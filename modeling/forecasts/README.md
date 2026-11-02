@@ -61,8 +61,22 @@ Registered on 2026-11-01 after v1, before any of these days' sales were seen. Sa
 
 Caution: the big-night effect rests on three nights from one year. If 2025's were unusual, v2 will overshoot.
 
+## v3: Oct 22 to Dec 31, 2026, guest counts (recommended)
+
+Registered on 2026-11-01 after v1 and v2, before any of these days' outcomes were seen. Same model and inputs as v1, but forecasting guests per day (Toast's "Total guests") instead of sales, because the owner scales staff, ordering and prep to how many people come in (`demand_model_v0.ipynb`, sections 8c and 9c).
+
+| File | sha256 |
+|---|---|
+| `frozen_forecast_v3_guests_daily_2026-10-22_to_2026-12-31.csv` | `976ef7c3c131eec76397687b4a61bdff1cef650011a514da0a007c7d8c4420c9` |
+| `frozen_forecast_v3_guests_weekly_2026-10-22_to_2026-12-31.csv` | `4fe42224dc531970184ab5328e97c673d20cd287b1a6c1f1c156f2917b9f230a` |
+
+- **Backtest:** a week ahead, a typical week was off by 9.4% (sales: 11.3%), and 3 of 37 weeks missed by more than 20% (sales: 12 of 37).
+- **Holidays:** re-estimated on guests. Big nights +173% (no shrinkage, chosen by leave-one-out); Halloween +4%.
+- **Weekly 80% ranges:** from the rolling backtest's weekly guest errors (refits every 3 months, 28 days ahead), about -19% to +17% around the forecast.
+- **Caveat:** guest counts are entered by staff. Guests per order slid from 1.63 (early 2025) to about 1.2-1.3 (late 2026), which fits the shift toward bar tabs but could also be a change in how counts are entered.
+
 ## How to score
 
 1. Add Kieran's next Sales Summary export to `data/sawtooth/`.
 2. Re-run `modeling/demand_model_v0.ipynb`.
-3. Read section 10: daily and weekly WAPE for v1, the holiday-blend alternative, v2, the linear model and the weekday median, plus 80% range coverage and a check of the closure assumptions.
+3. Read section 10: daily and weekly WAPE for v1, the holiday-blend alternative, v2, the linear model and the weekday median; v3's guest-count WAPE and 80% range coverage; and a check of the closure assumptions.

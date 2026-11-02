@@ -1,0 +1,72 @@
+date,weekday,expected_open,closed_reason,holiday,guests_forecast,guests_lo80,guests_hi80,outcome_existed_when_made
+2026-10-22,Thursday,True,,,81.83,55.89,113.77,True
+2026-10-23,Friday,True,,,202.87,137.87,259.00,True
+2026-10-24,Saturday,True,,,251.48,137.44,321.67,True
+2026-10-25,Sunday,False,Sunday,,,,,True
+2026-10-26,Monday,False,Monday,,,,,True
+2026-10-27,Tuesday,True,,,99.11,62.87,118.29,True
+2026-10-28,Wednesday,True,,,84.09,51.02,98.26,True
+2026-10-29,Thursday,True,,,74.61,50.95,103.72,True
+2026-10-30,Friday,True,,,244.27,166.01,311.85,True
+2026-10-31,Saturday,True,,Halloween,277.93,151.89,355.49,True
+2026-11-01,Sunday,False,Sunday,,,,,True
+2026-11-02,Monday,False,Monday,,,,,False
+2026-11-03,Tuesday,True,,,93.19,59.12,111.23,False
+2026-11-04,Wednesday,True,,,78.97,47.91,92.28,False
+2026-11-05,Thursday,True,,,80.07,54.68,111.31,False
+2026-11-06,Friday,True,,,194.49,132.18,248.31,False
+2026-11-07,Saturday,True,,,247.94,135.50,317.13,False
+2026-11-08,Sunday,False,Sunday,,,,,False
+2026-11-09,Monday,False,Monday,,,,,False
+2026-11-10,Tuesday,True,,,97.50,61.85,116.37,False
+2026-11-11,Wednesday,True,,,79.61,48.30,93.02,False
+2026-11-12,Thursday,True,,,70.82,48.36,98.45,False
+2026-11-13,Friday,True,,,189.14,128.54,241.48,False
+2026-11-14,Saturday,True,,,251.31,137.34,321.45,False
+2026-11-15,Sunday,False,Sunday,,,,,False
+2026-11-16,Monday,True,,,46.20,22.21,51.53,False
+2026-11-17,Tuesday,True,,,90.34,57.31,107.83,False
+2026-11-18,Wednesday,True,,,82.13,49.83,95.98,False
+2026-11-19,Thursday,True,,,79.49,54.29,110.51,False
+2026-11-20,Friday,True,,,191.03,129.82,243.88,False
+2026-11-21,Saturday,True,,,294.41,160.90,376.57,False
+2026-11-22,Sunday,False,Sunday,,,,,False
+2026-11-23,Monday,False,Monday,,,,,False
+2026-11-24,Tuesday,True,,,103.79,65.84,123.88,False
+2026-11-25,Wednesday,True,,big night,228.38,138.57,266.87,False
+2026-11-26,Thursday,False,Thanksgiving,closed holiday,,,,False
+2026-11-27,Friday,True,,,183.65,117.04,255.97,False
+2026-11-28,Saturday,True,,,255.13,129.13,349.90,False
+2026-11-29,Sunday,False,Sunday,,,,,False
+2026-11-30,Monday,False,Monday,,,,,False
+2026-12-01,Tuesday,True,,,83.41,43.79,121.98,False
+2026-12-02,Wednesday,True,,,76.99,37.48,111.43,False
+2026-12-03,Thursday,True,,,69.67,39.38,121.17,False
+2026-12-04,Friday,True,,,183.65,117.04,255.97,False
+2026-12-05,Saturday,True,,,255.13,129.13,349.90,False
+2026-12-06,Sunday,False,Sunday,,,,,False
+2026-12-07,Monday,False,Monday,,,,,False
+2026-12-08,Tuesday,True,,,83.41,43.79,121.98,False
+2026-12-09,Wednesday,True,,,76.99,37.48,111.43,False
+2026-12-10,Thursday,True,,,69.67,39.38,121.17,False
+2026-12-11,Friday,True,,,183.65,117.04,255.97,False
+2026-12-12,Saturday,True,,,255.13,129.13,349.90,False
+2026-12-13,Sunday,False,Sunday,,,,,False
+2026-12-14,Monday,False,Monday,,,,,False
+2026-12-15,Tuesday,True,,,83.41,43.79,121.98,False
+2026-12-16,Wednesday,True,,,76.99,37.48,111.43,False
+2026-12-17,Thursday,True,,,69.67,39.38,121.17,False
+2026-12-18,Friday,True,,,183.65,117.04,255.97,False
+2026-12-19,Saturday,True,,,255.13,129.13,349.90,False
+2026-12-20,Sunday,False,Sunday,,,,,False
+2026-12-21,Monday,False,Monday,,,,,False
+2026-12-22,Tuesday,True,,,83.41,43.79,121.98,False
+2026-12-23,Wednesday,True,,big night,210.40,102.43,304.52,False
+2026-12-24,Thursday,False,Christmas Eve,closed holiday,,,,False
+2026-12-25,Friday,False,Christmas,closed holiday,,,,False
+2026-12-26,Saturday,True,,,255.13,129.13,349.90,False
+2026-12-27,Sunday,False,Sunday,,,,,False
+2026-12-28,Monday,False,Monday,,,,,False
+2026-12-29,Tuesday,True,,,83.41,43.79,121.98,False
+2026-12-30,Wednesday,True,,,76.99,37.48,111.43,False
+2026-12-31,Thursday,True,,big night,190.41,107.62,331.15,False
