@@ -75,6 +75,10 @@ Registered on 2026-11-01 after v1 and v2, before any of these days' outcomes wer
 - **Weekly 80% ranges:** from the rolling backtest's weekly guest errors (refits every 3 months, 28 days ahead), about -19% to +17% around the forecast.
 - **Caveat:** guest counts are entered by staff. Guests per order slid from 1.63 (early 2025) to about 1.2-1.3 (late 2026), which fits the shift toward bar tabs but could also be a change in how counts are entered.
 
+## Booking rule
+
+`booking_rule_2026-10-22_to_2026-12-31.md` (registered 2026-11-01) defines how v3 is presented and scored on booked private-event nights: full buyouts get "booked: private event" instead of a walk-in forecast. In this window that's Mon Nov 16.
+
 ## How to score
 
 1. Add Kieran's next Sales Summary export to `data/sawtooth/`.
