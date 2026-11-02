@@ -75,6 +75,19 @@ Registered on 2026-11-01 after v1 and v2, before any of these days' outcomes wer
 - **Weekly 80% ranges:** from the rolling backtest's weekly guest errors (refits every 3 months, 28 days ahead), about -19% to +17% around the forecast.
 - **Caveat:** guest counts are entered by staff. Guests per order slid from 1.63 (early 2025) to about 1.2-1.3 (late 2026), which fits the shift toward bar tabs but could also be a change in how counts are entered.
 
+## v5: Oct 22 to Dec 31, 2026, guests with weekday levels since lunch ended
+
+Registered on 2026-11-01 after v1, v2 and v3, before any of these days' outcomes were seen. Same as v3, except each weekday gets its own level after July 1, 2026, the assumed date lunch service ended (lunch sales were normal in the Jan-Jun export and nearly gone in Jul-Oct; to confirm with Kieran). Holiday effects re-estimated: big nights +171%, Halloween +5% (`demand_model_v0.ipynb`, section 9f).
+
+| File | sha256 |
+|---|---|
+| `frozen_forecast_v5_guests_daily_2026-10-22_to_2026-12-31.csv` | `eef91985401f99500be44f700285c074eb0db447473ef46d58650835a7d7444b` |
+| `frozen_forecast_v5_guests_weekly_2026-10-22_to_2026-12-31.csv` | `a2d2981b29882b03088a9c6ce44ed1b263f050a51268ec68ad952b0798c8f3a6` |
+
+- **Why:** after lunch ended, v3 ran high on Wednesdays (+23%) and Thursdays (+31%) and low on Saturdays (-14%) in the Jul-Oct backtest.
+- **Check before freezing** (trained through Aug 31, scored Sep 1-Oct 21): v5 cut the Wednesday/Thursday/Saturday bias from 16% to 9% on average but added bias on Tuesdays (+41%) and Fridays (-31%), and its weekly WAPE was higher (8.1% vs 7.4%). By the rule set beforehand, the calendar stays on v3. The likely cause is that its after-lunch weekday levels could only be learned from summer weeks in that check; the frozen v5 also learned from Sep-Oct, so Nov-Dec is its real test.
+- **Difference from v3 in this window:** Wednesdays lower (85 vs 107 average guests), Thursdays lower (67 vs 87), Saturdays higher (322 vs 260).
+
 ## Booking rule
 
 `booking_rule_2026-10-22_to_2026-12-31.md` (registered 2026-11-01) defines how v3 is presented and scored on booked private-event nights: full buyouts get "booked: private event" instead of a walk-in forecast. In this window that's Mon Nov 16.
