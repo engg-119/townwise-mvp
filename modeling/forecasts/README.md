@@ -39,8 +39,30 @@ The model has no holiday feature, and several 2025 holiday days were far above a
 
 `hybrid_holiday_blend` averages the hybrid with last year's same day, scaled by that weekday's year-over-year level as of Oct 21, on these six days only. It equals the hybrid everywhere else. It was registered before any outcomes were seen, so scoring it is fair.
 
-### How to score
+## v2: Oct 22 to Dec 31, 2026, with holidays
+
+Registered on 2026-11-01 after v1, before any of these days' sales were seen. Same training data (through 2026-10-21) and model as v1, times holiday multipliers learned from 2025 (`demand_model_v0.ipynb`, sections 8b and 9b). v1 above is unchanged.
+
+| File | sha256 |
+|---|---|
+| `frozen_forecast_v2_daily_2026-10-22_to_2026-12-31.csv` | `ee4b9ee93a53f519d753473e89acbd2dc069e50b0b57324ed21c7b3c974610f9` |
+| `frozen_forecast_v2_weekly_2026-10-22_to_2026-12-31.csv` | `2fc0fcbffa14f894ebd4d846740fcdcb7aaf4f3a61744738462bda4ac91af096` |
+
+- **Big nights** (Thanksgiving Eve, Dec 23, New Year's Eve): +170%. These ran 3.0x to 4.2x a normal day in 2025. Shrinkage was chosen by leave-one-out on those three nights (no shrinkage won: 14.7% error vs 67.2% for v1).
+- **Halloween:** +16% (seen once, shrunk to a quarter of its measured effect).
+- **Closures** (New Year's Day, July 4, Thanksgiving, Dec 24, Dec 25) come from holiday rules; in this window they match v1's closed days.
+
+| Day | v1 hybrid | v2 | v2 80% range | 2025 same day |
+|---|---|---|---|---|
+| Sat Oct 31 (Halloween) | $6,701 | $7,742 | $4,635 to $11,285 | $11,174 (Fri) |
+| Wed Nov 25 (Thanksgiving Eve) | $1,857 | $5,024 | $3,158 to $13,770 | $6,075 |
+| Wed Dec 23 | $1,790 | $4,843 | $1,653 to $13,867 | $8,359 |
+| Thu Dec 31 (New Year's Eve) | $2,311 | $6,251 | $1,972 to $17,138 | $9,363 |
+
+Caution: the big-night effect rests on three nights from one year. If 2025's were unusual, v2 will overshoot.
+
+## How to score
 
 1. Add Kieran's next Sales Summary export to `data/sawtooth/`.
 2. Re-run `modeling/demand_model_v0.ipynb`.
-3. Read section 10: daily and weekly WAPE for all four forecasts, 80% range coverage, and a check of the closure assumptions.
+3. Read section 10: daily and weekly WAPE for v1, the holiday-blend alternative, v2, the linear model and the weekday median, plus 80% range coverage and a check of the closure assumptions.
