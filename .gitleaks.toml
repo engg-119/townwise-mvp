@@ -1,0 +1,6 @@
+# No path allowlists and no value allowlists. A real secret in any tracked file, .env files included,
+# fails the build. PR scans use the base branch's copy of this file, so a change here applies only
+# after merge. The one exception type is history already on main that was rotated: an [[allowlists]]
+# table with a description (what, and when it was rotated) and commits = ["<sha>"]. Policy: T13.
+[extend]
+useDefault = true
