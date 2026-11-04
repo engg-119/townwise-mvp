@@ -1,0 +1,1737 @@
+# Townwise client portal and staff console: build spec
+
+Status at merge into `develop` (2026-11-04): the API this spec describes is built in `api/`; `api/README.md` lists what is built and what is not yet. The client screens are not built; their mockups are on the Townwise design canvas, in the three "Client portal" and "Staff console" rows. Branch facts below (`feature/townwise-web`, the `kit-infra` and `portal-api` worktrees, `feature/infra` with MongoDB Atlas) describe the repository before those branches merged; production now runs on Azure DocumentDB (`infra/README.md`). The three source designs this spec cites were working files and are not in the repository.
+
+Original status: spec, 2026-11-04, revised the same day after a critic review (Section 23 lists the changes). Synthesized from the three designs in this folder (`design-security.md`, `design-product.md`, `design-minimal.md`). Nothing in this document is built unless it is marked **Exists**. Spec verbs (“returns”, “refuses”, “shows”) say what the build must do.
+
+Markers:
+
+- `[CONFIRM: …]` is a default the build ships with; the user can change it. Lead defaults say “lead default”.
+- `[DECISION NEEDED: …]` has no default; the build shows the honest gap until the user decides.
+- On mockups, both render as Placeholder chips (design system), so nobody mistakes them for final copy. Neither ever ships.
+
+Facts marked **Exists** were checked in these files for this spec, not copied from the designs:
+
+- Kit, in the `portal-api` worktree: `backend/auth/MODULE.md` (never its Changes from source section); `backend/auth/src/create-auth.ts` (`AuthContext`, `revokeAllSessions`, optional `onUserCreated`); `src/middleware.ts` (`authenticatedAt` is `session.createdAt`, and refresh never moves it); `src/totp/factor.ts` (confirming TOTP revokes the user’s other sessions and keeps the current one); `src/sign-in.ts` (`onUserCreated` failures are logged and swallowed); `src/stores/types.ts` (`users.findById`, `users.findByEmail`, `totp.get` with `status` and `enabledAt`; no user listing); `src/routes.ts` (`AUTH_ROUTES`, including `/auth/logout-all` and `/auth/me`); `backend/server-core/MODULE.md` (per-router body parsers, CORS allows only `Content-Type` and `Authorization`, request logs keep `url`, query key `q` is redacted); `backend/mongo/MODULE.md` and `src/documentDb.ts` (partial filters may not use `$or`, `$not`, `$nor`, `$xor`, `$all`, `$mod`; no collation); `backend/rate-limit/MODULE.md`; `compose.yaml` (standalone Mongo, no replica set); `api/src/main.ts`; `api/package.json`; `package-lock.json` (`express` 5.3.0, `mongoose` 9.11.2, `vitest` 5.0.5, `testcontainers` 12.2.1, `@testcontainers/mongodb` 12.2.1 and `@types/express` 5.0.6 are already installed).
+- Client: `client/README.md` says the client is `mobile/expo-shell`. On `feature/townwise-web` (staged in the `kit-infra` worktree, not committed): routes `/` (marketing home), `/about`, `/privacy`, `/security` (the marketing Security page), `/terms`, `/sign-in`, `/totp`, `/dashboard`, `/settings/security`, a Google button that reads “Continue with Google” on web and native, and self-hosted fonts.
+- Design: `townwise-ds/project/README.md`, `tokens.json`, and the Nav, AppFrame, Button, StatusTag, FormField, Placeholder, NumbersTable, Toggle and Section READMEs; `ConsoleV2.dc.html`, `SignIn.dc.html`, `Privacy.dc.html`.
+- Data: `townwise-home.json` (schema 1, year 2024, generated 2026-11-03): twelve towns with ids `hanover-nh`, `amherst-ma`, `ithaca-ny`, `burlington-vt`, `middlebury-vt`, `state-college-pa`, `bar-harbor-me`, `stowe-vt`, `conway-nh`, `north-elba-ny`, `provincetown-ma`, `nantucket-ma`. Conway, North Elba and Provincetown have one driver and no dates; Nantucket has neither.
+- Checked again for the revision: `backend/auth/src/stores/types.ts` (`UserStore` has `findById`, `findByEmail`, `findByGoogleSubject`, `create`, `linkGoogleSubject` and `updateEmail`, and no delete; `TotpStore` has `startEnrollment`, `confirmEnrollment({ userId, step, recoveryCodeHashes, now })` and `remove`); `create-auth.ts` (`AuthDeps.now`, `revokeAllSessions`); `src/limits.ts` (`auth:ml-send-ip`, 20 per hour); `src/tokens.ts` (access tokens last 600 seconds); `backend/auth/package.json` (exports only `./src/index.ts`; the test helpers in `backend/auth/test/helpers/` are not exported); `backend/redis` (`RedisHandle.client`); `backend/rate-limit/src/limiter.ts` (keys are SHA-256 hashed before storage); `eslint.config.js` (`import-x/no-extraneous-dependencies` with `includeTypes: true` and devDependencies allowed only under `**/test/**`, `**/*.config.{js,ts}` and `tooling/**`; `import-x/no-relative-packages`); the installed `mongodb` driver is 7.7.0 and accepts `monitorCommands` in the connection string. On `feature/townwise-web`: `TownPanel.web.tsx` takes `cardRef` and `onBack`; no DeltaChart, MonthScrubber or NumbersTable component exists; `package.json` has no `react-native-svg`; `towns.ts` is staged, not committed; the privacy, security, terms and home copy quoted in Sections 17 and 22.4. On `feature/infra`: `infra/README.md` plans a MongoDB Atlas M0 cluster with a `readWrite` user on `townwise`.
+
+---
+
+## 1. Judging the three designs
+
+### 1.1 Scores (1 to 10)
+
+| Criterion | Security-first | Product-first | Minimal |
+|---|---|---|---|
+| Correctness against the requirements | 8 | 9 | 7 |
+| Security | 10 | 7 | 6 |
+| Clarity for restaurant owners | 7 | 10 | 7 |
+| Simplicity | 4 | 6 | 9 |
+| Fit with the kit | 7 | 8 | 6 |
+| **Total, of 50** | **36** | **40** | **35** |
+
+**Security-first.** It has the strongest isolation. Invitations are per organization, so adding an email never reveals or blocks anything in another organization. It also has one route table, GET-only view-as and audit written before the effect, and it noticed that server-core redacts the `q` query key. It costs too much for a beta: a hash-chained audit log with a verify endpoint, a Mongoose tenant-guard plugin, ESLint bans, a mirrored view-as namespace, eight limiters, an org Activity log, multi-location upload batches and per-location time zones. Its Overview at `/` collides with the marketing homepage on `feature/townwise-web`. It defers “Continue with Google” as a kit change, but that branch already renders it. Its staff check (“TOTP on, session under 60 minutes”) accepts the session that enrolled TOTP, which passed a code only to enroll, never at sign-in. Removed members land on Request access with no explanation.
+
+**Product-first.** It has the clearest owner path. Approval creates the first location. The Waiting page shows the requester’s town. No access explains rejected, removed and paused separately, and the Forecast tab mirrors the homepage’s four steps. Its routes match the `(gate)` and `(app)` groups on `feature/townwise-web`. It reads the kit precisely: “session created after `enabledAt`” is exactly “this session passed a code”. Its weaknesses:
+
+- It allows one live invitation per email across all organizations. That gives org admins an “unavailable” oracle and lets a hostile org admin squat a stranger’s address.
+- It sets a 365-day calibration threshold that the homepage says is still being tested.
+- It sums every row per date, which inflates guests on item-level exports.
+- Its People page reads the kit’s `users` collection directly.
+
+**Minimal.** It is the smallest build, and it has two ideas worth keeping. It asks whether a row is a day or a check, because item-level exports repeat the check’s guest count on every line. It reports file errors by row and column, never by value. Its weaknesses:
+
+- View-as rides a `?viewAs=` query parameter authorized by any audit row from the last hour, so it is bound to the staff user, not the session.
+- Membership is resolved by email on every request, so a Google email change loses access.
+- It allows one email per organization, with the same oracle and squatting.
+- Home at `/` and staff setup at `/security` both collide with marketing routes.
+- An “In progress” tag on the client’s calibration step reads as work on their own model.
+
+### 1.2 Base and grafts
+
+The base is **Product-first**: its flows, pages, copy, routes, access-state model and per-session staff gate.
+
+Grafted from Security-first:
+
+- per-organization invitations with no cross-organization uniqueness, and a chooser when several organizations invited one email;
+- change, recount, revert for the last admin;
+- author-or-admin note edits, with `canEdit` on each note;
+- uploads recorded as `applying`, then `applied`;
+- the `q` key for email lookup;
+- a 60-minute staff window;
+- “Sign out everywhere” for staff;
+- a log line per view-as read;
+- product denials that are never 401;
+- per-route body parsers;
+- a branded `OrgScope`;
+- a `strict: 'throw'` sales schema.
+
+Grafted from Minimal:
+
+- the day-or-check question and the refusal of item-level exports;
+- errors by row and column;
+- the `tw_` collection prefix;
+- status derived from the data, with no stored calibration record in v1.
+
+New in this synthesis:
+
+- a Leave action and a one-time “Not your team?” notice after an automatic join that names who added the person, and a press-to-join screen for anyone who already has a pending request (the auto-join risk in F1);
+- org admins see every Townwise staff action on their organization, view-as included;
+- honest calibration states with no day threshold;
+- a daily guests chart on the Sales data tab, on web, with a text and table fallback on native (D21);
+- a staff-only deletion path for a person or a suspended organization (D22).
+
+Not taken, and why:
+
+- The hash-chained audit, tenant-guard plugin, ESLint import bans and mirrored view-as namespace are strong but heavy. The branded `OrgScope`, one route table, and isolation and view-as tests generated from that table cover the same failures for a beta. They are listed in Deferred.
+- Security-first’s audit-before-the-effect for every action. This spec writes only staff actions first, refusing the action if the write fails (9.3, a [CONFIRM]). Client actions keep Product-first’s order: written after the effect, with a failed write logged at error level.
+- The `?viewAs=` query parameter is not bound to a session.
+- One live invitation per email creates an oracle and allows squatting.
+- A 365-day threshold is an input claim the homepage says is untested.
+- “Approve into an existing organization” is unnecessary: staff add the requester’s email on that organization instead (F2b).
+- Reading the kit’s `users` collection touches a kit internal. The spec uses exact-email lookup through `users.findByEmail` instead.
+- A `web_only` rule for staff is unnecessary: a 60-minute window behind TOTP already bounds a native session.
+- Per-location time zones and archived locations are not needed: business dates are strings, and deleting an empty location is simpler.
+
+---
+
+## 2. Decisions at a glance
+
+| # | Decision | Why | Marker |
+|---|---|---|---|
+| D1 | Three roles: `superadmin` (Townwise staff), `org_admin`, `member`. A staff address never resolves as a member. | Staff manage any organization’s team, name and status from the console, and each of those actions is shown to that organization’s admins (D9). They read sales figures and note text only through audited view-as (D7). | [CONFIRM: lead default, the three roles] |
+| D2 | Staff are listed in `TOWNWISE_SUPERADMIN_EMAILS`. Every staff request needs TOTP enabled, a session created after TOTP was enabled, and a session at most 60 minutes old. | The kit cannot check a code per action without a kit change (Section 19). Once TOTP is on, every new session passes a code at sign-in. Confirming TOTP revokes the other sessions and keeps the current one, so “created after `enabledAt`” means “passed a code”. 60 minutes is as close to “every action” as the kit allows. | [CONFIRM: lead default, staff by config and TOTP for every staff action, read as a code at sign-in no more than 60 minutes ago] |
+| D3 | An email on an organization’s list joins it automatically, with no click, the first time that person continues with Google. Anyone else lands on Request access. Staff approve, which creates the organization and makes the requester its org admin. One exception: a person who already has a pending request presses Join, and only then is the request withdrawn (F2b). | Lead default. The exception keeps an invitation the person never chose from skipping staff review. | [CONFIRM: lead default, auto-join, request access, approval. Conflict: the critic review recommends a one-click Join screen for every invitation, because auto-join lets an org admin pull a stranger into their organization (F1).] |
+| D4 | Invitations are per organization. Two organizations may invite the same email; the person chooses. | No add result depends on another organization, so an org admin learns nothing about other customers and cannot block a stranger. | [CONFIRM: per-organization invitations] |
+| D5 | One active organization per person. | A restaurant group is one organization with several locations. One unique index replaces an organization picker. | [CONFIRM: one organization per person] |
+| D6 | Approval creates the organization, its first location and the requester’s admin seat. | The owner’s first page already shows their town and the upload step. | [CONFIRM: first location at approval] |
+| D7 | Staff see client sales figures and note text only through view-as. Without it, the console shows team emails, location names and towns, counts, date coverage and recent audit events, and those reads are not recorded. | One audited exception to “visible only to that client”. | [CONFIRM: staff see values only through view-as] |
+| D8 | View-as is bound to the staff session, lasts 30 minutes, needs a reason, refuses every write and every console route, resolves exactly as the target user, gate pages included, and ends when the target’s organization changes. | “Exactly what the client sees.” | [CONFIRM: lead default, read-only, audited, bannered; 30 minutes; any non-staff user as target] |
+| D9 | Org admins see every Townwise staff action on their organization: each view-as with the staff email and reason, and every team, name and status change staff make. | Trust around private data. Not requested by the user. | [CONFIRM: show staff activity to org admins, with staff emails] |
+| D10 | The browser parses the file and sends only `{ date, guests, netSalesCents }` per day for one location. | Lead default. POS exports can contain customer names. | [CONFIRM: lead default, browser-side parsing, three fields] |
+| D11 | The column mapper never renders a cell, except the distinct values of a column the user names as the location column. | Names stay off the screen and out of screenshots. | [CONFIRM: no cell contents in the mapper] |
+| D12 | Calibration states in v1: no sales data, and not calibrated. No day threshold is shown. | No fake output. The homepage says the history needed is still being tested. | [CONFIRM: lead default, honest states] [DECISION NEEDED: minimum days of history before calibration] |
+| D13 | Tuning is structured notes per location: closure, private event, opening, other. An AI chat waits. | Lead default. | [CONFIRM: lead default, notes first, AI chat later] |
+| D14 | No email in v1. | Lead default. Azure Communication Services comes later. | [CONFIRM: lead default, no email in v1] |
+| D15 | An organization has one or more locations. Sales, uploads and notes belong to a location. | Lead default. | [CONFIRM: lead default, per-location data] |
+| D16 | Members and org admins can upload and write notes. A member’s upload adds new days only; an org admin’s replaces the days it covers. Only org admins manage the team, locations, the organization name and deletion. | The person with POS access is often a manager. Replacing history is as destructive as deleting it, which is admin-only. | [CONFIRM: member permissions; members add new days only] |
+| D17 | No multi-document transactions. Writes are ordered so a retry completes them, and unique indexes catch races. | Local Mongo is standalone (`compose.yaml`), and production DocumentDB sets `retryWrites=false`. | none (a fact) |
+| D18 | Authorization is resolved on every request from the primary. Removing a member never signs them out. | They see an honest page on their next request, not a sign-in loop. | [CONFIRM: no session revoke on removal] |
+| D19 | Product denials are 403 or 404, never 401. | The shell refreshes on any 401 (kit client contract). | none (a kit contract) |
+| D20 | Upload is web only. | A native file picker is a new dependency. | [CONFIRM: web-only upload] |
+| D21 | The town profile (P4, P15) and the sales chart (P12) render on web only. Native shows each chart’s text summary and “Show the numbers” table, built from View and Text, plus “See the chart at townwise.tech.” | The client has no `react-native-svg`, and adding it is a new dependency. | [CONFIRM: web-only charts] |
+| D22 | Staff can delete a person’s Townwise records, or a suspended organization’s. The audit log keeps the events with the email or names replaced. The kit’s user record is then deleted by hand. | The privacy page and Terms on `feature/townwise-web` already promise deletion on request. | [CONFIRM: staff-only deletion in v1; suspend before deleting an organization] |
+
+---
+
+## 3. Roles and permissions
+
+| Capability | Staff | Staff in view-as | Org admin | Member | Signed in, no organization |
+|---|---|---|---|---|---|
+| Read own access state (`GET /api/me`) | yes | the target’s | yes | yes | yes |
+| Send an access request | no | no | no | no | yes, in `no_org`, `rejected`, `removed` |
+| Join, or decline, an organization that invited their email | no | no | no | no | yes, in `invited` |
+| Read the organization, locations, town profiles, sales, notes, calibration | team emails, location names and towns, counts and date coverage (D7) | read-only | yes | yes | no |
+| Upload sales | no | no | yes, new and replaced days | yes, new days only | no |
+| Delete all sales for a location | no | no | yes | no | no |
+| Add notes; edit or delete own notes | no | no | yes | yes | no |
+| Edit or delete anyone’s notes | no | no | yes | no | no |
+| Add, rename, change the town of, or delete (when empty) a location | no | no | yes | no | no |
+| Rename the organization | any | no | own | no | no |
+| Read the team | any | read-only, if the target is an org admin | own | no | no |
+| Add emails, change roles, remove people | any | no | own | no | no |
+| Leave the organization | no | no | yes, unless last admin | yes | no |
+| See Townwise staff activity on the organization | audit log | read-only, if the target is an org admin | yes | no | no |
+| Approve or reject requests; create, rename, suspend, reactivate organizations | yes | no | no | no | no |
+| See everyone across organizations; sign a person out everywhere | yes | no | no | no | no |
+| Read the audit log | yes | no | no | no | no |
+| Delete a person’s records, or a suspended organization’s (D22) | yes | no | no | no | no |
+| Start view-as | yes | no | no | no | no |
+| End view-as | yes | yes | no | no | no |
+| Two-step sign-in (`/settings/security`, **Exists**) | required | not applicable | optional, recommended | optional | optional |
+
+Rules behind the matrix:
+
+- An organization always keeps at least one active org admin. Demoting, removing or leaving as the last one answers 409 `last_admin`, for org admins and staff alike.
+- A staff email can be invited like any other, but it never resolves as a member, because the staff branch runs first.
+- Only the addresses in `TOWNWISE_SUPERADMIN_EMAILS` are staff. Any other address a staff member adds to an organization, a personal Gmail included, joins as an ordinary member with full member access, no banner and no time limit. That row shows “Added by Townwise staff” on Team (P17), and the add appears in the organization’s staff activity (9.3).
+- Every staff action on an organization (team, name, status, view-as) is recorded before it takes effect and shown to that organization’s admins (9.3).
+- Removed people keep their kit user. They may request access for another organization, or join another that invited them.
+
+---
+
+## 4. Access states and routing
+
+### 4.1 Types
+
+```ts
+type Role = 'org_admin' | 'member';
+
+type Access =
+  | { state: 'staff' }
+  | { state: 'staff_setup_required' }                          // staff email, TOTP not enabled
+  | { state: 'staff_reauth_required'; reason: 'session_before_codes' | 'session_too_old' }
+  | { state: 'member'; org: { id: string; name: string }; role: Role }
+  | { state: 'invited'; invitations: InvitationView[]; pendingRequest: AccessRequestView | null }
+  | { state: 'pending'; request: AccessRequestView }
+  | { state: 'rejected'; request: AccessRequestView }
+  | { state: 'removed'; org: { name: string }; removedAt: string; byYou: boolean }
+  | { state: 'org_suspended'; org: { name: string } }
+  | { state: 'no_org' };
+
+interface InvitationView {
+  inviteId: string; orgName: string; role: Role;
+  invitedBy: { staff: boolean; email: string | null };  // email: the org admin's current kit email;
+                                                         // null when staff added it, or that account no longer exists
+}
+
+interface MeResponse {
+  user: { id: string; email: string };        // always the signed-in person; during view-as, built from the staff actor (7.2)
+  access: Access;                              // during view-as: the target's access
+  viewAs: ViewAsView | null;
+  staff: { verifiedUntil: string } | null;    // set whenever the signed-in person's own state is 'staff'
+}
+```
+
+### 4.2 Resolution order (`resolveAccess`)
+
+Input: the kit’s `AuthContext` (`userId`, `sessionId`, `platform`, `authenticatedAt`). Output: `{ self: Access; effective: Access; grant: Grant | null }`. `self` is the signed-in person’s own access, computed before any view-as substitution; `effective` is what policies evaluate. Every read is from the primary. The resolver never writes. It reads the time only from the injected `now` (7.1).
+
+1. Load the kit user (`users.findById`). If it is missing, answer 401 `unauthenticated`, the kit’s own answer for a deleted user, through the one helper `userGone()`. No other product code answers 401 (D19).
+2. **Staff branch**, when the user’s current email is in `TOWNWISE_SUPERADMIN_EMAILS`:
+   1. `totp.get(userId)` is not `enabled`: `staff_setup_required`.
+   2. `authenticatedAt <= factor.enabledAt`: `staff_reauth_required`, reason `session_before_codes`.
+   3. `now − authenticatedAt > 60 minutes`: `staff_reauth_required`, reason `session_too_old`.
+   4. Otherwise `self` is `staff`, with `verifiedUntil = authenticatedAt + 60 minutes`. If a grant for this `sessionId` is live by time (Section 8), resolve its target with steps 3 to 7 (never step 2). The target’s resolved organization id is the organization of its active seat (step 3, active or suspended), or null. If that id equals `grant.orgId` (null equals null), the target’s access is `effective` and the grant is returned, so `viewAs` is set. Otherwise the grant is ignored exactly as an expired one, and `effective` is `self`.
+3. An active seat (`tw_members.activeUserId == userId`): `member` if the organization is `active`, `org_suspended` if it is `suspended`.
+4. Open invitations for the user’s current email (`tw_members.inviteEmail == email`, `status: 'invited'`) in active organizations: `invited`, listing all of them.
+5. A pending request by this user: `pending`.
+6. The newer of the latest rejected request and the latest removed seat: `rejected` or `removed`.
+7. Otherwise `no_org`.
+
+Outside the staff branch, `self` and `effective` are the same access.
+
+An invitation outranks a pending request, so a second employee who requested access by mistake sees their team on `/joining` as soon as an admin adds them. With a pending request, the state carries it as `pendingRequest`, and `/joining` never joins on load: the request is withdrawn only when the person presses Join, and “Not my team” deletes the invitation and returns them to Waiting (F2b).
+
+### 4.3 Client routing
+
+The client calls `GET /api/me` after restore, after sign-in, after join and after leave. It calls it again whenever an `/api` call answers 403 `no_access`, `forbidden`, `staff_setup_required` or `staff_reauth_required`, or 409 `view_as_active`. It clears cached organization data before it re-routes.
+
+| State | Route |
+|---|---|
+| `staff` | `/admin`; with `viewAs` set, the target’s route under the view-as banner |
+| `staff_setup_required` | `/settings/security` with the staff notice (**Exists**; notice added) |
+| `staff_reauth_required` | `/staff/sign-in-again` |
+| `member` | `/dashboard` |
+| `invited` | `/joining` |
+| `pending` | `/waiting` |
+| `rejected`, `removed`, `org_suspended` | `/no-access` |
+| `no_org` | `/request-access` |
+
+The gate also allows `/request-access` from `rejected` and `removed`, when the person chooses it on No access. Any other route opened in the wrong state redirects to that state’s route. Route names extend the `(gate)` and `(app)` groups on `feature/townwise-web`. [CONFIRM: route names]
+
+---
+
+## 5. Flows
+
+### F1. First sign-in with an invited email
+
+1. An org admin adds `{email}` on Team. A `tw_members` row is created with `status: 'invited'`, `inviteEmail: {email}` and the chosen role (default `member`). Audit `member.invited`.
+2. The admin tells the person. Townwise sends no email, and the Team page says so.
+3. The person presses “Continue with Google”. The kit creates or finds their user (**Exists**).
+4. `GET /api/me` answers `invited`. With one invitation and no pending request, `/joining` shows “Joining {org}…” and who added them, and calls `POST /api/me/join { inviteId }` at once (lead default). With a pending request, or with two or more invitations, `/joining` lists them and waits for a press: Join on one, or “Not my team” on any (P6).
+5. The server compare-and-sets the invitation to `active`. It matches `_id`, `status: 'invited'`, `inviteEmail` equal to the caller’s current email, and an active organization. It sets `userId`, `activeUserId` and `joinedAt`, and unsets `inviteEmail`. Then it withdraws any pending request of the caller (`withdrawnReason: 'joined_org'`), audits `member.joined`, and answers the new `MeResponse`.
+6. `/dashboard` shows once: “You joined {org}. {inviter} added {email}. Not your team? Leave {org}.” {inviter} is the org admin’s email, “Townwise staff”, or {org} when that account no longer exists. Leave is on Settings.
+
+[CONFIRM: lead default, auto-join without a click. Conflict: the critic review recommends dropping the automatic join for every invitation. The attack it describes: the org admin of any vetted organization renames it to a stranger’s business name (`PATCH /api/org`, not unique, not reviewed), adds a location in the stranger’s town, and adds the stranger’s Gmail address, often published on a restaurant’s website. The next time the stranger continues with Google, they join silently, see their own business name and town and the upload step, and cannot see the team (members have no Team page). Anything they upload, the org admin reads. Staff vetting covers the org admin’s own organization, not a right to enroll strangers, and the Leave notice shows once. A joined invitation also turns Active on the inviter’s Team page, which tells the inviter that the address uses Townwise. The recommended alternative: `/joining` always shows a one-click screen naming the organization and who added the person, with the primary “Join {org}” and the text link “Not my team”, and a test that join never runs from `GET /api/me` or on page load. It still needs no email and no approval, only one press. This spec keeps the lead default and narrows it: the notice names who added the person, and a pending request is never withdrawn without a press (F2b).]
+
+Branches:
+
+- **Different Google account than the one invited:** the state is `no_org`, so Request access. That page leads with “Joining a team that already uses Townwise? Ask an admin there to add {email}.” and ends with “Signed in as {email}. Using the wrong Google account? Sign out and continue with another one.”
+- **An address Google is not authoritative for** (not Gmail, not Workspace): the kit refuses sign-in with 403 `google_email_not_authoritative`, and the sign-in page shows its existing message (**Exists**). Team warns admins before they add an address.
+- **Already active elsewhere:** the update hits the unique `activeUserId` index, which answers 409 `already_in_org`. The client re-reads `/api/me`.
+- **Invitation removed meanwhile:** 409 `no_invite`. The client re-reads `/api/me`.
+- **Not my team:** `POST /api/me/decline { inviteId }` deletes that invitation, matching it exactly as join does. Audit `member.declined`. The row disappears from the inviter’s Team page. The client re-reads `/api/me`.
+
+### F2. Request access
+
+1. A person in `no_org` lands on `/request-access`. The form asks for organization name, their name, their role, the town (one of the twelve, or another town and state), number of locations and an optional note.
+2. `POST /api/access-requests`. A unique partial index allows one pending request per user. Audit `access_request.created`.
+3. `/waiting` shows what was sent, “We don’t send email yet, so check back here.”, and the public profile of the town they named. [CONFIRM: town profile while waiting]
+
+**F2b. Invited while pending.** At the next `GET /api/me` the person is `invited`, with `pendingRequest` set. `/joining` does not join on load. It names the organization and who added them, and offers “Join {org}” and “Not my team”. Join withdraws the request. “Not my team” deletes the invitation, and the request stays with staff, so an invitation the person never chose cannot skip staff review. This is also how staff place a requester into an existing organization: they add the requester’s email on that organization’s page, and the requester presses Join.
+
+### F3. Staff approve a request
+
+1. Staff open `/admin` (Requests, Pending) and read the request: organization, contact name and role, email (and the email at request time if it changed), town, location count, note, sent date. A warning shows when the requester already holds a seat.
+2. Staff validate the person by hand, outside Townwise: for example, the email domain matches the restaurant, or a phone call. [CONFIRM: what “validated manually” means in practice]
+3. “Approve” opens a dialog with the organization name and first location name, both prefilled and editable, and the town shown.
+4. `POST /api/admin/requests/:requestId/approve { orgName, locationName }`:
+   1. Load the request (404 if missing). If it is `approved` with an `orgId`, skip to step 6 (a retry completes the work).
+   2. If it is not `pending`: 409 `request_not_pending`.
+   3. If the requester holds an active seat: 409 `requester_has_org`.
+   4. Generate `orgId`. Audit `access_request.approved` with it, before the change (staff events are written first, 9.3).
+   5. Compare-and-set the request from `pending` to `approved`, with `orgId`, `decidedAt` and `decidedBy`. No match: 409 `request_not_pending` (another staff member got there first), and the server writes `staff_action.not_applied`.
+   6. Upsert the organization `{ _id: orgId }` with `$setOnInsert`: name, `active`, `createdAt`, `createdBy`, `fromRequestId`. Audit `org.created` on insert.
+   7. Upsert the first location keyed by `{ orgId, nameKey }` with `$setOnInsert`: name, and the town from the request. Audit `location.created` on insert.
+   8. Insert the requester’s seat: `role: 'org_admin'`, `status: 'active'`, `userId`, `activeUserId`, `joinedAt`, `email` (the requester’s current kit email). A duplicate key in this organization counts as success. A duplicate in another organization (the requester joined elsewhere in the gap) answers 409 `requester_has_org`; the organization then exists with no admin, and its detail page shows “No admin yet”. Audit `member.joined`.
+5. The requester sees their organization at their next `GET /api/me`. No email is sent.
+
+### F4. Staff reject a request
+
+1. “Reject” opens a dialog with an optional message of up to 500 characters, which the requester will see.
+2. `POST /api/admin/requests/:requestId/reject { message? }` audits `access_request.rejected` with `hasMessage` (never the message) first (9.3), then compare-and-sets `pending` to `rejected`. No match: 409 `request_not_pending`, and `staff_action.not_applied`.
+3. The requester sees `/no-access` (rejected variant) with the message and “Send a new request”. [CONFIRM: rejected people may send a new request]
+
+### F5. Org admin adds emails
+
+1. On `/team` the admin pastes up to 20 addresses (one per line, or comma separated) and picks a role (default Member). [CONFIRM: role chosen at invite, default member]
+2. `POST /api/org/members` normalizes each address exactly as the kit does (`trim().toLowerCase()`, then `z.email().max(254)`) and collapses duplicates. Each address gets one outcome, which never depends on any other organization:
+   - `invited`: a row was created. Audit `member.invited`.
+   - `already_invited`: this organization has an open invitation for it.
+   - `already_member`: an active member of this organization has that email.
+   - `invalid`: not an email.
+3. The page lists the outcomes and the updated team.
+
+Staff do the same for any organization from its detail page. Those rows carry `addedByStaff: true`, Team shows them as “Added by Townwise staff”, and each add appears in the organization’s staff activity (9.3).
+
+### F6. Org admin edits the team
+
+- **Change role:** `PATCH /api/org/members/:memberId { role }`. For a demotion, update, then count active admins. If the count is zero, set the role back and answer 409 `last_admin`. Audit `member.role_changed`.
+- **Remove an invitation** (never joined): delete the row. Audit `member.removed` with `wasStatus: 'invited'`.
+- **Remove a member:** set `status: 'removed'`, `removedAt` and `removedBy`, unset `activeUserId`, then count active admins. If zero, restore the row and answer 409 `last_admin`. Audit `member.removed`. An admin may remove themself when another admin exists.
+- Change, recount, revert never ends with zero admins, needs no lock, and two concurrent demotions either both revert or one wins.
+
+### F7. Losing access, and leaving
+
+- **Removed by an admin:** the person’s next `/api` call answers 403 `no_access`. The client re-reads `/api/me` (`removed`), clears cached organization data and shows `/no-access` (removed variant). Their session stays (D18).
+- **Leave:** `POST /api/org/leave` from Settings. It is the same as remove, for oneself, with `byYou: true` and audit `member.left`. The last admin gets 409 `last_admin`.
+- **Organization suspended by staff:** members see `/no-access` (paused variant). Data is kept, and reactivation restores access with no other step.
+- **Rejected request:** `/no-access` (rejected variant).
+- **Compromised account:** staff use “Sign out everywhere” on People (kit `revokeAllSessions`, **Exists**).
+
+### F8. View-as
+
+1. Staff pick a person (on People, a request’s detail, or a member row on an organization’s page) and press “View as”. A dialog asks for a reason (5 to 200 characters) and says it is recorded.
+2. `POST /api/admin/view-as { userId, reason }`. Staff targets get 400 `invalid_target`; unknown users get 404. The server clears any grant still holding this session, expired or not (Section 8), writes audit `view_as.started` first, and then inserts the grant. If the audit write fails, no grant exists.
+3. The response is a `MeResponse` with the target’s access and `viewAs` set. The client renders the target’s screens under a banner that cannot be dismissed.
+4. While the grant is live, every route with the `staff` policy, any method, answers 409 `view_as_active`. Every other non-GET answers 403 `view_as_read_only`. `POST /api/admin/view-as/end` (policy `staff_self`) is exempt from both (7.2).
+5. “End view-as” ends the grant (audit `view_as.ended`) and returns to `/admin`. The resolver ignores a grant past its end, and a grant whose target has joined, left or changed organization since it started. The next request returns staff access, and the client shows “View-as ended at {time}.” on `/admin`.
+
+### F9. Staff first sign-in, and the hourly sign-in
+
+1. A staff email continues with Google, and `GET /api/me` answers `staff_setup_required`. The client opens `/settings/security` (**Exists**) with the notice “Townwise staff accounts need two-step sign-in. Set up your authenticator app, then sign in again with a code.”
+2. After enrollment the kit shows recovery codes once and revokes the other sessions (**Exists**). This session predates `enabledAt`, so the resolver answers `staff_reauth_required` (`session_before_codes`), and the client offers “Sign in again”. The second sign-in goes through the code step, which also proves the authenticator works.
+3. Every 60 minutes staff sign in again with a code on `/staff/sign-in-again`. The shell has no return-to route (expo-shell Known gaps, **Exists**), so staff land on `/admin`.
+
+Runbook line: add a staff email only when that person will sign in and enroll within minutes. Until they enroll, anyone who takes over their Google account could enroll a factor of their own. People shows each staff email’s two-step status.
+
+### F10. Staff create an organization directly
+
+For an organization signed outside the app: on `/admin/orgs`, “New organization” asks for the name and the first admin’s email. `POST /api/admin/orgs` creates the organization and an invitation with `role: 'org_admin'` and `addedByStaff: true`. That person joins as admin the next time they continue with Google (F1). No location is created yet; the admin’s first page asks for one. The organization’s staff activity lists its creation and the invitation. [CONFIRM: staff can create organizations without a request]
+
+### F11. Upload sales history (web)
+
+Rules are in Section 11. The entry points are the Forecast tab checklist, the Sales data tab, and the empty states on both. An org admin’s upload replaces the days it covers; a member’s adds new days only and leaves existing days unchanged (D16, 11.4).
+
+### F13. Delete a person or an organization (staff)
+
+Rules are in 10.7 (Deletion). Staff delete a person from People (P22) after removing any active seat, or delete an organization from its detail page (P21) after suspending it. Each writes its audit event first, deletes the Townwise records, and replaces the email or names in older audit events. A deleted person’s kit user record is then deleted by hand (Section 19, item 7).
+
+### F12. Add a note
+
+Rules are in Section 12. The entry points are the Notes tab, the Forecast checklist, and “Add a closure note” beside the missing-days count on Sales data, which prefills kind `closure` and effect `closed`.
+
+---
+
+## 6. Data model
+
+All collections take the `tw_` prefix, so they never collide with the kit’s `users` and `auth_*`. Each is a Mongoose model with a fresh schema built inside a factory, registered on `mongo.connection` before `ensureIndexes` (**Exists**). Schemas use `strict: true` (`strict: 'throw'` for sales), `versionKey: false` and `read: 'primary'`. Ids are ObjectIds, and `userId` is the kit’s user id string (24 hex). Business days are `'YYYY-MM-DD'` strings with no time zone. Money is integer cents. Partial indexes use only `$type` and equality filters; DocumentDB 5.0 rejects `$or`, `$not` and others (**Exists**).
+
+### 6.1 `tw_orgs`
+
+| Field | Type | Rule |
+|---|---|---|
+| `_id` | ObjectId | |
+| `name` | string | 2 to 120, trimmed, not unique |
+| `status` | `'active' \| 'suspended'` | |
+| `createdAt`, `createdBy` | Date, userId | |
+| `fromRequestId` | ObjectId or null | set when created by approval |
+| `suspendedAt` | Date or null | |
+
+Indexes: `{ createdAt: -1 }`.
+
+### 6.2 `tw_members` (invitations and memberships, one collection)
+
+| Field | Type | Rule |
+|---|---|---|
+| `_id`, `orgId` | ObjectId | |
+| `email` | string | normalized; the invited address, or the requester’s email for an approval seat; kept for history |
+| `role` | `'org_admin' \| 'member'` | |
+| `status` | `'invited' \| 'active' \| 'removed'` | |
+| `inviteEmail` | string, present only while `invited` | |
+| `userId` | string or null | set on join |
+| `activeUserId` | string, present only while `active` | |
+| `invitedAt`, `invitedBy` | Date, userId | `invitedBy` is the org admin or staff member who added it |
+| `addedByStaff` | boolean | true when a staff principal added the address (F5 from the console, F10); false for org admins’ invitations and for the requester’s seat at approval |
+| `joinedAt` | Date or null | |
+| `removedAt`, `removedBy` | Date or null, userId or null | `removedBy == userId` means they left |
+
+Indexes:
+
+- `{ orgId: 1, inviteEmail: 1 }` unique, `partialFilterExpression: { inviteEmail: { $type: 'string' } }`: one open invitation per address per organization.
+- `{ activeUserId: 1 }` unique, `partialFilterExpression: { activeUserId: { $type: 'string' } }`: one active organization per person (D5).
+- `{ inviteEmail: 1 }`: the resolver’s invitation lookup.
+- `{ orgId: 1, status: 1 }`: team lists and admin counts.
+- `{ userId: 1, removedAt: -1 }`: the `removed` state.
+
+Email changes: the kit updates `users.email` when Google is authoritative for a new address (kit T27). A seat is bound by `userId` after joining, so access survives the change, and the display uses the current kit email.
+
+### 6.3 `tw_access_requests`
+
+| Field | Type | Rule |
+|---|---|---|
+| `_id`, `userId` | ObjectId, string | |
+| `emailAtRequest` | string | snapshot for staff review |
+| `orgName` | string | 2 to 120 |
+| `contactName` | string | 1 to 120 |
+| `contactRole` | string | 1 to 80 |
+| `town` | `{ townId: TownId \| null; name: string; state: string }` | Section 13 |
+| `locationCount` | integer | 1 to 50 |
+| `note` | string or null | up to 1,000; shown to staff only as plain text |
+| `status` | `'pending' \| 'approved' \| 'rejected' \| 'withdrawn'` | |
+| `createdAt`, `decidedAt`, `decidedBy` | | |
+| `decisionMessage` | string or null | up to 500; shown to the requester on rejection |
+| `orgId` | ObjectId or null | set on approval |
+| `withdrawnReason` | `'joined_org'` or null | |
+
+Indexes: `{ userId: 1 }` unique with `partialFilterExpression: { status: 'pending' }` (one pending request per person); `{ status: 1, createdAt: -1 }`; `{ userId: 1, createdAt: -1 }`.
+
+### 6.4 `tw_locations`
+
+| Field | Type | Rule |
+|---|---|---|
+| `_id`, `orgId` | ObjectId | |
+| `name` | string | 1 to 80 |
+| `nameKey` | string | `name` trimmed, lowercased, inner spaces collapsed |
+| `town` | `{ townId: TownId \| null; name: string; state: string }` | |
+| `createdAt`, `createdBy` | | |
+
+Indexes: `{ orgId: 1, nameKey: 1 }` unique; `{ orgId: 1, createdAt: 1 }`. Limit: 25 per organization. [CONFIRM: 25 locations]
+
+### 6.5 `tw_sales_days`
+
+| Field | Type | Rule |
+|---|---|---|
+| `_id`, `orgId`, `locationId` | ObjectId | `orgId` and `locationId` come from the location the server read, never from input |
+| `date` | `'YYYY-MM-DD'` | |
+| `guests` | integer or null | 0 to 20,000 |
+| `netSalesCents` | integer or null | 0 to 100,000,000 |
+| `uploadId` | ObjectId | the upload that last wrote this day |
+| `updatedAt` | Date | |
+
+Indexes: `{ orgId: 1, locationId: 1, date: 1 }` unique. The schema is `strict: 'throw'`, and the write path builds documents field by field, so no other field can be stored.
+
+### 6.6 `tw_uploads`
+
+`_id`, `orgId`, `locationId`, `uploadedBy` (userId), `uploadedAt`, `status` (`'applying' | 'applied'`), `dayCount`, `inserted`, `replaced`, `kept` (days a member’s upload left unchanged because they already had data; always 0 for an org admin’s), `firstDate`, `lastDate`, `hasGuests`, `hasNetSales`. It holds no file name (file names can contain people’s names), no column names and no row count. Index: `{ orgId: 1, locationId: 1, uploadedAt: -1 }`.
+
+### 6.7 `tw_notes`
+
+Fields are in Section 12. Index: `{ orgId: 1, locationId: 1, startDate: 1 }`. Limit: 1,000 per location. [CONFIRM: 1,000 notes]
+
+### 6.8 `tw_view_as_grants`
+
+| Field | Type | Rule |
+|---|---|---|
+| `_id` | ObjectId | |
+| `actorUserId`, `actorSessionId` | string | the staff member and their kit session id |
+| `activeSessionId` | string, present only while not ended | |
+| `targetUserId` | string | |
+| `orgId` | ObjectId or null | the target’s resolved organization at start (4.2 step 2.4); the grant is live only while the target’s resolved organization still equals it |
+| `reason` | string | 5 to 200 |
+| `startedAt`, `expiresAt` | Date | `expiresAt = startedAt + 30 minutes` [CONFIRM: 30 minutes] |
+| `endedAt`, `endReason` | Date or null, `'ended' \| 'replaced' \| 'expired'` or null | `expired` when the grant is cleared after `expiresAt` (Section 8) |
+
+Indexes: `{ activeSessionId: 1 }` unique, `$type` partial (one live grant per session); `{ actorUserId: 1, startedAt: -1 }`. Grants are never deleted.
+
+### 6.9 `tw_audit_events`
+
+Fields are in Section 9. Indexes: `{ at: -1 }`, `{ orgId: 1, at: -1 }`, `{ actorUserId: 1, at: -1 }`, `{ orgId: 1, actorRole: 1, at: -1 }` (staff activity for org admins). No TTL. The only update is the deletion redaction (9.3). [CONFIRM: keep audit events indefinitely]
+
+### 6.10 Isolation rules
+
+1. Every tenant document (`tw_members`, `tw_locations`, `tw_sales_days`, `tw_uploads`, `tw_notes`) carries `orgId`. Every tenant compound index leads with `orgId`, except the two seat indexes, which are keyed by the person.
+2. Tenant store functions take a branded `OrgScope` as their first argument and add `orgId: scope.orgId` to every filter, update, delete and insert. Only `api/src/access/policy.ts` can mint an `OrgScope`, and only through these four functions:
+   - `scopeOf(memberPrincipal)`: member routes (rule 3).
+   - `scopeForStaffOrg(staff, orgId)`: `/api/admin/orgs/:orgId/*` (rule 5). It reads the organization first and answers 404 if it is absent.
+   - `scopeForNewOrg(staff, orgId)`: approval (F3) and staff creation (F10) only, for the organization those handlers just created.
+   - `scopeForJoinedInvite(invite)`: the join handler only, after its compare-and-set succeeds.
+3. Handlers on `/api/org/*` take the organization only from the principal. No member route carries an organization id in its path, query or body.
+4. Location-scoped routes first load `{ _id: locationId, orgId }`. Another organization’s location answers 404 `not_found`, exactly like a location that does not exist. Children (sales, uploads, notes) copy `orgId` and `locationId` from that read.
+5. Staff routes on `/api/admin/orgs/:orgId/*` mint a scope from the path through one function that requires the `staff` principal and reads the organization first (404 if absent).
+6. Responses never include another organization’s ids or names, except the invitation list shown to its invitee.
+7. Path ids are parsed with the mongo module’s `objectId` schema, so a malformed id is 400. Filter values are zod scalars. The only operators are built in code and wrapped in `trusted(...)` (**Exists**).
+8. Operations keyed by a person, or spanning organizations, live in one file, `api/src/stores/cross-tenant.ts`, with a closed list: `findActiveSeat(userId)`, `findOpenInvites(email)`, `claimInvite(inviteId, email, userId)`, `declineInvite(inviteId, email)`, `latestRemovedSeat(userId)`, `adminOrgStats()`, `peopleRecords()` and `deletePersonRecords(userId, email)` (10.7, Deletion). Only `access/resolve.ts`, the join and decline handlers and the staff handlers import it, and a test enforces that list.
+
+---
+
+## 7. Authorization in one place
+
+### 7.1 Module layout
+
+All of it lives under `api/`; nothing changes in `backend/*`.
+
+```
+api/
+  src/
+    main.ts            Exists. Composition root: builds config, logger, Mongo, Redis and auth as today, calls
+                       createTownwiseApi() before ensureIndexes, and mounts its router at /api
+    app.ts             createTownwiseApi({ config, logger, connection, authStores, auth, redis, now }): registers the
+                       Townwise models on `connection` and returns the /api router. main.ts and the tests both use it
+    email.ts           Exists. Unchanged
+    config.ts          Townwise env schema (TOWNWISE_SUPERADMIN_EMAILS), spread into the one loadEnv call
+    towns.ts           the twelve { townId, name, state, kind } (Section 13) and the US state codes
+    normalize-email.ts the kit's email rule, repeated and pinned by a parity test (Section 19)
+    access/
+      resolve.ts       resolveAccess(): the only code that decides staff, membership, organization and view-as
+      policy.ts        Principal, the five policies, the view-as guard, the four OrgScope mint functions (6.10)
+      routes.ts        TOWNWISE_ROUTES and mountTownwiseRoutes()
+    stores/            one file per collection; tenant stores require OrgScope; cross-tenant.ts (6.10 rule 8)
+    handlers/          me, requests, org, locations, sales, notes, team, admin, view-as, deletion
+  test/                integration tests against Mongo and Valkey in Docker, as the kit's are; helpers/ (Section 20)
+```
+
+**One clock.** `now` is the same function `main.ts` passes to `createAuth` (`AuthDeps.now`, **Exists**), and Townwise code reads the time only from it: the staff window, view-as grants, the upload date rule and audit timestamps. A test clock then ages kit sessions and Townwise rules together.
+
+**Types without new packages.** The Redis client is typed `RedisHandle['client']` from `@ckeith26/redis`, and driver types come from `mongoose.mongo.*`, so `src/` imports no `ioredis` or `mongodb` types (Section 19, item 5).
+
+### 7.2 The route table
+
+```ts
+type Policy = 'signed_in' | 'member' | 'org_admin' | 'staff' | 'staff_self';
+
+interface TownwiseRoute {
+  readonly id: string;                          // 'org.locations.create'
+  readonly method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  readonly path: `/${string}`;                  // under /api
+  readonly policy: Policy;
+  readonly bodyLimit: 'none' | '32kb' | '256kb'; // 'none' for GET and DELETE; '256kb' only on the upload route
+  readonly limiter?: 'uploads' | 'requests' | 'view-as';   // 'writes' applies to every non-GET automatically, before resolveAccess
+  readonly handler: (req: Request, res: Response, principal: Principal) => Promise<void>;
+}
+```
+
+`mountTownwiseRoutes(router, TOWNWISE_ROUTES)` builds every route with the same chain:
+
+1. `auth.requireAuth` (kit): 401 `unauthenticated`; 403 `origin_not_allowed` for a cookie request without an allowlisted Origin (**Exists**).
+2. **`townwise:writes` limiter**, for every non-GET, keyed on `acct:<userId>` from `authOf(req)`. It runs before any read or parse, so refused and probing writes count too.
+3. `resolveAccess(authOf(req))` produces the `Principal` (from `self` and `effective`, 4.2).
+4. **View-as guard**, in this order, when the principal is in view-as:
+   1. A route with policy `staff`, any method, answers 409 `view_as_active`.
+   2. Any other non-GET answers 403 `view_as_read_only`.
+   3. The route with policy `staff_self` (`POST /api/admin/view-as/end`) is exempt from both.
+   
+   Each GET that passes logs `townwise.view_as_read { grantId, routeId }`.
+5. **Policy**, evaluated on `effective` except `staff_self`:
+   - `signed_in`: anyone who passed step 1.
+   - `member`: `access.state === 'member'`, else 403 `no_access`.
+   - `org_admin`: `member` and `role === 'org_admin'`. A member gets 403 `forbidden`; anyone else gets 403 `no_access`.
+   - `staff`: passes only for a principal of kind `staff`, which never carries view-as. `staff_setup_required` and `staff_reauth_required` answer 403 with those codes. Everyone else gets 403 `forbidden`, and the staff checks run after the email check, so a non-staff caller never learns anything about staff two-step state.
+   - `staff_self`: the signed-in person’s own staff gate (`self`: TOTP enabled, session created after `enabledAt`, under 60 minutes), computed before the view-as substitution. It passes for a `staff` principal and for any principal in view-as, because a grant is live only while its actor passes that gate. Otherwise it answers exactly as `staff` does. Used only by `POST /api/admin/view-as/end`.
+6. **Body parser**, `express.json({ limit })`, when the spec names a body limit. The guard and the policies never read the body, so a refused request is never parsed. The `/api` router mounts no router-wide parser, so the upload route’s 256 KB parser never widens the others (server-core: body parsing is per router, **Exists**).
+7. **Route limiter**, when named (`uploads`, `requests`, `view-as`; Section 10.8), keyed on `acct:<userId>`.
+8. The handler receives the principal. For member routes, `principal.scope` is the only organization it can use.
+
+Boot throws if two specs share a method and path, if a GET spec names a body limit, or if any route other than `view-as/end` uses `staff_self`. Paths not in the table reach server-core’s `notFound` (**Exists**).
+
+```ts
+interface StaffActor { userId: string; email: string; sessionId: string; verifiedUntil: string }
+interface ViewAsContext { grantId: string; actor: StaffActor }   // the staff member doing the viewing
+
+type Principal =
+  | { kind: 'staff'; actor: StaffActor }
+  | { kind: 'member'; userId: string; email: string; scope: OrgScope; role: Role; memberId: string;
+      viewAs: ViewAsContext | null }
+  | { kind: 'other'; userId: string; email: string; access: Access; viewAs: ViewAsContext | null };
+```
+
+In view-as, `userId` and `email` are the target’s, and `viewAs.actor` is the staff member. `MeResponse.user` and `MeResponse.staff` are built from the actor whenever there is one (`actor`, or `viewAs.actor`). `view-as/end` takes the session id from `viewAs.actor.sessionId`. Audit events use the actor, and view-as writes nothing except its own start and end.
+
+### 7.3 GET is side-effect free
+
+Every GET handler only reads (kit Security 5: GET handlers must be side-effect free). A test runs every GET route with Mongo command monitoring and fails on any `insert`, `update`, `delete`, `findAndModify` or `bulkWrite` (Section 20).
+
+---
+
+## 8. View-as mechanics
+
+- **Start** (`POST /api/admin/view-as`, policy `staff`). The server validates the target: it must exist and must not be staff. Before writing `view_as.started`, it compare-and-sets every grant with `activeSessionId == ctx.sessionId`, whether or not it has expired: `$set { endedAt: now, endReason: expiresAt <= now ? 'expired' : 'replaced' }`, `$unset { activeSessionId }`, and audits `view_as.ended` for each. Under a live grant the guard has already answered 409, so this clears a grant that expired without End, or one ignored because its target changed organization. Then it audits `view_as.started` with the target user and email, organization, reason and `expiresAt`, and inserts the grant with `activeSessionId = sessionId` and `orgId` = the target’s resolved organization (4.2 step 2.4). A duplicate key that remains (two tabs starting at once) answers 409 `view_as_active`. It returns the new `MeResponse`.
+- **Live grant:** `activeSessionId == ctx.sessionId`, `endedAt == null`, `expiresAt > now`, the staff gate passes on this request, and the target’s resolved organization id equals `grant.orgId` (null equals null). If any of these fails, there is no view-as for that request.
+- **Effect:** the resolver runs steps 3 to 7 of Section 4.2 for `targetUserId` and returns that access with `viewAs` set. Whatever the target sees now (dashboard, Waiting, No access) is what staff see, including the target’s 403s.
+- **Tracks the target’s organization.** If the target joins, leaves, is removed from or is approved into an organization while the grant runs, the grant stops being live at once, exactly as on expiry: the next `GET /api/me` returns staff access, and `/admin` shows “View-as ended at {time}.” Viewing the target again starts a new grant and writes a new `view_as.started` with the new `orgId`, which that organization’s admins see.
+- **End time shown to staff:** `viewAs.endsAt = min(grant.expiresAt, staff.verifiedUntil)`, because the 60-minute staff window ends view-as too.
+- **Bound to one session:** another tab of the same browser shares the session cookies, so it shares the view-as, and every tab shows the banner because every tab reads `/api/me`. A different device or browser does not share it.
+- **End** (`POST /api/admin/view-as/end`, policy `staff_self`, exempt from the view-as guard). It compare-and-sets the grant holding this session, live or expired: `endedAt`, `endReason: 'ended'` (or `'expired'` when `expiresAt <= now`), and unsets `activeSessionId`. Then it audits `view_as.ended`. It is idempotent: with no grant on the session it answers 200 with the current `MeResponse`.
+- **Client:** the banner and disabled controls are specified in Section 15.5. The upload wizard’s file step is disabled too, so no client file is ever read into a staff browser.
+- **Record:** the audit log keeps start and end with the reason. Each request in between writes the log line `townwise.view_as_read { grantId, routeId }` and no response data. [CONFIRM: no audit event per read]
+
+```ts
+interface ViewAsView {
+  id: string;
+  target: { userId: string; email: string };
+  org: { id: string; name: string } | null;
+  role: Role | null;
+  reason: string;
+  startedAt: string;
+  endsAt: string;
+}
+```
+
+---
+
+## 9. Audit log
+
+### 9.1 Record
+
+```ts
+interface AuditEvent {
+  _id: ObjectId;
+  at: Date;
+  actorUserId: string;
+  actorEmail: string;                         // snapshot
+  actorRole: 'superadmin' | 'org_admin' | 'member' | 'user';
+  viewAsGrantId: string | null;
+  orgId: ObjectId | null;
+  action: AuditAction;
+  target: { type: 'org' | 'member' | 'request' | 'location' | 'upload' | 'note' | 'user' | 'grant'; id: string };
+  details: Record<string, string | number | boolean | null>;   // allowlist per action, below
+}
+```
+
+### 9.2 Actions and their allowlisted details
+
+| Action | Details |
+|---|---|
+| `access_request.created` | `orgName`, `townId`, `townName` |
+| `access_request.approved` | `orgId` |
+| `access_request.rejected` | `hasMessage` |
+| `access_request.withdrawn` | `reason: 'joined_org'` |
+| `org.created` | `name`, `via: 'request' \| 'staff'` |
+| `org.renamed` | `from`, `to` |
+| `org.suspended`, `org.reactivated` | none |
+| `org.deleted` | none (ids only: the event’s `orgId` and target) |
+| `member.invited` | `email`, `role` |
+| `member.declined` | `email` |
+| `member.joined` | `email`, `role` |
+| `member.role_changed` | `email`, `from`, `to` |
+| `member.removed` | `email`, `wasStatus` |
+| `member.left` | `email` |
+| `location.created`, `location.updated`, `location.deleted` | `name`, `townId` |
+| `sales.uploaded` | `locationId`, `dayCount`, `inserted`, `replaced`, `firstDate`, `lastDate` |
+| `sales.deleted` | `locationId`, `deletedDays` |
+| `note.created`, `note.updated`, `note.deleted` | `locationId`, `kind`, `startDate`, `endDate` |
+| `view_as.started` | `targetUserId`, `targetEmail`, `reason`, `expiresAt` |
+| `view_as.ended` | `endReason` (`ended`, `replaced` or `expired`) |
+| `people.signed_out_everywhere` | none (written before the effect, 9.3; the revoked count is in the response) |
+| `person.deleted` | `userId` (null when the address never signed in); ids only |
+| `staff_action.not_applied` | `eventId` (the staff event it qualifies), `code` |
+
+Never in an audit event: guest or sales figures, note `detail` text, request notes, decision messages, anything from a file, tokens.
+
+An event’s `orgId` is the organization it touches: for `people.signed_out_everywhere`, the target’s active organization at the time, or null; for `view_as.*`, the grant’s `orgId`.
+
+### 9.3 Rules
+
+- **Append only, with one redaction path.** The store exposes `insert`, `query`, and `redact`, which only the deletion handlers call (10.7, Deletion). For a deleted person, `redact` replaces their email with “deleted person” in `actorEmail`, `details.email` and `details.targetEmail`. For a deleted organization, it replaces the organization’s name with “deleted organization” and its locations’ names with “deleted location” in `details.name`, `details.from`, `details.to` and `details.orgName`, in events with that `orgId` and in its request’s `access_request.created`. No other code path updates or deletes an event.
+- **When it is written.**
+  - Events by org members and org admins are written after the effect succeeds. If such a write fails, the action stands, the server logs `townwise.audit_write_failed { action, orgId, targetId }` at error level, and the response is still success.
+  - Every staff action’s event (actor role `superadmin`) is written before the effect, `view_as.started` included. Handlers run their read-only checks first (404, validation), then write the event, then act. If the write fails, the action is refused with 503 `unavailable` and nothing changes. If the effect then fails or is refused (for example 409 `last_admin`, or a duplicate key), the server writes `staff_action.not_applied { eventId, code }`, so the record never claims a change that did not happen.
+  - For approval and staff creation, the staff action’s event is `access_request.approved` or `org.created`; the follow-on records (`org.created` at approval, `location.created`, `member.joined`, `member.invited`) are written after their steps, as client events are.
+  - `view_as.ended` is written after the grant is cleared. A missing end record can only make a view look longer than it was, never hide one.
+  
+  [CONFIRM: audit after the effect for client actions; before the effect, refused on failure, for staff actions]
+- **Readers.** Staff read everything on `/admin/audit`. Org admins read every event on their own organization whose actor role is `superadmin` (view-as, team, name, status, and `staff_action.not_applied`), on Settings as “Townwise staff activity” (D9). Members read none.
+
+---
+
+## 10. API
+
+The `/api` router mounts beside `/auth` in `createServer`’s `routes`; the two are disjoint (**Exists**: `createServer` refuses an overlapping mount order). Bodies are JSON. Error bodies are the kit’s `{ error, message, retryAfterSeconds? }` (**Exists**). Ids are 24-hex strings and times are ISO 8601.
+
+No route puts an email, a name or a figure in its path or query, because server-core logs `url` (**Exists**). The one exception is the people lookup, which uses the query key `q`, which server-core redacts (**Exists**).
+
+### 10.1 Shared shapes
+
+```ts
+type TownId = 'hanover-nh' | 'amherst-ma' | 'ithaca-ny' | 'burlington-vt' | 'middlebury-vt' | 'state-college-pa'
+  | 'bar-harbor-me' | 'stowe-vt' | 'conway-nh' | 'north-elba-ny' | 'provincetown-ma' | 'nantucket-ma';
+interface Town { townId: TownId | null; name: string; state: string }          // state: two capital letters
+type TownInput = { townId: TownId } | { townId: null; name: string; state: string };
+
+interface AccessRequestView {
+  id: string; orgName: string; contactName: string; contactRole: string; town: Town;
+  locationCount: number; note: string | null; status: 'pending' | 'approved' | 'rejected' | 'withdrawn';
+  createdAt: string; decidedAt: string | null; decisionMessage: string | null;
+}
+
+interface Coverage {
+  dayCount: number;                 // days with guests or net sales
+  guestsDayCount: number; netSalesDayCount: number;
+  firstDate: string | null; lastDate: string | null;
+  missingDays: number;              // days between first and last with no row
+}
+
+type Calibration =
+  | { state: 'no_sales_data' }
+  | { state: 'not_calibrated'; dayCount: number; firstDate: string; lastDate: string };
+
+interface LocationSummary {
+  id: string; name: string; town: Town; coverage: Coverage; calibration: Calibration;
+  notesCount: number; lastUploadAt: string | null;
+}
+
+interface SalesDay { date: string; guests: number | null; netSalesCents: number | null }
+
+interface UploadView {
+  id: string; uploadedAt: string; uploadedByEmail: string; status: 'applying' | 'applied';
+  dayCount: number; inserted: number; replaced: number; kept: number; firstDate: string; lastDate: string;
+  hasGuests: boolean; hasNetSales: boolean;
+}
+
+interface MemberView {
+  id: string; email: string; role: Role; status: 'invited' | 'active';
+  invitedAt: string; joinedAt: string | null; isYou: boolean; addedByStaff: boolean;
+}
+
+type AddResult = { email: string; outcome: 'invited' | 'already_invited' | 'already_member' | 'invalid' };
+
+interface StaffActivityView {
+  at: string; staffEmail: string;
+  summary: string;                     // the server's plain-words summary, as in AuditEventView
+  viewAs: { targetEmail: string; reason: string; endsAt: string } | null;   // view_as.started only
+  notApplied: boolean;                 // a staff_action.not_applied event qualifies this one
+}
+```
+
+Emails shown for people (`uploadedByEmail`, `createdByEmail`, `MemberView.email` for a seat) are the current kit email, read at response time. When the kit user no longer exists, they read “Deleted person”.
+
+### 10.2 Access
+
+| Method and path | Policy | Request | Success | Extra errors |
+|---|---|---|---|---|
+| `GET /api/me` | signed_in | | 200 `MeResponse` | |
+| `POST /api/me/join` | signed_in | `{ inviteId }` | 200 `MeResponse` | 403 `forbidden` (staff); 409 `no_invite`, `already_in_org` |
+| `POST /api/me/decline` | signed_in | `{ inviteId }` | 200 `MeResponse` | 403 `forbidden` (staff); 409 `no_invite` |
+| `POST /api/access-requests` | signed_in, in `no_org`, `rejected` or `removed` | `{ orgName, contactName, contactRole, town: TownInput, locationCount, note? }` | 201 `MeResponse` (state `pending`) | 403 `forbidden` (staff or another state); 409 `request_exists`; 400 `unknown_town`; 429 |
+
+### 10.3 Organization and locations
+
+| Method and path | Policy | Request | Success | Extra errors |
+|---|---|---|---|---|
+| `GET /api/org` | member | | 200 `{ org: { id, name }, role, locations: LocationSummary[], requestedLocationCount: number \| null }` | |
+| `PATCH /api/org` | org_admin | `{ name }` | 200 `{ org }` | |
+| `GET /api/org/staff-activity` | org_admin | | 200 `{ events: StaffActivityView[] }` (newest 50 events on this organization whose actor role is `superadmin`) | |
+| `POST /api/org/leave` | member | `{}` | 200 `MeResponse` | 409 `last_admin` |
+| `POST /api/org/locations` | org_admin | `{ name, town: TownInput }` | 201 `{ location: LocationSummary }` | 409 `location_name_taken`, `location_limit`; 400 `unknown_town` |
+| `PATCH /api/org/locations/:locationId` | org_admin | `{ name?, town? }`, at least one | 200 `{ location }` | 404; 409 `location_name_taken` |
+| `DELETE /api/org/locations/:locationId` | org_admin | | 204 | 404; 409 `location_has_data` (any sales day or note) |
+
+[CONFIRM: org admins can rename their own organization]
+
+### 10.4 Sales
+
+| Method and path | Policy | Request | Success | Extra errors |
+|---|---|---|---|---|
+| `GET /api/org/locations/:locationId/sales` | member | | 200 `{ coverage, calibration, months: { month: 'YYYY-MM'; dayCount; guests: number \| null; netSalesCents: number \| null }[], uploads: UploadView[] }` (newest 20 uploads) | 404 |
+| `GET /api/org/locations/:locationId/sales/days?from=&to=` | member | dates `YYYY-MM-DD`, `from <= to`, span at most 366 days | 200 `{ days: SalesDay[] }` | 400; 404 |
+| `POST /api/org/locations/:locationId/sales/uploads` | member, 256 KB, limiter `uploads` | `{ days: SalesDay[] }` (Section 11.3) | 201 `{ upload: UploadView, coverage, calibration }`; a member’s upload adds new days only (11.4) | 400; 404; 413; 429 |
+| `DELETE /api/org/locations/:locationId/sales` | org_admin | | 200 `{ deletedDays, deletedUploads }` | 404 |
+
+Month sums run over the days that have a value. A month whose days have no guest counts returns `guests: null`.
+
+### 10.5 Notes
+
+| Method and path | Policy | Request | Success | Extra errors |
+|---|---|---|---|---|
+| `GET /api/org/locations/:locationId/notes` | member | | 200 `{ notes: Note[] }`, sorted by `startDate` | 404 |
+| `POST /api/org/locations/:locationId/notes` | member | `NoteInput` | 201 `{ note }` | 404; 409 `note_limit` |
+| `PATCH /api/org/locations/:locationId/notes/:noteId` | member (author or org admin) | `NoteInput` (full replace) | 200 `{ note }` | 403 `forbidden`; 404 |
+| `DELETE /api/org/locations/:locationId/notes/:noteId` | member (author or org admin) | | 204 | 403 `forbidden`; 404 |
+
+### 10.6 Team
+
+| Method and path | Policy | Request | Success | Extra errors |
+|---|---|---|---|---|
+| `GET /api/org/members` | org_admin | | 200 `{ members: MemberView[] }` (active and invited) | |
+| `POST /api/org/members` | org_admin | `{ emails: string[] (1 to 20, each up to 320 characters), role }` | 200 `{ results: AddResult[], members: MemberView[] }` | 409 `member_limit` (200 active plus invited) |
+| `PATCH /api/org/members/:memberId` | org_admin | `{ role }` | 200 `{ member }` | 404; 409 `last_admin` |
+| `DELETE /api/org/members/:memberId` | org_admin | | 204 | 404; 409 `last_admin` |
+
+### 10.7 Staff console
+
+Every route here has policy `staff`, except `view-as/end`, which has `staff_self` and is the only one that runs during view-as (7.2).
+
+| Method and path | Request | Success | Extra errors |
+|---|---|---|---|
+| `GET /api/admin/requests?status=pending\|approved\|rejected\|withdrawn` | | 200 `{ requests: (AccessRequestView & { requester: { userId, email }, emailAtRequest, requesterHasOrg: boolean, decidedBy: { email } \| null, orgId: string \| null })[], pendingCount }` | |
+| `POST /api/admin/requests/:requestId/approve` | `{ orgName (2 to 120), locationName (1 to 80) }` | 200 `{ org: { id, name }, request }` | 404; 409 `request_not_pending`, `requester_has_org` |
+| `POST /api/admin/requests/:requestId/reject` | `{ message?: string (up to 500) }` | 200 `{ request }` | 404; 409 `request_not_pending` |
+| `GET /api/admin/orgs` | | 200 `{ orgs: { id, name, status, createdAt, adminCount, memberCount, inviteCount, locationCount, salesDayCount, lastUploadAt }[] }` | |
+| `POST /api/admin/orgs` | `{ name, adminEmail }` | 201 `{ org: { id, name }, result: AddResult }` | |
+| `GET /api/admin/orgs/:orgId` | | 200 `{ org: { id, name, status, createdAt, fromRequestId, suspendedAt }, members: MemberView[], locations: { id, name, town, coverage, notesCount, lastUploadAt }[], recent: AuditEventView[] }` (counts only, D7; newest 20 events) | 404 |
+| `PATCH /api/admin/orgs/:orgId` | `{ name?, status?: 'active' \| 'suspended' }` | 200 `{ org }` | 404 |
+| `DELETE /api/admin/orgs/:orgId` | | 200 `{ deletedDays, deletedUploads, deletedNotes, deletedLocations, deletedSeats, redactedEvents }` | 404; 409 `org_not_suspended` |
+| `POST /api/admin/orgs/:orgId/members` | as 10.6 | as 10.6 | 404 |
+| `PATCH /api/admin/orgs/:orgId/members/:memberId` | as 10.6 | as 10.6 | 404; 409 `last_admin` |
+| `DELETE /api/admin/orgs/:orgId/members/:memberId` | | 204 | 404; 409 `last_admin` |
+| `GET /api/admin/people?kind=` | | 200 `{ people: PersonView[], truncated: boolean }` (up to 1,000) | |
+| `GET /api/admin/people/lookup?q=<exact email>` | | 200 `{ person: PersonView \| null }` | |
+| `POST /api/admin/people/:userId/sign-out-everywhere` | `{}` | 200 `{ revoked: number }` | 400 `invalid_target` (staff); 404 |
+| `POST /api/admin/people/delete` | `{ email }` (in the body, never the path, because `url` is logged) | 200 `{ deletedRequests, deletedSeats, redactedEvents, kitUserId: string \| null }` | 400 `invalid_target` (staff); 404 (no kit user and no Townwise record); 409 `person_has_seat` |
+| `GET /api/admin/audit?orgId=&actorUserId=&action=&before=&limit=` | `limit` 1 to 200, default 50; `before` an ISO time | 200 `{ events: AuditEventView[], nextBefore: string \| null }` | |
+| `POST /api/admin/view-as` | `{ userId, reason }` | 201 `MeResponse` | 400 `invalid_target`; 404; 429 |
+| `POST /api/admin/view-as/end` | `{}` | 200 `MeResponse` | |
+
+```ts
+interface PersonView {
+  userId: string | null; email: string;
+  kind: 'staff' | 'org_admin' | 'member' | 'invited' | 'pending' | 'rejected' | 'removed' | 'signed_in';
+  org: { id: string; name: string } | null;
+  since: string | null;
+  staffTwoStep: { state: 'on'; since: string } | { state: 'not_set_up' } | { state: 'not_signed_in' } | null;   // staff rows only
+}
+
+interface AuditEventView {
+  id: string; at: string; actorEmail: string; actorRole: string;
+  viewAs: { targetEmail: string } | null;
+  orgId: string | null; orgName: string | null; action: string;
+  summary: string;                                // built on the server from the action and its allowlisted details
+  details: Record<string, string | number | boolean | null>;
+}
+```
+
+People come only from Townwise records and config: staff from `TOWNWISE_SUPERADMIN_EMAILS` (with `users.findByEmail` and `totp.get` for their two-step state), plus seats, invitations and requests. A person who signed in and has none of these is found only by exact email through `users.findByEmail`, as kind `signed_in`. The kit’s collections are never read directly. “Sign out everywhere” calls the kit’s `revokeAllSessions(userId)` (**Exists**) and audits `people.signed_out_everywhere`. [CONFIRM: sign out everywhere for staff]
+
+**Deletion (D22).** The one v1 deletion path. Both actions follow the staff audit rule (9.3): checks, then the event, then the effect. Each step is a delete by filter, so a retry completes the work.
+
+- **Delete a person** (`POST /api/admin/people/delete { email }`). The server normalizes the email and looks up the kit user with `users.findByEmail` (there may be none, for an address that was only invited).
+  1. Refuse a staff address (400 `invalid_target`) and a person who holds an active seat (409 `person_has_seat`; staff remove the seat first, and the last-admin rule still applies). Answer 404 when there is no kit user and no Townwise record for the email.
+  2. Audit `person.deleted` with ids only.
+  3. Through `deletePersonRecords(userId, email)` (6.10 rule 8): delete the person’s access requests (by `userId`), their open invitations in every organization (`inviteEmail == email`), and their removed seats (`userId`, `status: 'removed'`).
+  4. When a kit user exists: call `revokeAllSessions(userId)` and `authStores.totp.remove(userId)` (both public, **Exists**).
+  5. `redact` the email in the audit log (9.3).
+  6. Answer the counts and `kitUserId`. The kit’s user record and its revoked session records are then deleted by hand, as a runbook step, because the kit has no user delete (Section 19, item 7). Until then, the person can still continue with Google, and they resolve to `no_org`.
+  
+  Notes and uploads the person wrote stay with their organization; the author shows as “Deleted person” once the kit user is gone. View-as grants keep only ids and the staff-written reason.
+- **Delete an organization** (`DELETE /api/admin/orgs/:orgId`). The organization must be suspended first (409 `org_not_suspended`), so its members have already seen the paused page.
+  1. Audit `org.deleted` with ids only.
+  2. Through `scopeForStaffOrg`: delete its `tw_sales_days`, `tw_uploads`, `tw_notes`, `tw_locations` and `tw_members`, and its access request (`fromRequestId`).
+  3. `redact` its name and its locations’ names in the audit log (9.3).
+  4. Delete the `tw_orgs` row last, so a retry still finds the organization.
+  
+  Former members then resolve to `no_org`. View-as grants keep only ids.
+
+[DECISION NEEDED: retention periods. The mechanism above exists in v1; how long each record is kept before staff delete it is still open (Section 17).]
+
+### 10.8 Rate limits
+
+Built with the rate-limit module and keyed on `acct:<userId>`, a key the caller cannot rotate. The module stores each key as a SHA-256 hash (**Exists**). The kit’s per-IP ceiling (**Exists**, 2,000 per minute) still applies first. `townwise:writes` runs right after `requireAuth` (7.2 step 2), so refused writes count; the others run after the policy. [CONFIRM: limits]
+
+| Name | Applies to | Limit | When Redis is down |
+|---|---|---|---|
+| `townwise:writes` | every non-GET `/api` route, before access is resolved | 300 per 10 minutes | allow |
+| `townwise:uploads` | the upload route | 30 per hour | allow |
+| `townwise:requests` | `POST /api/access-requests` | 5 per day | deny (503 `unavailable`) |
+| `townwise:view-as` | `POST /api/admin/view-as` | 20 per hour | deny (503 `unavailable`) |
+
+### 10.9 Error codes
+
+| Status | Code | When | Client handling |
+|---|---|---|---|
+| 400 | `invalid_request` | zod failure through `parseInput`, with no field details (**Exists**) | client validation should have caught it: “Something went wrong with that request. Reload the page and try again.” |
+| 400 | `malformed_json` | server-core (**Exists**) | as above |
+| 400 | `unknown_town`, `invalid_target` | as in the tables | as in the pages |
+| 401 | `unauthenticated` | the kit, and `userGone()` when the kit user no longer exists (4.2 step 1) | the shell refreshes once (**Exists**) |
+| 403 | `origin_not_allowed` | kit and server-core | configuration error |
+| 403 | `no_access` | member route, caller not an active member | re-read `/api/me` and route |
+| 403 | `forbidden` | role too low, not staff, not the note’s author | re-read `/api/me`; hide the control |
+| 403 | `staff_setup_required`, `staff_reauth_required` | staff gate | route per 4.3 |
+| 403 | `view_as_read_only` | a non-GET without the `staff` policy during view-as | should not happen: controls are disabled |
+| 404 | `not_found` | unknown id, or an id in another organization | “This {thing} isn’t available.” with a way back |
+| 409 | `view_as_active` | any route with the `staff` policy, any method, during view-as; a second view-as start racing the first | re-read `/api/me` |
+| 409 | `no_invite`, `already_in_org`, `request_exists`, `request_not_pending`, `requester_has_org`, `last_admin`, `location_name_taken`, `location_limit`, `location_has_data`, `note_limit`, `member_limit`, `person_has_seat`, `org_not_suspended` | as in the tables | inline copy per page |
+| 413 | `payload_too_large` | server-core | unreachable from the app (Section 11.3) |
+| 415 | `unsupported_media_type` | server-core | client bug |
+| 429 | `rate_limited` | Section 10.8, with `retryAfterSeconds` | “Too many attempts. Try again in {minutes} minutes.” |
+| 500 | `internal` | server | “Something went wrong on our side. Try again in a minute.” |
+| 503 | `unavailable` | a deny-when-down limiter, a store outage, or a staff action whose audit write failed (9.3) | “Townwise isn’t responding. Try again in a minute.” |
+
+---
+
+## 11. Upload format and validation
+
+### 11.1 What leaves the browser
+
+Only this, for one location:
+
+```
+{ "days": [ { "date": "YYYY-MM-DD", "guests": <integer or null>, "netSalesCents": <integer or null> }, ... ] }
+```
+
+Nothing else leaves the browser: no file name, column names, row count, other columns or raw values. The file is read with `File.text()`, held in component state only, never written to `localStorage`, IndexedDB or a log, and dropped when the wizard closes or finishes. The client sends no telemetry (expo-shell rule 12, **Exists**).
+
+### 11.2 Browser steps (web)
+
+1. **Choose a file.** `.csv` or `.txt`, up to 50 MB [CONFIRM: 50 MB]. UTF-8 with any leading byte-order mark stripped. The delimiter is detected from the header line (comma, semicolon or tab). A small RFC 4180 parser in the client handles quoted fields, doubled quotes, and CRLF or LF; no CSV library is added. An Excel file gets “Save it as CSV first.”
+2. **Match columns.**
+   - “What is one row in this file?” One day (a daily summary); One check or order; One item on a check. The third blocks Continue with “Item-level exports aren’t supported. Export daily totals or checks, not items.” Item lines repeat the check’s guest count, so adding them up would inflate guests.
+   - Four pickers list the header names, each with a type detected locally from the first 200 non-empty cells (“dates”, “numbers”, “text”). Cell contents are never shown (D11).
+   - **Date** (required) accepts `YYYY-MM-DD`, `YYYYMMDD`, `M/D/YYYY`, `M/D/YY`, any of them followed by a space and a time, which is ignored. For slash dates the user confirms the order: “Month first (03/04/2025 is March 4, 2025)” or “Day first (03/04/2025 is April 3, 2025)”. If a first part above 12 appears, the order is set and shown. The helper reads: “If your export has a business date column, pick it, so a 1 a.m. order counts toward the night before.”
+   - **Guests** and **Net sales** are optional, but at least one is required.
+   - **Location** is optional. If it is mapped, the user picks which value of that column is this location, from up to 50 distinct values. These are the only cell contents ever displayed, because the user named that column as locations. Only matching rows are used.
+   - Header guesses preselect the pickers: date from `date` or `business date`; guests from `guests`, `covers` or `guest count`; net sales from `net sales`. [CONFIRM: header guesses]
+3. **Check the totals.**
+   - Numbers: strip `$`, thousands commas and spaces. Parentheses or a leading minus (hyphen or U+2212) mean negative, so refunds net out. Guests must be whole numbers. Net sales becomes integer cents, rounded half up once per day.
+   - In “one day” mode, a repeated date is an error: “{n} dates appear more than once (rows {list}). Choose “One check or order”, or fix the file.” In “one check” mode, rows are added up per date: “We add up rows that share a date.”
+   - The screen shows “{rows} rows became {days} days, {first} to {last}.”
+   - Skipped rows by reason, with up to 10 row numbers each and never a value: “{n} rows had no readable date (rows {list}).”, “{n} rows had a number Townwise couldn’t read (rows {list}).”, “{n} rows were for other locations.”
+   - Excluded days, listed by date with the reason (up to 10, then “and {n} more”): a date after tomorrow, a date before 2010-01-01, a negative daily total, a total above the caps in 11.3, or a day with neither value.
+   - Totals for the file (guests, net sales), with “Check these against your point-of-sale system.”, and a table of the first 7 and last 7 days.
+   - If the location already has data, for an org admin: “You already have {first} to {last}. Days in both will be replaced by this file.” For a member: “You already have {first} to {last}. Days you already have stay as they are. Only an admin can replace them.”
+   - More than 3,660 days: “This file covers more than 10 years. Upload up to 10 years at a time.”
+4. **Send.** One request. On success, all file state is cleared, and the result reads, for an org admin: “Saved {days} days for {location}: {inserted} new, {replaced} replaced.” For a member: “Saved {inserted} new days for {location}.”, then, when `kept` is above zero, “{kept} days already had data. Ask an admin to replace them.” It is followed by the calibration line and the links “Add notes for unusual days” and “See your sales data”.
+
+### 11.3 Server rules (zod `.strict()` at every level)
+
+| Rule | Value |
+|---|---|
+| Body | exactly `{ days }`; any other key is 400 |
+| Day | exactly `{ date, guests, netSalesCents }`; any other key is 400 |
+| `days` length | 1 to 3,660 [CONFIRM: ten years per upload] |
+| `date` | `^\d{4}-\d{2}-\d{2}$`, a real calendar date, not before 2010-01-01, not after the server’s UTC date plus one day (covers every US zone) [CONFIRM: earliest date] |
+| `guests` | integer 0 to 20,000, or null [CONFIRM: cap] |
+| `netSalesCents` | integer 0 to 100,000,000 (one million dollars a day), or null [CONFIRM: cap] |
+| Per day | at least one of `guests` and `netSalesCents` is not null |
+| Dates | unique within the request |
+| Size | a 256 KB parser on this route only. 3,660 days at the largest allowed values serialize to 230,590 bytes (measured for this spec), under 262,144 |
+
+Any failure is 400 `invalid_request` with no field details (**Exists**). The client applies the same rules first, so a 400 means a client bug.
+
+### 11.4 Write
+
+1. Insert the `tw_uploads` record with `status: 'applying'`.
+2. One unordered `bulkWrite` of upserts keyed by `{ orgId, locationId, date }`. Days not in the upload are untouched.
+   - **Org admin:** each upsert `$set`s `guests`, `netSalesCents`, `uploadId` and `updatedAt`, so an uploaded day replaces that day in full, nulls included.
+   - **Member:** each upsert writes those four fields with `$setOnInsert` only, so a day that already exists is never changed. A member’s upload therefore cannot overwrite or zero out history, which matches the matrix reserving deletion for org admins (Section 3).
+   
+   [CONFIRM: replace by day for org admins; members add new days only. If members should replace data too, the matrix must say that a member’s upload can overwrite all of a location’s history.]
+3. Set the record to `applied`, with `inserted` (upserted count) and, from the matched count, `replaced` for an org admin or `kept` for a member.
+4. Audit `sales.uploaded`. Log `townwise.upload_applied { orgId, locationId, uploadId, dayCount }`.
+
+A crash leaves `applying`, which the Sales data tab shows as “This upload didn’t finish. Upload the file again.” Sending again is safe, because every write is an upsert on the day; a member’s resend keeps the days that already saved. The request body is never logged: server-core logs no bodies (**Exists**), and Townwise code adds no body logging.
+
+Delete all sales for a location removes its `tw_sales_days` and `tw_uploads`; the audit log keeps the history.
+
+---
+
+## 12. Notes (the tuning step)
+
+```ts
+type NoteKind = 'closure' | 'private_event' | 'opening' | 'other';
+type NoteEffect = 'closed' | 'more_guests' | 'fewer_guests' | 'unknown';
+
+interface NoteInput {
+  kind: NoteKind;
+  startDate: string;                 // YYYY-MM-DD, 2010-01-01 to today plus two years
+  endDate: string;                   // inclusive, >= startDate, at most 366 days after it
+  weekdays: number[] | null;         // 0 (Sunday) to 6, unique, 1 to 7 entries; null means every day in the range
+  effect: NoteEffect;
+  expectedGuests: number | null;     // integer 1 to 20,000; must be null when effect is 'closed'
+  detail: string | null;             // up to 280 characters; required when kind is 'other'
+}
+
+interface Note extends NoteInput {
+  id: string; createdByEmail: string; createdAt: string; updatedAt: string; canEdit: boolean;
+}
+```
+
+Stored in `tw_notes`: the `NoteInput` fields, `_id`, `orgId`, `locationId`, `createdBy` (userId), `createdAt` and `updatedAt`. No email is stored; `createdByEmail` is read from the kit user at response time (10.1).
+
+- Each kind sets the form’s default effect: closure is `closed`, private event is `more_guests`, opening and other are `unknown`. The owner can change it.
+- `weekdays` covers the homepage’s own example, “closed Mondays in March”, with one field.
+- Past notes explain history, and upcoming notes are for forecasts once they exist. Both are allowed.
+- Authors edit and delete their own notes; org admins edit and delete any. [CONFIRM: author or admin]
+- `detail` has the helper “Describe the event, not the guests. Leave out names.” The server cannot detect names and does not try. `detail` is never logged and never copied into an audit event.
+- In v1, notes are stored and shown. Nothing reads them yet, and the pages say so.
+- An AI chat to tune the model waits, because sending client data to an AI provider is a privacy decision not yet made (D13).
+
+---
+
+## 13. Town profile source
+
+- **Display data.** The client renders the twelve towns on `feature/townwise-web` from generated modules in `mobile/expo-shell/src/marketing/map/` (`towns.ts`, `countyData.ts`, built from `townwise-home.json`). The portal reuses those data modules, so the app holds one copy of the town data and no `/api/towns` route exists. [CONFIRM: depends on `feature/townwise-web` merging first]
+- **Components.** On that branch the chart, month scrubber and numbers table live inside `TownPanel.web.tsx`, which is web-only and tied to the map (`cardRef`, crossfade class names, `onBack`). No DeltaChart, MonthScrubber or NumbersTable component exists in the client; they exist only as HTML in the design-system bundle. This build extracts them from `TownPanel.web.tsx` into map-independent web components (`TownProfile`, `DeltaChart`, `MonthScrubber`, `NumbersTable`, each a `.web.tsx` file), and the homepage map then uses those components.
+- **Native (D21).** The client has no `react-native-svg`. On native, the town profile shows the text summary and the “Show the numbers” table, built from View and Text, plus “See the chart at townwise.tech.”
+- **Validation data.** `api/src/towns.ts` holds the twelve `{ townId, name, state, kind }`. The API uses it to validate `townId` and to fill `name` and `state` on locations and requests. `api/test/towns.test.ts` pins the twelve ids as a literal array, copied from this spec’s Data facts, and the client’s test on `feature/townwise-web` asserts the same literal list. Neither side imports across packages (`import-x/no-relative-packages`, and api cannot depend on the Expo app). Another town is stored with `townId: null`, a name (1 to 80) and a two-letter US state code from a fixed list.
+- **What the Town tab and the Waiting page show** follows every design system rule: county, not town; employment, not sales. The kicker is “Historical public data, 2024”, with “Measured across {county}, 2024.” The page shows the kind tag, the anchor, the 2024 food-service employment pattern against the Northeast with “Show the numbers”, drivers and key dates with source links, the Curve line, the three caveats, the index definition and the source list.
+- **Honest gaps:**
+  - A town outside the twelve: “Townwise hasn’t researched {town}, {state} yet. Profiles cover twelve Northeast towns today.” No chart.
+  - A listed town with no drivers or dates (Nantucket today): the curve, then “No drivers or key dates are researched for {town} yet.” Conway, North Elba and Provincetown show their one driver and the same line for dates.
+  - A missing county series: “BLS does not publish this series for {county}.” (design system).
+  - Key dates print with their year, so dates that have passed read as history, not as a live calendar.
+
+---
+
+## 14. Calibration and forecast states
+
+### 14.1 States in v1 (derived on every read, never stored)
+
+| State | Condition | Heading | Body |
+|---|---|---|---|
+| `no_sales_data` | no day with guests or net sales | “Not calibrated yet” | “Upload your sales history to start. The upload sends Townwise only the date, guest count and net sales for each day.” |
+| `not_calibrated` | one or more days | “Not calibrated yet” | “Your sales history is in: {n} days, {first} to {last}. Calibration isn’t built yet, so there is no forecast.” |
+
+Mockups add the chip [DECISION NEEDED: minimum days of history before calibration] under the `not_calibrated` body. When the user decides, a `needs_more_history` state with the copy “Calibration needs {min} days of history. You have {n}.” joins the table. Until then, no page states a threshold.
+
+[DECISION NEEDED: whether staff may copy a client’s uploaded days into research notebooks, for that client’s calibration only, and how the copy is recorded, shown to org admins and deleted.] Until it is decided, no client page mentions research notebooks or promises that a forecast will appear. The API has no export route, so today the only ways to get the figures would be copying view-as tables or reading the database directly, and both bypass the audit. If the answer is yes, the build adds an audited staff export route instead: a `sales.exported` audit event, listed in the org admins’ staff activity next to view-as, and a line on the privacy page. Terms (“Your data”, on `feature/townwise-web`) allow use for “calibrating your forecasts” and say “we will not use your data to improve Townwise for other customers”, so using a client’s days to work on shared candidate models would break Terms as written.
+
+**Data checks**, shown under the state and computed from the client’s own rows: days with data, first and last day, missing days in between, days with guests, days with net sales, and the last upload with its date and who sent it.
+
+### 14.2 What the app never shows in v1
+
+No forecast numbers, ranges, reasons or accuracy. No “calibrating” or “calibrated” states, and no progress for a process that does not run. No sample values. The one forward-looking block is the design system’s own pattern (Section 16, P11): a layout headed “Illustrative layout, not real output”, with slots only. [CONFIRM: show the illustrative layout in the app]
+
+### 14.3 Reserved for later (not in the v1 API)
+
+`queued`, `calibrating`, `calibrated` (with model version and fitted date), `stale` (sales or notes changed since the last fit) and `failed`. They arrive with model storage, as a `tw_calibrations` collection keyed by location. The forecast shape, also reserved: `{ horizon: 7 | 28; frozenAt; modelVersion; interval: 0.8; days: { date; guests: { low, mid, high }; netSalesCents: { low, mid, high }; reasons: { text, source }[] }[] }`.
+
+---
+
+## 15. App shell
+
+Mockup builders work from this section in parallel, so every page uses exactly these frames, bars, tabs, banner and patterns. Tokens are from `townwise-ds/project/tokens.json`. Class names are from `components/bundle.css`.
+
+### 15.1 Four frames
+
+| Frame | Used by | Top bar | Nav items |
+|---|---|---|---|
+| **Public** | `/sign-in`, `/totp` | the marketing Nav and footer, as on the SignIn artboard (**Exists**) | the marketing links |
+| **Gate** | `/request-access`, `/waiting`, `/no-access`, `/joining`, `/staff/sign-in-again`, the staff notice on `/settings/security` | `ground` fill, 64px; wordmark left; right: “Signed in as {email}” (`mono`, `text3`, hidden below 641px) and “Sign out” (text link) | none |
+| **Client app** | members and org admins, and staff in view-as | `ground` fill, 64px | per role (15.3) |
+| **Staff console** | staff | `panel` fill, 64px | Requests, Organizations, People, Audit log |
+
+Every signed-in frame ends with a slim footer: a 1px `border` rule, then one `mono`, `text3` row: “Townwise is a student project. It is not an official Dartmouth product.” and the links Privacy and Terms, `space-6` apart.
+
+### 15.2 The client app layout
+
+```
++--------------------------------------------------------------------------------------+
+| VIEWING AS  {email}, {Role} at {org}. Read-only until {time}.        [End view-as]   |  view-as only (15.5)
++--------------------------------------------------------------------------------------+
+| Townwise | {Org name}     Locations   Team   Settings                {email} Sign out |  top bar, 64px, ground
++--------------------------------------------------------------------------------------+
+| HANOVER, NH                                                 Location [{name}    v]   |  page header
+| {Location name}                                                                      |
+|                                                                                      |
+| [■ Forecast]   Sales data   Notes   Town   Settings                                  |  tabs (location pages)
++--------------------------------------------------------------------------------------+
+| content, 12 columns                                                                  |
+|                                                                                      |
++--------------------------------------------------------------------------------------+
+| Townwise is a student project. It is not an official Dartmouth product.  Privacy Terms |  slim footer
++--------------------------------------------------------------------------------------+
+```
+
+- **Grid.** Content max `content-max` (1280px), centred. Side margins `margin-fluid` from 1024px, `margin-tablet` (32px) from 641px, `margin-phone` (16px) at 640px and below, plus safe-area insets as on the SignIn artboard. Columns: 12 from 1024px, 8 from 641px, 4 below; gutters `gutter` (20px) and `gutter-phone` (16px).
+- **Top bar.** At least `nav-height` (64px), with a 1px `border` rule below. In order:
+  - the wordmark “Townwise” (`wordmark`, `white`), which links to `/dashboard`;
+  - a 1px `border` vertical rule, 20px tall, then the organization name in `ui`, `text2`;
+  - the nav links in `ui`, `text2`, `space-6` apart, turning `white` on hover and with `aria-current="page"`, as Nav does;
+  - right (`margin-left: auto`): the signed-in email in `mono`, `text3`, then “Sign out” as a text link.
+  
+  `<header>` holds `<nav aria-label="Main">`, and the skip link is the first focusable element (Nav, **Exists**).
+- **Below 900px** (`bp-nav-wrap`), the nav links wrap to a second row under a `border` rule. They never hide: the app has no footer that repeats them. At 640px and below the email hides; the organization name stays and truncates with an ellipsis.
+- **Page header.** `space-8` above, `space-6` below.
+  - Left, columns 1 to 8: the eyebrow (`tw-eyebrow`, `text3`), then the page title as the page’s one `<h1>`, styled `tw-h2` (40/44, then 32/36 below 1024px, then 28/32 at 640px and below), `text-wrap: balance`.
+  - Right, columns 9 to 12, aligned to the title’s last baseline: the page’s actions (at most one primary) or the location switcher.
+  - Below 1024px the two stack.
+  - Gate pages use the same header with the lead paragraph (`sub`, `text2`) under the title, in columns 1 to 7, and an optional side column 9 to 12, as on the SignIn artboard.
+- **Location switcher.** Shown only when the organization has more than one location. It is a labeled select (“Location”) styled like a FormField input, and changing it navigates to the same tab of the other location.
+- **Tabs** (location pages). A row of links in `ui`, at least 44px tall, `space-1` apart, with a 1px `border` rule under the row.
+  - Unselected: `text2`, with a `raised` fill on hover.
+  - Selected (`aria-current="page"`): the design system’s selected-row idiom, which is a `raised` fill, a 1px `border` outline, the 6px `mint` square before the label, and a `mint` label.
+  - Tabs: Forecast, Sales data, Notes, Town, and Settings for org admins.
+  - On phones the row scrolls sideways in a focusable region (`role="region"`, `tabindex="0"`, `aria-label="Location sections"`).
+- **Content.** Sections are separated by a 1px `border` rule with `space-8` between them. Panels have a `panel` fill, a 1px `border`, square corners, and `space-5` padding (`space-4` at 640px and below). Never put a `raised` fill inside a `raised` surface; outline the inner element with `line` instead. Reading width for forms and prose is columns 1 to 7; the side column 9 to 12 holds help text and summaries.
+
+### 15.3 Navigation per role
+
+| Who | Top bar nav | Location tabs | Notes |
+|---|---|---|---|
+| Member | Locations, Settings | Forecast, Sales data, Notes, Town | No Team. Upload and notes are allowed (D16). |
+| Org admin | Locations, Team, Settings | Forecast, Sales data, Notes, Town, Settings | |
+| Staff | Requests, Organizations, People, Audit log | none | Staff console frame (15.4). |
+| Staff in view-as | the target’s items | the target’s tabs | Client app frame under the banner; no console items. |
+| Signed in, no organization | none | none | Gate frame. |
+
+“Locations” goes to `/dashboard`, which redirects to the only location’s Forecast tab when there is one. Settings is the account page, `/settings`. Two-step sign-in (`/settings/security`, **Exists**) is reached from Settings.
+
+### 15.4 How the staff console differs
+
+- **Unmistakable chrome.** The console top bar has a `panel` fill (the client app’s is `ground`). After the wordmark comes a kind tag, “Staff console” (`tw-tag` with no square: the StatusTag kind form, so no new status is invented).
+- **Right side of the top bar:** “Verified until {time}” in `mono`, `text3`, then the staff email in `mono`, `text3`, then “Sign out”. The time is `staff.verifiedUntil`, a real time, not a live counter, and the page does not tick.
+- **No organization name and no location tabs.** Console pages are full-width tables: NumbersTable styling (`mono` 12/16, tabular figures, 1px `border` rules, heads in `text3`, values in `text2`, row hover `raised`, rows at least 44px), each inside a focusable, named scroll region.
+- **Requests** shows its count in the nav as “Requests {n}”, with `{n}` in `mono`. The count is a number, not a dot or badge, and it is never animated.
+- **Detail panels.** A selected row opens its detail in a panel: on the right from 1200px (columns 8 to 12), below the table under 1200px. The selected row takes the selected-row idiom (raised, border outline, 6px mint square, mint name).
+- **No client figures.** Location rows show counts and date ranges only, with the line “Sales figures and notes are visible only through View as.” (D7).
+- **Web only by layout.** The console is designed for 1024px and up and stays usable at 641px. At 640px and below, tables become stacked rows. Native builds do not include console routes. [CONFIRM: console on web only]
+
+### 15.5 The view-as banner
+
+```
++--------------------------------------------------------------------------------------+
+| VIEWING AS   {email}, {Admin|Member} at {org}.   Read-only until {time}.  [End view-as]|
++--------------------------------------------------------------------------------------+
+```
+
+- **Position.** First in the page, above the top bar, full bleed, `position: sticky; top: 0`, above every other layer. At least 52px tall (`toolbar-height`). It is the second focusable element, after the skip link.
+- **Look.** A `raised` fill with a 1px `line` rule below. `line` is a mark colour, so the edge reads as a boundary, not decoration. Inside the content grid:
+  - “Viewing as” as `tw-eyebrow` in `text3`;
+  - “{email}, {Admin or Member} at {org}.” in `ui`, `white`;
+  - “Read-only until {time}.” in `mono`, `text2`;
+  - right: an outline button (`tw-ob`), “End view-as”.
+  
+  For a target with no organization, the middle reads “{email}, signed in, no organization.”
+- **Never colour alone.** No mint (mint is data and selection), and no `warning` or `error` (proposed, not adopted). The words carry the meaning.
+- **Not dismissible.** It is `role="region"` with `aria-label="View-as"`. The document title is prefixed “Viewing as {email} · ”.
+- **Phone (640px and below).** Two rows: the text, then “End view-as” at full width.
+- **Read-only controls.** Every write control stays in place, so the layout matches the client’s, but renders disabled (15.7). Each form or section with writes shows one helper line: “Read-only while viewing as {email}.” Sign out in the client top bar is disabled too; End view-as is the way out.
+- **On expiry**, or when the target’s organization changes (Section 8), the next `GET /api/me` returns staff access without `viewAs`. The client goes to `/admin` and shows the notice “View-as ended at {time}.”
+
+### 15.6 Visual language
+
+- **Dark, one theme.** The page is `ground` (#080a0d). Surfaces step to `panel` (#101317) and then `raised` (#181c21). Depth comes only from the fill step and 1px `border` (#34383e) rules: no shadows, gradients or blur.
+- **Swiss.** A visible grid, flush-left sans, objective labels, asymmetric headers. Square corners everywhere (`radius-none`); the app frame’s 8px edge belongs to the homepage console, not to app pages. Round shapes only for data marks.
+- **Type.** Instrument Sans: display 600, UI 500, reading 400. Geist Mono for every numeral, with `tabular-nums`, for labels (`label`, uppercase, through `tw-eyebrow` and `tw-tag`) and for table cells. Sentence case. Fonts are self-hosted in the app (**Exists** on `feature/townwise-web`); mockups may link Google Fonts as the design system previews do.
+- **Colour roles.**
+  - `white` (#eff2f6): primary text.
+  - `text2` (#b5bbc2): secondary text.
+  - `text3` (#9a9fa6): mono labels and fine print.
+  - `line` (#7b8187): outlines and controls.
+  - **Mint (#7bd2b4) is for data and selection only**: chart series, the selected tab or row (6px square and label), pressed controls, the focus ring and the skip link. It never fills a button, never colours a message, and never marks a warning.
+  - Labels on a mint fill are `ground` (`on-mint`), never `white`.
+- **The primary button is white** (`cta`): `white` fill, `ground` label, `text2` fill on hover. It is square, at least 44px tall, with a 15px `button` label and 18px side padding. **One primary per page**, for its main action; everything else is an outline button (`tw-ob`) or a text link (`tw-tl`). [CONFIRM: extends the Button rules to app screens, where labels vary by page]
+- **StatusTag only for build status and kinds.** In progress (6px mint square) and Planned (6px outlined square) describe Townwise features, as on the homepage; College town, Seasonal town and Event town describe towns. A client’s own data state (“Not calibrated yet”, “Active”, “Invited”) is plain words, never a tag.
+- **Charts** follow the design system: every chart has a text summary and “Show the numbers”, prints its scale and year, and keeps its SVG `aria-hidden`. Client sales series are `mint`, solid, 2px (`stroke-series`), with “Scale fitted to this location.” Town charts keep the Northeast dashed and the county solid.
+- **Motion.** State changes only, 150 to 200ms with `--ease-out`. No spinners, shimmer, pulsing or counters. One reduced-motion switch zeroes everything.
+- **Voice.** Second person to the operator, first person plural for the team, short declarative sentences, no exclamation marks. Say what exists, and only that. U+2019 apostrophes and curly quotes in every visible string, no em dashes, ranges as “80 to 115”, a true minus (U+2212) for negatives.
+
+### 15.7 Shared patterns
+
+- **Forms (FormField).** The label is `ui`, `white`. The input has a `ground` fill, a 1px `line` border, square corners, at least 44px height, and 16px typed text. The helper is `small`, `text2`, tied by `aria-describedby`. Focus is a 2px `mint` outline offset 2px, plus a `mint` border. Selects, number inputs, date inputs and textareas use the same anatomy. Field messages print in white in the numbered, ruled list (`tw-msgs`), with `aria-invalid` on the field. [CONFIRM: error and notice colours stay unadopted, as the design system proposes]
+- **Page notices** (“Saved.”, “You joined {org}.”, “View-as ended at {time}.”) use the same ruled message style in `white` with `role="status"`, at the top of the content. No colour, no toast, no auto-dismiss.
+- **Disabled controls** are not defined in the design system. Here they get `aria-disabled="true"` (not the `disabled` attribute), so they stay focusable and screen readers reach them and their helper line. They use a `text3` label with a 1px `border` outline and do nothing when pressed. A disabled primary has a `raised` fill, a `text3` label (6.43:1) and a 1px `border` outline, with no hover change. [CONFIRM: disabled style]
+- **Destructive actions** have no red. Each is an outline button that opens a confirm dialog. Deleting data asks the person to type the location name, and the dialog’s action stays disabled until it matches.
+- **Dialogs** have a `panel` fill, a 1px `border`, square corners, at most 560px width, and `space-6` padding. The title is `tw-h3`, the body is `small` and `text2`. Actions sit flush left: the dialog’s one primary, then “Cancel” as a text link. The backdrop is `ground` at 80% opacity. Focus is trapped while open and returns to the opener on close; Escape closes.
+- **Tables** use NumbersTable styling in a focusable, named region. At 640px and below, rows become stacked label and value pairs.
+- **Loading** is a text line in place of the content (“Loading your locations”), in `small`, `text2`, inside a box that keeps the content’s height, so nothing shifts. There are no skeletons that suggest numbers.
+- **Errors** reuse the SignIn artboard’s strings word for word: “Can’t reach Townwise. Check your connection and try again.”, “Townwise isn’t responding. Try again in a minute.”, “Something went wrong on our side. Try again in a minute.”, “Something went wrong with that request. Reload the page and try again.”, “Too many attempts. Try again in {minutes} minutes.” Each comes with an outline “Try again”.
+- **Empty states** say what is missing and what to do next, in one or two sentences, with the action as the page’s primary or a text link.
+- **Numbers and dates.** Every numeral is `mono`, tabular. Guests print as whole numbers with thousands commas (“{n} guests”). Money prints in whole dollars with a `$` and thousands commas, rounded half up [CONFIRM: whole dollars in v1]. Dates always print their year (“Mar 2, 2026”), and times as “3:42 PM” in the viewer’s time zone. Day counts print as “{n} days”. No sample values ever appear in mockups: use `{slots}` (Placeholder data slot) for every number that comes from data.
+- **Hit targets** are at least 44px. Every control shows the focus ring.
+- **Phone (640px and below).** One column, 16px side margins, the top bar and banner as above, tables stacked, dialogs full width with 16px margins. There is no horizontal page scroll.
+
+---
+
+## 16. Pages
+
+### 16.1 Page list
+
+| # | Route | Page | Who | Frame |
+|---|---|---|---|---|
+| P1 | `/sign-in` | Sign in (**Exists**; copy change) | everyone | Public |
+| P2 | `/totp` | Two-step code (**Exists**) | anyone with TOTP | Public |
+| P3 | `/request-access` | Request access | `no_org`; `rejected`, `removed` by choice | Gate |
+| P4 | `/waiting` | Waiting for approval | `pending` | Gate |
+| P5 | `/no-access` | No access (rejected, removed, left, paused) | `rejected`, `removed`, `org_suspended` | Gate |
+| P6 | `/joining` | Joining your team, choosing one, or saying it isn’t yours | `invited` | Gate |
+| P7 | `/settings/security` | Two-step sign-in (**Exists**), with the staff setup notice | everyone; staff in setup | Gate for staff in setup, Client app otherwise |
+| P8 | `/staff/sign-in-again` | Staff sign in again | `staff_reauth_required` | Gate |
+| P9 | `/dashboard` | Locations, home and first-run | members | Client app |
+| P10 | `/locations/new` | Add location | org admins | Client app |
+| P11 | `/locations/[id]` | Forecast: calibration status, getting started, what the forecast will show | members | Client app |
+| P12 | `/locations/[id]/sales` | Sales data | members | Client app |
+| P13 | `/locations/[id]/sales/upload` | Upload sales history (web) | members | Client app |
+| P14 | `/locations/[id]/notes` | Notes, the tuning step | members | Client app |
+| P15 | `/locations/[id]/town` | Town profile | members | Client app |
+| P16 | `/locations/[id]/settings` | Location settings | org admins | Client app |
+| P17 | `/team` | Team: add teammates’ emails, roles, removal | org admins | Client app |
+| P18 | `/settings` | Settings: account, organization name, staff activity, leave | members | Client app |
+| P19 | `/admin` | Requests: approvals | staff | Staff console |
+| P20 | `/admin/orgs` | Organizations | staff | Staff console |
+| P21 | `/admin/orgs/[orgId]` | Organization detail: team, locations, suspend, view as, delete | staff | Staff console |
+| P22 | `/admin/people` | People: everyone across organizations, sign out everywhere, delete | staff | Staff console |
+| P23 | `/admin/audit` | Audit log | staff | Staff console |
+
+Components that are not routes: C1 View-as dialog, C2 View-as banner (15.5), C3 Approve dialog, C4 Reject dialog, C5 New organization dialog, C6 Note form, C7 Confirm dialogs (deletion dialogs ask for the typed name or email, 15.7).
+
+No sign-up page exists or is added. New people continue with Google, then request access.
+
+Every page below lists its content top to bottom, its one primary action, and its states. “View-as” says what changes under the banner; pages a target can see behave as for the target, with writes disabled.
+
+### 16.2 Public and gate pages
+
+**P1. Sign in (`/sign-in`).** This page **Exists** on `feature/townwise-web`, with “Continue with Google”. Copy change only: the sub becomes “Use your Google account. Townwise has no passwords.”, and the line under the button becomes “New to Townwise? Continue with Google, then tell us about your restaurant. Joining your team? Use the email address your admin added.” [CONFIRM: replaces “Your first sign-in creates your account.”] Signing in shows “Signing you in…”. Errors are the SignIn artboard’s message list (**Exists**). On success the client calls `GET /api/me` and routes per 4.3.
+
+**P2. Two-step code (`/totp`).** **Exists**, unchanged.
+
+**P3. Request access (`/request-access`)**
+
+- Eyebrow “Early access”. Title “Request access”. Lead: “Townwise is in early access. Tell us about your restaurant or group, and someone on our team will review it by hand.”
+- A panel above the form reads: “Joining a team that already uses Townwise? You don’t need to request access. Ask an admin on that team to add {email}, then reload this page.”
+- Fields:
+  - Organization name, with the helper “Your restaurant or group, as you’d like it to appear in Townwise.”
+  - Your name.
+  - Your role, with the helper “For example, owner or general manager.”
+  - Town: a select grouped “College towns” (six) and “Seasonal and event towns” (six), then “Another town”, which reveals Town name and State.
+  - Number of locations (1 to 50).
+  - “Anything we should know? (optional)”, with the helper “Don’t include guest names or sales figures.”
+- Primary: “Send request”.
+- Side column, “What happens next”, numbered 01 to 03: “Someone on our team reviews your request.”, “We don’t send email yet. Check back here.”, “Once you’re approved, you’ll upload your sales history and see your town.”
+- Footer line: “Signed in as {email}. Using the wrong Google account? Sign out and continue with another one.”
+- Variants: for `removed`, the lead adds “Setting up a different organization? Tell us about it below.” For `rejected`, the previous answers are prefilled.
+
+| State | Shows |
+|---|---|
+| Loading | Never blank: the form renders at once (the town list is bundled); only Send shows “Sending…” and is disabled while it sends |
+| Empty | The empty form |
+| Error | Field messages: “Enter your organization’s name.”, “Enter your name.”, “Enter a whole number from 1 to 50.”, “Pick a town, or choose Another town.”, “Enter a two-letter state, for example NH.” 409 `request_exists` re-reads `/api/me`. 429 and network errors use the shared copy. |
+| Success | Route to `/waiting` |
+| View-as | Form disabled |
+
+**P4. Waiting for approval (`/waiting`)**
+
+- Eyebrow “Request sent {date}”. Title “Your request is in”. Lead: “Someone on the Townwise team reviews every new organization by hand. We don’t send email yet, so check back here.” [DECISION NEEDED: whether to state a review time]
+- “What you sent”, a two-column definition list: Organization, Your name, Your role, Town, Locations, Note.
+- “While you wait: {town}, {state}”: the town profile (Section 13; on native, the text summary and numbers table, D21), or the gap copy for another town.
+- Hint: “Expecting to join a teammate’s organization instead? Ask their admin to add {email}. The next time you open Townwise, you can join it with one press.”
+- Actions: “Check again” (outline; re-reads `/api/me`) and “Sign out” (text link). The page has no primary.
+
+| State | Shows |
+|---|---|
+| Loading | “Checking your access” |
+| Empty | Not applicable: the page exists only with a pending request |
+| Error | Network copy with Try again; the town profile still renders from bundled data |
+| Success | As above. “Check again” routes to any new state; if nothing changed, the notice reads “Still waiting. Your organization will appear here once it’s approved.” |
+
+**P5. No access (`/no-access`).** Every variant ends with “Signed in as {email}. Using the wrong Google account? Sign out and continue with another one.” The page has no primary; actions are outline buttons or text links.
+
+| Variant | Title | Body | Action |
+|---|---|---|---|
+| Rejected | “We can’t give you access yet” | “We reviewed your request for {orgName} on {date} and didn’t approve it.” If a message was given: “Message from the Townwise team: “{message}”” Then: “If something has changed, you can send a new request.” | “Send a new request” (outline, to `/request-access`) |
+| Removed | “You no longer have access to {org}” | “{email} isn’t on {org}’s team anymore. If that’s a mistake, ask an admin there to add you again.” | “Request access for a different organization” (text link) |
+| Left (`byYou`) | “You left {org}” | “If you left by mistake, ask an admin there to add {email} again.” | “Request access for a different organization” (text link) |
+| Paused | “Access to {org} is paused” | “The Townwise team has paused access for {org}. Your organization’s data is kept. Questions: hello@townwise.tech.” [CONFIRM: the mailbox exists] | none |
+
+States: Loading shows “Checking your access”; Error shows the network copy with Try again; there is no empty state.
+
+**P6. Joining (`/joining`)**
+
+{inviter} below is the inviting org admin’s email, “Townwise staff”, or {org} when that account no longer exists (`invitedBy`, 4.1).
+
+- **One invitation, no pending request** (lead default): the title “Joining {org}…” and the line “{inviter} added {email}.” show while `POST /api/me/join` runs. On success it goes to `/dashboard` with the one-time notice (F1).
+- **One invitation, with a pending request** (F2b): title “Join {org}?”. Lead: “{inviter} added {email} to {org}. Your request for {pendingRequest.orgName} is still with our team. If you join {org}, we withdraw that request.” Primary: “Join {org}”. Text link: “Not my team”, which deletes the invitation and returns to Waiting.
+- **Two or more:** title “Choose your team”. Lead: “{count} organizations added {email}. You can belong to one. Choose the team you work with.” With a pending request, the lead adds: “Joining one withdraws your request for {pendingRequest.orgName}.” Each row shows the organization name, “as Admin” or “as Member” in `mono`, “Added by {inviter}” in `small`, `text2`, an outline “Join”, and the text link “Not my team”. The page has no primary.
+- After “Not my team”, the client re-reads `/api/me`. With invitations left, the page shows the rest with the notice “Removed the invitation from {org}.”; otherwise it routes per 4.3 (Waiting with a pending request, Request access with none).
+- Errors: 409 `no_invite` or `already_in_org` re-reads `/api/me` and routes. Network errors show the shared copy with Try again.
+- View-as: Join and Not my team are disabled. A staff member viewing an invited person sees this page without the automatic join.
+
+**P7. Two-step sign-in (`/settings/security`).** **Exists.** For staff in `staff_setup_required`, a notice sits above the existing screen: “Townwise staff accounts need two-step sign-in. Set up your authenticator app, then sign in again with a code.” After the recovery codes, the page shows the primary “Sign in again”, which signs out and opens `/sign-in`. Enrolling needs a sign-in within the last 15 minutes; the shell already handles the kit’s `reauth_required` (**Exists**).
+
+**P8. Staff sign in again (`/staff/sign-in-again`).** Title “Sign in again to use the staff console”. The body depends on the reason:
+
+- `session_before_codes`: “This session started before two-step sign-in was on.”
+- `session_too_old`: “Staff sessions need a fresh sign-in with your code every 60 minutes.”
+
+Primary: “Sign in again” (kit `POST /auth/logout`, then `/sign-in`).
+
+### 16.3 Client app pages
+
+**P9. Locations (`/dashboard`)**
+
+- With one location, it redirects to that location’s Forecast tab and keeps any one-time notice.
+- With several: eyebrow is the organization name, title “Locations”. Org admins get an outline “Add location” on the right. One row per location: name (link), town, “{n} days of sales” (`mono`), the calibration heading in words, and “{n} notes”. Rows are at least 44px, with a `raised` hover.
+- For org admins, while the request’s location count is higher than the locations created: “Your request mentioned {n} locations. Add the others when you’re ready.”
+
+| State | Shows |
+|---|---|
+| Loading | “Loading your locations” |
+| Empty, org admin | Title “Add your first location”. Lead: “Pick its town. For the twelve towns Townwise profiles, you’ll see public data on what moves demand there.” The P10 form inline; primary “Add location”. |
+| Empty, member | “Your admin hasn’t added a location yet.” |
+| Error | Network copy with Try again |
+| Success | The list, or the redirect. After a join, the notice “You joined {org}. {inviter} added {email}. Not your team? Leave {org}.” (F1) |
+
+**P10. Add location (`/locations/new`, org admins).** Fields: Name, and Town (as P3). Primary: “Add location”. Errors: “Another location already uses that name.” and “You’ve reached 25 locations. Write to hello@townwise.tech for more.” On success it opens the new location’s Forecast tab.
+
+**P11. Forecast (`/locations/[id]`, the default tab)**
+
+- Page header: eyebrow “{town}, {state}”, title {location name}, the location switcher when there are several locations, then the tabs.
+- **Status panel.** Kicker `tw-eyebrow` “Calibration”, heading `tw-h3` “Not calibrated yet”, then the body for the state (14.1). Under it, the data checks as a two-column definition list in `mono`: Days with data, First day, Last day, Missing days in between, Days with guests, Days with net sales, Last upload (“{date} by {email}”).
+- **Getting started**, numbered 01 to 04 like the homepage’s How it works. Each row has a two-digit counter in `mono` `text3`, a `tw-h3` title, a `small` body, and the client’s progress in plain `mono` words at the right:
+  1. “Your town”. “Public data on what moves demand in {town}, {state}.” Progress, derived from the bundled town data (Section 13): “{n} drivers and {m} key dates, from public sources” (singular forms for one, “no key dates” for none); “Employment pattern only. Drivers aren’t researched yet.” for a listed town with no drivers (Nantucket today); “Not researched yet” for another town. Link: “See your town” (Town tab).
+  2. “Upload your sales history”. “Export a daily summary from your point-of-sale system.” Progress: “Not started”, or “{n} days, {first} to {last}”. Link: “Upload sales history” (web), or “Upload from a computer at townwise.tech” on native [CONFIRM: web address for native users].
+  3. “Calibration”. “Calibration is designed to tune the town model to your business: daily guests and sales, 7 and 28 days ahead, each day with a range and a reason. This isn’t built into the app yet.” Progress: “Not calibrated yet”. No StatusTag: a client’s own data state is plain words (15.6).
+  4. “Tell Townwise what it can’t see”. “Closures, private events and openings, saved with this location. Nothing reads them yet.” Progress: “{n} notes”. Link: “Add a note” (Notes tab). A second line has a StatusTag, Planned: “Talking to your model is planned.”
+- **What a forecast will show.** Kicker “Illustrative layout, not real output”. One illustrative row on a `panel` with slots only: `{weekday}` `{date}`, `{guests}` guests, range `{low}` to `{high}`, `{sales}` sales, `{reason}`. Under it, the homepage’s qualifier, “In development. None of this is available to restaurants yet.”, and directly below it three lines with StatusTags copied from the homepage’s What you get: “7-day forecast” In progress, “28-day forecast” In progress, “A reason for every swing” Planned.
+- Primary: “Upload sales history” while the state is `no_sales_data` (web). Otherwise the page has no primary.
+
+| State | Shows |
+|---|---|
+| Loading | “Loading {location}” |
+| Empty | The `no_sales_data` status, with checklist step 02 selected (selected-row idiom) |
+| Error | Network copy with Try again. A location id that is not in the organization (deleted, or never theirs): “This location isn’t available.” and a link to Locations. |
+| Success | As above |
+| View-as | Upload links disabled |
+
+**P12. Sales data (`/locations/[id]/sales`)**
+
+- Coverage line: “{n} days, {first} to {last}. {missing} days missing in between.” With missing days, it adds: “Missing days might be closures. Add a closure note.” as a text link that opens C6 prefilled (closure, closed).
+- **Chart**: “Daily guests”, or “Daily net sales” when the location has no guest counts. It covers the last 365 days of data, ending at the last day, from `sales/days`. The line is `mint`, solid, 2px. The y scale is printed with “Scale fitted to this location.” and the x ticks are months with their year. Text summary: “Daily guests, {first} to {last}. Highest: {value} on {date}. Lowest day with data: {value} on {date}.” “Show the numbers” opens the daily table (Date, Guests, Net sales) in a focusable scroll region. On native (D21), the page shows the text summary and the table, plus “See the chart at townwise.tech.” [CONFIRM: daily chart on Sales data]
+- **By month** (NumbersTable styling): Month, Days, Guests, Net sales. Selecting a month shows its days below the row.
+- **Uploads**: Date, By, Days, New, Replaced, Unchanged (days a member’s upload left as they were), Range, and Status (“Finished”, or “This upload didn’t finish. Upload the file again.”).
+- Primary: “Upload sales history” (web; on native, the line “Upload from a computer at townwise.tech.”).
+- Org admins only, at the bottom: a section “Delete sales data” with an outline “Delete all sales data”. Its dialog reads: “This deletes {n} days of sales data for {location}. Notes stay. This can’t be undone. Type {location} to confirm.”
+
+| State | Shows |
+|---|---|
+| Loading | “Loading sales data” |
+| Empty | “No sales history yet for {location}. Upload a CSV export from your point-of-sale system. The upload sends Townwise only the date, guest count and net sales for each day.” with the primary |
+| Error | Network copy with Try again; 404 as on P11 |
+| Success | As above; after a delete, the notice “Deleted {n} days.” |
+| View-as | Upload, delete and the closure-note link are disabled |
+
+**P13. Upload sales history (`/locations/[id]/sales/upload`, web)**
+
+- Header: eyebrow {location name}, title “Upload sales history”, and a step line in `mono`: “Step {n} of 4: Choose a file, Match columns, Check the totals, Send.” Back is a text link on steps 2 and 3.
+- Step 1 copy: “Export a daily sales summary from your point-of-sale system as a CSV file. Your browser reads the file on this computer. Townwise receives only the date, guest count and net sales for each day; nothing else in the file leaves this computer.” The control is an outline button, “Choose a CSV file”.
+- Steps 2 to 4 follow Section 11.2, including the member and org admin wording for days the location already has. The primary on each step: “Check the totals” (step 2), “Send {days} days” (step 3), and “See your sales data” on the result.
+
+| State | Shows |
+|---|---|
+| Loading | “Reading {size} file…” while parsing; “Sending {days} days…” while sending |
+| Empty | Step 1 |
+| Error | “That file is larger than 50 MB.”, “That doesn’t look like a CSV file. Excel file? Save it as CSV first.”, “That file has no header row.”, “Choose a guests column, a net sales column, or both.”, “No rows had a readable date. Check the Date column.”, the item-level refusal, “This file covers more than 10 years. Upload up to 10 years at a time.” A server 400 shows “Something went wrong with that request. Reload the page and try again.” A 500 or 503 shows “The upload didn’t finish, and some days may have saved. Send again. Days are never duplicated.” A 429 or network error uses the shared copy; the parsed days stay in memory so Send can be retried. |
+| Success | The result line (11.2, step 4) |
+| Native | Not offered; the Forecast and Sales data tabs say “Upload from a computer at townwise.tech.” |
+| View-as | “Choose a CSV file” is disabled, so no client file is ever read into a staff browser |
+
+**P14. Notes (`/locations/[id]/notes`)**
+
+- Intro: “Notes record what your sales can’t show: a closure, a private event, an opening. Add past ones to explain unusual days, and upcoming ones for the dates ahead. Townwise keeps them with this location. Nothing reads them yet.”
+- A line with a StatusTag, Planned: “Talking to your model is planned.”
+- Primary: “Add a note”, which opens C6 inline above the lists.
+- Two lists, “Coming up” (end date today or later) and “Past”. Each note is a row:
+  - the kind (`ui`, `white`);
+  - the dates (“{start} to {end}”, plus “{Mondays} only” when weekdays are set);
+  - the effect in words (“Closed”, “More guests than usual”, “Fewer guests than usual”, “Not sure”);
+  - “About {n} guests”, when given;
+  - the details (`small`, `text2`);
+  - “Added by {email}, {date}”;
+  - Edit and Delete text links when `canEdit`.
+- **C6, the note form.** Fields:
+  - Kind: Closure, Private event, Opening, Other.
+  - Starts.
+  - Ends (optional; defaults to the start).
+  - “Only on these days”: seven weekday buttons with `aria-pressed`; pressed takes the `mint` fill and the `on-mint` label, as pressed controls do in the design system.
+  - Effect, defaulted by kind.
+  - Expected guests (optional; hidden when the effect is Closed).
+  - Details (optional; required for Other), with the helper “Describe the event, not the guests. Leave out names.”
+  
+  Its primary is “Save note”, then “Cancel” as a text link.
+- Delete asks “Delete this note? This can’t be undone.”
+
+| State | Shows |
+|---|---|
+| Loading | “Loading notes” |
+| Empty | “No notes yet.” and the intro |
+| Error | Field messages: “The end date is before the start date.”, “Pick a range of a year or less.”, “Add details for an Other note.”, “Enter a whole number from 1 to 20,000.” A save failure: “Couldn’t save the note. Try again.” 409 `note_limit`: “This location has 1,000 notes. Delete old ones to add more.” |
+| Success | The lists. The saved note takes the selected-row idiom, and the notice reads “Saved.” |
+| View-as | Add, Edit and Delete are disabled |
+
+**P15. Town (`/locations/[id]/town`).** The town profile from Section 13, using the `TownProfile`, `DeltaChart`, `MonthScrubber` and `NumbersTable` web components this build extracts from `TownPanel.web.tsx`, styled as the design system builds them, followed by the notes row content (drivers and dates with sources, the Curve line, the caveats, the index definition and the sources). On native (D21): the text summary and the “Show the numbers” table, then the same notes row content, plus “See the chart at townwise.tech.” Loading shows “Loading map data”. Failure shows “The town data did not load. Try again.” The gaps follow Section 13.
+
+**P16. Location settings (`/locations/[id]/settings`, org admins)**
+
+- Fields: Name, and Town. Primary: “Save changes”.
+- A section “Delete location”. When the location has no sales and no notes, it shows an outline “Delete location” with a typed-name confirmation. Otherwise it says “Delete this location’s sales data and notes first.”
+- States: loading; the field error “Another location already uses that name.”; success notice “Saved.”; after a delete, `/dashboard` with “Deleted {name}.”
+
+**P17. Team (`/team`, org admins)**
+
+- Title “Team”. Lead: “Each person signs in with Continue with Google using the exact address you add here. Townwise accepts Gmail addresses and Google Workspace accounts. We don’t send invitations yet, so let them know yourself.”
+- **Add people** panel: a textarea “Email addresses” (helper “One per line or separated by commas, up to 20.”), a Role select (Member by default, or Admin), and the primary “Add”.
+- **Results** under the form, one line per address:
+  - “Added. They can join the next time they continue with Google.”
+  - “Already invited.”
+  - “Already on your team.”
+  - “That isn’t an email address.”
+- **Members table**: Email, Role, Status (Active or Invited), and “Joined {date}” or “Invited {date}”.
+  - Row actions: “Make admin” or “Make member”, and “Remove”. Invited rows get “Remove invitation”.
+  - The signed-in admin’s row says “You”.
+  - Rows with `addedByStaff` show “Added by Townwise staff” under the email (`small`, `text2`). The add is also listed under Townwise staff activity on Settings.
+- Remove asks: “Remove {email}? They lose access on their next visit. Their notes and uploads stay.”
+
+| State | Shows |
+|---|---|
+| Loading | “Loading your team” |
+| Empty | “It’s just you so far. Add your teammates’ email addresses, and they can join the next time they continue with Google.” |
+| Error | 409 `last_admin`: “Your organization needs at least one admin. Make someone else an admin first.” 409 `member_limit`: “Your organization has reached 200 people.” Network copy. |
+| Success | As above |
+| View-as | Visible only when the target is an org admin. Add, role changes and removal are disabled. |
+
+**P18. Settings (`/settings`)**
+
+- **Account**: Email, Organization, Role, as a definition list.
+- **Two-step sign-in**: “Recommended for admins.” plus the link “Two-step sign-in settings” to `/settings/security` (**Exists**).
+- **Organization name** (org admins): a field and the page’s primary, “Save name”.
+- **Townwise staff activity** (org admins, from `GET /api/org/staff-activity`). Above the table: “Each time Townwise staff use View as to see your sales and notes, it’s recorded here with its reason. Without View as, staff can see your team’s email addresses, your location names and towns, and which dates your data covers. Any change staff make to your team, name or status is listed here too.” Table: When, Staff (“Townwise staff ({email})”), Action (the server’s summary, for example “Viewed as {email}” or “Added {email} as member”), Reason and Until (view-as rows only). A row with `notApplied` adds “Didn’t take effect.” Empty: “Townwise staff haven’t viewed or changed your organization.” (D9)
+- **Leave {org}**: an outline button. Confirm: “Leave {org}? You lose access right away. Your notes and uploads stay with {org}.” 409 `last_admin` uses the P17 copy.
+- **Sign out**: “Sign out” and “Sign out on every device” (kit `POST /auth/logout-all`, **Exists**; the shell has no screen for it yet), both text links. [CONFIRM: add sign out on every device]
+- States: loading, and network error with Try again.
+- View-as: every write is disabled.
+
+### 16.4 Staff console pages
+
+**P19. Requests (`/admin`)**
+
+- Title “Requests”. Tabs, styled as in 15.2: Pending {n}, Approved, Rejected, Withdrawn.
+- **Table**, oldest first under Pending and newest first elsewhere: Organization, Contact (name and role), Email, Town, Locations, Sent.
+- **Detail panel** for the selected row:
+  - every field, with the note as plain text;
+  - “Requested as {emailAtRequest}” when the email changed;
+  - the warning “This person already belongs to an organization.” when `requesterHasOrg` is true;
+  - actions: the primary “Approve” (C3), an outline “Reject” (C4), and a text link “View as” (C1), which shows the Waiting page as they see it.
+- **C3, Approve.** Title “Approve {orgName}”. Fields: Organization name, and First location name (prefilled with the organization name). The town is shown read-only. Text: “This creates the organization and its first location in {town}, and makes {email} its admin. They get access the next time they open Townwise. We don’t send email yet.” Primary: “Approve”.
+- **C4, Reject.** Title “Reject {orgName}?” Field: “Message to {contactName} (optional)”, with the helper “Shown on their No access page. Up to 500 characters.” Primary: “Reject”.
+
+| State | Shows |
+|---|---|
+| Loading | “Loading requests” |
+| Empty | Pending: “No requests are waiting.” Other tabs: “No approved requests.”, “No rejected requests.”, “No withdrawn requests.” |
+| Error | 409 `request_not_pending`: “Someone already decided this request.” and the list reloads. 409 `requester_has_org`: the warning copy. Network copy. |
+| Success | The request moves to its tab. After approval: “Approved. {org} is set up, and {email} is its admin.” with a link “Open {org}”. |
+
+**P20. Organizations (`/admin/orgs`)**
+
+- Title “Organizations”. Primary: “New organization” (C5).
+- **C5.** Fields: Name, and First admin email. Text: “They join as admin the next time they continue with Google with this address. We don’t send email yet. {org}’s admins will see that Townwise staff created it.”
+- **Table**: Name, Status (Active or Suspended), Admins, Members, Invited, Locations, Days of sales, Last upload, Created. A row with no admin shows “No admin yet” under Admins.
+- A client-side filter box (name), and a status filter.
+
+| State | Shows |
+|---|---|
+| Loading | “Loading organizations” |
+| Empty | “No organizations yet. Approve a request or create one.” |
+| Error | Network copy |
+| Success | As above |
+
+**P21. Organization detail (`/admin/orgs/[orgId]`)**
+
+- Header: eyebrow “Organization”, title {name}, then a line with the status, “Created {date}”, and “From request {date}” as a link to that request.
+- Actions: outline “Rename”, and outline “Suspend” or “Reactivate”. The suspend confirmation reads “Members of {org} lose access until you reactivate it. Data is kept.”
+- Under the actions, one line in `small`, `text2`: “What you change here is listed in {org}’s Townwise staff activity, which its admins see.”
+- With no admin: “No admin yet. Add an admin email.”
+- **Team**: P17’s table and add form, with a “View as” text link on each active member. Above the add form: “Addresses you add here show as added by Townwise staff. Don’t add your own addresses.”
+- **Locations**, metadata only: Name, Town, Days, First day, Last day, Notes, Last upload. Under the table: “Sales figures and notes are visible only through View as.”
+- **Recent activity**: the newest 20 audit events for this organization, with a link to `/admin/audit` filtered to it.
+- **Delete organization**, last on the page. While the organization is active: “Suspend {org} before deleting it.” and no button. While suspended: an outline “Delete organization”. Its dialog: “This deletes {org}: its {n} locations, their sales data and notes, its team and its request. The audit log keeps the events, with the organization’s and locations’ names removed. This can’t be undone. Type {org} to confirm.” On success, `/admin/orgs` with the notice “Deleted {org}.” (The notice uses the name typed into the dialog; the server no longer has it.)
+- States: loading; 404 “This organization doesn’t exist.”; network error; success. 409 `org_not_suspended`: “Suspend {org} before deleting it.”
+
+**P22. People (`/admin/people`)**
+
+- Title “People”. Lead: “Everyone Townwise has a record for: staff, members, invited emails and requesters.”
+- A kind filter, plus a client-side search box (email or organization).
+- **Lookup** panel: “Find a signed-in person by exact email”, with a field and an outline “Look up”, which calls `?q=`. The result row shows kind “Signed in only” when there is no other record, or “No one with that email has signed in or been added.”
+- **Table**: Email, Kind, Organization, Since, and Two-step (staff rows only).
+  - Kind is one of Townwise staff, Admin, Member, Invited, Requested, Rejected, Removed, Signed in only.
+  - Two-step reads “On since {date}”, “Not set up” or “Not signed in yet”.
+- **Row actions**: “View as” (C1) on every non-staff row with a user, and “Sign out everywhere” on the same rows. Its confirmation reads “This signs {email} out on every device. They can sign in again.”
+- **Delete person**, an outline action on every non-staff row, invited addresses included (D22). On a row with an active seat it is disabled (15.7), with the helper “Remove {email} from {org} first.” Its dialog: “This deletes {email}’s requests and invitations, signs them out everywhere, removes their authenticator, and replaces {email} with “deleted person” in the audit log. Their notes and uploads stay with their organization. This can’t be undone. Type {email} to confirm.” On success, the notice: “Deleted {email}’s Townwise records. Delete their kit user record by hand (runbook).” When no kit user exists, the second sentence is left out.
+- With `truncated`: “Showing the first 1,000 people. Use the search or the lookup.”
+- States: loading, network error, success. There is no empty state, because the viewer is staff. 409 `person_has_seat`: “Remove {email} from {org} first.”
+
+**P23. Audit log (`/admin/audit`)**
+
+- Filters: organization, actor, action. “Load more” pages with `before`.
+- **Table**: When, Who (email and role, plus “viewing as {email}” where relevant), Action (the server’s plain-words `summary`, for example “Added {email} as member”), Organization, Details. A staff event qualified by `staff_action.not_applied` adds “Didn’t take effect ({code}).” Redacted values read “deleted person”, “deleted organization” or “deleted location” (9.3).
+- States: Loading “Loading the audit log”; Empty “Nothing recorded yet.”; Error network copy.
+
+**C1. View-as dialog.** Title “View Townwise as {email}”. Body: “You’ll see what {email} sees, read-only, for 30 minutes. This is recorded in the audit log with your reason, and {org}’s admins can see it. It ends early if {email} joins, leaves or changes organization.” (The clause about {org}’s admins appears only when the target has an organization.) Field: Reason, required, 5 to 200 characters, with the helper “For example, the question you’re helping with.” Primary: “Start viewing”. Errors: 400 `invalid_target` reads “Staff accounts can’t be viewed as.”; 404 reads “This person no longer exists.”; 429 uses the shared copy.
+
+---
+
+## 17. Logging and privacy
+
+- Townwise server code logs ids and counts only: `userId`, `orgId`, `locationId`, `memberId`, `requestId`, `grantId`, `uploadId`, `routeId`. It never logs emails, names, organization or location names, note text, request notes, view-as reasons, figures, file content or request bodies. This matches the privacy page’s promise for sign-in logs (“its own log lines carry your account ID, never your email address”).
+- Product log lines: `townwise.view_as_read`, `townwise.upload_applied`, `townwise.audit_write_failed` (error level), `townwise.access_denied { policy, code }`.
+- The audit log (a database record) holds emails, organization names and view-as reasons. It never holds figures, note text, request notes or decision messages.
+- The client never logs (expo-shell rule 12, **Exists**) and never persists the file or the parsed rows.
+- **The privacy page must change before the portal ships.** The sentences on `feature/townwise-web` that become false are listed in 22.4. The new content needs to cover:
+  - what an access request stores (name, role, town, note);
+  - what a membership stores, including addresses an org admin adds for people who have never signed in and have never seen this notice: the address is stored on the admin’s action, kept on the invitation, and kept in the audit log until that person is deleted (10.7, Deletion);
+  - what an upload stores (date, guests and net sales per day, plus upload counts);
+  - locations (name, town);
+  - notes: kind, dates, weekdays, effect, expected guests, a detail of up to 280 characters, and the author; the organization’s members see them; nothing reads them yet;
+  - view-as grants and their reasons;
+  - per-account rate-limit counters: keys are SHA-256 hashed, and the longest is kept 24 hours;
+  - what the audit log stores;
+  - who sees each, stated exactly:
+    - the organization’s members;
+    - Townwise staff, who see sales figures and note text only through View as, which is audited and shown to org admins;
+    - Townwise staff in the console, who see team email addresses, location names and towns, date coverage, counts and recent audit events without View as; those reads are not recorded;
+    - the people with access to the production database (members of the MongoDB Atlas project that `infra/README.md` on `feature/infra` sets up), named on the page; anyone with that access can read every collection, and their reads are not recorded by Townwise [CONFIRM: who holds Atlas project access];
+  - how long each is kept, and how to ask for deletion (the staff path in 10.7).
+  
+  [DECISION NEEDED: retention and deletion terms for sales data, requests and audit events]
+- **The Security page’s Hosting section** (`security.tsx` on `feature/townwise-web`, which today says hosting “has not been chosen” and that the section will say “who has access”) gains the same who-has-access facts: who holds production database access, and that their reads are not recorded.
+- **Raw exports sent directly.** The privacy page already covers “Exports you send us directly” during early access, with its own [DECISION NEEDED]. [DECISION NEEDED: what happens to a raw export a client sent directly once that client uploads through the portal.] Recommended answer: delete the raw export once its days are in the portal, and say so on the privacy page. Raw exports can hold customer names, which is exactly what the upload design keeps away from Townwise.
+
+---
+
+## 18. Configuration and constants
+
+| Name | Kind | Value | Notes |
+|---|---|---|---|
+| `TOWNWISE_SUPERADMIN_EMAILS` | env, not secret | comma-separated, normalized like the kit, up to 20 | Parsed in `api/src/config.ts` and spread into the one `loadEnv` call in `main.ts`. Empty is allowed in development and test; production boot refuses an empty list. [CONFIRM: refuse empty in production] |
+| Staff window | constant | 60 minutes | [CONFIRM] |
+| View-as length | constant | 30 minutes | [CONFIRM] |
+| Upload | constants | 3,660 days, 256 KB, 50 MB file in the browser | [CONFIRM] |
+| Caps | constants | 25 locations per organization; 1,000 notes per location; 20 emails per add; 200 people per organization | [CONFIRM] |
+| Clock | dependency | the one `now` function `main.ts` passes to both `createAuth` and `createTownwiseApi` | 7.1 |
+
+---
+
+## 19. Kit reports (no kit file is edited)
+
+1. **Per-action TOTP** needs a kit export. `backend/auth` checks codes only inside its own routes, and its verifier is internal. A staff action that asks for a fresh code would need something like `verifyTotpCode(userId, code)` exported from `backend/auth`. This is reported, not made. D2 meets the requirement without it.
+2. **No user listing.** `UserStore` has `findById`, `findByEmail` and `findByGoogleSubject`, and no list. People uses Townwise records plus exact-email lookup (10.7), and never reads the kit’s collections.
+3. **`normalizeEmail` is not exported.** Townwise repeats `trim().toLowerCase()` then `z.email().max(254)` and pins the rule with a parity test against addresses the kit accepts and rejects.
+4. **`onUserCreated` swallows failures** (`auth.on_user_created_failed`), and it never fires for an existing user who is invited later. Townwise does not use it; joining is an explicit POST (F1).
+5. **Package manifest for `api/`.** The router, models and tests import `express`, `mongoose`, `vitest`, `testcontainers`, `@testcontainers/mongodb` and `@types/express`. All six are already in `package-lock.json` at 5.3.0, 9.11.2, 5.0.5, 12.2.1, 12.2.1 and 5.0.6 through the kit modules. Declaring them in `api/package.json` at those exact versions adds no new package. [CONFIRM: this counts as no new dependency; if not, the build is blocked on these six]
+   
+   The lint gate (`eslint.config.js`: `import-x/no-extraneous-dependencies` with `includeTypes: true`) requires every import, type-only ones included, to be declared, and lets only `**/test/**`, `**/*.config.{js,ts}` and `tooling/**` import devDependencies. The kit’s own pattern (`import type { Redis } from 'ioredis'`) would need a seventh package. To stay within six:
+   - type the Redis client as `RedisHandle['client']` from `@ckeith26/redis`;
+   - take driver types (command-monitoring events included) from `mongoose.mongo.*`;
+   - sign in during tests through magic link, so no `jose` is needed for a fake Google signer;
+   - turn on command monitoring with the `monitorCommands=true` connection-string option, which the installed `mongodb` 7.7.0 driver accepts;
+   - declare `express` and `mongoose` as dependencies, and `@types/express`, `vitest`, `testcontainers` and `@testcontainers/mongodb` as devDependencies;
+   - keep every test under `api/test/`, so the devDependencies glob matches.
+6. **Gmail and Workspace only.** The kit’s A-L2 rule refuses other email hosts (403 `google_email_not_authoritative`). An owner whose Google account uses a custom domain without Workspace cannot sign in until email delivery and magic links exist. [CONFIRM: accept for the beta]
+7. **No user delete.** `UserStore` has `findById`, `findByEmail`, `findByGoogleSubject`, `create`, `linkGoogleSubject` and `updateEmail`, and nothing that deletes. `SessionStore.revokeAllForUser` revokes but keeps the records, and `TotpStore.remove` deletes the factor. The privacy page on `feature/townwise-web` already promises “we will delete your account record, sessions and any authenticator record”. Until the kit adds a user delete, the Townwise path (10.7, Deletion) revokes sessions and removes the factor, and the user record and its revoked session records are deleted by hand in the database, as a runbook step. Kit user records are deleted only after the Townwise path succeeds, so no active seat ever outlives its user and the last-admin rule never counts a missing person.
+8. **Test helpers are not exported.** The kit’s helpers (`startAuthServer`, `signIn`, `seedTotp`, mail capture, `global-setup.ts`, `images.ts`) live in `backend/auth/test/`; the package exports only `./src/index.ts`, and `import-x/no-relative-packages` forbids reaching into it. `seedTotp` also uses internals that are not exported (`createTokenCrypto`, `parseKeyring`, `generateSecret`). Townwise writes its own helpers against the public API (Section 20).
+
+---
+
+## 20. Tests and verification
+
+Backend gate: from the worktree root, `npm run verify` with no new failures against the first stage’s baseline. `api/package.json` gains a `test` script (vitest), so the root `npm test --workspaces --if-present` runs it. Integration tests use Mongo and Valkey in Docker through testcontainers, as the kit’s do.
+
+**Harness (`api/test/helpers/`).** The kit’s helpers cannot be imported (Section 19, item 8), and `api/src/main.ts` is a top-level-await script, so the tests build the app through `createTownwiseApi` (7.1). The helpers provide:
+
+- `global-setup.ts`, which starts Mongo and Valkey with the same image digests as `compose.yaml`.
+- `startTownwiseServer()`, which composes server-core’s `createServer` with `/auth` (the kit’s `createAuth`) and `/api` (`createTownwiseApi`). It passes one shared, mutable test clock as `now` to both, and a capturing `sendMagicLink` (production `email.ts` rejects every magic link). It runs `flushdb` on Valkey per test file, which also resets the kit’s magic-link send limit (`auth:ml-send-ip`, 20 per hour per IP).
+- `signIn(email)`, through the kit’s magic-link routes and the captured link, so no fake Google signer and no `jose` is needed.
+- `makeStaff(userId, { enabledAt })`, which seeds the factor through the public `TotpStore`: `startEnrollment` with any `secretEnc`, then `confirmEnrollment({ userId, step, recoveryCodeHashes: [], now: enabledAt })`, with `enabledAt` placed before or after the session’s `createdAt`. The resolver reads only `status` and `enabledAt`, so no code is ever generated.
+- Command monitoring through a connection opened with `monitorCommands=true` (Section 19, item 5).
+
+Because access tokens last 600 seconds (**Exists**), a test that advances the clock past 10 minutes calls `POST /auth/refresh` before its next `/api` request; otherwise the kit answers 401 before Townwise code runs.
+
+Named tests:
+
+- **Routes:** every Express route on `/api` is in `TOWNWISE_ROUTES`, with no duplicates.
+- **Routes:** every GET route issues no write command, checked with Mongo command monitoring. This covers `GET /api/me`, which never joins and never withdraws a request.
+- **Routes:** product code answers 401 only from `resolveAccess` when the kit user no longer exists (4.2 step 1), through the one helper `userGone()`.
+- **Routes:** a non-GET refused by policy still counts toward `townwise:writes`, and is never body-parsed: a 300 KB body to the upload route from a `no_org` account answers 403, not 413.
+- **Access:** each state of 4.2 from fixtures.
+- **Access:** an invitation beats a pending request and carries it as `pendingRequest`, and the newer of rejected and removed wins.
+- **Access:** a staff email that is also invited resolves as staff, never as member.
+- **Join:** five concurrent joins of one invitation leave exactly one active seat.
+- **Join:** joining with a different email than the invitation’s is 409 `no_invite`.
+- **Join:** a second organization’s join is 409 `already_in_org`.
+- **Join:** an invited person with a pending request stays pending until they press Join; “Not my team” deletes only the caller’s own invitation, and the request stays pending.
+- **Invitations:** the same email invited by two organizations answers `invited` to both, and the person is offered both.
+- **Staff gate:** a session created before `enabledAt` is refused, and one created after is accepted.
+- **Staff gate:** after the clock advances 60 minutes and one second and the client calls `POST /auth/refresh`, a staff route answers 403 `staff_reauth_required`.
+- **Staff gate:** no factor is `staff_setup_required`, and a member gets `forbidden`, never a staff code.
+- **Isolation:** for every `member` and `org_admin` route with an id, organization A presenting organization B’s location, note or member id gets 404, and B is unchanged. The cases are generated from the route table.
+- **Isolation:** only `access/resolve.ts`, the join and decline handlers and the staff handlers import `stores/cross-tenant.ts`.
+- **View-as:** under a live grant, every non-GET route without the `staff` policy answers 403 `view_as_read_only`. The cases are generated from the route table.
+- **View-as:** under a live grant, every route with the `staff` policy, any method, answers 409 `view_as_active`; `view-as/end` is the only staff route excluded. The cases are generated from the route table.
+- **View-as:** under a live grant, `POST /api/admin/view-as/end` answers 200, and the next `GET /api/me` is `staff` with `viewAs: null`.
+- **View-as:** `end` with a stale staff session answers 403 `staff_reauth_required`.
+- **View-as:** a second session of the same staff user has no view-as.
+- **View-as:** an expired grant is ignored.
+- **View-as:** a grant that expired without End does not block a new Start on the same session.
+- **View-as:** view-as ends when the target joins or changes organization.
+- **View-as:** the target’s exact access is returned, including Waiting.
+- **View-as:** `view_as.started` exists for every grant.
+- **Audit:** a staff invite appears in the org admin’s staff activity.
+- **Audit:** a staff action whose audit write fails is refused with 503, and nothing changes; a staff role change refused with 409 `last_admin` is followed by `staff_action.not_applied`.
+- **Team:** concurrent demotion of the last two admins leaves at least one.
+- **Team:** removing the last admin is 409 and the row is restored.
+- **Team:** a removed member’s next member request is 403 `no_access`.
+- **Uploads:** an extra key in the body or in a day is 400, and nothing is written.
+- **Uploads:** a 3,661-day body is 400, and a 257 KB body is 413.
+- **Uploads:** replace-by-day counts are right for an org admin.
+- **Uploads:** a member upload never changes an existing day, and reports it as `kept`.
+- **Uploads:** stored documents have exactly the eight keys of 6.5.
+- **Uploads:** a log capture during upload contains no figures.
+- **Notes:** range, weekday and kind rules hold.
+- **Notes:** a member editing another member’s note is 403.
+- **Notes:** `detail` is absent from logs and audit.
+- **Deletion:** deleting a person with an active seat is 409 `person_has_seat`; otherwise their requests, invitations and removed seats are gone, and no audit event holds their email.
+- **Deletion:** deleting an active organization is 409 `org_not_suspended`; deleting a suspended one leaves no tenant document with its `orgId`, and no audit event holds its name.
+- **Audit:** every mutation writes its event with only the allowlisted keys.
+- **Email:** normalization matches the kit for case and spaces.
+- **Towns:** `api/test/towns.test.ts` matches `api/src/towns.ts` against the literal list of twelve ids (Section 13).
+- **Indexes:** `documentDbIndexProblems(connection)` is empty with the Townwise models registered (mongo MODULE.md, DocumentDB).
+
+Client tests:
+
+- routing per 4.3;
+- `/joining` never calls join on load with a `pendingRequest` or with two or more invitations;
+- the CSV parser’s RFC 4180 cases, delimiters, date orders, number formats, row modes and per-day sums;
+- the mapper never renders a cell: a file whose cells contain a sentinel name must never show it, except a mapped location value;
+- the view-as banner renders, and writes are disabled;
+- the twelve town ids in the client’s `towns.ts` match the same literal list as the api test.
+
+---
+
+## 21. Deferred
+
+| Item | Why it waits | What it needs |
+|---|---|---|
+| Email (invitations, approval, rejection) | Lead default: none in v1 | Azure Communication Services and an email sender with click tracking off; the Team and Waiting copy drops “We don’t send email yet” |
+| Calibration, forecasts, model storage | Models exist only in research notebooks | The reserved states and shape (14.3), and `tw_calibrations` |
+| AI chat for tuning | The privacy decision about sending client data to an AI provider | That decision, a provider agreement, a redaction step |
+| Per-action TOTP for staff | Kit gap 1 | A kit export |
+| Hash-chained audit, tenant-guard plugin, ESLint import bans | Heavy for a beta; covered by `OrgScope`, the route table and the generated tests | Revisit with paying customers |
+| An org activity log beyond staff activity | Not requested | An org-filtered audit view |
+| More than one organization per person | Simplicity (D5) | An organization switcher; organization ids on member routes |
+| Native upload, `.xlsx` upload, POS integrations | New dependencies or vendor terms | `expo-document-picker`, a vetted parser, vendor APIs |
+| Per-upload undo, a business-day cutoff setting | Not needed for v1 | Per-day history, or a per-location cutoff hour |
+| Self-serve deletion of accounts, organizations and data; export; a retention schedule | Privacy decisions pending. Staff deletion on request exists in v1 (D22) | Section 17 decision, then flows and a job |
+| Deleting the kit user record in code | The kit has no user delete (Section 19, item 7) | A kit addition; until then, a runbook step |
+| An audited staff export of a client’s days for notebook calibration | Waits on the Section 14.1 decision | A `sales.exported` audit event shown in staff activity, and a privacy page line |
+| Native charts | No `react-native-svg` (D21) | That dependency, vetted, or a View-based chart |
+| Withdrawing or editing a pending request | Staff can fix names at approval | A withdraw action on Waiting |
+| Last sign-in times on People | The kit exposes no session listing | A kit addition, or a Townwise `lastSeenAt` |
+| Required TOTP for org admins | Friction for owners | [CONFIRM: optional for org admins] |
+
+---
+
+## 22. Index of decisions
+
+### 22.1 Lead defaults to confirm
+
+Each is marked inline with “lead default”:
+
+- the three roles (D1);
+- staff by `TOWNWISE_SUPERADMIN_EMAILS`, with TOTP for every staff action (D2);
+- auto-join for invited emails, Request access for everyone else, and staff approval that creates the organization and its first admin (D3); kept despite the critic’s recommendation of a one-click Join screen for every invitation, which the F1 note explains;
+- view-as read-only, audited, bannered, with writes refused by the server (D8);
+- browser-side parsing that sends only date, guests and net sales per location per day (D10);
+- no fake output (D12);
+- tuning as structured notes, AI chat later (D13);
+- no email in v1 (D14);
+- organizations with one or more locations (D15).
+
+### 22.2 Judgment calls to confirm
+
+1. Per-organization invitations (D4).
+2. One organization per person (D5).
+3. Auto-join without a click, with Leave as the remedy and the inviter named (F1); a press to join when a request is pending, and “Not my team” to decline (F2b).
+4. Role chosen at invite, default member (F5).
+5. First location at approval (D6).
+6. Town profile while waiting (F2).
+7. What “validated manually” means (F3).
+8. Rejected people may request again, with an optional message (F4).
+9. Staff create organizations directly (F10).
+10. Staff see values only through view-as (D7).
+11. The 60-minute staff window, read as the TOTP requirement (D2).
+12. View-as for 30 minutes, any non-staff target, no audit event per read, ending when the target’s organization changes (D8, 8).
+13. Org admins see all staff activity on their organization, with staff emails (D9).
+14. No session revoke on removal (D18).
+15. Member permissions: upload and notes for members, with member uploads adding new days only (D16, 11.4).
+16. Notes edited by author or admin (12).
+17. Org admins rename their organization (10.3).
+18. Sign out everywhere for staff (10.7), and sign out on every device in Settings (P18).
+19. No cell contents in the mapper (D11).
+20. Header guesses (11.2).
+21. Replace by day for org admins (11.4).
+22. Web-only upload (D20).
+23. Limits, caps and file size (6, 10.8, 11.3, 18).
+24. Earliest date 2010-01-01 (11.3).
+25. Audit after the effect for client actions; before the effect, refused on failure, for staff actions (9.3).
+26. Audit kept indefinitely (6.9).
+27. Town data from the client modules on `feature/townwise-web` (13).
+28. Route names (4.3).
+29. The illustrative layout in the app (14.2).
+30. The daily chart on Sales data (P12).
+31. Whole dollars (15.7).
+32. One primary per app page (15.6).
+33. Disabled style (15.7).
+34. Error and notice colours unadopted (15.7).
+35. Console on web only (15.4).
+36. Sign-in copy (P1).
+37. `hello@townwise.tech` (P5, P10).
+38. Web address for native users (P11).
+39. Production refuses an empty staff list (18).
+40. Manifest entries for `api/` (19.5).
+41. Gmail and Workspace only (19.6).
+42. Optional TOTP for org admins (21).
+43. Web-only charts, with text and tables on native (D21).
+44. Staff-only deletion in v1, with suspension before an organization is deleted (D22).
+45. Who holds Atlas project access, named on the privacy page (17).
+
+### 22.3 Decisions needed
+
+- The minimum days of history before calibration (D12, 14.1).
+- Whether Waiting states a review time (P4).
+- Retention and deletion terms for the privacy page (17, 10.7).
+- Whether staff may copy a client’s uploaded days into research notebooks, for that client’s calibration only, and how the copy is recorded, shown to org admins and deleted (14.1).
+- What happens to a raw export a client sent directly once that client uploads through the portal (17). Recommended: delete it once its days are in the portal.
+
+### 22.4 Conflicts in existing copy
+
+- The homepage FAQ says the data needed is “what sold, how much, and when”. This spec stores only daily guests and net sales per location. One of them should change.
+- The homepage step 02 says “Today: the app has no upload yet.”, and the Privacy page says “The Townwise app has no place to upload sales data yet.” and “That is the whole account record.” All three change when the portal ships.
+- The SignIn artboard’s button says “Sign in with Google”. `feature/townwise-web` already says “Continue with Google”, but its sub still says “Your first sign-in creates your account.” (P1).
+- The homepage step 03 carries [DECISION NEEDED: confirm step 03 status]. P11 no longer mirrors it: the client’s calibration step carries no StatusTag, whatever the homepage decides.
+- More copy on `feature/townwise-web` that becomes false when the portal ships and has to change first:
+  - `privacy.tsx`: “We do not keep your name, your photo or the Google token itself.” (false once a request stores `contactName`).
+  - `privacy.tsx`, “Where your data lives”: “Account, session, authenticator and email-link records are stored in a MongoDB database.” (the portal adds requests, memberships, locations, sales days, uploads, notes, view-as grants and audit events).
+  - `privacy.tsx`, rate limiting: “the server counts requests from each IP address: one limit for the whole service and a tighter one for sign-in” (the portal adds per-account counters).
+  - `Home.web.tsx` FAQ: “There is no upload in the app yet.” and “The app has no upload yet.”
+  - `security.tsx`, Hosting: “Hosting has not been chosen.” gains the who-has-access facts (17).
+- Raw exports sent directly: the privacy page’s “Exports you send us directly” has its own [DECISION NEEDED]; the portal adds the question of what happens to them once the client uploads (22.3).
+
+---
+
+## 23. Changelog
+
+**2026-11-04, critic review.** Twenty-three findings applied. Where one conflicted with a lead default, the default stayed and the conflict went into its [CONFIRM] note.
+
+- **Auto-join (F1, D3, F2b, P6).** The lead default stays: one invitation and no pending request still joins on load. The F1 [CONFIRM] now describes the stranger-enrollment attack and the declined alternative (a one-click Join screen for every invitation). Within the default: the inviter is named on `/joining` and in the notice (`invitedBy`); a person with a pending request presses Join, and only then is the request withdrawn; “Not my team” (`POST /api/me/decline`, audit `member.declined`) deletes an invitation.
+- **View-as (4.2, 6.8, 7.2, 8, F8).** A grant is live only while the target’s resolved organization equals `grant.orgId`. `resolveAccess` returns `self`, `effective` and the grant. The new `staff_self` policy lets End pass during view-as, while `staff` stays strict. The principal carries the staff actor. Start clears any grant still holding the session, expired or not (`endReason: 'expired'`). The guard answers 409 for staff routes first, then 403 for other writes.
+- **Staff activity (D1, D7, D9, 9.3, 10.1, P17, P18, P21).** Org admins see every staff action on their organization, not only view-as. `MemberView.addedByStaff` marks addresses staff added. Staff events are written before the effect and refused on a failed write, with `staff_action.not_applied` when the effect then fails.
+- **Request chain (7.2, 10.8).** `townwise:writes` runs right after `requireAuth`. Bodies are parsed only after the guard and the policy pass.
+- **Member uploads (D16, 3, 11.2, 11.4, P12, P13).** A member’s upload adds new days only (`$setOnInsert`, counted as `kept`); org admins keep replace-by-day.
+- **Deletion (D22, F13, 9.3, 10.7, P21, P22, Section 19 item 7).** Staff delete a person (after removing their seat) or a suspended organization. Each deletes the Townwise records and redacts emails or names in the audit log, which is otherwise still append-only. The kit has no user delete, so the user record is deleted by hand.
+- **Honest copy (14.1, P9, P11, P12, P14, 13).** No research-notebook or future-forecast promises. The upload copy says what the upload sends, not what Townwise keeps. Step 03 has no StatusTag. The illustrative block sits under the homepage’s “In development” qualifier. Notes copy says nothing reads them yet. Town progress comes from the bundled data.
+- **Privacy (17, 22.3, 22.4).** Says exactly who sees what, including console metadata and Atlas project access, neither of which is recorded. The privacy checklist gains notes, locations, invited addresses, grants and counters. New decisions cover research notebooks and raw exports. 22.4 lists five more sentences on `feature/townwise-web` that become false.
+- **Build facts (7.1, 13, 19, 20, D21).** New `api/src/app.ts` with one shared clock. A test harness contract written against the public kit API. A way to stay within the six packages. Named OrgScope mint functions and `stores/cross-tenant.ts`. Town components extracted from `TownPanel.web.tsx`, with charts on web only. Town ids pinned as a literal list on each side. Two tests reworded to match the body (eight sales-day keys; the one 401 from `userGone()`).

@@ -2,7 +2,7 @@
 
 Townwise backend: one Node process (`src/main.ts`) composed from the kit modules in `../backend/` (copied from camkeith/modules; versions in `../KIT.md`). Sign-in is Google only.
 
-It mounts two routers. The kit’s `/auth` handles sign-in, sessions and two-step sign-in. Townwise’s `/api` (`src/app.ts`, routes in `src/access/routes.ts`) handles access, organizations, locations, sales data, notes, the team and the staff console. No kit file is changed; all Townwise code is under `api/`.
+It mounts two routers. The kit’s `/auth` handles sign-in, sessions and two-step sign-in. Townwise’s `/api` (`src/app.ts`, routes in `src/access/routes.ts`) handles access, organizations, locations, sales data, notes, the team and the staff console. No kit file is changed; all Townwise code is under `api/`. "The build spec" and "spec Section N" in this README and in code comments mean `../docs/portal/spec.md`.
 
 ## Run locally
 
