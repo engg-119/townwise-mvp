@@ -47,6 +47,12 @@ test('the googleSubject and previousRefreshHash indexes are partial on $type str
   expect(previous?.sparse).not.toBe(true);
 });
 
+test('the users unique indexes carry the names the DocumentDB duplicate-key mapping reads', async () => {
+  const users = await db.connection.collection('users').indexes();
+  expect(users.filter((entry) => entry.unique === true).map((entry) => entry.name).sort())
+    .toEqual(['email_1', 'googleSubject_1']);
+});
+
 test('TTL indexes present with the stated expireAfterSeconds', async () => {
   const sessions = await db.connection.collection('auth_sessions').indexes();
   const retired = await db.connection.collection('auth_refresh_retired').indexes();

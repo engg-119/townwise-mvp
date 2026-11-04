@@ -7,7 +7,7 @@ afterEach(async () => {
 
 import { ApiError } from '../../src/api/client';
 import { AuthProvider } from '../../src/auth/AuthProvider';
-import SecurityScreen from '../../app/(app)/security';
+import SecurityScreen from '../../app/(gate)/(app)/settings/security';
 import { fakeAuth } from '../helpers/fakes';
 
 const EMAIL = ['a', 'example.com'].join('@');

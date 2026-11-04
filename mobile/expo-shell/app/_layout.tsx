@@ -1,18 +1,20 @@
 import { useEffect, useState } from 'react';
 import { Stack } from 'expo-router';
+import Head from 'expo-router/head';
 import * as SplashScreen from 'expo-splash-screen';
 import { Platform } from 'react-native';
 
-import { AuthProvider, useAuth, useAuthState } from '../src/auth/AuthProvider';
+import { AuthProvider } from '../src/auth/AuthProvider';
 import { createAuth } from '../src/auth/auth';
 import { createSession } from '../src/auth/session';
 import { createApiClient } from '../src/api/client';
 import { parseConfig } from '../src/config';
 import { env } from '../src/env';
-import { createAuthStore, routeFor } from '../src/auth/store';
+import { createAuthStore } from '../src/auth/store';
 import type { Auth } from '../src/auth/auth';
 import type { ErrorBoundaryProps } from 'expo-router';
-import { Button, Loading, Message, Screen, Unreachable } from '../src/ui';
+import { theme } from '../src/theme';
+import { Button, Message, Screen } from '../src/ui';
 
 void SplashScreen.preventAutoHideAsync();
 
@@ -20,7 +22,7 @@ export default function RootLayout(): React.JSX.Element {
   const [auth] = useState(createAppAuth);
   return (
     <AuthProvider auth={auth}>
-      <RootNavigator />
+      <RootStack />
     </AuthProvider>
   );
 }
@@ -34,43 +36,24 @@ function createAppAuth(): Auth {
     session,
     onSessionEnded: () => {
       if (store.getState().status === 'signedIn') {
-        store.set({ status: 'signedOut', notice: 'Your session ended. Sign in again.' });
+        store.set({ status: 'signedOut', notice: 'You’ve been signed out. Sign in again to continue.' });
       }
     },
   });
   return createAuth({ api, session, store, config });
 }
 
-export function RootNavigator(): React.JSX.Element | null {
-  const auth = useAuth();
-  const state = useAuthState();
-  useEffect(() => { void auth.restore(); }, [auth]);
-  useEffect(() => {
-    if (state.status !== 'restoring') void SplashScreen.hideAsync();
-  }, [state.status]);
-  if (state.status === 'restoring') return Platform.OS === 'web' ? <Loading /> : null;
-  if (state.status === 'unreachable') {
-    return (
-      <Unreachable
-        onRetry={() => auth.restore()}
-        {...(Platform.OS === 'web' ? {} : { onSignInAgain: () => auth.signOut() })}
-      />
-    );
-  }
-  const home = routeFor(state) ?? '/sign-in';
+// On web the public pages and sign-in name themselves in the document title (MarketingShell.web). This
+// default is the title of every other screen, so a page's title never outlives it (sign-in, then the app).
+export function RootStack(): React.JSX.Element {
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Protected guard={state.status === 'signedIn'} redirectTo={home}>
-        <Stack.Screen name="(app)" />
-      </Stack.Protected>
-      <Stack.Protected guard={state.status === 'signedOut'} redirectTo={home}>
-        <Stack.Screen name="sign-in" />
-      </Stack.Protected>
-      <Stack.Protected guard={state.status === 'mfaRequired'} redirectTo={home}>
-        <Stack.Screen name="totp" />
-      </Stack.Protected>
-      <Stack.Screen name="auth/magic" />
-    </Stack>
+    <>
+      {Platform.OS === 'web' ? <Head><title>Townwise</title></Head> : null}
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: theme.color.ground } }}>
+        <Stack.Screen name="(marketing)" />
+        <Stack.Screen name="(gate)" />
+      </Stack>
+    </>
   );
 }
 
@@ -82,7 +65,7 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps): React.JSX.E
     <Screen>
       <Message tone="error">{__DEV__ ? error.message : 'Something went wrong.'}</Message>
       <Button label="Try again" onPress={() => { void retry(); }} />
-      {Platform.OS === 'web' ? <Button label="Go to start" onPress={goToStart} /> : null}
+      {Platform.OS === 'web' ? <Button variant="link" label="Go to start" onPress={goToStart} /> : null}
     </Screen>
   );
 }

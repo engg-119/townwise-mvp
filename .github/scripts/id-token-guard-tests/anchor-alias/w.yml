@@ -1,0 +1,9 @@
+on: push
+env:
+  unused: &grant
+    id-token: write
+jobs:
+  x:
+    runs-on: ubuntu-24.04
+    permissions: *grant
+    steps: [{run: echo}]

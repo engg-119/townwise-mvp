@@ -3,7 +3,7 @@ import { ExpoRoot, Stack, router } from 'expo-router';
 import { getMockContext } from 'expo-router/testing-library';
 
 import { AuthProvider } from '../../src/auth/AuthProvider';
-import MagicLinkScreen from '../../app/auth/magic';
+import MagicLinkScreen from '../../app/(gate)/auth/magic';
 import { fakeAuth } from '../helpers/fakes';
 
 class ResizeObserverPolyfill {

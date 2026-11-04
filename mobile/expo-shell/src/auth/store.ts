@@ -31,9 +31,9 @@ export function createAuthStore(initial?: AuthState): AuthStore {
   };
 }
 
-export function routeFor(state: AuthState): '/' | '/sign-in' | '/totp' | null {
+export function routeFor(state: AuthState): '/dashboard' | '/sign-in' | '/totp' | null {
   switch (state.status) {
-    case 'signedIn': return '/';
+    case 'signedIn': return '/dashboard';
     case 'mfaRequired': return '/totp';
     case 'signedOut': return '/sign-in';
     case 'restoring':
