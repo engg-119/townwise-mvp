@@ -161,7 +161,7 @@ test('MFA invalid_mfa_token to signedOut with notice', async () => {
     handler: () => jsonResponse(401, { error: 'invalid_mfa_token' }),
   });
   await expect(auth.verifyMfa({ code: '123456' })).rejects.toMatchObject({ code: 'invalid_mfa_token' });
-  expect(auth.store.getState()).toEqual({ status: 'signedOut', notice: 'Your sign-in timed out. Start again.' });
+  expect(auth.store.getState()).toEqual({ status: 'signedOut', notice: 'That took too long. Sign in again.' });
 });
 
 test('recovery code sent normalized', async () => {

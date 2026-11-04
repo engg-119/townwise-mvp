@@ -24,7 +24,7 @@ test('the idToken goes to onIdToken and the Google SDK is signed out', async () 
   const onIdToken = jest.fn();
   const onError = jest.fn();
   await render(<GoogleButton google={google} onIdToken={onIdToken} onError={onError} />);
-  await fireEvent.press(screen.getByText('Sign in with Google'));
+  await fireEvent.press(screen.getByText('Continue with Google'));
   await waitUntil(() => onIdToken.mock.calls.length === 1);
   expect(onIdToken).toHaveBeenCalledWith('id-1');
   expect(GoogleSignin.signOut).toHaveBeenCalled();
@@ -36,7 +36,7 @@ test('cancel is silent', async () => {
   const onIdToken = jest.fn();
   const onError = jest.fn();
   await render(<GoogleButton google={google} onIdToken={onIdToken} onError={onError} />);
-  await fireEvent.press(screen.getByText('Sign in with Google'));
+  await fireEvent.press(screen.getByText('Continue with Google'));
   await Promise.resolve();
   await Promise.resolve();
   expect(onIdToken).not.toHaveBeenCalled();
@@ -47,7 +47,7 @@ test('Play services error mapped', async () => {
   jest.mocked(GoogleSignin.signIn).mockRejectedValue({ code: statusCodes.PLAY_SERVICES_NOT_AVAILABLE });
   const onError = jest.fn<undefined, [string]>();
   await render(<GoogleButton google={google} onIdToken={jest.fn()} onError={onError} />);
-  await fireEvent.press(screen.getByText('Sign in with Google'));
+  await fireEvent.press(screen.getByText('Continue with Google'));
   await waitUntil(() => onError.mock.calls.length === 1);
   expect(onError.mock.calls[0]?.[0]).not.toBe('');
 });

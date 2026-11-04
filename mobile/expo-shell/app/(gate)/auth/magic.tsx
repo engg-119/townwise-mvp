@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Link, Redirect, useLocalSearchParams, useRouter } from 'expo-router';
+import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
 import { Platform } from 'react-native';
 
-import { ApiError } from '../../src/api/client';
-import { useAuth, useAuthState } from '../../src/auth/AuthProvider';
-import { parseMagicFragment } from '../../src/auth/magicLink';
-import { routeFor } from '../../src/auth/store';
-import { Button, Message, Screen, useSubmit } from '../../src/ui';
+import { ApiError } from '../../../src/api/client';
+import { useAuth, useAuthState } from '../../../src/auth/AuthProvider';
+import { parseMagicFragment } from '../../../src/auth/magicLink';
+import { routeFor } from '../../../src/auth/store';
+import { Button, Message, Screen, TextLink, useSubmit } from '../../../src/ui';
 
 const EXPIRED = 'Links work once, for 15 minutes, on the device where you asked for them. Request a new one.';
 
@@ -55,7 +55,7 @@ export default function MagicLinkScreen(): React.JSX.Element | null {
     return (
       <Screen>
         <Message>{EXPIRED}</Message>
-        <Link href="/sign-in">Go to sign in</Link>
+        <TextLink href="/sign-in">Go to sign in</TextLink>
       </Screen>
     );
   }
@@ -64,7 +64,7 @@ export default function MagicLinkScreen(): React.JSX.Element | null {
     return (
       <Screen>
         <Message>This link is invalid or incomplete</Message>
-        <Link href="/sign-in">Go to sign in</Link>
+        <TextLink href="/sign-in">Go to sign in</TextLink>
       </Screen>
     );
   }
@@ -73,7 +73,7 @@ export default function MagicLinkScreen(): React.JSX.Element | null {
     <Screen>
       <Message>{`Sign in as ${link.email}?`}</Message>
       <Button label="Continue" onPress={() => { submit(); }} {...(pending ? { disabled: true } : {})} />
-      <Link href="/sign-in">Not you? Go to sign in</Link>
+      <TextLink href="/sign-in">Not you? Go to sign in</TextLink>
     </Screen>
   );
 }

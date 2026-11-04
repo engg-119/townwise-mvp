@@ -1,11 +1,12 @@
 import { useCallback, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
-import { Image, Linking, Platform, Text } from 'react-native';
+import { Image, Linking, Platform, StyleSheet, Text } from 'react-native';
 
-import { ApiError } from '../../src/api/client';
-import { normalizeTotpCode, type Me } from '../../src/auth/auth';
-import { useAuth } from '../../src/auth/AuthProvider';
-import { Button, describeError, Field, Message, Screen, useSubmit } from '../../src/ui';
+import { ApiError } from '../../../../src/api/client';
+import { normalizeTotpCode, type Me } from '../../../../src/auth/auth';
+import { useAuth } from '../../../../src/auth/AuthProvider';
+import { theme } from '../../../../src/theme';
+import { Button, describeError, Field, Message, Screen, useSubmit } from '../../../../src/ui';
 
 const INVALID_CODE = "That code didn't work. Codes change every 30 seconds; wait for a new one and try again.";
 
@@ -87,7 +88,7 @@ export default function SecurityScreen(): React.JSX.Element {
   const showSetup = codes === null && !enrolling && me !== null && !me.totp.enabled;
 
   return (
-    <Screen>
+    <Screen scroll>
       {me !== null && me.totp.enabled && codes === null && !enrolling ? (
         <Message>{`Two-factor is on. ${String(me.totp.recoveryCodesRemaining)} recovery codes left.`}</Message>
       ) : null}
@@ -95,9 +96,9 @@ export default function SecurityScreen(): React.JSX.Element {
       {enrolling ? (
         <>
           <Image source={{ uri: qr }} accessibilityLabel="Authentication QR code" style={{ width: 240, height: 240 }} />
-          <Text selectable>{secret}</Text>
+          <Text selectable style={styles.code}>{secret}</Text>
           {Platform.OS !== 'web' && otpauthUri?.startsWith('otpauth://') === true ? (
-            <Button label="Open in authenticator app" onPress={() => { void Linking.openURL(otpauthUri); }} />
+            <Button variant="link" label="Open in authenticator app" onPress={() => { void Linking.openURL(otpauthUri); }} />
           ) : null}
           <Field
             label="Authentication code"
@@ -114,7 +115,7 @@ export default function SecurityScreen(): React.JSX.Element {
         <>
           {othersSignedOut ? <Message>Other devices were signed out.</Message> : null}
           <Message>Save these somewhere safe. Each works once.</Message>
-          {codes.map((item) => <Text key={item} selectable style={{ fontFamily: 'monospace' }}>{item}</Text>)}
+          {codes.map((item) => <Text key={item} selectable style={styles.code}>{item}</Text>)}
           <Button
             label="I saved these"
             onPress={() => {
@@ -135,3 +136,8 @@ export default function SecurityScreen(): React.JSX.Element {
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  // Geist Mono on web; native keeps the platform monospace face it used before.
+  code: { ...theme.type.code, fontFamily: theme.type.code.fontFamily ?? 'monospace', color: theme.color.white },
+});

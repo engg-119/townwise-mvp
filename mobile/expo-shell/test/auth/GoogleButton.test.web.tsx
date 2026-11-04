@@ -45,17 +45,19 @@ test('the credential reaches the mounted handler', async () => {
   expect(onIdToken).toHaveBeenCalledWith('gis-token');
 });
 
-test('load failure shows the unavailable message', async () => {
+test('load failure shows the unavailable message, as an alert screen readers announce', async () => {
   render(<GoogleButton google={google} onIdToken={jest.fn()} onError={jest.fn()} />);
   document.querySelector(`script[src="${GIS}"]`)?.dispatchEvent(new Event('error'));
-  expect(await screen.findByText('Google sign-in is unavailable here. Use the email link.')).toBeTruthy();
+  const alert = await screen.findByRole('alert');
+  expect(alert.textContent).toBe('Google sign-in didn’t load. Check your connection, turn off any blocker for accounts.google.com, and reload.');
+  expect(alert.getAttribute('aria-live')).toBe('assertive');
 });
 
 test('after a load failure, the next mount injects a fresh tag', async () => {
   const first = render(<GoogleButton google={google} onIdToken={jest.fn()} onError={jest.fn()} />);
   const failed = document.querySelector(`script[src="${GIS}"]`);
   failed?.dispatchEvent(new Event('error'));
-  await screen.findByText('Google sign-in is unavailable here. Use the email link.');
+  await screen.findByText('Google sign-in didn’t load. Check your connection, turn off any blocker for accounts.google.com, and reload.');
   expect(document.querySelector(`script[src="${GIS}"]`)).toBeNull();
   first.unmount();
   render(<GoogleButton google={google} onIdToken={jest.fn()} onError={jest.fn()} />);
