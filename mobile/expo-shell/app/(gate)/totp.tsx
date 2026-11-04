@@ -1,9 +1,9 @@
 import { useState } from 'react';
 
-import { ApiError } from '../src/api/client';
-import { normalizeRecoveryCode, normalizeTotpCode } from '../src/auth/auth';
-import { useAuth } from '../src/auth/AuthProvider';
-import { Button, describeError, Field, Message, Screen, useSubmit } from '../src/ui';
+import { ApiError } from '../../src/api/client';
+import { normalizeRecoveryCode, normalizeTotpCode } from '../../src/auth/auth';
+import { useAuth } from '../../src/auth/AuthProvider';
+import { Button, describeError, Field, Message, Screen, useSubmit } from '../../src/ui';
 
 const INVALID_CODE = "That code didn't work. Codes change every 30 seconds; wait for a new one and try again.";
 
@@ -64,10 +64,11 @@ export default function TotpScreen(): React.JSX.Element {
         />
       ) : null}
       <Button
+        variant="link"
         label={useRecovery ? 'Use an authentication code' : 'Use a recovery code instead'}
         onPress={() => { setUseRecovery((current) => !current); setMessage(null); }}
       />
-      <Button label="Use a different account" onPress={() => { auth.cancelMfa(); }} />
+      <Button variant="link" label="Use a different account" onPress={() => { auth.cancelMfa(); }} />
       {message === null ? null : <Message tone="error">{message}</Message>}
     </Screen>
   );

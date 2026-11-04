@@ -8,7 +8,10 @@ function present(value: string | undefined): string | undefined {
 export default ({ config }: ConfigContext): ExpoConfig => {
   const webUrl = present(process.env.EXPO_PUBLIC_WEB_URL);
   const iosClientId = present(process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID);
-  const plugins: NonNullable<ExpoConfig['plugins']> = ['expo-router', 'expo-secure-store'];
+  const plugins: NonNullable<ExpoConfig['plugins']> = [
+    ['expo-router', { asyncRoutes: { web: true } }],
+    'expo-secure-store',
+  ];
   if (iosClientId !== undefined) {
     const prefix = iosClientId.replace(/\.apps\.googleusercontent\.com$/, '');
     plugins.push([

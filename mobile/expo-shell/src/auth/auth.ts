@@ -118,7 +118,7 @@ export function createAuth(deps: { api: ApiClient; session: Session; store: Auth
         await postSignIn(PATHS.mfaVerify, { mfaToken: state.mfaToken, platform: platformOf(session), ...factor });
       } catch (error) {
         if (error instanceof ApiError && error.code === 'invalid_mfa_token') {
-          store.set({ status: 'signedOut', notice: 'Your sign-in timed out. Start again.' });
+          store.set({ status: 'signedOut', notice: 'That took too long. Sign in again.' });
         }
         throw error;
       }

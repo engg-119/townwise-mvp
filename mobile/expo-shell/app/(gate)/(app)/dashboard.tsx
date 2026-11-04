@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { Link } from 'expo-router';
-import { Text } from 'react-native';
+import { StyleSheet, Text } from 'react-native';
 
-import { useAuth, useAuthState } from '../../src/auth/AuthProvider';
-import { Button, Message, Screen } from '../../src/ui';
+import { useAuth, useAuthState } from '../../../src/auth/AuthProvider';
+import { theme } from '../../../src/theme';
+import { Button, Message, Screen, TextLink } from '../../../src/ui';
 
 export default function Home(): React.JSX.Element {
   const auth = useAuth();
@@ -12,9 +12,10 @@ export default function Home(): React.JSX.Element {
   const email = state.status === 'signedIn' ? state.user.email : '';
   return (
     <Screen>
-      <Text>{email}</Text>
-      <Link href="/security">Security</Link>
+      <Text style={styles.email}>{email}</Text>
+      <TextLink href="/settings/security">Security</TextLink>
       <Button
+        variant="link"
         label="Sign out"
         onPress={() => {
           void auth.signOut().catch(() => { setMessage("Couldn't sign out. Check your connection and try again."); });
@@ -24,3 +25,7 @@ export default function Home(): React.JSX.Element {
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  email: { ...theme.type.h3Phone, color: theme.color.white },
+});

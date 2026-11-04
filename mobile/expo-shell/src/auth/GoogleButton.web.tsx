@@ -1,6 +1,6 @@
 import { createElement, useEffect, useState } from 'react';
-import { Text } from 'react-native';
 
+import { Message } from '../ui';
 import type { GoogleButtonProps } from './GoogleButton';
 
 const GIS_SRC = 'https://accounts.google.com/gsi/client';
@@ -9,7 +9,7 @@ interface Gis {
   accounts: {
     id: {
       initialize: (config: { client_id: string; callback: (response: { credential?: string }) => void }) => void;
-      renderButton: (parent: HTMLElement, options: Record<string, never>) => void;
+      renderButton: (parent: HTMLElement, options: { text: 'continue_with' }) => void;
     };
   };
 }
@@ -74,7 +74,8 @@ export function GoogleButton(props: GoogleButtonProps): React.JSX.Element | null
         });
         initialized = true;
       }
-      accounts.accounts.id.renderButton(node, {});
+      // New and returning users take the same path, so the button reads "Continue with Google".
+      accounts.accounts.id.renderButton(node, { text: 'continue_with' });
     }).catch(() => {
       if (!cancelled) setUnavailable(true);
     });
@@ -85,6 +86,8 @@ export function GoogleButton(props: GoogleButtonProps): React.JSX.Element | null
   }, [google, node, onIdToken]);
 
   if (google === null) return null;
-  if (unavailable) return <Text>Google sign-in is unavailable here. Use the email link.</Text>;
+  if (unavailable) {
+    return <Message tone="error">Google sign-in didn’t load. Check your connection, turn off any blocker for accounts.google.com, and reload.</Message>;
+  }
   return createElement('div', { ref: setNode });
 }

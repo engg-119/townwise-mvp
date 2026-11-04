@@ -8,7 +8,7 @@ afterEach(async () => {
 
 import { ApiError } from '../../src/api/client';
 import { AuthProvider } from '../../src/auth/AuthProvider';
-import MagicLinkScreen from '../../app/auth/magic';
+import MagicLinkScreen from '../../app/(gate)/auth/magic';
 import { fakeAuth } from '../helpers/fakes';
 import type { Auth } from '../../src/auth/auth';
 

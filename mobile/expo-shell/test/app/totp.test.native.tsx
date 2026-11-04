@@ -7,7 +7,7 @@ afterEach(async () => {
 
 import { ApiError } from '../../src/api/client';
 import { AuthProvider } from '../../src/auth/AuthProvider';
-import TotpScreen from '../../app/totp';
+import TotpScreen from '../../app/(gate)/totp';
 import { fakeAuth } from '../helpers/fakes';
 
 function wrap(auth: ReturnType<typeof fakeAuth>): React.ComponentType<{ children: React.ReactNode }> {
@@ -47,5 +47,5 @@ test('lockout copy states a wait only when the server sends Retry-After', async 
   });
   await renderRouter({ totp: TotpScreen }, { initialUrl: '/totp', wrapper: wrap(without) });
   await fireEvent.changeText(screen.getByLabelText('Authentication code'), '123456');
-  expect(await screen.findByText('Try again later.')).toBeTruthy();
+  expect(await screen.findByText('Too many attempts. Try again later.')).toBeTruthy();
 });
