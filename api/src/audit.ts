@@ -47,6 +47,16 @@ export async function recordNotApplied(ctx: TownwiseContext, event: AuditEventIn
   });
 }
 
+/** Runs the effect of the staff action recorded as `event`. If it throws, the record says it did not apply (spec 9.3). */
+export async function applyRecorded<T>(ctx: TownwiseContext, event: AuditEventInput, eventId: string, effect: () => Promise<T>): Promise<T> {
+  try {
+    return await effect();
+  } catch (err) {
+    await recordNotApplied(ctx, event, eventId, 'internal');
+    throw err;
+  }
+}
+
 /** Spec 10.7: what the staff audit log and an organization's recent activity show for one event. */
 export interface AuditEventView {
   id: string; at: string; actorEmail: string; actorRole: string;

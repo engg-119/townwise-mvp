@@ -160,6 +160,26 @@ describe('POST /api/admin/view-as', () => {
     expect(await me(staff)).toMatchObject({ access: { state: 'staff' }, viewAs: null });
   });
 
+  it('when the grant cannot be stored, view_as.started is followed by staff_action.not_applied and no grant exists', async () => {
+    const target = await signIn(server, uniqueEmail('unstored'));
+    const db = server.connection.db;
+    if (db === undefined) throw new Error('not connected');
+    await db.command({ collMod: 'tw_view_as_grants', validator: { $expr: { $eq: [1, 0] } } });
+    try {
+      expect(await errorOf(await start(target.userId))).toEqual({ status: 500, error: 'internal' });
+    } finally {
+      await db.command({ collMod: 'tw_view_as_grants', validator: {} });
+    }
+    const started = (await auditEvents(server)).find((event) => event.action === 'view_as.started'
+      && (event.details as { targetUserId: string }).targetUserId === target.userId);
+    const grantId = (started?.target as { id: string }).id;
+    expect(await grantDoc(grantId)).toBeNull();
+    const events = await eventsOfGrant(grantId);
+    expect(events.map((e) => e.action)).toEqual(['view_as.started', 'staff_action.not_applied']);
+    expect(events[1]?.details).toEqual({ eventId: String(started?._id), code: 'internal' });
+    expect(await me(staff)).toMatchObject({ access: { state: 'staff' }, viewAs: null });
+  });
+
   it('two starts racing on one session leave one live grant, and every grant and every refusal is recorded', async () => {
     // signIn reads the newest captured link, so the targets sign in one at a time; only the starts race.
     const targets: TestSession[] = [];

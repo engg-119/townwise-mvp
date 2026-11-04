@@ -8,7 +8,7 @@ import type { Request, Response } from 'express';
 import { Types } from 'mongoose';
 import { z } from 'zod';
 
-import { auditEventViews, recordAfter, recordBefore, recordNotApplied } from '../audit.ts';
+import { applyRecorded, auditEventViews, recordAfter, recordBefore, recordNotApplied } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import { scopeForNewOrg, scopeForStaffOrg, type Principal, type StaffPrincipal } from '../access/policy.ts';
 import { requestView, type AccessRequestView } from '../access/resolve.ts';
@@ -102,8 +102,9 @@ export async function approveRequest(ctx: TownwiseContext, req: Request, res: Re
       target: { type: 'request', id: requestId },
       details: { orgId },
     };
+    const decision = { orgId, decidedAt: now, decidedBy: staff.actor.userId };
     const eventId = await recordBefore(ctx, event);
-    if (!(await ctx.stores.requests.markApproved(requestId, { orgId, decidedAt: now, decidedBy: staff.actor.userId }))) {
+    if (!(await applyRecorded(ctx, event, eventId, () => ctx.stores.requests.markApproved(requestId, decision)))) {
       await recordNotApplied(ctx, event, eventId, 'request_not_pending');
       throw new AppError(409, 'request_not_pending', 'The request was already decided');
     }
@@ -121,15 +122,19 @@ export async function approveRequest(ctx: TownwiseContext, req: Request, res: Re
     });
   }
   const scope = scopeForNewOrg(staff, org.id);
-  const location = await ctx.stores.locations.ensureByName(scope, {
-    name: body.locationName, town: request.town, createdAt: now, createdBy: staff.actor.userId,
-  });
-  if (location.inserted) {
-    await recordAfter(ctx, {
-      ...actor, at: now, orgId, action: 'location.created',
-      target: { type: 'location', id: location.id },
-      details: { name: body.locationName, townId: request.town.townId },
+  // Step 7 runs only while the organization has no location and no people, so a retry finishes a stopped
+  // approval but never adds a location to an organization in use (spec 3, 6.4), whatever name it sends.
+  if (inserted || (await ctx.stores.locations.count(scope) === 0 && await ctx.stores.members.countSeats(scope) === 0)) {
+    const location = await ctx.stores.locations.ensureByName(scope, {
+      name: body.locationName, town: request.town, createdAt: now, createdBy: staff.actor.userId,
     });
+    if (location.inserted) {
+      await recordAfter(ctx, {
+        ...actor, at: now, orgId, action: 'location.created',
+        target: { type: 'location', id: location.id },
+        details: { name: body.locationName, townId: request.town.townId },
+      });
+    }
   }
   const seat = await ctx.stores.members.insertAdminSeat(scope, {
     userId: requester.id, email: requester.email, joinedAt: now, invitedBy: staff.actor.userId,
@@ -164,7 +169,8 @@ export async function rejectRequest(ctx: TownwiseContext, req: Request, res: Res
     details: { hasMessage: message !== null },
   };
   const eventId = await recordBefore(ctx, event);
-  if (!(await ctx.stores.requests.markRejected(requestId, { decidedAt: now, decidedBy: staff.actor.userId, decisionMessage: message }))) {
+  const decision = { decidedAt: now, decidedBy: staff.actor.userId, decisionMessage: message };
+  if (!(await applyRecorded(ctx, event, eventId, () => ctx.stores.requests.markRejected(requestId, decision)))) {
     await recordNotApplied(ctx, event, eventId, 'request_not_pending');
     throw new AppError(409, 'request_not_pending', 'The request was already decided');
   }

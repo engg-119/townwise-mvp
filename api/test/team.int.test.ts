@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { MeResponse } from '../src/handlers/me.ts';
 import type { AddResult, MemberView } from '../src/handlers/team.ts';
@@ -79,6 +79,21 @@ async function eventsFor(targetId: string): Promise<Record<string, unknown>[]> {
 
 async function activeAdmins(orgId: string): Promise<number> {
   return server.connection.collection('tw_members').countDocuments({ orgId: new Types.ObjectId(orgId), status: 'active', role: 'org_admin' });
+}
+
+/** Runs `change` just before the handler's next tw_members write, as a request racing it would land between its read and its write. */
+async function withChangeBeforeNextWrite(change: () => Promise<unknown>, run: () => Promise<void>): Promise<void> {
+  const model = server.connection.models.TwMember as unknown as { updateOne: (...args: unknown[]) => PromiseLike<unknown> };
+  const updateOne = model.updateOne.bind(model);
+  const spy = vi.spyOn(model, 'updateOne').mockImplementationOnce(async (...args: unknown[]) => {
+    await change();
+    return updateOne(...args);
+  });
+  try {
+    await run();
+  } finally {
+    spy.mockRestore();
+  }
 }
 
 describe('GET /api/org/members', () => {
@@ -297,6 +312,25 @@ describe('PATCH /api/org/members/:memberId (F6)', () => {
     }
   });
 
+  it('a demotion recounts even when the row read as an invitation was claimed before the write', async () => {
+    const { orgId, admin, adminSeat } = await orgWithAdmin('Claimed Invite Org');
+    const inviteId = await addInvite(server, { orgId, email: uniqueEmail('claimer'), invitedBy: admin.session.userId, role: 'org_admin' });
+    const claimer = new Types.ObjectId().toHexString();
+    const members = server.connection.collection('tw_members');
+    // Between the read and the write, the invitee joins and the other admin is demoted.
+    await withChangeBeforeNextWrite(async () => {
+      await members.updateOne({ _id: new Types.ObjectId(inviteId) }, {
+        $set: { status: 'active', userId: claimer, activeUserId: claimer, joinedAt: server.clock.now() }, $unset: { inviteEmail: '' },
+      });
+      await members.updateOne({ _id: new Types.ObjectId(adminSeat) }, { $set: { role: 'member' } });
+    }, async () => {
+      expect(await errorOf(await setRole(admin.session, inviteId, 'member'))).toEqual({ status: 409, error: 'last_admin' });
+    });
+    expect(await memberDoc(server, inviteId)).toMatchObject({ status: 'active', role: 'org_admin' });
+    expect(await activeAdmins(orgId)).toBe(1);
+    expect((await eventsFor(inviteId)).filter((e) => e.action === 'member.role_changed')).toEqual([]);
+  });
+
   it('answers 404 for an unknown, removed or malformed id, and 400 for an unknown role', async () => {
     const { orgId, admin, adminSeat } = await orgWithAdmin('Missing Org');
     const gone = await person('gone');
@@ -350,6 +384,23 @@ describe('DELETE /api/org/members/:memberId (F6, F7)', () => {
     expect(doc).toMatchObject({ status: 'active', activeUserId: admin.session.userId, removedAt: null, removedBy: null });
     expect((await me(admin.session)).access).toMatchObject({ state: 'member', role: 'org_admin' });
     expect((await eventsFor(adminSeat)).filter((e) => e.action === 'member.removed')).toEqual([]);
+  });
+
+  it('a removal recounts even when the person read as a member was promoted before the write', async () => {
+    const { orgId, admin, adminSeat } = await orgWithAdmin('Promoted Org');
+    const member = await person('member');
+    const seat = await addSeat(server, { orgId, userId: member.session.userId, email: member.email });
+    const members = server.connection.collection('tw_members');
+    // Between the read and the write, the member is promoted and the other admin is demoted.
+    await withChangeBeforeNextWrite(async () => {
+      await members.updateOne({ _id: new Types.ObjectId(seat) }, { $set: { role: 'org_admin' } });
+      await members.updateOne({ _id: new Types.ObjectId(adminSeat) }, { $set: { role: 'member' } });
+    }, async () => {
+      expect(await errorOf(await remove(admin.session, seat))).toEqual({ status: 409, error: 'last_admin' });
+    });
+    expect(await memberDoc(server, seat)).toMatchObject({ status: 'active', role: 'org_admin', activeUserId: member.session.userId });
+    expect(await activeAdmins(orgId)).toBe(1);
+    expect((await eventsFor(seat)).filter((e) => e.action === 'member.removed')).toEqual([]);
   });
 
   it('an admin may remove themself while another admin exists', async () => {

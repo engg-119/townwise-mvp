@@ -9,7 +9,7 @@ import type { Request, Response } from 'express';
 import { Types } from 'mongoose';
 import { z } from 'zod';
 
-import { recordAfter, recordBefore, recordNotApplied } from '../audit.ts';
+import { applyRecorded, recordAfter, recordBefore, recordNotApplied } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { Principal, StaffActor } from '../access/policy.ts';
 import { resolveAccess, resolvePerson } from '../access/resolve.ts';
@@ -69,10 +69,10 @@ export async function startViewAs(ctx: TownwiseContext, req: Request, res: Respo
     details: { targetUserId: target.id, targetEmail: target.email, reason: body.reason, expiresAt: expiresAt.toISOString() },
   };
   const eventId = await recordBefore(ctx, event);
-  const inserted = await ctx.stores.grants.insert({
+  const inserted = await applyRecorded(ctx, event, eventId, () => ctx.stores.grants.insert({
     id: grantId, actorUserId: actor.userId, sessionId: actor.sessionId, targetUserId: target.id, orgId,
     reason: body.reason, startedAt: now, expiresAt,
-  });
+  }));
   if (!inserted) {
     // Another tab of this session started a grant at the same moment.
     await recordNotApplied(ctx, event, eventId, 'view_as_active');

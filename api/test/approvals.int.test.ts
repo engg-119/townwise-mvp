@@ -83,15 +83,15 @@ async function tenantCounts(requestId: string): Promise<{ orgs: number; location
   };
 }
 
-/** Makes every audit insert fail at the database, then puts it back. */
-async function withAuditWritesFailing(run: () => Promise<void>): Promise<void> {
+/** Makes every write to `collection` fail at the database, then puts it back. */
+async function withWritesFailing(collection: string, run: () => Promise<void>): Promise<void> {
   const db = server.connection.db;
   if (db === undefined) throw new Error('not connected');
-  await db.command({ collMod: 'tw_audit_events', validator: { $expr: { $eq: [1, 0] } } });
+  await db.command({ collMod: collection, validator: { $expr: { $eq: [1, 0] } } });
   try {
     await run();
   } finally {
-    await db.command({ collMod: 'tw_audit_events', validator: {} });
+    await db.command({ collMod: collection, validator: {} });
   }
 }
 
@@ -235,6 +235,39 @@ describe('POST /api/admin/requests/:requestId/approve (F3)', () => {
     expect((await eventsAbout(person.requestId, orgId.toHexString())).filter((e) => e.action === 'member.joined')).toHaveLength(1);
   });
 
+  it('a retry after a stop between the organization and its first location adds that location and the seat', async () => {
+    const person = await requester('half');
+    const orgId = new Types.ObjectId();
+    await server.connection.collection('tw_access_requests').updateOne(
+      { _id: new Types.ObjectId(person.requestId) },
+      { $set: { status: 'approved', orgId, decidedAt: server.clock.now(), decidedBy: staff.userId } },
+    );
+    await server.connection.collection('tw_orgs').insertOne({
+      _id: orgId, name: 'Half Kitchen', status: 'active', createdAt: server.clock.now(), createdBy: staff.userId,
+      fromRequestId: new Types.ObjectId(person.requestId), suspendedAt: null,
+    });
+    expect((await approve(person.requestId, { orgName: 'Half Kitchen', locationName: 'Main Street' })).status).toBe(200);
+    expect(await tenantCounts(person.requestId)).toEqual({ orgs: 1, locations: 1, seats: 1 });
+    expect((await eventsAbout(person.requestId, orgId.toHexString())).map((e) => e.action))
+      .toEqual(['access_request.created', 'location.created', 'member.joined']);
+  });
+
+  it('a retry never adds a location to an organization in use, whatever name it sends, even after its only location is deleted', async () => {
+    const person = await requester('replay');
+    const res = await approve(person.requestId);
+    expect(res.status).toBe(200);
+    const orgId = (await res.json() as { org: { id: string } }).org.id;
+    const replay = { orgName: 'Replay Kitchen', locationName: 'Second Street' };
+    expect((await approve(person.requestId, replay)).status).toBe(200);
+    expect(await tenantCounts(person.requestId)).toEqual({ orgs: 1, locations: 1, seats: 1 });
+
+    // An org admin may delete the only location (P16); a retry still adds none.
+    await server.connection.collection('tw_locations').deleteMany({ orgId: new Types.ObjectId(orgId) });
+    expect((await approve(person.requestId, replay)).status).toBe(200);
+    expect(await tenantCounts(person.requestId)).toEqual({ orgs: 1, locations: 0, seats: 1 });
+    expect((await eventsAbout(person.requestId, orgId)).filter((e) => e.action === 'location.created')).toHaveLength(1);
+  });
+
   it('a requester who joined another organization before the seat step is 409 requester_has_org; the organization has no admin', async () => {
     const person = await requester('gap');
     const orgId = new Types.ObjectId();
@@ -279,7 +312,7 @@ describe('POST /api/admin/requests/:requestId/approve (F3)', () => {
     const person = await requester('no-audit');
     const before = (await auditEvents(server)).length;
     server.logs.length = 0;
-    await withAuditWritesFailing(async () => {
+    await withWritesFailing('tw_audit_events', async () => {
       expect(await errorOf(await approve(person.requestId))).toEqual({ status: 503, error: 'unavailable' });
       expect(await errorOf(await reject(person.requestId, { message: 'Sentinel decision' }))).toEqual({ status: 503, error: 'unavailable' });
     });
@@ -290,6 +323,18 @@ describe('POST /api/admin/requests/:requestId/approve (F3)', () => {
     expect(failures.map((line) => line.action)).toEqual(['access_request.approved', 'access_request.rejected']);
     expect(failures[0]).toMatchObject({ targetId: person.requestId });
     expect(server.logs.join('\n')).not.toContain(person.email);
+  });
+
+  it('when marking the request fails, the approval event is followed by staff_action.not_applied and nothing is created', async () => {
+    const person = await requester('mark-fails');
+    await withWritesFailing('tw_access_requests', async () => {
+      expect(await errorOf(await approve(person.requestId))).toEqual({ status: 500, error: 'internal' });
+    });
+    expect(await requestDoc(person.requestId)).toMatchObject({ status: 'pending', orgId: null });
+    expect(await tenantCounts(person.requestId)).toEqual({ orgs: 0, locations: 0, seats: 0 });
+    const events = await eventsAbout(person.requestId, null);
+    expect(events.map((e) => e.action)).toEqual(['access_request.created', 'access_request.approved', 'staff_action.not_applied']);
+    expect(events[2]?.details).toEqual({ eventId: String(events[1]?._id), code: 'internal' });
   });
 });
 
@@ -328,6 +373,17 @@ describe('POST /api/admin/requests/:requestId/reject (F4)', () => {
     expect((await reject(person.requestId)).status).toBe(200);
     expect(await errorOf(await reject(person.requestId))).toEqual({ status: 409, error: 'request_not_pending' });
     expect(await errorOf(await reject(new Types.ObjectId().toHexString()))).toEqual({ status: 404, error: 'not_found' });
+  });
+
+  it('when marking the request fails, the rejection event is followed by staff_action.not_applied and the request stays pending', async () => {
+    const person = await requester('reject-fails');
+    await withWritesFailing('tw_access_requests', async () => {
+      expect(await errorOf(await reject(person.requestId, { message: 'Not in our towns yet' }))).toEqual({ status: 500, error: 'internal' });
+    });
+    expect(await requestDoc(person.requestId)).toMatchObject({ status: 'pending', decisionMessage: null });
+    const events = await eventsAbout(person.requestId, null);
+    expect(events.map((e) => e.action)).toEqual(['access_request.created', 'access_request.rejected', 'staff_action.not_applied']);
+    expect(events[2]?.details).toEqual({ eventId: String(events[1]?._id), code: 'internal' });
   });
 
   it('approve and reject racing: one wins, and a losing decision event is followed by staff_action.not_applied', async () => {

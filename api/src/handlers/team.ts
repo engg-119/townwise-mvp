@@ -120,7 +120,10 @@ export async function addMembers(ctx: TownwiseContext, req: Request, res: Respon
   res.status(200).json({ results, members: await teamOf(ctx, caller) });
 }
 
-/** F6, change role: change, recount, revert, so the organization never ends with no active admin. */
+/**
+ * F6, change role: change, recount, revert, so the organization never ends with no active admin. A demotion
+ * recounts whatever status was read, because an invitation can turn into a seat between the read and the write.
+ */
 export async function changeRole(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = orgAdmin(principal);
   const { scope } = caller;
@@ -130,7 +133,7 @@ export async function changeRole(ctx: TownwiseContext, req: Request, res: Respon
   if (member === null) throw notFound();
 
   if (member.role !== role && await ctx.stores.members.setRole(scope, memberId, member.role, role)) {
-    if (member.status === 'active' && member.role === 'org_admin' && await ctx.stores.members.countActiveAdmins(scope) === 0) {
+    if (member.role === 'org_admin' && await ctx.stores.members.countActiveAdmins(scope) === 0) {
       await ctx.stores.members.setRole(scope, memberId, role, member.role);
       throw new AppError(409, 'last_admin', 'The organization needs at least one admin');
     }
@@ -146,7 +149,10 @@ export async function changeRole(ctx: TownwiseContext, req: Request, res: Respon
   res.status(200).json({ member: await memberView(ctx, current, caller.userId) });
 }
 
-/** F6, remove: an invitation is deleted; a seat is removed, recounted and restored if it was the last admin. */
+/**
+ * F6, remove: an invitation is deleted; a seat is removed, recounted and restored if no active admin is left.
+ * Every seat removal recounts, because the role read before the write can be stale.
+ */
 export async function removeMember(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = orgAdmin(principal);
   const { scope } = caller;
@@ -160,7 +166,7 @@ export async function removeMember(ctx: TownwiseContext, req: Request, res: Resp
     if (!(await ctx.stores.members.deleteInvite(scope, memberId))) throw notFound();
   } else {
     if (!(await ctx.stores.members.removeSeat(scope, memberId, { removedAt: now, removedBy: caller.userId }))) throw notFound();
-    if (member.role === 'org_admin' && await ctx.stores.members.countActiveAdmins(scope) === 0) {
+    if (await ctx.stores.members.countActiveAdmins(scope) === 0) {
       await ctx.stores.members.restoreSeat(scope, memberId, member.userId);
       throw new AppError(409, 'last_admin', 'The organization needs at least one admin');
     }
