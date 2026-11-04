@@ -1,0 +1,11 @@
+# Build context for api/Dockerfile (built from the repository root): only the API's sources and manifests.
+# Everything else, including every .env file, node_modules and tests, stays out of the context.
+*
+!package.json
+!package-lock.json
+!.npmrc
+!api/package.json
+!api/production.env
+!api/src/
+!backend/*/package.json
+!backend/*/src/

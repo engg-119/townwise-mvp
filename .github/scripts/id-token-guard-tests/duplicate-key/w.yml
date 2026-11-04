@@ -1,0 +1,8 @@
+on: push
+jobs:
+  x:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    permissions: write-all
+    steps: [{run: echo}]

@@ -1,0 +1,6 @@
+on: push
+jobs:
+  deploy:
+    permissions:
+      id-token: write
+    uses: ./.github/workflows/other.yml

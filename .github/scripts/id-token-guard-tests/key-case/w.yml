@@ -1,0 +1,7 @@
+on: push
+jobs:
+  x:
+    runs-on: ubuntu-24.04
+    Permissions:
+      ID-Token: write
+    steps: [{run: echo}]

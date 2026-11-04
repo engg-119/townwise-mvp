@@ -1,0 +1,68 @@
+name: Security
+
+on:
+  pull_request: # no paths filter, ever
+  schedule:
+    - cron: '23 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  osv-scanner:
+    # Stable check name (infra/README.md lists it); keep it if branch protection is added later.
+    name: osv-scanner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install osv-scanner 2.6.0 (checksum verified)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/osv-scanner" \
+            https://github.com/google/osv-scanner/releases/download/v2.6.0/osv-scanner_linux_amd64
+          echo "ca69b3d3cd08f889a49dc0a383122f71cc528b83803671df5fd874d97485b108  $RUNNER_TEMP/bin/osv-scanner" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/bin/osv-scanner"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Dependencies (any finding fails; exit 128 = no lockfile found, also fails)
+        run: osv-scanner scan source --recursive --config osv-scanner.toml .
+
+  semgrep:
+    # Stable check name (infra/README.md lists it); keep it if branch protection is added later.
+    name: semgrep
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: SAST (WARNING and ERROR fail)
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/src" -w /src \
+            semgrep/semgrep:1.178.0@sha256:32e459968daabe7ab86968184a29109b9564aa00392401156f9788452b42786b \
+            semgrep scan --config p/default --config p/security-audit \
+              --severity WARNING --severity ERROR --error --metrics off --timeout 60 .
+
+  checkov:
+    # Stable check name (infra/README.md lists it); keep it if branch protection is added later.
+    name: checkov
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Terraform under infra/, the workflows and the API Dockerfile (any failed check fails)
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/src" -w /src \
+            bridgecrew/checkov:3.3.29@sha256:3cc125b5337717b7303dbddd4e79374c120687b5ff6a24f9abdad56b562469f3 \
+            --directory infra --directory .github --directory api --framework terraform github_actions dockerfile \
+            --compact --quiet
