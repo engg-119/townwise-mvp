@@ -208,6 +208,8 @@ In Google Cloud console, open APIs & Services, then Credentials:
 
 Put `<web id>,<ios id>` in `AUTH_GOOGLE_CLIENT_IDS` in `api/production.env` (in a pull request), and the same IDs in the repository variables below.
 
+In the same pull request, put the Google addresses of Townwise staff in `TOWNWISE_SUPERADMIN_EMAILS` (comma-separated). The API refuses to start in production while it is empty, so until this is set the new revision never becomes ready and the deploy workflow fails. Each staff account must then turn on two-step sign-in at `/settings/security` before the staff console opens.
+
 ### 12. GitHub (Free plan, private repository)
 
 On GitHub Free a private repository has no environments, environment variables or secrets, deployment branch policies, or branch protection. Teammates keep Read access and send pull requests from forks; only the owner merges to `main`.
