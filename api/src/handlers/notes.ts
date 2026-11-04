@@ -1,0 +1,166 @@
+// Notes, the tuning step (spec 10.5, 12, P14): structured notes per location for what sales can't show. Nothing
+// reads them yet. Authors edit and delete their own; org admins edit and delete any. `detail` is never logged and
+// never copied into an audit event.
+import { objectId } from '@ckeith26/mongo';
+import { AppError, parseInput } from '@ckeith26/server-core';
+import type { Request, Response } from 'express';
+import { z } from 'zod';
+
+import { recordAfter } from '../audit.ts';
+import type { TownwiseContext } from '../app.ts';
+import type { MemberPrincipal, Principal } from '../access/policy.ts';
+import { daysBetween, EARLIEST_DATE, isoDate, plusYears, utcDay } from '../dates.ts';
+import { currentEmail, DELETED_PERSON } from '../people.ts';
+import type { NoteContent, NoteRecord } from '../stores/notes.ts';
+import { loadLocation, memberOf } from './locations.ts';
+import { actorOf } from './team.ts';
+
+/** Spec 12. */
+export interface NoteView extends NoteContent {
+  id: string; createdByEmail: string; createdAt: string; updatedAt: string; canEdit: boolean;
+}
+
+/** Spec 6.7. [CONFIRM: 1,000 notes] */
+const MAX_NOTES = 1000;
+/** An end date at most 366 days after the start. */
+const MAX_SPAN_DAYS = 366;
+const MAX_EXPECTED_GUESTS = 20_000;
+
+const noteBody = z.object({
+  kind: z.enum(['closure', 'private_event', 'opening', 'other']),
+  startDate: isoDate,
+  endDate: isoDate,
+  weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7).nullish(),
+  effect: z.enum(['closed', 'more_guests', 'fewer_guests', 'unknown']),
+  expectedGuests: z.number().int().min(1).max(MAX_EXPECTED_GUESTS).nullish(),
+  detail: z.string().trim().max(280).nullish(),
+});
+
+function invalid(): AppError {
+  return new AppError(400, 'invalid_request', 'Invalid request');
+}
+
+function notFound(): AppError {
+  return new AppError(404, 'not_found', 'Not found');
+}
+
+/**
+ * Spec 12 NoteInput. A missing optional field reads as null, and an empty detail as none. The start date runs from
+ * 2010-01-01 to today plus two years; the end is on or after it, at most 366 days later; weekdays are unique;
+ * expected guests is null when the effect is `closed`; an `other` note needs a detail.
+ */
+function noteContent(raw: unknown, today: string): NoteContent {
+  const body = parseInput(noteBody, raw);
+  const content: NoteContent = {
+    kind: body.kind,
+    startDate: body.startDate,
+    endDate: body.endDate,
+    weekdays: body.weekdays === undefined || body.weekdays === null ? null : [...body.weekdays].sort((a, b) => a - b),
+    effect: body.effect,
+    expectedGuests: body.expectedGuests ?? null,
+    detail: body.detail === undefined || body.detail === null || body.detail === '' ? null : body.detail,
+  };
+  const valid = content.startDate >= EARLIEST_DATE && content.startDate <= plusYears(today, 2)
+    && content.endDate >= content.startDate && daysBetween(content.startDate, content.endDate) <= MAX_SPAN_DAYS
+    && (content.weekdays === null || new Set(content.weekdays).size === content.weekdays.length)
+    && (content.effect !== 'closed' || content.expectedGuests === null)
+    && (content.kind !== 'other' || content.detail !== null);
+  if (!valid) throw invalid();
+  return content;
+}
+
+function canEdit(caller: MemberPrincipal, note: NoteRecord): boolean {
+  return caller.role === 'org_admin' || note.createdBy === caller.userId;
+}
+
+function noteView(note: NoteRecord, createdByEmail: string, caller: MemberPrincipal): NoteView {
+  return {
+    id: note.id,
+    kind: note.kind,
+    startDate: note.startDate,
+    endDate: note.endDate,
+    weekdays: note.weekdays,
+    effect: note.effect,
+    expectedGuests: note.expectedGuests,
+    detail: note.detail,
+    createdByEmail,
+    createdAt: note.createdAt.toISOString(),
+    updatedAt: note.updatedAt.toISOString(),
+    canEdit: canEdit(caller, note),
+  };
+}
+
+/** Audit details for a note: never the detail text (spec 9.2). */
+function noteDetails(locationId: string, note: NoteContent): Record<string, string> {
+  return { locationId, kind: note.kind, startDate: note.startDate, endDate: note.endDate };
+}
+
+/** The note on this location, and the caller may change it: 404 before 403, so another location's note reads as absent. */
+async function editableNote(ctx: TownwiseContext, caller: MemberPrincipal, locationId: string, rawId: unknown): Promise<NoteRecord> {
+  const note = await ctx.stores.notes.find(caller.scope, locationId, parseInput(objectId, rawId));
+  if (note === null) throw notFound();
+  if (!canEdit(caller, note)) throw new AppError(403, 'forbidden', 'Forbidden');
+  return note;
+}
+
+/** GET /api/org/locations/:locationId/notes, sorted by start date. */
+export async function listNotes(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const caller = memberOf(principal);
+  const location = await loadLocation(ctx, caller.scope, req.params.locationId);
+  const notes = await ctx.stores.notes.list(caller.scope, location.id);
+  const authors = [...new Set(notes.map((note) => note.createdBy))];
+  const emails = new Map(await Promise.all(authors.map(async (userId) => [userId, await currentEmail(ctx, userId)] as const)));
+  res.status(200).json({ notes: notes.map((note) => noteView(note, emails.get(note.createdBy) ?? DELETED_PERSON, caller)) });
+}
+
+/** POST /api/org/locations/:locationId/notes. */
+export async function createNote(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const caller = memberOf(principal);
+  const { scope } = caller;
+  const now = ctx.now();
+  const content = noteContent(req.body, utcDay(now));
+  const location = await loadLocation(ctx, scope, req.params.locationId);
+  if (await ctx.stores.notes.count(scope, location.id) >= MAX_NOTES) {
+    throw new AppError(409, 'note_limit', 'This location has reached its note limit');
+  }
+  const note = await ctx.stores.notes.create(scope, location.id, content, { createdBy: caller.userId, now });
+  await recordAfter(ctx, {
+    ...actorOf(caller), at: now, orgId: scope.orgId, action: 'note.created',
+    target: { type: 'note', id: note.id },
+    details: noteDetails(location.id, note),
+  });
+  res.status(201).json({ note: noteView(note, caller.email, caller) });
+}
+
+/** PATCH /api/org/locations/:locationId/notes/:noteId: a full replace, by the author or an org admin. */
+export async function updateNote(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const caller = memberOf(principal);
+  const { scope } = caller;
+  const now = ctx.now();
+  const content = noteContent(req.body, utcDay(now));
+  const location = await loadLocation(ctx, scope, req.params.locationId);
+  const existing = await editableNote(ctx, caller, location.id, req.params.noteId);
+  const note = await ctx.stores.notes.replace(scope, location.id, existing.id, content, now);
+  if (note === null) throw notFound();
+  await recordAfter(ctx, {
+    ...actorOf(caller), at: now, orgId: scope.orgId, action: 'note.updated',
+    target: { type: 'note', id: note.id },
+    details: noteDetails(location.id, note),
+  });
+  res.status(200).json({ note: noteView(note, await currentEmail(ctx, note.createdBy), caller) });
+}
+
+/** DELETE /api/org/locations/:locationId/notes/:noteId, by the author or an org admin. */
+export async function deleteNote(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const caller = memberOf(principal);
+  const { scope } = caller;
+  const location = await loadLocation(ctx, scope, req.params.locationId);
+  const note = await editableNote(ctx, caller, location.id, req.params.noteId);
+  if (!(await ctx.stores.notes.remove(scope, location.id, note.id))) throw notFound();
+  await recordAfter(ctx, {
+    ...actorOf(caller), at: ctx.now(), orgId: scope.orgId, action: 'note.deleted',
+    target: { type: 'note', id: note.id },
+    details: noteDetails(location.id, note),
+  });
+  res.status(204).end();
+}

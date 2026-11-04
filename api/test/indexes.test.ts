@@ -1,0 +1,78 @@
+import { documentDbIndexProblems } from '@ckeith26/mongo';
+import mongoose from 'mongoose';
+import { describe, expect, it } from 'vitest';
+
+import { createTownwiseStores } from '../src/stores/index.ts';
+
+function registered(): mongoose.Connection {
+  const connection = mongoose.createConnection();
+  createTownwiseStores(connection);
+  return connection;
+}
+
+function indexesOf(connection: mongoose.Connection, model: string): [Record<string, unknown>, Record<string, unknown>][] {
+  const found = connection.models[model];
+  if (found === undefined) throw new Error(`${model} is not registered`);
+  return found.schema.indexes();
+}
+
+describe('indexes', () => {
+  it('registers the Townwise models on their tw_ collections', () => {
+    const connection = registered();
+    const collections = Object.values(connection.models).map((model) => model.collection.collectionName).sort();
+    expect(collections).toEqual([
+      'tw_access_requests', 'tw_audit_events', 'tw_locations', 'tw_members', 'tw_notes', 'tw_orgs', 'tw_sales_days',
+      'tw_uploads', 'tw_view_as_grants',
+    ]);
+  });
+
+  it('declares only indexes DocumentDB 5.0 builds', () => {
+    expect(documentDbIndexProblems(registered())).toEqual([]);
+  });
+
+  it('enforces one open invitation per address per organization, and one active organization per person', () => {
+    const members = indexesOf(registered(), 'TwMember');
+    expect(members).toContainEqual([
+      { orgId: 1, inviteEmail: 1 },
+      expect.objectContaining({ unique: true, partialFilterExpression: { inviteEmail: { $type: 'string' } } }),
+    ]);
+    expect(members).toContainEqual([
+      { activeUserId: 1 },
+      expect.objectContaining({ unique: true, partialFilterExpression: { activeUserId: { $type: 'string' } } }),
+    ]);
+  });
+
+  it('enforces one pending request per person, unique location names per organization and one live grant per session', () => {
+    const connection = registered();
+    expect(indexesOf(connection, 'TwAccessRequest')).toContainEqual([
+      { userId: 1 }, expect.objectContaining({ unique: true, partialFilterExpression: { status: 'pending' } }),
+    ]);
+    expect(indexesOf(connection, 'TwLocation')).toContainEqual([
+      { orgId: 1, nameKey: 1 }, expect.objectContaining({ unique: true }),
+    ]);
+    expect(indexesOf(connection, 'TwViewAsGrant')).toContainEqual([
+      { activeSessionId: 1 },
+      expect.objectContaining({ unique: true, partialFilterExpression: { activeSessionId: { $type: 'string' } } }),
+    ]);
+  });
+
+  it('leads every tenant compound index with orgId, except the two seat indexes keyed by the person', () => {
+    const connection = registered();
+    for (const model of ['TwMember', 'TwLocation', 'TwSalesDay', 'TwUpload', 'TwNote']) {
+      for (const [fields] of indexesOf(connection, model)) {
+        const keys = Object.keys(fields);
+        if (keys.length < 2) continue;
+        if (model === 'TwMember' && keys[0] === 'userId') continue;
+        expect(keys[0]).toBe('orgId');
+      }
+    }
+  });
+
+  it('keeps one sales row per location per day, and stores sales rows with strict: throw', () => {
+    const connection = registered();
+    expect(indexesOf(connection, 'TwSalesDay')).toContainEqual([
+      { orgId: 1, locationId: 1, date: 1 }, expect.objectContaining({ unique: true }),
+    ]);
+    expect(connection.models.TwSalesDay?.schema.get('strict')).toBe('throw');
+  });
+});
