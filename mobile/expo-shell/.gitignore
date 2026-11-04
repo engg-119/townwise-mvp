@@ -1,0 +1,14 @@
+.expo/
+.expo-export/
+dist/
+ios/
+android/
+expo-env.d.ts
+.env*
+!.env.example
+*.p8
+*.p12
+*.jks
+*.keystore
+*.mobileprovision
+credentials.json

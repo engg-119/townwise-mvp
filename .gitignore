@@ -9,3 +9,40 @@ __pycache__/
 
 # OS
 .DS_Store
+
+# From camkeith/modules (kit) .gitignore @ d43185ab6ced93ff5265db42983da5cb2086fc0d; keep every line
+node_modules/
+.env*
+!.env.example
+.vitest/
+.expo/
+.expo-export/
+dist/
+coverage/
+.terraform/
+*.tfstate*
+.magic-links
+*.pem
+*.key
+id_rsa
+id_ecdsa
+id_ed25519
+id_dsa
+*.p8
+*.p12
+*.pfx
+*.jks
+*.keystore
+credentials.json
+*service-account*.json
+*serviceAccount*.json
+*adminsdk*.json
+*.tfvars
+*.tfvars.json
+*.tfplan
+tfplan
+*.bson
+*.dump
+*.sql.gz
+settings.local.json
+*recovery-codes*.txt
