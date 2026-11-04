@@ -1,0 +1,6 @@
+on: push
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    permissions: !!str write-all
+    steps: [{run: echo}]

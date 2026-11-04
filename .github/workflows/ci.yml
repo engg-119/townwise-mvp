@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  verify:
+    # Stable check name (infra/README.md lists it); keep it if branch protection is added later.
+    name: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TESTCONTAINERS_RYUK_DISABLED: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run verify
+      - name: Native exports (iOS and Android)
+        run: |
+          set -euo pipefail
+          npm exec --no -w @ckeith26/expo-shell -- expo export --platform ios --output-dir "$RUNNER_TEMP/export-ios"
+          npm exec --no -w @ckeith26/expo-shell -- expo export --platform android --output-dir "$RUNNER_TEMP/export-android"
+
+  terraform:
+    # Stable check name (infra/README.md lists it); keep it if branch protection is added later.
+    name: terraform
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.14.4
+          terraform_wrapper: false
+      - name: Install tflint 0.64.0 (checksum verified)
+        run: |
+          set -euo pipefail
+          curl -fsSL -o "$RUNNER_TEMP/tflint.zip" \
+            https://github.com/terraform-linters/tflint/releases/download/v0.64.0/tflint_linux_amd64.zip
+          echo "cca9d13e2e1d7a2c627af60ff899a3c9b74212899416aeb96ec764d2ef954537  $RUNNER_TEMP/tflint.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/tflint.zip" -d "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: fmt
+        run: terraform fmt -check -recursive
+      - name: init, validate, tflint (azurerm ruleset), test (no backend, mocked providers)
+        env:
+          GITHUB_TOKEN: ${{ github.token }} # read-only; for tflint --init only
+        run: |
+          set -euo pipefail
+          for dir in bootstrap production; do
+            echo "::group::$dir"
+            (
+              cd "$dir"
+              terraform init -backend=false -input=false -lockfile=readonly
+              terraform validate
+              tflint --init
+              tflint
+              env -u GITHUB_TOKEN terraform test
+            )
+            echo "::endgroup::"
+          done
+
+  id-token-guard:
+    # Parses every workflow (PyYAML) and fails unless jobs.deploy in deploy.yml is the only job that can request
+    # an OIDC token. A check, not a gate (GitHub Free has no required checks); the federated credential's
+    # job_workflow_ref match is the server-side control (infra/README.md, step 12).
+    name: id-token-guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the guard's YAML parser (hash-pinned, wheels only)
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/guard"
+          "$RUNNER_TEMP/guard/bin/pip" install --quiet --require-hashes --only-binary :all: \
+            -r .github/scripts/id-token-guard-requirements.txt
+          echo "$RUNNER_TEMP/guard/bin" >> "$GITHUB_PATH"
+      - name: Self-test (the review's bypasses t1 to t4 and deploy.yml misuses must fail)
+        run: .github/scripts/id-token-guard-test.sh
+      - name: Only jobs.deploy in deploy.yml requests id-token
+        run: python3 .github/scripts/id-token-guard.py .github/workflows

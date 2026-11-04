@@ -1,0 +1,7 @@
+on: push
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    permissions:
+      "id\x2dtoken": write
+    steps: [{run: echo}]
