@@ -1,0 +1,388 @@
+// Staff approve and reject access requests (spec F3, F4, 9.3, 10.7).
+import { randomUUID } from 'node:crypto';
+
+import { Types } from 'mongoose';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+
+import type { AdminRequestView } from '../src/handlers/admin.ts';
+import type { MeResponse } from '../src/handlers/me.ts';
+import { AUDIT_DETAIL_KEYS, type AuditAction } from '../src/stores/audit-events.ts';
+import { addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
+import {
+  call, logLines, signIn, signInStaff, STAFF_EMAIL, startTownwiseServer, type TestSession, type TownwiseTestServer,
+} from './helpers/server.ts';
+
+let server: TownwiseTestServer;
+let staff: TestSession;
+
+beforeAll(async () => { server = await startTownwiseServer(); });
+afterAll(async () => { await server.close(); });
+beforeEach(async () => {
+  await server.redis.flushdb();
+  staff = await signInStaff(server);
+});
+afterEach(async () => { await server.authStores.totp.remove(staff.userId); });
+
+const REQUEST = {
+  orgName: 'Harbor Kitchen Group', contactName: 'Pat Sample', contactRole: 'General manager',
+  town: { townId: 'bar-harbor-me' }, locationCount: 3, note: 'Sentinel request note',
+};
+
+interface Requester { email: string; session: TestSession; requestId: string }
+
+function uniqueEmail(name: string): string {
+  return `${name}-${randomUUID().slice(0, 8)}@example.test`;
+}
+
+/** A person who signed in and sent a request through the API. */
+async function requester(name: string): Promise<Requester> {
+  const email = uniqueEmail(name);
+  const session = await signIn(server, email);
+  const res = await call(server, '/api/access-requests', { session, json: REQUEST });
+  expect(res.status).toBe(201);
+  const body = await res.json() as MeResponse;
+  return { email, session, requestId: body.access.state === 'pending' ? body.access.request.id : '' };
+}
+
+function approve(requestId: string, body: unknown = { orgName: 'Harbor Kitchen', locationName: 'Main Street' }, session = staff): Promise<Response> {
+  return call(server, `/api/admin/requests/${requestId}/approve`, { session, json: body });
+}
+
+function reject(requestId: string, body: unknown = {}, session = staff): Promise<Response> {
+  return call(server, `/api/admin/requests/${requestId}/reject`, { session, json: body });
+}
+
+async function errorOf(res: Response): Promise<{ status: number; error: string }> {
+  const body = await res.json() as { error: string };
+  return { status: res.status, error: body.error };
+}
+
+async function me(session: TestSession): Promise<MeResponse> {
+  const res = await call(server, '/api/me', { session });
+  expect(res.status).toBe(200);
+  return await res.json() as MeResponse;
+}
+
+async function requestDoc(requestId: string): Promise<Record<string, unknown> | null> {
+  return server.connection.collection('tw_access_requests').findOne({ _id: new Types.ObjectId(requestId) });
+}
+
+/** Every event about this request, or in the organization it became. */
+async function eventsAbout(requestId: string, orgId: string | null): Promise<Record<string, unknown>[]> {
+  return (await auditEvents(server)).filter((event) =>
+    (event.target as { id: string }).id === requestId || (orgId !== null && String(event.orgId) === orgId));
+}
+
+async function tenantCounts(requestId: string): Promise<{ orgs: number; locations: number; seats: number }> {
+  const orgs = await server.connection.collection('tw_orgs').find({ fromRequestId: new Types.ObjectId(requestId) }).toArray();
+  const orgIds = orgs.map((org) => org._id);
+  return {
+    orgs: orgs.length,
+    locations: await server.connection.collection('tw_locations').countDocuments({ orgId: { $in: orgIds } }),
+    seats: await server.connection.collection('tw_members').countDocuments({ orgId: { $in: orgIds } }),
+  };
+}
+
+/** Makes every audit insert fail at the database, then puts it back. */
+async function withAuditWritesFailing(run: () => Promise<void>): Promise<void> {
+  const db = server.connection.db;
+  if (db === undefined) throw new Error('not connected');
+  await db.command({ collMod: 'tw_audit_events', validator: { $expr: { $eq: [1, 0] } } });
+  try {
+    await run();
+  } finally {
+    await db.command({ collMod: 'tw_audit_events', validator: {} });
+  }
+}
+
+describe('GET /api/admin/requests', () => {
+  it('lists pending requests oldest first, with the requester’s current email, a seat warning and the pending count', async () => {
+    await server.connection.collection('tw_access_requests').deleteMany({});
+    const first = await requester('first');
+    server.clock.advance(1000);
+    const second = await requester('second');
+    const orgId = await createOrg(server, { name: 'Elsewhere Org' });
+    await addSeat(server, { orgId, userId: second.session.userId, email: second.email });
+    const decided = await requester('decided');
+    await server.connection.collection('tw_access_requests').updateOne(
+      { _id: new Types.ObjectId(decided.requestId) },
+      { $set: { status: 'rejected', decidedAt: server.clock.now(), decidedBy: staff.userId, decisionMessage: 'Sentinel decision' } },
+    );
+
+    const res = await call(server, '/api/admin/requests', { session: staff });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { requests: AdminRequestView[]; pendingCount: number };
+    expect(body.pendingCount).toBe(2);
+    expect(body.requests.map((r) => r.id)).toEqual([first.requestId, second.requestId]);
+    expect(body.requests[0]).toEqual({
+      id: first.requestId, orgName: REQUEST.orgName, contactName: REQUEST.contactName, contactRole: REQUEST.contactRole,
+      town: { townId: 'bar-harbor-me', name: 'Bar Harbor', state: 'ME' }, locationCount: 3, note: REQUEST.note,
+      status: 'pending', createdAt: expect.any(String) as string, decidedAt: null, decisionMessage: null,
+      requester: { userId: first.session.userId, email: first.email }, emailAtRequest: first.email,
+      requesterHasOrg: false, decidedBy: null, orgId: null,
+    });
+    expect(body.requests[1]?.requesterHasOrg).toBe(true);
+
+    const rejected = await (await call(server, '/api/admin/requests?status=rejected', { session: staff })).json() as { requests: AdminRequestView[] };
+    expect(rejected.requests).toHaveLength(1);
+    expect(rejected.requests[0]).toMatchObject({ id: decided.requestId, decidedBy: { email: STAFF_EMAIL }, decisionMessage: 'Sentinel decision' });
+    expect(await errorOf(await call(server, '/api/admin/requests?status=everything', { session: staff }))).toEqual({ status: 400, error: 'invalid_request' });
+  });
+});
+
+describe('POST /api/admin/requests/:requestId/approve (F3)', () => {
+  it('creates the organization, its first location in the request’s town and the requester’s admin seat; the requester is a member next', async () => {
+    const person = await requester('owner');
+    const res = await approve(person.requestId, { orgName: '  Harbor Kitchen ', locationName: ' Main  Street ' });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { org: { id: string; name: string }; request: AdminRequestView };
+    const orgId = body.org.id;
+    expect(body.org).toEqual({ id: orgId, name: 'Harbor Kitchen' });
+    expect(body.request).toMatchObject({
+      id: person.requestId, status: 'approved', orgId, decidedAt: server.clock.now().toISOString(),
+      decidedBy: { email: STAFF_EMAIL }, requesterHasOrg: true,
+    });
+
+    const oid = new Types.ObjectId(orgId);
+    expect(await server.connection.collection('tw_orgs').findOne({ _id: oid })).toMatchObject({
+      name: 'Harbor Kitchen', status: 'active', createdAt: server.clock.now(), createdBy: staff.userId,
+      fromRequestId: new Types.ObjectId(person.requestId), suspendedAt: null,
+    });
+    const locations = await server.connection.collection('tw_locations').find({ orgId: oid }).toArray();
+    expect(locations).toHaveLength(1);
+    expect(locations[0]).toMatchObject({
+      name: 'Main  Street', nameKey: 'main street', town: { townId: 'bar-harbor-me', name: 'Bar Harbor', state: 'ME' },
+      createdAt: server.clock.now(), createdBy: staff.userId,
+    });
+    const seats = await server.connection.collection('tw_members').find({ orgId: oid }).toArray();
+    expect(seats).toHaveLength(1);
+    expect(seats[0]).toMatchObject({
+      email: person.email, role: 'org_admin', status: 'active', userId: person.session.userId,
+      activeUserId: person.session.userId, joinedAt: server.clock.now(), invitedBy: staff.userId, addedByStaff: false,
+    });
+    expect(seats[0]).not.toHaveProperty('inviteEmail');
+    expect(await requestDoc(person.requestId)).toMatchObject({ status: 'approved', orgId: oid, decidedBy: staff.userId });
+
+    expect((await me(person.session)).access).toEqual({ state: 'member', org: { id: orgId, name: 'Harbor Kitchen' }, role: 'org_admin' });
+
+    const events = await eventsAbout(person.requestId, orgId);
+    expect(events.map((e) => e.action)).toEqual([
+      'access_request.created', 'access_request.approved', 'org.created', 'location.created', 'member.joined',
+    ]);
+    for (const event of events.slice(1)) {
+      expect(event).toMatchObject({ actorUserId: staff.userId, actorEmail: STAFF_EMAIL, actorRole: 'superadmin', orgId: oid });
+    }
+    expect(events.slice(1).map((e) => e.details)).toEqual([
+      { orgId },
+      { name: 'Harbor Kitchen', via: 'request' },
+      { name: 'Main  Street', townId: 'bar-harbor-me' },
+      { email: person.email, role: 'org_admin' },
+    ]);
+  });
+
+  it('answers 409 request_not_pending for a decided request, 404 for an unknown one, 400 for bad input, and writes nothing', async () => {
+    const person = await requester('decided');
+    expect((await reject(person.requestId)).status).toBe(200);
+    const before = (await auditEvents(server)).length;
+    expect(await errorOf(await approve(person.requestId))).toEqual({ status: 409, error: 'request_not_pending' });
+    expect(await errorOf(await approve(new Types.ObjectId().toHexString()))).toEqual({ status: 404, error: 'not_found' });
+    expect(await errorOf(await approve('not-an-id'))).toEqual({ status: 400, error: 'invalid_request' });
+    const fresh = await requester('fresh');
+    const afterFresh = (await auditEvents(server)).length;
+    for (const body of [{}, { orgName: 'H', locationName: 'Main' }, { orgName: 'Harbor', locationName: '' }, { orgName: 'Harbor', locationName: 'x'.repeat(81) }]) {
+      expect(await errorOf(await approve(fresh.requestId, body))).toEqual({ status: 400, error: 'invalid_request' });
+    }
+    expect((await auditEvents(server)).length).toBe(afterFresh);
+    expect(afterFresh).toBe(before + 1);   // only fresh's access_request.created
+    expect(await requestDoc(fresh.requestId)).toMatchObject({ status: 'pending' });
+    expect(await tenantCounts(person.requestId)).toEqual({ orgs: 0, locations: 0, seats: 0 });
+  });
+
+  it('a requester who already holds a seat is 409 requester_has_org, and nothing is written', async () => {
+    const person = await requester('seated');
+    const orgId = await createOrg(server, { name: 'Already Org' });
+    await addSeat(server, { orgId, userId: person.session.userId, email: person.email });
+    const before = (await auditEvents(server)).length;
+    expect(await errorOf(await approve(person.requestId))).toEqual({ status: 409, error: 'requester_has_org' });
+    expect(await requestDoc(person.requestId)).toMatchObject({ status: 'pending', orgId: null });
+    expect((await auditEvents(server)).length).toBe(before);
+    expect(await tenantCounts(person.requestId)).toEqual({ orgs: 0, locations: 0, seats: 0 });
+  });
+
+  it('a retry completes an approval that stopped after the request was marked, with no second approval event', async () => {
+    const person = await requester('retry');
+    const orgId = new Types.ObjectId();
+    await server.connection.collection('tw_access_requests').updateOne(
+      { _id: new Types.ObjectId(person.requestId) },
+      { $set: { status: 'approved', orgId, decidedAt: server.clock.now(), decidedBy: staff.userId } },
+    );
+    const retryBody = { orgName: 'Retry Kitchen', locationName: 'Retry Street' };
+    const res = await approve(person.requestId, retryBody);
+    expect(res.status).toBe(200);
+    expect((await res.json() as { org: { id: string } }).org.id).toBe(orgId.toHexString());
+    expect(await tenantCounts(person.requestId)).toEqual({ orgs: 1, locations: 1, seats: 1 });
+    expect((await eventsAbout(person.requestId, orgId.toHexString())).map((e) => e.action))
+      .toEqual(['access_request.created', 'org.created', 'location.created', 'member.joined']);
+
+    // Again: nothing new, and a seat the organization later removed is never put back.
+    await server.connection.collection('tw_members').updateOne(
+      { orgId, userId: person.session.userId },
+      { $set: { status: 'removed', removedAt: server.clock.now(), removedBy: 'f'.repeat(24) }, $unset: { activeUserId: '' } },
+    );
+    expect((await approve(person.requestId, retryBody)).status).toBe(200);
+    expect(await tenantCounts(person.requestId)).toEqual({ orgs: 1, locations: 1, seats: 1 });
+    expect(await server.connection.collection('tw_members').findOne({ orgId, userId: person.session.userId })).toMatchObject({ status: 'removed' });
+    expect((await eventsAbout(person.requestId, orgId.toHexString())).filter((e) => e.action === 'member.joined')).toHaveLength(1);
+  });
+
+  it('a requester who joined another organization before the seat step is 409 requester_has_org; the organization has no admin', async () => {
+    const person = await requester('gap');
+    const orgId = new Types.ObjectId();
+    await server.connection.collection('tw_access_requests').updateOne(
+      { _id: new Types.ObjectId(person.requestId) },
+      { $set: { status: 'approved', orgId, decidedAt: server.clock.now(), decidedBy: staff.userId } },
+    );
+    const elsewhere = await createOrg(server, { name: 'Elsewhere' });
+    await addSeat(server, { orgId: elsewhere, userId: person.session.userId, email: person.email });
+    expect(await errorOf(await approve(person.requestId))).toEqual({ status: 409, error: 'requester_has_org' });
+    expect(await tenantCounts(person.requestId)).toEqual({ orgs: 1, locations: 1, seats: 0 });
+    expect((await me(person.session)).access).toMatchObject({ state: 'member', org: { id: elsewhere } });
+  });
+
+  it('concurrent approvals make one organization; every approval event that lost is followed by staff_action.not_applied', async () => {
+    const person = await requester('race');
+    const results = await Promise.all(Array.from({ length: 5 }, (_, i) => approve(person.requestId, { orgName: `Race Kitchen ${String(i)}`, locationName: 'Main' })));
+    const ok = results.filter((res) => res.status === 200);
+    expect(ok.length).toBeGreaterThanOrEqual(1);
+    // A loser sees the request already decided, or (checking after the winner seated them) the requester's new seat.
+    for (const res of results.filter((r) => r.status !== 200)) {
+      expect([{ status: 409, error: 'request_not_pending' }, { status: 409, error: 'requester_has_org' }]).toContainEqual(await errorOf(res));
+    }
+    const orgIds = new Set(await Promise.all(ok.map(async (res) => (await res.json() as { org: { id: string } }).org.id)));
+    expect(orgIds.size).toBe(1);
+    expect(await tenantCounts(person.requestId)).toEqual({ orgs: 1, locations: 1, seats: 1 });
+
+    const events = await auditEvents(server);
+    const approvals = events.filter((e) => e.action === 'access_request.approved' && (e.target as { id: string }).id === person.requestId);
+    const notApplied = events.filter((e) => e.action === 'staff_action.not_applied' && (e.target as { id: string }).id === person.requestId);
+    expect(approvals.length).toBe(1 + notApplied.length);
+    const approvalIds = approvals.map((e) => String(e._id));
+    for (const event of notApplied) {
+      expect(approvalIds).toContain((event.details as { eventId: string }).eventId);
+      expect(event.details).toMatchObject({ code: 'request_not_pending' });
+    }
+    const winner = approvals.find((e) => !notApplied.some((n) => (n.details as { eventId: string }).eventId === String(e._id)));
+    expect((winner?.details as { orgId: string }).orgId).toBe([...orgIds][0]);
+  });
+
+  it('when the audit write fails, the approval is refused with 503 unavailable and nothing changes', async () => {
+    const person = await requester('no-audit');
+    const before = (await auditEvents(server)).length;
+    server.logs.length = 0;
+    await withAuditWritesFailing(async () => {
+      expect(await errorOf(await approve(person.requestId))).toEqual({ status: 503, error: 'unavailable' });
+      expect(await errorOf(await reject(person.requestId, { message: 'Sentinel decision' }))).toEqual({ status: 503, error: 'unavailable' });
+    });
+    expect(await requestDoc(person.requestId)).toMatchObject({ status: 'pending', orgId: null, decisionMessage: null });
+    expect(await tenantCounts(person.requestId)).toEqual({ orgs: 0, locations: 0, seats: 0 });
+    expect((await auditEvents(server)).length).toBe(before);
+    const failures = logLines(server).filter((line) => line.msg === 'townwise.audit_write_failed');
+    expect(failures.map((line) => line.action)).toEqual(['access_request.approved', 'access_request.rejected']);
+    expect(failures[0]).toMatchObject({ targetId: person.requestId });
+    expect(server.logs.join('\n')).not.toContain(person.email);
+  });
+});
+
+describe('POST /api/admin/requests/:requestId/reject (F4)', () => {
+  it('records the decision and the message; the audit event says only whether there was a message; the requester may ask again', async () => {
+    const person = await requester('rejected');
+    const res = await reject(person.requestId, { message: '  We only onboard restaurants in the twelve towns for now. ' });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { request: AdminRequestView };
+    expect(body.request).toMatchObject({
+      status: 'rejected', decisionMessage: 'We only onboard restaurants in the twelve towns for now.',
+      decidedAt: server.clock.now().toISOString(), decidedBy: { email: STAFF_EMAIL }, orgId: null,
+    });
+    expect((await me(person.session)).access).toMatchObject({
+      state: 'rejected', request: { id: person.requestId, decisionMessage: 'We only onboard restaurants in the twelve towns for now.' },
+    });
+    const events = (await eventsAbout(person.requestId, null)).filter((e) => e.action === 'access_request.rejected');
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ actorRole: 'superadmin', actorUserId: staff.userId, orgId: null, details: { hasMessage: true } });
+    expect(JSON.stringify(await auditEvents(server))).not.toContain('twelve towns');
+
+    expect((await call(server, '/api/access-requests', { session: person.session, json: REQUEST })).status).toBe(201);
+  });
+
+  it('without a message, or with a blank one, hasMessage is false and no message is stored', async () => {
+    const person = await requester('silent');
+    expect((await reject(person.requestId, { message: '   ' })).status).toBe(200);
+    expect(await requestDoc(person.requestId)).toMatchObject({ status: 'rejected', decisionMessage: null });
+    const events = (await eventsAbout(person.requestId, null)).filter((e) => e.action === 'access_request.rejected');
+    expect(events[0]?.details).toEqual({ hasMessage: false });
+  });
+
+  it('a decided request is 409 request_not_pending; a message over 500 characters is 400', async () => {
+    const person = await requester('twice');
+    expect(await errorOf(await reject(person.requestId, { message: 'm'.repeat(501) }))).toEqual({ status: 400, error: 'invalid_request' });
+    expect((await reject(person.requestId)).status).toBe(200);
+    expect(await errorOf(await reject(person.requestId))).toEqual({ status: 409, error: 'request_not_pending' });
+    expect(await errorOf(await reject(new Types.ObjectId().toHexString()))).toEqual({ status: 404, error: 'not_found' });
+  });
+
+  it('approve and reject racing: one wins, and a losing decision event is followed by staff_action.not_applied', async () => {
+    for (let round = 0; round < 3; round += 1) {
+      const person = await requester(`decide-${String(round)}`);
+      const results = await Promise.all([approve(person.requestId), reject(person.requestId)]);
+      expect(results.filter((res) => res.status === 200)).toHaveLength(1);
+      const status = (await requestDoc(person.requestId))?.status;
+      expect(['approved', 'rejected']).toContain(status);
+      const events = await auditEvents(server);
+      const decisions = events.filter((e) => ['access_request.approved', 'access_request.rejected'].includes(String(e.action))
+        && (e.target as { id: string }).id === person.requestId);
+      const notApplied = events.filter((e) => e.action === 'staff_action.not_applied' && (e.target as { id: string }).id === person.requestId);
+      expect(decisions.length).toBe(1 + notApplied.length);
+    }
+  });
+});
+
+describe('roles', () => {
+  it('requesters, members and org admins get 403 forbidden on every request route, and nothing changes', async () => {
+    const person = await requester('target');
+    const orgId = await createOrg(server, { name: 'Client Org' });
+    const adminEmail = uniqueEmail('client-admin');
+    const admin = await signIn(server, adminEmail);
+    await addSeat(server, { orgId, userId: admin.userId, email: adminEmail, role: 'org_admin' });
+    const memberEmail = uniqueEmail('client-member');
+    const member = await signIn(server, memberEmail);
+    await addSeat(server, { orgId, userId: member.userId, email: memberEmail });
+
+    for (const session of [person.session, admin, member]) {
+      expect(await errorOf(await call(server, '/api/admin/requests', { session }))).toEqual({ status: 403, error: 'forbidden' });
+      expect(await errorOf(await approve(person.requestId, undefined, session))).toEqual({ status: 403, error: 'forbidden' });
+      expect(await errorOf(await reject(person.requestId, undefined, session))).toEqual({ status: 403, error: 'forbidden' });
+    }
+    expect(await requestDoc(person.requestId)).toMatchObject({ status: 'pending' });
+  });
+
+  it('staff whose two-step sign-in is not set up get staff_setup_required', async () => {
+    const person = await requester('setup');
+    await server.authStores.totp.remove(staff.userId);
+    const unenrolled = await signIn(server, STAFF_EMAIL);
+    expect(await errorOf(await approve(person.requestId, undefined, unenrolled))).toEqual({ status: 403, error: 'staff_setup_required' });
+    expect(await requestDoc(person.requestId)).toMatchObject({ status: 'pending' });
+  });
+});
+
+describe('audit', () => {
+  it('every event written here carries only its action’s allowlisted detail keys, and never a note or decision message', async () => {
+    const events = await auditEvents(server);
+    expect(events.length).toBeGreaterThan(0);
+    for (const event of events) {
+      const allowed: readonly string[] = AUDIT_DETAIL_KEYS[event.action as AuditAction];
+      expect(Object.keys(event.details as object).every((key) => allowed.includes(key))).toBe(true);
+    }
+    const text = JSON.stringify(events);
+    for (const secret of ['Sentinel request note', 'Sentinel decision', 'Pat Sample']) expect(text).not.toContain(secret);
+  });
+});
