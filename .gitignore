@@ -10,6 +10,9 @@ __pycache__/
 # OS
 .DS_Store
 
+# Terraform: the one-time local-state override used before the state bucket exists (infra/README.md)
+backend_override.tf
+
 # From camkeith/modules (kit) .gitignore @ d43185ab6ced93ff5265db42983da5cb2086fc0d; keep every line
 node_modules/
 .env*
