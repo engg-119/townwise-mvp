@@ -1,0 +1,8 @@
+on: push
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    permissions:
+      ? id-token
+      : write
+    steps: [{run: echo}]

@@ -1,0 +1,26 @@
+# Suppressions for the osv-scanner job in .github/workflows/security.yml. Any other finding fails.
+# Every entry says why upgrading cannot close it yet and expires within 30 days; "noisy" is not a reason.
+# When a fix is installable under min-release-age=7, take it (directly or as an exact root `overrides` entry)
+# and delete the entry. If a removed id reappears, something moved backwards: fix it, do not re-list it.
+# Checked 2026-11-04. None of these packages is in the API release or the web bundle; all are build, lint or
+# test tooling (Expo CLI and config, Jest, ESLint).
+
+[[IgnoredVulns]]
+id = "GHSA-3g3m-2fjr-6pw4"
+ignoreUntil = 2026-12-04
+reason = "glob 13.0.6 (@expo/cli, @expo/config, jest-config) and 10.5.0 (test-exclude, archiver-utils) are affected; the only fix is glob 14.0.2, a new major outside every dependent's ^10 or ^13 range, with no 10.x or 13.x patch."
+
+[[IgnoredVulns]]
+id = "GHSA-g3hv-75wg-m249"
+ignoreUntil = 2026-12-04
+reason = "minimatch 10.2.6 (eslint, typescript-estree, glob 13) and 9.0.9 (under glob 10) are affected; the only fix is minimatch 11.0.1, a new major outside the ^9 and ^10 ranges those packages declare, with no 9.x or 10.x patch."
+
+[[IgnoredVulns]]
+id = "GHSA-gcqx-w48m-w2h4"
+ignoreUntil = 2026-12-04
+reason = "deepmerge 4.3.1 (@expo/config, jest-config) has no fixed release; @expo/config drops it in 58.0.10 (2026-10-31, inside the 7-day release-age gate) and jest-config 30.5.2, the newest Jest, still requires it."
+
+[[IgnoredVulns]]
+id = "GHSA-mrhx-c7xc-m3w5"
+ignoreUntil = 2026-12-04
+reason = "zod 3.25.76 is nested under expo for @expo/cli (^3.25.76); the fix is zod 4.6.6, a new major, and @expo/cli drops zod 3 in 58.1.18 (2026-10-31), which min-release-age=7 rejects until 2026-11-07. The app and API use zod 4.6.7."
