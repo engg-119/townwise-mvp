@@ -3,3 +3,4 @@
 - backend/rate-limit @ d43185ab6ced93ff5265db42983da5cb2086fc0d
 - backend/redis @ d43185ab6ced93ff5265db42983da5cb2086fc0d
 - backend/server-core @ d43185ab6ced93ff5265db42983da5cb2086fc0d
+- mobile/expo-shell @ e6460b6dec7c3ae6b63acb00538cf8fc28f120e1
