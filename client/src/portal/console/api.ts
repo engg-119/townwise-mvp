@@ -1,0 +1,110 @@
+import type { ApiClient } from '../../api/client';
+import { meResponseSchema, type MeResponse, type Role } from '../schemas';
+import {
+  addMembersSchema, approvedSchema, auditPageSchema, createdOrgSchema, lookupSchema, memberUpdatedSchema, orgDeletedSchema,
+  orgDetailSchema, orgListSchema, orgUpdatedSchema, peopleSchema, personDeletedSchema, rejectedSchema, requestListSchema,
+  signedOutSchema,
+  type AddResult, type AdminRequest, type AuditPage, type Member, type OrgDetail, type OrgRow, type OrgStatus, type People,
+  type Person, type PersonKind, type RequestList, type RequestStatus, type StaffOrg,
+} from './schemas';
+
+// One function per staff console call (spec 10.7). Pages pass usePortal().api, which re-reads GET /api/me on
+// 409 view_as_active and the staff gate's 403s, so the layout routes again (spec 4.3). Ids go in paths encoded;
+// no email or name goes in a path or query, except the people lookup's `q`, which server-core redacts.
+
+function id(value: string): string {
+  return encodeURIComponent(value);
+}
+
+export function fetchRequests(api: ApiClient, status: RequestStatus): Promise<RequestList> {
+  return api.json(`/api/admin/requests?status=${status}`, requestListSchema);
+}
+
+export function approveRequest(
+  api: ApiClient, requestId: string, input: { orgName: string; locationName: string },
+): Promise<{ org: { id: string; name: string }; request: AdminRequest }> {
+  return api.json(`/api/admin/requests/${id(requestId)}/approve`, approvedSchema, { method: 'POST', body: input });
+}
+
+/** An empty message is left out, so the requester sees none. */
+export async function rejectRequest(api: ApiClient, requestId: string, message: string): Promise<AdminRequest> {
+  const body = message === '' ? {} : { message };
+  return (await api.json(`/api/admin/requests/${id(requestId)}/reject`, rejectedSchema, { method: 'POST', body })).request;
+}
+
+export async function fetchOrgs(api: ApiClient): Promise<OrgRow[]> {
+  return (await api.json('/api/admin/orgs', orgListSchema)).orgs;
+}
+
+export function createOrg(
+  api: ApiClient, input: { name: string; adminEmail: string },
+): Promise<{ org: { id: string; name: string }; result: AddResult }> {
+  return api.json('/api/admin/orgs', createdOrgSchema, { method: 'POST', body: input });
+}
+
+export function fetchOrg(api: ApiClient, orgId: string): Promise<OrgDetail> {
+  return api.json(`/api/admin/orgs/${id(orgId)}`, orgDetailSchema);
+}
+
+export async function updateOrg(api: ApiClient, orgId: string, patch: { name: string } | { status: OrgStatus }): Promise<StaffOrg> {
+  return (await api.json(`/api/admin/orgs/${id(orgId)}`, orgUpdatedSchema, { method: 'PATCH', body: patch })).org;
+}
+
+/** Only a suspended organization (409 org_not_suspended). */
+export async function deleteOrg(api: ApiClient, orgId: string): Promise<void> {
+  await api.json(`/api/admin/orgs/${id(orgId)}`, orgDeletedSchema, { method: 'DELETE' });
+}
+
+export function addOrgMembers(
+  api: ApiClient, orgId: string, input: { emails: string[]; role: Role },
+): Promise<{ results: AddResult[]; members: Member[] }> {
+  return api.json(`/api/admin/orgs/${id(orgId)}/members`, addMembersSchema, { method: 'POST', body: input });
+}
+
+export async function changeOrgMemberRole(api: ApiClient, orgId: string, memberId: string, role: Role): Promise<Member> {
+  const path = `/api/admin/orgs/${id(orgId)}/members/${id(memberId)}` as const;
+  return (await api.json(path, memberUpdatedSchema, { method: 'PATCH', body: { role } })).member;
+}
+
+/** 204: an invitation is deleted, a seat removed. */
+export async function removeOrgMember(api: ApiClient, orgId: string, memberId: string): Promise<void> {
+  await api.request(`/api/admin/orgs/${id(orgId)}/members/${id(memberId)}`, { method: 'DELETE' });
+}
+
+export function fetchPeople(api: ApiClient, kind: PersonKind | null): Promise<People> {
+  return api.json(kind === null ? '/api/admin/people' : `/api/admin/people?kind=${kind}`, peopleSchema);
+}
+
+/** One person by exact email, signed-in-only people included; null when there is none. */
+export async function lookupPerson(api: ApiClient, email: string): Promise<Person | null> {
+  return (await api.json(`/api/admin/people/lookup?q=${encodeURIComponent(email)}`, lookupSchema)).person;
+}
+
+export async function signOutEverywhere(api: ApiClient, userId: string): Promise<number> {
+  return (await api.json(`/api/admin/people/${id(userId)}/sign-out-everywhere`, signedOutSchema, { method: 'POST', body: {} })).revoked;
+}
+
+/** The email goes in the body, never the path, because the server logs URLs. */
+export async function deletePerson(api: ApiClient, email: string): Promise<{ kitUserId: string | null }> {
+  return api.json('/api/admin/people/delete', personDeletedSchema, { method: 'POST', body: { email } });
+}
+
+/** Each filter is left out of the query when undefined or empty. */
+export interface AuditQuery {
+  orgId?: string | undefined;
+  actorUserId?: string | undefined;
+  action?: string | undefined;
+  /** The `nextBefore` of the page before. */
+  before?: string | undefined;
+}
+
+export function fetchAudit(api: ApiClient, query: AuditQuery): Promise<AuditPage> {
+  const params = (['orgId', 'actorUserId', 'action', 'before'] as const)
+    .flatMap((key) => (query[key] === undefined || query[key] === '' ? [] : [`${key}=${encodeURIComponent(query[key])}`]));
+  return api.json(params.length === 0 ? '/api/admin/audit' : `/api/admin/audit?${params.join('&')}`, auditPageSchema);
+}
+
+/** 201 with the target's access and `viewAs` set. */
+export function startViewAs(api: ApiClient, userId: string, reason: string): Promise<MeResponse> {
+  return api.json('/api/admin/view-as', meResponseSchema, { method: 'POST', body: { userId, reason } });
+}
