@@ -1,0 +1,39 @@
+event,kind,start_date,end_date,source_url,confidence,notes
+Winter 2025,term_classes,2025-01-06,2025-03-07,https://web.archive.org/web/2/https://dartmouth.edu/cse/docs/5_year_calendar_07082024.pdf,medium,Dartmouth Conferences & Events 5-year calendar (Jul 2024 version); registrar 2024-25 page 404'd
+Winter 2025,finals,2025-03-10,2025-03-14,https://web.archive.org/web/2/https://dartmouth.edu/cse/docs/5_year_calendar_07082024.pdf,medium,same source
+Spring 2025,term_classes,2025-03-31,2025-06-04,https://web.archive.org/web/2/https://dartmouth.edu/cse/docs/5_year_calendar_03212025.pdf,high,Spring end/exams from Mar 2025 version; start 03-31 from Jul 2024 version
+Spring 2025,finals,2025-06-06,2025-06-10,https://web.archive.org/web/2/https://dartmouth.edu/cse/docs/5_year_calendar_03212025.pdf,high,
+Summer 2025,term_classes,2025-06-26,2025-08-27,https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2025-2026-key-dates,high,Special Saturday class day 2025-06-28
+Summer 2025,finals,2025-08-30,2025-09-02,https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2025-2026-key-dates,high,Labor Day 2025-09-01 no exams
+Fall 2025,term_classes,2025-09-15,2025-11-18,https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2025-2026-key-dates,high,Registrar start date has an unexplained asterisk
+Fall 2025,finals,2025-11-21,2025-11-26,https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2025-2026-key-dates,high,Exams suspended 11-22; scheduled exams end 11-25
+Winter 2026,term_classes,2026-01-05,2026-03-10,https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2025-2026-key-dates,high,MLK Day 2026-01-19
+Winter 2026,finals,2026-03-13,2026-03-17,https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2025-2026-key-dates,high,
+Spring 2026,term_classes,2026-03-30,2026-06-03,https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2025-2026-key-dates,high,Memorial Day 2026-05-25
+Spring 2026,finals,2026-06-05,2026-06-09,https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2025-2026-key-dates,high,
+Summer 2026,term_classes,2026-06-25,2026-08-26,https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027-key-dates,high,
+Summer 2026,finals,2026-08-29,2026-09-01,https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027-key-dates,high,
+Fall 2026,term_classes,2026-09-14,2026-11-17,https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027-key-dates,high,
+Fall 2026,finals,2026-11-20,2026-11-25,https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027-key-dates,high,Outside window end (2026-10-31) but included
+Commencement 2025,commencement,2025-06-15,2025-06-15,https://web.archive.org/web/2/https://dartmouth.edu/cse/docs/5_year_calendar_03212025.pdf,high,Class Day/Baccalaureate 2025-06-14
+Commencement 2026,commencement,2026-06-14,2026-06-14,https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2025-2026-key-dates,high,Class Day/Baccalaureate 2026-06-13
+Green Key 2025,green_key,2025-05-16,2025-05-17,https://web.archive.org/web/2/https://dartmouth.edu/cse/docs/5_year_calendar_03212025.pdf,medium,Fri-Sat per Conferences & Events calendar; weekend events may extend to Sun
+Green Key 2026,green_key,2026-05-15,2026-05-16,https://web.archive.org/web/2/https://www.dartmouth.edu/cse/docs/5_year_calendar_05292026.pdf,medium,Fri-Sat per calendar; Collis page said May 15-17
+Homecoming 2025,homecoming,2025-10-10,2025-10-12,https://web.archive.org/web/2/https://www.dartmouth.edu/cse/docs/5_year_calendar_09162025.pdf,high,Dartmouth Night/Homecoming; football vs Yale Sat 10-11; alumni page says Oct 10-11 (https://home.dartmouth.edu/news/2025/10/get-ready-homecoming-2025)
+Homecoming 2026,homecoming,2026-10-02,2026-10-03,https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf,high,Dartmouth Night Fri 10-02; football vs Penn Sat 10-03
+Winter Carnival 2025,winter_carnival,2025-02-06,2025-02-09,https://web.archive.org/web/2/https://dartmouth.edu/cse/docs/5_year_calendar_07082024.pdf,medium,115th Carnival; secondary search result also stated Feb 6-9 (Dartmouth events page)
+Winter Carnival 2026,winter_carnival,2026-02-05,2026-02-08,https://web.archive.org/web/2/https://www.dartmouth.edu/cse/docs/5_year_calendar_09162025.pdf,medium,Calendar lists Thu-Sun
+Family Weekend 2025,family_weekend,2025-09-26,2025-09-28,https://web.archive.org/web/2/https://www.dartmouth.edu/cse/docs/5_year_calendar_09162025.pdf,high,
+Family Weekend 2026,family_weekend,2026-09-25,2026-09-27,https://web.archive.org/web/2/https://www.dartmouth.edu/cse/docs/5_year_calendar_05292026.pdf,medium,Later Oct 2026 calendar version omits it (past event); football vs Monmouth Sat 9-26
+Fall 2025 orientation,orientation,2025-09-03,2025-09-15,https://web.archive.org/web/2/https://www.dartmouth.edu/cse/docs/5_year_calendar_09162025.pdf,medium,Pre-orientation and Orientation; exact move-in day not found
+Fall 2026 orientation,orientation,2026-09-02,2026-09-14,https://web.archive.org/web/2/https://www.dartmouth.edu/cse/docs/5_year_calendar_05292026.pdf,medium,New Student Programs; exact move-in day not found
+Football vs New Hampshire,football_home,2025-09-20,2025-09-20,https://en.wikipedia.org/wiki/2025_Dartmouth_Big_Green_football_team,medium,1:00pm Memorial Field; also on Dartmouth calendar
+Football vs Yale (Homecoming),football_home,2025-10-11,2025-10-11,https://dartmouthsports.com/news/2025/8/26/football-announces-2025-promotional-schedule,high,1:30pm
+Football vs Columbia,football_home,2025-10-24,2025-10-24,https://en.wikipedia.org/wiki/2025_Dartmouth_Big_Green_football_team,medium,FRIDAY 6:00pm (Dartmouth 5-year calendar says Sat 10-25 which is wrong)
+Football vs Princeton,football_home,2025-11-08,2025-11-08,https://en.wikipedia.org/wiki/2025_Dartmouth_Big_Green_football_team,medium,1:00pm
+Football vs Cornell,football_home,2025-11-15,2025-11-15,https://en.wikipedia.org/wiki/2025_Dartmouth_Big_Green_football_team,medium,1:00pm
+Football vs Monmouth,football_home,2026-09-26,2026-09-26,https://fbschedules.com/dartmouth-adds-merrimack-completes-2026-football-schedule/,medium,1:00pm; Family Weekend
+Football vs Penn (Homecoming),football_home,2026-10-03,2026-10-03,https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf,high,1:30pm
+Football vs Merrimack,football_home,2026-10-17,2026-10-17,https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf,high,1:30pm
+Football vs Harvard,football_home,2026-10-30,2026-10-30,https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf,medium,FRIDAY 7:00pm ESPN; earlier schedule listed Sat 10-31
+Football vs Brown,football_home,2026-11-21,2026-11-21,https://fbschedules.com/dartmouth-adds-merrimack-completes-2026-football-schedule/,medium,"Season finale at Memorial Field, kickoff TBA in sources; also listed at dartmouthsports.com/sports/football/schedule/text; 5th 2026 home game"
