@@ -3,6 +3,8 @@ import { theme } from '../theme';
 // The marketing pages' CSS, from the design mockups, with colors, fonts and curves from the theme.
 // Shared chrome first, then each text page under its own root class (.pg-about and so on): screens
 // stay mounted in the stack, so every rule applies document-wide and page rules must not collide.
+// On phones a link inside running text gets vertical padding, which does not move the lines and makes its
+// tap target 44px tall; it is positioned so that the next line does not cover the lower half.
 
 const c = theme.color;
 const easeOut = `cubic-bezier(${theme.motion.easeOut.join(',')})`;
@@ -143,6 +145,7 @@ const privacy = `
 .pg-privacy .prose strong{color:var(--white);font-weight:600}
 .pg-privacy .prose a{color:var(--white);text-decoration:underline;text-decoration-color:var(--line)}
 .pg-privacy .prose a:hover{color:var(--mint);text-decoration-color:var(--mint)}
+@media (max-width:640px){.pg-privacy .prose a{position:relative;z-index:1;padding-block:13px}}
 .pg-privacy .prose code,.pg-privacy .tbl code{font-family:var(--mono);font-size:13px;line-height:20px;color:var(--white);word-break:break-word}
 .pg-privacy .bul{display:grid;gap:12px}
 .pg-privacy .bul li{position:relative;padding-left:20px;text-wrap:pretty}
@@ -189,6 +192,7 @@ const terms = `
 .pg-terms .prose{margin-top:16px;display:grid;gap:16px;color:var(--text2);text-wrap:pretty}
 .pg-terms .prose a{color:var(--white);text-decoration-color:var(--line)}
 .pg-terms .prose a:hover{color:var(--mint);text-decoration-color:var(--mint)}
+@media (max-width:640px){.pg-terms .prose a{position:relative;z-index:1;padding-block:13px}}
 .pg-terms .bl{display:grid;gap:8px}
 .pg-terms .bl li{position:relative;padding-left:20px}
 .pg-terms .bl li::before{content:"";position:absolute;left:0;top:11px;width:6px;height:6px;background:var(--mint)}
@@ -215,6 +219,7 @@ const security = `
 .pg-security .lead-l{display:grid;gap:8px;align-content:start}
 .pg-security .prose{display:grid;gap:20px;align-content:start;min-width:0}
 .pg-security .prose p{max-width:68ch;color:var(--text2);text-wrap:pretty}
+@media (max-width:640px){.pg-security .prose a{position:relative;z-index:1;padding-block:13px}}
 .pg-security .prose p.lede{font-size:22px;line-height:32px;color:var(--white);max-width:60ch}
 @media (max-width:640px){.pg-security .prose p.lede{font-size:20px;line-height:28px}}
 .pg-security .pts{display:grid;border-top:1px solid var(--border);min-width:0}

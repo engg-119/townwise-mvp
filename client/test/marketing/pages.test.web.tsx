@@ -302,6 +302,12 @@ test('on phones the Privacy and Terms contents keep two columns', () => {
   expect(css).not.toContain('.pg-terms .toc ol{grid-template-columns:minmax(0,1fr)}');
 });
 
+test('on phones a link in running text gets a 44px-tall tap target', () => {
+  for (const page of ['privacy', 'terms', 'security']) {
+    expect(css).toContain(`@media (max-width:640px){.pg-${page} .prose a{position:relative;z-index:1;padding-block:13px}`);
+  }
+});
+
 test('Terms and Security carry the new date, and Security says where Townwise is hosted', () => {
   renderAt('/terms');
   expect(screen.getByText('Effective November 5, 2026.')).toBeTruthy();
