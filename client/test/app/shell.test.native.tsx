@@ -94,7 +94,6 @@ describe('location pages (spec 15.2)', () => {
     ]);
     expect(screen.getByLabelText('Location sections')).toBeTruthy();
     expect(within(tabs).getByRole('link', { name: 'Forecast' }).props.accessibilityState).toMatchObject({ selected: true });
-    expect(screen.getByText('This page is being built.')).toBeTruthy();
     await fireEvent.press(within(tabs).getByRole('link', { name: 'Sales data' }));
     expect(router.getPathname()).toBe('/locations/l1/sales');
     expect(within(screen.getByLabelText('Location sections')).getByRole('link', { name: 'Sales data' }).props.accessibilityState)
@@ -186,7 +185,6 @@ describe('the staff console on native (spec 15.4)', () => {
 
 describe('placeholders (spec 16.1)', () => {
   test.each<[string, string, MeResponse]>([
-    ['/locations/new', 'Add location', meOf(ACCESS.admin)],
     ['/team', 'Team', meOf(ACCESS.admin)],
     ['/settings', 'Settings', meOf(ACCESS.member)],
   ])('%s: its title and one line, in the client app frame', async (path, title, me) => {
@@ -198,12 +196,7 @@ describe('placeholders (spec 16.1)', () => {
   });
 
   test.each<[string, string]>([
-    ['/locations/l1', 'Forecast'],
-    ['/locations/l1/sales', 'Sales data'],
     ['/locations/l1/sales/upload', 'Upload sales history'],
-    ['/locations/l1/notes', 'Notes'],
-    ['/locations/l1/town', 'Town'],
-    ['/locations/l1/settings', 'Location settings'],
   ])('%s: its title and one line, under the location header and tabs', async (path, title) => {
     const { router } = await renderApp(path, fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin') }));
     expect(await screen.findByRole('heading', { name: title })).toBeTruthy();

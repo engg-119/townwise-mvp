@@ -1,7 +1,6 @@
-import { TabPlaceholder } from '../../../../../../src/portal/shell/Page';
+import { Notes } from '../../../../../../src/portal/locations/Notes';
 
-// P14 Notes (/locations/[locationId]/notes, members): docs/portal/spec.md 16.3. Not built yet.
-// Replace this file to build the page; src/portal/README.md lists the shared pieces. Rendered inside the location layout: the header and tabs are already above it.
+// P14 Notes, the tuning step (/locations/[locationId]/notes, members): docs/portal/spec.md 16.3 and 12.
 export default function NotesTab(): React.JSX.Element {
-  return <TabPlaceholder title="Notes" />;
+  return <Notes />;
 }

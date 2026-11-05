@@ -5,11 +5,23 @@ import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text
 import { useAuth } from '../../../../../../src/auth/AuthProvider';
 import { EFFECT_LABEL, formatDates, formatDay, guestsText, KIND_LABEL, weekdaysText } from '../../../../../../src/chat/format';
 import { canSend, useTuningChat, type ChatMessage, type ProposalCard, type TuningChat } from '../../../../../../src/chat/useTuningChat';
+import { useReadOnly } from '../../../../../../src/portal/PortalProvider';
+import { useScrollingHead } from '../../../../../../src/portal/shell/LocationShell';
+import { webAria } from '../../../../../../src/portal/ui/aria';
+import { Button as PortalButton } from '../../../../../../src/portal/ui/Button';
+import { ReadOnlyLine } from '../../../../../../src/portal/ui/feedback';
 import { theme } from '../../../../../../src/theme';
 import { Button, Loading, Message, Screen } from '../../../../../../src/ui';
 
 // The tuning chat for one location (docs/portal/tuning-chat.md, section 7). The logic is in useTuningChat;
 // this file only lays it out. Nothing here animates: new text and the scroll to it appear at once.
+// Under view-as (spec 15.5) staff can read the target's conversations, and every write control (the composer,
+// Send or Stop, Add note, New conversation) stays in place, disabled, described by the one read-only line.
+// On phones the location's header and tabs come from the layout and sit at the top of the thread, so they
+// scroll away and the conversation gets the screen; wider screens keep them above the chat.
+
+const READ_ONLY_ID = 'chat-ro';
+
 export default function TuningChatScreen(): React.JSX.Element {
   const auth = useAuth();
   const router = useRouter();
@@ -17,9 +29,23 @@ export default function TuningChatScreen(): React.JSX.Element {
   const locationId = typeof params.locationId === 'string' ? params.locationId : '';
   const chat = useTuningChat(auth.api, locationId);
   const { state } = chat;
+  const locationHead = useScrollingHead();
   // iOS: the keyboard avoider measures itself from its parent, so it is offset by the header above it.
   const root = useRef<React.ComponentRef<typeof View>>(null);
   const [top, setTop] = useState(0);
+  const head = (
+    <View style={styles.head}>
+      <Button
+        variant="link"
+        label="Back to locations"
+        onPress={() => {
+          if (router.canGoBack()) router.back();
+          else router.replace('/dashboard');
+        }}
+      />
+      <Text role="heading" style={styles.title}>{state.locationName ?? 'Tuning chat'}</Text>
+    </View>
+  );
 
   return (
     <View
@@ -29,38 +55,31 @@ export default function TuningChatScreen(): React.JSX.Element {
     >
       <KeyboardAvoidingView behavior="padding" enabled={Platform.OS === 'ios'} keyboardVerticalOffset={top} style={styles.fill}>
         <Screen>
-          <View style={styles.head}>
-            <Button
-              variant="link"
-              label="Back to locations"
-              onPress={() => {
-                if (router.canGoBack()) router.back();
-                else router.replace('/dashboard');
-              }}
-            />
-            <Text role="heading" style={styles.title}>{state.locationName ?? 'Tuning chat'}</Text>
-          </View>
-          <Body chat={chat} />
+          {locationHead === null ? head : null}
+          <Body chat={chat} top={locationHead === null ? null : <>{locationHead}{head}</>} />
         </Screen>
       </KeyboardAvoidingView>
     </View>
   );
 }
 
-function Body({ chat }: { chat: TuningChat }): React.JSX.Element {
+/** `top`: on phones, the location's header and the chat's own, at the top of what scrolls. */
+function Body({ chat, top }: { chat: TuningChat; top: React.ReactNode }): React.JSX.Element {
   const { state } = chat;
+  const { readOnly, line } = useReadOnly();
   const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
-  if (state.status === 'loading') return <Loading />;
-  if (state.status === 'not_found') return <Message>This location wasn’t found.</Message>;
+  if (state.status === 'loading') return <>{top}<Loading /></>;
+  if (state.status === 'not_found') return <>{top}<Message>This location wasn’t found.</Message></>;
   if (state.status === 'failed') {
     return (
       <>
+        {top}
         <Message tone="error">{state.loadError ?? 'Something went wrong.'}</Message>
         <Button label="Try again" onPress={chat.retry} />
       </>
     );
   }
-  if (!state.enabled) return <Message>The tuning chat isn’t turned on yet.</Message>;
+  if (!state.enabled) return <>{top}<Message>The tuning chat isn’t turned on yet.</Message></>;
 
   const open = state.conversationId !== null || state.messages.length > 0;
   const replying = state.messages.find((message) => message.state === 'streaming');
@@ -69,27 +88,32 @@ function Body({ chat }: { chat: TuningChat }): React.JSX.Element {
     <>
       <ScrollView
         ref={scroll}
+        testID="chat-thread"
         style={styles.fill}
         contentContainerStyle={styles.thread}
         keyboardShouldPersistTaps="handled"
         onContentSizeChange={() => { if (open) scroll.current?.scrollToEnd({ animated: false }); }}
       >
+        {top}
         {open ? (
-          <Button variant="link" label="New conversation" disabled={state.streaming} onPress={chat.newConversation} />
+          readOnly
+            ? <PortalButton variant="link" label="New conversation" disabled describedBy={READ_ONLY_ID} />
+            : <Button variant="link" label="New conversation" disabled={state.streaming} onPress={chat.newConversation} />
         ) : (
           <Conversations chat={chat} />
         )}
         {state.conversationLoading ? <Text style={styles.muted}>Loading the conversation…</Text> : null}
-        {state.messages.map((message) => <MessageView key={message.key} message={message} chat={chat} />)}
+        {state.messages.map((message) => <MessageView key={message.key} message={message} chat={chat} readOnly={readOnly} />)}
         {state.streaming && status !== null ? (
           <Text style={styles.status} accessibilityLiveRegion="polite" aria-live="polite">{status}</Text>
         ) : null}
       </ScrollView>
       {state.error === null ? null : <Message tone="error">{state.error}</Message>}
+      <ReadOnlyLine text={line} nativeID={READ_ONLY_ID} />
       {state.budget?.exhausted === true ? (
         <Message>This month’s chat budget is used up. The chat opens again next month.</Message>
       ) : (
-        <Composer chat={chat} />
+        <Composer chat={chat} readOnly={readOnly} />
       )}
     </>
   );
@@ -122,21 +146,27 @@ function Conversations({ chat }: { chat: TuningChat }): React.JSX.Element {
   );
 }
 
-function MessageView({ message, chat }: { message: ChatMessage; chat: TuningChat }): React.JSX.Element {
+function MessageView({ message, chat, readOnly }: { message: ChatMessage; chat: TuningChat; readOnly: boolean }): React.JSX.Element {
   const user = message.role === 'user';
   return (
     <View style={[styles.message, user && styles.userMessage]}>
       <Text style={styles.label}>{user ? 'You' : 'Assistant'}</Text>
       {message.text === '' ? null : <Text selectable style={styles.text}>{message.text}</Text>}
       {message.proposals.map((card) => (card.status === 'dismissed' ? null : (
-        <ProposalView key={card.key} card={card} onAdd={() => { chat.addNote(message.key, card.key); }} onDismiss={() => { chat.dismiss(message.key, card.key); }} />
+        <ProposalView
+          key={card.key}
+          card={card}
+          readOnly={readOnly}
+          onAdd={() => { chat.addNote(message.key, card.key); }}
+          onDismiss={() => { chat.dismiss(message.key, card.key); }}
+        />
       )))}
       {message.note === null ? null : <Text style={styles.muted}>{message.note}</Text>}
     </View>
   );
 }
 
-function ProposalView(props: { card: ProposalCard; onAdd: () => void; onDismiss: () => void }): React.JSX.Element {
+function ProposalView(props: { card: ProposalCard; readOnly: boolean; onAdd: () => void; onDismiss: () => void }): React.JSX.Element {
   const { card } = props;
   const { proposal } = card;
   const weekdays = weekdaysText(proposal.weekdays);
@@ -153,7 +183,9 @@ function ProposalView(props: { card: ProposalCard; onAdd: () => void; onDismiss:
       {proposal.detail === null ? null : <Text style={styles.detail}>{proposal.detail}</Text>}
       {card.status === 'added' ? <Message>Note added.</Message> : (
         <View style={styles.actions}>
-          <Button label={adding ? 'Adding…' : 'Add note'} disabled={adding} onPress={props.onAdd} />
+          {props.readOnly
+            ? <PortalButton label="Add note" disabled describedBy={READ_ONLY_ID} />
+            : <Button label={adding ? 'Adding…' : 'Add note'} disabled={adding} onPress={props.onAdd} />}
           <Button variant="link" label="Dismiss" disabled={adding} onPress={props.onDismiss} />
         </View>
       )}
@@ -162,8 +194,12 @@ function ProposalView(props: { card: ProposalCard; onAdd: () => void; onDismiss:
   );
 }
 
-function Composer({ chat }: { chat: TuningChat }): React.JSX.Element {
+function Composer({ chat, readOnly }: { chat: TuningChat; readOnly: boolean }): React.JSX.Element {
   const { state } = chat;
+  let action: React.JSX.Element;
+  if (readOnly) action = <PortalButton label={state.streaming ? 'Stop' : 'Send'} disabled describedBy={READ_ONLY_ID} />;
+  else if (state.streaming) action = <Button label="Stop" onPress={chat.stop} />;
+  else action = <Button label="Send" disabled={!canSend(state)} onPress={chat.send} />;
   return (
     <View style={styles.composer}>
       <Text style={styles.fieldLabel}>Message</Text>
@@ -171,17 +207,15 @@ function Composer({ chat }: { chat: TuningChat }): React.JSX.Element {
         accessibilityLabel="Message"
         value={state.draft}
         onChangeText={chat.setDraft}
+        editable={!readOnly}
+        {...webAria({ 'aria-readonly': readOnly ? true : undefined, 'aria-describedby': readOnly ? READ_ONLY_ID : undefined })}
         multiline
         maxLength={4000}
         placeholder="Ask about this location"
         placeholderTextColor={theme.color.text3}
-        style={styles.input}
+        style={[styles.input, readOnly ? styles.inputReadOnly : null]}
       />
-      {state.streaming ? (
-        <Button label="Stop" onPress={chat.stop} />
-      ) : (
-        <Button label="Send" disabled={!canSend(state)} onPress={chat.send} />
-      )}
+      {action}
     </View>
   );
 }
@@ -225,4 +259,5 @@ const styles = StyleSheet.create({
     ...theme.type.sub, minHeight: 44, maxHeight: 160, paddingHorizontal: 12, paddingVertical: 10, color: c.white,
     backgroundColor: c.ground, borderWidth: 1, borderColor: c.line, borderRadius: 0, textAlignVertical: 'top',
   },
+  inputReadOnly: { color: c.text3, borderColor: c.border },
 });
