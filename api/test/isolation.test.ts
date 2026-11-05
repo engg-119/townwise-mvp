@@ -18,8 +18,8 @@ describe('isolation (source)', () => {
       .filter((file) => /^import (?!type )[^;]*from '[./]+(stores\/)?cross-tenant\.ts';/m.test(file.text))
       .map((file) => file.path)
       .sort();
-    // handlers/me.ts holds the join and decline handlers; handlers/admin.ts holds the staff handlers.
-    expect(importers).toEqual(['access/resolve.ts', 'handlers/admin.ts', 'handlers/me.ts']);
+    // handlers/me.ts holds the join and decline handlers; handlers/admin.ts and handlers/deletion.ts hold the staff handlers.
+    expect(importers).toEqual(['access/resolve.ts', 'handlers/admin.ts', 'handlers/deletion.ts', 'handlers/me.ts']);
   });
 
   it('product code answers 401 only through userGone() in access/resolve.ts', () => {

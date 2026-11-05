@@ -36,6 +36,8 @@ export interface ChatUsageStore {
   costMicroUsd(scope: OrgScope, month: string): Promise<number>;
   /** Adds a cost to the month, creating its document on first use. */
   add(scope: OrgScope, month: string, costMicroUsd: number, now: Date): Promise<void>;
+  /** Organization deletion (spec 10.7). Resolves the number deleted. */
+  removeForOrg(scope: OrgScope): Promise<number>;
 }
 
 export function createChatUsageStore(connection: Connection): ChatUsageStore {
@@ -55,6 +57,9 @@ export function createChatUsageStore(connection: Connection): ChatUsageStore {
         if (!isDuplicateKeyError(err)) throw err;
         await Usage.updateOne(filter, update);
       }
+    },
+    async removeForOrg(scope) {
+      return (await Usage.deleteMany({ orgId: new Types.ObjectId(scope.orgId) })).deletedCount;
     },
   };
 }
