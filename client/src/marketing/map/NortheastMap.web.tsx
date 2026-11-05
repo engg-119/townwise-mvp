@@ -12,7 +12,7 @@ import {
   shownMonth, valueAt, type MapTown,
 } from './mapState';
 import { mapCss } from './mapStyles.web';
-import { cursorX, finale, moveSentence, NE_SPARK_D, PIN_EXTRA, railFill, storyBox } from './story';
+import { cursorX, finale, flowOf, glyphOf, moveAt, moveSentence, NE_SPARK_D, PIN_EXTRA, placeTags, railFill, storyBox, titleBox } from './story';
 import { storyCss } from './storyStyles.web';
 import { TownPanel } from './TownPanel.web';
 
@@ -87,6 +87,10 @@ function railClass(index: number, month: number): string | undefined {
   return index === month ? 'is-c' : undefined;
 }
 
+// What the moving dots mean, and with reduced motion the + and − that replace them (CSS shows one).
+const FLOW_MOTION = 'Dots pulling in: restaurant and bar jobs up since last month, compared with the Northeast. Pushing out: down.';
+const FLOW_GLYPHS = '+ or − beside a dot: restaurant and bar jobs up or down since last month, compared with the Northeast.';
+
 function Legend(props: { className: string }): React.JSX.Element {
   return (
     <div className={props.className}>
@@ -99,13 +103,17 @@ function Legend(props: { className: string }): React.JSX.Element {
         <li><span className="sw sw-sz s-hi" aria-hidden="true" />{fmt1(MAX_ABS_GAP)}</li>
       </ul>
       <p>Dashed outline: the town’s county</p>
+      <p className="lg-fl"><span className="lg-fl-m">{FLOW_MOTION}</span><span className="lg-fl-r">{FLOW_GLYPHS}</span></p>
     </div>
   );
 }
 
-// What the story measures: the pinned map's width (value tags are placed in it) and the band.
+// What the story measures: the pinned map's width and the story's and window's (value tags are placed in the
+// map, clear of the title when it reaches over the flat map), and the band.
 interface Fit {
   mw: number;
+  width: number;
+  windowWidth: number;
   band: Band;
 }
 
@@ -142,11 +150,11 @@ function fitStory(parts: StoryParts, root: HTMLElement | null, wide: boolean): F
     extra = measured;
     box = apply(extra);
   }
-  return { mw: box.mw, band: wide ? CENTER_BAND : phoneBand(height, parts.pin.offsetHeight) };
+  return { mw: box.mw, width, windowWidth: window.innerWidth, band: wide ? CENTER_BAND : phoneBand(height, parts.pin.offsetHeight) };
 }
 
 function sameFit(a: Fit, b: Fit): boolean {
-  return a.mw === b.mw && a.band.top === b.band.top && a.band.bottom === b.band.bottom && a.band.unit === b.band.unit;
+  return a.mw === b.mw && a.width === b.width && a.windowWidth === b.windowWidth && a.band.top === b.band.top && a.band.bottom === b.band.bottom && a.band.unit === b.band.unit;
 }
 
 // The homepage map (ConsoleV2.dc.html) as a scroll-driven story: the title over the state outlines, the region,
@@ -283,6 +291,15 @@ export function NortheastMap(props: { head?: React.ReactNode; lead?: React.React
   const valueFade = flip('fa', state.monthTick);
   const tick = flip('tl', state.monthTick);
   const mon = `${monthLabel(month)} ${String(DATA_YEAR)}`;
+  // From January on, the month's movers: value tags on the three biggest, and the job flows (particles, or with
+  // reduced motion a + or −). Particles run only when the scroll moved the month, and replay on every step.
+  const moving = state.story && state.ss >= 3 && month > 0;
+  const flows = moving && !reduced && state.mby === 'scroll';
+  const glyphs = moving && reduced;
+  const burst = state.ssTick % 2 === 1 ? 'fl-a' : 'fl-b';
+  const mapWidth = fit === null ? 0 : state.story || wide ? fit.mw : Math.min(1040, fit.width);
+  const avoid = fit !== null && !state.story && wide ? [titleBox(fit.windowWidth, fit.width, fit.mw)] : [];
+  const tags = month > 0 && (moving || !state.story) ? placeTags(month, mapWidth, avoid) : null;
 
   // A list selection keeps focus on its button; a marker click moves focus there. Under 900px the card
   // sits under the list, so it is brought into view, without animating for the keyboard.
@@ -347,8 +364,12 @@ export function NortheastMap(props: { head?: React.ReactNode; lead?: React.React
                 </svg>
                 <div className="ov">
                   {stateShapes.map((shape) => <span key={shape.abbr} className="st" aria-hidden="true" style={place(shape.label)}>{shape.abbr}</span>)}
-                  {mapTowns.map((town) => {
+                  {mapTowns.map((town, index) => {
                     const k = markerScale(valueAt(town.series.gap, month));
+                    const delta = moveAt(town.series.gap, month);
+                    const flow = flows ? flowOf(index, delta) : null;
+                    const glyph = glyphs ? glyphOf(delta) : null;
+                    const value = tags?.get(town.id);
                     const side = town.shape.labelSide;
                     const hovered = state.hover === town.id;
                     const style = {
@@ -366,6 +387,13 @@ export function NortheastMap(props: { head?: React.ReactNode; lead?: React.React
                           <span className="dot" />
                         </button>
                         <span className="mtag" aria-hidden="true">{town.label}</span>
+                        {value !== undefined && <span className={`vtag vs-${value.side}`} aria-hidden="true">{value.text}</span>}
+                        {glyph !== null && <span className={glyph === '+' ? 'mk-g g-up' : 'mk-g g-dn'} aria-hidden="true">{glyph}</span>}
+                        {flow !== null && (
+                          <span className={`fl fl-${flow.dir} ${burst}`} aria-hidden="true">
+                            {flow.points.map((point) => <span key={point.j} className="pt" style={{ '--a': `${String(point.a)}deg`, '--d': `${String(point.d)}px`, '--j': point.j } as React.CSSProperties} />)}
+                          </span>
+                        )}
                       </div>
                     );
                   })}
@@ -423,6 +451,10 @@ export function NortheastMap(props: { head?: React.ReactNode; lead?: React.React
               <div className="st-c">
                 <h2 className="h3">Now the towns.</h2>
                 <p>In the counties around some of these towns, they keep their own. Filled dots: counties where restaurant and bar jobs break from the region’s monthly pattern. Outlined: counties that move with it. The bigger the dot, the bigger that month’s gap.</p>
+                <p className="st-ph">
+                  <span className="lg-fl-m">Month by month, small dots pull in toward a town when its county’s restaurant and bar jobs rose against the Northeast since the month before, and push out when they fell.</span>
+                  <span className="lg-fl-r">Month by month, a + or − beside a dot shows its county’s restaurant and bar jobs up or down against the Northeast since the month before.</span>
+                </p>
               </div>
             </div>
             {MONTH_NAMES.map((name, index) => (

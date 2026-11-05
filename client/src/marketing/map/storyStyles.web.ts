@@ -95,6 +95,34 @@ const panel = `
 .twmap .app.is-sm .dot{transition:transform 360ms cubic-bezier(0.34,1.25,0.64,1)}
 `;
 
+// From January on, the month's movers. Flows of jobs, not people: a dot pulls particles in when its county's
+// restaurant and bar jobs rose against the Northeast since last month and pushes them out when they fell; radial
+// only, up to 6 a town, one 700ms burst per step (fl-a and fl-b flip on every step, backward too, so it replays);
+// transform and opacity only. Value tags sit on the month's three biggest movers. With reduced motion there are no
+// particles: a + or − beside each dot that moved 4 points or more, and the legend and step 2 say so instead.
+const movers = `
+.twmap .fl{position:absolute;left:0;top:0;width:0;height:0;pointer-events:none}
+.twmap .pt{position:absolute;left:-2px;top:-2px;width:4px;height:4px;border-radius:50%;opacity:0}
+.twmap .fl-in .pt{background:var(--mint)}.twmap .fl-out .pt{background:var(--text2)}
+@keyframes twFlInA{0%{opacity:0;transform:rotate(var(--a)) translateX(var(--d))}25%{opacity:1}100%{opacity:0;transform:rotate(var(--a)) translateX(6px) scale(.6)}}
+@keyframes twFlInB{0%{opacity:0;transform:rotate(var(--a)) translateX(var(--d))}25%{opacity:1}100%{opacity:0;transform:rotate(var(--a)) translateX(6px) scale(.6)}}
+@keyframes twFlOutA{0%{opacity:0;transform:rotate(var(--a)) translateX(8px)}25%{opacity:1}100%{opacity:0;transform:rotate(var(--a)) translateX(var(--d)) scale(.6)}}
+@keyframes twFlOutB{0%{opacity:0;transform:rotate(var(--a)) translateX(8px)}25%{opacity:1}100%{opacity:0;transform:rotate(var(--a)) translateX(var(--d)) scale(.6)}}
+.twmap .fl-in.fl-a .pt{animation:twFlInA 700ms var(--eo) calc(var(--j) * 30ms) both}.twmap .fl-in.fl-b .pt{animation:twFlInB 700ms var(--eo) calc(var(--j) * 30ms) both}
+.twmap .fl-out.fl-a .pt{animation:twFlOutA 700ms var(--eo) calc(var(--j) * 30ms) both}.twmap .fl-out.fl-b .pt{animation:twFlOutB 700ms var(--eo) calc(var(--j) * 30ms) both}
+.twmap .mk-g{display:none;position:absolute;left:calc(var(--r) + 2px);top:calc(-1 * var(--r) - 12px);font-family:var(--mono);font-weight:500;font-size:12px;line-height:12px;color:var(--white);pointer-events:none}
+.twmap .vtag{position:absolute;z-index:2;white-space:nowrap;font-family:var(--mono);font-size:12px;line-height:16px;color:var(--white);background:var(--ground);border:1px solid var(--border);padding:1px 6px;pointer-events:none}
+.twmap .vtag.vs-right{left:calc(var(--r) + 6px);top:0;transform:translateY(-50%)}
+.twmap .vtag.vs-left{right:calc(var(--r) + 6px);top:0;transform:translateY(-50%)}
+.twmap .vtag.vs-above{bottom:calc(var(--r) + 6px);left:0;transform:translateX(-50%)}
+.twmap .vtag.vs-below{top:calc(var(--r) + 6px);left:0;transform:translateX(-50%)}
+.twmap .app:not(.is-local) .vtag,.twmap .app.is-zoomed .vtag,.twmap .mk-pos.is-hov .vtag{opacity:0}
+.twmap .lg-fl-r{display:none}
+@media (min-width:1024px){.twmap .st-ph{display:none}}
+.twmap .story.is-flat .st-ph{display:none}
+@media (prefers-reduced-motion:reduce){.twmap .fl{display:none}.twmap .mk-g{display:block}.twmap .lg-fl-m{display:none}.twmap .lg-fl-r{display:inline}}
+`;
+
 // A change made from the keyboard does not animate. Reduced motion keeps the fades and drops the movement: the
 // month still follows the scroll, in steps, with no rail fill, cursor slide, month tick or dot easing.
 const motion = `
@@ -102,4 +130,4 @@ const motion = `
 @media (prefers-reduced-motion:reduce){.twmap .tl-fill,.twmap .tl-cur,.twmap .app.is-sm .dot{transition:none}.twmap .tl-m.tl-a,.twmap .tl-m.tl-b,.twmap .tl-line.tl-a,.twmap .tl-line.tl-b,.twmap .ptl-m.tl-a,.twmap .ptl-m.tl-b{animation:none}}
 `;
 
-export const storyCss = skeleton + wide + narrow + panel + motion;
+export const storyCss = skeleton + wide + narrow + panel + movers + motion;

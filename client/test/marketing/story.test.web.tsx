@@ -4,7 +4,7 @@ import { ScrollRoot } from '../../src/marketing/MarketingShell.web';
 import { MONTHS } from '../../src/marketing/map/countyData';
 import { mapTowns, markerScale, MONTH_NAMES } from '../../src/marketing/map/mapState';
 import { NortheastMap } from '../../src/marketing/map/NortheastMap.web';
-import { cursorX, finale, moveSentence, railFill } from '../../src/marketing/map/story';
+import { cursorX, finale, flowOf, moveAt, moveSentence, placeTags, railFill, titleBox } from '../../src/marketing/map/story';
 import { storyCss } from '../../src/marketing/map/storyStyles.web';
 
 const BAND = { top: 405, bottom: 495, left: 0, right: 1280, width: 1280, height: 90 };
@@ -361,6 +361,101 @@ test('on a phone the band is the middle tenth of the window below the pinned map
   expect(story.style.getPropertyValue('--story-mw')).toBe('280px');
   expect(first.disconnected).toBe(true);
   expect(band().options?.rootMargin).toBe('-486px 0px -146px 0px');
+});
+
+// Each marker's movers: its value tag, its glyph and its particles.
+function movers(): { name: string; tag: string | null; glyph: string | null; flow: string | null; points: string[] }[] {
+  return [...document.querySelectorAll<HTMLElement>('.mk-pos')].map((element) => ({
+    name: element.querySelector('.mtag')?.textContent ?? '',
+    tag: element.querySelector('.vtag')?.textContent ?? null,
+    glyph: element.querySelector('.mk-g')?.textContent ?? null,
+    flow: element.querySelector('.fl')?.className ?? null,
+    points: [...element.querySelectorAll<HTMLElement>('.pt')].map((point) => ['--a', '--d', '--j'].map((name) => point.style.getPropertyValue(name)).join(' ')),
+  }));
+}
+
+test('from February each step bursts job flows that replay on every step, backward too; picked months and January have none', () => {
+  installObserver();
+  media({ wide: true, reduce: false });
+  renderStory();
+  step(3);
+  expect(document.querySelectorAll('.pt')).toHaveLength(0);
+  step(4);
+  expect(document.querySelectorAll('.pt')).toHaveLength(15);
+  const february = movers();
+  mapTowns.forEach((town, index) => {
+    const flow = flowOf(index, moveAt(town.series.gap, 1));
+    const shown = february[index];
+    expect(shown?.points).toEqual(flow?.points.map((point) => `${String(point.a)}deg ${String(point.d)}px ${String(point.j)}`) ?? []);
+    if (flow !== null) expect(shown?.flow).toMatch(new RegExp(`^fl fl-${flow.dir} fl-[ab]$`));
+  });
+  expect(document.querySelectorAll('.mk-g')).toHaveLength(0);
+  const burst = (): string | undefined => document.querySelector('.fl')?.className.split(' ').at(-1);
+  const first = burst();
+  step(5);
+  expect(document.querySelectorAll('.pt')).toHaveLength(18);
+  const second = burst();
+  expect(second).not.toBe(first);
+  // Back up a step: the class flips again, so February's burst plays again.
+  step(4);
+  expect(burst()).not.toBe(second);
+  // A month picked by hand never starts a burst.
+  fireEvent.click(within(screen.getByRole('radiogroup', { name: 'Month' })).getByRole('radio', { name: 'Jun' }), { detail: 1 });
+  expect(document.querySelectorAll('.pt')).toHaveLength(0);
+});
+
+test('with reduced motion the month still follows the scroll, with a + or − instead of particles and no draw-in', () => {
+  installObserver();
+  media({ wide: true, reduce: true });
+  const { frame } = renderStory();
+  expect(frame.className).toBe('app app-a is-region');
+  expect(document.querySelector('.m-draw')).toBeNull();
+  step(4);
+  expect(listHeader()).toBe('Gap in Feb 2024');
+  expect(document.querySelectorAll('.pt, .fl')).toHaveLength(0);
+  expect(movers().filter((marker) => marker.glyph !== null).map((marker) => [marker.name, marker.glyph])).toEqual([
+    ['Amherst, MA', '+'], ['Ithaca, NY', '+'], ['State College, PA', '+'],
+  ]);
+  step(5);
+  expect(movers().filter((marker) => marker.glyph !== null).map((marker) => marker.glyph)).toEqual(['−', '−', '−', '−', '−', '−']);
+});
+
+test('the legend and, on phones, step 2 say what the moving dots or the + and − mean; CSS shows the one that applies', () => {
+  installObserver();
+  renderStory();
+  const legend = document.querySelector('.lg-fl');
+  expect(legend?.querySelector('.lg-fl-m')?.textContent).toBe('Dots pulling in: restaurant and bar jobs up since last month, compared with the Northeast. Pushing out: down.');
+  expect(legend?.querySelector('.lg-fl-r')?.textContent).toBe('+ or − beside a dot: restaurant and bar jobs up or down since last month, compared with the Northeast.');
+  const towns = slot(2).querySelector('.st-ph');
+  expect(towns?.querySelector('.lg-fl-m')?.textContent).toBe('Month by month, small dots pull in toward a town when its county’s restaurant and bar jobs rose against the Northeast since the month before, and push out when they fell.');
+  expect(towns?.querySelector('.lg-fl-r')?.textContent).toBe('Month by month, a + or − beside a dot shows its county’s restaurant and bar jobs up or down against the Northeast since the month before.');
+  expect(storyCss).toContain('@media (min-width:1024px){.twmap .st-ph{display:none}}');
+  expect(storyCss).toContain('@media (prefers-reduced-motion:reduce){.twmap .fl{display:none}.twmap .mk-g{display:block}.twmap .lg-fl-m{display:none}.twmap .lg-fl-r{display:inline}}');
+  expect(storyCss).toContain('.twmap .fl-in.fl-a .pt{animation:twFlInA 700ms var(--eo) calc(var(--j) * 30ms) both}');
+});
+
+test('value tags mark the month’s biggest movers inside the pinned map, and clear the title over the flat map', () => {
+  installObserver();
+  Object.defineProperty(window, 'ResizeObserver', { configurable: true, writable: true, value: FakeResizeObserver });
+  media({ wide: true, reduce: false });
+  layout.width = { story: 1280 };
+  layout.height = { tw: 900 };
+  renderStory();
+  step(2);
+  expect(document.querySelectorAll('.vtag')).toHaveLength(0);
+  step(4);
+  const expected = [...placeTags(1, 732)].map(([id, tag]) => [mapTowns.find((town) => town.id === id)?.label, tag.text, `vtag vs-${tag.side}`]);
+  expect(expected).toHaveLength(3);
+  const shown = [...document.querySelectorAll<HTMLElement>('.vtag')].map((tag) => [tag.closest('.mk-pos')?.querySelector('.mtag')?.textContent, tag.textContent, tag.className]);
+  expect(shown.sort()).toEqual(expected.sort());
+  cleanup();
+
+  // Flat and wide (no observer), the title reaches over the July map's northwest corner.
+  Reflect.deleteProperty(window, 'IntersectionObserver');
+  renderStory();
+  const title = titleBox(window.innerWidth, 1280, 732);
+  const flat = [...placeTags(6, 732, [title]).values()].map((tag) => tag.text).sort();
+  expect([...document.querySelectorAll('.vtag')].map((tag) => tag.textContent).sort()).toEqual(flat);
 });
 
 test('a town picked mid-story keeps its zoom while the scroll moves the month, and Back returns to the step', () => {
