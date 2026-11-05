@@ -199,6 +199,44 @@ describe('P17 Team: adding addresses (F5)', () => {
     expect(writes(api)).toEqual([]);
   });
 
+  test('an entry over 320 characters stops in the form with nothing sent; one of exactly 320 goes', async () => {
+    const { api } = adminApi();
+    api.answers['/api/org/members'] = () => ({ results: [{ email: 'cook@example.com', outcome: 'invited' }], members: TEAM });
+    await renderApp('/team', api);
+    await screen.findByText('manager@example.com');
+    await fireEvent.changeText(screen.getByLabelText('Email addresses'), `cook@example.com\n${'x'.repeat(309)}@example.com`);
+    await fireEvent.press(screen.getByRole('button', { name: 'Add' }));
+    expect(screen.getByText('Each address can be up to 320 characters.')).toBeTruthy();
+    expect(writes(api)).toEqual([]);
+    const edge = `${'x'.repeat(308)}@example.com`;
+    await fireEvent.changeText(screen.getByLabelText('Email addresses'), `cook@example.com\n${edge}`);
+    await fireEvent.press(screen.getByRole('button', { name: 'Add' }));
+    expect(await screen.findByLabelText('Results of adding addresses')).toBeTruthy();
+    expect(screen.queryByText('Each address can be up to 320 characters.')).toBeNull();
+    expect(writes(api)[0]?.body).toEqual({ emails: ['cook@example.com', edge], role: 'member' });
+  });
+
+  test('a successful Add clears the last role change or removal line above the table', async () => {
+    const { api, routes } = adminApi();
+    api.answers['/api/org/members/m2'] = () => ({ member: { ...MANAGER, role: 'org_admin' } });
+    routes.requests['DELETE /api/org/members/m3'] = noContent;
+    api.answers['/api/org/members'] = () => ({ results: [{ email: 'cook@example.com', outcome: 'invited' }], members: TEAM });
+    await renderApp('/team', api);
+    await screen.findByText('manager@example.com');
+    await fireEvent.press(screen.getByRole('button', { name: 'Make admin, manager@example.com' }));
+    expect(await screen.findByText('Saved.')).toBeTruthy();
+    await fireEvent.changeText(screen.getByLabelText('Email addresses'), 'cook@example.com');
+    await fireEvent.press(screen.getByRole('button', { name: 'Add' }));
+    expect(await screen.findByLabelText('Results of adding addresses')).toBeTruthy();
+    expect(screen.queryByText('Saved.')).toBeNull();
+    await fireEvent.press(screen.getByRole('button', { name: 'Remove invitation, chef@example.com' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Remove invitation' }));
+    expect(await screen.findByText('Removed the invitation for chef@example.com.')).toBeTruthy();
+    await fireEvent.changeText(screen.getByLabelText('Email addresses'), 'cook@example.com');
+    await fireEvent.press(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => { expect(screen.queryByText('Removed the invitation for chef@example.com.')).toBeNull(); });
+  });
+
   test('the member cap: 409 member_limit says the team is full', async () => {
     const { api } = adminApi();
     api.answers['/api/org/members'] = () => refusal(409, 'member_limit');
@@ -305,6 +343,24 @@ describe('P17 Team: roles and removal (F6)', () => {
     await fireEvent.press(screen.getByRole('button', { name: 'Remove invitation' }));
     expect(await screen.findByText('Removed the invitation for chef@example.com.')).toBeTruthy();
     expect(writes(api)).toEqual([{ method: 'DELETE', path: '/api/org/members/m3', body: undefined }]);
+  });
+
+  test('while a removal runs, another Remove does not open a second dialog', async () => {
+    const { api, routes } = adminApi();
+    const gate = deferred<Response>();
+    routes.requests['DELETE /api/org/members/m2'] = () => gate.promise;
+    await renderApp('/team', api);
+    await screen.findByText('manager@example.com');
+    await fireEvent.press(screen.getByRole('button', { name: 'Remove, manager@example.com' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Remove' }));
+    await screen.findByText('Removing…');
+    await fireEvent.press(screen.getByRole('button', { name: 'Remove invitation, chef@example.com' }));
+    expect(screen.getByRole('heading', { name: 'Remove manager@example.com?' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Remove the invitation for chef@example.com?' })).toBeNull();
+    await act(async () => { gate.resolve(noContent()); await gate.promise; });
+    expect(await screen.findByText('Removed manager@example.com. They lose access on their next visit.')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Remove the invitation for chef@example.com?' })).toBeNull();
+    expect(writes(api)).toHaveLength(1);
   });
 
   test('removing the last admin: 409 last_admin closes the dialog, keeps the row and says why', async () => {

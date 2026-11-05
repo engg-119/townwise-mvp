@@ -57,6 +57,8 @@ export default function TeamPage(): React.JSX.Element {
   const update = useCallback<TeamUpdate>((change) => {
     setTeam((current) => change(current ?? loaded ?? []));
   }, [loaded]);
+  const [added, setAdded] = useState(0);
+  const onAdded = useCallback((members: MemberView[]) => { setTeam(members); setAdded((count) => count + 1); }, []);
   const retry = useCallback(() => { setTeam(null); reload(); }, [reload]);
 
   const access = me.access.state === 'member' ? me.access : null;
@@ -65,14 +67,14 @@ export default function TeamPage(): React.JSX.Element {
   const members = team ?? loaded;
 
   let list: React.ReactNode;
-  if (members !== null) list = <TeamTable org={org} members={members} update={update} />;
+  if (members !== null) list = <TeamTable org={org} members={members} update={update} addedCount={added} />;
   else if (state.status === 'failed') list = <ErrorNotice error={state.error} onRetry={retry} />;
   else list = <LoadingLine text={TEAM_COPY.loading} />;
 
   return (
     <Page eyebrow={org} title="Team" lead={TEAM_COPY.lead}>
       <Section first>
-        <Columns main={<AddPeople org={org} onAdded={setTeam} />} side={<HowJoining />} />
+        <Columns main={<AddPeople org={org} onAdded={onAdded} />} side={<HowJoining />} />
       </Section>
       <Section kicker="Members" title="Who can sign in">
         <Small>Active people have joined. Invited addresses are waiting for that person to continue with Google for the first time.</Small>

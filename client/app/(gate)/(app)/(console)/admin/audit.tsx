@@ -8,7 +8,7 @@ import { AuditTable } from '../../../../../src/portal/console/AuditTable';
 import { EMAIL_COPY, isEmailAddress } from '../../../../../src/portal/console/email';
 import type { AuditEvent, AuditPage } from '../../../../../src/portal/console/schemas';
 import { AUDIT_ACTIONS } from '../../../../../src/portal/console/words';
-import { hasCode } from '../../../../../src/portal/errors';
+import { errorCopy, hasCode } from '../../../../../src/portal/errors';
 import { useAction, useBreakpoint, useLoad } from '../../../../../src/portal/hooks';
 import { usePortal } from '../../../../../src/portal/PortalProvider';
 import { Page } from '../../../../../src/portal/shell/Page';
@@ -20,6 +20,7 @@ import {
 // filtered by organization (?orgId= from an organization's page), actor and action, and paged with Load more
 // (`before`). The API filters by the actor's user id, so the actor's email is found by exact lookup first. Each
 // row shows the server's plain-words summary and the action's allowlisted details, never a figure or note text.
+// The organization filter's options are a read of their own; when it fails, the filters say so, with Try again.
 
 interface Filters {
   orgId: string;
@@ -158,6 +159,9 @@ export default function AuditLogPage(): React.JSX.Element {
               />
             </View>
           </View>
+          {orgs.state.status === 'failed' ? (
+            <ErrorNotice message={`The organizations to filter by didn’t load. ${errorCopy(orgs.state.error)}`} onRetry={orgs.reload} />
+          ) : null}
           <Actions>
             <Button variant="outline" label="Apply filters" onPress={() => { apply(draft); }} />
             <Button variant="link" label="Clear filters" onPress={clear} />

@@ -275,7 +275,7 @@ describe('POST /api/admin/view-as/end', () => {
     const audit = await (await call(server, `/api/admin/audit?orgId=${target.orgId}`, { session: staff })).json() as { events: AuditEventView[] };
     expect(audit.events.slice(0, 2).map((event) => [event.summary, event.viewAs])).toEqual([
       ['Ended view-as', { targetEmail: target.email }],
-      [`Started viewing as ${target.email}`, { targetEmail: target.email }],
+      [`Viewed as ${target.email}`, { targetEmail: target.email }],
     ]);
   });
 

@@ -281,7 +281,7 @@ describe('GET /api/org/staff-activity (D9)', () => {
       },
       { at: at(2).toISOString(), staffEmail: STAFF_EMAIL, summary: 'Ended view-as', viewAs: null, ...applied },
       {
-        at: at(1).toISOString(), staffEmail: STAFF_EMAIL, summary: `Started viewing as ${member.email}`,
+        at: at(1).toISOString(), staffEmail: STAFF_EMAIL, summary: `Viewed as ${member.email}`,
         viewAs: { targetEmail: member.email, reason: 'Helping with an upload', endsAt: expiresAt }, ...applied,
       },
     ]);

@@ -19,7 +19,7 @@ const EVENTS = [
     details: { endReason: 'ended' },
   }),
   auditEvent('e2', {
-    actorEmail: STAFF, actorRole: 'superadmin', action: 'view_as.started', summary: `Started viewing as ${MANAGER_EMAIL}`,
+    actorEmail: STAFF, actorRole: 'superadmin', action: 'view_as.started', summary: `Viewed as ${MANAGER_EMAIL}`,
     details: { targetUserId: 'u2', targetEmail: MANAGER_EMAIL, reason: 'Helping with a question.', expiresAt: EXPIRES },
   }),
   auditEvent('e3', {
@@ -178,4 +178,23 @@ test('loading, then the network copy with Try again', async () => {
   answer = { events: EVENTS, nextBefore: null };
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
   expect(await screen.findByRole('region', { name: 'Events' })).toBeTruthy();
+});
+
+test('when the organizations to filter by don’t load, the filters say so, with Try again', async () => {
+  const api = consoleApi();
+  let fail = true;
+  api.routes['GET /api/admin/orgs'] = () => (fail ? offline() : { orgs: [orgRow('o1', 'Sample Restaurant Group')] });
+  api.routes['GET /api/admin/audit'] = () => ({ events: EVENTS, nextBefore: null });
+  renderAt('/admin/audit', api);
+  await screen.findByRole('region', { name: 'Events' });
+  const filters = screen.getByRole('region', { name: 'Filters' });
+  expect(await within(filters).findByText('The organizations to filter by didn’t load. Can’t reach Townwise. Check your connection and try again.')).toBeTruthy();
+  fail = false;
+  fireEvent.click(within(filters).getByRole('button', { name: 'Try again' }));
+  const options = (): (string | null)[] => [...within(filters).getByRole('combobox', { name: 'Organization' }).querySelectorAll('option')]
+    .map((option) => option.textContent);
+  await waitFor(() => { expect(options()).toEqual(['All organizations', 'Sample Restaurant Group']); });
+  expect(within(filters).queryByRole('button', { name: 'Try again' })).toBeNull();
+  // The log itself loaded once; only the filter's list was read again.
+  expect(api.calls.filter((call) => call.path === '/api/admin/audit')).toHaveLength(1);
 });

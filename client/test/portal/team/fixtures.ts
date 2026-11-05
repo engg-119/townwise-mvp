@@ -34,7 +34,7 @@ export const PARTNER: MemberView = {
 export const TEAM: MemberView[] = [YOU, MANAGER, CHEF, PARTNER];
 
 export const VIEW_AS_EVENT: StaffActivity = {
-  at: '2026-10-20T15:05:00.000Z', staffEmail: 'staff@example.com', summary: 'Started viewing as owner@example.com',
+  at: '2026-10-20T15:05:00.000Z', staffEmail: 'staff@example.com', summary: 'Viewed as owner@example.com',
   viewAs: { targetEmail: 'owner@example.com', reason: 'Checking an upload question.', endsAt: '2026-10-20T15:35:00.000Z' },
   applied: true, notAppliedReason: null,
 };

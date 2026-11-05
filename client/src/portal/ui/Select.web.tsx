@@ -33,6 +33,8 @@ export function Select(props: SelectProps): React.JSX.Element {
             appearance: 'none', WebkitAppearance: 'none', width: '100%', minHeight: 44, margin: 0, padding: '0 40px 0 12px',
             background: c.ground, color: readOnly ? c.text3 : c.white, border: `1px solid ${border}`, borderRadius: 0,
             fontFamily: theme.font.sans, fontSize: 16, lineHeight: '24px', cursor: readOnly ? 'default' : 'pointer',
+            // A long choice (the location switcher on phones) ends in an ellipsis instead of being cut off.
+            overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
           }}
         >
           {props.placeholder === undefined ? null : <option value="">{props.placeholder}</option>}

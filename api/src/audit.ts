@@ -160,7 +160,7 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'note.deleted': return noteSummary('Deleted', d);
     case 'chat.turn_completed': return 'Asked the tuning chat about a location';
     case 'chat.conversation_deleted': return 'Deleted a tuning chat conversation';
-    case 'view_as.started': return `Started viewing as ${text(d.targetEmail)}`;
+    case 'view_as.started': return `Viewed as ${text(d.targetEmail)}`;
     case 'view_as.ended':
       if (d.endReason === 'expired') return 'View-as expired';
       if (d.endReason === 'replaced') return 'View-as replaced by a new one';

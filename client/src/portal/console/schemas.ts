@@ -104,7 +104,8 @@ export const auditEventSchema = z.object({
 export type AuditEvent = z.infer<typeof auditEventSchema>;
 
 export const orgDetailSchema = z.object({
-  org: staffOrgSchema,
+  /** `fromRequestSentAt`: when the request it came from was sent; null without one, or once it is deleted. */
+  org: staffOrgSchema.extend({ fromRequestSentAt: z.string().nullable() }),
   members: z.array(memberSchema),
   locations: z.array(orgLocationSchema),
   recent: z.array(auditEventSchema),

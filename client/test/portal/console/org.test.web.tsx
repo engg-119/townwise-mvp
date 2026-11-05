@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 
+import type { OrgDetail } from '../../../src/portal/console/schemas';
 import { ACCESS, offline, refusal, viewAsMe, writes } from '../../helpers/portal';
 import {
   auditEvent, CHEF_EMAIL, consoleApi, emailOf, MANAGER_EMAIL, member, orgDetail, OWNER_EMAIL, renderAt, type ConsoleApi,
@@ -432,4 +433,93 @@ test('recent activity shows who was viewed as, and staff events that didn’t ta
   const activity = await screen.findByRole('region', { name: 'Recent activity' });
   expect(within(activity).getByText(`Townwise staff, viewing as ${MANAGER_EMAIL}`)).toBeTruthy();
   expect(within(activity).getByText(`Changed ${OWNER_EMAIL} from admin to member. Didn’t take effect (last_admin).`)).toBeTruthy();
+});
+
+test('the header links the request it came from, with the day it was sent, from the organization read alone', async () => {
+  const api = consoleApi();
+  serve(api, orgDetail({ org: { fromRequestSentAt: '2026-08-20T15:00:00.000Z' } }));
+  renderAt('/admin/orgs/o1', api);
+  const link = await screen.findByRole('link', { name: 'From request Aug 20, 2026' });
+  expect(link.getAttribute('href')).toBe('/admin?status=approved&request=r1');
+  expect(screen.getByText('Created Sep 1, 2026').parentElement?.textContent).toBe('ActiveCreated Sep 1, 2026From request Aug 20, 2026');
+  // No list of approved requests is read for it.
+  expect(api.calls.filter((call) => call.path === '/api/admin/requests?status=approved')).toEqual([]);
+});
+
+describe('a write that finds the organization deleted (404) shows the page’s 404 state', () => {
+  const ADDED = emailOf('server');
+
+  test.each<[string, Partial<OrgDetail['org']>, string, () => Promise<void>]>([
+    ['Rename', {}, `PATCH ${PATH}`, async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Rename' }));
+      fireEvent.click(within(screen.getByRole('dialog', { name: `Rename ${NAME}` })).getByRole('button', { name: 'Save name' }));
+    }],
+    ['Suspend', {}, `PATCH ${PATH}`, async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Suspend' }));
+      fireEvent.click(within(screen.getByRole('dialog', { name: `Suspend ${NAME}?` })).getByRole('button', { name: 'Suspend' }));
+    }],
+    ['Reactivate', { status: 'suspended' }, `PATCH ${PATH}`, async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Reactivate' }));
+    }],
+    ['Delete organization', { status: 'suspended' }, `DELETE ${PATH}`, async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Delete organization' }));
+      const dialog = screen.getByRole('dialog', { name: `Delete ${NAME}` });
+      fireEvent.change(within(dialog).getByRole('textbox', { name: `Type ${NAME} to confirm.` }), { target: { value: NAME } });
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Delete organization' }));
+    }],
+    ['Add people', {}, `POST ${PATH}/members`, async () => {
+      const panel = await screen.findByRole('region', { name: 'Add people' });
+      fireEvent.change(within(panel).getByRole('textbox', { name: 'Email addresses' }), { target: { value: ADDED } });
+      fireEvent.click(within(panel).getByRole('button', { name: 'Add' }));
+    }],
+  ])('%s', async (_name, org, route, write) => {
+    const api = consoleApi();
+    serve(api, orgDetail({ org }));
+    api.routes[route] = () => refusal(404, 'not_found');
+    renderAt('/admin/orgs/o1', api);
+    await write();
+    const line = await screen.findByText('This organization doesn’t exist.');
+    expect(screen.getByRole('link', { name: 'Back to organizations' }).getAttribute('href')).toBe('/admin/orgs');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByText('Something went wrong with that request. Reload the page and try again.')).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Team' })).toBeNull();
+    // The control that opened it is gone, so focus moves to the line that says why.
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement?.contains(line)).toBe(true);
+    expect(writes(api)).toHaveLength(1);
+  });
+});
+
+describe('a change that saved, then a read that finds the organization deleted, shows the 404 state instead of Saved.', () => {
+  test.each<[string, Partial<OrgDetail['org']>, string, unknown, () => Promise<void>]>([
+    ['Rename', {}, `PATCH ${PATH}`, { org: orgDetail().org }, async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Rename' }));
+      fireEvent.click(within(screen.getByRole('dialog', { name: `Rename ${NAME}` })).getByRole('button', { name: 'Save name' }));
+    }],
+    ['Reactivate', { status: 'suspended' }, `PATCH ${PATH}`, { org: orgDetail().org }, async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Reactivate' }));
+    }],
+    ['Make admin', {}, `PATCH ${PATH}/members/m2`, { member: member('m2', MANAGER_EMAIL, { role: 'org_admin' }) }, async () => {
+      fireEvent.click(await screen.findByRole('button', { name: `Make ${MANAGER_EMAIL} an admin` }));
+    }],
+    ['Remove', {}, `DELETE ${PATH}/members/m2`, null, async () => {
+      fireEvent.click(await screen.findByRole('button', { name: `Remove ${MANAGER_EMAIL}` }));
+      fireEvent.click(within(screen.getByRole('dialog', { name: `Remove ${MANAGER_EMAIL}?` })).getByRole('button', { name: 'Remove' }));
+    }],
+  ])('%s', async (_name, org, route, answer, write) => {
+    const api = consoleApi();
+    // Another staff member deletes the organization just after this change lands.
+    let deleted = false;
+    api.routes[`GET ${PATH}`] = () => (deleted ? refusal(404, 'not_found') : orgDetail({ org }));
+    api.routes[route] = () => { deleted = true; return answer; };
+    renderAt('/admin/orgs/o1', api);
+    await write();
+    const line = await screen.findByText('This organization doesn’t exist.');
+    expect(screen.queryByText('Saved.')).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    // The control that was pressed is gone, so focus moves to the line that says why.
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement?.contains(line)).toBe(true);
+    expect(writes(api)).toHaveLength(1);
+  });
 });

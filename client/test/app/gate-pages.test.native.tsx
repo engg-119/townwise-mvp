@@ -9,6 +9,7 @@ jest.mock('expo-splash-screen', () => ({
 
 import { userEvent } from '@testing-library/react-native';
 import { act, cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing-library';
+import { Dimensions, StyleSheet, type TextStyle, type ViewStyle } from 'react-native';
 
 import type { Access } from '../../src/portal/schemas';
 import {
@@ -16,12 +17,33 @@ import {
   STAFF_EMAIL, staffMe, viewAsMe, writes,
 } from '../helpers/portal';
 import { renderApp } from '../helpers/renderApp';
+import { theme } from '../../src/theme';
 
 afterEach(async () => {
   await cleanup();
+  jest.restoreAllMocks();
 });
 
 const ONE_LOCATION = orgOf('member', LOCATIONS.slice(0, 1));
+const WINDOW = Dimensions.get('window');
+
+type Element = ReturnType<typeof screen.getByText>;
+
+function styleOf(element: Element): TextStyle & ViewStyle {
+  return StyleSheet.flatten(element.props.style as TextStyle) as TextStyle & ViewStyle;
+}
+
+/** The nearest element around `element` that also holds what `find` finds. */
+function around(element: Element, find: (scope: ReturnType<typeof within>) => Element | null): Element {
+  let node = element.parent;
+  while (node !== null && find(within(node)) === null) node = node.parent;
+  if (node === null) throw new Error('nothing holds both');
+  return node;
+}
+
+function atWidth(width: number): void {
+  jest.spyOn(Dimensions, 'get').mockReturnValue({ ...WINDOW, width });
+}
 
 describe('P3 Request access', () => {
   test('the form, its lead and side column, and a message for each field it can’t send', async () => {
@@ -138,6 +160,29 @@ describe('P3 Request access', () => {
     expect(screen.getByText(`Signed in as ${STAFF_EMAIL}. Using the wrong Google account?`, { exact: false })).toBeTruthy();
   });
 
+  test('the join panel’s body is `small` in `text2` at every width', async () => {
+    atWidth(375);
+    await renderApp('/request-access', fakePortalApi({ me: meOf(ACCESS.noOrg) }));
+    const body = await screen.findByText(`You don’t need to request access. Ask an admin on that team to add ${EMAIL}, then reload this page.`);
+    expect(styleOf(body)).toMatchObject({ fontSize: 14, lineHeight: 20, fontWeight: 400, color: theme.color.text2 });
+  });
+
+  test.each([[375, 'column'], [768, 'row']] as const)('at %ipx, Town and Number of locations share a %s', async (width, direction) => {
+    atWidth(width);
+    await renderApp('/request-access', fakePortalApi({ me: meOf(ACCESS.noOrg) }));
+    const count = await screen.findByLabelText('Number of locations');
+    expect(styleOf(around(count, (scope) => scope.queryByLabelText('Town'))).flexDirection ?? 'column').toBe(direction);
+  });
+
+  test('field labels are `ui`, weight 500', async () => {
+    await renderApp('/request-access', fakePortalApi({ me: meOf(ACCESS.noOrg) }));
+    for (const label of ['Organization name', 'Your name', 'Number of locations']) {
+      const text = (await screen.findAllByText(label)).find((node) => node.props.nativeID !== undefined) ?? screen.getAllByText(label)[0];
+      if (text === undefined) throw new Error(label);
+      expect(styleOf(text)).toMatchObject({ fontSize: 14, lineHeight: 20, fontWeight: 500, color: theme.color.white });
+    }
+  });
+
   async function fillValid(): Promise<void> {
     await fireEvent.changeText(await screen.findByLabelText('Organization name'), 'Sample Diner');
     await fireEvent.changeText(screen.getByLabelText('Your name'), 'Pat');
@@ -170,6 +215,13 @@ describe('P4 Waiting for approval', () => {
     const table = screen.getByLabelText('Numbers: Lamoille County and the Northeast, 2024');
     expect(within(table).getByText('May')).toBeTruthy();
     expect(within(table).getByText('−15.9')).toBeTruthy();
+  });
+
+  test('the town’s biggest gap prints its index delta in mono', async () => {
+    await renderApp('/waiting', fakePortalApi({ me: meOf(ACCESS.pending) }));
+    expect(await screen.findByText(/biggest gap with the region in May, −15\.9 index points\.$/)).toBeTruthy();
+    const delta = screen.getByText('−15.9');
+    expect(styleOf(delta)).toMatchObject({ ...theme.type.mono, fontVariant: ['tabular-nums'] });
   });
 
   test('Check again: no change shows the still-waiting notice; an approval opens Locations', async () => {
@@ -220,6 +272,15 @@ describe('P5 No access', () => {
     expect(screen.getByText(`Signed in as ${EMAIL}. Using the wrong Google account?`, { exact: false })).toBeTruthy();
     await fireEvent.press(screen.getByRole('link', { name: 'Send a new request' }));
     expect(router.getPathname()).toBe('/request-access');
+  });
+
+  test('rejected: the lead is `text2` and Questions is `small` at every width', async () => {
+    atWidth(375);
+    await renderApp('/no-access', fakePortalApi({ me: meOf(ACCESS.rejected) }));
+    const lead = await screen.findByText('We reviewed your request for Sample Mountain Tavern on Oct 5, 2026 and didn’t approve it.');
+    expect(styleOf(lead).color).toBe(theme.color.text2);
+    const questions = screen.getByText(/^Questions: /);
+    expect(styleOf(questions)).toMatchObject({ fontSize: 14, lineHeight: 20, color: theme.color.text2 });
   });
 
   test('rejected with no message says nothing about one', async () => {
@@ -290,6 +351,28 @@ describe('P6 Joining', () => {
     expect(writes(api)).toEqual([{ method: 'POST', path: '/api/me/decline', body: { inviteId: 'i1' } }]);
   });
 
+  test('with a pending request, what Join does names the role with its article', async () => {
+    for (const [invitation, words] of [[INVITE, 'as a Member'], [{ ...INVITE, role: 'org_admin' as const }, 'as an Admin']] as const) {
+      await renderApp('/joining', fakePortalApi({ me: meOf({ state: 'invited', invitations: [invitation], pendingRequest: REQUEST }) }));
+      expect(await screen.findByText(`Join: you join Sample Restaurant Group’s team ${words} and see its locations. We withdraw your request for Sample Mountain Tavern.`)).toBeTruthy();
+      await cleanup();
+    }
+  });
+
+  test('Join and Not my team share one row; a long name wraps inside Join instead', async () => {
+    atWidth(320);
+    const access: Access = { state: 'invited', invitations: [{ ...INVITE, orgName: 'Juniper Lane Hospitality Group' }], pendingRequest: REQUEST };
+    await renderApp('/joining', fakePortalApi({ me: meOf(access) }));
+    const join = await screen.findByRole('button', { name: 'Join Juniper Lane Hospitality Group' });
+    const row = around(join, (scope) => scope.queryByRole('button', { name: 'Not my team' }));
+    expect(styleOf(row)).toMatchObject({ flexDirection: 'row' });
+    expect(styleOf(row).flexWrap ?? 'nowrap').toBe('nowrap');
+    // Join's box gives way; Not my team keeps its width.
+    expect(styleOf(join.parent ?? join)).toMatchObject({ flexShrink: 1, minWidth: 0 });
+    const notMine = screen.getByRole('button', { name: 'Not my team' });
+    expect(styleOf(notMine.parent ?? notMine)).toMatchObject({ flexShrink: 0 });
+  });
+
   test('with a pending request, Join withdraws it and opens Locations', async () => {
     const access: Access = { state: 'invited', invitations: [INVITE], pendingRequest: REQUEST };
     const api = fakePortalApi({ me: meOf(access), org: orgOf('member') });
@@ -309,6 +392,9 @@ describe('P6 Joining', () => {
     expect(screen.getByText(`2 organizations added ${EMAIL}. You can belong to one. Choose the team you work with. Joining one withdraws your request for Sample Mountain Tavern.`)).toBeTruthy();
     expect(screen.getByText('as Admin')).toBeTruthy();
     expect(screen.getByText('Added by Townwise staff')).toBeTruthy();
+    // The count is a mono numeral; Added by is `small`, `text2`, at every width.
+    expect(styleOf(screen.getByText('2'))).toMatchObject({ fontFamily: theme.type.mono.fontFamily, fontVariant: ['tabular-nums'] });
+    expect(styleOf(screen.getByText('Added by Townwise staff'))).toMatchObject({ fontSize: 14, lineHeight: 20, color: theme.color.text2 });
     await fireEvent.press(screen.getByRole('button', { name: 'Not my team: Sample Ski Bar' }));
     expect(await screen.findByText('Removed the invitation from Sample Ski Bar.')).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Join Sample Restaurant Group?' })).toBeTruthy();
@@ -382,12 +468,17 @@ describe('P8 Staff sign in again, and the P7 staff notice', () => {
       signOut,
       confirmTotpEnrollment: () => Promise.resolve({ recoveryCodes: codes }),
     });
-    expect(await screen.findByText('Townwise staff accounts need two-step sign-in. Set up your authenticator app, then sign in again with a code.')).toBeTruthy();
+    // The notice is the page's lead, under the eyebrow and title, not a numbered message.
+    expect(await screen.findByRole('heading', { name: 'Two-step sign-in' })).toBeTruthy();
+    expect(screen.getByText('Townwise staff')).toBeTruthy();
+    const notice = screen.getByText('Townwise staff accounts need two-step sign-in. Set up your authenticator app, then sign in again with a code.');
+    expect(styleOf(notice)).toMatchObject({ ...theme.type.sub, color: theme.color.text2 });
+    expect(screen.queryByText('01')).toBeNull();
     expect(screen.getByText(`Signed in as ${STAFF_EMAIL}`)).toBeTruthy();
     expect(screen.queryByLabelText('Main')).toBeNull();
-    await fireEvent.press(await screen.findByText('Set up two-factor'));
+    await fireEvent.press(await screen.findByText('Set up two-step sign-in'));
     await fireEvent.press(await screen.findByText('Confirm'));
-    expect(await screen.findByText('Save these somewhere safe. Each works once.')).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Save your recovery codes' })).toBeTruthy();
     expect(screen.queryByText('I saved these')).toBeNull();
     const again = screen.getAllByRole('button', { name: 'Sign in again' });
     await fireEvent.press(again[0] ?? screen.getByText('Sign in again'));
@@ -396,7 +487,7 @@ describe('P8 Staff sign in again, and the P7 staff notice', () => {
 
   test('members see two-step settings in the client app, with no staff notice', async () => {
     await renderApp('/settings/security', fakePortalApi({ me: meOf(ACCESS.member) }));
-    expect(await screen.findByRole('heading', { name: 'Two-factor settings' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Two-step sign-in' })).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Locations' })).toBeTruthy();
     expect(screen.queryByText(/Townwise staff accounts need two-step sign-in/)).toBeNull();
   });

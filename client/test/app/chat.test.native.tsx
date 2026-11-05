@@ -39,8 +39,8 @@ async function send(text: string): Promise<void> {
 
 test('shows the location, its conversations and a labelled composer', async () => {
   await renderChat(fakeChatApi());
-  // The location header's and the chat's own.
-  expect(screen.getAllByRole('heading', { name: 'Main Street Bar' })).toHaveLength(2);
+  // The location header names it; the chat doesn't repeat it.
+  expect(screen.getAllByRole('heading', { name: 'Main Street Bar' })).toHaveLength(1);
   expect(screen.getByRole('button', { name: 'Back to locations' })).toBeTruthy();
   expect(screen.getByRole('button', { name: /^Earlier chat, Nov 2, 2026$/ })).toBeTruthy();
   expect(screen.getByLabelText('Message')).toBeTruthy();

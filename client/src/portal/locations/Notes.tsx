@@ -1,8 +1,9 @@
 import { useCallback, useState } from 'react';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
+import { hasCode } from '../errors';
 import { formatDate } from '../format';
 import { useAction, useLoad } from '../hooks';
 import { usePortal, useReadOnly } from '../PortalProvider';
@@ -25,8 +26,12 @@ import { LoadFailure, Loading, useOrgRefreshOnLeave } from './parts';
 // “Coming up” (ending today or later) and “Past”. Authors edit and delete their own notes; org admins any
 // (`canEdit`). Under view-as, Add, Edit and Delete are disabled in place. Only the tuning chat reads notes yet
 // (api/src/handlers/notes.ts), so the intro says that instead of the spec's “Nothing reads them yet.” Sales data's “Add a closure note.” opens the form as a closure (`?new=closure`).
+// A 404 on a write means the note, or its location, was deleted in the meantime (spec 10.9): the form or dialog
+// closes, an edit or delete says “This note isn’t available.”, and the list loads again, which shows “This
+// location isn’t available.” if the location went too.
 
 const READ_ONLY_ID = 'notes-ro';
+const NOTE_GONE = 'This note isn’t available.';
 
 type FormState = { mode: 'new'; kind: 'closure' | null } | { mode: 'edit'; note: Note } | null;
 
@@ -65,11 +70,11 @@ function NotesTable(props: {
     <DataTable
       label={props.label}
       columns={[
-        { key: 'note', label: 'Note', flex: 1.6 },
-        { key: 'dates', label: 'Dates', flex: 1.4 },
-        { key: 'effect', label: 'Effect', flex: 1.2 },
-        { key: 'added', label: 'Added by', flex: 1.4 },
-        { key: 'actions', label: 'Actions', hiddenLabel: true, flex: 1 },
+        { key: 'note', label: 'Note', flex: 1.5 },
+        { key: 'dates', label: 'Dates', flex: 1.3 },
+        { key: 'effect', label: 'Effect', flex: 1 },
+        { key: 'added', label: 'Added by', flex: 1.8 },
+        { key: 'actions', label: 'Actions', hiddenLabel: true, flex: 1.3 },
       ]}
       rows={props.notes.map((note) => {
         const name = `${KIND_LABEL[note.kind]} note, ${datesLine(note)}`;
@@ -81,7 +86,7 @@ function NotesTable(props: {
             note: <NoteCell note={note} selected={note.id === props.selectedId} />,
             dates: <TwoLines first={datesLine(note)} second={weekdaysLine(note.weekdays)} />,
             effect: <TwoLines first={EFFECT_LABEL[note.effect]} second={guestsLine(note.expectedGuests)} />,
-            added: `${note.createdByEmail}, ${formatDate(note.createdAt)}`,
+            added: <TwoLines first={note.createdByEmail} second={formatDate(note.createdAt)} />,
             actions: note.canEdit ? (
               <Actions>
                 <Button variant="link" label="Edit" accessibilityLabel={`Edit ${name}`} {...ro} onPress={() => { props.onEdit(note); }} />
@@ -103,6 +108,12 @@ export function Notes(): React.JSX.Element {
   const markStale = useOrgRefreshOnLeave();
   const readOnlyId = readOnly ? READ_ONLY_ID : null;
   const [form, setForm] = useState<FormState>(() => (params.new === 'closure' && !readOnly ? { mode: 'new', kind: 'closure' } : null));
+  const router = useRouter();
+  const closeForm = useCallback(() => {
+    setForm(null);
+    // A query (`?new=`) may have opened it; drop that, so a reload or Back shows the list, not an empty form again.
+    if (params.new !== undefined) router.setParams({ new: undefined });
+  }, [params.new, router]);
   const [notice, setNotice] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<Note | null>(null);
@@ -120,28 +131,49 @@ export function Notes(): React.JSX.Element {
     setLocal((previous) => ({ from: loaded, notes: update(previous !== null && previous.from === loaded ? previous.notes : loaded) }));
   }, [loaded]);
 
+  const gone = useCallback((text: string | null) => {
+    closeForm();
+    setDeleting(null);
+    setSelectedId(null);
+    setNotice(text);
+    markStale();
+    reload();
+  }, [closeForm, markStale, reload]);
+
   const editing = form?.mode === 'edit' ? form.note : null;
-  const save = useCallback((input: NoteInput) => (
-    editing === null ? createNote(api, location.id, input) : updateNote(api, location.id, editing.id, input)
-  ), [api, location.id, editing]);
+  const save = useCallback(async (input: NoteInput): Promise<Note | null> => {
+    try {
+      return editing === null ? await createNote(api, location.id, input) : await updateNote(api, location.id, editing.id, input);
+    } catch (error) {
+      if (!hasCode(error, 404, 'not_found')) throw error;
+      // A new note can only miss its location, which the reload reports; an edit can miss its note.
+      gone(editing === null ? null : NOTE_GONE);
+      return null;
+    }
+  }, [api, location.id, editing, gone]);
 
   const onSaved = useCallback((note: Note) => {
     change((current) => sortNotes([...current.filter((other) => other.id !== note.id), note]));
     markStale();
-    setForm(null);
+    closeForm();
     setSelectedId(note.id);
     setNotice('Saved.');
-  }, [change, markStale]);
+  }, [change, closeForm, markStale]);
 
   const remove = useAction(useCallback(async (note: Note) => {
-    await deleteNote(api, location.id, note.id);
+    try {
+      await deleteNote(api, location.id, note.id);
+    } catch (error) {
+      if (hasCode(error, 404, 'not_found')) { gone(NOTE_GONE); return; }
+      throw error;
+    }
     change((current) => current.filter((other) => other.id !== note.id));
     markStale();
     setDeleting(null);
     setSelectedId(null);
     if (editing?.id === note.id) setForm(null);
     setNotice('Deleted the note.');
-  }, [api, location.id, change, markStale, editing]));
+  }, [api, location.id, change, markStale, editing, gone]));
 
   function open(next: FormState): void {
     setNotice(null);
@@ -206,7 +238,7 @@ export function Notes(): React.JSX.Element {
                 editing={editing !== null}
                 save={save}
                 onSaved={onSaved}
-                onCancel={() => { setForm(null); }}
+                onCancel={closeForm}
               />
             )}
           />

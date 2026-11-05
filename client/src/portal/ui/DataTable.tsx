@@ -1,11 +1,27 @@
-import { Pressable, StyleSheet, Text, View, type PressableStateCallbackType } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View, type PressableStateCallbackType } from 'react-native';
 
 import { theme } from '../../theme';
 import { useBreakpoint } from '../hooks';
 
 // Tables in NumbersTable styling (spec 15.7, shell.md 7.6): mono 12/16 with tabular figures, 1px `border` rules,
 // heads in `text3`, values in `text2`, rows at least 44px with a `raised` hover, inside a focusable region named
-// for what it holds. At 640px and below each row becomes stacked label and value pairs.
+// for what it holds. At 640px and below each row becomes stacked pairs, each label above its value so the value
+// has the full width. From 641px to 1023px the table keeps a minimum width and its region scrolls sideways instead
+// of squeezing the columns; from 1024px it fills its column with no minimum, so a desktop table does not scroll
+// sideways. The last row has no rule under it: a Section that follows draws its own.
+
+/**
+ * The least width of one unit of column flex below 1024px: a 9-character mono word (“Locations”, 64.8px at 12px)
+ * plus the cell's 24px of padding, with a few pixels to spare. So a head of 9 characters or fewer stays on one line
+ * in a column of flex 1 or more; a narrower column (flex 0.8 is 73.6px) can still wrap one.
+ */
+export const MIN_FLEX_WIDTH = 92;
+
+/**
+ * The flex of a column of email addresses, which have no spaces to wrap at. Below 1024px its 3 units are at least
+ * 276px: a 35-character address in 12px mono (252px) and the cell's 24px of padding, on one line.
+ */
+export const EMAIL_FLEX = 3;
 
 export interface Column {
   key: string;
@@ -43,17 +59,23 @@ function empty(value: React.ReactNode): boolean {
 }
 
 export function DataTable(props: { label: string; columns: readonly Column[]; rows: readonly Row[] }): React.JSX.Element {
-  const { phone } = useBreakpoint();
+  const { phone, desktop } = useBreakpoint();
   const { columns, rows } = props;
+  // The last row drops its rule unless it is selected: borderBottomWidth would beat the outline's later borderWidth.
+  const ruleless = (row: Row, index: number) => (index === rows.length - 1 && row.selected !== true ? styles.lastRow : null);
   if (phone) {
     return (
       <View role="region" aria-label={props.label} focusable style={styles.region}>
         <View role="list">
-          {rows.map((row) => (
-            <View key={row.key} role="listitem" style={[styles.stackedRow, row.selected === true ? styles.selected : null]}>
+          {rows.map((row, rowIndex) => (
+            <View
+              key={row.key}
+              role="listitem"
+              style={[styles.stackedRow, ruleless(row, rowIndex), row.selected === true ? styles.selected : null]}
+            >
               {columns.map((column, index) => (empty(row.cells[column.key]) ? null : (
                 <View key={column.key} style={styles.pair}>
-                  <Text style={[styles.head, styles.pairLabel]}>{column.label}</Text>
+                  <Text style={styles.head}>{column.label}</Text>
                   <View style={styles.pairValue}><Cell value={row.cells[column.key]} numeric={false} first={index === 0} /></View>
                 </View>
               )))}
@@ -63,9 +85,19 @@ export function DataTable(props: { label: string; columns: readonly Column[]; ro
       </View>
     );
   }
+  const flex = columns.reduce((sum, column) => sum + (column.flex ?? 1), 0);
+  // No minimum from 1024px: the console's Split column (652px at 1280) is narrower than an 8-unit table's 736px.
+  const minWidth = desktop ? null : { minWidth: Math.ceil(flex * MIN_FLEX_WIDTH) };
   return (
-    <View role="region" aria-label={props.label} focusable style={styles.region}>
-      <View role="table">
+    <ScrollView
+      horizontal
+      role="region"
+      aria-label={props.label}
+      focusable
+      style={styles.scroller}
+      contentContainerStyle={[styles.scrollContent, minWidth]}
+    >
+      <View role="table" style={styles.table}>
         <View role="row" style={styles.headRow}>
           {columns.map((column) => (
             <View key={column.key} role="columnheader" style={[styles.cell, { flex: column.flex ?? 1 }]}>
@@ -77,12 +109,15 @@ export function DataTable(props: { label: string; columns: readonly Column[]; ro
             </View>
           ))}
         </View>
-        {rows.map((row) => (
+        {rows.map((row, rowIndex) => (
           <Pressable
             key={row.key}
             role="row"
             focusable={false}
-            style={(state) => [styles.row, hovered(state) || row.selected === true ? styles.raised : null, row.selected === true ? styles.selected : null]}
+            style={(state) => [
+              styles.row, ruleless(row, rowIndex), hovered(state) || row.selected === true ? styles.raised : null,
+              row.selected === true ? styles.selected : null,
+            ]}
           >
             {columns.map((column, index) => (
               <View key={column.key} role="cell" style={[styles.cell, { flex: column.flex ?? 1 }, column.numeric === true ? styles.cellNumeric : null]}>
@@ -92,16 +127,19 @@ export function DataTable(props: { label: string; columns: readonly Column[]; ro
           </Pressable>
         ))}
       </View>
-    </View>
+    </ScrollView>
   );
 }
 
-/** A two-column definition list (`.dl`), in mono for data checks (`.dl-m`); it stacks on phones. */
+/**
+ * A two-column definition list (`.dl`), in mono for data checks (`.dl-m`). On phones each term sits above its value
+ * and the pairs are spaced only by their 12px margin, with no row gap, as on the boards.
+ */
 export function DefinitionList(props: { items: readonly { term: string; value: React.ReactNode }[]; mono?: boolean }): React.JSX.Element {
   const { phone } = useBreakpoint();
   const mono = props.mono === true;
   return (
-    <View style={styles.dl}>
+    <View style={phone ? null : styles.dl}>
       {props.items.map((item) => (
         <View key={item.term} style={phone ? styles.dlStacked : styles.dlRow}>
           <Text style={[mono ? styles.dlMono : styles.dlText, styles.term, phone ? null : styles.termWide]}>{item.term}</Text>
@@ -120,8 +158,14 @@ const c = theme.color;
 
 const styles = StyleSheet.create({
   region: { minWidth: 0 },
+  // The region scrolls sideways; its content is the region's width, and below 1024px never less than the table's
+  // minimum.
+  scroller: { flexGrow: 0, minWidth: 0 },
+  scrollContent: { width: '100%' },
+  table: { flex: 1 },
   headRow: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: c.border },
   row: { flexDirection: 'row', minHeight: 44, borderBottomWidth: 1, borderBottomColor: c.border },
+  lastRow: { borderBottomWidth: 0 },
   raised: { backgroundColor: c.raised },
   selected: { borderWidth: 1, borderColor: c.border },
   cell: { minWidth: 0, justifyContent: 'center', paddingVertical: 6, paddingLeft: 8, paddingRight: 16 },
@@ -132,9 +176,8 @@ const styles = StyleSheet.create({
   numeric: { textAlign: 'right' },
   hidden: { opacity: 0 },
   stackedRow: { paddingVertical: theme.space[2], borderBottomWidth: 1, borderBottomColor: c.border },
-  pair: { flexDirection: 'row', columnGap: theme.space[3], minHeight: 32, paddingVertical: 4, paddingHorizontal: 8 },
-  pairLabel: { flex: 2 },
-  pairValue: { flex: 3, minWidth: 0 },
+  pair: { rowGap: 2, paddingVertical: 4, paddingHorizontal: 8 },
+  pairValue: { minWidth: 0 },
   dl: { gap: theme.space[2] },
   dlRow: { flexDirection: 'row', columnGap: theme.space[6] },
   dlStacked: { gap: 0, marginBottom: theme.space[3] },
