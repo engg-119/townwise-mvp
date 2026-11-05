@@ -66,14 +66,15 @@ test('Sales data draws the daily chart as aria-hidden SVG, with its scale, ticks
   // The page's one SVG; its frame holds the y scale.
   const svg = document.querySelector('svg');
   const chart = svg?.parentElement;
-  expect(svg?.getAttribute('aria-hidden')).toBe('true');
-  const line = [...(svg?.querySelectorAll('path') ?? [])].map((path) => path.getAttribute('d') ?? '').find((d) => d.includes('L'));
+  if (svg === null || chart === null || chart === undefined) throw new Error('no chart');
+  expect(svg.getAttribute('aria-hidden')).toBe('true');
+  const line = [...svg.querySelectorAll('path')].map((path) => path.getAttribute('d') ?? '').find((d) => d.includes('L'));
   expect(line).toMatch(/^M[\d.]+ [\d.]+ L/);
   // The y scale is printed: the highest and lowest day in the range.
-  expect(within(chart as HTMLElement).getByText('79')).toBeTruthy();
-  expect(within(chart as HTMLElement).getByText('50')).toBeTruthy();
+  expect(within(chart).getByText('79')).toBeTruthy();
+  expect(within(chart).getByText('50')).toBeTruthy();
   // Month ticks with their year: the first, middle and last day.
-  expect([...(chart?.nextElementSibling?.children ?? [])].map((tick) => tick.textContent)).toEqual(['Feb 2025', 'Aug 2025', 'Feb 2026']);
+  expect([...(chart.nextElementSibling?.children ?? [])].map((tick) => tick.textContent)).toEqual(['Feb 2025', 'Aug 2025', 'Feb 2026']);
   expect(screen.getByText('Scale fitted to this location.')).toBeTruthy();
   expect(screen.queryByText('See the chart at townwise.tech.')).toBeNull();
   expect(screen.getByText(/^Daily guests, Feb 5, 2025 to Feb 4, 2026\. Highest: 79 guests on/)).toBeTruthy();

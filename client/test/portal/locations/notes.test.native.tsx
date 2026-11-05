@@ -54,7 +54,8 @@ test('loading shows one line under the intro', async () => {
   const { api } = setup(meOf(ACCESS.member), deferred<unknown>().promise);
   await renderApp('/locations/l1/notes', api);
   expect(await screen.findByText('Loading notes')).toBeTruthy();
-  expect(screen.getByText(/^Notes record what your sales can’t show/)).toBeTruthy();
+  // The tuning chat reads notes (api/src/handlers/notes.ts), so the intro doesn't say nothing does.
+  expect(screen.getByText(/^Notes record what your sales can’t show.*Only the tuning chat reads them yet\.$/)).toBeTruthy();
   expect(screen.getByText('Talking to your model is planned.')).toBeTruthy();
 });
 

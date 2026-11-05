@@ -136,6 +136,17 @@ describe('P16 Location settings', () => {
     expect(writes(api)).toEqual([]);
   });
 
+  test('the switcher opens the other location’s settings fresh, with nothing carried over', async () => {
+    const { api } = setup();
+    const { router } = await renderApp('/locations/l1/settings', api);
+    await fireEvent.changeText(await screen.findByLabelText('Name'), 'Half typed');
+    await fireEvent.press(screen.getByRole('button', { name: 'Location' }));
+    await fireEvent.press(screen.getByRole('radio', { name: 'River Grill' }));
+    expect(router.getPathname()).toBe('/locations/l2/settings');
+    await waitFor(() => { expect(screen.getByLabelText('Name').props.value).toBe('River Grill'); });
+    expect(screen.getByRole('button', { name: 'Delete location' })).toBeTruthy();
+  });
+
   test('members are sent to Locations', async () => {
     const { router } = await renderApp('/locations/l1/settings', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') }));
     await waitFor(() => { expect(router.getPathname()).toBe('/dashboard'); });

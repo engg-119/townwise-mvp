@@ -177,7 +177,7 @@ export function Forecast(): React.JSX.Element {
           <Step
             number="04"
             title="Tell Townwise what it can’t see"
-            body="Closures, private events and openings, saved with this location. Nothing reads them yet."
+            body="Closures, private events and openings, saved with this location. Only the tuning chat reads them yet."
             progress={plural(location.notesCount, 'note', 'notes')}
           >
             <LinkButton href={locationHref(location.id, 'notes')} label="Add a note" />

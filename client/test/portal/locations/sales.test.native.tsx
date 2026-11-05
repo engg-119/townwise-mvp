@@ -7,6 +7,7 @@ jest.mock('expo-splash-screen', () => ({
   hideAsync: jest.fn(() => Promise.resolve()),
 }));
 
+import { Dimensions } from 'react-native';
 import { cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing-library';
 
 import type { MeResponse } from '../../../src/portal/schemas';
@@ -81,6 +82,24 @@ test('coverage, the chart’s text and numbers, by month, and uploads', async ()
   expect(writes(api)).toEqual([]);
 });
 
+test('at 320px the tables stack into label and value pairs, and a month still opens its days', async () => {
+  const spy = jest.spyOn(Dimensions, 'get').mockReturnValue({ ...Dimensions.get('window'), width: 320 });
+  try {
+    const { api } = setup(meOf(ACCESS.admin));
+    await renderApp('/locations/l1/sales', api);
+    const uploads = await screen.findByLabelText('Uploads');
+    expect(within(uploads).getAllByText('Status')).toHaveLength(2);
+    const months = screen.getByLabelText('Sales by month');
+    expect(within(months).getAllByText('Net sales')).toHaveLength(SALES.months.length);
+    await fireEvent.press(within(months).getByRole('button', { name: 'Feb 2026' }));
+    const february = await screen.findByLabelText('Days in Feb 2026');
+    expect(within(february).getAllByText('Guests')).toHaveLength(4);
+    expect(screen.getByRole('button', { name: 'Delete all sales data' })).toBeTruthy();
+  } finally {
+    spy.mockRestore();
+  }
+});
+
 test('a location with no guest counts charts daily net sales, in dollars', async () => {
   const days = daysOf('2026-01-01', 10, (index) => ({ guests: null, netSalesCents: 100_000 + index * 10_000 }));
   const fake = locationsFake({ sales: { l1: salesOf(days) }, days: { l1: days } });
@@ -147,6 +166,11 @@ test('a failed delete keeps the dialog open with the shared copy', async () => {
   await fireEvent.press(confirm);
   expect(await screen.findByText('Can’t reach Townwise. Check your connection and try again.')).toBeTruthy();
   expect(screen.getByText('This deletes 397 days of sales data for Main Street Bar. Notes stay. This can’t be undone.')).toBeTruthy();
+  // Opened again, the dialog starts without the earlier error.
+  await fireEvent.press(screen.getByRole('button', { name: 'Cancel' }));
+  await fireEvent.press(screen.getByRole('button', { name: 'Delete all sales data' }));
+  expect(screen.getByLabelText('Type Main Street Bar to confirm.')).toBeTruthy();
+  expect(screen.queryByText('Can’t reach Townwise. Check your connection and try again.')).toBeNull();
 });
 
 test('errors: the shared copy with Try again; an unknown location is not available', async () => {
