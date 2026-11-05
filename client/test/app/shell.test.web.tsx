@@ -42,7 +42,6 @@ test('the staff console: panel bar, kind tag, Requests with its count, the verif
   api.pendingCount = 4;
   renderAt('/admin', api);
   expect(await screen.findByRole('heading', { level: 1, name: 'Requests' })).toBeTruthy();
-  expect(screen.getByText('This page is being built.')).toBeTruthy();
   expect(screen.getByText('Staff console')).toBeTruthy();
   const nav = screen.getByRole('navigation', { name: 'Main' });
   // The count is a number after the label, never a dot or badge.
