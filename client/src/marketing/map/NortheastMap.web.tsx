@@ -123,6 +123,8 @@ interface StoryParts {
   fig: HTMLElement;
   box: HTMLElement;
   cap: HTMLElement;
+  // The title block in the first step (the page's H1, subtitle and actions), when there is one.
+  head: HTMLElement | null;
 }
 
 // Sizes the pinned map from the story's width and the scroll container's height, in px, and writes them as the
@@ -135,7 +137,7 @@ function fitStory(parts: StoryParts, root: HTMLElement | null, wide: boolean): F
   const width = parts.story.clientWidth;
   const height = root === null ? window.innerHeight : root.clientHeight;
   if (width <= 0 || height <= 0) return null;
-  const apply = (extra: number): { mw: number } => {
+  const apply = (extra: number): ReturnType<typeof storyBox> => {
     const box = storyBox(width, height, wide, extra);
     parts.story.style.setProperty('--story-mw', `${String(box.mw)}px`);
     parts.story.style.setProperty('--story-mh', `${String(box.mh)}px`);
@@ -150,6 +152,14 @@ function fitStory(parts: StoryParts, root: HTMLElement | null, wide: boolean): F
     if (measured === extra) break;
     extra = measured;
     box = apply(extra);
+  }
+  // The first screen, before the legend shows: the story starts low enough that the map sits centered in the window
+  // under the 65px header (the pinned box is centered, so that gap is top + (extra - 65) / 2), unless that would
+  // bring the title block within 24px of the window's bottom. The map pins at --story-top once scrolled, as before.
+  if (wide) {
+    const centered = box.top + (extra - 65) / 2;
+    const titleFits = height - 65 - (parts.head?.offsetHeight ?? 0) - 24;
+    parts.story.style.setProperty('--story-pad', `${String(Math.round(Math.max(24, Math.min(centered, titleFits))))}px`);
   }
   return { mw: box.mw, width, windowWidth: window.innerWidth, band: wide ? CENTER_BAND : phoneBand(height, parts.pin.offsetHeight) };
 }
@@ -191,7 +201,8 @@ export function NortheastMap(props: { head?: React.ReactNode; lead?: React.React
   const measure = useCallback((): void => {
     const [story, pin, fig, box, cap] = [storyRef.current, pinRef.current, figRef.current, boxRef.current, capRef.current];
     if (story === null || pin === null || fig === null || box === null || cap === null) return;
-    const next = fitStory({ story, pin, fig, box, cap }, root.current, wide);
+    const head = story.querySelector<HTMLElement>(':scope > .st-h > *');
+    const next = fitStory({ story, pin, fig, box, cap, head }, root.current, wide);
     if (next !== null) setFit((last) => (last !== null && sameFit(last, next) ? last : next));
   }, [root, wide]);
   useLayoutEffect(() => { measure(); }, [measure]);
@@ -202,7 +213,9 @@ export function NortheastMap(props: { head?: React.ReactNode; lead?: React.React
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(measure);
     });
-    for (const element of [storyRef.current, figRef.current, capRef.current, root.current]) if (element !== null) observer.observe(element);
+    // The title block too: its height changes when the web font swaps in.
+    const head = storyRef.current?.querySelector(':scope > .st-h > *') ?? null;
+    for (const element of [storyRef.current, figRef.current, capRef.current, root.current, head]) if (element !== null) observer.observe(element);
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();

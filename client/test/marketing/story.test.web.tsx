@@ -706,3 +706,24 @@ test('the story CSS: the panel shares the pinned map’s box, centered, in px; p
   const animations = [...storyCss.matchAll(/animation:([^;}]*)/g)].flatMap((match) => [...(match[1] ?? '').matchAll(/(\d+)ms/g)].map((ms) => Number(ms[1])));
   expect(Math.max(...animations)).toBeLessThanOrEqual(700);
 });
+
+test('from 1024px the first screen centers the map under the header, keeping the title clear of the bottom', () => {
+  installObserver();
+  Object.defineProperty(window, 'ResizeObserver', { configurable: true, writable: true, value: FakeResizeObserver });
+  media({ wide: true, reduce: false });
+  layout.width = { story: 1280 };
+  // 900px tall: the box is 637 + 150 at 57px, so the map's gaps under the 65px header are equal at 99.5px.
+  for (const [title, pad] of [[560, '100px'], [780, '31px'], [840, '24px']] as const) {
+    layout.height = { tw: 900, hd: title };
+    const { story, unmount } = renderStory(<div className="hd">The Northeast has one season.</div>);
+    expect(story.style.getPropertyValue('--story-top')).toBe('57px');
+    expect(story.style.getPropertyValue('--story-pad')).toBe(pad);
+    unmount();
+  }
+  // The title block is observed too, since the web font changes its height.
+  FakeResizeObserver.instances.length = 0;
+  layout.height = { tw: 900, hd: 560 };
+  const { story } = renderStory(<div className="hd">The Northeast has one season.</div>);
+  expect(FakeResizeObserver.instances.at(-1)?.observed).toContain(story.querySelector('.st-h > .hd'));
+  expect(storyCss).toMatch(/@media \(min-width:1024px\)\{[^@]*\.twmap \.story\.is-on\{padding-top:var\(--story-pad,24px\)\}/);
+});

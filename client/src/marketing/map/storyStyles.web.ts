@@ -32,9 +32,12 @@ const skeleton = `
 // the title steps aside; focus inside it (a Tab from the header) brings back only the part with focus, the actions,
 // so its links never take an invisible focus and the H1 never covers the map's Back. Hidden parts stay focusable
 // and in the reading order (opacity, not visibility), and come back only once the title's 150ms fade has ended.
+// On the first screen the legend under the map is not shown yet, so the story starts lower (--story-pad, measured
+// in NortheastMap's fitStory): the map centered in the window under the header, the title kept clear of the bottom.
 const wide = `
 @media (min-width:1024px){
 .twmap .story{padding-top:24px}
+.twmap .story.is-on{padding-top:var(--story-pad,24px)}
 .twmap .story.is-on{grid-template-columns:minmax(0,1fr) var(--story-mw,60%)}
 .twmap .story.is-on .st-h{grid-column:1;grid-row:1;min-height:calc(var(--story-mh,600px) + var(--story-ex,150px))}
 .twmap .story.is-on .story-pin{grid-column:2;grid-row:1 / span 16;position:sticky;top:var(--story-top,16px);align-self:start;min-height:calc(var(--story-mh,600px) + var(--story-ex,150px))}
