@@ -10,7 +10,7 @@ const c = theme.color;
 const easeOut = `cubic-bezier(${theme.motion.easeOut.join(',')})`;
 
 const chrome = `
-.tw{--ground:${c.ground};--panel:${c.panel};--raised:${c.raised};--state:${c.state};--border:${c.border};--line:${c.line};--white:${c.white};--text2:${c.text2};--text3:${c.text3};--mint:${c.mint};--eo:${easeOut};--sans:${theme.font.sans};--mono:${theme.font.mono};position:absolute;inset:0;overflow-x:hidden;overflow-y:auto;background:var(--ground);color:var(--white);font-family:var(--sans);font-size:17px;line-height:28px;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+.tw{--ground:${c.ground};--panel:${c.panel};--raised:${c.raised};--state:${c.state};--border:${c.border};--line:${c.line};--white:${c.white};--text2:${c.text2};--text3:${c.text3};--mint:${c.mint};--eo:${easeOut};--sans:${theme.font.sans};--mono:${theme.font.mono};position:absolute;inset:0;overflow-x:hidden;overflow-y:auto;background:var(--ground);color:var(--white);font-family:var(--sans);font-size:17px;line-height:28px;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .tw *,.tw *::before,.tw *::after{box-sizing:border-box}
 .tw h1,.tw h2,.tw h3,.tw p,.tw ul,.tw ol{margin:0}
 .tw ul,.tw ol{padding:0;list-style:none}
