@@ -1,6 +1,6 @@
 import { act, cleanup, render } from '@testing-library/react';
 
-import { homeCss } from '../../src/marketing/homeStyles.web';
+import { FLOW, FLOW_DAY_PX, homeCss } from '../../src/marketing/homeStyles.web';
 import { HowItWorks } from '../../src/marketing/HowItWorks.web';
 import { ScrollRoot } from '../../src/marketing/MarketingShell.web';
 
@@ -243,8 +243,8 @@ test('without IntersectionObserver the steps stack, each with its visual shown a
 });
 
 test('each illustration enters within 900ms on the entering curves, its parts 30 to 80ms apart', () => {
-  // Each part's last instance: the third date, the fourth tag, the fourteenth dot, the third row.
-  const last = { 'v1-l li': 2, 'v2-band': 0, 'v2-line': 0, 'v2-tags li': 3, 'v3-dot': 13, 'v3-line': 0, 'v4-r': 2 };
+  // Each part's last instance: the third date, the fourth tag, the eleventh dot (history to today), the third row.
+  const last = { 'v1-l li': 2, 'v2-band': 0, 'v2-line': 0, 'v2-tags li': 3, 'v3-dot': 10, 'v3-line': 0, 'v3-fc': 0, 'v3-today': 0, 'v4-r': 2 };
   for (const [part, n] of Object.entries(last)) {
     const rules = [...homeCss.matchAll(new RegExp(`\\.hv\\.is-on \\.${part}\\{([^}]*)\\}`, 'g'))].map((match) => match[1] ?? '');
     expect(rules.length).toBeGreaterThan(0);
@@ -260,4 +260,48 @@ test('each illustration enters within 900ms on the entering curves, its parts 30
       }
     }
   }
+});
+
+test('after the fit, step 03 moves on 12 days in six moves, once and under 5 seconds, each new actual landing at today', () => {
+  installObserver();
+  media({ wide: true, reduce: false });
+  const root = renderHow();
+  const live = at([...stageOf(root).querySelectorAll<HTMLElement>('.hw-vz > .hv')], 2);
+  expect([...live.querySelectorAll('.v3-lg li')].map((item) => item.textContent)).toEqual(['Actual', 'Predicted', 'Forecast', 'Today']);
+  expect(live.querySelectorAll('svg text')).toHaveLength(0);
+
+  // The live phase starts after the 900ms enter, moves for under 5 seconds (WCAG 2.2.2) and runs once.
+  expect(FLOW.start).toBeGreaterThanOrEqual(900);
+  expect(FLOW.every * FLOW.steps).toBeLessThan(5000);
+  expect(FLOW.move).toBeLessThan(FLOW.every);
+  const motion = homeCss.split('\n').find((line) => line.startsWith('@media (prefers-reduced-motion:no-preference){.pg-home .v1-l li')) ?? '';
+  expect(motion).toContain(`.pg-home .hv.is-on .v3-flow{animation:twFlow ${String(FLOW.every * FLOW.steps)}ms var(--eio) ${String(FLOW.start)}ms both}`);
+  expect(motion).toContain(`.pg-home .hv.is-on .v3-new{animation:twLand 240ms var(--eo) calc(${String(FLOW.start + FLOW.move)}ms + var(--k) * ${String(FLOW.every)}ms) both}`);
+  // Only the no-preference rules animate it, so reduced motion shows the fitted chart standing still.
+  expect(homeCss.split('\n').filter((line) => /v3-(?:flow|new)\{[^}]*animation/.test(line))).toEqual([motion]);
+  expect(homeCss).not.toMatch(/infinite/);
+  const flow = /@keyframes twFlow\{(.*)\}\n/.exec(homeCss)?.[1] ?? '';
+  const shifts = [...flow.matchAll(/translateX\((-[\d.]+)px\)/g)].map((match) => Number(match[1]));
+  expect(Math.min(...shifts)).toBeCloseTo(-FLOW.steps * FLOW.daysPerStep * FLOW_DAY_PX, 1);
+
+  // Three moving groups (solid past, dashed forecast, dots) under clips that stay put; the dashed forecast is the
+  // same model line as the solid past, and the two clips meet at today.
+  const today = Number(live.querySelector('.v3-today')?.getAttribute('x1'));
+  expect(live.querySelectorAll('.v3-flow')).toHaveLength(3);
+  for (const group of live.querySelectorAll('.v3-flow')) expect(group.parentElement?.closest('.v3-flow')).toBeNull();
+  expect(live.querySelector('.v3-fc')?.getAttribute('d')).toBe(live.querySelector('.v3-line')?.getAttribute('d'));
+  const [view, past, ahead] = [...live.querySelectorAll('clipPath rect')].map((rect) => ['x', 'width'].map((name) => Number(rect.getAttribute(name))));
+  expect(past).toEqual([0, expect.closeTo(today, 1) as number]);
+  expect(at(ahead ?? [], 0)).toBeCloseTo(today, 1);
+  expect(view).toEqual([8, 384]);
+
+  // History to today, then one new actual per move, each reaching the today line when its move ends.
+  expect(live.querySelectorAll('.v3-dot')).toHaveLength(11);
+  expect(Number(at([...live.querySelectorAll('.v3-dot')], 10).getAttribute('cx'))).toBeCloseTo(today, 1);
+  const landing = [...live.querySelectorAll<SVGCircleElement>('.v3-new')];
+  expect(landing).toHaveLength(FLOW.steps);
+  landing.forEach((dot, k) => {
+    expect(dot.style.getPropertyValue('--k')).toBe(String(k));
+    expect(Number(dot.getAttribute('cx')) - (k + 1) * FLOW.daysPerStep * FLOW_DAY_PX).toBeCloseTo(today, 0);
+  });
 });
