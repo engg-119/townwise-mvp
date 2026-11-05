@@ -21,5 +21,10 @@ export default async function setup(project: TestProject): Promise<() => Promise
   ]);
   project.provide('mongoUri', mongo.getConnectionString());
   project.provide('redisUrl', `redis://${valkey.getHost()}:${String(valkey.getMappedPort(6379))}`);
+  // The tests run on a clock frozen at 2026-06-01 (helpers/server.ts), but mongod's TTL monitor deletes by the wall
+  // clock, by which every session and magic link a test writes has long expired. Its pass, once a minute, would delete
+  // them mid-test. Nothing here may expire by the wall clock (mongo-stores.int.test.ts pins this).
+  const ttl = await mongo.exec(['mongosh', '--quiet', '--eval', 'db.adminCommand({ setParameter: 1, ttlMonitorEnabled: false })']);
+  if (ttl.exitCode !== 0) throw new Error(`could not turn off the TTL monitor: ${ttl.output}`);
   return async () => { await Promise.all([mongo.stop(), valkey.stop()]); };
 }
