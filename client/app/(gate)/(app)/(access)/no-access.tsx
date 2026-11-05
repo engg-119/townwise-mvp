@@ -1,7 +1,7 @@
 import { Link } from 'expo-router';
 import { StyleSheet, View } from 'react-native';
 
-import { CONTACT_HREF } from '../../../../src/marketing/links';
+import { CONTACT_EMAIL, CONTACT_HREF } from '../../../../src/portal/contact';
 import { formatDate } from '../../../../src/portal/format';
 import { personEmail, QuestionsLine, SignedInLine } from '../../../../src/portal/gate';
 import { usePortal } from '../../../../src/portal/PortalProvider';
@@ -9,7 +9,7 @@ import { Page } from '../../../../src/portal/shell/Page';
 import type { Access } from '../../../../src/portal/schemas';
 import { Actions, LinkButton } from '../../../../src/portal/ui/Button';
 import { Columns, Panel, Stack } from '../../../../src/portal/ui/layout';
-import { Body, Lead } from '../../../../src/portal/ui/text';
+import { Body, inlineTarget, Lead } from '../../../../src/portal/ui/text';
 import { theme } from '../../../../src/theme';
 
 // P5. No access (spec 16.2, F4, F7; the NoAccess board): a request that wasn't approved, removed by an admin,
@@ -75,7 +75,7 @@ function Paused(props: { access: Extract<Variant, { state: 'org_suspended' }> })
       lead={(
         <Lead>
           {`The Townwise team has paused access for ${org.name}. Your organization’s data is kept. Questions: `}
-          <Link href={CONTACT_HREF} style={styles.link}>hello@townwise.tech</Link>
+          <Link href={CONTACT_HREF} style={styles.link}>{CONTACT_EMAIL}</Link>
           .
         </Lead>
       )}
@@ -95,5 +95,5 @@ export default function NoAccessPage(): React.JSX.Element {
 }
 
 const styles = StyleSheet.create({
-  link: { color: theme.color.white, textDecorationLine: 'underline', textDecorationColor: theme.color.line },
+  link: { ...inlineTarget, color: theme.color.white, textDecorationLine: 'underline', textDecorationColor: theme.color.line },
 });

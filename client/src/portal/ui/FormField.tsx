@@ -1,5 +1,5 @@
-import { useId, useState } from 'react';
-import { StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
+import { useEffect, useId, useState } from 'react';
+import { AccessibilityInfo, Platform, StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
 
 import { theme } from '../../theme';
 import { ids, webAria } from './aria';
@@ -8,13 +8,16 @@ import { Messages } from './feedback';
 // FormField (spec 15.7): a `ui` white label, a `ground` input with a 1px `line` border, square corners, at least
 // 44px tall with 16px text, a `small` helper tied by aria-describedby, and field messages in the numbered ruled
 // list with aria-invalid on the field. Focus turns the border mint (the ring itself is the shell's focus-visible
-// style on web). Under view-as the field is read-only and described by the read-only line.
+// style on web). Under view-as the field is read-only and described by the read-only line. A field whose messages
+// come back from a submit (a wrong code) sets `alert`, so they are announced as ErrorNotice's are.
 
 export interface FieldChrome {
   label: string;
   helper?: string;
   /** Field messages; any message marks the field invalid. */
   messages?: readonly string[];
+  /** The messages come back from a submit: the alert role, an assertive live region, and on iOS an announcement. */
+  alert?: boolean;
   /** View-as: the field shows its value and cannot change. */
   readOnly?: boolean;
   /** The id of the ReadOnlyLine that explains why. */
@@ -28,12 +31,18 @@ export function useFieldIds(): { label: string; helper: string; messages: string
 
 export function FieldFrame(props: FieldChrome & { ids: ReturnType<typeof useFieldIds>; children: React.ReactNode }): React.JSX.Element {
   const { messages = [] } = props;
+  const alert = props.alert === true;
+  const text = messages.join('\n');
+  // iOS reads neither the role nor the live region when content appears, so it is told (as in ErrorNotice).
+  useEffect(() => {
+    if (alert && text !== '' && Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(text);
+  }, [alert, text]);
   return (
     <View style={styles.field}>
       <Text nativeID={props.ids.label} style={styles.label}>{props.label}</Text>
       {props.children}
       {props.helper === undefined ? null : <Text nativeID={props.ids.helper} style={styles.help}>{props.helper}</Text>}
-      {messages.length === 0 ? null : <Messages nativeID={props.ids.messages} items={messages} />}
+      {messages.length === 0 ? null : <Messages nativeID={props.ids.messages} items={messages} {...(alert ? { live: 'alert' as const } : {})} />}
     </View>
   );
 }
@@ -53,7 +62,7 @@ export interface FormFieldProps extends FieldChrome, Omit<TextInputProps, 'style
 }
 
 export function FormField(props: FormFieldProps): React.JSX.Element {
-  const { label, helper, messages, readOnly, readOnlyId, numeric, multiline, onFocus, onBlur, ...input } = props;
+  const { label, helper, messages, alert, readOnly, readOnlyId, numeric, multiline, onFocus, onBlur, ...input } = props;
   const fieldIds = useFieldIds();
   const [focused, setFocused] = useState(false);
   const invalid = (messages?.length ?? 0) > 0;
@@ -61,6 +70,7 @@ export function FormField(props: FormFieldProps): React.JSX.Element {
     label,
     ...(helper === undefined ? {} : { helper }),
     ...(messages === undefined ? {} : { messages }),
+    ...(alert === undefined ? {} : { alert }),
     ...(readOnly === undefined ? {} : { readOnly }),
     ...(readOnlyId === undefined ? {} : { readOnlyId }),
   };

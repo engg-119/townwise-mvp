@@ -7,7 +7,7 @@ import { errorCopy } from '../errors';
 import { useBreakpoint } from '../hooks';
 import { Button } from './Button';
 import { useMessageTarget } from './messageFocus';
-import { Mono } from './text';
+import { inlineTarget, Mono } from './text';
 
 // Messages, notices, errors, loading lines, empty states and status tags (spec 15.6, 15.7; shell.md 7.3, 7.8).
 // No colour carries meaning: messages print in white in the numbered, ruled list, with no toast and no
@@ -120,7 +120,7 @@ const styles = StyleSheet.create({
   },
   counter: { width: 28, lineHeight: 24 },
   message: { ...theme.type.sub, color: c.white, flex: 1, minWidth: 0 },
-  link: { color: c.white, textDecorationLine: 'underline', textDecorationColor: c.line },
+  link: { ...inlineTarget, color: c.white, textDecorationLine: 'underline', textDecorationColor: c.line },
   error: { gap: theme.space[4], alignItems: 'flex-start' },
   loading: { ...theme.type.small, color: c.text2, paddingTop: 4 },
   empty: {

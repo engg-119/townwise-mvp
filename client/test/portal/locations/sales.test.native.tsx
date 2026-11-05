@@ -82,7 +82,7 @@ test('coverage, the chart’s text and numbers, by month, and uploads', async ()
   expect(writes(api)).toEqual([]);
 });
 
-test('at 320px the tables stack into label and value pairs, and a month still opens its days', async () => {
+test('at 320px By month is one compact table, and a month still opens its days', async () => {
   const spy = jest.spyOn(Dimensions, 'get').mockReturnValue({ ...Dimensions.get('window'), width: 320 });
   try {
     const { api } = setup(meOf(ACCESS.admin));
@@ -90,7 +90,15 @@ test('at 320px the tables stack into label and value pairs, and a month still op
     const uploads = await screen.findByLabelText('Uploads');
     expect(within(uploads).getAllByText('Status')).toHaveLength(2);
     const months = screen.getByLabelText('Sales by month');
-    expect(within(months).getAllByText('Net sales')).toHaveLength(SALES.months.length);
+    // One header row, not a label per month, and every month keeps its four cells.
+    for (const head of ['Month', 'Days', 'Guests', 'Net sales']) expect(within(months).getAllByText(head)).toHaveLength(1);
+    expect(within(months).getAllByRole('button')).toHaveLength(SALES.months.length);
+    expect(within(months).getByText('$39,000')).toBeTruthy();
+    // A screen reader hears each value with its column (January 2025: 26 days of $1,500 net sales).
+    expect(within(months).getByLabelText('Net sales: $39,000')).toBeTruthy();
+    for (const head of ['Days', 'Guests', 'Net sales']) {
+      expect(within(months).getAllByLabelText(new RegExp(`^${head}: \\$?[\\d,]+$`))).toHaveLength(SALES.months.length);
+    }
     await fireEvent.press(within(months).getByRole('button', { name: 'Feb 2026' }));
     const february = await screen.findByLabelText('Days in Feb 2026');
     expect(within(february).getAllByText('Guests')).toHaveLength(4);

@@ -53,6 +53,13 @@ test('the users unique indexes carry the names the DocumentDB duplicate-key mapp
     .toEqual(['email_1', 'googleSubject_1']);
 });
 
+// The tests' clock is frozen at 2026-06-01 (helpers/server.ts); by the wall clock the TTL monitor reads, every session
+// and magic link they write has long expired, and a pass would delete it mid-test.
+test('the test database deletes nothing by the wall clock: its TTL monitor is off', async () => {
+  const reply = await db.connection.getClient().db('admin').command({ getParameter: 1, ttlMonitorEnabled: 1 });
+  expect(reply.ttlMonitorEnabled).toBe(false);
+});
+
 test('TTL indexes present with the stated expireAfterSeconds', async () => {
   const sessions = await db.connection.collection('auth_sessions').indexes();
   const retired = await db.connection.collection('auth_refresh_retired').indexes();

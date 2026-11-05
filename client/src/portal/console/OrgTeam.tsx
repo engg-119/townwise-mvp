@@ -7,7 +7,7 @@ import { useAction } from '../hooks';
 import { usePortal } from '../PortalProvider';
 import type { Role } from '../schemas';
 import { Actions, Button } from '../ui/Button';
-import { DataTable } from '../ui/DataTable';
+import { DataTable, EMAIL_FLEX } from '../ui/DataTable';
 import { Messages } from '../ui/feedback';
 import { FormField } from '../ui/FormField';
 import { Panel, Stack } from '../ui/layout';
@@ -137,7 +137,7 @@ export function OrgTeam(props: {
         <DataTable
           label="Team"
           columns={[
-            { key: 'email', label: 'Email', flex: 1.8 },
+            { key: 'email', label: 'Email', flex: EMAIL_FLEX },
             { key: 'role', label: 'Role', flex: 0.7 },
             { key: 'status', label: 'Status', flex: 0.7 },
             { key: 'since', label: 'Since' },

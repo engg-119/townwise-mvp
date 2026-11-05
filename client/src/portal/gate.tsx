@@ -3,15 +3,15 @@ import { Link } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { useAuth } from '../auth/AuthProvider';
-import { CONTACT_HREF } from '../marketing/links';
 import { theme } from '../theme';
+import { CONTACT_EMAIL, CONTACT_HREF } from './contact';
 import { COPY } from './errors';
 import { useAction, useBreakpoint } from './hooks';
 import { usePortal, useReadOnly } from './PortalProvider';
 import type { Invitation, MeResponse } from './schemas';
 import { webAria } from './ui/aria';
 import { ErrorNotice } from './ui/feedback';
-import { Mono } from './ui/text';
+import { inlineTarget, Mono } from './ui/text';
 
 // Pieces the gate pages share (spec 16.2, the RequestAccess, Pending, NoAccess and Joining boards).
 
@@ -75,13 +75,12 @@ export function SignedInLine(): React.JSX.Element {
   );
 }
 
-/** “Questions: hello@townwise.tech.” */
+/** “Questions: {contact address}.”, in `small` at every width, as on the NoAccess board. */
 export function QuestionsLine(): React.JSX.Element {
-  const { phone } = useBreakpoint();
   return (
-    <Text style={[phone ? theme.type.sub : theme.type.small, styles.meText]}>
+    <Text style={[theme.type.small, styles.meText]}>
       {'Questions: '}
-      <Link href={CONTACT_HREF} style={styles.link}>hello@townwise.tech</Link>
+      <Link href={CONTACT_HREF} style={styles.link}>{CONTACT_EMAIL}</Link>
       .
     </Text>
   );
@@ -97,6 +96,6 @@ const styles = StyleSheet.create({
   itemText: { color: c.text2, flex: 1, minWidth: 0 },
   me: { gap: theme.space[4], paddingTop: theme.space[4], borderTopWidth: 1, borderTopColor: c.border },
   meText: { color: c.text2 },
-  link: { color: c.white, textDecorationLine: 'underline', textDecorationColor: c.line },
-  linkDisabled: { color: c.text3, textDecorationLine: 'underline', textDecorationColor: c.border },
+  link: { ...inlineTarget, color: c.white, textDecorationLine: 'underline', textDecorationColor: c.line },
+  linkDisabled: { ...inlineTarget, color: c.text3, textDecorationLine: 'underline', textDecorationColor: c.border },
 });

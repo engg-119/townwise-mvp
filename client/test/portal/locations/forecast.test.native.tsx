@@ -98,6 +98,18 @@ describe('P11 Forecast', () => {
     expect(StyleSheet.flatten(screen.getByRole('heading', { name: 'Your town' }).props.style)).toMatchObject({ color: theme.color.white });
   });
 
+  test('only the selected step draws a marker, and it hangs outside the text so no title shifts', async () => {
+    const { api } = setup(meOf(ACCESS.member), { l2: salesOf([]) });
+    await renderApp('/locations/l2', api);
+    await screen.findByText('No finished upload');
+    const markers = screen.getAllByTestId('step-marker');
+    expect(markers).toHaveLength(1);
+    expect(StyleSheet.flatten(markers[0]?.props.style)).toMatchObject({ position: 'absolute', backgroundColor: theme.color.mint });
+    // Unselected titles are alone in their row, so they align with the body text below them.
+    const title = screen.getByRole('heading', { name: 'Your town' });
+    expect(title.parent?.children).toHaveLength(1);
+  });
+
   test('its links open the Town and Notes tabs', async () => {
     const { api } = setup(meOf(ACCESS.member), { l1: salesOf(DAYS) });
     const { router } = await renderApp('/locations/l1', api);

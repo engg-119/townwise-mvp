@@ -4,6 +4,7 @@ import { Platform, Pressable, StyleSheet, Text, View, type PressableStateCallbac
 
 import { theme } from '../../theme';
 import { webAria } from './aria';
+import { useHover } from './hover';
 
 // Buttons (spec 15.6, 15.7): one white primary per page with a dark label, outline buttons, and text links. Mint
 // never fills a button. A disabled control keeps its place and its focus: it carries aria-disabled (never the
@@ -34,10 +35,10 @@ function hovered(state: PressableStateCallbackType): boolean {
   return (state as { hovered?: boolean }).hovered === true;
 }
 
-function boxStyle(variant: ButtonVariant, state: PressableStateCallbackType, disabled: boolean, block: boolean) {
+function boxStyle(variant: ButtonVariant, hover: boolean, disabled: boolean, block: boolean) {
   return [
     styles[variant],
-    !disabled && hovered(state) && hoverStyles[variant],
+    !disabled && hover && hoverStyles[variant],
     disabled && disabledStyles[variant],
     disabled && styles.inert,
     block ? styles.block : styles.inline,
@@ -89,7 +90,7 @@ export function Button(props: ButtonProps): React.JSX.Element {
       {...(props.accessibilityLabel === undefined ? {} : { accessibilityLabel: props.accessibilityLabel })}
       {...webAria({ 'aria-describedby': props.describedBy })}
       {...(disabled || props.onPress === undefined ? {} : { onPress: props.onPress })}
-      style={(state) => boxStyle(variant, state, disabled, props.block === true)}
+      style={(state) => boxStyle(variant, hovered(state), disabled, props.block === true)}
     >
       {(state) => <Label variant={variant} hover={hovered(state)} disabled={disabled} text={props.label} />}
     </Pressable>
@@ -105,16 +106,20 @@ export interface LinkButtonProps extends CommonProps {
 /** A link that looks like a button or a text link. Disabled, it is a disabled button that goes nowhere. */
 export function LinkButton(props: LinkButtonProps): React.JSX.Element {
   const variant = props.variant ?? 'link';
+  const hover = useHover();
   if (props.disabled === true) return <Button {...props} variant={variant} />;
   return (
     <Link href={props.href} asChild {...(props.replace === true ? { replace: true } : {})}>
+      {/* A child of Link asChild takes one plain style object (ui/hover.ts). */}
       <Pressable
         role="link"
         {...(props.accessibilityLabel === undefined ? {} : { accessibilityLabel: props.accessibilityLabel })}
         {...webAria({ 'aria-describedby': props.describedBy })}
-        style={(state) => boxStyle(variant, state, false, props.block === true)}
+        onHoverIn={hover.onHoverIn}
+        onHoverOut={hover.onHoverOut}
+        style={StyleSheet.flatten(boxStyle(variant, hover.hovered, false, props.block === true))}
       >
-        {(state) => <Label variant={variant} hover={hovered(state)} disabled={false} text={props.label} />}
+        <Label variant={variant} hover={hover.hovered} disabled={false} text={props.label} />
       </Pressable>
     </Link>
   );
