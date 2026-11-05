@@ -53,6 +53,14 @@ test('the code field sits in the sign-in card, in the site header and footer, as
   expect(within(card).getByRole('button', { name: 'Use a recovery code instead' })).toBeTruthy();
 });
 
+test('nothing on /totp offers early access, since /request-access leads back here mid sign-in', () => {
+  renderTotp(() => Promise.resolve());
+  expect(screen.queryAllByRole('link', { name: 'Request early access' })).toEqual([]);
+  expect(document.body.textContent).not.toContain('Request early access');
+  const account = within(screen.getByRole('contentinfo')).getByRole('navigation', { name: 'Account' });
+  expect(within(account).getAllByRole('link').map((link) => [link.textContent, link.getAttribute('href')])).toEqual([['Sign in', '/sign-in']]);
+});
+
 test('a wrong code prints under the field, tied to it, as an assertive alert', async () => {
   const card = renderTotp(() => Promise.reject(new ApiError('http', 'invalid', { status: 400, code: 'invalid_code' })));
   const input = within(card).getByLabelText('Code');

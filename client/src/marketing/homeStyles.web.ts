@@ -132,6 +132,7 @@ export const homeCss = `
 .pg-home .faq{display:grid;border-top:1px solid var(--border)}
 .pg-home .faq-i{display:grid;grid-template-columns:minmax(0,4fr) minmax(0,5fr);gap:12px 20px;padding:28px 0;border-bottom:1px solid var(--border)}
 .pg-home .faq-i p{color:var(--text2);text-wrap:pretty}
+@media (max-width:640px){.pg-home .faq-i p a{position:relative;z-index:1;padding-block:13px}}
 @media (max-width:1023px){.pg-home .faq-i{grid-template-columns:minmax(0,1fr)}}
 .pg-home .fin{background:var(--panel)}
 .pg-home .fin-l{grid-column:1/8}

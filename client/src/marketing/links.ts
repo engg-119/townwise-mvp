@@ -16,7 +16,7 @@ export const SIGN_IN_HREF = '/sign-in';
 // first; a person with no organization then lands on the form, and staff see the request on /admin.
 export const EARLY_ACCESS_HREF = '/request-access';
 // The one contact address, shown on the pages and linked by CONTACT_HREF. The mailbox does not exist yet (launch
-// blocker). The portal reads the address back from CONTACT_HREF, so it stays a plain mailto with no query string.
+// blocker). The portal imports both through src/portal/contact.ts, so changing the address here changes every page.
 export const CONTACT_EMAIL = 'hello@townwise.tech';
 export const CONTACT_HREF = `mailto:${CONTACT_EMAIL}`;
 
