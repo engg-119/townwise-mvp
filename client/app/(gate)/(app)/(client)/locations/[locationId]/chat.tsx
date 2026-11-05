@@ -17,8 +17,9 @@ import { Button, Loading, Message, Screen } from '../../../../../../src/ui';
 // this file only lays it out. Nothing here animates: new text and the scroll to it appear at once.
 // Under view-as (spec 15.5) staff can read the target's conversations, and every write control (the composer,
 // Send or Stop, Add note, New conversation) stays in place, disabled, described by the one read-only line.
-// On phones the location's header and tabs come from the layout and sit at the top of the thread, so they
-// scroll away and the conversation gets the screen; wider screens keep them above the chat.
+// The location's header (the page's one h1, with the name) and its tabs come from the layout. On phones they are
+// compact (the name on one line, no eyebrow or switcher) and sit at the top of the thread, so they scroll away
+// and the conversation gets the screen; wider screens keep the full header above the chat.
 
 const READ_ONLY_ID = 'chat-ro';
 
@@ -31,24 +32,19 @@ export default function TuningChatScreen(): React.JSX.Element {
   // A note added from a card changes the location's notes count: the organization is read again on leaving.
   const markOrgStale = useOrgRefreshOnLeave();
   const chat = useTuningChat(api, locationId, markOrgStale);
-  const { state } = chat;
   const locationHead = useScrollingHead();
   // iOS: the keyboard avoider measures itself from its parent, so it is offset by the header above it.
   const root = useRef<React.ComponentRef<typeof View>>(null);
   const [top, setTop] = useState(0);
   const head = (
-    <View style={styles.head}>
-      <Button
-        variant="link"
-        label="Back to locations"
-        onPress={() => {
-          if (router.canGoBack()) router.back();
-          else router.replace('/dashboard');
-        }}
-      />
-      {/* The location header above holds the page's one h1. */}
-      <Text role="heading" {...webAria({ 'aria-level': 2 })} style={styles.title}>{state.locationName ?? 'Tuning chat'}</Text>
-    </View>
+    <Button
+      variant="link"
+      label="Back to locations"
+      onPress={() => {
+        if (router.canGoBack()) router.back();
+        else router.replace('/dashboard');
+      }}
+    />
   );
 
   return (
@@ -67,7 +63,7 @@ export default function TuningChatScreen(): React.JSX.Element {
   );
 }
 
-/** `top`: on phones, the location's header and the chat's own, at the top of what scrolls. */
+/** `top`: on phones, the location's header and the chat's back link, at the top of what scrolls. */
 function Body({ chat, top }: { chat: TuningChat; top: React.ReactNode }): React.JSX.Element {
   const { state } = chat;
   const { readOnly, line } = useReadOnly();
@@ -127,7 +123,7 @@ function Conversations({ chat }: { chat: TuningChat }): React.JSX.Element {
   const { conversations } = chat.state;
   return (
     <View style={styles.list}>
-      <Text role="heading" {...webAria({ 'aria-level': 3 })} style={styles.label}>Conversations</Text>
+      <Text role="heading" {...webAria({ 'aria-level': 2 })} style={styles.label}>Conversations</Text>
       {conversations.length === 0 ? (
         <Text style={styles.muted}>No conversations yet. Ask about a closure, a private event or an unusual day.</Text>
       ) : null}
@@ -228,8 +224,6 @@ const c = theme.color;
 
 const styles = StyleSheet.create({
   fill: { flex: 1, backgroundColor: c.ground },
-  head: { gap: theme.space[1] },
-  title: { ...theme.type.h3Phone, color: c.white },
   thread: { gap: theme.space[4], paddingBottom: theme.space[4] },
   list: { gap: theme.space[2] },
   label: { ...theme.type.label, color: c.text3 },
@@ -243,14 +237,15 @@ const styles = StyleSheet.create({
   rowTitle: { ...theme.type.ui, color: c.white },
   rowDate: { ...theme.type.small, color: c.text3 },
   message: { gap: theme.space[2] },
+  // Square corners everywhere in the app (spec 15.6).
   userMessage: {
     padding: theme.space[3], backgroundColor: c.panel, borderWidth: theme.stroke.hairline, borderColor: c.border,
-    borderRadius: theme.radius.frame,
+    borderRadius: theme.radius.none,
   },
   text: { ...theme.type.sub, color: c.white },
   card: {
     gap: theme.space[2], padding: theme.space[4], backgroundColor: c.panel, borderWidth: theme.stroke.hairline,
-    borderColor: c.border, borderRadius: theme.radius.frame,
+    borderColor: c.border, borderRadius: theme.radius.none,
   },
   cardTitle: { ...theme.type.ui, color: c.white },
   // Dates and guest counts are the note's data: mint, in the mono face.

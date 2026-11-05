@@ -16,7 +16,8 @@ import { Wrap } from '../ui/layout';
 // - staff console: `panel`; wordmark and the “Staff console” kind tag, the nav with “Requests {n}”, then
 //   “Verified until {time}”, the staff email and Sign out.
 // Nav links never hide: below 900px (1024px in the console) they take a second row under a rule. At 640px and
-// below the email hides and the organization name truncates.
+// below the email hides and the organization name truncates; the console puts “Verified until” under the wordmark,
+// beside Sign out, so its bar is one band and the nav.
 
 export interface TopBarProps {
   kind: 'gate' | 'client' | 'console';
@@ -80,7 +81,8 @@ export function TopBar(props: TopBarProps): React.JSX.Element {
       onPress={props.onSignOut}
     />
   );
-  // At 640px and below the gaps tighten to 12px, so the wordmark, the organization and Sign out fit at 320px.
+  // At 640px and below the gaps tighten to 12px and Sign out holds its width: the organization name takes the
+  // squeeze and truncates with an ellipsis, so Sign out stays inside the 16px margin at 320px and never wraps.
   const tight = phone ? styles.tight : null;
   const identity = (
     <View style={[styles.identity, tight]}>
@@ -94,36 +96,42 @@ export function TopBar(props: TopBarProps): React.JSX.Element {
       {consoleBar ? <StatusTag label="Staff console" /> : null}
     </View>
   );
-  const me = consoleBar ? (
-    <View style={[styles.me, phone ? styles.meRow : null]}>
-      <View style={phone ? styles.statusLeft : styles.status}>
-        {props.verifiedUntil === undefined || props.verifiedUntil === null ? null : (
-          <Text style={styles.mail}>{`Verified until ${formatTime(props.verifiedUntil)}`}</Text>
-        )}
-        {phone ? null : <Text numberOfLines={1} style={styles.mail}>{props.email}</Text>}
+  const verified = props.verifiedUntil === undefined || props.verifiedUntil === null ? null : (
+    <Text style={styles.mail}>{`Verified until ${formatTime(props.verifiedUntil)}`}</Text>
+  );
+  let me: React.JSX.Element;
+  if (phone) {
+    // Only Sign out, which never shrinks.
+    me = <View style={[styles.me, styles.hold]}>{signOut}</View>;
+  } else if (consoleBar) {
+    me = (
+      <View style={styles.me}>
+        <View style={styles.status}>
+          {verified}
+          <Text numberOfLines={1} style={styles.mail}>{props.email}</Text>
+        </View>
+        {signOut}
       </View>
-      {signOut}
-    </View>
-  ) : (
-    <View style={[styles.me, tight]}>
-      {phone ? null : (
+    );
+  } else {
+    me = (
+      <View style={styles.me}>
         <Text numberOfLines={1} style={[styles.mail, styles.shrink]}>
           {props.kind === 'gate' ? `Signed in as ${props.email}` : props.email}
         </Text>
-      )}
-      {signOut}
-    </View>
-  );
+        {signOut}
+      </View>
+    );
+  }
   const nav = props.nav === undefined || props.nav.length === 0 ? null : props.nav;
   return (
     <View role="banner" style={[styles.bar, consoleBar ? styles.panel : null]}>
       <Wrap>
         <View style={[styles.row, tight]}>
-          {identity}
+          {consoleBar && phone ? <View style={styles.stacked}>{identity}{verified}</View> : identity}
           {nav !== null && !wrapped ? <Nav items={nav} wrapped={false} /> : null}
-          {consoleBar && phone ? null : me}
+          {me}
         </View>
-        {consoleBar && phone ? <View style={styles.secondRow}>{me}</View> : null}
         {nav !== null && wrapped ? <View style={styles.navRow}><Nav items={nav} wrapped /></View> : null}
       </Wrap>
     </View>
@@ -165,10 +173,10 @@ const styles = StyleSheet.create({
   white: { color: c.white },
   count: { fontFamily: theme.type.mono.fontFamily, fontVariant: ['tabular-nums'] },
   me: { marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', columnGap: 20, flexShrink: 1, minWidth: 0 },
-  meRow: { marginLeft: 0, flex: 1, justifyContent: 'space-between' },
+  hold: { flexShrink: 0 },
   status: { alignItems: 'flex-end', minWidth: 0, flexShrink: 1 },
-  statusLeft: { alignItems: 'flex-start' },
-  secondRow: { flexDirection: 'row', minHeight: 44, alignItems: 'center' },
+  // The console on phones: the wordmark and kind tag, “Verified until” under them, and 12px below it.
+  stacked: { flexShrink: 1, minWidth: 0, paddingBottom: 12 },
   mail: { ...theme.type.mono, color: c.text3 },
   shrink: { flexShrink: 1 },
   tight: { columnGap: 12 },

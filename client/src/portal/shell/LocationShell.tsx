@@ -1,6 +1,6 @@
 import { createContext, useContext, useState } from 'react';
 import { Link, usePathname, useRouter } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, Text, View, type PressableStateCallbackType } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
 import { townLabel } from '../format';
@@ -11,8 +11,10 @@ import type { LocationSummary, MeResponse, OrgResponse } from '../schemas';
 import { webAria } from '../ui/aria';
 import { LinkButton } from '../ui/Button';
 import { ErrorNotice, LoadingLine, Notice } from '../ui/feedback';
+import { useHover } from '../ui/hover';
 import { Content, Wrap } from '../ui/layout';
 import { Select } from '../ui/Select';
+import { Title } from '../ui/text';
 import { PageHeader, PageNotice } from './Page';
 
 // The location pages' layout (spec 15.2, P11 to P16): the page header (eyebrow “{town}, {state}”, the location's
@@ -32,9 +34,9 @@ export function useLocation(): { location: LocationSummary; org: OrgResponse } {
 }
 
 /**
- * On phones the Chat tab needs the screen: the layout hands it the location's header and tabs instead of drawing
- * them above it, and the chat puts them at the top of its thread, so they scroll away with the conversation.
- * Null on every other page, and on wider screens.
+ * On phones the Chat tab needs the screen: the layout hands it a compact header (the name on one line, with no
+ * eyebrow or switcher) and the tabs instead of drawing them above it, and the chat puts them at the top of its
+ * thread, so they scroll away with the conversation. Null on every other page, and on wider screens.
  */
 const ScrollingHeadContext = createContext<React.ReactNode>(null);
 
@@ -42,19 +44,19 @@ export function useScrollingHead(): React.ReactNode {
   return useContext(ScrollingHeadContext);
 }
 
-function hovered(state: PressableStateCallbackType): boolean {
-  return (state as { hovered?: boolean }).hovered === true;
-}
-
 function Tab(props: { tab: LocationTab }): React.JSX.Element {
   const { tab } = props;
+  const hover = useHover();
   return (
     <Link href={tab.href} asChild>
+      {/* A child of Link asChild takes one plain style object (ui/hover.ts). */}
       <Pressable
         role="link"
         accessibilityState={{ selected: tab.current }}
         {...webAria({ 'aria-current': tab.current ? 'page' : undefined })}
-        style={(state) => [styles.tab, tab.current ? styles.tabOn : hovered(state) ? styles.tabHover : null]}
+        onHoverIn={hover.onHoverIn}
+        onHoverOut={hover.onHoverOut}
+        style={StyleSheet.flatten([styles.tab, tab.current ? styles.tabOn : hover.hovered ? styles.tabHover : null])}
       >
         <View style={[styles.square, tab.current ? styles.squareOn : null]} />
         <Text style={[styles.tabText, tab.current ? styles.tabTextOn : null]}>{tab.label}</Text>
@@ -123,20 +125,22 @@ export function LocationShell(props: { children: React.ReactNode }): React.JSX.E
       onChange={(id) => { router.push(locationHref(id, tabOf(pathname))); }}
     />
   ) : undefined;
-  const head = (
-    <>
-      <PageHeader eyebrow={townLabel(location.town)} title={location.name} {...(switcher === undefined ? {} : { side: switcher })} />
-      <LocationTabs tabs={locationTabs(location.id, role, pathname)} />
-    </>
-  );
+  const tabs = <LocationTabs tabs={locationTabs(location.id, role, pathname)} />;
   const page = <ShownOrgContext.Provider value={shown}>{props.children}</ShownOrgContext.Provider>;
   if (isFillRoute(pathname) && phone) {
+    const compact = <><Title lines={1}>{location.name}</Title>{tabs}</>;
     return (
-      <ScrollingHeadContext.Provider value={head}>
+      <ScrollingHeadContext.Provider value={compact}>
         <View style={styles.fill}>{page}</View>
       </ScrollingHeadContext.Provider>
     );
   }
+  const head = (
+    <>
+      <PageHeader eyebrow={townLabel(location.town)} title={location.name} {...(switcher === undefined ? {} : { side: switcher })} />
+      {tabs}
+    </>
+  );
   if (isFillRoute(pathname)) {
     return (
       <View style={styles.fill}>
@@ -161,7 +165,8 @@ const c = theme.color;
 const styles = StyleSheet.create({
   fill: { flex: 1 },
   missing: { gap: theme.space[4], alignItems: 'flex-start' },
-  tabsRegion: { marginHorizontal: -4, borderBottomWidth: 1, borderBottomColor: c.border },
+  // The row's 4px padding, inside the region, leaves room for the first and last tab's focus ring in the scroller.
+  tabsRegion: { borderBottomWidth: 1, borderBottomColor: c.border },
   tabsScroll: { flexGrow: 1 },
   tabs: { flexDirection: 'row', columnGap: 4, padding: 4 },
   tab: {

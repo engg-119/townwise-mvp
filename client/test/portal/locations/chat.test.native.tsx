@@ -7,7 +7,7 @@ jest.mock('expo-splash-screen', () => ({
   hideAsync: jest.fn(() => Promise.resolve()),
 }));
 
-import { Dimensions } from 'react-native';
+import { Dimensions, StyleSheet } from 'react-native';
 import { cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing-library';
 
 import type { MeResponse } from '../../../src/portal/schemas';
@@ -16,7 +16,8 @@ import { ACCESS, fakePortalApi, LOCATIONS, meOf, orgOf, refusal, staffMe, viewAs
 import { renderApp } from '../../helpers/renderApp';
 
 // The tuning chat inside the portal on native: view-as keeps every write control in place and disabled (spec
-// 15.5), and on phones the location's header and tabs scroll with the thread so the conversation gets the screen.
+// 15.5), and on phones a compact location header and the tabs scroll with the thread so the conversation gets the
+// screen.
 
 afterEach(async () => {
   await cleanup();
@@ -112,20 +113,34 @@ describe('the portal’s client (spec 4.3)', () => {
 });
 
 describe('the chat’s height on phones', () => {
-  test('at 375px the location header, switcher and tabs sit at the top of the thread, and the composer stays below it', async () => {
+  test('at 375px a compact header (the name on one line, no eyebrow or switcher) and the tabs sit at the top of the thread, and the composer stays below it', async () => {
     const spy = jest.spyOn(Dimensions, 'get').mockReturnValue({ ...WINDOW, width: 375 });
     try {
       await renderChat(meOf(ACCESS.member));
       const thread = await screen.findByTestId('chat-thread');
       expect(within(thread).getByLabelText('Location sections')).toBeTruthy();
-      expect(within(thread).getByRole('button', { name: 'Location' })).toBeTruthy();
-      // The page's h1 and the chat's own title both scroll away with the thread.
-      expect(within(thread).getAllByRole('heading', { name: 'Main Street Bar' })).toHaveLength(2);
+      // The page's one h1 names the location, once, on one line, and scrolls away with the thread.
+      const title = within(thread).getByRole('heading', { name: 'Main Street Bar' });
+      expect(screen.getAllByRole('heading', { name: 'Main Street Bar' })).toEqual([title]);
+      expect(title.props.numberOfLines).toBe(1);
+      // The organization has two locations, but the chat on a phone shows neither the switcher nor the town.
+      expect(screen.queryByRole('button', { name: 'Location' })).toBeNull();
+      expect(screen.queryByText('Hanover, NH')).toBeNull();
       expect(within(thread).getByRole('button', { name: 'Back to locations' })).toBeTruthy();
       expect(within(thread).queryByLabelText('Message')).toBeNull();
       expect(screen.getByLabelText('Message')).toBeTruthy();
     } finally {
       spy.mockRestore();
+    }
+  });
+
+  test('the bubbles and the proposal card have square corners (spec 15.6)', async () => {
+    await renderChat(meOf(ACCESS.member));
+    await fireEvent.press(screen.getByRole('button', { name: /^Earlier chat/ }));
+    const card = (await screen.findByText('Proposed note')).parent;
+    const bubble = screen.getByText('You').parent;
+    for (const box of [card, bubble]) {
+      expect(StyleSheet.flatten(box?.props.style)).toMatchObject({ borderWidth: 1, borderRadius: 0 });
     }
   });
 
@@ -142,12 +157,14 @@ describe('the chat’s height on phones', () => {
     }
   });
 
-  test('wider screens keep the header and tabs above the chat, as before', async () => {
+  test('wider screens keep the full header, the switcher and the tabs above the chat, and name the location once', async () => {
     await renderChat(meOf(ACCESS.member));
     const thread = await screen.findByTestId('chat-thread');
     expect(within(thread).queryByLabelText('Location sections')).toBeNull();
     expect(within(thread).queryByRole('button', { name: 'Back to locations' })).toBeNull();
     expect(screen.getByLabelText('Location sections')).toBeTruthy();
-    expect(screen.getAllByRole('heading', { name: 'Main Street Bar' })).toHaveLength(2);
+    expect(screen.getByRole('button', { name: 'Location' })).toBeTruthy();
+    expect(screen.getByText('Hanover, NH')).toBeTruthy();
+    expect(screen.getAllByRole('heading', { name: 'Main Street Bar' })).toHaveLength(1);
   });
 });

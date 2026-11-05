@@ -18,12 +18,21 @@ export function Eyebrow(props: TextProps): React.JSX.Element {
   return <Text nativeID={props.nativeID} style={[styles.eyebrow, props.style]}>{props.children}</Text>;
 }
 
-/** The page's one h1, styled `tw-h2`: 40/44, then 32/36 below 1024px, then 28/32 at 640px and below. */
-export function Title(props: TextProps): React.JSX.Element {
+/**
+ * The page's one h1, styled `tw-h2`: 40/44, then 32/36 below 1024px, then 28/32 at 640px and below. `lines` caps it
+ * and ends it with an ellipsis (the chat's compact header on phones).
+ */
+export function Title(props: TextProps & { lines?: number }): React.JSX.Element {
   const { phone, desktop } = useBreakpoint();
   const size = phone ? theme.type.h2Phone : desktop ? theme.type.h2 : theme.type.h2Tablet;
   return (
-    <Text role="heading" {...webAria({ 'aria-level': 1 })} nativeID={props.nativeID} style={[size, styles.white, props.style]}>
+    <Text
+      role="heading"
+      {...webAria({ 'aria-level': 1 })}
+      nativeID={props.nativeID}
+      {...(props.lines === undefined ? {} : { numberOfLines: props.lines })}
+      style={[size, styles.white, props.style]}
+    >
       {props.children}
     </Text>
   );
