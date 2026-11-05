@@ -23,7 +23,7 @@ export function SignInFrame(props: SignInFrameProps): React.JSX.Element {
       <Text style={styles.sub}>{props.lead}</Text>
       <View style={styles.card}>{props.children}</View>
       <View style={styles.access}>
-        <Text style={styles.fine}>{props.note}</Text>
+        <Text style={[width <= 640 ? theme.type.bodyPhone : theme.type.small, styles.fine]}>{props.note}</Text>
       </View>
     </Screen>
   );
@@ -39,6 +39,7 @@ const styles = StyleSheet.create({
     marginTop: theme.space[4], padding: theme.space[6], gap: theme.space[4],
     backgroundColor: c.panel, borderWidth: 1, borderColor: c.border, borderRadius: theme.radius.frame,
   },
-  fine: { ...theme.type.small, color: c.text2 },
+  // The note is reading text: 16/24 on phones, as the web frame sets it, and 14/20 wider.
+  fine: { color: c.text2 },
   access: { marginTop: theme.space[4], paddingTop: theme.space[4], borderTopWidth: 1, borderTopColor: c.border },
 });

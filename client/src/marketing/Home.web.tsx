@@ -40,36 +40,59 @@ function Section(props: { id: string; labelId: string; className?: string; child
   );
 }
 
-// The homepage (ConsoleV2.dc.html). The first screen: the eyebrow, the title, the sub, both actions, the
-// status line, then the map. Below it, the town list and panel, then the sections in the mockup's order.
-// Heading ids carry a useId prefix: screens stay mounted in the stack, and other pages use h-hero and h-about.
+// The lead after the map story: the eyebrow, the sub, both actions again and the status line. It rises in
+// like a section, and focus inside it (Tab) shows it at once.
+function Lead(): React.JSX.Element {
+  const root = useContext(ScrollRoot);
+  const { ref, armed, revealed, instant, revealNow } = useReveal<HTMLDivElement>(root, SECTION_VIEW);
+  const className = ['hd2 rv', armed && !revealed ? 'is-hid' : '', instant ? 'is-now' : ''].filter((name) => name !== '').join(' ');
+  return (
+    <div ref={ref} className={className} onFocus={revealNow}>
+      <p className="eyebrow">Early access. Built at Dartmouth, testing in Hanover, NH.</p>
+      <p className="sub">We’re building forecasts of daily guests and sales for restaurants and bars, 7 and 28 days ahead, from your town’s calendar, not the region’s.</p>
+      <div className="cta-row">
+        <a className="btn" href={EARLY_ACCESS_HREF}>Request early access</a>
+        <a className="btn-o" href={SIGN_IN_HREF}>Sign in</a>
+      </div>
+      <p className="eyebrow status">In development. No forecasts are for sale yet.</p>
+    </div>
+  );
+}
+
+// The homepage (ConsoleV2.dc.html). The first screen is the map story's first step: the title, the subtitle and
+// both actions over the state outlines. The story follows, then the lead, the town list and panel, then the
+// sections in the mockup's order. Heading ids carry a useId prefix: screens stay mounted in the stack, and other
+// pages use h-hero and h-about.
 export default function Home(): React.JSX.Element {
   const id = useId();
-  // The title rises once. Its animation is dropped when it ends, because the stack hides this screen with
-  // display: none, which would replay it on the way back.
+  // The title rises once and the subtitle fades in after it. Each animation is dropped when it ends, because
+  // the stack hides this screen with display: none, which would replay it on the way back.
   const [risen, setRisen] = useState(false);
+  const [subIn, setSubIn] = useState(true);
   const h = (name: string): string => `${id}h-${name}`;
+  const head = (
+    <div className="hd">
+      <h1 id={h('hero')} className={risen ? 'h1' : 'h1 is-rise'}>
+        <span className="ln"><span><span className="w">The Northeast</span> <span className="w">has one season.</span></span></span>
+        {' '}
+        <span className="ln"><span onAnimationEnd={() => { setRisen(true); }}><span className="w">Your town</span> <span className="w">has its own.</span></span></span>
+      </h1>
+      <p className={subIn ? 'hsub is-in' : 'hsub'} onAnimationEnd={() => { setSubIn(false); }}>
+        We’re building daily demand forecasts for restaurants and bars in college, ski and island towns. <span className="hsub-2">Now in early access.</span>
+      </p>
+      <div className="cta-row">
+        <a className="btn" href={EARLY_ACCESS_HREF}>Request early access</a>
+        <a className="btn-o" href={SIGN_IN_HREF}>Sign in</a>
+      </div>
+    </div>
+  );
   return (
     <MarketingShell title="Townwise">
       <style href="townwise-home" precedence="default">{homeCss}</style>
       <div className="pg-home">
         <section id="map" className="hero" aria-labelledby={h('hero')} tabIndex={-1}>
           <div className="wrap">
-            <div className="hd">
-              <p className="eyebrow">Early access. Built at Dartmouth, testing in Hanover, NH.</p>
-              <h1 id={h('hero')} className={risen ? 'h1' : 'h1 is-rise'}>
-                <span className="ln"><span>The Northeast has one season.</span></span>
-                {' '}
-                <span className="ln"><span onAnimationEnd={() => { setRisen(true); }}>Your town has its own.</span></span>
-              </h1>
-              <p className="sub">We’re building forecasts of daily guests and sales for restaurants and bars, 7 and 28 days ahead, from your town’s calendar, not the region’s.</p>
-              <div className="cta-row">
-                <a className="btn" href={EARLY_ACCESS_HREF}>Request early access</a>
-                <a className="btn-o" href={SIGN_IN_HREF}>Sign in</a>
-              </div>
-              <p className="eyebrow status">In development. No forecasts are for sale yet.</p>
-            </div>
-            <NortheastMap />
+            <NortheastMap head={head} lead={<Lead />} />
           </div>
         </section>
 

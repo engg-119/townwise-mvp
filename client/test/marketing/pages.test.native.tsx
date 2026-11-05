@@ -63,8 +63,8 @@ test('links between pages work on native', async () => {
   expect(router.getPathname()).toBe('/privacy');
 });
 
-test('the public security page links to the two-factor settings', async () => {
+test('the public security page links to the two-step sign-in settings', async () => {
   const router = await renderRouter(routes, { initialUrl: '/security' });
-  await fireEvent.press(screen.getByText('Two-factor settings'));
+  await fireEvent.press(screen.getByText('Two-step sign-in settings'));
   expect(router.getPathname()).toBe('/settings/security');
 });

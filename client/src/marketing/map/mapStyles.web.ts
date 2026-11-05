@@ -14,28 +14,12 @@ const frame = `
 .twmap button{font-family:inherit}
 .twmap .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .twmap .app{border:1px solid var(--border);border-radius:${theme.radius.frame}px;background:var(--panel);overflow:clip}
-.twmap .app+.app{margin-top:${theme.space[8]}px}
-.twmap .tb{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:8px 12px;min-height:52px;padding:4px 12px;border-top:1px solid var(--border)}
-.twmap .tb-l{justify-self:start}.twmap .tb-r{justify-self:end;text-align:right}
-.twmap .tg{display:flex}
-.twmap .tg button{width:88px;min-height:44px;padding:0;font-size:14px;line-height:20px;font-weight:500;color:var(--text2);background:transparent;border:1px solid var(--line);border-radius:0;cursor:pointer;transition:background-color ${m.select}ms ease,color ${m.select}ms ease}
-.twmap .tg button+button{border-left:0}
-.twmap .tg button:hover{color:var(--white)}
-.twmap .tg button[aria-pressed="true"]{background:var(--mint);border-color:var(--mint);color:var(--ground)}
-@media (max-width:699px){.twmap .tb{grid-template-columns:minmax(0,1fr);gap:4px;padding:4px 12px}.twmap .tb-l{grid-row:1}.twmap .tb-r{grid-row:2;justify-self:start;text-align:left}.twmap .tg{grid-row:3;margin-top:4px}.twmap .tg button{flex:1 1 0;width:auto}}
-.twmap .pane-map{position:relative;min-width:0;padding:16px}
 .twmap .map-fig{width:100%;max-width:1040px;margin-inline:auto;container-type:inline-size;container-name:map}
-.twmap .map-cap{display:grid;gap:8px;max-width:1072px;margin-inline:auto;padding:16px;font-size:14px;line-height:20px;color:var(--text2)}
-.twmap .map-cap p{max-width:720px}
-.twmap .map-cap strong{color:var(--white);font-weight:600}
 .twmap .app-b{display:grid;grid-template-columns:minmax(0,1fr);grid-template-areas:"list" "card" "notes"}
 .twmap .pane-list{grid-area:list;min-width:0;padding:8px}
 .twmap .pane-card{grid-area:card;min-width:0;padding:16px;background:var(--raised);border-top:1px solid var(--border);container-type:inline-size;container-name:card}
 .twmap .pane-notes{grid-area:notes;min-width:0}
-@media (max-width:699px){.twmap .pane-map{padding:0 0 16px}.twmap .map-cap,.twmap .lg-under{padding-inline:16px}}
 @media (min-width:900px){.twmap .app-b{grid-template-columns:300px minmax(0,1fr);grid-template-areas:"list card" "notes notes"}.twmap .pane-list{border-right:1px solid var(--border)}.twmap .pane-card{border-top:0}}
-.twmap .inst-touch{display:none}
-@media (hover:none) and (pointer:coarse){.twmap .inst-ptr{display:none}.twmap .inst-touch{display:inline}}
 .twmap .mono-s{font-family:var(--mono);font-size:12px;line-height:16px;color:var(--text3)}
 `;
 
@@ -71,7 +55,6 @@ const map = `
 .twmap .mk-pos.is-hov{z-index:3}
 @media (hover:hover) and (pointer:fine) and (prefers-reduced-motion:no-preference){.twmap .mk-pos.is-hov.is-ptr .mk{transform:scale(1.25)}}
 .twmap .dot{position:relative;display:block;width:24px;height:24px;border-radius:50%;background:var(--mint);outline:2px solid ${c.mintRing};outline-offset:3px;transform:scale(var(--k,1))}
-.twmap .app.is-play .dot{transition:transform 280ms var(--eio)}
 .twmap .pat-moves .dot{background:transparent;border:3px solid var(--mint);outline:0}
 .twmap .pat-opposite .dot::after{content:"";position:absolute;left:20%;right:20%;top:50%;height:4px;margin-top:-2px;background:var(--ground)}
 .twmap .mtag{position:absolute;z-index:2;white-space:nowrap;font-family:var(--mono);font-size:12px;line-height:16px;color:var(--white);background:var(--raised);border:1px solid var(--border);padding:1px 6px;pointer-events:none;opacity:0;--off:6px}
@@ -89,27 +72,11 @@ const map = `
 @keyframes twTagB{0%,66%{opacity:0}100%{opacity:1}}
 .twmap .ztag.zf-a{animation:twTagA 420ms var(--eo)}
 .twmap .ztag.zf-b{animation:twTagB 420ms var(--eo)}
-.twmap .hud{position:sticky;top:12px;z-index:4;display:grid;gap:8px;width:max-content;max-width:calc(100% - 24px);margin:12px;padding:8px;background:var(--panel);border:1px solid var(--border);transition:opacity ${m.fade}ms var(--eo),visibility ${m.fade}ms}
-.twmap .mon{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.twmap .mon-l{display:inline-block;padding-left:4px;font-family:var(--mono);font-weight:500;font-size:16px;line-height:20px;letter-spacing:.04em;text-transform:uppercase;font-variant-numeric:tabular-nums;color:var(--white)}
-/* While the year plays the month rises as it fades in. Play and Pause change only its rise and length, never
-   the animation-name, so toggling them does not replay the label. */
-@keyframes twTickA{from{opacity:0;transform:translateY(var(--tk-y,0))}to{opacity:1;transform:none}}
-@keyframes twTickB{from{opacity:0;transform:translateY(var(--tk-y,0))}to{opacity:1;transform:none}}
-.twmap .mon-l.tk-a{animation:twTickA 150ms var(--eo)}.twmap .mon-l.tk-b{animation:twTickB 150ms var(--eo)}
-.twmap .app.is-play .mon-l{--tk-y:6px;animation-duration:${m.fade}ms}
-.twmap .mon-b{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-width:44px;min-height:44px;padding:0 12px;background:transparent;color:var(--white);border:1px solid var(--line);border-radius:0;font-size:14px;line-height:20px;font-weight:500;cursor:pointer;transition:border-color ${m.select}ms ease,transform 160ms var(--eo)}
-.twmap .mon-b:hover{border-color:var(--white)}
-.twmap .mon-b:active{transform:scale(.97)}
-.twmap .mon-b svg{flex:none;width:14px;height:14px;fill:currentColor}
 .twmap .lg{font-family:var(--mono);font-size:12px;line-height:16px;color:var(--text3);display:grid;gap:4px;transition:opacity ${m.fade}ms var(--eo)}
 .twmap .lg ul{display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px}
 .twmap .lg li{display:flex;align-items:center;gap:6px;min-height:16px}
-.twmap .lg-on{display:none;border-top:1px solid var(--border);padding-top:8px}
-.twmap .lg-on .lg-pat{flex-direction:column;align-items:flex-start}
 .twmap .lg-under{padding-top:12px}
-.twmap .app:not(.is-local) .hud,.twmap .app.is-zoomed .hud,.twmap .app:not(.is-local) .lg-under{opacity:0;visibility:hidden}
-@media (min-width:641px){@container map (min-width:530px){.twmap .lg-on{display:grid}.twmap .lg-under{display:none}.twmap .hud{width:224px}}}
+.twmap .app:not(.is-local) .lg-under{opacity:0;visibility:hidden}
 .twmap .sw{position:relative;display:inline-block;flex:none;width:12px;height:12px;border-radius:50%;background:var(--mint)}
 .twmap .sw-moves{background:transparent;border:1.5px solid var(--mint)}
 .twmap .sw-breaks,.twmap .sw-opposite{outline:1px solid ${c.mintRing};outline-offset:2px}
@@ -122,10 +89,13 @@ const map = `
 .twmap .zb:hover{color:var(--white);border-color:var(--white)}
 `;
 
-// The town list, the card and the notes row under the panes.
+// The town list, the card and the notes row under the panes. On phones the card's sentences are body size and
+// the notes' longer mono lines 14px.
 const panel = `
-.twmap .list-h{display:flex;justify-content:flex-end;align-items:center;min-height:32px;padding:4px 11px;transition:opacity ${m.fade}ms var(--eo)}
-.twmap .app:not(.is-local) .list-h{opacity:0}
+.twmap .list-h{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:4px 16px;min-height:32px;padding:4px 11px}
+.twmap .list-pick{font-size:14px;line-height:20px;font-weight:600;color:var(--white)}
+.twmap .list-m{margin-left:auto;transition:opacity ${m.fade}ms var(--eo)}
+.twmap .app:not(.is-local) .list-m{opacity:0}
 .twmap .grp{border-top:1px solid var(--border);padding-top:4px}
 .twmap .grp+.grp{margin-top:8px}
 .twmap .grp-h{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:2px 8px;padding:6px 10px}
@@ -219,17 +189,18 @@ const panel = `
 .twmap .srcs{display:grid}
 .twmap .srcs a{display:inline-flex;align-items:center;min-height:44px;color:var(--text3)}
 .twmap .srcs a:hover{color:var(--mint)}
+@media (max-width:640px){.twmap .cp,.twmap .pat,.twmap .tx,.twmap .why li{font-size:16px;line-height:24px}.twmap .cav li,.twmap .fine,.twmap .srcs a{font-size:14px;line-height:20px}}
 `;
 
 // Crossfades replay because their class flips between two identical copies on each change. A change made
 // from the keyboard (is-kb) does not animate. Reduced motion keeps the fades and drops the movement: the
-// zoom, the marker scale, the cursor slide and the press (the script skips the draw-in and the playing year).
+// zoom, the marker scale, the cursor slide and the press (the script skips the draw-in).
 const motion = `
 @keyframes twFadeA{from{opacity:0}to{opacity:1}}
 @keyframes twFadeB{from{opacity:0}to{opacity:1}}
 .twmap .fa-a{animation:twFadeA ${m.select}ms var(--eo)}.twmap .fa-b{animation:twFadeB ${m.select}ms var(--eo)}
 .twmap .cf-a{animation:twFadeA ${m.fade}ms var(--eo)}.twmap .cf-b{animation:twFadeB ${m.fade}ms var(--eo)}
-.twmap .app.is-kb .world,.twmap .app.is-kb .ch-cur,.twmap .app.is-kb .mk-pos,.twmap .app.is-kb .zbar,.twmap .app.is-kb .ztag,.twmap .app.is-kb .mon-l,.twmap .app.is-kb .row-v,.twmap .app.is-kb .bv-v,.twmap .app.is-kb .cb,.twmap .app.is-kb .nt,.twmap .app.is-kb .hud,.twmap .app.is-kb .lg,.twmap .app.is-kb .m-states,.twmap .app.is-kb .m-feat,.twmap .app.is-kb .m-lead,.twmap .app.is-kb .st,.twmap .app.is-kb .list-h,.twmap .app.is-kb .row-d,.twmap .app.is-kb .tg button,.twmap .app.is-kb .row,.twmap .app.is-kb .row-sq,.twmap .app.is-kb .row-name,.twmap .app.is-kb .sb{transition:none !important;animation:none !important}
+.twmap .app.is-kb .world,.twmap .app.is-kb .ch-cur,.twmap .app.is-kb .mk-pos,.twmap .app.is-kb .zbar,.twmap .app.is-kb .ztag,.twmap .app.is-kb .row-v,.twmap .app.is-kb .bv-v,.twmap .app.is-kb .cb,.twmap .app.is-kb .nt,.twmap .app.is-kb .lg,.twmap .app.is-kb .m-states,.twmap .app.is-kb .m-feat,.twmap .app.is-kb .m-lead,.twmap .app.is-kb .st,.twmap .app.is-kb .list-m,.twmap .app.is-kb .row-d,.twmap .app.is-kb .row,.twmap .app.is-kb .row-sq,.twmap .app.is-kb .row-name,.twmap .app.is-kb .sb{transition:none !important;animation:none !important}
 .twmap .row:focus-visible,.twmap .row:focus-visible *{transition:none}
 @media (prefers-reduced-motion:reduce){.twmap .world,.twmap .dot,.twmap .mk,.twmap .ch-cur{transition:none}.twmap .mk-pos,.twmap .app.is-local .mk-pos{transform:none}.twmap .app.is-local .mk-pos{transition:opacity ${m.fade}ms var(--eo)}.twmap .app.is-zoomed .mk-pos{transition:none}}
 `;

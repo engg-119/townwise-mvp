@@ -3,9 +3,10 @@ import { theme } from '../theme';
 // The homepage's CSS (ConsoleV2.dc.html), rendered by Home.web.tsx so it ships in the / route chunk with the
 // page, not in the shared chunk every route loads. Colors, fonts and --eo come from the marketing chrome (.tw);
 // every rule sits under .pg-home, because screens stay mounted in the stack.
-// The lead sits above the map, so the H1 keeps the mockup's in-flow steps (40px, 52px from 800px); its 64 to
-// 92px steps fitted the map's empty corner. Each sentence rises once from its line mask; with reduced motion it
-// fades. Sections rise 16px as they enter, or only fade.
+// The H1 is the map story's first step: 40px, 52px from 800px, and from 1024px four lines of 64 to 92px that reach
+// into the map's empty northwest (the mockup's fitted sizes). Each sentence rises once from its line mask and the
+// subtitle fades in after it; with reduced motion they fade. The lead (.hd2) follows the story. Sections rise 16px
+// as they enter, or only fade.
 // How it works: from 1024px with an observer (.is-pin) the steps scroll in 560px slots beside one sticky
 // stage. Each visual's parts return to their start only after the 120ms fade out (0s, 150ms delay), so every
 // enter replays from the start. All movement sits under no-preference: reduced motion keeps only the fades,
@@ -20,18 +21,30 @@ export const homeCss = `
 .pg-home .btn-o:active{transform:scale(.97)}
 
 .pg-home .hero{padding-bottom:96px}
-.pg-home .hd{display:grid;gap:16px;justify-items:start;padding-block:40px 32px}
+.pg-home .hd{padding-block:40px 32px}
+.pg-home .hd .cta-row{margin-top:24px}
+.pg-home .hd2{display:grid;gap:16px;justify-items:start;padding-block:48px}
 .pg-home .h1{font-size:40px;line-height:44px;font-weight:600;letter-spacing:-.025em}
 @media (min-width:800px){.pg-home .h1{font-size:52px;line-height:56px}}
+@media (min-width:1024px){.pg-home .hd{padding:0;width:max-content;max-width:none;transition:opacity 150ms ease}.pg-home .h1{font-size:64px;line-height:64px;letter-spacing:-.03em}.pg-home .h1 .w{display:block}}
+@media (min-width:1280px){.pg-home .h1{font-size:80px;line-height:80px}}
+@media (min-width:1440px){.pg-home .h1{font-size:92px;line-height:92px}}
 .pg-home .h1 .ln{display:block;overflow:hidden;padding-bottom:.08em;margin-bottom:-.08em}
 .pg-home .h1 .ln>span{display:block;text-wrap:balance}
+.pg-home .hsub{max-width:520px;margin-top:12px;font-size:16px;line-height:24px;color:var(--text2);text-wrap:pretty}
+@media (min-width:641px){.pg-home .hsub{font-size:17px;line-height:26px}}
+@media (min-width:1024px){.pg-home .hsub{max-width:260px;margin-top:16px;font-size:17px;line-height:24px}.pg-home .hsub-2{display:block}}
+@media (min-width:1280px){.pg-home .hsub{max-width:400px;font-size:18px;line-height:26px}}
+@media (min-width:1440px){.pg-home .hsub{max-width:430px;font-size:20px;line-height:28px}}
 .pg-home .sub{max-width:680px;font-size:17px;line-height:28px;color:var(--text2);text-wrap:pretty}
 .pg-home .cta-row{display:flex;flex-wrap:wrap;align-items:center;gap:12px}
-@media (max-width:640px){.pg-home .hero{padding-bottom:64px}.pg-home .hd{gap:12px;padding-block:24px}.pg-home .sub{font-size:16px;line-height:24px}.pg-home .cta-row{width:100%}.pg-home .cta-row>a{flex:1 1 auto}}
+@media (max-width:640px){.pg-home .hero{padding-bottom:64px}.pg-home .hd{padding-block:24px}.pg-home .hd2{padding-block:32px;gap:12px}.pg-home .sub{font-size:16px;line-height:24px}.pg-home .cta-row{width:100%}.pg-home .cta-row>a{flex:1 1 auto}}
 @keyframes twRise{from{transform:translateY(100%)}to{transform:none}}
 @keyframes twIn{from{opacity:0}to{opacity:1}}
 @media (prefers-reduced-motion:no-preference){.pg-home .h1.is-rise .ln>span{animation:twRise 600ms var(--eo) both}.pg-home .h1.is-rise .ln+.ln>span{animation-delay:80ms}}
 @media (prefers-reduced-motion:reduce){.pg-home .h1.is-rise .ln>span{animation:twIn 300ms var(--eo) both}}
+@media (prefers-reduced-motion:no-preference){.pg-home .hsub.is-in{animation:twIn 300ms var(--eo) 560ms both}}
+@media (prefers-reduced-motion:reduce){.pg-home .hsub.is-in{animation:twIn 300ms var(--eo) both}}
 
 .pg-home .sec{border-top:1px solid var(--border);padding-block:96px}
 @media (max-width:640px){.pg-home .sec{padding-block:64px}}
@@ -119,6 +132,7 @@ export const homeCss = `
 .pg-home .faq{display:grid;border-top:1px solid var(--border)}
 .pg-home .faq-i{display:grid;grid-template-columns:minmax(0,4fr) minmax(0,5fr);gap:12px 20px;padding:28px 0;border-bottom:1px solid var(--border)}
 .pg-home .faq-i p{color:var(--text2);text-wrap:pretty}
+@media (max-width:640px){.pg-home .faq-i p a{position:relative;z-index:1;padding-block:13px}}
 @media (max-width:1023px){.pg-home .faq-i{grid-template-columns:minmax(0,1fr)}}
 .pg-home .fin{background:var(--panel)}
 .pg-home .fin-l{grid-column:1/8}
