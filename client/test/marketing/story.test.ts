@@ -173,7 +173,9 @@ describe('the pinned map', () => {
   test('its size and top, from the story’s width and the scroll container’s height', () => {
     expect(storyBox(1280, 900, true)).toEqual({ mw: 732, mh: 637, top: 57 });
     expect(storyBox(1280, 1080, true)).toEqual({ mw: 939, mh: 817, top: 57 });
-    expect(storyBox(910, 768, true)).toEqual({ mw: 580, mh: 505, top: 57 });
+    expect(storyBox(910, 768, true)).toEqual({ mw: 609, mh: 530, top: 44 });
+    // A short laptop window keeps 24px above and below the block instead of the header's room.
+    expect(storyBox(1206, 657, true, 196)).toEqual({ mw: 475, mh: 413, top: 24 });
     expect(storyBox(1280, 800, true)).toEqual({ mw: 617, mh: 537, top: 57 });
     expect(storyBox(1280, 1400, true)).toEqual({ mw: 940, mh: 818, top: 216 });
     expect(storyBox(358, 844, false)).toEqual({ mw: 358, mh: 311, top: 0 });
@@ -183,7 +185,7 @@ describe('the pinned map', () => {
     // A taller legend and caption than budgeted shrink the map so the whole block still fits, centered.
     expect(storyBox(1280, 900, true, 176)).toEqual({ mw: 702, mh: 611, top: 57 });
     // From 1024px the box is centered in the window: its middle is the window's middle, to the half pixel.
-    for (const [width, height, extra] of [[1280, 900, 150], [1280, 1080, 150], [1280, 900, 176], [1280, 1400, 150]] as const) {
+    for (const [width, height, extra] of [[1280, 900, 150], [1280, 1080, 150], [1280, 900, 176], [1280, 1400, 150], [910, 768, 150], [1206, 657, 196]] as const) {
       const box = storyBox(width, height, true, extra);
       expect(Math.abs(box.top + (box.mh + extra) / 2 - height / 2)).toBeLessThanOrEqual(0.5);
     }

@@ -103,11 +103,14 @@ export function finale(): { title: string; line: string } {
 export const PIN_EXTRA = 150;
 
 // The pinned map's size and top, in px, from the story's width and the scroll container's height. From 1024px
-// the map plus its legend and caption (`extra`) is centered in the window under the header (65px) and the
-// story's padding; under 1024px the map, its month strip and caption fill about the top half.
+// the map plus its legend and caption (`extra`) is centered in the window, leaving room for the header (65px)
+// and the story's padding. A short window gives up that room, down to 24px above and below, since the header has
+// scrolled away by the time the map is pinned: otherwise the map shrinks, its legend wraps more and shrinks it
+// again. Under 1024px the map, its month strip and caption fill about the top half.
 export function storyBox(width: number, height: number, wide: boolean, extra = PIN_EXTRA): { mw: number; mh: number; top: number } {
   if (wide) {
-    const mw = Math.round(Math.max(320, Math.min(width - (width >= 960 ? 340 : 300), (height - 65 - 48 - extra) / 0.87)));
+    const reserve = Math.min(65 + 48, Math.max(48, height - 680));
+    const mw = Math.round(Math.max(320, Math.min(width - (width >= 960 ? 340 : 300), (height - reserve - extra) / 0.87)));
     const mh = Math.round(mw * 0.87);
     return { mw, mh, top: Math.max(16, Math.round((height - mh - extra) / 2)) };
   }
