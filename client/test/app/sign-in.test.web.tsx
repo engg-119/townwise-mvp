@@ -79,6 +79,16 @@ test('one Continue with Google button, links to the terms and privacy pages, and
   expect(screen.queryByText(/sign up/i)).toBeNull();
 });
 
+test('nothing on /sign-in offers early access, since /request-access leads back here; Sign in stays in the header', async () => {
+  await renderSignIn();
+  expect(screen.queryAllByRole('link', { name: 'Request early access' })).toEqual([]);
+  expect(document.body.textContent).not.toContain('Request early access');
+  const header = screen.getByRole('banner');
+  expect(within(header).getAllByRole('link').map((link) => link.textContent).slice(-1)).toEqual(['Sign in']);
+  const account = within(screen.getByRole('contentinfo')).getByRole('navigation', { name: 'Account' });
+  expect(within(account).getAllByRole('link').map((link) => [link.textContent, link.getAttribute('href')])).toEqual([['Sign in', '/sign-in']]);
+});
+
 test('sign-in sits in the site header and footer, with the legal links and its own title', async () => {
   await renderSignIn();
   const header = screen.getByRole('banner');

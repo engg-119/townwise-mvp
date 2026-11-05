@@ -120,6 +120,17 @@ test.each(PAGES)('every Request early access link on %s goes to the request form
 
 // A placeholder is any bracketed text that starts with a capital ([DECISION NEEDED: …], [PRICE], [HOW: …]), or
 // anything still drawn as a placeholder box. The check covers the page, its header and its footer.
+test.each(['/', '/about', '/privacy'])('%s keeps Request early access in the header and the footer, to the request form', (path) => {
+  renderAt(path);
+  const cta = within(screen.getByRole('banner')).getByRole('link', { name: 'Request early access' });
+  expect(cta.className).toBe('btn');
+  expect(cta.getAttribute('href')).toBe(EARLY_ACCESS);
+  const account = within(screen.getByRole('contentinfo')).getByRole('navigation', { name: 'Account' });
+  expect(within(account).getAllByRole('link').map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
+    ['Sign in', '/sign-in'], ['Request early access', EARLY_ACCESS],
+  ]);
+});
+
 test.each(PAGES)('%s, header and footer included, renders no bracketed placeholder and no placeholder box', (path) => {
   renderAt(path);
   const text = document.body.textContent;
