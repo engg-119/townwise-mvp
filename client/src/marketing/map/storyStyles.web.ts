@@ -22,7 +22,6 @@ const skeleton = `
 @media (min-width:1024px){.twmap .story.is-flat{grid-template-columns:minmax(0,1fr) var(--story-mw,60%)}.twmap .story.is-flat .st-h{grid-column:1;grid-row:1;align-self:start}.twmap .story.is-flat .st-tl{display:block;grid-column:1;grid-row:2;align-self:end;padding-top:40px}.twmap .story.is-flat .tl-rail ol{line-height:40px}.twmap .story.is-flat .story-pin{grid-column:2;grid-row:1 / 3}.twmap .story.is-flat .story-steps{grid-column:1 / -1;grid-row:3;grid-template-columns:repeat(3,minmax(0,1fr));column-gap:40px}}
 .twmap .story.is-on .st-m{display:block;min-height:200px}
 .twmap .story.is-on .st-t{display:grid;align-content:center;min-height:560px}
-.twmap .story.is-on .st-f{min-height:640px}
 .twmap .story.is-on.ss-0 .pin-cap{opacity:0}
 `;
 
@@ -50,7 +49,9 @@ const wide = `
 
 // Under 1024px: the title, then the map pinned over the top of the window on the ground color, with the month
 // strip under it; the step cards scroll up from below and pass under it, so no text sits over a dot. The legend
-// under the map is hidden (step 2 explains the dots).
+// under the map is hidden (step 2 explains the dots). The final card sits at the end of a shorter slot, so the map
+// releases as soon as the card has passed under it; its top is about as far down its slot as steps 1 and 2 are
+// down theirs, so it reaches the band as they do.
 const narrow = `
 @media (max-width:1023px){
 .twmap .story.is-on{display:block}
@@ -58,6 +59,7 @@ const narrow = `
 .twmap .story.is-on .story-pin .map-fig{max-width:var(--story-mw,100%)}
 .twmap .story.is-on .lg-under{display:none}
 .twmap .story.is-on .st-t{min-height:520px}
+.twmap .story.is-on .st-f{align-content:end;min-height:280px}
 .twmap .story.is-on .st-m{min-height:160px}
 .twmap .story.is-on .st-c{background:var(--ground);padding-block:16px}
 .twmap .story.is-on .pin-tl{display:flex;align-items:center;gap:12px;padding-top:8px}

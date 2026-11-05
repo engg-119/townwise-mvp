@@ -599,6 +599,9 @@ test('the story CSS: the panel shares the pinned map’s box, centered, in px; p
   // Flat and wide, the month panel sits under the title's actions with room between them.
   expect(storyCss).toContain('.twmap .story.is-flat .st-tl{display:block;grid-column:1;grid-row:2;align-self:end;padding-top:40px}');
   expect(storyCss).toContain('.twmap .story.is-on .story-pin{position:sticky;top:0;padding-top:8px;background:var(--ground)}');
+  // Under 1024px the final card ends its slot (the story's last), so the map releases as the card passes under it.
+  const narrow = storyCss.slice(storyCss.indexOf('@media (max-width:1023px){\n'));
+  expect(narrow.slice(0, narrow.indexOf('\n}\n'))).toContain('\n.twmap .story.is-on .st-f{align-content:end;min-height:280px}\n');
   expect(storyCss).toContain('@media (prefers-reduced-motion:reduce){.twmap .tl-fill,.twmap .tl-cur,.twmap .app.is-sm .dot{transition:none}.twmap .tl-m.tl-a,.twmap .tl-m.tl-b,.twmap .tl-line.tl-a,.twmap .tl-line.tl-b,.twmap .ptl-m.tl-a,.twmap .ptl-m.tl-b{animation:none}');
   expect(storyCss).not.toMatch(/\d(?:vh|svh|dvh|lvh)\b|scroll-snap/);
   const lines = storyCss.split('\n').filter((line) => line.trim() !== '');
