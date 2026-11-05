@@ -18,8 +18,10 @@ export const staffActivitySchema = z.object({
   summary: z.string(),
   /** view_as.started only; `endsAt` is the grant's scheduled end. */
   viewAs: z.object({ targetEmail: z.string(), reason: z.string(), endsAt: z.string() }).nullable(),
-  /** A staff_action.not_applied event qualifies this one. */
-  notApplied: z.boolean(),
+  /** False when the server refused or could not make the change; the refusal is never a row of its own. */
+  applied: z.boolean(),
+  /** Why it didn’t take effect, in plain words; null when applied. */
+  notAppliedReason: z.string().nullable(),
 });
 export type StaffActivity = z.infer<typeof staffActivitySchema>;
 

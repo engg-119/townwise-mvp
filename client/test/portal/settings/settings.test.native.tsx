@@ -190,6 +190,9 @@ describe('P18 Settings: an org admin', () => {
     // A staff change the server refused says so.
     expect(activity.getByText('Changed owner@example.com from admin to member')).toBeTruthy();
     expect(activity.getAllByText('Didn’t take effect.')).toHaveLength(1);
+    expect(activity.getByText('The organization needs at least one admin.')).toBeTruthy();
+    // Shown once: the refused action has no second row.
+    expect(activity.getAllByText('Changed owner@example.com from admin to member')).toHaveLength(1);
     expect(api.calls.filter((call) => call.path === '/api/org/staff-activity')).toHaveLength(1);
   });
 

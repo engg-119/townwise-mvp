@@ -59,7 +59,7 @@ function messageOf(text: string | null): readonly string[] {
 /** C3. The town is the request's; the server takes it from there. */
 function ApproveDialog(props: { request: AdminRequest; onApproved: () => void; onStale: () => void; onClose: () => void }): React.JSX.Element {
   const { request, onApproved, onStale } = props;
-  const { api, showNotice } = usePortal();
+  const { api, showNotice, refreshPending } = usePortal();
   const [orgName, setOrgName] = useState(request.orgName);
   const [locationName, setLocationName] = useState(request.orgName);
   const [messages, setMessages] = useState<{ orgName: string | null; locationName: string | null }>({ orgName: null, locationName: null });
@@ -71,15 +71,17 @@ function ApproveDialog(props: { request: AdminRequest; onApproved: () => void; o
         { text: `Approved. ${org.name} is set up, and ${email} is its admin.`, link: { label: `Open ${org.name}`, href: orgHref(org.id) } },
         /^\/admin$/,
       );
+      refreshPending();
       onApproved();
     } catch (error) {
       if (hasCode(error, 409, 'request_not_pending')) {
+        refreshPending();
         onStale();
         return;
       }
       throw error;
     }
-  }, [api, showNotice, request.id, email, onApproved, onStale]));
+  }, [api, showNotice, refreshPending, request.id, email, onApproved, onStale]));
 
   function submit(): void {
     const input = { orgName: orgName.trim(), locationName: locationName.trim() };
@@ -123,21 +125,23 @@ function ApproveDialog(props: { request: AdminRequest; onApproved: () => void; o
 /** C4. The message is shown to the requester; the audit log records only that there was one. */
 function RejectDialog(props: { request: AdminRequest; onRejected: () => void; onStale: () => void; onClose: () => void }): React.JSX.Element {
   const { request, onRejected, onStale } = props;
-  const { api, showNotice } = usePortal();
+  const { api, showNotice, refreshPending } = usePortal();
   const [message, setMessage] = useState('');
   const reject = useAction(useCallback(async (text: string) => {
     try {
       await rejectRequest(api, request.id, text);
       showNotice({ text: `Rejected the request for ${request.orgName}.`, link: { label: 'See rejected requests', href: '/admin?status=rejected' } }, /^\/admin$/);
+      refreshPending();
       onRejected();
     } catch (error) {
       if (hasCode(error, 409, 'request_not_pending')) {
+        refreshPending();
         onStale();
         return;
       }
       throw error;
     }
-  }, [api, showNotice, request.id, request.orgName, onRejected, onStale]));
+  }, [api, showNotice, refreshPending, request.id, request.orgName, onRejected, onStale]));
 
   return (
     <Dialog

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useRef, useState, type RefObject } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type RefObject } from 'react';
 import { usePathname } from 'expo-router';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -7,7 +7,7 @@ import { useAuth, useAuthState } from '../../auth/AuthProvider';
 import { theme } from '../../theme';
 import { fetchPendingCount } from '../api';
 import { COPY } from '../errors';
-import { useAction, useLoad } from '../hooks';
+import { useAction } from '../hooks';
 import { useOptionalPortal, usePortal, useReadOnly } from '../PortalProvider';
 import { clientNav, consoleNav, isFillRoute } from '../routing';
 import { ErrorNotice } from '../ui/feedback';
@@ -151,11 +151,17 @@ export function ConsoleFrame(props: { children: React.ReactNode }): React.JSX.El
 }
 
 function WebConsoleFrame(props: { children: React.ReactNode }): React.JSX.Element {
-  const { me, api } = usePortal();
+  const { me, api, pendingTick } = usePortal();
   const pathname = usePathname();
   const signOut = useSignOut();
-  const { state } = useLoad(useCallback(() => fetchPendingCount(api), [api]));
-  const count = state.status === 'ready' ? state.data : null;
+  // Read on mount and again whenever approve or reject changes the list (pendingTick). The last count stays up
+  // meanwhile, so the nav doesn't blink; a failed read leaves it as it was.
+  const [count, setCount] = useState<number | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetchPendingCount(api).then((next) => { if (live) setCount(next); }, () => undefined);
+    return () => { live = false; };
+  }, [api, pendingTick]);
   const bar = (
     <TopBar
       kind="console"

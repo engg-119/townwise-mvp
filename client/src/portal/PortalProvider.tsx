@@ -47,6 +47,10 @@ export interface Portal {
   /** Starts loading the organization unless it is loading or loaded. */
   ensureOrg: () => void;
   reloadOrg: () => void;
+  /** Counts the requests list's changes; the console nav reads the pending count again when it moves. */
+  pendingTick: number;
+  /** Called after an approve or reject: the console nav's pending count reads again. */
+  refreshPending: () => void;
 }
 
 type MeLoad = { status: 'loading' } | { status: 'failed'; error: unknown } | { status: 'ready'; me: MeResponse };
@@ -70,6 +74,7 @@ export function PortalProvider(props: { children: React.ReactNode }): React.JSX.
   const [org, setOrg] = useState<LoadState<OrgResponse> | null>(null);
   const current = useRef<MeResponse | null>(null);
   const reading = useRef<Promise<MeResponse> | null>(null);
+  const [pendingTick, setPendingTick] = useState(0);
   const orgTicket = useRef(0);
   const orgStarted = useRef(false);
 
@@ -144,6 +149,8 @@ export function PortalProvider(props: { children: React.ReactNode }): React.JSX.
     ensureOrg();
   }, [ensureOrg]);
 
+  const refreshPending = useCallback(() => { setPendingTick((value) => value + 1); }, []);
+
   const showNotice = useCallback((next: Notice, where?: RegExp) => {
     setNotice({ notice: next, where: where ?? null, shownAt: null });
   }, []);
@@ -159,7 +166,8 @@ export function PortalProvider(props: { children: React.ReactNode }): React.JSX.
   const me = meState.status === 'ready' ? meState.me : null;
   const portal = useMemo<Portal | null>(() => (me === null ? null : {
     me, api, applyMe, refreshMe, notice, showNotice, markNoticeShown, org, ensureOrg, reloadOrg,
-  }), [me, api, applyMe, refreshMe, notice, showNotice, markNoticeShown, org, ensureOrg, reloadOrg]);
+    pendingTick, refreshPending,
+  }), [me, api, applyMe, refreshMe, notice, showNotice, markNoticeShown, org, ensureOrg, reloadOrg, pendingTick, refreshPending]);
 
   const value = useMemo<PortalContextValue>(() => ({ meState, retry, portal, leftPath }), [meState, retry, portal, leftPath]);
   return <PortalContext.Provider value={value}>{props.children}</PortalContext.Provider>;

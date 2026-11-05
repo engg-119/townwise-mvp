@@ -36,8 +36,14 @@ export async function fetchOrgs(api: ApiClient): Promise<OrgRow[]> {
   return (await api.json('/api/admin/orgs', orgListSchema)).orgs;
 }
 
+/** A new 24-hex organization id, made once per New organization dialog so a repeat of the request finds the same one. */
+export function newOrgId(): string {
+  return Array.from({ length: 24 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+}
+
+/** `id` makes a retry or double submit answer with the organization it made (200) instead of creating a second. */
 export function createOrg(
-  api: ApiClient, input: { name: string; adminEmail: string },
+  api: ApiClient, input: { id: string; name: string; adminEmail: string },
 ): Promise<{ org: { id: string; name: string }; result: AddResult }> {
   return api.json('/api/admin/orgs', createdOrgSchema, { method: 'POST', body: input });
 }

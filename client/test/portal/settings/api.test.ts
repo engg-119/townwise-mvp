@@ -21,6 +21,7 @@ describe('settings calls (spec 10.3, api/src/handlers/org.ts)', () => {
     const { fake, routes } = api();
     routes.gets['/api/org/staff-activity'] = () => ({ events: [{ ...VIEW_AS_EVENT, details: { reason: 'x' } }, REFUSED_EVENT] });
     expect(await fetchStaffActivity(fake)).toEqual([VIEW_AS_EVENT, REFUSED_EVENT]);
+    expect(REFUSED_EVENT).toMatchObject({ applied: false, notAppliedReason: 'The organization needs at least one admin' });
   });
 
   test('POST /api/org/leave sends exactly {} and returns the new access; 409 last_admin passes through', async () => {

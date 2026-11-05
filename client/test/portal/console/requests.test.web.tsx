@@ -266,3 +266,31 @@ test('a staff window that ran out mid-action sends staff to sign in again', asyn
   fireEvent.click(within(screen.getByRole('dialog', { name: 'Approve Sample Mountain Tavern' })).getByRole('button', { name: 'Approve' }));
   await waitFor(() => { expect(window.location.pathname).toBe('/staff/sign-in-again'); });
 });
+
+function navCount(): string | null | undefined {
+  return within(screen.getByRole('navigation', { name: 'Main' })).getAllByRole('link')[0]?.textContent;
+}
+
+test('the console nav’s Requests count reads again after an approve and after a reject', async () => {
+  const api = consoleApi();
+  let pending: unknown[] = [TAVERN, PUB];
+  api.routes['GET /api/admin/requests?status=pending'] = () => ({ requests: pending, pendingCount: pending.length });
+  api.routes['POST /api/admin/requests/r1/approve'] = () => {
+    pending = [PUB];
+    return { org: { id: 'o9', name: 'Mountain Tavern' }, request: { ...TAVERN, status: 'approved', orgId: 'o9' } };
+  };
+  api.routes['POST /api/admin/requests/r2/reject'] = () => {
+    pending = [];
+    return { request: { ...PUB, status: 'rejected' } };
+  };
+  renderAt('/admin', api);
+  await waitFor(() => { expect(navCount()).toBe('Requests 2'); });
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+  fireEvent.click(within(screen.getByRole('dialog', { name: 'Approve Sample Mountain Tavern' })).getByRole('button', { name: 'Approve' }));
+  await waitFor(() => { expect(navCount()).toBe('Requests 1'); });
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Reject' }));
+  fireEvent.click(within(screen.getByRole('dialog', { name: 'Reject Sample Campus Pub?' })).getByRole('button', { name: 'Reject' }));
+  await waitFor(() => { expect(navCount()).toBe('Requests 0'); });
+});

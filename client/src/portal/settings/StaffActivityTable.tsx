@@ -8,16 +8,22 @@ import type { StaffActivity } from './api';
 import { SETTINGS_COPY } from './copy';
 
 // Townwise staff activity (spec P18, D9, 9.3): every staff action on the organization, newest first, with the
-// staff email. When, Staff, the server's summary as the Action, and Reason and Until for view-as rows. A row that
-// a staff_action.not_applied event qualifies adds “Didn’t take effect.”
+// staff email. When, Staff, the server's summary as the Action, and Reason and Until for view-as rows. A refused
+// action is one row (`applied: false`): it adds “Didn’t take effect.” and the server's reason in plain words.
 
-/** A string prints in the table's mono style; a qualified row adds its note under the summary. */
+/** The reason as a sentence: the server sends it without a full stop. */
+function sentence(text: string): string {
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
+/** A string prints in the table's mono style; a refused row adds its note and reason under the summary. */
 function actionCell(event: StaffActivity): React.ReactNode {
-  if (!event.notApplied) return event.summary;
+  if (event.applied) return event.summary;
   return (
     <View style={styles.action}>
       <Text style={styles.value}>{event.summary}</Text>
       <Text style={styles.note}>{SETTINGS_COPY.notApplied}</Text>
+      {event.notAppliedReason === null ? null : <Text style={styles.note}>{sentence(event.notAppliedReason)}</Text>}
     </View>
   );
 }

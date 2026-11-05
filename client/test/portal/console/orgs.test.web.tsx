@@ -97,7 +97,7 @@ test('New organization (C5): checks its fields, creates it, then opens it with a
   fireEvent.change(within(dialog).getByRole('textbox', { name: 'First admin email' }), { target: { value: ` ${admin}` } });
   fireEvent.click(within(dialog).getByRole('button', { name: 'Create organization' }));
   await waitFor(() => { expect(window.location.pathname).toBe('/admin/orgs/o9'); });
-  expect(writes(api)).toEqual([{ method: 'POST', path: '/api/admin/orgs', body: { name: 'Sample Diner', adminEmail: admin } }]);
+  expect(writes(api)).toEqual([{ method: 'POST', path: '/api/admin/orgs', body: { id: expect.stringMatching(/^[0-9a-f]{24}$/) as unknown, name: 'Sample Diner', adminEmail: admin } }]);
   expect(await screen.findByRole('heading', { level: 1, name: 'Sample Diner' })).toBeTruthy();
   expect(screen.getByText(`Created Sample Diner. ${admin} joins as its admin the next time they continue with Google.`)).toBeTruthy();
 });
@@ -116,4 +116,62 @@ test('New organization shows the shared copy when the server refuses, and Cancel
   fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
   expect(screen.queryByRole('dialog', { name: 'New organization' })).toBeNull();
   expect(window.location.pathname).toBe('/admin/orgs');
+});
+
+function fillAndCreate(dialog: HTMLElement): void {
+  fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name' }), { target: { value: 'Sample Diner' } });
+  fireEvent.change(within(dialog).getByRole('textbox', { name: 'First admin email' }), { target: { value: emailOf('owner') } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Create organization' }));
+}
+
+function sentIds(api: ReturnType<typeof consoleApi>): unknown[] {
+  return writes(api).map((call) => (call.body as { id?: unknown }).id);
+}
+
+test('New organization sends one id: a retry repeats it, and a new dialog makes a new one', async () => {
+  const api = consoleApi();
+  api.routes['GET /api/admin/orgs'] = () => ({ orgs: ORGS });
+  let attempts = 0;
+  api.routes['POST /api/admin/orgs'] = () => {
+    attempts += 1;
+    return attempts === 1 ? refusal(503, 'unavailable') : { org: { id: 'o9', name: 'Sample Diner' }, result: { email: emailOf('owner'), outcome: 'invited' } };
+  };
+  api.routes['GET /api/admin/orgs/o9'] = () => orgDetail({ org: { id: 'o9', name: 'Sample Diner', fromRequestId: null }, locations: [], recent: [] });
+  renderAt('/admin/orgs', api);
+  fireEvent.click(await screen.findByRole('button', { name: 'New organization' }));
+  const dialog = screen.getByRole('dialog', { name: 'New organization' });
+  fillAndCreate(dialog);
+  expect(await within(dialog).findByText('Townwise isn’t responding. Try again in a minute.')).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Create organization' }));
+  await waitFor(() => { expect(window.location.pathname).toBe('/admin/orgs/o9'); });
+  const [first, second] = sentIds(api);
+  expect(first).toMatch(/^[0-9a-f]{24}$/);
+  expect(second).toBe(first);
+});
+
+test('New organization: a second dialog sends a different id', async () => {
+  const api = consoleApi();
+  api.routes['GET /api/admin/orgs'] = () => ({ orgs: ORGS });
+  api.routes['POST /api/admin/orgs'] = () => refusal(503, 'unavailable');
+  renderAt('/admin/orgs', api);
+  fireEvent.click(await screen.findByRole('button', { name: 'New organization' }));
+  fillAndCreate(screen.getByRole('dialog', { name: 'New organization' }));
+  await screen.findByText('Townwise isn’t responding. Try again in a minute.');
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  fireEvent.click(screen.getByRole('button', { name: 'New organization' }));
+  fillAndCreate(screen.getByRole('dialog', { name: 'New organization' }));
+  await waitFor(() => { expect(writes(api)).toHaveLength(2); });
+  const [first, second] = sentIds(api);
+  expect(second).not.toBe(first);
+});
+
+test('New organization says so in plain words on 409 conflict', async () => {
+  const api = consoleApi();
+  api.routes['GET /api/admin/orgs'] = () => ({ orgs: ORGS });
+  api.routes['POST /api/admin/orgs'] = () => refusal(409, 'conflict');
+  renderAt('/admin/orgs', api);
+  fireEvent.click(await screen.findByRole('button', { name: 'New organization' }));
+  const dialog = screen.getByRole('dialog', { name: 'New organization' });
+  fillAndCreate(dialog);
+  expect(await within(dialog).findByText('Another change got there first. Check the organizations list, then try again.')).toBeTruthy();
 });

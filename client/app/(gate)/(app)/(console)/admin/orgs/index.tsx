@@ -2,12 +2,13 @@ import { useCallback, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { StyleSheet, View } from 'react-native';
 
-import { createOrg, fetchOrgs } from '../../../../../../src/portal/console/api';
+import { createOrg, fetchOrgs, newOrgId } from '../../../../../../src/portal/console/api';
 import { Dialog } from '../../../../../../src/portal/console/Dialog';
 import { onlyAt, orgHref } from '../../../../../../src/portal/console/links';
 import { CellLink } from '../../../../../../src/portal/console/parts';
 import { problemOf } from '../../../../../../src/portal/console/problems';
 import type { OrgRow } from '../../../../../../src/portal/console/schemas';
+import { hasCode } from '../../../../../../src/portal/errors';
 import { formatCount, formatDate } from '../../../../../../src/portal/format';
 import { useAction, useBreakpoint, useLoad } from '../../../../../../src/portal/hooks';
 import { usePortal } from '../../../../../../src/portal/PortalProvider';
@@ -21,6 +22,7 @@ import {
 // (C5) creates one with an org admin invitation for its first admin, then opens its page.
 
 const NAME_COPY = 'Enter the organization’s name, 2 to 120 characters.';
+const CONFLICT_COPY = 'Another change got there first. Check the organizations list, then try again.';
 const EMAIL_COPY = 'Enter an email address.';
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -28,15 +30,17 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 function NewOrgDialog(props: { onClose: () => void }): React.JSX.Element {
   const { api, showNotice } = usePortal();
   const router = useRouter();
+  // One id per opened dialog: a double submit or a retry sends the same one, so the server makes one organization.
+  const [orgId] = useState(newOrgId);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [messages, setMessages] = useState<{ name: string | null; email: string | null }>({ name: null, email: null });
   const create = useAction(useCallback(async (input: { name: string; adminEmail: string }) => {
-    const { org, result } = await createOrg(api, input);
+    const { org, result } = await createOrg(api, { id: orgId, ...input });
     const href = orgHref(org.id);
     showNotice({ text: `Created ${org.name}. ${result.email} joins as its admin the next time they continue with Google.` }, onlyAt(href));
     router.push(href);
-  }, [api, showNotice, router]));
+  }, [api, orgId, showNotice, router]));
 
   function submit(): void {
     const input = { name: name.trim(), adminEmail: email.trim() };
@@ -55,7 +59,7 @@ function NewOrgDialog(props: { onClose: () => void }): React.JSX.Element {
       confirmLabel="Create organization"
       pendingLabel="Creating…"
       pending={create.pending}
-      problem={problemOf(create.error)}
+      problem={problemOf(create.error, (error) => (hasCode(error, 409, 'conflict') ? CONFLICT_COPY : null))}
       onConfirm={submit}
       onCancel={props.onClose}
     >

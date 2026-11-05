@@ -36,17 +36,17 @@ export const TEAM: MemberView[] = [YOU, MANAGER, CHEF, PARTNER];
 export const VIEW_AS_EVENT: StaffActivity = {
   at: '2026-10-20T15:05:00.000Z', staffEmail: 'staff@example.com', summary: 'Started viewing as owner@example.com',
   viewAs: { targetEmail: 'owner@example.com', reason: 'Checking an upload question.', endsAt: '2026-10-20T15:35:00.000Z' },
-  notApplied: false,
+  applied: true, notAppliedReason: null,
 };
 
 export const ADD_EVENT: StaffActivity = {
   at: '2026-10-19T15:00:00.000Z', staffEmail: 'staff@example.com', summary: 'Added manager@example.com as member',
-  viewAs: null, notApplied: false,
+  viewAs: null, applied: true, notAppliedReason: null,
 };
 
 export const REFUSED_EVENT: StaffActivity = {
   at: '2026-10-18T15:00:00.000Z', staffEmail: 'staff@example.com', summary: 'Changed owner@example.com from admin to member',
-  viewAs: null, notApplied: true,
+  viewAs: null, applied: false, notAppliedReason: 'The organization needs at least one admin',
 };
 
 type Answer = () => unknown;
