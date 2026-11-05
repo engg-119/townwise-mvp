@@ -1,0 +1,193 @@
+// The route chain (spec 7.2) and the staff gate (D2), through /api and the test-only /probe table.
+import { randomUUID } from 'node:crypto';
+
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+
+import { TOWNWISE_ROUTES } from '../src/access/routes.ts';
+import {
+  addGrant, addInvite, addLocation, addNote, addRequest, addSalesDay, addSeat, addUpload, createOrg,
+} from './helpers/fixtures.ts';
+import { PROBE_ROUTES } from './helpers/probe.ts';
+import {
+  call, limiterKey, logLines, makeStaff, MINUTE, refresh, removeStaffFactor, signIn, signInStaff, startTownwiseServer,
+  STAFF_EMAIL, type TestSession, type TownwiseTestServer,
+} from './helpers/server.ts';
+
+let server: TownwiseTestServer;
+
+beforeAll(async () => { server = await startTownwiseServer({ probe: PROBE_ROUTES }); });
+afterAll(async () => { await server.close(); });
+beforeEach(async () => { await server.redis.flushdb(); });
+afterEach(async () => { await removeStaffFactor(server); });
+
+function uniqueEmail(name: string): string {
+  return `${name}-${randomUUID().slice(0, 8)}@example.test`;
+}
+
+async function errorOf(res: Response): Promise<{ status: number; error: string }> {
+  const body = await res.json() as { error: string };
+  return { status: res.status, error: body.error };
+}
+
+describe('route table', () => {
+  it('every Express route on /api is in TOWNWISE_ROUTES, with no duplicates', () => {
+    const mounted: string[] = [];
+    for (const layer of server.apiRouter.stack) {
+      const route = layer.route as { path: string; methods: Record<string, boolean> } | undefined;
+      if (route === undefined) continue;
+      for (const method of Object.keys(route.methods)) mounted.push(`${method.toUpperCase()} ${route.path}`);
+    }
+    const declared = TOWNWISE_ROUTES.map((route) => `${route.method} ${route.path}`);
+    expect(new Set(declared).size).toBe(declared.length);
+    expect(mounted.sort()).toEqual([...declared].sort());
+  });
+
+  it('a path outside the table reaches server-core’s notFound', async () => {
+    const session = await signIn(server, uniqueEmail('lost'));
+    expect(await errorOf(await call(server, '/api/nowhere', { session }))).toEqual({ status: 404, error: 'not_found' });
+  });
+});
+
+describe('GET is side-effect free (7.3)', () => {
+  const WRITES = new Set(['insert', 'update', 'delete', 'findAndModify', 'bulkWrite']);
+
+  async function writesDuring(session: TestSession, path: string): Promise<{ status: number; writes: string[] }> {
+    server.commands.length = 0;
+    const res = await call(server, path, { session });
+    expect(server.commands).toContain('find');   // monitoring is on
+    return { status: res.status, writes: server.commands.filter((name) => WRITES.has(name)) };
+  }
+
+  it('every GET route issues no write, for an org admin, a member, an invited person with a pending request, staff, and staff in view-as', async () => {
+    const adminEmail = uniqueEmail('admin');
+    const admin = await signIn(server, adminEmail);
+    const memberEmail = uniqueEmail('member');
+    const member = await signIn(server, memberEmail);
+    const orgId = await createOrg(server, { name: 'Read Only Org' });
+    await addSeat(server, { orgId, userId: admin.userId, email: adminEmail, role: 'org_admin' });
+    await addSeat(server, { orgId, userId: member.userId, email: memberEmail });
+
+    const invitedEmail = uniqueEmail('invited');
+    const invited = await signIn(server, invitedEmail);
+    await addRequest(server, { userId: invited.userId, email: invitedEmail, status: 'pending' });
+    await addInvite(server, { orgId, email: invitedEmail, invitedBy: admin.userId });
+
+    // Two sessions of the staff member: one viewing as the org admin, one plain.
+    const viewing = await signIn(server, STAFF_EMAIL);
+    const staff = await signIn(server, STAFF_EMAIL);
+    await makeStaff(server, staff.userId, { enabledAt: new Date(server.clock.now().getTime() - MINUTE) });
+    await addGrant(server, { actorUserId: viewing.userId, sessionId: viewing.sessionId, targetUserId: admin.userId, orgId });
+
+    // Every GET runs for every caller; each must also succeed for at least one of them. Path ids name this
+    // organization and its location, and the people lookup asks for the member's address.
+    const locationId = await addLocation(server, { orgId, name: 'Main Street' });
+    await addSalesDay(server, { orgId, locationId, date: '2026-05-01', guests: 120, netSalesCents: 345_600 });
+    await addUpload(server, { orgId, locationId, uploadedAt: server.clock.now(), status: 'applied' });
+    await addNote(server, { orgId, locationId, detail: 'Closed for a staff day' });
+    const ids: Record<string, string> = { orgId, locationId, townId: 'hanover-nh' };
+    const query: Record<string, string> = {
+      'admin.people.lookup': `?q=${encodeURIComponent(memberEmail)}`,
+      'org.sales.days': '?from=2026-01-01&to=2026-05-31',
+    };
+    const gets = TOWNWISE_ROUTES.filter((route) => route.method === 'GET')
+      .map((route) => `/api${route.path.replace(/:([A-Za-z]+)/g, (_m, name: string) => ids[name] ?? '')}${query[route.id] ?? ''}`);
+    const answered = new Set<string>();
+    for (const session of [admin, member, invited, staff, viewing]) {
+      for (const path of gets) {
+        const { status, writes } = await writesDuring(session, path);
+        expect(writes).toEqual([]);
+        if (status === 200) answered.add(path);
+      }
+    }
+    expect([...answered].sort()).toEqual([...gets].sort());
+    for (const session of [member, viewing]) {
+      const { status, writes } = await writesDuring(session, '/probe/member');
+      expect({ status, writes }).toEqual({ status: 200, writes: [] });
+    }
+    // GET /api/me never joins and never withdraws the request.
+    expect(await server.connection.collection('tw_members').countDocuments({ inviteEmail: invitedEmail, status: 'invited' })).toBe(1);
+    expect(await server.connection.collection('tw_access_requests').countDocuments({ userId: invited.userId, status: 'pending' })).toBe(1);
+  });
+});
+
+describe('townwise:writes and body parsing', () => {
+  it('a write refused by policy counts toward townwise:writes and is never parsed: 300 KB to a 256 KB route answers 403, not 413', async () => {
+    const session = await signIn(server, uniqueEmail('no-org'));
+    const res = await call(server, '/probe/member', { session, rawBody: JSON.stringify({ pad: 'x'.repeat(300 * 1024) }) });
+    expect(await errorOf(res)).toEqual({ status: 403, error: 'no_access' });
+    expect(await server.redis.get(limiterKey('townwise:writes', session.userId))).toBe('1');
+  });
+
+  it('GETs do not count toward townwise:writes', async () => {
+    const session = await signIn(server, uniqueEmail('reader'));
+    expect((await call(server, '/api/me', { session })).status).toBe(200);
+    expect(await server.redis.get(limiterKey('townwise:writes', session.userId))).toBeNull();
+  });
+
+  it('the 301st write in 10 minutes is 429 rate_limited, before access is resolved; reads still work', async () => {
+    const session = await signIn(server, uniqueEmail('busy'));
+    await server.redis.set(limiterKey('townwise:writes', session.userId), '300', 'EX', 600);
+    const res = await call(server, '/api/me/join', { session, json: { inviteId: 'f'.repeat(24) } });
+    expect(await errorOf(res)).toEqual({ status: 429, error: 'rate_limited' });
+    expect(res.headers.get('retry-after')).not.toBeNull();
+    expect((await call(server, '/api/me', { session })).status).toBe(200);
+  });
+
+  it('a route parses its body only after the policy passes, with its own limit', async () => {
+    const session = await signIn(server, uniqueEmail('big-body'));
+    const res = await call(server, '/api/me/join', { session, rawBody: JSON.stringify({ inviteId: 'f'.repeat(24), pad: 'x'.repeat(40 * 1024) }) });
+    expect(await errorOf(res)).toEqual({ status: 413, error: 'payload_too_large' });
+  });
+
+  it('a denial logs townwise.access_denied with the policy and code only', async () => {
+    const session = await signIn(server, uniqueEmail('denied'));
+    server.logs.length = 0;
+    await call(server, '/probe/staff', { session });
+    const denied = logLines(server).filter((line) => line.msg === 'townwise.access_denied');
+    expect(denied).toHaveLength(1);
+    expect(denied[0]).toMatchObject({ policy: 'staff', code: 'forbidden' });
+  });
+});
+
+describe('staff gate (D2)', () => {
+  it('a session created before codes were enabled is refused; one created after is accepted', async () => {
+    const before = await signIn(server, STAFF_EMAIL);
+    await makeStaff(server, before.userId, { enabledAt: new Date(server.clock.now().getTime() + 1000) });
+    expect(await errorOf(await call(server, '/probe/staff', { session: before }))).toEqual({ status: 403, error: 'staff_reauth_required' });
+    await server.authStores.totp.remove(before.userId);
+
+    const after = await signInStaff(server);
+    const res = await call(server, '/probe/staff', { session: after });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ kind: 'staff', orgId: null, role: null });
+  });
+
+  it('after 60 minutes and one second, and a refresh, a staff route answers 403 staff_reauth_required', async () => {
+    const session = await signInStaff(server);
+    server.clock.advance(60 * MINUTE);
+    await refresh(server, session);
+    expect((await call(server, '/probe/staff', { session })).status).toBe(200);
+    server.clock.advance(1000);
+    expect(await errorOf(await call(server, '/probe/staff', { session }))).toEqual({ status: 403, error: 'staff_reauth_required' });
+    const me = await (await call(server, '/api/me', { session })).json() as { access: unknown; staff: unknown };
+    expect(me).toMatchObject({ access: { state: 'staff_reauth_required', reason: 'session_too_old' }, staff: null });
+  });
+
+  it('no factor is staff_setup_required, and a member gets forbidden, never a staff code', async () => {
+    const unenrolled = await signIn(server, STAFF_EMAIL);
+    expect(await errorOf(await call(server, '/probe/staff', { session: unenrolled }))).toEqual({ status: 403, error: 'staff_setup_required' });
+    expect(await errorOf(await call(server, '/probe/staff', { session: unenrolled, json: {} }))).toEqual({ status: 403, error: 'staff_setup_required' });
+
+    const email = uniqueEmail('member');
+    const member = await signIn(server, email);
+    const orgId = await createOrg(server, { name: 'Gate Org' });
+    await addSeat(server, { orgId, userId: member.userId, email, role: 'org_admin' });
+    expect(await errorOf(await call(server, '/probe/staff', { session: member }))).toEqual({ status: 403, error: 'forbidden' });
+    expect(await errorOf(await call(server, '/probe/staff', { session: member, json: {} }))).toEqual({ status: 403, error: 'forbidden' });
+  });
+
+  it('staff are not members: member routes answer 403 no_access', async () => {
+    const staff = await signInStaff(server);
+    expect(await errorOf(await call(server, '/probe/member', { session: staff }))).toEqual({ status: 403, error: 'no_access' });
+  });
+});

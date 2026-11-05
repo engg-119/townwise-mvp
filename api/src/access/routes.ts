@@ -1,0 +1,235 @@
+// TOWNWISE_ROUTES and mountTownwiseRoutes(): every /api route, and the one chain each of them runs (spec 7.2).
+import { authOf } from '@ckeith26/auth';
+import { createRateLimiter, rateLimit } from '@ckeith26/rate-limit';
+import { AppError, ConfigError } from '@ckeith26/server-core';
+import express, { type NextFunction, type Request, type RequestHandler, type Response, type Router } from 'express';
+
+import type { TownwiseContext } from '../app.ts';
+import {
+  approveRequest, getOrg, listOrgs, listPeople, listRequests, lookupPerson, queryAudit, rejectRequest,
+} from '../handlers/admin.ts';
+import { deleteConversation, getChat, getConversation, postTurn } from '../handlers/chat.ts';
+import { createLocation, deleteLocation, getOwnOrg, updateLocation } from '../handlers/locations.ts';
+import { declineInvite, getMe, joinInvite } from '../handlers/me.ts';
+import { createNote, deleteNote, listNotes, updateNote } from '../handlers/notes.ts';
+import { createAccessRequest } from '../handlers/requests.ts';
+import { deleteSales, getSales, getSalesDays, uploadSales } from '../handlers/sales.ts';
+import { addMembers, changeRole, listMembers, removeMember } from '../handlers/team.ts';
+import { getTownProfile } from '../handlers/towns.ts';
+import { endViewAs, startViewAs } from '../handlers/view-as.ts';
+import { policyRefusal, principalOf, recordResolution, viewAsRefusal, type Policy, type Principal } from './policy.ts';
+import { resolveAccess } from './resolve.ts';
+
+export interface TownwiseRoute {
+  readonly id: string;
+  readonly method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  /** Under /api. */
+  readonly path: `/${string}`;
+  readonly policy: Policy;
+  /** 'none' for GET and DELETE; '256kb' only on the upload route. */
+  readonly bodyLimit: 'none' | '32kb' | '256kb';
+  /** 'writes' applies to every non-GET automatically, before access is resolved. */
+  readonly limiter?: 'uploads' | 'requests' | 'view-as' | 'chat';
+  readonly handler: (ctx: TownwiseContext, req: Request, res: Response, principal: Principal) => Promise<void>;
+}
+
+export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
+  { id: 'me.get', method: 'GET', path: '/me', policy: 'signed_in', bodyLimit: 'none', handler: getMe },
+  { id: 'me.join', method: 'POST', path: '/me/join', policy: 'signed_in', bodyLimit: '32kb', handler: joinInvite },
+  { id: 'me.decline', method: 'POST', path: '/me/decline', policy: 'signed_in', bodyLimit: '32kb', handler: declineInvite },
+  {
+    id: 'requests.create', method: 'POST', path: '/access-requests', policy: 'signed_in', bodyLimit: '32kb',
+    limiter: 'requests', handler: createAccessRequest,
+  },
+  { id: 'towns.get', method: 'GET', path: '/towns/:townId', policy: 'signed_in', bodyLimit: 'none', handler: getTownProfile },
+
+  { id: 'org.get', method: 'GET', path: '/org', policy: 'member', bodyLimit: 'none', handler: getOwnOrg },
+  {
+    id: 'org.locations.create', method: 'POST', path: '/org/locations', policy: 'org_admin', bodyLimit: '32kb',
+    handler: createLocation,
+  },
+  {
+    id: 'org.locations.update', method: 'PATCH', path: '/org/locations/:locationId', policy: 'org_admin', bodyLimit: '32kb',
+    handler: updateLocation,
+  },
+  {
+    id: 'org.locations.remove', method: 'DELETE', path: '/org/locations/:locationId', policy: 'org_admin', bodyLimit: 'none',
+    handler: deleteLocation,
+  },
+  {
+    id: 'org.sales.get', method: 'GET', path: '/org/locations/:locationId/sales', policy: 'member', bodyLimit: 'none',
+    handler: getSales,
+  },
+  {
+    id: 'org.sales.days', method: 'GET', path: '/org/locations/:locationId/sales/days', policy: 'member', bodyLimit: 'none',
+    handler: getSalesDays,
+  },
+  {
+    id: 'org.sales.upload', method: 'POST', path: '/org/locations/:locationId/sales/uploads', policy: 'member',
+    bodyLimit: '256kb', limiter: 'uploads', handler: uploadSales,
+  },
+  {
+    id: 'org.sales.remove', method: 'DELETE', path: '/org/locations/:locationId/sales', policy: 'org_admin', bodyLimit: 'none',
+    handler: deleteSales,
+  },
+  {
+    id: 'org.notes.list', method: 'GET', path: '/org/locations/:locationId/notes', policy: 'member', bodyLimit: 'none',
+    handler: listNotes,
+  },
+  {
+    id: 'org.notes.create', method: 'POST', path: '/org/locations/:locationId/notes', policy: 'member', bodyLimit: '32kb',
+    handler: createNote,
+  },
+  {
+    id: 'org.notes.update', method: 'PATCH', path: '/org/locations/:locationId/notes/:noteId', policy: 'member',
+    bodyLimit: '32kb', handler: updateNote,
+  },
+  {
+    id: 'org.notes.remove', method: 'DELETE', path: '/org/locations/:locationId/notes/:noteId', policy: 'member',
+    bodyLimit: 'none', handler: deleteNote,
+  },
+  { id: 'org.chat.get', method: 'GET', path: '/org/locations/:locationId/chat', policy: 'member', bodyLimit: 'none', handler: getChat },
+  {
+    id: 'org.chat.conversation', method: 'GET', path: '/org/locations/:locationId/chat/:conversationId', policy: 'member',
+    bodyLimit: 'none', handler: getConversation,
+  },
+  {
+    id: 'org.chat.turn', method: 'POST', path: '/org/locations/:locationId/chat/turns', policy: 'member', bodyLimit: '32kb',
+    limiter: 'chat', handler: postTurn,
+  },
+  {
+    id: 'org.chat.remove', method: 'DELETE', path: '/org/locations/:locationId/chat/:conversationId', policy: 'member',
+    bodyLimit: 'none', handler: deleteConversation,
+  },
+
+  { id: 'org.members.list', method: 'GET', path: '/org/members', policy: 'org_admin', bodyLimit: 'none', handler: listMembers },
+  { id: 'org.members.add', method: 'POST', path: '/org/members', policy: 'org_admin', bodyLimit: '32kb', handler: addMembers },
+  {
+    id: 'org.members.update', method: 'PATCH', path: '/org/members/:memberId', policy: 'org_admin', bodyLimit: '32kb',
+    handler: changeRole,
+  },
+  {
+    id: 'org.members.remove', method: 'DELETE', path: '/org/members/:memberId', policy: 'org_admin', bodyLimit: 'none',
+    handler: removeMember,
+  },
+
+  { id: 'admin.requests.list', method: 'GET', path: '/admin/requests', policy: 'staff', bodyLimit: 'none', handler: listRequests },
+  {
+    id: 'admin.requests.approve', method: 'POST', path: '/admin/requests/:requestId/approve', policy: 'staff',
+    bodyLimit: '32kb', handler: approveRequest,
+  },
+  {
+    id: 'admin.requests.reject', method: 'POST', path: '/admin/requests/:requestId/reject', policy: 'staff',
+    bodyLimit: '32kb', handler: rejectRequest,
+  },
+  { id: 'admin.orgs.list', method: 'GET', path: '/admin/orgs', policy: 'staff', bodyLimit: 'none', handler: listOrgs },
+  { id: 'admin.orgs.get', method: 'GET', path: '/admin/orgs/:orgId', policy: 'staff', bodyLimit: 'none', handler: getOrg },
+  { id: 'admin.people.list', method: 'GET', path: '/admin/people', policy: 'staff', bodyLimit: 'none', handler: listPeople },
+  {
+    id: 'admin.people.lookup', method: 'GET', path: '/admin/people/lookup', policy: 'staff', bodyLimit: 'none',
+    handler: lookupPerson,
+  },
+  { id: 'admin.audit.list', method: 'GET', path: '/admin/audit', policy: 'staff', bodyLimit: 'none', handler: queryAudit },
+  {
+    id: 'admin.view_as.start', method: 'POST', path: '/admin/view-as', policy: 'staff', bodyLimit: '32kb',
+    limiter: 'view-as', handler: startViewAs,
+  },
+  {
+    id: 'admin.view_as.end', method: 'POST', path: '/admin/view-as/end', policy: 'staff_self', bodyLimit: '32kb',
+    handler: endViewAs,
+  },
+];
+
+/** The only route that may use staff_self. */
+const VIEW_AS_END = { method: 'POST', path: '/admin/view-as/end' } as const;
+
+/** Spec 10.8. [CONFIRM: limits] */
+const WRITES_LIMIT = { name: 'townwise:writes', limit: 300, windowSeconds: 600 } as const;
+const ROUTE_LIMITS = {
+  uploads: { name: 'townwise:uploads', limit: 30, windowSeconds: 3600, whenStoreDown: 'allow' },
+  requests: { name: 'townwise:requests', limit: 5, windowSeconds: 86400, whenStoreDown: 'deny' },
+  'view-as': { name: 'townwise:view-as', limit: 20, windowSeconds: 3600, whenStoreDown: 'deny' },
+  // docs/portal/tuning-chat.md section 2: every turn costs money, so a store outage denies.
+  chat: { name: 'townwise:chat', limit: 60, windowSeconds: 3600, whenStoreDown: 'deny' },
+} as const;
+
+/** Boot refuses a duplicate method and path, a GET with a body limit, and staff_self on any other route. */
+export function assertRouteTable(routes: readonly TownwiseRoute[]): void {
+  const seen = new Set<string>();
+  for (const route of routes) {
+    const key = `${route.method} ${route.path}`;
+    if (seen.has(key)) throw new ConfigError('routes', `${key} is declared twice`);
+    seen.add(key);
+    if (route.method === 'GET' && route.bodyLimit !== 'none') {
+      throw new ConfigError('routes', `${route.id} is a GET with a body limit`);
+    }
+    if (route.policy === 'staff_self' && (route.method !== VIEW_AS_END.method || route.path !== VIEW_AS_END.path)) {
+      throw new ConfigError('routes', `${route.id} uses staff_self, which only POST /admin/view-as/end may use`);
+    }
+  }
+}
+
+const principals = new WeakMap<Request, Principal>();
+
+function bound(run: (req: Request, res: Response) => Promise<void>): RequestHandler {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    void run(req, res).then(() => { if (!res.headersSent) next(); }).catch(next);
+  };
+}
+
+/** Steps 3 to 5: resolve, the view-as guard, the policy. Never reads the body. */
+function authorize(ctx: TownwiseContext, route: TownwiseRoute): RequestHandler {
+  return bound(async (req) => {
+    const auth = authOf(req);
+    const resolution = await resolveAccess(ctx, auth);
+    const principal = principalOf(resolution, auth);
+    const refusal = viewAsRefusal(route, principal) ?? policyRefusal(route.policy, principal);
+    if (refusal !== null) {
+      ctx.logger.info({ policy: route.policy, code: refusal.code }, 'townwise.access_denied');
+      throw refusal;
+    }
+    if (principal.kind !== 'staff' && principal.viewAs !== null && route.method === 'GET') {
+      ctx.logger.info({ grantId: principal.viewAs.grantId, routeId: route.id }, 'townwise.view_as_read');
+    }
+    principals.set(req, principal);
+    recordResolution(req, resolution);
+  });
+}
+
+function accountKey(req: Request): string {
+  return `acct:${authOf(req).userId}`;
+}
+
+export function mountTownwiseRoutes(router: Router, routes: readonly TownwiseRoute[], ctx: TownwiseContext): void {
+  assertRouteTable(routes);
+  const writes = rateLimit({
+    limiter: createRateLimiter({ redis: ctx.redis, ...WRITES_LIMIT }),
+    key: accountKey,
+    whenStoreDown: 'allow',
+    logger: ctx.logger,
+  });
+  const routeLimiters = new Map<NonNullable<TownwiseRoute['limiter']>, RequestHandler>();
+  const routeLimiter = (name: NonNullable<TownwiseRoute['limiter']>): RequestHandler => {
+    const existing = routeLimiters.get(name);
+    if (existing !== undefined) return existing;
+    const { whenStoreDown, ...rule } = ROUTE_LIMITS[name];
+    const created = rateLimit({ limiter: createRateLimiter({ redis: ctx.redis, ...rule }), key: accountKey, whenStoreDown, logger: ctx.logger });
+    routeLimiters.set(name, created);
+    return created;
+  };
+
+  for (const route of routes) {
+    const chain: RequestHandler[] = [ctx.auth.requireAuth];
+    if (route.method !== 'GET') chain.push(writes);
+    chain.push(authorize(ctx, route));
+    if (route.bodyLimit !== 'none') chain.push(express.json({ limit: route.bodyLimit }));
+    if (route.limiter !== undefined) chain.push(routeLimiter(route.limiter));
+    chain.push(bound(async (req, res) => {
+      const principal = principals.get(req);
+      if (principal === undefined) throw new AppError(500, 'internal', 'Internal server error');
+      await route.handler(ctx, req, res, principal);
+    }));
+    const method = route.method === 'GET' ? 'get' : route.method === 'POST' ? 'post' : route.method === 'PATCH' ? 'patch' : 'delete';
+    router[method](route.path, ...chain);
+  }
+}

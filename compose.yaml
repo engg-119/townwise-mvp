@@ -1,0 +1,12 @@
+# Local development only: Mongo and Valkey (Redis-compatible) on localhost.
+# Image references are the kit's test pins (backend/mongo/test/images.ts, backend/redis/test/images.ts).
+services:
+  mongo:
+    image: mongo:8.0.32@sha256:d0d926f94df099bff534b7ee5b5986458131a22489dfff8664509af0c1e2ca9c
+    ports: ["127.0.0.1:27017:27017"]
+    volumes: [mongo-data:/data/db]
+  valkey:
+    image: valkey/valkey:8.1.10-alpine@sha256:081c2f5cb575efc901aa80ff9cdbd1ec6a301682fd35e1ebb4b0990a4a4a8507
+    ports: ["127.0.0.1:6379:6379"]
+volumes:
+  mongo-data:
