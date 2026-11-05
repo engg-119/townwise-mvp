@@ -197,7 +197,9 @@ jobs:
       # The upload client runs from its image pinned by digest (not the Static Web Apps action, which builds
       # FROM a moving tag). docker run passes only the variables named with -e: the container gets the token
       # and the read-only web folder, and no ACTIONS_ID_TOKEN_REQUEST_* variables, Azure CLI session or
-      # docker socket. The token never leaves this step (no step output).
+      # docker socket. The token never leaves this step (no step output). GITHUB_WORKSPACE is the one non-INPUT_
+      # variable: the client resolves app_location against it (falling back to its working directory,
+      # /bin/staticsites), as it does inside the official action's container.
       - name: Fetch the Static Web Apps deployment token, sign out of Azure, upload the web build
         env:
           # mcr.microsoft.com/appsvc/staticappsclient, the "prev" tag (2026-09-28); "stable" (2026-10-29) is
@@ -212,7 +214,7 @@ jobs:
           az logout
           INPUT_AZURE_STATIC_WEB_APPS_API_TOKEN="$token" docker run --rm \
             -e INPUT_ACTION=upload -e INPUT_AZURE_STATIC_WEB_APPS_API_TOKEN -e INPUT_APP_LOCATION=web \
-            -e INPUT_SKIP_APP_BUILD=true \
+            -e INPUT_SKIP_APP_BUILD=true -e GITHUB_WORKSPACE=/github/workspace \
             -v "$GITHUB_WORKSPACE/web:/github/workspace/web:ro" -w /github/workspace \
             "$SWA_CLIENT" sh -c 'cd /bin/staticsites && ./StaticSitesClient upload'
       - name: Smoke check (prints only the status)
