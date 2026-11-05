@@ -70,6 +70,8 @@ export interface LocationStore {
   /** F3 step 7: the location with this name in the organization, inserted once (`$setOnInsert`), so a retry finds it. */
   ensureByName(scope: OrgScope, input: { name: string; town: Town; createdAt: Date; createdBy: string }):
     Promise<{ id: string; inserted: boolean }>;
+  /** Organization deletion (spec 10.7). Resolves the number deleted. */
+  removeForOrg(scope: OrgScope): Promise<number>;
 }
 
 function toLocation(doc: LocationFields & { _id: Types.ObjectId }): LocationRecord {
@@ -150,6 +152,9 @@ export function createLocationStore(connection: Connection): LocationStore {
       const doc = await Location.findOne(filter).lean();
       if (doc === null) throw new Error('location missing after its upsert');
       return { id: doc._id.toHexString(), inserted };
+    },
+    async removeForOrg(scope) {
+      return (await Location.deleteMany({ orgId: scope.orgId })).deletedCount;
     },
   };
 }

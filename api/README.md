@@ -1,6 +1,6 @@
 # api
 
-Townwise backend: one Node process (`src/main.ts`) composed from the kit modules in `../backend/` (copied from camkeith/modules; versions in `../KIT.md`). Sign-in is Google only.
+Townwise backend: one Node process (`src/main.ts`) composed from the kit modules in `kit/` (copied from camkeith/modules; versions in `../KIT.md`). Sign-in is Google only.
 
 It mounts two routers. The kit’s `/auth` handles sign-in, sessions and two-step sign-in. Townwise’s `/api` (`src/app.ts`, routes in `src/access/routes.ts`) handles access, organizations, locations, sales data, notes, the tuning chat, the team and the staff console. No kit file is changed; all Townwise code is under `api/`. "The build spec" and "spec Section N" in this README and in code comments mean `../docs/portal/spec.md`.
 
@@ -47,20 +47,26 @@ Three roles: staff (`superadmin`, Townwise’s own people), org admin and member
 | Edit or delete anyone’s notes | no | no | yes | no | no |
 | Use the tuning chat (own conversations only) | no | reads the target’s, cannot send or delete | yes | yes | no |
 | Add, rename, change the town of, or delete (when empty) a location | no | no | yes | no | no |
+| Rename the organization | any organization, in the console | no | own | no | no |
 | Read the team | any organization, in the console | read-only, when the target is an org admin | own | no | no |
-| Add emails, change roles, remove people | not built yet | no | own | no | no |
+| Add emails, change roles, remove people | any organization, in the console | no | own | no | no |
+| Leave the organization | no | no | yes, unless the last admin | yes | no |
+| See Townwise staff activity on the organization | the audit log | read-only, when the target is an org admin | yes | no | no |
 | Approve or reject access requests | yes | no | no | no | no |
-| List organizations and people; read the audit log | yes | no | no | no | no |
+| Create, rename, suspend and reactivate organizations | yes | no | no | no | no |
+| List organizations and people; read the audit log; sign a person out everywhere | yes | no | no | no | no |
+| Delete a person’s Townwise records, or a suspended organization’s | yes | no | no | no | no |
 | Start view-as | yes | no | no | no | no |
 | End view-as | yes | yes | no | no | no |
 | Two-step sign-in (kit `/auth/totp/*`) | required | not applicable | optional | optional | optional |
 
 Rules behind the matrix:
 
-- An organization always keeps at least one active org admin. Demoting or removing the last one answers 409 `last_admin` and changes nothing.
+- An organization always keeps at least one active org admin. Demoting, removing or leaving as the last one answers 409 `last_admin` and changes nothing, for org admins and staff alike, even when several of these run at once. A removal (leaving included) recounts when the seat was an org admin, or was being demoted at that moment: a demotion marks the seat (`demotingSince`) in the same write and clears the mark once its own recount or revert is done. So a member can leave, and staff can remove a member from, an organization with no active admin yet (staff created it and its admin hasn’t joined, or its approval found the requester seated elsewhere). A role change or removal of an invitation never counts, since it takes no active admin away. One exception: when the person took a seat in another organization before theirs could be put back, the removal stands and is answered as done.
 - A staff address never resolves as a member, even when an organization invites it, because the staff check runs first.
 - Staff see client sales figures and note text only through view-as. Member routes answer staff with 403 `no_access`. [CONFIRM: staff see values only through view-as]
-- Removing someone does not sign them out. Their next member request answers 403 `no_access`, and `GET /api/me` says `removed`. [CONFIRM: no session revoke on removal]
+- Removing someone does not sign them out. Their next member request answers 403 `no_access`, and `GET /api/me` says `removed`. [CONFIRM: no session revoke on removal] Staff can sign a person out on every device from People, which revokes every kit session and leaves their seat alone.
+- Every staff action on an organization (its name, status, team, and each view-as) is recorded before it takes effect, and that organization’s admins read it as Townwise staff activity. [CONFIRM: show staff activity to org admins, with staff emails]
 - One active organization per person, enforced by a unique index. Invitations are per organization, so two organizations may invite the same address, and no add result depends on another organization. [CONFIRM: one organization per person; per-organization invitations]
 
 ### Access states
@@ -99,7 +105,7 @@ A signed-in person whose kit user no longer exists gets 401 `unauthenticated`. T
 
 1. A person in `no_org`, `rejected` or `removed` sends `POST /api/access-requests`: organization name, their name and role, the town, the number of locations and an optional note. Each person has at most one pending request. Their state becomes `pending`.
 2. Staff validate the person by hand, outside Townwise, for example by matching the email domain to the restaurant or by phone. [CONFIRM: what “validated manually” means]
-3. Approve (`POST /api/admin/requests/:requestId/approve`) creates the organization, its first location in the requested town, and the requester’s org admin seat. A retry completes the work. [CONFIRM: first location at approval]
+3. Approve (`POST /api/admin/requests/:requestId/approve`) creates the organization, its first location in the requested town, and the requester’s org admin seat. A retry completes the work. If the requester is deleted while it runs (their request goes with them), the approval takes back what it made for them and answers 404 (Deletion). [CONFIRM: first location at approval]
 4. Reject (`POST /api/admin/requests/:requestId/reject`) stores an optional message of up to 500 characters, which the requester sees. They may send a new request. [CONFIRM: rejected people may request again]
 5. The requester sees the result at their next `GET /api/me`.
 
@@ -107,8 +113,25 @@ A signed-in person whose kit user no longer exists gets 401 `unauthenticated`. T
 
 - An org admin adds up to 20 addresses at once, with a role (default member). [CONFIRM: role chosen at invite, default member] Each address is normalized as the kit does (trimmed, lowercased) and gets one result: `invited`, `already_invited`, `already_member` or `invalid`.
 - An organization holds at most 200 people, active and invited (409 `member_limit`).
-- Changing a role or removing someone uses change, recount, revert, so a demotion or removal never leaves an organization without an active admin, even when two run at once.
+- Changing a role or removing someone uses change, recount, revert, so a demotion or removal never leaves an organization without an active admin, even when two run at once. A demotion recounts when the row was an active seat at its write, and marks the row until it is done, so a removal of that seat meanwhile recounts too; its revert matches the row by id, organization and the role it set, whatever its status, so a seat removed meanwhile gets its admin role back and that removal, finding no active admin, puts the seat back.
 - Removing an invitation deletes it. Removing a member keeps the row as `removed`, for history and for the `removed` state.
+- Anyone with a seat leaves with `POST /api/org/leave {}`, from Settings. It is a removal of oneself (`removed.byYou` is true), recorded as `member.left`. The body must be exactly `{}`.
+- Staff edit any organization’s team from its console page (`/api/admin/orgs/:orgId/members`), with the same outcomes, caps and last-admin rule. Rows they add carry `addedByStaff`, which Team shows as added by Townwise staff.
+
+### Staff organizations
+
+1. `POST /api/admin/orgs { name, adminEmail, id? }` creates an active organization with no location and an `org_admin` invitation for that address, added by staff. That person joins as admin the next time they continue with Google. `id` is an optional 24-hex id the client generates once per new organization and sends again on a retry: a repeat answers 200 with the organization it made and writes no second `org.created`. It counts as a repeat only for an active organization this route made (no request) with the same name, whose team holds the same admin address, or nobody yet; any other organization with that `id` is 409 `conflict`. A repeat adds nothing, except the admin invitation when the organization has nobody yet (a create that stopped before it), and that invitation’s `member.invited` is written before it, as for a staff team edit. Two repeats racing past the check make one organization; the loser’s `org.created` is followed by `staff_action.not_applied` (`conflict`). [CONFIRM: staff can create organizations without a request]
+2. `PATCH /api/admin/orgs/:orgId { name?, status? }` renames, suspends or reactivates. A value that already holds records nothing. Suspension keeps every record: members resolve to `org_suspended`, every member route answers them 403 `no_access`, and invitations into it are hidden. Reactivation restores access with no other step.
+3. Each of these, and each staff team edit, writes its audit event before the change. A request with several changes (a name and a status, or several addresses) writes all its events first and then makes its changes in one write, so a refused event (503) never follows an applied change; an event already written when a later one is refused is followed by `staff_action.not_applied` (`unavailable`). The organization’s admins see all of them, and every view-as of their team, on `GET /api/org/staff-activity`.
+
+### Deletion
+
+Staff delete on request (the privacy page’s promise). Both actions write their audit event first, with ids only, then delete by filter, so a retry completes the work, then replace the email or names in older audit events. [CONFIRM: staff-only deletion in v1; suspend before deleting an organization]
+
+- **An organization** (`DELETE /api/admin/orgs/:orgId`) must be suspended first (409 `org_not_suspended`). Its sales days, uploads, notes, tuning chat conversations, live turns and monthly chat usage, locations, every `tw_members` row and the request it was approved from are deleted, then the organization row last, and only while it is still suspended. One reactivated during the deletion keeps its row and answers 409 `org_not_suspended`, recorded as `staff_action.not_applied`; the records already deleted stay deleted, and suspending it and deleting again finishes the work. After the row goes, its sales days and chat usage are swept once more (counted in `deletedDays`), which catches what requests already running wrote after the first sweep. That narrows the gap without closing it: a tuning chat turn started before the suspension can still add chat usage for up to 150 seconds, an upload still running can write days after the second sweep, and its `tw_uploads` row, if written after the first sweep, is never swept. Such rows carry only the deleted organization’s id. In the audit log its name becomes “deleted organization” and its locations’ names “deleted location”, in its own events and in its request’s `access_request.created`. Former members resolve to `no_org`. View-as grants keep only ids. The client’s dialog asks for the typed name; the server checks only that the organization is suspended.
+- **A person** (`POST /api/admin/people/delete { email }`, in the body because the URL is logged) must hold no active seat (409 `person_has_seat`: remove it first). A staff address is 400 `invalid_target`. An address with no kit user and nothing in Townwise, audit log included, is 404. Their access requests, open invitations in every organization, removed seats, and tuning chat conversations and live turns in every organization are deleted. Then the server checks for an active seat again: one taken meanwhile (a join, an approval) answers 409 `person_has_seat`, recorded as `staff_action.not_applied`, before any session is revoked or event redacted; the records already deleted stay deleted, and removing the seat and deleting again finishes the work. An approval that seats the person after that check reads the request again, finds it gone, and takes the seat back, with the organization and location made only for it (their names redacted as in an organization deletion), answering 404 with its approval recorded as not applied. Only a new invitation added after the deletion can still seat the person, which the runbook checks for. Otherwise, when a kit user exists, every session is revoked (`revokeAllSessions`) and the authenticator removed (`totp.remove`). In the audit log every address the person is known by becomes “deleted person” in `details.email`, in anyone’s events (other people’s `member.invited`, `member.role_changed`, `member.removed` and approval-time `member.joined` included): the current one, the addresses on their seats and requests, and those their own events and the events about their seats hold. Their email also goes from `actorEmail` and `targetEmail`, and events found by their user id lose whatever address they had then. Notes and uploads they wrote stay with their organization, shown as “Deleted person” once the kit user is gone.
+
+**Runbook: delete the kit user record by hand.** The kit has no user delete (`../docs/portal/spec.md` Section 19, item 7), so the response’s `kitUserId` names a record that still exists. Only after the Townwise deletion answered 200, in the production database (Atlas), first confirm that no `tw_members` document has `activeUserId` equal to `kitUserId` (the person can still sign in until this step, so they may have joined an organization since; if so, remove that seat and run the deletion again). Then delete the `users` document whose `_id` is `ObjectId(kitUserId)`, then the `auth_sessions` documents whose `userId` is `ObjectId(kitUserId)` (all revoked by then). Their `auth_refresh_retired` entries hold no user id and expire on their own. Never delete a kit user first: an active seat must never outlive its user. Until this step is done, the person can still continue with Google, and resolves to `no_org`.
 
 ### Staff and two-step sign-in
 
@@ -155,8 +178,38 @@ Each location’s calibration state is derived from its sales days on every read
 
 ### Audit and logs
 
-- Every change writes an event to `tw_audit_events`, with details from a fixed allowlist per action. Events never hold guest or sales figures, note detail text, request notes, decision messages or file contents.
-- Events for client actions (members, org admins and requesters) are written after the effect; a failed write is logged and the action stands. Staff events are written before the effect; a failed write refuses the action with 503, and an effect that then fails adds `staff_action.not_applied`. [CONFIRM: audit timing; events kept indefinitely]
+- Every change writes an event to `tw_audit_events`, with details from a fixed allowlist per action (the table below, `AUDIT_DETAIL_KEYS` in `src/stores/audit-events.ts`). Events never hold guest or sales figures, note detail text, request notes, decision messages or file contents.
+- Events for client actions (members, org admins and requesters) are written after the effect; a failed write is logged and the action stands. Staff events are written before the effect; a failed write refuses the action with 503, and an effect that then fails or is refused adds `staff_action.not_applied { eventId, code }`. Its code is the refusal’s error code (`request_not_pending`, `view_as_active`, `last_admin`, `already_invited`, `not_found`, `person_has_seat`, `org_not_suspended`), `conflict` when a concurrent change to the same row won, `unavailable` when a later event of the same request could not be written, or `internal` when the effect threw. The list is closed (`NOT_APPLIED_REASONS` in `src/audit.ts`, which also holds each code’s plain words). [CONFIRM: audit timing; events kept indefinitely]
+- The only update to an event is deletion’s redaction; nothing deletes one.
+- Org admins read their organization’s staff events (actor role `superadmin`), newest 50, as Townwise staff activity: `{ at, staffEmail, summary, viewAs, applied, notAppliedReason }`, where `viewAs` is `{ targetEmail, reason, endsAt }` on `view_as.started` only and `endsAt` is the grant’s scheduled end (an earlier end is its own `view_as.ended` row). A `staff_action.not_applied` event is never a row: the row it qualifies has `applied: false` and `notAppliedReason`, the code in plain words (for example “The organization needs at least one admin”); every other row has `applied: true` and `notAppliedReason: null`.
+
+| Action | Details | Written |
+|---|---|---|
+| `access_request.created` | `orgName`, `townId`, `townName` | after, by the requester |
+| `access_request.approved` | `orgId` | before, by staff |
+| `access_request.rejected` | `hasMessage` | before, by staff |
+| `access_request.withdrawn` | `reason` (`joined_org`) | after, on join |
+| `org.created` | `name`, `via` (`request` or `staff`) | at approval, after its step; by `POST /api/admin/orgs`, before |
+| `org.renamed` | `from`, `to` | after, by an org admin; before, by staff |
+| `org.suspended`, `org.reactivated` | none | before, by staff |
+| `org.deleted` | none | before, by staff |
+| `member.invited` | `email`, `role` | after, by an org admin; before, by a staff team edit; after its step, for the first admin of an organization staff create |
+| `member.declined` | `email` | after |
+| `member.joined` | `email`, `role` | after, on join or at approval |
+| `member.role_changed` | `email`, `from`, `to` | after, by an org admin; before, by staff |
+| `member.removed` | `email`, `wasStatus` | after, by an org admin; before, by staff |
+| `member.left` | `email` | after |
+| `location.created`, `location.updated`, `location.deleted` | `name`, `townId` | after |
+| `sales.uploaded` | `locationId`, `dayCount`, `inserted`, `replaced`, `firstDate`, `lastDate` | after |
+| `sales.deleted` | `locationId`, `deletedDays` | after |
+| `note.created`, `note.updated`, `note.deleted` | `locationId`, `kind`, `startDate`, `endDate` | after |
+| `chat.turn_completed` | `locationId`, `conversationId`, `model`, `calls`, `inputTokens`, `outputTokens`, `stopReason` | after |
+| `chat.conversation_deleted` | `locationId`, `conversationId` | after |
+| `view_as.started` | `targetUserId`, `targetEmail`, `reason`, `expiresAt` | before, by staff |
+| `view_as.ended` | `endReason` (`ended`, `replaced` or `expired`) | after the grant is cleared |
+| `people.signed_out_everywhere` | none (the event’s `orgId` is the person’s organization, or null) | before, by staff |
+| `person.deleted` | `userId` (null for an address that never signed in) | before, by staff |
+| `staff_action.not_applied` | `eventId`, `code` | after a staff effect fails or is refused |
 - Townwise log lines carry ids and counts only: `townwise.access_denied { policy, code }`, `townwise.view_as_read { grantId, routeId }`, `townwise.upload_applied { orgId, locationId, uploadId, dayCount }`, `townwise.audit_write_failed { action, orgId, targetId }`, and for the tuning chat `townwise.chat_turn`, `townwise.chat_turn_failed`, `townwise.chat_turn_aborted` and `townwise.chat_turn_not_saved` (`{ orgId, locationId, conversationId, calls, costMicroUsd }` with the stop reason, or the code and error class; `timeout` has no error class), and `townwise.chat_live_turn_not_released` (`{ orgId, locationId, errType }`). No route puts an email, a name or a figure in its path or query, because server-core logs the URL. The one exception is the people lookup’s `q`, which server-core redacts.
 
 ## Endpoints
@@ -199,6 +252,9 @@ Member routes take the organization from the caller’s own seat, never from the
 | Method and path | Policy | Request | Success | Errors |
 |---|---|---|---|---|
 | `GET /api/org` | member | | 200 `{ org, role, locations, requestedLocationCount }` | |
+| `PATCH /api/org` | org_admin | `{ name }`, 2 to 120 characters | 200 `{ org }` | 400 |
+| `GET /api/org/staff-activity` | org_admin | | 200 `{ events }`, the newest 50 staff actions on this organization, each marked `applied` (see Audit and logs) | |
+| `POST /api/org/leave` | member | `{}` exactly | 200, as `GET /api/me` (`removed`, `byYou`) | 400; 409 `last_admin` |
 | `POST /api/org/locations` | org_admin | `{ name, town }` | 201 `{ location }` | 409 `location_name_taken`, `location_limit`; 400 `unknown_town` |
 | `PATCH /api/org/locations/:locationId` | org_admin | `{ name?, town? }`, at least one | 200 `{ location }` | 404; 409 `location_name_taken`; 400 `unknown_town` |
 | `DELETE /api/org/locations/:locationId` | org_admin | | 204 | 404; 409 `location_has_data` (any sales day or note) |
@@ -244,14 +300,22 @@ Policy `staff`, except End. During view-as, every route here answers 409 `view_a
 | `POST /api/admin/requests/:requestId/approve` | `{ orgName, locationName }` | 200 `{ org, request }` | 404; 409 `request_not_pending`, `requester_has_org`; 503 |
 | `POST /api/admin/requests/:requestId/reject` | `{ message? }` | 200 `{ request }` | 404; 409 `request_not_pending`; 503 |
 | `GET /api/admin/orgs` | | 200 `{ orgs }`, each with team, location, sales-day counts and the last upload time | |
+| `POST /api/admin/orgs` | `{ name, adminEmail, id? }`, `id` a client-generated 24-hex id | 201 `{ org: { id, name }, result }`, the admin invitation’s add result; 200, the same shape, for a repeat of that `id` | 400; 409 `conflict` (the `id` names another organization); 503 |
 | `GET /api/admin/orgs/:orgId` | | 200 `{ org, members, locations, recent }`: the team, each location’s coverage and counts, and the newest 20 audit events | 400; 404 |
+| `PATCH /api/admin/orgs/:orgId` | `{ name?, status? }`, at least one; status `active` or `suspended` | 200 `{ org }`, as in the detail | 400; 404; 503 |
+| `DELETE /api/admin/orgs/:orgId` | | 200 `{ deletedDays, deletedUploads, deletedNotes, deletedLocations, deletedSeats, redactedEvents }` | 400; 404; 409 `org_not_suspended` (also when reactivated during the deletion); 503 |
+| `POST /api/admin/orgs/:orgId/members` | `{ emails, role? }`, as on Team | 200 `{ results, members }` | 400; 404; 409 `member_limit`; 503 |
+| `PATCH /api/admin/orgs/:orgId/members/:memberId` | `{ role }` | 200 `{ member }` | 400; 404; 409 `last_admin`; 503 |
+| `DELETE /api/admin/orgs/:orgId/members/:memberId` | | 204 | 400; 404; 409 `last_admin`; 503 |
 | `GET /api/admin/people?kind=` | | 200 `{ people, truncated }`, up to 1,000 | 400 |
 | `GET /api/admin/people/lookup?q=` | an exact email | 200 `{ person }`, or `{ person: null }` | 400 |
+| `POST /api/admin/people/:userId/sign-out-everywhere` | `{}` | 200 `{ revoked }`, the sessions revoked | 400 `invalid_target` (staff); 404; 503 |
+| `POST /api/admin/people/delete` | `{ email }` | 200 `{ deletedRequests, deletedSeats, redactedEvents, kitUserId }` | 400 `invalid_target` (staff); 404; 409 `person_has_seat` (also for a seat taken during the deletion); 503 |
 | `GET /api/admin/audit?orgId=&actorUserId=&action=&before=&limit=` | `limit` 1 to 200, default 50 | 200 `{ events, nextBefore }` | 400 |
 | `POST /api/admin/view-as` (limiter `view-as`) | `{ userId, reason }` | 201, as `GET /api/me`, with `viewAs` set | 400 `invalid_target`; 404; 409 `view_as_active`; 429; 503 |
 | `POST /api/admin/view-as/end` (policy `staff_self`) | `{}` | 200, as `GET /api/me` | |
 
-The console never returns sales figures or note text. People come only from Townwise records, `TOWNWISE_SUPERADMIN_EMAILS` and the kit’s exact-email lookup; the kit’s collections are never read directly.
+The console never returns sales figures or note text. People come only from Townwise records, `TOWNWISE_SUPERADMIN_EMAILS` and the kit’s exact-email lookup; the kit’s collections are never read directly. Organization and team changes, sign out everywhere and deletion are staff actions (see Audit and logs), and deletion is described under Deletion, with its runbook step.
 
 ### Tuning chat
 
@@ -279,13 +343,8 @@ A refused request is 429 `rate_limited` with `retryAfterSeconds`. Account keys a
 
 ### Not built yet
 
-These routes are in the build spec and have no server code yet:
+These are in the build specs and have no server code yet:
 
-- `PATCH /api/org` (org admins rename their organization) and `POST /api/org/leave`.
-- `GET /api/org/staff-activity` (org admins see every staff action on their organization, view-as included).
-- `POST /api/admin/orgs`, `PATCH /api/admin/orgs/:orgId` and `DELETE /api/admin/orgs/:orgId` (staff create, rename, suspend, reactivate and delete organizations).
-- `POST`, `PATCH` and `DELETE` under `/api/admin/orgs/:orgId/members` (staff team edits).
-- `POST /api/admin/people/:userId/sign-out-everywhere` and `POST /api/admin/people/delete`.
 - In the tuning chat (`../docs/portal/tuning-chat.md`): background turns and resumable streams, message trees, regenerate and edit, history compaction, attachments, memory and voice.
 
 ## Data
@@ -307,7 +366,7 @@ Every Townwise collection takes the `tw_` prefix. Every tenant document carries 
 | `tw_chat_live_turns` | per organization and person: the one live tuning chat turn’s id and start time |
 | `tw_chat_usage` | per organization and UTC month: the tuning chat’s cost in whole micro-dollars |
 
-Townwise reads the kit’s data only through its store functions (`users.findById`, `users.findByEmail`, `totp.get`).
+Townwise reads the kit’s data only through its store functions (`users.findById`, `users.findByEmail`, `totp.get`), and changes it only through `totp.remove` and the kit’s `revokeAllSessions`, for sign out everywhere and person deletion. Deleting a kit user is a runbook step (Deletion).
 
 ## Environment variables
 
@@ -319,7 +378,7 @@ Townwise reads the kit’s data only through its store functions (`users.findByI
 | `PORT` | server-core | no | no | `8080` |
 | `LOG_LEVEL` | server-core | no | no | `info` |
 | `CORS_ORIGINS` | server-core | no | no | `http://localhost:8081`, the Expo web client |
-| `TRUST_PROXY` | server-core | yes | no | `loopback` locally; when deployed, only the addresses of the proxy in front of the app (`../backend/server-core/MODULE.md`) |
+| `TRUST_PROXY` | server-core | yes | no | `loopback` locally; when deployed, only the addresses of the proxy in front of the app (`kit/server-core/MODULE.md`) |
 | `HTTP_KEEP_ALIVE_TIMEOUT_MS` | server-core | no | no | `65000` |
 | `SHUTDOWN_TIMEOUT_MS` | server-core | no | no | `25000` |
 | `MONGODB_URI` | mongo | yes | yes | `mongodb://localhost:27017/townwise` |
@@ -335,8 +394,8 @@ Townwise reads the kit’s data only through its store functions (`users.findByI
 | `TOWNWISE_CHAT_MONTHLY_BUDGET_USD` | api (`src/config.ts`) | no | no | `20`: the tuning chat’s monthly spend limit per organization, in dollars, 0 to 10,000 |
 | `ANTHROPIC_API_KEY` | api (`src/main.ts`) | no | yes | empty locally, which turns the tuning chat off; in production a Key Vault reference when `enable_chat` is on (`../infra/README.md`, step 16) |
 
-`.env.example` lists every variable above except `LOG_LEVEL`, `HTTP_KEEP_ALIVE_TIMEOUT_MS` and `SHUTDOWN_TIMEOUT_MS`, which take their defaults. It holds local values and placeholders only: the two key rings, the Google client ids, the staff list and the Anthropic key are empty. Key rotation for the two key rings is in `../backend/auth/MODULE.md`.
+`.env.example` lists every variable above except `LOG_LEVEL`, `HTTP_KEEP_ALIVE_TIMEOUT_MS` and `SHUTDOWN_TIMEOUT_MS`, which take their defaults. It holds local values and placeholders only: the two key rings, the Google client ids, the staff list and the Anthropic key are empty. Key rotation for the two key rings is in `kit/auth/MODULE.md`.
 
 ## Kit modules
 
-The code under `../backend/` is ours to own. Record any change under `## Local changes` in that module's `MODULE.md` with the test that pins it. To take a kit fix: in a camkeith/modules clone, `git diff <commit in KIT.md> <new commit> -- backend/<name>`, apply it here, run `npm run verify`, and update the line in `KIT.md`.
+The code under `kit/` is ours to own. Record any change under `## Local changes` in that module's `MODULE.md` with the test that pins it. To take a kit fix: in a camkeith/modules clone, `git diff <commit in KIT.md> <new commit> -- backend/<name>`, apply it here, run `npm run verify`, and update the line in `KIT.md`.

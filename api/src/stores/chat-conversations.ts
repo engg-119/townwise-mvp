@@ -103,6 +103,8 @@ export interface ChatConversationStore {
   remove(scope: OrgScope, owner: ConversationOwner, conversationId: string): Promise<boolean>;
   /** Every conversation about this location, whoever wrote it. Resolves the number deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
+  /** Organization deletion (spec 10.7). Resolves the number deleted. */
+  removeForOrg(scope: OrgScope): Promise<number>;
 }
 
 type ConversationDoc = ConversationFields & { _id: Types.ObjectId };
@@ -179,6 +181,9 @@ export function createChatConversationStore(connection: Connection): ChatConvers
         orgId: new Types.ObjectId(scope.orgId), locationId: new Types.ObjectId(locationId),
       });
       return result.deletedCount;
+    },
+    async removeForOrg(scope) {
+      return (await Conversation.deleteMany({ orgId: new Types.ObjectId(scope.orgId) })).deletedCount;
     },
   };
 }

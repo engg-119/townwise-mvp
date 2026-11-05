@@ -23,11 +23,13 @@ resource "azurerm_dns_cname_record" "www" {
 }
 
 # Static Web Apps domain validation. The token is needed only until validation succeeds and may later
-# read back empty, so Terraform does not chase it.
+# read back empty, so Terraform does not chase it. It does read back empty once a domain is Ready, and the
+# provider rejects an empty TXT value at plan time even under ignore_changes, so coalesce() supplies a
+# placeholder that ignore_changes keeps out of the live record.
 resource "azurerm_dns_txt_record" "swa_validation" {
   for_each = {
-    "_dnsauth"     = azurerm_static_web_app_custom_domain.apex.validation_token
-    "_dnsauth.www" = azurerm_static_web_app_custom_domain.www.validation_token
+    "_dnsauth"     = coalesce(azurerm_static_web_app_custom_domain.apex.validation_token, "validated")
+    "_dnsauth.www" = coalesce(azurerm_static_web_app_custom_domain.www.validation_token, "validated")
   }
   name                = each.key
   zone_name           = azurerm_dns_zone.main.name

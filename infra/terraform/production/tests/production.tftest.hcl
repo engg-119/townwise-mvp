@@ -513,7 +513,7 @@ run "container_app" {
     condition = (
       azurerm_container_app.api.template[0].container[1].image == "crtownwise2d2c15bf.azurecr.io/valkey/valkey@sha256:081c2f5cb575efc901aa80ff9cdbd1ec6a301682fd35e1ebb4b0990a4a4a8507" &&
       azurerm_container_app.api.template[0].init_container[0].image == azurerm_container_app.api.template[0].container[1].image &&
-      join(" ", azurerm_container_app.api.template[0].container[1].args) == "valkey-server --bind 127.0.0.1 --protected-mode yes --port 0 --tls-port 6379 --tls-cert-file /tls/server.crt --tls-key-file /tls/server.key --tls-ca-cert-file /tls/ca.crt --tls-auth-clients no --save  --appendonly no --maxmemory 64mb --maxmemory-policy noeviction"
+      join(" ", azurerm_container_app.api.template[0].container[1].args) == "valkey-server --bind 127.0.0.1 --protected-mode yes --port 0 --tls-port 6379 --tls-cert-file /tls/server.crt --tls-key-file /tls/server.key --tls-ca-cert-file /tls/ca.crt --tls-auth-clients no --save --appendonly no --maxmemory 64mb --maxmemory-policy noeviction"
     )
     error_message = "Valkey: digest-pinned from the private registry, loopback and TLS only, no saved data, noeviction."
   }

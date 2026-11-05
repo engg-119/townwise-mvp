@@ -40,6 +40,8 @@ export interface ChatLiveTurnStore {
   claim(scope: OrgScope, userId: string, input: { turnId: string; now: Date; staleBefore: Date }): Promise<boolean>;
   /** Drops the claim while `turnId` still holds it; a claim another turn took over stays. */
   release(scope: OrgScope, userId: string, turnId: string): Promise<void>;
+  /** Organization deletion (spec 10.7). Resolves the number deleted. */
+  removeForOrg(scope: OrgScope): Promise<number>;
 }
 
 export function createChatLiveTurnStore(connection: Connection): ChatLiveTurnStore {
@@ -63,6 +65,9 @@ export function createChatLiveTurnStore(connection: Connection): ChatLiveTurnSto
     },
     async release(scope, userId, turnId) {
       await LiveTurn.deleteOne({ ...heldBy(scope, userId), turnId });
+    },
+    async removeForOrg(scope) {
+      return (await LiveTurn.deleteMany({ orgId: new Types.ObjectId(scope.orgId) })).deletedCount;
     },
   };
 }

@@ -1,6 +1,6 @@
 ---
 name: expo-shell
-summary: Expo SDK 58 app shell (iOS, Android, web) with Google and magic-link sign-in, TOTP, protected routes and a refresh-safe client for backend/auth.
+summary: Expo SDK 58 app shell (iOS, Android, web) with Google and magic-link sign-in, TOTP, protected routes and a refresh-safe client for api/kit/auth.
 requires: []
 env:
   - { name: EXPO_PUBLIC_API_URL, required: true, secret: false }
@@ -70,7 +70,7 @@ The shell sends only `Accept: application/json` (`text/event-stream` on the tuni
 | TOTP enroll | `POST /auth/totp/enroll` | 200 `{ secret, otpauthUri, expiresAt, qrPngDataUrl }` | 403 `reauth_required`; 409 `totp_already_enabled`; 503 |
 | TOTP confirm | `POST /auth/totp/enroll/confirm { code }` | 200 `{ recoveryCodes: string[10] }` | 400 `invalid_code`, `enrollment_expired`; 403 `reauth_required`; 429; 503 |
 
-`SignInResult` is `{ status: 'signed_in', user, session }` on web, the same plus `accessToken`, `accessTokenExpiresAt`, and `refreshToken` on native, or `{ status: 'mfa_required', mfaToken, mfaTokenExpiresAt }`. Schemas are `z.object` and strip unknown keys. The committed `backend/auth` route table also returns `isNewUser` on `signed_in`. The shell does not read it. Paths, body keys, and the fields the shell reads match that table.
+`SignInResult` is `{ status: 'signed_in', user, session }` on web, the same plus `accessToken`, `accessTokenExpiresAt`, and `refreshToken` on native, or `{ status: 'mfa_required', mfaToken, mfaTokenExpiresAt }`. Schemas are `z.object` and strip unknown keys. The committed `api/kit/auth` route table also returns `isNewUser` on `signed_in`. The shell does not read it. Paths, body keys, and the fields the shell reads match that table.
 
 Error bodies use `{ error, message, retryAfterSeconds? }`. `toApiError` reads `error` as the code. Any 401 on an authenticated request triggers one refresh and one retry, then stops. Server reuse grace is 60 seconds (`GRACE_SECONDS` in the committed auth module). `REFRESH_TIMEOUT_MS` is 15 seconds.
 
@@ -159,7 +159,7 @@ Dropped:
 
 - No return to the route the user wanted after sign-in.
 - No Expo Go for native Google. Use a dev build.
-- No TOTP disable, device list, or logout-all screens. Those routes exist in `backend/auth`.
+- No TOTP disable, device list, or logout-all screens. Those routes exist in `api/kit/auth`.
 - Other tabs learn of a sign-out at their next request.
 - A refresh whose response is lost, followed by more than 60 s before the next attempt, ends the session through reuse detection. The committed auth module rotates again while `now` is within `GRACE_SECONDS` (60) of `lastUsedAt`, and revokes after that.
 - Email click tracking can strip the link fragment, so the email module must disable it for magic links.

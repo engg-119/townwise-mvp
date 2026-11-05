@@ -82,6 +82,8 @@ export interface UploadStore {
   recent(scope: OrgScope, locationId: string, limit: number): Promise<UploadRecord[]>;
   /** Resolves the number of records deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
+  /** Organization deletion (spec 10.7). Resolves the number deleted. */
+  removeForOrg(scope: OrgScope): Promise<number>;
 }
 
 function toUpload(doc: UploadFields & { _id: Types.ObjectId }): UploadRecord {
@@ -131,6 +133,9 @@ export function createUploadStore(connection: Connection): UploadStore {
     },
     async removeForLocation(scope, locationId) {
       return (await Upload.deleteMany({ orgId: scope.orgId, locationId })).deletedCount;
+    },
+    async removeForOrg(scope) {
+      return (await Upload.deleteMany({ orgId: scope.orgId })).deletedCount;
     },
   };
 }

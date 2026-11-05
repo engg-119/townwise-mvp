@@ -1,13 +1,15 @@
 // Operations keyed by a person, or spanning organizations (spec 6.10 rule 8). The list is closed:
-// findActiveSeat, findOpenInvites, claimInvite, declineInvite, latestRemovedSeat, adminOrgStats and
-// peopleRecords exist today; deletePersonRecords arrives with deletion.
-// Only access/resolve.ts, the join and decline handlers and the staff handlers import this file
-// (test/isolation.test.ts enforces the list).
+// findActiveSeat, findOpenInvites, claimInvite, declineInvite, latestRemovedSeat, adminOrgStats, peopleRecords
+// and deletePersonRecords.
+// Only access/resolve.ts, the join and decline handlers and the staff handlers (admin.ts, deletion.ts) import this
+// file (test/isolation.test.ts enforces the list).
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { trusted, type Connection, type Types } from 'mongoose';
 
 import type { Role } from '../access/resolve.ts';
 import { accessRequestModel, type AccessRequestStatus } from './access-requests.ts';
+import { chatConversationModel } from './chat-conversations.ts';
+import { chatLiveTurnModel } from './chat-live-turns.ts';
 import { locationModel } from './locations.ts';
 import { memberModel } from './members.ts';
 import { orgModel } from './orgs.ts';
@@ -185,7 +187,10 @@ export async function adminOrgStats(connection: Connection): Promise<Map<string,
 }
 
 export interface PersonSeat {
+  readonly id: string;
   readonly userId: string;
+  /** The address the seat was added for (an invitation's, or the requester's at approval). */
+  readonly email: string;
   readonly orgId: string;
   readonly role: Role;
   readonly status: 'active' | 'removed';
@@ -197,6 +202,7 @@ export interface PersonInvite { readonly email: string; readonly orgId: string; 
 
 export interface PersonRequest {
   readonly userId: string;
+  readonly emailAtRequest: string;
   readonly status: AccessRequestStatus;
   readonly createdAt: Date;
   readonly decidedAt: Date | null;
@@ -226,14 +232,43 @@ export async function peopleRecords(
   ]);
   return {
     seats: seats.flatMap((doc) => (doc.userId === null || doc.status === 'invited' ? [] : [{
-      userId: doc.userId, orgId: doc.orgId.toHexString(), role: doc.role, status: doc.status,
+      id: doc._id.toHexString(), userId: doc.userId, email: doc.email, orgId: doc.orgId.toHexString(), role: doc.role, status: doc.status,
       joinedAt: doc.joinedAt, removedAt: doc.removedAt,
     }])),
     invites: invites.flatMap((doc) => (doc.inviteEmail === undefined ? [] : [{
       email: doc.inviteEmail, orgId: doc.orgId.toHexString(), invitedAt: doc.invitedAt,
     }])),
     requests: requests.map((doc) => ({
-      userId: doc.userId, status: doc.status, createdAt: doc.createdAt, decidedAt: doc.decidedAt,
+      userId: doc.userId, emailAtRequest: doc.emailAtRequest, status: doc.status, createdAt: doc.createdAt, decidedAt: doc.decidedAt,
     })),
   };
+}
+
+export interface DeletedPersonRecords {
+  readonly requests: number;
+  /** Open invitations and removed seats. */
+  readonly seats: number;
+  readonly conversations: number;
+  readonly liveTurns: number;
+}
+
+/**
+ * Person deletion (spec 10.7 step 3): their access requests, their open invitations in every organization, their
+ * removed seats, and their tuning chat conversations and live turns in every organization. Never an active seat: the
+ * handler refuses a person who holds one. An address with no kit user has only invitations. Deletes by filter, so a
+ * retry completes the work.
+ */
+export async function deletePersonRecords(
+  connection: Connection,
+  person: { readonly userId: string | null; readonly email: string },
+): Promise<DeletedPersonRecords> {
+  const Member = memberModel(connection);
+  const invites = (await Member.deleteMany({ inviteEmail: person.email, status: 'invited' })).deletedCount;
+  const { userId } = person;
+  if (userId === null) return { requests: 0, seats: invites, conversations: 0, liveTurns: 0 };
+  const requests = (await accessRequestModel(connection).deleteMany({ userId })).deletedCount;
+  const removed = (await Member.deleteMany({ userId, status: 'removed' })).deletedCount;
+  const conversations = (await chatConversationModel(connection).deleteMany({ userId })).deletedCount;
+  const liveTurns = (await chatLiveTurnModel(connection).deleteMany({ userId })).deletedCount;
+  return { requests, seats: invites + removed, conversations, liveTurns };
 }

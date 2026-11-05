@@ -7,5 +7,5 @@
 !api/package.json
 !api/production.env
 !api/src/
-!backend/*/package.json
-!backend/*/src/
+!api/kit/*/package.json
+!api/kit/*/src/

@@ -247,6 +247,27 @@ export function limiterKey(name: string, userId: string): string {
   return `rl:${name}:${createHash('sha256').update(`acct:${userId}`, 'utf8').digest('base64url')}`;
 }
 
+const WRITE_COMMANDS = new Set(['insert', 'update', 'delete', 'findAndModify']);
+
+/**
+ * Every write the app's connection sends while `run` runs, in order, as `<command> <collection>`. The kit's stores share
+ * the connection, so its writes show too.
+ */
+export async function writesDuring(server: TownwiseTestServer, run: () => Promise<void>): Promise<string[]> {
+  const writes: string[] = [];
+  const listener = (event: mongoose.mongo.CommandStartedEvent): void => {
+    if (WRITE_COMMANDS.has(event.commandName)) writes.push(`${event.commandName} ${String(event.command[event.commandName])}`);
+  };
+  const client = server.connection.getClient();
+  client.on('commandStarted', listener);
+  try {
+    await run();
+  } finally {
+    client.off('commandStarted', listener);
+  }
+  return writes;
+}
+
 /** Parsed JSON log lines. */
 export function logLines(server: TownwiseTestServer): Record<string, unknown>[] {
   return server.logs.map((line) => JSON.parse(line) as Record<string, unknown>);

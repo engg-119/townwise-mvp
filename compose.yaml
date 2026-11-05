@@ -1,5 +1,5 @@
 # Local development only: Mongo and Valkey (Redis-compatible) on localhost.
-# Image references are the kit's test pins (backend/mongo/test/images.ts, backend/redis/test/images.ts).
+# Image references are the kit's test pins (api/kit/mongo/test/images.ts, api/kit/redis/test/images.ts).
 services:
   mongo:
     image: mongo:8.0.32@sha256:d0d926f94df099bff534b7ee5b5986458131a22489dfff8664509af0c1e2ca9c

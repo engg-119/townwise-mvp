@@ -32,7 +32,7 @@ export default defineConfig(
   },
   {
     // Library code is configured by the app; it never configures itself.
-    files: ['backend/*/src/**/*.ts'],
+    files: ['api/kit/*/src/**/*.ts'],
     rules: {
       'no-restricted-properties': ['error', { object: 'process', property: 'env',
         message: 'Library code never reads process.env. Export an env schema instead (2.6).' }],
