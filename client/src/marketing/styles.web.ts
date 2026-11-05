@@ -155,6 +155,15 @@ const privacy = `
 .pg-privacy .tbl thead th{font-family:var(--mono);font-size:12px;line-height:16px;letter-spacing:.04em;text-transform:uppercase;color:var(--text3);background:var(--raised)}
 .pg-privacy .tbl td:first-child{color:var(--white)}
 .pg-privacy .tbl:focus-visible{outline:2px solid var(--mint);outline-offset:2px}
+@media (max-width:640px){
+.pg-privacy .tbl thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+.pg-privacy .tbl table,.pg-privacy .tbl tbody,.pg-privacy .tbl tr,.pg-privacy .tbl td{display:block}
+.pg-privacy .tbl table,.pg-privacy .tbl.wide table{min-width:0;font-size:16px;line-height:24px}
+.pg-privacy .tbl tr{display:grid;gap:12px;padding:16px 12px;border-bottom:1px solid var(--border)}
+.pg-privacy .tbl tr:last-child{border-bottom:0}
+.pg-privacy .tbl td{padding:0;border-bottom:0}
+.pg-privacy .tbl td[data-l]::before{content:attr(data-l);display:block;margin-bottom:4px;font-family:var(--mono);font-size:12px;line-height:16px;letter-spacing:.04em;text-transform:uppercase;color:var(--text3)}
+}
 .pg-privacy .sum{background:var(--panel)}
 `;
 

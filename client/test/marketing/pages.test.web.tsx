@@ -4,6 +4,7 @@ import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
 import { AuthProvider } from '../../src/auth/AuthProvider';
+import { css } from '../../src/marketing/styles.web';
 import { RootStack } from '../../app/_layout';
 import MarketingLayout from '../../app/(marketing)/_layout';
 import MarketingHome from '../../app/(marketing)/index';
@@ -280,6 +281,20 @@ test('Privacy makes the three commitments and no longer says the app has no uplo
   expect(text).toContain('sends us only the date, guest count and net sales for each day');
   expect(text).toContain('Effective November 5, 2026. Last updated November 5, 2026.');
   expect(text).not.toMatch(/no place to upload|before any upload exists|email account holders/i);
+});
+
+test('on phones the Privacy tables stack into rows, each cell after the first labeled with its column name', () => {
+  renderAt('/privacy');
+  const tables = [...document.querySelectorAll('.pg-privacy .tbl table')];
+  expect(tables).toHaveLength(2);
+  for (const table of tables) {
+    const heads = [...table.querySelectorAll('thead th')].map((th) => th.textContent);
+    for (const row of table.querySelectorAll('tbody tr')) {
+      expect([...row.querySelectorAll('td')].map((td) => td.getAttribute('data-l'))).toEqual([null, ...heads.slice(1)]);
+    }
+  }
+  expect(css).toContain('.pg-privacy .tbl table,.pg-privacy .tbl.wide table{min-width:0;font-size:16px;line-height:24px}');
+  expect(css).toContain('.pg-privacy .tbl td[data-l]::before{content:attr(data-l);');
 });
 
 test('Terms and Security carry the new date, and Security says where Townwise is hosted', () => {
