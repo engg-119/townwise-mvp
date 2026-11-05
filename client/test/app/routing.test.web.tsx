@@ -4,17 +4,11 @@ import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
 import { ApiError } from '../../src/api/client';
-import { AuthProvider } from '../../src/auth/AuthProvider';
-import { RootStack } from '../../app/_layout';
-import MarketingLayout from '../../app/(marketing)/_layout';
-import MarketingHome from '../../app/(marketing)/index';
-import PublicSecurity from '../../app/(marketing)/security';
 import AuthGate from '../../app/(gate)/_layout';
-import AppLayout from '../../app/(gate)/(app)/_layout';
-import Dashboard from '../../app/(gate)/(app)/dashboard';
-import Security from '../../app/(gate)/(app)/settings/security';
+import { AuthProvider } from '../../src/auth/AuthProvider';
 import type { Auth } from '../../src/auth/auth';
 import type { AuthState } from '../../src/auth/store';
+import { appRoutes, seededRoot } from '../helpers/app';
 import { fakeAuth } from '../helpers/fakes';
 
 class ResizeObserverPolyfill {
@@ -46,19 +40,11 @@ function renderAt(path: string, auth: Auth): void {
   render(
     <Head.Provider>
       <ExpoRoot
-        context={getMockContext({
-          _layout: () => <AuthProvider auth={auth}><RootStack /></AuthProvider>,
-          '(marketing)/_layout': MarketingLayout,
-          '(marketing)/index': MarketingHome,
-          '(marketing)/security': PublicSecurity,
-          '(gate)/_layout': AuthGate,
+        context={getMockContext(appRoutes(seededRoot(auth), {
           '(gate)/sign-in': () => <p>Sign-in screen</p>,
           '(gate)/totp': () => null,
           '(gate)/auth/magic': () => null,
-          '(gate)/(app)/_layout': AppLayout,
-          '(gate)/(app)/dashboard': Dashboard,
-          '(gate)/(app)/settings/security': Security,
-        })}
+        }))}
         location={path}
       />
     </Head.Provider>,
