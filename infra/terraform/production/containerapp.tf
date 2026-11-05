@@ -170,7 +170,9 @@ resource "azurerm_container_app" "api" {
         "--tls-key-file", "/tls/server.key",
         "--tls-ca-cert-file", "/tls/ca.crt",
         "--tls-auth-clients", "no",
-        "--save", "",
+        # A bare --save followed by another option is save "" (no snapshots). An empty-string arg cannot be
+        # used: the azurerm provider reads "" in this list as null and refuses the app before creating it.
+        "--save",
         "--appendonly", "no",
         "--maxmemory", "64mb",
         # Rate-limit keys all carry a TTL; eviction would silently reset counters (backend/redis/MODULE.md).
