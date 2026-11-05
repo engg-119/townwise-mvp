@@ -1,8 +1,9 @@
-import { useContext, useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useId, useRef, useState } from 'react';
 
 import { MONTHS } from './map/countyData';
 import { fmtRange, sourceLinks } from './map/TownPanel.web';
 import { towns } from './map/towns';
+import { FLOW, FLOW_DAY_PX } from './homeStyles.web';
 import { ScrollRoot } from './MarketingShell.web';
 import { useMediaQuery } from './useReducedMotion.web';
 import { useReveal, type RevealView } from './useReveal.web';
@@ -16,11 +17,19 @@ const GRID_D = 'M0 40 H400 M0 100 H400 M0 160 H400';
 const BAND_D = 'M16.0 141.8 L29.6 136.7 L43.3 127.0 L56.9 108.1 L70.5 70.8 L84.1 56.5 L97.8 97.4 L111.4 138.3 L125.0 133.2 L138.7 123.5 L152.3 104.6 L165.9 67.3 L179.6 53.0 L193.2 93.9 L206.8 134.8 L220.4 129.7 L234.1 120.0 L247.7 101.1 L261.3 41.8 L275.0 27.5 L288.6 90.4 L302.2 131.3 L315.9 126.2 L329.5 116.5 L343.1 97.6 L356.7 60.3 L370.4 46.0 L384.0 86.9 L384.0 127.9 L370.4 86.0 L356.7 99.3 L343.1 135.6 L329.5 153.5 L315.9 162.2 L302.2 166.3 L288.6 124.4 L275.0 60.5 L261.3 73.8 L247.7 132.1 L234.1 150.0 L220.4 158.7 L206.8 162.8 L193.2 120.9 L179.6 79.0 L165.9 92.3 L152.3 128.6 L138.7 146.5 L125.0 155.2 L111.4 159.3 L97.8 117.4 L84.1 75.5 L70.5 88.8 L56.9 125.1 L43.3 143.0 L29.6 151.7 L16.0 155.8 Z';
 const GUESTS_D = 'M16.0 148.8 L29.6 144.2 L43.3 135.0 L56.9 116.6 L70.5 79.8 L84.1 66.0 L97.8 107.4 L111.4 148.8 L125.0 144.2 L138.7 135.0 L152.3 116.6 L165.9 79.8 L179.6 66.0 L193.2 107.4 L206.8 148.8 L220.4 144.2 L234.1 135.0 L247.7 116.6 L261.3 57.8 L275.0 44.0 L288.6 107.4 L302.2 148.8 L315.9 144.2 L329.5 135.0 L343.1 116.6 L356.7 79.8 L370.4 66.0 L384.0 107.4';
 const METHODS = ['quantile regression', 'event model', 'gradient-boosted trees', 'rolling backtest'];
-const HISTORY = [
-  [16.0, 152.4], [43.3, 134.6], [70.5, 70.1], [97.8, 96.8], [125.0, 137.1], [152.3, 108.4], [179.6, 26.2],
-  [206.8, 141.4], [234.1, 132.6], [261.3, 74.1], [288.6, 101.8], [315.9, 147.1], [343.1, 113.4], [370.4, 56.2],
-] as const;
-const MODEL_D = 'M16.0 147.4 L29.6 142.1 L43.3 131.6 L56.9 110.4 L70.5 68.1 L84.1 52.2 L97.8 99.8 L111.4 147.4 L125.0 142.1 L138.7 131.6 L152.3 110.4 L165.9 46.1 L179.6 30.2 L193.2 99.8 L206.8 147.4 L220.4 142.1 L234.1 131.6 L247.7 110.4 L261.3 68.1 L275.0 52.2 L288.6 99.8 L302.2 147.4 L315.9 142.1 L329.5 131.6 L343.1 110.4 L356.7 68.1 L370.4 52.2 L384.0 99.8';
+
+// Step 03: the town model's daily guests, quiet weeks and event weeks, over 40 days (28 in view and the 12 the live
+// phase brings in), and the actual guests every other day: history to day 20 (today), then the six that land at the
+// today line as the chart moves on (homeStyles' FLOW).
+const dayX = (day: number): number => 16 + day * FLOW_DAY_PX;
+const QUIET_WEEK = [147.4, 142.1, 131.6, 110.4, 68.1, 52.2, 99.8];
+const EVENT_WEEK = [147.4, 142.1, 131.6, 110.4, 46.1, 30.2, 99.8];
+const MODEL = [QUIET_WEEK, EVENT_WEEK, QUIET_WEEK, QUIET_WEEK, EVENT_WEEK, QUIET_WEEK].flat().slice(0, 28 + FLOW.steps * FLOW.daysPerStep);
+const MODEL_D = MODEL.map((y, day) => `${day === 0 ? 'M' : 'L'}${dayX(day).toFixed(1)} ${y.toFixed(1)}`).join(' ');
+const TODAY = 20;
+const ACTUAL = [152.4, 134.6, 70.1, 96.8, 137.1, 108.4, 26.2, 141.4, 132.6, 74.1, 101.8, 147.1, 113.4, 56.2, 151.0, 126.0, 39.5];
+const HISTORY = ACTUAL.slice(0, TODAY / 2 + 1);
+const LANDING = ACTUAL.slice(TODAY / 2 + 1);
 
 const STEPS = [0, 1, 2, 3];
 // The pinned stage needs two columns' width (and an observer for the active step).
@@ -38,6 +47,43 @@ function stepNo(index: number): string {
 // A part's place in its visual's stagger, read by its transition delay.
 function nth(n: number): React.CSSProperties {
   return { '--n': n } as React.CSSProperties;
+}
+
+// Step 03: your history and the fitted model, the today line and the forecast ahead (dashed). Then the live phase
+// moves the chart on and each new actual lands at the today line beside what the model predicted. The clip paths
+// stay put while the groups inside them move, so the solid line is always the past and the dashed one the forecast.
+function LiveFit(): React.JSX.Element {
+  const id = useId().replace(/[^A-Za-z0-9_-]/g, '');
+  const today = dayX(TODAY);
+  return (
+    <>
+      <p className="hv-k">Your history and the town model</p>
+      <svg className="v-ch" viewBox="0 0 400 200" focusable="false">
+        <defs>
+          <clipPath id={`${id}view`}><rect x="8" y="0" width="384" height="200" /></clipPath>
+          <clipPath id={`${id}past`}><rect x="0" y="0" width={today} height="200" /></clipPath>
+          <clipPath id={`${id}ahead`}><rect x={today} y="0" width={400 - today} height="200" /></clipPath>
+        </defs>
+        <path className="v-grid" d={GRID_D} />
+        <g clipPath={`url(#${id}view)`}>
+          <g clipPath={`url(#${id}past)`}><g className="v3-flow"><path className="v3-line" d={MODEL_D} /></g></g>
+          <g clipPath={`url(#${id}ahead)`}><g className="v3-flow"><path className="v3-fc" d={MODEL_D} strokeDasharray="4 4" /></g></g>
+          <g className="v3-flow">
+            {HISTORY.map((cy, n) => <circle key={n} className="v3-dot" cx={dayX(2 * n).toFixed(1)} cy={cy} r="4" style={nth(n)} />)}
+            {LANDING.map((cy, k) => <circle key={k} className="v3-new" cx={dayX(TODAY + FLOW.daysPerStep * (k + 1)).toFixed(1)} cy={cy} r="4" style={{ '--k': k } as React.CSSProperties} />)}
+          </g>
+        </g>
+        <line className="v3-today" x1={today.toFixed(1)} x2={today.toFixed(1)} y1="16" y2="184" />
+      </svg>
+      <ul className="v3-lg">
+        <li><span className="v3-sw v3-sw-a" />Actual</li>
+        <li><span className="v3-sw v3-sw-p" />Predicted</li>
+        <li><span className="v3-sw v3-sw-f" />Forecast</li>
+        <li><span className="v3-sw v3-sw-t" />Today</li>
+      </ul>
+      <p className="hv-cap">Illustration, not real output</p>
+    </>
+  );
 }
 
 // The illustration of step `index` (ConsoleV2's stage visuals). Decorative: the step's text carries the
@@ -75,19 +121,7 @@ function Visual(props: { index: number }): React.JSX.Element {
       </>
     );
   }
-  if (props.index === 2) {
-    return (
-      <>
-        <p className="hv-k">Your history and the town model</p>
-        <svg className="v-ch" viewBox="0 0 400 200" focusable="false">
-          <path className="v-grid" d={GRID_D} />
-          {HISTORY.map(([cx, cy], n) => <circle key={cx} className="v3-dot" cx={cx} cy={cy} r="4" style={nth(n)} />)}
-          <path className="v3-line" d={MODEL_D} />
-        </svg>
-        <p className="hv-cap">Illustration, not real output</p>
-      </>
-    );
-  }
+  if (props.index === 2) return <LiveFit />;
   return (
     <>
       <p className="hv-k">Orders for the week of <span className="slot">{'{date}'}</span></p>
@@ -116,8 +150,8 @@ function InlineVisual(props: { index: number }): React.JSX.Element {
   );
 }
 
-// From 1024px with an observer: one stage pinned beside the steps, 32px from the top of the scroll
-// container (the header does not stick), released when the steps end. Once half of it has been in view it
+// From 1024px with an observer: one stage pinned beside the steps, centered in the scroll container (the
+// header does not stick), released when the steps end. Once half of it has been in view it
 // shows the active step's illustration; on a change the outgoing one fades out as the next plays its enter.
 // Decorative: hidden from assistive technology, with nothing focusable inside.
 function Stage(props: { active: number }): React.JSX.Element {

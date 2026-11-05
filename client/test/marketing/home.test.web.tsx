@@ -6,7 +6,7 @@ import { getMockContext } from 'expo-router/testing-library';
 import MarketingLayout from '../../app/(marketing)/_layout';
 import MarketingHome from '../../app/(marketing)/index';
 import { navLinks } from '../../src/marketing/links';
-import { homeCss } from '../../src/marketing/homeStyles.web';
+import { FLOW, homeCss } from '../../src/marketing/homeStyles.web';
 
 const TITLE = 'The Northeast has one season. Your town has its own.';
 const EARLY_ACCESS = '/request-access';
@@ -350,7 +350,12 @@ test('the homepage CSS ships with the page and its motion stays within the rules
   expect(document.head.querySelector('style[data-href="townwise-home"]')?.textContent).toBe(homeCss);
   const rules = homeCss.split('\n').filter((line) => line.trim() !== '');
   expect(rules.filter((line) => !line.includes('.pg-home') && !line.startsWith('@keyframes'))).toEqual([]);
-  const durations = rules.flatMap((line) => [...line.matchAll(/(\d+)ms/g)].map((match) => Number(match[1])));
+  // Step 03's live phase is the one sequence of moments: six moves 650ms apart from 1s, each a 400ms moment,
+  // its timing pinned by how.test.web.tsx. Its two rules are left out here, and each move is held to the same 600ms.
+  const live = /\.pg-home \.hv\.is-on \.v3-(?:flow|new)\{animation:[^}]*\}/g;
+  expect(homeCss.match(live)).toHaveLength(2);
+  expect(FLOW.move).toBeLessThanOrEqual(600);
+  const durations = rules.flatMap((line) => [...line.replace(live, '').matchAll(/(\d+)ms/g)].map((match) => Number(match[1])));
   expect(durations.length).toBeGreaterThan(0);
   // One-time moments (the title, the section reveals) stay under 900ms; hover and press stay under 300ms.
   expect(Math.max(...durations)).toBeLessThanOrEqual(600);

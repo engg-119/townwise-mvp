@@ -14,6 +14,16 @@ import { theme } from '../theme';
 // with the lines fully drawn and in place.
 const easeInOut = `cubic-bezier(${theme.motion.easeInOut.join(',')})`;
 
+// Step 03's live phase (HowItWorks.web.tsx): once the model has fit, the chart moves on 12 days, 2 at a time, and
+// after each move a new actual lands at the today line. Six 400ms moves 650ms apart, from 1s: 3.9s of movement,
+// once per entry, so it ends well inside the 5 seconds after which moving content needs a pause control (WCAG
+// 2.2.2). FLOW_DAY_PX is one day in the illustrations' 400px box, 28 days from x 16 to 384.
+export const FLOW_DAY_PX = 368 / 27;
+export const FLOW = { start: 1000, every: 650, move: 400, steps: 6, daysPerStep: 2 } as const;
+const flowAt = (step: number): string => (step === 0 ? 'none' : `translateX(${(-step * FLOW.daysPerStep * FLOW_DAY_PX).toFixed(2)}px)`);
+const flowPct = (ms: number): string => `${String(Math.round((ms / (FLOW.every * FLOW.steps)) * 10000) / 100)}%`;
+const flowFrames = Array.from({ length: FLOW.steps }, (_, step) => `${flowPct(step * FLOW.every)}{transform:${flowAt(step)}}${flowPct(step * FLOW.every + FLOW.move)}{transform:${flowAt(step + 1)}}`).join('');
+
 export const homeCss = `
 .pg-home .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .pg-home .body{color:var(--text2);text-wrap:pretty}
@@ -42,6 +52,8 @@ export const homeCss = `
 @media (max-width:640px){.pg-home .hero{padding-bottom:64px}.pg-home .hd{padding-block:24px}.pg-home .hd2{padding-block:32px;gap:12px}.pg-home .sub{font-size:16px;line-height:24px}.pg-home .cta-row{width:100%}.pg-home .cta-row>a{flex:1 1 auto}}
 @keyframes twRise{from{transform:translateY(100%)}to{transform:none}}
 @keyframes twIn{from{opacity:0}to{opacity:1}}
+@keyframes twFlow{${flowFrames}100%{transform:${flowAt(FLOW.steps)}}}
+@keyframes twLand{from{opacity:0;transform:scale(.3)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:no-preference){.pg-home .h1.is-rise .ln>span{animation:twRise 600ms var(--eo) both}.pg-home .h1.is-rise .ln+.ln>span{animation-delay:80ms}}
 @media (prefers-reduced-motion:reduce){.pg-home .h1.is-rise .ln>span{animation:twIn 300ms var(--eo) both}}
 @media (prefers-reduced-motion:no-preference){.pg-home .hsub.is-in{animation:twIn 300ms var(--eo) 560ms both}}
@@ -107,9 +119,21 @@ export const homeCss = `
 .pg-home .hv.is-on .v2-tags li{opacity:1;transition:opacity 200ms var(--eo) calc(550ms + var(--n) * 50ms)}
 .pg-home .v3-dot{fill:var(--text2);opacity:0;transition:opacity 0s 150ms}
 .pg-home .hv.is-on .v3-dot{opacity:1;transition:opacity 200ms var(--eo) calc(80ms + var(--n) * 30ms)}
+.pg-home .v3-fc{fill:none;stroke:var(--mint);stroke-width:2;stroke-linejoin:round;opacity:0;transition:opacity 0s 150ms}
+.pg-home .hv.is-on .v3-fc{opacity:.7;transition:opacity 300ms var(--eo) 600ms}
+.pg-home .v3-today{stroke:var(--text3);stroke-width:1;opacity:0;transition:opacity 0s 150ms}
+.pg-home .hv.is-on .v3-today{opacity:1;transition:opacity 200ms var(--eo) 600ms}
+.pg-home .v3-new{fill:var(--text2);opacity:0}
+.pg-home .v3-lg{display:flex;flex-wrap:wrap;gap:6px 16px;font-family:var(--mono);font-size:12px;line-height:16px;color:var(--text2)}
+.pg-home .v3-lg li{display:inline-flex;align-items:center;gap:6px}
+.pg-home .v3-sw{display:inline-block;flex:none}
+.pg-home .v3-sw-a{width:8px;height:8px;border-radius:50%;background:var(--text2)}
+.pg-home .v3-sw-p{width:16px;height:2px;background:var(--mint)}
+.pg-home .v3-sw-f{width:16px;height:0;border-top:2px dashed var(--mint);opacity:.7}
+.pg-home .v3-sw-t{width:1px;height:12px;background:var(--text3)}
 .pg-home .v4-r{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;padding:12px 14px;background:var(--raised);border:1px solid var(--border);font-family:var(--mono);font-size:14px;line-height:20px;color:var(--text2);opacity:0;transition:opacity 0s 150ms}
 .pg-home .hv.is-on .v4-r{opacity:1;transition:opacity 200ms var(--eo) calc(100ms + var(--n) * 60ms)}
-@media (prefers-reduced-motion:no-preference){.pg-home .v1-l li{transform:translateY(-12px);transition:opacity 0s 150ms,transform 0s 150ms}.pg-home .hv.is-on .v1-l li{transform:none;transition:opacity 280ms var(--eo) calc(100ms + var(--n) * 50ms),transform 280ms var(--eo) calc(100ms + var(--n) * 50ms)}.pg-home .v2-line{stroke-dasharray:1 1;stroke-dashoffset:1;transition:stroke-dashoffset 0s 150ms}.pg-home .hv.is-on .v2-line{stroke-dashoffset:0;transition:stroke-dashoffset 500ms var(--eo) 100ms}.pg-home .v3-line{transform-box:fill-box;transform-origin:50% 50%;transform:translateY(14px) scaleY(.5);transition:transform 0s 150ms}.pg-home .hv.is-on .v3-line{transform:none;transition:transform 400ms var(--eio) 500ms}.pg-home .v4-r{opacity:1;clip-path:inset(0 100% 0 0);transition:clip-path 0s 150ms}.pg-home .hv.is-on .v4-r{clip-path:inset(0 0 0 0);transition:clip-path 280ms var(--eo) calc(100ms + var(--n) * 60ms)}}
+@media (prefers-reduced-motion:no-preference){.pg-home .v1-l li{transform:translateY(-12px);transition:opacity 0s 150ms,transform 0s 150ms}.pg-home .hv.is-on .v1-l li{transform:none;transition:opacity 280ms var(--eo) calc(100ms + var(--n) * 50ms),transform 280ms var(--eo) calc(100ms + var(--n) * 50ms)}.pg-home .v2-line{stroke-dasharray:1 1;stroke-dashoffset:1;transition:stroke-dashoffset 0s 150ms}.pg-home .hv.is-on .v2-line{stroke-dashoffset:0;transition:stroke-dashoffset 500ms var(--eo) 100ms}.pg-home .v3-line{transform-box:fill-box;transform-origin:50% 50%;transform:translateY(14px) scaleY(.5);transition:transform 0s 150ms}.pg-home .hv.is-on .v3-line{transform:none;transition:transform 400ms var(--eio) 500ms}.pg-home .v4-r{opacity:1;clip-path:inset(0 100% 0 0);transition:clip-path 0s 150ms}.pg-home .hv.is-on .v4-r{clip-path:inset(0 0 0 0);transition:clip-path 280ms var(--eo) calc(100ms + var(--n) * 60ms)}.pg-home .v3-new{transform-box:fill-box;transform-origin:50% 50%}.pg-home .hv.is-on .v3-flow{animation:twFlow ${String(FLOW.every * FLOW.steps)}ms var(--eio) ${String(FLOW.start)}ms both}.pg-home .hv.is-on .v3-new{animation:twLand 240ms var(--eo) calc(${String(FLOW.start + FLOW.move)}ms + var(--k) * ${String(FLOW.every)}ms) both}}
 .pg-home .slot{border:1px dashed var(--line);padding:2px 6px;color:var(--text2)}
 .pg-home .after{margin-top:32px;color:var(--text2)}
 @media (max-width:640px){.pg-home .step-body p,.pg-home .v1-t{font-size:16px;line-height:24px}}
