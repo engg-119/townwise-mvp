@@ -163,15 +163,15 @@ export default function Home(): React.JSX.Element {
             </div>
             <div className="faq-i">
               <h3 className="h3">What data do I need to give you?</h3>
-              <p>Sales history exported from your point-of-sale system: what sold, how much, and when. Townwise is designed to start from public local information and improve as your history comes in, and we are testing how much history it takes to make a real difference. <span className="chip">[DECISION NEEDED: how early-access restaurants send their export. There is no upload in the app yet.]</span></p>
+              <p>Your daily guest counts and net sales, from a CSV export of your point-of-sale system. Once you have access, you upload the file in the app on the web. Your browser reads it and sends us only the date, guest count and net sales for each day, for one location. The file itself never reaches our server. Townwise is designed to start from public local information and improve as your history comes in, and we are testing how much history it takes to make a real difference.</p>
             </div>
             <div className="faq-i">
               <h3 className="h3">Is my sales data shared, or used to train forecasts for other restaurants?</h3>
-              <p>Your sales history will be used to calibrate your forecasts. The app has no upload yet. Exports sent to us directly during early access are handled as described in the <a href="/privacy">Privacy notice</a>. <span className="chip">[DECISION NEEDED: how exports are stored, who sees them, and whether they are shared or used for other restaurants]</span></p>
+              <p>No. Your sales data is used only to calibrate your own restaurant’s forecasts. It is not shared with or used for other restaurants, and it is not used to train AI models. In the app, the people on your organization’s team can see it. Townwise staff can see the figures only through a read-only view that is recorded and shown to your organization’s admins. The <a href="/privacy">Privacy notice</a> has the details.</p>
             </div>
             <div className="faq-i">
               <h3 className="h3">Which towns do you cover?</h3>
-              <p>We are building and testing in Hanover, NH first. The other towns on the map show the kinds of places Townwise is built for; it is not available there yet. If your town keeps its own calendar, tell us about it.</p>
+              <p>We are building and testing in Hanover, NH first. The other towns on the map show the kinds of places Townwise is built for. If your town keeps its own calendar, tell us about it.</p>
             </div>
             <div className="faq-i">
               <h3 className="h3">How accurate is it?</h3>
@@ -183,7 +183,7 @@ export default function Home(): React.JSX.Element {
             </div>
             <div className="faq-i">
               <h3 className="h3">Is Townwise ready to use today?</h3>
-              <p>Not yet. Townwise is a student project in active development. The sign-in service is built; the forecasts are being built and tested now. Request early access and we will tell you where things stand.</p>
+              <p>Not for forecasts yet. Townwise is a student project in active development. With early access you can add your locations, upload your sales history, add notes about unusual days and see your town’s public profile, if it is one of the twelve on the map. The forecasts themselves are being built and tested now.</p>
             </div>
           </div>
         </Section>
@@ -191,7 +191,7 @@ export default function Home(): React.JSX.Element {
         <Section id="start" className="sec fin" labelId={h('start')}>
           <h2 id={h('start')} className="h2 fin-l">Tell us about your town.</h2>
           <div className="fin-r">
-            <p className="body">Townwise is in early access. Write to us with your town and what you run, and we will tell you where we are.</p>
+            <p className="body">Townwise is in early access. Sign in with Google and fill in a short form about your restaurant and your town. Someone on our team reviews each request by hand.</p>
             <a className="btn" href={EARLY_ACCESS_HREF}>Request early access</a>
             <a className="tl" href={SIGN_IN_HREF}>Already have access? Sign in</a>
           </div>

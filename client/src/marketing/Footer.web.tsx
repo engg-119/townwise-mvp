@@ -33,9 +33,8 @@ export function Footer(props: { root: RefObject<HTMLElement | null> }): React.JS
             </nav>
           ))}
         </div>
-        <p className="ft-dec"><span className="chip">[DECISION NEEDED: where the marketing and legal pages are hosted]</span></p>
         <div className="ft-bot">
-          <p>© 2026 <span className="chip">[COPYRIGHT HOLDER]</span></p>
+          <p>© 2026 Townwise</p>
           <p>Townwise is a student project. It is not an official Dartmouth product.</p>
         </div>
         <div className="ft-word" aria-hidden="true">

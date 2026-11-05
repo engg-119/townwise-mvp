@@ -9,7 +9,7 @@ import { navLinks } from '../../src/marketing/links';
 import { homeCss } from '../../src/marketing/homeStyles.web';
 
 const TITLE = 'The Northeast has one season. Your town has its own.';
-const EARLY_ACCESS = 'mailto:hello@townwise.tech?subject=Townwise%20early%20access';
+const EARLY_ACCESS = '/request-access';
 const SECTIONS: readonly [string, string][] = [
   ['map', TITLE],
   ['problem', 'A regional forecast averages your town away.'],
@@ -221,7 +221,24 @@ test('what is not built yet is described in the future tense', () => {
     .toBe('Today: Hanover’s calendar is compiled from public sources, every date with a source. The agent that will do this research on its own is not built yet.');
   const faq = within(section('FAQ'));
   expect(faq.getByText(/^If your system forecasts/).textContent).toContain('Townwise starts from your town: a research agent will find the local events that move demand, then your own sales history will calibrate the model to your business, and you will be able to tune it by talking to it.');
-  expect(faq.getByText(/^Your sales history/).textContent).toMatch(/^Your sales history will be used to calibrate your forecasts\. The app has no upload yet\./);
+  expect(document.body.textContent).not.toMatch(/no upload/i);
+});
+
+test('step 03 and the FAQ say what the portal does today: uploads and notes, no forecasts', () => {
+  renderHome();
+  const how = section('Local first. Then your own numbers.');
+  const third = [...how.querySelectorAll<HTMLElement>('.steps > li')][2];
+  if (third === undefined) throw new Error('no step 03');
+  expect(third.querySelector('.step-body p:nth-of-type(2)')?.textContent)
+    .toBe('Today: restaurants with early access upload their daily guests and net sales in the web app, and add notes about closures and other unusual days. Calibration itself is not built yet, so the app shows no forecasts.');
+  expect(third.querySelector('.chip')).toBeNull();
+  const faq = within(section('FAQ'));
+  expect(faq.getByText(/^Your daily guest counts/).textContent)
+    .toContain('Your browser reads it and sends us only the date, guest count and net sales for each day, for one location. The file itself never reaches our server.');
+  expect(faq.getByText(/^No\. Your sales data/).textContent)
+    .toContain('Your sales data is used only to calibrate your own restaurant’s forecasts. It is not shared with or used for other restaurants, and it is not used to train AI models.');
+  expect(within(section('Tell us about your town.')).getByText(/^Townwise is in early access/).textContent)
+    .toBe('Townwise is in early access. Sign in with Google and fill in a short form about your restaurant and your town. Someone on our team reviews each request by hand.');
 });
 
 test('the rendered text has no em or en dash and never says curve', () => {

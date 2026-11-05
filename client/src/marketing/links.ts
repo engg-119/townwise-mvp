@@ -12,9 +12,13 @@ export interface LinkGroup {
 }
 
 export const SIGN_IN_HREF = '/sign-in';
-// The mailbox does not exist yet (launch blocker).
-export const EARLY_ACCESS_HREF = 'mailto:hello@townwise.tech?subject=Townwise%20early%20access';
-export const CONTACT_HREF = 'mailto:hello@townwise.tech';
+// The portal's Request access form (docs/portal/spec.md P3). A signed-out visitor is sent to sign in with Google
+// first; a person with no organization then lands on the form, and staff see the request on /admin.
+export const EARLY_ACCESS_HREF = '/request-access';
+// The one contact address, shown on the pages and linked by CONTACT_HREF. The mailbox does not exist yet (launch
+// blocker). The portal reads the address back from CONTACT_HREF, so it stays a plain mailto with no query string.
+export const CONTACT_EMAIL = 'hello@townwise.tech';
+export const CONTACT_HREF = `mailto:${CONTACT_EMAIL}`;
 
 export const navLinks: readonly MarketingLink[] = [
   { label: 'The map', href: '/#map' },
