@@ -30,6 +30,7 @@ test('the sign-in frame with the board’s second step: heading, guidance, Code,
   expect(screen.getByRole('heading', { name: 'Sign in to Townwise' })).toBeTruthy();
   expect(screen.getByText('Your account uses two-step sign-in.')).toBeTruthy();
   expect(screen.queryByRole('link', { name: 'Request early access' })).toBeNull();
+  expect(screen.queryByText(/for sale/)).toBeNull();
   expect(screen.getByRole('heading', { name: 'Enter your code' })).toBeTruthy();
   expect(screen.getByText('Open your authenticator app and enter the 6-digit code for Townwise.')).toBeTruthy();
   const field = screen.getByLabelText('Code');

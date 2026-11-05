@@ -53,6 +53,15 @@ test('the code field sits in the sign-in card, in the site header and footer, as
   expect(within(card).getByRole('button', { name: 'Use a recovery code instead' })).toBeTruthy();
 });
 
+test('/totp has no line under the card, as on the board’s second step; the rule and legal links stay', () => {
+  renderTotp(() => Promise.resolve());
+  const access = document.querySelector('.pg-signin .access');
+  expect(access).not.toBeNull();
+  expect(access?.textContent).toBe('');
+  expect(document.body.textContent).not.toContain('No forecasts are for sale');
+  expect(within(screen.getByRole('list', { name: 'Legal' })).getAllByRole('link').map((link) => link.textContent)).toEqual(['Privacy', 'Terms', 'Security']);
+});
+
 test('nothing on /totp offers early access, since /request-access leads back here mid sign-in', () => {
   renderTotp(() => Promise.resolve());
   expect(screen.queryAllByRole('link', { name: 'Request early access' })).toEqual([]);

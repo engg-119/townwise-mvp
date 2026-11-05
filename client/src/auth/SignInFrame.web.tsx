@@ -4,8 +4,8 @@ import { MarketingShell } from '../marketing/MarketingShell.web';
 import type { SignInFrameProps } from './SignInFrame';
 
 // Web sign-in inside the site's header and footer (SignIn.dc.html): the wordmark, title and lead on the
-// left with the card beside them from 1220px, then the early-access line and the legal links. Its CSS is
-// the .pg-signin block of styles.web.ts.
+// left with the card beside them from 1220px, then the note under the card (when the page has one) and the
+// legal links. Its CSS is the .pg-signin block of styles.web.ts.
 export function SignInFrame(props: SignInFrameProps): React.JSX.Element {
   const id = useId();
   return (
@@ -21,7 +21,7 @@ export function SignInFrame(props: SignInFrameProps): React.JSX.Element {
             <div className="hd-r"><div className="card">{props.children}</div></div>
             <div className="c-all">
               <div className="access">
-                <p>{props.note}</p>
+                {props.note === undefined ? null : <p>{props.note}</p>}
               </div>
               <ul className="legal-row" aria-label="Legal">
                 <li><a className="tl" href="/privacy">Privacy</a></li>
