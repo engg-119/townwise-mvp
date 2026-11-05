@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useId, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
 import { Image, Platform, StyleSheet, Text, View } from 'react-native';
 
@@ -32,9 +32,16 @@ function groupKey(secret: string): string {
   return (secret.match(/.{1,4}/g) ?? []).join(' ');
 }
 
-/** Copies `text` on web, where the browser offers a clipboard; native shows the text selectable instead. */
+const COPY_FAILED = 'Couldn’t copy. Select the text and copy it.';
+
+/**
+ * Copies `text` on web, where the browser offers a clipboard; native shows the text selectable instead. The result
+ * is read from a polite live region that is there before the press: “Copied” (unseen, since the button says it),
+ * or the line on copying by hand, which also describes the button.
+ */
 function CopyButton(props: { text: string; label: string }): React.JSX.Element | null {
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const noteId = `${useId().replace(/:/g, '')}-copy`;
   const clipboard = Platform.OS === 'web' ? (navigator as { clipboard?: Clipboard }).clipboard : undefined;
   if (clipboard === undefined) return null;
   return (
@@ -42,11 +49,15 @@ function CopyButton(props: { text: string; label: string }): React.JSX.Element |
       <Button
         variant="outline"
         label={state === 'copied' ? 'Copied' : props.label}
+        {...(state === 'failed' ? { describedBy: noteId } : {})}
         onPress={() => {
           clipboard.writeText(props.text).then(() => { setState('copied'); }, () => { setState('failed'); });
         }}
       />
-      {state === 'failed' ? <Small>Couldn’t copy. Select the text and copy it.</Small> : null}
+      <View role="status" aria-live="polite">
+        {state === 'copied' ? <Text style={styles.unseen}>Copied</Text> : null}
+        {state === 'failed' ? <Small nativeID={noteId} style={styles.copyNote}>{COPY_FAILED}</Small> : null}
+      </View>
     </View>
   );
 }
@@ -94,7 +105,11 @@ export default function SecurityScreen(): React.JSX.Element {
     }
     if (error instanceof ApiError && error.code === 'totp_already_enabled') {
       clearEnrollment();
-      setMe(await auth.loadMe());
+      try {
+        setMe(await auth.loadMe());
+      } catch (loadError) {
+        setMessage(errorCopy(loadError));
+      }
       return;
     }
     setMessage(errorCopy(error));
@@ -144,7 +159,9 @@ export default function SecurityScreen(): React.JSX.Element {
 
   let steps: React.ReactNode = null;
   if (enrolling) {
-    const open = otpauthUri?.startsWith('otpauth://') === true
+    // The otpauth link opens an app on this device, so it shows on native and in a phone's browser; a desktop
+    // browser has nothing to open it with.
+    const open = otpauthUri?.startsWith('otpauth://') === true && (Platform.OS !== 'web' || phone)
       ? <LinkButton key="open" variant="outline" href={otpauthUri} label="Open in authenticator app" />
       : null;
     const key = (
@@ -181,6 +198,7 @@ export default function SecurityScreen(): React.JSX.Element {
             inputMode="numeric"
             numeric
             messages={codeMessage === null ? [] : [codeMessage]}
+            alert
           />
           <Button label="Confirm" block={phone} disabled={confirm.pending} onPress={() => { confirm.submit(); }} />
         </Panel>
@@ -262,7 +280,10 @@ const styles = StyleSheet.create({
   label: { ...theme.type.ui, color: c.white },
   key: { ...theme.type.code, fontFamily: monoFace, color: c.white },
   qr: { width: 240, height: 240 },
-  copy: { gap: theme.space[2], alignItems: 'flex-start' },
+  copy: { alignItems: 'flex-start' },
+  copyNote: { marginTop: theme.space[2] },
+  // Read by screen readers, but takes no space and shows nothing.
+  unseen: { position: 'absolute', width: 1, height: 1, overflow: 'hidden', opacity: 0 },
   codes: { gap: theme.space[1] },
   recovery: { ...theme.type.monoUi, fontFamily: monoFace, fontVariant: ['tabular-nums'], color: c.white },
 });

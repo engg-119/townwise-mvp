@@ -1,4 +1,4 @@
-import { Dimensions } from 'react-native';
+import { AccessibilityInfo, Dimensions } from 'react-native';
 import { cleanup, fireEvent, renderRouter, screen } from 'expo-router/testing-library';
 
 afterEach(async () => {
@@ -93,7 +93,8 @@ test.each([
   expect([...positions].sort((a, b) => a - b)).toEqual(positions);
 });
 
-test('a wrong code prints under the code field, with a curly apostrophe', async () => {
+test('a wrong code prints under the code field, with a curly apostrophe, as an alert announced on iOS', async () => {
+  const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation(() => undefined);
   await renderSecurity({
     confirmTotpEnrollment: () => Promise.reject(new ApiError('http', 'invalid', { status: 400, code: 'invalid_code' })),
   });
@@ -101,7 +102,10 @@ test('a wrong code prints under the code field, with a curly apostrophe', async 
   await fireEvent.changeText(await screen.findByLabelText('Code'), '000000');
   await fireEvent.press(screen.getByText('Confirm'));
   const text = 'That code didn’t work. Codes change every 30 seconds; wait for a new one and try again.';
-  expect(await screen.findByText(text)).toBeTruthy();
+  const element = await screen.findByText(text);
+  expect(element.props.role).toBe('alert');
+  expect(element.props['aria-live']).toBe('assertive');
+  expect(announce).toHaveBeenCalledWith(text);
   const [field, message, confirm] = order(['Code', text, 'Confirm']);
   expect(field).toBeLessThan(message ?? 0);
   expect(message).toBeLessThan(confirm ?? 0);
@@ -155,6 +159,22 @@ test('a failed start says why instead of doing nothing', async () => {
   await renderSecurity({ beginTotpEnrollment: () => Promise.reject(new ApiError('network', 'offline')) });
   await fireEvent.press(await screen.findByText('Set up two-step sign-in'));
   expect(await screen.findByText('Can’t reach Townwise. Check your connection and try again.')).toBeTruthy();
+});
+
+test('totp_already_enabled with a failed reload says why instead of dropping the error', async () => {
+  let loads = 0;
+  const loadMe = jest.fn(() => {
+    loads += 1;
+    if (loads > 1) return Promise.reject(new ApiError('network', 'offline'));
+    return Promise.resolve({ user: { id: 'u1', email: EMAIL }, totp: { enabled: false, recoveryCodesRemaining: 0 } });
+  });
+  await renderSecurity({
+    loadMe,
+    beginTotpEnrollment: () => Promise.reject(new ApiError('http', 'enabled', { status: 409, code: 'totp_already_enabled' })),
+  });
+  await fireEvent.press(await screen.findByText('Set up two-step sign-in'));
+  expect(await screen.findByText('Can’t reach Townwise. Check your connection and try again.')).toBeTruthy();
+  expect(loadMe).toHaveBeenCalledTimes(2);
 });
 
 test('enrollment_expired returns to the start state', async () => {

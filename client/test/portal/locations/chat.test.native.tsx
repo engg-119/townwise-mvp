@@ -129,6 +129,9 @@ describe('the chat’s height on phones', () => {
       expect(within(thread).getByRole('button', { name: 'Back to locations' })).toBeTruthy();
       expect(within(thread).queryByLabelText('Message')).toBeNull();
       expect(screen.getByLabelText('Message')).toBeTruthy();
+      // The composer is one row: the input keeps its name, no label is drawn, and Send sits beside it.
+      expect(screen.queryByText('Message')).toBeNull();
+      expect(StyleSheet.flatten(screen.getByLabelText('Message').parent?.props.style)).toMatchObject({ flexDirection: 'row' });
     } finally {
       spy.mockRestore();
     }
@@ -166,5 +169,7 @@ describe('the chat’s height on phones', () => {
     expect(screen.getByRole('button', { name: 'Location' })).toBeTruthy();
     expect(screen.getByText('Hanover, NH')).toBeTruthy();
     expect(screen.getAllByRole('heading', { name: 'Main Street Bar' })).toHaveLength(1);
+    // The composer keeps its drawn label above the input.
+    expect(screen.getByText('Message')).toBeTruthy();
   });
 });

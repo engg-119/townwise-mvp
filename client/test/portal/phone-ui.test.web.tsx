@@ -4,11 +4,13 @@ import { getMockContext } from 'expo-router/testing-library';
 import { View } from 'react-native';
 
 import { FilterTabs } from '../../src/portal/console/parts';
+import { MonthsTable } from '../../src/portal/locations/MonthsTable';
 import { locationTabs } from '../../src/portal/routing';
 import { LocationTabs } from '../../src/portal/shell/LocationShell';
 import { PortalStyles } from '../../src/portal/shell/PortalStyles';
 import { LinkButton } from '../../src/portal/ui/Button';
 import { DataTable, MIN_FLEX_WIDTH, type Column } from '../../src/portal/ui/DataTable';
+import { Notice } from '../../src/portal/ui/feedback';
 import { Select } from '../../src/portal/ui/Select';
 
 // The shared pieces as a phone and a tablet draw them on web, through the real expo-router <Link asChild>
@@ -140,7 +142,7 @@ test('a stacked table on phones puts each label above its value, and the last ro
   expect(style(nth(items, 1)).borderBottomWidth).toBe('0px');
 });
 
-test('from 641px a table keeps a minimum width, so its focusable region scrolls sideways instead of squeezing nine columns', () => {
+test('from 641px to 1023px a table keeps a minimum width, so its focusable region scrolls sideways instead of squeezing nine columns', () => {
   setWidth(768);
   renderLinked(<DataTable label="Organizations" columns={COLUMNS} rows={ROWS} />);
   const region = screen.getByRole('region', { name: 'Organizations' });
@@ -149,10 +151,12 @@ test('from 641px a table keeps a minimum width, so its focusable region scrolls 
   const content = region.firstElementChild as HTMLElement;
   expect(within(content).getByRole('table')).toBeTruthy();
   const minWidth = parseFloat(style(content).minWidth);
-  // Nine columns, 9.6 units of flex: wider than the 704px of content at 768px, so a header like “Locations” keeps
-  // its 9 characters on one line.
+  // Nine columns, 9.6 units of flex: wider than the 704px of content at 768px. Each column of flex 1 or more gets at
+  // least MIN_FLEX_WIDTH, which fits a 9-character head like “Locations” (Geist Mono's 0.6em at 12px, plus the
+  // cell's 8px and 16px of padding) on one line; a column of flex below 1 gets less and may wrap it.
   expect(minWidth).toBe(Math.ceil(9.6 * MIN_FLEX_WIDTH));
   expect(minWidth).toBeGreaterThan(768 - 2 * 32);
+  expect(COLUMNS.find((column) => column.label === 'Locations')?.flex ?? 1).toBeGreaterThanOrEqual(1);
   expect(MIN_FLEX_WIDTH).toBeGreaterThanOrEqual('Locations'.length * 0.6 * 12 + 8 + 16);
   const rows = within(region).getAllByRole('row');
   expect(style(nth(rows, -2)).borderBottomWidth).toBe('1px');
@@ -165,6 +169,24 @@ test('a selected last row keeps its whole outline', () => {
   const last = nth(within(screen.getByRole('region', { name: 'Organizations' })).getAllByRole('row'), -1);
   expect(style(last).borderBottomWidth).toBe('1px');
   expect(style(last).borderTopWidth).toBe('1px');
+});
+
+test('a link at the end of a message (“Leave {org}.”) is a 44px tap target that leaves its line where it was', () => {
+  renderLinked(<Notice text="You joined Test Group. Not your team?" link={{ label: 'Leave Test Group', href: '/other' }} />);
+  const link = screen.getByRole('link', { name: 'Leave Test Group' });
+  // 20px of text and 13px above and below; an inline box's padding takes no room in the line.
+  expect(style(link).paddingTop).toBe('13px');
+  expect(style(link).paddingBottom).toBe('13px');
+  expect(style(link).display).toBe('inline');
+});
+
+test('the compact By month table on a phone is a table, so each value is read with its column head', () => {
+  render(<MonthsTable locationId="l1" months={[{ month: '2026-02', dayCount: 28, guests: 1204, netSalesCents: 3_900_000 }]} />);
+  const table = within(screen.getByRole('region', { name: 'Sales by month' })).getByRole('table');
+  expect(within(table).getAllByRole('columnheader').map((head) => head.textContent)).toEqual(['Month', 'Days', 'Guests', 'Net sales']);
+  const rows = within(table).getAllByRole('row');
+  expect(rows).toHaveLength(2);
+  expect(within(nth(rows, 1)).getAllByRole('cell').map((cell) => cell.textContent)).toEqual(['Feb 2026', '28', '1,204', '$39,000']);
 });
 
 test('a select ends a long choice with an ellipsis instead of cutting it off (the location switcher)', () => {

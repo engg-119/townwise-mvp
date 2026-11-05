@@ -82,10 +82,11 @@ export function TopBar(props: TopBarProps): React.JSX.Element {
     />
   );
   // At 640px and below the gaps tighten to 12px and Sign out holds its width: the organization name takes the
-  // squeeze and truncates with an ellipsis, so Sign out stays inside the 16px margin at 320px and never wraps.
+  // squeeze and truncates with an ellipsis, so Sign out stays inside the 16px margin at 320px and never wraps. The
+  // console has no organization name to squeeze, so its kind tag keeps the 16px gap from the wordmark.
   const tight = phone ? styles.tight : null;
   const identity = (
-    <View style={[styles.identity, tight]}>
+    <View style={[styles.identity, consoleBar ? null : tight]}>
       <Link href={home} style={styles.wordmark}>Townwise</Link>
       {props.orgName === undefined ? null : (
         <View style={[styles.org, tight]}>

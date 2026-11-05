@@ -2,7 +2,9 @@ import { cleanup, fireEvent, screen, within } from '@testing-library/react';
 
 import { formatTime } from '../../../src/portal/format';
 import { STAFF_EMAIL, VERIFIED_UNTIL } from '../../helpers/portal';
-import { adminRequest, consoleApi, orgRow, renderAt, REQUESTER_EMAIL, setWidth, type ConsoleApi } from './helpers';
+import {
+  adminRequest, consoleApi, member, orgDetail, orgRow, person, renderAt, REQUESTER_EMAIL, setWidth, type ConsoleApi,
+} from './helpers';
 
 // The staff console on phones and in its tables (spec 15.4, 15.7): the top bar's height, tap targets, the
 // selected-row idiom and the View as dialog's title.
@@ -33,8 +35,12 @@ test('at 320px the console bar is one band (wordmark, kind tag, the verified tim
   const bands = [...(bar.firstElementChild?.children ?? [])] as HTMLElement[];
   expect(bands).toHaveLength(2);
   const [first, second] = bands as [HTMLElement, HTMLElement];
-  expect(within(first).getByRole('link', { name: 'Townwise' })).toBeTruthy();
-  expect(within(first).getByText('Staff console')).toBeTruthy();
+  const wordmark = within(first).getByRole('link', { name: 'Townwise' });
+  const tag = within(first).getByText('Staff console');
+  // The kind tag keeps the bar's normal 16px gap from the wordmark.
+  const identity = wordmark.parentElement;
+  expect(identity?.contains(tag)).toBe(true);
+  expect(identity === null ? '' : style(identity).columnGap).toBe('16px');
   expect(within(first).getByText(`Verified until ${formatTime(VERIFIED_UNTIL)}`)).toBeTruthy();
   expect(within(first).getByRole('button', { name: 'Sign out' })).toBeTruthy();
   // The email hides at 640px and below; the nav keeps its own band.
@@ -53,6 +59,49 @@ test('only the selected row’s name has the mint square, so the other names sta
   expect(selected.children).toHaveLength(2);
   expect(other.children).toHaveLength(1);
   expect(other.firstElementChild?.textContent).toBe('Sample Campus Pub');
+});
+
+test('at 1440px the Approved table fills its column with no forced minimum width, so it does not scroll sideways', async () => {
+  setWidth(1440);
+  const api = consoleApi();
+  const approved = adminRequest({ status: 'approved', decidedAt: '2026-10-04T15:00:00.000Z', decidedBy: { email: STAFF_EMAIL }, orgId: 'o9' });
+  api.routes['GET /api/admin/requests?status=approved'] = () => ({ requests: [approved], pendingCount: 0 });
+  renderAt('/admin?status=approved', api);
+  const region = await screen.findByRole('region', { name: 'Approved requests' });
+  // Seven columns, 8.0 units of flex: a 736px minimum, wider than the Split column's 735px at 1440.
+  expect(within(region).getAllByRole('columnheader')).toHaveLength(7);
+  const content = region.firstElementChild as HTMLElement;
+  expect(within(content).getByRole('table')).toBeTruthy();
+  expect(style(content).minWidth).toBe('0px');
+  expect(style(content).width).toBe('100%');
+});
+
+// A 35-character address: 252px of 12px mono, plus the cell's 8px and 16px of padding.
+const LONG_EMAIL = ['dana.whitfield', 'birchwoodbistro.test'].join('@');
+const LONG_EMAIL_WIDTH = LONG_EMAIL.length * 0.6 * 12 + 8 + 16;
+
+/** The width the Email column gets at the least, from its share of the flex and the table's minimum width. */
+function emailColumnFloor(region: HTMLElement): number {
+  const content = region.firstElementChild as HTMLElement;
+  const heads = within(region).getAllByRole('columnheader');
+  const flex = heads.map((head) => parseFloat(style(head).flexGrow));
+  const email = heads.findIndex((head) => head.textContent === 'Email');
+  return (flex[email] ?? 0) / flex.reduce((sum, value) => sum + value, 0) * parseFloat(style(content).minWidth);
+}
+
+test.each([
+  ['People', '/admin/people', 'Everyone'],
+  ['an organization’s Team', '/admin/orgs/o1', 'Team'],
+])('at 768px %s holds a 35-character email on one line, scrolling sideways if it must', async (_page, path, label) => {
+  setWidth(768);
+  expect(LONG_EMAIL).toHaveLength(35);
+  const api = consoleApi();
+  api.routes['GET /api/admin/people'] = () => ({ people: [person(LONG_EMAIL, 'pending', { userId: 'u3' })], truncated: false });
+  api.routes['GET /api/admin/orgs/o1'] = () => orgDetail({ members: [member('m1', LONG_EMAIL, { role: 'org_admin' })] });
+  renderAt(path, api);
+  const region = await screen.findByRole('region', { name: label });
+  expect(within(region).getByText(LONG_EMAIL)).toBeTruthy();
+  expect(emailColumnFloor(region)).toBeGreaterThanOrEqual(LONG_EMAIL_WIDTH);
 });
 
 test('at 375px an organization’s name in a table is a 44px tap target, from padding rather than a 44px line height', async () => {

@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
 import { formatCount, formatDate } from '../format';
@@ -14,7 +14,9 @@ import { cellOf } from './sales';
 // By month on Sales data (spec P12): Month, Days, Guests, Net sales in NumbersTable styling, inside a focusable
 // region. Selecting a month opens its days below its row (GET .../sales/days for that month) and takes the
 // selected-row idiom; selecting it again closes them. At 640px and below it stays one compact four-column table
-// (tighter cell padding, shares tuned for 288px), because 14 stacked months would run about 2,200px.
+// (tighter cell padding, shares tuned for 288px), because 14 stacked months would run about 2,200px. It carries
+// DataTable's table, row, columnheader and cell roles, so a web screen reader names each value by its column; native
+// screen readers have no table navigation, so there each value's label names its column (“Days: 28”).
 
 const COLUMNS = [
   { key: 'days', label: 'Days' },
@@ -27,6 +29,11 @@ const PHONE_FLEX = { days: { flex: 0.8 }, guests: { flex: 1 }, net: { flex: 1.2 
 
 function valuesOf(month: SalesMonth): Record<(typeof COLUMNS)[number]['key'], string> {
   return { days: formatCount(month.dayCount), guests: cellOf(month.guests, false), net: cellOf(month.netSalesCents, true) };
+}
+
+/** On native, a value's label names its column; on web the cell's column header does. */
+function valueLabel(column: string, value: string): { accessibilityLabel?: string } {
+  return Platform.OS === 'web' ? {} : { accessibilityLabel: `${column}: ${value}` };
 }
 
 function MonthDays(props: { locationId: string; month: string }): React.JSX.Element {
@@ -79,37 +86,50 @@ export function MonthsTable(props: { locationId: string; months: readonly SalesM
   const toggle = (month: string): void => { setOpen((current) => (current === month ? null : month)); };
   return (
     <View role="region" aria-label="Sales by month" focusable style={styles.region}>
-      <View style={styles.headRow}>
-        <View style={[styles.cell, styles.first, phone ? styles.cellPhone : null]}><Text style={styles.head}>Month</Text></View>
-        {COLUMNS.map((column) => (
-          <View key={column.key} style={[styles.cell, styles.numeric, phone ? styles.cellPhone : null, phone ? PHONE_FLEX[column.key] : null]}>
-            <Text style={[styles.head, styles.right]}>{column.label}</Text>
-          </View>
-        ))}
-      </View>
-      {props.months.map((month) => {
-        const isOpen = open === month.month;
-        const values = valuesOf(month);
-        return (
-          <View key={month.month} style={[styles.row, isOpen ? styles.selected : null]}>
-            <View style={styles.line}>
-              <View style={[styles.cell, styles.first, phone ? styles.cellPhone : null]}>
-                <MonthButton month={month.month} open={isOpen} onPress={() => { toggle(month.month); }} />
-              </View>
-              {COLUMNS.map((column) => (
-                <View key={column.key} style={[styles.cell, styles.numeric, phone ? styles.cellPhone : null, phone ? PHONE_FLEX[column.key] : null]}>
-                  <Text style={[styles.value, styles.right]}>{values[column.key]}</Text>
-                </View>
-              ))}
+      <View role="table">
+        <View role="row" style={styles.headRow}>
+          <View role="columnheader" style={[styles.cell, styles.first, phone ? styles.cellPhone : null]}><Text style={styles.head}>Month</Text></View>
+          {COLUMNS.map((column) => (
+            <View
+              key={column.key}
+              role="columnheader"
+              style={[styles.cell, styles.numeric, phone ? styles.cellPhone : null, phone ? PHONE_FLEX[column.key] : null]}
+            >
+              <Text style={[styles.head, styles.right]}>{column.label}</Text>
             </View>
-            {isOpen ? (
-              <View style={phone ? styles.daysPhone : styles.days}>
-                <MonthDays locationId={props.locationId} month={month.month} />
+          ))}
+        </View>
+        {props.months.map((month) => {
+          const isOpen = open === month.month;
+          const values = valuesOf(month);
+          return (
+            <View key={month.month} style={[styles.row, isOpen ? styles.selected : null]}>
+              <View role="row" style={styles.line}>
+                <View role="cell" style={[styles.cell, styles.first, phone ? styles.cellPhone : null]}>
+                  <MonthButton month={month.month} open={isOpen} onPress={() => { toggle(month.month); }} />
+                </View>
+                {COLUMNS.map((column) => (
+                  <View
+                    key={column.key}
+                    role="cell"
+                    style={[styles.cell, styles.numeric, phone ? styles.cellPhone : null, phone ? PHONE_FLEX[column.key] : null]}
+                  >
+                    <Text {...valueLabel(column.label, values[column.key])} style={[styles.value, styles.right]}>{values[column.key]}</Text>
+                  </View>
+                ))}
               </View>
-            ) : null}
-          </View>
-        );
-      })}
+              {/* The month's days, in a row and cell of their own so the table holds only rows. */}
+              {isOpen ? (
+                <View role="row">
+                  <View role="cell" style={phone ? styles.daysPhone : styles.days}>
+                    <MonthDays locationId={props.locationId} month={month.month} />
+                  </View>
+                </View>
+              ) : null}
+            </View>
+          );
+        })}
+      </View>
     </View>
   );
 }

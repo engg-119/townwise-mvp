@@ -11,7 +11,7 @@ import { usePortal, useReadOnly } from './PortalProvider';
 import type { Invitation, MeResponse } from './schemas';
 import { webAria } from './ui/aria';
 import { ErrorNotice } from './ui/feedback';
-import { Mono } from './ui/text';
+import { inlineTarget, Mono } from './ui/text';
 
 // Pieces the gate pages share (spec 16.2, the RequestAccess, Pending, NoAccess and Joining boards).
 
@@ -96,6 +96,6 @@ const styles = StyleSheet.create({
   itemText: { color: c.text2, flex: 1, minWidth: 0 },
   me: { gap: theme.space[4], paddingTop: theme.space[4], borderTopWidth: 1, borderTopColor: c.border },
   meText: { color: c.text2 },
-  link: { color: c.white, textDecorationLine: 'underline', textDecorationColor: c.line },
-  linkDisabled: { color: c.text3, textDecorationLine: 'underline', textDecorationColor: c.border },
+  link: { ...inlineTarget, color: c.white, textDecorationLine: 'underline', textDecorationColor: c.line },
+  linkDisabled: { ...inlineTarget, color: c.text3, textDecorationLine: 'underline', textDecorationColor: c.border },
 });

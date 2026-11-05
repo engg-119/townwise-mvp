@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
@@ -8,7 +8,7 @@ import { VIEW_AS_LINE_ID } from '../../src/portal/shell/ViewAsBanner';
 import { appRoutes, seededRoot } from '../helpers/app';
 import { fakeChatApi } from '../helpers/chat';
 import { fakeAuth } from '../helpers/fakes';
-import { ACCESS, EMAIL, fakePortalApi, meOf, orgOf, viewAsMe } from '../helpers/portal';
+import { ACCESS, EMAIL, fakePortalApi, INVITE, meOf, orgOf, SECOND_INVITE, viewAsMe } from '../helpers/portal';
 
 // The client app's frame on phones, on web (spec 15.2, 15.5, 15.7): the top bar at 320px, the view-as banner's two
 // rows, and the tuning chat, which needs the screen for the conversation.
@@ -68,6 +68,32 @@ describe.each([
   });
 });
 
+test.each([
+  ['rejected', ACCESS.rejected],
+  ['paused', ACCESS.suspended],
+] as const)('at 320px on No access, %s, the contact address and Sign out in their sentences are 44px tap targets', async (_variant, access) => {
+  renderAt('/no-access', meOf(access));
+  const links = [
+    await screen.findByRole('link', { name: 'hello@townwise.tech' }),
+    screen.getByRole('link', { name: 'Sign out' }),
+  ];
+  for (const link of links) {
+    // 18 to 20px of text and 13px above and below, inline, so the sentence keeps its lines.
+    expect(style(link).paddingTop).toBe('13px');
+    expect(style(link).paddingBottom).toBe('13px');
+    expect(style(link).display).toBe('inline');
+  }
+});
+
+test('at 320px Choose your team sets the count of organizations as a mono numeral in its sentence', async () => {
+  renderAt('/joining', meOf({ state: 'invited', invitations: [INVITE, SECOND_INVITE], pendingRequest: null }));
+  await screen.findByRole('heading', { level: 1, name: 'Choose your team' });
+  const count = screen.getByText('2', { selector: 'span' });
+  expect(count.parentElement?.textContent).toMatch(/^2 organizations added /);
+  expect(style(count).fontFamily).toContain('Geist Mono');
+  expect(style(parentOf(count)).fontFamily).not.toContain('Geist Mono');
+});
+
 test('at 320px the view-as banner is two rows: its words as one paragraph, then End view-as', async () => {
   renderAt('/dashboard', viewAsMe(ACCESS.member));
   const banner = await screen.findByRole('region', { name: 'View-as' });
@@ -109,4 +135,41 @@ describe.each([
     expect(thread.contains(composer)).toBe(false);
     expect(screen.getByRole('button', { name: 'Send' })).toBeTruthy();
   });
+
+  test('the composer is one row: the input, named Message with no label drawn, at one line, and Send beside it', async () => {
+    renderAt('/locations/l1/chat', me);
+    await screen.findByTestId('chat-thread');
+    const input = screen.getByLabelText('Message');
+    expect(screen.queryByText('Message')).toBeNull();
+    expect(input.tagName).toBe('TEXTAREA');
+    expect(input.getAttribute('rows')).toBe('1');
+    expect(style(input).minHeight).toBe('44px');
+    const send = screen.getByRole('button', { name: 'Send' });
+    const row = parentOf(input);
+    expect(row.contains(send)).toBe(true);
+    expect(style(row).flexDirection).toBe('row');
+  });
+});
+
+test('at 320px the composer grows with its text, up to its maximum, and starts over when emptied', async () => {
+  // jsdom lays nothing out: a textarea's content is 24px a line plus its 20px of padding.
+  const scrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight');
+  Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', {
+    configurable: true,
+    get(this: HTMLTextAreaElement) { return this.value.split('\n').length * 24 + 20; },
+  });
+  try {
+    renderAt('/locations/l1/chat', meOf(ACCESS.member));
+    await screen.findByTestId('chat-thread');
+    const input = screen.getByLabelText<HTMLTextAreaElement>('Message');
+    expect(input.style.height).toBe('46px');
+    fireEvent.change(input, { target: { value: 'Closed\nfor the\nholidays' } });
+    expect(input.style.height).toBe('94px');
+    expect(style(input).maxHeight).toBe('160px');
+    fireEvent.change(input, { target: { value: '' } });
+    expect(input.style.height).toBe('46px');
+  } finally {
+    Reflect.deleteProperty(HTMLTextAreaElement.prototype, 'scrollHeight');
+    if (scrollHeight !== undefined) Object.defineProperty(HTMLElement.prototype, 'scrollHeight', scrollHeight);
+  }
 });

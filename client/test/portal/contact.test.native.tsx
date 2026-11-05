@@ -6,10 +6,12 @@ jest.mock('expo-splash-screen', () => ({
   preventAutoHideAsync: jest.fn(() => Promise.resolve()),
   hideAsync: jest.fn(() => Promise.resolve()),
 }));
-// Another mailbox in the one constant: every portal line that names the address must follow it.
+// Another mailbox in the one constant: every portal line that names the address must follow it. The link carries
+// a subject, so an address read back from the link would carry it too.
 jest.mock('../../src/marketing/links', () => ({
   ...jest.requireActual<object>('../../src/marketing/links'),
-  CONTACT_HREF: 'mailto:team@example.org',
+  CONTACT_EMAIL: 'team@example.org',
+  CONTACT_HREF: 'mailto:team@example.org?subject=Townwise',
 }));
 
 import { render } from '@testing-library/react-native';
@@ -30,8 +32,8 @@ afterEach(async () => {
   await cleanup();
 });
 
-test('the address is CONTACT_HREF without its mailto:', () => {
-  expect(CONTACT_HREF).toBe('mailto:team@example.org');
+test('the address is the site’s CONTACT_EMAIL, not read back from the link', () => {
+  expect(CONTACT_HREF).toBe('mailto:team@example.org?subject=Townwise');
   expect(CONTACT_EMAIL).toBe('team@example.org');
 });
 
@@ -61,6 +63,6 @@ test.each([
 ] as const)('No access, %s: the questions line links the address', async (_variant, access) => {
   await renderApp('/no-access', fakePortalApi({ me: meOf(access) }));
   const link = await screen.findByRole('link', { name: 'team@example.org' });
-  expect(link.props.href).toBe('mailto:team@example.org');
+  expect(link.props.href).toBe('mailto:team@example.org?subject=Townwise');
   expect(screen.queryByText(/hello@townwise\.tech/)).toBeNull();
 });

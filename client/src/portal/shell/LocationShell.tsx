@@ -1,6 +1,6 @@
-import { createContext, useContext, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Link, usePathname, useRouter } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View, type LayoutRectangle } from 'react-native';
 
 import { theme } from '../../theme';
 import { townLabel } from '../format';
@@ -44,8 +44,11 @@ export function useScrollingHead(): React.ReactNode {
   return useContext(ScrollingHeadContext);
 }
 
-function Tab(props: { tab: LocationTab }): React.JSX.Element {
-  const { tab } = props;
+/** The row's padding after the last tab (`styles.tabs`), kept in view with the current tab. */
+const ROW_PADDING = 4;
+
+function Tab(props: { tab: LocationTab; onMeasure: (key: string, layout: LayoutRectangle) => void }): React.JSX.Element {
+  const { tab, onMeasure } = props;
   const hover = useHover();
   return (
     <Link href={tab.href} asChild>
@@ -56,6 +59,7 @@ function Tab(props: { tab: LocationTab }): React.JSX.Element {
         {...webAria({ 'aria-current': tab.current ? 'page' : undefined })}
         onHoverIn={hover.onHoverIn}
         onHoverOut={hover.onHoverOut}
+        onLayout={(event) => { onMeasure(tab.key, event.nativeEvent.layout); }}
         style={StyleSheet.flatten([styles.tab, tab.current ? styles.tabOn : hover.hovered ? styles.tabHover : null])}
       >
         <View style={[styles.square, tab.current ? styles.squareOn : null]} />
@@ -65,13 +69,36 @@ function Tab(props: { tab: LocationTab }): React.JSX.Element {
   );
 }
 
-/** The location's sections, in a focusable region that scrolls sideways when it doesn't fit. */
+/**
+ * The location's sections, in a focusable region that scrolls sideways when it doesn't fit. On a phone Chat, Town
+ * and Settings sit past the right edge, so the row scrolls (without animating) to keep the current tab in view, on
+ * mount and whenever the route changes.
+ */
 export function LocationTabs(props: { tabs: readonly LocationTab[] }): React.JSX.Element {
+  const scroller = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  const [viewport, setViewport] = useState(0);
+  const [spans, setSpans] = useState<Readonly<Record<string, { x: number; width: number }>>>({});
+  const current = props.tabs.find((tab) => tab.current)?.key;
+  const span = current === undefined ? undefined : spans[current];
+  // The least scroll that shows the whole current tab: none for the first tabs, the row's end for the last.
+  const target = span === undefined || viewport === 0 ? null : Math.max(0, span.x + span.width + ROW_PADDING - viewport);
+  useEffect(() => {
+    if (target !== null) scroller.current?.scrollTo({ x: target, animated: false });
+  }, [current, target]);
+  const measure = useCallback((key: string, { x, width }: LayoutRectangle) => {
+    setSpans((before) => (before[key]?.x === x && before[key].width === width ? before : { ...before, [key]: { x, width } }));
+  }, []);
   return (
-    <View role="region" aria-label="Location sections" focusable style={styles.tabsRegion}>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsScroll}>
+    <View
+      role="region"
+      aria-label="Location sections"
+      focusable
+      onLayout={(event) => { setViewport(event.nativeEvent.layout.width); }}
+      style={styles.tabsRegion}
+    >
+      <ScrollView ref={scroller} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsScroll}>
         <View role="navigation" aria-label="Location" style={styles.tabs}>
-          {props.tabs.map((tab) => <Tab key={tab.key} tab={tab} />)}
+          {props.tabs.map((tab) => <Tab key={tab.key} tab={tab} onMeasure={measure} />)}
         </View>
       </ScrollView>
     </View>
@@ -168,7 +195,7 @@ const styles = StyleSheet.create({
   // The row's 4px padding, inside the region, leaves room for the first and last tab's focus ring in the scroller.
   tabsRegion: { borderBottomWidth: 1, borderBottomColor: c.border },
   tabsScroll: { flexGrow: 1 },
-  tabs: { flexDirection: 'row', columnGap: 4, padding: 4 },
+  tabs: { flexDirection: 'row', columnGap: 4, padding: ROW_PADDING },
   tab: {
     flexDirection: 'row', alignItems: 'center', columnGap: 8, minHeight: 44, paddingHorizontal: 12, borderWidth: 1,
     borderColor: 'transparent',

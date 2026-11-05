@@ -9,7 +9,7 @@ import { Page } from '../../../../src/portal/shell/Page';
 import type { Access } from '../../../../src/portal/schemas';
 import { Actions, LinkButton } from '../../../../src/portal/ui/Button';
 import { Columns, Panel, Stack } from '../../../../src/portal/ui/layout';
-import { Body, Lead } from '../../../../src/portal/ui/text';
+import { Body, inlineTarget, Lead } from '../../../../src/portal/ui/text';
 import { theme } from '../../../../src/theme';
 
 // P5. No access (spec 16.2, F4, F7; the NoAccess board): a request that wasn't approved, removed by an admin,
@@ -95,5 +95,5 @@ export default function NoAccessPage(): React.JSX.Element {
 }
 
 const styles = StyleSheet.create({
-  link: { color: theme.color.white, textDecorationLine: 'underline', textDecorationColor: theme.color.line },
+  link: { ...inlineTarget, color: theme.color.white, textDecorationLine: 'underline', textDecorationColor: theme.color.line },
 });

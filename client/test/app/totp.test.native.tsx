@@ -1,3 +1,4 @@
+import { AccessibilityInfo } from 'react-native';
 import { act, cleanup, fireEvent, renderRouter, screen } from 'expo-router/testing-library';
 
 afterEach(async () => {
@@ -74,6 +75,26 @@ test('a wrong code prints the board’s message, with a curly apostrophe', async
   await renderTotp({ verifyMfa: INVALID });
   await fireEvent.changeText(screen.getByLabelText('Code'), '123456');
   expect(await screen.findByText('That code didn’t work. Codes change every 30 seconds; wait for a new one and try again.')).toBeTruthy();
+});
+
+test.each([
+  ['code', 'That code didn’t work. Codes change every 30 seconds; wait for a new one and try again.'],
+  ['recovery code', 'That recovery code didn’t work. Each one works once.'],
+] as const)('a wrong %s under the field is an alert: the role, an assertive live region, and an announcement on iOS', async (kind, text) => {
+  const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation(() => undefined);
+  await renderTotp({ verifyMfa: INVALID });
+  if (kind === 'code') {
+    await fireEvent.changeText(screen.getByLabelText('Code'), '123456');
+  } else {
+    await fireEvent.press(screen.getByRole('button', { name: 'Use a recovery code instead' }));
+    await fireEvent.changeText(screen.getByLabelText('Recovery code'), 'abcde-01234-abcde-56789');
+    await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
+  }
+  const message = await screen.findByText(text);
+  expect(message.props.role).toBe('alert');
+  expect(message.props['aria-live']).toBe('assertive');
+  expect(announce).toHaveBeenCalledWith(text);
+  announce.mockRestore();
 });
 
 test('a recovery code goes normalized; a wrong one says so without the 30-second hint', async () => {

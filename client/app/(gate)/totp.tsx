@@ -11,7 +11,7 @@ import { Heading, Small } from '../../src/portal/ui/text';
 import { describeError, useSubmit } from '../../src/ui';
 
 // P2. The second step of signing in (spec 15.1: the Public frame), as the SignIn board's "Second step" card: the
-// code, which sends itself at six digits, or a recovery code. A wrong code prints under its field.
+// code, which sends itself at six digits, or a recovery code. A wrong code prints under its field, as an alert.
 
 const INVALID_CODE = 'That code didn’t work. Codes change every 30 seconds; wait for a new one and try again.';
 const SHORT_CODE = 'Enter the 6-digit code from your authenticator app.';
@@ -75,6 +75,7 @@ export default function TotpScreen(): React.JSX.Element {
             autoCorrect={false}
             numeric
             messages={messages}
+            alert
             onSubmitEditing={sendRecovery}
           />
           <Button block label="Continue" disabled={pending} onPress={sendRecovery} />
@@ -98,6 +99,7 @@ export default function TotpScreen(): React.JSX.Element {
             inputMode="numeric"
             numeric
             messages={messages}
+            alert
           />
           <Button block label="Continue" disabled={pending} onPress={() => { sendCode(code); }} />
         </>

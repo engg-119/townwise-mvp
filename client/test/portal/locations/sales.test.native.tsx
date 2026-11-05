@@ -94,6 +94,11 @@ test('at 320px By month is one compact table, and a month still opens its days',
     for (const head of ['Month', 'Days', 'Guests', 'Net sales']) expect(within(months).getAllByText(head)).toHaveLength(1);
     expect(within(months).getAllByRole('button')).toHaveLength(SALES.months.length);
     expect(within(months).getByText('$39,000')).toBeTruthy();
+    // A screen reader hears each value with its column (January 2025: 26 days of $1,500 net sales).
+    expect(within(months).getByLabelText('Net sales: $39,000')).toBeTruthy();
+    for (const head of ['Days', 'Guests', 'Net sales']) {
+      expect(within(months).getAllByLabelText(new RegExp(`^${head}: \\$?[\\d,]+$`))).toHaveLength(SALES.months.length);
+    }
     await fireEvent.press(within(months).getByRole('button', { name: 'Feb 2026' }));
     const february = await screen.findByLabelText('Days in Feb 2026');
     expect(within(february).getAllByText('Guests')).toHaveLength(4);

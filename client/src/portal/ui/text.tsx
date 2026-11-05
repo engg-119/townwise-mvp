@@ -1,4 +1,4 @@
-import { StyleSheet, Text, type StyleProp, type TextStyle } from 'react-native';
+import { Platform, StyleSheet, Text, type StyleProp, type TextStyle } from 'react-native';
 
 import { theme } from '../../theme';
 import { useBreakpoint } from '../hooks';
@@ -6,6 +6,13 @@ import { webAria } from './aria';
 
 // The portal's type (spec 15.6): Instrument Sans for reading and UI, Geist Mono for labels and every numeral.
 // Sizes step down at 1023px and 640px as the shell's CSS does.
+
+/**
+ * The box of a link inside a sentence (“Questions: {address}.”, “Leave {org}.”, Sign out in the signed-in line).
+ * On web its 18 to 20px of text gains 13px above and below, a tap target of at least 44px, and the line does not
+ * move, since an inline element's padding takes no room. Native's nested text takes no padding.
+ */
+export const inlineTarget: TextStyle = Platform.OS === 'web' ? { paddingVertical: 13 } : {};
 
 interface TextProps {
   children: React.ReactNode;

@@ -53,11 +53,13 @@ test('the code field sits in the sign-in card, in the site header and footer, as
   expect(within(card).getByRole('button', { name: 'Use a recovery code instead' })).toBeTruthy();
 });
 
-test('a wrong code prints under the field and is tied to it', async () => {
+test('a wrong code prints under the field, tied to it, as an assertive alert', async () => {
   const card = renderTotp(() => Promise.reject(new ApiError('http', 'invalid', { status: 400, code: 'invalid_code' })));
   const input = within(card).getByLabelText('Code');
   fireEvent.change(input, { target: { value: '123456' } });
   const message = await within(card).findByText('That code didn’t work. Codes change every 30 seconds; wait for a new one and try again.');
+  expect(message.getAttribute('role')).toBe('alert');
+  expect(message.getAttribute('aria-live')).toBe('assertive');
   expect(input.getAttribute('aria-invalid')).toBe('true');
   const describedBy = input.getAttribute('aria-describedby') ?? '';
   expect(describedBy).not.toBe('');

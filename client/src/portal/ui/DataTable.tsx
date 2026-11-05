@@ -6,14 +6,22 @@ import { useBreakpoint } from '../hooks';
 // Tables in NumbersTable styling (spec 15.7, shell.md 7.6): mono 12/16 with tabular figures, 1px `border` rules,
 // heads in `text3`, values in `text2`, rows at least 44px with a `raised` hover, inside a focusable region named
 // for what it holds. At 640px and below each row becomes stacked pairs, each label above its value so the value
-// has the full width. Wider, the table keeps a minimum width and its region scrolls sideways instead of squeezing
-// the columns. The last row has no rule under it: a Section that follows draws its own.
+// has the full width. From 641px to 1023px the table keeps a minimum width and its region scrolls sideways instead
+// of squeezing the columns; from 1024px it fills its column with no minimum, so a desktop table does not scroll
+// sideways. The last row has no rule under it: a Section that follows draws its own.
 
 /**
- * The least width of one unit of column flex: a 9-character mono word (“Locations”, 64.8px at 12px) plus the
- * cell's 24px of padding, with a few pixels to spare.
+ * The least width of one unit of column flex below 1024px: a 9-character mono word (“Locations”, 64.8px at 12px)
+ * plus the cell's 24px of padding, with a few pixels to spare. So a head of 9 characters or fewer stays on one line
+ * in a column of flex 1 or more; a narrower column (flex 0.8 is 73.6px) can still wrap one.
  */
 export const MIN_FLEX_WIDTH = 92;
+
+/**
+ * The flex of a column of email addresses, which have no spaces to wrap at. Below 1024px its 3 units are at least
+ * 276px: a 35-character address in 12px mono (252px) and the cell's 24px of padding, on one line.
+ */
+export const EMAIL_FLEX = 3;
 
 export interface Column {
   key: string;
@@ -51,7 +59,7 @@ function empty(value: React.ReactNode): boolean {
 }
 
 export function DataTable(props: { label: string; columns: readonly Column[]; rows: readonly Row[] }): React.JSX.Element {
-  const { phone } = useBreakpoint();
+  const { phone, desktop } = useBreakpoint();
   const { columns, rows } = props;
   // The last row drops its rule unless it is selected: borderBottomWidth would beat the outline's later borderWidth.
   const ruleless = (row: Row, index: number) => (index === rows.length - 1 && row.selected !== true ? styles.lastRow : null);
@@ -77,7 +85,9 @@ export function DataTable(props: { label: string; columns: readonly Column[]; ro
       </View>
     );
   }
-  const minWidth = Math.ceil(columns.reduce((sum, column) => sum + (column.flex ?? 1), 0) * MIN_FLEX_WIDTH);
+  const flex = columns.reduce((sum, column) => sum + (column.flex ?? 1), 0);
+  // No minimum from 1024px: the console's Split column (652px at 1280) is narrower than an 8-unit table's 736px.
+  const minWidth = desktop ? null : { minWidth: Math.ceil(flex * MIN_FLEX_WIDTH) };
   return (
     <ScrollView
       horizontal
@@ -85,7 +95,7 @@ export function DataTable(props: { label: string; columns: readonly Column[]; ro
       aria-label={props.label}
       focusable
       style={styles.scroller}
-      contentContainerStyle={[styles.scrollContent, { minWidth }]}
+      contentContainerStyle={[styles.scrollContent, minWidth]}
     >
       <View role="table" style={styles.table}>
         <View role="row" style={styles.headRow}>
@@ -148,7 +158,8 @@ const c = theme.color;
 
 const styles = StyleSheet.create({
   region: { minWidth: 0 },
-  // The region scrolls sideways; its content is the region's width, and never less than the table's minimum.
+  // The region scrolls sideways; its content is the region's width, and below 1024px never less than the table's
+  // minimum.
   scroller: { flexGrow: 0, minWidth: 0 },
   scrollContent: { width: '100%' },
   table: { flex: 1 },
