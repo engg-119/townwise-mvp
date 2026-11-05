@@ -1,7 +1,7 @@
 import { Text } from 'react-native';
 import { act, cleanup, fireEvent, renderRouter, screen, waitFor } from 'expo-router/testing-library';
 
-import ChatScreen from '../../app/(gate)/(app)/locations/[locationId]/chat';
+import ChatScreen from '../../app/(gate)/(app)/(client)/locations/[locationId]/chat';
 import { AuthProvider } from '../../src/auth/AuthProvider';
 import { STOPPED } from '../../src/chat/useTuningChat';
 import { fakeChatApi, PROPOSAL, SUMMARY, type FakeChatApi, type LiveTurn } from '../helpers/chat';

@@ -12,24 +12,10 @@ import * as SplashScreen from 'expo-splash-screen';
 import { act, cleanup, fireEvent, renderRouter, screen, testRouter, waitFor } from 'expo-router/testing-library';
 
 import { ApiError } from '../../src/api/client';
-import { AuthProvider } from '../../src/auth/AuthProvider';
-import { RootStack } from '../../app/_layout';
-import MarketingLayout from '../../app/(marketing)/_layout';
-import MarketingHome from '../../app/(marketing)/index';
-import About from '../../app/(marketing)/about';
-import Privacy from '../../app/(marketing)/privacy';
-import Terms from '../../app/(marketing)/terms';
-import PublicSecurity from '../../app/(marketing)/security';
-import AuthGate from '../../app/(gate)/_layout';
-import SignIn from '../../app/(gate)/sign-in';
-import Totp from '../../app/(gate)/totp';
-import Magic from '../../app/(gate)/auth/magic';
-import AppLayout from '../../app/(gate)/(app)/_layout';
-import Dashboard from '../../app/(gate)/(app)/dashboard';
-import Security from '../../app/(gate)/(app)/settings/security';
-import NotFound from '../../app/+not-found';
 import { routeFor, type AuthState } from '../../src/auth/store';
+import { appRoutes, seededRoot } from '../helpers/app';
 import { fakeAuth } from '../helpers/fakes';
+import { ACCESS, fakePortalApi, meOf, orgOf } from '../helpers/portal';
 
 const hideAsync = jest.mocked(SplashScreen.hideAsync);
 
@@ -45,36 +31,15 @@ afterEach(async () => {
 const EMAIL = ['a', 'example.com'].join('@');
 const appDir = join(__dirname, '../../app');
 
+// Signed in, the portal reads GET /api/me: here a member of an organization with two locations.
 function seeded(state: AuthState, overrides?: Parameters<typeof fakeAuth>[1]) {
-  const auth = fakeAuth(state, overrides);
-  function Seeded(): React.JSX.Element {
-    return (
-      <AuthProvider auth={auth}>
-        <RootStack />
-      </AuthProvider>
-    );
-  }
-  return { auth, Seeded };
+  const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') });
+  const auth = fakeAuth(state, { api, ...overrides });
+  return { auth, Seeded: seededRoot(auth) };
 }
 
 function routes(Seeded: React.ComponentType): Record<string, React.ComponentType> {
-  return {
-    _layout: Seeded,
-    '(marketing)/_layout': MarketingLayout,
-    '(marketing)/index': MarketingHome,
-    '(marketing)/about': About,
-    '(marketing)/privacy': Privacy,
-    '(marketing)/terms': Terms,
-    '(marketing)/security': PublicSecurity,
-    '(gate)/_layout': AuthGate,
-    '(gate)/sign-in': SignIn,
-    '(gate)/totp': Totp,
-    '(gate)/auth/magic': Magic,
-    '(gate)/(app)/_layout': AppLayout,
-    '(gate)/(app)/dashboard': Dashboard,
-    '(gate)/(app)/settings/security': Security,
-    '+not-found': NotFound,
-  };
+  return appRoutes(Seeded);
 }
 
 function pending(): Promise<void> {
@@ -93,11 +58,13 @@ test('a signed-in user on /sign-in lands on /dashboard', async () => {
   expect(router.getPathname()).toBe('/dashboard');
 });
 
-test('/ signed in lands on /dashboard, which links to /settings/security', async () => {
+test('/ signed in lands on /dashboard, and Settings links to /settings/security', async () => {
   const { Seeded } = seeded({ status: 'signedIn', user: { id: 'u1', email: EMAIL } });
   const router = await renderRouter(routes(Seeded), { initialUrl: '/' });
   expect(router.getPathname()).toBe('/dashboard');
-  await fireEvent.press(screen.getByText('Security'));
+  await fireEvent.press(await screen.findByRole('link', { name: 'Settings' }));
+  expect(router.getPathname()).toBe('/settings');
+  await fireEvent.press(await screen.findByRole('link', { name: 'Two-factor settings' }));
   expect(router.getPathname()).toBe('/settings/security');
 });
 
@@ -140,7 +107,7 @@ test('/?state=x&code=y lands on /dashboard', async () => {
   const { Seeded } = seeded({ status: 'signedIn', user: { id: 'u1', email: EMAIL } });
   const router = await renderRouter(routes(Seeded), { initialUrl: '/?state=x&code=y' });
   expect(router.getPathname()).toBe('/dashboard');
-  expect(screen.getByText(EMAIL)).toBeTruthy();
+  expect(await screen.findByText(EMAIL)).toBeTruthy();
 });
 
 test('a ConfigError renders the root ErrorBoundary', async () => {

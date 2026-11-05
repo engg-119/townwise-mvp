@@ -6,7 +6,13 @@ import { CONTACT_HREF, EARLY_ACCESS_HREF } from '../../src/marketing/links';
 // Every URL the app serves. test/marketing/links.test.ts keeps this list equal to the files in app/.
 export const ROUTES = [
   '/', '/about', '/privacy', '/terms', '/security',
-  '/sign-in', '/totp', '/auth/magic', '/dashboard', '/settings/security', '/locations/[locationId]/chat',
+  '/sign-in', '/totp', '/auth/magic',
+  // The portal (docs/portal/spec.md 16.1): gate pages, the client app, two-step settings and the staff console.
+  '/request-access', '/waiting', '/no-access', '/joining', '/staff/sign-in-again', '/settings/security',
+  '/dashboard', '/locations/new', '/locations/[locationId]', '/locations/[locationId]/sales',
+  '/locations/[locationId]/sales/upload', '/locations/[locationId]/notes', '/locations/[locationId]/town',
+  '/locations/[locationId]/settings', '/locations/[locationId]/chat', '/team', '/settings',
+  '/admin', '/admin/orgs', '/admin/orgs/[orgId]', '/admin/people', '/admin/audit',
 ];
 
 // The homepage sections the nav and footer link to (/#map and so on).
@@ -14,7 +20,7 @@ export const HOME_SECTIONS = ['map', 'how', 'product', 'faq'];
 
 export const MAILTO_HREFS = [EARLY_ACCESS_HREF, CONTACT_HREF];
 
-// app/(gate)/(app)/settings/security.tsx serves /settings/security: groups add no segment,
+// app/(gate)/(app)/(account)/settings/security.tsx serves /settings/security: groups add no segment,
 // index is the directory itself, and _layout and +special files are not pages.
 export function routesInAppDir(): string[] {
   return readdirSync(join(__dirname, '../../app'), { recursive: true, encoding: 'utf8' })

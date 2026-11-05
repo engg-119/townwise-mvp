@@ -2,11 +2,11 @@ import { useRef, useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { useAuth } from '../../../../../src/auth/AuthProvider';
-import { EFFECT_LABEL, formatDates, formatDay, guestsText, KIND_LABEL, weekdaysText } from '../../../../../src/chat/format';
-import { canSend, useTuningChat, type ChatMessage, type ProposalCard, type TuningChat } from '../../../../../src/chat/useTuningChat';
-import { theme } from '../../../../../src/theme';
-import { Button, Loading, Message, Screen } from '../../../../../src/ui';
+import { useAuth } from '../../../../../../src/auth/AuthProvider';
+import { EFFECT_LABEL, formatDates, formatDay, guestsText, KIND_LABEL, weekdaysText } from '../../../../../../src/chat/format';
+import { canSend, useTuningChat, type ChatMessage, type ProposalCard, type TuningChat } from '../../../../../../src/chat/useTuningChat';
+import { theme } from '../../../../../../src/theme';
+import { Button, Loading, Message, Screen } from '../../../../../../src/ui';
 
 // The tuning chat for one location (docs/portal/tuning-chat.md, section 7). The logic is in useTuningChat;
 // this file only lays it out. Nothing here animates: new text and the scroll to it appear at once.
