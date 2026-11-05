@@ -1,7 +1,8 @@
 // The tuning chat (docs/portal/tuning-chat.md sections 1 to 5) against a scripted model (helpers/chat-model.ts): the
 // GET shapes, author-only and per-location access, view-as, the event stream for answers, tool loops, proposals,
-// the call limit, refusals, cut-off replies and provider errors, disconnects, the live-turn claim, the caps, the
-// budget and cost, byte-for-byte replay of thinking blocks, and audit events and logs free of message text.
+// the call and per-reply tool limits, refusals, cut-off replies and provider errors, disconnects, the live-turn claims
+// (per conversation and per person), the caps, the budget and cost, byte-for-byte replay of thinking blocks, and audit
+// events and logs free of message text.
 import { randomUUID } from 'node:crypto';
 
 import {
@@ -346,17 +347,35 @@ describe('tools', () => {
     expect(sent).toHaveLength(18);
     expect(toolResults(sent[16]).map((r) => r.tool_use_id)).toEqual(['loop8']);
   });
+
+  it('runs at most 5 tool calls from one reply and answers the rest as not run, because it asked for too many at once', async () => {
+    const asked = Array.from({ length: 7 }, (_, i) => toolUse(`cap${String(i + 1)}`, 'list_notes', {}));
+    model.script(
+      { kind: 'message', message: message(asked) },
+      { kind: 'message', message: message([text('Five lookups were enough.')]) },
+    );
+    const { events } = await turn({ content: 'Check everything at once.' });
+    expect(shape(events)).toEqual(['conversation', ...Array<string>(10).fill('tool'), 'text', 'done']);
+    const results = toolResults(messagesOf(model.calls[1])[2]);
+    expect(results.map((r) => [r.tool_use_id, r.is_error === true])).toEqual([
+      ['cap1', false], ['cap2', false], ['cap3', false], ['cap4', false], ['cap5', false], ['cap6', true], ['cap7', true],
+    ]);
+    for (const result of results.slice(5)) expect(result.content).toMatch(/^Not run: the reply asked for too many tool calls at once\./);
+    expect(await storedParams(conversationIdOf(events))).toHaveLength(4);
+  });
 });
 
 describe('stop reasons', () => {
-  it('a refusal ends the turn with refusal and never runs that turn’s tool calls', async () => {
-    model.script({ kind: 'message', message: message([text('I can’t help'), toolUse('r1', 'propose_note', PROPOSAL)], { stopReason: 'refusal' }) });
+  it('a refused first turn ends with done refusal, records its cost, never runs its tool calls and deletes its conversation', async () => {
+    model.script({ kind: 'message', message: message([text('I can’t help'), toolUse('r1', 'propose_note', PROPOSAL)], {
+      stopReason: 'refusal', usage: { input: 1000, output: 500 },
+    }) });
     const { events } = await turn({ content: 'Refuse me.' });
     expect(shape(events)).toEqual(['conversation', 'text', 'done']);
-    expect(events.at(-1)?.data).toMatchObject({ stopReason: 'refusal' });
-    const stored = await storedParams(conversationIdOf(events));
-    expect(stored).toHaveLength(3);
-    expect(toolResults(stored[2])).toEqual([expect.objectContaining({ tool_use_id: 'r1', is_error: true })]);
+    // 1000 x $4 + 500 x $20 per million tokens.
+    expect(events.at(-1)?.data).toEqual({ stopReason: 'refusal', costUsd: 0.014 });
+    expect(await usedMicroUsd()).toBe(14_000);
+    expect(await conversationDoc(conversationIdOf(events))).toBeNull();
   });
 
   it('after a mid-reply fallback, the declined model’s tool call never runs and only its text is sent back', async () => {
@@ -381,11 +400,22 @@ describe('stop reasons', () => {
     expect(JSON.stringify(stored)).not.toContain('sig-declined');
   });
 
-  it('a refusal before any output saves no empty assistant message', async () => {
-    model.script({ kind: 'message', message: message([], { stopReason: 'refusal' }) });
-    const { events } = await turn({ content: 'Refuse before output.' });
-    expect(shape(events)).toEqual(['conversation', 'done']);
-    expect(await storedParams(conversationIdOf(events))).toEqual([{ role: 'user', content: 'Refuse before output.' }]);
+  it('a refusal after a tool step appends nothing to an existing conversation: no user message, partial reply or results', async () => {
+    const id = await addConversation(server, { orgId, locationId, userId: author.session.userId, text: 'Older question' });
+    const before = await conversationDoc(id);
+    const history = await storedParams(id);
+    model.script(
+      { kind: 'message', message: message([text('Let me look. '), toolUse('r2', 'list_notes', {})]) },
+      { kind: 'message', message: message([], { stopReason: 'refusal' }) },
+    );
+    const { events } = await turn({ conversationId: id, content: 'Refuse later.' });
+    expect(shape(events)).toEqual(['conversation', 'text', 'tool', 'tool', 'done']);
+    expect(events.at(-1)?.data).toMatchObject({ stopReason: 'refusal' });
+    expect(await conversationDoc(id)).toEqual(before);
+
+    model.script({ kind: 'message', message: message([text('Here it is.')]) });
+    expect(shape((await turn({ conversationId: id, content: 'Go on.' })).events)).toEqual(['conversation', 'text', 'done']);
+    expect(messagesOf(model.calls[2])).toEqual([...history, { role: 'user', content: 'Go on.' }]);
   });
 
   it('max_tokens with a tool_use ends with max_tokens and does not run the tool', async () => {
@@ -425,8 +455,8 @@ describe('provider errors', () => {
       expect(shape(events)).toEqual(['conversation', 'text', 'error']);
       expect(events.at(-1)?.data).toEqual({ code });
       expect(await conversationDoc(conversationIdOf(events))).toBeNull();
-      // message_start reported 2000 input tokens and 1 output token.
-      expect(await usedMicroUsd()).toBe(2000 * 4 + 20);
+      // message_start reported 2000 input tokens; the 7 characters streamed before the failure count as 3 output tokens.
+      expect(await usedMicroUsd()).toBe(2000 * 4 + 3 * 20);
     });
   }
 
@@ -462,7 +492,8 @@ describe('provider errors', () => {
 
 describe('closing the connection', () => {
   it('aborts the provider call and saves nothing but the cost', async () => {
-    const partial = eventsOf(message([text('A long answer that keeps going and going')], { usage: { input: 1000 } })).slice(0, 4);
+    // One text delta, so what streamed before the abort is always the same 7 characters.
+    const partial = eventsOf(message([text('A long answer that keeps going and going')], { usage: { input: 1000 } })).slice(0, 3);
     model.script({ kind: 'hang', before: partial });
     const controller = new AbortController();
     const res = await fetch(new URL(turnsPath(), server.url), {
@@ -487,8 +518,11 @@ describe('closing the connection', () => {
 
     await until(() => Promise.resolve(model.calls[0]?.signal.aborted === true));
     await until(async () => (await conversationDoc(id)) === null);
-    expect(await usedMicroUsd()).toBe(1000 * 4 + 20);
+    // 7 streamed characters count as 3 output tokens; the test clock did not move, so time adds none.
+    expect(await usedMicroUsd()).toBe(1000 * 4 + 3 * 20);
     await until(() => Promise.resolve(server.logs.some((line) => line.includes('townwise.chat_turn_aborted'))));
+    await until(async () => (await server.connection.collection('tw_chat_live_turns').countDocuments({})) === 0);
+    expect(server.logs.join('\n')).not.toContain('"code":"timeout"');
   });
 });
 
@@ -525,6 +559,59 @@ describe('the live-turn claim', () => {
   });
 });
 
+describe('one live turn per person', () => {
+  it('of concurrent turns from one person, in any conversation or location, exactly one streams; the rest are 409 and create nothing', async () => {
+    const snug = await addLocation(server, { orgId, name: 'Snug' });
+    const existing = await addConversation(server, { orgId, locationId, userId: author.session.userId, text: 'Earlier' });
+    const inSnug = await addConversation(server, { orgId, locationId: snug, userId: author.session.userId, text: 'Snug' });
+    const conversations = server.connection.collection('tw_chat_conversations');
+    const before = await conversations.countDocuments({});
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    model.script({ kind: 'message', message: message([text('Only one answer.')]), gate });
+
+    const posts: [string, unknown][] = [
+      [turnsPath(), { content: 'New one' }],
+      [turnsPath(), { content: 'New two' }],
+      [turnsPath(), { content: 'Existing', conversationId: existing }],
+      [turnsPath(snug), { content: 'Other room' }],
+      [turnsPath(snug), { content: 'Other room again', conversationId: inSnug }],
+    ];
+    const responses = await Promise.all(posts.map(([path, json]) => call(server, path, { session: author.session, json })));
+    const streaming = responses.filter((res) => res.status === 200);
+    expect(streaming).toHaveLength(1);
+    for (const res of responses.filter((r) => r.status !== 200)) {
+      expect(await errorOf(res)).toEqual({ status: 409, error: 'chat_turn_in_progress' });
+    }
+
+    release();
+    const [winner] = streaming;
+    if (winner === undefined) throw new Error('no turn streamed');
+    const events = parseSse(await winner.text());
+    expect(shape(events)).toEqual(['conversation', 'text', 'done']);
+    expect(model.calls).toHaveLength(1);
+    const id = conversationIdOf(events);
+    expect(await conversations.countDocuments({})).toBe(before + ([existing, inSnug].includes(id) ? 0 : 1));
+    expect(await server.connection.collection('tw_chat_live_turns').countDocuments({})).toBe(0);
+  });
+
+  it('two people in one organization each stream a turn at the same time', async () => {
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    model.script(
+      { kind: 'message', message: message([text('For one.')]), gate },
+      { kind: 'message', message: message([text('For the other.')]), gate },
+    );
+    const responses = await Promise.all([author, colleague].map((who) => call(server, turnsPath(), {
+      session: who.session, json: { content: 'At the same time' },
+    })));
+    expect(responses.map((res) => res.status)).toEqual([200, 200]);
+    release();
+    for (const res of responses) expect(shape(parseSse(await res.text()))).toEqual(['conversation', 'text', 'done']);
+    expect(model.calls).toHaveLength(2);
+  });
+});
+
 describe('caps, budget and limits', () => {
   it('a conversation with 40 turns, or 1.5 MB of messages, is 409 conversation_full; 39 small turns still take one more', async () => {
     const full = await addConversation(server, { orgId, locationId, userId: author.session.userId, text: 'Full', turnCount: 40 });
@@ -554,6 +641,28 @@ describe('caps, budget and limits', () => {
     expect(refused).toMatchObject({ status: 409, error: 'chat_budget_exhausted' });
     const summary = await (await call(server, `/api/org/locations/${locationId}/chat`, { session: author.session })).json() as ChatSummary;
     expect(summary.budget).toEqual({ month: '2026-06', usedUsd: 20.03, limitUsd: 20, exhausted: true });
+  });
+
+  it('a budget spent during a turn ends it with budget after its last complete step, and makes no further call', async () => {
+    const usage = server.connection.collection('tw_chat_usage');
+    await usage.insertOne({ orgId: new Types.ObjectId(orgId), month: '2026-06', costMicroUsd: 19_990_000, updatedAt: server.clock.now() });
+    model.script({ kind: 'message', message: message([text('Checking your notes. '), toolUse('b1', 'list_notes', {})], {
+      usage: { input: 1000, output: 500, cacheRead: 10_000, cacheWrite: 2000 },
+    }) });
+    const { events } = await turn({ content: 'Spend the rest' });
+    expect(model.calls).toHaveLength(1);
+    expect(shape(events)).toEqual(['conversation', 'text', 'tool', 'tool', 'done']);
+    expect(events.at(-1)?.data).toEqual({ stopReason: 'budget', costUsd: 0.026 });
+    expect(await usedMicroUsd()).toBe(19_990_000 + 26_000);
+
+    // Saved, with every tool call answered, so the history is still a valid request.
+    const id = conversationIdOf(events);
+    const stored = await storedParams(id);
+    expect(stored).toHaveLength(3);
+    expect(toolResults(stored[2]).map((r) => [r.tool_use_id, r.is_error === true])).toEqual([['b1', false]]);
+    expect(await conversationDoc(id)).toMatchObject({ turnCount: 1, liveTurn: null });
+    const event = (await auditEvents(server)).find((e) => e.action === 'chat.turn_completed' && (e.target as { id: string }).id === id);
+    expect(event?.details).toMatchObject({ calls: 1, stopReason: 'budget' });
   });
 
   it('prices a model outside the table at the most expensive row', async () => {

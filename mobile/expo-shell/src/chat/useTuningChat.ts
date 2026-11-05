@@ -64,11 +64,18 @@ export type ChatAction =
   | { type: 'ended' }
   | { type: 'stopped' }
   | { type: 'failed'; error: string | null; content: string; exhausted: boolean }
+  | { type: 'discard'; id: string }
   | { type: 'card'; messageKey: string; cardKey: string; patch: CardPatch };
 
 export const NOT_SAVED = 'Your message and this reply weren’t saved.';
 export const STOPPED = 'Stopped. Your message and this reply weren’t saved.';
 export const CUT_OFF = 'The reply was cut off. Try again.';
+export const REFUSED = 'The assistant can’t help with that. Your message and this reply weren’t saved.';
+export const BUDGET_SPENT = 'The assistant stopped here because this month’s chat budget is used up.';
+export const TIMED_OUT = 'The reply took too long. Try asking something shorter.';
+
+/** The `done` stop reasons of a turn the server saved; any other (a refusal) saved nothing. */
+const SAVED_STOP_REASONS: readonly string[] = ['end_turn', 'max_tokens', 'tool_limit', 'budget'];
 
 export function initialChatState(): TuningChatState {
   return {
@@ -80,8 +87,9 @@ export function initialChatState(): TuningChatState {
 function doneNote(stopReason: string): string | null {
   switch (stopReason) {
     case 'max_tokens': return 'The reply hit its length limit.';
-    case 'refusal': return 'The assistant can’t help with that.';
+    case 'refusal': return REFUSED;
     case 'tool_limit': return 'The assistant stopped after too many lookups. Ask again to continue.';
+    case 'budget': return BUDGET_SPENT;
     default: return null;
   }
 }
@@ -89,6 +97,7 @@ function doneNote(stopReason: string): string | null {
 function streamErrorText(code: string): string {
   if (code === 'provider_overloaded') return 'The assistant is busy. Try again in a minute.';
   if (code === 'provider_unavailable') return 'Can’t reach the assistant. Try again.';
+  if (code === 'timeout') return TIMED_OUT;
   return 'Something went wrong with that reply. Try again.';
 }
 
@@ -100,7 +109,7 @@ function minutes(seconds: number): string {
 /** Copy for a turn the server refused or a stream that failed before it finished. */
 export function sendErrorText(error: unknown): string {
   if (error instanceof ApiError && error.kind === 'http') {
-    if (error.code === 'chat_turn_in_progress') return 'This conversation is still answering. Try again in a moment.';
+    if (error.code === 'chat_turn_in_progress') return 'You already have a reply in progress, maybe in another tab or location. Wait for it to finish, then try again.';
     if (error.code === 'conversation_full') return 'This conversation is full. Start a new conversation.';
     if (error.code === 'view_as_read_only') return 'View-as is read-only, so you can’t send messages.';
     if (error.status === 404) return 'This conversation or location wasn’t found.';
@@ -192,6 +201,13 @@ export function chatReducer(state: TuningChatState, action: ChatAction): TuningC
       }
       return { ...base, messages: withLive(state, (message) => ({ ...message, state: 'failed', note: NOT_SAVED })) };
     }
+    case 'discard':
+      // The server kept no conversation for this id: the next send starts a new one instead of getting a 404.
+      return {
+        ...state,
+        conversationId: state.conversationId === action.id ? null : state.conversationId,
+        conversations: state.conversations.filter((conversation) => conversation.id !== action.id),
+      };
     case 'card':
       return {
         ...state,
@@ -225,8 +241,14 @@ function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: s
           proposals: [...message.proposals, { key, proposal: event.proposal, status: 'open', error: null }],
         })),
       };
-    case 'done':
-      return { ...state, tool: null, messages: withLive(state, (message) => ({ ...message, state: 'complete', note: doneNote(event.stopReason) })) };
+    case 'done': {
+      // The budget ran out during the turn: the reply stays, and the chat shows the budget used up, as the GET would.
+      const budget = event.stopReason === 'budget' && state.budget !== null ? { ...state.budget, exhausted: true } : state.budget;
+      return {
+        ...state, tool: null, budget,
+        messages: withLive(state, (message) => ({ ...message, state: 'complete', note: doneNote(event.stopReason) })),
+      };
+    }
     case 'error':
       return {
         ...state, tool: null, error: streamErrorText(event.code),
@@ -297,7 +319,12 @@ export function useTuningChat(api: ApiClient, locationId: string): TuningChat {
     live.current = controller;
     dispatch({ type: 'send', content, userKey: nextKey(), replyKey: nextKey() });
     const turn = { conversationId: state.conversationId, content };
+    // A first turn that saved nothing (an error, Stop, a cut-off stream or a refusal) left no conversation behind.
+    let created: string | null = null;
+    let saved = false;
     void sendTurn(api, locationId, turn, controller.signal, (event) => {
+      if (event.type === 'conversation') created = event.id;
+      if (event.type === 'done' && SAVED_STOP_REASONS.includes(event.stopReason)) saved = true;
       dispatch({ type: 'event', event, key: nextKey(), at: new Date().toISOString() });
     }).then(
       () => { dispatch({ type: 'ended' }); },
@@ -311,6 +338,7 @@ export function useTuningChat(api: ApiClient, locationId: string): TuningChat {
       },
     ).finally(() => {
       if (live.current === controller) live.current = null;
+      if (turn.conversationId === null && created !== null && !saved) dispatch({ type: 'discard', id: created });
       // The list, the budget and the off switch may all have changed with this turn.
       refresh();
     });

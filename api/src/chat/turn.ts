@@ -1,12 +1,12 @@
 // One tuning chat turn (docs/portal/tuning-chat.md sections 3 and 4): a manual streaming loop. Stream a model call,
 // take its finalMessage(), run its tool calls, append, repeat, for at most 8 calls. Every assistant message is kept
 // exactly as received, thinking blocks included, except what a mid-reply fallback requires dropping (echoable). The
-// turn's messages are returned for one save; a failed or aborted turn returns nothing to save, only its cost, which is
-// charged after every call either way.
+// turn's messages are returned for one save; a failed, aborted or refused turn returns nothing to save, only its cost,
+// which is charged after every call either way.
 import { AnthropicError, APIConnectionError, APIError, InternalServerError, RateLimitError } from '@anthropic-ai/sdk';
 import type {
-  BetaContentBlock, BetaMessage, BetaMessageParam, BetaMessageStreamParams, BetaRawMessageStreamEvent, BetaToolResultBlockParam,
-  BetaToolUseBlock,
+  BetaContentBlock, BetaMessage, BetaMessageParam, BetaMessageStreamParams, BetaRawContentBlockDelta, BetaRawMessageStreamEvent,
+  BetaToolResultBlockParam, BetaToolUseBlock,
 } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 
 import type { NoteContent } from '../stores/notes.ts';
@@ -17,11 +17,20 @@ import { SYSTEM_PROMPT, TOOLS, type ToolName } from './prompt.ts';
 import { runTool, type ToolContext } from './tools.ts';
 
 export const CHAT_MODEL = 'claude-opus-5-5';
+export const MAX_TOKENS = 16_000;
 export const MAX_CALLS_PER_TURN = 8;
+/** Tool calls run from one assistant message; the rest are answered without running. */
+export const MAX_TOOLS_PER_MESSAGE = 5;
+/**
+ * A whole turn's time limit. The Container Apps ingress closes an HTTP request at about 240 seconds, and a live-turn
+ * claim goes stale at 3 minutes, so a turn ends well before either.
+ */
+export const TURN_TIME_LIMIT_MS = 150_000;
 /** Consecutive retries of a call whose tool input the SDK could not parse at all. */
 const MAX_JSON_RETRIES = 2;
 
-export type DoneReason = 'end_turn' | 'max_tokens' | 'refusal' | 'tool_limit';
+/** Why a saved turn ended. A refusal is not one: a refused turn saves nothing. */
+export type DoneReason = 'end_turn' | 'max_tokens' | 'tool_limit' | 'budget';
 export type FailureCode = 'internal' | 'provider_unavailable' | 'provider_overloaded';
 
 /** What the turn streams to the client between `conversation` and `done` or `error`. */
@@ -35,6 +44,7 @@ export type TurnResult =
     kind: 'done'; stopReason: DoneReason; messages: StoredMessage[]; calls: number; model: string;
     inputTokens: number; outputTokens: number; costMicroUsd: number;
   }
+  | { kind: 'refused'; calls: number; model: string; costMicroUsd: number }
   | { kind: 'failed'; code: FailureCode; errType: string; status: number | null; calls: number; costMicroUsd: number }
   | { kind: 'aborted'; calls: number; costMicroUsd: number };
 
@@ -49,6 +59,8 @@ export interface TurnInput {
   readonly emit: (event: TurnEvent) => void;
   /** Adds one call's cost to the organization's month. */
   readonly charge: (costMicroUsd: number) => Promise<void>;
+  /** True when the organization's budget for the month is spent. Asked before every model call after the first. */
+  readonly budgetSpent: () => Promise<boolean>;
 }
 
 const TOOL_NAMES: readonly string[] = TOOLS.map((tool) => tool.name);
@@ -57,7 +69,7 @@ const TOOL_NAMES: readonly string[] = TOOLS.map((tool) => tool.name);
 export function requestParams(messages: BetaMessageParam[]): BetaMessageStreamParams {
   return {
     model: CHAT_MODEL,
-    max_tokens: 16_000,
+    max_tokens: MAX_TOKENS,
     output_config: { effort: 'low' },
     // Adaptive thinking is Opus 5.5's only mode, so `thinking` is omitted.
     betas: ['server-side-fallback-2026-07-01'],
@@ -92,16 +104,42 @@ function isUnparseableToolInput(err: unknown): boolean {
   return err instanceof AnthropicError && !(err instanceof APIError);
 }
 
-/** What a call that never finished used so far, from message_start and message_delta, for its cost. */
-function usageTracker(): { observe(event: BetaRawMessageStreamEvent): void; costMicroUsd(): number } {
+/** The characters a content delta streams: text, thinking and tool input. */
+function streamedCharacters(delta: BetaRawContentBlockDelta): number {
+  switch (delta.type) {
+    case 'text_delta': return delta.text.length;
+    case 'thinking_delta': return delta.thinking.length;
+    case 'input_json_delta': return delta.partial_json.length;
+    default: return 0;
+  }
+}
+
+/**
+ * What a call that never finished used so far, for its cost. Input tokens come from message_start and output tokens
+ * only from message_delta. A call aborted or failed after message_start but before message_delta is charged an output
+ * estimate instead of the token or so message_start reports:
+ *
+ *   min(max_tokens, max(ceil(streamed characters / 3), ceil(seconds since message_start x 150)))
+ *
+ * at the price of the model that was answering. Streamed characters are those of text, thinking and tool input
+ * deltas; the time term covers thinking that is billed but not streamed (Opus 5.5 omits its text by default).
+ */
+function usageTracker(now: () => Date): { observe(event: BetaRawMessageStreamEvent): void; costMicroUsd(): number } {
   let model: string | null = null;
   let tokens: TokenCounts | null = null;
+  let startedAt = 0;
+  let characters = 0;
+  let outputReported = false;
   return {
     observe(event) {
       if (event.type === 'message_start') {
         model = event.message.model;
         tokens = tokensOf(event.message.usage);
+        startedAt = now().getTime();
+      } else if (event.type === 'content_block_delta') {
+        characters += streamedCharacters(event.delta);
       } else if (event.type === 'message_delta' && tokens !== null) {
+        outputReported = true;
         tokens = {
           input: event.usage.input_tokens ?? tokens.input,
           output: event.usage.output_tokens,
@@ -110,13 +148,19 @@ function usageTracker(): { observe(event: BetaRawMessageStreamEvent): void; cost
         };
       }
     },
-    costMicroUsd: () => (model === null || tokens === null ? 0 : costMicroUsd(model, tokens)),
+    costMicroUsd() {
+      if (model === null || tokens === null) return 0;
+      if (outputReported) return costMicroUsd(model, tokens);
+      const seconds = (now().getTime() - startedAt) / 1000;
+      const output = Math.min(MAX_TOKENS, Math.max(Math.ceil(characters / 3), Math.ceil(seconds * 150)));
+      return costMicroUsd(model, { ...tokens, output });
+    },
   };
 }
 
 /**
- * Answers for tool calls that will not run (a refusal, or a reply cut off at max_tokens), so the stored history
- * stays a valid request: the API rejects a tool_use with no tool_result after it.
+ * Answers for tool calls that will not run (a reply cut off at max_tokens), so the stored history stays a valid
+ * request: the API rejects a tool_use with no tool_result after it.
  */
 function notRun(blocks: readonly BetaToolUseBlock[]): BetaMessageParam {
   return {
@@ -124,6 +168,14 @@ function notRun(blocks: readonly BetaToolUseBlock[]): BetaMessageParam {
     content: blocks.map((block): BetaToolResultBlockParam => ({
       type: 'tool_result', tool_use_id: block.id, is_error: true, content: 'Not run: the reply stopped before this call could run.',
     })),
+  };
+}
+
+/** The answer for a tool call past the per-message cap. */
+function tooMany(block: BetaToolUseBlock): BetaToolResultBlockParam {
+  return {
+    type: 'tool_result', tool_use_id: block.id, is_error: true,
+    content: `Not run: the reply asked for too many tool calls at once. At most ${MAX_TOOLS_PER_MESSAGE} run from one reply; ask for the rest in the next one.`,
   };
 }
 
@@ -169,8 +221,11 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     for (;;) {
       if (calls === MAX_CALLS_PER_TURN) return done('tool_limit');
       if (aborted()) return { kind: 'aborted', calls, costMicroUsd: spent };
+      // The handler checked the budget before the first call. A later call that finds it spent is not made: the turn
+      // ends after its last complete step, whose tool calls all have results, so the saved history stays valid.
+      if (calls > 0 && await input.budgetSpent()) return done('budget');
       calls += 1;
-      const usage = usageTracker();
+      const usage = usageTracker(input.now);
       let message: BetaMessage;
       try {
         const stream = input.model.stream(requestParams([...input.history, ...turn]), { signal: input.signal });
@@ -196,21 +251,27 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       inputTokens += tokens.input + tokens.cacheRead + tokens.cacheWrite;
       outputTokens += tokens.output;
       model = message.model;
+      const stop = message.stop_reason;
+      // A refused turn saves nothing, as a failed one: no user message, no partial reply, no results for its calls.
+      if (stop === 'refusal') return { kind: 'refused', calls, model, costMicroUsd: spent };
       const content = echoable(message.content);
-      // A refusal before any output has no content; an empty assistant message would make the next request invalid.
+      // An empty assistant message would make the next request invalid.
       if (content.length > 0) append({ role: 'assistant', content });
 
       const toolUses = content.filter((block): block is BetaToolUseBlock => block.type === 'tool_use');
-      const stop = message.stop_reason;
-      if (stop === 'refusal' || stop === 'max_tokens' || stop === 'model_context_window_exceeded') {
-        // A refusal can cut a tool call off mid-input, and so can max_tokens: never run that call.
+      if (stop === 'max_tokens' || stop === 'model_context_window_exceeded') {
+        // max_tokens can cut a tool call off mid-input: never run that call.
         if (toolUses.length > 0) append(notRun(toolUses));
-        return done(stop === 'refusal' ? 'refusal' : 'max_tokens');
+        return done('max_tokens');
       }
       if (toolUses.length === 0) return done('end_turn');
 
       const results: BetaToolResultBlockParam[] = [];
-      for (const block of toolUses) {
+      for (const [index, block] of toolUses.entries()) {
+        if (index >= MAX_TOOLS_PER_MESSAGE) {
+          results.push(tooMany(block));
+          continue;
+        }
         const name = TOOL_NAMES.includes(block.name) ? block.name as ToolName : null;
         if (name !== null) input.emit({ type: 'tool', data: { name, state: 'running' } });
         const outcome = await runTool(input.tools, block);

@@ -30,7 +30,7 @@ const MAX_LISTED = 50;
 /** Section 5 caps. */
 const MAX_TURNS = 40;
 const MAX_STORED_BYTES = 1_500_000;
-/** A live-turn claim older than this may be taken over. */
+/** A live-turn claim older than this may be taken over, the person's and the conversation's alike. */
 const STALE_TURN_MS = 3 * 60 * 1000;
 /** Keeps the Container Apps ingress from closing an idle stream. */
 const PING_MS = 15_000;
@@ -120,20 +120,19 @@ export async function deleteConversation(ctx: TownwiseContext, req: Request, res
 }
 
 interface ClaimedTurn { conversationId: string; title: string; history: BetaMessageParam[] }
+interface TurnClaim { turnId: string; now: Date; staleBefore: Date }
 
 /** Claims an existing conversation for this turn, or creates a new one already claimed. */
 async function claimTurn(
-  ctx: TownwiseContext, scope: OrgScope, owner: ConversationOwner, body: z.infer<typeof turnBody>, turnId: string,
+  ctx: TownwiseContext, scope: OrgScope, owner: ConversationOwner, body: z.infer<typeof turnBody>, claim: TurnClaim,
 ): Promise<ClaimedTurn> {
   const conversations = ctx.stores.chatConversations;
-  const now = ctx.now();
+  const { turnId, now } = claim;
   if (body.conversationId === undefined) {
     const title = titleOf(body.content);
     return { conversationId: await conversations.create(scope, owner, { title, turnId, now }), title, history: [] };
   }
-  const claimed = await conversations.claim(scope, owner, body.conversationId, {
-    turnId, now, staleBefore: new Date(now.getTime() - STALE_TURN_MS),
-  });
+  const claimed = await conversations.claim(scope, owner, body.conversationId, claim);
   if (claimed === null) {
     if ((await conversations.find(scope, owner, body.conversationId)) === null) throw notFound();
     throw new AppError(409, 'chat_turn_in_progress', 'This conversation is still answering. Wait for it, or stop it first.');
@@ -147,8 +146,9 @@ async function claimTurn(
 
 /**
  * POST /api/org/locations/:locationId/chat/turns (sections 2 and 3). Every refusal is a JSON error before the stream
- * starts; after that the answer is text/event-stream and ends with `done` or `error`. The turn is saved once, when it
- * finishes; closing the connection aborts the provider call and saves nothing but the cost.
+ * starts; after that the answer is text/event-stream and ends with `done` or `error`. A person has at most one live
+ * turn in the organization. The turn is saved once, when it finishes; closing the connection, or running past the time
+ * limit, aborts the provider call and saves nothing but the cost.
  */
 export async function postTurn(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
@@ -166,8 +166,31 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   if ((await budgetOf(ctx, scope)).exhausted) {
     throw new AppError(409, 'chat_budget_exhausted', 'Your organization’s tuning chat budget for this month is used up');
   }
-  const turnId = randomUUID();
-  const { conversationId, title, history } = await claimTurn(ctx, scope, owner, body, turnId);
+  const now = ctx.now();
+  const claim: TurnClaim = { turnId: randomUUID(), now, staleBefore: new Date(now.getTime() - STALE_TURN_MS) };
+  const { turnId } = claim;
+  if (!(await ctx.stores.chatLiveTurns.claim(scope, caller.userId, claim))) {
+    throw new AppError(409, 'chat_turn_in_progress', 'You already have a reply in progress. Wait for it, or stop it first.');
+  }
+  // Every exit from here on releases the person's claim, by this turn's id.
+  const releaseLiveTurn = async (): Promise<void> => {
+    try {
+      await ctx.stores.chatLiveTurns.release(scope, caller.userId, turnId);
+    } catch (err) {
+      // The claim goes stale after 3 minutes; until then this person's next turn is 409.
+      ctx.logger.warn({
+        orgId: scope.orgId, locationId: location.id, errType: err instanceof Error ? err.constructor.name : typeof err,
+      }, 'townwise.chat_live_turn_not_released');
+    }
+  };
+  let claimed: ClaimedTurn;
+  try {
+    claimed = await claimTurn(ctx, scope, owner, body, claim);
+  } catch (err) {
+    await releaseLiveTurn();
+    throw err;
+  }
+  const { conversationId, title, history } = claimed;
   const ids = { orgId: scope.orgId, locationId: location.id, conversationId };
 
   res.status(200);
@@ -178,9 +201,12 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   const send = (event: string, data: unknown): void => {
     if (!res.writableEnded && !res.destroyed) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
-  const abort = new AbortController();
-  res.on('close', () => { abort.abort(); });
-  if (req.socket.destroyed) abort.abort();
+  // Either one aborts the provider call. A closed connection sends nothing more; the time limit ends with `timeout`.
+  const closed = new AbortController();
+  res.on('close', () => { closed.abort(); });
+  if (req.socket.destroyed) closed.abort();
+  const timeLimit = AbortSignal.timeout(ctx.chatTurnTimeLimitMs);
+  const signal = AbortSignal.any([closed.signal, timeLimit]);
   const ping = setInterval(() => {
     if (!res.writableEnded && !res.destroyed) res.write(': ping\n\n');
   }, PING_MS);
@@ -192,15 +218,28 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
       tools: { ctx, scope, location, today: utcDay(ctx.now()) },
       history,
       userMessage: { role: 'user', content: body.content },
-      signal: abort.signal,
+      signal,
       now: ctx.now,
       emit: (event: TurnEvent) => { send(event.type, event.data); },
       charge: (cost) => ctx.stores.chatUsage.add(scope, monthOf(ctx.now()), cost, ctx.now()),
+      budgetSpent: async () => (await budgetOf(ctx, scope)).exhausted,
     });
     if (result.kind !== 'done') {
+      // Nothing of the turn is saved: the claim goes, and a conversation that never finished a turn is deleted.
       await ctx.stores.chatConversations.release(scope, conversationId, turnId);
+      if (result.kind === 'refused') {
+        ctx.logger.info({ ...ids, calls: result.calls, stopReason: 'refusal', costMicroUsd: result.costMicroUsd }, 'townwise.chat_turn');
+        send('done', { stopReason: 'refusal', costUsd: result.costMicroUsd / 1_000_000 });
+        return;
+      }
       if (result.kind === 'aborted') {
-        ctx.logger.info({ ...ids, calls: result.calls, costMicroUsd: result.costMicroUsd }, 'townwise.chat_turn_aborted');
+        // Whichever aborted first decides: a closed connection sends nothing, the time limit ends with `timeout`.
+        if (!(timeLimit.aborted && signal.reason === timeLimit.reason)) {
+          ctx.logger.info({ ...ids, calls: result.calls, costMicroUsd: result.costMicroUsd }, 'townwise.chat_turn_aborted');
+          return;
+        }
+        ctx.logger.warn({ ...ids, calls: result.calls, code: 'timeout', costMicroUsd: result.costMicroUsd }, 'townwise.chat_turn_failed');
+        send('error', { code: 'timeout' });
         return;
       }
       ctx.logger.warn({
@@ -236,6 +275,8 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
     send('error', { code: 'internal' });
   } finally {
     clearInterval(ping);
+    // Before the stream ends, so the client's next turn never finds this one still live.
+    await releaseLiveTurn();
     if (!res.writableEnded) res.end();
   }
 }

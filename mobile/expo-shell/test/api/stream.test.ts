@@ -194,11 +194,11 @@ test('a 2xx that is not an event stream is an invalid response', async () => {
   expect(stream.cancelled).toBe(true);
 });
 
-test('a last event with no blank line after it is delivered when the stream closes', async () => {
+test('a last event with no blank line after it is discarded when the stream closes', async () => {
   const { client } = cookieClient(() => closedStream('event: done\ndata: {"stopReason":"end_turn","costUsd":0}'));
   const { events, onEvent } = collect();
   await client.stream(TURNS, { body: { content: 'x' }, onEvent });
-  expect(events).toEqual([{ event: 'done', data: '{"stopReason":"end_turn","costUsd":0}' }]);
+  expect(events).toEqual([]);
 });
 
 test('a character split across chunks decodes whole', async () => {

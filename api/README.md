@@ -142,9 +142,11 @@ The build contract is `../docs/portal/tuning-chat.md`. A member chats with an as
 
 - Off until `ANTHROPIC_API_KEY` is set: the GET answers `enabled: false`, a turn answers 503 `chat_unavailable`.
 - Conversations are private to their author, per location. Staff in view-as read the target’s and cannot send.
-- A turn streams over the POST (`text/event-stream`): `conversation` first, then `text`, `tool` and `proposal` events, then `done` (`end_turn`, `max_tokens`, `refusal` or `tool_limit`, with `costUsd`) or `error` (`internal`, `provider_unavailable`, `provider_overloaded`). A comment line every 15 seconds keeps the ingress from closing an idle stream. At most 8 model calls per turn.
-- A turn is saved in one update when it finishes, under a compare-and-set on its live-turn claim; a claim older than 3 minutes may be taken over. A failed turn, or one the client closed, saves nothing but its cost. Every stored message is the API message param exactly as sent or received, thinking blocks included, and history is append-only.
-- Each organization has a monthly budget, `TOWNWISE_CHAT_MONTHLY_BUDGET_USD` (UTC calendar month), checked before a turn starts. Cost is recorded after every model call from its token usage at list prices (`src/chat/pricing.ts`), so one turn can overrun by its own cost.
+- A turn streams over the POST (`text/event-stream`): `conversation` first, then `text`, `tool` and `proposal` events, then `done` (`end_turn`, `max_tokens`, `tool_limit`, `budget` or `refusal`, with `costUsd`) or `error` (`internal`, `provider_unavailable`, `provider_overloaded`, `timeout`). A comment line every 15 seconds keeps the ingress from closing an idle stream. At most 8 model calls per turn, and at most 5 tool calls run from one reply; the rest are answered as not run because the reply asked for too many at once.
+- A whole turn is bounded at 150 seconds (the ingress closes a request at about 240): past it the provider call is aborted and the stream ends with `error` `timeout`.
+- A person has at most one live turn per organization, in any conversation or location (`tw_chat_live_turns`, unique per person, claimed atomically): another POST meanwhile is 409 `chat_turn_in_progress`. The claim is released by its turn id however the turn ends, and one older than 3 minutes may be taken over.
+- A turn is saved in one update when it finishes, under a compare-and-set on the conversation’s live-turn claim; a claim older than 3 minutes may be taken over. A failed, timed-out or refused turn, or one the client closed, saves nothing but its cost (a refusal still ends with `done` `refusal`), and a first turn that saved nothing deletes its conversation. Every stored message is the API message param exactly as sent or received, thinking blocks included, and history is append-only.
+- Each organization has a monthly budget, `TOWNWISE_CHAT_MONTHLY_BUDGET_USD` (UTC calendar month), checked before a turn starts (409) and before every later model call in it; a budget spent mid-turn ends the turn with `done` `budget` after its last complete step, and the turn is saved. Cost is recorded after every model call from its token usage at list prices (`src/chat/pricing.ts`), so one call can overrun by its own cost. A call aborted or failed before its output usage arrived is charged an output estimate from what it streamed and how long it ran (`src/chat/turn.ts`).
 - Message text, tool inputs and tool results never reach a log or an audit event.
 
 ### Calibration
@@ -155,7 +157,7 @@ Each location’s calibration state is derived from its sales days on every read
 
 - Every change writes an event to `tw_audit_events`, with details from a fixed allowlist per action. Events never hold guest or sales figures, note detail text, request notes, decision messages or file contents.
 - Events for client actions (members, org admins and requesters) are written after the effect; a failed write is logged and the action stands. Staff events are written before the effect; a failed write refuses the action with 503, and an effect that then fails adds `staff_action.not_applied`. [CONFIRM: audit timing; events kept indefinitely]
-- Townwise log lines carry ids and counts only: `townwise.access_denied { policy, code }`, `townwise.view_as_read { grantId, routeId }`, `townwise.upload_applied { orgId, locationId, uploadId, dayCount }`, `townwise.audit_write_failed { action, orgId, targetId }`, and for the tuning chat `townwise.chat_turn`, `townwise.chat_turn_failed`, `townwise.chat_turn_aborted` and `townwise.chat_turn_not_saved` (`{ orgId, locationId, conversationId, calls, costMicroUsd }` with the stop reason, or the code and error class). No route puts an email, a name or a figure in its path or query, because server-core logs the URL. The one exception is the people lookup’s `q`, which server-core redacts.
+- Townwise log lines carry ids and counts only: `townwise.access_denied { policy, code }`, `townwise.view_as_read { grantId, routeId }`, `townwise.upload_applied { orgId, locationId, uploadId, dayCount }`, `townwise.audit_write_failed { action, orgId, targetId }`, and for the tuning chat `townwise.chat_turn`, `townwise.chat_turn_failed`, `townwise.chat_turn_aborted` and `townwise.chat_turn_not_saved` (`{ orgId, locationId, conversationId, calls, costMicroUsd }` with the stop reason, or the code and error class; `timeout` has no error class), and `townwise.chat_live_turn_not_released` (`{ orgId, locationId, errType }`). No route puts an email, a name or a figure in its path or query, because server-core logs the URL. The one exception is the people lookup’s `q`, which server-core redacts.
 
 ## Endpoints
 
@@ -260,7 +262,7 @@ The console never returns sales figures or note text. People come only from Town
 | `POST /api/org/locations/:locationId/chat/turns` | member; limiter `chat` | `{ conversationId?, content }`, content 1 to 4,000 characters | 200 `text/event-stream` | 400; 404; 409 `chat_turn_in_progress`, `conversation_full`, `chat_budget_exhausted`; 429; 503 `chat_unavailable` |
 | `DELETE /api/org/locations/:locationId/chat/:conversationId` | member (author) | | 204 | 400; 404 |
 
-`budget` is `{ month, usedUsd, limitUsd, exhausted }`. Each conversation is `{ id, title, updatedAt, turnCount }`; its `messages` are `{ role, text, proposals, at }`, one per message with text or a proposal, never thinking blocks, tool calls or tool results. A proposal is exactly a note (the notes route’s body). Another person’s conversation, or one from another location, is 404. A conversation holds at most 40 turns or 1.5 MB of stored messages (409 `conversation_full`).
+`budget` is `{ month, usedUsd, limitUsd, exhausted }`. Each conversation is `{ id, title, updatedAt, turnCount }`; its `messages` are `{ role, text, proposals, at }`, one per message with text or a proposal, never thinking blocks, tool calls or tool results. A proposal is exactly a note (the notes route’s body). Another person’s conversation, or one from another location, is 404. A conversation holds at most 40 turns or 1.5 MB of stored messages (409 `conversation_full`). `chat_turn_in_progress` means the caller already has a live turn in this organization, in any conversation or location.
 
 ### Rate limits
 
@@ -302,6 +304,7 @@ Every Townwise collection takes the `tw_` prefix. Every tenant document carries 
 | `tw_view_as_grants` | staff member and session, target, organization, reason, start and end |
 | `tw_audit_events` | who did what, with allowlisted details |
 | `tw_chat_conversations` | per author and location: the title, every API message param of the conversation as JSON with its time, the turn count and the live-turn claim |
+| `tw_chat_live_turns` | per organization and person: the one live tuning chat turn’s id and start time |
 | `tw_chat_usage` | per organization and UTC month: the tuning chat’s cost in whole micro-dollars |
 
 Townwise reads the kit’s data only through its store functions (`users.findById`, `users.findByEmail`, `totp.get`).

@@ -75,6 +75,8 @@ export async function startTownwiseServer(opts?: {
   probe?: readonly TownwiseRoute[];
   /** The tuning chat's model, a scripted fake (helpers/chat-model.ts); absent, the chat is off. */
   chat?: ChatModel;
+  /** A tuning chat turn's time limit; absent, the production 150 seconds. */
+  chatTurnTimeLimitMs?: number;
 }): Promise<TownwiseTestServer> {
   const env: Record<string, string> = {
     NODE_ENV: 'test',
@@ -125,7 +127,10 @@ export async function startTownwiseServer(opts?: {
         return Promise.resolve();
       },
     });
-    const deps = { config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now: clock.now, chat: opts?.chat };
+    const deps = {
+      config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now: clock.now, chat: opts?.chat,
+      chatTurnTimeLimitMs: opts?.chatTurnTimeLimitMs,
+    };
     const apiRouter = createTownwiseApi(deps);
     const routes: RouteMount[] = [{ path: '/auth', router: auth.router }, { path: '/api', router: apiRouter }];
     if (opts?.probe !== undefined) routes.push({ path: '/probe', router: createTownwiseApi(deps, opts.probe) });

@@ -2,7 +2,8 @@ import { act, renderHook, waitFor } from '@testing-library/react-native';
 
 import { ApiError } from '../../src/api/client';
 import {
-  canSend, chatReducer, CUT_OFF, initialChatState, NOT_SAVED, STOPPED, useTuningChat, type TuningChat, type TuningChatState,
+  BUDGET_SPENT, canSend, chatReducer, CUT_OFF, initialChatState, NOT_SAVED, STOPPED, TIMED_OUT, useTuningChat,
+  type TuningChat, type TuningChatState,
 } from '../../src/chat/useTuningChat';
 import { CONVERSATION, fakeChatApi, PROPOSAL, refusal, SUMMARY, type FakeChatApi, type LiveTurn } from '../helpers/chat';
 
@@ -90,8 +91,9 @@ test('a reply that ends early says why', () => {
   const rows: [string, string | null][] = [
     ['end_turn', null],
     ['max_tokens', 'The reply hit its length limit.'],
-    ['refusal', 'The assistant can’t help with that.'],
+    ['refusal', 'The assistant can’t help with that. Your message and this reply weren’t saved.'],
     ['tool_limit', 'The assistant stopped after too many lookups. Ask again to continue.'],
+    ['budget', 'The assistant stopped here because this month’s chat budget is used up.'],
   ];
   for (const [stopReason, note] of rows) {
     let state: TuningChatState = { ...initialChatState(), status: 'ready', enabled: true };
@@ -112,6 +114,16 @@ test('an error event marks the reply failed and unsaved, and says why', async ()
   });
   expect(reply(chat)).toMatchObject({ text: 'Partly', state: 'failed', note: NOT_SAVED });
   expect(chat.current.state).toMatchObject({ streaming: false, error: 'The assistant is busy. Try again in a minute.' });
+});
+
+test('a turn past the server’s time limit is marked unsaved and asks for something shorter', () => {
+  let state: TuningChatState = { ...initialChatState(), status: 'ready', enabled: true };
+  state = chatReducer(state, { type: 'send', content: 'x', userKey: 'u', replyKey: 'r' });
+  state = chatReducer(state, { type: 'event', event: { type: 'text', delta: 'Partly' }, key: 'k1', at: '' });
+  state = chatReducer(state, { type: 'event', event: { type: 'error', code: 'timeout' }, key: 'k2', at: '' });
+  expect(state.messages.at(-1)).toMatchObject({ text: 'Partly', state: 'failed', note: NOT_SAVED });
+  expect(state.error).toBe(TIMED_OUT);
+  expect(TIMED_OUT).toBe('The reply took too long. Try asking something shorter.');
 });
 
 test('Stop aborts the stream and keeps the partial reply, marked stopped', async () => {
@@ -143,6 +155,45 @@ test('a stream that closes without done is cut off', async () => {
   expect(chat.current.state.error).toBe(CUT_OFF);
 });
 
+const UNSAVED_FIRST_TURNS: [string, (chat: { current: TuningChat }, live: LiveTurn) => Promise<void>][] = [
+  ['Stop', async (chat) => { await act(() => { chat.current.stop(); }); }],
+  ['provider_overloaded', async (_chat, live) => {
+    await act(() => {
+      live.emit('error', { code: 'provider_overloaded' });
+      live.end();
+    });
+  }],
+  ['a refusal', async (_chat, live) => {
+    await act(() => {
+      live.emit('done', { stopReason: 'refusal', costUsd: 0.01 });
+      live.end();
+    });
+  }],
+];
+
+test.each(UNSAVED_FIRST_TURNS)('a first turn ended by %s saved nothing: its conversation goes, and the next send starts a new one', async (_how, finish) => {
+  const api = fakeChatApi();
+  const chat = await ready(api);
+  // The re-read after the turn fails, so only the hook itself can drop the conversation from the list.
+  api.chatError = new ApiError('network', 'The network request failed.');
+  await send(chat, 'Closed Monday');
+  await act(() => {
+    turn(api).emit('conversation', { id: 'c2', title: 'Closed Monday' });
+    turn(api).emit('text', { delta: 'Partly' });
+  });
+  expect(chat.current.state.conversationId).toBe('c2');
+  expect(chat.current.state.conversations.map((item) => item.id)).toEqual(['c2', 'c1']);
+
+  await finish(chat, turn(api));
+  await waitFor(() => { expect(chat.current.state.streaming).toBe(false); });
+  expect(chat.current.state.conversationId).toBeNull();
+  expect(chat.current.state.conversations.map((item) => item.id)).toEqual(['c1']);
+  expect(reply(chat).text).toBe('Partly');
+
+  await send(chat, 'Closed Tuesday');
+  expect(turn(api, 1).body).toEqual({ content: 'Closed Tuesday' });
+});
+
 test('a dropped connection keeps the partial reply as failed; one before any reply takes the turn back', async () => {
   const api = fakeChatApi();
   const chat = await ready(api);
@@ -164,7 +215,7 @@ test('a refused turn is taken back and its text returns to the composer', async 
   const api = fakeChatApi();
   const chat = await ready(api);
   const rows: [ApiError, string][] = [
-    [refusal(409, 'chat_turn_in_progress'), 'This conversation is still answering. Try again in a moment.'],
+    [refusal(409, 'chat_turn_in_progress'), 'You already have a reply in progress, maybe in another tab or location. Wait for it to finish, then try again.'],
     [refusal(409, 'conversation_full'), 'This conversation is full. Start a new conversation.'],
     [refusal(403, 'view_as_read_only'), 'View-as is read-only, so you can’t send messages.'],
     [new ApiError('http', 'The request was refused.', { status: 429, code: 'rate_limited', retryAfterSeconds: 90 }), 'You’ve sent a lot of messages. Try again in 2 minutes.'],
@@ -195,6 +246,27 @@ test('budget used up: the GET turns Send off, and a 409 turns the budget to used
   await waitFor(() => { expect(chat.current.state.budget?.exhausted).toBe(true); });
   expect(chat.current.state).toMatchObject({ error: null, draft: 'Hello', messages: [] });
   expect(canSend(chat.current.state)).toBe(false);
+});
+
+test('a reply that ends with budget stays, shows the budget used up as the GET would, and turns Send off', async () => {
+  const api = fakeChatApi();
+  const chat = await ready(api);
+  // The re-read after the turn fails, so only the done event can mark the budget used up.
+  api.chatError = new ApiError('network', 'The network request failed.');
+  await send(chat, 'Hello');
+  await act(() => {
+    turn(api).emit('conversation', { id: 'c2', title: 'Hello' });
+    turn(api).emit('text', { delta: 'Here is what I found.' });
+    turn(api).emit('done', { stopReason: 'budget', costUsd: 0.02 });
+    turn(api).end();
+  });
+  await waitFor(() => { expect(chat.current.state.streaming).toBe(false); });
+  expect(reply(chat)).toMatchObject({ text: 'Here is what I found.', state: 'complete', note: BUDGET_SPENT });
+  expect(chat.current.state).toMatchObject({ conversationId: 'c2', error: null, budget: { ...SUMMARY.budget, exhausted: true } });
+  await act(() => { chat.current.setDraft('More'); });
+  expect(canSend(chat.current.state)).toBe(false);
+  await act(() => { chat.current.send(); });
+  expect(api.turns).toHaveLength(1);
 });
 
 test('off: the GET says disabled, and a 503 re-reads it', async () => {

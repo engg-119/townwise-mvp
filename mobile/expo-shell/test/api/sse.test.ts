@@ -40,9 +40,11 @@ test('joins multi-line data with newlines', () => {
   expect(parse(['data: one\ndata: two\ndata:\ndata: three\n\n'])).toEqual([{ event: 'message', data: 'one\ntwo\n\nthree' }]);
 });
 
-test('a final event without a trailing blank line is delivered at the end', () => {
-  expect(parse(['event: done\ndata: {"stopReason":"end_turn"}'])).toEqual([{ event: 'done', data: '{"stopReason":"end_turn"}' }]);
-  expect(parse(['event: done\ndata: {}\n'])).toEqual([{ event: 'done', data: '{}' }]);
+test('an event with no blank line after it is discarded when the stream ends', () => {
+  expect(parse(['event: done\ndata: {"stopReason":"end_turn"}'])).toEqual([]);
+  expect(parse(['event: done\ndata: {}\n'])).toEqual([]);
+  expect(parse(['data: 1\r'])).toEqual([]);
+  expect(parse(['event: text\ndata: 1\n\nevent: done\ndata: {}\n'])).toEqual([{ event: 'text', data: '1' }]);
 });
 
 test('reads CRLF and CR line ends, including a CRLF split between chunks', () => {
@@ -51,7 +53,8 @@ test('reads CRLF and CR line ends, including a CRLF split between chunks', () =>
     { event: 'b', data: '2' },
   ]);
   expect(parse(['event: a\r', '\ndata: 1\r', '\n\r', '\n'])).toEqual([{ event: 'a', data: '1' }]);
-  expect(parse(['data: 1\r'])).toEqual([{ event: 'message', data: '1' }]);
+  // A CR at the very end still ends its line, here the blank one.
+  expect(parse(['data: 1\r\r'])).toEqual([{ event: 'message', data: '1' }]);
 });
 
 test('field rules: one leading space is dropped, no colon means an empty value, unknown fields and empty events are ignored', () => {

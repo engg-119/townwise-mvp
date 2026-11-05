@@ -12,7 +12,10 @@ export interface SseEvent {
 export interface SseParser {
   /** Feeds decoded text and returns the events it completed. */
   push(text: string): SseEvent[];
-  /** The stream ended. Completes a last event that had no blank line after it. */
+  /**
+   * The stream ended. A CR held back as a possible CRLF ends its line after all; an event with no blank line after
+   * it is discarded, as the WHATWG rules say, so a reply cut off mid-event never reads as finished.
+   */
   end(): SseEvent[];
 }
 
@@ -65,10 +68,11 @@ export function createSseParser(): SseParser {
     },
     end() {
       const out: SseEvent[] = [];
-      const rest = buffer.endsWith('\r') ? buffer.slice(0, -1) : buffer;
+      // Only a line with its end is a line; a blank one dispatches the event before it.
+      if (buffer.endsWith('\r')) line(buffer.slice(0, -1), out);
       buffer = '';
-      if (rest !== '') line(rest, out);
-      dispatch(out);
+      eventType = '';
+      data = [];
       return out;
     },
   };

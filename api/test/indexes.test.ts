@@ -21,8 +21,8 @@ describe('indexes', () => {
     const connection = registered();
     const collections = Object.values(connection.models).map((model) => model.collection.collectionName).sort();
     expect(collections).toEqual([
-      'tw_access_requests', 'tw_audit_events', 'tw_chat_conversations', 'tw_chat_usage', 'tw_locations', 'tw_members',
-      'tw_notes', 'tw_orgs', 'tw_sales_days', 'tw_uploads', 'tw_view_as_grants',
+      'tw_access_requests', 'tw_audit_events', 'tw_chat_conversations', 'tw_chat_live_turns', 'tw_chat_usage', 'tw_locations',
+      'tw_members', 'tw_notes', 'tw_orgs', 'tw_sales_days', 'tw_uploads', 'tw_view_as_grants',
     ]);
   });
 
@@ -58,7 +58,7 @@ describe('indexes', () => {
 
   it('leads every tenant compound index with orgId, except the two seat indexes keyed by the person', () => {
     const connection = registered();
-    for (const model of ['TwMember', 'TwLocation', 'TwSalesDay', 'TwUpload', 'TwNote', 'TwChatConversation', 'TwChatUsage']) {
+    for (const model of ['TwMember', 'TwLocation', 'TwSalesDay', 'TwUpload', 'TwNote', 'TwChatConversation', 'TwChatLiveTurn', 'TwChatUsage']) {
       for (const [fields] of indexesOf(connection, model)) {
         const keys = Object.keys(fields);
         if (keys.length < 2) continue;
@@ -75,6 +75,12 @@ describe('indexes', () => {
     ]);
     expect(indexesOf(connection, 'TwChatUsage')).toContainEqual([
       { orgId: 1, month: 1 }, expect.objectContaining({ unique: true }),
+    ]);
+  });
+
+  it('keeps one live tuning chat turn per person per organization', () => {
+    expect(indexesOf(registered(), 'TwChatLiveTurn')).toContainEqual([
+      { orgId: 1, userId: 1 }, expect.objectContaining({ unique: true }),
     ]);
   });
 

@@ -61,7 +61,7 @@ async function snapshotOf(org: Tenant): Promise<string> {
   const docs: unknown[] = [await server.connection.collection('tw_orgs').findOne({ _id: orgId })];
   for (const name of [
     'tw_members', 'tw_locations', 'tw_sales_days', 'tw_uploads', 'tw_notes', 'tw_view_as_grants', 'tw_audit_events',
-    'tw_chat_conversations', 'tw_chat_usage',
+    'tw_chat_conversations', 'tw_chat_live_turns', 'tw_chat_usage',
   ]) {
     docs.push(await server.connection.collection(name).find({ orgId }).sort({ _id: 1 }).toArray());
   }

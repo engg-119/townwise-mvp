@@ -1,15 +1,17 @@
-// The tuning chat's pricing and provider error codes (docs/portal/tuning-chat.md sections 4 and 5), without Docker.
+// The tuning chat's pricing, provider error codes and the cost of calls that never finished (docs/portal/tuning-chat.md
+// sections 4 and 5), without Docker.
 import {
   AnthropicError, APIConnectionError, APIConnectionTimeoutError, APIError, APIUserAbortError, AuthenticationError,
   BadRequestError, InternalServerError, NotFoundError, PermissionDeniedError, RateLimitError,
 } from '@anthropic-ai/sdk';
-import type { BetaContentBlock } from '@anthropic-ai/sdk/resources/beta/messages/messages';
+import type { BetaContentBlock, BetaRawMessageStreamEvent } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import { describe, expect, it } from 'vitest';
 
 import { costMicroUsd, messageCostMicroUsd } from '../src/chat/pricing.ts';
 import { SYSTEM_PROMPT, TOOLS } from '../src/chat/prompt.ts';
-import { echoable, failureCode, requestParams } from '../src/chat/turn.ts';
-import { message, text, thinking, toolUse, usage } from './helpers/chat-model.ts';
+import type { ToolContext } from '../src/chat/tools.ts';
+import { echoable, failureCode, requestParams, runTurn, type TurnResult } from '../src/chat/turn.ts';
+import { eventsOf, message, scriptedModel, text, thinking, toolUse, usage, type Step } from './helpers/chat-model.ts';
 
 const tokens = (input: number, output: number, cacheRead = 0, cacheWrite = 0) => ({ input, output, cacheRead, cacheWrite });
 
@@ -113,5 +115,72 @@ describe('a mid-reply fallback', () => {
     expect(echoable(content)).toEqual([
       text('Partial '), text('more '), thinking('kept'), text('Final'), toolUse('t-kept', 'list_notes', {}),
     ]);
+  });
+});
+
+describe('a call that never finished', () => {
+  // These calls make no tool call, so the turn never reads its tool context.
+  const noTools = {} as unknown as ToolContext;
+
+  /** The events of a reply up to, not including, message_delta: message_start reports 1000 input tokens. */
+  function startedReply(value: string, model = 'claude-opus-5-5'): BetaRawMessageStreamEvent[] {
+    const events = eventsOf(message([text(value)], { model, usage: { input: 1000, output: 900 } }));
+    return events.slice(0, events.findIndex((event) => event.type === 'message_delta'));
+  }
+
+  /** Runs one turn of one call. On its first text delta the clock moves on `seconds`, and `abort` aborts the turn. */
+  async function charged(step: Step, opts: { seconds?: number; abort?: boolean } = {}): Promise<{ result: TurnResult; costs: number[] }> {
+    const model = scriptedModel();
+    model.script(step);
+    let clock = Date.parse('2026-06-01T12:00:00.000Z');
+    const controller = new AbortController();
+    let moved = false;
+    const costs: number[] = [];
+    const result = await runTurn({
+      model, tools: noTools, history: [], userMessage: { role: 'user', content: 'Hello' }, signal: controller.signal,
+      now: () => new Date(clock),
+      emit: (event) => {
+        if (event.type !== 'text' || moved) return;
+        moved = true;
+        clock += (opts.seconds ?? 0) * 1000;
+        if (opts.abort === true) controller.abort();
+      },
+      charge: (cost) => {
+        costs.push(cost);
+        return Promise.resolve();
+      },
+      budgetSpent: () => Promise.resolve(false),
+    });
+    return { result, costs };
+  }
+
+  const connectionError = (): APIConnectionError => new APIConnectionError({ message: 'Connection error.' });
+
+  it('a call that fails after message_start is charged ceil(streamed characters / 3) output tokens', async () => {
+    // Three 7-character text deltas: 21 characters, 7 tokens, and no time passed.
+    const before = startedReply('Partial reply here, then').slice(0, 5);
+    expect(before.filter((event) => event.type === 'content_block_delta')).toHaveLength(3);
+    const { result, costs } = await charged({ kind: 'error', error: connectionError(), before });
+    expect(result).toMatchObject({ kind: 'failed', code: 'provider_unavailable' });
+    expect(costs).toEqual([1000 * 4 + 7 * 20]);
+  });
+
+  it('an aborted call is charged ceil(seconds since message_start x 150) when that is more, up to max_tokens', async () => {
+    const before = startedReply('A long answer that keeps going');
+    const tenSeconds = await charged({ kind: 'hang', before }, { seconds: 10, abort: true });
+    expect(tenSeconds.result).toMatchObject({ kind: 'aborted' });
+    expect(tenSeconds.costs).toEqual([1000 * 4 + 1500 * 20]);
+    const fractional = await charged({ kind: 'hang', before }, { seconds: 0.101, abort: true });
+    expect(fractional.costs).toEqual([1000 * 4 + 16 * 20]);
+    const long = await charged({ kind: 'hang', before }, { seconds: 200, abort: true });
+    expect(long.costs).toEqual([1000 * 4 + 16_000 * 20]);
+  });
+
+  it('prices the estimate at the answering model’s output price, and a call past message_delta at its reported usage', async () => {
+    const fallback = await charged({ kind: 'error', error: connectionError(), before: startedReply('Partial reply here, then', 'claude-opus-5').slice(0, 5) });
+    expect(fallback.costs).toEqual([1000 * 5 + 7 * 25]);
+    const events = eventsOf(message([text('Whole')], { usage: { input: 1000, output: 900 } }));
+    const reported = await charged({ kind: 'error', error: connectionError(), before: events.slice(0, -1) }, { seconds: 10 });
+    expect(reported.costs).toEqual([1000 * 4 + 900 * 20]);
   });
 });

@@ -6,6 +6,7 @@ import type { Connection } from 'mongoose';
 
 import { mountTownwiseRoutes, TOWNWISE_ROUTES, type TownwiseRoute } from './access/routes.ts';
 import type { ChatModel } from './chat/model.ts';
+import { TURN_TIME_LIMIT_MS } from './chat/turn.ts';
 import { resolveTownwiseConfig, type ResolvedTownwiseConfig, type TownwiseConfig } from './config.ts';
 import { createTownwiseStores, type TownwiseStores } from './stores/index.ts';
 
@@ -20,6 +21,8 @@ export interface TownwiseDeps {
   readonly now: () => Date;
   /** The tuning chat's model; absent turns the chat off (main.ts builds it only when ANTHROPIC_API_KEY is set). */
   readonly chat?: ChatModel | undefined;
+  /** A tuning chat turn's time limit in milliseconds; tests shorten it. Absent, TURN_TIME_LIMIT_MS (150 seconds). */
+  readonly chatTurnTimeLimitMs?: number | undefined;
 }
 
 /** What every route handler receives besides the request and the principal. */
@@ -34,6 +37,7 @@ export interface TownwiseContext {
   readonly stores: TownwiseStores;
   /** Null while the tuning chat is off. */
   readonly chat: ChatModel | null;
+  readonly chatTurnTimeLimitMs: number;
 }
 
 /**
@@ -51,6 +55,7 @@ export function createTownwiseApi(deps: TownwiseDeps, routes: readonly TownwiseR
     now: deps.now,
     stores: createTownwiseStores(deps.connection),
     chat: deps.chat ?? null,
+    chatTurnTimeLimitMs: deps.chatTurnTimeLimitMs ?? TURN_TIME_LIMIT_MS,
   };
   // No router-wide body parser: each route mounts its own limit after the policy passes (spec 7.2 step 6).
   const router = express.Router();
