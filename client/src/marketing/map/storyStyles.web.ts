@@ -29,8 +29,9 @@ const skeleton = `
 // month panel shares the map's sticky box (rows 1 to 16, the same top and height) and centers itself in it, so it
 // stays still, centered, from January to the last step and leaves with the map only after the last step. It fades
 // in at January and out at the final card, whose text runs through the same column. A zoomed town fills the map, so
-// the title steps aside; focus inside it (a Tab from the header) brings it back, so its links never take an
-// invisible focus.
+// the title steps aside; focus inside it (a Tab from the header) brings back only the part with focus, the actions,
+// so its links never take an invisible focus and the H1 never covers the map's Back. Hidden parts stay focusable
+// and in the reading order (opacity, not visibility), and come back only once the title's 150ms fade has ended.
 const wide = `
 @media (min-width:1024px){
 .twmap .story{padding-top:24px}
@@ -43,7 +44,10 @@ const wide = `
 .twmap .story.is-on.is-months .st-tl{opacity:1}
 .twmap .story.is-on .st-f{min-height:720px}
 .twmap .app.is-zoomed .st-h .hd{opacity:0;pointer-events:none}
-.twmap .app.is-zoomed .st-h .hd:focus-within{opacity:1;pointer-events:auto}
+.twmap .app.is-zoomed .st-h .hd>*{transition:opacity 0s 150ms}
+.twmap .app.is-zoomed .st-h .hd:focus-within{opacity:1}
+.twmap .app.is-zoomed .st-h .hd:focus-within>:not(:focus-within){opacity:0;transition:none}
+.twmap .app.is-zoomed .st-h .hd>:focus-within{pointer-events:auto}
 }
 `;
 

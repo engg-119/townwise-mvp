@@ -598,32 +598,44 @@ test('without an observer the map lies flat at the widest spread; a silent one l
   expect(listHeader()).toBe('Gap in Feb 2024');
 });
 
-test('from 1024px a zoomed town hides the title, and focus inside it brings the title back', () => {
+test('from 1024px a zoomed town hides the title, and focus inside it brings back only the part with focus, so the H1 stays off the map’s Back', () => {
   installObserver();
   media({ wide: true, reduce: false });
-  const { frame } = renderStory(<div className="hd"><h1>The title</h1><a href="/early-access">Request early access</a></div>);
+  const { frame } = renderStory(<div className="hd"><h1>The title</h1><div className="cta-row"><a href="/early-access">Request early access</a></div></div>);
   const head = document.querySelector<HTMLElement>('.st-h .hd');
-  if (head === null) throw new Error('no title');
+  const title = head?.querySelector('h1');
+  const actions = head?.querySelector('.cta-row');
+  if (head == null || title == null || actions == null) throw new Error('no title');
   const hidden = '.twmap .app.is-zoomed .st-h .hd';
   const shown = `${hidden}:focus-within`;
-  // The rule that shows it comes after the one that hides it, in the same block, and is more specific.
+  const rest = `${shown}>:not(:focus-within)`;
+  const part = `${hidden}>:focus-within`;
+  // The rules that show it come after the one that hides it, in the same block, and are more specific. Its parts
+  // are hidden with opacity, so they stay focusable and in the reading order, and a part that loses focus comes
+  // back only once the title's 150ms fade has ended.
   const wide = storyCss.slice(storyCss.indexOf('@media (min-width:1024px){\n'));
+  const end = wide.indexOf('\n}\n');
   const hide = wide.indexOf(`${hidden}{opacity:0;pointer-events:none}`);
-  const show = wide.indexOf(`${shown}{opacity:1;pointer-events:auto}`);
   expect(hide).toBeGreaterThan(-1);
-  expect(show).toBeGreaterThan(hide);
-  expect(show).toBeLessThan(wide.indexOf('\n}\n'));
+  for (const rule of [`${hidden}>*{transition:opacity 0s 150ms}`, `${shown}{opacity:1}`, `${rest}{opacity:0;transition:none}`, `${part}{pointer-events:auto}`]) {
+    expect(wide.indexOf(rule)).toBeGreaterThan(hide);
+    expect(wide.indexOf(rule)).toBeLessThan(end);
+  }
   expect(head.matches(hidden)).toBe(false);
   fireEvent.click(row('Hanover, NH'), { detail: 1 });
   expect(frame.className).toContain('is-zoomed');
   expect(head.matches(hidden)).toBe(true);
   expect(head.matches(shown)).toBe(false);
-  // Tab from the header lands on the title's first link.
+  // Tab from the header lands on the title's first link: its actions come back, the H1 stays hidden.
   const link = screen.getByRole('link', { name: 'Request early access' });
   act(() => { link.focus(); });
+  expect(document.activeElement).toBe(link);
   expect(head.matches(shown)).toBe(true);
+  expect([actions.matches(part), actions.matches(rest)]).toEqual([true, false]);
+  expect([title.matches(part), title.matches(rest)]).toEqual([false, true]);
   act(() => { link.blur(); });
   expect(head.matches(shown)).toBe(false);
+  expect(title.matches(rest)).toBe(false);
 });
 
 test('every step is in the reading order, the story adds no control, and nothing listens to the page', () => {
