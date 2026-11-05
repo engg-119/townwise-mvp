@@ -439,6 +439,13 @@ test('the map figure fills the pane on phones instead of collapsing to zero widt
   expect(mapCss).toMatch(/\.twmap \.map-fig\{width:100%;max-width:1040px;margin-inline:auto;/);
 });
 
+test('on phones the card’s sentences are body size and the notes’ longer mono lines 14px', () => {
+  expect(mapCss).toContain('@media (max-width:640px){.twmap .cp,.twmap .pat,.twmap .tx,.twmap .why li{font-size:16px;line-height:24px}.twmap .cav li,.twmap .fine,.twmap .srcs a{font-size:14px;line-height:20px}}');
+  // The rule comes after the base sizes, so it wins at the same specificity.
+  expect(mapCss.indexOf('.twmap .cav li,.twmap .fine{')).toBeLessThan(mapCss.indexOf('.twmap .cav li,.twmap .fine,.twmap .srcs a{font-size:14px'));
+  expect(mapCss.indexOf('.twmap .cp{')).toBeLessThan(mapCss.indexOf('.twmap .cp,.twmap .pat,'));
+});
+
 test('the map CSS follows the motion rules', () => {
   expect(mapCss).not.toMatch(/transition:\s*all/);
   expect(mapCss).not.toMatch(/ease-in(?!-out)/);

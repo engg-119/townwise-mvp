@@ -89,7 +89,8 @@ const map = `
 .twmap .zb:hover{color:var(--white);border-color:var(--white)}
 `;
 
-// The town list, the card and the notes row under the panes.
+// The town list, the card and the notes row under the panes. On phones the card's sentences are body size and
+// the notes' longer mono lines 14px.
 const panel = `
 .twmap .list-h{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:4px 16px;min-height:32px;padding:4px 11px}
 .twmap .list-pick{font-size:14px;line-height:20px;font-weight:600;color:var(--white)}
@@ -188,6 +189,7 @@ const panel = `
 .twmap .srcs{display:grid}
 .twmap .srcs a{display:inline-flex;align-items:center;min-height:44px;color:var(--text3)}
 .twmap .srcs a:hover{color:var(--mint)}
+@media (max-width:640px){.twmap .cp,.twmap .pat,.twmap .tx,.twmap .why li{font-size:16px;line-height:24px}.twmap .cav li,.twmap .fine,.twmap .srcs a{font-size:14px;line-height:20px}}
 `;
 
 // Crossfades replay because their class flips between two identical copies on each change. A change made
