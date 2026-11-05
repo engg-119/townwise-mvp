@@ -1,6 +1,6 @@
 # api
 
-Townwise backend: one Node process (`src/main.ts`) composed from the kit modules in `../backend/` (copied from camkeith/modules; versions in `../KIT.md`). Sign-in is Google only.
+Townwise backend: one Node process (`src/main.ts`) composed from the kit modules in `kit/` (copied from camkeith/modules; versions in `../KIT.md`). Sign-in is Google only.
 
 It mounts two routers. The kit’s `/auth` handles sign-in, sessions and two-step sign-in. Townwise’s `/api` (`src/app.ts`, routes in `src/access/routes.ts`) handles access, organizations, locations, sales data, notes, the tuning chat, the team and the staff console. No kit file is changed; all Townwise code is under `api/`. "The build spec" and "spec Section N" in this README and in code comments mean `../docs/portal/spec.md`.
 
@@ -378,7 +378,7 @@ Townwise reads the kit’s data only through its store functions (`users.findByI
 | `PORT` | server-core | no | no | `8080` |
 | `LOG_LEVEL` | server-core | no | no | `info` |
 | `CORS_ORIGINS` | server-core | no | no | `http://localhost:8081`, the Expo web client |
-| `TRUST_PROXY` | server-core | yes | no | `loopback` locally; when deployed, only the addresses of the proxy in front of the app (`../backend/server-core/MODULE.md`) |
+| `TRUST_PROXY` | server-core | yes | no | `loopback` locally; when deployed, only the addresses of the proxy in front of the app (`kit/server-core/MODULE.md`) |
 | `HTTP_KEEP_ALIVE_TIMEOUT_MS` | server-core | no | no | `65000` |
 | `SHUTDOWN_TIMEOUT_MS` | server-core | no | no | `25000` |
 | `MONGODB_URI` | mongo | yes | yes | `mongodb://localhost:27017/townwise` |
@@ -394,8 +394,8 @@ Townwise reads the kit’s data only through its store functions (`users.findByI
 | `TOWNWISE_CHAT_MONTHLY_BUDGET_USD` | api (`src/config.ts`) | no | no | `20`: the tuning chat’s monthly spend limit per organization, in dollars, 0 to 10,000 |
 | `ANTHROPIC_API_KEY` | api (`src/main.ts`) | no | yes | empty locally, which turns the tuning chat off; in production a Key Vault reference when `enable_chat` is on (`../infra/README.md`, step 16) |
 
-`.env.example` lists every variable above except `LOG_LEVEL`, `HTTP_KEEP_ALIVE_TIMEOUT_MS` and `SHUTDOWN_TIMEOUT_MS`, which take their defaults. It holds local values and placeholders only: the two key rings, the Google client ids, the staff list and the Anthropic key are empty. Key rotation for the two key rings is in `../backend/auth/MODULE.md`.
+`.env.example` lists every variable above except `LOG_LEVEL`, `HTTP_KEEP_ALIVE_TIMEOUT_MS` and `SHUTDOWN_TIMEOUT_MS`, which take their defaults. It holds local values and placeholders only: the two key rings, the Google client ids, the staff list and the Anthropic key are empty. Key rotation for the two key rings is in `kit/auth/MODULE.md`.
 
 ## Kit modules
 
-The code under `../backend/` is ours to own. Record any change under `## Local changes` in that module's `MODULE.md` with the test that pins it. To take a kit fix: in a camkeith/modules clone, `git diff <commit in KIT.md> <new commit> -- backend/<name>`, apply it here, run `npm run verify`, and update the line in `KIT.md`.
+The code under `kit/` is ours to own. Record any change under `## Local changes` in that module's `MODULE.md` with the test that pins it. To take a kit fix: in a camkeith/modules clone, `git diff <commit in KIT.md> <new commit> -- backend/<name>`, apply it here, run `npm run verify`, and update the line in `KIT.md`.

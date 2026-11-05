@@ -7,11 +7,11 @@ WORKDIR /app
 # Manifests first, so this layer is rebuilt only when a manifest or the lockfile changes.
 COPY package.json package-lock.json .npmrc ./
 COPY api/package.json api/
-COPY backend/auth/package.json backend/auth/
-COPY backend/mongo/package.json backend/mongo/
-COPY backend/rate-limit/package.json backend/rate-limit/
-COPY backend/redis/package.json backend/redis/
-COPY backend/server-core/package.json backend/server-core/
+COPY api/kit/auth/package.json api/kit/auth/
+COPY api/kit/mongo/package.json api/kit/mongo/
+COPY api/kit/rate-limit/package.json api/kit/rate-limit/
+COPY api/kit/redis/package.json api/kit/redis/
+COPY api/kit/server-core/package.json api/kit/server-core/
 # Production dependencies of the API workspace only, exactly as locked, with no install scripts
 # (.npmrc also sets ignore-scripts and engine-strict).
 RUN npm ci --omit=dev --ignore-scripts --workspace @townwise/api --no-audit --no-fund
@@ -23,16 +23,16 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 COPY api/package.json api/production.env api/
 COPY api/src api/src
-COPY backend/auth/package.json backend/auth/
-COPY backend/auth/src backend/auth/src
-COPY backend/mongo/package.json backend/mongo/
-COPY backend/mongo/src backend/mongo/src
-COPY backend/rate-limit/package.json backend/rate-limit/
-COPY backend/rate-limit/src backend/rate-limit/src
-COPY backend/redis/package.json backend/redis/
-COPY backend/redis/src backend/redis/src
-COPY backend/server-core/package.json backend/server-core/
-COPY backend/server-core/src backend/server-core/src
+COPY api/kit/auth/package.json api/kit/auth/
+COPY api/kit/auth/src api/kit/auth/src
+COPY api/kit/mongo/package.json api/kit/mongo/
+COPY api/kit/mongo/src api/kit/mongo/src
+COPY api/kit/rate-limit/package.json api/kit/rate-limit/
+COPY api/kit/rate-limit/src api/kit/rate-limit/src
+COPY api/kit/redis/package.json api/kit/redis/
+COPY api/kit/redis/src api/kit/redis/src
+COPY api/kit/server-core/package.json api/kit/server-core/
+COPY api/kit/server-core/src api/kit/server-core/src
 # The code is owned by root and read-only to the app; it runs as the image's unprivileged node user.
 # No secrets are in any layer: they arrive as environment variables at run time.
 USER node

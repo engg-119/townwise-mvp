@@ -1,4 +1,4 @@
-// Composition root, from backend/server-core/MODULE.md "Wire it in". The only file that reads process.env.
+// Composition root, from api/kit/server-core/MODULE.md "Wire it in". The only file that reads process.env.
 import { z } from 'zod';
 import { configSchema as serverSchema, createLogger, createServer, loadEnv } from '@ckeith26/server-core';
 import { configSchema as mongoSchema, connectMongo, ensureIndexes } from '@ckeith26/mongo';

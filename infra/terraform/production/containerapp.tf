@@ -175,7 +175,7 @@ resource "azurerm_container_app" "api" {
         "--save",
         "--appendonly", "no",
         "--maxmemory", "64mb",
-        # Rate-limit keys all carry a TTL; eviction would silently reset counters (backend/redis/MODULE.md).
+        # Rate-limit keys all carry a TTL; eviction would silently reset counters (api/kit/redis/MODULE.md).
         "--maxmemory-policy", "noeviction",
       ]
 
@@ -205,7 +205,7 @@ resource "azurerm_container_app" "api" {
 }
 
 # api.townwise.tech: an A record to the environment's static IP (dns.tf), never a CNAME to another
-# domain, because WebKit caps cookies set by a CNAME-cloaked API host at 7 days (backend/auth/MODULE.md).
+# domain, because WebKit caps cookies set by a CNAME-cloaked API host at 7 days (api/kit/auth/MODULE.md).
 resource "azurerm_container_app_custom_domain" "api" {
   name             = local.api_domain
   container_app_id = azurerm_container_app.api.id

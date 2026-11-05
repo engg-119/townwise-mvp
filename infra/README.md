@@ -113,7 +113,7 @@ printf 'mongodb+srv://townwise-backup:%s@%s/townwise?%s' "$(pw)" "$host" "$O" | 
 printf 'none' | infra/scripts/set-secret.sh "$V" mongodb-restore-uri     # no restore user until a restore (step 14)
 ```
 
-**Rotation.** JWT and encryption rings: run the same command, then `az containerapp revision restart`; key order is in `backend/auth/MODULE.md`. Database users: write a new `mongodb-uri` or `mongodb-backup-uri` as above (same user name, new password), run the db-users job (step 7), then restart the API revision; between the job and the restart, new pool connections fail, so do it at a quiet time. Admin password: bump `db_admin_password_version` and apply. Container Apps picks up new secret versions within about 30 minutes on its own; a job started sooner can still see the old value, so wait, or check what the db-users job reports.
+**Rotation.** JWT and encryption rings: run the same command, then `az containerapp revision restart`; key order is in `api/kit/auth/MODULE.md`. Database users: write a new `mongodb-uri` or `mongodb-backup-uri` as above (same user name, new password), run the db-users job (step 7), then restart the API revision; between the job and the restart, new pool connections fail, so do it at a quiet time. Admin password: bump `db_admin_password_version` and apply. Container Apps picks up new secret versions within about 30 minutes on its own; a job started sooner can still see the old value, so wait, or check what the db-users job reports.
 
 ### 6. Images
 

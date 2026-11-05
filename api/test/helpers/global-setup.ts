@@ -10,7 +10,7 @@ declare module 'vitest' {
 
 export default async function setup(project: TestProject): Promise<() => Promise<void>> {
   const [mongo, valkey] = await Promise.all([
-    // The kit's settings (backend/auth/test/global-setup.ts): a raised open-file limit, and rseq=1 so
+    // The kit's settings (api/kit/auth/test/global-setup.ts): a raised open-file limit, and rseq=1 so
     // mongo 8.0.32 starts on newer kernels.
     new MongoDBContainer(MONGO_IMAGE)
       .withUlimits({ nofile: { soft: 64000, hard: 64000 } })
