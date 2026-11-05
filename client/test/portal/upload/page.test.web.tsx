@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
@@ -175,7 +175,11 @@ test('an org admin’s upload: match, check, send one body of days, and the repl
   expect(screen.getByText('$2,731')).toBeTruthy();
   expect(screen.getByText('Check these against your point-of-sale system.')).toBeTruthy();
   expect(screen.getByText('You already have Jan 1, 2025 to Feb 4, 2026. Days in both will be replaced by this file.')).toBeTruthy();
-  expect(screen.getByRole('region', { name: 'First 3 days' })).toBeTruthy();
+  const preview = screen.getByRole('region', { name: 'First 3 days' });
+  expect(preview).toBeTruthy();
+  // The group label prints once, above the table; the date column is headed Date, so stacked rows do not repeat it.
+  expect(screen.getAllByText('First 3 days')).toHaveLength(1);
+  expect(within(preview).getByRole('columnheader', { name: 'Date' })).toBeTruthy();
   expect(pageText()).not.toContain(SENTINEL);
 
   await click('Send 3 days');

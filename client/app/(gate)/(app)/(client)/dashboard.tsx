@@ -164,7 +164,11 @@ export default function LocationsPage(): React.JSX.Element {
 const c = theme.color;
 
 const styles = StyleSheet.create({
-  name: { ...theme.type.mono, color: c.white, textDecorationLine: 'underline', textDecorationColor: c.line, minHeight: 44, lineHeight: 44 },
+  // A 44px tap target from padding, not line height, so a long name wraps at the type's own line height.
+  name: {
+    ...theme.type.mono, color: c.white, textDecorationLine: 'underline', textDecorationColor: c.line,
+    minHeight: 44, paddingVertical: (44 - theme.type.mono.lineHeight) / 2,
+  },
   cell: { ...theme.type.mono, fontVariant: ['tabular-nums'], color: c.text2 },
   note: { ...theme.type.small, color: c.text2 },
   towns: { gap: theme.space[5] },

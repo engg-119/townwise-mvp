@@ -22,22 +22,25 @@ const PREVIEW = 7;
 
 function DaysTable(props: { label: string; days: readonly SalesDay[] }): React.JSX.Element {
   return (
-    <DataTable
-      label={props.label}
-      columns={[
-        { key: 'date', label: props.label, flex: 2 },
-        { key: 'guests', label: 'Guests', numeric: true },
-        { key: 'sales', label: 'Net sales', numeric: true },
-      ]}
-      rows={props.days.map((day) => ({
-        key: day.date,
-        cells: {
-          date: formatDate(day.date),
-          guests: day.guests === null ? '' : formatCount(day.guests),
-          sales: day.netSalesCents === null ? '' : formatDollars(day.netSalesCents),
-        },
-      }))}
-    />
+    <Stack gap={theme.space[2]}>
+      <Small>{props.label}</Small>
+      <DataTable
+        label={props.label}
+        columns={[
+          { key: 'date', label: 'Date', flex: 2 },
+          { key: 'guests', label: 'Guests', numeric: true },
+          { key: 'sales', label: 'Net sales', numeric: true },
+        ]}
+        rows={props.days.map((day) => ({
+          key: day.date,
+          cells: {
+            date: formatDate(day.date),
+            guests: day.guests === null ? '' : formatCount(day.guests),
+            sales: day.netSalesCents === null ? '' : formatDollars(day.netSalesCents),
+          },
+        }))}
+      />
+    </Stack>
   );
 }
 

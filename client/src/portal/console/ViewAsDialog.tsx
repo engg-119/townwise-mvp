@@ -63,7 +63,8 @@ export function ViewAsDialog(props: { target: ViewAsTarget; onClose: () => void 
 
   return (
     <Dialog
-      title={`View Townwise as ${target.email}`}
+      title="View Townwise as"
+      titleEmail={target.email}
       body={viewAsBody(target)}
       confirmLabel="Start viewing"
       pending={start.pending}

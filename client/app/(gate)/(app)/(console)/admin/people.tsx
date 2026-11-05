@@ -18,8 +18,8 @@ import { useAction, useBreakpoint } from '../../../../../src/portal/hooks';
 import { usePortal } from '../../../../../src/portal/PortalProvider';
 import { Page } from '../../../../../src/portal/shell/Page';
 import {
-  Actions, Button, DataTable, EmptyState, ErrorNotice, FormField, Heading, LoadingLine, Messages, Panel, Select, Small, Stack,
-  useFocusMessage,
+  Actions, Button, DataTable, EMAIL_FLEX, EmptyState, ErrorNotice, FormField, Heading, LoadingLine, Messages, Panel, Select, Small,
+  Stack, useFocusMessage,
 } from '../../../../../src/portal/ui';
 
 // P22. People (/admin/people, staff): docs/portal/spec.md 16.4, F7, F13; the AdminUsers board. Everyone Townwise
@@ -138,7 +138,7 @@ function PeopleTable(props: { label: string; people: readonly Person[]; you: str
     <DataTable
       label={props.label}
       columns={[
-        { key: 'email', label: 'Email', flex: 1.6 },
+        { key: 'email', label: 'Email', flex: EMAIL_FLEX },
         { key: 'kind', label: 'Kind' },
         { key: 'org', label: 'Organization', flex: 1.3 },
         { key: 'since', label: 'Since' },

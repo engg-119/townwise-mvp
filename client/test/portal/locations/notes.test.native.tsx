@@ -7,6 +7,7 @@ jest.mock('expo-splash-screen', () => ({
   hideAsync: jest.fn(() => Promise.resolve()),
 }));
 
+import { Dimensions } from 'react-native';
 import { cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing-library';
 
 import type { Note, NoteInput } from '../../../src/portal/locations/api';
@@ -14,7 +15,7 @@ import { addDays, localToday } from '../../../src/portal/locations/dates';
 import { formatDate } from '../../../src/portal/format';
 import type { MeResponse } from '../../../src/portal/schemas';
 import {
-  ACCESS, deferred, EMAIL, fakePortalApi, meOf, offline, orgOf, refusal, viewAsMe, writes, type FakePortalApi,
+  ACCESS, ADMIN_EMAIL, deferred, EMAIL, fakePortalApi, meOf, offline, orgOf, refusal, viewAsMe, writes, type FakePortalApi,
 } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { locationsFake, noteOf, type LocationsFake } from './fakes';
@@ -82,7 +83,9 @@ test('coming up and past, each note in plain words; Edit and Delete only where t
   expect(within(coming).getByText('More guests than usual')).toBeTruthy();
   expect(within(coming).getByText('About 40 guests')).toBeTruthy();
   expect(within(coming).getByText('A rehearsal dinner.')).toBeTruthy();
-  expect(within(coming).getByText('manager@example.com, Feb 1, 2026')).toBeTruthy();
+  // The email sits on its own line, with the date under it, so it can use the column's whole width.
+  expect(within(coming).getByText('manager@example.com')).toBeTruthy();
+  expect(within(coming).getAllByText('Feb 1, 2026').length).toBeGreaterThan(0);
   expect(within(past).getByText('Other')).toBeTruthy();
   expect(within(past).getByText('Road work.')).toBeTruthy();
   expect(within(past).getByText('Fewer guests than usual')).toBeTruthy();
@@ -294,4 +297,20 @@ test('view-as: Add, Edit and Delete are disabled in place with the read-only lin
   await waitFor(() => { expect(screen.queryByRole('heading', { name: 'Delete this note?' })).toBeNull(); });
   expect(screen.queryByRole('button', { name: 'Save note' })).toBeNull();
   expect(writes(api)).toEqual([]);
+});
+
+test('at 768px an email is one text of its own and Edit and Delete share one row', async () => {
+  const spy = jest.spyOn(Dimensions, 'get').mockReturnValue({ ...Dimensions.get('window'), width: 768 });
+  try {
+    const { api } = setup();
+    await renderApp('/locations/l1/notes', api);
+    const coming = await screen.findByLabelText('Notes coming up');
+    expect(within(coming).getByText(ADMIN_EMAIL)).toBeTruthy();
+    const name = `${formatDate(day(10))} to ${formatDate(day(12))}`;
+    const edit = within(coming).getByRole('button', { name: `Edit Closure note, ${name}` });
+    const del = within(coming).getByRole('button', { name: `Delete Closure note, ${name}` });
+    expect(edit.parent).toBe(del.parent);
+  } finally {
+    spy.mockRestore();
+  }
 });

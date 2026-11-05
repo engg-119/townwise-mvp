@@ -24,6 +24,11 @@ export interface Problem {
 
 export interface DialogProps {
   title: string;
+  /**
+   * An email that ends the title (“View Townwise as {email}”), set in mono 14/20 so up to 30 characters fit a line
+   * of a 320px screen's dialog: it moves to its own line whole instead of breaking mid-word.
+   */
+  titleEmail?: string;
   body?: string;
   children?: React.ReactNode;
   confirmLabel: string;
@@ -55,7 +60,10 @@ function DialogBody(props: DialogProps): React.JSX.Element {
   return (
     <View style={styles.backdrop}>
       <View role="dialog" aria-modal aria-labelledby={titleId} style={[styles.dialog, { padding: phone ? theme.space[4] : theme.space[6] }]}>
-        <Heading nativeID={titleId}>{props.title}</Heading>
+        <Heading nativeID={titleId}>
+          {props.title}
+          {props.titleEmail === undefined ? null : <>{' '}<Text style={styles.titleEmail}>{props.titleEmail}</Text></>}
+        </Heading>
         {props.body === undefined ? null : <Text style={styles.body}>{props.body}</Text>}
         {props.children}
         {typedName === undefined ? null : (
@@ -81,4 +89,5 @@ const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(8, 10, 13, 0.8)', alignItems: 'center', justifyContent: 'center', padding: theme.space[4] },
   dialog: { width: '100%', maxWidth: 560, backgroundColor: c.panel, borderWidth: 1, borderColor: c.border, gap: theme.space[4] },
   body: { ...theme.type.small, color: c.text2 },
+  titleEmail: { ...theme.type.monoUi },
 });

@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { useRouter } from 'expo-router';
 
 import { createLocation, type TownInput } from './api';
+import { CONTACT_EMAIL } from './contact';
 import { hasCode } from './errors';
 import { useAction } from './hooks';
 import { usePortal, useReadOnly } from './PortalProvider';
@@ -19,7 +20,7 @@ import { checkTown, EMPTY_TOWN, TOWN_COPY, TownFields, type TownMessages, type T
 export const LOCATION_COPY = {
   name: 'Enter the location’s name.',
   taken: 'Another location already uses that name.',
-  limit: 'You’ve reached 25 locations. Write to hello@townwise.tech for more.',
+  limit: `You’ve reached 25 locations. Write to ${CONTACT_EMAIL} for more.`,
 } as const;
 
 interface Messages { name?: string; town?: TownMessages }

@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { declineInvite, joinInvite } from '../../../../src/portal/api';
 import { hasCode } from '../../../../src/portal/errors';
-import { formatDate, plural, roleLabel, townLabel } from '../../../../src/portal/format';
+import { formatCount, formatDate, roleLabel, townLabel } from '../../../../src/portal/format';
 import { inviterOf, NumberedList, personEmail, SideHeading } from '../../../../src/portal/gate';
 import { useAction, useBreakpoint } from '../../../../src/portal/hooks';
 import { usePortal, useReadOnly } from '../../../../src/portal/PortalProvider';
@@ -13,7 +13,7 @@ import { Actions, Button } from '../../../../src/portal/ui/Button';
 import { DefinitionList } from '../../../../src/portal/ui/DataTable';
 import { ErrorNotice, Notice, ReadOnlyLine } from '../../../../src/portal/ui/feedback';
 import { Columns, Pair, Panel } from '../../../../src/portal/ui/layout';
-import { Eyebrow, Heading, Mono, Small } from '../../../../src/portal/ui/text';
+import { Eyebrow, Heading, Lead, Mono } from '../../../../src/portal/ui/text';
 import { theme } from '../../../../src/theme';
 
 // P6. Joining (spec 16.2, F1, F2b; the Joining board), for `invited`.
@@ -27,6 +27,12 @@ import { theme } from '../../../../src/theme';
 const CLIENT_PATHS = /^\/(dashboard|locations\/)/;
 
 interface Last { kind: 'join' | 'decline'; invitation: Invitation }
+
+/** “as an Admin”, “as a Member”: the role as the rest of the portal names it, with its article. */
+function asRole(role: Invitation['role']): string {
+  const label = roleLabel(role);
+  return `as ${label === 'Admin' ? 'an' : 'a'} ${label}`;
+}
 
 function RequestPanel(props: { request: AccessRequest }): React.JSX.Element {
   const { request } = props;
@@ -122,7 +128,7 @@ export default function JoiningPage(): React.JSX.Element {
         <SideHeading>What each choice does</SideHeading>
         <NumberedList
           items={[
-            `Join: you join ${org}’s team as a ${roleLabel(first.role)} and see its locations. We withdraw your request for ${pendingRequest.orgName}.`,
+            `Join: you join ${org}’s team ${asRole(first.role)} and see its locations. We withdraw your request for ${pendingRequest.orgName}.`,
             `Not my team: we remove this invitation. Your request for ${pendingRequest.orgName} stays with our team, and you’re back to waiting.`,
           ]}
         />
@@ -137,10 +143,15 @@ export default function JoiningPage(): React.JSX.Element {
         leadActions={(
           <View style={styles.leadActions}>
             <ReadOnlyLine text={line} nativeID="joining-ro" />
-            <Actions>
-              <Button label={`Join ${org}`} disabled={disabled} {...roProps} onPress={() => { act.run({ kind: 'join', invitation: first }); }} />
-              <Button variant="link" label="Not my team" disabled={disabled} {...roProps} onPress={() => { act.run({ kind: 'decline', invitation: first }); }} />
-            </Actions>
+            {/* One row, as on the board: a long name wraps inside the primary instead of pushing Not my team down. */}
+            <View style={styles.joinRow}>
+              <View style={styles.joinPrimary}>
+                <Button label={`Join ${org}`} disabled={disabled} {...roProps} onPress={() => { act.run({ kind: 'join', invitation: first }); }} />
+              </View>
+              <View style={styles.joinLink}>
+                <Button variant="link" label="Not my team" disabled={disabled} {...roProps} onPress={() => { act.run({ kind: 'decline', invitation: first }); }} />
+              </View>
+            </View>
             {error}
           </View>
         )}
@@ -162,8 +173,13 @@ export default function JoiningPage(): React.JSX.Element {
     );
   }
 
-  const lead = `${plural(invitations.length, 'organization', 'organizations')} added ${email}. You can belong to one. Choose the team you work with.${
-    pendingRequest === null ? '' : ` Joining one withdraws your request for ${pendingRequest.orgName}.`}`;
+  const lead = (
+    <Lead style={styles.lead}>
+      <Text style={styles.numeral}>{formatCount(invitations.length)}</Text>
+      {` ${invitations.length === 1 ? 'organization' : 'organizations'} added ${email}. You can belong to one. Choose the team you work with.${
+        pendingRequest === null ? '' : ` Joining one withdraws your request for ${pendingRequest.orgName}.`}`}
+    </Lead>
+  );
   return (
     <Page gate eyebrow="Your team" title="Choose your team" lead={lead}>
       {notice}
@@ -179,7 +195,7 @@ export default function JoiningPage(): React.JSX.Element {
                       <Text style={styles.org}>{invitation.orgName}</Text>
                       <Mono>{`as ${roleLabel(invitation.role)}`}</Mono>
                     </View>
-                    <Small>{`Added by ${inviterOf(invitation)}`}</Small>
+                    <Text style={styles.addedBy}>{`Added by ${inviterOf(invitation)}`}</Text>
                   </View>
                   <Actions>
                     <Button
@@ -214,7 +230,13 @@ const c = theme.color;
 
 const styles = StyleSheet.create({
   panelHead: { gap: 8 },
+  // The lead as Page sets a string one, with its count in mono.
+  lead: { marginTop: theme.space[1] },
+  numeral: { fontFamily: theme.type.mono.fontFamily, fontVariant: ['tabular-nums'] },
   leadActions: { gap: 12, marginTop: 8 },
+  joinRow: { flexDirection: 'row', alignItems: 'center', columnGap: 20 },
+  joinPrimary: { flexShrink: 1, minWidth: 0 },
+  joinLink: { flexShrink: 0 },
   notice: { marginBottom: 32 },
   choose: { gap: 16 },
   list: { borderTopWidth: 1, borderTopColor: c.border },
@@ -226,4 +248,6 @@ const styles = StyleSheet.create({
   rowText: { gap: 4, flexShrink: 1, minWidth: 0 },
   rowName: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: 12, rowGap: 4 },
   org: { ...theme.type.body, fontWeight: 600, color: c.white },
+  // `small`, `text2` at every width, as on the board.
+  addedBy: { ...theme.type.small, color: c.text2 },
 });

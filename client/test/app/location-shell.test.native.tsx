@@ -9,7 +9,7 @@ jest.mock('expo-splash-screen', () => ({
 
 import { useEffect } from 'react';
 import { act, cleanup, fireEvent, renderRouter, screen, within } from 'expo-router/testing-library';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 
 import { usePortal } from '../../src/portal/PortalProvider';
 import { useLocation } from '../../src/portal/shell/LocationShell';
@@ -80,6 +80,29 @@ test('the first load says “Loading this location”, then shows the header, th
   expect(await screen.findByText('Probe: Main Street Bar, org_admin')).toBeTruthy();
   expect(screen.getByRole('heading', { name: 'Main Street Bar' })).toBeTruthy();
   expect(screen.getByLabelText('Location sections')).toBeTruthy();
+});
+
+test('on a phone the tab row scrolls, without animating, to keep the current tab in view, on mount and on a new route', async () => {
+  const scrollTo = jest.spyOn(ScrollView.prototype, 'scrollTo');
+  try {
+    const router = await renderTab(adminApi());
+    await screen.findByText('Probe: Main Street Bar, org_admin');
+    const sections = screen.getByLabelText('Location sections');
+    // A 320px row, and six tabs 90px wide, 4px apart from 4px in: Town, the fourth, ends at 376px.
+    await fireEvent(sections, 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 320, height: 53 } } });
+    const links = within(sections).getAllByRole('link');
+    expect(links).toHaveLength(6);
+    expect(within(sections).getByRole('link', { name: 'Town' }).props.accessibilityState).toMatchObject({ selected: true });
+    for (const [index, link] of links.entries()) {
+      await fireEvent(link, 'layout', { nativeEvent: { layout: { x: 4 + index * 94, y: 4, width: 90, height: 44 } } });
+    }
+    expect(scrollTo).toHaveBeenLastCalledWith({ x: 376 + 4 - 320, animated: false });
+    await fireEvent.press(within(sections).getByRole('link', { name: 'Forecast' }));
+    expect(router.getPathname()).toBe('/locations/l1');
+    expect(scrollTo).toHaveBeenLastCalledWith({ x: 0, animated: false });
+  } finally {
+    scrollTo.mockRestore();
+  }
 });
 
 test('a reload keeps the page mounted on its tab with the answer before it, then shows the new one', async () => {

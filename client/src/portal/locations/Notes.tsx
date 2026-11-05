@@ -70,11 +70,11 @@ function NotesTable(props: {
     <DataTable
       label={props.label}
       columns={[
-        { key: 'note', label: 'Note', flex: 1.6 },
-        { key: 'dates', label: 'Dates', flex: 1.4 },
-        { key: 'effect', label: 'Effect', flex: 1.2 },
-        { key: 'added', label: 'Added by', flex: 1.4 },
-        { key: 'actions', label: 'Actions', hiddenLabel: true, flex: 1 },
+        { key: 'note', label: 'Note', flex: 1.5 },
+        { key: 'dates', label: 'Dates', flex: 1.3 },
+        { key: 'effect', label: 'Effect', flex: 1 },
+        { key: 'added', label: 'Added by', flex: 1.8 },
+        { key: 'actions', label: 'Actions', hiddenLabel: true, flex: 1.3 },
       ]}
       rows={props.notes.map((note) => {
         const name = `${KIND_LABEL[note.kind]} note, ${datesLine(note)}`;
@@ -86,7 +86,7 @@ function NotesTable(props: {
             note: <NoteCell note={note} selected={note.id === props.selectedId} />,
             dates: <TwoLines first={datesLine(note)} second={weekdaysLine(note.weekdays)} />,
             effect: <TwoLines first={EFFECT_LABEL[note.effect]} second={guestsLine(note.expectedGuests)} />,
-            added: `${note.createdByEmail}, ${formatDate(note.createdAt)}`,
+            added: <TwoLines first={note.createdByEmail} second={formatDate(note.createdAt)} />,
             actions: note.canEdit ? (
               <Actions>
                 <Button variant="link" label="Edit" accessibilityLabel={`Edit ${name}`} {...ro} onPress={() => { props.onEdit(note); }} />
