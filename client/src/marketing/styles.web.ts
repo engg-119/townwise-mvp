@@ -232,8 +232,12 @@ const security = `
 `;
 
 // Sign-in (src/auth/SignInFrame.web.tsx). The card holds React Native views, so it stacks them in a flex
-// column (the mockup's grid with the same 16px gap) where their own alignSelf applies.
+// column (the mockup's grid with the same 16px gap) where their own alignSelf applies. The page fills the
+// window under the header (64px and its border; .tw is the window's size, so 100% is its height) with the
+// sign-in centered in it, so the footer starts below the fold.
 const signIn = `
+.tw main:has(>.pg-signin){display:grid;min-height:calc(100% - 65px)}
+.pg-signin{display:grid;align-content:center}
 .pg-signin .hd{padding-block:48px 64px;row-gap:32px;align-items:start}
 .pg-signin .hd-l{grid-column:1/8;min-width:0;display:grid;gap:16px;align-content:start}
 .pg-signin .hd-r{grid-column:9/13;min-width:0}
