@@ -83,7 +83,7 @@ The essentials only. Patterns come from the Coffee Chats chat (streaming over a 
 - `TOWNWISE_CHAT_MONTHLY_BUDGET_USD`: number, default 20, set in `api/production.env`.
 - Terraform: `enable_chat` (bool, default false). When true, `api_secrets` gains `anthropic-api-key = ANTHROPIC_API_KEY`. The runbook gets an "Enable the tuning chat" section: create the Anthropic API key (with a Console spend limit), seed it with `infra/scripts/set-secret.sh`, set `enable_chat = true`, apply.
 
-## 7. Client (`mobile/expo-shell`, web and native)
+## 7. Client (`client`, web and native)
 
 - `src/api/client.ts` gains a streaming request: same auth and refresh as `request`, no timeout once headers arrive, `fetch` from `expo/fetch` on native and the global `fetch` on web, a pure SSE parser with unit tests, and an `AbortSignal` for Stop.
 - The dashboard lists the organization's locations (from `GET /api/org`), each linking to `/locations/[locationId]/chat`. A person with no organization sees a short line instead of an error.

@@ -1,6 +1,6 @@
 // GENERATED FILE: do not edit by hand. Generator: townwise-portal/tools/build-town-profiles.mjs (scratchpad tooling,
 // not in the repo). Numbers and meta come from townwise-home.json (schema 1, year 2024, generated 2026-11-03), copied
-// exactly. Notes, anchors and driver and date text are the homepage’s (mobile/expo-shell/src/marketing/map/towns.ts on
+// exactly. Notes, anchors and driver and date text are the homepage’s (client/src/marketing/map/towns.ts on
 // develop), which relabels brand names as plain descriptions and keeps every link; the generator checks each link and
 // date against the data file.
 //

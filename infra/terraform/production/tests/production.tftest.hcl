@@ -473,7 +473,7 @@ run "web_headers" {
       "Referrer-Policy"            = "strict-origin-when-cross-origin"
       "X-Content-Type-Options"     = "nosniff"
     }
-    error_message = "globalHeaders must be exactly the headers in mobile/expo-shell/MODULE.md (Security), with the API origin filled in."
+    error_message = "globalHeaders must be exactly the headers in client/MODULE.md (Security), with the API origin filled in."
   }
 
   assert {

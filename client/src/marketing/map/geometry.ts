@@ -1,5 +1,5 @@
 // GENERATED FILE: do not edit by hand. Generator: townwise-build/tools/build-marketing-data.mjs (scratchpad tooling, not in the repo),
-// run as: node build-marketing-data.mjs <townwise-design/data> <ConsoleV2.dc.html> mobile/expo-shell/src/marketing/map
+// run as: node build-marketing-data.mjs <townwise-design/data> <ConsoleV2.dc.html> client/src/marketing/map
 // Input: northeast-map.json (the design data build, 2026-11-03), plus the state label anchors and town
 // label sides from townwise-home.json, whose map paths the generator checked are identical to these.
 //
