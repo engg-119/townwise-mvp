@@ -5,6 +5,7 @@ import { countySeries } from '../../src/marketing/map/countyData';
 import { mapTowns, markerScale, REST_MONTH } from '../../src/marketing/map/mapState';
 import { mapCss } from '../../src/marketing/map/mapStyles.web';
 import { NortheastMap } from '../../src/marketing/map/NortheastMap.web';
+import { storyCss } from '../../src/marketing/map/storyStyles.web';
 
 // jsdom has neither IntersectionObserver nor matchMedia, so each test installs the ones it needs.
 class FakeObserver {
@@ -27,6 +28,24 @@ class FakeObserver {
     const entries = this.observed.map((target) => ({ target, isIntersecting, intersectionRatio }) as IntersectionObserverEntry);
     act(() => { this.callback(entries, this as unknown as IntersectionObserver); });
   }
+
+  // The story's band: slot `step` in it, the slots before it above, the rest below.
+  reportStep(step: number): void {
+    const band = { top: 405, bottom: 495, left: 0, right: 1000, width: 1000, height: 90 };
+    const entries = this.observed.map((target, index) => {
+      const [top, bottom] = index === step ? [400, 500] : index < step ? [-300, 100] : [900, 1100];
+      return { target, isIntersecting: index === step, intersectionRatio: index === step ? 0.5 : 0, rootBounds: band, boundingClientRect: { top, bottom, left: 0, right: 500, width: 500, height: bottom - top } };
+    }) as unknown as IntersectionObserverEntry[];
+    act(() => { this.callback(entries, this as unknown as IntersectionObserver); });
+  }
+}
+
+// The observer that watches an element (the map box for the intro, the title's slot for the story's band).
+function observerOf(selector: string): FakeObserver {
+  const target = document.querySelector(selector);
+  const found = FakeObserver.instances.find((observer) => target !== null && observer.observed.includes(target));
+  if (found === undefined) throw new Error(`no observer for ${selector}`);
+  return found;
 }
 
 function installObserver(): void {
@@ -78,12 +97,8 @@ function wait(ms: number): void {
   act(() => { jest.advanceTimersByTime(ms); });
 }
 
-function monthShown(): string | null | undefined {
-  return document.querySelector('.mon-l')?.textContent;
-}
-
 function listHeader(): string | null | undefined {
-  return document.querySelector('.list-h')?.textContent;
+  return document.querySelector('.list-m')?.textContent;
 }
 
 function row(label: string): HTMLButtonElement {
@@ -91,7 +106,7 @@ function row(label: string): HTMLButtonElement {
 }
 
 function marker(label: string): HTMLElement {
-  const found = [...document.querySelectorAll<HTMLElement>('.mk-pos')].find((element) => element.textContent === label);
+  const found = [...document.querySelectorAll<HTMLElement>('.mk-pos')].find((element) => element.querySelector('.mtag')?.textContent === label);
   if (found === undefined) throw new Error(`no marker ${label}`);
   return found;
 }
@@ -109,155 +124,96 @@ function panel(): HTMLElement {
   return element;
 }
 
-// Through the intro: the draw starts 450ms after mount, runs 900ms, then the towns appear on January.
-function playToJanuary(): void {
-  wait(450);
-  wait(900);
-}
-
-// From January to the rest month. Each step is scheduled once the one before it has rendered.
-function playToRest(): void {
-  wait(1000);
-  for (let month = 1; month < 11; month += 1) wait(500);
-  wait(800);
-}
-
 const NANTUCKET_GAPS = town('nantucket-ma').series.gap;
 
-test('the outlines draw in once the map is in view, then the towns appear and the year plays January to December', () => {
+test('the outlines draw in once the map is in view, and the towns wait for the story', () => {
   installObserver();
   const { mapFrame } = renderMap();
-  // Before the map is in view the outlines wait, hidden.
-  expect(mapFrame.className).toBe('app is-region is-pre');
-  const [observer] = FakeObserver.instances;
-  if (observer === undefined) throw new Error('no observer');
-  expect(observer.observed).toEqual([document.querySelector('.map-box')]);
-  observer.report(true, 0.5);
-  expect(observer.disconnected).toBe(true);
+  // Before the map is in view the outlines wait, hidden, and the story starts at its title.
+  expect(mapFrame.className).toBe('app app-a is-region is-pre');
+  expect(document.querySelector('.story')?.className).toBe('story is-on ss-0');
+  const intro = observerOf('.map-box');
+  expect(intro.observed).toEqual([document.querySelector('.map-box')]);
+  const band = observerOf('.st-h');
+  band.reportStep(0);
+  intro.report(true, 0.5);
+  expect(intro.disconnected).toBe(true);
 
   wait(450);
-  expect(mapFrame.className).toBe('app is-region is-run');
+  expect(mapFrame.className).toBe('app app-a is-region is-run');
   expect(document.querySelector<SVGPathElement>('.m-draw')?.style.strokeDashoffset).toBe('0');
   wait(900);
   expect(document.querySelector('.m-draw')).toBeNull();
-  expect(mapFrame.className).toBe('app is-local is-play');
-  expect(monthShown()).toBe('Jan 2024');
-  expect(screen.getByRole('button', { name: 'Pause the year' }).textContent).toBe('Pause');
+  // The towns appear only when the story reaches them; nothing moves on its own.
+  expect(mapFrame.className).toBe('app app-a is-region');
+  wait(10_000);
+  expect(mapFrame.className).toBe('app app-a is-region');
+  expect(band.disconnected).toBe(false);
 
-  // Each marker's scale follows that month's gap, and the scale eases only while the year plays.
+  band.reportStep(2);
+  expect(mapFrame.className).toBe('app app-a is-local is-sm');
+  expect(listHeader()).toBe('Gap in Jan 2024');
+  // Each marker's scale follows that month's gap, and the scale eases only when the scroll moved the month.
   const nantucket = marker('Nantucket, MA');
   const scale = (): number => Number(nantucket.style.getPropertyValue('--k'));
   expect(scale()).toBeCloseTo(markerScale(NANTUCKET_GAPS[0] ?? 0), 3);
-  expect(mapCss).toContain('.twmap .app.is-play .dot{transition:transform 280ms var(--eio)}');
+  expect(storyCss).toContain('.twmap .app.is-sm .dot{transition:transform 360ms cubic-bezier(0.34,1.25,0.64,1)}');
   // The markers enter one by one, west to east.
   const order = [...document.querySelectorAll<HTMLElement>('.mk-pos')].map((element) => Number(element.style.getPropertyValue('--i')));
   expect([...order].sort((a, b) => a - b)).toEqual([...Array(12).keys()]);
   expect(mapCss).toContain('calc(var(--dz,0ms) + var(--i) * var(--stg,50ms))');
-
-  // January holds while the markers enter; then 500ms a month; December holds 800ms before the rest.
-  wait(999);
-  expect(monthShown()).toBe('Jan 2024');
-  wait(1);
-  expect(monthShown()).toBe('Feb 2024');
+  band.reportStep(4);
   expect(scale()).toBeCloseTo(markerScale(NANTUCKET_GAPS[1] ?? 0), 3);
-  for (const label of ['Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']) {
-    wait(500);
-    expect(monthShown()).toBe(`${label} 2024`);
-  }
-  expect(listHeader()).toBe('Gap in Dec 2024');
-  wait(799);
-  expect(monthShown()).toBe('Dec 2024');
-  wait(1);
-
-  // The year rests on the month with the widest spread of gaps, computed from the data: July 2024.
-  expect(REST_MONTH).toBe(6);
-  expect(monthShown()).toBe('Jul 2024');
-  expect(scale()).toBe(1);
-  expect(screen.getByRole('button', { name: 'Play the year' }).textContent).toBe('Play');
   wait(10_000);
-  expect(monthShown()).toBe('Jul 2024');
-});
-
-test('Pause stops the year where it is and Play resumes it', () => {
-  renderMap();
-  playToJanuary();
-  wait(1000);
-  expect(monthShown()).toBe('Feb 2024');
-  fireEvent.click(screen.getByRole('button', { name: 'Pause the year' }));
-  expect(screen.getByRole('button', { name: 'Play the year' }).textContent).toBe('Play');
-  wait(5000);
-  expect(monthShown()).toBe('Feb 2024');
-  fireEvent.click(screen.getByRole('button', { name: 'Play the year' }));
-  expect(screen.getByRole('button', { name: 'Pause the year' })).toBeTruthy();
-  wait(300);
-  expect(monthShown()).toBe('Mar 2024');
-  wait(500);
-  expect(monthShown()).toBe('Apr 2024');
-});
-
-test('Play after the year has come to rest plays it again from January', () => {
-  renderMap();
-  playToJanuary();
-  playToRest();
-  expect(monthShown()).toBe('Jul 2024');
-  fireEvent.click(screen.getByRole('button', { name: 'Play the year' }));
-  expect(monthShown()).toBe('Jan 2024');
-  wait(500);
-  expect(monthShown()).toBe('Feb 2024');
-});
-
-test('Pause leaves the month label alone: its animation never depends on the play state', () => {
-  renderMap();
-  playToJanuary();
-  wait(1000);
-  const before = document.querySelector('.mon-l')?.className;
-  fireEvent.click(screen.getByRole('button', { name: 'Pause the year' }));
-  expect(document.querySelector('.mon-l')?.className).toBe(before);
-  // The play state sets only the rise and the length. A new animation-name would replay the label.
-  expect(mapCss).toContain('.twmap .app.is-play .mon-l{--tk-y:6px;animation-duration:200ms}');
-  expect(mapCss).not.toMatch(/is-play[^{]*\.mon-l[^{]*\{[^}]*animation(-name)?:/);
+  expect(listHeader()).toBe('Gap in Feb 2024');
+  // The last step rests on the month with the widest spread of gaps, computed from the data: July 2024.
+  band.reportStep(15);
+  expect(REST_MONTH).toBe(6);
+  expect(listHeader()).toBe('Gap in Jul 2024');
+  expect(scale()).toBe(1);
 });
 
 test.each([
   ['a town in the list', () => { fireEvent.click(row('Hanover, NH')); }, 'May'],
   ['a marker', () => { fireEvent.click(markerButton('Stowe, VT'), { detail: 1 }); }, 'May'],
-  ['the Region toggle', () => { fireEvent.click(screen.getByRole('button', { name: 'Region' })); }, 'Feb'],
   ['the month scrubber', () => { fireEvent.click(screen.getByRole('radio', { name: 'Oct' })); }, 'Oct'],
-])('using %s stops the year', (_name, use, month) => {
+])('%s sets the month by hand, and nothing changes it on its own', (_name, use, month) => {
   const { mapFrame } = renderMap();
-  playToJanuary();
-  wait(1000);
-  expect(monthShown()).toBe('Feb 2024');
+  expect(listHeader()).toBe('Gap in Jul 2024');
   use();
-  expect(mapFrame.className).not.toContain('is-play');
+  // A month picked by hand jumps: the dots do not ease.
+  expect(mapFrame.className).not.toContain('is-sm');
   expect(listHeader()).toBe(`Gap in ${month} 2024`);
   wait(10_000);
   expect(listHeader()).toBe(`Gap in ${month} 2024`);
 });
 
-test('with reduced motion the towns show the resting month at once: no draw-in and no playing year', () => {
-  prefersReducedMotion(true);
+test('without an observer the map lies flat at the resting month: no draw-in and no playing year', () => {
   const { mapFrame } = renderMap();
-  expect(mapFrame.className).toBe('app is-local');
+  expect(mapFrame.className).toBe('app app-a is-local');
+  expect(document.querySelector('.story')?.className).toBe('story is-flat ss-15');
   expect(document.querySelector('.m-draw')).toBeNull();
-  expect(monthShown()).toBe('Jul 2024');
   expect(screen.queryByRole('button', { name: /the year$/ })).toBeNull();
   wait(20_000);
-  expect(monthShown()).toBe('Jul 2024');
   expect(listHeader()).toBe('Gap in Jul 2024');
   expect(Number(marker('Nantucket, MA').style.getPropertyValue('--k'))).toBe(1);
 });
 
-test('with reduced motion and an observer, the outlines show at once and the towns wait for the map to be in view', () => {
+test('with reduced motion and an observer, the outlines show at once and the story still sets the towns and months', () => {
   installObserver();
   prefersReducedMotion(true);
   const { mapFrame } = renderMap();
-  expect(mapFrame.className).toBe('app is-region');
-  FakeObserver.instances[0]?.report(true, 0.5);
-  expect(mapFrame.className).toBe('app is-local');
-  expect(monthShown()).toBe('Jul 2024');
+  expect(mapFrame.className).toBe('app app-a is-region');
+  expect(document.querySelector('.m-draw')).toBeNull();
+  observerOf('.map-box').report(true, 0.5);
+  expect(mapFrame.className).toBe('app app-a is-region');
+  observerOf('.st-h').reportStep(5);
+  expect(mapFrame.className).toBe('app app-a is-local is-sm');
+  expect(listHeader()).toBe('Gap in Mar 2024');
   wait(20_000);
-  expect(monthShown()).toBe('Jul 2024');
+  expect(listHeader()).toBe('Gap in Mar 2024');
+  // The dots do not ease with reduced motion, whoever set the month.
+  expect(storyCss).toContain('@media (prefers-reduced-motion:reduce){.twmap .tl-fill,.twmap .tl-cur,.twmap .app.is-sm .dot{transition:none}');
 });
 
 test('the reduced-motion CSS keeps the fades and drops the movement', () => {
@@ -307,6 +263,26 @@ test('a marker click zooms the same way and moves focus to the town’s list but
   expect(document.activeElement).toBe(row('Nantucket, MA'));
   expect(within(panel()).getByRole('heading', { name: 'Nantucket, MA' })).toBeTruthy();
   expect(panel().querySelector('.bv-v')?.textContent).toBe('+93.5');
+});
+
+test('a pointer click goes to the town whose dot is nearest it, even on a neighbor’s overlapping button', () => {
+  renderMap();
+  const box = document.querySelector<HTMLElement>('.map-box');
+  if (box === null) throw new Error('no map box');
+  // A 356px phone map at the top left of the window.
+  box.getBoundingClientRect = () => ({ left: 0, top: 0, right: 356, bottom: 309.72, width: 356, height: 309.72, x: 0, y: 0, toJSON: () => null });
+  const at = (id: string): { clientX: number; clientY: number } => {
+    const [x, y] = town(id).shape.centroid;
+    return { clientX: (x / 1000) * 356, clientY: (y / 870) * 309.72 };
+  };
+  // Burlington's 44px button covers Stowe's dot 12px away: a tap on Stowe's dot opens Stowe.
+  fireEvent.click(markerButton('Burlington, VT'), { detail: 1, ...at('stowe-vt') });
+  expect(document.activeElement).toBe(row('Stowe, VT'));
+  expect(row('Stowe, VT').getAttribute('aria-pressed')).toBe('true');
+  fireEvent.click(row('Stowe, VT'));
+  // From the keyboard (detail 0) the button's own town, wherever the event says it is.
+  fireEvent.click(markerButton('Middlebury, VT'), { detail: 0, ...at('stowe-vt') });
+  expect(row('Middlebury, VT').getAttribute('aria-pressed')).toBe('true');
 });
 
 test('under 900px the card scrolls into view, smoothly only for a pointer, and not after the map is gone', () => {
@@ -441,15 +417,17 @@ test('the town list is the keyboard path: twelve buttons in two groups, with mar
   const focusable = [...document.querySelectorAll<HTMLElement>('.twmap button, .twmap a, .twmap [tabindex]')]
     .filter((element) => element.tabIndex >= 0 && element.getAttribute('role') !== 'region');
   expect(focusable.every((element) => element.tagName === 'BUTTON' || element.tagName === 'A')).toBe(true);
-  expect(screen.getByRole('group', { name: 'Region / Towns' })).toBeTruthy();
+  // The story adds no control: the Region / Towns toggle is gone, and the list is introduced by its heading.
+  expect(screen.queryByRole('group', { name: 'Region / Towns' })).toBeNull();
+  expect(screen.getByRole('heading', { level: 2, name: 'Pick a town to compare it with the Northeast' })).toBeTruthy();
 });
 
-test('the caption says the map shows BLS QCEW restaurant and bar jobs, not a forecast', () => {
+test('the story and the caption say the map shows BLS QCEW restaurant and bar jobs, not a forecast', () => {
   renderMap();
-  expect(screen.getByText('What the map shows.').parentElement?.textContent).toBe(
-    'What the map shows. Restaurant and bar jobs in each town’s county, month by month in 2024, compared with the Northeast. Public data from the U.S. Bureau of Labor Statistics (QCEW), not a Townwise forecast.',
-  );
-  expect(screen.getByText('Public data (BLS QCEW). Not a forecast.')).toBeTruthy();
+  const first = screen.getByRole('heading', { level: 2, name: 'The Northeast, as one pattern.' }).parentElement;
+  expect(first?.querySelector('.eyebrow')?.textContent).toBe('What the map shows');
+  expect(first?.textContent).toContain('Restaurant and bar jobs in each town’s county, month by month in 2024, compared with the Northeast. Public data from the U.S. Bureau of Labor Statistics (QCEW), not a Townwise forecast.');
+  expect(screen.getByText('Restaurant and bar jobs by county, 2024. Public data (BLS QCEW). Not a forecast.').className).toBe('eyebrow pin-cap');
   expect(screen.getByRole('img', { name: /^Map of the nine Northeast states with twelve featured towns/ })).toBeTruthy();
   expect(screen.getAllByText('Historical public data, not a Townwise forecast.')).toHaveLength(1);
   expect(document.body.textContent).not.toMatch(/sales of|revenue|\$/);
@@ -461,17 +439,23 @@ test('the map figure fills the pane on phones instead of collapsing to zero widt
   expect(mapCss).toMatch(/\.twmap \.map-fig\{width:100%;max-width:1040px;margin-inline:auto;/);
 });
 
+test('on phones the card’s sentences are body size and the notes’ longer mono lines 14px', () => {
+  expect(mapCss).toContain('@media (max-width:640px){.twmap .cp,.twmap .pat,.twmap .tx,.twmap .why li{font-size:16px;line-height:24px}.twmap .cav li,.twmap .fine,.twmap .srcs a{font-size:14px;line-height:20px}}');
+  // The rule comes after the base sizes, so it wins at the same specificity.
+  expect(mapCss.indexOf('.twmap .cav li,.twmap .fine{')).toBeLessThan(mapCss.indexOf('.twmap .cav li,.twmap .fine,.twmap .srcs a{font-size:14px'));
+  expect(mapCss.indexOf('.twmap .cp{')).toBeLessThan(mapCss.indexOf('.twmap .cp,.twmap .pat,'));
+});
+
 test('the map CSS follows the motion rules', () => {
   expect(mapCss).not.toMatch(/transition:\s*all/);
   expect(mapCss).not.toMatch(/ease-in(?!-out)/);
   expect(mapCss).not.toMatch(/scale\(0\)/);
   expect(mapCss).toContain('.twmap{--eio:cubic-bezier(0.77,0,0.175,1)}');
   expect(mapCss).toContain('.twmap .world{transform-box:view-box;transform-origin:0 0;transition:transform 280ms var(--eio)}');
-  expect(mapCss).toContain('.twmap .mon-b:active{transform:scale(.97)}');
-  // A keyboard change does not animate: the zoom, values, toggle, rows and months jump, a row focused from
-  // the keyboard shows its marker's name tag at once, and only a pointer fades the tag in.
+  // A keyboard change does not animate: the zoom, values, rows and months jump, a row focused from the keyboard
+  // shows its marker's name tag at once, and only a pointer fades the tag in.
   const keyboardRule = `${/(\.twmap \.app\.is-kb [^{]*)\{transition:none !important;animation:none !important\}/.exec(mapCss)?.[1] ?? ''},`;
-  for (const part of ['.world', '.ch-cur', '.mk-pos', '.mon-l', '.row-v', '.bv-v', '.cb', '.tg button', '.row', '.sb']) {
+  for (const part of ['.world', '.ch-cur', '.mk-pos', '.list-m', '.row-v', '.bv-v', '.cb', '.row', '.sb']) {
     expect(keyboardRule).toContain(`.twmap .app.is-kb ${part},`);
   }
   expect(mapCss).toContain('.twmap .row:focus-visible,.twmap .row:focus-visible *{transition:none}');
