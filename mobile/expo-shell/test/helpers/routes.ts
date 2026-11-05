@@ -6,7 +6,7 @@ import { CONTACT_HREF, EARLY_ACCESS_HREF } from '../../src/marketing/links';
 // Every URL the app serves. test/marketing/links.test.ts keeps this list equal to the files in app/.
 export const ROUTES = [
   '/', '/about', '/privacy', '/terms', '/security',
-  '/sign-in', '/totp', '/auth/magic', '/dashboard', '/settings/security',
+  '/sign-in', '/totp', '/auth/magic', '/dashboard', '/settings/security', '/locations/[locationId]/chat',
 ];
 
 // The homepage sections the nav and footer link to (/#map and so on).

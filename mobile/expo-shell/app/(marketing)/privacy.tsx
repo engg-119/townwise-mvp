@@ -172,6 +172,7 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
           <Li><Strong>Google</Strong>, when you open the sign-in page (its sign-in script loads there) and when you sign in with your Google account, under Google’s privacy policy.</Li>
           <Li><Strong><Span className="chip">[HOSTING PROVIDER]</Span></Strong>, which runs our servers and stores our database and logs.</Li>
           <Li><Strong><Span className="chip">[EMAIL PROVIDER]</Span></Strong>, if you write to us.</Li>
+          <Li><Strong>Anthropic</Strong>, which provides the AI model behind the tuning chat. When you use the chat, Anthropic receives the messages you send and the location data the assistant reads to answer them: the location’s name and town, its sales totals and daily figures, its notes and its town profile. <Span className="chip">[DECISION NEEDED: how long Anthropic keeps chat data, and whether it may be used to train models]</Span></Li>
         </Ul>
         <P>Apart from Google’s sign-in script on the sign-in page, the Townwise app and server send your account and sign-in information to no one else. Sales data exports are covered under “Your restaurant’s sales data”. <Span className="chip">[DECISION NEEDED: commit in writing that Townwise does not sell personal data.]</Span></P>
       </>

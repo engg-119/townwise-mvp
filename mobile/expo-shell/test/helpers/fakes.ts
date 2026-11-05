@@ -81,6 +81,86 @@ export function jsonResponse(status: number, body?: unknown, headers?: Readonly<
   } as unknown as Response;
 }
 
+export interface FakeEventStream {
+  response: Response;
+  /** Queues a chunk for the next read: text (encoded as UTF-8) or raw bytes. */
+  push(chunk: string | Uint8Array): void;
+  close(): void;
+  /** The next read rejects, as a dropped connection does. */
+  fail(error: unknown): void;
+  readonly cancelled: boolean;
+}
+
+/** A 2xx `text/event-stream` response whose body the test feeds; reads wait until something is pushed. */
+export function fakeEventStream(opts?: { contentType?: string }): FakeEventStream {
+  const queue: Uint8Array[] = [];
+  let waiter: { resolve: (result: ReadableStreamReadResult<Uint8Array>) => void; reject: (error: unknown) => void } | null = null;
+  let closed = false;
+  let cancelled = false;
+  let failure: { error: unknown } | null = null;
+  const encoder = new TextEncoder();
+
+  function settle(): void {
+    if (waiter === null) return;
+    const pending = waiter;
+    const next = queue.shift();
+    if (next !== undefined) {
+      waiter = null;
+      pending.resolve({ done: false, value: next });
+    } else if (failure !== null) {
+      waiter = null;
+      pending.reject(failure.error);
+    } else if (closed || cancelled) {
+      waiter = null;
+      pending.resolve({ done: true, value: undefined });
+    }
+  }
+
+  const reader = {
+    read(): Promise<ReadableStreamReadResult<Uint8Array>> {
+      return new Promise((resolve, reject) => {
+        waiter = { resolve, reject };
+        settle();
+      });
+    },
+    cancel(): Promise<void> {
+      cancelled = true;
+      settle();
+      return Promise.resolve();
+    },
+    releaseLock(): void { return undefined; },
+  };
+  const headers = new Map([['content-type', opts?.contentType ?? 'text/event-stream; charset=utf-8']]);
+  const response = {
+    ok: true,
+    status: 200,
+    headers: { get: (name: string) => headers.get(name.toLowerCase()) ?? null },
+    body: { getReader: () => reader, cancel: () => reader.cancel() },
+    json: () => Promise.reject(new SyntaxError('not json')),
+  } as unknown as Response;
+
+  return {
+    response,
+    push(chunk) {
+      queue.push(typeof chunk === 'string' ? encoder.encode(chunk) : chunk);
+      settle();
+    },
+    close() {
+      closed = true;
+      settle();
+    },
+    fail(error) {
+      failure = { error };
+      settle();
+    },
+    get cancelled() { return cancelled; },
+  };
+}
+
+export function sseText(event: string, data: unknown): string {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
 function abortError(): Error {
   const error = new Error('The operation was aborted');
   error.name = 'AbortError';
@@ -117,6 +197,7 @@ export function fakeAuth(state: AuthState, overrides?: Partial<Auth>): Auth {
     api: {
       request: () => Promise.reject(new Error('stub')),
       json: <T,>() => Promise.reject<T>(new Error('stub')),
+      stream: () => Promise.reject(new Error('stub')),
       logout: () => Promise.reject(new Error('stub')),
     },
     restore: () => Promise.resolve(),
