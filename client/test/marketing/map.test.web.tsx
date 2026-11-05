@@ -439,6 +439,19 @@ test('the map figure fills the pane on phones instead of collapsing to zero widt
   expect(mapCss).toMatch(/\.twmap \.map-fig\{width:100%;max-width:1040px;margin-inline:auto;/);
 });
 
+test('beside the list the card and its notes share the right column once the card has two columns', () => {
+  // From 900px the list sits beside the card, the notes across the bottom; from 1160px (the card's container is
+  // 680px or more, its two-column layout) the notes move under the card so the column is not mostly empty.
+  expect(mapCss).toContain('@media (min-width:900px){.twmap .app-b{grid-template-columns:300px minmax(0,1fr);grid-template-areas:"list card" "notes notes"}');
+  expect(mapCss).toContain('@media (min-width:1160px){.twmap .app-b{grid-template-rows:auto 1fr;grid-template-areas:"list card" "list notes"}}');
+  expect(mapCss.indexOf('@media (min-width:900px){.twmap .app-b')).toBeLessThan(mapCss.indexOf('@media (min-width:1160px){.twmap .app-b'));
+  expect(mapCss).toContain('@container card (min-width:680px){.twmap .cb{');
+});
+
+test('on phones the pinned caption takes the map’s width, so it lines up with the month strip', () => {
+  expect(storyCss).toMatch(/@media \(max-width:1023px\)\{[^@]*\.twmap \.story\.is-on \.pin-cap\{max-width:var\(--story-mw,100%\);margin-inline:auto\}/);
+});
+
 test('on phones the card’s sentences are body size and the notes’ longer mono lines 14px', () => {
   expect(mapCss).toContain('@media (max-width:640px){.twmap .cp,.twmap .pat,.twmap .tx,.twmap .why li{font-size:16px;line-height:24px}.twmap .cav li,.twmap .fine,.twmap .srcs a{font-size:14px;line-height:20px}}');
   // The rule comes after the base sizes, so it wins at the same specificity.

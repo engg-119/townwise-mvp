@@ -62,6 +62,7 @@ const narrow = `
 .twmap .story.is-on{display:block}
 .twmap .story.is-on .story-pin{position:sticky;top:0;padding-block:8px 16px;background:var(--ground)}
 .twmap .story.is-on .story-pin .map-fig{max-width:var(--story-mw,100%)}
+.twmap .story.is-on .pin-cap{max-width:var(--story-mw,100%);margin-inline:auto}
 .twmap .story.is-on .lg-under{display:none}
 .twmap .story.is-on .st-t{min-height:520px}
 .twmap .story.is-on .st-f{align-content:end;min-height:280px}
