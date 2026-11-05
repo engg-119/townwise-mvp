@@ -183,7 +183,7 @@ describe('P18 Settings: an org admin', () => {
     expect(screen.getByText(/^Each time Townwise staff use View as to see your sales and notes, it’s recorded here with its reason\./)).toBeTruthy();
     expect(activity.getAllByText('Townwise staff (staff@example.com)')).toHaveLength(3);
     expect(activity.getByText(`${formatDate(VIEW_AS_EVENT.at)}, ${formatTime(VIEW_AS_EVENT.at)}`)).toBeTruthy();
-    expect(activity.getByText('Started viewing as owner@example.com')).toBeTruthy();
+    expect(activity.getByText('Viewed as owner@example.com')).toBeTruthy();
     expect(activity.getByText('Checking an upload question.')).toBeTruthy();
     expect(activity.getByText(formatTime(VIEW_AS_EVENT.viewAs?.endsAt ?? ''))).toBeTruthy();
     expect(activity.getByText('Added manager@example.com as member')).toBeTruthy();
