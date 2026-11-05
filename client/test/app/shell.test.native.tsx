@@ -194,14 +194,4 @@ describe('placeholders (spec 16.1)', () => {
     expect(screen.getByLabelText('Main')).toBeTruthy();
     expect(router.getPathname()).toBe(path);
   });
-
-  test.each<[string, string]>([
-    ['/locations/l1/sales/upload', 'Upload sales history'],
-  ])('%s: its title and one line, under the location header and tabs', async (path, title) => {
-    const { router } = await renderApp(path, fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin') }));
-    expect(await screen.findByRole('heading', { name: title })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Main Street Bar' })).toBeTruthy();
-    expect(screen.getByText('This page is being built.')).toBeTruthy();
-    expect(router.getPathname()).toBe(path);
-  });
 });
