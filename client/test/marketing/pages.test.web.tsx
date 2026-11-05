@@ -5,6 +5,7 @@ import { getMockContext } from 'expo-router/testing-library';
 
 import { AuthProvider } from '../../src/auth/AuthProvider';
 import { css } from '../../src/marketing/styles.web';
+import { homeCss } from '../../src/marketing/homeStyles.web';
 import { RootStack } from '../../app/_layout';
 import MarketingLayout from '../../app/(marketing)/_layout';
 import MarketingHome from '../../app/(marketing)/index';
@@ -310,6 +311,7 @@ test('on phones a link in running text gets a 44px-tall tap target', () => {
   for (const page of ['privacy', 'terms', 'security']) {
     expect(css).toContain(`@media (max-width:640px){.pg-${page} .prose a{position:relative;z-index:1;padding-block:13px}`);
   }
+  expect(homeCss).toContain('@media (max-width:640px){.pg-home .faq-i p a{position:relative;z-index:1;padding-block:13px}}');
 });
 
 test('Terms and Security carry the new date, and Security says where Townwise is hosted', () => {
