@@ -23,10 +23,19 @@ export interface Notice {
   link?: { label: string; href: string };
 }
 
+/** Where a notice may show: a pattern, or a string meaning exactly that path (no pattern built from a path). */
+export type NoticeWhere = RegExp | string;
+
+/** Whether a notice limited to `where` shows on `pathname`; `null` means any page. */
+export function noticeShowsAt(where: NoticeWhere | null, pathname: string): boolean {
+  if (where === null) return true;
+  return typeof where === 'string' ? where === pathname : where.test(pathname);
+}
+
 interface StoredNotice {
   notice: Notice;
   /** The paths the notice may show on; null for any page. */
-  where: RegExp | null;
+  where: NoticeWhere | null;
   /** The path it first showed on. It shows there only, once. */
   shownAt: string | null;
 }
@@ -41,7 +50,7 @@ export interface Portal {
   refreshMe: () => Promise<MeResponse>;
   notice: StoredNotice | null;
   /** Shows `notice` once, on the first page that matches `where` (any page when left out). */
-  showNotice: (notice: Notice, where?: RegExp) => void;
+  showNotice: (notice: Notice, where?: NoticeWhere) => void;
   markNoticeShown: (path: string) => void;
   org: LoadState<OrgResponse> | null;
   /** Starts loading the organization unless it is loading or loaded. */
@@ -164,7 +173,7 @@ export function PortalProvider(props: { children: React.ReactNode }): React.JSX.
 
   const refreshPending = useCallback(() => { setPendingTick((value) => value + 1); }, []);
 
-  const showNotice = useCallback((next: Notice, where?: RegExp) => {
+  const showNotice = useCallback((next: Notice, where?: NoticeWhere) => {
     setNotice({ notice: next, where: where ?? null, shownAt: null });
   }, []);
 

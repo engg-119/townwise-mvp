@@ -54,7 +54,7 @@ export function LocationSettings(): React.JSX.Element {
       throw error;
     }
     // The organization reloads, so the header shows the new name; the notice shows once this page is back.
-    showNotice({ text: 'Saved.' }, new RegExp(`^${settingsPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`));
+    showNotice({ text: 'Saved.' }, settingsPath);
     reloadOrg();
   }, [api, location.id, reloadOrg, showNotice, settingsPath]));
 

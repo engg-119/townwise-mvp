@@ -4,7 +4,7 @@ import { StyleSheet, View } from 'react-native';
 
 import { theme } from '../../theme';
 import { useBreakpoint } from '../hooks';
-import { useOptionalPortal } from '../PortalProvider';
+import { noticeShowsAt, useOptionalPortal } from '../PortalProvider';
 import { Notice } from '../ui/feedback';
 import { Content, Wrap } from '../ui/layout';
 import { Eyebrow, Lead, Title } from '../ui/text';
@@ -58,7 +58,7 @@ export function PageNotice(): React.JSX.Element | null {
   const pathname = usePathname();
   const stored = portal?.notice ?? null;
   const visible = stored !== null
-    && (stored.where === null || stored.where.test(pathname))
+    && noticeShowsAt(stored.where, pathname)
     && (stored.shownAt === null || stored.shownAt === pathname);
   const unmarked = visible && stored.shownAt === null;
   const mark = portal?.markNoticeShown;

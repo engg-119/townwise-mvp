@@ -4,7 +4,7 @@ import { StyleSheet, View } from 'react-native';
 
 import { createOrg, fetchOrgs, newOrgId } from '../../../../../../src/portal/console/api';
 import { Dialog } from '../../../../../../src/portal/console/Dialog';
-import { onlyAt, orgHref } from '../../../../../../src/portal/console/links';
+import { orgHref } from '../../../../../../src/portal/console/links';
 import { CellLink } from '../../../../../../src/portal/console/parts';
 import { problemOf } from '../../../../../../src/portal/console/problems';
 import type { OrgRow } from '../../../../../../src/portal/console/schemas';
@@ -46,7 +46,7 @@ function NewOrgDialog(props: { onClose: () => void }): React.JSX.Element {
     }
     const { org, result } = created;
     const href = orgHref(org.id);
-    showNotice({ text: `Created ${org.name}. ${result.email} joins as its admin the next time they continue with Google.` }, onlyAt(href));
+    showNotice({ text: `Created ${org.name}. ${result.email} joins as its admin the next time they continue with Google.` }, href);
     router.push(href);
   }, [api, orgId, showNotice, router]));
 

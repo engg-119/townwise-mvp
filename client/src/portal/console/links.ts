@@ -13,8 +13,3 @@ export function requestHref(status: 'pending' | 'approved' | 'rejected' | 'withd
 export function auditHref(orgId: string): string {
   return `/admin/audit?orgId=${encodeURIComponent(orgId)}`;
 }
-
-/** Matches exactly this path, for a notice that should show only there (PortalProvider.showNotice). */
-export function onlyAt(path: string): RegExp {
-  return new RegExp(`^${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`);
-}

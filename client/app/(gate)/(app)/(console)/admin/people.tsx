@@ -4,7 +4,7 @@ import { StyleSheet, View } from 'react-native';
 import { deletePerson, fetchPeople, lookupPerson, signOutEverywhere } from '../../../../../src/portal/console/api';
 import { Dialog } from '../../../../../src/portal/console/Dialog';
 import { EMAIL_COPY, isEmailAddress } from '../../../../../src/portal/console/email';
-import { onlyAt, orgHref } from '../../../../../src/portal/console/links';
+import { orgHref } from '../../../../../src/portal/console/links';
 import { CellLines, CellLink, RowActions } from '../../../../../src/portal/console/parts';
 import { problemOf } from '../../../../../src/portal/console/problems';
 import { PERSON_KINDS, type Person, type PersonKind } from '../../../../../src/portal/console/schemas';
@@ -49,7 +49,7 @@ function SignOutDialog(props: { email: string; userId: string; onDone: () => voi
   const { api, showNotice } = usePortal();
   const signOut = useAction(useCallback(async () => {
     await signOutEverywhere(api, userId);
-    showNotice({ text: `Signed ${email} out everywhere.` }, onlyAt('/admin/people'));
+    showNotice({ text: `Signed ${email} out everywhere.` }, '/admin/people');
     onDone();
   }, [api, showNotice, email, userId, onDone]));
   return (
@@ -86,7 +86,7 @@ function DeleteDialog(props: { person: Person; onDone: () => void; onClose: () =
       throw error;
     }
     const runbook = kitUserId === null ? '' : ' Delete their kit user record by hand (runbook).';
-    showNotice({ text: `Deleted ${email}’s Townwise records.${runbook}` }, onlyAt('/admin/people'));
+    showNotice({ text: `Deleted ${email}’s Townwise records.${runbook}` }, '/admin/people');
     onDone();
   }, [api, showNotice, email, onDone]));
   return (

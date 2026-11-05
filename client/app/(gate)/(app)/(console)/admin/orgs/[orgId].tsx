@@ -5,7 +5,7 @@ import { Text, StyleSheet } from 'react-native';
 import { deleteOrg, fetchOrg, updateOrg } from '../../../../../../src/portal/console/api';
 import { AuditTable } from '../../../../../../src/portal/console/AuditTable';
 import { Dialog } from '../../../../../../src/portal/console/Dialog';
-import { auditHref, onlyAt, requestHref } from '../../../../../../src/portal/console/links';
+import { auditHref, requestHref } from '../../../../../../src/portal/console/links';
 import { OrgTeam } from '../../../../../../src/portal/console/OrgTeam';
 import { CellLink, Facts } from '../../../../../../src/portal/console/parts';
 import { problemOf } from '../../../../../../src/portal/console/problems';
@@ -113,7 +113,7 @@ function DeleteDialog(props: { detail: OrgDetail; onStale: () => Promise<void>; 
       if (hasCode(error, 409, 'org_not_suspended')) await onStale();
       throw error;
     }
-    showNotice({ text: `Deleted ${org.name}.` }, onlyAt('/admin/orgs'));
+    showNotice({ text: `Deleted ${org.name}.` }, '/admin/orgs');
     router.replace('/admin/orgs');
   }, [api, org.id, org.name, onStale, showNotice, router]));
   const request = org.fromRequestId === null ? '' : ' and its request';
@@ -171,7 +171,7 @@ export default function OrganizationPage(): React.JSX.Element {
   const [open, setOpen] = useState<Open>(null);
   const [viewing, setViewing] = useState<ViewAsTarget | null>(null);
 
-  const saved = useCallback(() => { showNotice({ text: 'Saved.' }, onlyAt(pathname)); }, [showNotice, pathname]);
+  const saved = useCallback(() => { showNotice({ text: 'Saved.' }, pathname); }, [showNotice, pathname]);
   const savedAndClosed = useCallback(async () => {
     await refresh();
     setOpen(null);

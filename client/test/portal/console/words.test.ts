@@ -1,4 +1,5 @@
-import { onlyAt, requestHref } from '../../../src/portal/console/links';
+import { requestHref } from '../../../src/portal/console/links';
+import { noticeShowsAt } from '../../../src/portal/PortalProvider';
 import { splitEmails } from '../../../src/portal/console/OrgTeam';
 import { viewAsBody } from '../../../src/portal/console/ViewAsDialog';
 import { actorLine, actorRoleLabel, AUDIT_ACTIONS, auditDetails, KIND_LABEL, twoStepLabel } from '../../../src/portal/console/words';
@@ -62,6 +63,10 @@ test('addresses split on lines, commas, semicolons and spaces', () => {
 test('links: a request on its tab, and a notice that shows only on one path', () => {
   expect(requestHref('pending', 'r1')).toBe('/admin?request=r1');
   expect(requestHref('approved', 'r1')).toBe('/admin?status=approved&request=r1');
-  expect(onlyAt('/admin/orgs').test('/admin/orgs')).toBe(true);
-  expect(onlyAt('/admin/orgs').test('/admin/orgs/o1')).toBe(false);
+  // A string means exactly that path, so no pattern is ever built from a path.
+  expect(noticeShowsAt('/admin/orgs', '/admin/orgs')).toBe(true);
+  expect(noticeShowsAt('/admin/orgs', '/admin/orgs/o1')).toBe(false);
+  expect(noticeShowsAt('/admin/orgs/a.b', '/admin/orgs/aXb')).toBe(false);
+  expect(noticeShowsAt(/^\/admin$/, '/admin')).toBe(true);
+  expect(noticeShowsAt(null, '/anywhere')).toBe(true);
 });
