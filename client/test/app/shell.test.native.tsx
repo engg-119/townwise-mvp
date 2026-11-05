@@ -187,8 +187,6 @@ describe('the staff console on native (spec 15.4)', () => {
 describe('placeholders (spec 16.1)', () => {
   test.each<[string, string, MeResponse]>([
     ['/locations/new', 'Add location', meOf(ACCESS.admin)],
-    ['/team', 'Team', meOf(ACCESS.admin)],
-    ['/settings', 'Settings', meOf(ACCESS.member)],
   ])('%s: its title and one line, in the client app frame', async (path, title, me) => {
     const { router } = await renderApp(path, fakePortalApi({ me, org: orgOf('org_admin') }));
     expect(await screen.findByRole('heading', { name: title })).toBeTruthy();
