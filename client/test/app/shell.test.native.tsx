@@ -200,7 +200,6 @@ describe('placeholders (spec 16.1)', () => {
   test.each<[string, string]>([
     ['/locations/l1', 'Forecast'],
     ['/locations/l1/sales', 'Sales data'],
-    ['/locations/l1/sales/upload', 'Upload sales history'],
     ['/locations/l1/notes', 'Notes'],
     ['/locations/l1/town', 'Town'],
     ['/locations/l1/settings', 'Location settings'],
