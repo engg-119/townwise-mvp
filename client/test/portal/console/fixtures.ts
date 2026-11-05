@@ -52,7 +52,7 @@ export function orgDetail(extra?: { org?: Partial<OrgDetail['org']>; members?: M
   return {
     org: {
       id: 'o1', name: 'Sample Restaurant Group', status: 'active', createdAt: '2026-09-01T15:00:00.000Z', fromRequestId: 'r1',
-      suspendedAt: null, ...extra?.org,
+      fromRequestSentAt: null, suspendedAt: null, ...extra?.org,
     },
     members: extra?.members ?? [
       member('m1', OWNER_EMAIL, { role: 'org_admin' }),

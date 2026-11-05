@@ -10,7 +10,8 @@ import { useLoad, type LoadState } from '../hooks';
 export function useRefreshable<T>(load: () => Promise<T>): {
   state: LoadState<T>;
   reload: () => void;
-  refresh: () => Promise<void>;
+  /** Resolves to null when the read went through, or to why it failed, so the caller can act on it at once. */
+  refresh: () => Promise<{ error: unknown } | null>;
   /** Why the last refresh failed, until one succeeds; null otherwise. */
   refreshError: unknown;
 } {
@@ -22,8 +23,10 @@ export function useRefreshable<T>(load: () => Promise<T>): {
       const data = await load();
       setFresh({ load, data });
       setFailed(null);
+      return null;
     } catch (error) {
       setFailed({ load, error });
+      return { error };
     }
   }, [load]);
   const reload = useCallback(() => {

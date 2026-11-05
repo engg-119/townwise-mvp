@@ -1,4 +1,5 @@
-import { A, Code, Div, H1, H2, Li, P, Section, Span, Strong, Ul } from '../../src/marketing/html';
+import { A, Code, Div, H1, H2, Li, P, Section, Strong, Ul } from '../../src/marketing/html';
+import { CONTACT_EMAIL, CONTACT_HREF } from '../../src/marketing/links';
 import { MarketingShell } from '../../src/marketing/MarketingShell';
 
 const parts: { id: string; title: string; body: React.ReactNode }[] = [
@@ -86,9 +87,16 @@ const parts: { id: string; title: string; body: React.ReactNode }[] = [
     id: 'h-hosting',
     title: 'Hosting',
     body: (
-      <Div className="prose">
-        <P>Hosting has not been chosen. When it is, this section will say where the servers run, how data is encrypted at rest and in transit there, and who has access. <Span className="chip">[DECISION NEEDED]</Span></P>
-      </Div>
+      <Ul className="pts">
+        <Li><P><Strong>Microsoft Azure, East US.</Strong> Our server and its database run on Microsoft Azure, in its East US region, and the database backups are stored there too. The web pages are served by Azure Static Web Apps.</P></Li>
+        <Li><P><Strong>HTTPS.</Strong> The site and the server both send HSTS, which tells browsers to connect to them only over HTTPS for a year.</P></Li>
+        <Li><P><Strong>A private database.</Strong> The database (Azure DocumentDB) has public network access turned off and no firewall rules. The only way in is a private endpoint that accepts the database port only from the network our server runs in.</P></Li>
+        <Li><P><Strong>Secrets in Key Vault.</Strong> The server’s keys and database passwords are kept in Azure Key Vault. Each part of the system can read only the secrets it needs, and every read is logged.</P></Li>
+        <Li><P><Strong>Encrypted at rest.</Strong> Azure encrypts the database and its backups at rest. The backup storage adds a second layer of encryption.</P></Li>
+        <Li><P><Strong>Nightly backups.</Strong> Each night a job copies the database to Azure Blob Storage. Each copy is write-once for 30 days and is deleted on day 31.</P></Li>
+        <Li><P><Strong>Who has access.</Strong> Our Townwise administrators group manages the production systems and can reach the database outside the app. Our developers group can read the configuration and the server logs, but not secrets or the database.</P></Li>
+        <Li><P><Strong>Staff use two-step sign-in.</Strong> Townwise staff accounts must use two-step sign-in, and the staff console asks for a fresh code every 60 minutes.</P></Li>
+      </Ul>
     ),
   },
   {
@@ -96,9 +104,8 @@ const parts: { id: string; title: string; body: React.ReactNode }[] = [
     title: 'Report a problem',
     body: (
       <Div className="prose">
-        <P>If you think you’ve found a security issue, write to <Span className="chip">[SECURITY CONTACT]</Span>. Tell us what you found and how to reproduce it. Please give us a chance to fix it before you share it. We are students and will answer as fast as we can; we do not offer a bug bounty.</P>
+        <P>Report a security problem to <A href={CONTACT_HREF}>{CONTACT_EMAIL}</A>. Tell us what you found and how to reproduce it. Please give us a chance to fix it before you share it. We are students and will answer as fast as we can; we do not offer a bug bounty.</P>
         <P>This page does not give permission to test the service. The <A href="/terms">Terms</A> forbid security testing without our written permission.</P>
-        <P><Span className="chip">[DECISION NEEDED: security contact, security.txt, response time, safe harbor]</Span></P>
       </Div>
     ),
   },
@@ -114,7 +121,7 @@ export default function PublicSecurity(): React.JSX.Element {
               <Div className="hd-l">
                 <P className="eyebrow">Townwise</P>
                 <Div className="h1w"><H1 id="h-hero" className="h1">Security</H1></Div>
-                <P className="eyebrow updated">Last updated <Span className="chip">[LAST UPDATED DATE]</Span></P>
+                <P className="eyebrow updated">Last updated November 5, 2026</P>
                 <P className="settings"><A className="tl" href="/settings/security">Two-factor settings</A></P>
               </Div>
             </Div>

@@ -24,11 +24,10 @@ const frame = `
 .twmap .tg button[aria-pressed="true"]{background:var(--mint);border-color:var(--mint);color:var(--ground)}
 @media (max-width:699px){.twmap .tb{grid-template-columns:minmax(0,1fr);gap:4px;padding:4px 12px}.twmap .tb-l{grid-row:1}.twmap .tb-r{grid-row:2;justify-self:start;text-align:left}.twmap .tg{grid-row:3;margin-top:4px}.twmap .tg button{flex:1 1 0;width:auto}}
 .twmap .pane-map{position:relative;min-width:0;padding:16px}
-.twmap .map-fig{max-width:1040px;margin-inline:auto;container-type:inline-size;container-name:map}
+.twmap .map-fig{width:100%;max-width:1040px;margin-inline:auto;container-type:inline-size;container-name:map}
 .twmap .map-cap{display:grid;gap:8px;max-width:1072px;margin-inline:auto;padding:16px;font-size:14px;line-height:20px;color:var(--text2)}
 .twmap .map-cap p{max-width:720px}
 .twmap .map-cap strong{color:var(--white);font-weight:600}
-@media (max-width:640px){.twmap .pane-map{min-height:600px;display:flex;flex-direction:column;justify-content:center}}
 .twmap .app-b{display:grid;grid-template-columns:minmax(0,1fr);grid-template-areas:"list" "card" "notes"}
 .twmap .pane-list{grid-area:list;min-width:0;padding:8px}
 .twmap .pane-card{grid-area:card;min-width:0;padding:16px;background:var(--raised);border-top:1px solid var(--border);container-type:inline-size;container-name:card}

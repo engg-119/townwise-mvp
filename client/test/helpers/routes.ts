@@ -1,7 +1,7 @@
 import { readdirSync } from 'node:fs';
 import { join, sep } from 'node:path';
 
-import { CONTACT_HREF, EARLY_ACCESS_HREF } from '../../src/marketing/links';
+import { CONTACT_HREF } from '../../src/marketing/links';
 
 // Every URL the app serves. test/marketing/links.test.ts keeps this list equal to the files in app/.
 export const ROUTES = [
@@ -18,7 +18,7 @@ export const ROUTES = [
 // The homepage sections the nav and footer link to (/#map and so on).
 export const HOME_SECTIONS = ['map', 'how', 'product', 'faq'];
 
-export const MAILTO_HREFS = [EARLY_ACCESS_HREF, CONTACT_HREF];
+export const MAILTO_HREFS = [CONTACT_HREF];
 
 // app/(gate)/(app)/(account)/settings/security.tsx serves /settings/security: groups add no segment,
 // index is the directory itself, and _layout and +special files are not pages.

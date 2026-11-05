@@ -173,10 +173,12 @@ function WebConsoleFrame(props: { children: React.ReactNode }): React.JSX.Elemen
   const pathname = usePathname();
   const signOut = useSignOut();
   // Read on mount, on each move to another console page, and whenever approve or reject changes the list
-  // (pendingTick); P19 also hands over the count from each list read. The last count stays up meanwhile, so the
-  // nav doesn't blink; a failed read leaves it as it was.
+  // (pendingTick); P19 also hands over the count from each list read. On /admin that is P19 itself, which reads
+  // the same list, so the frame doesn't read it too. The last count stays up meanwhile, so the nav doesn't blink;
+  // a failed read leaves it as it was.
   const [count, setCount] = useState<number | null>(null);
   useEffect(() => {
+    if (pathname === '/admin') return undefined;
     let live = true;
     fetchPendingCount(api).then((next) => { if (live) setCount(next); }, () => undefined);
     return () => { live = false; };

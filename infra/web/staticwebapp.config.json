@@ -1,7 +1,7 @@
 {
   "navigationFallback": {
     "rewrite": "/index.html",
-    "exclude": ["/_expo/*", "/assets/*", "/.well-known/*"]
+    "exclude": ["/_expo/*", "/assets/*", "/.well-known/*", "/og/*", "/favicon.ico", "/favicon.svg", "/favicon-32.png", "/apple-touch-icon.png"]
   },
   "routes": [
     {

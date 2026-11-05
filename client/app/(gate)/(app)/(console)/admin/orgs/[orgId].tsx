@@ -2,8 +2,7 @@ import { useCallback, useState } from 'react';
 import { useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import { Text, StyleSheet } from 'react-native';
 
-import type { ApiClient } from '../../../../../../src/api/client';
-import { deleteOrg, fetchOrg, fetchRequests, updateOrg } from '../../../../../../src/portal/console/api';
+import { deleteOrg, fetchOrg, updateOrg } from '../../../../../../src/portal/console/api';
 import { AuditTable } from '../../../../../../src/portal/console/AuditTable';
 import { Dialog } from '../../../../../../src/portal/console/Dialog';
 import { auditHref, requestHref } from '../../../../../../src/portal/console/links';
@@ -15,7 +14,7 @@ import { useRefreshable } from '../../../../../../src/portal/console/useRefresha
 import { ViewAsDialog, type ViewAsTarget } from '../../../../../../src/portal/console/ViewAsDialog';
 import { hasCode } from '../../../../../../src/portal/errors';
 import { formatCount, formatDate, plural, townLabel } from '../../../../../../src/portal/format';
-import { useAction, useLoad } from '../../../../../../src/portal/hooks';
+import { useAction } from '../../../../../../src/portal/hooks';
 import { usePortal } from '../../../../../../src/portal/PortalProvider';
 import { Page } from '../../../../../../src/portal/shell/Page';
 import {
@@ -28,8 +27,8 @@ import { theme } from '../../../../../../src/theme';
 // the team with View as on each active member, the locations as metadata only (D7: day counts and dates, never a
 // figure or a note), the newest 20 audit events, and deletion last: only once suspended, with the typed name.
 // Every change here is a staff action its admins see (D9); after one the page reads the organization again in
-// place. A change that answers 404, or a read after one, means another staff member deleted the organization
-// meanwhile: the page shows its 404 state, as on load, and focus moves to that line.
+// place. A change that answers 404, or a read after one that does, means another staff member deleted the
+// organization meanwhile: the page shows its 404 state, as on load, with no “Saved.”, and focus moves to that line.
 
 const NAME_COPY = 'Enter the organization’s name, 2 to 120 characters.';
 /** A change went through, but reading the organization again didn't: what the page shows may be old. */
@@ -45,17 +44,6 @@ function missing(error: unknown): boolean {
 /** A write's 404: the organization is gone. (A write's 400 is about its body, so it isn't `missing`.) */
 function gone(error: unknown): boolean {
   return hasCode(error, 404, 'not_found');
-}
-
-/** When the request this organization came from was sent, for “From request {date}”; null until known. */
-function useRequestSentAt(api: ApiClient, requestId: string | null): string | null {
-  const { state } = useLoad(useCallback(async () => {
-    if (requestId === null) return null;
-    // An organization comes from an approved request; the list has no single-request read.
-    const { requests } = await fetchRequests(api, 'approved');
-    return requests.find((request) => request.id === requestId)?.createdAt ?? null;
-  }, [api, requestId]));
-  return state.status === 'ready' ? state.data : null;
 }
 
 function RenameDialog(props: { org: StaffOrg; onSaved: () => Promise<void>; onGone: () => void; onClose: () => void }): React.JSX.Element {
@@ -135,7 +123,8 @@ function SuspendDialog(props: { org: StaffOrg; onSaved: () => Promise<void>; onG
 }
 
 /** C7 for an organization: only a suspended one, with its name typed. The notice uses that name. */
-function DeleteDialog(props: { detail: OrgDetail; onStale: () => Promise<void>; onGone: () => void; onClose: () => void }): React.JSX.Element {
+/** `onStale` reads the organization again; false when that read found it deleted, and the 404 state shows. */
+function DeleteDialog(props: { detail: OrgDetail; onStale: () => Promise<boolean>; onGone: () => void; onClose: () => void }): React.JSX.Element {
   const { org, locations } = props.detail;
   const { onStale, onGone } = props;
   const { api, showNotice } = usePortal();
@@ -148,7 +137,7 @@ function DeleteDialog(props: { detail: OrgDetail; onStale: () => Promise<void>; 
         onGone();
         return;
       }
-      if (hasCode(error, 409, 'org_not_suspended')) await onStale();
+      if (hasCode(error, 409, 'org_not_suspended') && !await onStale()) return;
       throw error;
     }
     showNotice({ text: `Deleted ${org.name}.` }, '/admin/orgs');
@@ -211,20 +200,26 @@ export default function OrganizationPage(): React.JSX.Element {
   /** The organization a write found deleted; by id, so another organization's page starts fresh. */
   const [goneId, setGoneId] = useState<string | null>(null);
   const focusMessage = useFocusMessage();
-  const sentAt = useRequestSentAt(api, state.status === 'ready' ? state.data.org.fromRequestId : null);
 
   const saved = useCallback(() => { showNotice({ text: 'Saved.' }, pathname); }, [showNotice, pathname]);
-  const savedAndClosed = useCallback(async () => {
-    await refresh();
-    setOpen(null);
-    saved();
-  }, [refresh, saved]);
   // The page's 404 state replaces the control that was pressed, so focus moves to its line.
   const onGone = useCallback(() => {
     focusMessage();
     setOpen(null);
     setGoneId(orgId);
   }, [focusMessage, orgId]);
+  /** Reads the organization again after a change; false when that read found it deleted, and the 404 state shows. */
+  const refreshed = useCallback(async () => {
+    const failure = await refresh();
+    if (failure === null || !missing(failure.error)) return true;
+    onGone();
+    return false;
+  }, [refresh, onGone]);
+  const savedAndClosed = useCallback(async () => {
+    if (!await refreshed()) return;
+    setOpen(null);
+    saved();
+  }, [refreshed, saved]);
   const reactivate = useAction(useCallback(async () => {
     try {
       await updateOrg(api, orgId, { status: 'active' });
@@ -235,9 +230,8 @@ export default function OrganizationPage(): React.JSX.Element {
       }
       throw error;
     }
-    await refresh();
-    saved();
-  }, [api, orgId, refresh, saved, onGone]));
+    if (await refreshed()) saved();
+  }, [api, orgId, refreshed, saved, onGone]));
 
   const isMissing = goneId === orgId
     || (state.status === 'failed' && missing(state.error))
@@ -279,8 +273,11 @@ export default function OrganizationPage(): React.JSX.Element {
           <Text style={styles.fact}>{suspended ? 'Suspended' : 'Active'}</Text>
           <Text style={styles.fact}>{`Created ${formatDate(org.createdAt)}${org.fromRequestId === null ? ' by Townwise staff' : ''}`}</Text>
           {org.fromRequestId === null ? null : (
-            // The date shows once the request is found; until then, or if it isn't, the plain link.
-            <CellLink label={sentAt === null ? 'From request' : `From request ${formatDate(sentAt)}`} href={requestHref('approved', org.fromRequestId)} />
+            // A request deleted since (with its requester) has no date: the plain link.
+            <CellLink
+              label={org.fromRequestSentAt === null ? 'From request' : `From request ${formatDate(org.fromRequestSentAt)}`}
+              href={requestHref('approved', org.fromRequestId)}
+            />
           )}
         </Facts>
         <Small>{`What you change here is listed in ${org.name}’s Townwise staff activity, which its admins see.`}</Small>
@@ -291,7 +288,7 @@ export default function OrganizationPage(): React.JSX.Element {
       </Stack>
 
       <Section title="Team">
-        <OrgTeam org={org} members={members} onChanged={refresh} onSaved={saved} onViewAs={setViewing} onGone={onGone} />
+        <OrgTeam org={org} members={members} onChanged={refreshed} onSaved={saved} onViewAs={setViewing} onGone={onGone} />
       </Section>
 
       <Section kicker="Locations, metadata only" title="Locations">
@@ -314,7 +311,7 @@ export default function OrganizationPage(): React.JSX.Element {
 
       {open === 'rename' ? <RenameDialog org={org} onSaved={savedAndClosed} onGone={onGone} onClose={() => { setOpen(null); }} /> : null}
       {open === 'suspend' ? <SuspendDialog org={org} onSaved={savedAndClosed} onGone={onGone} onClose={() => { setOpen(null); }} /> : null}
-      {open === 'delete' ? <DeleteDialog detail={detail} onStale={refresh} onGone={onGone} onClose={() => { setOpen(null); }} /> : null}
+      {open === 'delete' ? <DeleteDialog detail={detail} onStale={refreshed} onGone={onGone} onClose={() => { setOpen(null); }} /> : null}
       {viewing === null ? null : <ViewAsDialog target={viewing} onClose={() => { setViewing(null); }} />}
     </Page>
   );

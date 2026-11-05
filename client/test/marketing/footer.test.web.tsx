@@ -81,6 +81,30 @@ test('armed, the letters wait below the edge, but the links stay readable and fo
   expect(word?.textContent).toBe('TOWNWISE');
 });
 
+test('the bottom line names Townwise as the copyright holder and keeps the student-project line, with no placeholder', () => {
+  const footer = renderFooter();
+  expect([...footer.querySelectorAll('.ft-bot p')].map((line) => line.textContent)).toEqual([
+    '© 2026 Townwise',
+    'Townwise is a student project. It is not an official Dartmouth product.',
+  ]);
+  expect(footer.textContent.match(/\[[A-Z][^\]]*\]/g)).toBeNull();
+  expect(footer.querySelector('.chip')).toBeNull();
+  expect(footer.querySelector('.ft-dec')).toBeNull();
+});
+
+test('Request early access is in the Account group unless the shell says not to offer it (on /sign-in)', () => {
+  const offered = renderFooter();
+  expect(within(within(offered).getByRole('navigation', { name: 'Account' })).getAllByRole('link').map((link) => link.textContent))
+    .toEqual(['Sign in', 'Request early access']);
+  cleanup();
+  render(<Footer root={{ current: null }} offerEarlyAccess={false} />);
+  const footer = screen.getByRole('contentinfo');
+  expect(within(within(footer).getByRole('navigation', { name: 'Account' })).getAllByRole('link').map((link) => link.textContent))
+    .toEqual(['Sign in']);
+  expect(within(footer).queryByRole('link', { name: 'Request early access' })).toBeNull();
+  expect(within(footer).getAllByRole('link')).toHaveLength(11);
+});
+
 test('the letters rise once the footer is in view, and the observer disconnects', () => {
   installObserver();
   const root = document.createElement('div');

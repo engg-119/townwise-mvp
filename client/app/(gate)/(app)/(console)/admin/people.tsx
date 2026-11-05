@@ -27,10 +27,14 @@ import {
 // in is found by exact email (the lookup). Non-staff rows with a kit user get View as (C1) and Sign out
 // everywhere; every non-staff row gets Delete person (C7, the typed email), disabled while the person holds a seat.
 // A delete or sign-out reloads the list, which takes the opener with it, so focus moves to the notice (spec 15.7).
-// A refusal that shows the page is out of date (409 person_has_seat, 404) reads the list again in place, so the
-// opener stays for Cancel to return to. Each of these reads the lookup's result again too.
+// A 409 person_has_seat reads the list and the lookup's result again in place, keeping both up meanwhile, so the
+// opener stays for Cancel to return to. A 404 means the person is gone, and the row or lookup result that opened the
+// dialog goes with them when both are read again, so the dialog closes and focus moves to the line that says so.
+// Each of these reads the lookup's result again too.
 
 const SEATED: readonly PersonKind[] = ['org_admin', 'member'];
+/** A 404 for a sign-out or delete: someone else deleted the person meanwhile. */
+const GONE = 'This person no longer exists.';
 
 type Open =
   | { kind: 'signOut'; email: string; userId: string }
@@ -50,19 +54,22 @@ function viewTarget(person: Person): ViewAsTarget {
   return { email: person.email, userId: person.userId, orgName: SEATED.includes(person.kind) ? (person.org?.name ?? null) : null };
 }
 
-function SignOutDialog(props: { email: string; userId: string; onDone: () => void; onStale: () => void; onClose: () => void }): React.JSX.Element {
-  const { email, userId, onDone, onStale } = props;
+function SignOutDialog(props: { email: string; userId: string; onDone: () => void; onGone: () => void; onClose: () => void }): React.JSX.Element {
+  const { email, userId, onDone, onGone } = props;
   const { api, showNotice } = usePortal();
   const signOut = useAction(useCallback(async () => {
     try {
       await signOutEverywhere(api, userId);
     } catch (error) {
-      if (hasCode(error, 404, 'not_found')) onStale();
+      if (hasCode(error, 404, 'not_found')) {
+        onGone();
+        return;
+      }
       throw error;
     }
     showNotice({ text: `Signed ${email} out everywhere.` }, '/admin/people');
     onDone();
-  }, [api, showNotice, email, userId, onDone, onStale]));
+  }, [api, showNotice, email, userId, onDone, onGone]));
   return (
     <Dialog
       title={`Sign out ${email} everywhere?`}
@@ -70,11 +77,7 @@ function SignOutDialog(props: { email: string; userId: string; onDone: () => voi
       confirmLabel="Sign out everywhere"
       pendingLabel="Signing out…"
       pending={signOut.pending}
-      problem={problemOf(signOut.error, (error) => {
-        if (hasCode(error, 400, 'invalid_target')) return 'Staff accounts can’t be signed out from here.';
-        if (hasCode(error, 404, 'not_found')) return 'This person no longer exists.';
-        return null;
-      })}
+      problem={problemOf(signOut.error, (error) => (hasCode(error, 400, 'invalid_target') ? 'Staff accounts can’t be signed out from here.' : null))}
       onConfirm={signOut.run}
       onCancel={props.onClose}
     />
@@ -82,8 +85,8 @@ function SignOutDialog(props: { email: string; userId: string; onDone: () => voi
 }
 
 /** C7 for a person: the typed email, then their Townwise records go; the kit user record is a runbook step. */
-function DeleteDialog(props: { person: Person; onDone: () => void; onStale: () => void; onClose: () => void }): React.JSX.Element {
-  const { person, onDone, onStale } = props;
+function DeleteDialog(props: { person: Person; onDone: () => void; onStale: () => void; onGone: () => void; onClose: () => void }): React.JSX.Element {
+  const { person, onDone, onStale, onGone } = props;
   const { email } = person;
   const { api, showNotice } = usePortal();
   // A seat taken since the list was read: the lookup names the organization they are in now.
@@ -93,15 +96,20 @@ function DeleteDialog(props: { person: Person; onDone: () => void; onStale: () =
     try {
       ({ kitUserId } = await deletePerson(api, email));
     } catch (error) {
-      const seated = hasCode(error, 409, 'person_has_seat');
-      if (seated) setSeat((await lookupPerson(api, email).catch(() => null))?.org ?? null);
-      if (seated || hasCode(error, 404, 'not_found')) onStale();
+      if (hasCode(error, 404, 'not_found')) {
+        onGone();
+        return;
+      }
+      if (hasCode(error, 409, 'person_has_seat')) {
+        setSeat((await lookupPerson(api, email).catch(() => null))?.org ?? null);
+        onStale();
+      }
       throw error;
     }
     const runbook = kitUserId === null ? '' : ' Delete their kit user record by hand (runbook).';
     showNotice({ text: `Deleted ${email}’s Townwise records.${runbook}` }, '/admin/people');
     onDone();
-  }, [api, showNotice, email, onDone, onStale]));
+  }, [api, showNotice, email, onDone, onStale, onGone]));
   return (
     <Dialog
       title={`Delete ${email}`}
@@ -116,7 +124,6 @@ function DeleteDialog(props: { person: Person; onDone: () => void; onStale: () =
           return seat === null ? text : { text, link: { label: `Open ${seat.name}’s team`, href: orgHref(seat.id) } };
         }
         if (hasCode(error, 400, 'invalid_target')) return 'Staff accounts can’t be deleted from here.';
-        if (hasCode(error, 404, 'not_found')) return 'This person no longer exists.';
         return null;
       })}
       onConfirm={remove.run}
@@ -200,7 +207,10 @@ interface Lookup {
   look: LookupState;
   /** Looks up `address`, or says it isn't an email address (null). */
   run: (address: string | null) => void;
-  /** Reads a person result again, after a write that changed or removed them. */
+  /**
+   * Reads a person result again, after a write that changed or removed them. The result stays up until the answer
+   * lands, so a dialog opened from it still has its opener to return focus to.
+   */
   refresh: () => void;
 }
 
@@ -208,14 +218,15 @@ interface Lookup {
 function useLookup(api: ApiClient): Lookup {
   const [look, setLook] = useState<LookupState>({ status: 'idle' });
   const latest = useRef(0);
-  const run = useCallback((address: string | null) => {
+  /** `keep` leaves what shows now up while the lookup runs, instead of the pending state. */
+  const start = useCallback((address: string | null, keep: boolean) => {
     latest.current += 1;
     const ticket = latest.current;
     if (address === null) {
       setLook({ status: 'invalid' });
       return;
     }
-    setLook({ status: 'pending', address });
+    if (!keep) setLook({ status: 'pending', address });
     lookupPerson(api, address).then(
       (person) => { if (ticket === latest.current) setLook({ status: 'found', address, person }); },
       (error: unknown) => {
@@ -225,9 +236,10 @@ function useLookup(api: ApiClient): Lookup {
       },
     );
   }, [api]);
+  const run = useCallback((address: string | null) => { start(address, false); }, [start]);
   const refresh = useCallback(() => {
-    if (look.status === 'found' && look.person !== null) run(look.address);
-  }, [look, run]);
+    if (look.status === 'found' && look.person !== null) start(look.address, true);
+  }, [look, start]);
   return { look, run, refresh };
 }
 
@@ -272,11 +284,14 @@ export default function PeoplePage(): React.JSX.Element {
   const { state, reload, refresh, refreshError } = useRefreshable(useCallback(() => fetchPeople(api, kind), [api, kind]));
   const lookup = useLookup(api);
   const { refresh: refreshLookup } = lookup;
+  /** The 404 line; each one a new number, so a second one is a new line that takes focus. */
+  const [gone, setGone] = useState<number | null>(null);
   const focusMessage = useFocusMessage();
   const close = useCallback(() => { setOpen(null); }, []);
   const done = useCallback(() => {
     focusMessage();
     setOpen(null);
+    setGone(null);
     reload();
     refreshLookup();
   }, [focusMessage, reload, refreshLookup]);
@@ -284,6 +299,13 @@ export default function PeoplePage(): React.JSX.Element {
     void refresh();
     refreshLookup();
   }, [refresh, refreshLookup]);
+  const onGone = useCallback(() => {
+    focusMessage();
+    setOpen(null);
+    setGone((previous) => (previous ?? 0) + 1);
+    void refresh();
+    refreshLookup();
+  }, [focusMessage, refresh, refreshLookup]);
 
   let body: React.ReactNode;
   if (state.status === 'loading') {
@@ -310,6 +332,7 @@ export default function PeoplePage(): React.JSX.Element {
   return (
     <Page title="People" lead="Everyone Townwise has a record for: staff, members, invited emails and requesters.">
       <Stack gap={32}>
+        {gone === null ? null : <ErrorNotice key={gone} message={GONE} />}
         <View style={phone ? styles.filtersStacked : styles.filters}>
           <View style={styles.filter}>
             <Select
@@ -326,8 +349,8 @@ export default function PeoplePage(): React.JSX.Element {
         <LookupPanel lookup={lookup} you={me.user.id} onOpen={setOpen} />
         {body}
       </Stack>
-      {open?.kind === 'signOut' ? <SignOutDialog email={open.email} userId={open.userId} onDone={done} onStale={stale} onClose={close} /> : null}
-      {open?.kind === 'delete' ? <DeleteDialog person={open.person} onDone={done} onStale={stale} onClose={close} /> : null}
+      {open?.kind === 'signOut' ? <SignOutDialog email={open.email} userId={open.userId} onDone={done} onGone={onGone} onClose={close} /> : null}
+      {open?.kind === 'delete' ? <DeleteDialog person={open.person} onDone={done} onStale={stale} onGone={onGone} onClose={close} /> : null}
       {open?.kind === 'view' ? <ViewAsDialog target={open.target} onClose={close} /> : null}
     </Page>
   );

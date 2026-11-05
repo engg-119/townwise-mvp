@@ -68,8 +68,11 @@ function RemoveDialog(props: { org: StaffOrg; member: Member; onRemoved: () => P
 export function OrgTeam(props: {
   org: StaffOrg;
   members: readonly Member[];
-  /** Reads the organization again after a change. It never rejects: the page shows a failed read on its own. */
-  onChanged: () => Promise<void>;
+  /**
+   * Reads the organization again after a change. It never rejects: the page shows a failed read on its own. False
+   * when that read found the organization deleted: the page shows its 404 state, so the change isn't reported.
+   */
+  onChanged: () => Promise<boolean>;
   onSaved: () => void;
   onViewAs: (target: ViewAsTarget) => void;
   /** The organization is gone (a write answered 404). */
@@ -85,8 +88,7 @@ export function OrgTeam(props: {
 
   const changeRole = useAction(useCallback(async (member: Member, next: Role) => {
     await changeOrgMemberRole(api, org.id, member.id, next);
-    await onChanged();
-    onSaved();
+    if (await onChanged()) onSaved();
   }, [api, org.id, onChanged, onSaved]));
 
   const add = useAction(useCallback(async (list: string[], as: Role) => {
@@ -107,8 +109,7 @@ export function OrgTeam(props: {
 
   const removed = useCallback(async () => {
     setRemoving(null);
-    await onChanged();
-    onSaved();
+    if (await onChanged()) onSaved();
   }, [onChanged, onSaved]);
 
   function submit(): void {

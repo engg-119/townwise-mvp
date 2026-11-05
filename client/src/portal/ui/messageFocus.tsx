@@ -52,9 +52,18 @@ function ignore(): void {
   return undefined;
 }
 
-/** Asks for focus on the message the same update shows. */
+/**
+ * Asks for focus on the message the same update shows. Once the calling component has unmounted it does nothing,
+ * so an answer that lands after staff moved to another console page never takes focus there.
+ */
 export function useFocusMessage(): () => void {
-  return useContext(MessageFocusContext)?.ask ?? ignore;
+  const ask = useContext(MessageFocusContext)?.ask ?? ignore;
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  return useCallback(() => { if (mounted.current) ask(); }, [ask]);
 }
 
 /**

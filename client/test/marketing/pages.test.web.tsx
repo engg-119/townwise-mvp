@@ -17,7 +17,9 @@ import { fakeAuth } from '../helpers/fakes';
 import { brokenHref } from '../helpers/routes';
 
 const PAGES = ['/', '/about', '/privacy', '/terms', '/security'];
-const EARLY_ACCESS = 'mailto:hello@townwise.tech?subject=Townwise%20early%20access';
+const EARLY_ACCESS = '/request-access';
+const CONTACT = 'mailto:hello@townwise.tech';
+const ANTHROPIC_TERMS = 'https://www.anthropic.com/legal/commercial-terms';
 
 class ResizeObserverPolyfill {
   observe(): void { return undefined; }
@@ -59,6 +61,7 @@ function renderAt(path: string): void {
           '(gate)/totp': () => null,
           '(gate)/auth/magic': () => null,
           '(gate)/(app)/_layout': AppLayout,
+          '(gate)/(app)/request-access': () => <p>Request access form</p>,
           '(gate)/(app)/dashboard': () => null,
           '(gate)/(app)/settings/security': () => null,
         })}
@@ -98,19 +101,61 @@ test('the text pages link to each other, to the app and by email', () => {
     cleanup();
     return hrefs;
   };
-  expect(linksOn('/about')).toEqual([EARLY_ACCESS, 'mailto:hello@townwise.tech']);
-  expect(linksOn('/terms')).toEqual(expect.arrayContaining(['/privacy', '/security', '#s1', '#s13', 'mailto:hello@townwise.tech']));
-  expect(linksOn('/security')).toEqual(['/settings/security', '/terms']);
-  expect(linksOn('/privacy')).toEqual(expect.arrayContaining(['#short', '#changes', 'mailto:hello@townwise.tech']));
+  expect(linksOn('/about')).toEqual([EARLY_ACCESS, CONTACT]);
+  expect(linksOn('/terms')).toEqual(expect.arrayContaining(['/privacy', '/security', '#s1', '#s12', CONTACT]));
+  expect(linksOn('/security')).toEqual(['/settings/security', CONTACT, '/terms']);
+  expect(linksOn('/privacy')).toEqual(expect.arrayContaining(['#short', '#org', '#changes', CONTACT, ANTHROPIC_TERMS]));
 });
 
-test('the mailto links are exact', () => {
-  renderAt('/about');
+test.each(PAGES)('every Request early access link on %s goes to the request form, and Contact is the mailto', (path) => {
+  renderAt(path);
   const early = screen.getAllByRole('link', { name: 'Request early access' });
-  expect(early).toHaveLength(3);
+  // The header and the footer on every page, plus the page's own actions.
+  expect(early.length).toBeGreaterThanOrEqual(2);
   for (const link of early) expect(link.getAttribute('href')).toBe(EARLY_ACCESS);
-  expect(within(screen.getByRole('contentinfo')).getByRole('link', { name: 'Contact' }).getAttribute('href'))
-    .toBe('mailto:hello@townwise.tech');
+  expect(within(screen.getByRole('contentinfo')).getByRole('link', { name: 'Contact' }).getAttribute('href')).toBe(CONTACT);
+  expect(document.body.textContent).not.toMatch(/write to us with your town/i);
+  expect([...document.querySelectorAll('a')].map((anchor) => anchor.getAttribute('href') ?? '').filter((href) => href.includes('subject='))).toEqual([]);
+});
+
+// A placeholder is any bracketed text that starts with a capital ([DECISION NEEDED: …], [PRICE], [HOW: …]), or
+// anything still drawn as a placeholder box. The check covers the page, its header and its footer.
+test.each(['/', '/about', '/privacy'])('%s keeps Request early access in the header and the footer, to the request form', (path) => {
+  renderAt(path);
+  const cta = within(screen.getByRole('banner')).getByRole('link', { name: 'Request early access' });
+  expect(cta.className).toBe('btn');
+  expect(cta.getAttribute('href')).toBe(EARLY_ACCESS);
+  const account = within(screen.getByRole('contentinfo')).getByRole('navigation', { name: 'Account' });
+  expect(within(account).getAllByRole('link').map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
+    ['Sign in', '/sign-in'], ['Request early access', EARLY_ACCESS],
+  ]);
+});
+
+test.each(PAGES)('%s, header and footer included, renders no bracketed placeholder and no placeholder box', (path) => {
+  renderAt(path);
+  const text = document.body.textContent;
+  expect(text.match(/\[[A-Z][^\]]*\]/g)).toBeNull();
+  expect(document.querySelectorAll('.chip')).toHaveLength(0);
+  expect(within(screen.getByRole('contentinfo')).getByText('© 2026 Townwise')).toBeTruthy();
+});
+
+test('Terms has no liability cap, notice period, governing-law clause or promise to notify account holders', () => {
+  renderAt('/terms');
+  const main = screen.getByRole('main');
+  const text = main.textContent;
+  expect(text).toContain('These terms are between you and the Townwise team, a group of students in ENGG 119, AI in the Real World, at Dartmouth’s Thayer School of Engineering (“Townwise”, “we”).');
+  expect(text).toContain('Townwise does not charge for early access.');
+  expect(text).toContain('If we do, we will update this page and the effective date at the top before the changes take effect.');
+  expect(text).toContain('or end early access for everyone. Whenever you stop');
+  expect(text).not.toMatch(/total liability|governed by|tell account holders|we start charging/i);
+  expect(within(main).queryByRole('heading', { name: /Governing law/ })).toBeNull();
+});
+
+test('Request early access, signed out, sends the visitor to sign in with Google first', async () => {
+  renderAt('/');
+  fireEvent.click(within(screen.getByRole('banner')).getByRole('link', { name: 'Request early access' }));
+  expect(await screen.findByText('Sign-in screen')).toBeTruthy();
+  expect(window.location.pathname).toBe('/sign-in');
 });
 
 test('a footer link navigates in the app', async () => {
@@ -213,15 +258,41 @@ test.each([
   expect(ids.filter((id, index) => ids.indexOf(id) !== index && /^h-|^pv-/.test(id))).toEqual([]);
 });
 
-test('Privacy names Anthropic as the tuning chat’s provider, with its retention and training wording undecided', () => {
+test('Privacy names Anthropic as the tuning chat’s provider, says the chat is off until turned on, and links Anthropic’s terms', () => {
   renderAt('/privacy');
   const items = within(screen.getByRole('region', { name: 'Who else sees it' })).getAllByRole('listitem');
   const anthropic = items.find((item) => item.textContent.startsWith('Anthropic,'));
   if (anthropic === undefined) throw new Error('no Anthropic item');
+  expect(anthropic.textContent).toContain('The tuning chat is off in production until we turn it on, and while it is off nothing is sent to Anthropic.');
   expect(anthropic.textContent).toContain('Anthropic receives the messages you send and the location data the assistant reads to answer them');
-  expect([...anthropic.querySelectorAll('.chip')].map((chip) => chip.textContent)).toEqual([
-    '[DECISION NEEDED: how long Anthropic keeps chat data, and whether it may be used to train models]',
-  ]);
+  expect(anthropic.textContent).toContain('which say Anthropic may not train models on that content.');
+  expect(within(anthropic).getByRole('link', { name: 'Commercial Terms of Service' }).getAttribute('href')).toBe(ANTHROPIC_TERMS);
+  expect(anthropic.querySelectorAll('.chip')).toHaveLength(0);
+});
+
+test('Privacy makes the three commitments and no longer says the app has no upload', () => {
+  renderAt('/privacy');
+  const text = screen.getByRole('main').textContent;
+  expect(text).toContain('Townwise does not sell personal data.');
+  expect(text).toContain('Your sales data is used only to provide Townwise to your restaurant: its own forecasts and, when it is turned on, its tuning chat. It is not shared with or used for other restaurants, and it is not used to train AI models.');
+  expect(text).toContain('The operator responsible for your data is the Townwise team, a group of students in ENGG 119, AI in the Real World, at Dartmouth’s Thayer School of Engineering in Hanover, NH. Townwise is not an official Dartmouth product.');
+  expect(text).toContain('we will delete your account and its data within 30 days');
+  expect(text).toContain('sends us only the date, guest count and net sales for each day');
+  expect(text).toContain('Effective November 5, 2026. Last updated November 5, 2026.');
+  expect(text).not.toMatch(/no place to upload|before any upload exists|email account holders/i);
+});
+
+test('Terms and Security carry the new date, and Security says where Townwise is hosted', () => {
+  renderAt('/terms');
+  expect(screen.getByText('Effective November 5, 2026.')).toBeTruthy();
+  expect(screen.getByRole('main').textContent).toContain('you must be 18 or older and acting for your business');
+  cleanup();
+  renderAt('/security');
+  expect(screen.getByText('Last updated November 5, 2026')).toBeTruthy();
+  const hosting = screen.getByRole('main').textContent;
+  expect(hosting).toContain('Our server and its database run on Microsoft Azure, in its East US region');
+  expect(hosting).not.toContain('Hosting has not been chosen');
+  expect(within(screen.getByRole('main')).getByRole('link', { name: 'hello@townwise.tech' }).getAttribute('href')).toBe(CONTACT);
 });
 
 test('About lists what we are building in the future tense, then what comes next, unnumbered', () => {

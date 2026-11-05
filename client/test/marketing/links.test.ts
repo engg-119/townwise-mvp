@@ -1,14 +1,22 @@
-import { CONTACT_HREF, EARLY_ACCESS_HREF, footerGroups, navLinks, SIGN_IN_HREF } from '../../src/marketing/links';
+import { CONTACT_EMAIL, CONTACT_HREF, EARLY_ACCESS_HREF, footerGroups, navLinks, SIGN_IN_HREF } from '../../src/marketing/links';
 import { brokenHref, ROUTES, routesInAppDir } from '../helpers/routes';
 
 test('the route list matches the files in app/', () => {
   expect([...routesInAppDir()].sort()).toEqual([...ROUTES].sort());
 });
 
-test('the mailto links are exact', () => {
-  expect(EARLY_ACCESS_HREF).toBe('mailto:hello@townwise.tech?subject=Townwise%20early%20access');
-  expect(CONTACT_HREF).toBe('mailto:hello@townwise.tech');
+test('early access is the portal’s Request access form, not an email', () => {
+  expect(EARLY_ACCESS_HREF).toBe('/request-access');
+  expect(ROUTES).toContain(EARLY_ACCESS_HREF);
   expect(SIGN_IN_HREF).toBe('/sign-in');
+});
+
+// The portal shows the address by stripping “mailto:” from CONTACT_HREF, so it must stay a plain mailto.
+test('the contact address lives in one constant, and its link is a plain mailto', () => {
+  expect(CONTACT_EMAIL).toBe('hello@townwise.tech');
+  expect(CONTACT_HREF).toBe('mailto:hello@townwise.tech');
+  expect(CONTACT_HREF).toMatch(/^mailto:[^?]+$/);
+  expect(CONTACT_HREF.replace(/^mailto:/, '')).toBe(CONTACT_EMAIL);
 });
 
 test('the nav links are the four homepage sections', () => {
