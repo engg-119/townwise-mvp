@@ -21,7 +21,7 @@ export function SignInFrame(props: SignInFrameProps): React.JSX.Element {
             <div className="hd-r"><div className="card">{props.children}</div></div>
             <div className="c-all">
               <div className="access">
-                <p>{props.note}</p>
+                {props.note === undefined ? null : <p>{props.note}</p>}
               </div>
               <ul className="legal-row" aria-label="Legal">
                 <li><a className="tl" href="/privacy">Privacy</a></li>

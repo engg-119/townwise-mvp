@@ -6,8 +6,8 @@ import { Screen } from '../ui';
 export interface SignInFrameProps {
   title: string;
   lead: string;
-  // The line under the card.
-  note: string;
+  // The line under the card, if the page has one (/totp has none, as on the board's second step).
+  note?: string;
   // The card's contents.
   children: React.ReactNode;
 }
@@ -22,9 +22,11 @@ export function SignInFrame(props: SignInFrameProps): React.JSX.Element {
       <Text role="heading" style={[width <= 640 ? theme.type.h1Phone : theme.type.h1Tablet, styles.title]}>{props.title}</Text>
       <Text style={styles.sub}>{props.lead}</Text>
       <View style={styles.card}>{props.children}</View>
-      <View style={styles.access}>
-        <Text style={[width <= 640 ? theme.type.bodyPhone : theme.type.small, styles.fine]}>{props.note}</Text>
-      </View>
+      {props.note === undefined ? null : (
+        <View style={styles.access}>
+          <Text style={[width <= 640 ? theme.type.bodyPhone : theme.type.small, styles.fine]}>{props.note}</Text>
+        </View>
+      )}
     </Screen>
   );
 }
