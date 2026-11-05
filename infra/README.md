@@ -159,7 +159,7 @@ terraform apply
 az containerapp hostname list -n ca-townwise-api -g rg-townwise-prod -o table
 ```
 
-The apply creates the Container App, its custom domain and managed certificate, the backup and restore jobs, the Static Web App and its domains, and every DNS record. On first boot the API connects as `townwise-app` and builds its 9 indexes. If `api.townwise.tech` shows binding `Disabled` after about 15 minutes, bind the managed certificate:
+The apply creates the Container App, its custom domain and managed certificate, the backup and restore jobs, the Static Web App and its domains, and every DNS record. On first boot the API connects as `townwise-app` and builds its indexes. If `api.townwise.tech` shows binding `Disabled` after about 15 minutes, bind the managed certificate:
 
 ```sh
 az containerapp hostname bind --hostname api.townwise.tech -n ca-townwise-api -g rg-townwise-prod \
@@ -340,6 +340,23 @@ List revisions with `az containerapp revision list -n ca-townwise-api -g rg-town
 
 Check the remaining credit at https://www.microsoftazuresponsorships.com/Balance. The subscription's spending limit is off, so usage bills the card on file once the credits run out. The $60 budget covers the three Townwise resource groups and alerts at 80% of actual spend and at 100% of forecast. Expected spend is about $50.50, so the 80% alert fires late in most months.
 
+### 16. Enable the tuning chat
+
+The tuning chat (`docs/portal/tuning-chat.md`) is off until the API has `ANTHROPIC_API_KEY`. Off, `GET /api/org/locations/<id>/chat` answers `enabled: false` and a turn answers 503 `chat_unavailable`. Turning it on sends chat messages, and the location data the assistant reads, to Anthropic.
+
+1. **Create the key.** In the Anthropic Console, in a workspace used only by Townwise production, create an API key named `townwise-production`, and set that workspace's monthly spend limit to what you can afford to lose; it is the hard cap. The API's own cap, `TOWNWISE_CHAT_MONTHLY_BUDGET_USD` in `api/production.env` (20 dollars a month per organization), stops new turns per organization but is not a cap on the account.
+2. **Seed it** without it reaching argv, history or the terminal (paste at the hidden prompt):
+
+   ```sh
+   cd "$(git rev-parse --show-toplevel)"
+   infra/scripts/set-secret.sh kv-townwise-2d2c15bf anthropic-api-key
+   ```
+
+3. **Turn it on.** Add `enable_chat = true` to `infra/terraform/production/terraform.tfvars`, then `terraform plan` and `terraform apply` from `infra/terraform/production`. The plan adds one role assignment (the app's identity reads `anthropic-api-key` only) and changes the Container App (the `anthropic-api-key` Key Vault reference and the `ANTHROPIC_API_KEY` env var), which starts a new revision.
+4. **Check.** Signed in as a member, `GET /api/org/locations/<id>/chat` answers `enabled: true`.
+
+**Rotate** by seeding a new version with the same command and running `az containerapp revision restart`, then revoke the old key in the Console. **Turn it off** with `enable_chat = false` and apply, which removes the reference, the env var and the role assignment; the secret stays in Key Vault until you delete it.
+
 ## Logs
 
 Container Apps and Key Vault `AuditEvent` logs go to `log-townwise`, capped at 0.1 GB a day to stay inside the 5 GB monthly free ingestion. `AuditEvent` also goes to `sttwaudit2d2c15bf`, which has no cap, keeps it for a year, and admits only Azure Monitor, so spending the cap cannot blind the audit trail. When the cap is reached, ingestion stops until the daily reset, and the alert `townwise-log-daily-cap-reached` emails `alert_email`. A flood of rate-limited requests logs one line per `429`, which can spend the cap; excluding 429s from the request log is an upstream suggestion for the kit's `server-core`, not changed here.
@@ -370,6 +387,8 @@ Prices are from the Azure Retail Prices API (eastus), with a 730-hour month (2,6
 | Communication Services email | $0.00025 per message plus $0.00012 per MB | about $0.25 per 1,000 emails |
 | State storage | | under $0.05 |
 | **Total** | | **about $50.50 at low traffic** |
+
+The tuning chat, when on (step 16), bills Anthropic directly, not Azure: at most the Console workspace's spend limit, and the API stops new turns once an organization reaches `TOWNWISE_CHAT_MONTHLY_BUDGET_USD` in a month.
 
 If the free tier refuses private access (step 3), M10 adds $0.0191 an hour ($13.94) plus 32 GiB at $0.115 per GB ($3.68): about $68 in total. If init-container resources turn out to be billed too, the Container Apps line rises by about half.
 

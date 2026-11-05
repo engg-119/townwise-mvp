@@ -30,10 +30,15 @@ const PROFILES: ReadonlyMap<string, TownProfile> = new Map(TOWNS.flatMap((town) 
   }] as const];
 }));
 
+/** The profile GET /api/towns/:townId serves for this id, if it is one of the twelve. */
+export function townProfileOf(townId: string): TownProfile | undefined {
+  return PROFILES.get(townId);
+}
+
 /** Any signed-in person may read it: a requester sees their town on Waiting before any organization exists. */
 export function getTownProfile(_ctx: TownwiseContext, req: Request, res: Response): Promise<void> {
   const { townId } = req.params;
-  const profile = typeof townId === 'string' ? PROFILES.get(townId) : undefined;
+  const profile = typeof townId === 'string' ? townProfileOf(townId) : undefined;
   if (profile === undefined) return Promise.reject(new AppError(404, 'not_found', 'Not found'));
   res.status(200).json({ profile });
   return Promise.resolve();

@@ -1,0 +1,241 @@
+// The tuning chat (docs/portal/tuning-chat.md): a member talks with an assistant about one location's demand, and it
+// can propose notes the member adds through the notes route. Conversations are private to their author, per
+// location. Message text, tool inputs and tool results never reach a log or an audit event: only ids, counts, stop
+// reasons and codes do.
+import { randomUUID } from 'node:crypto';
+
+import type { BetaMessageParam } from '@anthropic-ai/sdk/resources/beta/messages/messages';
+import { objectId } from '@ckeith26/mongo';
+import { AppError, parseInput } from '@ckeith26/server-core';
+import type { Request, Response } from 'express';
+import { z } from 'zod';
+
+import { recordAfter } from '../audit.ts';
+import type { TownwiseContext } from '../app.ts';
+import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
+import { runTurn, type TurnEvent } from '../chat/turn.ts';
+import { chatMessageViews, type ChatMessageView } from '../chat/view.ts';
+import { utcDay } from '../dates.ts';
+import type { ConversationOwner, ConversationRecord, ConversationSummary } from '../stores/chat-conversations.ts';
+import { loadLocation, memberOf } from './locations.ts';
+import { actorOf } from './team.ts';
+
+/** Section 2. */
+export interface ChatBudget { month: string; usedUsd: number; limitUsd: number; exhausted: boolean }
+export interface ConversationListItem { id: string; title: string; updatedAt: string; turnCount: number }
+export interface ChatSummary { enabled: boolean; budget: ChatBudget; conversations: ConversationListItem[] }
+export interface ConversationView { id: string; title: string; updatedAt: string; messages: ChatMessageView[] }
+
+const MAX_LISTED = 50;
+/** Section 5 caps. */
+const MAX_TURNS = 40;
+const MAX_STORED_BYTES = 1_500_000;
+/** A live-turn claim older than this may be taken over. */
+const STALE_TURN_MS = 3 * 60 * 1000;
+/** Keeps the Container Apps ingress from closing an idle stream. */
+const PING_MS = 15_000;
+const TITLE_CHARS = 60;
+
+const turnBody = z.object({
+  conversationId: objectId.optional(),
+  content: z.string().trim().min(1).max(4000),
+});
+
+function notFound(): AppError {
+  return new AppError(404, 'not_found', 'Not found');
+}
+
+function ownerOf(caller: MemberPrincipal, locationId: string): ConversationOwner {
+  return { locationId, userId: caller.userId };
+}
+
+function monthOf(at: Date): string {
+  return at.toISOString().slice(0, 7);
+}
+
+/** The organization's spend this calendar month (UTC), used dollars rounded to cents. */
+async function budgetOf(ctx: TownwiseContext, scope: OrgScope): Promise<ChatBudget> {
+  const month = monthOf(ctx.now());
+  const used = await ctx.stores.chatUsage.costMicroUsd(scope, month);
+  const limitUsd = ctx.config.chatMonthlyBudgetUsd;
+  return { month, usedUsd: Math.round(used / 10_000) / 100, limitUsd, exhausted: used >= Math.round(limitUsd * 1_000_000) };
+}
+
+function listItem(conversation: ConversationSummary): ConversationListItem {
+  return {
+    id: conversation.id, title: conversation.title, updatedAt: conversation.updatedAt.toISOString(),
+    turnCount: conversation.turnCount,
+  };
+}
+
+function isFull(conversation: ConversationRecord): boolean {
+  const bytes = conversation.messages.reduce((sum, message) => sum + Buffer.byteLength(message.param, 'utf8'), 0);
+  return conversation.turnCount >= MAX_TURNS || bytes >= MAX_STORED_BYTES;
+}
+
+/** The first 60 characters of the first message. */
+function titleOf(content: string): string {
+  return Array.from(content).slice(0, TITLE_CHARS).join('').trimEnd();
+}
+
+/** GET /api/org/locations/:locationId/chat: on or off, the month's budget, and the caller's own conversations. */
+export async function getChat(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const caller = memberOf(principal);
+  const location = await loadLocation(ctx, caller.scope, req.params.locationId);
+  const [budget, conversations] = await Promise.all([
+    budgetOf(ctx, caller.scope),
+    ctx.stores.chatConversations.list(caller.scope, ownerOf(caller, location.id), MAX_LISTED),
+  ]);
+  const body: ChatSummary = { enabled: ctx.chat !== null, budget, conversations: conversations.map(listItem) };
+  res.status(200).json(body);
+}
+
+/** GET /api/org/locations/:locationId/chat/:conversationId: the caller's own conversation, its visible messages. */
+export async function getConversation(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const caller = memberOf(principal);
+  const location = await loadLocation(ctx, caller.scope, req.params.locationId);
+  const conversationId = parseInput(objectId, req.params.conversationId);
+  const conversation = await ctx.stores.chatConversations.find(caller.scope, ownerOf(caller, location.id), conversationId);
+  if (conversation === null) throw notFound();
+  const body: ConversationView = {
+    id: conversation.id, title: conversation.title, updatedAt: conversation.updatedAt.toISOString(),
+    messages: chatMessageViews(conversation.messages, utcDay(ctx.now())),
+  };
+  res.status(200).json(body);
+}
+
+/** DELETE /api/org/locations/:locationId/chat/:conversationId: the caller's own conversation. */
+export async function deleteConversation(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const caller = memberOf(principal);
+  const { scope } = caller;
+  const location = await loadLocation(ctx, scope, req.params.locationId);
+  const conversationId = parseInput(objectId, req.params.conversationId);
+  if (!(await ctx.stores.chatConversations.remove(scope, ownerOf(caller, location.id), conversationId))) throw notFound();
+  await recordAfter(ctx, {
+    ...actorOf(caller), at: ctx.now(), orgId: scope.orgId, action: 'chat.conversation_deleted',
+    target: { type: 'conversation', id: conversationId },
+    details: { locationId: location.id, conversationId },
+  });
+  res.status(204).end();
+}
+
+interface ClaimedTurn { conversationId: string; title: string; history: BetaMessageParam[] }
+
+/** Claims an existing conversation for this turn, or creates a new one already claimed. */
+async function claimTurn(
+  ctx: TownwiseContext, scope: OrgScope, owner: ConversationOwner, body: z.infer<typeof turnBody>, turnId: string,
+): Promise<ClaimedTurn> {
+  const conversations = ctx.stores.chatConversations;
+  const now = ctx.now();
+  if (body.conversationId === undefined) {
+    const title = titleOf(body.content);
+    return { conversationId: await conversations.create(scope, owner, { title, turnId, now }), title, history: [] };
+  }
+  const claimed = await conversations.claim(scope, owner, body.conversationId, {
+    turnId, now, staleBefore: new Date(now.getTime() - STALE_TURN_MS),
+  });
+  if (claimed === null) {
+    if ((await conversations.find(scope, owner, body.conversationId)) === null) throw notFound();
+    throw new AppError(409, 'chat_turn_in_progress', 'This conversation is still answering. Wait for it, or stop it first.');
+  }
+  return {
+    conversationId: claimed.id,
+    title: claimed.title,
+    history: claimed.messages.map((message) => JSON.parse(message.param) as BetaMessageParam),
+  };
+}
+
+/**
+ * POST /api/org/locations/:locationId/chat/turns (sections 2 and 3). Every refusal is a JSON error before the stream
+ * starts; after that the answer is text/event-stream and ends with `done` or `error`. The turn is saved once, when it
+ * finishes; closing the connection aborts the provider call and saves nothing but the cost.
+ */
+export async function postTurn(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const caller = memberOf(principal);
+  const { scope } = caller;
+  const body = parseInput(turnBody, req.body);
+  const location = await loadLocation(ctx, scope, req.params.locationId);
+  const model = ctx.chat;
+  if (model === null) throw new AppError(503, 'chat_unavailable', 'The tuning chat isn’t turned on yet');
+  const owner = ownerOf(caller, location.id);
+  if (body.conversationId !== undefined) {
+    const existing = await ctx.stores.chatConversations.find(scope, owner, body.conversationId);
+    if (existing === null) throw notFound();
+    if (isFull(existing)) throw new AppError(409, 'conversation_full', 'This conversation is full. Start a new one.');
+  }
+  if ((await budgetOf(ctx, scope)).exhausted) {
+    throw new AppError(409, 'chat_budget_exhausted', 'Your organization’s tuning chat budget for this month is used up');
+  }
+  const turnId = randomUUID();
+  const { conversationId, title, history } = await claimTurn(ctx, scope, owner, body, turnId);
+  const ids = { orgId: scope.orgId, locationId: location.id, conversationId };
+
+  res.status(200);
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+  const send = (event: string, data: unknown): void => {
+    if (!res.writableEnded && !res.destroyed) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+  const abort = new AbortController();
+  res.on('close', () => { abort.abort(); });
+  if (req.socket.destroyed) abort.abort();
+  const ping = setInterval(() => {
+    if (!res.writableEnded && !res.destroyed) res.write(': ping\n\n');
+  }, PING_MS);
+
+  try {
+    send('conversation', { id: conversationId, title });
+    const result = await runTurn({
+      model,
+      tools: { ctx, scope, location, today: utcDay(ctx.now()) },
+      history,
+      userMessage: { role: 'user', content: body.content },
+      signal: abort.signal,
+      now: ctx.now,
+      emit: (event: TurnEvent) => { send(event.type, event.data); },
+      charge: (cost) => ctx.stores.chatUsage.add(scope, monthOf(ctx.now()), cost, ctx.now()),
+    });
+    if (result.kind !== 'done') {
+      await ctx.stores.chatConversations.release(scope, conversationId, turnId);
+      if (result.kind === 'aborted') {
+        ctx.logger.info({ ...ids, calls: result.calls, costMicroUsd: result.costMicroUsd }, 'townwise.chat_turn_aborted');
+        return;
+      }
+      ctx.logger.warn({
+        ...ids, calls: result.calls, code: result.code, errType: result.errType, status: result.status,
+        costMicroUsd: result.costMicroUsd,
+      }, 'townwise.chat_turn_failed');
+      send('error', { code: result.code });
+      return;
+    }
+    const saved = await ctx.stores.chatConversations.finish(scope, conversationId, turnId, { messages: result.messages, now: ctx.now() });
+    if (!saved) {
+      // Another turn took over the claim (this one ran past 3 minutes), or the conversation was deleted.
+      ctx.logger.warn({ ...ids, calls: result.calls, costMicroUsd: result.costMicroUsd }, 'townwise.chat_turn_not_saved');
+      send('error', { code: 'internal' });
+      return;
+    }
+    await recordAfter(ctx, {
+      ...actorOf(caller), at: ctx.now(), orgId: scope.orgId, action: 'chat.turn_completed',
+      target: { type: 'conversation', id: conversationId },
+      details: {
+        locationId: location.id, conversationId, model: result.model, calls: result.calls,
+        inputTokens: result.inputTokens, outputTokens: result.outputTokens, stopReason: result.stopReason,
+      },
+    });
+    ctx.logger.info({
+      ...ids, calls: result.calls, stopReason: result.stopReason, costMicroUsd: result.costMicroUsd,
+    }, 'townwise.chat_turn');
+    send('done', { stopReason: result.stopReason, costUsd: result.costMicroUsd / 1_000_000 });
+  } catch (err) {
+    // A store failure while saving: nothing was saved, and the claim goes if it can.
+    ctx.logger.error({ ...ids, code: 'internal', errType: err instanceof Error ? err.constructor.name : typeof err }, 'townwise.chat_turn_failed');
+    await ctx.stores.chatConversations.release(scope, conversationId, turnId).catch(() => undefined);
+    send('error', { code: 'internal' });
+  } finally {
+    clearInterval(ping);
+    if (!res.writableEnded) res.end();
+  }
+}

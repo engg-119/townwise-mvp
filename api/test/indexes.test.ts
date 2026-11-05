@@ -21,8 +21,8 @@ describe('indexes', () => {
     const connection = registered();
     const collections = Object.values(connection.models).map((model) => model.collection.collectionName).sort();
     expect(collections).toEqual([
-      'tw_access_requests', 'tw_audit_events', 'tw_locations', 'tw_members', 'tw_notes', 'tw_orgs', 'tw_sales_days',
-      'tw_uploads', 'tw_view_as_grants',
+      'tw_access_requests', 'tw_audit_events', 'tw_chat_conversations', 'tw_chat_usage', 'tw_locations', 'tw_members',
+      'tw_notes', 'tw_orgs', 'tw_sales_days', 'tw_uploads', 'tw_view_as_grants',
     ]);
   });
 
@@ -58,7 +58,7 @@ describe('indexes', () => {
 
   it('leads every tenant compound index with orgId, except the two seat indexes keyed by the person', () => {
     const connection = registered();
-    for (const model of ['TwMember', 'TwLocation', 'TwSalesDay', 'TwUpload', 'TwNote']) {
+    for (const model of ['TwMember', 'TwLocation', 'TwSalesDay', 'TwUpload', 'TwNote', 'TwChatConversation', 'TwChatUsage']) {
       for (const [fields] of indexesOf(connection, model)) {
         const keys = Object.keys(fields);
         if (keys.length < 2) continue;
@@ -66,6 +66,16 @@ describe('indexes', () => {
         expect(keys[0]).toBe('orgId');
       }
     }
+  });
+
+  it('lists a person’s conversations per location newest first, and keeps one chat cost document per organization per month', () => {
+    const connection = registered();
+    expect(indexesOf(connection, 'TwChatConversation')).toContainEqual([
+      { orgId: 1, locationId: 1, userId: 1, updatedAt: -1 }, expect.anything(),
+    ]);
+    expect(indexesOf(connection, 'TwChatUsage')).toContainEqual([
+      { orgId: 1, month: 1 }, expect.objectContaining({ unique: true }),
+    ]);
   });
 
   it('keeps one sales row per location per day, and stores sales rows with strict: throw', () => {

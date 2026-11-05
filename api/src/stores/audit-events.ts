@@ -26,6 +26,8 @@ export const AUDIT_DETAIL_KEYS = {
   'note.created': ['locationId', 'kind', 'startDate', 'endDate'],
   'note.updated': ['locationId', 'kind', 'startDate', 'endDate'],
   'note.deleted': ['locationId', 'kind', 'startDate', 'endDate'],
+  'chat.turn_completed': ['locationId', 'conversationId', 'model', 'calls', 'inputTokens', 'outputTokens', 'stopReason'],
+  'chat.conversation_deleted': ['locationId', 'conversationId'],
   'view_as.started': ['targetUserId', 'targetEmail', 'reason', 'expiresAt'],
   'view_as.ended': ['endReason'],
   'people.signed_out_everywhere': [],
@@ -35,7 +37,7 @@ export const AUDIT_DETAIL_KEYS = {
 
 export type AuditAction = keyof typeof AUDIT_DETAIL_KEYS;
 export type AuditActorRole = 'superadmin' | 'org_admin' | 'member' | 'user';
-export type AuditTargetType = 'org' | 'member' | 'request' | 'location' | 'upload' | 'note' | 'user' | 'grant';
+export type AuditTargetType = 'org' | 'member' | 'request' | 'location' | 'upload' | 'note' | 'user' | 'grant' | 'conversation';
 export type AuditDetails = Record<string, string | number | boolean | null>;
 
 export interface AuditEventFields {

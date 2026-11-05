@@ -86,3 +86,9 @@ variable "lock_backup_retention" {
   type        = bool
   default     = false
 }
+
+variable "enable_chat" {
+  description = "Turn on the tuning chat: the API gets ANTHROPIC_API_KEY from the Key Vault secret anthropic-api-key, which must be seeded first (infra/README.md, Enable the tuning chat). False leaves the chat off."
+  type        = bool
+  default     = false
+}

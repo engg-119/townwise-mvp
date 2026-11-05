@@ -2,7 +2,7 @@
 
 Townwise backend: one Node process (`src/main.ts`) composed from the kit modules in `../backend/` (copied from camkeith/modules; versions in `../KIT.md`). Sign-in is Google only.
 
-It mounts two routers. The kit’s `/auth` handles sign-in, sessions and two-step sign-in. Townwise’s `/api` (`src/app.ts`, routes in `src/access/routes.ts`) handles access, organizations, locations, sales data, notes, the team and the staff console. No kit file is changed; all Townwise code is under `api/`. "The build spec" and "spec Section N" in this README and in code comments mean `../docs/portal/spec.md`.
+It mounts two routers. The kit’s `/auth` handles sign-in, sessions and two-step sign-in. Townwise’s `/api` (`src/app.ts`, routes in `src/access/routes.ts`) handles access, organizations, locations, sales data, notes, the tuning chat, the team and the staff console. No kit file is changed; all Townwise code is under `api/`. "The build spec" and "spec Section N" in this README and in code comments mean `../docs/portal/spec.md`.
 
 ## Run locally
 
@@ -45,6 +45,7 @@ Three roles: staff (`superadmin`, Townwise’s own people), org admin and member
 | Delete all sales for a location | no | no | yes | no | no |
 | Add notes; edit or delete their own | no | no | yes | yes | no |
 | Edit or delete anyone’s notes | no | no | yes | no | no |
+| Use the tuning chat (own conversations only) | no | reads the target’s, cannot send or delete | yes | yes | no |
 | Add, rename, change the town of, or delete (when empty) a location | no | no | yes | no | no |
 | Read the team | any organization, in the console | read-only, when the target is an org admin | own | no | no |
 | Add emails, change roles, remove people | not built yet | no | own | no | no |
@@ -133,7 +134,18 @@ A signed-in person whose kit user no longer exists gets 401 `unauthenticated`. T
 
 - A note belongs to one location. Its kind is closure, private event, opening or other. It covers a date range of up to 366 days, optionally only certain weekdays, with an effect (closed, more guests, fewer guests, unknown), optional expected guests and a detail of up to 280 characters (required for other). [CONFIRM: notes first, AI chat later]
 - Authors edit and delete their own notes; org admins edit and delete any. [CONFIRM: author or admin]
-- Nothing reads notes yet. The detail text never reaches a log or an audit event.
+- Only the tuning chat reads notes yet (its `list_notes` tool, as data). The detail text never reaches a log or an audit event.
+
+### Tuning chat
+
+The build contract is `../docs/portal/tuning-chat.md`. A member chats with an assistant (Claude Opus 5.5 through the Anthropic API) about one location's demand. The assistant reads the location's sales coverage and totals, its daily rows, its notes and its town profile, and can propose a note. A proposal is a card in the client; **Add note** posts it to the notes route as the person, and nothing else writes a note.
+
+- Off until `ANTHROPIC_API_KEY` is set: the GET answers `enabled: false`, a turn answers 503 `chat_unavailable`.
+- Conversations are private to their author, per location. Staff in view-as read the target’s and cannot send.
+- A turn streams over the POST (`text/event-stream`): `conversation` first, then `text`, `tool` and `proposal` events, then `done` (`end_turn`, `max_tokens`, `refusal` or `tool_limit`, with `costUsd`) or `error` (`internal`, `provider_unavailable`, `provider_overloaded`). A comment line every 15 seconds keeps the ingress from closing an idle stream. At most 8 model calls per turn.
+- A turn is saved in one update when it finishes, under a compare-and-set on its live-turn claim; a claim older than 3 minutes may be taken over. A failed turn, or one the client closed, saves nothing but its cost. Every stored message is the API message param exactly as sent or received, thinking blocks included, and history is append-only.
+- Each organization has a monthly budget, `TOWNWISE_CHAT_MONTHLY_BUDGET_USD` (UTC calendar month), checked before a turn starts. Cost is recorded after every model call from its token usage at list prices (`src/chat/pricing.ts`), so one turn can overrun by its own cost.
+- Message text, tool inputs and tool results never reach a log or an audit event.
 
 ### Calibration
 
@@ -143,7 +155,7 @@ Each location’s calibration state is derived from its sales days on every read
 
 - Every change writes an event to `tw_audit_events`, with details from a fixed allowlist per action. Events never hold guest or sales figures, note detail text, request notes, decision messages or file contents.
 - Events for client actions (members, org admins and requesters) are written after the effect; a failed write is logged and the action stands. Staff events are written before the effect; a failed write refuses the action with 503, and an effect that then fails adds `staff_action.not_applied`. [CONFIRM: audit timing; events kept indefinitely]
-- Townwise log lines carry ids and counts only: `townwise.access_denied { policy, code }`, `townwise.view_as_read { grantId, routeId }`, `townwise.upload_applied { orgId, locationId, uploadId, dayCount }` and `townwise.audit_write_failed { action, orgId, targetId }`. No route puts an email, a name or a figure in its path or query, because server-core logs the URL. The one exception is the people lookup’s `q`, which server-core redacts.
+- Townwise log lines carry ids and counts only: `townwise.access_denied { policy, code }`, `townwise.view_as_read { grantId, routeId }`, `townwise.upload_applied { orgId, locationId, uploadId, dayCount }`, `townwise.audit_write_failed { action, orgId, targetId }`, and for the tuning chat `townwise.chat_turn`, `townwise.chat_turn_failed`, `townwise.chat_turn_aborted` and `townwise.chat_turn_not_saved` (`{ orgId, locationId, conversationId, calls, costMicroUsd }` with the stop reason, or the code and error class). No route puts an email, a name or a figure in its path or query, because server-core logs the URL. The one exception is the people lookup’s `q`, which server-core redacts.
 
 ## Endpoints
 
@@ -239,6 +251,17 @@ Policy `staff`, except End. During view-as, every route here answers 409 `view_a
 
 The console never returns sales figures or note text. People come only from Townwise records, `TOWNWISE_SUPERADMIN_EMAILS` and the kit’s exact-email lookup; the kit’s collections are never read directly.
 
+### Tuning chat
+
+| Method and path | Policy | Request | Success | Errors |
+|---|---|---|---|---|
+| `GET /api/org/locations/:locationId/chat` | member | | 200 `{ enabled, budget, conversations }` (the caller’s own, newest 50) | 404 |
+| `GET /api/org/locations/:locationId/chat/:conversationId` | member (author) | | 200 `{ id, title, updatedAt, messages }` | 400; 404 |
+| `POST /api/org/locations/:locationId/chat/turns` | member; limiter `chat` | `{ conversationId?, content }`, content 1 to 4,000 characters | 200 `text/event-stream` | 400; 404; 409 `chat_turn_in_progress`, `conversation_full`, `chat_budget_exhausted`; 429; 503 `chat_unavailable` |
+| `DELETE /api/org/locations/:locationId/chat/:conversationId` | member (author) | | 204 | 400; 404 |
+
+`budget` is `{ month, usedUsd, limitUsd, exhausted }`. Each conversation is `{ id, title, updatedAt, turnCount }`; its `messages` are `{ role, text, proposals, at }`, one per message with text or a proposal, never thinking blocks, tool calls or tool results. A proposal is exactly a note (the notes route’s body). Another person’s conversation, or one from another location, is 404. A conversation holds at most 40 turns or 1.5 MB of stored messages (409 `conversation_full`).
+
 ### Rate limits
 
 | Name | Applies to | Limit | When Redis is down |
@@ -248,6 +271,7 @@ The console never returns sales figures or note text. People come only from Town
 | `townwise:uploads` | the upload route, per account | 30 per hour | allow |
 | `townwise:requests` | `POST /api/access-requests`, per account | 5 per day | deny (503 `unavailable`) |
 | `townwise:view-as` | `POST /api/admin/view-as`, per account | 20 per hour | deny (503 `unavailable`) |
+| `townwise:chat` | `POST /api/org/locations/:locationId/chat/turns`, per account | 60 per hour | deny (503 `unavailable`) |
 
 A refused request is 429 `rate_limited` with `retryAfterSeconds`. Account keys are `acct:<userId>`, which the rate-limit module hashes before storing. [CONFIRM: limits]
 
@@ -260,6 +284,7 @@ These routes are in the build spec and have no server code yet:
 - `POST /api/admin/orgs`, `PATCH /api/admin/orgs/:orgId` and `DELETE /api/admin/orgs/:orgId` (staff create, rename, suspend, reactivate and delete organizations).
 - `POST`, `PATCH` and `DELETE` under `/api/admin/orgs/:orgId/members` (staff team edits).
 - `POST /api/admin/people/:userId/sign-out-everywhere` and `POST /api/admin/people/delete`.
+- In the tuning chat (`../docs/portal/tuning-chat.md`): background turns and resumable streams, message trees, regenerate and edit, history compaction, attachments, memory and voice.
 
 ## Data
 
@@ -276,6 +301,8 @@ Every Townwise collection takes the `tw_` prefix. Every tenant document carries 
 | `tw_notes` | the note’s fields and the author’s user id |
 | `tw_view_as_grants` | staff member and session, target, organization, reason, start and end |
 | `tw_audit_events` | who did what, with allowlisted details |
+| `tw_chat_conversations` | per author and location: the title, every API message param of the conversation as JSON with its time, the turn count and the live-turn claim |
+| `tw_chat_usage` | per organization and UTC month: the tuning chat’s cost in whole micro-dollars |
 
 Townwise reads the kit’s data only through its store functions (`users.findById`, `users.findByEmail`, `totp.get`).
 
@@ -302,8 +329,10 @@ Townwise reads the kit’s data only through its store functions (`users.findByI
 | `AUTH_TOTP_ISSUER` | auth | yes | no | `Townwise` |
 | `AUTH_GOOGLE_CLIENT_IDS` | auth | no | no | Google OAuth web client ids, comma-separated; empty turns Google sign-in off |
 | `TOWNWISE_SUPERADMIN_EMAILS` | api (`src/config.ts`) | in production | no | staff addresses, comma-separated, at most 20, normalized like the kit; empty locally [CONFIRM: production refuses an empty list] |
+| `TOWNWISE_CHAT_MONTHLY_BUDGET_USD` | api (`src/config.ts`) | no | no | `20`: the tuning chat’s monthly spend limit per organization, in dollars, 0 to 10,000 |
+| `ANTHROPIC_API_KEY` | api (`src/main.ts`) | no | yes | empty locally, which turns the tuning chat off; in production a Key Vault reference when `enable_chat` is on (`../infra/README.md`, step 16) |
 
-`.env.example` lists every variable above except `LOG_LEVEL`, `HTTP_KEEP_ALIVE_TIMEOUT_MS` and `SHUTDOWN_TIMEOUT_MS`, which take their defaults. It holds local values and placeholders only: the two key rings, the Google client ids and the staff list are empty. Key rotation for the two key rings is in `../backend/auth/MODULE.md`.
+`.env.example` lists every variable above except `LOG_LEVEL`, `HTTP_KEEP_ALIVE_TIMEOUT_MS` and `SHUTDOWN_TIMEOUT_MS`, which take their defaults. It holds local values and placeholders only: the two key rings, the Google client ids, the staff list and the Anthropic key are empty. Key rotation for the two key rings is in `../backend/auth/MODULE.md`.
 
 ## Kit modules
 

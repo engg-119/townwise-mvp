@@ -1,6 +1,6 @@
-// Notes, the tuning step (spec 10.5, 12, P14): structured notes per location for what sales can't show. Nothing
-// reads them yet. Authors edit and delete their own; org admins edit and delete any. `detail` is never logged and
-// never copied into an audit event.
+// Notes, the tuning step (spec 10.5, 12, P14): structured notes per location for what sales can't show. Only the
+// tuning chat reads them yet. Authors edit and delete their own; org admins edit and delete any. `detail` is never
+// logged and never copied into an audit event.
 import { objectId } from '@ckeith26/mongo';
 import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
@@ -47,10 +47,13 @@ function notFound(): AppError {
 /**
  * Spec 12 NoteInput. A missing optional field reads as null, and an empty detail as none. The start date runs from
  * 2010-01-01 to today plus two years; the end is on or after it, at most 366 days later; weekdays are unique;
- * expected guests is null when the effect is `closed`; an `other` note needs a detail.
+ * expected guests is null when the effect is `closed`; an `other` note needs a detail. Null when any rule fails.
+ * The tuning chat validates its note proposals with this too.
  */
-function noteContent(raw: unknown, today: string): NoteContent {
-  const body = parseInput(noteBody, raw);
+export function readNoteContent(raw: unknown, today: string): NoteContent | null {
+  const parsed = noteBody.safeParse(raw);
+  if (!parsed.success) return null;
+  const body = parsed.data;
   const content: NoteContent = {
     kind: body.kind,
     startDate: body.startDate,
@@ -65,7 +68,13 @@ function noteContent(raw: unknown, today: string): NoteContent {
     && (content.weekdays === null || new Set(content.weekdays).size === content.weekdays.length)
     && (content.effect !== 'closed' || content.expectedGuests === null)
     && (content.kind !== 'other' || content.detail !== null);
-  if (!valid) throw invalid();
+  return valid ? content : null;
+}
+
+/** The note in a request body; 400 invalid_request when any rule fails. */
+function noteContent(raw: unknown, today: string): NoteContent {
+  const content = readNoteContent(raw, today);
+  if (content === null) throw invalid();
   return content;
 }
 

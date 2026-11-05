@@ -11,6 +11,7 @@
     "test:int": "vitest run --project integration"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "1.3.0",
     "@ckeith26/auth": "file:../backend/auth",
     "@ckeith26/mongo": "file:../backend/mongo",
     "@ckeith26/rate-limit": "file:../backend/rate-limit",

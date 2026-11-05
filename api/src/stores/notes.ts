@@ -1,5 +1,5 @@
-// tw_notes (spec 6.7, 12): structured notes per location, the tuning step. Nothing reads them yet. `detail` is the
-// owner's own words: no function here logs, and nothing copies it into an audit event.
+// tw_notes (spec 6.7, 12): structured notes per location, the tuning step. Only the tuning chat reads them yet.
+// `detail` is the owner's own words: no function here logs, and nothing copies it into an audit event.
 import { Schema, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
