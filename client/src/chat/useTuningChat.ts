@@ -278,7 +278,8 @@ function isStatus(error: unknown, status: number): boolean {
   return error instanceof ApiError && error.kind === 'http' && error.status === status;
 }
 
-export function useTuningChat(api: ApiClient, locationId: string): TuningChat {
+/** `onNoteAdded` runs after each note a card adds, so the page can mark the location's notes count stale. */
+export function useTuningChat(api: ApiClient, locationId: string, onNoteAdded?: () => void): TuningChat {
   const [state, dispatch] = useReducer(chatReducer, undefined, initialChatState);
   const [generation, setGeneration] = useState(0);
   const live = useRef<AbortController | null>(null);
@@ -376,7 +377,10 @@ export function useTuningChat(api: ApiClient, locationId: string): TuningChat {
     adding.current.add(cardKey);
     dispatch({ type: 'card', messageKey, cardKey, patch: { status: 'adding', error: null } });
     void postNote(api, locationId, card.proposal).then(
-      () => { dispatch({ type: 'card', messageKey, cardKey, patch: { status: 'added', error: null } }); },
+      () => {
+        dispatch({ type: 'card', messageKey, cardKey, patch: { status: 'added', error: null } });
+        onNoteAdded?.();
+      },
       (error: unknown) => { dispatch({ type: 'card', messageKey, cardKey, patch: { status: 'open', error: noteErrorText(error) } }); },
     ).finally(() => { adding.current.delete(cardKey); });
   }

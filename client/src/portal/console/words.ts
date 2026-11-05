@@ -1,0 +1,140 @@
+import { formatCount, formatDate, formatTime } from '../format';
+import type { AddResult, AuditEvent, Person, PersonKind } from './schemas';
+
+// The console's words for the API's codes (spec 16.4): person kinds, actor roles, two-step states, add results,
+// and the Details column of the audit log. Details read only the keys each action allowlists (spec 9.2), so an
+// unexpected key never reaches the screen.
+
+export const KIND_LABEL: Readonly<Record<PersonKind, string>> = {
+  staff: 'Townwise staff',
+  org_admin: 'Admin',
+  member: 'Member',
+  invited: 'Invited',
+  pending: 'Requested',
+  rejected: 'Rejected',
+  removed: 'Removed',
+  signed_in: 'Signed in only',
+};
+
+/** The audit log's actor roles (spec 9.1). */
+export function actorRoleLabel(role: string): string {
+  switch (role) {
+    case 'superadmin': return 'Townwise staff';
+    case 'org_admin': return 'Admin';
+    case 'member': return 'Member';
+    case 'user': return 'No organization';
+    default: return role;
+  }
+}
+
+/** The Who column: the role, and who staff were viewing as. */
+export function actorLine(event: Pick<AuditEvent, 'actorRole' | 'viewAs'>): string {
+  const role = actorRoleLabel(event.actorRole);
+  return event.viewAs === null ? role : `${role}, viewing as ${event.viewAs.targetEmail}`;
+}
+
+export function twoStepLabel(twoStep: Person['staffTwoStep']): string {
+  if (twoStep === null) return '';
+  if (twoStep.state === 'on') return `On since ${formatDate(twoStep.since)}`;
+  return twoStep.state === 'not_set_up' ? 'Not set up' : 'Not signed in yet';
+}
+
+export const ADD_COPY: Readonly<Record<AddResult['outcome'], string>> = {
+  invited: 'Added. They can join the next time they continue with Google.',
+  already_invited: 'Already invited.',
+  already_member: 'Already on the team.',
+  invalid: 'That isn’t an email address.',
+};
+
+/** “{date}, {time}”. */
+export function whenLabel(at: string): string {
+  return `${formatDate(at)}, ${formatTime(at)}`;
+}
+
+/** The audit log's action filter: the API's action codes (api/src/stores/audit-events.ts), in plain words. */
+export const AUDIT_ACTIONS: readonly { value: string; label: string }[] = [
+  { value: 'access_request.created', label: 'Request sent' },
+  { value: 'access_request.approved', label: 'Request approved' },
+  { value: 'access_request.rejected', label: 'Request rejected' },
+  { value: 'access_request.withdrawn', label: 'Request withdrawn' },
+  { value: 'org.created', label: 'Organization created' },
+  { value: 'org.renamed', label: 'Organization renamed' },
+  { value: 'org.suspended', label: 'Organization suspended' },
+  { value: 'org.reactivated', label: 'Organization reactivated' },
+  { value: 'org.deleted', label: 'Organization deleted' },
+  { value: 'member.invited', label: 'Added' },
+  { value: 'member.declined', label: 'Declined' },
+  { value: 'member.joined', label: 'Joined' },
+  { value: 'member.role_changed', label: 'Role changed' },
+  { value: 'member.removed', label: 'Removed' },
+  { value: 'member.left', label: 'Left' },
+  { value: 'location.created', label: 'Location added' },
+  { value: 'location.updated', label: 'Location changed' },
+  { value: 'location.deleted', label: 'Location deleted' },
+  { value: 'sales.uploaded', label: 'Sales uploaded' },
+  { value: 'sales.deleted', label: 'Sales deleted' },
+  { value: 'note.created', label: 'Note added' },
+  { value: 'note.updated', label: 'Note changed' },
+  { value: 'note.deleted', label: 'Note deleted' },
+  { value: 'chat.turn_completed', label: 'Tuning chat used' },
+  { value: 'chat.conversation_deleted', label: 'Tuning chat deleted' },
+  { value: 'view_as.started', label: 'View-as started' },
+  { value: 'view_as.ended', label: 'View-as ended' },
+  { value: 'people.signed_out_everywhere', label: 'Signed out everywhere' },
+  { value: 'person.deleted', label: 'Person deleted' },
+  { value: 'staff_action.not_applied', label: 'Didn’t take effect' },
+];
+
+const NOTE_KIND: Readonly<Record<string, string>> = {
+  closure: 'Closure', private_event: 'Private event', opening: 'Opening', other: 'Other',
+};
+
+const END_REASON: Readonly<Record<string, string>> = {
+  ended: 'Ended by staff', expired: 'Ran out', replaced: 'Replaced by a new view-as',
+};
+
+function text(value: AuditEvent['details'][string] | undefined): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function count(value: AuditEvent['details'][string] | undefined): string {
+  return typeof value === 'number' ? formatCount(value) : '';
+}
+
+function role(value: AuditEvent['details'][string] | undefined): string {
+  return value === 'org_admin' ? 'admin' : text(value);
+}
+
+function dates(details: AuditEvent['details']): string {
+  const first = text(details.startDate ?? details.firstDate);
+  const last = text(details.endDate ?? details.lastDate);
+  return first === '' || last === '' ? '' : `${formatDate(first)} to ${formatDate(last)}`;
+}
+
+/** The Details column: what the summary leaves out, from the action's allowlisted keys only. */
+export function auditDetails(event: Pick<AuditEvent, 'action' | 'details'>): string {
+  const d = event.details;
+  switch (event.action) {
+    case 'access_request.created':
+      return text(d.townName) === '' ? '' : `Town: ${text(d.townName)}`;
+    case 'member.invited':
+    case 'member.joined':
+      return role(d.role) === '' ? '' : `Role: ${role(d.role)}`;
+    case 'member.role_changed':
+      return `From ${role(d.from)} to ${role(d.to)}`;
+    case 'note.created':
+    case 'note.updated':
+    case 'note.deleted':
+      return [NOTE_KIND[text(d.kind)] ?? '', dates(d)].filter((part) => part !== '').join(', ');
+    case 'sales.uploaded':
+      return [`${count(d.inserted)} new`, `${count(d.replaced)} replaced`, dates(d)].filter((part) => part !== '').join(', ');
+    case 'view_as.started': {
+      const until = text(d.expiresAt) === '' ? '' : ` Until ${formatTime(text(d.expiresAt))}.`;
+      return `Reason: “${text(d.reason)}”${until}`;
+    }
+    case 'view_as.ended':
+      return END_REASON[text(d.endReason)] ?? '';
+    default:
+      return '';
+  }
+}

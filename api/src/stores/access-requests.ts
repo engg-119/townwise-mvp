@@ -101,6 +101,8 @@ export interface AccessRequestStore {
   markApproved(id: string, input: { orgId: string; decidedAt: Date; decidedBy: string }): Promise<boolean>;
   /** Compare-and-set from pending; false when the request is no longer pending. */
   markRejected(id: string, input: { decidedAt: Date; decidedBy: string; decisionMessage: string | null }): Promise<boolean>;
+  /** Organization deletion: the request it was approved from (spec 10.7). Resolves the number deleted. */
+  remove(id: string): Promise<number>;
 }
 
 function toRecord(doc: AccessRequestFields & { _id: Types.ObjectId }): AccessRequestRecord {
@@ -192,6 +194,9 @@ export function createAccessRequestStore(connection: Connection): AccessRequestS
         { $set: { status: 'rejected', decidedAt: input.decidedAt, decidedBy: input.decidedBy, decisionMessage: input.decisionMessage } },
       );
       return result.modifiedCount === 1;
+    },
+    async remove(id) {
+      return (await Request.deleteOne({ _id: id })).deletedCount;
     },
   };
 }

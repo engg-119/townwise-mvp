@@ -83,6 +83,8 @@ export interface NoteStore {
   /** A full replace of the content; null when the note is gone. */
   replace(scope: OrgScope, locationId: string, noteId: string, content: NoteContent, now: Date): Promise<NoteRecord | null>;
   remove(scope: OrgScope, locationId: string, noteId: string): Promise<boolean>;
+  /** Organization deletion (spec 10.7). Resolves the number deleted. */
+  removeForOrg(scope: OrgScope): Promise<number>;
 }
 
 function toNote(doc: NoteFields & { _id: Types.ObjectId }): NoteRecord {
@@ -155,6 +157,9 @@ export function createNoteStore(connection: Connection): NoteStore {
     async remove(scope, locationId, noteId) {
       const result = await Note.deleteOne({ _id: noteId, orgId: scope.orgId, locationId });
       return result.deletedCount === 1;
+    },
+    async removeForOrg(scope) {
+      return (await Note.deleteMany({ orgId: scope.orgId })).deletedCount;
     },
   };
 }

@@ -1,5 +1,5 @@
 import { isDuplicateKeyError } from '@ckeith26/mongo';
-import { Schema, trusted, type Connection, type Model, type Types } from 'mongoose';
+import mongoose, { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
 import type { Role } from '../access/resolve.ts';
@@ -19,6 +19,8 @@ export interface MemberFields {
   joinedAt: Date | null;
   removedAt: Date | null;
   removedBy: string | null;
+  /** Set by a demotion from org_admin in the same write, until its recount or revert ends (the last-admin rule). */
+  demotingSince?: Date;
 }
 
 function memberSchema(): Schema<MemberFields> {
@@ -36,6 +38,7 @@ function memberSchema(): Schema<MemberFields> {
     joinedAt: { type: Date, default: null },
     removedAt: { type: Date, default: null },
     removedBy: { type: String, default: null },
+    demotingSince: { type: Date },
   }, { strict: true, versionKey: false, read: 'primary' });
   // One open invitation per address per organization.
   schema.index({ orgId: 1, inviteEmail: 1 }, {
@@ -88,9 +91,12 @@ export interface MemberStore {
   openInviteEmails(scope: OrgScope, emails: readonly string[]): Promise<Set<string>>;
   hasActiveSeat(scope: OrgScope, userId: string): Promise<boolean>;
   /** An open invitation; null when this organization already has one for the address (the unique index). */
-  insertInvite(scope: OrgScope, input: {
-    email: string; role: Role; invitedAt: Date; invitedBy: string; addedByStaff: boolean;
-  }): Promise<string | null>;
+  insertInvite(scope: OrgScope, input: InviteInput): Promise<string | null>;
+  /**
+   * Several open invitations in one write, each with the id its audit event already names. Resolves, per input in
+   * order, whether it was inserted: false when this organization already has an invitation for the address.
+   */
+  insertInvites(scope: OrgScope, inputs: readonly (InviteInput & { id: string })[]): Promise<boolean[]>;
   /**
    * F3 step 8, the requester's admin seat. `exists` when this person already has a seat here, active or removed
    * (a retry completes the work and never re-seats someone the organization removed); `elsewhere` when the
@@ -99,13 +105,41 @@ export interface MemberStore {
   insertAdminSeat(scope: OrgScope, input: {
     userId: string; email: string; joinedAt: Date; invitedBy: string;
   }): Promise<AdminSeatResult>;
-  /** Compare-and-set on the current role; false when the row changed or is gone. */
-  setRole(scope: OrgScope, memberId: string, from: Role, to: Role): Promise<boolean>;
+  /**
+   * Compare-and-set on the current role of an active member or open invitation. A demotion from org_admin also sets
+   * demotingSince to `now` in the same write, so a removal racing it knows the seat was an admin a moment ago; any
+   * other change clears it. Resolves the row's status at the write, or null when the row changed or is gone.
+   */
+  setRole(scope: OrgScope, memberId: string, from: Role, to: Role, now: Date): Promise<'invited' | 'active' | null>;
+  /** Ends a demotion that stands: clears the demotingSince it set. */
+  endDemotion(scope: OrgScope, memberId: string, since: Date): Promise<void>;
+  /**
+   * Reverts setRole (the last-admin rule) and clears demotingSince: matches the row by id, organization and the role
+   * setRole wrote, whatever its status, so a seat removed since still gets its role back.
+   */
+  revertRole(scope: OrgScope, memberId: string, from: Role, to: Role): Promise<void>;
   deleteInvite(scope: OrgScope, memberId: string): Promise<boolean>;
-  /** Compare-and-set from active to removed; unsets activeUserId. */
-  removeSeat(scope: OrgScope, memberId: string, input: { removedAt: Date; removedBy: string }): Promise<boolean>;
-  /** Reverts removeSeat (the last-admin rule). */
-  restoreSeat(scope: OrgScope, memberId: string, userId: string): Promise<void>;
+  /**
+   * Compare-and-set from active to removed; unsets activeUserId. Resolves the role the seat had when it was removed,
+   * and whether a demotion of it was still under way, both read in the same write, or null when the row is not an
+   * active seat.
+   */
+  removeSeat(
+    scope: OrgScope, memberId: string, input: { removedAt: Date; removedBy: string },
+  ): Promise<{ role: Role; demoting: boolean } | null>;
+  /** Deletes an active seat outright: an approval undoing the seat it gave a person deleted meanwhile. */
+  deleteSeat(scope: OrgScope, memberId: string): Promise<boolean>;
+  /**
+   * Reverts removeSeat (the last-admin rule). False when the seat can't come back: the person took a seat in another
+   * organization since (the unique activeUserId index), or the row is no longer a removed seat.
+   */
+  restoreSeat(scope: OrgScope, memberId: string, userId: string): Promise<boolean>;
+  /** Organization deletion: every row, invitations, seats and removed seats alike. Resolves the number deleted. */
+  removeForOrg(scope: OrgScope): Promise<number>;
+}
+
+export interface InviteInput {
+  readonly email: string; readonly role: Role; readonly invitedAt: Date; readonly invitedBy: string; readonly addedByStaff: boolean;
 }
 
 /** Active members and open invitations: a fresh trusted operator for each query. */
@@ -165,6 +199,26 @@ export function createMemberStore(connection: Connection): MemberStore {
         throw err;
       }
     },
+    async insertInvites(scope, inputs) {
+      if (inputs.length === 0) return [];
+      const orgId = new Types.ObjectId(scope.orgId);
+      const docs = inputs.map((input) => ({
+        _id: new Types.ObjectId(input.id), orgId, email: input.email, role: input.role, status: 'invited' as const,
+        inviteEmail: input.email, userId: null, invitedAt: input.invitedAt, invitedBy: input.invitedBy,
+        addedByStaff: input.addedByStaff, joinedAt: null, removedAt: null, removedBy: null,
+      }));
+      try {
+        // One unordered insert: each row stands or falls on the unique index alone.
+        await Member.collection.insertMany(docs, { ordered: false });
+        return inputs.map(() => true);
+      } catch (err) {
+        if (!(err instanceof mongoose.mongo.MongoBulkWriteError)) throw err;
+        const writeErrors = [err.writeErrors].flat();
+        if (writeErrors.some((writeError) => writeError.code !== 11000)) throw err;
+        const taken = new Set(writeErrors.map((writeError) => writeError.index));
+        return inputs.map((_, i) => !taken.has(i));
+      }
+    },
     async insertAdminSeat(scope, input) {
       if ((await Member.exists({ orgId: scope.orgId, userId: input.userId })) !== null) return { kind: 'exists' };
       try {
@@ -180,29 +234,52 @@ export function createMemberStore(connection: Connection): MemberStore {
         return here === null ? { kind: 'elsewhere' } : { kind: 'exists' };
       }
     },
-    async setRole(scope, memberId, from, to) {
-      const result = await Member.updateOne(
+    async setRole(scope, memberId, from, to, now) {
+      const update = from === 'org_admin' && to !== 'org_admin'
+        ? { $set: { role: to, demotingSince: now } }
+        : { $set: { role: to }, $unset: { demotingSince: '' } };
+      const before = await Member.findOneAndUpdate(
         { _id: memberId, orgId: scope.orgId, status: open(), role: from },
-        { $set: { role: to } },
+        update,
+        { returnDocument: 'before', lean: true },
       );
-      return result.modifiedCount === 1;
+      return before === null || before.status === 'removed' ? null : before.status;
+    },
+    async endDemotion(scope, memberId, since) {
+      await Member.updateOne({ _id: memberId, orgId: scope.orgId, demotingSince: since }, { $unset: { demotingSince: '' } });
+    },
+    async revertRole(scope, memberId, from, to) {
+      await Member.updateOne({ _id: memberId, orgId: scope.orgId, role: from }, { $set: { role: to }, $unset: { demotingSince: '' } });
     },
     async deleteInvite(scope, memberId) {
       const result = await Member.deleteOne({ _id: memberId, orgId: scope.orgId, status: 'invited' });
       return result.deletedCount === 1;
     },
     async removeSeat(scope, memberId, input) {
-      const result = await Member.updateOne(
+      const before = await Member.findOneAndUpdate(
         { _id: memberId, orgId: scope.orgId, status: 'active' },
         { $set: { status: 'removed', removedAt: input.removedAt, removedBy: input.removedBy }, $unset: { activeUserId: '' } },
+        { returnDocument: 'before', lean: true },
       );
-      return result.modifiedCount === 1;
+      return before === null ? null : { role: before.role, demoting: before.demotingSince !== undefined };
+    },
+    async deleteSeat(scope, memberId) {
+      return (await Member.deleteOne({ _id: memberId, orgId: scope.orgId, status: 'active' })).deletedCount === 1;
     },
     async restoreSeat(scope, memberId, userId) {
-      await Member.updateOne(
-        { _id: memberId, orgId: scope.orgId, status: 'removed' },
-        { $set: { status: 'active', activeUserId: userId, removedAt: null, removedBy: null } },
-      );
+      try {
+        const result = await Member.updateOne(
+          { _id: memberId, orgId: scope.orgId, status: 'removed' },
+          { $set: { status: 'active', activeUserId: userId, removedAt: null, removedBy: null } },
+        );
+        return result.modifiedCount === 1;
+      } catch (err) {
+        if (isDuplicateKeyError(err)) return false;
+        throw err;
+      }
+    },
+    async removeForOrg(scope) {
+      return (await Member.deleteMany({ orgId: scope.orgId })).deletedCount;
     },
   };
 }

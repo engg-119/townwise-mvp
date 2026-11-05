@@ -6,12 +6,15 @@ import express, { type NextFunction, type Request, type RequestHandler, type Res
 
 import type { TownwiseContext } from '../app.ts';
 import {
-  approveRequest, getOrg, listOrgs, listPeople, listRequests, lookupPerson, queryAudit, rejectRequest,
+  addOrgMembers, approveRequest, changeOrgMemberRole, createOrg, getOrg, listOrgs, listPeople, listRequests, lookupPerson,
+  queryAudit, rejectRequest, removeOrgMember, signOutEverywhere, updateOrg,
 } from '../handlers/admin.ts';
 import { deleteConversation, getChat, getConversation, postTurn } from '../handlers/chat.ts';
+import { deleteOrg, deletePerson } from '../handlers/deletion.ts';
 import { createLocation, deleteLocation, getOwnOrg, updateLocation } from '../handlers/locations.ts';
 import { declineInvite, getMe, joinInvite } from '../handlers/me.ts';
 import { createNote, deleteNote, listNotes, updateNote } from '../handlers/notes.ts';
+import { getStaffActivity, leaveOrg, renameOrg } from '../handlers/org.ts';
 import { createAccessRequest } from '../handlers/requests.ts';
 import { deleteSales, getSales, getSalesDays, uploadSales } from '../handlers/sales.ts';
 import { addMembers, changeRole, listMembers, removeMember } from '../handlers/team.ts';
@@ -44,6 +47,12 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   { id: 'towns.get', method: 'GET', path: '/towns/:townId', policy: 'signed_in', bodyLimit: 'none', handler: getTownProfile },
 
   { id: 'org.get', method: 'GET', path: '/org', policy: 'member', bodyLimit: 'none', handler: getOwnOrg },
+  { id: 'org.update', method: 'PATCH', path: '/org', policy: 'org_admin', bodyLimit: '32kb', handler: renameOrg },
+  {
+    id: 'org.staff_activity', method: 'GET', path: '/org/staff-activity', policy: 'org_admin', bodyLimit: 'none',
+    handler: getStaffActivity,
+  },
+  { id: 'org.leave', method: 'POST', path: '/org/leave', policy: 'member', bodyLimit: '32kb', handler: leaveOrg },
   {
     id: 'org.locations.create', method: 'POST', path: '/org/locations', policy: 'org_admin', bodyLimit: '32kb',
     handler: createLocation,
@@ -123,12 +132,32 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     bodyLimit: '32kb', handler: rejectRequest,
   },
   { id: 'admin.orgs.list', method: 'GET', path: '/admin/orgs', policy: 'staff', bodyLimit: 'none', handler: listOrgs },
+  { id: 'admin.orgs.create', method: 'POST', path: '/admin/orgs', policy: 'staff', bodyLimit: '32kb', handler: createOrg },
   { id: 'admin.orgs.get', method: 'GET', path: '/admin/orgs/:orgId', policy: 'staff', bodyLimit: 'none', handler: getOrg },
+  { id: 'admin.orgs.update', method: 'PATCH', path: '/admin/orgs/:orgId', policy: 'staff', bodyLimit: '32kb', handler: updateOrg },
+  { id: 'admin.orgs.remove', method: 'DELETE', path: '/admin/orgs/:orgId', policy: 'staff', bodyLimit: 'none', handler: deleteOrg },
+  {
+    id: 'admin.orgs.members.add', method: 'POST', path: '/admin/orgs/:orgId/members', policy: 'staff', bodyLimit: '32kb',
+    handler: addOrgMembers,
+  },
+  {
+    id: 'admin.orgs.members.update', method: 'PATCH', path: '/admin/orgs/:orgId/members/:memberId', policy: 'staff',
+    bodyLimit: '32kb', handler: changeOrgMemberRole,
+  },
+  {
+    id: 'admin.orgs.members.remove', method: 'DELETE', path: '/admin/orgs/:orgId/members/:memberId', policy: 'staff',
+    bodyLimit: 'none', handler: removeOrgMember,
+  },
   { id: 'admin.people.list', method: 'GET', path: '/admin/people', policy: 'staff', bodyLimit: 'none', handler: listPeople },
   {
     id: 'admin.people.lookup', method: 'GET', path: '/admin/people/lookup', policy: 'staff', bodyLimit: 'none',
     handler: lookupPerson,
   },
+  {
+    id: 'admin.people.sign_out_everywhere', method: 'POST', path: '/admin/people/:userId/sign-out-everywhere', policy: 'staff',
+    bodyLimit: '32kb', handler: signOutEverywhere,
+  },
+  { id: 'admin.people.delete', method: 'POST', path: '/admin/people/delete', policy: 'staff', bodyLimit: '32kb', handler: deletePerson },
   { id: 'admin.audit.list', method: 'GET', path: '/admin/audit', policy: 'staff', bodyLimit: 'none', handler: queryAudit },
   {
     id: 'admin.view_as.start', method: 'POST', path: '/admin/view-as', policy: 'staff', bodyLimit: '32kb',

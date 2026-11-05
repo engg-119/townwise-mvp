@@ -1,6 +1,8 @@
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, type Connection, type Model, type Types } from 'mongoose';
 
+import type { OrgScope } from '../access/policy.ts';
+
 export interface OrgFields {
   name: string;
   status: 'active' | 'suspended';
@@ -47,6 +49,22 @@ export interface OrgStore {
   insertFromRequest(input: {
     id: string; name: string; createdAt: Date; createdBy: string; fromRequestId: string;
   }): Promise<{ org: OrgRecord; inserted: boolean }>;
+  /** F10: a new active organization staff created directly, with no request; null when this id is already taken. */
+  insertByStaff(input: { id: string; name: string; createdAt: Date; createdBy: string }): Promise<OrgRecord | null>;
+  /** Sets the name. Resolves the organization as it was before, or null when it is gone. */
+  rename(scope: OrgScope, name: string): Promise<OrgRecord | null>;
+  /**
+   * The staff console's changes in one write: the name, and the status, which suspends (setting suspendedAt) or
+   * reactivates (clearing it). False when the organization is gone.
+   */
+  update(scope: OrgScope, changes: { name?: string; status?: 'active' | 'suspended' }, now: Date): Promise<boolean>;
+  /**
+   * Deletion's last step (spec 10.7), so a retry still finds the organization until then. Only while it is suspended:
+   * false when it was reactivated, or is already gone.
+   */
+  remove(scope: OrgScope): Promise<boolean>;
+  /** Deletes the organization an approval made from this request (fromRequestId), whatever its status. */
+  removeFromRequest(scope: OrgScope, requestId: string): Promise<boolean>;
 }
 
 function toOrg(doc: OrgFields & { _id: Types.ObjectId }): OrgRecord {
@@ -94,6 +112,38 @@ export function createOrgStore(connection: Connection): OrgStore {
       const doc = await Org.findById(input.id).lean();
       if (doc === null) throw new Error('organization missing after its upsert');
       return { org: toOrg(doc), inserted };
+    },
+    async insertByStaff(input) {
+      try {
+        const doc = await Org.create({
+          _id: input.id, name: input.name, status: 'active', createdAt: input.createdAt, createdBy: input.createdBy,
+          fromRequestId: null, suspendedAt: null,
+        });
+        return toOrg(doc.toObject());
+      } catch (err) {
+        if (isDuplicateKeyError(err)) return null;
+        throw err;
+      }
+    },
+    async rename(scope, name) {
+      const doc = await Org.findOneAndUpdate({ _id: scope.orgId }, { $set: { name } }, { returnDocument: 'before' }).lean();
+      return doc === null ? null : toOrg(doc);
+    },
+    async update(scope, changes, now) {
+      const set: Partial<Pick<OrgFields, 'name' | 'status' | 'suspendedAt'>> = {};
+      if (changes.name !== undefined) set.name = changes.name;
+      if (changes.status !== undefined) {
+        set.status = changes.status;
+        set.suspendedAt = changes.status === 'suspended' ? now : null;
+      }
+      const result = await Org.updateOne({ _id: scope.orgId }, { $set: set });
+      return result.matchedCount === 1;
+    },
+    async remove(scope) {
+      return (await Org.deleteOne({ _id: scope.orgId, status: 'suspended' })).deletedCount === 1;
+    },
+    async removeFromRequest(scope, requestId) {
+      return (await Org.deleteOne({ _id: scope.orgId, fromRequestId: requestId })).deletedCount === 1;
     },
   };
 }

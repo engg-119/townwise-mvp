@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AdminRequestView } from '../src/handlers/admin.ts';
 import type { MeResponse } from '../src/handlers/me.ts';
@@ -266,6 +266,42 @@ describe('POST /api/admin/requests/:requestId/approve (F3)', () => {
     expect((await approve(person.requestId, replay)).status).toBe(200);
     expect(await tenantCounts(person.requestId)).toEqual({ orgs: 1, locations: 0, seats: 1 });
     expect((await eventsAbout(person.requestId, orgId)).filter((e) => e.action === 'location.created')).toHaveLength(1);
+  });
+
+  it('an approval racing the requester’s deletion takes back the seat it gave after the deletion’s check, with the organization made for it: 404, not applied', async () => {
+    const person = await requester('deleted-midway');
+    const model = server.connection.models.TwOrg as unknown as { updateOne: (...args: unknown[]) => Promise<unknown> };
+    const updateOne = model.updateOne.bind(model);
+    let deleted: Response | undefined;
+    // The request is marked approved; before the organization is made, staff delete the requester, start to finish.
+    const spy = vi.spyOn(model, 'updateOne').mockImplementationOnce(async (...args: unknown[]) => {
+      deleted = await call(server, '/api/admin/people/delete', { session: staff, json: { email: person.email } });
+      return updateOne(...args);
+    });
+    let res: Response;
+    try {
+      res = await approve(person.requestId);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(deleted?.status).toBe(200);
+    expect(await errorOf(res)).toEqual({ status: 404, error: 'not_found' });
+    expect(await tenantCounts(person.requestId)).toEqual({ orgs: 0, locations: 0, seats: 0 });
+    expect(await server.connection.collection('tw_members').countDocuments({ userId: person.session.userId })).toBe(0);
+    const approved = (await auditEvents(server)).find((event) => event.action === 'access_request.approved'
+      && (event.target as { id: string }).id === person.requestId);
+    const orgId = (approved?.details as { orgId: string }).orgId;
+    expect(await server.connection.collection('tw_locations').countDocuments({ orgId: new Types.ObjectId(orgId) })).toBe(0);
+    // No event holds their email, or the organization's or location's name; the approval says it didn't apply.
+    const events = await eventsAbout(person.requestId, orgId);
+    const text = JSON.stringify(await auditEvents(server));
+    expect(text).not.toContain(person.email);
+    expect(JSON.stringify(events)).not.toContain('Harbor Kitchen');
+    expect(JSON.stringify(events)).not.toContain('Main Street');
+    expect(events.map((event) => event.action)).toEqual([
+      'access_request.created', 'access_request.approved', 'org.created', 'location.created', 'staff_action.not_applied',
+    ]);
+    expect(events.at(-1)?.details).toEqual({ eventId: String(approved?._id), code: 'not_found' });
   });
 
   it('a requester who joined another organization before the seat step is 409 requester_has_org; the organization has no admin', async () => {
