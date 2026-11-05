@@ -5,6 +5,7 @@ jest.mock('@react-native-google-signin/google-signin', () => {
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react-native';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
+import { Dimensions, StyleSheet, type StyleProp, type TextStyle } from 'react-native';
 
 afterEach(async () => {
   await cleanup();
@@ -117,4 +118,26 @@ test('while the server checks the Google token, the button gives way to a disabl
   expect(await screen.findByRole('button', { name: 'Signing you in…', disabled: true })).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Continue with Google' })).toBeNull();
   expect(signInWithGoogle).toHaveBeenCalledTimes(1);
+});
+
+test('the lines around the card are 16/24 on a phone and 14/20 wider, with no padding on the native links', async () => {
+  const lines = [
+    'Use a Gmail address or a Google Workspace account.',
+    'By continuing, you agree to the Terms and the Privacy Policy.',
+    'Townwise is in development. No forecasts are for sale yet.',
+  ];
+  const style = (text: string): TextStyle => StyleSheet.flatten(screen.getByText(text).props.style as StyleProp<TextStyle>) ?? {};
+  const window = Dimensions.get('window');
+  for (const [width, size] of [[1024, { fontSize: 14, lineHeight: 20 }], [390, { fontSize: 16, lineHeight: 24 }]] as const) {
+    const spy = jest.spyOn(Dimensions, 'get').mockReturnValue({ ...window, width });
+    try {
+      await renderSignIn({ status: 'signedOut' });
+      for (const line of lines) expect(style(line)).toMatchObject(size);
+      // Native nested text takes no padding, so the links keep their text-sized box.
+      expect(style('Terms')).not.toHaveProperty('paddingVertical');
+      await cleanup();
+    } finally {
+      spy.mockRestore();
+    }
+  }
 });

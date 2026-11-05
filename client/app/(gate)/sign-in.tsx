@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'expo-router';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { ApiError } from '../../src/api/client';
 import { GoogleButton } from '../../src/auth/GoogleButton';
@@ -76,20 +76,35 @@ export default function SignIn(): React.JSX.Element {
       {notice === undefined ? null : <Message>{notice}</Message>}
       {action}
       {message === null ? null : <Message tone="error">{message}</Message>}
-      <Text style={styles.fine}>Use a Gmail address or a Google Workspace account.</Text>
-      <Text style={styles.fine}>
-        By continuing, you agree to the <Link href="/terms" style={styles.inline}>Terms</Link> and
-        the <Link href="/privacy" style={styles.inline}>Privacy Policy</Link>.
-      </Text>
+      <Fine>Use a Gmail address or a Google Workspace account.</Fine>
+      <Fine>
+        By continuing, you agree to the <InlineLink href="/terms">Terms</InlineLink> and
+        the <InlineLink href="/privacy">Privacy Policy</InlineLink>.
+      </Fine>
     </SignInFrame>
   );
+}
+
+// The lines under the button are reading text: 16/24 on phones, 14/20 wider. They read the window size themselves,
+// so a resize re-renders only them, not the screen and its Google button.
+function Fine(props: { children: React.ReactNode }): React.JSX.Element {
+  const phone = useWindowDimensions().width <= 640;
+  return <Text style={[phone ? theme.type.bodyPhone : theme.type.small, styles.fine]}>{props.children}</Text>;
+}
+
+// On a phone's browser, vertical padding gives a link inside a line a 44px-tall tap target without moving the text.
+// Native nested text takes no padding.
+function InlineLink(props: { href: '/terms' | '/privacy'; children: string }): React.JSX.Element {
+  const tap = useWindowDimensions().width <= 640 && Platform.OS === 'web';
+  return <Link href={props.href} style={[styles.inline, tap ? styles.inlineTap : null]}>{props.children}</Link>;
 }
 
 const c = theme.color;
 
 const styles = StyleSheet.create({
-  fine: { ...theme.type.small, color: c.text2 },
+  fine: { color: c.text2 },
   inline: { color: c.white, textDecorationLine: 'underline', textDecorationColor: c.line },
+  inlineTap: { paddingVertical: 13 },
   // The sign-in mockup's waiting button: raised fill, line border, a mint square before the label.
   wait: {
     alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 44, paddingHorizontal: 18,

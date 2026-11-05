@@ -1,7 +1,8 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { ExpoRoot, Stack } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
+import { Dimensions } from 'react-native';
 
 import { AuthProvider } from '../../src/auth/AuthProvider';
 import { resetGoogleButtonState } from '../../src/auth/GoogleButton';
@@ -106,4 +107,47 @@ test('sign-in sits in the site header and footer, with the legal links and its o
     expect(within(footer).getByRole('navigation', { name: group })).toBeTruthy();
   }
   await waitFor(() => { expect(document.title).toBe('Townwise Sign in'); });
+});
+
+// The padding react-native-web's style sheet declares for an element's classes.
+function paddingTop(element: Element): string[] {
+  return [...document.styleSheets].flatMap((sheet) => [...sheet.cssRules])
+    .filter((rule): rule is CSSStyleRule => 'selectorText' in rule && [...element.classList].some((name) => rule.selectorText === `.${name}`))
+    .map((rule) => rule.style.getPropertyValue('padding-top'))
+    .filter((value) => value !== '');
+}
+
+test('on a phone the lines under the button are 16/24 and their links get 44px-tall tap targets; wider they stay 14/20', async () => {
+  const window = Dimensions.get('window');
+  for (const [width, phone] of [[390, true], [1024, false]] as const) {
+    const spy = jest.spyOn(Dimensions, 'get').mockReturnValue({ ...window, width });
+    try {
+      const { card } = await renderSignIn();
+      const line = within(card).getByText('Use a Gmail address or a Google Workspace account.');
+      expect([line.style.fontSize, line.style.lineHeight]).toEqual(phone ? ['16px', '24px'] : ['14px', '20px']);
+      for (const name of ['Terms', 'Privacy Policy']) {
+        expect(paddingTop(within(card).getByRole('link', { name })).includes('13px')).toBe(phone);
+      }
+      cleanup();
+    } finally {
+      spy.mockRestore();
+    }
+  }
+});
+
+test('a window resize resizes the lines under the button without drawing Google’s button again', async () => {
+  const spy = jest.spyOn(Dimensions, 'get').mockReturnValue({ ...Dimensions.get('window'), width: 1024 });
+  const { card, renderButton } = await renderSignIn();
+  spy.mockRestore();
+  const line = within(card).getByText('Use a Gmail address or a Google Workspace account.');
+  expect(line.style.fontSize).toBe('14px');
+  expect(renderButton).toHaveBeenCalledTimes(1);
+  // jsdom has no layout, so the resize reports a width of 0: a phone. Google's button is drawn after a promise, so
+  // let pending work run before counting.
+  await act(async () => {
+    window.dispatchEvent(new Event('resize'));
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+  });
+  expect(line.style.fontSize).toBe('16px');
+  expect(renderButton).toHaveBeenCalledTimes(1);
 });
