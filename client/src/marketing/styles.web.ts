@@ -33,7 +33,6 @@ const chrome = `
 .h3{font-size:22px;line-height:28px;font-weight:600;letter-spacing:-.01em;text-wrap:balance}
 @media (max-width:1023px){.h2{font-size:32px;line-height:36px}}
 @media (max-width:640px){.tw{font-size:16px;line-height:24px}.h2{font-size:28px;line-height:32px}.h3{font-size:20px;line-height:24px}}
-.chip{font-family:var(--mono);font-size:12px;line-height:16px;font-weight:400;letter-spacing:0;text-transform:none;color:var(--text2);border:1px dashed var(--line);padding:1px 5px;-webkit-box-decoration-break:clone;box-decoration-break:clone}
 .tag{font-family:var(--mono);font-size:12px;line-height:16px;letter-spacing:.04em;text-transform:uppercase;color:var(--text2);border:1px solid var(--line);padding:3px 6px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
 .tag-prog::before{content:"";width:6px;height:6px;background:var(--mint)}
 .tag-plan::before{content:"";width:6px;height:6px;border:1px solid var(--line)}
@@ -64,8 +63,7 @@ const chrome = `
 .ft-by{font-size:14px;line-height:20px;color:var(--text2);max-width:420px}
 .ft-cn a{display:inline-flex;align-items:center;min-height:44px;min-width:44px;font-size:14px;line-height:20px;color:var(--text2);text-decoration:none}
 .ft-cn a:hover{color:var(--white);text-decoration:underline}
-.ft-dec{margin-top:40px}
-.ft-bot{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px 24px;padding:24px 0 32px;font-family:var(--mono);font-size:12px;line-height:16px;color:var(--text3)}
+.ft-bot{margin-top:40px;display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px 24px;padding:24px 0 32px;font-family:var(--mono);font-size:12px;line-height:16px;color:var(--text3)}
 .tw .ft-word{--adv:3.959;--cap:0.72;--base:0.14;--pad:0.02em;display:flex;justify-content:space-between;align-items:flex-end;box-sizing:content-box;font-size:calc(98cqi / var(--adv));height:calc(var(--cap) * 1em);padding-top:var(--pad);overflow:clip;line-height:1;font-family:${theme.font.wordmark};font-weight:700;font-stretch:75%;letter-spacing:0;color:var(--white)}
 .ft-word span{display:block;line-height:1;margin-bottom:calc(var(--base) * -1em);transition:transform 700ms var(--eo)}
 @media screen and (prefers-reduced-motion:no-preference){.ft.is-armed:not(.is-in) .ft-word span{transform:translateY(100%);transition:none}}

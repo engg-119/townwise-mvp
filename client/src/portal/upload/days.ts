@@ -48,6 +48,8 @@ export interface DaysResult {
   excluded: { date: string; reason: ExclusionReason }[];
   guestsMapped: boolean;
   netSalesMapped: boolean;
+  /** One row is one check or order, so rows that share a date were added up. */
+  addedUp: boolean;
 }
 
 export type CheckResult =
@@ -187,6 +189,7 @@ export class DayAggregator {
       excluded,
       guestsMapped: this.mapping.guests !== null,
       netSalesMapped: this.mapping.netSales !== null,
+      addedUp: this.mapping.rowMode === 'check',
     };
   }
 }

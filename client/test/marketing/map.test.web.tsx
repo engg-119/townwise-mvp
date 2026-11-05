@@ -455,6 +455,12 @@ test('the caption says the map shows BLS QCEW restaurant and bar jobs, not a for
   expect(document.body.textContent).not.toMatch(/sales of|revenue|\$/);
 });
 
+test('the map figure fills the pane on phones instead of collapsing to zero width', () => {
+  // A column-flex .pane-map with an auto-margined, inline-size container figure sized the figure (and the map) to 0px.
+  expect(mapCss).not.toMatch(/\.pane-map\{[^}]*(display:flex|flex-direction|min-height)/);
+  expect(mapCss).toMatch(/\.twmap \.map-fig\{width:100%;max-width:1040px;margin-inline:auto;/);
+});
+
 test('the map CSS follows the motion rules', () => {
   expect(mapCss).not.toMatch(/transition:\s*all/);
   expect(mapCss).not.toMatch(/ease-in(?!-out)/);

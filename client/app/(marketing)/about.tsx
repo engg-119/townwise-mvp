@@ -1,5 +1,5 @@
 import { A, Div, H1, H2, Li, Ol, P, Section, Span, Strong, Table, Tbody, Td, Th, Thead, Tr, Ul } from '../../src/marketing/html';
-import { CONTACT_HREF, EARLY_ACCESS_HREF } from '../../src/marketing/links';
+import { CONTACT_EMAIL, CONTACT_HREF, EARLY_ACCESS_HREF } from '../../src/marketing/links';
 import { MarketingShell } from '../../src/marketing/MarketingShell';
 
 function Part(props: { id: string; title: string; children: React.ReactNode }): React.JSX.Element {
@@ -60,7 +60,7 @@ export default function About(): React.JSX.Element {
                   <Tr>
                     <Th scope="row">3. Calibration and forecasts</Th>
                     <Td data-l="What it covers">Calibrating with point-of-sale history; forecasts with ranges and reasons; testing how much history is needed</Td>
-                    <Td data-l="Status"><Div className="st-c"><Span className="tag tag-prog">In progress</Span><P><Span className="chip">[DECISION NEEDED: confirm stage 3 status]</Span></P><P>Reasons for each forecast are not built yet.</P></Div></Td>
+                    <Td data-l="Status"><Div className="st-c"><Span className="tag tag-prog">In progress</Span><P>Restaurants with early access can upload their sales history and add notes about unusual days in the app. Calibration, forecasts and the reasons for them are not built yet, so the app shows no forecasts.</P></Div></Td>
                   </Tr>
                   <Tr>
                     <Th scope="row">4. Evaluation</Th>
@@ -84,8 +84,7 @@ export default function About(): React.JSX.Element {
 
         <Part id="h-who" title="Who we are">
           <Div className="c-r prose">
-            <P>We are students in ENGG 119, AI in the Real World, at Dartmouth’s Thayer School of Engineering in Hanover, NH. Townwise is our course project. It is not an official Dartmouth product.</P>
-            <P><Span className="chip">[TEAM NAMES AND ROLES]</Span></P>
+            <P>We are a team of four students in ENGG 119, AI in the Real World, at Dartmouth’s Thayer School of Engineering in Hanover, NH. Townwise is our course project. It is not an official Dartmouth product.</P>
           </Div>
         </Part>
 
@@ -94,7 +93,7 @@ export default function About(): React.JSX.Element {
             <P className="big">If you run a restaurant or bar in a town with its own calendar, we’d like to hear from you.</P>
             <Div className="talk-act">
               <A className="btn" href={EARLY_ACCESS_HREF}>Request early access</A>
-              <A className="tl" href={CONTACT_HREF}>Or write to hello@townwise.tech</A>
+              <A className="tl" href={CONTACT_HREF}>Or write to {CONTACT_EMAIL}</A>
             </Div>
           </Div>
         </Part>

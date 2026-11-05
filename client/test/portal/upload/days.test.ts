@@ -65,6 +65,9 @@ describe('one row is one check or order', () => {
       { date: '2025-03-05', guests: 4, netSalesCents: 100 },
     ]);
     expect(result.rows).toBe(3);
+    // Step 3 says so: “We add up rows that share a date.”
+    expect(result.addedUp).toBe(true);
+    expect(daysOf('Date,Guests,Net\n2025-03-04,2,1').addedUp).toBe(false);
   });
 
   test('net sales round half up once per day, not per row', () => {

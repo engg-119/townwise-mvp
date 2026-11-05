@@ -1,5 +1,5 @@
 import { ApiError } from '../../api/client';
-import { errorCopy, COPY as SHARED } from '../errors';
+import { errorCopy, hasCode, COPY as SHARED } from '../errors';
 import { formatCount, formatDate, plural } from '../format';
 import type { Calibration, Role } from '../schemas';
 import type { ColumnProfile } from './columns';
@@ -45,6 +45,8 @@ export const COPY = {
   /** Not in the spec: every day was left out, so there is nothing to send. */
   nothingToSend: 'No days are left to send.',
   serverFailed: 'The upload didn’t finish, and some days may have saved. Send again. Days are never duplicated.',
+  /** Spec 10.9: a 404, “This {thing} isn’t available.” with a way back. */
+  notAvailable: 'This location isn’t available.',
   seeSales: 'See your sales data',
   addNotes: 'Add notes for unusual days',
   notInFile: 'Not in this file',
@@ -179,12 +181,14 @@ export function canCheck(messages: MatchMessages): boolean {
 
 /**
  * The send error of P13 and what its button does: `send` (a 500, 503 or a timeout: the upload may have half
- * applied, so the primary sends again), `retry` (429 or the network: the shared copy, Try again sends again), or
- * `restart` (400, 413 or another refusal: a client bug, so Try again starts over).
+ * applied, so the primary sends again), `retry` (429 or the network: the shared copy, Try again sends again),
+ * `missing` (404: the location is gone, so the way back is Locations), or `restart` (400, 413 or another refusal: a
+ * client bug, so Try again starts over).
  */
-export function sendErrorOf(error: unknown): { text: string; action: 'send' | 'retry' | 'restart' } {
+export function sendErrorOf(error: unknown): { text: string; action: 'send' | 'retry' | 'restart' | 'missing' } {
   if (error instanceof ApiError) {
     if (error.kind === 'timeout' || (error.kind === 'http' && error.status >= 500)) return { text: COPY.serverFailed, action: 'send' };
+    if (hasCode(error, 404, 'not_found')) return { text: COPY.notAvailable, action: 'missing' };
     if (error.kind === 'http' && error.status !== 429) return { text: SHARED.request, action: 'restart' };
   }
   return { text: errorCopy(error), action: 'retry' };

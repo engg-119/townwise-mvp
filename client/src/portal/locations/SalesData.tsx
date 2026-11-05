@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 
 import { theme } from '../../theme';
+import { hasCode } from '../errors';
 import { formatCount, formatDate, plural } from '../format';
 import { useAction, useLoad } from '../hooks';
 import { usePortal, useReadOnly } from '../PortalProvider';
@@ -22,7 +23,9 @@ import { SalesChart } from './SalesChart';
 
 // P12 Sales data (spec 16.3, 10.4): the coverage line, the daily chart (web; the text summary and “Show the
 // numbers” everywhere, D21), By month, Uploads, and, for org admins, Delete all sales data behind a typed-name
-// confirmation. Under view-as, Upload, Delete and the closure-note link are disabled in place.
+// confirmation. A 404 on the delete means the location was deleted in the meantime: the organization reloads, and
+// the location layout says “This location isn’t available.” with the link to Locations (spec 10.9). Under view-as,
+// Upload, Delete and the closure-note link are disabled in place.
 
 const READ_ONLY_ID = 'sales-ro';
 
@@ -62,7 +65,7 @@ function UploadsTable(props: { uploads: readonly Upload[] }): React.JSX.Element 
 
 export function SalesData(): React.JSX.Element {
   const { location, org } = useLocation();
-  const { api } = usePortal();
+  const { api, reloadOrg } = usePortal();
   const { readOnly, line } = useReadOnly();
   const markStale = useOrgRefreshOnLeave();
   const admin = org.role === 'org_admin';
@@ -80,12 +83,18 @@ export function SalesData(): React.JSX.Element {
   }, [api, location.id]));
 
   const remove = useAction(useCallback(async () => {
-    const result = await deleteSales(api, location.id);
+    let result: { deletedDays: number };
+    try {
+      result = await deleteSales(api, location.id);
+    } catch (error) {
+      if (hasCode(error, 404, 'not_found')) { setConfirming(false); reloadOrg(); return; }
+      throw error;
+    }
     markStale();
     setConfirming(false);
     setDeleted(result.deletedDays);
     reload();
-  }, [api, location.id, markStale, reload]));
+  }, [api, location.id, markStale, reload, reloadOrg]));
 
   const notice = deleted === null ? null : <View style={styles.notice}><Notice text={`Deleted ${plural(deleted, 'day', 'days')}.`} /></View>;
   if (state.status === 'loading') return <>{notice}<Loading text="Loading sales data" /></>;
@@ -127,7 +136,7 @@ export function SalesData(): React.JSX.Element {
             {readOnlyLine}
             <Lead>
               {`${plural(coverage.dayCount, 'day', 'days')}, ${formatDate(coverage.firstDate)} to ${formatDate(coverage.lastDate)}. `
-                + (missing > 0 ? `${plural(missing, 'day', 'days')} missing in between.` : 'No days missing in between.')}
+                + `${plural(missing, 'day', 'days')} missing in between.`}
             </Lead>
             {missing > 0 ? (
               <Actions>

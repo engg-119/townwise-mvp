@@ -14,7 +14,8 @@ import { Heading } from '../ui/text';
 // It adds what the console needs and ConfirmDialog doesn't have: form fields as children, and a refusal in the
 // page's own words (409 last_admin, person_has_seat, org_not_suspended), with an optional link. A typed-name
 // confirm keeps its action disabled until the name matches. Focus is trapped while open and Escape closes it
-// (react-native-web's Modal). Nothing animates.
+// (react-native-web's Modal). While the action runs, Cancel is disabled and Escape does nothing, so its answer
+// always lands in the open dialog, and a reopened form can't send the same decision twice. Nothing animates.
 
 export interface Problem {
   text: string;
@@ -39,7 +40,7 @@ export interface DialogProps {
 /** Open while it is rendered; the page renders it only when its dialog is open. */
 export function Dialog(props: DialogProps): React.JSX.Element {
   return (
-    <Modal visible transparent animationType="none" onRequestClose={props.onCancel}>
+    <Modal visible transparent animationType="none" onRequestClose={() => { if (!props.pending) props.onCancel(); }}>
       <DialogBody {...props} />
     </Modal>
   );
@@ -67,7 +68,7 @@ function DialogBody(props: DialogProps): React.JSX.Element {
             disabled={!matches || props.pending}
             onPress={props.onConfirm}
           />
-          <Button variant="link" label="Cancel" onPress={props.onCancel} />
+          <Button variant="link" label="Cancel" disabled={props.pending} onPress={props.onCancel} />
         </Actions>
       </View>
     </View>

@@ -24,7 +24,8 @@ import { ADD_COPY } from './words';
 // P21's Team (spec 16.4, F5, F6): P17's table and add form for any organization, through
 // /api/admin/orgs/:orgId/members. Every change is a staff action its admins see (D9), and the rows staff add
 // carry “Added by Townwise staff”. Active members get View as, which finds the person by email (MemberView has no
-// user id). The last admin can't be demoted or removed (409 last_admin).
+// user id). The last admin can't be demoted or removed (409 last_admin). An add that answers 404 found the
+// organization deleted, which the page shows as its own 404 state (`onGone`).
 
 const MAX_EMAILS = 20;
 
@@ -67,12 +68,17 @@ function RemoveDialog(props: { org: StaffOrg; member: Member; onRemoved: () => P
 export function OrgTeam(props: {
   org: StaffOrg;
   members: readonly Member[];
-  /** Reads the organization again after a change. It never rejects: the page shows a failed read on its own. */
-  onChanged: () => Promise<void>;
+  /**
+   * Reads the organization again after a change. It never rejects: the page shows a failed read on its own. False
+   * when that read found the organization deleted: the page shows its 404 state, so the change isn't reported.
+   */
+  onChanged: () => Promise<boolean>;
   onSaved: () => void;
   onViewAs: (target: ViewAsTarget) => void;
+  /** The organization is gone (a write answered 404). */
+  onGone: () => void;
 }): React.JSX.Element {
-  const { org, onChanged, onSaved } = props;
+  const { org, onChanged, onSaved, onGone } = props;
   const { api } = usePortal();
   const [removing, setRemoving] = useState<Member | null>(null);
   const [emails, setEmails] = useState('');
@@ -82,21 +88,28 @@ export function OrgTeam(props: {
 
   const changeRole = useAction(useCallback(async (member: Member, next: Role) => {
     await changeOrgMemberRole(api, org.id, member.id, next);
-    await onChanged();
-    onSaved();
+    if (await onChanged()) onSaved();
   }, [api, org.id, onChanged, onSaved]));
 
   const add = useAction(useCallback(async (list: string[], as: Role) => {
-    const answer = await addOrgMembers(api, org.id, { emails: list, role: as });
+    let answer: { results: AddResult[] };
+    try {
+      answer = await addOrgMembers(api, org.id, { emails: list, role: as });
+    } catch (error) {
+      if (hasCode(error, 404, 'not_found')) {
+        onGone();
+        return;
+      }
+      throw error;
+    }
     setResults(answer.results);
     setEmails('');
     await onChanged();
-  }, [api, org.id, onChanged]));
+  }, [api, org.id, onChanged, onGone]));
 
   const removed = useCallback(async () => {
     setRemoving(null);
-    await onChanged();
-    onSaved();
+    if (await onChanged()) onSaved();
   }, [onChanged, onSaved]);
 
   function submit(): void {

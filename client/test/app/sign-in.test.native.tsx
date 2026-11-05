@@ -15,7 +15,6 @@ import { AuthProvider } from '../../src/auth/AuthProvider';
 import type { Auth } from '../../src/auth/auth';
 import { resetGoogleButtonState } from '../../src/auth/GoogleButton';
 import type { AuthState } from '../../src/auth/store';
-import { EARLY_ACCESS_HREF } from '../../src/marketing/links';
 import SignIn from '../../app/(gate)/sign-in';
 import { fakeAuth } from '../helpers/fakes';
 
@@ -44,7 +43,11 @@ test('one Continue with Google button, links to the terms and privacy pages, and
   expect(screen.getByText('By continuing, you agree to the Terms and the Privacy Policy.')).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Terms' }).props.href).toBe('/terms');
   expect(screen.getByRole('link', { name: 'Privacy Policy' }).props.href).toBe('/privacy');
-  expect(screen.getByRole('link', { name: 'Request early access' }).props.href).toBe(EARLY_ACCESS_HREF);
+  // /request-access would send a signed-out visitor straight back here, so the page has no early-access link; the
+  // note under the card stays.
+  expect(screen.queryByRole('link', { name: 'Request early access' })).toBeNull();
+  expect(screen.queryByText('Request early access')).toBeNull();
+  expect(screen.getByText('Townwise is in development. No forecasts are for sale yet.')).toBeTruthy();
   expect(view.container.queryAll((instance) => instance.type === 'TextInput')).toHaveLength(0);
   expect(screen.queryByLabelText('Email')).toBeNull();
   expect(screen.queryByText(/sign up/i)).toBeNull();

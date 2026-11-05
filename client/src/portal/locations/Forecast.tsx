@@ -68,33 +68,30 @@ function Status(props: { sales: Sales; locationId: string; readOnlyId: string | 
         <Eyebrow>Calibration</Eyebrow>
         <Heading>Not calibrated yet</Heading>
       </Stack>
+      <Small>
+        {calibration.state === 'no_sales_data'
+          ? 'Upload your sales history to start. The upload sends Townwise only the date, guest count and net sales for each day.'
+          : `Your sales history is in: ${plural(calibration.dayCount, 'day', 'days')}, ${formatDate(calibration.firstDate)} to ${formatDate(calibration.lastDate)}. Calibration isn’t built yet, so there is no forecast.`}
+      </Small>
+      {/* The data checks (spec P11, 14.1), from the client's own rows, in every state. */}
+      <DefinitionList
+        mono
+        items={[
+          { term: 'Days with data', value: formatCount(coverage.dayCount) },
+          { term: 'First day', value: coverage.firstDate === null ? 'None' : formatDate(coverage.firstDate) },
+          { term: 'Last day', value: coverage.lastDate === null ? 'None' : formatDate(coverage.lastDate) },
+          { term: 'Missing days in between', value: formatCount(coverage.missingDays) },
+          { term: 'Days with guests', value: formatCount(coverage.guestsDayCount) },
+          { term: 'Days with net sales', value: formatCount(coverage.netSalesDayCount) },
+          {
+            term: 'Last upload',
+            value: last === undefined ? 'No finished upload' : `${formatDate(last.uploadedAt)} by ${last.uploadedByEmail}`,
+          },
+        ]}
+      />
       {calibration.state === 'no_sales_data' ? (
-        <>
-          <Small>Upload your sales history to start. The upload sends Townwise only the date, guest count and net sales for each day.</Small>
-          <Actions><UploadAction locationId={props.locationId} variant="primary" readOnlyId={props.readOnlyId} /></Actions>
-        </>
-      ) : (
-        <>
-          <Small>
-            {`Your sales history is in: ${plural(calibration.dayCount, 'day', 'days')}, ${formatDate(calibration.firstDate)} to ${formatDate(calibration.lastDate)}. Calibration isn’t built yet, so there is no forecast.`}
-          </Small>
-          <DefinitionList
-            mono
-            items={[
-              { term: 'Days with data', value: formatCount(coverage.dayCount) },
-              { term: 'First day', value: coverage.firstDate === null ? 'None' : formatDate(coverage.firstDate) },
-              { term: 'Last day', value: coverage.lastDate === null ? 'None' : formatDate(coverage.lastDate) },
-              { term: 'Missing days in between', value: formatCount(coverage.missingDays) },
-              { term: 'Days with guests', value: formatCount(coverage.guestsDayCount) },
-              { term: 'Days with net sales', value: formatCount(coverage.netSalesDayCount) },
-              {
-                term: 'Last upload',
-                value: last === undefined ? 'No finished upload' : `${formatDate(last.uploadedAt)} by ${last.uploadedByEmail}`,
-              },
-            ]}
-          />
-        </>
-      )}
+        <Actions><UploadAction locationId={props.locationId} variant="primary" readOnlyId={props.readOnlyId} /></Actions>
+      ) : null}
     </Panel>
   );
 }
