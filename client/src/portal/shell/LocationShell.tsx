@@ -1,8 +1,10 @@
+import { createContext, useContext } from 'react';
 import { Link, usePathname, useRouter } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, View, type PressableStateCallbackType } from 'react-native';
 
 import { theme } from '../../theme';
 import { townLabel } from '../format';
+import { useBreakpoint } from '../hooks';
 import { useOrg, usePortal } from '../PortalProvider';
 import { isFillRoute, locationHref, locationIdOf, locationTabs, tabOf, type LocationTab } from '../routing';
 import type { LocationSummary, OrgResponse } from '../schemas';
@@ -25,6 +27,17 @@ export function useLocation(): { location: LocationSummary; org: OrgResponse } {
   const location = state.data.locations.find((candidate) => candidate.id === locationId);
   if (location === undefined) throw new Error('useLocation must be used inside the location layout');
   return { location, org: state.data };
+}
+
+/**
+ * On phones the Chat tab needs the screen: the layout hands it the location's header and tabs instead of drawing
+ * them above it, and the chat puts them at the top of its thread, so they scroll away with the conversation.
+ * Null on every other page, and on wider screens.
+ */
+const ScrollingHeadContext = createContext<React.ReactNode>(null);
+
+export function useScrollingHead(): React.ReactNode {
+  return useContext(ScrollingHeadContext);
 }
 
 function hovered(state: PressableStateCallbackType): boolean {
@@ -67,6 +80,7 @@ export function LocationShell(props: { children: React.ReactNode }): React.JSX.E
   const router = useRouter();
   const { me } = usePortal();
   const { state, reload } = useOrg();
+  const { phone } = useBreakpoint();
   const role = me.access.state === 'member' ? me.access.role : 'member';
 
   if (state.status === 'loading') {
@@ -104,6 +118,13 @@ export function LocationShell(props: { children: React.ReactNode }): React.JSX.E
       <LocationTabs tabs={locationTabs(location.id, role, pathname)} />
     </>
   );
+  if (isFillRoute(pathname) && phone) {
+    return (
+      <ScrollingHeadContext.Provider value={head}>
+        <View style={styles.fill}>{props.children}</View>
+      </ScrollingHeadContext.Provider>
+    );
+  }
   if (isFillRoute(pathname)) {
     return (
       <View style={styles.fill}>
