@@ -66,6 +66,8 @@ test('one Continue with Google button, links to the terms and privacy pages, and
   for (const [, options] of renderButton.mock.calls) expect(options).toEqual({ text: 'continue_with' });
 
   expect(screen.getByRole('heading', { level: 1, name: 'Sign in to Townwise' })).toBeTruthy();
+  expect(screen.getByText('Use your Google account. Townwise has no passwords.')).toBeTruthy();
+  expect(screen.getByText('New to Townwise? Continue with Google, then tell us about your restaurant. Joining your team? Use the email address your admin added.')).toBeTruthy();
   expect(within(card).getByRole('link', { name: 'Terms' }).getAttribute('href')).toBe('/terms');
   expect(within(card).getByRole('link', { name: 'Privacy Policy' }).getAttribute('href')).toBe('/privacy');
   for (const link of screen.getAllByRole('link', { name: 'Townwise' })) expect(link.getAttribute('href')).toBe('/');

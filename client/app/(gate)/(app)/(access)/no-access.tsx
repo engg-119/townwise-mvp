@@ -1,7 +1,7 @@
 import { Link } from 'expo-router';
 import { StyleSheet, View } from 'react-native';
 
-import { CONTACT_HREF } from '../../../../src/marketing/links';
+import { CONTACT_EMAIL, CONTACT_HREF } from '../../../../src/portal/contact';
 import { formatDate } from '../../../../src/portal/format';
 import { personEmail, QuestionsLine, SignedInLine } from '../../../../src/portal/gate';
 import { usePortal } from '../../../../src/portal/PortalProvider';
@@ -75,7 +75,7 @@ function Paused(props: { access: Extract<Variant, { state: 'org_suspended' }> })
       lead={(
         <Lead>
           {`The Townwise team has paused access for ${org.name}. Your organization’s data is kept. Questions: `}
-          <Link href={CONTACT_HREF} style={styles.link}>hello@townwise.tech</Link>
+          <Link href={CONTACT_HREF} style={styles.link}>{CONTACT_EMAIL}</Link>
           .
         </Lead>
       )}

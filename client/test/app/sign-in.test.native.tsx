@@ -52,6 +52,13 @@ test('one Continue with Google button, links to the terms and privacy pages, and
   expect(screen.getByText('Townwise').props.href).toBeUndefined();
 });
 
+test('the P1 copy: the lead, and the line for new people and for teammates', async () => {
+  await renderSignIn({ status: 'signedOut' });
+  expect(screen.getByText('Use your Google account. Townwise has no passwords.')).toBeTruthy();
+  expect(screen.getByText('New to Townwise? Continue with Google, then tell us about your restaurant. Joining your team? Use the email address your admin added.')).toBeTruthy();
+  expect(screen.queryByText(/first sign-in creates/)).toBeNull();
+});
+
 test('the ID token goes to the server, and its errors keep their messages', async () => {
   jest.mocked(GoogleSignin.signIn).mockResolvedValue({ type: 'success', data: { idToken: 'id-1', user: { id: 'g', email: 'a@b.c' } } } as never);
   jest.mocked(GoogleSignin.signOut).mockResolvedValue(null);

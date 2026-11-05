@@ -3,8 +3,8 @@ import { Link } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { useAuth } from '../auth/AuthProvider';
-import { CONTACT_HREF } from '../marketing/links';
 import { theme } from '../theme';
+import { CONTACT_EMAIL, CONTACT_HREF } from './contact';
 import { COPY } from './errors';
 import { useAction, useBreakpoint } from './hooks';
 import { usePortal, useReadOnly } from './PortalProvider';
@@ -75,13 +75,12 @@ export function SignedInLine(): React.JSX.Element {
   );
 }
 
-/** “Questions: hello@townwise.tech.” */
+/** “Questions: {contact address}.”, in `small` at every width, as on the NoAccess board. */
 export function QuestionsLine(): React.JSX.Element {
-  const { phone } = useBreakpoint();
   return (
-    <Text style={[phone ? theme.type.sub : theme.type.small, styles.meText]}>
+    <Text style={[theme.type.small, styles.meText]}>
       {'Questions: '}
-      <Link href={CONTACT_HREF} style={styles.link}>hello@townwise.tech</Link>
+      <Link href={CONTACT_HREF} style={styles.link}>{CONTACT_EMAIL}</Link>
       .
     </Text>
   );
