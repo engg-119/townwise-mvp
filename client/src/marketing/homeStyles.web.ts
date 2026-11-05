@@ -8,7 +8,8 @@ import { theme } from '../theme';
 // subtitle fades in after it; with reduced motion they fade. The lead (.hd2) follows the story. Sections rise 16px
 // as they enter, or only fade.
 // How it works: from 1024px with an observer (.is-pin) the steps scroll in 560px slots beside one sticky
-// stage. Each visual's parts return to their start only after the 120ms fade out (0s, 150ms delay), so every
+// stage, centered in the window (a sticky top's percentage is of the scroll container's height), so the active
+// step, centered in its slot as it takes the band, sits beside it. Each visual's parts return to their start only after the 120ms fade out (0s, 150ms delay), so every
 // enter replays from the start. All movement sits under no-preference: reduced motion keeps only the fades,
 // with the lines fully drawn and in place.
 const easeInOut = `cubic-bezier(${theme.motion.easeInOut.join(',')})`;
@@ -75,7 +76,7 @@ export const homeCss = `
 .pg-home .hw.is-pin .hw-s:not(.is-act) .h3{color:var(--text2)}
 .pg-home .hw.is-pin .hw-s:not(.is-act) .step-body p{color:var(--text3)}
 .pg-home .hw-stc{grid-column:7/13}
-.pg-home .hw-st{position:sticky;top:32px;height:520px;display:grid;grid-template-rows:auto minmax(0,1fr);background:var(--panel);border:1px solid var(--border)}
+.pg-home .hw-st{position:sticky;top:max(16px,calc(50% - 260px));height:520px;display:grid;grid-template-rows:auto minmax(0,1fr);background:var(--panel);border:1px solid var(--border)}
 .pg-home .hw-hd{display:flex;align-items:center;min-height:48px;padding:0 16px;border-bottom:1px solid var(--border)}
 .pg-home .hw-pg{display:flex;gap:20px;font-family:var(--mono);font-size:12px;line-height:16px;color:var(--text3)}
 .pg-home .hw-pg li{position:relative;padding-block:6px;transition:color 200ms ease}

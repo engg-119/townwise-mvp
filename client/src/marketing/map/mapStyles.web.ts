@@ -9,6 +9,9 @@ const m = theme.motion;
 const s = theme.stroke;
 const easeInOut = `cubic-bezier(${m.easeInOut.join(',')})`;
 
+// The town list, card and notes: stacked on phones; from 900px the list beside the card with the notes across the
+// bottom. From 1160px the card has its two columns (its container is 680px or more) and is short beside the list's
+// twelve towns, so the notes move under it, beside the list.
 const frame = `
 .twmap{--eio:${easeInOut}}
 .twmap button{font-family:inherit}
@@ -20,6 +23,7 @@ const frame = `
 .twmap .pane-card{grid-area:card;min-width:0;padding:16px;background:var(--raised);border-top:1px solid var(--border);container-type:inline-size;container-name:card}
 .twmap .pane-notes{grid-area:notes;min-width:0}
 @media (min-width:900px){.twmap .app-b{grid-template-columns:300px minmax(0,1fr);grid-template-areas:"list card" "notes notes"}.twmap .pane-list{border-right:1px solid var(--border)}.twmap .pane-card{border-top:0}}
+@media (min-width:1160px){.twmap .app-b{grid-template-rows:auto 1fr;grid-template-areas:"list card" "list notes"}}
 .twmap .mono-s{font-family:var(--mono);font-size:12px;line-height:16px;color:var(--text3)}
 `;
 
