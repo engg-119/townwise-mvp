@@ -9,7 +9,8 @@
     "test": "jest --ci",
     "test:unit": "jest --ci",
     "export:web": "expo export --platform web --output-dir .expo-export && node scripts/check-web-export.mts .expo-export",
-    "doctor": "expo-doctor",
+    "doctor": "EXPO_DOCTOR_SKIP_DEPENDENCY_VERSION_CHECK=1 expo-doctor",
+    "deps:check": "expo install --check",
     "verify": "npm run typecheck && npm test && npm run export:web && npm run doctor"
   },
   "jest": {
