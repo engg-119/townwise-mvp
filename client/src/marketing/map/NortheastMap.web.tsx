@@ -1,4 +1,4 @@
-import { useContext, useEffect, useId, useLayoutEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useId, useLayoutEffect, useReducer, useRef, useState } from 'react';
 
 import { fmt1, fmtSigned } from '../format';
 import { ScrollRoot } from '../MarketingShell.web';
@@ -184,28 +184,29 @@ export function NortheastMap(props: { head?: React.ReactNode; lead?: React.React
   useEffect(() => () => { clearTimeout(scrollTimer.current); }, []);
 
   // The pinned map's size, measured once before the first paint and again whenever the story, the scroll
-  // container or the legend and caption change size. A frame later, never inside the observer's callback.
-  useLayoutEffect(() => {
+  // container or the legend and caption change size. A frame later, never inside the observer's callback. The
+  // observer starts after the commit: the scroll container is a parent, so its ref attaches only after this
+  // layout effect has run, and a window that changes only its height changes the size of nothing else.
+  const measure = useCallback((): void => {
     const [story, pin, fig, box, cap] = [storyRef.current, pinRef.current, figRef.current, boxRef.current, capRef.current];
-    if (story === null || pin === null || fig === null || box === null || cap === null) return undefined;
-    const parts = { story, pin, fig, box, cap };
-    const measure = (): void => {
-      const next = fitStory(parts, root.current, wide);
-      if (next !== null) setFit((last) => (last !== null && sameFit(last, next) ? last : next));
-    };
-    measure();
+    if (story === null || pin === null || fig === null || box === null || cap === null) return;
+    const next = fitStory({ story, pin, fig, box, cap }, root.current, wide);
+    if (next !== null) setFit((last) => (last !== null && sameFit(last, next) ? last : next));
+  }, [root, wide]);
+  useLayoutEffect(() => { measure(); }, [measure]);
+  useEffect(() => {
     if (typeof ResizeObserver !== 'function') return undefined;
     let frame = 0;
     const observer = new ResizeObserver(() => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(measure);
     });
-    for (const element of [story, fig, cap, root.current]) if (element !== null) observer.observe(element);
+    for (const element of [storyRef.current, figRef.current, capRef.current, root.current]) if (element !== null) observer.observe(element);
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [root, wide]);
+  }, [root, measure]);
 
   // The intro waits for the map to come into view; a watchdog covers an observer that never reports.
   useEffect(() => {

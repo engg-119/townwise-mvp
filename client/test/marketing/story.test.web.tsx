@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 
 import { ScrollRoot } from '../../src/marketing/MarketingShell.web';
@@ -61,6 +62,12 @@ class FakeResizeObserver {
   resize(): void {
     act(() => { this.callback([], this); });
   }
+
+  // A change in the size of `target`, which the browser reports only for an observed element (and for each one
+  // as its observation starts).
+  resizeOf(target: Element): void {
+    if (this.observed.includes(target)) this.resize();
+  }
 }
 
 function installObserver(): void {
@@ -118,6 +125,25 @@ function renderStory(head?: React.ReactNode): { root: HTMLElement; frame: HTMLEl
   const story = root.querySelector<HTMLElement>('.story');
   if (frame === null || story === null) throw new Error('no story');
   return { root, frame, story, unmount: view.unmount };
+}
+
+// The page's scroll container as MarketingShell renders it, a parent of the map: its ref attaches only after the
+// map's layout effects have run.
+function Shell(props: { children: React.ReactNode }): React.JSX.Element {
+  const ref = useRef<HTMLDivElement>(null);
+  return <div ref={ref} className="tw"><ScrollRoot value={ref}>{props.children}</ScrollRoot></div>;
+}
+
+function renderInShell(): { root: HTMLElement; story: HTMLElement; resize: FakeResizeObserver } {
+  const view = render(<Shell><NortheastMap /></Shell>);
+  const root = view.container.querySelector<HTMLElement>('.tw');
+  const story = view.container.querySelector<HTMLElement>('.story');
+  const [resize] = FakeResizeObserver.instances;
+  if (root === null || story === null || resize === undefined) throw new Error('no story');
+  // The observer reports each element as its observation starts; a frame later the map is measured.
+  resize.resizeOf(story);
+  act(() => { jest.advanceTimersByTime(20); });
+  return { root, story, resize };
 }
 
 function slots(): HTMLElement[] {
@@ -360,6 +386,39 @@ test('on a phone the band is the middle tenth of the window below the pinned map
   act(() => { jest.advanceTimersByTime(20); });
   expect(story.style.getPropertyValue('--story-mw')).toBe('280px');
   expect(first.disconnected).toBe(true);
+  expect(band().options?.rootMargin).toBe('-486px 0px -146px 0px');
+});
+
+test('the scroll container is watched even though its ref attaches after the map: from 1024px a window that changes only its height moves the map’s top', () => {
+  installObserver();
+  Object.defineProperty(window, 'ResizeObserver', { configurable: true, writable: true, value: FakeResizeObserver });
+  media({ wide: true, reduce: false });
+  layout.width = { story: 900 };
+  layout.height = { tw: 900 };
+  const { root, story, resize } = renderInShell();
+  expect(resize.observed.includes(root)).toBe(true);
+  expect(story.style.getPropertyValue('--story-mw')).toBe('600px');
+  expect(story.style.getPropertyValue('--story-top')).toBe('114px');
+  layout.height = { tw: 1000 };
+  resize.resizeOf(root);
+  act(() => { jest.advanceTimersByTime(20); });
+  expect(story.style.getPropertyValue('--story-mw')).toBe('600px');
+  expect(story.style.getPropertyValue('--story-top')).toBe('164px');
+});
+
+test('on a phone a window that changes only its height moves the band with the pin', () => {
+  installObserver();
+  Object.defineProperty(window, 'ResizeObserver', { configurable: true, writable: true, value: FakeResizeObserver });
+  media({ wide: false, reduce: false });
+  layout.width = { story: 358 };
+  layout.height = { tw: 844, 'story-pin': 420 };
+  const { root, story, resize } = renderInShell();
+  expect(band().options).toEqual({ root, threshold: 0, rootMargin: '-611px 0px -191px 0px' });
+  // Safari's toolbars shrink the window and nothing else changes size until the map is measured again.
+  layout.height = { tw: 664, 'story-pin': 340 };
+  resize.resizeOf(root);
+  act(() => { jest.advanceTimersByTime(20); });
+  expect(story.style.getPropertyValue('--story-mw')).toBe('280px');
   expect(band().options?.rootMargin).toBe('-486px 0px -146px 0px');
 });
 
