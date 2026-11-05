@@ -14,7 +14,8 @@ import { Heading } from '../ui/text';
 // It adds what the console needs and ConfirmDialog doesn't have: form fields as children, and a refusal in the
 // page's own words (409 last_admin, person_has_seat, org_not_suspended), with an optional link. A typed-name
 // confirm keeps its action disabled until the name matches. Focus is trapped while open and Escape closes it
-// (react-native-web's Modal). Nothing animates.
+// (react-native-web's Modal). While the action runs, Cancel is disabled and Escape does nothing, so its answer
+// always lands in the open dialog, and a reopened form can't send the same decision twice. Nothing animates.
 
 export interface Problem {
   text: string;
@@ -23,6 +24,11 @@ export interface Problem {
 
 export interface DialogProps {
   title: string;
+  /**
+   * An email that ends the title (“View Townwise as {email}”), set in mono 14/20 so up to 30 characters fit a line
+   * of a 320px screen's dialog: it moves to its own line whole instead of breaking mid-word.
+   */
+  titleEmail?: string;
   body?: string;
   children?: React.ReactNode;
   confirmLabel: string;
@@ -39,7 +45,7 @@ export interface DialogProps {
 /** Open while it is rendered; the page renders it only when its dialog is open. */
 export function Dialog(props: DialogProps): React.JSX.Element {
   return (
-    <Modal visible transparent animationType="none" onRequestClose={props.onCancel}>
+    <Modal visible transparent animationType="none" onRequestClose={() => { if (!props.pending) props.onCancel(); }}>
       <DialogBody {...props} />
     </Modal>
   );
@@ -54,7 +60,10 @@ function DialogBody(props: DialogProps): React.JSX.Element {
   return (
     <View style={styles.backdrop}>
       <View role="dialog" aria-modal aria-labelledby={titleId} style={[styles.dialog, { padding: phone ? theme.space[4] : theme.space[6] }]}>
-        <Heading nativeID={titleId}>{props.title}</Heading>
+        <Heading nativeID={titleId}>
+          {props.title}
+          {props.titleEmail === undefined ? null : <>{' '}<Text style={styles.titleEmail}>{props.titleEmail}</Text></>}
+        </Heading>
         {props.body === undefined ? null : <Text style={styles.body}>{props.body}</Text>}
         {props.children}
         {typedName === undefined ? null : (
@@ -67,7 +76,7 @@ function DialogBody(props: DialogProps): React.JSX.Element {
             disabled={!matches || props.pending}
             onPress={props.onConfirm}
           />
-          <Button variant="link" label="Cancel" onPress={props.onCancel} />
+          <Button variant="link" label="Cancel" disabled={props.pending} onPress={props.onCancel} />
         </Actions>
       </View>
     </View>
@@ -80,4 +89,5 @@ const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(8, 10, 13, 0.8)', alignItems: 'center', justifyContent: 'center', padding: theme.space[4] },
   dialog: { width: '100%', maxWidth: 560, backgroundColor: c.panel, borderWidth: 1, borderColor: c.border, gap: theme.space[4] },
   body: { ...theme.type.small, color: c.text2 },
+  titleEmail: { ...theme.type.monoUi },
 });

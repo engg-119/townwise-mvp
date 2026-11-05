@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { sendAccessRequest, type AccessRequestInput } from '../../../../src/portal/api';
 import { hasCode } from '../../../../src/portal/errors';
@@ -12,8 +12,9 @@ import { Actions, Button } from '../../../../src/portal/ui/Button';
 import { ErrorNotice, ReadOnlyLine } from '../../../../src/portal/ui/feedback';
 import { FormField } from '../../../../src/portal/ui/FormField';
 import { Columns, Pair, Panel, Stack } from '../../../../src/portal/ui/layout';
-import { Body, Heading } from '../../../../src/portal/ui/text';
+import { Heading } from '../../../../src/portal/ui/text';
 import { checkTown, EMPTY_TOWN, TOWN_COPY, TownFields, townValueOf, type TownMessages, type TownValue } from '../../../../src/portal/ui/TownFields';
+import { theme } from '../../../../src/theme';
 
 // P3. Request access (spec 16.2, F2; the RequestAccess board). For no_org, and by choice from rejected and
 // removed. The form renders at once (the town list ships with the app); POST /api/access-requests answers the new
@@ -147,7 +148,7 @@ export default function RequestAccessPage(): React.JSX.Element {
           <Stack gap={20}>
             <Panel>
               <Heading>Joining a team that already uses Townwise?</Heading>
-              <Body>{`You don’t need to request access. Ask an admin on that team to add ${email}, then reload this page.`}</Body>
+              <Text style={styles.panelBody}>{`You don’t need to request access. Ask an admin on that team to add ${email}, then reload this page.`}</Text>
             </Panel>
             <Stack gap={20}>
               <ReadOnlyLine text={line} nativeID={readOnlyId} />
@@ -185,23 +186,26 @@ export default function RequestAccessPage(): React.JSX.Element {
                   {...ro}
                 />
               </Pair>
-              <TownFields
-                value={form.town}
-                onChange={(town) => { update({ town }); }}
-                {...(messages.town === undefined ? {} : { messages: messages.town })}
-                {...ro}
-              />
-              <FormField
-                label="Number of locations"
-                value={form.locationCount}
-                onChangeText={(locationCount) => { update({ locationCount }); }}
-                keyboardType="number-pad"
-                inputMode="numeric"
-                numeric
-                maxLength={2}
-                messages={list(messages.locationCount)}
-                {...ro}
-              />
+              {/* Town beside Number of locations where two fields fit, as on the board; Another town's two fields stay under Town. */}
+              <Pair>
+                <TownFields
+                  value={form.town}
+                  onChange={(town) => { update({ town }); }}
+                  {...(messages.town === undefined ? {} : { messages: messages.town })}
+                  {...ro}
+                />
+                <FormField
+                  label="Number of locations"
+                  value={form.locationCount}
+                  onChangeText={(locationCount) => { update({ locationCount }); }}
+                  keyboardType="number-pad"
+                  inputMode="numeric"
+                  numeric
+                  maxLength={2}
+                  messages={list(messages.locationCount)}
+                  {...ro}
+                />
+              </Pair>
               <FormField
                 label="Anything we should know? (optional)"
                 helper="Don’t include guest names or sales figures."
@@ -229,3 +233,8 @@ export default function RequestAccessPage(): React.JSX.Element {
     </Page>
   );
 }
+
+const styles = StyleSheet.create({
+  // The board's panel body: `small`, `text2`, at every width.
+  panelBody: { ...theme.type.small, color: theme.color.text2 },
+});

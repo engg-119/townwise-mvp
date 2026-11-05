@@ -17,7 +17,7 @@ import { LinkButton } from '../../../../src/portal/ui/Button';
 import { DefinitionList } from '../../../../src/portal/ui/DataTable';
 import { ErrorNotice, LoadingLine, Notice, ReadOnlyLine } from '../../../../src/portal/ui/feedback';
 import { Columns, Section } from '../../../../src/portal/ui/layout';
-import { Small } from '../../../../src/portal/ui/text';
+import { inlineTarget, Small } from '../../../../src/portal/ui/text';
 import { theme } from '../../../../src/theme';
 
 // P18. Settings (spec 16.3, F7, D9; the OrgSettings board), for anyone with a seat: the account, the link to
@@ -108,6 +108,6 @@ export default function SettingsPage(): React.JSX.Element {
 
 const styles = StyleSheet.create({
   top: { marginBottom: theme.space[8] },
-  link: { color: theme.color.white, textDecorationLine: 'underline', textDecorationColor: theme.color.line },
+  link: { ...inlineTarget, color: theme.color.white, textDecorationLine: 'underline', textDecorationColor: theme.color.line },
   measure: { maxWidth: 680 },
 });

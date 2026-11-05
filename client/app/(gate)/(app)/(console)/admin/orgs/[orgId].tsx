@@ -18,7 +18,7 @@ import { useAction } from '../../../../../../src/portal/hooks';
 import { usePortal } from '../../../../../../src/portal/PortalProvider';
 import { Page } from '../../../../../../src/portal/shell/Page';
 import {
-  Button, DataTable, EmptyState, ErrorNotice, FormField, LinkButton, LoadingLine, Section, Small, Stack,
+  Button, DataTable, EmptyState, ErrorNotice, FormField, LinkButton, LoadingLine, Section, Small, Stack, useFocusMessage,
 } from '../../../../../../src/portal/ui';
 import { theme } from '../../../../../../src/theme';
 
@@ -27,7 +27,8 @@ import { theme } from '../../../../../../src/theme';
 // the team with View as on each active member, the locations as metadata only (D7: day counts and dates, never a
 // figure or a note), the newest 20 audit events, and deletion last: only once suspended, with the typed name.
 // Every change here is a staff action its admins see (D9); after one the page reads the organization again in
-// place.
+// place. A change that answers 404, or a read after one that does, means another staff member deleted the
+// organization meanwhile: the page shows its 404 state, as on load, with no “Saved.”, and focus moves to that line.
 
 const NAME_COPY = 'Enter the organization’s name, 2 to 120 characters.';
 /** A change went through, but reading the organization again didn't: what the page shows may be old. */
@@ -40,15 +41,28 @@ function missing(error: unknown): boolean {
   return hasCode(error, 404, 'not_found') || hasCode(error, 400, 'invalid_request');
 }
 
-function RenameDialog(props: { org: StaffOrg; onSaved: () => Promise<void>; onClose: () => void }): React.JSX.Element {
-  const { org, onSaved } = props;
+/** A write's 404: the organization is gone. (A write's 400 is about its body, so it isn't `missing`.) */
+function gone(error: unknown): boolean {
+  return hasCode(error, 404, 'not_found');
+}
+
+function RenameDialog(props: { org: StaffOrg; onSaved: () => Promise<void>; onGone: () => void; onClose: () => void }): React.JSX.Element {
+  const { org, onSaved, onGone } = props;
   const { api } = usePortal();
   const [name, setName] = useState(org.name);
   const [invalid, setInvalid] = useState(false);
   const save = useAction(useCallback(async (next: string) => {
-    await updateOrg(api, org.id, { name: next });
+    try {
+      await updateOrg(api, org.id, { name: next });
+    } catch (error) {
+      if (gone(error)) {
+        onGone();
+        return;
+      }
+      throw error;
+    }
     await onSaved();
-  }, [api, org.id, onSaved]));
+  }, [api, org.id, onSaved, onGone]));
   function submit(): void {
     const next = name.trim();
     const bad = next.length < 2 || next.length > 120;
@@ -79,13 +93,21 @@ function RenameDialog(props: { org: StaffOrg; onSaved: () => Promise<void>; onCl
   );
 }
 
-function SuspendDialog(props: { org: StaffOrg; onSaved: () => Promise<void>; onClose: () => void }): React.JSX.Element {
-  const { org, onSaved } = props;
+function SuspendDialog(props: { org: StaffOrg; onSaved: () => Promise<void>; onGone: () => void; onClose: () => void }): React.JSX.Element {
+  const { org, onSaved, onGone } = props;
   const { api } = usePortal();
   const suspend = useAction(useCallback(async () => {
-    await updateOrg(api, org.id, { status: 'suspended' });
+    try {
+      await updateOrg(api, org.id, { status: 'suspended' });
+    } catch (error) {
+      if (gone(error)) {
+        onGone();
+        return;
+      }
+      throw error;
+    }
     await onSaved();
-  }, [api, org.id, onSaved]));
+  }, [api, org.id, onSaved, onGone]));
   return (
     <Dialog
       title={`Suspend ${org.name}?`}
@@ -101,21 +123,26 @@ function SuspendDialog(props: { org: StaffOrg; onSaved: () => Promise<void>; onC
 }
 
 /** C7 for an organization: only a suspended one, with its name typed. The notice uses that name. */
-function DeleteDialog(props: { detail: OrgDetail; onStale: () => Promise<void>; onClose: () => void }): React.JSX.Element {
+/** `onStale` reads the organization again; false when that read found it deleted, and the 404 state shows. */
+function DeleteDialog(props: { detail: OrgDetail; onStale: () => Promise<boolean>; onGone: () => void; onClose: () => void }): React.JSX.Element {
   const { org, locations } = props.detail;
-  const { onStale } = props;
+  const { onStale, onGone } = props;
   const { api, showNotice } = usePortal();
   const router = useRouter();
   const remove = useAction(useCallback(async () => {
     try {
       await deleteOrg(api, org.id);
     } catch (error) {
-      if (hasCode(error, 409, 'org_not_suspended')) await onStale();
+      if (gone(error)) {
+        onGone();
+        return;
+      }
+      if (hasCode(error, 409, 'org_not_suspended') && !await onStale()) return;
       throw error;
     }
     showNotice({ text: `Deleted ${org.name}.` }, '/admin/orgs');
     router.replace('/admin/orgs');
-  }, [api, org.id, org.name, onStale, showNotice, router]));
+  }, [api, org.id, org.name, onStale, onGone, showNotice, router]));
   const request = org.fromRequestId === null ? '' : ' and its request';
   return (
     <Dialog
@@ -170,33 +197,60 @@ export default function OrganizationPage(): React.JSX.Element {
   const { state, reload, refresh, refreshError } = useRefreshable(useCallback(() => fetchOrg(api, orgId), [api, orgId]));
   const [open, setOpen] = useState<Open>(null);
   const [viewing, setViewing] = useState<ViewAsTarget | null>(null);
+  /** The organization a write found deleted; by id, so another organization's page starts fresh. */
+  const [goneId, setGoneId] = useState<string | null>(null);
+  const focusMessage = useFocusMessage();
 
   const saved = useCallback(() => { showNotice({ text: 'Saved.' }, pathname); }, [showNotice, pathname]);
+  // The page's 404 state replaces the control that was pressed, so focus moves to its line.
+  const onGone = useCallback(() => {
+    focusMessage();
+    setOpen(null);
+    setGoneId(orgId);
+  }, [focusMessage, orgId]);
+  /** Reads the organization again after a change; false when that read found it deleted, and the 404 state shows. */
+  const refreshed = useCallback(async () => {
+    const failure = await refresh();
+    if (failure === null || !missing(failure.error)) return true;
+    onGone();
+    return false;
+  }, [refresh, onGone]);
   const savedAndClosed = useCallback(async () => {
-    await refresh();
+    if (!await refreshed()) return;
     setOpen(null);
     saved();
-  }, [refresh, saved]);
+  }, [refreshed, saved]);
   const reactivate = useAction(useCallback(async () => {
-    await updateOrg(api, orgId, { status: 'active' });
-    await refresh();
-    saved();
-  }, [api, orgId, refresh, saved]));
+    try {
+      await updateOrg(api, orgId, { status: 'active' });
+    } catch (error) {
+      if (gone(error)) {
+        onGone();
+        return;
+      }
+      throw error;
+    }
+    if (await refreshed()) saved();
+  }, [api, orgId, refreshed, saved, onGone]));
 
+  const isMissing = goneId === orgId
+    || (state.status === 'failed' && missing(state.error))
+    || (refreshError !== null && missing(refreshError));
+  if (isMissing) {
+    return (
+      <Page eyebrow="Organization" title="Organization">
+        <Stack>
+          <ErrorNotice message="This organization doesn’t exist." />
+          <LinkButton href="/admin/orgs" label="Back to organizations" />
+        </Stack>
+      </Page>
+    );
+  }
   if (state.status === 'loading') {
     return <Page eyebrow="Organization" title="Organization"><LoadingLine text="Loading the organization" minHeight={480} /></Page>;
   }
   if (state.status === 'failed') {
-    return (
-      <Page eyebrow="Organization" title="Organization">
-        {missing(state.error) ? (
-          <Stack>
-            <ErrorNotice message="This organization doesn’t exist." />
-            <LinkButton href="/admin/orgs" label="Back to organizations" />
-          </Stack>
-        ) : <ErrorNotice error={state.error} onRetry={reload} />}
-      </Page>
-    );
+    return <Page eyebrow="Organization" title="Organization"><ErrorNotice error={state.error} onRetry={reload} /></Page>;
   }
 
   const detail = state.data;
@@ -218,7 +272,13 @@ export default function OrganizationPage(): React.JSX.Element {
         <Facts>
           <Text style={styles.fact}>{suspended ? 'Suspended' : 'Active'}</Text>
           <Text style={styles.fact}>{`Created ${formatDate(org.createdAt)}${org.fromRequestId === null ? ' by Townwise staff' : ''}`}</Text>
-          {org.fromRequestId === null ? null : <CellLink label="From request" href={requestHref('approved', org.fromRequestId)} />}
+          {org.fromRequestId === null ? null : (
+            // A request deleted since (with its requester) has no date: the plain link.
+            <CellLink
+              label={org.fromRequestSentAt === null ? 'From request' : `From request ${formatDate(org.fromRequestSentAt)}`}
+              href={requestHref('approved', org.fromRequestId)}
+            />
+          )}
         </Facts>
         <Small>{`What you change here is listed in ${org.name}’s Townwise staff activity, which its admins see.`}</Small>
         {suspended ? <Small>{`Members of ${org.name} see that access is paused. Data is kept.`}</Small> : null}
@@ -228,7 +288,7 @@ export default function OrganizationPage(): React.JSX.Element {
       </Stack>
 
       <Section title="Team">
-        <OrgTeam org={org} members={members} onChanged={refresh} onSaved={saved} onViewAs={setViewing} />
+        <OrgTeam org={org} members={members} onChanged={refreshed} onSaved={saved} onViewAs={setViewing} onGone={onGone} />
       </Section>
 
       <Section kicker="Locations, metadata only" title="Locations">
@@ -249,9 +309,9 @@ export default function OrganizationPage(): React.JSX.Element {
           : <Small>{`Suspend ${org.name} before deleting it.`}</Small>}
       </Section>
 
-      {open === 'rename' ? <RenameDialog org={org} onSaved={savedAndClosed} onClose={() => { setOpen(null); }} /> : null}
-      {open === 'suspend' ? <SuspendDialog org={org} onSaved={savedAndClosed} onClose={() => { setOpen(null); }} /> : null}
-      {open === 'delete' ? <DeleteDialog detail={detail} onStale={refresh} onClose={() => { setOpen(null); }} /> : null}
+      {open === 'rename' ? <RenameDialog org={org} onSaved={savedAndClosed} onGone={onGone} onClose={() => { setOpen(null); }} /> : null}
+      {open === 'suspend' ? <SuspendDialog org={org} onSaved={savedAndClosed} onGone={onGone} onClose={() => { setOpen(null); }} /> : null}
+      {open === 'delete' ? <DeleteDialog detail={detail} onStale={refreshed} onGone={onGone} onClose={() => { setOpen(null); }} /> : null}
       {viewing === null ? null : <ViewAsDialog target={viewing} onClose={() => { setViewing(null); }} />}
     </Page>
   );

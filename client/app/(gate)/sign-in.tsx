@@ -6,6 +6,7 @@ import { ApiError } from '../../src/api/client';
 import { GoogleButton } from '../../src/auth/GoogleButton';
 import { useAuth, useAuthState } from '../../src/auth/AuthProvider';
 import { SignInFrame } from '../../src/auth/SignInFrame';
+import { CONTACT_EMAIL } from '../../src/portal/contact';
 import { theme } from '../../src/theme';
 import { describeError, Message } from '../../src/ui';
 
@@ -16,8 +17,8 @@ const OFF = 'Sign-in is turned off right now. Try again later.';
 const REFUSALS = new Map<string, string>([
   ['google_email_unverified', 'Your Google account’s email isn’t verified yet. Verify it with Google, then try again.'],
   ['google_email_not_authoritative', 'Townwise accepts Gmail addresses and Google Workspace accounts. This Google account uses a different email provider.'],
-  ['email_linked_to_other_google_account', 'This email is already linked to a different Google account. Sign in with that account, or write to hello@townwise.tech.'],
-  ['google_email_conflict', 'Another Townwise account already uses this email. Write to hello@townwise.tech and we’ll sort it out.'],
+  ['email_linked_to_other_google_account', `This email is already linked to a different Google account. Sign in with that account, or write to ${CONTACT_EMAIL}.`],
+  ['google_email_conflict', `Another Townwise account already uses this email. Write to ${CONTACT_EMAIL} and we’ll sort it out.`],
   ['origin_not_allowed', 'Sign-in isn’t available from this address. Go to townwise.tech to sign in.'],
   ['google_unavailable', 'Google isn’t responding. Try again in a minute.'],
 ]);
@@ -70,8 +71,8 @@ export default function SignIn(): React.JSX.Element {
   return (
     <SignInFrame
       title="Sign in to Townwise"
-      lead="Use your Google account, whether you’re new or returning. Your first sign-in creates your account. Townwise has no passwords."
-      note="Townwise is in development. No forecasts are for sale yet."
+      lead="Use your Google account. Townwise has no passwords."
+      note="New to Townwise? Continue with Google, then tell us about your restaurant. Joining your team? Use the email address your admin added."
     >
       {notice === undefined ? null : <Message>{notice}</Message>}
       {action}

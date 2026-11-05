@@ -81,7 +81,13 @@ describe('P11 Forecast', () => {
     const { api } = setup(meOf(ACCESS.member), { l2: salesOf([]) });
     await renderApp('/locations/l2', api);
     expect(await screen.findByText('Upload your sales history to start. The upload sends Townwise only the date, guest count and net sales for each day.')).toBeTruthy();
-    expect(screen.queryByText('Days with data')).toBeNull();
+    // The data checks show in every state (spec P11, 14.1), with nothing in them yet.
+    for (const term of ['Days with data', 'First day', 'Last day', 'Missing days in between', 'Days with guests', 'Days with net sales', 'Last upload']) {
+      expect(screen.getByText(term)).toBeTruthy();
+    }
+    expect(screen.getByText('No finished upload')).toBeTruthy();
+    expect(screen.getAllByText('None')).toHaveLength(2);
+    expect(screen.getAllByText('0').length).toBeGreaterThanOrEqual(4);
     expect(screen.getByText('Not started')).toBeTruthy();
     expect(screen.getByText('Not researched yet')).toBeTruthy();
     expect(screen.getByText('0 notes')).toBeTruthy();
@@ -90,6 +96,18 @@ describe('P11 Forecast', () => {
     const step = screen.getByRole('heading', { name: 'Upload your sales history' });
     expect(StyleSheet.flatten(step.props.style)).toMatchObject({ color: theme.color.mint });
     expect(StyleSheet.flatten(screen.getByRole('heading', { name: 'Your town' }).props.style)).toMatchObject({ color: theme.color.white });
+  });
+
+  test('only the selected step draws a marker, and it hangs outside the text so no title shifts', async () => {
+    const { api } = setup(meOf(ACCESS.member), { l2: salesOf([]) });
+    await renderApp('/locations/l2', api);
+    await screen.findByText('No finished upload');
+    const markers = screen.getAllByTestId('step-marker');
+    expect(markers).toHaveLength(1);
+    expect(StyleSheet.flatten(markers[0]?.props.style)).toMatchObject({ position: 'absolute', backgroundColor: theme.color.mint });
+    // Unselected titles are alone in their row, so they align with the body text below them.
+    const title = screen.getByRole('heading', { name: 'Your town' });
+    expect(title.parent?.children).toHaveLength(1);
   });
 
   test('its links open the Town and Notes tabs', async () => {

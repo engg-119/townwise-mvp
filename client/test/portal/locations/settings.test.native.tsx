@@ -7,11 +7,11 @@ jest.mock('expo-splash-screen', () => ({
   hideAsync: jest.fn(() => Promise.resolve()),
 }));
 
-import { cleanup, fireEvent, screen, waitFor } from 'expo-router/testing-library';
+import { act, cleanup, fireEvent, screen, waitFor } from 'expo-router/testing-library';
 
 import type { LocationSummary } from '../../../src/portal/schemas';
 import {
-  ACCESS, fakePortalApi, LOCATIONS, locationOf, meOf, orgOf, refusal, viewAsMe, writes, type FakePortalApi,
+  ACCESS, deferred, fakePortalApi, LOCATIONS, locationOf, meOf, orgOf, refusal, viewAsMe, writes, type FakePortalApi,
 } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { locationsFake, salesOf, type LocationsFake } from './fakes';
@@ -65,6 +65,32 @@ describe('P16 Location settings', () => {
     expect(router.getPathname()).toBe('/locations/l1/settings');
   });
 
+  test('while the organization reloads after Save, the Settings tab stays mounted on its own address', async () => {
+    const { api } = setup();
+    const renamed = { ...only('l1'), name: 'Main Street Tavern' };
+    api.answers['/api/org/locations/l1'] = () => {
+      api.org = orgOf('org_admin', [renamed, only('l2')]);
+      return { location: renamed };
+    };
+    const { router } = await renderApp('/locations/l1/settings', api);
+    await fireEvent.changeText(await screen.findByLabelText('Name'), 'Main Street Tavern');
+    // GET /api/org is held, as over a slow network, while the reload runs.
+    const gate = deferred<null>();
+    const json = api.json.bind(api);
+    api.json = (path, schema, opts) => (path === '/api/org' ? gate.promise.then(() => json(path, schema, opts)) : json(path, schema, opts));
+    await fireEvent.press(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => { expect(writes(api)).toHaveLength(1); });
+    // The page is still there, with what was typed, not swapped for the loading line.
+    expect(screen.queryByText('Loading this location')).toBeNull();
+    expect(screen.getByLabelText('Name').props.value).toBe('Main Street Tavern');
+    expect(router.getPathname()).toBe('/locations/l1/settings');
+    api.json = json;
+    await act(async () => { gate.resolve(null); await gate.promise; });
+    expect(await screen.findByText('Saved.')).toBeTruthy();
+    expect(screen.getByLabelText('Name').props.value).toBe('Main Street Tavern');
+    expect(router.getPathname()).toBe('/locations/l1/settings');
+  });
+
   test('field messages: an empty name stops the form; a taken name says so', async () => {
     const { api } = setup();
     api.answers['/api/org/locations/l1'] = () => refusal(409, 'location_name_taken');
@@ -78,6 +104,43 @@ describe('P16 Location settings', () => {
     expect(await screen.findByText('Another location already uses that name.')).toBeTruthy();
     expect(screen.queryByText('Saved.')).toBeNull();
   });
+
+  test('a save after another admin deleted the location says it isn’t available, with the way back', async () => {
+    const { api } = setup();
+    api.answers['/api/org/locations/l1'] = () => {
+      api.org = orgOf('org_admin', [only('l2')]);
+      return refusal(404, 'not_found');
+    };
+    const { router } = await renderApp('/locations/l1/settings', api);
+    await fireEvent.press(await screen.findByRole('button', { name: 'Save changes' }));
+    expect(await screen.findByText('This location isn’t available.')).toBeTruthy();
+    expect(screen.queryByText('Something went wrong with that request. Reload the page and try again.')).toBeNull();
+    expect(screen.queryByText('Saved.')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+    const back = screen.getAllByRole('link', { name: 'Locations' }).at(-1);
+    if (back === undefined) throw new Error('no link');
+    await fireEvent.press(back);
+    // One location is left, so Locations opens its Forecast tab.
+    await waitFor(() => { expect(router.getPathname()).toBe('/locations/l2'); });
+  });
+
+  test('a delete after another admin deleted the location closes the dialog and says it isn’t available', async () => {
+    const { api, fake } = setup();
+    fake.deletes['/api/org/locations/l2'] = () => {
+      api.org = orgOf('org_admin', [only('l1')]);
+      return refusal(404, 'not_found');
+    };
+    await renderApp('/locations/l2/settings', api);
+    await fireEvent.press(await screen.findByRole('button', { name: 'Delete location' }));
+    await fireEvent.changeText(screen.getByLabelText('Type River Grill to confirm.'), 'River Grill');
+    await fireEvent.press(dialogButton('Delete location'));
+    // Not Locations with “Deleted River Grill.”, which would open the remaining location's Forecast tab.
+    expect(await screen.findByText('This location isn’t available.')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Delete River Grill?' })).toBeNull();
+    expect(screen.queryByText('Something went wrong with that request. Reload the page and try again.')).toBeNull();
+    expect(screen.queryByText('Deleted River Grill.')).toBeNull();
+  });
+
 
   test('a location with sales or notes cannot be deleted yet, and says where to start', async () => {
     const { api } = setup();

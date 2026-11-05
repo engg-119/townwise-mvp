@@ -1,13 +1,16 @@
+import { useLayoutEffect, useRef, type RefObject } from 'react';
 import { Link } from 'expo-router';
-import { Pressable, StyleSheet, Text, View, type PressableStateCallbackType } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View, type PressableStateCallbackType } from 'react-native';
 
 import { theme } from '../../theme';
 import { webAria } from './aria';
-import { DisabledButton } from './DisabledButton';
+import { useHover } from './hover';
 
 // Buttons (spec 15.6, 15.7): one white primary per page with a dark label, outline buttons, and text links. Mint
 // never fills a button. A disabled control keeps its place and its focus: it carries aria-disabled (never the
-// disabled attribute), a `text3` label and a `border` outline, and pressing it does nothing. Nothing animates.
+// disabled attribute), a `text3` label and a `border` outline, and pressing it does nothing. It is the same element
+// enabled or disabled, so a button that turns disabled while its action runs (Save, Add, a dialog's primary) keeps
+// keyboard focus. Nothing animates.
 
 export type ButtonVariant = 'primary' | 'outline' | 'link';
 
@@ -32,13 +35,38 @@ function hovered(state: PressableStateCallbackType): boolean {
   return (state as { hovered?: boolean }).hovered === true;
 }
 
-function boxStyle(variant: ButtonVariant, state: PressableStateCallbackType, disabled: boolean, block: boolean) {
+function boxStyle(variant: ButtonVariant, hover: boolean, disabled: boolean, block: boolean) {
   return [
     styles[variant],
-    !disabled && hovered(state) && hoverStyles[variant],
+    !disabled && hover && hoverStyles[variant],
     disabled && disabledStyles[variant],
+    disabled && styles.inert,
     block ? styles.block : styles.inline,
   ];
+}
+
+type Host = React.ComponentRef<typeof View>;
+
+/** The two DOM calls the web disabled state needs; react-native-web hands the <button> itself to the ref. */
+interface AttributeTarget {
+  setAttribute: (name: string, value: string) => void;
+  removeAttribute: (name: string) => void;
+}
+
+/**
+ * The disabled state on the same element. Native takes Pressable's `disabled` (accessibilityState, no touches). On
+ * web react-native-web turns that prop into the disabled attribute and tabindex -1, which drop focus, so the button
+ * gets no press handler and aria-disabled="true" is set on it directly.
+ */
+function useWebAriaDisabled(disabled: boolean): RefObject<Host | null> {
+  const ref = useRef<Host>(null);
+  useLayoutEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const element = ref.current as unknown as AttributeTarget | null;
+    if (disabled) element?.setAttribute('aria-disabled', 'true');
+    else element?.removeAttribute('aria-disabled');
+  }, [disabled]);
+  return ref;
 }
 
 function Label(props: { variant: ButtonVariant; hover: boolean; disabled: boolean; text: string }): React.JSX.Element {
@@ -52,26 +80,19 @@ function Label(props: { variant: ButtonVariant; hover: boolean; disabled: boolea
 
 export function Button(props: ButtonProps): React.JSX.Element {
   const variant = props.variant ?? 'primary';
-  if (props.disabled === true) {
-    return (
-      <DisabledButton
-        variant={variant}
-        label={props.label}
-        block={props.block === true}
-        {...(props.accessibilityLabel === undefined ? {} : { accessibilityLabel: props.accessibilityLabel })}
-        {...(props.describedBy === undefined ? {} : { describedBy: props.describedBy })}
-      />
-    );
-  }
+  const disabled = props.disabled === true;
+  const ref = useWebAriaDisabled(disabled);
   return (
     <Pressable
+      ref={ref}
       role="button"
+      {...(Platform.OS === 'web' ? {} : { disabled })}
       {...(props.accessibilityLabel === undefined ? {} : { accessibilityLabel: props.accessibilityLabel })}
       {...webAria({ 'aria-describedby': props.describedBy })}
-      {...(props.onPress === undefined ? {} : { onPress: props.onPress })}
-      style={(state) => boxStyle(variant, state, false, props.block === true)}
+      {...(disabled || props.onPress === undefined ? {} : { onPress: props.onPress })}
+      style={(state) => boxStyle(variant, hovered(state), disabled, props.block === true)}
     >
-      {(state) => <Label variant={variant} hover={hovered(state)} disabled={false} text={props.label} />}
+      {(state) => <Label variant={variant} hover={hovered(state)} disabled={disabled} text={props.label} />}
     </Pressable>
   );
 }
@@ -85,16 +106,20 @@ export interface LinkButtonProps extends CommonProps {
 /** A link that looks like a button or a text link. Disabled, it is a disabled button that goes nowhere. */
 export function LinkButton(props: LinkButtonProps): React.JSX.Element {
   const variant = props.variant ?? 'link';
+  const hover = useHover();
   if (props.disabled === true) return <Button {...props} variant={variant} />;
   return (
     <Link href={props.href} asChild {...(props.replace === true ? { replace: true } : {})}>
+      {/* A child of Link asChild takes one plain style object (ui/hover.ts). */}
       <Pressable
         role="link"
         {...(props.accessibilityLabel === undefined ? {} : { accessibilityLabel: props.accessibilityLabel })}
         {...webAria({ 'aria-describedby': props.describedBy })}
-        style={(state) => boxStyle(variant, state, false, props.block === true)}
+        onHoverIn={hover.onHoverIn}
+        onHoverOut={hover.onHoverOut}
+        style={StyleSheet.flatten(boxStyle(variant, hover.hovered, false, props.block === true))}
       >
-        {(state) => <Label variant={variant} hover={hovered(state)} disabled={false} text={props.label} />}
+        <Label variant={variant} hover={hover.hovered} disabled={false} text={props.label} />
       </Pressable>
     </Link>
   );
@@ -116,6 +141,8 @@ const styles = StyleSheet.create({
   link: { minHeight: 44, minWidth: 44, alignItems: 'flex-start', justifyContent: 'center' },
   inline: { alignSelf: 'flex-start' },
   block: { alignSelf: 'stretch' },
+  /** No pointer cursor on a control that does nothing. */
+  inert: { cursor: 'auto' },
   actions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 20, rowGap: 12 },
 });
 

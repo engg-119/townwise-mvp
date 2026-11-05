@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
@@ -7,7 +7,7 @@ import { ApiError } from '../../../src/api/client';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
 import {
-  ACCESS, deferred, EMAIL, fakePortalApi, meOf, offline, orgOf, refusal, TARGET_EMAIL, viewAsMe, writes, type FakePortalApi,
+  ACCESS, deferred, EMAIL, fakePortalApi, LOCATIONS, meOf, offline, orgOf, refusal, TARGET_EMAIL, viewAsMe, writes, type FakePortalApi,
 } from '../../helpers/portal';
 
 // P13 on the web, through the whole app: choose a file, match columns, check the totals, send. Every file here is
@@ -128,6 +128,10 @@ function answerFor(counts: { dayCount: number; inserted: number; replaced: numbe
   });
 }
 
+function orgReads(api: FakePortalApi): number {
+  return api.calls.filter((call) => call.method === 'GET' && call.path === '/api/org').length;
+}
+
 function pageText(): string {
   return document.body.textContent;
 }
@@ -171,7 +175,11 @@ test('an org admin’s upload: match, check, send one body of days, and the repl
   expect(screen.getByText('$2,731')).toBeTruthy();
   expect(screen.getByText('Check these against your point-of-sale system.')).toBeTruthy();
   expect(screen.getByText('You already have Jan 1, 2025 to Feb 4, 2026. Days in both will be replaced by this file.')).toBeTruthy();
-  expect(screen.getByRole('region', { name: 'First 3 days' })).toBeTruthy();
+  const preview = screen.getByRole('region', { name: 'First 3 days' });
+  expect(preview).toBeTruthy();
+  // The group label prints once, above the table; the date column is headed Date, so stacked rows do not repeat it.
+  expect(screen.getAllByText('First 3 days')).toHaveLength(1);
+  expect(within(preview).getByRole('columnheader', { name: 'Date' })).toBeTruthy();
   expect(pageText()).not.toContain(SENTINEL);
 
   await click('Send 3 days');
@@ -304,6 +312,24 @@ test('a location column whose values don’t include the location’s name waits
   await waitFor(() => { expect(screen.getByRole('button', { name: 'Check the totals' }).getAttribute('aria-disabled')).toBeNull(); });
 });
 
+test('while a location column’s values are read, Check the totals is described only by messages on the page', async () => {
+  const text = 'Date,Store,Guests\n2025-03-04,Store 1,10\n2025-03-04,Store 2,20';
+  const later = deferred<string>();
+  let reads = 0;
+  renderAt(adminApi());
+  await toMatch(csvFile(text, 'export.csv', { text: () => { reads += 1; return reads === 1 ? Promise.resolve(text) : later.promise; } }));
+  await settle(() => { fireEvent.change(select('Location column (optional)'), { target: { value: '1' } }); });
+  expect(screen.getByText('Reading 1 KB file…')).toBeTruthy();
+  const check = screen.getByRole('button', { name: 'Check the totals' });
+  expect(check.getAttribute('aria-disabled')).toBe('true');
+  const described = (check.getAttribute('aria-describedby') ?? '').split(' ').filter((id) => id !== '');
+  for (const id of described) expect(document.getElementById(id)).not.toBeNull();
+  await act(async () => { later.resolve(text); await later.promise; });
+  const message = await screen.findByText('Choose which value is Main Street Bar.');
+  expect(screen.getByRole('button', { name: 'Check the totals' }).getAttribute('aria-describedby')?.split(' ')).toContain('upload-location-msgs');
+  expect(message.closest('#upload-location-msgs')).toBeTruthy();
+});
+
 test.each<[string, File, string]>([
   ['larger than 50 MB', csvFile('Date\n', 'export.csv', { size: 50 * 1024 * 1024 + 1 }), 'That file is larger than 50 MB.'],
   ['an Excel file', csvFile('PK', 'export.xlsx'), 'That doesn’t look like a CSV file. Excel file? Save it as CSV first.'],
@@ -399,6 +425,84 @@ test('a network error or 429 uses the shared copy, and Try again sends the same 
   expect(await screen.findByText('Too many attempts. Try again in 2 minutes.')).toBeTruthy();
   await click('Try again');
   expect(await screen.findByText('Saved 3 days for Main Street Bar: 3 new, 0 replaced.')).toBeTruthy();
+});
+
+test('a 404: the location isn’t available, with a way back to Locations, and nothing is sent again', async () => {
+  const api = adminApi();
+  api.answers[UPLOAD] = () => refusal(404, 'not_found');
+  renderAt(api);
+  await toCheck(csvFile(FILE));
+  await click('Send 3 days');
+  expect(await screen.findByText('This location isn’t available.')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: /^Send/ })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+  // The page's own way back, not the top bar's Locations.
+  const nav = screen.getByRole('navigation', { name: 'Main' });
+  const back = screen.getAllByRole('link', { name: 'Locations' }).find((link) => !nav.contains(link));
+  if (back === undefined) throw new Error('no way back to Locations');
+  expect(back.getAttribute('href')).toBe('/dashboard');
+  expect(orgReads(api)).toBe(1);
+  // The organization's list may be stale; it is read again once the page closes.
+  await settle(() => { fireEvent.click(back); });
+  await waitFor(() => { expect(orgReads(api)).toBe(2); });
+  expect(writes(api)).toHaveLength(1);
+});
+
+test('a 404 for an organization’s only location: Locations opens Locations, not the missing location again', async () => {
+  const api = fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin', LOCATIONS.slice(0, 1)) });
+  api.answers[UPLOAD] = () => refusal(404, 'not_found');
+  renderAt(api);
+  await toCheck(csvFile(FILE));
+  // Deleted elsewhere while the person checked the totals.
+  api.org = orgOf('org_admin', []);
+  await click('Send 3 days');
+  expect(await screen.findByText('This location isn’t available.')).toBeTruthy();
+  const nav = screen.getByRole('navigation', { name: 'Main' });
+  const back = screen.getAllByRole('link', { name: 'Locations' }).find((link) => !nav.contains(link));
+  if (back === undefined) throw new Error('no way back to Locations');
+  // Locations redirects an organization with one location to it. The organization read when the page closes
+  // must reach Locations first, so the person stays on Locations instead of going back to the missing location.
+  await settle(() => { fireEvent.click(back); });
+  expect(await screen.findByRole('heading', { name: 'Add your first location' })).toBeTruthy();
+  expect(window.location.pathname).toBe('/dashboard');
+  expect(screen.queryByText('This location isn’t available.')).toBeNull();
+  expect(orgReads(api)).toBe(2);
+  expect(writes(api)).toHaveLength(1);
+});
+
+test('a 404 that answers after the person left still reads the organization again', async () => {
+  const api = adminApi();
+  const answer = deferred<unknown>();
+  api.answers[UPLOAD] = () => answer.promise;
+  renderAt(api);
+  await toCheck(csvFile(FILE));
+  await click('Send 3 days');
+  await screen.findByText('Sending 3 days…');
+  await settle(() => { fireEvent.click(screen.getByRole('link', { name: 'Notes' })); });
+  await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/notes'); });
+  expect(orgReads(api)).toBe(1);
+  await act(async () => { answer.resolve(refusal(404, 'not_found')); await answer.promise; });
+  await waitFor(() => { expect(orgReads(api)).toBe(2); });
+});
+
+test('one check or order: rows that share a date are added up, with net sales rounded once per day', async () => {
+  const text = [
+    'Date,Guests,Net Sales',
+    '2025-03-04,2,10.005',
+    '2025-03-04,3,10.005',
+    '2025-03-05,4,5.00',
+  ].join('\n');
+  const api = adminApi();
+  api.answers[UPLOAD] = answerFor({ dayCount: 2, inserted: 2, replaced: 0, kept: 0 });
+  renderAt(api);
+  await toMatch(csvFile(text));
+  await click('One check or order');
+  await click('Check the totals');
+  expect(await screen.findByText('3 rows became 2 days, Mar 4, 2025 to Mar 5, 2025.')).toBeTruthy();
+  expect(screen.getByText('We add up rows that share a date.')).toBeTruthy();
+  await click('Send 2 days');
+  await screen.findByText('Saved 2 days for Main Street Bar: 2 new, 0 replaced.');
+  expect(writes(api)[0]?.body).toEqual({ days: [{ date: '2025-03-04', guests: 5, netSalesCents: 2001 }, { date: '2025-03-05', guests: 4, netSalesCents: 500 }] });
 });
 
 test('a 400 is a client bug: the shared request copy, and Try again starts over', async () => {

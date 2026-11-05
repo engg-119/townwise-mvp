@@ -8,11 +8,13 @@ jest.mock('expo-splash-screen', () => ({
 }));
 
 import { cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing-library';
+import { StyleSheet, type TextStyle } from 'react-native';
 
 import {
   ACCESS, deferred, fakePortalApi, locationOf, LOCATIONS, meOf, offline, orgOf, refusal, viewAsMe, writes,
 } from '../helpers/portal';
 import { renderApp } from '../helpers/renderApp';
+import { theme } from '../../src/theme';
 
 afterEach(async () => {
   await cleanup();
@@ -46,6 +48,16 @@ test('several locations: one row each, with town, sales history, calibration in 
   expect(screen.queryByRole('link', { name: 'Add location' })).toBeNull();
   await fireEvent.press(within(table).getByText('Main Street Bar'));
   expect(router.getPathname()).toBe('/locations/l1');
+});
+
+test('a long location name wraps at the type’s line height and keeps a 44px tap target', async () => {
+  const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') });
+  await renderApp('/dashboard', api);
+  const table = await screen.findByLabelText('Locations');
+  const style: TextStyle = StyleSheet.flatten(within(table).getByText('Main Street Bar').props.style as TextStyle) ?? {};
+  expect(style.lineHeight).toBe(theme.type.mono.lineHeight);
+  expect(style.minHeight).toBe(44);
+  expect((style.lineHeight ?? 0) + 2 * Number(style.paddingVertical)).toBe(44);
 });
 
 test('the towns of the locations, from the bundled public data', async () => {

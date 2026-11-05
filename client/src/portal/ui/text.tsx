@@ -1,4 +1,4 @@
-import { StyleSheet, Text, type StyleProp, type TextStyle } from 'react-native';
+import { Platform, StyleSheet, Text, type StyleProp, type TextStyle } from 'react-native';
 
 import { theme } from '../../theme';
 import { useBreakpoint } from '../hooks';
@@ -6,6 +6,13 @@ import { webAria } from './aria';
 
 // The portal's type (spec 15.6): Instrument Sans for reading and UI, Geist Mono for labels and every numeral.
 // Sizes step down at 1023px and 640px as the shell's CSS does.
+
+/**
+ * The box of a link inside a sentence (“Questions: {address}.”, “Leave {org}.”, Sign out in the signed-in line).
+ * On web its 18 to 20px of text gains 13px above and below, a tap target of at least 44px, and the line does not
+ * move, since an inline element's padding takes no room. Native's nested text takes no padding.
+ */
+export const inlineTarget: TextStyle = Platform.OS === 'web' ? { paddingVertical: 13 } : {};
 
 interface TextProps {
   children: React.ReactNode;
@@ -18,12 +25,21 @@ export function Eyebrow(props: TextProps): React.JSX.Element {
   return <Text nativeID={props.nativeID} style={[styles.eyebrow, props.style]}>{props.children}</Text>;
 }
 
-/** The page's one h1, styled `tw-h2`: 40/44, then 32/36 below 1024px, then 28/32 at 640px and below. */
-export function Title(props: TextProps): React.JSX.Element {
+/**
+ * The page's one h1, styled `tw-h2`: 40/44, then 32/36 below 1024px, then 28/32 at 640px and below. `lines` caps it
+ * and ends it with an ellipsis (the chat's compact header on phones).
+ */
+export function Title(props: TextProps & { lines?: number }): React.JSX.Element {
   const { phone, desktop } = useBreakpoint();
   const size = phone ? theme.type.h2Phone : desktop ? theme.type.h2 : theme.type.h2Tablet;
   return (
-    <Text role="heading" {...webAria({ 'aria-level': 1 })} nativeID={props.nativeID} style={[size, styles.white, props.style]}>
+    <Text
+      role="heading"
+      {...webAria({ 'aria-level': 1 })}
+      nativeID={props.nativeID}
+      {...(props.lines === undefined ? {} : { numberOfLines: props.lines })}
+      style={[size, styles.white, props.style]}
+    >
       {props.children}
     </Text>
   );

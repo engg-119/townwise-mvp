@@ -205,7 +205,8 @@ describe('GET /api/admin/orgs/:orgId', () => {
 
     const body = await get<OrgDetail>(`/api/admin/orgs/${orgId}`);
     expect(body.org).toEqual({
-      id: orgId, name: 'Cedar Grill', status: 'active', createdAt: createdAt.toISOString(), fromRequestId: null, suspendedAt: null,
+      id: orgId, name: 'Cedar Grill', status: 'active', createdAt: createdAt.toISOString(), fromRequestId: null,
+      fromRequestSentAt: null, suspendedAt: null,
     });
     expect(body.members).toEqual([
       {
@@ -237,6 +238,17 @@ describe('GET /api/admin/orgs/:orgId', () => {
     expect(body.recent[0]).toMatchObject({ orgId, orgName: 'Cedar Grill', action: 'member.invited', at: at(21).toISOString(), viewAs: null });
     for (const figure of FIGURES) expect(numbersIn(body)).not.toContain(figure);
     expect(JSON.stringify(body)).not.toContain('Sentinel note detail');
+  });
+
+  it('says when the request it was approved from was sent, and null once that request is deleted', async () => {
+    const requester = await person('c-requester');
+    const sentAt = new Date(server.clock.now().getTime() - 3 * 86_400_000);
+    const requestId = await addRequest(server, { userId: requester.session.userId, email: requester.email, status: 'approved', createdAt: sentAt });
+    const orgId = await createOrg(server, { name: 'Birch Cafe', fromRequestId: requestId });
+    expect((await get<OrgDetail>(`/api/admin/orgs/${orgId}`)).org).toMatchObject({ fromRequestId: requestId, fromRequestSentAt: sentAt.toISOString() });
+
+    await server.connection.collection('tw_access_requests').deleteOne({ _id: new Types.ObjectId(requestId) });
+    expect((await get<OrgDetail>(`/api/admin/orgs/${orgId}`)).org).toMatchObject({ fromRequestId: requestId, fromRequestSentAt: null });
   });
 
   it('answers 404 for an organization that does not exist and 400 for a malformed id', async () => {
@@ -416,7 +428,7 @@ describe('GET /api/admin/audit', () => {
     expect(body.events.map((event) => event.summary)).toEqual([
       'Suspended the organization',
       'Ended view-as',
-      'Started viewing as owner@example.test',
+      'Viewed as owner@example.test',
       'Didn’t take effect (last_admin)',
       'Changed cook@example.test from admin to member. Didn’t take effect (last_admin).',
     ]);

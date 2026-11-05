@@ -3,7 +3,7 @@ import { fireEvent, render, screen, userEvent, within } from '@testing-library/r
 
 import { Button } from '../../src/portal/ui/Button';
 import { ConfirmDialog } from '../../src/portal/ui/ConfirmDialog';
-import { DataTable } from '../../src/portal/ui/DataTable';
+import { DataTable, DefinitionList } from '../../src/portal/ui/DataTable';
 import { EmptyState, ErrorNotice, Notice, StatusTag } from '../../src/portal/ui/feedback';
 import { FormField } from '../../src/portal/ui/FormField';
 import { offline } from '../helpers/portal';
@@ -46,6 +46,26 @@ describe('ConfirmDialog (spec 15.7)', () => {
     expect(screen.getByText('Can’t reach Townwise. Check your connection and try again.')).toBeTruthy();
     await view.rerender(<ConfirmDialog {...props} visible={false} />);
     expect(screen.queryByText(props.body)).toBeNull();
+  });
+
+  test('while it runs, Cancel and the back button wait for its answer', async () => {
+    const { props, onCancel } = dialog({ pending: true, pendingLabel: 'Deleting…' });
+    const view = await render(<ConfirmDialog {...props} />);
+    /** The host Modal around the dialog, where Android's back button lands (onRequestClose). */
+    function modal(): Parameters<typeof fireEvent>[0] {
+      let node = screen.getByText(props.body);
+      while (node.type !== 'Modal' && node.parent !== null) node = node.parent;
+      return node;
+    }
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    expect(cancel.props.accessibilityState).toMatchObject({ disabled: true });
+    await userEvent.setup().press(cancel);
+    await fireEvent(modal(), 'requestClose');
+    expect(onCancel).not.toHaveBeenCalled();
+
+    await view.rerender(<ConfirmDialog {...props} pending={false} />);
+    await fireEvent(modal(), 'requestClose');
+    expect(onCancel).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -121,5 +141,33 @@ describe('DataTable (spec 15.7)', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe('DefinitionList (spec 15.7)', () => {
+  const items = [{ term: 'Organization', value: 'Sample Diner' }, { term: 'Town', value: 'Stowe, VT' }];
+
+  /** The space between one pair and the next: the pair's bottom margin plus the list's row gap. */
+  async function spacing(width: number): Promise<number> {
+    const spy = jest.spyOn(Dimensions, 'get').mockReturnValue({ width, height: 800, scale: 2, fontScale: 1 });
+    try {
+      await render(<DefinitionList items={items} />);
+      const pair = screen.getByText('Organization').parent;
+      const list = pair?.parent;
+      const margin = (StyleSheet.flatten(pair?.props.style) as { marginBottom?: number } | undefined)?.marginBottom ?? 0;
+      const gap = (StyleSheet.flatten(list?.props.style) as { gap?: number } | undefined)?.gap ?? 0;
+      return margin + gap;
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  test('on phones the pairs are 12px apart, with no row gap on top of their margin, as on the boards', async () => {
+    // A 20px term and a 20px value, then 12px: 52px from one pair to the next.
+    expect(await spacing(375)).toBe(12);
+  });
+
+  test('wider, the term and value share a row and the rows are 8px apart', async () => {
+    expect(await spacing(768)).toBe(8);
   });
 });

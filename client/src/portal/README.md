@@ -10,7 +10,7 @@ The signed-in app of `docs/portal/spec.md`: access routing (4.3), the app shell 
 | P4 Waiting | `/waiting` | `(access)/waiting.tsx` | built |
 | P5 No access | `/no-access` | `(access)/no-access.tsx` | built |
 | P6 Joining | `/joining` | `(access)/joining.tsx` | built |
-| P7 Two-step sign-in | `/settings/security` | `(account)/settings/security.tsx` | exists; staff notice added |
+| P7 Two-step sign-in | `/settings/security` | `(account)/settings/security.tsx` | built: steps in panels, Copy on web, the staff setup lead (a kit screen: `client/MODULE.md`, Local changes) |
 | P8 Staff sign in again | `/staff/sign-in-again` | `(access)/staff/sign-in-again.tsx` | built |
 | P9 Locations | `/dashboard` | `(client)/dashboard.tsx` | built |
 | P10 Add location | `/locations/new` | `(client)/locations/new.tsx` | built (`src/portal/locations/`, `AddLocationForm`) |
@@ -55,7 +55,8 @@ Route files under `app/` never carry a platform suffix (`test/marketing/boundary
 - `format.ts`: `formatDate` (“Mar 2, 2026”), `formatTime` (“3:42 PM”), `formatCount`, `plural`, `townLabel`, `roleLabel`.
 - `towns.ts`: the twelve towns from the homepage's bundled data, `townProfile`, `townResearchLine` (P11 step 1), `townSentences`. `town/TownProfile.tsx` is the whole profile (chart on web, text and table on native) for P15.
 - `AddLocationForm.tsx`: Name and Town, `POST /api/org/locations`, then the new location's Forecast tab (P10).
-- `ui/` (import from `src/portal/ui`): `Button` and `LinkButton` (primary white, outline, link; `disabled` keeps the control focusable), `Actions`, `FormField`, `Select`, `TownFields` with `checkTown`, `DataTable` (stacks at 640px and below) and `DefinitionList`, `ConfirmDialog` (with `typedName`), `Notice`, `ErrorNotice`, `LoadingLine`, `EmptyState`, `ReadOnlyLine`, `StatusTag`, `Panel`, `Section`, `Columns`, `Pair`, `Stack`, and the type components (`Title`, `Heading`, `Body`, `Small`, `Mono`, `Eyebrow`).
+- `ui/` (import from `src/portal/ui`): `Button` and `LinkButton` (primary white, outline, link; `disabled` keeps the same element and its focus, with aria-disabled on web), `Actions`, `FormField` (`alert` when its messages come back from a submit, as a wrong code does), `Select`, `TownFields` with `checkTown`, `DataTable` (stacks at 640px and below; from 641px to 1023px it keeps a minimum width, `MIN_FLEX_WIDTH` per unit of column flex, and its region scrolls sideways; from 1024px it fills its column; give a column of emails `EMAIL_FLEX`) and `DefinitionList`, `ConfirmDialog` (with `typedName`; Cancel and Escape wait while its action runs), `MessageFocus` and `useFocusMessage()` (when an action removes its opener, focus moves to the resulting `Notice` or `ErrorNotice`), `Notice`, `ErrorNotice`, `LoadingLine`, `EmptyState`, `ReadOnlyLine`, `StatusTag`, `Panel`, `Section`, `Columns`, `Pair`, `Stack`, and the type components (`Title`, `Heading`, `Body`, `Small`, `Mono`, `Eyebrow`), with `inlineTarget` for a link inside a sentence (a 44px tap target on web that leaves the line where it was).
+- `ui/hover.ts`: a child of expo-router's `<Link asChild>` gets its style merged as one object, so a function style is dropped and an array throws. Give such a child one flattened plain style (`StyleSheet.flatten(...)`, a `styles.x` member or an object literal) and take hover from `useHover()` instead of a style function, as `LinkButton` and the location tabs do. `test/portal/link-child.test.ts` fails any other style.
 
 Mint (`#7bd2b4`) is for data and selection only, never a button or a message. Visible copy uses curly apostrophes and no em dashes. Nothing animates on keyboard input.
 

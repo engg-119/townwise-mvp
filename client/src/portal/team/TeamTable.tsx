@@ -53,13 +53,24 @@ function OutcomeLine(props: { outcome: Outcome }): React.JSX.Element {
   return <ErrorNotice error={outcome.error} onRetry={outcome.retry} />;
 }
 
-export function TeamTable(props: { org: string; members: readonly MemberView[]; update: TeamUpdate }): React.JSX.Element {
+export function TeamTable(props: {
+  org: string;
+  members: readonly MemberView[];
+  update: TeamUpdate;
+  /** Changes when an Add succeeds, which clears the last row action's line above the table. */
+  addedCount: number;
+}): React.JSX.Element {
   const { api } = usePortal();
   const { readOnly } = useReadOnly();
   const { update } = props;
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [removing, setRemoving] = useState<MemberView | null>(null);
   const [removeError, setRemoveError] = useState<unknown>(null);
+  const [seenAdds, setSeenAdds] = useState(props.addedCount);
+  if (seenAdds !== props.addedCount) {
+    setSeenAdds(props.addedCount);
+    setOutcome(null);
+  }
 
   /** 409 last_admin and 404 have their own lines; a 404 row is gone, so it leaves the table. */
   const refusal = useCallback((error: unknown, member: MemberView): Outcome | null => {
@@ -106,6 +117,8 @@ export function TeamTable(props: { org: string; members: readonly MemberView[]; 
   }
 
   function ask(member: MemberView): void {
+    // One removal at a time: its answer closes the dialog, which would otherwise be this other member's.
+    if (remove.pending) return;
     setOutcome(null);
     setRemoveError(null);
     setRemoving(member);
