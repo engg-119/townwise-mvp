@@ -128,8 +128,9 @@ interface StoryParts {
 // Sizes the pinned map from the story's width and the scroll container's height, in px, and writes them as the
 // story's custom properties before the browser paints. From 1024px the legend and caption under the map are
 // measured too: when they are taller than budgeted the map shrinks, so the whole block still fits the window,
-// centered, and the month panel's box (the same height) stays centered with it. Under 1024px the band is set
-// below the pinned map. A hidden screen measures 0 and changes nothing.
+// centered, and the month panel's box (the same height) stays centered with it. A narrower map wraps the legend
+// onto more lines, so the budget only grows, measured again until it holds (a few passes in practice; capped).
+// Under 1024px the band is set below the pinned map. A hidden screen measures 0 and changes nothing.
 function fitStory(parts: StoryParts, root: HTMLElement | null, wide: boolean): Fit | null {
   const width = parts.story.clientWidth;
   const height = root === null ? window.innerHeight : root.clientHeight;
@@ -144,8 +145,8 @@ function fitStory(parts: StoryParts, root: HTMLElement | null, wide: boolean): F
   };
   let extra = PIN_EXTRA;
   let box = apply(extra);
-  for (let pass = 0; wide && pass < 3; pass += 1) {
-    const measured = Math.max(PIN_EXTRA, Math.ceil(parts.fig.offsetHeight - parts.box.offsetHeight + parts.cap.offsetHeight));
+  for (let pass = 0; wide && pass < 8; pass += 1) {
+    const measured = Math.max(extra, Math.ceil(parts.fig.offsetHeight - parts.box.offsetHeight + parts.cap.offsetHeight));
     if (measured === extra) break;
     extra = measured;
     box = apply(extra);

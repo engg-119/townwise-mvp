@@ -422,6 +422,25 @@ test('on a phone a window that changes only its height moves the band with the p
   expect(band().options?.rootMargin).toBe('-486px 0px -146px 0px');
 });
 
+test('from 1024px the legend is measured again until its height holds, so the map’s block is as tall as the panel’s box', () => {
+  installObserver();
+  media({ wide: true, reduce: false });
+  layout.width = { story: 1138 };
+  layout.height = { tw: 650 };
+  // The legend wraps onto more lines as the map narrows: 196px down to 248px.
+  const wraps: readonly (readonly [number, number])[] = [[430, 196], [390, 212], [360, 228]];
+  jest.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function height(this: HTMLElement) {
+    if (!this.classList.contains('map-fig')) return 0;
+    const mw = Number.parseFloat(document.querySelector<HTMLElement>('.story')?.style.getPropertyValue('--story-mw') ?? '0');
+    return wraps.find(([narrowest]) => mw > narrowest)?.[1] ?? 248;
+  });
+  const { story } = renderStory();
+  expect(story.style.getPropertyValue('--story-ex')).toBe('248px');
+  expect(story.style.getPropertyValue('--story-mw')).toBe('332px');
+  expect(story.style.getPropertyValue('--story-mh')).toBe('289px');
+  expect(story.style.getPropertyValue('--story-top')).toBe('57px');
+});
+
 // Each marker's movers: its value tag, its glyph and its particles.
 function movers(): { name: string; tag: string | null; glyph: string | null; flow: string | null; points: string[] }[] {
   return [...document.querySelectorAll<HTMLElement>('.mk-pos')].map((element) => ({
