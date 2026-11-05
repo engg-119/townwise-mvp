@@ -122,7 +122,7 @@ export default function PublicSecurity(): React.JSX.Element {
                 <P className="eyebrow">Townwise</P>
                 <Div className="h1w"><H1 id="h-hero" className="h1">Security</H1></Div>
                 <P className="eyebrow updated">Last updated November 5, 2026</P>
-                <P className="settings"><A className="tl" href="/settings/security">Two-factor settings</A></P>
+                <P className="settings"><A className="tl" href="/settings/security">Two-step sign-in settings</A></P>
               </Div>
             </Div>
           </Div>

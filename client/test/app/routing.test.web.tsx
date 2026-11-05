@@ -101,5 +101,5 @@ test('a signed-out /settings/security redirects to /sign-in', async () => {
 test('the public /security page links to /settings/security', () => {
   renderAt('/security', fakeAuth({ status: 'signedOut' }));
   expect(screen.getByRole('heading', { name: 'Security' })).toBeTruthy();
-  expect(screen.getByRole('link', { name: 'Two-factor settings' }).getAttribute('href')).toBe('/settings/security');
+  expect(screen.getByRole('link', { name: 'Two-step sign-in settings' }).getAttribute('href')).toBe('/settings/security');
 });
