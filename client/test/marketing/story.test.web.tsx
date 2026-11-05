@@ -558,7 +558,7 @@ test('every step is in the reading order, the story adds no control, and nothing
   const { story } = renderStory();
   for (let at = 0; at < 16; at += 1) step(at);
   for (const at of [15, 3, 0]) step(at);
-  // Each month slot carries its month's sentence for screen readers and keyboard users.
+  // Each month slot carries its month's sentence for screen readers.
   expect(slots().slice(3, 15).map((element) => element.querySelector('.sr-only')?.textContent)).toEqual(
     MONTH_NAMES.map((name, month) => `${name} 2024. ${moveSentence(month)}`),
   );
