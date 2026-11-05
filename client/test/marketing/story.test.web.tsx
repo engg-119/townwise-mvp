@@ -109,11 +109,11 @@ afterEach(() => {
 });
 
 // The map inside the page's scroll container, which is every observer's root.
-function renderStory(): { root: HTMLElement; frame: HTMLElement; story: HTMLElement; unmount: () => void } {
+function renderStory(head?: React.ReactNode): { root: HTMLElement; frame: HTMLElement; story: HTMLElement; unmount: () => void } {
   const root = document.createElement('div');
   root.className = 'tw';
   document.body.append(root);
-  const view = render(<ScrollRoot value={{ current: root }}><NortheastMap /></ScrollRoot>, { container: root });
+  const view = render(<ScrollRoot value={{ current: root }}><NortheastMap head={head} /></ScrollRoot>, { container: root });
   const frame = root.querySelector<HTMLElement>('.app-a');
   const story = root.querySelector<HTMLElement>('.story');
   if (frame === null || story === null) throw new Error('no story');
@@ -518,6 +518,34 @@ test('without an observer the map lies flat at the widest spread; a silent one l
   step(4);
   expect(story.className).toBe('story is-on ss-4 is-months');
   expect(listHeader()).toBe('Gap in Feb 2024');
+});
+
+test('from 1024px a zoomed town hides the title, and focus inside it brings the title back', () => {
+  installObserver();
+  media({ wide: true, reduce: false });
+  const { frame } = renderStory(<div className="hd"><h1>The title</h1><a href="/early-access">Request early access</a></div>);
+  const head = document.querySelector<HTMLElement>('.st-h .hd');
+  if (head === null) throw new Error('no title');
+  const hidden = '.twmap .app.is-zoomed .st-h .hd';
+  const shown = `${hidden}:focus-within`;
+  // The rule that shows it comes after the one that hides it, in the same block, and is more specific.
+  const wide = storyCss.slice(storyCss.indexOf('@media (min-width:1024px){\n'));
+  const hide = wide.indexOf(`${hidden}{opacity:0;pointer-events:none}`);
+  const show = wide.indexOf(`${shown}{opacity:1;pointer-events:auto}`);
+  expect(hide).toBeGreaterThan(-1);
+  expect(show).toBeGreaterThan(hide);
+  expect(show).toBeLessThan(wide.indexOf('\n}\n'));
+  expect(head.matches(hidden)).toBe(false);
+  fireEvent.click(row('Hanover, NH'), { detail: 1 });
+  expect(frame.className).toContain('is-zoomed');
+  expect(head.matches(hidden)).toBe(true);
+  expect(head.matches(shown)).toBe(false);
+  // Tab from the header lands on the title's first link.
+  const link = screen.getByRole('link', { name: 'Request early access' });
+  act(() => { link.focus(); });
+  expect(head.matches(shown)).toBe(true);
+  act(() => { link.blur(); });
+  expect(head.matches(shown)).toBe(false);
 });
 
 test('every step is in the reading order, the story adds no control, and nothing listens to the page', () => {
