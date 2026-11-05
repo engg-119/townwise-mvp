@@ -2,10 +2,25 @@
 data/*
 !data/README.md
 
+# Model outputs are built from those private exports, so they stay local too
+modeling/outputs/
+
 # Python / uv
 .venv/
 __pycache__/
 .ipynb_checkpoints/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Git worktrees for parallel branches (.worktrees/<branch>)
+.worktrees/
+
+# Logs (Terraform's crash.log included) and tool caches
+*.log
+npm-debug.log*
+.eslintcache
+*.tsbuildinfo
 
 # OS
 .DS_Store
