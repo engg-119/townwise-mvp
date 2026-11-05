@@ -52,14 +52,15 @@ const wide = `
 `;
 
 // Under 1024px: the title, then the map pinned over the top of the window on the ground color, with the month
-// strip under it; the step cards scroll up from below and pass under it, so no text sits over a dot. The legend
+// strip under it; the step cards scroll up from below and pass under it, so no text sits over a dot, and 16px of
+// ground under the caption keeps a passing card's cut-off line clear of it. The legend
 // under the map is hidden (step 2 explains the dots). The final card sits at the end of a shorter slot, so the map
 // releases as soon as the card has passed under it; its top is about as far down its slot as steps 1 and 2 are
 // down theirs, so it reaches the band as they do.
 const narrow = `
 @media (max-width:1023px){
 .twmap .story.is-on{display:block}
-.twmap .story.is-on .story-pin{position:sticky;top:0;padding-top:8px;background:var(--ground)}
+.twmap .story.is-on .story-pin{position:sticky;top:0;padding-block:8px 16px;background:var(--ground)}
 .twmap .story.is-on .story-pin .map-fig{max-width:var(--story-mw,100%)}
 .twmap .story.is-on .lg-under{display:none}
 .twmap .story.is-on .st-t{min-height:520px}
