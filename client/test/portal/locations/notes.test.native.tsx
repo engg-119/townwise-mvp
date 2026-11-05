@@ -205,6 +205,69 @@ test('save failures: the note limit, the network, and anything else', async () =
   expect(screen.getByRole('heading', { name: 'Add a note' })).toBeTruthy();
 });
 
+test('a delete that fails keeps the dialog open with the shared copy, and the note stays', async () => {
+  const { api, fake } = setup();
+  fake.deletes[`${PATH}/n3`] = () => offline();
+  await renderApp('/locations/l1/notes', api);
+  await fireEvent.press(await screen.findByRole('button', { name: `Delete Other note, ${formatDate(day(-40))} to ${formatDate(day(-35))}` }));
+  await fireEvent.press(screen.getByRole('button', { name: 'Delete note' }));
+  expect(await screen.findByText('Can’t reach Townwise. Check your connection and try again.')).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Delete this note?' })).toBeTruthy();
+  expect(within(screen.getByLabelText('Past notes')).getByText('Road work.')).toBeTruthy();
+});
+
+test('an edit of a note deleted elsewhere closes the form, says the note isn’t available and reloads the list', async () => {
+  const { api, fake } = setup(meOf(ACCESS.admin));
+  api.answers[`${PATH}/n1`] = () => {
+    fake.notes.l1 = NOTES.filter((note) => note.id !== 'n1');
+    return refusal(404, 'not_found');
+  };
+  await renderApp('/locations/l1/notes', api);
+  await fireEvent.press(await screen.findByRole('button', { name: `Edit Closure note, ${formatDate(day(10))} to ${formatDate(day(12))}` }));
+  await fireEvent.press(screen.getByRole('button', { name: 'Save note' }));
+  expect(await screen.findByText('This note isn’t available.')).toBeTruthy();
+  expect(screen.queryByText('Couldn’t save the note. Try again.')).toBeNull();
+  expect(screen.queryByRole('heading', { name: 'Edit this note' })).toBeNull();
+  const coming = await screen.findByLabelText('Notes coming up');
+  expect(within(coming).queryByText('Closure')).toBeNull();
+  expect(within(coming).getByText('Private event')).toBeTruthy();
+  expect(writes(api)).toHaveLength(1);
+});
+
+test('a delete of a note deleted elsewhere closes the dialog, says the note isn’t available and reloads the list', async () => {
+  const { api, fake } = setup();
+  fake.deletes[`${PATH}/n3`] = () => {
+    fake.notes.l1 = NOTES.filter((note) => note.id !== 'n3');
+    return refusal(404, 'not_found');
+  };
+  await renderApp('/locations/l1/notes', api);
+  await fireEvent.press(await screen.findByRole('button', { name: `Delete Other note, ${formatDate(day(-40))} to ${formatDate(day(-35))}` }));
+  await fireEvent.press(screen.getByRole('button', { name: 'Delete note' }));
+  expect(await screen.findByText('This note isn’t available.')).toBeTruthy();
+  expect(screen.queryByRole('heading', { name: 'Delete this note?' })).toBeNull();
+  expect(screen.queryByText('Something went wrong with that request. Reload the page and try again.')).toBeNull();
+  expect(screen.queryByText('Deleted the note.')).toBeNull();
+  expect(await screen.findByLabelText('Notes coming up')).toBeTruthy();
+  expect(screen.queryByLabelText('Past notes')).toBeNull();
+});
+
+test('a new note for a location deleted elsewhere says the location isn’t available, with the way back', async () => {
+  const { api, fake } = setup();
+  api.answers[PATH] = () => {
+    fake.notes.l1 = refusal(404, 'not_found');
+    return refusal(404, 'not_found');
+  };
+  await renderApp('/locations/l1/notes', api);
+  await fireEvent.press(await screen.findByRole('button', { name: 'Add a note' }));
+  await fireEvent.changeText(screen.getByLabelText('Starts'), day(1));
+  await fireEvent.press(screen.getByRole('button', { name: 'Save note' }));
+  expect(await screen.findByText('This location isn’t available.')).toBeTruthy();
+  expect(screen.queryByText('This note isn’t available.')).toBeNull();
+  expect(screen.queryByText('Couldn’t save the note. Try again.')).toBeNull();
+  expect(screen.queryByRole('heading', { name: 'Add a note' })).toBeNull();
+  expect(screen.getAllByRole('link', { name: 'Locations' }).length).toBeGreaterThan(0);
+});
+
 test('load errors: the shared copy with Try again; an unknown location is not available', async () => {
   const { api, fake } = setup(meOf(ACCESS.member), offline());
   await renderApp('/locations/l1/notes', api);

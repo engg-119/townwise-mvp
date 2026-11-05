@@ -67,7 +67,8 @@ export function MatchStep(props: {
     messages.row.length > 0 && ID.row,
     messages.date.length > 0 && ID.date,
     messages.values.length > 0 && ID.values,
-    messages.locationValue.length > 0 && ID.location,
+    // The location value's messages print under its picker, which shows once the column's values are read.
+    messages.locationValue.length > 0 && locationValues.status === 'ready' && ID.location,
   );
 
   function chooseDate(value: string): void {

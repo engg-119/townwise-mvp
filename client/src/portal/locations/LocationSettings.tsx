@@ -21,7 +21,9 @@ import { deleteLocation, updateLocation } from './api';
 // P16 Location settings (spec 16.3, org admins; the route guard sends members to Locations): Name and Town with
 // “Save changes”, then Delete location, offered only while the location holds no sales day and no note, behind a
 // typed-name confirmation. Saving reloads the organization, so the header shows the new name, and the page shows
-// “Saved.”; deleting opens Locations with “Deleted {name}.”. Under view-as every write is disabled in place.
+// “Saved.”; deleting opens Locations with “Deleted {name}.”. A 404 on either write means the location was deleted
+// in the meantime: the organization reloads, and the location layout says “This location isn’t available.” with
+// the link to Locations (spec 10.9). Under view-as every write is disabled in place.
 
 const READ_ONLY_ID = 'location-settings-ro';
 const HAS_DATA = 'Delete this location’s sales data and notes first.';
@@ -51,6 +53,7 @@ export function LocationSettings(): React.JSX.Element {
     } catch (error) {
       if (hasCode(error, 409, 'location_name_taken')) { setMessages({ name: LOCATION_COPY.taken }); return; }
       if (hasCode(error, 400, 'unknown_town')) { setMessages({ town: { choice: TOWN_COPY.choice } }); return; }
+      if (hasCode(error, 404, 'not_found')) { reloadOrg(); return; }
       throw error;
     }
     // The organization reloads, so the header shows the new name; the notice shows once this page is back.
@@ -63,6 +66,7 @@ export function LocationSettings(): React.JSX.Element {
       await deleteLocation(api, location.id);
     } catch (error) {
       if (hasCode(error, 409, 'location_has_data')) { setHasData(true); setConfirming(false); return; }
+      if (hasCode(error, 404, 'not_found')) { setConfirming(false); reloadOrg(); return; }
       throw error;
     }
     // Locations, or the one location left, whose Forecast tab Locations opens.
