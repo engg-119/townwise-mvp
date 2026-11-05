@@ -8,6 +8,7 @@ import type { MeResponse } from '../src/handlers/me.ts';
 import type { AddResult, MemberView } from '../src/handlers/team.ts';
 import { AUDIT_DETAIL_KEYS, type AuditAction } from '../src/stores/audit-events.ts';
 import { addInvite, addRequest, addSeat, auditEvents, createOrg, memberDoc } from './helpers/fixtures.ts';
+import { holdCalls } from './helpers/hold.ts';
 import {
   call, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
@@ -306,17 +307,35 @@ describe('PATCH /api/org/members/:memberId (F6)', () => {
     expect((await eventsFor(inviteId)).filter((e) => e.action === 'member.role_changed')).toHaveLength(1);
   });
 
-  it('concurrent demotions of the last two admins leave at least one admin', async () => {
+  it('the last two admins demoting each other, both written before either recounts: the first to recount reverts, the second stands', async () => {
     const { orgId, admin, adminSeat } = await orgWithAdmin('Race Org');
     const second = await person('second');
     const secondSeat = await addSeat(server, { orgId, userId: second.session.userId, email: second.email, role: 'org_admin' });
-    for (let round = 0; round < 5; round += 1) {
-      const results = await Promise.all([setRole(admin.session, secondSeat, 'member'), setRole(second.session, adminSeat, 'member')]);
-      expect(await activeAdmins(orgId)).toBeGreaterThanOrEqual(1);
-      for (const res of results) expect([200, 403, 409]).toContain(res.status);
-      // Restore both admins for the next round.
-      await server.connection.collection('tw_members').updateMany({ orgId: new Types.ObjectId(orgId) }, { $set: { role: 'org_admin' } });
+    const writes = holdCalls(server, 'findOneAndUpdate');
+    const counts = holdCalls(server, 'countDocuments');
+    try {
+      // Both pass the org_admin policy before either writes.
+      const first = setRole(admin.session, secondSeat, 'member');
+      await writes.arrived(1);
+      const other = setRole(second.session, adminSeat, 'member');
+      await writes.arrived(2);
+      writes.release(1);
+      await counts.arrived(1);          // the second admin is demoted; the first demotion's recount waits
+      writes.release(2);
+      await counts.arrived(2);          // the first admin is demoted too
+      counts.release(1);                // no admin is left: the first demotion reverts
+      expect(await errorOf(await first)).toEqual({ status: 409, error: 'last_admin' });
+      counts.open();                    // the second admin is back, so the second demotion stands
+      expect((await other).status).toBe(200);
+    } finally {
+      writes.restore();
+      counts.restore();
     }
+    expect(await memberDoc(server, secondSeat)).toMatchObject({ status: 'active', role: 'org_admin' });
+    expect(await memberDoc(server, adminSeat)).toMatchObject({ status: 'active', role: 'member' });
+    expect(await activeAdmins(orgId)).toBe(1);
+    expect((await eventsFor(adminSeat)).map((e) => e.action)).toEqual(['member.role_changed']);
+    expect(await eventsFor(secondSeat)).toEqual([]);
   });
 
   it('a demotion recounts even when the row read as an invitation was claimed before the write', async () => {

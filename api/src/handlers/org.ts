@@ -11,7 +11,7 @@ import type { Principal } from '../access/policy.ts';
 import { resolveAccess } from '../access/resolve.ts';
 import { memberOf } from './locations.ts';
 import { meResponse } from './me.ts';
-import { actorOf, orgAdmin } from './team.ts';
+import { actorOf, lastAdmin, orgAdmin, removeActiveSeat } from './team.ts';
 
 /** Spec 10.3: the newest staff events shown on Settings. */
 const STAFF_ACTIVITY_EVENTS = 50;
@@ -39,24 +39,21 @@ export async function renameOrg(ctx: TownwiseContext, req: Request, res: Respons
 }
 
 /**
- * POST /api/org/leave {} (F7): the same as removing oneself, recorded as member.left. The last admin gets 409
- * last_admin and keeps the seat. The recount uses the role the seat had when it was removed, read in the same write,
- * so leaving as a member never depends on whether the organization has an admin.
+ * POST /api/org/leave {} (F7): the same as removing oneself (removeActiveSeat), recorded as member.left with the role
+ * the seat had when it was removed. When no active admin would be left, the seat stays and the answer is 409
+ * last_admin, whatever the caller's role, so a member of an organization with no admin yet stays until it has one.
  */
 export async function leaveOrg(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
   const { scope } = caller;
   parseInput(leaveBody, req.body);
   const now = ctx.now();
-  const role = await ctx.stores.members.removeSeat(scope, caller.memberId, { removedAt: now, removedBy: caller.userId });
-  if (role === 'org_admin' && await ctx.stores.members.countActiveAdmins(scope) === 0) {
-    await ctx.stores.members.restoreSeat(scope, caller.memberId, caller.userId);
-    throw new AppError(409, 'last_admin', 'The organization needs at least one admin');
-  }
-  // A null role means an admin removed the seat meanwhile: the caller is out either way, and did not leave.
-  if (role !== null) {
+  const removal = await removeActiveSeat(ctx, scope, caller.memberId, caller.userId, { removedAt: now, removedBy: caller.userId });
+  if (removal.kind === 'last_admin') throw lastAdmin();
+  // not_found means an admin removed the seat meanwhile: the caller is out either way, and did not leave.
+  if (removal.kind === 'removed') {
     await recordAfter(ctx, {
-      ...actorOf(caller), actorRole: role, at: now, orgId: scope.orgId, action: 'member.left',
+      ...actorOf(caller), actorRole: removal.role, at: now, orgId: scope.orgId, action: 'member.left',
       target: { type: 'member', id: caller.memberId },
       details: { email: caller.email },
     });
@@ -64,9 +61,12 @@ export async function leaveOrg(ctx: TownwiseContext, req: Request, res: Response
   res.status(200).json(meResponse(await resolveAccess(ctx, authOf(req))));
 }
 
-/** GET /api/org/staff-activity (D9, P18): every staff event on this organization, newest first. */
+/** GET /api/org/staff-activity (D9, P18): every staff action on this organization, newest first, each marked applied or not. */
 export async function getStaffActivity(ctx: TownwiseContext, _req: Request, res: Response, principal: Principal): Promise<void> {
   const { scope } = orgAdmin(principal);
-  const page = await ctx.stores.audit.query({ orgId: scope.orgId, actorRole: 'superadmin', limit: STAFF_ACTIVITY_EVENTS });
+  // A staff_action.not_applied event marks the row it qualifies, so it takes no row of its own.
+  const page = await ctx.stores.audit.query({
+    orgId: scope.orgId, actorRole: 'superadmin', excludeAction: 'staff_action.not_applied', limit: STAFF_ACTIVITY_EVENTS,
+  });
   res.status(200).json({ events: await staffActivityViews(ctx, page.events.slice(0, STAFF_ACTIVITY_EVENTS)) });
 }

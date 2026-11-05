@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TOWNWISE_ROUTES } from '../src/access/routes.ts';
 import type { MeResponse } from '../src/handlers/me.ts';
@@ -100,16 +100,20 @@ async function snapshot(): Promise<string> {
   return JSON.stringify(docs);
 }
 
-/** Makes every write to `collection` fail at the database, then puts it back. */
-async function withWritesFailing(collection: string, run: () => Promise<void>): Promise<void> {
+/** Makes every write to `collection` fail at the database (or only those `refused` matches), then puts it back. */
+async function withWritesFailing(collection: string, run: () => Promise<void>, refused?: Record<string, unknown>): Promise<void> {
   const db = server.connection.db;
   if (db === undefined) throw new Error('not connected');
-  await db.command({ collMod: collection, validator: { $expr: { $eq: [1, 0] } } });
+  await db.command({ collMod: collection, validator: refused === undefined ? { $expr: { $eq: [1, 0] } } : { $nor: [refused] } });
   try {
     await run();
   } finally {
     await db.command({ collMod: collection, validator: {} });
   }
+}
+
+function createOrgCall(body: Record<string, unknown>): Promise<Response> {
+  return call(server, '/api/admin/orgs', { session: staff, json: body });
 }
 
 describe('POST /api/admin/orgs (F10)', () => {
@@ -169,6 +173,55 @@ describe('POST /api/admin/orgs (F10)', () => {
     expect(await server.connection.collection('tw_orgs').countDocuments({})).toBe(orgs);
   });
 
+  it('a repeat with the same id creates nothing new: 200 with the same organization, one org.created, one invitation', async () => {
+    const id = new Types.ObjectId().toHexString();
+    const adminEmail = uniqueEmail('repeat-admin');
+    const first = await createOrgCall({ id, name: 'Once Only Cafe', adminEmail });
+    expect(first.status).toBe(201);
+    expect(await first.json()).toEqual({ org: { id, name: 'Once Only Cafe' }, result: { email: adminEmail, outcome: 'invited' } });
+    const repeat = await createOrgCall({ id: id.toUpperCase(), name: 'Once Only Cafe', adminEmail });
+    expect(repeat.status).toBe(200);
+    expect(await repeat.json()).toEqual({ org: { id, name: 'Once Only Cafe' }, result: { email: adminEmail, outcome: 'already_invited' } });
+    expect(await server.connection.collection('tw_orgs').countDocuments({ _id: new Types.ObjectId(id) })).toBe(1);
+    expect(await server.connection.collection('tw_members').countDocuments({ orgId: new Types.ObjectId(id) })).toBe(1);
+    expect((await eventsIn(id)).map((event) => event.action)).toEqual(['org.created', 'member.invited']);
+    // After the admin joins, a repeat says so and still adds nothing.
+    const admin = await signIn(server, adminEmail);
+    const invite = await server.connection.collection('tw_members').findOne({ orgId: new Types.ObjectId(id) });
+    expect((await call(server, '/api/me/join', { session: admin, json: { inviteId: String(invite?._id) } })).status).toBe(200);
+    expect(await (await createOrgCall({ id, name: 'Once Only Cafe', adminEmail })).json())
+      .toMatchObject({ result: { email: adminEmail, outcome: 'already_member' } });
+    expect(await server.connection.collection('tw_members').countDocuments({ orgId: new Types.ObjectId(id) })).toBe(1);
+    expect(await errorOf(await createOrgCall({ id: 'not-an-id', name: 'Once Only Cafe', adminEmail }))).toEqual({ status: 400, error: 'invalid_request' });
+  });
+
+  it('a repeat that races the first past its check makes one organization; the loser’s org.created is followed by not_applied conflict', async () => {
+    const id = new Types.ObjectId().toHexString();
+    const adminEmail = uniqueEmail('raced-admin');
+    const body = { id, name: 'Raced Create Cafe', adminEmail };
+    const model = server.connection.models.TwOrg as unknown as { create: (...args: unknown[]) => Promise<unknown> };
+    const create = model.create.bind(model);
+    let repeat: Response | undefined;
+    // Between the first request's check and its insert, the repeat runs whole.
+    const spy = vi.spyOn(model, 'create').mockImplementationOnce(async (...args: unknown[]) => {
+      repeat = await createOrgCall(body);
+      return create(...args);
+    });
+    let first: Response;
+    try {
+      first = await createOrgCall(body);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(repeat?.status).toBe(201);
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({ org: { id, name: 'Raced Create Cafe' }, result: { email: adminEmail, outcome: 'already_invited' } });
+    expect(await server.connection.collection('tw_orgs').countDocuments({ _id: new Types.ObjectId(id) })).toBe(1);
+    const events = await eventsIn(id);
+    expect(events.map((event) => event.action)).toEqual(['org.created', 'org.created', 'member.invited', 'staff_action.not_applied']);
+    expect(events[3]?.details).toEqual({ eventId: String(events[0]?._id), code: 'conflict' });
+  });
+
   it('when the organization cannot be stored, org.created is followed by staff_action.not_applied', async () => {
     await withWritesFailing('tw_orgs', async () => {
       const res = await call(server, '/api/admin/orgs', { session: staff, json: { name: 'Unstored Org', adminEmail: uniqueEmail('a') } });
@@ -197,7 +250,7 @@ describe('PATCH /api/admin/orgs/:orgId', () => {
         suspendedAt: null,
       },
     });
-    expect(writes).toEqual(['insert tw_audit_events', 'findAndModify tw_orgs']);
+    expect(writes).toEqual(['insert tw_audit_events', 'update tw_orgs']);
     expect((await eventsIn(orgId)).map((event) => [event.action, event.actorRole, event.details])).toEqual([
       ['org.renamed', 'superadmin', { from: 'Before Rename Grill', to: 'After Rename Grill' }],
     ]);
@@ -236,13 +289,29 @@ describe('PATCH /api/admin/orgs/:orgId', () => {
     ]);
   });
 
-  it('a value that already holds records nothing; a name and a status in one request record both, in order', async () => {
+  it('a value that already holds records nothing; a name and a status in one request record both, in order, then change in one write', async () => {
     const { orgId } = await orgWithAdmin('Steady Diner');
     expect((await patchOrg(orgId, { name: 'Steady Diner', status: 'active' })).status).toBe(200);
     expect(await eventsIn(orgId)).toEqual([]);
-    expect((await patchOrg(orgId, { name: 'Renamed Diner', status: 'suspended' })).status).toBe(200);
+    let status = 0;
+    const writes = await writesDuring(server, async () => { status = (await patchOrg(orgId, { name: 'Renamed Diner', status: 'suspended' })).status; });
+    expect(status).toBe(200);
+    expect(writes).toEqual(['insert tw_audit_events', 'insert tw_audit_events', 'update tw_orgs']);
     expect((await eventsIn(orgId)).map((event) => event.action)).toEqual(['org.renamed', 'org.suspended']);
     expect(await orgDoc(orgId)).toMatchObject({ name: 'Renamed Diner', status: 'suspended' });
+  });
+
+  it('a name and a status whose second event can’t be written: 503, neither changes, and the first event says it didn’t apply', async () => {
+    const { orgId } = await orgWithAdmin('Half Done Diner');
+    await withWritesFailing('tw_audit_events', async () => {
+      expect(await errorOf(await patchOrg(orgId, { name: 'Never Renamed Diner', status: 'suspended' }))).toEqual({ status: 503, error: 'unavailable' });
+    }, { action: 'org.suspended' });
+    expect(await orgDoc(orgId)).toMatchObject({ name: 'Half Done Diner', status: 'active', suspendedAt: null });
+    const events = await eventsIn(orgId);
+    expect(events.map((event) => [event.action, event.details])).toEqual([
+      ['org.renamed', { from: 'Half Done Diner', to: 'Never Renamed Diner' }],
+      ['staff_action.not_applied', { eventId: String(events[0]?._id), code: 'unavailable' }],
+    ]);
   });
 
   it('answers 404 for an unknown organization and 400 for a malformed id or body, writing nothing', async () => {
@@ -284,7 +353,7 @@ describe('staff team edits (F5, F6 from the console)', () => {
       { email: first, outcome: 'invited' }, { email: second, outcome: 'invited' }, { email: already, outcome: 'already_invited' },
       { email: admin.email, outcome: 'already_member' }, { email: 'nope', outcome: 'invalid' },
     ]);
-    expect(writes).toEqual(['insert tw_audit_events', 'insert tw_members', 'insert tw_audit_events', 'insert tw_members']);
+    expect(writes).toEqual(['insert tw_audit_events', 'insert tw_audit_events', 'insert tw_members']);
     expect(body.members.filter((m) => m.addedByStaff).map((m) => [m.email, m.role, m.isYou])).toEqual([
       [first, 'org_admin', false], [second, 'org_admin', false],
     ]);
@@ -295,6 +364,49 @@ describe('staff team edits (F5, F6 from the console)', () => {
         ['member.invited', 'superadmin', { email: String(row.email), role: 'org_admin' }],
       ]);
     }
+  });
+
+  it('addresses whose later event can’t be written: 503, nobody is added, and the earlier event says it didn’t apply', async () => {
+    const { orgId } = await orgWithAdmin('Half Added Kitchen');
+    const first = uniqueEmail('first');
+    const second = uniqueEmail('second');
+    await withWritesFailing('tw_audit_events', async () => {
+      expect(await errorOf(await addMembers(orgId, [first, second]))).toEqual({ status: 503, error: 'unavailable' });
+    }, { 'details.email': second });
+    expect(await server.connection.collection('tw_members').countDocuments({ orgId: new Types.ObjectId(orgId), status: 'invited' })).toBe(0);
+    const events = await eventsIn(orgId);
+    expect(events.map((event) => [event.action, event.details])).toEqual([
+      ['member.invited', { email: first, role: 'member' }],
+      ['staff_action.not_applied', { eventId: String(events[0]?._id), code: 'unavailable' }],
+    ]);
+  });
+
+  it('an address another add took first is already_invited, followed by not_applied, while the others are added', async () => {
+    const { orgId, admin } = await orgWithAdmin('Raced Add Kitchen');
+    const taken = uniqueEmail('taken');
+    const free = uniqueEmail('free');
+    const model = server.connection.models.TwMember as unknown as { collection: { insertMany: (...args: unknown[]) => Promise<unknown> } };
+    const insertMany = model.collection.insertMany.bind(model.collection);
+    // Between the events and the insert, an org admin invites one of the addresses.
+    const spy = vi.spyOn(model.collection, 'insertMany').mockImplementationOnce(async (...args: unknown[]) => {
+      expect((await call(server, '/api/org/members', { session: admin.session, json: { emails: [taken] } })).status).toBe(200);
+      return insertMany(...args);
+    });
+    let res: Response;
+    try {
+      res = await addMembers(orgId, [taken, free]);
+    } finally {
+      spy.mockRestore();
+    }
+    expect((await res.json() as { results: AddResult[] }).results).toEqual([
+      { email: taken, outcome: 'already_invited' }, { email: free, outcome: 'invited' },
+    ]);
+    const rows = await server.connection.collection('tw_members').find({ orgId: new Types.ObjectId(orgId), status: 'invited' }).toArray();
+    expect(rows.map((row) => [String(row.email), Boolean(row.addedByStaff)])).toEqual([[taken, false], [free, true]]);
+    const staffEvents = (await eventsIn(orgId)).filter((event) => event.actorRole === 'superadmin');
+    const takenEvent = staffEvents.find((event) => (event.details as { email?: string }).email === taken);
+    expect(staffEvents.map((event) => event.action)).toEqual(['member.invited', 'member.invited', 'staff_action.not_applied']);
+    expect(staffEvents[2]?.details).toEqual({ eventId: String(takenEvent?._id), code: 'already_invited' });
   });
 
   it('is 409 member_limit past 200 people, and 404 for an unknown organization', async () => {
@@ -318,7 +430,7 @@ describe('staff team edits (F5, F6 from the console)', () => {
     let res: Response | undefined;
     const writes = await writesDuring(server, async () => { res = await setRole(orgId, seat, 'org_admin'); });
     expect((await res?.json() as { member: MemberView }).member).toMatchObject({ id: seat, role: 'org_admin', email: member.email });
-    expect(writes).toEqual(['insert tw_audit_events', 'update tw_members']);
+    expect(writes).toEqual(['insert tw_audit_events', 'findAndModify tw_members']);
     expect((await me(member.session)).access).toMatchObject({ state: 'member', role: 'org_admin' });
     expect((await setRole(orgId, seat, 'org_admin')).status).toBe(200);
     expect((await eventsFor(seat)).map((event) => [event.action, event.actorRole, event.details])).toEqual([
@@ -333,6 +445,16 @@ describe('staff team edits (F5, F6 from the console)', () => {
     const events = await eventsFor(adminSeat);
     expect(events.map((event) => event.action)).toEqual(['member.role_changed', 'staff_action.not_applied']);
     expect(events[1]?.details).toEqual({ eventId: String(events[0]?._id), code: 'last_admin' });
+  });
+
+  it('demotes an admin invitation in an organization with no active admin: no active admin is lost', async () => {
+    const orgId = await createOrg(server, { name: 'Invite Only Bakery' });
+    const inviteId = await addInvite(server, { orgId, email: uniqueEmail('future-admin'), invitedBy: staff.userId, role: 'org_admin', addedByStaff: true });
+    const res = await setRole(orgId, inviteId, 'member');
+    expect(res.status).toBe(200);
+    expect((await res.json() as { member: MemberView }).member).toMatchObject({ id: inviteId, role: 'member', status: 'invited' });
+    expect(await memberDoc(server, inviteId)).toMatchObject({ role: 'member', status: 'invited' });
+    expect((await eventsFor(inviteId)).map((event) => event.action)).toEqual(['member.role_changed']);
   });
 
   it('removes an invitation and a member; the removed member sees that they were removed, not by themself', async () => {
@@ -368,12 +490,15 @@ describe('staff team edits (F5, F6 from the console)', () => {
     ]);
   });
 
-  it('removes a member from an organization that has no admin yet', async () => {
+  it('can’t remove a member from an organization that has no active admin yet: 409 last_admin, and the seat is restored', async () => {
     const orgId = await createOrg(server, { name: 'Adminless Staff Bakery' });
     const member = await person('adminless');
     const seat = await addSeat(server, { orgId, userId: member.session.userId, email: member.email });
-    expect((await removeMember(orgId, seat)).status).toBe(204);
-    expect(await memberDoc(server, seat)).toMatchObject({ status: 'removed' });
+    expect(await errorOf(await removeMember(orgId, seat))).toEqual({ status: 409, error: 'last_admin' });
+    expect(await memberDoc(server, seat)).toMatchObject({ status: 'active', activeUserId: member.session.userId });
+    expect((await eventsFor(seat)).map((event) => [event.action, (event.details as { code?: string }).code ?? null])).toEqual([
+      ['member.removed', null], ['staff_action.not_applied', 'last_admin'],
+    ]);
   });
 
   it('when the audit write fails, an add, a role change and a removal are refused with 503 and nothing changes', async () => {

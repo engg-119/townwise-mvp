@@ -138,10 +138,47 @@ export async function addMembers(ctx: TownwiseContext, req: Request, res: Respon
   res.status(200).json({ results, members: await teamOf(ctx, caller) });
 }
 
+export function lastAdmin(): AppError {
+  return new AppError(409, 'last_admin', 'The organization needs at least one admin');
+}
+
 /**
- * F6, change role: change, recount, revert, so the organization never ends with no active admin. A demotion
- * recounts whatever status was read, because an invitation can turn into a seat between the read and the write.
+ * F6 change role, for org admins and staff alike: change, recount, revert, so the organization never ends with no
+ * active admin. Only a demotion of what was an active seat at the write recounts (the status read before it can be
+ * stale either way): an invitation's role takes no active admin away. The revert matches the row by the role it set,
+ * whatever its status, so a seat removed meanwhile gets its admin role back, and that removal's own recount, which
+ * finds no active admin, puts the seat back.
  */
+export async function changeActiveRole(
+  ctx: TownwiseContext, scope: OrgScope, memberId: string, from: Role, to: Role,
+): Promise<'changed' | 'conflict' | 'last_admin'> {
+  const { members } = ctx.stores;
+  const status = await members.setRole(scope, memberId, from, to);
+  if (status === null) return 'conflict';
+  if (from !== 'org_admin' || status !== 'active' || await members.countActiveAdmins(scope) > 0) return 'changed';
+  await members.revertRole(scope, memberId, to, from);
+  return 'last_admin';
+}
+
+export type SeatRemoval = { readonly kind: 'removed'; readonly role: Role } | { readonly kind: 'not_found' | 'last_admin' };
+
+/**
+ * F6 remove and F7 leave, for org admins, staff and the person alike: remove, recount, restore. Every removal
+ * recounts, whatever role the seat had, because a demotion racing it may have just taken that seat's admin role and
+ * will give it back; so an organization with no active admin keeps its people until it has one. A seat that can't be
+ * put back, because the person took a seat in another organization meanwhile, stays removed: that removal happened.
+ */
+export async function removeActiveSeat(
+  ctx: TownwiseContext, scope: OrgScope, memberId: string, userId: string, input: { removedAt: Date; removedBy: string },
+): Promise<SeatRemoval> {
+  const { members } = ctx.stores;
+  const role = await members.removeSeat(scope, memberId, input);
+  if (role === null) return { kind: 'not_found' };
+  if (await members.countActiveAdmins(scope) > 0 || !(await members.restoreSeat(scope, memberId, userId))) return { kind: 'removed', role };
+  return { kind: 'last_admin' };
+}
+
+/** F6, change role (changeActiveRole). A concurrent change or removal shows as what is there now. */
 export async function changeRole(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = orgAdmin(principal);
   const { scope } = caller;
@@ -150,27 +187,23 @@ export async function changeRole(ctx: TownwiseContext, req: Request, res: Respon
   const member = await ctx.stores.members.find(scope, memberId);
   if (member === null) throw notFound();
 
-  if (member.role !== role && await ctx.stores.members.setRole(scope, memberId, member.role, role)) {
-    if (member.role === 'org_admin' && await ctx.stores.members.countActiveAdmins(scope) === 0) {
-      await ctx.stores.members.setRole(scope, memberId, role, member.role);
-      throw new AppError(409, 'last_admin', 'The organization needs at least one admin');
+  if (member.role !== role) {
+    const outcome = await changeActiveRole(ctx, scope, memberId, member.role, role);
+    if (outcome === 'last_admin') throw lastAdmin();
+    if (outcome === 'changed') {
+      await recordAfter(ctx, {
+        ...actorOf(caller), at: ctx.now(), orgId: scope.orgId, action: 'member.role_changed',
+        target: { type: 'member', id: memberId },
+        details: { email: await emailOf(ctx, member), from: member.role, to: role },
+      });
     }
-    await recordAfter(ctx, {
-      ...actorOf(caller), at: ctx.now(), orgId: scope.orgId, action: 'member.role_changed',
-      target: { type: 'member', id: memberId },
-      details: { email: await emailOf(ctx, member), from: member.role, to: role },
-    });
   }
-  // A concurrent change or removal shows as what is there now.
   const current = await ctx.stores.members.find(scope, memberId);
   if (current === null) throw notFound();
   res.status(200).json({ member: await memberView(ctx, current, caller.userId) });
 }
 
-/**
- * F6, remove: an invitation is deleted; a seat is removed, recounted and restored if no active admin is left.
- * Every seat removal recounts, because the role read before the write can be stale.
- */
+/** F6, remove: an invitation is deleted; a seat is removed, recounted and restored if no active admin is left (removeActiveSeat). */
 export async function removeMember(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = orgAdmin(principal);
   const { scope } = caller;
@@ -183,11 +216,9 @@ export async function removeMember(ctx: TownwiseContext, req: Request, res: Resp
   if (member.status === 'invited') {
     if (!(await ctx.stores.members.deleteInvite(scope, memberId))) throw notFound();
   } else {
-    if (await ctx.stores.members.removeSeat(scope, memberId, { removedAt: now, removedBy: caller.userId }) === null) throw notFound();
-    if (await ctx.stores.members.countActiveAdmins(scope) === 0) {
-      await ctx.stores.members.restoreSeat(scope, memberId, member.userId);
-      throw new AppError(409, 'last_admin', 'The organization needs at least one admin');
-    }
+    const removal = await removeActiveSeat(ctx, scope, memberId, member.userId, { removedAt: now, removedBy: caller.userId });
+    if (removal.kind === 'not_found') throw notFound();
+    if (removal.kind === 'last_admin') throw lastAdmin();
   }
   await recordAfter(ctx, {
     ...actorOf(caller), at: now, orgId: scope.orgId, action: 'member.removed',

@@ -168,9 +168,9 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
     expect(await res?.json()).toEqual({
       deletedDays: 2, deletedUploads: 1, deletedNotes: 1, deletedLocations: 2, deletedSeats: 4, redactedEvents: 4,
     });
-    // The event is written before the effect, and the organization row is deleted last.
+    // The event is written before the effect; the organization row is deleted last, then sales days and chat usage swept again.
     expect(writes[0]).toBe('insert tw_audit_events');
-    expect(writes.at(-1)).toBe('delete tw_orgs');
+    expect(writes.slice(-3)).toEqual(['delete tw_orgs', 'delete tw_sales_days', 'delete tw_chat_usage']);
 
     const orgId = new Types.ObjectId(doomed.orgId);
     for (const name of TENANT_COLLECTIONS) expect({ name, n: await count(name, { orgId }) }).toEqual({ name, n: 0 });
@@ -228,6 +228,57 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
     expect(staffEvents[1]?.details).toEqual({ eventId: String(staffEvents[0]?._id), code: 'internal' });
   });
 
+  it('an organization reactivated while it is being deleted keeps its row: 409 org_not_suspended, recorded as not applied', async () => {
+    const org = await populatedOrg('Reactivated Midway Grill', 'suspended');
+    const model = server.connection.models.TwLocation as unknown as { deleteMany: (...args: unknown[]) => Promise<unknown> };
+    const deleteMany = model.deleteMany.bind(model);
+    let reactivated = 0;
+    const spy = vi.spyOn(model, 'deleteMany').mockImplementationOnce(async (...args: unknown[]) => {
+      reactivated = (await call(server, `/api/admin/orgs/${org.orgId}`, { method: 'PATCH', session: staff, json: { status: 'active' } })).status;
+      return deleteMany(...args);
+    });
+    try {
+      expect(await errorOf(await deleteOrg(org.orgId))).toEqual({ status: 409, error: 'org_not_suspended' });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(reactivated).toBe(200);
+    const orgId = new Types.ObjectId(org.orgId);
+    expect(await server.connection.collection('tw_orgs').findOne({ _id: orgId })).toMatchObject({ status: 'active' });
+    // The records deleted before the reactivation stay deleted.
+    expect(await count('tw_locations', { orgId })).toBe(0);
+    const staffEvents = (await auditEvents(server)).filter((event) => String(event.orgId) === org.orgId && event.actorUserId === staff.userId);
+    expect(staffEvents.map((event) => event.action)).toEqual(['org.deleted', 'org.reactivated', 'staff_action.not_applied']);
+    expect(staffEvents[2]?.details).toEqual({ eventId: String(staffEvents[0]?._id), code: 'org_not_suspended' });
+    // Suspended again, a retry completes the deletion.
+    expect((await call(server, `/api/admin/orgs/${org.orgId}`, { method: 'PATCH', session: staff, json: { status: 'suspended' } })).status).toBe(200);
+    expect((await deleteOrg(org.orgId)).status).toBe(200);
+    expect(await count('tw_orgs', { _id: orgId })).toBe(0);
+  });
+
+  it('sales days and chat usage written after the first sweep, by an upload or a chat turn in flight, are swept too', async () => {
+    const org = await populatedOrg('Late Writes Grill', 'suspended');
+    const model = server.connection.models.TwOrg as unknown as { deleteOne: (...args: unknown[]) => Promise<unknown> };
+    const deleteOne = model.deleteOne.bind(model);
+    const locationId = new Types.ObjectId().toHexString();
+    const spy = vi.spyOn(model, 'deleteOne').mockImplementationOnce(async (...args: unknown[]) => {
+      const removed = await deleteOne(...args);
+      await addSalesDay(server, { orgId: org.orgId, locationId, date: '2026-05-03', guests: 77, netSalesCents: 199_900 });
+      await addChatUsage(server, { orgId: org.orgId, month: '2026-07', costMicroUsd: 40_000 });
+      return removed;
+    });
+    let res: Response;
+    try {
+      res = await deleteOrg(org.orgId);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await res.json()).toMatchObject({ deletedDays: 3 });
+    const orgId = new Types.ObjectId(org.orgId);
+    for (const name of TENANT_COLLECTIONS) expect({ name, n: await count(name, { orgId }) }).toEqual({ name, n: 0 });
+    expect(await count('tw_orgs', { _id: orgId })).toBe(0);
+  });
+
   it('when its audit write fails, is refused with 503 and deletes nothing', async () => {
     const org = await populatedOrg('Unrecorded Deletion Cafe', 'suspended');
     const before = await snapshotOf(org);
@@ -244,7 +295,9 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
 });
 
 interface DoomedPerson {
-  person: Person; second: TestSession; oldEmail: string; formerOrgId: string; noteId: string; grantId: string;
+  person: Person; second: TestSession; formerOrgId: string; locationId: string; noteId: string; grantId: string;
+  /** Addresses they had before: in their own events, on an old seat, on a request, and only in an event about that seat. */
+  oldEmail: string; seatEmail: string; requestEmail: string; changedEmail: string;
 }
 
 /** A person with every kind of Townwise record a person can have, except an active seat, and a TOTP factor. */
@@ -255,6 +308,9 @@ async function doomedPerson(name: string): Promise<DoomedPerson> {
   const formerOrgId = await createOrg(server, { name: `${name} Former Home` });
   const locationId = await addLocation(server, { orgId: formerOrgId, name: 'Former Room' });
   await addRemovedSeat(server, { orgId: formerOrgId, userId, email: doomed.email, removedAt: server.clock.now(), removedBy: userId });
+  const olderOrgId = await createOrg(server, { name: `${name} Older Home` });
+  const seatEmail = uniqueEmail(`${name}-seat`);
+  const olderSeat = await addRemovedSeat(server, { orgId: olderOrgId, userId, email: seatEmail, removedAt: server.clock.now(), removedBy: 'e'.repeat(24) });
   const noteId = await addNote(server, { orgId: formerOrgId, locationId, detail: 'Written before leaving', createdBy: userId });
   await addConversation(server, { orgId: formerOrgId, locationId, userId, text: `${name} private chat` });
   await addLiveTurn(server, { orgId: formerOrgId, userId });
@@ -263,7 +319,8 @@ async function doomedPerson(name: string): Promise<DoomedPerson> {
   await addInvite(server, { orgId: inviting, email: doomed.email, invitedBy: 'f'.repeat(24) });
   await addInvite(server, { orgId: paused, email: doomed.email, invitedBy: 'f'.repeat(24) });
   await addRequest(server, { userId, email: doomed.email, status: 'rejected' });
-  await addRequest(server, { userId, email: doomed.email, status: 'withdrawn' });
+  const requestEmail = uniqueEmail(`${name}-request`);
+  await addRequest(server, { userId, email: requestEmail, status: 'withdrawn' });
   const grantId = await addGrant(server, { actorUserId: staff.userId, sessionId: randomUUID(), targetUserId: userId, orgId: null });
   await makeStaff(server, userId, { enabledAt: new Date(server.clock.now().getTime() - MINUTE) });
 
@@ -281,7 +338,18 @@ async function doomedPerson(name: string): Promise<DoomedPerson> {
   });
   // Written under an address they no longer use: found by their user id.
   await addAuditEvent(server, { at, orgId: formerOrgId, action: 'member.left', actorUserId: userId, actorEmail: oldEmail, details: { email: oldEmail } });
-  return { person: doomed, second, oldEmail, formerOrgId, noteId, grantId };
+  // Other people's events naming older addresses: by their seats' and requests' addresses, and by the seat itself.
+  const seatTarget = { type: 'member', id: olderSeat };
+  const changedEmail = uniqueEmail(`${name}-changed`);
+  await addAuditEvent(server, { at, orgId: olderOrgId, action: 'member.invited', target: seatTarget, details: { email: seatEmail, role: 'member' } });
+  await addAuditEvent(server, {
+    at, orgId: olderOrgId, action: 'member.role_changed', target: seatTarget, details: { email: changedEmail, from: 'member', to: 'org_admin' },
+  });
+  await addAuditEvent(server, { at, orgId: inviting, action: 'member.removed', details: { email: requestEmail, wasStatus: 'invited' } });
+  await addAuditEvent(server, {
+    at, orgId: olderOrgId, action: 'member.joined', actorEmail: STAFF_EMAIL, actorRole: 'superadmin', details: { email: requestEmail, role: 'org_admin' },
+  });
+  return { person: doomed, second, formerOrgId, locationId, noteId, grantId, oldEmail, seatEmail, requestEmail, changedEmail };
 }
 
 /** One person's records in every collection that holds any, serialized. */
@@ -303,12 +371,22 @@ describe('POST /api/admin/people/delete', () => {
     const doomed = await doomedPerson('doomed');
     const bystander = await doomedPerson('bystander');
     const bystanderBefore = await snapshotOfPerson(bystander.person);
+    // Someone who shares the deleted person's organization keeps their seat, invitation, conversations and live turn.
+    const sharer = await person('sharer');
+    await addSeat(server, { orgId: doomed.formerOrgId, userId: sharer.session.userId, email: sharer.email });
+    await addConversation(server, { orgId: doomed.formerOrgId, locationId: doomed.locationId, userId: sharer.session.userId, text: 'Sharer chat' });
+    await addLiveTurn(server, { orgId: doomed.formerOrgId, userId: sharer.session.userId });
+    await addRemovedSeat(server, {
+      orgId: bystander.formerOrgId, userId: sharer.session.userId, email: sharer.email, removedAt: server.clock.now(), removedBy: 'e'.repeat(24),
+    });
+    await addAuditEvent(server, { at: server.clock.now(), orgId: doomed.formerOrgId, action: 'member.joined', actorUserId: sharer.session.userId, actorEmail: sharer.email, details: { email: sharer.email, role: 'member' } });
+    const sharerBefore = await snapshotOfPerson(sharer);
     const { userId } = doomed.person.session;
 
     let res: Response | undefined;
     const writes = await writesDuring(server, async () => { res = await deletePerson(`  ${doomed.person.email.toUpperCase()} `); });
     expect(res?.status).toBe(200);
-    expect(await res?.json()).toEqual({ deletedRequests: 2, deletedSeats: 3, redactedEvents: 4, kitUserId: userId });
+    expect(await res?.json()).toEqual({ deletedRequests: 2, deletedSeats: 4, redactedEvents: 8, kitUserId: userId });
     expect(writes[0]).toBe('insert tw_audit_events');
 
     expect(await count('tw_access_requests', { userId })).toBe(0);
@@ -324,12 +402,17 @@ describe('POST /api/admin/people/delete', () => {
     expect(await count('tw_notes', { _id: new Types.ObjectId(doomed.noteId) })).toBe(1);
     expect(await count('tw_view_as_grants', { _id: new Types.ObjectId(doomed.grantId) })).toBe(1);
     expect(await snapshotOfPerson(bystander.person)).toBe(bystanderBefore);
+    expect(await snapshotOfPerson(sharer)).toBe(sharerBefore);
+    expect((await me(sharer.session)).access).toMatchObject({ state: 'member', org: { id: doomed.formerOrgId } });
 
+    // Every address they were known by is gone from the audit log, other people's events included.
     const events = await auditEvents(server);
     const text = JSON.stringify(events);
-    expect(text).not.toContain(doomed.person.email);
-    expect(text).not.toContain(doomed.oldEmail);
+    for (const address of [doomed.person.email, doomed.oldEmail, doomed.seatEmail, doomed.requestEmail, doomed.changedEmail]) {
+      expect(text).not.toContain(address);
+    }
     expect(text).toContain(bystander.person.email);
+    expect(text).toContain(bystander.seatEmail);
     for (const event of events.filter((e) => e.actorUserId === userId)) expect(event.actorEmail).toBe('deleted person');
     const deleted = events.filter((event) => event.action === 'person.deleted');
     expect(deleted).toHaveLength(1);
@@ -378,6 +461,40 @@ describe('POST /api/admin/people/delete', () => {
     expect((await me(seated.session)).access.state).toBe('org_suspended');
   });
 
+  it('a person who joins while their deletion runs keeps the seat: 409 person_has_seat, recorded as not applied, nothing revoked or redacted', async () => {
+    const orgId = await createOrg(server, { name: 'Joined Midway Cafe' });
+    const joiner = await person('joiner');
+    await makeStaff(server, joiner.session.userId, { enabledAt: new Date(server.clock.now().getTime() - MINUTE) });
+    const inviteId = await addInvite(server, { orgId, email: joiner.email, invitedBy: 'f'.repeat(24), role: 'org_admin' });
+    await addAuditEvent(server, { at: server.clock.now(), orgId, action: 'member.invited', target: { type: 'member', id: inviteId }, details: { email: joiner.email, role: 'org_admin' } });
+    const model = server.connection.models.TwMember as unknown as { deleteMany: (...args: unknown[]) => Promise<unknown> };
+    const deleteMany = model.deleteMany.bind(model);
+    let joined = 0;
+    // Just before their invitations are deleted, the person joins.
+    const spy = vi.spyOn(model, 'deleteMany').mockImplementationOnce(async (...args: unknown[]) => {
+      joined = (await call(server, '/api/me/join', { session: joiner.session, json: { inviteId } })).status;
+      return deleteMany(...args);
+    });
+    try {
+      expect(await errorOf(await deletePerson(joiner.email))).toEqual({ status: 409, error: 'person_has_seat' });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(joined).toBe(200);
+    expect(await server.connection.collection('tw_members').findOne({ _id: new Types.ObjectId(inviteId) }))
+      .toMatchObject({ status: 'active', activeUserId: joiner.session.userId });
+    // Still signed in, with their authenticator, and the audit log still names them.
+    expect((await me(joiner.session)).access).toMatchObject({ state: 'member', org: { id: orgId }, role: 'org_admin' });
+    expect(await server.authStores.totp.get(joiner.session.userId)).not.toBeNull();
+    const events = await auditEvents(server);
+    expect(JSON.stringify(events)).toContain(joiner.email);
+    const staffEvents = events.filter((event) => event.actorUserId === staff.userId && (event.target as { id: string }).id === joiner.session.userId);
+    expect(staffEvents.map((event) => [event.action, event.details])).toEqual([
+      ['person.deleted', { userId: joiner.session.userId }],
+      ['staff_action.not_applied', { eventId: String(staffEvents[0]?._id), code: 'person_has_seat' }],
+    ]);
+  });
+
   it('when its audit write fails, is refused with 503: nothing is deleted and the person stays signed in', async () => {
     const doomed = await doomedPerson('unrecorded');
     const before = await snapshotOfPerson(doomed.person);
@@ -398,7 +515,7 @@ describe('logs and the record', () => {
     expect((await deletePerson(doomed.person.email)).status).toBe(200);
     const logs = server.logs.join('\n');
     expect(logs).toContain(org.orgId);
-    for (const secret of [org.name, ...org.locationNames, org.admin.email, doomed.person.email, doomed.oldEmail]) {
+    for (const secret of [org.name, ...org.locationNames, org.admin.email, doomed.person.email, doomed.oldEmail, doomed.seatEmail, doomed.requestEmail]) {
       expect(logs).not.toContain(secret);
     }
   });

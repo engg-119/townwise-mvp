@@ -1,5 +1,5 @@
 import { isDuplicateKeyError } from '@ckeith26/mongo';
-import { Schema, trusted, type Connection, type Model, type Types } from 'mongoose';
+import mongoose, { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
 import type { Role } from '../access/resolve.ts';
@@ -87,13 +87,13 @@ export interface MemberStore {
   /** Which of these addresses this organization already has an open invitation for. */
   openInviteEmails(scope: OrgScope, emails: readonly string[]): Promise<Set<string>>;
   hasActiveSeat(scope: OrgScope, userId: string): Promise<boolean>;
+  /** An open invitation; null when this organization already has one for the address (the unique index). */
+  insertInvite(scope: OrgScope, input: InviteInput): Promise<string | null>;
   /**
-   * An open invitation; null when this organization already has one for the address (the unique index). `id` lets a
-   * staff handler name the row in its audit event before inserting it.
+   * Several open invitations in one write, each with the id its audit event already names. Resolves, per input in
+   * order, whether it was inserted: false when this organization already has an invitation for the address.
    */
-  insertInvite(scope: OrgScope, input: {
-    id?: string; email: string; role: Role; invitedAt: Date; invitedBy: string; addedByStaff: boolean;
-  }): Promise<string | null>;
+  insertInvites(scope: OrgScope, inputs: readonly (InviteInput & { id: string })[]): Promise<boolean[]>;
   /**
    * F3 step 8, the requester's admin seat. `exists` when this person already has a seat here, active or removed
    * (a retry completes the work and never re-seats someone the organization removed); `elsewhere` when the
@@ -102,18 +102,33 @@ export interface MemberStore {
   insertAdminSeat(scope: OrgScope, input: {
     userId: string; email: string; joinedAt: Date; invitedBy: string;
   }): Promise<AdminSeatResult>;
-  /** Compare-and-set on the current role; false when the row changed or is gone. */
-  setRole(scope: OrgScope, memberId: string, from: Role, to: Role): Promise<boolean>;
+  /**
+   * Compare-and-set on the current role of an active member or open invitation. Resolves the row's status at the
+   * write, or null when the row changed or is gone.
+   */
+  setRole(scope: OrgScope, memberId: string, from: Role, to: Role): Promise<'invited' | 'active' | null>;
+  /**
+   * Reverts setRole (the last-admin rule): matches the row by id, organization and the role setRole wrote, whatever its
+   * status, so a seat removed since still gets its role back.
+   */
+  revertRole(scope: OrgScope, memberId: string, from: Role, to: Role): Promise<void>;
   deleteInvite(scope: OrgScope, memberId: string): Promise<boolean>;
   /**
    * Compare-and-set from active to removed; unsets activeUserId. Resolves the role the seat had when it was removed,
    * read in the same write, or null when the row is not an active seat.
    */
   removeSeat(scope: OrgScope, memberId: string, input: { removedAt: Date; removedBy: string }): Promise<Role | null>;
-  /** Reverts removeSeat (the last-admin rule). */
-  restoreSeat(scope: OrgScope, memberId: string, userId: string): Promise<void>;
+  /**
+   * Reverts removeSeat (the last-admin rule). False when the seat can't come back: the person took a seat in another
+   * organization since (the unique activeUserId index), or the row is no longer a removed seat.
+   */
+  restoreSeat(scope: OrgScope, memberId: string, userId: string): Promise<boolean>;
   /** Organization deletion: every row, invitations, seats and removed seats alike. Resolves the number deleted. */
   removeForOrg(scope: OrgScope): Promise<number>;
+}
+
+export interface InviteInput {
+  readonly email: string; readonly role: Role; readonly invitedAt: Date; readonly invitedBy: string; readonly addedByStaff: boolean;
 }
 
 /** Active members and open invitations: a fresh trusted operator for each query. */
@@ -163,7 +178,6 @@ export function createMemberStore(connection: Connection): MemberStore {
     async insertInvite(scope, input) {
       try {
         const doc = await Member.create({
-          ...(input.id === undefined ? {} : { _id: input.id }),
           orgId: scope.orgId, email: input.email, role: input.role, status: 'invited', inviteEmail: input.email,
           userId: null, invitedAt: input.invitedAt, invitedBy: input.invitedBy, addedByStaff: input.addedByStaff,
           joinedAt: null, removedAt: null, removedBy: null,
@@ -172,6 +186,26 @@ export function createMemberStore(connection: Connection): MemberStore {
       } catch (err) {
         if (isDuplicateKeyError(err)) return null;
         throw err;
+      }
+    },
+    async insertInvites(scope, inputs) {
+      if (inputs.length === 0) return [];
+      const orgId = new Types.ObjectId(scope.orgId);
+      const docs = inputs.map((input) => ({
+        _id: new Types.ObjectId(input.id), orgId, email: input.email, role: input.role, status: 'invited' as const,
+        inviteEmail: input.email, userId: null, invitedAt: input.invitedAt, invitedBy: input.invitedBy,
+        addedByStaff: input.addedByStaff, joinedAt: null, removedAt: null, removedBy: null,
+      }));
+      try {
+        // One unordered insert: each row stands or falls on the unique index alone.
+        await Member.collection.insertMany(docs, { ordered: false });
+        return inputs.map(() => true);
+      } catch (err) {
+        if (!(err instanceof mongoose.mongo.MongoBulkWriteError)) throw err;
+        const writeErrors = [err.writeErrors].flat();
+        if (writeErrors.some((writeError) => writeError.code !== 11000)) throw err;
+        const taken = new Set(writeErrors.map((writeError) => writeError.index));
+        return inputs.map((_, i) => !taken.has(i));
       }
     },
     async insertAdminSeat(scope, input) {
@@ -190,11 +224,15 @@ export function createMemberStore(connection: Connection): MemberStore {
       }
     },
     async setRole(scope, memberId, from, to) {
-      const result = await Member.updateOne(
+      const before = await Member.findOneAndUpdate(
         { _id: memberId, orgId: scope.orgId, status: open(), role: from },
         { $set: { role: to } },
+        { returnDocument: 'before', lean: true },
       );
-      return result.modifiedCount === 1;
+      return before === null || before.status === 'removed' ? null : before.status;
+    },
+    async revertRole(scope, memberId, from, to) {
+      await Member.updateOne({ _id: memberId, orgId: scope.orgId, role: from }, { $set: { role: to } });
     },
     async deleteInvite(scope, memberId) {
       const result = await Member.deleteOne({ _id: memberId, orgId: scope.orgId, status: 'invited' });
@@ -209,10 +247,16 @@ export function createMemberStore(connection: Connection): MemberStore {
       return before?.role ?? null;
     },
     async restoreSeat(scope, memberId, userId) {
-      await Member.updateOne(
-        { _id: memberId, orgId: scope.orgId, status: 'removed' },
-        { $set: { status: 'active', activeUserId: userId, removedAt: null, removedBy: null } },
-      );
+      try {
+        const result = await Member.updateOne(
+          { _id: memberId, orgId: scope.orgId, status: 'removed' },
+          { $set: { status: 'active', activeUserId: userId, removedAt: null, removedBy: null } },
+        );
+        return result.modifiedCount === 1;
+      } catch (err) {
+        if (isDuplicateKeyError(err)) return false;
+        throw err;
+      }
     },
     async removeForOrg(scope) {
       return (await Member.deleteMany({ orgId: scope.orgId })).deletedCount;

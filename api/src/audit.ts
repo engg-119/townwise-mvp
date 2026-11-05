@@ -32,8 +32,32 @@ export async function recordBefore(ctx: TownwiseContext, event: AuditEventInput)
   }
 }
 
+/**
+ * The codes a staff_action.not_applied event may carry (spec 9.3), each with the plain words org admins read in their
+ * staff activity. A refusal's code is its error code; `conflict` means a concurrent change to the same row won,
+ * `unavailable` that a later event of the same request could not be written, and `internal` that the effect threw.
+ */
+export const NOT_APPLIED_REASONS = {
+  request_not_pending: 'The request was already decided',
+  view_as_active: 'Another view-as was already running',
+  last_admin: 'The organization needs at least one admin',
+  already_invited: 'That address was already invited',
+  not_found: 'It was already gone',
+  conflict: 'Another change got there first',
+  person_has_seat: 'The person holds a seat in an organization',
+  org_not_suspended: 'The organization was reactivated first',
+  unavailable: 'Townwise was briefly unavailable',
+  internal: 'Something went wrong on Townwise’s side',
+} as const;
+
+export type NotAppliedCode = keyof typeof NOT_APPLIED_REASONS;
+
+function notAppliedReason(code: string): string {
+  return Object.hasOwn(NOT_APPLIED_REASONS, code) ? NOT_APPLIED_REASONS[code as NotAppliedCode] : 'It didn’t take effect';
+}
+
 /** The staff action recorded as `event` (id `eventId`) did not take effect, so the record never claims it did. */
-export async function recordNotApplied(ctx: TownwiseContext, event: AuditEventInput, eventId: string, code: string): Promise<void> {
+export async function recordNotApplied(ctx: TownwiseContext, event: AuditEventInput, eventId: string, code: NotAppliedCode): Promise<void> {
   await recordAfter(ctx, {
     at: ctx.now(),
     actorUserId: event.actorUserId,
@@ -47,14 +71,39 @@ export async function recordNotApplied(ctx: TownwiseContext, event: AuditEventIn
   });
 }
 
-/** Runs the effect of the staff action recorded as `event`. If it throws, the record says it did not apply (spec 9.3). */
-export async function applyRecorded<T>(ctx: TownwiseContext, event: AuditEventInput, eventId: string, effect: () => Promise<T>): Promise<T> {
+export interface Recorded { readonly event: AuditEventInput; readonly eventId: string }
+
+/**
+ * A staff request with several changes records every event before any effect, so a refused write (503) never follows
+ * an applied change. If one write fails, the events already written are followed by staff_action.not_applied
+ * (`unavailable`), and the action is refused with 503.
+ */
+export async function recordAllBefore(ctx: TownwiseContext, events: readonly AuditEventInput[]): Promise<Recorded[]> {
+  const recorded: Recorded[] = [];
+  for (const event of events) {
+    try {
+      recorded.push({ event, eventId: await recordBefore(ctx, event) });
+    } catch (err) {
+      for (const done of recorded) await recordNotApplied(ctx, done.event, done.eventId, 'unavailable');
+      throw err;
+    }
+  }
+  return recorded;
+}
+
+/** Runs the effect of the staff actions recorded. If it throws, the record says none of them applied (spec 9.3). */
+export async function applyRecordedAll<T>(ctx: TownwiseContext, recorded: readonly Recorded[], effect: () => Promise<T>): Promise<T> {
   try {
     return await effect();
   } catch (err) {
-    await recordNotApplied(ctx, event, eventId, 'internal');
+    for (const { event, eventId } of recorded) await recordNotApplied(ctx, event, eventId, 'internal');
     throw err;
   }
+}
+
+/** Runs the effect of the staff action recorded as `event`. If it throws, the record says it did not apply (spec 9.3). */
+export function applyRecorded<T>(ctx: TownwiseContext, event: AuditEventInput, eventId: string, effect: () => Promise<T>): Promise<T> {
+  return applyRecordedAll(ctx, [{ event, eventId }], effect);
 }
 
 /** Spec 10.7: what the staff audit log and an organization's recent activity show for one event. */
@@ -160,25 +209,34 @@ export async function auditEventViews(ctx: TownwiseContext, events: readonly Aud
 /** Spec 10.1: one row of an organization's Townwise staff activity, which its org admins read (D9). */
 export interface StaffActivityView {
   at: string; staffEmail: string;
-  /** The plain-words summary, as in AuditEventView, without the “Didn’t take effect” suffix: `notApplied` carries it. */
+  /** The plain-words summary, as in AuditEventView, without the “Didn’t take effect” suffix: `applied` carries it. */
   summary: string;
   /** view_as.started only. `endsAt` is the grant's scheduled end; an earlier end is its own view_as.ended row. */
   viewAs: { targetEmail: string; reason: string; endsAt: string } | null;
-  /** A staff_action.not_applied event qualifies this one. */
-  notApplied: boolean;
+  /** False when a staff_action.not_applied event qualifies this one; that event is never a row of its own. */
+  applied: boolean;
+  /** Why it didn't take effect, in plain words; null when applied. */
+  notAppliedReason: string | null;
 }
 
-/** Rows for staff events (actor role superadmin) on one organization, newest first as given. */
+/**
+ * Rows for staff events (actor role superadmin) on one organization, newest first as given. The caller leaves out the
+ * staff_action.not_applied events: each marks the row it qualifies instead.
+ */
 export async function staffActivityViews(ctx: TownwiseContext, events: readonly AuditEventRecord[]): Promise<StaffActivityView[]> {
   const qualifiers = await ctx.stores.audit.findNotApplied(events.map((event) => event.id));
-  const notApplied = new Set(qualifiers.map((event) => text(event.details.eventId)));
-  return events.map((event) => ({
-    at: event.at.toISOString(),
-    staffEmail: event.actorEmail,
-    summary: summaryOf(event.action, event.details),
-    viewAs: event.action === 'view_as.started'
-      ? { targetEmail: text(event.details.targetEmail), reason: text(event.details.reason), endsAt: text(event.details.expiresAt) }
-      : null,
-    notApplied: notApplied.has(event.id),
-  }));
+  const codes = new Map(qualifiers.map((event) => [text(event.details.eventId), text(event.details.code)]));
+  return events.map((event) => {
+    const code = codes.get(event.id);
+    return {
+      at: event.at.toISOString(),
+      staffEmail: event.actorEmail,
+      summary: summaryOf(event.action, event.details),
+      viewAs: event.action === 'view_as.started'
+        ? { targetEmail: text(event.details.targetEmail), reason: text(event.details.reason), endsAt: text(event.details.expiresAt) }
+        : null,
+      applied: code === undefined,
+      notAppliedReason: code === undefined ? null : notAppliedReason(code),
+    };
+  });
 }

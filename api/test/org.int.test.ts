@@ -9,6 +9,7 @@ import type { StaffActivityView } from '../src/audit.ts';
 import type { MeResponse } from '../src/handlers/me.ts';
 import { AUDIT_DETAIL_KEYS, type AuditAction } from '../src/stores/audit-events.ts';
 import { addAuditEvent, addGrant, addSeat, auditEvents, createOrg, memberDoc } from './helpers/fixtures.ts';
+import { holdCalls } from './helpers/hold.ts';
 import {
   call, logLines, removeStaffFactor, signIn, signInStaff, startTownwiseServer, STAFF_EMAIL, writesDuring,
   type TestSession, type TownwiseTestServer,
@@ -191,21 +192,37 @@ describe('POST /api/org/leave (F7)', () => {
     expect((await eventsIn(orgId)).filter((event) => event.action === 'member.left')).toEqual([]);
   });
 
-  it('the last two admins leaving at once leave at least one admin', async () => {
-    const { orgId, admin, member, memberSeat } = await team('Racing Admins Diner');
+  it('the last two admins leaving at once, both removed before either recounts: the first to recount stays, the other leaves', async () => {
+    const { orgId, admin, adminSeat, member, memberSeat } = await team('Racing Admins Diner');
     await server.connection.collection('tw_members').updateOne({ _id: new Types.ObjectId(memberSeat) }, { $set: { role: 'org_admin' } });
-    const statuses = (await Promise.all([leave(admin.session), leave(member.session)])).map((res) => res.status).sort();
-    expect(await activeAdmins(orgId)).toBeGreaterThanOrEqual(1);
-    expect(statuses.every((status) => status === 200 || status === 409)).toBe(true);
-    expect(statuses).toContain(409);
+    const counts = holdCalls(server, 'countDocuments');
+    try {
+      const first = leave(admin.session);
+      await counts.arrived(1);            // the first seat is removed; its recount waits
+      const second = leave(member.session);
+      await counts.arrived(2);            // the second seat is removed too
+      counts.release(1);                  // no admin is left: the first seat is put back
+      expect(await errorOf(await first)).toEqual({ status: 409, error: 'last_admin' });
+      counts.open();                      // the first admin is back, so the second leaves
+      expect((await second).status).toBe(200);
+    } finally {
+      counts.restore();
+    }
+    expect(await memberDoc(server, adminSeat)).toMatchObject({ status: 'active', role: 'org_admin' });
+    expect(await memberDoc(server, memberSeat)).toMatchObject({ status: 'removed', removedBy: member.session.userId });
+    expect(await activeAdmins(orgId)).toBe(1);
+    expect((await eventsIn(orgId)).filter((event) => event.action === 'member.left').map((event) => event.actorUserId))
+      .toEqual([member.session.userId]);
   });
 
-  it('a member may leave an organization that has no admin yet', async () => {
+  it('a member can’t leave an organization that has no active admin yet: 409 last_admin, and the seat stays', async () => {
     const orgId = await createOrg(server, { name: 'No Admin Yet Bakery' });
     const member = await person('adminless');
-    await addSeat(server, { orgId, userId: member.session.userId, email: member.email });
-    expect((await leave(member.session)).status).toBe(200);
-    expect((await me(member.session)).access).toMatchObject({ state: 'removed', byYou: true });
+    const seat = await addSeat(server, { orgId, userId: member.session.userId, email: member.email });
+    expect(await errorOf(await leave(member.session))).toEqual({ status: 409, error: 'last_admin' });
+    expect(await memberDoc(server, seat)).toMatchObject({ status: 'active', activeUserId: member.session.userId });
+    expect((await me(member.session)).access).toMatchObject({ state: 'member', role: 'member' });
+    expect((await eventsIn(orgId)).filter((event) => event.action === 'member.left')).toEqual([]);
   });
 
   it('refuses a body that carries anything, with 400, and the seat stays', async () => {
@@ -230,7 +247,7 @@ describe('POST /api/org/leave (F7)', () => {
 });
 
 describe('GET /api/org/staff-activity (D9)', () => {
-  it('lists every staff event on this organization, newest first, with view-as details and “didn’t take effect”', async () => {
+  it('lists every staff event on this organization, newest first, with view-as details; a refused one shows once, as not applied', async () => {
     const { orgId, admin, member } = await team('Watched Kitchen');
     const other = await team('Unwatched Kitchen');
     const base = server.clock.now().getTime();
@@ -254,31 +271,54 @@ describe('GET /api/org/staff-activity (D9)', () => {
     const res = await call(server, '/api/org/staff-activity', { session: admin.session });
     expect(res.status).toBe(200);
     const { events } = await res.json() as { events: StaffActivityView[] };
+    const applied = { applied: true, notAppliedReason: null };
     expect(events).toEqual([
-      { at: at(4).toISOString(), staffEmail: STAFF_EMAIL, summary: 'Didn’t take effect (last_admin)', viewAs: null, notApplied: false },
       {
         at: at(3).toISOString(), staffEmail: STAFF_EMAIL, summary: `Changed ${admin.email} from admin to member`, viewAs: null,
-        notApplied: true,
+        applied: false, notAppliedReason: 'The organization needs at least one admin',
       },
-      { at: at(2).toISOString(), staffEmail: STAFF_EMAIL, summary: 'Ended view-as', viewAs: null, notApplied: false },
+      { at: at(2).toISOString(), staffEmail: STAFF_EMAIL, summary: 'Ended view-as', viewAs: null, ...applied },
       {
         at: at(1).toISOString(), staffEmail: STAFF_EMAIL, summary: `Started viewing as ${member.email}`,
-        viewAs: { targetEmail: member.email, reason: 'Helping with an upload', endsAt: expiresAt }, notApplied: false,
+        viewAs: { targetEmail: member.email, reason: 'Helping with an upload', endsAt: expiresAt }, ...applied,
       },
     ]);
-    expect(JSON.stringify(events)).not.toContain(other.orgId);
+    // The other organization's admins see only its own staff event.
+    const theirs = await (await call(server, '/api/org/staff-activity', { session: other.admin.session })).json() as { events: StaffActivityView[] };
+    expect(theirs.events).toEqual([
+      { at: at(6).toISOString(), staffEmail: STAFF_EMAIL, summary: 'Suspended the organization', viewAs: null, ...applied },
+    ]);
   });
 
-  it('shows the newest 50', async () => {
+  it('a staff change the console refuses shows once, as not applied with a plain reason', async () => {
+    const { orgId, admin, adminSeat } = await team('Refused Change Grill');
+    const staff = await signInStaff(server);
+    const refused = await call(server, `/api/admin/orgs/${orgId}/members/${adminSeat}`, { method: 'PATCH', session: staff, json: { role: 'member' } });
+    expect(await errorOf(refused)).toEqual({ status: 409, error: 'last_admin' });
+    expect((await eventsIn(orgId)).map((event) => event.action)).toEqual(['member.role_changed', 'staff_action.not_applied']);
+    const { events } = await (await call(server, '/api/org/staff-activity', { session: admin.session })).json() as { events: StaffActivityView[] };
+    expect(events).toEqual([{
+      at: server.clock.now().toISOString(), staffEmail: STAFF_EMAIL, summary: `Changed ${admin.email} from admin to member`,
+      viewAs: null, applied: false, notAppliedReason: 'The organization needs at least one admin',
+    }]);
+  });
+
+  it('shows the newest 50 staff actions; not-applied records take no row', async () => {
     const { orgId, admin } = await team('Busy Staff Kitchen');
     const base = server.clock.now().getTime();
-    await server.connection.collection('tw_audit_events').insertMany(Array.from({ length: 55 }, (_, i) => ({
-      at: new Date(base + i * 1000), actorUserId: 'a'.repeat(24), actorEmail: STAFF_EMAIL, actorRole: 'superadmin',
-      viewAsGrantId: null, orgId: new Types.ObjectId(orgId), action: 'org.suspended', target: { type: 'org', id: orgId }, details: {},
-    })));
+    const staffEvent = (at: number, action: string, details: Record<string, unknown>): Record<string, unknown> => ({
+      at: new Date(base + at), actorUserId: 'a'.repeat(24), actorEmail: STAFF_EMAIL, actorRole: 'superadmin',
+      viewAsGrantId: null, orgId: new Types.ObjectId(orgId), action, target: { type: 'org', id: orgId }, details,
+    });
+    await server.connection.collection('tw_audit_events').insertMany(Array.from({ length: 55 }, (_, i) => staffEvent(i * 1000, 'org.suspended', {})));
+    // Newer than all of them: ten records that qualify an older event.
+    await server.connection.collection('tw_audit_events').insertMany(Array.from({ length: 10 }, (_, i) => staffEvent(
+      100_000 + i, 'staff_action.not_applied', { eventId: new Types.ObjectId().toHexString(), code: 'internal' },
+    )));
     const { events } = await (await call(server, '/api/org/staff-activity', { session: admin.session })).json() as { events: StaffActivityView[] };
     expect(events).toHaveLength(50);
     expect(events[0]?.at).toBe(new Date(base + 54_000).toISOString());
+    expect(events.every((event) => event.summary === 'Suspended the organization')).toBe(true);
   });
 
   it('a staff invitation made in the console appears in the org admin’s staff activity', async () => {
@@ -288,7 +328,7 @@ describe('GET /api/org/staff-activity (D9)', () => {
     const added = await call(server, `/api/admin/orgs/${orgId}/members`, { session: staff, json: { emails: [invited] } });
     expect(added.status).toBe(200);
     const { events } = await (await call(server, '/api/org/staff-activity', { session: admin.session })).json() as { events: StaffActivityView[] };
-    expect(events[0]).toMatchObject({ staffEmail: STAFF_EMAIL, summary: `Added ${invited} as member`, notApplied: false });
+    expect(events[0]).toMatchObject({ staffEmail: STAFF_EMAIL, summary: `Added ${invited} as member`, applied: true, notAppliedReason: null });
   });
 
   it('a member gets 403 forbidden; someone with no organization and staff get 403 no_access', async () => {

@@ -187,7 +187,10 @@ export async function adminOrgStats(connection: Connection): Promise<Map<string,
 }
 
 export interface PersonSeat {
+  readonly id: string;
   readonly userId: string;
+  /** The address the seat was added for (an invitation's, or the requester's at approval). */
+  readonly email: string;
   readonly orgId: string;
   readonly role: Role;
   readonly status: 'active' | 'removed';
@@ -199,6 +202,7 @@ export interface PersonInvite { readonly email: string; readonly orgId: string; 
 
 export interface PersonRequest {
   readonly userId: string;
+  readonly emailAtRequest: string;
   readonly status: AccessRequestStatus;
   readonly createdAt: Date;
   readonly decidedAt: Date | null;
@@ -228,14 +232,14 @@ export async function peopleRecords(
   ]);
   return {
     seats: seats.flatMap((doc) => (doc.userId === null || doc.status === 'invited' ? [] : [{
-      userId: doc.userId, orgId: doc.orgId.toHexString(), role: doc.role, status: doc.status,
+      id: doc._id.toHexString(), userId: doc.userId, email: doc.email, orgId: doc.orgId.toHexString(), role: doc.role, status: doc.status,
       joinedAt: doc.joinedAt, removedAt: doc.removedAt,
     }])),
     invites: invites.flatMap((doc) => (doc.inviteEmail === undefined ? [] : [{
       email: doc.inviteEmail, orgId: doc.orgId.toHexString(), invitedAt: doc.invitedAt,
     }])),
     requests: requests.map((doc) => ({
-      userId: doc.userId, status: doc.status, createdAt: doc.createdAt, decidedAt: doc.decidedAt,
+      userId: doc.userId, emailAtRequest: doc.emailAtRequest, status: doc.status, createdAt: doc.createdAt, decidedAt: doc.decidedAt,
     })),
   };
 }
