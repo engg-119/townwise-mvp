@@ -1,13 +1,12 @@
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
-import { EARLY_ACCESS_HREF } from '../marketing/links';
 import { theme } from '../theme';
-import { Screen, TextLink } from '../ui';
+import { Screen } from '../ui';
 
 export interface SignInFrameProps {
   title: string;
   lead: string;
-  // The line beside Request early access.
+  // The line under the card.
   note: string;
   // The card's contents.
   children: React.ReactNode;
@@ -25,7 +24,6 @@ export function SignInFrame(props: SignInFrameProps): React.JSX.Element {
       <View style={styles.card}>{props.children}</View>
       <View style={styles.access}>
         <Text style={styles.fine}>{props.note}</Text>
-        <TextLink href={EARLY_ACCESS_HREF}>Request early access</TextLink>
       </View>
     </Screen>
   );
