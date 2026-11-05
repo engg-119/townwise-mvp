@@ -21,7 +21,11 @@ describe('the band', () => {
     const two = sides(4);
     two[5] = 'in';
     expect(pickStep(two, 4)).toBe(4);
-    expect(pickStep(two, 9)).toBe(9);
+    expect(pickStep(two, 5)).toBe(5);
+    // A jump that lands with the band on a boundary takes the slot nearer the current step, where a continuous
+    // scroll would have stopped: down from 2 that is 4, up from 9 it is 5.
+    expect(pickStep(two, 2)).toBe(4);
+    expect(pickStep(two, 9)).toBe(5);
   });
 
   test('with no slot in the band the step is the last slot passed: past the story the last, ahead of it the first', () => {

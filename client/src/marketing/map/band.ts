@@ -60,15 +60,20 @@ export function sideOf(entry: { isIntersecting: boolean; boundingClientRect: Rec
   return rect.top + rect.height / 2 < (bounds.top + bounds.bottom) / 2 ? 'above' : 'below';
 }
 
-// The active step for the slots' sides, in slot order. Exactly one slot in the band wins; two in it (the band
-// straddles a boundary) hold the current step. With none in it, the step is the last slot the band has passed:
-// the last step past the story (every slot above it), the first ahead of it (every slot below it), and on phones,
-// where the pinned map's own flow separates the title from the first card, the title's step. Any unknown side, or
-// sides out of slot order, hold.
+// The active step for the slots' sides, in slot order. Exactly one slot in the band wins. Two in it (the band
+// straddles a boundary) hold the current step when it is one of them; after a jump that lands on a boundary, the
+// one nearer the current step, where a continuous scroll would have stopped. With none in it, the step is the last
+// slot the band has passed: the last step past the story (every slot above it), the first ahead of it (every slot
+// below it), and on phones, where the pinned map's own flow separates the title from the first card, the title's
+// step. Any unknown side, or sides out of slot order, hold.
 export function pickStep(sides: readonly Side[], current: number): number {
   const inside = sides.flatMap((side, index) => (side === 'in' ? [index] : []));
   if (inside.length === 1) return inside[0] ?? current;
-  if (inside.length > 1 || sides.length === 0 || sides.includes('unknown')) return current;
+  if (inside.length > 1) {
+    if (inside.includes(current)) return current;
+    return inside.reduce((best, index) => (Math.abs(index - current) < Math.abs(best - current) ? index : best));
+  }
+  if (sides.length === 0 || sides.includes('unknown')) return current;
   const passed = sides.filter((side) => side === 'above').length;
   if (sides.slice(0, passed).some((side) => side !== 'above')) return current;
   return Math.max(0, passed - 1);

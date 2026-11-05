@@ -34,10 +34,14 @@ test('a band report moves the story one step at a time, and only an actual chang
   expect(three).toMatchObject({ ss: 3, month: 0, ssTick: 2, monthTick: 1 });
   // The same step again is no change at all.
   expect(scrollTo(three, 3)).toBe(three);
-  // Two slots in the band hold the step.
-  const both = band(4);
-  both[5] = 'in';
+  // Two slots in the band hold the step when it is one of them.
+  const both = band(3);
+  both[4] = 'in';
   expect(mapReducer(three, { type: 'band', sides: both })).toBe(three);
+  // A jump that lands on a boundary takes the slot nearer the step it left.
+  const boundary = band(9);
+  boundary[10] = 'in';
+  expect(mapReducer(three, { type: 'band', sides: boundary })).toMatchObject({ ss: 9, month: 6 });
   // A hidden screen holds it too.
   expect(mapReducer(three, { type: 'band', sides: Array<Side>(16).fill('unknown') })).toBe(three);
   expect(scrollTo(three, 14)).toMatchObject({ ss: 14, month: 11, monthTick: 2 });
