@@ -372,6 +372,19 @@ test('the nav’s Requests count reads again when the console route changes', as
   await waitFor(() => { expect(navCount()).toBe('Requests 5'); });
 });
 
+test('on /admin the nav takes its count from the page’s list read and reads nothing of its own; elsewhere it reads', async () => {
+  const api = consoleApi();
+  list(api, 'pending', [TAVERN], 3);
+  api.routes['GET /api/admin/orgs'] = () => ({ orgs: [] });
+  renderAt('/admin', api);
+  await waitFor(() => { expect(navCount()).toBe('Requests 3'); });
+  expect(gets(api, '/api/admin/requests?status=pending')).toBe(1);
+  // Another console page has no list of its own, so the frame reads the count.
+  fireEvent.click(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Organizations' }));
+  await waitFor(() => { expect(window.location.pathname).toBe('/admin/orgs'); });
+  await waitFor(() => { expect(gets(api, '/api/admin/requests?status=pending')).toBe(2); });
+});
+
 test('the nav’s Requests count takes the pending count a Requests list read returns', async () => {
   const api = consoleApi();
   let count = 1;
