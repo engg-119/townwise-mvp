@@ -302,6 +302,10 @@ test('on phones the Privacy and Terms contents keep two columns', () => {
   expect(css).not.toContain('.pg-terms .toc ol{grid-template-columns:minmax(0,1fr)}');
 });
 
+test('below 360px the header tightens, shrinking the wordmark only beside the early-access button', () => {
+  expect(css).toContain('@media (max-width:359px){.nav-in{column-gap:8px}.nav-in:has(.btn)>.wm{font-size:16px}.nav-act{gap:8px}.nav-act .btn{font-size:13px;padding:0 10px}}');
+});
+
 test('on phones a link in running text gets a 44px-tall tap target', () => {
   for (const page of ['privacy', 'terms', 'security']) {
     expect(css).toContain(`@media (max-width:640px){.pg-${page} .prose a{position:relative;z-index:1;padding-block:13px}`);

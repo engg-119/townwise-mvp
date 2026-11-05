@@ -55,6 +55,7 @@ const chrome = `
 .nav-act{margin-left:auto;display:flex;align-items:center;gap:20px}
 @media (max-width:899px){.nav-in{column-gap:16px}.nav-links{order:3;width:100%;column-gap:20px;border-top:1px solid var(--border)}}
 @media (max-width:640px){.nav-links{display:none}.nav-act{gap:12px}.nav-act .btn{font-size:14px;padding:0 14px}}
+@media (max-width:359px){.nav-in{column-gap:8px}.nav-in:has(.btn)>.wm{font-size:16px}.nav-act{gap:8px}.nav-act .btn{font-size:13px;padding:0 10px}}
 
 .ft{border-top:1px solid var(--border);padding-top:64px}
 .ft-inner{container-type:inline-size}
