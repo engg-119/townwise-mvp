@@ -19,6 +19,9 @@ export function MarketingShell(props: MarketingShellProps): React.JSX.Element {
   const router = useRouter();
   const pathname = usePathname();
   const hash = useLocalSearchParams()['#'];
+  // /request-access sends a signed-out visitor to /sign-in, so on that page early access is a dead link: neither
+  // the header nor the footer offers it there.
+  const offerEarlyAccess = pathname !== SIGN_IN_HREF;
 
   // Arriving from another page at /#how (or a deep link to /privacy#cookies) lands on the section.
   useEffect(() => {
@@ -54,12 +57,12 @@ export function MarketingShell(props: MarketingShellProps): React.JSX.Element {
           </nav>
           <div className="nav-act">
             <a className="tl" href={SIGN_IN_HREF} aria-current={pathname === SIGN_IN_HREF ? 'page' : undefined}>Sign in</a>
-            <a className="btn" href={EARLY_ACCESS_HREF}>Request early access</a>
+            {offerEarlyAccess ? <a className="btn" href={EARLY_ACCESS_HREF}>Request early access</a> : null}
           </div>
         </div>
       </header>
       <main id="main" tabIndex={-1}><ScrollRoot value={rootRef}>{props.children}</ScrollRoot></main>
-      <Footer root={rootRef} />
+      <Footer root={rootRef} offerEarlyAccess={offerEarlyAccess} />
     </div>
   );
 }

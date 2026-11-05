@@ -1,8 +1,12 @@
-import { A, Code, Div, H1, H2, Li, Nav, P, Section, Span, Strong, Table, Tbody, Td, Th, Thead, Tr, Ul } from '../../src/marketing/html';
-import { CONTACT_HREF } from '../../src/marketing/links';
+import { A, Code, Div, H1, H2, Li, Nav, P, Section, Strong, Table, Tbody, Td, Th, Thead, Tr, Ul } from '../../src/marketing/html';
+import { CONTACT_EMAIL, CONTACT_HREF } from '../../src/marketing/links';
 import { MarketingShell } from '../../src/marketing/MarketingShell';
 
-const Mail = (): React.JSX.Element => <A href={CONTACT_HREF}>hello@townwise.tech</A>;
+const Mail = (): React.JSX.Element => <A href={CONTACT_HREF}>{CONTACT_EMAIL}</A>;
+
+// Anthropic's own terms for API data (checked 2026-11-05: “Anthropic may not train models on Customer Content
+// from Services”, where Customer Content is the inputs and outputs).
+const ANTHROPIC_TERMS_HREF = 'https://www.anthropic.com/legal/commercial-terms';
 
 const sections: { id: string; title: string; className?: string; body: React.ReactNode }[] = [
   {
@@ -11,11 +15,13 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
     className: 'sec sum',
     body: (
       <Ul className="bul">
-        <Li>You sign in with Google. We keep your email address, your Google account ID and the date your account was created. That is the whole account record.</Li>
+        <Li>You sign in with Google. Your account record holds your email address, your Google account ID and the date it was created.</Li>
         <Li>Two cookies keep you signed in. There are no advertising or analytics cookies.</Li>
         <Li>Our server logs each request: the address it came from, the browser or app that sent it, the page asked for and the result. The request log does not record your email address, your sign-in tokens, your cookies or what you send us.</Li>
         <Li>The Townwise app sends no telemetry: no analytics, no tracking, no crash reports. The sign-in page loads Google’s sign-in script, so Google sees that visit.</Li>
-        <Li>The Townwise app has no place to upload sales data yet. Point-of-sale exports you send us directly are covered under “Your restaurant’s sales data” below.</Li>
+        <Li>When you upload sales history, your browser reads the file and sends us only the date, guest count and net sales for each day. The file itself never reaches our server.</Li>
+        <Li>Your sales data is used only to provide Townwise to your restaurant: its own forecasts and, when it is turned on, its tuning chat. It is not shared with or used for other restaurants, and it is not used to train AI models.</Li>
+        <Li>Townwise does not sell personal data.</Li>
       </Ul>
     ),
   },
@@ -23,7 +29,7 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
     id: 'who',
     title: 'Who we are',
     body: (
-      <P>Townwise is a student project built in ENGG 119 at Dartmouth’s Thayer School of Engineering, in Hanover, NH. The operator responsible for your data is <Span className="chip">[OPERATOR LEGAL NAME]</Span>. Write to us at <Mail />.</P>
+      <P>Townwise is a student project. The operator responsible for your data is the Townwise team, a group of students in ENGG 119, AI in the Real World, at Dartmouth’s Thayer School of Engineering in Hanover, NH. Townwise is not an official Dartmouth product. Write to us at <Mail />.</P>
     ),
   },
   {
@@ -42,7 +48,7 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
             </Tbody>
           </Table>
         </Div>
-        <P>We do not keep your name, your photo or the Google token itself. The app holds the token only long enough to send it to our server once; the mobile app then clears Google’s sign-in session.</P>
+        <P>We do not keep the name or photo on your Google account, or the Google token itself. The app holds the token only long enough to send it to our server once; the mobile app then clears Google’s sign-in session.</P>
         <P>Your account record is kept until it is deleted (see Your choices).</P>
         <P>Every sign-in needs a Google account whose email address Google says is verified. We create a new account, or link Google to an existing one, only for a Gmail address or a Google Workspace account. If the email on your Google account changes and Google is the authority for it, we update the email we keep at your next sign-in.</P>
         <P>On the web, the sign-in page loads Google’s sign-in script from accounts.google.com as soon as the page opens, so Google sees your visit to that page even if you never press the button. When you use the button, your browser talks to Google directly. Google’s own privacy policy covers both. Our server checks Google’s signature using Google’s published keys; it does not send your information back to Google.</P>
@@ -112,7 +118,8 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
         <P>Sign-in events (signed in, signed out, account created, code checks) also log your internal account ID or the session ID, the sign-in method and whether you used the web or the app.</P>
         <P>When a request fails because of a fault on our side, the server also logs the error: its type, its message, any error code and a stack trace (the lines of our code that were running), together with the request URL with sensitive values replaced. The logging code removes known sensitive details from database error messages, such as the duplicate value in a duplicate-key error.</P>
         <P>The request logger records only the fixed list of fields above. On top of that, the logging code removes fields named token, password, secret, recovery code, cookie and authorization from the top level of a log entry and one level down. The sign-in service never logs request bodies, and its own log lines carry your account ID, never your email address.</P>
-        <P>Logs are written to the server’s standard output and kept by <Span className="chip">[HOSTING PROVIDER]</Span> for <Span className="chip">[LOG RETENTION PERIOD]</Span>.</P>
+        <P>The app’s own log lines, for actions such as uploads and view-as, carry ids and counts only, never your email address, names, sales figures or note text.</P>
+        <P>Logs are written to the server’s standard output and kept by Microsoft Azure for 30 days. Members of our Townwise administrators and developers groups can read them.</P>
       </>
     ),
   },
@@ -124,6 +131,7 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
         <P>To stop abuse, the server counts requests from each IP address: one limit for the whole service and a tighter one for sign-in, both over one-minute windows. Before a counter is stored, the key it belongs to (an IP address, an account ID or an email address) is replaced with a SHA-256 hash, so the store holds hashes, not addresses. IPv6 addresses are counted by their first half (the /64 network). Each counter is deleted when its window ends, counted from the first request in that window.</P>
         <P>If the email-link route is used (see Email), the request is also counted per IP address (hashed) for one hour, and per email address (hashed) for 15 minutes and for 24 hours.</P>
         <P>If you use authenticator codes, every code attempt is also counted per account, as a hash of your account ID, for 15 minutes and for 24 hours.</P>
+        <P>When you are signed in, some actions are also counted per account, as a hash of your account ID: every change for 10 minutes; uploads, tuning chat messages and staff view-as for one hour; and access requests for 24 hours.</P>
         <P>A hash of an IP address is not anonymous: anyone who tries every possible address can match it. We treat these counters as personal data. The longest any IP-address counter is kept is one hour; the longest any account or email counter is kept is 24 hours.</P>
       </>
     ),
@@ -140,9 +148,23 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
     title: 'Email',
     body: (
       <>
-        <P>Townwise does not send sign-in emails. If you write to <Mail />, we keep your message and address in <Span className="chip">[EMAIL PROVIDER]</Span> to reply to you and to manage early access.</P>
+        <P>Townwise does not send email, for sign-in or anything else. If you write to <Mail />, we keep your message and address to reply to you.</P>
         <P>The sign-in service still includes an email-link route that Townwise does not use. If an email address is submitted to it, the service stores that address with a hashed one-time token, the platform and timestamps, and deletes the record automatically shortly after its 15 minutes are up, counts the attempt per IP address (hashed) for one hour and under a keyed hash of the address for up to 24 hours, and sends nothing.</P>
       </>
+    ),
+  },
+  {
+    id: 'org',
+    title: 'Your organization and team',
+    body: (
+      <Ul className="bul">
+        <Li><Strong>Access requests.</Strong> To request access, you sign in with Google and fill in a short form: your organization’s name, your name, your role, your town, how many locations you have and an optional note. We keep it with your email address at the time and the request’s status. Townwise staff read it to decide on it. If they turn it down, they may add a message, which you see.</Li>
+        <Li><Strong>Your team.</Strong> An org admin can add teammates by email address, each with a role. We keep each address on the team, with its role and who added it, even before that person signs in. Townwise does not email them. Org admins can see the team; members cannot.</Li>
+        <Li><Strong>Locations.</Strong> Each location’s name and town.</Li>
+        <Li><Strong>Notes.</Strong> Notes about unusual days: the kind, the dates and weekdays, the expected effect and number of guests, a detail of up to 280 characters, and who wrote it. Everyone on your organization’s team can see them. So far, only the tuning chat reads them.</Li>
+        <Li><Strong>Tuning chat conversations.</Strong> If you use the tuning chat, we keep your conversations for each location. They are private to you, except that Townwise staff using view-as as you can read them. We keep them until your account or your organization is deleted.</Li>
+        <Li><Strong>The audit record.</Strong> We record changes: who did what and when, such as who added a teammate, uploaded sales, wrote a note or started a view-as, with the reason given. It holds email addresses, organization and location names, and view-as reasons. It never holds sales figures, note text, request notes or decision messages. Org admins can see every Townwise staff action on their organization. Audit records are not deleted; when a person or an organization is deleted, their email address or names in it are replaced.</Li>
+      </Ul>
     ),
   },
   {
@@ -150,9 +172,17 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
     title: 'Your restaurant’s sales data',
     body: (
       <>
-        <P>The Townwise app has no place to upload point-of-sale data today: the service mounts only sign-in. Forecasts are designed to be calibrated with each restaurant’s own sales history.</P>
-        <P><Strong>Exports you send us directly.</Strong> During early access, a restaurant may send us point-of-sale exports outside the app. <Span className="chip">[DECISION NEEDED: how exports are stored, who can see them, how long they are kept, and whether they are shared or used for other restaurants]</Span></P>
-        <P>Before any upload exists in the app, this section will also state what the app collects, where it is stored, who can see it and how long it is kept. <Span className="chip">[DECISION NEEDED]</Span></P>
+        <P><Strong>What an upload sends.</Strong> You upload sales history in the app, on the web. Your browser reads your point-of-sale export and sends us only the date, guest count and net sales for each day, for one location. The file itself never reaches our server, and neither do its name or its other columns.</P>
+        <P><Strong>What we keep.</Strong> For each location, one record per day with the date, guests and net sales. For each upload, who sent it, when, how many days it added or replaced, and its first and last dates. We never keep the file name.</P>
+        <P><Strong>How we use it.</Strong> Your sales data is used only to provide Townwise to your restaurant: its own forecasts and, when it is turned on, its tuning chat. It is not shared with or used for other restaurants, and it is not used to train AI models.</P>
+        <P><Strong>Who can see it.</Strong></P>
+        <Ul className="bul">
+          <Li>The members and org admins of your organization.</Li>
+          <Li>Townwise staff, in the staff console, see your organization’s name, its locations’ names and towns, team email addresses, counts and the dates your data covers. They do not see the sales figures or your location notes there, and these console views are not recorded.</Li>
+          <Li>Townwise staff can see the sales figures and your location notes only through view-as: a read-only view of the app as one of your team sees it. It needs a reason, lasts at most 30 minutes, is recorded, and is shown to your organization’s admins.</Li>
+          <Li>Members of our Townwise administrators group, who manage the production systems, can reach the database outside the app. Townwise’s audit record does not include those reads.</Li>
+        </Ul>
+        <P><Strong>How long we keep it.</Strong> Until an org admin deletes it (in the app, an org admin can delete all sales data for a location), or until we delete your organization’s account on request (see Your choices). Our nightly backups keep copies for 30 days.</P>
       </>
     ),
   },
@@ -160,7 +190,7 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
     id: 'where',
     title: 'Where your data lives',
     body: (
-      <P>Account, session, authenticator and email-link records are stored in a MongoDB database. Rate-limit counters are stored in a Redis-compatible store. Both are hosted by <Span className="chip">[HOSTING PROVIDER]</Span> in <Span className="chip">[HOSTING REGION]</Span>.</P>
+      <P>Account, session, authenticator and email-link records, and everything the app keeps for your organization, are stored in a MongoDB-compatible database, Azure DocumentDB. Rate-limit counters are kept in memory by a Redis-compatible store (Valkey) that runs beside our server and saves nothing to disk. Both run on Microsoft Azure, in its East US region, and the database’s nightly backups are stored there too.</P>
     ),
   },
   {
@@ -170,11 +200,10 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
       <>
         <Ul className="bul">
           <Li><Strong>Google</Strong>, when you open the sign-in page (its sign-in script loads there) and when you sign in with your Google account, under Google’s privacy policy.</Li>
-          <Li><Strong><Span className="chip">[HOSTING PROVIDER]</Span></Strong>, which runs our servers and stores our database and logs.</Li>
-          <Li><Strong><Span className="chip">[EMAIL PROVIDER]</Span></Strong>, if you write to us.</Li>
-          <Li><Strong>Anthropic</Strong>, which provides the AI model behind the tuning chat. When you use the chat, Anthropic receives the messages you send and the location data the assistant reads to answer them: the location’s name and town, its sales totals and daily figures, its notes and its town profile. <Span className="chip">[DECISION NEEDED: how long Anthropic keeps chat data, and whether it may be used to train models]</Span></Li>
+          <Li><Strong>Microsoft Azure</Strong>, which runs our servers and stores our database, its backups and our logs.</Li>
+          <Li><Strong>Anthropic</Strong>, which provides the AI model behind the tuning chat. The tuning chat is off in production until we turn it on, and while it is off nothing is sent to Anthropic. When it is on and you use it, Anthropic receives the messages you send and the location data the assistant reads to answer them: the location’s name and town, its sales totals and daily figures, its notes and its town profile. Anthropic processes them under its <A href={ANTHROPIC_TERMS_HREF}>Commercial Terms of Service</A>, which say Anthropic may not train models on that content.</Li>
         </Ul>
-        <P>Apart from Google’s sign-in script on the sign-in page, the Townwise app and server send your account and sign-in information to no one else. Sales data exports are covered under “Your restaurant’s sales data”. <Span className="chip">[DECISION NEEDED: commit in writing that Townwise does not sell personal data.]</Span></P>
+        <P>Apart from Google’s sign-in script on the sign-in page, the Townwise app and server send your account and sign-in information to no one else. Townwise does not sell personal data.</P>
       </>
     ),
   },
@@ -185,11 +214,13 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
       <>
         <Ul className="bul">
           <Li><Strong>Sign out</Strong> at any time; that ends the session and clears the cookies.</Li>
-          <Li><Strong>Delete your account:</Strong> there is no self-serve deletion yet. Write to <Mail /> and we will delete your account record, sessions and any authenticator record within <Span className="chip">[DELETION TIMEFRAME]</Span>. Log lines expire on the retention schedule above.</Li>
-          <Li><Strong>If your access ends:</Strong> <Span className="chip">[DECISION NEEDED: whether account data is deleted automatically when early access ends or an account is closed, and on what schedule, or only on request]</Span></Li>
+          <Li><Strong>Delete your account:</Strong> there is no self-serve deletion yet. Write to <Mail /> and we will delete your account and its data within 30 days: your account record, sessions, any authenticator record, your access requests and invitations, your place on a team and your tuning chat conversations. Notes and uploads you added stay with your organization. In the audit record, your email address is replaced with “deleted person”. Log lines expire on the retention schedule above.</Li>
+          <Li><Strong>Delete your organization:</Strong> an org admin can ask us the same way to delete the organization’s account and its data, and we will do it within 30 days: its locations, sales data, uploads, notes, team and tuning chat conversations. In the audit record, its name and its locations’ names are replaced.</Li>
+          <Li><Strong>Backups:</Strong> our nightly backups are kept for 30 days and then deleted, so deleted data can remain in a backup until then.</Li>
+          <Li><Strong>If your access ends:</Strong> your account record and your organization’s data are not deleted automatically. You can ask us to delete them, and we will within 30 days, as above.</Li>
           <Li><Strong>Questions or corrections:</Strong> <Mail />.</Li>
         </Ul>
-        <P><Span className="chip">[DECISION NEEDED: rights under specific laws, age limits, and the process for requests]</Span></P>
+        <P>To ask what data we hold about you, or to have it corrected or deleted, write to <Mail />. We will answer within 30 days. Townwise is for businesses, used by people 18 or older acting for them.</P>
       </>
     ),
   },
@@ -197,7 +228,7 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
     id: 'changes',
     title: 'Changes',
     body: (
-      <P>If we change how Townwise handles your data, we will update this page and the date at the top before the change takes effect. <Span className="chip">[DECISION NEEDED: whether to email account holders about material changes.]</Span></P>
+      <P>If we change how Townwise handles your data, we will update this page and the date at the top before the change takes effect.</P>
     ),
   },
 ];
@@ -210,7 +241,7 @@ export default function Privacy(): React.JSX.Element {
           <Div className="g12 hd">
             <Div className="hd-l">
               <H1 className="h1">Privacy</H1>
-              <P className="sub">Effective <Span className="chip">[EFFECTIVE DATE]</Span>. Last updated <Span className="chip">[LAST UPDATED DATE]</Span>.</P>
+              <P className="sub">Effective November 5, 2026. Last updated November 5, 2026.</P>
             </Div>
             <Nav className="hd-r" aria-labelledby="h-toc">
               <P id="h-toc" className="eyebrow">On this page</P>
