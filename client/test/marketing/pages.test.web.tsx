@@ -297,6 +297,11 @@ test('on phones the Privacy tables stack into rows, each cell after the first la
   expect(css).toContain('.pg-privacy .tbl td[data-l]::before{content:attr(data-l);');
 });
 
+test('on phones the Privacy and Terms contents keep two columns', () => {
+  expect(css).toContain('@media (max-width:640px){.pg-privacy .toc{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:16px}}');
+  expect(css).not.toContain('.pg-terms .toc ol{grid-template-columns:minmax(0,1fr)}');
+});
+
 test('Terms and Security carry the new date, and Security says where Townwise is hosted', () => {
   renderAt('/terms');
   expect(screen.getByText('Effective November 5, 2026.')).toBeTruthy();
