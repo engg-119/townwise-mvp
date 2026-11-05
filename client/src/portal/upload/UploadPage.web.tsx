@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { ApiError } from '../../api/client';
 import { theme } from '../../theme';
+import { hasCode } from '../errors';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { locationHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
@@ -158,7 +159,8 @@ export function UploadPage(): React.JSX.Element {
   const valuesRun = useRef(0);
   const inflight = useRef(false);
   const mounted = useRef(true);
-  const saved = useRef(false);
+  /** The organization's copy of this location is out of date: an upload saved, or the location is gone (404). */
+  const stale = useRef(false);
   const reload = useRef(reloadOrg);
   const salesHref = locationHref(location.id, 'sales');
 
@@ -170,8 +172,9 @@ export function UploadPage(): React.JSX.Element {
       fileRun.current += 1;
       valuesRun.current += 1;
       file.current = null;
-      // The location's coverage changed: the other tabs read it from the organization.
-      if (saved.current) reload.current();
+      // Locations and this page read the location's coverage from the organization, so it is read again once this
+      // page closes. Not at once: a failed read shows the layout's error in place of the result.
+      if (stale.current) reload.current();
     };
   }, []);
 
@@ -320,7 +323,7 @@ export function UploadPage(): React.JSX.Element {
       // 3,660 days at the largest values are 230,590 bytes, under the route's 256 KB; this guards a client bug.
       if (bodyBytes(body) > MAX_BODY_BYTES) throw new ApiError('http', 'The upload is larger than the route accepts.', { status: 413 });
       const response = await sendUpload(api, location.id, body);
-      saved.current = true;
+      stale.current = true;
       if (!mounted.current) {
         reload.current();
         return;
@@ -329,6 +332,14 @@ export function UploadPage(): React.JSX.Element {
       setResult(response);
       setStep('done');
     } catch (error) {
+      if (hasCode(error, 404, 'not_found')) {
+        stale.current = true;
+        // Left while the send ran: the cleanup has already run, so the organization is read again here.
+        if (!mounted.current) {
+          reload.current();
+          return;
+        }
+      }
       setSendError(error);
     } finally {
       inflight.current = false;

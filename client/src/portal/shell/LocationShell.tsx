@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react';
+import { createContext, useContext, useState } from 'react';
 import { Link, usePathname, useRouter } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, View, type PressableStateCallbackType } from 'react-native';
 
@@ -7,7 +7,7 @@ import { townLabel } from '../format';
 import { useBreakpoint } from '../hooks';
 import { useOrg, usePortal } from '../PortalProvider';
 import { isFillRoute, locationHref, locationIdOf, locationTabs, tabOf, type LocationTab } from '../routing';
-import type { LocationSummary, OrgResponse } from '../schemas';
+import type { LocationSummary, MeResponse, OrgResponse } from '../schemas';
 import { webAria } from '../ui/aria';
 import { LinkButton } from '../ui/Button';
 import { ErrorNotice, LoadingLine, Notice } from '../ui/feedback';
@@ -19,14 +19,16 @@ import { PageHeader, PageNotice } from './Page';
 // name as the h1, and the location switcher when the organization has more than one location), then the tabs,
 // then the tab's page. The tab pages render only their content.
 
+/** The organization the layout is showing (see LocationShell), for its tab pages. */
+const ShownOrgContext = createContext<OrgResponse | null>(null);
+
 /** The location this layout is showing; tab pages read it instead of loading the organization again. */
 export function useLocation(): { location: LocationSummary; org: OrgResponse } {
   const locationId = locationIdOf(usePathname());
-  const { state } = useOrg();
-  if (state.status !== 'ready') throw new Error('useLocation must be used inside the location layout');
-  const location = state.data.locations.find((candidate) => candidate.id === locationId);
-  if (location === undefined) throw new Error('useLocation must be used inside the location layout');
-  return { location, org: state.data };
+  const org = useContext(ShownOrgContext);
+  const location = org?.locations.find((candidate) => candidate.id === locationId);
+  if (org === null || location === undefined) throw new Error('useLocation must be used inside the location layout');
+  return { location, org };
 }
 
 /**
@@ -82,15 +84,24 @@ export function LocationShell(props: { children: React.ReactNode }): React.JSX.E
   const { state, reload } = useOrg();
   const { phone } = useBreakpoint();
   const role = me.access.state === 'member' ? me.access.role : 'member';
+  // While the organization reloads after a write, the layout keeps showing the answer before it, so the tab page
+  // stays mounted. Hiding it would unmount the location's navigator, and expo-router would move the address to
+  // the location's first tab (Forecast) before the new answer arrived. A location the old answer lacks waits.
+  // A new GET /api/me clears cached organization data (spec 4.3), so the old answer is kept only for the `me` it
+  // was read under.
+  const [previous, setPrevious] = useState<{ org: OrgResponse; me: MeResponse } | null>(null);
+  if (state.status === 'ready' && (previous?.org !== state.data || previous.me !== me)) setPrevious({ org: state.data, me });
+  const kept = previous?.me === me ? previous.org : null;
+  const shown = state.status === 'ready' ? state.data : state.status === 'loading' ? kept : null;
+  const location = shown?.locations.find((candidate) => candidate.id === locationId);
 
-  if (state.status === 'loading') {
-    return <Wrap><Content><LoadingLine text="Loading this location" minHeight={240} /></Content></Wrap>;
-  }
   if (state.status === 'failed') {
     return <Wrap><Content><ErrorNotice error={state.error} onRetry={reload} /></Content></Wrap>;
   }
-  const { locations } = state.data;
-  const location = locations.find((candidate) => candidate.id === locationId);
+  if (shown === null || (location === undefined && state.status === 'loading')) {
+    return <Wrap><Content><LoadingLine text="Loading this location" minHeight={240} /></Content></Wrap>;
+  }
+  const { locations } = shown;
   if (location === undefined) {
     return (
       <Wrap>
@@ -118,10 +129,11 @@ export function LocationShell(props: { children: React.ReactNode }): React.JSX.E
       <LocationTabs tabs={locationTabs(location.id, role, pathname)} />
     </>
   );
+  const page = <ShownOrgContext.Provider value={shown}>{props.children}</ShownOrgContext.Provider>;
   if (isFillRoute(pathname) && phone) {
     return (
       <ScrollingHeadContext.Provider value={head}>
-        <View style={styles.fill}>{props.children}</View>
+        <View style={styles.fill}>{page}</View>
       </ScrollingHeadContext.Provider>
     );
   }
@@ -129,7 +141,7 @@ export function LocationShell(props: { children: React.ReactNode }): React.JSX.E
     return (
       <View style={styles.fill}>
         <Wrap>{head}</Wrap>
-        <View style={styles.fill}>{props.children}</View>
+        <View style={styles.fill}>{page}</View>
       </View>
     );
   }
@@ -138,7 +150,7 @@ export function LocationShell(props: { children: React.ReactNode }): React.JSX.E
       {head}
       <Content>
         <PageNotice />
-        {props.children}
+        {page}
       </Content>
     </Wrap>
   );

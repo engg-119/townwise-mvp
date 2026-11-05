@@ -40,14 +40,18 @@ export function saveErrorCopy(error: unknown): string {
 export function NoteForm(props: {
   initial: NoteDraft;
   editing: boolean;
-  save: (input: NoteInput) => Promise<Note>;
+  /** The saved note, or null when the page handled the failure itself (a 404 closes the form). */
+  save: (input: NoteInput) => Promise<Note | null>;
   onSaved: (note: Note) => void;
   onCancel: () => void;
 }): React.JSX.Element {
   const { save, onSaved } = props;
   const [draft, setDraft] = useState<NoteDraft>(props.initial);
   const [messages, setMessages] = useState<NoteMessages>({});
-  const action = useAction(useCallback(async (input: NoteInput) => { onSaved(await save(input)); }, [save, onSaved]));
+  const action = useAction(useCallback(async (input: NoteInput) => {
+    const note = await save(input);
+    if (note !== null) onSaved(note);
+  }, [save, onSaved]));
   const set = (patch: Partial<NoteDraft>): void => { setDraft((current) => ({ ...current, ...patch })); };
 
   function submit(): void {
