@@ -7,7 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { TOWNWISE_ROUTES } from '../src/access/routes.ts';
 import {
-  addInvite, addLocation, addNote, addRequest, addSalesDay, addSeat, addUpload, createOrg,
+  addConversation, addInvite, addLocation, addNote, addRequest, addSalesDay, addSeat, addUpload, createOrg,
 } from './helpers/fixtures.ts';
 import { PROBE_ROUTES } from './helpers/probe.ts';
 import { call, signIn, startTownwiseServer, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
@@ -23,10 +23,11 @@ interface Tenant {
   inviteId: string;
   /** The admin's and the member's seat ids. */
   seatIds: string[];
-  /** A location with a sales day, an upload record and a note written by the member. */
+  /** A location with a sales day, an upload record, a note and a tuning chat conversation, both the member's. */
   locationId: string;
   locationName: string;
   noteId: string;
+  conversationId: string;
 }
 
 let a: Tenant;
@@ -50,7 +51,8 @@ async function tenant(name: string): Promise<Tenant> {
   await addSalesDay(server, { orgId, locationId, date: '2026-05-01', guests: 140, netSalesCents: 512_300 });
   await addUpload(server, { orgId, locationId, uploadedAt: server.clock.now(), status: 'applied' });
   const noteId = await addNote(server, { orgId, locationId, detail: `${name} private note`, createdBy: member.session.userId });
-  return { orgId, name, admin, member, inviteId, seatIds, locationId, locationName, noteId };
+  const conversationId = await addConversation(server, { orgId, locationId, userId: member.session.userId, text: `${name} private chat` });
+  return { orgId, name, admin, member, inviteId, seatIds, locationId, locationName, noteId, conversationId };
 }
 
 /** Every Townwise document that belongs to B, serialized, so any change shows. */
@@ -59,6 +61,7 @@ async function snapshotOf(org: Tenant): Promise<string> {
   const docs: unknown[] = [await server.connection.collection('tw_orgs').findOne({ _id: orgId })];
   for (const name of [
     'tw_members', 'tw_locations', 'tw_sales_days', 'tw_uploads', 'tw_notes', 'tw_view_as_grants', 'tw_audit_events',
+    'tw_chat_conversations', 'tw_chat_live_turns', 'tw_chat_usage',
   ]) {
     docs.push(await server.connection.collection(name).find({ orgId }).sort({ _id: 1 }).toArray());
   }
@@ -81,13 +84,13 @@ beforeEach(async () => { await server.redis.flushdb(); });
 function bIds(): Record<string, string> {
   return {
     orgId: b.orgId, inviteId: b.inviteId, memberId: b.inviteId, userId: b.member.session.userId,
-    locationId: b.locationId, noteId: b.noteId,
+    locationId: b.locationId, noteId: b.noteId, conversationId: b.conversationId,
   };
 }
 
 /** What B's tenant data must never leak. */
 function bSecrets(): string[] {
-  return [b.orgId, b.name, b.admin.email, b.member.email, b.locationId, b.locationName, b.noteId];
+  return [b.orgId, b.name, b.admin.email, b.member.email, b.locationId, b.locationName, b.noteId, b.conversationId, `${b.name} private chat`];
 }
 
 function pathWithBIds(path: string): string {
@@ -123,21 +126,26 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
     'org.sales.upload': { days: [{ date: '2026-05-02', guests: 1, netSalesCents: null }] },
     'org.notes.create': NOTE,
     'org.notes.update': NOTE,
+    'org.chat.turn': { content: 'Hello from A' },
   };
   const QUERY: Record<string, string> = { 'org.sales.days': '?from=2026-01-01&to=2026-05-31' };
 
-  it('covers the team, location, sales and note routes', () => {
+  it('covers the team, location, sales, note and tuning chat routes', () => {
     expect(tenantRoutesWithIds.map((route) => route.id)).toEqual(expect.arrayContaining([
       'org.members.update', 'org.members.remove', 'org.locations.update', 'org.locations.remove', 'org.sales.get',
       'org.sales.days', 'org.sales.upload', 'org.sales.remove', 'org.notes.list', 'org.notes.create', 'org.notes.update',
-      'org.notes.remove',
+      'org.notes.remove', 'org.chat.get', 'org.chat.conversation', 'org.chat.turn', 'org.chat.remove',
     ]));
   });
 
   for (const route of tenantRoutesWithIds) {
     it(`${route.method} /api${route.path}: A’s org admin presenting any of B’s ids, with A’s own ids elsewhere, gets 404 not_found, and B is unchanged`, async () => {
-      const bOwn: Record<string, string[]> = { memberId: [b.inviteId, ...b.seatIds], locationId: [b.locationId], noteId: [b.noteId] };
-      const aOwn: Record<string, string> = { memberId: a.inviteId, locationId: a.locationId, noteId: a.noteId };
+      const bOwn: Record<string, string[]> = {
+        memberId: [b.inviteId, ...b.seatIds], locationId: [b.locationId], noteId: [b.noteId], conversationId: [b.conversationId],
+      };
+      const aOwn: Record<string, string> = {
+        memberId: a.inviteId, locationId: a.locationId, noteId: a.noteId, conversationId: a.conversationId,
+      };
       const params = [...route.path.matchAll(/:([A-Za-z]+)/g)].map((match) => match[1] ?? '');
       let cases = 0;
       for (const foreign of params) {

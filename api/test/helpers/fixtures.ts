@@ -161,3 +161,22 @@ export async function addAuditEvent(
   });
   return _id.toHexString();
 }
+
+/** A tw_chat_conversations record in the shape of docs/portal/tuning-chat.md section 5: one finished turn. */
+export async function addConversation(
+  server: Server,
+  opts: { orgId: string; locationId: string; userId: string; text: string; turnCount?: number },
+): Promise<string> {
+  const _id = new Types.ObjectId();
+  const at = server.clock.now();
+  await server.connection.collection('tw_chat_conversations').insertOne({
+    _id, orgId: new Types.ObjectId(opts.orgId), locationId: new Types.ObjectId(opts.locationId), userId: opts.userId,
+    title: opts.text.slice(0, 60),
+    messages: [
+      { at, param: JSON.stringify({ role: 'user', content: opts.text }) },
+      { at, param: JSON.stringify({ role: 'assistant', content: [{ type: 'text', text: `Answer to ${opts.text}` }] }) },
+    ],
+    turnCount: opts.turnCount ?? 1, liveTurn: null, createdAt: at, updatedAt: at,
+  });
+  return _id.toHexString();
+}

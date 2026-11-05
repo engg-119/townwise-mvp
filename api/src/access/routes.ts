@@ -8,6 +8,7 @@ import type { TownwiseContext } from '../app.ts';
 import {
   approveRequest, getOrg, listOrgs, listPeople, listRequests, lookupPerson, queryAudit, rejectRequest,
 } from '../handlers/admin.ts';
+import { deleteConversation, getChat, getConversation, postTurn } from '../handlers/chat.ts';
 import { createLocation, deleteLocation, getOwnOrg, updateLocation } from '../handlers/locations.ts';
 import { declineInvite, getMe, joinInvite } from '../handlers/me.ts';
 import { createNote, deleteNote, listNotes, updateNote } from '../handlers/notes.ts';
@@ -28,7 +29,7 @@ export interface TownwiseRoute {
   /** 'none' for GET and DELETE; '256kb' only on the upload route. */
   readonly bodyLimit: 'none' | '32kb' | '256kb';
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
-  readonly limiter?: 'uploads' | 'requests' | 'view-as';
+  readonly limiter?: 'uploads' | 'requests' | 'view-as' | 'chat';
   readonly handler: (ctx: TownwiseContext, req: Request, res: Response, principal: Principal) => Promise<void>;
 }
 
@@ -87,6 +88,19 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     id: 'org.notes.remove', method: 'DELETE', path: '/org/locations/:locationId/notes/:noteId', policy: 'member',
     bodyLimit: 'none', handler: deleteNote,
   },
+  { id: 'org.chat.get', method: 'GET', path: '/org/locations/:locationId/chat', policy: 'member', bodyLimit: 'none', handler: getChat },
+  {
+    id: 'org.chat.conversation', method: 'GET', path: '/org/locations/:locationId/chat/:conversationId', policy: 'member',
+    bodyLimit: 'none', handler: getConversation,
+  },
+  {
+    id: 'org.chat.turn', method: 'POST', path: '/org/locations/:locationId/chat/turns', policy: 'member', bodyLimit: '32kb',
+    limiter: 'chat', handler: postTurn,
+  },
+  {
+    id: 'org.chat.remove', method: 'DELETE', path: '/org/locations/:locationId/chat/:conversationId', policy: 'member',
+    bodyLimit: 'none', handler: deleteConversation,
+  },
 
   { id: 'org.members.list', method: 'GET', path: '/org/members', policy: 'org_admin', bodyLimit: 'none', handler: listMembers },
   { id: 'org.members.add', method: 'POST', path: '/org/members', policy: 'org_admin', bodyLimit: '32kb', handler: addMembers },
@@ -135,6 +149,8 @@ const ROUTE_LIMITS = {
   uploads: { name: 'townwise:uploads', limit: 30, windowSeconds: 3600, whenStoreDown: 'allow' },
   requests: { name: 'townwise:requests', limit: 5, windowSeconds: 86400, whenStoreDown: 'deny' },
   'view-as': { name: 'townwise:view-as', limit: 20, windowSeconds: 3600, whenStoreDown: 'deny' },
+  // docs/portal/tuning-chat.md section 2: every turn costs money, so a store outage denies.
+  chat: { name: 'townwise:chat', limit: 60, windowSeconds: 3600, whenStoreDown: 'deny' },
 } as const;
 
 /** Boot refuses a duplicate method and path, a GET with a body limit, and staff_self on any other route. */

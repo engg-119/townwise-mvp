@@ -144,8 +144,10 @@ export async function deleteLocation(ctx: TownwiseContext, req: Request, res: Re
   ]);
   if (hasDays || hasNotes) throw new AppError(409, 'location_has_data', 'Delete the location’s sales data and notes first');
   if (!(await ctx.stores.locations.remove(scope, location.id))) throw notFound();
-  // Records of uploads that never wrote a day (a crash leaves `applying`) go with it.
+  // Records of uploads that never wrote a day (a crash leaves `applying`) go with it, and so do its tuning chats,
+  // which nothing could reach without the location.
   await ctx.stores.uploads.removeForLocation(scope, location.id);
+  await ctx.stores.chatConversations.removeForLocation(scope, location.id);
   await recordAfter(ctx, {
     ...actorOf(admin), at: ctx.now(), orgId: scope.orgId, action: 'location.deleted',
     target: { type: 'location', id: location.id },

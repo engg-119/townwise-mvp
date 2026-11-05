@@ -2,6 +2,9 @@ import type { Connection } from 'mongoose';
 
 import { createAccessRequestStore, type AccessRequestStore } from './access-requests.ts';
 import { createAuditEventStore, type AuditEventStore } from './audit-events.ts';
+import { createChatConversationStore, type ChatConversationStore } from './chat-conversations.ts';
+import { createChatLiveTurnStore, type ChatLiveTurnStore } from './chat-live-turns.ts';
+import { createChatUsageStore, type ChatUsageStore } from './chat-usage.ts';
 import { createLocationStore, type LocationStore } from './locations.ts';
 import { createMemberStore, type MemberStore } from './members.ts';
 import { createNoteStore, type NoteStore } from './notes.ts';
@@ -21,6 +24,9 @@ export interface TownwiseStores {
   readonly salesDays: SalesDayStore;
   readonly uploads: UploadStore;
   readonly notes: NoteStore;
+  readonly chatConversations: ChatConversationStore;
+  readonly chatLiveTurns: ChatLiveTurnStore;
+  readonly chatUsage: ChatUsageStore;
 }
 
 /** Registers every Townwise model on `connection`; call it before ensureIndexes. */
@@ -35,5 +41,8 @@ export function createTownwiseStores(connection: Connection): TownwiseStores {
     salesDays: createSalesDayStore(connection),
     uploads: createUploadStore(connection),
     notes: createNoteStore(connection),
+    chatConversations: createChatConversationStore(connection),
+    chatLiveTurns: createChatLiveTurnStore(connection),
+    chatUsage: createChatUsageStore(connection),
   };
 }

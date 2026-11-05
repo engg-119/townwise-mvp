@@ -37,9 +37,20 @@ describe('config', () => {
   });
 
   it('production refuses an empty staff list; development and test allow it', () => {
-    expect(() => resolveTownwiseConfig({ NODE_ENV: 'production', TOWNWISE_SUPERADMIN_EMAILS: [] })).toThrow(ConfigError);
-    expect(resolveTownwiseConfig({ NODE_ENV: 'development', TOWNWISE_SUPERADMIN_EMAILS: [] }).superadminEmails.size).toBe(0);
-    const resolved = resolveTownwiseConfig({ NODE_ENV: 'production', TOWNWISE_SUPERADMIN_EMAILS: ['staff@townwise.test'] });
+    const budget = { TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20 };
+    expect(() => resolveTownwiseConfig({ NODE_ENV: 'production', TOWNWISE_SUPERADMIN_EMAILS: [], ...budget })).toThrow(ConfigError);
+    expect(resolveTownwiseConfig({ NODE_ENV: 'development', TOWNWISE_SUPERADMIN_EMAILS: [], ...budget }).superadminEmails.size).toBe(0);
+    const resolved = resolveTownwiseConfig({ NODE_ENV: 'production', TOWNWISE_SUPERADMIN_EMAILS: ['staff@townwise.test'], ...budget });
     expect(resolved.superadminEmails.has('staff@townwise.test')).toBe(true);
+  });
+
+  it('reads the tuning chat budget in dollars, 20 by default, and refuses a value that is not a number from 0 to 10,000', () => {
+    const budget = (value: string | undefined): number =>
+      loadEnv(configSchema, { TOWNWISE_CHAT_MONTHLY_BUDGET_USD: value }).TOWNWISE_CHAT_MONTHLY_BUDGET_USD;
+    expect(budget(undefined)).toBe(20);
+    expect(budget('')).toBe(20);
+    expect(budget('35.5')).toBe(35.5);
+    expect(budget('0')).toBe(0);
+    for (const bad of ['-1', 'twenty', '10001']) expect(() => budget(bad)).toThrow(ConfigError);
   });
 });

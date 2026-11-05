@@ -45,6 +45,8 @@ test('the copy and its placeholders come through', async () => {
   expect(screen.getByText(/Two cookies keep you signed in\./)).toBeTruthy();
   expect(screen.getByText('__Host-refresh')).toBeTruthy();
   expect(screen.getByText('[OPERATOR LEGAL NAME]')).toBeTruthy();
+  expect(screen.getByText(/Anthropic receives the messages you send and the location data the assistant reads/)).toBeTruthy();
+  expect(screen.getByText('[DECISION NEEDED: how long Anthropic keeps chat data, and whether it may be used to train models]')).toBeTruthy();
 });
 
 test('links between pages work on native', async () => {

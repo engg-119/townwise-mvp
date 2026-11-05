@@ -15,6 +15,7 @@ export default function AppLayout(): React.JSX.Element {
     >
       <Stack.Screen name="dashboard" options={{ title: 'Townwise' }} />
       <Stack.Screen name="settings/security" options={{ title: 'Two-factor settings' }} />
+      <Stack.Screen name="locations/[locationId]/chat" options={{ title: 'Tuning chat' }} />
     </Stack>
   );
 }

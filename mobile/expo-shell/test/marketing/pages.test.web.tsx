@@ -213,6 +213,17 @@ test.each([
   expect(ids.filter((id, index) => ids.indexOf(id) !== index && /^h-|^pv-/.test(id))).toEqual([]);
 });
 
+test('Privacy names Anthropic as the tuning chat’s provider, with its retention and training wording undecided', () => {
+  renderAt('/privacy');
+  const items = within(screen.getByRole('region', { name: 'Who else sees it' })).getAllByRole('listitem');
+  const anthropic = items.find((item) => item.textContent.startsWith('Anthropic,'));
+  if (anthropic === undefined) throw new Error('no Anthropic item');
+  expect(anthropic.textContent).toContain('Anthropic receives the messages you send and the location data the assistant reads to answer them');
+  expect([...anthropic.querySelectorAll('.chip')].map((chip) => chip.textContent)).toEqual([
+    '[DECISION NEEDED: how long Anthropic keeps chat data, and whether it may be used to train models]',
+  ]);
+});
+
 test('About lists what we are building in the future tense, then what comes next, unnumbered', () => {
   renderAt('/about');
   const items = [...within(screen.getByRole('region', { name: 'What we’re building' })).getAllByRole('listitem')];

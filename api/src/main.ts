@@ -6,11 +6,14 @@ import { configSchema as redisSchema, createRedis } from '@ckeith26/redis';
 import { createRateLimiter, ipKey, rateLimit } from '@ckeith26/rate-limit';
 import { configSchema as authSchema, createAuth, createMongoAuthStores } from '@ckeith26/auth';
 import { createTownwiseApi } from './app.ts';
+import { createAnthropicChatModel } from './chat/model.ts';
 import { configSchema as townwiseSchema } from './config.ts';
 import { createSendMagicLink } from './email.ts';
 
-const config = loadEnv(z.object({
+// ANTHROPIC_API_KEY is optional: absent, the tuning chat is off. It goes no further than the model built here.
+const { ANTHROPIC_API_KEY, ...config } = loadEnv(z.object({
   ...serverSchema.shape, ...mongoSchema.shape, ...redisSchema.shape, ...authSchema.shape, ...townwiseSchema.shape,
+  ANTHROPIC_API_KEY: z.string().optional(),
 }), process.env);
 const logger = createLogger(config);
 const mongo = await connectMongo({ config, logger });
@@ -24,7 +27,8 @@ const auth = createAuth({
   stores: authStores,
   sendMagicLink: createSendMagicLink(config),
 });
-const api = createTownwiseApi({ config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now });
+const chat = ANTHROPIC_API_KEY === undefined ? undefined : createAnthropicChatModel(ANTHROPIC_API_KEY);
+const api = createTownwiseApi({ config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now, chat });
 await ensureIndexes(mongo.connection, { logger });   // after every store has registered its models
 await redis.ready(3000);                             // bounded; logs and continues on false
 const ceiling = createRateLimiter({ redis: redis.client, name: 'app:api-ceiling', limit: 2000, windowSeconds: 60 });
