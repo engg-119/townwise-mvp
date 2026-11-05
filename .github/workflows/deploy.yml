@@ -53,8 +53,8 @@ jobs:
         name: Add the Static Web Apps config (headers, single-page fallback) and pack
         run: |
           set -euo pipefail
-          cp infra/web/staticwebapp.config.json mobile/expo-shell/.expo-export/staticwebapp.config.json
-          tar -czf "$RUNNER_TEMP/web.tar.gz" -C mobile/expo-shell/.expo-export .
+          cp infra/web/staticwebapp.config.json client/.expo-export/staticwebapp.config.json
+          tar -czf "$RUNNER_TEMP/web.tar.gz" -C client/.expo-export .
           echo "sha256=$(sha256sum "$RUNNER_TEMP/web.tar.gz" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

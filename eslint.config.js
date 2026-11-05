@@ -40,7 +40,7 @@ export default defineConfig(
     },
   },
   {
-    files: ['mobile/**/*.{ts,tsx}'],
+    files: ['client/**/*.{ts,tsx}'],
     extends: [reactHooks.configs.flat.recommended],
     rules: {
       'no-restricted-syntax': ['error',
