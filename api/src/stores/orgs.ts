@@ -1,6 +1,8 @@
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, type Connection, type Model, type Types } from 'mongoose';
 
+import type { OrgScope } from '../access/policy.ts';
+
 export interface OrgFields {
   name: string;
   status: 'active' | 'suspended';
@@ -47,6 +49,14 @@ export interface OrgStore {
   insertFromRequest(input: {
     id: string; name: string; createdAt: Date; createdBy: string; fromRequestId: string;
   }): Promise<{ org: OrgRecord; inserted: boolean }>;
+  /** F10: a new active organization staff created directly, with no request. */
+  insertByStaff(input: { id: string; name: string; createdAt: Date; createdBy: string }): Promise<OrgRecord>;
+  /** Sets the name. Resolves the organization as it was before, or null when it is gone. */
+  rename(scope: OrgScope, name: string): Promise<OrgRecord | null>;
+  /** Suspends (setting suspendedAt) or reactivates (clearing it); false when the organization is gone. */
+  setStatus(scope: OrgScope, status: 'active' | 'suspended', now: Date): Promise<boolean>;
+  /** Deletion's last step (spec 10.7), so a retry still finds the organization until then. */
+  remove(scope: OrgScope): Promise<boolean>;
 }
 
 function toOrg(doc: OrgFields & { _id: Types.ObjectId }): OrgRecord {
@@ -94,6 +104,27 @@ export function createOrgStore(connection: Connection): OrgStore {
       const doc = await Org.findById(input.id).lean();
       if (doc === null) throw new Error('organization missing after its upsert');
       return { org: toOrg(doc), inserted };
+    },
+    async insertByStaff(input) {
+      const doc = await Org.create({
+        _id: input.id, name: input.name, status: 'active', createdAt: input.createdAt, createdBy: input.createdBy,
+        fromRequestId: null, suspendedAt: null,
+      });
+      return toOrg(doc.toObject());
+    },
+    async rename(scope, name) {
+      const doc = await Org.findOneAndUpdate({ _id: scope.orgId }, { $set: { name } }, { returnDocument: 'before' }).lean();
+      return doc === null ? null : toOrg(doc);
+    },
+    async setStatus(scope, status, now) {
+      const result = await Org.updateOne(
+        { _id: scope.orgId },
+        { $set: { status, suspendedAt: status === 'suspended' ? now : null } },
+      );
+      return result.matchedCount === 1;
+    },
+    async remove(scope) {
+      return (await Org.deleteOne({ _id: scope.orgId })).deletedCount === 1;
     },
   };
 }

@@ -87,9 +87,12 @@ export interface MemberStore {
   /** Which of these addresses this organization already has an open invitation for. */
   openInviteEmails(scope: OrgScope, emails: readonly string[]): Promise<Set<string>>;
   hasActiveSeat(scope: OrgScope, userId: string): Promise<boolean>;
-  /** An open invitation; null when this organization already has one for the address (the unique index). */
+  /**
+   * An open invitation; null when this organization already has one for the address (the unique index). `id` lets a
+   * staff handler name the row in its audit event before inserting it.
+   */
   insertInvite(scope: OrgScope, input: {
-    email: string; role: Role; invitedAt: Date; invitedBy: string; addedByStaff: boolean;
+    id?: string; email: string; role: Role; invitedAt: Date; invitedBy: string; addedByStaff: boolean;
   }): Promise<string | null>;
   /**
    * F3 step 8, the requester's admin seat. `exists` when this person already has a seat here, active or removed
@@ -102,10 +105,15 @@ export interface MemberStore {
   /** Compare-and-set on the current role; false when the row changed or is gone. */
   setRole(scope: OrgScope, memberId: string, from: Role, to: Role): Promise<boolean>;
   deleteInvite(scope: OrgScope, memberId: string): Promise<boolean>;
-  /** Compare-and-set from active to removed; unsets activeUserId. */
-  removeSeat(scope: OrgScope, memberId: string, input: { removedAt: Date; removedBy: string }): Promise<boolean>;
+  /**
+   * Compare-and-set from active to removed; unsets activeUserId. Resolves the role the seat had when it was removed,
+   * read in the same write, or null when the row is not an active seat.
+   */
+  removeSeat(scope: OrgScope, memberId: string, input: { removedAt: Date; removedBy: string }): Promise<Role | null>;
   /** Reverts removeSeat (the last-admin rule). */
   restoreSeat(scope: OrgScope, memberId: string, userId: string): Promise<void>;
+  /** Organization deletion: every row, invitations, seats and removed seats alike. Resolves the number deleted. */
+  removeForOrg(scope: OrgScope): Promise<number>;
 }
 
 /** Active members and open invitations: a fresh trusted operator for each query. */
@@ -155,6 +163,7 @@ export function createMemberStore(connection: Connection): MemberStore {
     async insertInvite(scope, input) {
       try {
         const doc = await Member.create({
+          ...(input.id === undefined ? {} : { _id: input.id }),
           orgId: scope.orgId, email: input.email, role: input.role, status: 'invited', inviteEmail: input.email,
           userId: null, invitedAt: input.invitedAt, invitedBy: input.invitedBy, addedByStaff: input.addedByStaff,
           joinedAt: null, removedAt: null, removedBy: null,
@@ -192,17 +201,21 @@ export function createMemberStore(connection: Connection): MemberStore {
       return result.deletedCount === 1;
     },
     async removeSeat(scope, memberId, input) {
-      const result = await Member.updateOne(
+      const before = await Member.findOneAndUpdate(
         { _id: memberId, orgId: scope.orgId, status: 'active' },
         { $set: { status: 'removed', removedAt: input.removedAt, removedBy: input.removedBy }, $unset: { activeUserId: '' } },
+        { returnDocument: 'before', lean: true },
       );
-      return result.modifiedCount === 1;
+      return before?.role ?? null;
     },
     async restoreSeat(scope, memberId, userId) {
       await Member.updateOne(
         { _id: memberId, orgId: scope.orgId, status: 'removed' },
         { $set: { status: 'active', activeUserId: userId, removedAt: null, removedBy: null } },
       );
+    },
+    async removeForOrg(scope) {
+      return (await Member.deleteMany({ orgId: scope.orgId })).deletedCount;
     },
   };
 }

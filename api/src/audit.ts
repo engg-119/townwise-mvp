@@ -156,3 +156,29 @@ export async function auditEventViews(ctx: TownwiseContext, events: readonly Aud
     };
   });
 }
+
+/** Spec 10.1: one row of an organization's Townwise staff activity, which its org admins read (D9). */
+export interface StaffActivityView {
+  at: string; staffEmail: string;
+  /** The plain-words summary, as in AuditEventView, without the “Didn’t take effect” suffix: `notApplied` carries it. */
+  summary: string;
+  /** view_as.started only. `endsAt` is the grant's scheduled end; an earlier end is its own view_as.ended row. */
+  viewAs: { targetEmail: string; reason: string; endsAt: string } | null;
+  /** A staff_action.not_applied event qualifies this one. */
+  notApplied: boolean;
+}
+
+/** Rows for staff events (actor role superadmin) on one organization, newest first as given. */
+export async function staffActivityViews(ctx: TownwiseContext, events: readonly AuditEventRecord[]): Promise<StaffActivityView[]> {
+  const qualifiers = await ctx.stores.audit.findNotApplied(events.map((event) => event.id));
+  const notApplied = new Set(qualifiers.map((event) => text(event.details.eventId)));
+  return events.map((event) => ({
+    at: event.at.toISOString(),
+    staffEmail: event.actorEmail,
+    summary: summaryOf(event.action, event.details),
+    viewAs: event.action === 'view_as.started'
+      ? { targetEmail: text(event.details.targetEmail), reason: text(event.details.reason), endsAt: text(event.details.expiresAt) }
+      : null,
+    notApplied: notApplied.has(event.id),
+  }));
+}

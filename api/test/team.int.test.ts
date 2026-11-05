@@ -83,16 +83,23 @@ async function activeAdmins(orgId: string): Promise<number> {
 
 /** Runs `change` just before the handler's next tw_members write, as a request racing it would land between its read and its write. */
 async function withChangeBeforeNextWrite(change: () => Promise<unknown>, run: () => Promise<void>): Promise<void> {
-  const model = server.connection.models.TwMember as unknown as { updateOne: (...args: unknown[]) => PromiseLike<unknown> };
-  const updateOne = model.updateOne.bind(model);
-  const spy = vi.spyOn(model, 'updateOne').mockImplementationOnce(async (...args: unknown[]) => {
-    await change();
-    return updateOne(...args);
+  type Write = (...args: unknown[]) => PromiseLike<unknown>;
+  const model = server.connection.models.TwMember as unknown as { updateOne: Write; findOneAndUpdate: Write };
+  let pending = true;
+  const spies = (['updateOne', 'findOneAndUpdate'] as const).map((method) => {
+    const write = model[method].bind(model);
+    return vi.spyOn(model, method).mockImplementation(async (...args: unknown[]) => {
+      if (pending) {
+        pending = false;
+        await change();
+      }
+      return write(...args);
+    });
   });
   try {
     await run();
   } finally {
-    spy.mockRestore();
+    for (const spy of spies) spy.mockRestore();
   }
 }
 

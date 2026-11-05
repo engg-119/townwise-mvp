@@ -8,11 +8,15 @@ type Role = 'org_admin' | 'member';
 
 const TOWN = { townId: 'hanover-nh', name: 'Hanover', state: 'NH' };
 
-export async function createOrg(server: Server, opts: { name: string; status?: 'active' | 'suspended' }): Promise<string> {
+export async function createOrg(
+  server: Server,
+  opts: { name: string; status?: 'active' | 'suspended'; fromRequestId?: string },
+): Promise<string> {
   const _id = new Types.ObjectId();
   await server.connection.collection('tw_orgs').insertOne({
     _id, name: opts.name, status: opts.status ?? 'active', createdAt: server.clock.now(), createdBy: 'fixture',
-    fromRequestId: null, suspendedAt: opts.status === 'suspended' ? server.clock.now() : null,
+    fromRequestId: opts.fromRequestId === undefined ? null : new Types.ObjectId(opts.fromRequestId),
+    suspendedAt: opts.status === 'suspended' ? server.clock.now() : null,
   });
   return _id.toHexString();
 }
@@ -179,4 +183,19 @@ export async function addConversation(
     turnCount: opts.turnCount ?? 1, liveTurn: null, createdAt: at, updatedAt: at,
   });
   return _id.toHexString();
+}
+
+/** A tw_chat_live_turns record: the person's one live tuning chat turn in the organization. */
+export async function addLiveTurn(server: Server, opts: { orgId: string; userId: string }): Promise<void> {
+  await server.connection.collection('tw_chat_live_turns').insertOne({
+    orgId: new Types.ObjectId(opts.orgId), userId: opts.userId, turnId: `turn-${new Types.ObjectId().toHexString()}`,
+    startedAt: server.clock.now(),
+  });
+}
+
+/** A tw_chat_usage record: the organization's tuning chat cost for one month. */
+export async function addChatUsage(server: Server, opts: { orgId: string; month: string; costMicroUsd: number }): Promise<void> {
+  await server.connection.collection('tw_chat_usage').insertOne({
+    orgId: new Types.ObjectId(opts.orgId), month: opts.month, costMicroUsd: opts.costMicroUsd, updatedAt: server.clock.now(),
+  });
 }

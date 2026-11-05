@@ -7,7 +7,7 @@ import { z } from 'zod';
 
 import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
-import type { MemberPrincipal, Principal } from '../access/policy.ts';
+import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import type { Role } from '../access/resolve.ts';
 import { normalizeEmail } from '../normalize-email.ts';
 import { currentEmail } from '../people.ts';
@@ -26,12 +26,13 @@ const MAX_EMAILS_PER_ADD = 20;
 const MAX_PEOPLE = 200;
 
 const roleSchema = z.enum(['org_admin', 'member']);
-const addBody = z.object({
+/** Also the staff console's team edits (spec 10.7: as 10.6). */
+export const addBody = z.object({
   emails: z.array(z.string().max(320)).min(1).max(MAX_EMAILS_PER_ADD),
   // [CONFIRM: role chosen at invite, default member]
   role: roleSchema.default('member'),
 });
-const roleBody = z.object({ role: roleSchema });
+export const roleBody = z.object({ role: roleSchema });
 
 function notFound(): AppError {
   return new AppError(404, 'not_found', 'Not found');
@@ -48,7 +49,7 @@ export function actorOf(principal: MemberPrincipal): Pick<AuditEventInput, 'acto
 }
 
 /** A seat shows the person's current kit email; an invitation shows the address that was added. */
-function emailOf(ctx: TownwiseContext, member: MemberRecord): Promise<string> {
+export function emailOf(ctx: TownwiseContext, member: MemberRecord): Promise<string> {
   return member.status === 'active' ? currentEmail(ctx, member.userId) : Promise.resolve(member.email);
 }
 
@@ -65,24 +66,24 @@ export async function memberView(ctx: TownwiseContext, member: MemberRecord, you
   };
 }
 
+/** The organization's active members and open invitations, as `you` sees them. */
+export async function teamView(ctx: TownwiseContext, scope: OrgScope, you: string): Promise<MemberView[]> {
+  const members = await ctx.stores.members.list(scope);
+  return Promise.all(members.map((member) => memberView(ctx, member, you)));
+}
+
 async function teamOf(ctx: TownwiseContext, principal: MemberPrincipal): Promise<MemberView[]> {
-  const members = await ctx.stores.members.list(principal.scope);
-  return Promise.all(members.map((member) => memberView(ctx, member, principal.userId)));
+  return teamView(ctx, principal.scope, principal.userId);
 }
 
-export async function listMembers(ctx: TownwiseContext, _req: Request, res: Response, principal: Principal): Promise<void> {
-  res.status(200).json({ members: await teamOf(ctx, orgAdmin(principal)) });
-}
-
-/** F5. Each address gets one outcome, and no outcome depends on any other organization. */
-export async function addMembers(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
-  const caller = orgAdmin(principal);
-  const { scope } = caller;
-  const body = parseInput(addBody, req.body);
-
+/**
+ * F5 step 2: one outcome per address, normalized like the kit, duplicates collapsed. `invited` here means the address
+ * is new to this organization; no outcome depends on any other organization.
+ */
+export async function addOutcomes(ctx: TownwiseContext, scope: OrgScope, emails: readonly string[]): Promise<AddResult[]> {
   const results: AddResult[] = [];
   const seen = new Set<string>();
-  for (const raw of body.emails) {
+  for (const raw of emails) {
     const email = normalizeEmail(raw);
     const shown = email ?? raw.trim();
     if (seen.has(shown)) continue;
@@ -97,11 +98,28 @@ export async function addMembers(ctx: TownwiseContext, req: Request, res: Respon
     if (user !== null && await ctx.stores.members.hasActiveSeat(scope, user.id)) result.outcome = 'already_member';
     else if (open.has(result.email)) result.outcome = 'already_invited';
   }
+  return results;
+}
 
-  const fresh = results.filter((r) => r.outcome === 'invited');
-  if (fresh.length > 0 && (await ctx.stores.members.countSeats(scope)) + fresh.length > MAX_PEOPLE) {
+/** The 200-person cap, active plus invited, for `adding` new invitations (409 member_limit). */
+export async function assertRoomFor(ctx: TownwiseContext, scope: OrgScope, adding: number): Promise<void> {
+  if (adding > 0 && (await ctx.stores.members.countSeats(scope)) + adding > MAX_PEOPLE) {
     throw new AppError(409, 'member_limit', 'The organization has reached its people limit');
   }
+}
+
+export async function listMembers(ctx: TownwiseContext, _req: Request, res: Response, principal: Principal): Promise<void> {
+  res.status(200).json({ members: await teamOf(ctx, orgAdmin(principal)) });
+}
+
+/** F5. Each address gets one outcome, and no outcome depends on any other organization. */
+export async function addMembers(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const caller = orgAdmin(principal);
+  const { scope } = caller;
+  const body = parseInput(addBody, req.body);
+  const results = await addOutcomes(ctx, scope, body.emails);
+  const fresh = results.filter((r) => r.outcome === 'invited');
+  await assertRoomFor(ctx, scope, fresh.length);
   const now = ctx.now();
   for (const result of fresh) {
     const memberId = await ctx.stores.members.insertInvite(scope, {
@@ -165,7 +183,7 @@ export async function removeMember(ctx: TownwiseContext, req: Request, res: Resp
   if (member.status === 'invited') {
     if (!(await ctx.stores.members.deleteInvite(scope, memberId))) throw notFound();
   } else {
-    if (!(await ctx.stores.members.removeSeat(scope, memberId, { removedAt: now, removedBy: caller.userId }))) throw notFound();
+    if (await ctx.stores.members.removeSeat(scope, memberId, { removedAt: now, removedBy: caller.userId }) === null) throw notFound();
     if (await ctx.stores.members.countActiveAdmins(scope) === 0) {
       await ctx.stores.members.restoreSeat(scope, memberId, member.userId);
       throw new AppError(409, 'last_admin', 'The organization needs at least one admin');

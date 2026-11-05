@@ -96,6 +96,8 @@ export interface SalesDayStore {
   hasAny(scope: OrgScope, locationId: string): Promise<boolean>;
   /** Resolves the number of days deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
+  /** Organization deletion (spec 10.7). Resolves the number deleted. */
+  removeForOrg(scope: OrgScope): Promise<number>;
 }
 
 export function createSalesDayStore(connection: Connection): SalesDayStore {
@@ -188,6 +190,9 @@ export function createSalesDayStore(connection: Connection): SalesDayStore {
     },
     async removeForLocation(scope, locationId) {
       return (await SalesDay.deleteMany(ofLocation(scope, locationId))).deletedCount;
+    },
+    async removeForOrg(scope) {
+      return (await SalesDay.deleteMany({ orgId: new Types.ObjectId(scope.orgId) })).deletedCount;
     },
   };
 }
