@@ -568,6 +568,8 @@ test('the story CSS: the panel shares the pinned map’s box, centered, in px; p
   expect(storyCss).toContain('.twmap .story.is-on .st-tl{display:grid;align-content:center;grid-column:1;grid-row:1 / span 16;align-self:start;position:sticky;top:var(--story-top,16px);height:calc(var(--story-mh,600px) + var(--story-ex,150px));pointer-events:none;opacity:0;transition:opacity 200ms var(--eo)}');
   expect(storyCss).toContain('.twmap .story.is-on.is-months .st-tl{opacity:1}');
   expect(storyCss).toContain('.twmap .story.is-on .st-f{min-height:720px}');
+  // Flat and wide, the month panel sits under the title's actions with room between them.
+  expect(storyCss).toContain('.twmap .story.is-flat .st-tl{display:block;grid-column:1;grid-row:2;align-self:end;padding-top:40px}');
   expect(storyCss).toContain('.twmap .story.is-on .story-pin{position:sticky;top:0;padding-top:8px;background:var(--ground)}');
   expect(storyCss).toContain('@media (prefers-reduced-motion:reduce){.twmap .tl-fill,.twmap .tl-cur,.twmap .app.is-sm .dot{transition:none}.twmap .tl-m.tl-a,.twmap .tl-m.tl-b,.twmap .tl-line.tl-a,.twmap .tl-line.tl-b,.twmap .ptl-m.tl-a,.twmap .ptl-m.tl-b{animation:none}');
   expect(storyCss).not.toMatch(/\d(?:vh|svh|dvh|lvh)\b|scroll-snap/);

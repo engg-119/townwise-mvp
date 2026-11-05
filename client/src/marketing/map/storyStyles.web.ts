@@ -3,7 +3,8 @@
 // scroll container in px (--story-mw, --story-mh, --story-top, and --story-ex for the legend and caption under it).
 
 // The skeleton. Frame A has no box: the map sits on the page ground. Steps are invisible slots; the one alone
-// in the band sets the map. Flat (no observer): one map at the rest month, the step texts in a row under it.
+// in the band sets the map. Flat (no observer): one map at the rest month, the step texts in a row under it; from
+// 1024px the title and its actions, then the month panel 40px under them, beside the map.
 const skeleton = `
 .twmap .app.app-a{border:0;border-radius:0;background:transparent;overflow:visible}
 .twmap .app-a .map-box{background:transparent}
@@ -18,7 +19,7 @@ const skeleton = `
 .twmap .st-c p{color:var(--text2);text-wrap:pretty}
 .twmap .story.is-flat .story-steps{display:grid;gap:24px;padding-top:32px}
 .twmap .st-tl,.twmap .pin-tl{display:none}
-@media (min-width:1024px){.twmap .story.is-flat{grid-template-columns:minmax(0,1fr) var(--story-mw,60%)}.twmap .story.is-flat .st-h{grid-column:1;grid-row:1;align-self:start}.twmap .story.is-flat .st-tl{display:block;grid-column:1;grid-row:2;align-self:end}.twmap .story.is-flat .tl-rail ol{line-height:40px}.twmap .story.is-flat .story-pin{grid-column:2;grid-row:1 / 3}.twmap .story.is-flat .story-steps{grid-column:1 / -1;grid-row:3;grid-template-columns:repeat(3,minmax(0,1fr));column-gap:40px}}
+@media (min-width:1024px){.twmap .story.is-flat{grid-template-columns:minmax(0,1fr) var(--story-mw,60%)}.twmap .story.is-flat .st-h{grid-column:1;grid-row:1;align-self:start}.twmap .story.is-flat .st-tl{display:block;grid-column:1;grid-row:2;align-self:end;padding-top:40px}.twmap .story.is-flat .tl-rail ol{line-height:40px}.twmap .story.is-flat .story-pin{grid-column:2;grid-row:1 / 3}.twmap .story.is-flat .story-steps{grid-column:1 / -1;grid-row:3;grid-template-columns:repeat(3,minmax(0,1fr));column-gap:40px}}
 .twmap .story.is-on .st-m{display:block;min-height:200px}
 .twmap .story.is-on .st-t{display:grid;align-content:center;min-height:560px}
 .twmap .story.is-on .st-f{min-height:640px}
