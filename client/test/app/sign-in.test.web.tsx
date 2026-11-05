@@ -71,11 +71,11 @@ test('one Continue with Google button, links to the terms and privacy pages, and
   expect(within(card).getByRole('link', { name: 'Privacy Policy' }).getAttribute('href')).toBe('/privacy');
   for (const link of screen.getAllByRole('link', { name: 'Townwise' })) expect(link.getAttribute('href')).toBe('/');
   // /request-access would send a signed-out visitor straight back here, so the sign-in section has no early-access
-  // link (the site header and footer keep theirs); the note under the card stays.
+  // link (the site header and footer keep theirs); the note under the card is spec P1's line.
   const page = document.querySelector<HTMLElement>('.pg-signin');
   if (page === null) throw new Error('no sign-in section');
   expect(within(page).queryByRole('link', { name: 'Request early access' })).toBeNull();
-  expect(within(page).getByText('Townwise is in development. No forecasts are for sale yet.')).toBeTruthy();
+  expect(within(page).getByText('New to Townwise? Continue with Google, then tell us about your restaurant. Joining your team? Use the email address your admin added.')).toBeTruthy();
   expect(document.querySelector('input, textarea')).toBeNull();
   expect(screen.queryByRole('button')).toBeNull();
   expect(screen.queryByText(/sign up/i)).toBeNull();

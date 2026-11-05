@@ -44,10 +44,10 @@ test('one Continue with Google button, links to the terms and privacy pages, and
   expect(screen.getByRole('link', { name: 'Terms' }).props.href).toBe('/terms');
   expect(screen.getByRole('link', { name: 'Privacy Policy' }).props.href).toBe('/privacy');
   // /request-access would send a signed-out visitor straight back here, so the page has no early-access link; the
-  // note under the card stays.
+  // note under the card is spec P1's line for new people and teammates.
   expect(screen.queryByRole('link', { name: 'Request early access' })).toBeNull();
   expect(screen.queryByText('Request early access')).toBeNull();
-  expect(screen.getByText('Townwise is in development. No forecasts are for sale yet.')).toBeTruthy();
+  expect(screen.queryByText('Townwise is in development. No forecasts are for sale yet.')).toBeNull();
   expect(view.container.queryAll((instance) => instance.type === 'TextInput')).toHaveLength(0);
   expect(screen.queryByLabelText('Email')).toBeNull();
   expect(screen.queryByText(/sign up/i)).toBeNull();
