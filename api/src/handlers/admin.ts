@@ -10,10 +10,10 @@ import { Types } from 'mongoose';
 import { z } from 'zod';
 
 import {
-  applyRecorded, applyRecordedAll, auditEventViews, recordAfter, recordAllBefore, recordBefore, recordNotApplied,
+  applyRecorded, applyRecordedAll, auditEventViews, recordAfter, recordAllBefore, recordBefore, recordNotApplied, type Recorded,
 } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
-import { scopeForNewOrg, scopeForStaffOrg, type Principal, type StaffPrincipal } from '../access/policy.ts';
+import { scopeForNewOrg, scopeForStaffOrg, type OrgScope, type Principal, type StaffPrincipal } from '../access/policy.ts';
 import { requestView, type AccessRequestView } from '../access/resolve.ts';
 import { normalizeEmail } from '../normalize-email.ts';
 import { currentEmail } from '../people.ts';
@@ -84,7 +84,26 @@ export async function listRequests(ctx: TownwiseContext, req: Request, res: Resp
   res.status(200).json({ requests, pendingCount: await ctx.stores.requests.countPending() });
 }
 
-/** F3. A request already approved with an organization skips to step 6, so a retry completes the work. */
+/**
+ * Takes back the seat an approval gave a person whose request was deleted meanwhile (person deletion), and, when
+ * nobody else is in it, the organization and first location made only for that request, with their names in the
+ * audit log, as organization deletion does.
+ */
+async function undoApproval(ctx: TownwiseContext, scope: OrgScope, requestId: string, seatId: string): Promise<void> {
+  const { stores } = ctx;
+  await stores.members.deleteSeat(scope, seatId);
+  if (await stores.members.countSeats(scope) > 0) return;
+  await stores.locations.removeForOrg(scope);
+  await stores.audit.redact({ kind: 'org', orgId: scope.orgId, requestId });
+  await stores.orgs.removeFromRequest(scope, requestId);
+}
+
+/**
+ * F3. A request already approved with an organization skips to step 6, so a retry completes the work. After it seats
+ * the requester, it reads the request again: person deletion deletes the request before its own second check for a
+ * seat, so a request gone now means a seat given after that check, which is taken back (undoApproval) before
+ * member.joined is written, and the answer is 404, recorded as not applied.
+ */
 export async function approveRequest(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const staff = staffOf(principal);
   const requestId = parseInput(objectId, req.params.requestId);
@@ -97,6 +116,7 @@ export async function approveRequest(ctx: TownwiseContext, req: Request, res: Re
   const now = ctx.now();
 
   let orgId = request.orgId;
+  let approval: Recorded | null = null;
   if (request.status !== 'approved' || orgId === null) {
     if (request.status !== 'pending') throw new AppError(409, 'request_not_pending', 'The request was already decided');
     if (await findActiveSeat(ctx.connection, request.userId) !== null) {
@@ -114,6 +134,7 @@ export async function approveRequest(ctx: TownwiseContext, req: Request, res: Re
       await recordNotApplied(ctx, event, eventId, 'request_not_pending');
       throw new AppError(409, 'request_not_pending', 'The request was already decided');
     }
+    approval = { event, eventId };
   }
 
   // Follow-on records are written after their steps, as client events are (spec 9.3).
@@ -150,6 +171,11 @@ export async function approveRequest(ctx: TownwiseContext, req: Request, res: Re
     throw new AppError(409, 'requester_has_org', 'The requester already belongs to an organization');
   }
   if (seat.kind === 'inserted') {
+    if (await ctx.stores.requests.findById(requestId) === null) {
+      await undoApproval(ctx, scope, requestId, seat.id);
+      if (approval !== null) await recordNotApplied(ctx, approval.event, approval.eventId, 'not_found');
+      throw notFound();
+    }
     await recordAfter(ctx, {
       ...actor, at: now, orgId, action: 'member.joined',
       target: { type: 'member', id: seat.id },
@@ -249,11 +275,14 @@ const createOrgBody = z.object({ name: orgName, adminEmail: z.string().max(320),
 const updateOrgBody = z.object({ name: orgName.optional(), status: z.enum(['active', 'suspended']).optional() })
   .refine((body) => body.name !== undefined || body.status !== undefined);
 
+function idTaken(): AppError {
+  return new AppError(409, 'conflict', 'Another organization already has this id');
+}
+
 /**
  * POST /api/admin/orgs { name, adminEmail, id? } (F10): the organization and an org admin invitation added by staff. No
- * location: the admin's first page asks for one. With `id`, a repeat finds the organization it made: it answers 200
- * with that organization, writes no second org.created, and adds the admin invitation only when the address has no
- * invitation or seat there yet, so a retry completes a create that stopped before it.
+ * location: the admin's first page asks for one. With `id`, a repeat of this request answers 200 with the organization
+ * it made and writes no second org.created (repeatCreate); any other organization with that id is 409 conflict.
  * [CONFIRM: staff can create organizations without a request]
  */
 export async function createOrg(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
@@ -286,22 +315,52 @@ export async function createOrg(ctx: TownwiseContext, req: Request, res: Respons
     }
   }
   const scope = scopeForNewOrg(staff, org.id);
-  const result: AddResult = { email: adminEmail, outcome: 'already_member' };
-  const user = await ctx.authStores.users.findByEmail(adminEmail);
-  if (user === null || !(await ctx.stores.members.hasActiveSeat(scope, user.id))) {
-    const memberId = await ctx.stores.members.insertInvite(scope, {
-      email: adminEmail, role: 'org_admin', invitedAt: now, invitedBy: staff.actor.userId, addedByStaff: true,
-    });
-    result.outcome = memberId === null ? 'already_invited' : 'invited';
-    if (memberId !== null) {
-      await recordAfter(ctx, {
-        ...actor, at: now, orgId: org.id, action: 'member.invited',
-        target: { type: 'member', id: memberId },
-        details: { email: adminEmail, role: 'org_admin' },
-      });
-    }
+  if (!created) {
+    const outcome = await repeatCreate(ctx, staff, scope, org, { name: body.name, adminEmail });
+    res.status(200).json({ org: { id: org.id, name: org.name }, result: { email: adminEmail, outcome } });
+    return;
   }
-  res.status(created ? 201 : 200).json({ org: { id: org.id, name: org.name }, result });
+  const memberId = await ctx.stores.members.insertInvite(scope, {
+    email: adminEmail, role: 'org_admin', invitedAt: now, invitedBy: staff.actor.userId, addedByStaff: true,
+  });
+  if (memberId !== null) {
+    await recordAfter(ctx, {
+      ...actor, at: now, orgId, action: 'member.invited',
+      target: { type: 'member', id: memberId },
+      details: { email: adminEmail, role: 'org_admin' },
+    });
+  }
+  const result: AddResult = { email: adminEmail, outcome: memberId === null ? 'already_invited' : 'invited' };
+  res.status(201).json({ org: { id: org.id, name: org.name }, result });
+}
+
+/**
+ * A repeat of POST /api/admin/orgs: only of an active organization this route made (no request) with the same name,
+ * whose admin address is the one sent, or which has nobody yet. Otherwise 409 conflict. It adds nothing, except the
+ * admin invitation when the organization has nobody yet (a create that stopped before it), recorded before its
+ * insert as the console's team adds are. Resolves the admin address's outcome.
+ */
+async function repeatCreate(
+  ctx: TownwiseContext, staff: StaffPrincipal, scope: OrgScope, org: OrgRecord, sent: { name: string; adminEmail: string },
+): Promise<AddResult['outcome']> {
+  if (org.fromRequestId !== null || org.status !== 'active' || org.name !== sent.name) throw idTaken();
+  const people = await ctx.stores.members.list(scope);
+  const admin = people.find((row) => row.email === sent.adminEmail);
+  if (admin !== undefined) return admin.status === 'active' ? 'already_member' : 'already_invited';
+  if (people.length > 0) throw idTaken();
+  const id = new Types.ObjectId().toHexString();
+  const event: AuditEventInput = {
+    ...actorOf(staff), at: ctx.now(), orgId: scope.orgId, action: 'member.invited',
+    target: { type: 'member', id },
+    details: { email: sent.adminEmail, role: 'org_admin' },
+  };
+  const eventId = await recordBefore(ctx, event);
+  const [inserted] = await applyRecorded(ctx, event, eventId, () => ctx.stores.members.insertInvites(scope, [{
+    id, email: sent.adminEmail, role: 'org_admin', invitedAt: event.at, invitedBy: staff.actor.userId, addedByStaff: true,
+  }]));
+  if (inserted === true) return 'invited';
+  await recordNotApplied(ctx, event, eventId, 'already_invited');   // a concurrent repeat got there first
+  return 'already_invited';
 }
 
 /**

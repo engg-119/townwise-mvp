@@ -118,9 +118,9 @@ describe('a demotion and a removal of the sole admin, interleaved at their recou
         expect(await errorOf(demoted)).toEqual({ status: 409, error: 'last_admin' });
         expect(await errorOf(removed)).toEqual({ status: 409, error: 'last_admin' });
         expect(await activeAdmins(admin.orgId)).toBe(1);
-        expect(await memberDoc(server, admin.seat)).toMatchObject({
-          status: 'active', role: 'org_admin', activeUserId: admin.session.userId, removedAt: null, removedBy: null,
-        });
+        const doc = await memberDoc(server, admin.seat);
+        expect(doc).toMatchObject({ status: 'active', role: 'org_admin', activeUserId: admin.session.userId, removedAt: null, removedBy: null });
+        expect(doc).not.toHaveProperty('demotingSince');
         // Client actions record nothing that did not happen; each staff event is followed by not_applied last_admin.
         const expected: unknown[][] = [];
         if (demotion.byStaff) expected.push(['member.role_changed', null], ['staff_action.not_applied', 'last_admin']);
@@ -129,6 +129,24 @@ describe('a demotion and a removal of the sole admin, interleaved at their recou
       });
     }
   }
+});
+
+describe('the demotion mark', () => {
+  it('a demotion that stands, and one of an invitation, leave no mark, so the demoted member later leaves without a recount', async () => {
+    const admin = await soleAdmin('Marked Then Cleared Org');
+    const second = `second-${randomUUID().slice(0, 8)}@example.test`;
+    const secondSession = await signIn(server, second);
+    const secondSeat = await addSeat(server, { orgId: admin.orgId, userId: secondSession.userId, email: second, role: 'org_admin' });
+    const inviteId = await addInvite(server, { orgId: admin.orgId, email: 'future@example.test', invitedBy: 'f'.repeat(24), role: 'org_admin' });
+    for (const id of [secondSeat, inviteId]) {
+      expect((await call(server, `/api/org/members/${id}`, { method: 'PATCH', session: admin.session, json: { role: 'member' } })).status).toBe(200);
+      expect(await memberDoc(server, id)).toMatchObject({ role: 'member' });
+      expect(await memberDoc(server, id)).not.toHaveProperty('demotingSince');
+    }
+    // With no mark and the member role, leaving doesn't recount: an organization whose only admin is away keeps no one in.
+    await server.connection.collection('tw_members').updateOne({ _id: new Types.ObjectId(admin.seat) }, { $set: { role: 'member' } });
+    expect((await call(server, '/api/org/leave', { session: secondSession, json: {} })).status).toBe(200);
+  });
 });
 
 describe('a seat that can’t be put back because the person joined another organization meanwhile', () => {

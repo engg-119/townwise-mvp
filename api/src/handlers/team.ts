@@ -144,36 +144,45 @@ export function lastAdmin(): AppError {
 
 /**
  * F6 change role, for org admins and staff alike: change, recount, revert, so the organization never ends with no
- * active admin. Only a demotion of what was an active seat at the write recounts (the status read before it can be
- * stale either way): an invitation's role takes no active admin away. The revert matches the row by the role it set,
- * whatever its status, so a seat removed meanwhile gets its admin role back, and that removal's own recount, which
- * finds no active admin, puts the seat back.
+ * active admin. A demotion from org_admin marks the row (demotingSince) in the same write and clears the mark when it
+ * ends, so a removal racing it recounts too (removeActiveSeat). Only a demotion of what was an active seat at the
+ * write recounts (the status read before it can be stale either way): an invitation's role takes no active admin
+ * away. The revert matches the row by the role it set, whatever its status, so a seat removed meanwhile gets its
+ * admin role back, and that removal's own recount, which finds no active admin, puts the seat back.
  */
 export async function changeActiveRole(
   ctx: TownwiseContext, scope: OrgScope, memberId: string, from: Role, to: Role,
 ): Promise<'changed' | 'conflict' | 'last_admin'> {
   const { members } = ctx.stores;
-  const status = await members.setRole(scope, memberId, from, to);
+  const since = ctx.now();
+  const status = await members.setRole(scope, memberId, from, to, since);
   if (status === null) return 'conflict';
-  if (from !== 'org_admin' || status !== 'active' || await members.countActiveAdmins(scope) > 0) return 'changed';
-  await members.revertRole(scope, memberId, to, from);
-  return 'last_admin';
+  if (from !== 'org_admin') return 'changed';
+  if (status === 'active' && await members.countActiveAdmins(scope) === 0) {
+    await members.revertRole(scope, memberId, to, from);
+    return 'last_admin';
+  }
+  await members.endDemotion(scope, memberId, since);
+  return 'changed';
 }
 
 export type SeatRemoval = { readonly kind: 'removed'; readonly role: Role } | { readonly kind: 'not_found' | 'last_admin' };
 
 /**
- * F6 remove and F7 leave, for org admins, staff and the person alike: remove, recount, restore. Every removal
- * recounts, whatever role the seat had, because a demotion racing it may have just taken that seat's admin role and
- * will give it back; so an organization with no active admin keeps its people until it has one. A seat that can't be
- * put back, because the person took a seat in another organization meanwhile, stays removed: that removal happened.
+ * F6 remove and F7 leave, for org admins, staff and the person alike: remove, recount, restore. A removal recounts
+ * when the seat was an org admin, or was being demoted (its admin role taken a moment ago by a demotion that may
+ * still give it back), read in the same write as the removal. So a member of an organization with no active admin
+ * yet can still leave, and be removed. A seat that can't be put back, because the person took a seat in another
+ * organization meanwhile, stays removed: that removal happened.
  */
 export async function removeActiveSeat(
   ctx: TownwiseContext, scope: OrgScope, memberId: string, userId: string, input: { removedAt: Date; removedBy: string },
 ): Promise<SeatRemoval> {
   const { members } = ctx.stores;
-  const role = await members.removeSeat(scope, memberId, input);
-  if (role === null) return { kind: 'not_found' };
+  const removed = await members.removeSeat(scope, memberId, input);
+  if (removed === null) return { kind: 'not_found' };
+  const { role } = removed;
+  if (role !== 'org_admin' && !removed.demoting) return { kind: 'removed', role };
   if (await members.countActiveAdmins(scope) > 0 || !(await members.restoreSeat(scope, memberId, userId))) return { kind: 'removed', role };
   return { kind: 'last_admin' };
 }

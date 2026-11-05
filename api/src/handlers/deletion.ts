@@ -54,8 +54,11 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     const redactedEvents = await stores.audit.redact({ kind: 'org', orgId: scope.orgId, requestId: org.fromRequestId });
     // A row still there after a failed removal was reactivated; a missing one was deleted by a concurrent retry.
     if (!(await stores.orgs.remove(scope)) && (await stores.orgs.findById(scope.orgId)) !== null) return null;
-    // An upload or tuning chat turn in flight when the first sweep ran can upsert after it; with the organization
-    // gone, no new one starts, so a second sweep leaves nothing behind.
+    // With the row gone no new request starts, so this second sweep catches sales days and chat usage that requests
+    // already running wrote after the first. It narrows the gap, not closes it: a tuning chat turn started before the
+    // suspension can still add chat usage for up to 150 seconds (its time limit), an upload still running can write
+    // days after this sweep, and its tw_uploads row, if written after the first sweep, is never swept. Those rows
+    // carry only the deleted organization's id.
     const lateDays = await stores.salesDays.removeForOrg(scope);
     await stores.chatUsage.removeForOrg(scope);
     return { deletedDays: firstDays + lateDays, deletedUploads, deletedNotes, deletedLocations, deletedSeats, redactedEvents };
@@ -69,9 +72,12 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
 
 /**
  * POST /api/admin/people/delete { email }: a person with no active seat (409 person_has_seat; staff remove the seat
- * first, and the last-admin rule applies there). A seat taken while the deletion runs (a join, an approval) is found
- * by a second check after the records are deleted, and the answer is then 409 person_has_seat, recorded as not
- * applied, before any session is revoked or event redacted, so the kit user is never deleted under a seat. 404 when the
+ * first, and the last-admin rule applies there). A seat taken while the deletion runs, by a join or an approval, before
+ * a second check after the records are deleted is found by it, and the answer is then 409 person_has_seat, recorded as
+ * not applied, before any session is revoked or event redacted. After that check, an approval that seats the person
+ * reads the request again, finds it deleted here, and takes the seat back (approveRequest); a join needs an
+ * invitation, and this deleted theirs, so only one added afterwards can seat them, which the runbook's check before
+ * the kit user is deleted catches (api/README.md). 404 when the
  * address has no kit user and Townwise holds nothing for it, audit events included, since the audit log keeps an
  * address until its person is deleted (spec 17). Notes and uploads the person wrote stay with their organization.
  * Until the kit user record is deleted by hand, the person can still continue with Google, and resolves to no_org.

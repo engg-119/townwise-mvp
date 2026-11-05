@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import type { StaffActivityView } from '../src/audit.ts';
 import type { MeResponse } from '../src/handlers/me.ts';
 import { AUDIT_DETAIL_KEYS, type AuditAction } from '../src/stores/audit-events.ts';
-import { addAuditEvent, addGrant, addSeat, auditEvents, createOrg, memberDoc } from './helpers/fixtures.ts';
+import { addAuditEvent, addGrant, addInvite, addSeat, auditEvents, createOrg, memberDoc } from './helpers/fixtures.ts';
 import { holdCalls } from './helpers/hold.ts';
 import {
   call, logLines, removeStaffFactor, signIn, signInStaff, startTownwiseServer, STAFF_EMAIL, writesDuring,
@@ -215,14 +215,16 @@ describe('POST /api/org/leave (F7)', () => {
       .toEqual([member.session.userId]);
   });
 
-  it('a member can’t leave an organization that has no active admin yet: 409 last_admin, and the seat stays', async () => {
+  it('a member may leave an organization that has no active admin yet (its admin invitation still pending)', async () => {
     const orgId = await createOrg(server, { name: 'No Admin Yet Bakery' });
+    await addInvite(server, { orgId, email: uniqueEmail('future-admin'), invitedBy: 'f'.repeat(24), role: 'org_admin', addedByStaff: true });
     const member = await person('adminless');
     const seat = await addSeat(server, { orgId, userId: member.session.userId, email: member.email });
-    expect(await errorOf(await leave(member.session))).toEqual({ status: 409, error: 'last_admin' });
-    expect(await memberDoc(server, seat)).toMatchObject({ status: 'active', activeUserId: member.session.userId });
-    expect((await me(member.session)).access).toMatchObject({ state: 'member', role: 'member' });
-    expect((await eventsIn(orgId)).filter((event) => event.action === 'member.left')).toEqual([]);
+    expect((await leave(member.session)).status).toBe(200);
+    expect(await memberDoc(server, seat)).toMatchObject({ status: 'removed', removedBy: member.session.userId });
+    expect((await me(member.session)).access).toMatchObject({ state: 'removed', byYou: true });
+    expect((await eventsIn(orgId)).filter((event) => event.action === 'member.left').map((event) => event.actorUserId))
+      .toEqual([member.session.userId]);
   });
 
   it('refuses a body that carries anything, with 400, and the seat stays', async () => {

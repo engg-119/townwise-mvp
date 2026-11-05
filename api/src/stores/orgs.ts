@@ -63,6 +63,8 @@ export interface OrgStore {
    * false when it was reactivated, or is already gone.
    */
   remove(scope: OrgScope): Promise<boolean>;
+  /** Deletes the organization an approval made from this request (fromRequestId), whatever its status. */
+  removeFromRequest(scope: OrgScope, requestId: string): Promise<boolean>;
 }
 
 function toOrg(doc: OrgFields & { _id: Types.ObjectId }): OrgRecord {
@@ -139,6 +141,9 @@ export function createOrgStore(connection: Connection): OrgStore {
     },
     async remove(scope) {
       return (await Org.deleteOne({ _id: scope.orgId, status: 'suspended' })).deletedCount === 1;
+    },
+    async removeFromRequest(scope, requestId) {
+      return (await Org.deleteOne({ _id: scope.orgId, fromRequestId: requestId })).deletedCount === 1;
     },
   };
 }

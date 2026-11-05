@@ -195,6 +195,37 @@ describe('POST /api/admin/orgs (F10)', () => {
     expect(await errorOf(await createOrgCall({ id: 'not-an-id', name: 'Once Only Cafe', adminEmail }))).toEqual({ status: 400, error: 'invalid_request' });
   });
 
+  it('an id naming any other organization is 409 conflict and writes nothing: another name or admin, made from a request, or suspended', async () => {
+    const id = new Types.ObjectId().toHexString();
+    const adminEmail = uniqueEmail('first-admin');
+    expect((await createOrgCall({ id, name: 'Taken Id Cafe', adminEmail })).status).toBe(201);
+    const fromRequest = await createOrg(server, { name: 'Requested Cafe', fromRequestId: new Types.ObjectId().toHexString() });
+    const suspended = await createOrg(server, { name: 'Paused Id Cafe', status: 'suspended' });
+    const before = await snapshot();
+    for (const body of [
+      { id, name: 'Another Name Cafe', adminEmail }, { id, name: 'Taken Id Cafe', adminEmail: uniqueEmail('other-admin') },
+      { id: fromRequest, name: 'Requested Cafe', adminEmail }, { id: suspended, name: 'Paused Id Cafe', adminEmail },
+    ]) {
+      expect(await errorOf(await createOrgCall(body))).toEqual({ status: 409, error: 'conflict' });
+    }
+    expect(await snapshot()).toBe(before);
+  });
+
+  it('a repeat of a create that stopped before its invitation adds it, recorded before the insert', async () => {
+    const id = await createOrg(server, { name: 'Stopped Create Cafe' });
+    const adminEmail = uniqueEmail('late-admin');
+    let res: Response | undefined;
+    const writes = await writesDuring(server, async () => { res = await createOrgCall({ id, name: 'Stopped Create Cafe', adminEmail }); });
+    expect(res?.status).toBe(200);
+    expect(await res?.json()).toEqual({ org: { id, name: 'Stopped Create Cafe' }, result: { email: adminEmail, outcome: 'invited' } });
+    expect(writes).toEqual(['insert tw_audit_events', 'insert tw_members']);
+    const invite = await server.connection.collection('tw_members').findOne({ orgId: new Types.ObjectId(id) });
+    expect(invite).toMatchObject({ email: adminEmail, role: 'org_admin', status: 'invited', addedByStaff: true, invitedBy: staff.userId });
+    expect((await eventsIn(id)).map((event) => [event.action, event.actorRole, (event.target as { id: string }).id])).toEqual([
+      ['member.invited', 'superadmin', String(invite?._id)],
+    ]);
+  });
+
   it('a repeat that races the first past its check makes one organization; the loser’s org.created is followed by not_applied conflict', async () => {
     const id = new Types.ObjectId().toHexString();
     const adminEmail = uniqueEmail('raced-admin');
@@ -490,15 +521,14 @@ describe('staff team edits (F5, F6 from the console)', () => {
     ]);
   });
 
-  it('can’t remove a member from an organization that has no active admin yet: 409 last_admin, and the seat is restored', async () => {
+  it('removes a member from an organization that has no active admin yet (its admin invitation still pending)', async () => {
     const orgId = await createOrg(server, { name: 'Adminless Staff Bakery' });
+    await addInvite(server, { orgId, email: uniqueEmail('future-admin'), invitedBy: staff.userId, role: 'org_admin', addedByStaff: true });
     const member = await person('adminless');
     const seat = await addSeat(server, { orgId, userId: member.session.userId, email: member.email });
-    expect(await errorOf(await removeMember(orgId, seat))).toEqual({ status: 409, error: 'last_admin' });
-    expect(await memberDoc(server, seat)).toMatchObject({ status: 'active', activeUserId: member.session.userId });
-    expect((await eventsFor(seat)).map((event) => [event.action, (event.details as { code?: string }).code ?? null])).toEqual([
-      ['member.removed', null], ['staff_action.not_applied', 'last_admin'],
-    ]);
+    expect((await removeMember(orgId, seat)).status).toBe(204);
+    expect(await memberDoc(server, seat)).toMatchObject({ status: 'removed', removedBy: staff.userId });
+    expect((await eventsFor(seat)).map((event) => event.action)).toEqual(['member.removed']);
   });
 
   it('when the audit write fails, an add, a role change and a removal are refused with 503 and nothing changes', async () => {

@@ -40,8 +40,8 @@ export async function renameOrg(ctx: TownwiseContext, req: Request, res: Respons
 
 /**
  * POST /api/org/leave {} (F7): the same as removing oneself (removeActiveSeat), recorded as member.left with the role
- * the seat had when it was removed. When no active admin would be left, the seat stays and the answer is 409
- * last_admin, whatever the caller's role, so a member of an organization with no admin yet stays until it has one.
+ * the seat had when it was removed. The last admin, or one being demoted while they leave, gets 409 last_admin and
+ * keeps the seat; a member leaves whether or not the organization has an admin.
  */
 export async function leaveOrg(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);

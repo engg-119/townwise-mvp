@@ -19,6 +19,8 @@ export interface MemberFields {
   joinedAt: Date | null;
   removedAt: Date | null;
   removedBy: string | null;
+  /** Set by a demotion from org_admin in the same write, until its recount or revert ends (the last-admin rule). */
+  demotingSince?: Date;
 }
 
 function memberSchema(): Schema<MemberFields> {
@@ -36,6 +38,7 @@ function memberSchema(): Schema<MemberFields> {
     joinedAt: { type: Date, default: null },
     removedAt: { type: Date, default: null },
     removedBy: { type: String, default: null },
+    demotingSince: { type: Date },
   }, { strict: true, versionKey: false, read: 'primary' });
   // One open invitation per address per organization.
   schema.index({ orgId: 1, inviteEmail: 1 }, {
@@ -103,21 +106,29 @@ export interface MemberStore {
     userId: string; email: string; joinedAt: Date; invitedBy: string;
   }): Promise<AdminSeatResult>;
   /**
-   * Compare-and-set on the current role of an active member or open invitation. Resolves the row's status at the
-   * write, or null when the row changed or is gone.
+   * Compare-and-set on the current role of an active member or open invitation. A demotion from org_admin also sets
+   * demotingSince to `now` in the same write, so a removal racing it knows the seat was an admin a moment ago; any
+   * other change clears it. Resolves the row's status at the write, or null when the row changed or is gone.
    */
-  setRole(scope: OrgScope, memberId: string, from: Role, to: Role): Promise<'invited' | 'active' | null>;
+  setRole(scope: OrgScope, memberId: string, from: Role, to: Role, now: Date): Promise<'invited' | 'active' | null>;
+  /** Ends a demotion that stands: clears the demotingSince it set. */
+  endDemotion(scope: OrgScope, memberId: string, since: Date): Promise<void>;
   /**
-   * Reverts setRole (the last-admin rule): matches the row by id, organization and the role setRole wrote, whatever its
-   * status, so a seat removed since still gets its role back.
+   * Reverts setRole (the last-admin rule) and clears demotingSince: matches the row by id, organization and the role
+   * setRole wrote, whatever its status, so a seat removed since still gets its role back.
    */
   revertRole(scope: OrgScope, memberId: string, from: Role, to: Role): Promise<void>;
   deleteInvite(scope: OrgScope, memberId: string): Promise<boolean>;
   /**
    * Compare-and-set from active to removed; unsets activeUserId. Resolves the role the seat had when it was removed,
-   * read in the same write, or null when the row is not an active seat.
+   * and whether a demotion of it was still under way, both read in the same write, or null when the row is not an
+   * active seat.
    */
-  removeSeat(scope: OrgScope, memberId: string, input: { removedAt: Date; removedBy: string }): Promise<Role | null>;
+  removeSeat(
+    scope: OrgScope, memberId: string, input: { removedAt: Date; removedBy: string },
+  ): Promise<{ role: Role; demoting: boolean } | null>;
+  /** Deletes an active seat outright: an approval undoing the seat it gave a person deleted meanwhile. */
+  deleteSeat(scope: OrgScope, memberId: string): Promise<boolean>;
   /**
    * Reverts removeSeat (the last-admin rule). False when the seat can't come back: the person took a seat in another
    * organization since (the unique activeUserId index), or the row is no longer a removed seat.
@@ -223,16 +234,22 @@ export function createMemberStore(connection: Connection): MemberStore {
         return here === null ? { kind: 'elsewhere' } : { kind: 'exists' };
       }
     },
-    async setRole(scope, memberId, from, to) {
+    async setRole(scope, memberId, from, to, now) {
+      const update = from === 'org_admin' && to !== 'org_admin'
+        ? { $set: { role: to, demotingSince: now } }
+        : { $set: { role: to }, $unset: { demotingSince: '' } };
       const before = await Member.findOneAndUpdate(
         { _id: memberId, orgId: scope.orgId, status: open(), role: from },
-        { $set: { role: to } },
+        update,
         { returnDocument: 'before', lean: true },
       );
       return before === null || before.status === 'removed' ? null : before.status;
     },
+    async endDemotion(scope, memberId, since) {
+      await Member.updateOne({ _id: memberId, orgId: scope.orgId, demotingSince: since }, { $unset: { demotingSince: '' } });
+    },
     async revertRole(scope, memberId, from, to) {
-      await Member.updateOne({ _id: memberId, orgId: scope.orgId, role: from }, { $set: { role: to } });
+      await Member.updateOne({ _id: memberId, orgId: scope.orgId, role: from }, { $set: { role: to }, $unset: { demotingSince: '' } });
     },
     async deleteInvite(scope, memberId) {
       const result = await Member.deleteOne({ _id: memberId, orgId: scope.orgId, status: 'invited' });
@@ -244,7 +261,10 @@ export function createMemberStore(connection: Connection): MemberStore {
         { $set: { status: 'removed', removedAt: input.removedAt, removedBy: input.removedBy }, $unset: { activeUserId: '' } },
         { returnDocument: 'before', lean: true },
       );
-      return before?.role ?? null;
+      return before === null ? null : { role: before.role, demoting: before.demotingSince !== undefined };
+    },
+    async deleteSeat(scope, memberId) {
+      return (await Member.deleteOne({ _id: memberId, orgId: scope.orgId, status: 'active' })).deletedCount === 1;
     },
     async restoreSeat(scope, memberId, userId) {
       try {
