@@ -18,6 +18,9 @@ import { Eyebrow } from '../ui/text';
 // be dismissed. End view-as (POST /api/admin/view-as/end) is the way out; the answer is the staff member's own
 // access, so the portal layout opens /admin, where “View-as ended at {time}.” shows once.
 
+/** The banner's “Read-only until {time}.” line, which also explains the disabled Sign out in the top bar. */
+export const VIEW_AS_LINE_ID = 'view-as-until';
+
 export function viewAsWho(viewAs: ViewAs): string {
   const { email } = viewAs.target;
   if (viewAs.org === null || viewAs.role === null) return `${email}, signed in, no organization.`;
@@ -38,7 +41,7 @@ export function ViewAsBanner(props: { viewAs: ViewAs }): React.JSX.Element {
           <View style={styles.text}>
             <Eyebrow>Viewing as</Eyebrow>
             <Text style={styles.who}>{viewAsWho(viewAs)}</Text>
-            <Text style={styles.until}>{`Read-only until ${formatTime(viewAs.endsAt)}.`}</Text>
+            <Text nativeID={VIEW_AS_LINE_ID} style={styles.until}>{`Read-only until ${formatTime(viewAs.endsAt)}.`}</Text>
           </View>
           <Button variant="outline" label="End view-as" disabled={end.pending} block={phone} onPress={end.run} />
         </View>

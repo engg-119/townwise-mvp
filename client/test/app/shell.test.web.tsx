@@ -1,14 +1,16 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
 import type { Auth } from '../../src/auth/auth';
 import { formatTime } from '../../src/portal/format';
+import type { MeResponse } from '../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../helpers/app';
 import { fakeAuth } from '../helpers/fakes';
 import {
-  ACCESS, EMAIL, fakePortalApi, meOf, orgOf, STAFF_EMAIL, staffMe, VERIFIED_UNTIL, viewAsMe, writes, type FakePortalApi,
+  ACCESS, deferred, EMAIL, fakePortalApi, meOf, orgOf, refusal, STAFF_EMAIL, staffMe, VERIFIED_UNTIL, viewAsMe, writes,
+  type FakePortalApi,
 } from '../helpers/portal';
 
 class ResizeObserverPolyfill {
@@ -96,6 +98,11 @@ test('view-as: the title names the target; disabled controls stay focusable; End
   expect(add.tabIndex).toBe(0);
   expect(add.getAttribute('aria-describedby')).toBe('locations-ro');
   expect(document.getElementById('locations-ro')?.textContent).toBe('Read-only while viewing as gm@example.org.');
+  // Sign out is disabled too, and the banner's read-only line says why.
+  const signOut = screen.getByRole('button', { name: 'Sign out' });
+  expect(signOut.getAttribute('aria-disabled')).toBe('true');
+  const why = signOut.getAttribute('aria-describedby') ?? '';
+  expect(document.getElementById(why)?.textContent).toMatch(/^Read-only until \d{1,2}:\d{2} (AM|PM)\.$/);
   fireEvent.click(add);
   fireEvent.click(screen.getByRole('button', { name: 'End view-as' }));
   await waitFor(() => { expect(window.location.pathname).toBe('/admin'); });
@@ -103,6 +110,28 @@ test('view-as: the title names the target; disabled controls stay focusable; End
   expect(await screen.findByRole('status')).toBeTruthy();
   expect(screen.getByText(/^View-as ended at \d{1,2}:\d{2} (AM|PM)\.$/)).toBeTruthy();
   expect(screen.queryByRole('region', { name: 'View-as' })).toBeNull();
+});
+
+test('a GET /api/me read that started before End view-as and answers after it doesn’t bring the banner back', async () => {
+  // GET /api/org is refused, so the page re-reads GET /api/me; that read is still running when End view-as answers.
+  const api = fakePortalApi({ me: viewAsMe(ACCESS.admin), org: refusal(403, 'forbidden') });
+  const stale = deferred<MeResponse>();
+  const json = api.json.bind(api);
+  api.json = (path, schema, opts) => {
+    const answer = json(path, schema, opts);
+    if (path === '/api/me') api.me = stale.promise as unknown as MeResponse;
+    return answer;
+  };
+  api.answers['/api/admin/view-as/end'] = () => staffMe();
+  renderAt('/dashboard', api);
+  await screen.findByRole('region', { name: 'View-as' });
+  await waitFor(() => { expect(api.calls.filter((call) => call.path === '/api/me')).toHaveLength(2); });
+  fireEvent.click(screen.getByRole('button', { name: 'End view-as' }));
+  await waitFor(() => { expect(window.location.pathname).toBe('/admin'); });
+  await act(async () => { stale.resolve(viewAsMe(ACCESS.admin)); await stale.promise; });
+  await new Promise((resolve) => { setTimeout(resolve, 0); });
+  expect(screen.queryByRole('region', { name: 'View-as' })).toBeNull();
+  expect(window.location.pathname).toBe('/admin');
 });
 
 test('Waiting draws the town’s chart on web, with its summary and the numbers', async () => {

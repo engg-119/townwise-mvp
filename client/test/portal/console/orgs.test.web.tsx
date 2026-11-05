@@ -165,13 +165,24 @@ test('New organization: a second dialog sends a different id', async () => {
   expect(second).not.toBe(first);
 });
 
-test('New organization says so in plain words on 409 conflict', async () => {
+test('New organization says so in plain words on 409 conflict, and the try after it sends a fresh id', async () => {
   const api = consoleApi();
   api.routes['GET /api/admin/orgs'] = () => ({ orgs: ORGS });
-  api.routes['POST /api/admin/orgs'] = () => refusal(409, 'conflict');
+  let attempts = 0;
+  api.routes['POST /api/admin/orgs'] = () => {
+    attempts += 1;
+    return attempts === 1 ? refusal(409, 'conflict') : { org: { id: 'o9', name: 'Sample Diner' }, result: { email: emailOf('owner'), outcome: 'invited' } };
+  };
+  api.routes['GET /api/admin/orgs/o9'] = () => orgDetail({ org: { id: 'o9', name: 'Sample Diner', fromRequestId: null }, locations: [], recent: [] });
   renderAt('/admin/orgs', api);
   fireEvent.click(await screen.findByRole('button', { name: 'New organization' }));
   const dialog = screen.getByRole('dialog', { name: 'New organization' });
   fillAndCreate(dialog);
   expect(await within(dialog).findByText('Another change got there first. Check the organizations list, then try again.')).toBeTruthy();
+  // The same id would conflict again, every time: the try after a conflict sends a new one.
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Create organization' }));
+  await waitFor(() => { expect(window.location.pathname).toBe('/admin/orgs/o9'); });
+  const [first, second] = sentIds(api);
+  expect(second).toMatch(/^[0-9a-f]{24}$/);
+  expect(second).not.toBe(first);
 });

@@ -74,6 +74,8 @@ export function PortalProvider(props: { children: React.ReactNode }): React.JSX.
   const [org, setOrg] = useState<LoadState<OrgResponse> | null>(null);
   const current = useRef<MeResponse | null>(null);
   const reading = useRef<Promise<MeResponse> | null>(null);
+  /** Counts applied answers; a read that started before the last one is older than it. */
+  const applied = useRef(0);
   const [pendingTick, setPendingTick] = useState(0);
   const orgTicket = useRef(0);
   const orgStarted = useRef(false);
@@ -81,6 +83,9 @@ export function PortalProvider(props: { children: React.ReactNode }): React.JSX.
   const applyMe = useCallback((next: MeResponse) => {
     const previous = current.current;
     current.current = next;
+    applied.current += 1;
+    // A read still running started before this answer, so the next refreshMe starts a fresh one.
+    reading.current = null;
     // Spec 4.3: cached organization data is cleared before the client routes again.
     orgTicket.current += 1;
     orgStarted.current = false;
@@ -97,10 +102,18 @@ export function PortalProvider(props: { children: React.ReactNode }): React.JSX.
   }, []);
 
   const refreshMe = useCallback((): Promise<MeResponse> => {
-    reading.current ??= fetchMe(auth.api)
-      .then((next) => { applyMe(next); return next; })
-      .finally(() => { reading.current = null; });
-    return reading.current;
+    if (reading.current !== null) return reading.current;
+    const startedAt = applied.current;
+    const read: Promise<MeResponse> = fetchMe(auth.api)
+      .then((next) => {
+        // An answer applied meanwhile (End view-as, a join) is newer than this read: drop the read's answer.
+        if (applied.current !== startedAt && current.current !== null) return current.current;
+        applyMe(next);
+        return next;
+      })
+      .finally(() => { if (reading.current === read) reading.current = null; });
+    reading.current = read;
+    return read;
   }, [auth, applyMe]);
 
   const firstRead = useCallback(() => {

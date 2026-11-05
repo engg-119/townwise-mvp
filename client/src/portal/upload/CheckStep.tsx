@@ -120,8 +120,9 @@ export function CheckStep(props: {
 
   if (result.kind !== 'days') {
     const text = result.kind === 'no_dates' ? COPY.noDates
-      : result.kind === 'too_many_days' ? COPY.tooManyDays
-        : repeatedDatesLine(result.dates, result.repeats);
+      : result.kind === 'decimal_comma' ? COPY.decimalComma
+        : result.kind === 'too_many_days' ? COPY.tooManyDays
+          : repeatedDatesLine(result.dates, result.repeats);
     return (
       <Stack gap={theme.space[6]}>
         {heading}

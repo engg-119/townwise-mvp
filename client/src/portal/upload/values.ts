@@ -75,15 +75,23 @@ export function provenOrder(cell: DateCell): DateOrder | null {
 /** Millionths of a unit: exact integer sums for money with up to six decimal places. */
 export const MICROS = 1_000_000;
 
-const AMOUNT = /^(\d{1,3}(?:,\d{3})+|\d+)?(?:\.(\d*))?$/;
+/** The decimal mark a number is read with: a dot (12.50, with thousands commas) or a comma (12,50, with thousands dots). */
+export type DecimalMark = '.' | ',';
+
+const AMOUNT: Readonly<Record<DecimalMark, RegExp>> = {
+  '.': /^(\d{1,3}(?:,\d{3})+|\d+)?(?:\.(\d*))?$/,
+  ',': /^(\d{1,3}(?:\.\d{3})+|\d+)?(?:,(\d*))?$/,
+};
+const GROUPING: Readonly<Record<DecimalMark, RegExp>> = { '.': /,/g, ',': /\./g };
 const MINUS = /^[-\u2212]/;
 
 /**
  * A number cell in millionths (`MICROS`): null for an empty cell, NaN when it can't be read. `$`, thousands
- * commas and spaces are stripped. Parentheses or a leading minus (hyphen or U+2212) mean negative, so refunds net
- * out. Commas must group thousands, so a decimal comma (12,50) is unreadable rather than misread.
+ * separators and spaces are stripped. Parentheses or a leading minus (hyphen or U+2212) mean negative, so refunds
+ * net out. Separators must group thousands, so with a dot for decimals a decimal comma (12,50) is unreadable rather
+ * than misread. `decimal` is a dot unless a caller asks how the cell reads with a comma (days.ts, semicolon files).
  */
-export function readAmount(raw: string): number | null {
+export function readAmount(raw: string, decimal: DecimalMark = '.'): number | null {
   let text = raw.replace(/\s/g, '');
   if (text === '') return null;
   let negative = false;
@@ -102,12 +110,12 @@ export function readAmount(raw: string): number | null {
     text = text.slice(1);
   }
   if (!dollar && text.startsWith('$')) text = text.slice(1);
-  const match = AMOUNT.exec(text);
+  const match = AMOUNT[decimal].exec(text);
   if (match === null) return NaN;
   const whole = match[1];
   const fraction = match[2] ?? '';
   if (whole === undefined && fraction === '') return NaN;
-  let micros = (whole === undefined ? 0 : Number(whole.replace(/,/g, ''))) * MICROS;
+  let micros = (whole === undefined ? 0 : Number(whole.replace(GROUPING[decimal], ''))) * MICROS;
   if (fraction !== '') {
     micros += Number(fraction.slice(0, 6).padEnd(6, '0'));
     // Beyond six decimal places, round half up once here; no export carries that many.

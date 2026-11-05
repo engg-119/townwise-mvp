@@ -1,25 +1,28 @@
-import { Text } from 'react-native';
-import { act, cleanup, fireEvent, renderRouter, screen, waitFor } from 'expo-router/testing-library';
+jest.mock('@react-native-google-signin/google-signin', () => {
+  const mocked: unknown = jest.requireActual('../helpers/googleSigninMock');
+  return mocked;
+});
+jest.mock('expo-splash-screen', () => ({
+  preventAutoHideAsync: jest.fn(() => Promise.resolve()),
+  hideAsync: jest.fn(() => Promise.resolve()),
+}));
 
-import ChatScreen from '../../app/(gate)/(app)/(client)/locations/[locationId]/chat';
-import { AuthProvider } from '../../src/auth/AuthProvider';
+import { act, cleanup, fireEvent, screen, waitFor } from 'expo-router/testing-library';
+
 import { STOPPED } from '../../src/chat/useTuningChat';
 import { fakeChatApi, PROPOSAL, SUMMARY, type FakeChatApi, type LiveTurn } from '../helpers/chat';
-import { fakeAuth } from '../helpers/fakes';
+import { ACCESS, fakePortalApi, meOf, orgOf } from '../helpers/portal';
+import { renderApp } from '../helpers/renderApp';
 
 afterEach(async () => {
   await cleanup();
 });
 
-const EMAIL = ['a', 'example.com'].join('@');
-
+// The chat inside the portal, as it ships: it calls the portal's api, which answers /api/me and /api/org and passes
+// the chat's own routes to `api`.
 async function renderChat(api: FakeChatApi) {
-  const auth = fakeAuth({ status: 'signedIn', user: { id: 'u1', email: EMAIL } }, { api });
-  const router = await renderRouter(
-    { 'locations/[locationId]/chat': ChatScreen, dashboard: () => <Text>Dashboard screen</Text> },
-    { initialUrl: '/locations/l1/chat', wrapper: ({ children }) => <AuthProvider auth={auth}>{children}</AuthProvider> },
-  );
-  await screen.findByText('Main Street Bar');
+  const { router } = await renderApp('/locations/l1/chat', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: api }));
+  await screen.findAllByRole('heading', { name: 'Main Street Bar' });
   return router;
 }
 
@@ -36,7 +39,8 @@ async function send(text: string): Promise<void> {
 
 test('shows the location, its conversations and a labelled composer', async () => {
   await renderChat(fakeChatApi());
-  expect(screen.getByRole('heading', { name: 'Main Street Bar' })).toBeTruthy();
+  // The location header's and the chat's own.
+  expect(screen.getAllByRole('heading', { name: 'Main Street Bar' })).toHaveLength(2);
   expect(screen.getByRole('button', { name: 'Back to locations' })).toBeTruthy();
   expect(screen.getByRole('button', { name: /^Earlier chat, Nov 2, 2026$/ })).toBeTruthy();
   expect(screen.getByLabelText('Message')).toBeTruthy();

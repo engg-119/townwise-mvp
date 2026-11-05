@@ -38,6 +38,8 @@ const TAB_LABEL: Readonly<Record<RequestStatus, string>> = {
 };
 
 const ALREADY_DECIDED = 'Someone already decided this request.';
+/** A request link (?request=) to one the list doesn't have, or a decision on one that is gone (404). */
+const GONE = 'That request is no longer listed.';
 const HAS_ORG = 'This person already belongs to an organization.';
 const ORG_NAME_COPY = 'Enter the organization’s name, 2 to 120 characters.';
 const LOCATION_NAME_COPY = 'Enter the first location’s name, up to 80 characters.';
@@ -56,9 +58,23 @@ function messageOf(text: string | null): readonly string[] {
   return text === null ? [] : [text];
 }
 
+/** A decision that came too late: decided by someone else (409) or gone (404). The list and the count read again. */
+function lateDecision(error: unknown): string | null {
+  if (hasCode(error, 409, 'request_not_pending')) return ALREADY_DECIDED;
+  if (hasCode(error, 404, 'not_found')) return GONE;
+  return null;
+}
+
 /** C3. The town is the request's; the server takes it from there. */
-function ApproveDialog(props: { request: AdminRequest; onApproved: () => void; onStale: () => void; onClose: () => void }): React.JSX.Element {
-  const { request, onApproved, onStale } = props;
+function ApproveDialog(props: {
+  request: AdminRequest;
+  onApproved: () => void;
+  onStale: (text: string) => void;
+  /** Reads the list again and keeps the dialog open. */
+  onRefresh: () => void;
+  onClose: () => void;
+}): React.JSX.Element {
+  const { request, onApproved, onStale, onRefresh } = props;
   const { api, showNotice, refreshPending } = usePortal();
   const [orgName, setOrgName] = useState(request.orgName);
   const [locationName, setLocationName] = useState(request.orgName);
@@ -74,14 +90,20 @@ function ApproveDialog(props: { request: AdminRequest; onApproved: () => void; o
       refreshPending();
       onApproved();
     } catch (error) {
-      if (hasCode(error, 409, 'request_not_pending')) {
+      const late = lateDecision(error);
+      if (late !== null) {
         refreshPending();
-        onStale();
+        onStale(late);
         return;
+      }
+      // The requester joined an organization meanwhile: the dialog says so, and the list and count read again.
+      if (hasCode(error, 409, 'requester_has_org')) {
+        refreshPending();
+        onRefresh();
       }
       throw error;
     }
-  }, [api, showNotice, refreshPending, request.id, email, onApproved, onStale]));
+  }, [api, showNotice, refreshPending, request.id, email, onApproved, onStale, onRefresh]));
 
   function submit(): void {
     const input = { orgName: orgName.trim(), locationName: locationName.trim() };
@@ -123,7 +145,7 @@ function ApproveDialog(props: { request: AdminRequest; onApproved: () => void; o
 }
 
 /** C4. The message is shown to the requester; the audit log records only that there was one. */
-function RejectDialog(props: { request: AdminRequest; onRejected: () => void; onStale: () => void; onClose: () => void }): React.JSX.Element {
+function RejectDialog(props: { request: AdminRequest; onRejected: () => void; onStale: (text: string) => void; onClose: () => void }): React.JSX.Element {
   const { request, onRejected, onStale } = props;
   const { api, showNotice, refreshPending } = usePortal();
   const [message, setMessage] = useState('');
@@ -134,9 +156,10 @@ function RejectDialog(props: { request: AdminRequest; onRejected: () => void; on
       refreshPending();
       onRejected();
     } catch (error) {
-      if (hasCode(error, 409, 'request_not_pending')) {
+      const late = lateDecision(error);
+      if (late !== null) {
         refreshPending();
-        onStale();
+        onStale(late);
         return;
       }
       throw error;
@@ -209,7 +232,7 @@ function RequestDetail(props: { request: AdminRequest; onOpen: (open: Open) => v
   );
 }
 
-function RequestTable(props: { status: RequestStatus; requests: readonly AdminRequest[]; selected: AdminRequest }): React.JSX.Element {
+function RequestTable(props: { status: RequestStatus; requests: readonly AdminRequest[]; selected: AdminRequest | undefined }): React.JSX.Element {
   const { status } = props;
   const decided = status === 'approved' || status === 'rejected';
   const columns: Column[] = [
@@ -225,7 +248,7 @@ function RequestTable(props: { status: RequestStatus; requests: readonly AdminRe
       label={`${TAB_LABEL[status]} requests`}
       columns={columns}
       rows={props.requests.map((request) => {
-        const selected = request.id === props.selected.id;
+        const selected = request.id === props.selected?.id;
         return {
           key: request.id,
           selected,
@@ -251,10 +274,13 @@ export default function RequestsPage(): React.JSX.Element {
   const status = statusOf(params.status);
   const { state, reload } = useLoad(useCallback(() => fetchRequests(api, status), [api, status]));
   const [open, setOpen] = useState<Open>(null);
-  const [stale, setStale] = useState(false);
+  /** A late decision's line, for the tab it happened on. */
+  const [stale, setStale] = useState<{ status: RequestStatus; text: string } | null>(null);
+  // Another tab drops it, so coming back doesn't show it again.
+  if (stale !== null && stale.status !== status) setStale(null);
   const close = useCallback(() => { setOpen(null); }, []);
-  const done = useCallback(() => { setOpen(null); setStale(false); reload(); }, [reload]);
-  const onStale = useCallback(() => { setOpen(null); setStale(true); reload(); }, [reload]);
+  const done = useCallback(() => { setOpen(null); setStale(null); reload(); }, [reload]);
+  const onStale = useCallback((text: string) => { setOpen(null); setStale({ status, text }); reload(); }, [reload, status]);
 
   const pendingCount = state.status === 'ready' ? state.data.pendingCount : null;
   const tabs = REQUEST_STATUSES.map((value) => ({
@@ -270,15 +296,16 @@ export default function RequestsPage(): React.JSX.Element {
     body = <ErrorNotice error={state.error} onRetry={reload} />;
   } else {
     const { requests } = state.data;
-    const selected = requests.find((request) => request.id === params.request) ?? requests[0];
-    body = selected === undefined ? (
+    // A link to a request this list doesn't have says so, rather than showing another request as if it were it.
+    const selected = typeof params.request === 'string' ? requests.find((request) => request.id === params.request) : requests[0];
+    body = requests.length === 0 ? (
       <EmptyState text={EMPTY[status]}>
         {status === 'pending' ? <LinkButton href={listHref('approved')} label="See approved requests" /> : null}
       </EmptyState>
     ) : (
       <Split
         table={<RequestTable status={status} requests={requests} selected={selected} />}
-        detail={<RequestDetail request={selected} onOpen={setOpen} />}
+        detail={selected === undefined ? <EmptyState text={`${GONE} Choose one from the list.`} /> : <RequestDetail request={selected} onOpen={setOpen} />}
       />
     );
   }
@@ -287,10 +314,10 @@ export default function RequestsPage(): React.JSX.Element {
     <Page title="Requests">
       <Stack gap={24}>
         <FilterTabs label="Requests by status" tabs={tabs} />
-        {stale ? <ErrorNotice message={ALREADY_DECIDED} /> : null}
+        {stale === null ? null : <ErrorNotice message={stale.text} />}
         {body}
       </Stack>
-      {open?.kind === 'approve' ? <ApproveDialog request={open.request} onApproved={done} onStale={onStale} onClose={close} /> : null}
+      {open?.kind === 'approve' ? <ApproveDialog request={open.request} onApproved={done} onStale={onStale} onRefresh={reload} onClose={close} /> : null}
       {open?.kind === 'reject' ? <RejectDialog request={open.request} onRejected={done} onStale={onStale} onClose={close} /> : null}
       {open?.kind === 'view' ? <ViewAsDialog target={open.target} onClose={close} /> : null}
     </Page>

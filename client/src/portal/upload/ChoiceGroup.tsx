@@ -65,8 +65,10 @@ const styles = StyleSheet.create({
   field: { gap: theme.space[2], minWidth: 0 },
   legend: { ...theme.type.ui, color: c.white },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
+  // A long label wraps inside its button instead of pushing it past a 320px screen.
   button: {
     minWidth: 44, minHeight: 44, paddingHorizontal: 10, justifyContent: 'center', borderWidth: 1, borderColor: c.line, borderRadius: 0,
+    flexShrink: 1, maxWidth: '100%',
   },
   pressed: { backgroundColor: c.mint, borderColor: c.mint },
   label: { ...theme.type.ui, color: c.text2 },

@@ -91,10 +91,10 @@ describe('match columns', () => {
 
   test('pickers list header names with their kind; repeated and blank names get the column number', () => {
     const columns: ColumnProfile[] = [
-      { name: 'Date', kind: 'dates', slashDates: false, order: null },
-      { name: 'Net Sales', kind: 'numbers', slashDates: false, order: null },
-      { name: 'Net Sales', kind: 'numbers', slashDates: false, order: null },
-      { name: '', kind: 'empty', slashDates: false, order: null },
+      { name: 'Date', kind: 'dates', slashDates: false, order: null, mixedOrder: false },
+      { name: 'Net Sales', kind: 'numbers', slashDates: false, order: null, mixedOrder: false },
+      { name: 'Net Sales', kind: 'numbers', slashDates: false, order: null, mixedOrder: false },
+      { name: '', kind: 'empty', slashDates: false, order: null, mixedOrder: false },
     ];
     expect(columnOptions(columns)).toEqual([
       { value: '0', label: 'Date: dates' },

@@ -1,6 +1,6 @@
-import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 
-import { ACCESS, offline, refusal, STAFF_EMAIL, viewAsMe, writes } from '../../helpers/portal';
+import { ACCESS, deferred, offline, refusal, STAFF_EMAIL, viewAsMe, writes } from '../../helpers/portal';
 import { CHEF_EMAIL, consoleApi, emailOf, MANAGER_EMAIL, OWNER_EMAIL, person, renderAt, setWidth, type ConsoleApi } from './helpers';
 
 // P22 People: everyone across organizations, the lookup, View as (C1), sign out everywhere, and Delete person
@@ -139,6 +139,51 @@ test('the lookup finds a signed-in-only person by exact email, or says no one ha
   fireEvent.change(within(panel).getByRole('textbox', { name: 'Email' }), { target: { value: emailOf('nobody') } });
   fireEvent.click(within(panel).getByRole('button', { name: 'Look up' }));
   expect(await within(panel).findByText('No one with that email has signed in or been added.')).toBeTruthy();
+});
+
+function lookups(api: ConsoleApi): string[] {
+  return api.calls.filter((call) => call.path.startsWith('/api/admin/people/lookup')).map((call) => call.path);
+}
+
+test('a lookup that isn’t an email address says so without asking the server; a 400 reads the same', async () => {
+  const api = consoleApi();
+  serve(api);
+  const odd = emailOf('odd');
+  api.routes[`GET /api/admin/people/lookup?q=${encodeURIComponent(odd)}`] = () => refusal(400, 'invalid_request');
+  renderAt('/admin/people', api);
+  const panel = await screen.findByRole('region', { name: 'Lookup' });
+  const field = within(panel).getByRole('textbox', { name: 'Email' });
+  fireEvent.change(field, { target: { value: 'bob' } });
+  fireEvent.click(within(panel).getByRole('button', { name: 'Look up' }));
+  expect(within(panel).getByText('Enter an email address.')).toBeTruthy();
+  expect(lookups(api)).toEqual([]);
+  fireEvent.change(field, { target: { value: odd } });
+  fireEvent.click(within(panel).getByRole('button', { name: 'Look up' }));
+  await waitFor(() => { expect(lookups(api)).toHaveLength(1); });
+  expect(await within(panel).findByText('Enter an email address.')).toBeTruthy();
+  expect(within(panel).queryByText('Something went wrong with that request. Reload the page and try again.')).toBeNull();
+});
+
+test('a lookup started while another runs takes over: Enter sends it, and the older answer is dropped', async () => {
+  const api = consoleApi();
+  serve(api);
+  const first = emailOf('alpha');
+  const second = emailOf('bravo');
+  const slow = deferred<unknown>();
+  api.routes[`GET /api/admin/people/lookup?q=${encodeURIComponent(first)}`] = () => slow.promise;
+  api.routes[`GET /api/admin/people/lookup?q=${encodeURIComponent(second)}`] = () => ({ person: null });
+  renderAt('/admin/people', api);
+  const panel = await screen.findByRole('region', { name: 'Lookup' });
+  const field = within(panel).getByRole('textbox', { name: 'Email' });
+  fireEvent.change(field, { target: { value: first } });
+  fireEvent.keyDown(field, { key: 'Enter' });
+  fireEvent.change(field, { target: { value: second } });
+  fireEvent.keyDown(field, { key: 'Enter' });
+  expect(await within(panel).findByText('No one with that email has signed in or been added.')).toBeTruthy();
+  await act(async () => { slow.resolve({ person: person(first, 'signed_in', { userId: 'u7' }) }); await slow.promise; });
+  expect(within(panel).queryByRole('region', { name: 'Lookup result' })).toBeNull();
+  expect(within(panel).getByText('No one with that email has signed in or been added.')).toBeTruthy();
+  expect(lookups(api)).toEqual([first, second].map((email) => `/api/admin/people/lookup?q=${encodeURIComponent(email)}`));
 });
 
 test('Sign out everywhere confirms, sends {}, then says so', async () => {

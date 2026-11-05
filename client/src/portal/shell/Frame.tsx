@@ -16,6 +16,7 @@ import { Body } from '../ui/text';
 import { Page } from './Page';
 import { PortalStyles } from './PortalStyles';
 import { Footer, TopBar } from './TopBar';
+import { VIEW_AS_LINE_ID } from './ViewAsBanner';
 
 // The four frames of spec 15.1 (Public is the existing sign-in). Each is a scroll view: the top bar, the page in
 // <main>, then the slim footer. The tuning chat fills the screen instead, so its frame does not scroll and has
@@ -85,6 +86,11 @@ export function Frame(props: { topBar: React.ReactNode; children: React.ReactNod
   );
 }
 
+/** Under view-as Sign out is disabled (spec 15.5), described by the banner's read-only line. */
+function signOutState(readOnly: boolean): { signOutDisabled: boolean; signOutDescribedBy?: string } {
+  return readOnly ? { signOutDisabled: true, signOutDescribedBy: VIEW_AS_LINE_ID } : { signOutDisabled: false };
+}
+
 /** Sign out, and the line that says it didn't work (web keeps the session when the server can't clear it). */
 function useSignOut(): { run: () => void; failed: React.ReactNode } {
   const auth = useAuth();
@@ -103,7 +109,7 @@ export function GateFrame(props: { children: React.ReactNode }): React.JSX.Eleme
   const signOut = useSignOut();
   const email = portal?.me.user.email ?? (authState.status === 'signedIn' ? authState.user.email : '');
   return (
-    <Frame topBar={<><TopBar kind="gate" email={email} signOutDisabled={readOnly} onSignOut={signOut.run} />{signOut.failed}</>}>
+    <Frame topBar={<><TopBar kind="gate" email={email} {...signOutState(readOnly)} onSignOut={signOut.run} />{signOut.failed}</>}>
       {props.children}
     </Frame>
   );
@@ -123,7 +129,7 @@ export function ClientFrame(props: { children: React.ReactNode }): React.JSX.Ele
       email={me.user.email}
       orgName={access.org.name}
       nav={clientNav(access.role, pathname)}
-      signOutDisabled={readOnly}
+      {...signOutState(readOnly)}
       onSignOut={signOut.run}
     />
   );

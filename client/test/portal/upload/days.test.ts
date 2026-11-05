@@ -1,4 +1,4 @@
-import { parseCsv } from '../../../src/portal/upload/csv';
+import { detectDelimiter, parseCsv } from '../../../src/portal/upload/csv';
 import {
   bodyBytes, DayAggregator, exclusionOf, latestDate, MAX_BODY_BYTES, MAX_DAYS, totalsOf, uploadBody, type CheckResult,
   type DaysResult, type Mapping, type SalesDay,
@@ -12,7 +12,7 @@ const MAPPING: Mapping = { rowMode: 'day', date: 0, guests: 1, netSales: 2, loca
 
 function check(text: string, mapping: Partial<Mapping> = {}): CheckResult {
   const [, ...rows] = parseCsv(text);
-  const days = new DayAggregator({ ...MAPPING, ...mapping }, LATEST);
+  const days = new DayAggregator({ ...MAPPING, ...mapping }, LATEST, detectDelimiter(text));
   rows.forEach((row, index) => { days.add(row, index + 2); });
   return days.finish();
 }
@@ -160,6 +160,25 @@ describe('days left out (the rules of 11.3)', () => {
   });
 });
 
+describe('semicolon files and the decimal comma', () => {
+  test('1.234 or 12,50 in a semicolon file is refused, never read as $1.23 or skipped as unreadable', () => {
+    expect(check('Datum;Gäste;Umsatz\n2025-03-04;5;1.234\n2025-03-05;6;980')).toEqual({ kind: 'decimal_comma' });
+    expect(check('Datum;Gäste;Umsatz\n2025-03-04;5;"1.234,50"\n2025-03-05;6;12,50')).toEqual({ kind: 'decimal_comma' });
+    // A dot-decimal cell doesn't excuse one that needs the comma.
+    expect(check('Date;Guests;Net\n2025-03-04;5;980.00\n2025-03-05;6;12,50')).toEqual({ kind: 'decimal_comma' });
+  });
+
+  test('a semicolon file whose cells prove the dot reads as before; whole amounts read the same either way', () => {
+    expect(daysOf('Date;Guests;Net\n2025-03-04;5;1.234\n2025-03-05;6;980.00').days.map((day) => day.netSalesCents)).toEqual([123, 98_000]);
+    expect(daysOf('Date;Guests;Net\n2025-03-04;5;1234\n2025-03-05;6;$980').days.map((day) => day.netSalesCents)).toEqual([123_400, 98_000]);
+    expect(daysOf('Date;Guests;Net\n2025-03-04;5;1234', { netSales: null }).days).toHaveLength(1);
+  });
+
+  test('a comma file reads 1.234 as a decimal, as before', () => {
+    expect(daysOf('Date,Guests,Net\n2025-03-04,5,1.234').days[0]?.netSalesCents).toBe(123);
+  });
+});
+
 describe('ten years at a time', () => {
   function daysFile(count: number): string {
     const lines = ['Date,Guests,Net'];
@@ -176,9 +195,23 @@ describe('ten years at a time', () => {
 });
 
 describe('the latest date', () => {
-  test('tomorrow, never later than the server’s UTC date plus one day', () => {
-    expect(latestDate(new Date('2026-11-04T12:00:00.000Z'))).toBe('2026-11-05');
-    expect(latestDate(new Date('2026-11-04T23:30:00.000Z')) <= '2026-11-05').toBe(true);
+  /** `iso` as a browser `offsetHours` from UTC sees it: its local date fields, whatever zone the tests run in. */
+  function seenAt(iso: string, offsetHours: number): Date {
+    const now = new Date(iso);
+    const wall = new Date(now.getTime() + offsetHours * 3_600_000);
+    return Object.assign(now, {
+      getFullYear: () => wall.getUTCFullYear(),
+      getMonth: () => wall.getUTCMonth(),
+      getDate: () => wall.getUTCDate(),
+    });
+  }
+
+  test('tomorrow in local time, never later than the server’s UTC date plus one day', () => {
+    expect(latestDate(seenAt('2026-11-04T12:00:00.000Z', 0))).toBe('2026-11-05');
+    // Tokyo is already on Nov 5, so its tomorrow is Nov 6; the server's UTC date is Nov 4, so it allows Nov 5.
+    expect(latestDate(seenAt('2026-11-04T23:30:00.000Z', 9))).toBe('2026-11-05');
+    // New York is still on Nov 4, so tomorrow is Nov 5, a day before the server's limit.
+    expect(latestDate(seenAt('2026-11-05T02:00:00.000Z', -5))).toBe('2026-11-05');
   });
 });
 

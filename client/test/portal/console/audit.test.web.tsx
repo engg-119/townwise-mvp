@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 
 import { formatTime } from '../../../src/portal/format';
-import { deferred, offline } from '../../helpers/portal';
+import { deferred, offline, refusal } from '../../helpers/portal';
 import { auditEvent, CHEF_EMAIL, consoleApi, emailOf, MANAGER_EMAIL, orgRow, renderAt, type ConsoleApi } from './helpers';
 
 // P23 Audit log: filters, Load more, and what each row shows. docs/portal/spec.md 16.4, Section 9.
@@ -139,6 +139,30 @@ test('opened from an organization’s page, filtered to it; empty says nothing r
   if (inEmpty === undefined) throw new Error('no Clear filters in the empty state');
   fireEvent.click(inEmpty);
   expect(await screen.findByRole('region', { name: 'Events' })).toBeTruthy();
+});
+
+test('an actor that isn’t an email address says so at the field and sends nothing; a 400 reads the same', async () => {
+  const api = consoleApi();
+  serveOrgs(api);
+  api.routes['GET /api/admin/audit'] = () => ({ events: EVENTS, nextBefore: null });
+  const odd = emailOf('odd');
+  api.routes[`GET /api/admin/people/lookup?q=${encodeURIComponent(odd)}`] = () => refusal(400, 'invalid_request');
+  renderAt('/admin/audit', api);
+  await screen.findByRole('region', { name: 'Events' });
+  const field = screen.getByRole('textbox', { name: 'Actor email' });
+  fireEvent.change(field, { target: { value: 'bob' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Apply filters' }));
+  expect(screen.getByText('Enter an email address.')).toBeTruthy();
+  expect(field.getAttribute('aria-invalid')).toBe('true');
+  expect(api.calls.filter((call) => call.path.includes('/lookup'))).toEqual([]);
+  expect(screen.getByRole('region', { name: 'Events' })).toBeTruthy();
+  // The server refuses an address the page let through: the same words, and no Try again that sends it again.
+  fireEvent.change(field, { target: { value: odd } });
+  fireEvent.click(screen.getByRole('button', { name: 'Apply filters' }));
+  await waitFor(() => { expect(api.calls.filter((call) => call.path.includes('/lookup'))).toHaveLength(1); });
+  expect(await screen.findByText('Enter an email address.')).toBeTruthy();
+  expect(screen.queryByText('Something went wrong with that request. Reload the page and try again.')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
 });
 
 test('loading, then the network copy with Try again', async () => {

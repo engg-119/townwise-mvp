@@ -19,7 +19,7 @@ export const COPY = {
   /** Not in the spec: the browser could not read the file (it moved or changed after it was chosen). */
   unreadable: 'That file can’t be read. Choose it again.',
   native: 'Upload from a computer at townwise.tech.',
-  matchCells: 'Each picker lists your file’s column names and the kind of values found in its first 200 filled cells. Townwise never shows what’s in a cell.',
+  matchCells: 'Each picker lists your file’s column names and the kind of values found in its first 200 filled cells. Cell values stay hidden, except a location column’s once you name it.',
   rowQuestion: 'What is one row in this file?',
   itemLevel: 'Item-level exports aren’t supported. Export daily totals or checks, not items.',
   addedUp: 'We add up rows that share a date.',
@@ -27,6 +27,8 @@ export const COPY = {
   /** Not in the spec: Check the totals waits for a date column. */
   chooseDate: 'Choose the date column.',
   orderSet: 'Set from the dates in this file.',
+  /** Not in the spec: the column's dates prove both orders. */
+  orderMixed: 'Some dates in this column work only day first, and others only month first. Choose the order. Rows whose date doesn’t fit it are skipped.',
   valuesHelp: 'Guests and net sales are each optional. Pick at least one. Guesses from your column names are already picked.',
   chooseValues: 'Choose a guests column, a net sales column, or both.',
   locationHelp: 'For a file that covers several locations.',
@@ -36,6 +38,8 @@ export const COPY = {
   checkTotals: 'Check the totals',
   noDates: 'No rows had a readable date. Check the Date column.',
   tooManyDays: 'This file covers more than 10 years. Upload up to 10 years at a time.',
+  /** Not in the spec: a semicolon file whose net sales may use a decimal comma. */
+  decimalComma: 'The net sales in this file may use a comma for decimals, as in 1.234,50. Townwise reads only a dot for decimals, so it can’t be sure of these amounts. Export the file with a dot for decimals, then choose it again.',
   checkAgainst: 'Check these against your point-of-sale system.',
   onlyThese: 'Only these three columns leave this computer, one row per day.',
   /** Not in the spec: every day was left out, so there is nothing to send. */

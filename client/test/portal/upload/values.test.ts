@@ -123,6 +123,15 @@ describe('numbers', () => {
     },
   );
 
+  test('read with a comma for decimals, dots group thousands', () => {
+    expect(readAmount('1.234,50', ',')).toBe(1234.5 * MICROS);
+    expect(readAmount('12,50', ',')).toBe(12.5 * MICROS);
+    expect(readAmount('1.234', ',')).toBe(1234 * MICROS);
+    expect(readAmount('(1.234,50)', ',')).toBe(-1234.5 * MICROS);
+    expect(Number.isNaN(readAmount('980.00', ','))).toBe(true);
+    expect(Number.isNaN(readAmount('1,234.50', ','))).toBe(true);
+  });
+
   test('amounts are exact in millionths, so sums do not drift', () => {
     const sum = (readAmount('0.1') ?? 0) + (readAmount('0.2') ?? 0);
     expect(sum).toBe(300_000);

@@ -159,6 +159,70 @@ test('Approve refusals: someone else decided it (the list reloads); the requeste
   expect(writes(api)).toHaveLength(2);
 });
 
+test('a request link to one the list doesn’t have says so, and selects no other request', async () => {
+  const api = consoleApi();
+  const other = adminRequest({ id: 'r7', orgName: 'Sample Other Group', status: 'approved', orgId: 'o7' });
+  list(api, 'approved', [other]);
+  renderAt('/admin?status=approved&request=r1', api);
+  const table = await screen.findByRole('region', { name: 'Approved requests' });
+  expect(screen.getByText('That request is no longer listed. Choose one from the list.')).toBeTruthy();
+  expect(screen.queryByRole('region', { name: /^Request: / })).toBeNull();
+  expect(within(table).getByRole('link', { name: 'Sample Other Group' }).getAttribute('aria-current')).toBeNull();
+});
+
+test('an approve for a request that is gone (404) closes, says so, and reads the list and the count again', async () => {
+  const api = consoleApi();
+  let pending: unknown[] = [TAVERN];
+  api.routes['GET /api/admin/requests?status=pending'] = () => ({ requests: pending, pendingCount: pending.length });
+  api.routes['POST /api/admin/requests/r1/approve'] = () => { pending = []; return refusal(404, 'not_found'); };
+  renderAt('/admin', api);
+  await waitFor(() => { expect(navCount()).toBe('Requests 1'); });
+  fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+  fireEvent.click(within(screen.getByRole('dialog', { name: 'Approve Sample Mountain Tavern' })).getByRole('button', { name: 'Approve' }));
+  expect(await screen.findByText('That request is no longer listed.')).toBeTruthy();
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(await screen.findByText('No requests are waiting.')).toBeTruthy();
+  await waitFor(() => { expect(navCount()).toBe('Requests 0'); });
+});
+
+test('an approve refused because the requester joined an organization reads the list and the count again', async () => {
+  const api = consoleApi();
+  let pending: unknown[] = [TAVERN];
+  let count = 1;
+  api.routes['GET /api/admin/requests?status=pending'] = () => ({ requests: pending, pendingCount: count });
+  api.routes['POST /api/admin/requests/r1/approve'] = () => {
+    pending = [{ ...TAVERN, requesterHasOrg: true }];
+    count = 3;
+    return refusal(409, 'requester_has_org');
+  };
+  renderAt('/admin', api);
+  await waitFor(() => { expect(navCount()).toBe('Requests 1'); });
+  fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+  const dialog = screen.getByRole('dialog', { name: 'Approve Sample Mountain Tavern' });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Approve' }));
+  expect(await within(dialog).findByText('This person already belongs to an organization.')).toBeTruthy();
+  await waitFor(() => { expect(navCount()).toBe('Requests 3'); });
+  expect(await screen.findByRole('link', { name: 'Pending 3' })).toBeTruthy();
+});
+
+test('“Someone already decided this request.” stays on its tab: switching tabs drops it', async () => {
+  const api = consoleApi();
+  list(api, 'pending', [TAVERN]);
+  list(api, 'approved', []);
+  api.routes['POST /api/admin/requests/r1/approve'] = () => refusal(409, 'request_not_pending');
+  renderAt('/admin', api);
+  fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+  fireEvent.click(within(screen.getByRole('dialog', { name: 'Approve Sample Mountain Tavern' })).getByRole('button', { name: 'Approve' }));
+  expect(await screen.findByText('Someone already decided this request.')).toBeTruthy();
+  const tabs = screen.getByRole('navigation', { name: 'Requests by status' });
+  fireEvent.click(within(tabs).getByRole('link', { name: 'Approved' }));
+  expect(await screen.findByText('No approved requests.')).toBeTruthy();
+  expect(screen.queryByText('Someone already decided this request.')).toBeNull();
+  fireEvent.click(within(tabs).getByRole('link', { name: /^Pending/ }));
+  await screen.findByRole('region', { name: 'Pending requests' });
+  expect(screen.queryByText('Someone already decided this request.')).toBeNull();
+});
+
 test('Reject (C4): an optional message, sent only when written; the notice links to the Rejected tab', async () => {
   const api = consoleApi();
   list(api, 'pending', [TAVERN, PUB]);

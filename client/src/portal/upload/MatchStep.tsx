@@ -108,6 +108,7 @@ export function MatchStep(props: {
           value={mapping.dateOrder}
           choices={ORDERS}
           onChange={(dateOrder) => { onChange({ ...mapping, dateOrder }); }}
+          {...(dateColumn.mixedOrder ? { helper: COPY.orderMixed } : {})}
         />
       ) : (
         // A part above 12 sets the order (spec 11.2): shown, not offered.

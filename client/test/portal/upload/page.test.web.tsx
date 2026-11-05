@@ -138,6 +138,9 @@ test('step 1: the four steps, what is sent, and an outline Choose a CSV file', a
   expect(screen.getByText('Step 1 of 4: Choose a file, Match columns, Check the totals, Send.')).toBeTruthy();
   expect(screen.getByText(/^Export a daily sales summary from your point-of-sale system as a CSV file\./)).toBeTruthy();
   expect(screen.getByText('A .csv or .txt file up to 50 MB, separated by commas, semicolons or tabs.')).toBeTruthy();
+  // The location column's values do show once that column is named, so no line says cells never show.
+  expect(screen.getByText(/Townwise shows column names, not what’s in the cells\. Only a location column’s values show, once you name that column\.$/)).toBeTruthy();
+  expect(pageText()).not.toMatch(/never (what’s in|shows what’s in)/);
   expect(screen.getByRole('button', { name: 'Choose a CSV file' }).getAttribute('aria-disabled')).toBeNull();
   expect(fileInput()?.getAttribute('accept')).toBe('.csv,.txt,text/csv,text/plain');
   expect(screen.queryByText(/\[CONFIRM|\[DECISION NEEDED/)).toBeNull();
@@ -156,6 +159,8 @@ test('an org admin’s upload: match, check, send one body of days, and the repl
   expect(optionsOf('Date')).toEqual(['Choose a column', 'Business Date: dates', 'Customer: text', 'Guest Count: numbers', 'Net Sales: numbers', 'Server: text']);
   expect(optionsOf('Guests')[0]).toBe('Not in this file');
   expect(pageText()).not.toContain(SENTINEL);
+  expect(screen.getByText(/Cell values stay hidden, except a location column’s once you name it\.$/)).toBeTruthy();
+  expect(pageText()).not.toMatch(/never (what’s in|shows what’s in)/);
 
   await click('Check the totals');
   await screen.findByRole('heading', { name: 'Check the totals' });
@@ -252,6 +257,19 @@ test('slash dates: the order is the person’s to confirm, unless a part above 1
   expect(await screen.findByText('2 rows became 2 days, Apr 3, 2025 to Dec 25, 2025.')).toBeTruthy();
 });
 
+test('slash dates that prove both orders: the person chooses, and the page says why', async () => {
+  renderAt(adminApi());
+  await toMatch(csvFile('Date,Guests\n13/02/2025,5\n02/13/2025,6\n01/01/2025,7'));
+  expect(screen.queryByText('Set from the dates in this file.')).toBeNull();
+  const why = screen.getByText('Some dates in this column work only day first, and others only month first. Choose the order. Rows whose date doesn’t fit it are skipped.');
+  const dayFirst = screen.getByRole('button', { name: 'Day first (03/04/2025 is April 3, 2025)' });
+  expect(dayFirst.getAttribute('aria-describedby')).toBe(why.id);
+  await click('Day first (03/04/2025 is April 3, 2025)');
+  await click('Check the totals');
+  expect(await screen.findByText('2 rows became 2 days, Jan 1, 2025 to Feb 13, 2025.')).toBeTruthy();
+  expect(screen.getByText('1 row had no readable date (row 3).')).toBeTruthy();
+});
+
 test('a location column lists its values, the only cells shown, and other locations’ rows are left out', async () => {
   const text = [
     'Date,Store,Customer,Guests',
@@ -301,6 +319,14 @@ test.each<[string, File, string]>([
   expect(screen.getByRole('button', { name: 'Choose a CSV file' })).toBeTruthy();
 });
 
+test('a headerless file whose first row has a date and a name is refused, and no cell shows (D11)', async () => {
+  renderAt(adminApi());
+  await choose(csvFile(`2025-03-04,${SENTINEL},12,980.00\n2025-03-05,${SENTINEL},9,700.00`));
+  expect(await screen.findByText('That file has no header row.')).toBeTruthy();
+  expect(screen.queryByRole('heading', { name: 'Match columns' })).toBeNull();
+  expect(pageText()).not.toContain(SENTINEL);
+});
+
 test('“Reading {size} file…” shows while the file is read', async () => {
   const text = deferred<string>();
   renderAt(adminApi());
@@ -319,6 +345,15 @@ test('check errors: repeated dates in one-day mode, and no readable date; Back r
   fireEvent.change(await screen.findByRole('combobox', { name: 'Date' }), { target: { value: '1' } });
   await click('Check the totals');
   expect(await screen.findByText('No rows had a readable date. Check the Date column.')).toBeTruthy();
+});
+
+test('a semicolon file with 1.234 in net sales is stopped with a clear line, never sent as $1.23', async () => {
+  const api = adminApi();
+  renderAt(api);
+  await toCheck(csvFile('Business Date;Guest Count;Net Sales\n2025-03-04;5;1.234\n2025-03-05;6;980'));
+  expect(screen.getByText('The net sales in this file may use a comma for decimals, as in 1.234,50. Townwise reads only a dot for decimals, so it can’t be sure of these amounts. Export the file with a dot for decimals, then choose it again.')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: /^Send/ })).toBeNull();
+  expect(writes(api)).toEqual([]);
 });
 
 test('more than 3,660 days is refused', async () => {

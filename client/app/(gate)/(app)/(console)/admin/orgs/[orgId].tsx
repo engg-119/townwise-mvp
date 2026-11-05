@@ -30,6 +30,8 @@ import { theme } from '../../../../../../src/theme';
 // place.
 
 const NAME_COPY = 'Enter the organization’s name, 2 to 120 characters.';
+/** A change went through, but reading the organization again didn't: what the page shows may be old. */
+const REFRESH_COPY = 'This page couldn’t load the latest, so it may be out of date.';
 
 type Open = 'rename' | 'suspend' | 'delete' | null;
 
@@ -108,7 +110,7 @@ function DeleteDialog(props: { detail: OrgDetail; onStale: () => Promise<void>; 
     try {
       await deleteOrg(api, org.id);
     } catch (error) {
-      if (hasCode(error, 409, 'org_not_suspended')) await onStale().catch(() => undefined);
+      if (hasCode(error, 409, 'org_not_suspended')) await onStale();
       throw error;
     }
     showNotice({ text: `Deleted ${org.name}.` }, onlyAt('/admin/orgs'));
@@ -164,7 +166,8 @@ export default function OrganizationPage(): React.JSX.Element {
   const pathname = usePathname();
   const params = useLocalSearchParams<{ orgId: string }>();
   const orgId = typeof params.orgId === 'string' ? params.orgId : '';
-  const { state, reload, refresh } = useRefreshable(useCallback(() => fetchOrg(api, orgId), [api, orgId]));
+  // A write's outcome is its own: `refresh` never rejects, and a failed one shows REFRESH_COPY with its own Try again.
+  const { state, reload, refresh, refreshError } = useRefreshable(useCallback(() => fetchOrg(api, orgId), [api, orgId]));
   const [open, setOpen] = useState<Open>(null);
   const [viewing, setViewing] = useState<ViewAsTarget | null>(null);
 
@@ -221,6 +224,7 @@ export default function OrganizationPage(): React.JSX.Element {
         {suspended ? <Small>{`Members of ${org.name} see that access is paused. Data is kept.`}</Small> : null}
         {noAdmin ? <Small white>No admin yet. Add an admin email.</Small> : null}
         {reactivate.error === null ? null : <ErrorNotice error={reactivate.error} />}
+        {refreshError === null ? null : <ErrorNotice message={REFRESH_COPY} onRetry={() => { void refresh(); }} />}
       </Stack>
 
       <Section title="Team">

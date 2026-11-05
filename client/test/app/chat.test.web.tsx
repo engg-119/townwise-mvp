@@ -50,8 +50,11 @@ test('on web, the dashboard links to a location, whose Chat tab streams a reply 
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1'); });
   fireEvent.click(await screen.findByRole('link', { name: 'Chat' }));
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/chat'); });
-  // The location's page header and the chat both name the location.
+  // The location's page header and the chat both name the location; the header's is the page's only h1.
   expect(await screen.findAllByRole('heading', { name: 'Main Street Bar' })).toHaveLength(2);
+  expect(screen.getAllByRole('heading', { level: 1 }).map((heading) => heading.textContent)).toEqual(['Main Street Bar']);
+  expect(screen.getByRole('heading', { level: 2, name: 'Main Street Bar' })).toBeTruthy();
+  expect(screen.getByRole('heading', { level: 3, name: 'Conversations' })).toBeTruthy();
 
   fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Closed for the holidays' } });
   fireEvent.click(screen.getByRole('button', { name: 'Send' }));

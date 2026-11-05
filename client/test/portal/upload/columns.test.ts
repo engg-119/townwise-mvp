@@ -44,6 +44,12 @@ describe('the header row', () => {
     expect(lacksHeader(['3/4/2025', '', '12'])).toBe(true);
   });
 
+  test('a first row with any date is data, even beside a name, so the name never becomes a column label (D11)', () => {
+    expect(lacksHeader(['2025-03-04', SENTINEL, '12', '980.00'])).toBe(true);
+    expect(lacksHeader([SENTINEL, '3/4/2025'])).toBe(true);
+    expect(lacksHeader(['Date', SENTINEL])).toBe(false);
+  });
+
   test('a first row with a name is a header', () => {
     expect(lacksHeader(['Date', 'Guests'])).toBe(false);
     expect(lacksHeader(['Business Date', '', ''])).toBe(false);
@@ -97,6 +103,11 @@ describe('slash date order from the whole column', () => {
 
   test('dates that read either way leave the order to the person', () => {
     expect(profile('Date\n03/04/2025\n12/11/2025 10:00 PM')[0]).toMatchObject({ slashDates: true, order: null });
+  });
+
+  test('dates that prove both orders leave the order to the person, and say so', () => {
+    expect(profile('Date\n13/02/2025\n02/13/2025\n01/01/2025')[0]).toMatchObject({ slashDates: true, order: null, mixedOrder: true });
+    expect(profile('Date\n13/02/2025\n01/01/2025')[0]).toMatchObject({ order: 'day_first', mixedOrder: false });
   });
 
   test('full dates need no order', () => {

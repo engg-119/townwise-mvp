@@ -315,6 +315,68 @@ test('Remove and Remove invitation confirm first, then delete; the last admin is
   ]);
 });
 
+describe('a change that saved, then the page couldn’t read the organization again', () => {
+  const STALE = 'This page couldn’t load the latest, so it may be out of date.';
+
+  function failingRefresh(api: ConsoleApi): { fail: () => void; heal: (detail: unknown) => void } {
+    let next: unknown = orgDetail();
+    let failing = false;
+    api.routes[`GET ${PATH}`] = () => (failing ? offline() : next);
+    return { fail: () => { failing = true; }, heal: (detail) => { failing = false; next = detail; } };
+  }
+
+  test('Remove says Saved., keeps no write error, and Try again reads the team again', async () => {
+    const api = consoleApi();
+    const refresh = failingRefresh(api);
+    api.routes[`DELETE ${PATH}/members/m2`] = () => { refresh.fail(); return null; };
+    renderAt('/admin/orgs/o1', api);
+    fireEvent.click(await screen.findByRole('button', { name: `Remove ${MANAGER_EMAIL}` }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: `Remove ${MANAGER_EMAIL}?` })).getByRole('button', { name: 'Remove' }));
+    expect(await screen.findByText('Saved.')).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByText(STALE)).toBeTruthy();
+    expect(screen.queryByText('Can’t reach Townwise. Check your connection and try again.')).toBeNull();
+    refresh.heal(orgDetail({ members: [member('m1', OWNER_EMAIL, { role: 'org_admin' })] }));
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => { expect(screen.queryByText(STALE)).toBeNull(); });
+    expect(within(screen.getByRole('region', { name: 'Team' })).queryByText(MANAGER_EMAIL)).toBeNull();
+    // Try again read the organization; it sent nothing again.
+    expect(writes(api).map((call) => `${call.method} ${call.path}`)).toEqual([`DELETE ${PATH}/members/m2`]);
+  });
+
+  test('Rename closes with Saved. instead of showing a failure in the dialog', async () => {
+    const api = consoleApi();
+    const refresh = failingRefresh(api);
+    api.routes[`PATCH ${PATH}`] = () => { refresh.fail(); return { org: orgDetail({ org: { name: 'Sample Group' } }).org }; };
+    renderAt('/admin/orgs/o1', api);
+    fireEvent.click(await screen.findByRole('button', { name: 'Rename' }));
+    const dialog = screen.getByRole('dialog', { name: `Rename ${NAME}` });
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Sample Group' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save name' }));
+    expect(await screen.findByText('Saved.')).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: `Rename ${NAME}` })).toBeNull();
+    expect(screen.getByText(STALE)).toBeTruthy();
+  });
+
+  test('Add people shows each address’s result, and Make admin says Saved., with no write error', async () => {
+    const api = consoleApi();
+    const refresh = failingRefresh(api);
+    const added = emailOf('server');
+    api.routes[`POST ${PATH}/members`] = () => { refresh.fail(); return { results: [{ email: added, outcome: 'invited' }], members: [] }; };
+    api.routes[`PATCH ${PATH}/members/m2`] = () => ({ member: member('m2', MANAGER_EMAIL, { role: 'org_admin' }) });
+    renderAt('/admin/orgs/o1', api);
+    const panel = await screen.findByRole('region', { name: 'Add people' });
+    fireEvent.change(within(panel).getByRole('textbox', { name: 'Email addresses' }), { target: { value: added } });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Add' }));
+    expect(await within(panel).findByText(`${added}: Added. They can join the next time they continue with Google.`)).toBeTruthy();
+    expect(await screen.findByText(STALE)).toBeTruthy();
+    expect(within(panel).queryByRole('alert')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: `Make ${MANAGER_EMAIL} an admin` }));
+    expect(await screen.findByText('Saved.')).toBeTruthy();
+    expect(screen.queryByText('Can’t reach Townwise. Check your connection and try again.')).toBeNull();
+  });
+});
+
 test('View as on a member row finds the person by email, then opens what they see under the banner', async () => {
   const api = consoleApi();
   serve(api, orgDetail());

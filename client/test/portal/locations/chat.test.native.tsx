@@ -8,11 +8,11 @@ jest.mock('expo-splash-screen', () => ({
 }));
 
 import { Dimensions } from 'react-native';
-import { cleanup, fireEvent, screen, within } from 'expo-router/testing-library';
+import { cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing-library';
 
 import type { MeResponse } from '../../../src/portal/schemas';
-import { fakeChatApi, refusal as chatRefusal, type FakeChatApi } from '../../helpers/chat';
-import { ACCESS, fakePortalApi, meOf, orgOf, viewAsMe } from '../../helpers/portal';
+import { fakeChatApi, PROPOSAL, refusal as chatRefusal, type FakeChatApi } from '../../helpers/chat';
+import { ACCESS, fakePortalApi, LOCATIONS, meOf, orgOf, refusal, staffMe, viewAsMe } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 
 // The tuning chat inside the portal on native: view-as keeps every write control in place and disabled (spec
@@ -60,6 +60,54 @@ describe('view-as', () => {
     await fireEvent.changeText(await screen.findByLabelText('Message'), 'Hello');
     expect(screen.getByRole('button', { name: 'Send' }).props.accessibilityState).not.toMatchObject({ disabled: true });
     expect(screen.queryByText(/^Read-only while viewing as/)).toBeNull();
+  });
+});
+
+describe('the portal’s client (spec 4.3)', () => {
+  // auth.api is the bare fake; the portal's api wraps it and re-reads GET /api/me on the access errors. Only the
+  // portal's api routes again, so a chat that called auth.api directly would stay put and show an error.
+  async function refusedChat(me: MeResponse, after: MeResponse) {
+    const chat = fakeChatApi();
+    chat.chatError = refusal(403, 'no_access');
+    const api = fakePortalApi({ me, org: orgOf('member'), fallback: chat });
+    const json = api.json.bind(api);
+    api.json = (path, schema, opts) => {
+      const answer = json(path, schema, opts);
+      if (path === '/api/me') api.me = after;
+      return answer;
+    };
+    const { router, auth } = await renderApp('/locations/l1/chat', api);
+    expect(auth.api).toBe(api);
+    return { api, router };
+  }
+
+  test('a member removed meanwhile is routed to No access, not shown an error', async () => {
+    const { api, router } = await refusedChat(meOf(ACCESS.member), meOf(ACCESS.removed));
+    await waitFor(() => { expect(router.getPathname()).toBe('/no-access'); });
+    expect(api.calls.filter((call) => call.path === '/api/me')).toHaveLength(2);
+    expect(screen.queryByText('Something went wrong with that request. Reload the page and try again.')).toBeNull();
+  });
+
+  test('a view-as grant that expired meanwhile lands staff on the console', async () => {
+    const { router } = await refusedChat(viewAsMe(ACCESS.member), staffMe());
+    await waitFor(() => { expect(router.getPathname()).toBe('/admin'); });
+    expect(screen.queryByRole('region', { name: 'View-as' })).toBeNull();
+  });
+
+  test('a note added from a card reads the organization again on leaving, so Locations shows the new count', async () => {
+    const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: fakeChatApi() });
+    await renderApp('/locations/l1/chat', api);
+    await fireEvent.press(await screen.findByRole('button', { name: /^Earlier chat/ }));
+    await fireEvent.press(await screen.findByRole('button', { name: 'Add note' }));
+    expect(await screen.findByText('Note added.')).toBeTruthy();
+    expect(api.calls.filter((call) => call.method === 'POST')).toEqual([
+      { method: 'POST', path: '/api/org/locations/l1/notes', body: PROPOSAL },
+    ]);
+    const reads = api.calls.filter((call) => call.path === '/api/org').length;
+    api.org = orgOf('member', LOCATIONS.map((location) => (location.id === 'l1' ? { ...location, notesCount: 3 } : location)));
+    await fireEvent.press(screen.getByRole('button', { name: 'Back to locations' }));
+    expect(await screen.findByText('3 notes')).toBeTruthy();
+    expect(api.calls.filter((call) => call.path === '/api/org').length).toBeGreaterThan(reads);
   });
 });
 

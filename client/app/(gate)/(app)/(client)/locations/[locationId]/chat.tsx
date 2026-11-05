@@ -2,10 +2,10 @@ import { useRef, useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { useAuth } from '../../../../../../src/auth/AuthProvider';
 import { EFFECT_LABEL, formatDates, formatDay, guestsText, KIND_LABEL, weekdaysText } from '../../../../../../src/chat/format';
 import { canSend, useTuningChat, type ChatMessage, type ProposalCard, type TuningChat } from '../../../../../../src/chat/useTuningChat';
-import { useReadOnly } from '../../../../../../src/portal/PortalProvider';
+import { useOrgRefreshOnLeave } from '../../../../../../src/portal/locations/parts';
+import { usePortal, useReadOnly } from '../../../../../../src/portal/PortalProvider';
 import { useScrollingHead } from '../../../../../../src/portal/shell/LocationShell';
 import { webAria } from '../../../../../../src/portal/ui/aria';
 import { Button as PortalButton } from '../../../../../../src/portal/ui/Button';
@@ -23,11 +23,14 @@ import { Button, Loading, Message, Screen } from '../../../../../../src/ui';
 const READ_ONLY_ID = 'chat-ro';
 
 export default function TuningChatScreen(): React.JSX.Element {
-  const auth = useAuth();
+  // The portal's client, so the access errors of spec 4.3 re-read GET /api/me and route again.
+  const { api } = usePortal();
   const router = useRouter();
   const params = useLocalSearchParams<{ locationId: string }>();
   const locationId = typeof params.locationId === 'string' ? params.locationId : '';
-  const chat = useTuningChat(auth.api, locationId);
+  // A note added from a card changes the location's notes count: the organization is read again on leaving.
+  const markOrgStale = useOrgRefreshOnLeave();
+  const chat = useTuningChat(api, locationId, markOrgStale);
   const { state } = chat;
   const locationHead = useScrollingHead();
   // iOS: the keyboard avoider measures itself from its parent, so it is offset by the header above it.
@@ -43,7 +46,8 @@ export default function TuningChatScreen(): React.JSX.Element {
           else router.replace('/dashboard');
         }}
       />
-      <Text role="heading" style={styles.title}>{state.locationName ?? 'Tuning chat'}</Text>
+      {/* The location header above holds the page's one h1. */}
+      <Text role="heading" {...webAria({ 'aria-level': 2 })} style={styles.title}>{state.locationName ?? 'Tuning chat'}</Text>
     </View>
   );
 
@@ -123,7 +127,7 @@ function Conversations({ chat }: { chat: TuningChat }): React.JSX.Element {
   const { conversations } = chat.state;
   return (
     <View style={styles.list}>
-      <Text role="heading" style={styles.label}>Conversations</Text>
+      <Text role="heading" {...webAria({ 'aria-level': 3 })} style={styles.label}>Conversations</Text>
       {conversations.length === 0 ? (
         <Text style={styles.muted}>No conversations yet. Ask about a closure, a private event or an unusual day.</Text>
       ) : null}

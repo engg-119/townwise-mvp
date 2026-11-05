@@ -16,6 +16,7 @@ import { sendUpload, type UploadResponse } from './api';
 import { CheckStep } from './CheckStep';
 import { checkFile, guessColumns, lacksHeader, LocationValues, looksBinary, Profiler, type ColumnProfile } from './columns';
 import { COPY, readingLine, sendingLine, stepLine } from './copy';
+import { detectDelimiter, stripBom } from './csv';
 import { bodyBytes, DayAggregator, latestDate, MAX_BODY_BYTES, uploadBody, type CheckResult, type Mapping } from './days';
 import { MatchStep, type LocationValuesState } from './MatchStep';
 import { ResultStep } from './ResultStep';
@@ -40,7 +41,7 @@ const EMPTY_MAPPING: Mapping = {
 
 const HOW: readonly [string, string][] = [
   ['Choose a file.', 'Your browser reads it here. Nothing is sent yet.'],
-  ['Match columns.', 'Pick the date, guests and net sales columns. Townwise shows column names, never what’s in the cells.'],
+  ['Match columns.', 'Pick the date, guests and net sales columns. Townwise shows column names, not what’s in the cells. Only a location column’s values show, once you name that column.'],
   ['Check the totals.', 'Compare them with your point-of-sale system before anything is sent.'],
   ['Send.', 'One request with three values per day. The file itself never leaves this computer.'],
 ];
@@ -300,7 +301,7 @@ export function UploadPage(): React.JSX.Element {
     setReading(chosen.size);
     const text = await readText(chosen, run);
     if (text === null) return;
-    const days = new DayAggregator(current, latestDate(new Date()));
+    const days = new DayAggregator(current, latestDate(new Date()), detectDelimiter(stripBom(text)));
     const outcome = await scanText(text, { header: () => true, row: (cells, row) => { days.add(cells, row); return true; } }, scanOptions(run));
     if (outcome === 'cancelled') return;
     setCheck(days.finish());

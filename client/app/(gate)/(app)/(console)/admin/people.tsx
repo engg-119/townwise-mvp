@@ -1,8 +1,9 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { deletePerson, fetchPeople, lookupPerson, signOutEverywhere } from '../../../../../src/portal/console/api';
 import { Dialog } from '../../../../../src/portal/console/Dialog';
+import { EMAIL_COPY, isEmailAddress } from '../../../../../src/portal/console/email';
 import { onlyAt, orgHref } from '../../../../../src/portal/console/links';
 import { CellLines, CellLink, RowActions } from '../../../../../src/portal/console/parts';
 import { problemOf } from '../../../../../src/portal/console/problems';
@@ -23,7 +24,6 @@ import {
 // in is found by exact email (the lookup). Non-staff rows with a kit user get View as (C1) and Sign out
 // everywhere; every non-staff row gets Delete person (C7, the typed email), disabled while the person holds a seat.
 
-const EMAIL_COPY = 'Enter an email address.';
 const SEATED: readonly PersonKind[] = ['org_admin', 'member'];
 
 type Open =
@@ -175,20 +175,43 @@ function PeopleTable(props: { label: string; people: readonly Person[]; you: str
   );
 }
 
-/** “Find a signed-in person by exact email” (GET /api/admin/people/lookup?q=). */
+type LookupState =
+  | { status: 'idle' }
+  | { status: 'pending' }
+  | { status: 'found'; person: Person | null }
+  | { status: 'failed'; error: unknown };
+
+/**
+ * “Find a signed-in person by exact email” (GET /api/admin/people/lookup?q=). The address is checked here first.
+ * Each Look up or Enter starts a new lookup, and only the newest one's answer shows.
+ */
 function Lookup(props: { you: string; onOpen: (open: Open) => void }): React.JSX.Element {
   const { api } = usePortal();
   const [email, setEmail] = useState('');
   const [invalid, setInvalid] = useState(false);
-  const [found, setFound] = useState<{ person: Person | null } | null>(null);
-  const look = useAction(useCallback(async (address: string) => {
-    setFound({ person: await lookupPerson(api, address) });
-  }, [api]));
+  const [look, setLook] = useState<LookupState>({ status: 'idle' });
+  const latest = useRef(0);
   function submit(): void {
+    latest.current += 1;
+    const ticket = latest.current;
     const address = email.trim();
-    setInvalid(address === '');
-    setFound(null);
-    if (address !== '') look.run(address);
+    const ok = isEmailAddress(address);
+    setInvalid(!ok);
+    setLook(ok ? { status: 'pending' } : { status: 'idle' });
+    if (!ok) return;
+    lookupPerson(api, address).then(
+      (person) => { if (ticket === latest.current) setLook({ status: 'found', person }); },
+      (error: unknown) => {
+        if (ticket !== latest.current) return;
+        // The server's own check of the address: the same line as the check here.
+        if (hasCode(error, 400, 'invalid_request')) {
+          setInvalid(true);
+          setLook({ status: 'idle' });
+          return;
+        }
+        setLook({ status: 'failed', error });
+      },
+    );
   }
   return (
     <Panel label="Lookup">
@@ -204,11 +227,11 @@ function Lookup(props: { you: string; onOpen: (open: Open) => void }): React.JSX
         maxLength={320}
         messages={invalid ? [EMAIL_COPY] : []}
       />
-      <Actions><Button variant="outline" label={look.pending ? 'Looking up…' : 'Look up'} disabled={look.pending} onPress={submit} /></Actions>
-      {look.error === null ? null : <ErrorNotice error={look.error} />}
-      {found === null ? null : found.person === null
+      <Actions><Button variant="outline" label={look.status === 'pending' ? 'Looking up…' : 'Look up'} onPress={submit} /></Actions>
+      {look.status === 'failed' ? <ErrorNotice error={look.error} /> : null}
+      {look.status !== 'found' ? null : look.person === null
         ? <Messages live="status" items={['No one with that email has signed in or been added.']} />
-        : <PeopleTable label="Lookup result" people={[found.person]} you={props.you} onOpen={props.onOpen} />}
+        : <PeopleTable label="Lookup result" people={[look.person]} you={props.you} onOpen={props.onOpen} />}
     </Panel>
   );
 }

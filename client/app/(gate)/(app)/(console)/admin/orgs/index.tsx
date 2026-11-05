@@ -31,12 +31,20 @@ function NewOrgDialog(props: { onClose: () => void }): React.JSX.Element {
   const { api, showNotice } = usePortal();
   const router = useRouter();
   // One id per opened dialog: a double submit or a retry sends the same one, so the server makes one organization.
-  const [orgId] = useState(newOrgId);
+  // A 409 conflict means that id is taken by a different organization, so the next try starts a fresh one.
+  const [orgId, setOrgId] = useState(newOrgId);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [messages, setMessages] = useState<{ name: string | null; email: string | null }>({ name: null, email: null });
   const create = useAction(useCallback(async (input: { name: string; adminEmail: string }) => {
-    const { org, result } = await createOrg(api, { id: orgId, ...input });
+    let created: Awaited<ReturnType<typeof createOrg>>;
+    try {
+      created = await createOrg(api, { id: orgId, ...input });
+    } catch (error) {
+      if (hasCode(error, 409, 'conflict')) setOrgId(newOrgId());
+      throw error;
+    }
+    const { org, result } = created;
     const href = orgHref(org.id);
     showNotice({ text: `Created ${org.name}. ${result.email} joins as its admin the next time they continue with Google.` }, onlyAt(href));
     router.push(href);

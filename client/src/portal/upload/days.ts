@@ -1,4 +1,4 @@
-import { isBlankRecord } from './csv';
+import { isBlankRecord, type Delimiter } from './csv';
 import { centsOf, readAmount, readDateCell, readGuests, resolveDate, type DateOrder } from './values';
 
 // Check the totals (spec 11.2 step 3): rows become days, with the skipped rows and left-out days counted, then
@@ -53,6 +53,8 @@ export interface DaysResult {
 export type CheckResult =
   | DaysResult
   | { kind: 'no_dates' }
+  /** A semicolon file whose net sales may use a decimal comma (1.234,50): refused rather than misread. */
+  | { kind: 'decimal_comma' }
   | { kind: 'repeated_dates'; dates: number; repeats: RowTally }
   | { kind: 'too_many_days'; days: number };
 
@@ -75,10 +77,19 @@ function count(into: RowTally, row: number): void {
 
 interface DayTotal { guests: number | null; micros: number | null; rows: number }
 
+/**
+ * How a semicolon file's net sales read with a dot and with a comma for decimals. Semicolons are the separator
+ * where a comma marks decimals, so there 1.234 may be one thousand and 12,50 twelve and a half. Townwise reads only
+ * a dot for decimals, so such a file goes on only when a cell proves the dot (980.00) and none needs the comma.
+ */
+interface MoneyMarks { dotOnly: boolean; commaOnly: boolean; eitherWay: boolean }
+
 /** Adds rows up per date for one mapping. `latest` is the last date allowed (`latestDate`). */
 export class DayAggregator {
   private readonly mapping: Mapping;
   private readonly latest: string;
+  /** Checked on semicolon files only; null otherwise. */
+  private readonly marks: MoneyMarks | null;
   private readonly totals = new Map<string, DayTotal>();
   private readonly noDate = tally();
   private readonly badNumber = tally();
@@ -87,9 +98,24 @@ export class DayAggregator {
   private otherLocation = 0;
   private dated = 0;
 
-  constructor(mapping: Mapping, latest: string) {
+  /** `delimiter` is the file's (csv.ts detectDelimiter). */
+  constructor(mapping: Mapping, latest: string, delimiter: Delimiter = ',') {
     this.mapping = mapping;
     this.latest = latest;
+    this.marks = delimiter === ';' && mapping.netSales !== null ? { dotOnly: false, commaOnly: false, eitherWay: false } : null;
+  }
+
+  private noteMarks(cell: string): void {
+    const marks = this.marks;
+    if (marks === null) return;
+    const dot = readAmount(cell);
+    if (dot === null) return;
+    const comma = readAmount(cell, ',') ?? NaN;
+    const dotReads = !Number.isNaN(dot);
+    const commaReads = !Number.isNaN(comma);
+    if (dotReads && !commaReads) marks.dotOnly = true;
+    else if (!dotReads && commaReads) marks.commaOnly = true;
+    else if (dotReads && comma !== dot) marks.eitherWay = true;
   }
 
   /** One data row; `row` is its spreadsheet row number (the header is row 1). */
@@ -108,7 +134,9 @@ export class DayAggregator {
     }
     this.dated += 1;
     const guests = mapping.guests === null ? null : readGuests(cells[mapping.guests] ?? '');
-    const micros = mapping.netSales === null ? null : readAmount(cells[mapping.netSales] ?? '');
+    const sales = mapping.netSales === null ? null : cells[mapping.netSales] ?? '';
+    if (sales !== null) this.noteMarks(sales);
+    const micros = sales === null ? null : readAmount(sales);
     if (Number.isNaN(guests ?? 0) || Number.isNaN(micros ?? 0)) {
       count(this.badNumber, row);
       return;
@@ -130,6 +158,8 @@ export class DayAggregator {
 
   finish(): CheckResult {
     if (this.dated === 0) return { kind: 'no_dates' };
+    const marks = this.marks;
+    if (marks !== null && (marks.commaOnly || (marks.eitherWay && !marks.dotOnly))) return { kind: 'decimal_comma' };
     if (this.repeatedDates.size > 0) return { kind: 'repeated_dates', dates: this.repeatedDates.size, repeats: this.repeats };
     const days: SalesDay[] = [];
     const excluded: DaysResult['excluded'] = [];

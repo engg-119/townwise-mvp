@@ -19,8 +19,10 @@ export interface ColumnProfile {
   kind: ColumnKind;
   /** True when any cell is a slash date, so the person confirms the order. */
   slashDates: boolean;
-  /** The order the column's slash dates prove (a part above 12), or null when they read either way. */
+  /** The order the column's slash dates prove (a part above 12), or null when they read either way or prove both. */
   order: DateOrder | null;
+  /** Some slash dates prove day first and others month first, so the person chooses and the page says why. */
+  mixedOrder: boolean;
 }
 
 /** File checks before reading: the size, then the extension (`.csv` or `.txt`). */
@@ -38,11 +40,14 @@ function isValueCell(cell: string): boolean {
   return readDateCell(cell) !== null || !Number.isNaN(readAmount(cell) ?? NaN);
 }
 
-/** No header row: the file is empty, or every non-empty cell of its first row is a date or a number. */
+/**
+ * No header row: the file is empty, any cell of its first row reads as a date, or every non-empty one is a number.
+ * Such a first row is data, so none of its cells may become a column label (D11): the file is refused.
+ */
 export function lacksHeader(header: readonly string[] | null): boolean {
   if (header === null) return true;
   const named = header.filter((cell) => cell.trim() !== '');
-  return named.length === 0 || named.every(isValueCell);
+  return named.length === 0 || named.some((cell) => readDateCell(cell) !== null) || named.every(isValueCell);
 }
 
 interface ColumnTally {
@@ -95,8 +100,10 @@ export class Profiler {
       let kind: ColumnKind = 'empty';
       if (tally.sampled > 0) kind = tally.dates >= tally.numbers && tally.dates >= text ? 'dates' : tally.numbers >= text ? 'numbers' : 'text';
       // Spec 11.2: a first part above 12 sets the order. A second part above 12 proves month first the same way.
-      const order: DateOrder | null = tally.dayFirst ? 'day_first' : tally.monthFirst ? 'month_first' : null;
-      return { name, kind, slashDates: tally.slashDates, order };
+      // When cells prove both, no order fits every row, so the person chooses.
+      const mixedOrder = tally.dayFirst && tally.monthFirst;
+      const order: DateOrder | null = mixedOrder ? null : tally.dayFirst ? 'day_first' : tally.monthFirst ? 'month_first' : null;
+      return { name, kind, slashDates: tally.slashDates, order, mixedOrder };
     });
   }
 }

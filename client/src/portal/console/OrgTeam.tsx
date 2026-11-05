@@ -67,7 +67,7 @@ function RemoveDialog(props: { org: StaffOrg; member: Member; onRemoved: () => P
 export function OrgTeam(props: {
   org: StaffOrg;
   members: readonly Member[];
-  /** Reads the organization again after a change. */
+  /** Reads the organization again after a change. It never rejects: the page shows a failed read on its own. */
   onChanged: () => Promise<void>;
   onSaved: () => void;
   onViewAs: (target: ViewAsTarget) => void;

@@ -5,8 +5,10 @@ import { StyleSheet, View } from 'react-native';
 import type { ApiClient } from '../../../../../src/api/client';
 import { fetchAudit, fetchOrgs, lookupPerson } from '../../../../../src/portal/console/api';
 import { AuditTable } from '../../../../../src/portal/console/AuditTable';
+import { EMAIL_COPY, isEmailAddress } from '../../../../../src/portal/console/email';
 import type { AuditEvent, AuditPage } from '../../../../../src/portal/console/schemas';
 import { AUDIT_ACTIONS } from '../../../../../src/portal/console/words';
+import { hasCode } from '../../../../../src/portal/errors';
 import { useAction, useBreakpoint, useLoad } from '../../../../../src/portal/hooks';
 import { usePortal } from '../../../../../src/portal/PortalProvider';
 import { Page } from '../../../../../src/portal/shell/Page';
@@ -27,16 +29,22 @@ interface Filters {
 
 const NONE: Filters = { orgId: '', actor: '', action: '' };
 
-type Result = AuditPage & { unknownActor: boolean };
+/** `actor`: no actor filter or one found, an address no one signed in with, or one the server refused (400). */
+type Result = AuditPage & { actor: 'ok' | 'unknown' | 'invalid' };
 
 async function loadAudit(api: ApiClient, filters: Filters, before?: string): Promise<Result> {
   let actorUserId: string | undefined;
   if (filters.actor !== '') {
-    actorUserId = (await lookupPerson(api, filters.actor))?.userId ?? undefined;
-    if (actorUserId === undefined) return { events: [], nextBefore: null, unknownActor: true };
+    try {
+      actorUserId = (await lookupPerson(api, filters.actor))?.userId ?? undefined;
+    } catch (error) {
+      if (hasCode(error, 400, 'invalid_request')) return { events: [], nextBefore: null, actor: 'invalid' };
+      throw error;
+    }
+    if (actorUserId === undefined) return { events: [], nextBefore: null, actor: 'unknown' };
   }
   const page = await fetchAudit(api, { orgId: filters.orgId, actorUserId, action: filters.action, before });
-  return { ...page, unknownActor: false };
+  return { ...page, actor: 'ok' };
 }
 
 function filtered(filters: Filters): boolean {
@@ -49,6 +57,7 @@ export default function AuditLogPage(): React.JSX.Element {
   const params = useLocalSearchParams<{ orgId?: string }>();
   const [draft, setDraft] = useState<Filters>(() => ({ ...NONE, orgId: typeof params.orgId === 'string' ? params.orgId : '' }));
   const [applied, setApplied] = useState<Filters>(draft);
+  const [actorInvalid, setActorInvalid] = useState(false);
   const [more, setMore] = useState<{ filters: Filters; events: AuditEvent[]; nextBefore: string | null } | null>(null);
   const orgs = useLoad(useCallback(() => fetchOrgs(api), [api]));
   const { state, reload } = useLoad(useCallback(() => loadAudit(api, applied), [api, applied]));
@@ -67,8 +76,13 @@ export default function AuditLogPage(): React.JSX.Element {
   }, [api, applied, nextBefore]));
 
   function apply(next: Filters): void {
+    const actor = next.actor.trim();
+    // Checked here first, so a typo never sends a lookup the server refuses.
+    const invalid = actor !== '' && !isEmailAddress(actor);
+    setActorInvalid(invalid);
+    if (invalid) return;
     setMore(null);
-    setApplied({ orgId: next.orgId, actor: next.actor.trim(), action: next.action });
+    setApplied({ orgId: next.orgId, actor, action: next.action });
   }
 
   function clear(): void {
@@ -89,7 +103,9 @@ export default function AuditLogPage(): React.JSX.Element {
     body = <LoadingLine text="Loading the audit log" minHeight={320} />;
   } else if (state.status === 'failed') {
     body = <ErrorNotice error={state.error} onRetry={reload} />;
-  } else if (state.data.unknownActor) {
+  } else if (state.data.actor === 'invalid') {
+    body = <EmptyState text={EMAIL_COPY}><Button variant="link" label="Clear filters" onPress={clear} /></EmptyState>;
+  } else if (state.data.actor === 'unknown') {
     body = <EmptyState text="No one with that email has signed in."><Button variant="link" label="Clear filters" onPress={clear} /></EmptyState>;
   } else if (state.data.events.length === 0) {
     body = (
@@ -130,6 +146,7 @@ export default function AuditLogPage(): React.JSX.Element {
                 keyboardType="email-address"
                 autoCorrect={false}
                 maxLength={320}
+                messages={actorInvalid ? [EMAIL_COPY] : []}
               />
             </View>
             <View style={styles.filter}>
