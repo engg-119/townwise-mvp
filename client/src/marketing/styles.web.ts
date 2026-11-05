@@ -66,6 +66,7 @@ const chrome = `
 .ft-cn a{display:inline-flex;align-items:center;min-height:44px;min-width:44px;font-size:14px;line-height:20px;color:var(--text2);text-decoration:none}
 .ft-cn a:hover{color:var(--white);text-decoration:underline}
 .ft-bot{margin-top:40px;display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px 24px;padding:24px 0 32px;font-family:var(--mono);font-size:12px;line-height:16px;color:var(--text3)}
+@media (max-width:640px){.ft-by,.ft-cn a,.ft-bot{font-size:16px;line-height:24px}}
 .tw .ft-word{--adv:3.959;--cap:0.72;--base:0.14;--pad:0.02em;display:flex;justify-content:space-between;align-items:flex-end;box-sizing:content-box;font-size:calc(98cqi / var(--adv));height:calc(var(--cap) * 1em);padding-top:var(--pad);overflow:clip;line-height:1;font-family:${theme.font.wordmark};font-weight:700;font-stretch:75%;letter-spacing:0;color:var(--white)}
 .ft-word span{display:block;line-height:1;margin-bottom:calc(var(--base) * -1em);transition:transform 700ms var(--eo)}
 @media screen and (prefers-reduced-motion:no-preference){.ft.is-armed:not(.is-in) .ft-word span{transform:translateY(100%);transition:none}}

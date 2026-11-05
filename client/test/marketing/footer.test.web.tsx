@@ -92,6 +92,10 @@ test('the bottom line names Townwise as the copyright holder and keeps the stude
   expect(footer.querySelector('.ft-dec')).toBeNull();
 });
 
+test('on phones the footer’s reading text and links are 16px', () => {
+  expect(css).toContain('@media (max-width:640px){.ft-by,.ft-cn a,.ft-bot{font-size:16px;line-height:24px}}');
+});
+
 test('Request early access is in the Account group unless the shell says not to offer it (on /sign-in)', () => {
   const offered = renderFooter();
   expect(within(within(offered).getByRole('navigation', { name: 'Account' })).getAllByRole('link').map((link) => link.textContent))
