@@ -8,8 +8,8 @@ import { cameraFor, cameraPoint, cameraTransform, REGION } from './camera';
 import { DATA_YEAR, GROUP_DOMAIN, MAX_ABS_GAP, MONTHS, northeastSeries, type TownGroup } from './countyData';
 import { FEATURED_D, stateShapes, STATES_D, VIEW_HEIGHT, VIEW_WIDTH, type Point } from './geometry';
 import {
-  FINAL_STEP, initialMapState, mapReducer, mapTowns, markerScale, MONTH_NAMES, monthLabel, PATTERN_LABEL, patternGap, PATTERNS,
-  shownMonth, valueAt, type MapTown,
+  FINAL_STEP, initialMapState, mapReducer, mapTowns, markerScale, MONTH_NAMES, monthLabel, nearestTown, PATTERN_LABEL, patternGap,
+  PATTERNS, shownMonth, valueAt, type MapTown,
 } from './mapState';
 import { mapCss } from './mapStyles.web';
 import { cursorX, finale, flowOf, glyphOf, moveAt, moveSentence, NE_SPARK_D, PIN_EXTRA, placeTags, railFill, storyBox, titleBox } from './story';
@@ -315,6 +315,16 @@ export function NortheastMap(props: { head?: React.ReactNode; lead?: React.React
     }
   }
 
+  // A pointer click on a marker goes to the dot nearest the click (close towns' hit areas overlap); a keyboard
+  // click, or one without a position, keeps the button's own town.
+  function tapped(townId: string, event: React.MouseEvent): string {
+    const box = boxRef.current?.getBoundingClientRect();
+    if (event.detail === 0 || box === undefined || box.width <= 0 || box.height <= 0) return townId;
+    const x = ((event.clientX - box.left) / box.width) * VIEW_WIDTH;
+    const y = ((event.clientY - box.top) / box.height) * VIEW_HEIGHT;
+    return nearestTown(x, y) ?? townId;
+  }
+
   // Back and Escape return focus to the town's list button; the map's own Back does it without scrolling.
   function reset(kb: boolean, fromMap: boolean): void {
     const last = state.sel;
@@ -383,7 +393,7 @@ export function NortheastMap(props: { head?: React.ReactNode; lead?: React.React
                         onMouseEnter={() => { hover(town.id, true); }}
                         onMouseLeave={() => { hover(null, false); }}
                       >
-                        <button type="button" className="mk" tabIndex={-1} aria-hidden="true" onClick={(event) => { select(town.id, event, true); }}>
+                        <button type="button" className="mk" tabIndex={-1} aria-hidden="true" onClick={(event) => { select(tapped(town.id, event), event, true); }}>
                           <span className="dot" />
                         </button>
                         <span className="mtag" aria-hidden="true">{town.label}</span>

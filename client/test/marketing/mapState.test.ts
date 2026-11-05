@@ -1,5 +1,5 @@
 import type { Side } from '../../src/marketing/map/band';
-import { initialMapState, mapReducer, REST_MONTH, shownMonth, stepMonth, stepPhase, type MapState } from '../../src/marketing/map/mapState';
+import { initialMapState, mapReducer, mapTowns, nearestTown, REST_MONTH, shownMonth, stepMonth, stepPhase, type MapState } from '../../src/marketing/map/mapState';
 
 // The band with slot `at` in it, the slots before it above and the rest below.
 function band(at: number): Side[] {
@@ -82,4 +82,16 @@ test('a silent observer lays the story flat; any later report brings it back', (
   // In the flat map the band changes nothing until it reports: then the story is back, at the reported step.
   expect(scrollTo(flat, 9)).toMatchObject({ story: true, ss: 9, month: 6, phase: 'local', mby: 'scroll' });
   expect(mapReducer(flat, { type: 'story', on: true })).toMatchObject({ story: true, ss: 0, phase: 'region', month: null });
+});
+
+test('a tap goes to the town whose dot is nearest it', () => {
+  for (const town of mapTowns) expect(nearestTown(...town.shape.centroid)).toBe(town.id);
+  const centroid = (id: string): readonly [number, number] => mapTowns.find((town) => town.id === id)?.shape.centroid ?? [0, 0];
+  // 3 map units from Stowe toward Burlington, its nearest neighbor: still Stowe.
+  const [sx, sy] = centroid('stowe-vt');
+  const [bx, by] = centroid('burlington-vt');
+  const length = Math.hypot(bx - sx, by - sy);
+  expect(nearestTown(sx + ((bx - sx) * 3) / length, sy + ((by - sy) * 3) / length)).toBe('stowe-vt');
+  // Past the midpoint, Burlington.
+  expect(nearestTown(sx + (bx - sx) * 0.6, sy + (by - sy) * 0.6)).toBe('burlington-vt');
 });

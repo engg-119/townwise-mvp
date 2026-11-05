@@ -52,6 +52,19 @@ export const mapTowns: readonly MapTown[] = towns.flatMap((town) => {
   return [{ ...town, label: `${town.name}, ${town.state}`, series, shape, countyD: county.d, pattern: patternOf(series) }];
 });
 
+// The town whose dot is nearest a point, in map units (the viewBox). Each dot's 44px hit area overlaps its
+// neighbors' where towns sit close (Burlington and Stowe are 12px apart on a phone), so a tap goes to the dot
+// nearest it, whichever button it landed on.
+export function nearestTown(x: number, y: number): string | null {
+  let best: { id: string; distance: number } | null = null;
+  for (const town of mapTowns) {
+    const [cx, cy] = town.shape.centroid;
+    const distance = (cx - x) ** 2 + (cy - y) ** 2;
+    if (best === null || distance < best.distance) best = { id: town.id, distance };
+  }
+  return best === null ? null : best.id;
+}
+
 export function monthLabel(month: number): string {
   return MONTHS[month] ?? '';
 }

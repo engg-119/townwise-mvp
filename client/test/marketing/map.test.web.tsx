@@ -265,6 +265,26 @@ test('a marker click zooms the same way and moves focus to the town’s list but
   expect(panel().querySelector('.bv-v')?.textContent).toBe('+93.5');
 });
 
+test('a pointer click goes to the town whose dot is nearest it, even on a neighbor’s overlapping button', () => {
+  renderMap();
+  const box = document.querySelector<HTMLElement>('.map-box');
+  if (box === null) throw new Error('no map box');
+  // A 356px phone map at the top left of the window.
+  box.getBoundingClientRect = () => ({ left: 0, top: 0, right: 356, bottom: 309.72, width: 356, height: 309.72, x: 0, y: 0, toJSON: () => null });
+  const at = (id: string): { clientX: number; clientY: number } => {
+    const [x, y] = town(id).shape.centroid;
+    return { clientX: (x / 1000) * 356, clientY: (y / 870) * 309.72 };
+  };
+  // Burlington's 44px button covers Stowe's dot 12px away: a tap on Stowe's dot opens Stowe.
+  fireEvent.click(markerButton('Burlington, VT'), { detail: 1, ...at('stowe-vt') });
+  expect(document.activeElement).toBe(row('Stowe, VT'));
+  expect(row('Stowe, VT').getAttribute('aria-pressed')).toBe('true');
+  fireEvent.click(row('Stowe, VT'));
+  // From the keyboard (detail 0) the button's own town, wherever the event says it is.
+  fireEvent.click(markerButton('Middlebury, VT'), { detail: 0, ...at('stowe-vt') });
+  expect(row('Middlebury, VT').getAttribute('aria-pressed')).toBe('true');
+});
+
 test('under 900px the card scrolls into view, smoothly only for a pointer, and not after the map is gone', () => {
   Object.defineProperty(window, 'matchMedia', {
     configurable: true,
