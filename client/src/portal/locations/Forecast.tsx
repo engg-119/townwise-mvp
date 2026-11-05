@@ -47,7 +47,7 @@ function Step(props: {
       <Text style={[styles.number, { width: phone ? 28 : 48 }]}>{props.number}</Text>
       <View style={styles.stepBody}>
         <View style={styles.stepTitle}>
-          <View style={[styles.square, selected ? styles.squareOn : null]} />
+          {selected ? <View testID="step-marker" style={styles.square} /> : null}
           <Heading level={3} style={selected ? styles.titleOn : null}>{props.title}</Heading>
         </View>
         <Small>{props.body}</Small>
@@ -201,9 +201,9 @@ const styles = StyleSheet.create({
   stepOn: { backgroundColor: c.raised, borderColor: c.border },
   number: { ...theme.type.mono, lineHeight: 28, color: c.text3, fontVariant: ['tabular-nums'] },
   stepBody: { flex: 1, minWidth: 0, gap: theme.space[2], alignItems: 'flex-start' },
-  stepTitle: { flexDirection: 'row', alignItems: 'center', columnGap: 8 },
-  square: { width: 6, height: 6 },
-  squareOn: { backgroundColor: c.mint },
+  stepTitle: { position: 'relative' },
+  // Hangs in the gutter left of the title, so a selected step does not move its text.
+  square: { position: 'absolute', left: -12, top: '50%', marginTop: -3, width: 6, height: 6, backgroundColor: c.mint },
   titleOn: { color: c.mint },
   progress: { ...theme.type.mono, lineHeight: 20, color: c.text2, fontVariant: ['tabular-nums'] },
   progressWide: { width: 260, lineHeight: 28, textAlign: 'right' },
