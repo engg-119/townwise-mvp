@@ -2,7 +2,7 @@ import { fmtSigned } from '../../src/marketing/format';
 import { bandEdges, CENTER_BAND, phoneBand, pickStep, rootMargin, sideOf, sideOfRect, type Side } from '../../src/marketing/map/band';
 import { mapTowns, MONTH_NAMES } from '../../src/marketing/map/mapState';
 import {
-  biggestMove, cursorX, finale, flowOf, glyphOf, largest, moveAt, moveSentence, NE_SPARK_D, placeTags, railFill, storyBox,
+  biggestMove, cursorX, finale, flowOf, glyphOf, largest, markerBox, moveAt, moveSentence, NE_SPARK_D, placeTags, railFill, storyBox,
   titleBox, topMovers, type Box,
 } from '../../src/marketing/map/story';
 
@@ -191,7 +191,7 @@ describe('the pinned map', () => {
     }
   });
 
-  test('value tags stay inside the map, 4px clear of each other and of the title', () => {
+  test('value tags stay inside the map, 4px clear of each other, of other towns’ markers and of the title', () => {
     const clear = (a: Box, b: Box): boolean => !(a[0] < b[2] + 4 && a[2] + 4 > b[0] && a[1] < b[3] + 4 && a[3] + 4 > b[1]);
     const check = (width: number, avoid: readonly Box[]): number => {
       let shown = 0;
@@ -207,12 +207,16 @@ describe('the pinned map', () => {
           expect(left >= 0 && top >= 0 && right <= width && bottom <= width * 0.87).toBe(true);
           for (const other of avoid) expect(clear(tag.box, other)).toBe(true);
           for (const [otherId, other] of tags) if (otherId !== id) expect(clear(tag.box, other.box)).toBe(true);
+          // The tags are opaque: none hides another town's dot.
+          for (const town of mapTowns) if (town.id !== id) expect(clear(tag.box, markerBox(town, month, width))).toBe(true);
         }
         shown += tags.length;
       }
       return shown;
     };
-    for (const width of [358, 487, 580, 732, 939]) expect(check(width, [])).toBeGreaterThan(20);
+    // A phone's map has room for fewer tags clear of the markers; from 580px nearly all of them fit.
+    for (const width of [358, 487]) expect(check(width, [])).toBeGreaterThanOrEqual(20);
+    for (const width of [580, 732, 939]) expect(check(width, [])).toBeGreaterThanOrEqual(30);
     expect(placeTags(0, 732).size).toBe(0);
     expect(placeTags(3, 0).size).toBe(0);
     // Flat and wide, the title reaches over the map's northwest corner: no tag lands on it.

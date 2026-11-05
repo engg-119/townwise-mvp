@@ -130,12 +130,21 @@ export function titleBox(windowWidth: number, storyWidth: number, mapWidth: numb
 }
 
 // The month's value tags: each of the three biggest movers on the first side (its name tag's side, then right,
-// left, above, below) that keeps the tag inside the map and 4px clear of the tags placed before it and of
-// `avoid`. A tag that fits nowhere is left out. Sizes from the 12px mono face, 7.2px a character.
+// left, above, below) that keeps the tag inside the map and 4px clear of the tags placed before it, of every
+// other town's marker and of `avoid`. The tags are opaque, so one over a marker would hide that town's month. A
+// tag that fits nowhere is left out. Sizes from the 12px mono face, 7.2px a character.
 export interface Tag {
   text: string;
   side: LabelSide;
   box: Box;
+}
+
+// A town's marker in map px: its dot (24px) and the ring 3px outside it (2px), scaled with the month's gap.
+export function markerBox(town: MapTown, month: number, width: number): Box {
+  const x = (town.shape.centroid[0] / VIEW_WIDTH) * width;
+  const y = (town.shape.centroid[1] / VIEW_HEIGHT) * width * 0.87;
+  const r = 17 * markerScale(town.series.gap[month] ?? 0);
+  return [x - r, y - r, x + r, y + r];
 }
 
 export function placeTags(month: number, width: number, avoid: readonly Box[] = []): Map<string, Tag> {
@@ -143,10 +152,12 @@ export function placeTags(month: number, width: number, avoid: readonly Box[] = 
   if (month <= 0 || width <= 0) return placed;
   const height = width * 0.87;
   const boxes: Box[] = [...avoid];
+  const hits = (box: Box, others: readonly Box[]): boolean => others.some((other) => box[0] < other[2] + 4 && box[2] + 4 > other[0] && box[1] < other[3] + 4 && box[3] + 4 > other[1]);
   for (const { town, delta } of topMovers(month)) {
     const x = (town.shape.centroid[0] / VIEW_WIDTH) * width;
     const y = (town.shape.centroid[1] / VIEW_HEIGHT) * height;
     const r = 12 * markerScale(town.series.gap[month] ?? 0);
+    const markers = mapTowns.filter((other) => other.id !== town.id).map((other) => markerBox(other, month, width));
     const text = `${town.name} ${fmtSigned(delta)}`;
     const tw = text.length * 7.2 + 14;
     const th = 20;
@@ -157,7 +168,7 @@ export function placeTags(month: number, width: number, avoid: readonly Box[] = 
           : where === 'above' ? [x - tw / 2, y - r - 6 - th, x + tw / 2, y - r - 6]
             : [x - tw / 2, y + r + 6, x + tw / 2, y + r + 6 + th];
       if (box[0] < 0 || box[1] < 0 || box[2] > width || box[3] > height) continue;
-      if (boxes.some((other) => box[0] < other[2] + 4 && box[2] + 4 > other[0] && box[1] < other[3] + 4 && box[3] + 4 > other[1])) continue;
+      if (hits(box, boxes) || hits(box, markers)) continue;
       boxes.push(box);
       placed.set(town.id, { text, side: where, box });
       break;
