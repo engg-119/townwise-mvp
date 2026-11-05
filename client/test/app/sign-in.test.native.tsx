@@ -131,7 +131,7 @@ test('the lines around the card are 16/24 on a phone and 14/20 wider, with no pa
   const lines = [
     'Use a Gmail address or a Google Workspace account.',
     'By continuing, you agree to the Terms and the Privacy Policy.',
-    'Townwise is in development. No forecasts are for sale yet.',
+    'New to Townwise? Continue with Google, then tell us about your restaurant. Joining your team? Use the email address your admin added.',
   ];
   const style = (text: string): TextStyle => StyleSheet.flatten(screen.getByText(text).props.style as StyleProp<TextStyle>) ?? {};
   const window = Dimensions.get('window');
