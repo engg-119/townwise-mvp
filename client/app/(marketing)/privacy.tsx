@@ -42,9 +42,9 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
           <Table>
             <Thead><Tr><Th scope="col">What</Th><Th scope="col">Why</Th></Tr></Thead>
             <Tbody>
-              <Tr><Td>Your email address, as Google reports it</Td><Td>To identify your account and to contact you about it</Td></Tr>
-              <Tr><Td>Your Google account ID (a number Google assigns, not your password)</Td><Td>To recognize you the next time you sign in, even if your email changes</Td></Tr>
-              <Tr><Td>The date your account was created</Td><Td>Record keeping</Td></Tr>
+              <Tr><Td>Your email address, as Google reports it</Td><Td data-l="Why">To identify your account and to contact you about it</Td></Tr>
+              <Tr><Td>Your Google account ID (a number Google assigns, not your password)</Td><Td data-l="Why">To recognize you the next time you sign in, even if your email changes</Td></Tr>
+              <Tr><Td>The date your account was created</Td><Td data-l="Why">Record keeping</Td></Tr>
             </Tbody>
           </Table>
         </Div>
@@ -92,8 +92,8 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
           <Table>
             <Thead><Tr><Th scope="col">Cookie</Th><Th scope="col">What it does</Th><Th scope="col">How long it lasts</Th><Th scope="col">Settings</Th></Tr></Thead>
             <Tbody>
-              <Tr><Td><Code>__Host-access</Code></Td><Td>Proves to our server that you are signed in</Td><Td>10 minutes</Td><Td>HttpOnly, Secure, SameSite=Lax, Path=/</Td></Tr>
-              <Tr><Td><Code>__Host-refresh</Code></Td><Td>Gets a fresh <Code>__Host-access</Code> cookie so you stay signed in</Td><Td>Until your session’s 30-day limit</Td><Td>HttpOnly, Secure, SameSite=Strict, Path=/</Td></Tr>
+              <Tr><Td><Code>__Host-access</Code></Td><Td data-l="What it does">Proves to our server that you are signed in</Td><Td data-l="How long it lasts">10 minutes</Td><Td data-l="Settings">HttpOnly, Secure, SameSite=Lax, Path=/</Td></Tr>
+              <Tr><Td><Code>__Host-refresh</Code></Td><Td data-l="What it does">Gets a fresh <Code>__Host-access</Code> cookie so you stay signed in</Td><Td data-l="How long it lasts">Until your session’s 30-day limit</Td><Td data-l="Settings">HttpOnly, Secure, SameSite=Strict, Path=/</Td></Tr>
             </Tbody>
           </Table>
         </Div>

@@ -4,6 +4,8 @@ import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
 import { AuthProvider } from '../../src/auth/AuthProvider';
+import { css } from '../../src/marketing/styles.web';
+import { homeCss } from '../../src/marketing/homeStyles.web';
 import { RootStack } from '../../app/_layout';
 import MarketingLayout from '../../app/(marketing)/_layout';
 import MarketingHome from '../../app/(marketing)/index';
@@ -280,6 +282,41 @@ test('Privacy makes the three commitments and no longer says the app has no uplo
   expect(text).toContain('sends us only the date, guest count and net sales for each day');
   expect(text).toContain('Effective November 5, 2026. Last updated November 5, 2026.');
   expect(text).not.toMatch(/no place to upload|before any upload exists|email account holders/i);
+});
+
+test('on phones the Privacy tables stack into rows, each cell after the first labeled with its column name', () => {
+  renderAt('/privacy');
+  const tables = [...document.querySelectorAll('.pg-privacy .tbl table')];
+  expect(tables).toHaveLength(2);
+  for (const table of tables) {
+    const heads = [...table.querySelectorAll('thead th')].map((th) => th.textContent);
+    for (const row of table.querySelectorAll('tbody tr')) {
+      expect([...row.querySelectorAll('td')].map((td) => td.getAttribute('data-l'))).toEqual([null, ...heads.slice(1)]);
+    }
+  }
+  expect(css).toContain('.pg-privacy .tbl table,.pg-privacy .tbl.wide table{min-width:0;font-size:16px;line-height:24px}');
+  expect(css).toContain('.pg-privacy .tbl td[data-l]::before{content:attr(data-l);');
+});
+
+test('on phones the Privacy and Terms contents keep two columns', () => {
+  expect(css).toContain('@media (max-width:640px){.pg-privacy .toc{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:16px}}');
+  expect(css).not.toContain('.pg-terms .toc ol{grid-template-columns:minmax(0,1fr)}');
+});
+
+test('below 360px the header tightens, shrinking the wordmark only beside the early-access button', () => {
+  expect(css).toContain('@media (max-width:359px){.nav-in{column-gap:8px}.nav-in:has(.btn)>.wm{font-size:16px}.nav-act{gap:8px}.nav-act .btn{font-size:13px;padding:0 10px}}');
+});
+
+test('on phones a link in running text gets a 44px-tall tap target', () => {
+  for (const page of ['privacy', 'terms', 'security']) {
+    expect(css).toContain(`@media (max-width:640px){.pg-${page} .prose a{position:relative;z-index:1;padding-block:13px}`);
+  }
+  expect(homeCss).toContain('@media (max-width:640px){.pg-home .faq-i p a{position:relative;z-index:1;padding-block:13px}}');
+});
+
+test('marketing text keeps its set size when a phone turns sideways', () => {
+  const tw = /^\.tw\{([^}]*)\}$/m.exec(css)?.[1]?.split(';') ?? [];
+  expect(tw).toEqual(expect.arrayContaining(['-webkit-text-size-adjust:100%', 'text-size-adjust:100%']));
 });
 
 test('Terms and Security carry the new date, and Security says where Townwise is hosted', () => {

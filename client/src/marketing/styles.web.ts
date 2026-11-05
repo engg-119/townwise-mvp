@@ -3,12 +3,14 @@ import { theme } from '../theme';
 // The marketing pages' CSS, from the design mockups, with colors, fonts and curves from the theme.
 // Shared chrome first, then each text page under its own root class (.pg-about and so on): screens
 // stay mounted in the stack, so every rule applies document-wide and page rules must not collide.
+// On phones a link inside running text gets vertical padding, which does not move the lines and makes its
+// tap target 44px tall; it is positioned so that the next line does not cover the lower half.
 
 const c = theme.color;
 const easeOut = `cubic-bezier(${theme.motion.easeOut.join(',')})`;
 
 const chrome = `
-.tw{--ground:${c.ground};--panel:${c.panel};--raised:${c.raised};--state:${c.state};--border:${c.border};--line:${c.line};--white:${c.white};--text2:${c.text2};--text3:${c.text3};--mint:${c.mint};--eo:${easeOut};--sans:${theme.font.sans};--mono:${theme.font.mono};position:absolute;inset:0;overflow-x:hidden;overflow-y:auto;background:var(--ground);color:var(--white);font-family:var(--sans);font-size:17px;line-height:28px;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+.tw{--ground:${c.ground};--panel:${c.panel};--raised:${c.raised};--state:${c.state};--border:${c.border};--line:${c.line};--white:${c.white};--text2:${c.text2};--text3:${c.text3};--mint:${c.mint};--eo:${easeOut};--sans:${theme.font.sans};--mono:${theme.font.mono};position:absolute;inset:0;overflow-x:hidden;overflow-y:auto;background:var(--ground);color:var(--white);font-family:var(--sans);font-size:17px;line-height:28px;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .tw *,.tw *::before,.tw *::after{box-sizing:border-box}
 .tw h1,.tw h2,.tw h3,.tw p,.tw ul,.tw ol{margin:0}
 .tw ul,.tw ol{padding:0;list-style:none}
@@ -53,6 +55,7 @@ const chrome = `
 .nav-act{margin-left:auto;display:flex;align-items:center;gap:20px}
 @media (max-width:899px){.nav-in{column-gap:16px}.nav-links{order:3;width:100%;column-gap:20px;border-top:1px solid var(--border)}}
 @media (max-width:640px){.nav-links{display:none}.nav-act{gap:12px}.nav-act .btn{font-size:14px;padding:0 14px}}
+@media (max-width:359px){.nav-in{column-gap:8px}.nav-in:has(.btn)>.wm{font-size:16px}.nav-act{gap:8px}.nav-act .btn{font-size:13px;padding:0 10px}}
 
 .ft{border-top:1px solid var(--border);padding-top:64px}
 .ft-inner{container-type:inline-size}
@@ -64,6 +67,7 @@ const chrome = `
 .ft-cn a{display:inline-flex;align-items:center;min-height:44px;min-width:44px;font-size:14px;line-height:20px;color:var(--text2);text-decoration:none}
 .ft-cn a:hover{color:var(--white);text-decoration:underline}
 .ft-bot{margin-top:40px;display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px 24px;padding:24px 0 32px;font-family:var(--mono);font-size:12px;line-height:16px;color:var(--text3)}
+@media (max-width:640px){.ft-by,.ft-cn a,.ft-bot{font-size:16px;line-height:24px}}
 .tw .ft-word{--adv:3.959;--cap:0.72;--base:0.14;--pad:0.02em;display:flex;justify-content:space-between;align-items:flex-end;box-sizing:content-box;font-size:calc(98cqi / var(--adv));height:calc(var(--cap) * 1em);padding-top:var(--pad);overflow:clip;line-height:1;font-family:${theme.font.wordmark};font-weight:700;font-stretch:75%;letter-spacing:0;color:var(--white)}
 .ft-word span{display:block;line-height:1;margin-bottom:calc(var(--base) * -1em);transition:transform 700ms var(--eo)}
 @media screen and (prefers-reduced-motion:no-preference){.ft.is-armed:not(.is-in) .ft-word span{transform:translateY(100%);transition:none}}
@@ -81,10 +85,10 @@ const about = `
 .pg-about .prose{display:grid;gap:20px;max-width:66ch}
 .pg-about .prose p{color:var(--text2);text-wrap:pretty}
 .pg-about .lede{font-size:22px;line-height:28px;font-weight:600;letter-spacing:-.01em;color:var(--white);text-wrap:balance;max-width:34ch}
-@media (max-width:640px){.pg-about .lede{font-size:20px;line-height:24px}.pg-about .ab-hero{padding-block:48px 64px}}
+@media (max-width:640px){.pg-about .lede{font-size:20px;line-height:24px}.pg-about .ab-hero{padding-block:40px 48px}.pg-about .ab-hero .g12{row-gap:24px}.pg-about .h1{margin-top:0}}
 .pg-about .sec{border-top:1px solid var(--border);padding-block:96px}
-@media (max-width:640px){.pg-about .sec{padding-block:64px}}
 .pg-about .sec .g12{row-gap:32px;align-items:start}
+@media (max-width:640px){.pg-about .sec{padding-block:48px}.pg-about .sec .g12{row-gap:24px}}
 .pg-about .h2s{font-size:28px;line-height:32px;font-weight:600;letter-spacing:-.02em;text-wrap:balance}
 @media (max-width:640px){.pg-about .h2s{font-size:24px;line-height:28px}}
 .pg-about .build{display:grid;border-top:1px solid var(--border);counter-reset:b;max-width:760px}
@@ -132,8 +136,9 @@ const privacy = `
 @media (max-width:1219px){.pg-privacy .hd{align-items:start}.pg-privacy .hd-l,.pg-privacy .hd-r{grid-column:1/-1}.pg-privacy .hd-r{max-width:640px}}
 @media (max-width:640px){.pg-privacy .hd{padding-block:32px 40px}}
 .pg-privacy .toc{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));column-gap:20px}
-.pg-privacy .toc a{display:inline-flex;align-items:center;min-height:44px;font-size:14px;line-height:20px;color:var(--text2);text-decoration:none}
+.pg-privacy .toc a{display:inline-flex;align-items:center;min-height:44px;min-width:44px;font-size:14px;line-height:20px;color:var(--text2);text-decoration:none}
 .pg-privacy .toc a:hover{color:var(--white);text-decoration:underline}
+@media (max-width:640px){.pg-privacy .toc{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:16px}}
 .pg-privacy .sec{border-top:1px solid var(--border);padding-block:56px}
 @media (max-width:640px){.pg-privacy .sec{padding-block:40px}}
 .pg-privacy .sec .g12{row-gap:16px;align-items:start}
@@ -142,6 +147,7 @@ const privacy = `
 .pg-privacy .prose strong{color:var(--white);font-weight:600}
 .pg-privacy .prose a{color:var(--white);text-decoration:underline;text-decoration-color:var(--line)}
 .pg-privacy .prose a:hover{color:var(--mint);text-decoration-color:var(--mint)}
+@media (max-width:640px){.pg-privacy .prose a{position:relative;z-index:1;padding-block:13px}}
 .pg-privacy .prose code,.pg-privacy .tbl code{font-family:var(--mono);font-size:13px;line-height:20px;color:var(--white);word-break:break-word}
 .pg-privacy .bul{display:grid;gap:12px}
 .pg-privacy .bul li{position:relative;padding-left:20px;text-wrap:pretty}
@@ -155,6 +161,15 @@ const privacy = `
 .pg-privacy .tbl thead th{font-family:var(--mono);font-size:12px;line-height:16px;letter-spacing:.04em;text-transform:uppercase;color:var(--text3);background:var(--raised)}
 .pg-privacy .tbl td:first-child{color:var(--white)}
 .pg-privacy .tbl:focus-visible{outline:2px solid var(--mint);outline-offset:2px}
+@media (max-width:640px){
+.pg-privacy .tbl thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+.pg-privacy .tbl table,.pg-privacy .tbl tbody,.pg-privacy .tbl tr,.pg-privacy .tbl td{display:block}
+.pg-privacy .tbl table,.pg-privacy .tbl.wide table{min-width:0;font-size:16px;line-height:24px}
+.pg-privacy .tbl tr{display:grid;gap:12px;padding:16px 12px;border-bottom:1px solid var(--border)}
+.pg-privacy .tbl tr:last-child{border-bottom:0}
+.pg-privacy .tbl td{padding:0;border-bottom:0}
+.pg-privacy .tbl td[data-l]::before{content:attr(data-l);display:block;margin-bottom:4px;font-family:var(--mono);font-size:12px;line-height:16px;letter-spacing:.04em;text-transform:uppercase;color:var(--text3)}
+}
 .pg-privacy .sum{background:var(--panel)}
 `;
 
@@ -179,11 +194,12 @@ const terms = `
 .pg-terms .prose{margin-top:16px;display:grid;gap:16px;color:var(--text2);text-wrap:pretty}
 .pg-terms .prose a{color:var(--white);text-decoration-color:var(--line)}
 .pg-terms .prose a:hover{color:var(--mint);text-decoration-color:var(--mint)}
+@media (max-width:640px){.pg-terms .prose a{position:relative;z-index:1;padding-block:13px}}
 .pg-terms .bl{display:grid;gap:8px}
 .pg-terms .bl li{position:relative;padding-left:20px}
 .pg-terms .bl li::before{content:"";position:absolute;left:0;top:11px;width:6px;height:6px;background:var(--mint)}
 @media (max-width:1023px){.pg-terms .toc{grid-column:1/-1;position:static}.pg-terms .art{grid-column:1/-1}.pg-terms .toc ol{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:24px}}
-@media (max-width:640px){.pg-terms .toc ol{grid-template-columns:minmax(0,1fr)}.pg-terms .ph{padding-block:32px 24px}.pg-terms .doc{padding-block:32px 64px}}
+@media (max-width:640px){.pg-terms .toc ol{column-gap:16px}.pg-terms .toc a{gap:8px}.pg-terms .ph{padding-block:32px 24px}.pg-terms .doc{padding-block:32px 64px}}
 `;
 
 const security = `
@@ -200,11 +216,12 @@ const security = `
 .pg-security .updated{margin-top:12px}
 .pg-security .settings{margin-top:8px}
 .pg-security .sec{border-top:1px solid var(--border);padding-block:96px}
-@media (max-width:640px){.pg-security .sec{padding-block:64px}}
+@media (max-width:640px){.pg-security .pg{padding-bottom:24px}.pg-security .sec{padding-block:48px}}
 .pg-security .sec .g12{row-gap:24px;align-items:start}
 .pg-security .lead-l{display:grid;gap:8px;align-content:start}
 .pg-security .prose{display:grid;gap:20px;align-content:start;min-width:0}
 .pg-security .prose p{max-width:68ch;color:var(--text2);text-wrap:pretty}
+@media (max-width:640px){.pg-security .prose a{position:relative;z-index:1;padding-block:13px}}
 .pg-security .prose p.lede{font-size:22px;line-height:32px;color:var(--white);max-width:60ch}
 @media (max-width:640px){.pg-security .prose p.lede{font-size:20px;line-height:28px}}
 .pg-security .pts{display:grid;border-top:1px solid var(--border);min-width:0}
