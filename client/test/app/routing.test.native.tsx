@@ -64,7 +64,7 @@ test('/ signed in lands on /dashboard, and Settings links to /settings/security'
   expect(router.getPathname()).toBe('/dashboard');
   await fireEvent.press(await screen.findByRole('link', { name: 'Settings' }));
   expect(router.getPathname()).toBe('/settings');
-  await fireEvent.press(await screen.findByRole('link', { name: 'Two-factor settings' }));
+  await fireEvent.press(await screen.findByRole('link', { name: 'Two-step sign-in settings' }));
   expect(router.getPathname()).toBe('/settings/security');
 });
 
