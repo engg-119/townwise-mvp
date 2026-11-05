@@ -114,60 +114,78 @@ function follows(first: Element, second: Element): boolean {
   return (first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
 }
 
-test('the first screen: eyebrow, title, sub, both actions and the status line, then the map, then the list', () => {
+test('the first screen is the map story’s title with both actions; the lead follows the story, then the list', () => {
   const main = renderHome();
   const hero = section(TITLE);
   expect(main.querySelector('section')).toBe(hero);
   const wrap = hero.firstElementChild;
-  expect([...(wrap?.children ?? [])].map((child) => child.className)).toEqual(['hd', 'twmap']);
-  const lead = hero.querySelector('.hd');
+  expect([...(wrap?.children ?? [])].map((child) => child.className)).toEqual(['twmap']);
+  // Step 0 of the story: the title, the subtitle (what we are building, not a claim that forecasts exist) and
+  // both actions.
+  const head = hero.querySelector('.st-h > .hd');
+  expect([...(head?.children ?? [])].map((child) => [child.tagName, child.textContent])).toEqual([
+    ['H1', TITLE],
+    ['P', 'We’re building daily demand forecasts for restaurants and bars in college, ski and island towns. Now in early access.'],
+    ['DIV', 'Request early accessSign in'],
+  ]);
+  // After the story: the eyebrow, the sub, both actions again and the status line.
+  const lead = hero.querySelector('.hd2');
   expect([...(lead?.children ?? [])].map((child) => [child.tagName, child.textContent])).toEqual([
     ['P', 'Early access. Built at Dartmouth, testing in Hanover, NH.'],
-    ['H1', TITLE],
     ['P', 'We’re building forecasts of daily guests and sales for restaurants and bars, 7 and 28 days ahead, from your town’s calendar, not the region’s.'],
     ['DIV', 'Request early accessSign in'],
     ['P', 'In development. No forecasts are for sale yet.'],
   ]);
 
   const title = screen.getByRole('heading', { level: 1, name: TITLE });
-  const early = within(hero).getByRole('link', { name: 'Request early access' });
-  const signIn = within(hero).getByRole('link', { name: 'Sign in' });
+  const [early, earlyAgain] = within(hero).getAllByRole('link', { name: 'Request early access' });
+  const [signIn, signInAgain] = within(hero).getAllByRole('link', { name: 'Sign in' });
   const map = within(hero).getByRole('img', { name: /^Map of the nine Northeast states/ });
-  const toolbar = within(hero).getByText('Public data (BLS QCEW). Not a forecast.');
-  const caption = within(hero).getByText('What the map shows.');
+  const steps = ['The Northeast, as one pattern.', 'Now the towns.', 'July, the year’s widest spread.'].map((name) => within(hero).getByRole('heading', { level: 2, name }));
+  const pick = within(hero).getByRole('heading', { level: 2, name: 'Pick a town to compare it with the Northeast' });
   const list = within(hero).getByRole('button', { name: /^Hanover, NH/ });
+  if (early === undefined || earlyAgain === undefined || signIn === undefined || signInAgain === undefined) throw new Error('missing actions');
   expect(screen.getAllByRole('heading', { level: 1 })).toEqual([title]);
-  expect(follows(title, early)).toBe(true);
-  expect(follows(early, signIn)).toBe(true);
-  expect(follows(signIn, map)).toBe(true);
-  expect(follows(map, toolbar)).toBe(true);
-  expect(follows(toolbar, caption)).toBe(true);
-  expect(follows(caption, list)).toBe(true);
+  const order = [title, early, signIn, map, ...steps, earlyAgain, signInAgain, pick, list];
+  for (const [index, element] of order.slice(1).entries()) expect(follows(order[index] ?? element, element)).toBe(true);
 });
 
-test('the hero actions: Request early access as the white primary, Sign in as the outline, both kept on phones', () => {
+test('the hero actions, under the title and again after the story: Request early access as the white primary, Sign in as the outline, both kept on phones', () => {
   renderHome();
-  const row = section(TITLE).querySelector('.cta-row');
-  if (row === null) throw new Error('no action row');
-  const links = within(row as HTMLElement).getAllByRole('link');
-  expect(links.map((link) => [link.textContent, link.className, link.getAttribute('href')])).toEqual([
-    ['Request early access', 'btn', EARLY_ACCESS],
-    ['Sign in', 'btn-o', '/sign-in'],
-  ]);
+  const rows = [...section(TITLE).querySelectorAll<HTMLElement>('.cta-row')];
+  expect(rows).toHaveLength(2);
+  for (const row of rows) {
+    expect(within(row).getAllByRole('link').map((link) => [link.textContent, link.className, link.getAttribute('href')])).toEqual([
+      ['Request early access', 'btn', EARLY_ACCESS],
+      ['Sign in', 'btn-o', '/sign-in'],
+    ]);
+  }
   // Phones share the row between the two; nothing hides the outline Sign in.
-  expect(homeCss).toContain('@media (max-width:640px){.pg-home .hero{padding-bottom:64px}.pg-home .hd{gap:12px;padding-block:24px}.pg-home .sub{font-size:16px;line-height:24px}.pg-home .cta-row{width:100%}.pg-home .cta-row>a{flex:1 1 auto}}');
+  expect(homeCss).toContain('@media (max-width:640px){.pg-home .hero{padding-bottom:64px}.pg-home .hd{padding-block:24px}.pg-home .hd2{padding-block:32px;gap:12px}.pg-home .sub{font-size:16px;line-height:24px}.pg-home .cta-row{width:100%}.pg-home .cta-row>a{flex:1 1 auto}}');
   expect(homeCss).not.toMatch(/(?:cta-row|btn-o)[^{}]*\{[^}]*display:\s*none/);
   expect(homeCss).toContain('.pg-home .btn-o:active{transform:scale(.97)}');
+});
+
+test('the lead after the story rises in like a section, and focus inside it shows it at once', () => {
+  installObserver();
+  const main = renderHome();
+  const lead = section(TITLE).querySelector<HTMLElement>('.hd2');
+  if (lead === null) throw new Error('no lead');
+  expect(lead.className).toBe('hd2 rv is-hid');
+  const observer = observerOf(lead);
+  expect(observer.options).toEqual({ root: main.parentElement, threshold: 0, rootMargin: '0px 0px -12% 0px' });
+  act(() => { within(lead).getByRole('link', { name: 'Sign in' }).focus(); });
+  expect(lead.className).toBe('hd2 rv is-now');
 });
 
 test('every action on the page has one destination per label, and there is no sign-up', () => {
   const main = renderHome();
   const early = screen.getAllByRole('link', { name: 'Request early access' });
-  // The nav, the hero, Who it is for, the final band and the footer.
-  expect(early).toHaveLength(5);
+  // The nav, the story's title step, the lead after the story, Who it is for, the final band and the footer.
+  expect(early).toHaveLength(6);
   for (const link of early) expect(link.getAttribute('href')).toBe(EARLY_ACCESS);
   const signIn = screen.getAllByRole('link', { name: /sign in/i });
-  expect(signIn.map((link) => link.textContent)).toEqual(['Sign in', 'Sign in', 'Already have access? Sign in', 'Sign in']);
+  expect(signIn.map((link) => link.textContent)).toEqual(['Sign in', 'Sign in', 'Sign in', 'Already have access? Sign in', 'Sign in']);
   for (const link of signIn) expect(link.getAttribute('href')).toBe('/sign-in');
   expect(screen.queryByText(/sign up/i)).toBeNull();
   expect(within(section('About')).getByRole('link', { name: 'About' }).getAttribute('href')).toBe('/about');
