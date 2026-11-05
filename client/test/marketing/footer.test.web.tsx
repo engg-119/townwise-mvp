@@ -87,6 +87,7 @@ test('the bottom line names Townwise as the copyright holder and keeps the stude
     '© 2026 Townwise',
     'Townwise is a student project. It is not an official Dartmouth product.',
   ]);
+  expect(footer.textContent.match(/\[[A-Z][^\]]*\]/g)).toBeNull();
   expect(footer.querySelector('.chip')).toBeNull();
   expect(footer.querySelector('.ft-dec')).toBeNull();
 });

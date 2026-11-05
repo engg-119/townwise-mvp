@@ -7,7 +7,7 @@ const Mail = (): React.JSX.Element => <A href={CONTACT_HREF}>{CONTACT_EMAIL}</A>
 const clauses: { title: string; body: React.ReactNode }[] = [
   {
     title: 'Who you are agreeing with',
-    body: <P>These terms are between you and <Span className="chip">[OPERATOR LEGAL NAME]</Span> (“Townwise”, “we”). Townwise is a student project built in ENGG 119 at Dartmouth’s Thayer School of Engineering. It is not an official Dartmouth product. Contact: <Mail />.</P>,
+    body: <P>These terms are between you and the Townwise team, a group of students in ENGG 119, AI in the Real World, at Dartmouth’s Thayer School of Engineering (“Townwise”, “we”). Townwise is a student project. It is not an official Dartmouth product. Contact: <Mail />.</P>,
   },
   {
     title: 'What Townwise is, today',
@@ -23,7 +23,7 @@ const clauses: { title: string; body: React.ReactNode }[] = [
   },
   {
     title: 'Your data',
-    body: <P>You keep ownership of the sales data and other information you give us. You give us permission to use it to provide Townwise to you, including calibrating your forecasts. Your sales data is used only to calibrate your own restaurant’s forecasts. It is not shared with or used for other restaurants, and it is not used to train AI models. Our <A href="/privacy">Privacy notice</A> explains what we collect and how we handle it.</P>,
+    body: <P>You keep ownership of the sales data and other information you give us. You give us permission to use it to provide Townwise to you, including calibrating your forecasts. Your sales data is used only to provide Townwise to your restaurant: its own forecasts and, when it is turned on, its tuning chat. It is not shared with or used for other restaurants, and it is not used to train AI models. Our <A href="/privacy">Privacy notice</A> explains what we collect and how we handle it.</P>,
   },
   {
     title: 'Fair use',
@@ -42,27 +42,23 @@ const clauses: { title: string; body: React.ReactNode }[] = [
   },
   {
     title: 'Fees',
-    body: <P>Early access is <Span className="chip">[FREE / PRICE AND BILLING TERMS]</Span>. If we start charging, we will tell you the price before it applies, and you can stop using Townwise instead.</P>,
+    body: <P>Townwise does not charge for early access.</P>,
   },
   {
     title: 'Ending your use',
-    body: <P>You can stop using Townwise at any time. We may suspend or end your access if you break these terms, or end early access for everyone with <Span className="chip">[NOTICE PERIOD]</Span> notice. Whenever you stop, or your access ends, you can ask us to delete your account and its data, and we will delete it within 30 days. The <A href="/privacy">Privacy notice</A> explains how, under “Your choices”.</P>,
+    body: <P>You can stop using Townwise at any time. We may suspend or end your access if you break these terms, or end early access for everyone. Whenever you stop, or your access ends, you can ask us to delete your account and its data, and we will delete it within 30 days. The <A href="/privacy">Privacy notice</A> explains how, under “Your choices”.</P>,
   },
   {
     title: 'No warranty',
-    body: <P>Townwise is provided as is, without warranties of any kind, to the extent the law allows. <Span className="chip">[LEGAL REVIEW: jurisdiction-specific disclaimer language.]</Span></P>,
+    body: <P>Townwise is provided as is, without warranties of any kind, to the extent the law allows.</P>,
   },
   {
     title: 'Limits on liability',
-    body: <P>To the extent the law allows, we are not liable for lost profits, lost revenue, spoiled or excess inventory, staffing costs or other indirect losses from using or relying on Townwise. Our total liability is limited to <Span className="chip">[LIABILITY CAP]</Span>. <Span className="chip">[LEGAL REVIEW]</Span></P>,
+    body: <P>To the extent the law allows, we are not liable for lost profits, lost revenue, spoiled or excess inventory, staffing costs or other indirect losses from using or relying on Townwise.</P>,
   },
   {
     title: 'Changes to these terms',
-    body: <P>We may update these terms. We will post the new version with a new effective date and, for changes that matter, tell account holders <Span className="chip">[HOW: by email or in the app]</Span> before they take effect. If you keep using Townwise after that, the new terms apply.</P>,
-  },
-  {
-    title: 'Governing law',
-    body: <P>These terms are governed by <Span className="chip">[GOVERNING LAW]</Span>. Disputes go to <Span className="chip">[VENUE]</Span>. <Span className="chip">[LEGAL REVIEW]</Span></P>,
+    body: <P>We may update these terms. If we do, we will update this page and the effective date at the top before the changes take effect. If you keep using Townwise after that, the new terms apply.</P>,
   },
   {
     title: 'Contact',

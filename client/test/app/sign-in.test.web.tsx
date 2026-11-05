@@ -5,7 +5,6 @@ import { getMockContext } from 'expo-router/testing-library';
 
 import { AuthProvider } from '../../src/auth/AuthProvider';
 import { resetGoogleButtonState } from '../../src/auth/GoogleButton';
-import { EARLY_ACCESS_HREF } from '../../src/marketing/links';
 import SignIn from '../../app/(gate)/sign-in';
 import { fakeAuth } from '../helpers/fakes';
 
@@ -69,7 +68,12 @@ test('one Continue with Google button, links to the terms and privacy pages, and
   expect(within(card).getByRole('link', { name: 'Terms' }).getAttribute('href')).toBe('/terms');
   expect(within(card).getByRole('link', { name: 'Privacy Policy' }).getAttribute('href')).toBe('/privacy');
   for (const link of screen.getAllByRole('link', { name: 'Townwise' })) expect(link.getAttribute('href')).toBe('/');
-  for (const link of screen.getAllByRole('link', { name: 'Request early access' })) expect(link.getAttribute('href')).toBe(EARLY_ACCESS_HREF);
+  // /request-access would send a signed-out visitor straight back here, so the sign-in section has no early-access
+  // link (the site header and footer keep theirs); the note under the card stays.
+  const page = document.querySelector<HTMLElement>('.pg-signin');
+  if (page === null) throw new Error('no sign-in section');
+  expect(within(page).queryByRole('link', { name: 'Request early access' })).toBeNull();
+  expect(within(page).getByText('Townwise is in development. No forecasts are for sale yet.')).toBeTruthy();
   expect(document.querySelector('input, textarea')).toBeNull();
   expect(screen.queryByRole('button')).toBeNull();
   expect(screen.queryByText(/sign up/i)).toBeNull();

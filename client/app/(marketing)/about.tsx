@@ -84,8 +84,7 @@ export default function About(): React.JSX.Element {
 
         <Part id="h-who" title="Who we are">
           <Div className="c-r prose">
-            <P>We are students in ENGG 119, AI in the Real World, at Dartmouth’s Thayer School of Engineering in Hanover, NH. Townwise is our course project. It is not an official Dartmouth product.</P>
-            <P><Span className="chip">[TEAM NAMES AND ROLES]</Span></P>
+            <P>We are a team of four students in ENGG 119, AI in the Real World, at Dartmouth’s Thayer School of Engineering in Hanover, NH. Townwise is our course project. It is not an official Dartmouth product.</P>
           </Div>
         </Part>
 

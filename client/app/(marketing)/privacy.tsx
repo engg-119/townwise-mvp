@@ -1,4 +1,4 @@
-import { A, Code, Div, H1, H2, Li, Nav, P, Section, Span, Strong, Table, Tbody, Td, Th, Thead, Tr, Ul } from '../../src/marketing/html';
+import { A, Code, Div, H1, H2, Li, Nav, P, Section, Strong, Table, Tbody, Td, Th, Thead, Tr, Ul } from '../../src/marketing/html';
 import { CONTACT_EMAIL, CONTACT_HREF } from '../../src/marketing/links';
 import { MarketingShell } from '../../src/marketing/MarketingShell';
 
@@ -20,7 +20,7 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
         <Li>Our server logs each request: the address it came from, the browser or app that sent it, the page asked for and the result. The request log does not record your email address, your sign-in tokens, your cookies or what you send us.</Li>
         <Li>The Townwise app sends no telemetry: no analytics, no tracking, no crash reports. The sign-in page loads Google’s sign-in script, so Google sees that visit.</Li>
         <Li>When you upload sales history, your browser reads the file and sends us only the date, guest count and net sales for each day. The file itself never reaches our server.</Li>
-        <Li>Your sales data is used only to calibrate your own restaurant’s forecasts. It is not shared with or used for other restaurants, and it is not used to train AI models.</Li>
+        <Li>Your sales data is used only to provide Townwise to your restaurant: its own forecasts and, when it is turned on, its tuning chat. It is not shared with or used for other restaurants, and it is not used to train AI models.</Li>
         <Li>Townwise does not sell personal data.</Li>
       </Ul>
     ),
@@ -29,7 +29,7 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
     id: 'who',
     title: 'Who we are',
     body: (
-      <P>Townwise is a student project built in ENGG 119 at Dartmouth’s Thayer School of Engineering, in Hanover, NH. The operator responsible for your data is <Span className="chip">[OPERATOR LEGAL NAME]</Span>. Write to us at <Mail />.</P>
+      <P>Townwise is a student project. The operator responsible for your data is the Townwise team, a group of students in ENGG 119, AI in the Real World, at Dartmouth’s Thayer School of Engineering in Hanover, NH. Townwise is not an official Dartmouth product. Write to us at <Mail />.</P>
     ),
   },
   {
@@ -148,7 +148,7 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
     title: 'Email',
     body: (
       <>
-        <P>Townwise does not send email, for sign-in or anything else. If you write to <Mail />, we keep your message and address in <Span className="chip">[EMAIL PROVIDER]</Span> to reply to you.</P>
+        <P>Townwise does not send email, for sign-in or anything else. If you write to <Mail />, we keep your message and address to reply to you.</P>
         <P>The sign-in service still includes an email-link route that Townwise does not use. If an email address is submitted to it, the service stores that address with a hashed one-time token, the platform and timestamps, and deletes the record automatically shortly after its 15 minutes are up, counts the attempt per IP address (hashed) for one hour and under a keyed hash of the address for up to 24 hours, and sends nothing.</P>
       </>
     ),
@@ -174,7 +174,7 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
       <>
         <P><Strong>What an upload sends.</Strong> You upload sales history in the app, on the web. Your browser reads your point-of-sale export and sends us only the date, guest count and net sales for each day, for one location. The file itself never reaches our server, and neither do its name or its other columns.</P>
         <P><Strong>What we keep.</Strong> For each location, one record per day with the date, guests and net sales. For each upload, who sent it, when, how many days it added or replaced, and its first and last dates. We never keep the file name.</P>
-        <P><Strong>How we use it.</Strong> Your sales data is used only to calibrate your own restaurant’s forecasts. It is not shared with or used for other restaurants, and it is not used to train AI models.</P>
+        <P><Strong>How we use it.</Strong> Your sales data is used only to provide Townwise to your restaurant: its own forecasts and, when it is turned on, its tuning chat. It is not shared with or used for other restaurants, and it is not used to train AI models.</P>
         <P><Strong>Who can see it.</Strong></P>
         <Ul className="bul">
           <Li>The members and org admins of your organization.</Li>
@@ -201,7 +201,6 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
         <Ul className="bul">
           <Li><Strong>Google</Strong>, when you open the sign-in page (its sign-in script loads there) and when you sign in with your Google account, under Google’s privacy policy.</Li>
           <Li><Strong>Microsoft Azure</Strong>, which runs our servers and stores our database, its backups and our logs.</Li>
-          <Li><Strong><Span className="chip">[EMAIL PROVIDER]</Span></Strong>, if you write to us.</Li>
           <Li><Strong>Anthropic</Strong>, which provides the AI model behind the tuning chat. The tuning chat is off in production until we turn it on, and while it is off nothing is sent to Anthropic. When it is on and you use it, Anthropic receives the messages you send and the location data the assistant reads to answer them: the location’s name and town, its sales totals and daily figures, its notes and its town profile. Anthropic processes them under its <A href={ANTHROPIC_TERMS_HREF}>Commercial Terms of Service</A>, which say Anthropic may not train models on that content.</Li>
         </Ul>
         <P>Apart from Google’s sign-in script on the sign-in page, the Townwise app and server send your account and sign-in information to no one else. Townwise does not sell personal data.</P>

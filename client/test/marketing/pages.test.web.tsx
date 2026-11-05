@@ -102,7 +102,7 @@ test('the text pages link to each other, to the app and by email', () => {
     return hrefs;
   };
   expect(linksOn('/about')).toEqual([EARLY_ACCESS, CONTACT]);
-  expect(linksOn('/terms')).toEqual(expect.arrayContaining(['/privacy', '/security', '#s1', '#s13', CONTACT]));
+  expect(linksOn('/terms')).toEqual(expect.arrayContaining(['/privacy', '/security', '#s1', '#s12', CONTACT]));
   expect(linksOn('/security')).toEqual(['/settings/security', CONTACT, '/terms']);
   expect(linksOn('/privacy')).toEqual(expect.arrayContaining(['#short', '#org', '#changes', CONTACT, ANTHROPIC_TERMS]));
 });
@@ -118,12 +118,26 @@ test.each(PAGES)('every Request early access link on %s goes to the request form
   expect([...document.querySelectorAll('a')].map((anchor) => anchor.getAttribute('href') ?? '').filter((href) => href.includes('subject='))).toEqual([]);
 });
 
-test.each(PAGES)('%s shows no unfinished decision or copyright placeholder', (path) => {
+// A placeholder is any bracketed text that starts with a capital ([DECISION NEEDED: …], [PRICE], [HOW: …]), or
+// anything still drawn as a placeholder box. The check covers the page, its header and its footer.
+test.each(PAGES)('%s, header and footer included, renders no bracketed placeholder and no placeholder box', (path) => {
   renderAt(path);
   const text = document.body.textContent;
-  expect(text).not.toMatch(/\[DECISION NEEDED/);
-  expect(text).not.toContain('[COPYRIGHT HOLDER]');
+  expect(text.match(/\[[A-Z][^\]]*\]/g)).toBeNull();
+  expect(document.querySelectorAll('.chip')).toHaveLength(0);
   expect(within(screen.getByRole('contentinfo')).getByText('© 2026 Townwise')).toBeTruthy();
+});
+
+test('Terms has no liability cap, notice period, governing-law clause or promise to notify account holders', () => {
+  renderAt('/terms');
+  const main = screen.getByRole('main');
+  const text = main.textContent;
+  expect(text).toContain('These terms are between you and the Townwise team, a group of students in ENGG 119, AI in the Real World, at Dartmouth’s Thayer School of Engineering (“Townwise”, “we”).');
+  expect(text).toContain('Townwise does not charge for early access.');
+  expect(text).toContain('If we do, we will update this page and the effective date at the top before the changes take effect.');
+  expect(text).toContain('or end early access for everyone. Whenever you stop');
+  expect(text).not.toMatch(/total liability|governed by|tell account holders|we start charging/i);
+  expect(within(main).queryByRole('heading', { name: /Governing law/ })).toBeNull();
 });
 
 test('Request early access, signed out, sends the visitor to sign in with Google first', async () => {
@@ -249,7 +263,8 @@ test('Privacy makes the three commitments and no longer says the app has no uplo
   renderAt('/privacy');
   const text = screen.getByRole('main').textContent;
   expect(text).toContain('Townwise does not sell personal data.');
-  expect(text).toContain('Your sales data is used only to calibrate your own restaurant’s forecasts. It is not shared with or used for other restaurants, and it is not used to train AI models.');
+  expect(text).toContain('Your sales data is used only to provide Townwise to your restaurant: its own forecasts and, when it is turned on, its tuning chat. It is not shared with or used for other restaurants, and it is not used to train AI models.');
+  expect(text).toContain('The operator responsible for your data is the Townwise team, a group of students in ENGG 119, AI in the Real World, at Dartmouth’s Thayer School of Engineering in Hanover, NH. Townwise is not an official Dartmouth product.');
   expect(text).toContain('we will delete your account and its data within 30 days');
   expect(text).toContain('sends us only the date, guest count and net sales for each day');
   expect(text).toContain('Effective November 5, 2026. Last updated November 5, 2026.');

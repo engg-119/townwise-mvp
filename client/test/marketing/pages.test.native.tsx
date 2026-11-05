@@ -40,18 +40,19 @@ test.each([
   expect(screen.queryByText('TOWNWISE')).toBeNull();
 });
 
-test('the copy and its remaining placeholders come through', async () => {
+test('the copy comes through', async () => {
   await renderRouter(routes, { initialUrl: '/privacy' });
   expect(screen.getByText(/Two cookies keep you signed in\./)).toBeTruthy();
   expect(screen.getByText('__Host-refresh')).toBeTruthy();
-  expect(screen.getByText('[OPERATOR LEGAL NAME]')).toBeTruthy();
+  expect(screen.getByText(/The operator responsible for your data is the Townwise team/)).toBeTruthy();
   expect(screen.getByText(/Anthropic receives the messages you send and the location data the assistant reads/)).toBeTruthy();
   expect(screen.getByText('Commercial Terms of Service')).toBeTruthy();
 });
 
-test.each(['/about', '/privacy', '/terms', '/security'])('%s shows no unfinished decision placeholder on native', async (path) => {
+// A placeholder is any bracketed text that starts with a capital ([DECISION NEEDED: …], [PRICE], [HOW: …]).
+test.each(['/about', '/privacy', '/terms', '/security'])('%s renders no bracketed placeholder on native', async (path) => {
   await renderRouter(routes, { initialUrl: path });
-  expect(screen.queryAllByText(/\[DECISION NEEDED|\[COPYRIGHT HOLDER\]/)).toEqual([]);
+  expect(screen.queryAllByText(/\[[A-Z][^\]]*\]/)).toEqual([]);
 });
 
 test('links between pages work on native', async () => {

@@ -33,7 +33,6 @@ const chrome = `
 .h3{font-size:22px;line-height:28px;font-weight:600;letter-spacing:-.01em;text-wrap:balance}
 @media (max-width:1023px){.h2{font-size:32px;line-height:36px}}
 @media (max-width:640px){.tw{font-size:16px;line-height:24px}.h2{font-size:28px;line-height:32px}.h3{font-size:20px;line-height:24px}}
-.chip{font-family:var(--mono);font-size:12px;line-height:16px;font-weight:400;letter-spacing:0;text-transform:none;color:var(--text2);border:1px dashed var(--line);padding:1px 5px;-webkit-box-decoration-break:clone;box-decoration-break:clone}
 .tag{font-family:var(--mono);font-size:12px;line-height:16px;letter-spacing:.04em;text-transform:uppercase;color:var(--text2);border:1px solid var(--line);padding:3px 6px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
 .tag-prog::before{content:"";width:6px;height:6px;background:var(--mint)}
 .tag-plan::before{content:"";width:6px;height:6px;border:1px solid var(--line)}

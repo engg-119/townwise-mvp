@@ -1,6 +1,5 @@
 import { useId } from 'react';
 
-import { EARLY_ACCESS_HREF } from '../marketing/links';
 import { MarketingShell } from '../marketing/MarketingShell.web';
 import type { SignInFrameProps } from './SignInFrame';
 
@@ -23,7 +22,6 @@ export function SignInFrame(props: SignInFrameProps): React.JSX.Element {
             <div className="c-all">
               <div className="access">
                 <p>{props.note}</p>
-                <a className="tl" href={EARLY_ACCESS_HREF}>Request early access</a>
               </div>
               <ul className="legal-row" aria-label="Legal">
                 <li><a className="tl" href="/privacy">Privacy</a></li>
