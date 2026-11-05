@@ -416,7 +416,7 @@ describe('GET /api/admin/audit', () => {
     expect(body.events.map((event) => event.summary)).toEqual([
       'Suspended the organization',
       'Ended view-as',
-      'Started viewing as owner@example.test',
+      'Viewed as owner@example.test',
       'Didn’t take effect (last_admin)',
       'Changed cook@example.test from admin to member. Didn’t take effect (last_admin).',
     ]);

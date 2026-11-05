@@ -12,6 +12,7 @@ import { useOptionalPortal, usePortal, useReadOnly } from '../PortalProvider';
 import { clientNav, consoleNav, isFillRoute } from '../routing';
 import { ErrorNotice } from '../ui/feedback';
 import { Wrap } from '../ui/layout';
+import { MessageFocus } from '../ui/messageFocus';
 import { Body } from '../ui/text';
 import { Page } from './Page';
 import { PortalStyles } from './PortalStyles';
@@ -156,18 +157,30 @@ export function ConsoleFrame(props: { children: React.ReactNode }): React.JSX.El
   return <WebConsoleFrame>{props.children}</WebConsoleFrame>;
 }
 
+const PendingCountContext = createContext<((count: number) => void) | null>(null);
+
+function ignoreCount(): void {
+  return undefined;
+}
+
+/** P19 hands the console nav the pending count each list read returns, so the nav and the Pending tab agree. */
+export function useReportPendingCount(): (count: number) => void {
+  return useContext(PendingCountContext) ?? ignoreCount;
+}
+
 function WebConsoleFrame(props: { children: React.ReactNode }): React.JSX.Element {
   const { me, api, pendingTick } = usePortal();
   const pathname = usePathname();
   const signOut = useSignOut();
-  // Read on mount and again whenever approve or reject changes the list (pendingTick). The last count stays up
-  // meanwhile, so the nav doesn't blink; a failed read leaves it as it was.
+  // Read on mount, on each move to another console page, and whenever approve or reject changes the list
+  // (pendingTick); P19 also hands over the count from each list read. The last count stays up meanwhile, so the
+  // nav doesn't blink; a failed read leaves it as it was.
   const [count, setCount] = useState<number | null>(null);
   useEffect(() => {
     let live = true;
     fetchPendingCount(api).then((next) => { if (live) setCount(next); }, () => undefined);
     return () => { live = false; };
-  }, [api, pendingTick]);
+  }, [api, pendingTick, pathname]);
   const bar = (
     <TopBar
       kind="console"
@@ -177,7 +190,13 @@ function WebConsoleFrame(props: { children: React.ReactNode }): React.JSX.Elemen
       onSignOut={signOut.run}
     />
   );
-  return <Frame topBar={<>{bar}{signOut.failed}</>}>{props.children}</Frame>;
+  return (
+    <Frame topBar={<>{bar}{signOut.failed}</>}>
+      <PendingCountContext.Provider value={setCount}>
+        <MessageFocus>{props.children}</MessageFocus>
+      </PendingCountContext.Provider>
+    </Frame>
+  );
 }
 
 const c = theme.color;

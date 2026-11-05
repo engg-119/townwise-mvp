@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
+import type { ApiClient } from '../../../../../src/api/client';
 import { deletePerson, fetchPeople, lookupPerson, signOutEverywhere } from '../../../../../src/portal/console/api';
 import { Dialog } from '../../../../../src/portal/console/Dialog';
 import { EMAIL_COPY, isEmailAddress } from '../../../../../src/portal/console/email';
@@ -8,21 +9,26 @@ import { orgHref } from '../../../../../src/portal/console/links';
 import { CellLines, CellLink, RowActions } from '../../../../../src/portal/console/parts';
 import { problemOf } from '../../../../../src/portal/console/problems';
 import { PERSON_KINDS, type Person, type PersonKind } from '../../../../../src/portal/console/schemas';
+import { useRefreshable } from '../../../../../src/portal/console/useRefreshable';
 import { ViewAsDialog, type ViewAsTarget } from '../../../../../src/portal/console/ViewAsDialog';
 import { KIND_LABEL, twoStepLabel } from '../../../../../src/portal/console/words';
 import { hasCode } from '../../../../../src/portal/errors';
 import { formatDate } from '../../../../../src/portal/format';
-import { useAction, useBreakpoint, useLoad } from '../../../../../src/portal/hooks';
+import { useAction, useBreakpoint } from '../../../../../src/portal/hooks';
 import { usePortal } from '../../../../../src/portal/PortalProvider';
 import { Page } from '../../../../../src/portal/shell/Page';
 import {
   Actions, Button, DataTable, EmptyState, ErrorNotice, FormField, Heading, LoadingLine, Messages, Panel, Select, Small, Stack,
+  useFocusMessage,
 } from '../../../../../src/portal/ui';
 
 // P22. People (/admin/people, staff): docs/portal/spec.md 16.4, F7, F13; the AdminUsers board. Everyone Townwise
 // has a record for, filtered by kind on the server (?kind=) and searched in the browser; anyone else who signed
 // in is found by exact email (the lookup). Non-staff rows with a kit user get View as (C1) and Sign out
 // everywhere; every non-staff row gets Delete person (C7, the typed email), disabled while the person holds a seat.
+// A delete or sign-out reloads the list, which takes the opener with it, so focus moves to the notice (spec 15.7).
+// A refusal that shows the page is out of date (409 person_has_seat, 404) reads the list again in place, so the
+// opener stays for Cancel to return to. Each of these reads the lookup's result again too.
 
 const SEATED: readonly PersonKind[] = ['org_admin', 'member'];
 
@@ -44,14 +50,19 @@ function viewTarget(person: Person): ViewAsTarget {
   return { email: person.email, userId: person.userId, orgName: SEATED.includes(person.kind) ? (person.org?.name ?? null) : null };
 }
 
-function SignOutDialog(props: { email: string; userId: string; onDone: () => void; onClose: () => void }): React.JSX.Element {
-  const { email, userId, onDone } = props;
+function SignOutDialog(props: { email: string; userId: string; onDone: () => void; onStale: () => void; onClose: () => void }): React.JSX.Element {
+  const { email, userId, onDone, onStale } = props;
   const { api, showNotice } = usePortal();
   const signOut = useAction(useCallback(async () => {
-    await signOutEverywhere(api, userId);
+    try {
+      await signOutEverywhere(api, userId);
+    } catch (error) {
+      if (hasCode(error, 404, 'not_found')) onStale();
+      throw error;
+    }
     showNotice({ text: `Signed ${email} out everywhere.` }, '/admin/people');
     onDone();
-  }, [api, showNotice, email, userId, onDone]));
+  }, [api, showNotice, email, userId, onDone, onStale]));
   return (
     <Dialog
       title={`Sign out ${email} everywhere?`}
@@ -71,8 +82,8 @@ function SignOutDialog(props: { email: string; userId: string; onDone: () => voi
 }
 
 /** C7 for a person: the typed email, then their Townwise records go; the kit user record is a runbook step. */
-function DeleteDialog(props: { person: Person; onDone: () => void; onClose: () => void }): React.JSX.Element {
-  const { person, onDone } = props;
+function DeleteDialog(props: { person: Person; onDone: () => void; onStale: () => void; onClose: () => void }): React.JSX.Element {
+  const { person, onDone, onStale } = props;
   const { email } = person;
   const { api, showNotice } = usePortal();
   // A seat taken since the list was read: the lookup names the organization they are in now.
@@ -82,13 +93,15 @@ function DeleteDialog(props: { person: Person; onDone: () => void; onClose: () =
     try {
       ({ kitUserId } = await deletePerson(api, email));
     } catch (error) {
-      if (hasCode(error, 409, 'person_has_seat')) setSeat((await lookupPerson(api, email).catch(() => null))?.org ?? null);
+      const seated = hasCode(error, 409, 'person_has_seat');
+      if (seated) setSeat((await lookupPerson(api, email).catch(() => null))?.org ?? null);
+      if (seated || hasCode(error, 404, 'not_found')) onStale();
       throw error;
     }
     const runbook = kitUserId === null ? '' : ' Delete their kit user record by hand (runbook).';
     showNotice({ text: `Deleted ${email}’s Townwise records.${runbook}` }, '/admin/people');
     onDone();
-  }, [api, showNotice, email, onDone]));
+  }, [api, showNotice, email, onDone, onStale]));
   return (
     <Dialog
       title={`Delete ${email}`}
@@ -177,41 +190,54 @@ function PeopleTable(props: { label: string; people: readonly Person[]; you: str
 
 type LookupState =
   | { status: 'idle' }
-  | { status: 'pending' }
-  | { status: 'found'; person: Person | null }
-  | { status: 'failed'; error: unknown };
+  /** Not an email address, by the check here or the server's (400). */
+  | { status: 'invalid' }
+  | { status: 'pending'; address: string }
+  | { status: 'found'; address: string; person: Person | null }
+  | { status: 'failed'; address: string; error: unknown };
 
-/**
- * “Find a signed-in person by exact email” (GET /api/admin/people/lookup?q=). The address is checked here first.
- * Each Look up or Enter starts a new lookup, and only the newest one's answer shows.
- */
-function Lookup(props: { you: string; onOpen: (open: Open) => void }): React.JSX.Element {
-  const { api } = usePortal();
-  const [email, setEmail] = useState('');
-  const [invalid, setInvalid] = useState(false);
+interface Lookup {
+  look: LookupState;
+  /** Looks up `address`, or says it isn't an email address (null). */
+  run: (address: string | null) => void;
+  /** Reads a person result again, after a write that changed or removed them. */
+  refresh: () => void;
+}
+
+/** GET /api/admin/people/lookup?q=. Each run starts a new lookup, and only the newest one's answer shows. */
+function useLookup(api: ApiClient): Lookup {
   const [look, setLook] = useState<LookupState>({ status: 'idle' });
   const latest = useRef(0);
-  function submit(): void {
+  const run = useCallback((address: string | null) => {
     latest.current += 1;
     const ticket = latest.current;
-    const address = email.trim();
-    const ok = isEmailAddress(address);
-    setInvalid(!ok);
-    setLook(ok ? { status: 'pending' } : { status: 'idle' });
-    if (!ok) return;
+    if (address === null) {
+      setLook({ status: 'invalid' });
+      return;
+    }
+    setLook({ status: 'pending', address });
     lookupPerson(api, address).then(
-      (person) => { if (ticket === latest.current) setLook({ status: 'found', person }); },
+      (person) => { if (ticket === latest.current) setLook({ status: 'found', address, person }); },
       (error: unknown) => {
         if (ticket !== latest.current) return;
         // The server's own check of the address: the same line as the check here.
-        if (hasCode(error, 400, 'invalid_request')) {
-          setInvalid(true);
-          setLook({ status: 'idle' });
-          return;
-        }
-        setLook({ status: 'failed', error });
+        setLook(hasCode(error, 400, 'invalid_request') ? { status: 'invalid' } : { status: 'failed', address, error });
       },
     );
+  }, [api]);
+  const refresh = useCallback(() => {
+    if (look.status === 'found' && look.person !== null) run(look.address);
+  }, [look, run]);
+  return { look, run, refresh };
+}
+
+/** “Find a signed-in person by exact email”. The address is checked here first; Look up or Enter starts a lookup. */
+function LookupPanel(props: { lookup: Lookup; you: string; onOpen: (open: Open) => void }): React.JSX.Element {
+  const { look, run } = props.lookup;
+  const [email, setEmail] = useState('');
+  function submit(): void {
+    const address = email.trim();
+    run(isEmailAddress(address) ? address : null);
   }
   return (
     <Panel label="Lookup">
@@ -225,10 +251,10 @@ function Lookup(props: { you: string; onOpen: (open: Open) => void }): React.JSX
         keyboardType="email-address"
         autoCorrect={false}
         maxLength={320}
-        messages={invalid ? [EMAIL_COPY] : []}
+        messages={look.status === 'invalid' ? [EMAIL_COPY] : []}
       />
       <Actions><Button variant="outline" label={look.status === 'pending' ? 'Looking up…' : 'Look up'} onPress={submit} /></Actions>
-      {look.status === 'failed' ? <ErrorNotice error={look.error} /> : null}
+      {look.status === 'failed' ? <ErrorNotice error={look.error} onRetry={() => { run(look.address); }} /> : null}
       {look.status !== 'found' ? null : look.person === null
         ? <Messages live="status" items={['No one with that email has signed in or been added.']} />
         : <PeopleTable label="Lookup result" people={[look.person]} you={props.you} onOpen={props.onOpen} />}
@@ -242,9 +268,22 @@ export default function PeoplePage(): React.JSX.Element {
   const [kind, setKind] = useState<PersonKind | null>(null);
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState<Open>(null);
-  const { state, reload } = useLoad(useCallback(() => fetchPeople(api, kind), [api, kind]));
+  // `refresh` never rejects; a failed one shows the shared copy with its own Try again.
+  const { state, reload, refresh, refreshError } = useRefreshable(useCallback(() => fetchPeople(api, kind), [api, kind]));
+  const lookup = useLookup(api);
+  const { refresh: refreshLookup } = lookup;
+  const focusMessage = useFocusMessage();
   const close = useCallback(() => { setOpen(null); }, []);
-  const done = useCallback(() => { setOpen(null); reload(); }, [reload]);
+  const done = useCallback(() => {
+    focusMessage();
+    setOpen(null);
+    reload();
+    refreshLookup();
+  }, [focusMessage, reload, refreshLookup]);
+  const stale = useCallback(() => {
+    void refresh();
+    refreshLookup();
+  }, [refresh, refreshLookup]);
 
   let body: React.ReactNode;
   if (state.status === 'loading') {
@@ -258,6 +297,7 @@ export default function PeoplePage(): React.JSX.Element {
       || (person.org?.name.toLowerCase().includes(needle) ?? false));
     body = (
       <Stack gap={16}>
+        {refreshError === null ? null : <ErrorNotice error={refreshError} onRetry={() => { void refresh(); }} />}
         {state.data.truncated ? <Messages live="status" items={['Showing the first 1,000 people. Use the search or the lookup.']} /> : null}
         {shown.length === 0
           ? <EmptyState text="No one matches." />
@@ -283,11 +323,11 @@ export default function PeoplePage(): React.JSX.Element {
             <FormField label="Search email or organization" value={query} onChangeText={setQuery} autoCorrect={false} />
           </View>
         </View>
-        <Lookup you={me.user.id} onOpen={setOpen} />
+        <LookupPanel lookup={lookup} you={me.user.id} onOpen={setOpen} />
         {body}
       </Stack>
-      {open?.kind === 'signOut' ? <SignOutDialog email={open.email} userId={open.userId} onDone={done} onClose={close} /> : null}
-      {open?.kind === 'delete' ? <DeleteDialog person={open.person} onDone={done} onClose={close} /> : null}
+      {open?.kind === 'signOut' ? <SignOutDialog email={open.email} userId={open.userId} onDone={done} onStale={stale} onClose={close} /> : null}
+      {open?.kind === 'delete' ? <DeleteDialog person={open.person} onDone={done} onStale={stale} onClose={close} /> : null}
       {open?.kind === 'view' ? <ViewAsDialog target={open.target} onClose={close} /> : null}
     </Page>
   );

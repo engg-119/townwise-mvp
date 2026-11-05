@@ -6,6 +6,7 @@ export { DataTable, DefinitionList, type Column, type Row } from './DataTable';
 export { EmptyState, ErrorNotice, LoadingLine, Messages, Notice, ReadOnlyLine, StatusTag } from './feedback';
 export { FormField, type FormFieldProps } from './FormField';
 export { Columns, Content, Pair, Panel, Section, Stack, Wrap } from './layout';
+export { MessageFocus, useFocusMessage } from './messageFocus';
 export { Select } from './Select';
 export { Body, Eyebrow, Heading, Lead, Mono, Small, Title } from './text';
 export { checkTown, EMPTY_TOWN, TOWN_COPY, TownFields, townValueOf, type TownMessages, type TownValue } from './TownFields';

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useLocalSearchParams } from 'expo-router';
 import { StyleSheet, View } from 'react-native';
 
@@ -13,10 +13,11 @@ import { hasCode } from '../../../../../src/portal/errors';
 import { formatCount, formatDate, townLabel } from '../../../../../src/portal/format';
 import { useAction, useLoad } from '../../../../../src/portal/hooks';
 import { usePortal } from '../../../../../src/portal/PortalProvider';
+import { useReportPendingCount } from '../../../../../src/portal/shell/Frame';
 import { Page } from '../../../../../src/portal/shell/Page';
 import {
   Actions, Button, DataTable, DefinitionList, EmptyState, ErrorNotice, Eyebrow, FormField, Heading, LinkButton,
-  LoadingLine, Messages, Panel, Small, Stack, type Column,
+  LoadingLine, Messages, Panel, Small, Stack, useFocusMessage, type Column,
 } from '../../../../../src/portal/ui';
 
 // P19. Requests (/admin, staff): docs/portal/spec.md 16.4, F3, F4; the AdminOverview board. Tabs filter by
@@ -24,7 +25,8 @@ import {
 // opens its detail (?request=): every field, the note as plain text, “Requested as” when the email changed and
 // the warning when the requester already has an organization. Approve (C3) creates the organization, its first
 // location and the requester's admin seat; Reject (C4) sends an optional message; View as (C1) shows what the
-// requester sees.
+// requester sees. A decision, or a 409 or 404 for one, takes the request out of the list along with the button
+// that opened its dialog, so focus moves to the notice or the line that says what happened (spec 15.7).
 
 const EMPTY: Readonly<Record<RequestStatus, string>> = {
   pending: 'No requests are waiting.',
@@ -274,15 +276,23 @@ export default function RequestsPage(): React.JSX.Element {
   const status = statusOf(params.status);
   const { state, reload } = useLoad(useCallback(() => fetchRequests(api, status), [api, status]));
   const [open, setOpen] = useState<Open>(null);
-  /** A late decision's line, for the tab it happened on. */
-  const [stale, setStale] = useState<{ status: RequestStatus; text: string } | null>(null);
+  /** A late decision's line, for the tab it happened on; `id` makes each one a new line that takes focus. */
+  const [stale, setStale] = useState<{ id: number; status: RequestStatus; text: string } | null>(null);
   // Another tab drops it, so coming back doesn't show it again.
   if (stale !== null && stale.status !== status) setStale(null);
+  const focusMessage = useFocusMessage();
   const close = useCallback(() => { setOpen(null); }, []);
-  const done = useCallback(() => { setOpen(null); setStale(null); reload(); }, [reload]);
-  const onStale = useCallback((text: string) => { setOpen(null); setStale({ status, text }); reload(); }, [reload, status]);
+  const done = useCallback(() => { focusMessage(); setOpen(null); setStale(null); reload(); }, [focusMessage, reload]);
+  const onStale = useCallback((text: string) => {
+    focusMessage();
+    setOpen(null);
+    setStale((previous) => ({ id: (previous?.id ?? 0) + 1, status, text }));
+    reload();
+  }, [focusMessage, reload, status]);
 
   const pendingCount = state.status === 'ready' ? state.data.pendingCount : null;
+  const reportPending = useReportPendingCount();
+  useEffect(() => { if (pendingCount !== null) reportPending(pendingCount); }, [pendingCount, reportPending]);
   const tabs = REQUEST_STATUSES.map((value) => ({
     label: value === 'pending' && pendingCount !== null ? `Pending ${formatCount(pendingCount)}` : TAB_LABEL[value],
     href: listHref(value),
@@ -314,7 +324,7 @@ export default function RequestsPage(): React.JSX.Element {
     <Page title="Requests">
       <Stack gap={24}>
         <FilterTabs label="Requests by status" tabs={tabs} />
-        {stale === null ? null : <ErrorNotice message={stale.text} />}
+        {stale === null ? null : <ErrorNotice key={stale.id} message={stale.text} />}
         {body}
       </Stack>
       {open?.kind === 'approve' ? <ApproveDialog request={open.request} onApproved={done} onStale={onStale} onRefresh={reload} onClose={close} /> : null}

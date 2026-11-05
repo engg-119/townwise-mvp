@@ -12,7 +12,8 @@ import { Heading } from './text';
 // at 80%. The title is `tw-h3`, the body `small` `text2`, and the actions sit flush left: the dialog's one primary,
 // then Cancel as a text link. Destructive actions have no red. Deleting data adds the typed-name field, and the
 // action stays disabled until it matches. Focus is trapped while open and returns to the opener on close, and
-// Escape closes it (react-native-web's Modal; Android's back button on native). Nothing animates.
+// Escape closes it (react-native-web's Modal; Android's back button on native). While the action runs, Cancel is
+// disabled and Escape and back do nothing, so its answer always lands in the open dialog. Nothing animates.
 
 export interface ConfirmDialogProps {
   visible: boolean;
@@ -32,7 +33,7 @@ export interface ConfirmDialogProps {
 
 export function ConfirmDialog(props: ConfirmDialogProps): React.JSX.Element {
   return (
-    <Modal visible={props.visible} transparent animationType="none" onRequestClose={props.onCancel}>
+    <Modal visible={props.visible} transparent animationType="none" onRequestClose={() => { if (props.pending !== true) props.onCancel(); }}>
       {props.visible ? <DialogBody {...props} /> : null}
     </Modal>
   );
@@ -61,7 +62,7 @@ function DialogBody(props: ConfirmDialogProps): React.JSX.Element {
             disabled={!matches || pending}
             onPress={props.onConfirm}
           />
-          <Button variant="link" label="Cancel" onPress={props.onCancel} />
+          <Button variant="link" label="Cancel" disabled={pending} onPress={props.onCancel} />
         </Actions>
       </View>
     </View>

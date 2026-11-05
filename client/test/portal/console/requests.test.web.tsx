@@ -1,6 +1,6 @@
-import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 
-import { ACCESS, offline, refusal, staffMe, viewAsMe, writes } from '../../helpers/portal';
+import { ACCESS, deferred, offline, refusal, staffMe, viewAsMe, writes } from '../../helpers/portal';
 import { adminRequest, consoleApi, emailOf, renderAt, REQUESTER_EMAIL, type ConsoleApi } from './helpers';
 
 // P19 Requests, with Approve (C3), Reject (C4) and View as (C1): docs/portal/spec.md 16.4, F3, F4, F8.
@@ -357,4 +357,102 @@ test('the console nav’s Requests count reads again after an approve and after 
   fireEvent.click(await screen.findByRole('button', { name: 'Reject' }));
   fireEvent.click(within(screen.getByRole('dialog', { name: 'Reject Sample Campus Pub?' })).getByRole('button', { name: 'Reject' }));
   await waitFor(() => { expect(navCount()).toBe('Requests 0'); });
+});
+
+test('the nav’s Requests count reads again when the console route changes', async () => {
+  const api = consoleApi();
+  api.routes['GET /api/admin/orgs'] = () => ({ orgs: [] });
+  api.routes['GET /api/admin/people'] = () => ({ people: [], truncated: false });
+  renderAt('/admin/orgs', api);
+  await waitFor(() => { expect(navCount()).toBe('Requests 2'); });
+  // A request arrived meanwhile.
+  api.pendingCount = 5;
+  fireEvent.click(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'People' }));
+  await waitFor(() => { expect(window.location.pathname).toBe('/admin/people'); });
+  await waitFor(() => { expect(navCount()).toBe('Requests 5'); });
+});
+
+test('the nav’s Requests count takes the pending count a Requests list read returns', async () => {
+  const api = consoleApi();
+  let count = 1;
+  api.routes['GET /api/admin/requests?status=pending'] = () => ({ requests: [TAVERN], pendingCount: count });
+  api.routes['GET /api/admin/requests?status=approved'] = () => ({ requests: [], pendingCount: count });
+  renderAt('/admin', api);
+  await waitFor(() => { expect(navCount()).toBe('Requests 1'); });
+  // Three requests arrived meanwhile; switching tabs reads the list, and its count, again.
+  count = 4;
+  fireEvent.click(within(screen.getByRole('navigation', { name: 'Requests by status' })).getByRole('link', { name: 'Approved' }));
+  expect(await screen.findByText('No approved requests.')).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Pending 4' })).toBeTruthy();
+  await waitFor(() => { expect(navCount()).toBe('Requests 4'); });
+});
+
+function escape(): void {
+  act(() => { document.dispatchEvent(new KeyboardEvent('keyup', { key: 'Escape' })); });
+}
+
+test('while a decision is sent, Cancel and Escape leave its dialog open, so the answer lands in it', async () => {
+  const api = consoleApi();
+  list(api, 'pending', [TAVERN]);
+  const answer = deferred<unknown>();
+  api.routes['POST /api/admin/requests/r1/approve'] = () => answer.promise;
+  renderAt('/admin', api);
+  fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+  const dialog = screen.getByRole('dialog', { name: 'Approve Sample Mountain Tavern' });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Approve' }));
+  const cancel = within(dialog).getByRole('button', { name: 'Cancel' });
+  await waitFor(() => { expect(cancel.getAttribute('aria-disabled')).toBe('true'); });
+  fireEvent.click(cancel);
+  escape();
+  expect(screen.getByRole('dialog', { name: 'Approve Sample Mountain Tavern' })).toBe(dialog);
+
+  await act(async () => { answer.resolve(refusal(503, 'unavailable')); await answer.promise; });
+  expect(await within(dialog).findByText('Townwise isn’t responding. Try again in a minute.')).toBeTruthy();
+  // Answered, Cancel closes it again.
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+  expect(screen.queryByRole('dialog', { name: 'Approve Sample Mountain Tavern' })).toBeNull();
+  expect(writes(api)).toHaveLength(1);
+});
+
+/** Focus is on the element that holds this text, not left on the page body. */
+function expectFocusOn(text: RegExp): void {
+  const active = document.activeElement;
+  expect(active).not.toBe(document.body);
+  expect(active?.textContent).toMatch(text);
+}
+
+test('a decision takes its opener off the page, so focus moves to the notice; after a 409, to its line', async () => {
+  const api = consoleApi();
+  let pending: unknown[] = [TAVERN, PUB];
+  api.routes['GET /api/admin/requests?status=pending'] = () => ({ requests: pending, pendingCount: pending.length });
+  api.routes['POST /api/admin/requests/r1/approve'] = () => {
+    pending = [PUB];
+    return { org: { id: 'o9', name: 'Mountain Tavern' }, request: { ...TAVERN, status: 'approved', orgId: 'o9' } };
+  };
+  api.routes['POST /api/admin/requests/r2/reject'] = () => refusal(409, 'request_not_pending');
+  renderAt('/admin', api);
+  const approve = await screen.findByRole('button', { name: 'Approve' });
+  approve.focus();
+  fireEvent.click(approve);
+  fireEvent.click(within(screen.getByRole('dialog', { name: 'Approve Sample Mountain Tavern' })).getByRole('button', { name: 'Approve' }));
+  await screen.findByRole('region', { name: 'Request: Sample Campus Pub' });
+  expectFocusOn(/^\d+Approved\. Mountain Tavern is set up/);
+
+  const reject = screen.getByRole('button', { name: 'Reject' });
+  reject.focus();
+  fireEvent.click(reject);
+  fireEvent.click(within(screen.getByRole('dialog', { name: 'Reject Sample Campus Pub?' })).getByRole('button', { name: 'Reject' }));
+  await screen.findByText('Someone already decided this request.');
+  await screen.findByRole('region', { name: 'Pending requests' });
+  // The newer line, not the approval notice still above it.
+  expectFocusOn(/^\d+Someone already decided this request\.$/);
+
+  // A second late decision with the same words is a new line, and takes focus again.
+  const again = await screen.findByRole('button', { name: 'Reject' });
+  again.focus();
+  fireEvent.click(again);
+  fireEvent.click(within(screen.getByRole('dialog', { name: 'Reject Sample Campus Pub?' })).getByRole('button', { name: 'Reject' }));
+  await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Reject Sample Campus Pub?' })).toBeNull(); });
+  await screen.findByRole('region', { name: 'Pending requests' });
+  expectFocusOn(/^\d+Someone already decided this request\.$/);
 });

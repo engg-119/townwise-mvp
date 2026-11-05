@@ -277,3 +277,123 @@ test('View as from People names the organization whose admins will see it, then 
   expect(await screen.findByRole('region', { name: 'View-as' })).toBeTruthy();
   expect(writes(api)).toEqual([{ method: 'POST', path: '/api/admin/view-as', body: { userId: 'u2', reason: 'Their upload question.' } }]);
 });
+
+function lookupRoute(email: string): string {
+  return `GET /api/admin/people/lookup?q=${encodeURIComponent(email)}`;
+}
+
+async function lookUp(email: string): Promise<HTMLElement> {
+  const panel = await screen.findByRole('region', { name: 'Lookup' });
+  fireEvent.change(within(panel).getByRole('textbox', { name: 'Email' }), { target: { value: email } });
+  fireEvent.click(within(panel).getByRole('button', { name: 'Look up' }));
+  return panel;
+}
+
+function confirmDelete(email: string): HTMLElement {
+  const dialog = screen.getByRole('dialog', { name: `Delete ${email}` });
+  fireEvent.change(within(dialog).getByRole('textbox', { name: `Type ${email} to confirm.` }), { target: { value: email } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Delete person' }));
+  return dialog;
+}
+
+test('a failed lookup shows the shared copy with Try again, which looks that address up again', async () => {
+  const api = consoleApi();
+  serve(api);
+  const cook = emailOf('cook');
+  api.routes[lookupRoute(cook)] = () => offline();
+  renderAt('/admin/people', api);
+  const panel = await lookUp(cook);
+  expect(await within(panel).findByText('Can’t reach Townwise. Check your connection and try again.')).toBeTruthy();
+  api.routes[lookupRoute(cook)] = () => ({ person: person(cook, 'signed_in', { userId: 'u7' }) });
+  fireEvent.click(within(panel).getByRole('button', { name: 'Try again' }));
+  expect(await within(panel).findByRole('region', { name: 'Lookup result' })).toBeTruthy();
+  expect(lookups(api)).toHaveLength(2);
+});
+
+test('a delete refused because they took a seat reads the list again: after Cancel the row shows it, Delete disabled, with focus', async () => {
+  const api = consoleApi();
+  const seat = { id: 'o5', name: 'Sample Ski Bar' };
+  let people = [person(BARTENDER_EMAIL, 'rejected', { userId: 'u4' })];
+  api.routes['GET /api/admin/people'] = () => ({ people, truncated: false });
+  api.routes[lookupRoute(BARTENDER_EMAIL)] = () => ({ person: people[0] });
+  api.routes['POST /api/admin/people/delete'] = () => {
+    people = [person(BARTENDER_EMAIL, 'member', { userId: 'u4', org: seat })];
+    return refusal(409, 'person_has_seat');
+  };
+  renderAt('/admin/people', api);
+  const opener = await screen.findByRole('button', { name: `Delete ${BARTENDER_EMAIL}` });
+  opener.focus();
+  fireEvent.click(opener);
+  const dialog = confirmDelete(BARTENDER_EMAIL);
+  expect(await within(dialog).findByText(/^Remove bartender@example\.net from Sample Ski Bar first\./)).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+  const row = rowOf(screen.getByRole('region', { name: 'Everyone' }), BARTENDER_EMAIL);
+  await waitFor(() => { expect(within(row).getByText('Member')).toBeTruthy(); });
+  const remove = within(row).getByRole('button', { name: `Delete ${BARTENDER_EMAIL}` });
+  expect(remove.getAttribute('aria-disabled')).toBe('true');
+  expect(within(row).getByText(`Remove ${BARTENDER_EMAIL} from ${seat.name} first.`)).toBeTruthy();
+  // Read again in place, so the opener is still on the page and gets focus back.
+  expect(remove).toBe(opener);
+  expect(document.activeElement).toBe(opener);
+});
+
+test('a delete reloads the list, which takes the opener away, so focus moves to the notice', async () => {
+  const api = consoleApi();
+  serve(api);
+  api.routes['POST /api/admin/people/delete'] = () => ({ deletedRequests: 1, deletedSeats: 0, redactedEvents: 2, kitUserId: null });
+  renderAt('/admin/people', api);
+  const opener = await screen.findByRole('button', { name: `Delete ${CHEF_EMAIL}` });
+  opener.focus();
+  fireEvent.click(opener);
+  confirmDelete(CHEF_EMAIL);
+  await screen.findByText(`Deleted ${CHEF_EMAIL}’s Townwise records.`);
+  await screen.findByRole('region', { name: 'Everyone' });
+  expect(document.activeElement).not.toBe(document.body);
+  expect(document.activeElement?.textContent).toMatch(/^\d+Deleted chef@example\.com’s Townwise records\.$/);
+});
+
+test('the lookup result reads again after a delete, so a deleted person never shows with live buttons', async () => {
+  const api = consoleApi();
+  serve(api);
+  const cook = emailOf('cook');
+  let found: unknown = person(cook, 'pending', { userId: 'u7' });
+  api.routes[lookupRoute(cook)] = () => ({ person: found });
+  api.routes['POST /api/admin/people/delete'] = () => {
+    found = null;
+    return { deletedRequests: 1, deletedSeats: 0, redactedEvents: 0, kitUserId: null };
+  };
+  renderAt('/admin/people', api);
+  const panel = await lookUp(cook);
+  const result = await within(panel).findByRole('region', { name: 'Lookup result' });
+  fireEvent.click(within(result).getByRole('button', { name: `Delete ${cook}` }));
+  confirmDelete(cook);
+  expect(await screen.findByText(`Deleted ${cook}’s Townwise records.`)).toBeTruthy();
+  expect(await within(panel).findByText('No one with that email has signed in or been added.')).toBeTruthy();
+  expect(within(panel).queryByRole('region', { name: 'Lookup result' })).toBeNull();
+  expect(lookups(api)).toHaveLength(2);
+});
+
+test('the lookup result reads again after a sign-out, and after a 404 that says the person is gone', async () => {
+  const api = consoleApi();
+  serve(api);
+  const cook = emailOf('cook');
+  let found: unknown = person(cook, 'signed_in', { userId: 'u7' });
+  api.routes[lookupRoute(cook)] = () => ({ person: found });
+  api.routes['POST /api/admin/people/u7/sign-out-everywhere'] = () => ({ revoked: 2 });
+  renderAt('/admin/people', api);
+  const panel = await lookUp(cook);
+  fireEvent.click(within(await within(panel).findByRole('region', { name: 'Lookup result' })).getByRole('button', { name: `Sign out ${cook} everywhere` }));
+  fireEvent.click(within(screen.getByRole('dialog', { name: `Sign out ${cook} everywhere?` })).getByRole('button', { name: 'Sign out everywhere' }));
+  expect(await screen.findByText(`Signed ${cook} out everywhere.`)).toBeTruthy();
+  await waitFor(() => { expect(lookups(api)).toHaveLength(2); });
+
+  // Deleted elsewhere meanwhile: the dialog says so, and the lookup drops them.
+  api.routes['POST /api/admin/people/u7/sign-out-everywhere'] = () => { found = null; return refusal(404, 'not_found'); };
+  fireEvent.click(within(await within(panel).findByRole('region', { name: 'Lookup result' })).getByRole('button', { name: `Sign out ${cook} everywhere` }));
+  const dialog = screen.getByRole('dialog', { name: `Sign out ${cook} everywhere?` });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Sign out everywhere' }));
+  expect(await within(dialog).findByText('This person no longer exists.')).toBeTruthy();
+  expect(await within(panel).findByText('No one with that email has signed in or been added.')).toBeTruthy();
+  expect(within(panel).queryByRole('region', { name: 'Lookup result' })).toBeNull();
+  expect(lookups(api)).toHaveLength(3);
+});
