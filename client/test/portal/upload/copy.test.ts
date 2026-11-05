@@ -129,6 +129,11 @@ describe('send errors (P13)', () => {
     }
   });
 
+  test('a 404 means the location is gone: “This location isn’t available.”, with Locations as the way back', () => {
+    const missing = new ApiError('http', 'refused', { status: 404, code: 'not_found', retryAfterSeconds: null });
+    expect(sendErrorOf(missing)).toEqual({ text: 'This location isn’t available.', action: 'missing' });
+  });
+
   test('429 and the network use the shared copy; Try again sends the same days', () => {
     expect(sendErrorOf(http(429, 600))).toEqual({ text: 'Too many attempts. Try again in 10 minutes.', action: 'retry' });
     expect(sendErrorOf(new ApiError('network', 'down'))).toEqual({ text: 'Can’t reach Townwise. Check your connection and try again.', action: 'retry' });

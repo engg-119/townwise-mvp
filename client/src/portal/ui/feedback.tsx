@@ -6,6 +6,7 @@ import { theme } from '../../theme';
 import { errorCopy } from '../errors';
 import { useBreakpoint } from '../hooks';
 import { Button } from './Button';
+import { useMessageTarget } from './messageFocus';
 import { Mono } from './text';
 
 // Messages, notices, errors, loading lines, empty states and status tags (spec 15.6, 15.7; shell.md 7.3, 7.8).
@@ -22,10 +23,13 @@ export function Messages(props: {
   link?: MessageLink;
   /** `alert` for errors, `status` for notices: on the text, where native screen readers find it. */
   live?: 'alert' | 'status';
+  /** Notices and error lines: takes focus when the page asks for it (ui/messageFocus.tsx). */
+  takesFocus?: boolean;
 }): React.JSX.Element {
   const live = props.live === undefined ? {} : { role: props.live, 'aria-live': props.live === 'alert' ? 'assertive' as const : 'polite' as const };
+  const target = useMessageTarget(props.takesFocus === true ? props.items.join('\n') : null);
   return (
-    <View nativeID={props.nativeID} style={styles.list}>
+    <View nativeID={props.nativeID} {...target} style={styles.list}>
       {props.items.map((item, index) => (
         <View key={index} style={styles.item}>
           <Mono tone="text3" style={styles.counter}>{String(index + 1).padStart(2, '0')}</Mono>
@@ -47,7 +51,7 @@ export function Messages(props: {
 
 /** A page notice ("Saved.", "You joined {org}."): `role="status"`, at the top of the content. */
 export function Notice(props: { text: string; link?: MessageLink }): React.JSX.Element {
-  return <Messages live="status" items={[props.text]} {...(props.link === undefined ? {} : { link: props.link })} />;
+  return <Messages live="status" takesFocus items={[props.text]} {...(props.link === undefined ? {} : { link: props.link })} />;
 }
 
 /**
@@ -61,7 +65,7 @@ export function ErrorNotice(props: { error?: unknown; message?: string; onRetry?
   }, [text]);
   return (
     <View style={styles.error}>
-      <Messages live="alert" items={[text]} />
+      <Messages live="alert" takesFocus items={[text]} />
       {props.onRetry === undefined ? null : <Button variant="outline" label={props.retryLabel ?? 'Try again'} onPress={props.onRetry} />}
     </View>
   );

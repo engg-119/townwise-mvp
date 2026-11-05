@@ -47,6 +47,26 @@ describe('ConfirmDialog (spec 15.7)', () => {
     await view.rerender(<ConfirmDialog {...props} visible={false} />);
     expect(screen.queryByText(props.body)).toBeNull();
   });
+
+  test('while it runs, Cancel and the back button wait for its answer', async () => {
+    const { props, onCancel } = dialog({ pending: true, pendingLabel: 'Deleting…' });
+    const view = await render(<ConfirmDialog {...props} />);
+    /** The host Modal around the dialog, where Android's back button lands (onRequestClose). */
+    function modal(): Parameters<typeof fireEvent>[0] {
+      let node = screen.getByText(props.body);
+      while (node.type !== 'Modal' && node.parent !== null) node = node.parent;
+      return node;
+    }
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    expect(cancel.props.accessibilityState).toMatchObject({ disabled: true });
+    await userEvent.setup().press(cancel);
+    await fireEvent(modal(), 'requestClose');
+    expect(onCancel).not.toHaveBeenCalled();
+
+    await view.rerender(<ConfirmDialog {...props} pending={false} />);
+    await fireEvent(modal(), 'requestClose');
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('buttons (spec 15.6, 15.7)', () => {

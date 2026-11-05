@@ -14,7 +14,7 @@ export const renamedOrgSchema = z.object({ org: z.object({ id: z.string(), name:
 export const staffActivitySchema = z.object({
   at: z.string(),
   staffEmail: z.string(),
-  /** The server's plain-words summary ("Added {email} as member", "Started viewing as {email}"). */
+  /** The server's plain-words summary ("Added {email} as member", "Viewed as {email}"). */
   summary: z.string(),
   /** view_as.started only; `endsAt` is the grant's scheduled end. */
   viewAs: z.object({ targetEmail: z.string(), reason: z.string(), endsAt: z.string() }).nullable(),

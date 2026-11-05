@@ -12,7 +12,7 @@ import { cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing
 
 import type { MeResponse } from '../../../src/portal/schemas';
 import {
-  ACCESS, deferred, fakePortalApi, meOf, offline, orgOf, refusal, viewAsMe, writes, type FakePortalApi,
+  ACCESS, deferred, fakePortalApi, LOCATIONS, meOf, offline, orgOf, refusal, viewAsMe, writes, type FakePortalApi,
 } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { daysOf, locationsFake, salesOf, uploadOf, type LocationsFake } from './fakes';
@@ -105,12 +105,12 @@ test('a location with no guest counts charts daily net sales, in dollars', async
   const fake = locationsFake({ sales: { l1: salesOf(days) }, days: { l1: days } });
   await renderApp('/locations/l1/sales', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: fake }));
   expect(await screen.findByRole('heading', { name: 'Daily net sales' })).toBeTruthy();
-  expect(screen.getByText('10 days, Jan 1, 2026 to Jan 10, 2026. No days missing in between.')).toBeTruthy();
+  expect(screen.getByText('10 days, Jan 1, 2026 to Jan 10, 2026. 0 days missing in between.')).toBeTruthy();
   expect(screen.queryByText('Missing days might be closures.')).toBeNull();
   expect(screen.getByText('Daily net sales, Jan 1, 2026 to Jan 10, 2026. Highest: $1,900 on Jan 10, 2026. Lowest day with data: $1,000 on Jan 1, 2026.')).toBeTruthy();
 });
 
-test('Add a closure note opens the note form as a closure', async () => {
+test('Add a closure note opens the note form as a closure; closing it drops the query, so a reload shows the list', async () => {
   const { api } = setup(meOf(ACCESS.member));
   const { router } = await renderApp('/locations/l1/sales', api);
   await fireEvent.press(await screen.findByRole('link', { name: 'Add a closure note.' }));
@@ -118,6 +118,11 @@ test('Add a closure note opens the note form as a closure', async () => {
   expect(await screen.findByRole('heading', { name: 'Add a note' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Closure' }).props.accessibilityState).toMatchObject({ checked: true });
   expect(screen.getByRole('button', { name: 'Closed' }).props.accessibilityState).toMatchObject({ checked: true });
+  expect(router.getSearchParams().new).toBe('closure');
+  await fireEvent.press(screen.getByRole('button', { name: 'Cancel' }));
+  expect(screen.queryByRole('heading', { name: 'Add a note' })).toBeNull();
+  await waitFor(() => { expect(router.getSearchParams().new).toBeUndefined(); });
+  expect(screen.queryByRole('heading', { name: 'Add a note' })).toBeNull();
 });
 
 test('empty: says what is missing and where to upload; no delete, even for an org admin', async () => {
@@ -171,6 +176,24 @@ test('a failed delete keeps the dialog open with the shared copy', async () => {
   await fireEvent.press(screen.getByRole('button', { name: 'Delete all sales data' }));
   expect(screen.getByLabelText('Type Main Street Bar to confirm.')).toBeTruthy();
   expect(screen.queryByText('Can’t reach Townwise. Check your connection and try again.')).toBeNull();
+});
+
+test('a delete after another admin deleted the location closes the dialog and says it isn’t available', async () => {
+  const { api } = setup(meOf(ACCESS.admin));
+  api.answers['/api/org/locations/l1/sales'] = () => {
+    api.org = orgOf('org_admin', LOCATIONS.filter((location) => location.id !== 'l1'));
+    return refusal(404, 'not_found');
+  };
+  await renderApp('/locations/l1/sales', api);
+  await fireEvent.press(await screen.findByRole('button', { name: 'Delete all sales data' }));
+  await fireEvent.changeText(screen.getByLabelText('Type Main Street Bar to confirm.'), 'Main Street Bar');
+  const confirm = screen.getAllByRole('button', { name: 'Delete all sales data' }).at(-1);
+  if (confirm === undefined) throw new Error('no dialog');
+  await fireEvent.press(confirm);
+  expect(await screen.findByText('This location isn’t available.')).toBeTruthy();
+  expect(screen.queryByLabelText('Type Main Street Bar to confirm.')).toBeNull();
+  expect(screen.queryByText('Something went wrong with that request. Reload the page and try again.')).toBeNull();
+  expect(screen.getAllByRole('link', { name: 'Locations' }).length).toBeGreaterThan(0);
 });
 
 test('errors: the shared copy with Try again; an unknown location is not available', async () => {

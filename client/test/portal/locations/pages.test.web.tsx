@@ -3,9 +3,12 @@ import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
+import { fmt1, fmtSigned, side } from '../../../src/marketing/format';
 import type { Note, NoteInput } from '../../../src/portal/locations/api';
 import { addDays, localToday } from '../../../src/portal/locations/dates';
 import type { MeResponse } from '../../../src/portal/schemas';
+import { MONTHS, northeastSeries, townProfile } from '../../../src/portal/towns';
+import { theme } from '../../../src/theme';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeChatApi } from '../../helpers/chat';
 import { fakeAuth } from '../../helpers/fakes';
@@ -87,6 +90,64 @@ test('Sales data draws the daily chart as aria-hidden SVG, with its scale, ticks
   expect(screen.getByRole('link', { name: 'Add a closure note.' }).getAttribute('href')).toBe('/locations/l1/notes?new=closure');
 });
 
+test('Town on web: the month scrubber starts at the biggest gap and moves the chart’s cursor and readout, by click and key', async () => {
+  const profile = townProfile('hanover-nh');
+  if (profile === null) throw new Error('no profile');
+  const { index, gap } = profile.series;
+  renderAt('/locations/l1/town', portal(meOf(ACCESS.member)));
+  const group = await screen.findByRole('radiogroup', { name: 'Month' });
+  const radios = within(group).getAllByRole('radio');
+  const radio = (month: number): HTMLElement => {
+    const found = radios[month];
+    if (found === undefined) throw new Error(`no radio ${String(month)}`);
+    return found;
+  };
+  expect(radios.map((item) => item.textContent)).toEqual([...MONTHS]);
+  const checked = (): (string | null)[] => radios.filter((item) => item.getAttribute('aria-checked') === 'true').map((item) => item.textContent);
+  const cursor = (): string | null | undefined => [...(document.querySelector('svg')?.querySelectorAll('path') ?? [])]
+    .find((path) => path.getAttribute('stroke') === theme.color.white)?.getAttribute('d');
+  // The readout above the chart, a polite live region: the month's gap, its label, and both index values.
+  const readout = (month: number): void => {
+    const value = gap[month] ?? 0;
+    const box = screen.getByText(`${side(value)} the Northeast, index points, ${MONTHS[month] ?? ''} 2024`).parentElement;
+    expect(box?.getAttribute('aria-live')).toBe('polite');
+    expect(box?.firstElementChild?.textContent).toBe(fmtSigned(value));
+    expect(box?.lastElementChild?.textContent).toBe(`Grafton County ${fmt1(index[month] ?? 0)} · Northeast ${fmt1(northeastSeries.index[month] ?? 0)}`);
+  };
+  // It starts at the year's biggest gap, the one tab stop.
+  const start = profile.series.largestGap.monthIndex;
+  expect(start).not.toBe(0);
+  expect(checked()).toEqual([MONTHS[start]]);
+  expect(radios.filter((item) => item.tabIndex === 0)).toEqual([radio(start)]);
+  readout(start);
+  // A click picks a month: the white cursor moves to it on the chart, and the readout follows.
+  fireEvent.click(radio(0));
+  expect(checked()).toEqual(['Jan']);
+  expect(cursor()).toBe('M12 0 V196');
+  readout(0);
+  // Arrows wrap, Home and End jump, and focus follows the choice.
+  fireEvent.keyDown(radio(0), { key: 'ArrowLeft' });
+  expect(checked()).toEqual(['Dec']);
+  expect(document.activeElement).toBe(radio(11));
+  expect(cursor()).toBe('M288 0 V196');
+  fireEvent.keyDown(radio(11), { key: 'Home' });
+  expect(checked()).toEqual(['Jan']);
+  fireEvent.keyDown(radio(0), { key: 'ArrowRight' });
+  expect(checked()).toEqual(['Feb']);
+  expect(document.activeElement).toBe(radio(1));
+  readout(1);
+  fireEvent.keyDown(radio(1), { key: 'End' });
+  expect(checked()).toEqual(['Dec']);
+  expect(radios.filter((item) => item.tabIndex === 0)).toEqual([radio(11)]);
+  // Up and Down match Left and Right, and other keys do nothing (as the homepage scrubber).
+  fireEvent.keyDown(radio(11), { key: 'ArrowUp' });
+  expect(checked()).toEqual(['Nov']);
+  fireEvent.keyDown(radio(10), { key: 'ArrowDown' });
+  expect(checked()).toEqual(['Dec']);
+  fireEvent.keyDown(radio(11), { key: 'a' });
+  expect(checked()).toEqual(['Dec']);
+});
+
 test('view-as on Sales data: Upload, the closure-note link and Delete stay focusable, aria-disabled, with the line', async () => {
   renderAt('/locations/l1/sales', portal(viewAsMe(ACCESS.admin)));
   await screen.findByRole('heading', { name: 'Delete sales data' });
@@ -139,6 +200,20 @@ test('the note form on web: date inputs, pressed buttons, and the note it sends'
     method: 'POST', path: '/api/org/locations/l1/notes',
     body: { kind: 'opening', startDate: start, endDate: start, weekdays: [1], effect: 'unknown', expectedGuests: null, detail: 'The patio opens.' },
   }]);
+});
+
+test('Add a closure note opens the form; once the note is saved, the address drops ?new=closure', async () => {
+  const api = portal(meOf(ACCESS.member));
+  api.answers['/api/org/locations/l1/notes'] = (body) => ({ note: noteOf('n9', { ...(body as NoteInput), createdByEmail: EMAIL }) });
+  renderAt('/locations/l1/notes?new=closure', api);
+  expect(await screen.findByRole('heading', { name: 'Add a note' })).toBeTruthy();
+  expect(window.location.search).toBe('?new=closure');
+  fireEvent.change(screen.getByLabelText('Starts'), { target: { value: addDays(localToday(), 3) } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
+  expect(await screen.findByText('Saved.')).toBeTruthy();
+  await waitFor(() => { expect(window.location.search).toBe(''); });
+  expect(window.location.pathname).toBe('/locations/l1/notes');
+  expect(screen.queryByRole('heading', { name: 'Add a note' })).toBeNull();
 });
 
 test('view-as on Notes and Location settings: every write is aria-disabled or read-only, with the line', async () => {

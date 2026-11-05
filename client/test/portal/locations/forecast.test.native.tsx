@@ -81,7 +81,13 @@ describe('P11 Forecast', () => {
     const { api } = setup(meOf(ACCESS.member), { l2: salesOf([]) });
     await renderApp('/locations/l2', api);
     expect(await screen.findByText('Upload your sales history to start. The upload sends Townwise only the date, guest count and net sales for each day.')).toBeTruthy();
-    expect(screen.queryByText('Days with data')).toBeNull();
+    // The data checks show in every state (spec P11, 14.1), with nothing in them yet.
+    for (const term of ['Days with data', 'First day', 'Last day', 'Missing days in between', 'Days with guests', 'Days with net sales', 'Last upload']) {
+      expect(screen.getByText(term)).toBeTruthy();
+    }
+    expect(screen.getByText('No finished upload')).toBeTruthy();
+    expect(screen.getAllByText('None')).toHaveLength(2);
+    expect(screen.getAllByText('0').length).toBeGreaterThanOrEqual(4);
     expect(screen.getByText('Not started')).toBeTruthy();
     expect(screen.getByText('Not researched yet')).toBeTruthy();
     expect(screen.getByText('0 notes')).toBeTruthy();

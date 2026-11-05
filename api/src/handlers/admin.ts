@@ -244,16 +244,18 @@ function staffOrgView(org: OrgRecord): Record<string, string | null> {
 export async function getOrg(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const staff = staffOf(principal);
   const { scope, org } = await scopeForStaffOrg(ctx.stores.orgs, staff, parseInput(objectId, req.params.orgId));
-  const [members, locations, coverage, notes, uploads, recent] = await Promise.all([
+  const [members, locations, coverage, notes, uploads, recent, request] = await Promise.all([
     ctx.stores.members.list(scope),
     ctx.stores.locations.list(scope),
     ctx.stores.salesDays.coverageByLocation(scope),
     ctx.stores.notes.countByLocation(scope),
     ctx.stores.uploads.lastUploadByLocation(scope),
     ctx.stores.audit.query({ orgId: scope.orgId, limit: RECENT_EVENTS }),
+    // For “From request {date}”; gone once its requester is deleted (spec 10.7, Deletion).
+    org.fromRequestId === null ? null : ctx.stores.requests.findById(org.fromRequestId),
   ]);
   res.status(200).json({
-    org: staffOrgView(org),
+    org: { ...staffOrgView(org), fromRequestSentAt: request?.createdAt.toISOString() ?? null },
     members: await Promise.all(members.map((member) => memberView(ctx, member, staff.actor.userId))),
     locations: locations.map((location) => ({
       id: location.id, name: location.name, town: location.town,

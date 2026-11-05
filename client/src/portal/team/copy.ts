@@ -6,6 +6,9 @@ import type { AddOutcome } from './api';
 /** Spec 18: at most 20 addresses per add. */
 export const MAX_EMAILS = 20;
 
+/** Spec 10.6: each address up to 320 characters. The server refuses the whole request for one longer. */
+export const MAX_EMAIL_LENGTH = 320;
+
 export const TEAM_COPY = {
   loading: 'Loading your team',
   lead: 'Each person signs in with “Continue with Google” using the exact address you add here. Townwise accepts '
@@ -14,6 +17,7 @@ export const TEAM_COPY = {
   roleHelper: 'Everyone you add at once gets this role. You can change it on any row below.',
   noEmails: 'Enter at least one email address.',
   tooMany: 'Add up to 20 addresses at a time.',
+  tooLong: 'Each address can be up to 320 characters.',
   empty: 'It’s just you so far. Add your teammates’ email addresses, and they can join the next time they continue with Google.',
   lastAdmin: 'Your organization needs at least one admin. Make someone else an admin first.',
   memberLimit: 'Your organization has reached 200 people.',
@@ -49,7 +53,7 @@ export function uninviteBody(org: string): string {
 /**
  * The addresses in the textarea: split on new lines and commas (and spaces or semicolons, which no address
  * contains), trimmed, with repeats dropped ignoring case. The server normalizes and validates each one; this only
- * keeps the request within its 1 to 20 entries.
+ * keeps the request within its 1 to 20 entries of up to 320 characters.
  */
 export function parseEmails(text: string): { emails: string[] } | { message: string } {
   const seen = new Set<string>();
@@ -62,5 +66,6 @@ export function parseEmails(text: string): { emails: string[] } | { message: str
   }
   if (emails.length === 0) return { message: TEAM_COPY.noEmails };
   if (emails.length > MAX_EMAILS) return { message: TEAM_COPY.tooMany };
+  if (emails.some((email) => email.length > MAX_EMAIL_LENGTH)) return { message: TEAM_COPY.tooLong };
   return { emails };
 }

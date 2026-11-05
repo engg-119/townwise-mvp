@@ -141,6 +141,8 @@ export function CheckStep(props: {
   let actions: React.ReactNode;
   if (count === 0) {
     actions = <Actions>{back}{cancel}</Actions>;
+  } else if (failure?.action === 'missing') {
+    actions = <Actions><LinkButton href="/dashboard" label="Locations" /></Actions>;
   } else if (failure?.action === 'restart') {
     actions = <Actions><Button variant="outline" label="Try again" onPress={props.onRestart} />{cancel}</Actions>;
   } else if (failure?.action === 'retry') {
@@ -157,6 +159,7 @@ export function CheckStep(props: {
       ) : (
         <Lead>{rowsBecameDays(result.rows, count, first.date, last.date)}</Lead>
       )}
+      {result.addedUp ? <Small>{COPY.addedUp}</Small> : null}
       <Summary result={result} role={props.role} coverage={props.coverage} />
       {failure === null ? null : <Messages live="alert" items={[failure.text]} />}
       {actions}
