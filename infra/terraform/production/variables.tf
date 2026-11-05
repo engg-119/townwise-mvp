@@ -60,7 +60,7 @@ variable "db_admin_password_version" {
 }
 
 variable "mongo_image_digest" {
-  description = "Digest of mongo:8.0.32 (the kit's test pin, backend/mongo/test/images.ts), imported into the registry; the jobs run mongodump, mongorestore and mongosh from it."
+  description = "Digest of mongo:8.0.32 (the kit's test pin, api/kit/mongo/test/images.ts), imported into the registry; the jobs run mongodump, mongorestore and mongosh from it."
   type        = string
   default     = "sha256:d0d926f94df099bff534b7ee5b5986458131a22489dfff8664509af0c1e2ca9c"
 

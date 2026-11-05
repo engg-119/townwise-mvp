@@ -33,7 +33,7 @@ function describeSignInError(error: unknown): string {
 }
 
 // Google is the only way in, and there is no sign-up page: the server creates the account on the
-// first Google sign-in from a Gmail or Google Workspace address (backend/auth, resolveGoogleUser).
+// first Google sign-in from a Gmail or Google Workspace address (api/kit/auth, resolveGoogleUser).
 export default function SignIn(): React.JSX.Element {
   const auth = useAuth();
   const state = useAuthState();

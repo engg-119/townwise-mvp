@@ -21,7 +21,7 @@ locals {
   domain     = "townwise.tech"
   api_domain = "api.${local.domain}"
 
-  # Key Vault secret name => the env var the API's schema reads (backend/mongo, backend/auth MODULE.md).
+  # Key Vault secret name => the env var the API's schema reads (api/kit/mongo, api/kit/auth MODULE.md).
   # Terraform creates no values; infra/scripts/set-secret.sh seeds them. The tuning chat's key joins the map only
   # when enable_chat is true (infra/README.md, "Enable the tuning chat"); without it the chat is off.
   api_secrets = merge({

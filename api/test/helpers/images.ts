@@ -1,4 +1,4 @@
-// The same pins as compose.yaml (and the kit's backend/mongo/test/images.ts, backend/redis/test/images.ts).
+// The same pins as compose.yaml (and the kit's api/kit/mongo/test/images.ts, api/kit/redis/test/images.ts).
 export const MONGO_IMAGE =
   'mongo:8.0.32@sha256:d0d926f94df099bff534b7ee5b5986458131a22489dfff8664509af0c1e2ca9c';
 
