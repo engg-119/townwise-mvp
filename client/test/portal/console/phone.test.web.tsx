@@ -48,6 +48,21 @@ test('at 320px the console bar is one band (wordmark, kind tag, the verified tim
   expect(within(second).getByRole('navigation', { name: 'Main' })).toBeTruthy();
 });
 
+test.each([320, 1280])('at %ipx the kind tag sits centered beside the wordmark, not level with its top', async (width) => {
+  setWidth(width);
+  const api = consoleApi();
+  pending(api);
+  renderAt('/admin', api);
+  await screen.findByRole('heading', { level: 1, name: 'Requests' });
+  const identity = within(screen.getByRole('banner')).getByRole('link', { name: 'Townwise' }).parentElement;
+  if (identity === null) throw new Error('no identity row');
+  expect(style(identity).alignItems).toBe('center');
+  // StatusTag sets align-self: flex-start for list rows, so the row's item that holds it must center itself.
+  const item = [...identity.children].find((child) => child.contains(within(identity).getByText('Staff console')));
+  if (item === undefined) throw new Error('no kind tag in the identity row');
+  expect(style(item).alignSelf).toBe('center');
+});
+
 test('only the selected row’s name has the mint square, so the other names start flush with the column', async () => {
   const api = consoleApi();
   pending(api);
