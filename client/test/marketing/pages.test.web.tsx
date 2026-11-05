@@ -303,6 +303,16 @@ test('on phones the Privacy and Terms contents keep two columns', () => {
   expect(css).not.toContain('.pg-terms .toc ol{grid-template-columns:minmax(0,1fr)}');
 });
 
+test('sign-in fills the window under the header, centered, so the footer starts below the fold', () => {
+  // .tw is absolutely positioned over the window, so main's percentage is of the window's height; the header is
+  // 64px and its 1px border. No viewport units.
+  expect(css).toContain('.tw main:has(>.pg-signin){display:grid;min-height:calc(100% - 65px)}');
+  expect(css).toContain('.pg-signin{display:grid;align-content:center}');
+  expect(css).toMatch(/\.tw\{[^}]*position:absolute;inset:0;/);
+  expect(css).toContain('.nav-in{display:flex;flex-wrap:wrap;align-items:center;column-gap:48px;min-height:64px}');
+  expect(css).toContain('.nav{border-bottom:1px solid var(--border)}');
+});
+
 test('below 360px the header tightens, shrinking the wordmark only beside the early-access button', () => {
   expect(css).toContain('@media (max-width:359px){.nav-in{column-gap:8px}.nav-in:has(.btn)>.wm{font-size:16px}.nav-act{gap:8px}.nav-act .btn{font-size:13px;padding:0 10px}}');
 });

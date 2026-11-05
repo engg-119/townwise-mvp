@@ -168,9 +168,10 @@ test('the stage is decorative: aria-hidden, nothing focusable, illustrations onl
   expect(container?.querySelectorAll('svg text')).toHaveLength(0);
   expect([...at(visuals, 3).querySelectorAll('.v4-r')].map((row) => row.textContent)).toEqual(Array<string>(3).fill('{item}order{quantity}by{weekday}{reason}'));
 
-  // Sticky 32px from the top of the scroll container, 520px tall; each step a 560px slot; no viewport units,
-  // no snapping.
-  expect(homeCss).toContain('.pg-home .hw-st{position:sticky;top:32px;height:520px;');
+  // Sticky and centered in the scroll container (a sticky top's percentage is of its height), at least 16px from
+  // the top, 520px tall; each step a 560px slot, centered in it, so the active step sits beside the stage; no
+  // viewport units, no snapping.
+  expect(homeCss).toContain('.pg-home .hw-st{position:sticky;top:max(16px,calc(50% - 260px));height:520px;');
   expect(homeCss).toContain('.pg-home .hw.is-pin .hw-s{min-height:560px;align-content:center}');
   expect(homeCss).not.toMatch(/\d(?:vh|svh|dvh|lvh)\b|scroll-snap/);
 });
