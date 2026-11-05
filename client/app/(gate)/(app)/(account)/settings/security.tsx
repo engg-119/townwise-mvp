@@ -1,24 +1,59 @@
 import { useCallback, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
-import { Image, Linking, Platform, StyleSheet, Text, View } from 'react-native';
+import { Image, Platform, StyleSheet, Text, View } from 'react-native';
 
 import { ApiError } from '../../../../../src/api/client';
 import { normalizeTotpCode, type Me } from '../../../../../src/auth/auth';
 import { useAuth } from '../../../../../src/auth/AuthProvider';
+import { errorCopy } from '../../../../../src/portal/errors';
+import { plural } from '../../../../../src/portal/format';
+import { useBreakpoint } from '../../../../../src/portal/hooks';
 import { useOptionalPortal } from '../../../../../src/portal/PortalProvider';
 import { Page } from '../../../../../src/portal/shell/Page';
-import { Notice } from '../../../../../src/portal/ui/feedback';
+import { Actions, Button, LinkButton } from '../../../../../src/portal/ui/Button';
+import { ErrorNotice, Notice } from '../../../../../src/portal/ui/feedback';
+import { FormField } from '../../../../../src/portal/ui/FormField';
+import { Columns, Panel, Stack } from '../../../../../src/portal/ui/layout';
+import { Body, Eyebrow, Heading, Small } from '../../../../../src/portal/ui/text';
 import { theme } from '../../../../../src/theme';
-import { Button, describeError, Field, Message, useSubmit } from '../../../../../src/ui';
+import { useSubmit } from '../../../../../src/ui';
 
-const INVALID_CODE = "That code didn't work. Codes change every 30 seconds; wait for a new one and try again.";
+// P7. Two-step sign-in (spec 16.2, F9), in the SignIn board's pattern: eyebrow, title, lead, then each step in a
+// panel. Step 1 adds Townwise to an authenticator app (the otpauth link on this phone, the setup key, or the QR
+// from another screen); step 2 confirms a code; then the recovery codes. Staff in staff_setup_required read why
+// in the lead, and after the recovery codes sign in again, so the next session passes a code.
 
-// P7 (spec 16.2, F9): staff in staff_setup_required land here with this notice, and after the recovery codes
-// sign in again, so the next session passes a code.
+const INVALID_CODE = 'That code didn’t work. Codes change every 30 seconds; wait for a new one and try again.';
+const REAUTH = 'For your security, sign in again to set up two-step sign-in.';
 const STAFF_SETUP_NOTICE = 'Townwise staff accounts need two-step sign-in. Set up your authenticator app, then sign in again with a code.';
+
+/** "KMHF NWBK LCAS …": the setup key in fours, so a line breaks between groups and it is easier to type. */
+function groupKey(secret: string): string {
+  return (secret.match(/.{1,4}/g) ?? []).join(' ');
+}
+
+/** Copies `text` on web, where the browser offers a clipboard; native shows the text selectable instead. */
+function CopyButton(props: { text: string; label: string }): React.JSX.Element | null {
+  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const clipboard = Platform.OS === 'web' ? (navigator as { clipboard?: Clipboard }).clipboard : undefined;
+  if (clipboard === undefined) return null;
+  return (
+    <View style={styles.copy}>
+      <Button
+        variant="outline"
+        label={state === 'copied' ? 'Copied' : props.label}
+        onPress={() => {
+          clipboard.writeText(props.text).then(() => { setState('copied'); }, () => { setState('failed'); });
+        }}
+      />
+      {state === 'failed' ? <Small>Couldn’t copy. Select the text and copy it.</Small> : null}
+    </View>
+  );
+}
 
 export default function SecurityScreen(): React.JSX.Element {
   const auth = useAuth();
+  const { phone } = useBreakpoint();
   const staffSetup = useOptionalPortal()?.me.access.state === 'staff_setup_required';
   const [me, setMe] = useState<Me | null>(null);
   const [secret, setSecret] = useState<string | null>(null);
@@ -26,6 +61,8 @@ export default function SecurityScreen(): React.JSX.Element {
   const [qr, setQr] = useState<string | null>(null);
   const [codes, setCodes] = useState<string[] | null>(null);
   const [code, setCode] = useState('');
+  // A wrong code prints under the code field; everything else under the steps.
+  const [codeMessage, setCodeMessage] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [reauth, setReauth] = useState(false);
   const [othersSignedOut, setOthersSignedOut] = useState(false);
@@ -35,126 +72,197 @@ export default function SecurityScreen(): React.JSX.Element {
     void auth.loadMe().then((next) => {
       if (!cancelled) setMe(next);
     }).catch((error: unknown) => {
-      if (!cancelled) setMessage(describeError(error));
+      if (!cancelled) setMessage(errorCopy(error));
     });
     return () => { cancelled = true; };
   }, [auth]);
 
   useFocusEffect(load);
 
+  function clearEnrollment(): void {
+    setSecret(null);
+    setOtpauthUri(null);
+    setQr(null);
+  }
+
+  /** The refusals starting and confirming share. */
+  async function refuse(error: unknown): Promise<void> {
+    if (error instanceof ApiError && error.code === 'reauth_required') {
+      setReauth(true);
+      setMessage(REAUTH);
+      return;
+    }
+    if (error instanceof ApiError && error.code === 'totp_already_enabled') {
+      clearEnrollment();
+      setMe(await auth.loadMe());
+      return;
+    }
+    setMessage(errorCopy(error));
+  }
+
   const enroll = useSubmit(async () => {
     setMessage(null);
+    setCodeMessage(null);
     setReauth(false);
-    const next = await auth.beginTotpEnrollment();
-    setSecret(next.secret);
-    setOtpauthUri(next.otpauthUri);
-    setQr(next.qrPngDataUrl);
-    setCodes(null);
-    setOthersSignedOut(false);
+    try {
+      const next = await auth.beginTotpEnrollment();
+      setSecret(next.secret);
+      setOtpauthUri(next.otpauthUri);
+      setQr(next.qrPngDataUrl);
+      setCodes(null);
+      setOthersSignedOut(false);
+    } catch (error) {
+      await refuse(error);
+    }
   });
 
   const confirm = useSubmit(async () => {
+    setCodeMessage(null);
+    setMessage(null);
     try {
       const result = await auth.confirmTotpEnrollment(normalizeTotpCode(code));
       setCodes(result.recoveryCodes);
-      setSecret(null);
-      setOtpauthUri(null);
-      setQr(null);
+      clearEnrollment();
       setOthersSignedOut(true);
-      setMessage(null);
     } catch (error) {
       if (error instanceof ApiError && error.code === 'enrollment_expired') {
-        setSecret(null);
-        setOtpauthUri(null);
-        setQr(null);
+        clearEnrollment();
         setCodes(null);
         setMessage('Setup timed out. Start again.');
         return;
       }
       if (error instanceof ApiError && error.code === 'invalid_code') {
-        setMessage(INVALID_CODE);
+        setCodeMessage(INVALID_CODE);
         return;
       }
-      if (error instanceof ApiError && error.code === 'reauth_required') {
-        setReauth(true);
-        setMessage('For your security, sign in again to change two-factor settings.');
-        return;
-      }
-      if (error instanceof ApiError && error.code === 'totp_already_enabled') {
-        setSecret(null);
-        setOtpauthUri(null);
-        setQr(null);
-        const next = await auth.loadMe();
-        setMe(next);
-        return;
-      }
-      setMessage(describeError(error));
+      await refuse(error);
     }
   });
 
   const enrolling = qr !== null && secret !== null;
   const showSetup = codes === null && !enrolling && me !== null && !me.totp.enabled;
 
-  return (
-    <Page title="Two-factor settings">
-      <View style={styles.column}>
-        {staffSetup ? <Notice text={STAFF_SETUP_NOTICE} /> : null}
-        {me !== null && me.totp.enabled && codes === null && !enrolling ? (
-          <Message>{`Two-factor is on. ${String(me.totp.recoveryCodesRemaining)} recovery codes left.`}</Message>
-        ) : null}
-        {showSetup ? <Button label="Set up two-factor" onPress={() => { enroll.submit(); }} /> : null}
-        {enrolling ? (
-          <>
-            <Image source={{ uri: qr }} accessibilityLabel="Authentication QR code" style={{ width: 240, height: 240 }} />
-            <Text selectable style={styles.code}>{secret}</Text>
-            {Platform.OS !== 'web' && otpauthUri?.startsWith('otpauth://') === true ? (
-              <Button variant="link" label="Open in authenticator app" onPress={() => { void Linking.openURL(otpauthUri); }} />
-            ) : null}
-            <Field
-              label="Authentication code"
-              value={code}
-              onChangeText={setCode}
-              textContentType="oneTimeCode"
-              autoComplete="one-time-code"
-              keyboardType="number-pad"
-            />
-            <Button label="Confirm" onPress={() => { confirm.submit(); }} />
-          </>
-        ) : null}
-        {codes !== null ? (
-          <>
-            {othersSignedOut ? <Message>Other devices were signed out.</Message> : null}
-            <Message>Save these somewhere safe. Each works once.</Message>
-            {codes.map((item) => <Text key={item} selectable style={styles.code}>{item}</Text>)}
-            {staffSetup ? (
-              <Button label="Sign in again" onPress={() => { void auth.signOut(); }} />
-            ) : (
-              <Button
-                label="I saved these"
-                onPress={() => {
-                  setCodes(null);
-                  setOthersSignedOut(false);
-                  void auth.loadMe().then((next) => { setMe(next); }).catch((error: unknown) => { setMessage(describeError(error)); });
-                }}
-              />
-            )}
-          </>
-        ) : null}
-        {message === null ? null : <Message tone="error">{message}</Message>}
-        {reauth ? (
-          <Button
-            label="Sign in again"
-            onPress={() => { void auth.signOut('Sign in again to finish setting up two-factor.'); }}
-          />
-        ) : null}
+  let steps: React.ReactNode = null;
+  if (enrolling) {
+    const open = otpauthUri?.startsWith('otpauth://') === true
+      ? <LinkButton key="open" variant="outline" href={otpauthUri} label="Open in authenticator app" />
+      : null;
+    const key = (
+      <View key="key" style={styles.block}>
+        <Text style={styles.label}>Setup key</Text>
+        <Text selectable style={styles.key}>{groupKey(secret)}</Text>
+        <CopyButton text={secret} label="Copy" />
       </View>
+    );
+    const scan = <Image key="qr" source={{ uri: qr }} accessibilityLabel="Authentication QR code" style={styles.qr} />;
+    steps = (
+      <>
+        <Panel>
+          <View style={styles.head}><Eyebrow>Step 1</Eyebrow><Heading>Add Townwise to your authenticator app</Heading></View>
+          <Small>
+            {phone
+              ? 'Open the link on this phone, or type the setup key into your authenticator app.'
+              : 'Scan the QR code with your phone’s authenticator app, or type the setup key into it.'}
+          </Small>
+          {/* On a phone the page is on the device with the app, so the link comes first; elsewhere the QR does. */}
+          {phone ? [open, key, scan] : [scan, key, open]}
+        </Panel>
+        <Panel>
+          <View style={styles.head}><Eyebrow>Step 2</Eyebrow><Heading>Enter the code</Heading></View>
+          <Small>Enter the 6-digit code your authenticator app shows for Townwise.</Small>
+          <FormField
+            label="Code"
+            value={code}
+            onChangeText={setCode}
+            onSubmitEditing={() => { confirm.submit(); }}
+            textContentType="oneTimeCode"
+            autoComplete="one-time-code"
+            keyboardType="number-pad"
+            inputMode="numeric"
+            numeric
+            messages={codeMessage === null ? [] : [codeMessage]}
+          />
+          <Button label="Confirm" block={phone} disabled={confirm.pending} onPress={() => { confirm.submit(); }} />
+        </Panel>
+      </>
+    );
+  } else if (codes !== null) {
+    steps = (
+      <>
+        {othersSignedOut ? <Notice text="Other devices were signed out." /> : null}
+        <Panel>
+          <Heading>Save your recovery codes</Heading>
+          <Small>If you lose your phone, sign in with one of these instead of a code. Each works once.</Small>
+          <View role="list" aria-label="Recovery codes" style={styles.codes}>
+            {codes.map((item) => <Text key={item} role="listitem" selectable style={styles.recovery}>{item}</Text>)}
+          </View>
+          <CopyButton text={codes.join('\n')} label="Copy all" />
+        </Panel>
+        <Actions>
+          {staffSetup ? (
+            <Button label="Sign in again" onPress={() => { void auth.signOut(); }} />
+          ) : (
+            <Button
+              label="I saved these"
+              onPress={() => {
+                setCodes(null);
+                setOthersSignedOut(false);
+                void auth.loadMe().then((next) => { setMe(next); }).catch((error: unknown) => { setMessage(errorCopy(error)); });
+              }}
+            />
+          )}
+        </Actions>
+      </>
+    );
+  } else if (showSetup) {
+    steps = (
+      <Panel>
+        <Heading>Before you start</Heading>
+        <Small>You need an authenticator app on your phone. Setup has two steps: add Townwise to the app, then enter the 6-digit code it shows.</Small>
+        <Actions>
+          <Button label="Set up two-step sign-in" disabled={enroll.pending} onPress={() => { enroll.submit(); }} />
+        </Actions>
+      </Panel>
+    );
+  } else if (me?.totp.enabled === true) {
+    steps = <Body>{`Two-step sign-in is on. ${plural(me.totp.recoveryCodesRemaining, 'recovery code', 'recovery codes')} left.`}</Body>;
+  }
+
+  return (
+    <Page
+      gate
+      eyebrow={staffSetup ? 'Townwise staff' : 'Settings'}
+      title="Two-step sign-in"
+      {...(staffSetup ? { lead: STAFF_SETUP_NOTICE } : {})}
+    >
+      <Columns
+        main={(
+          <Stack gap={theme.space[5]}>
+            {steps}
+            {message === null ? null : <ErrorNotice message={message} />}
+            {reauth ? (
+              <Actions>
+                <Button label="Sign in again" onPress={() => { void auth.signOut('Sign in again to finish setting up two-step sign-in.'); }} />
+              </Actions>
+            ) : null}
+          </Stack>
+        )}
+      />
     </Page>
   );
 }
 
+const c = theme.color;
+// Geist Mono on web; native keeps the platform monospace face it used before.
+const monoFace = theme.type.code.fontFamily ?? 'monospace';
+
 const styles = StyleSheet.create({
-  // The screen's own column, as before it moved into the portal frame.
-  column: { maxWidth: 480, gap: theme.space[4] },
-  // Geist Mono on web; native keeps the platform monospace face it used before.
-  code: { ...theme.type.code, fontFamily: theme.type.code.fontFamily ?? 'monospace', color: theme.color.white },
+  head: { gap: theme.space[2] },
+  block: { gap: theme.space[2], alignItems: 'flex-start' },
+  label: { ...theme.type.ui, color: c.white },
+  key: { ...theme.type.code, fontFamily: monoFace, color: c.white },
+  qr: { width: 240, height: 240 },
+  copy: { gap: theme.space[2], alignItems: 'flex-start' },
+  codes: { gap: theme.space[1] },
+  recovery: { ...theme.type.monoUi, fontFamily: monoFace, fontVariant: ['tabular-nums'], color: c.white },
 });

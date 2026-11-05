@@ -13,7 +13,7 @@ import {
 import { DataTable } from '../ui/DataTable';
 import { StatusTag } from '../ui/feedback';
 import { Columns, Stack } from '../ui/layout';
-import { Eyebrow, Heading, Small } from '../ui/text';
+import { Eyebrow, Heading, Mono, Small } from '../ui/text';
 import { TownChart } from './TownChart';
 
 // A town's public profile (spec Section 13), for Waiting (P4) and the Town tab (P15), from the bundled data:
@@ -116,16 +116,25 @@ function Notes(props: { profile: TownProfileData }): React.JSX.Element {
   );
 }
 
-/** The swatch, the pattern's name and its biggest gap with the region. */
+/** The swatch, the pattern's name and its biggest gap with the region, the signed delta in mono (spec 15.7). */
 export function PatternLine(props: { profile: TownProfileData }): React.JSX.Element {
   const { profile } = props;
   const { phone } = useBreakpoint();
+  const gap = patternGap(profile);
+  const delta = fmtSigned(profile.series.largestGap.signedGap);
+  const at = gap.indexOf(delta);
   return (
     <View style={styles.pattern}>
       <View aria-hidden style={[styles.swatch, profile.pattern === 'moves' ? styles.swatchMoves : null]} />
       <Text style={[phone ? theme.type.sub : theme.type.small, styles.patternText]}>
         <Text style={styles.patternLabel}>{PATTERN_LABEL[profile.pattern]}</Text>
-        {patternGap(profile)}
+        {at < 0 ? gap : (
+          <>
+            {gap.slice(0, at)}
+            <Mono>{delta}</Mono>
+            {gap.slice(at + delta.length)}
+          </>
+        )}
       </Text>
     </View>
   );
