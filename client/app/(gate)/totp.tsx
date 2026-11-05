@@ -61,7 +61,6 @@ export default function TotpScreen(): React.JSX.Element {
     <SignInFrame
       title="Sign in to Townwise"
       lead="Your account uses two-step sign-in."
-      note="Townwise is in development. No forecasts are for sale yet."
     >
       {useRecovery ? (
         <>
