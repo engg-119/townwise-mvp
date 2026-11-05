@@ -7,7 +7,7 @@ import { useBreakpoint } from '../hooks';
 import { useOptionalPortal } from '../PortalProvider';
 import { Notice } from '../ui/feedback';
 import { Content, Wrap } from '../ui/layout';
-import { Body, Eyebrow, Heading, Lead, Title } from '../ui/text';
+import { Eyebrow, Lead, Title } from '../ui/text';
 
 // The page header and the page body (spec 15.2). Every page that is not a location tab renders <Page>: the
 // eyebrow and the page's one h1 in columns 1 to 8, its actions (at most one primary) or a side column in 9 to
@@ -91,31 +91,6 @@ export function Page(props: PageProps): React.JSX.Element {
   );
 }
 
-/** The line every page not built yet shows, under its title. */
-export const PLACEHOLDER_LINE = 'This page is being built.';
-
-/** A page not built yet: its title and one line, inside its frame. Replace the route file to build it. */
-export function Placeholder(props: { title: string; eyebrow?: string; children?: React.ReactNode }): React.JSX.Element {
-  return (
-    <Page title={props.title} {...(props.eyebrow === undefined ? {} : { eyebrow: props.eyebrow })}>
-      <View style={styles.tab}>
-        <Body>{PLACEHOLDER_LINE}</Body>
-        {props.children}
-      </View>
-    </Page>
-  );
-}
-
-/** A location tab not built yet: the tab's name as its heading and one line, under the location's header. */
-export function TabPlaceholder(props: { title: string }): React.JSX.Element {
-  return (
-    <View style={styles.tab}>
-      <Heading>{props.title}</Heading>
-      <Body>{PLACEHOLDER_LINE}</Body>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   header: { paddingTop: theme.space[8], paddingBottom: theme.space[6], rowGap: theme.space[5] },
   row: { flexDirection: 'row', columnGap: theme.space.gutter },
@@ -128,5 +103,4 @@ const styles = StyleSheet.create({
   sideEnd: { justifyContent: 'flex-end' },
   sideColumn: { gap: theme.space[3] },
   notice: { marginBottom: theme.space[8] },
-  tab: { gap: theme.space[3] },
 });

@@ -1,6 +1,6 @@
 # The portal: shared pieces and page ownership
 
-The signed-in app of `docs/portal/spec.md`: access routing (4.3), the app shell (15), the gate pages (P3 to P8) and Locations (P9). Every other page is a placeholder that renders its title and “This page is being built.” inside the right frame. Build a page by replacing its one route file and adding files of your own; you should not need to edit anything shared. If you do, say so in your PR.
+The signed-in app of `docs/portal/spec.md`: access routing (4.3), the app shell (15), and every page in 16.1. Each page owns its route file plus a folder of its own under `src/portal/`; change a page there, and say so in your PR if you have to edit anything shared.
 
 ## Which file each page owns
 
@@ -13,21 +13,21 @@ The signed-in app of `docs/portal/spec.md`: access routing (4.3), the app shell 
 | P7 Two-step sign-in | `/settings/security` | `(account)/settings/security.tsx` | exists; staff notice added |
 | P8 Staff sign in again | `/staff/sign-in-again` | `(access)/staff/sign-in-again.tsx` | built |
 | P9 Locations | `/dashboard` | `(client)/dashboard.tsx` | built |
-| P10 Add location | `/locations/new` | `(client)/locations/new.tsx` | placeholder; `AddLocationForm` exists |
-| P11 Forecast | `/locations/[locationId]` | `(client)/locations/[locationId]/index.tsx` | placeholder |
-| P12 Sales data | `/locations/[locationId]/sales` | `(client)/locations/[locationId]/sales/index.tsx` | placeholder |
-| P13 Upload | `/locations/[locationId]/sales/upload` | `(client)/locations/[locationId]/sales/upload.tsx` | placeholder |
-| P14 Notes | `/locations/[locationId]/notes` | `(client)/locations/[locationId]/notes.tsx` | placeholder |
-| P15 Town | `/locations/[locationId]/town` | `(client)/locations/[locationId]/town.tsx` | placeholder; `TownProfile` exists |
-| P16 Location settings | `/locations/[locationId]/settings` | `(client)/locations/[locationId]/settings.tsx` | placeholder |
-| P17 Team | `/team` | `(client)/team.tsx` | placeholder |
-| P18 Settings | `/settings` | `(client)/settings.tsx` | placeholder; keeps the link to two-step settings |
-| P19 Requests | `/admin` | `(console)/admin/index.tsx` | placeholder |
-| P20 Organizations | `/admin/orgs` | `(console)/admin/orgs/index.tsx` | placeholder |
-| P21 Organization | `/admin/orgs/[orgId]` | `(console)/admin/orgs/[orgId].tsx` | placeholder |
-| P22 People | `/admin/people` | `(console)/admin/people.tsx` | placeholder |
-| P23 Audit log | `/admin/audit` | `(console)/admin/audit.tsx` | placeholder |
-| Tuning chat | `/locations/[locationId]/chat` | `(client)/locations/[locationId]/chat.tsx` | exists, unchanged |
+| P10 Add location | `/locations/new` | `(client)/locations/new.tsx` | built (`src/portal/locations/`, `AddLocationForm`) |
+| P11 Forecast | `/locations/[locationId]` | `(client)/locations/[locationId]/index.tsx` | built (`src/portal/locations/`) |
+| P12 Sales data | `/locations/[locationId]/sales` | `(client)/locations/[locationId]/sales/index.tsx` | built (`src/portal/locations/`) |
+| P13 Upload | `/locations/[locationId]/sales/upload` | `(client)/locations/[locationId]/sales/upload.tsx` | built, web only (`src/portal/upload/`) |
+| P14 Notes | `/locations/[locationId]/notes` | `(client)/locations/[locationId]/notes.tsx` | built (`src/portal/locations/`) |
+| P15 Town | `/locations/[locationId]/town` | `(client)/locations/[locationId]/town.tsx` | built (`TownProfile`) |
+| P16 Location settings | `/locations/[locationId]/settings` | `(client)/locations/[locationId]/settings.tsx` | built (`src/portal/locations/`) |
+| P17 Team | `/team` | `(client)/team.tsx` | built (`src/portal/team/`) |
+| P18 Settings | `/settings` | `(client)/settings.tsx` | built (`src/portal/settings/`), with the link to two-step settings |
+| P19 Requests | `/admin` | `(console)/admin/index.tsx` | built, web only (`src/portal/console/`) |
+| P20 Organizations | `/admin/orgs` | `(console)/admin/orgs/index.tsx` | built, web only (`src/portal/console/`) |
+| P21 Organization | `/admin/orgs/[orgId]` | `(console)/admin/orgs/[orgId].tsx` | built, web only (`src/portal/console/`) |
+| P22 People | `/admin/people` | `(console)/admin/people.tsx` | built, web only (`src/portal/console/`) |
+| P23 Audit log | `/admin/audit` | `(console)/admin/audit.tsx` | built, web only (`src/portal/console/`) |
+| Tuning chat | `/locations/[locationId]/chat` | `(client)/locations/[locationId]/chat.tsx` | built; read-only under view-as (`src/chat/`) |
 
 Route files under `app/` never carry a platform suffix (`test/marketing/boundary.test.ts`). Put web-only code in a `.web.tsx` file under `src/` with a native file of the same name beside it, as `src/portal/town/TownChart` does.
 
