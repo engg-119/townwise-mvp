@@ -649,7 +649,7 @@ export async function deleteLocationOriginals(ctx: TownwiseContext, req: Request
   const { scope } = admin;
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const originals = await ctx.stores.files.originals(scope, location.id);
-  const result = await deleteOriginals(ctx.stores, blobs, scope, originals, { now: ctx.now(), flagBusy: false });
+  const result = await deleteOriginals(ctx.stores, blobs, scope, originals, ctx.now());
   await recordAfter(ctx, {
     ...actorOf(admin), at: ctx.now(), orgId: scope.orgId, action: 'files.raw_deleted_all',
     target: { type: 'location', id: location.id }, details: { locationId: location.id, count: result.deletedOriginals },

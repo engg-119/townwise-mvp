@@ -358,15 +358,16 @@ export interface SweptImport {
 export interface SweepCandidates {
   /** Upload sessions past their expiry. */
   readonly expiredUploads: readonly SweptFile[];
-  /** Originals uploaded before `originalsBefore`, still stored, of files the reader is done with. */
+  /** Originals uploaded before `originalsBefore`, still stored, of files not uploading or being read. */
   readonly expiredOriginals: readonly SweptFile[];
-  /** Files a staff purge flagged while they were busy, now done. */
+  /** Files a staff purge flagged while they were uploading or being read, now neither. */
   readonly purges: readonly SweptFile[];
   /** Imports still open whose last drop was before `dropsBefore`. */
   readonly abandonedImports: readonly SweptImport[];
 }
 
-const DONE: FileStatus[] = ['read', 'kept', 'failed'];
+/** Every status but uploading, reading and deleting: a file whose original the sweep may delete (files/remove.ts). */
+const SWEEPABLE: FileStatus[] = ['stored', 'queued', 'waiting', 'read', 'kept', 'failed'];
 
 /** What the daily sweep has to do, across organizations, `limit` of each at most. */
 export async function sweepCandidates(
@@ -378,8 +379,8 @@ export async function sweepCandidates(
   });
   const [expiredUploads, expiredOriginals, purges, abandonedImports] = await Promise.all([
     File.find({ status: 'uploading', 'upload.expiresAt': trusted({ $lte: input.now }) }).limit(input.limit).lean(),
-    File.find({ rawDeletedAt: null, uploadedAt: trusted({ $lt: input.originalsBefore }), status: trusted({ $in: DONE }) }).limit(input.limit).lean(),
-    File.find({ purgeRaw: true, rawDeletedAt: null, status: trusted({ $in: DONE }) }).limit(input.limit).lean(),
+    File.find({ rawDeletedAt: null, uploadedAt: trusted({ $lt: input.originalsBefore }), status: trusted({ $in: SWEEPABLE }) }).limit(input.limit).lean(),
+    File.find({ purgeRaw: true, rawDeletedAt: null, status: trusted({ $in: SWEEPABLE }) }).limit(input.limit).lean(),
     importModel(connection).find({ status: 'open', lastDropAt: trusted({ $lt: input.dropsBefore }) }).limit(input.limit).lean(),
   ]);
   return {

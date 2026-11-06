@@ -278,8 +278,13 @@ export interface FileStore {
   uploading(scope: OrgScope, locationId: string | null): Promise<FileRecord[]>;
   /** Files whose original is still stored, at one location or across the organization. */
   originals(scope: OrgScope, locationId: string | null): Promise<FileRecord[]>;
-  /** A staff purge found the file busy: the reader deletes its original once it is done. */
+  /** A staff purge found the file uploading or being read: its original goes once that ends. */
   flagPurge(scope: OrgScope, fileId: string): Promise<void>;
+  /**
+   * A file not read yet (stored, queued or waiting) whose original is about to be deleted: kept, with `outcome`, so no
+   * reader claims it. The record as it was, or null when it had moved on (claimed by a reader, or deleted).
+   */
+  keepUnread(scope: OrgScope, fileId: string, outcome: string): Promise<FileRecord | null>;
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
   removeForOrg(scope: OrgScope): Promise<number>;
 
@@ -429,6 +434,14 @@ export function createFileStore(connection: Connection): FileStore {
     },
     async flagPurge(scope, fileId) {
       await File.updateOne({ _id: oid(fileId), orgId: org(scope), rawDeletedAt: null }, { $set: { purgeRaw: true } });
+    },
+    async keepUnread(scope, fileId, outcome) {
+      const doc = await File.findOneAndUpdate(
+        { _id: oid(fileId), orgId: org(scope), status: trusted({ $in: ['stored', 'queued', 'waiting'] }) },
+        { $set: { status: 'kept', outcome, progress: null } },
+        { returnDocument: 'before' },
+      ).lean();
+      return doc === null ? null : toFile(doc);
     },
     async removeForLocation(scope, locationId) {
       return (await File.deleteMany({ orgId: org(scope), locationId: oid(locationId) })).deletedCount;

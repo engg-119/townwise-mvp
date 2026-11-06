@@ -10,7 +10,7 @@ import type { OrgScope } from '../src/access/policy.ts';
 import { cleanBlobName, rawBlobName } from '../src/files/blobs.ts';
 import { createMemoryFileBlobs, type MemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import { addLocation, addSalesDay, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
-import { seedReadFile, uploadFile } from './helpers/files.ts';
+import { filesPath, putChunk, seedReadFile, uploadFile, type Created } from './helpers/files.ts';
 import {
   call, signIn, signInStaff, startTownwiseServer, writesDuring, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
@@ -169,11 +169,11 @@ describe('deleting originals', () => {
 });
 
 describe('the staff purge of originals', () => {
-  it('records the event first, with an enum basis, then deletes every original without reading one; busy files after reading', async () => {
+  it('records the event first, with an enum basis, then deletes every original without reading one, unread ones too', async () => {
     const { orgId, member } = await team('Purge Grill');
     const locationId = await addLocation(server, { orgId, name: 'Main' });
     const done = await seedReadFile(server, blobs, { orgId, locationId, uploadedBy: member.userId, name: SENTINEL_NAME, raw: Buffer.from('r'), clean: 'date\r\n' });
-    const uploaded = await uploadFile(server, locationId, member, 'later.csv', Buffer.from('Date,Guests\n2025-01-01,1\n'));
+    const uploaded = await uploadFile(server, locationId, member, SENTINEL_NAME, Buffer.from('Date,Guests\n2025-01-01,1\n'));
     const later = uploaded.body.file?.id ?? '';
     const path = `/api/admin/orgs/${orgId}/originals/delete`;
     const free = await call(server, path, { session: staff, json: { basis: `request from ${SENTINEL_NAME}` } });
@@ -182,22 +182,66 @@ describe('the staff purge of originals', () => {
     server.logs.length = 0;
     let res: Response | undefined;
     const writes = await writesDuring(server, async () => { res = await call(server, path, { session: staff, json: { basis: 'data_subject_request' } }); });
-    expect(await res?.json()).toEqual({ deletedOriginals: 1, skippedBusy: 1 });
+    expect(await res?.json()).toEqual({ deletedOriginals: 2, skippedBusy: 0 });
     expect(writes[0]).toBe('insert tw_audit_events');
     const event = (await auditEvents(server)).find((e) => e.action === 'org.originals_deleted' && String(e.orgId) === orgId);
     expect(event).toMatchObject({ actorRole: 'superadmin', target: { type: 'org', id: orgId }, details: { count: 2, basis: 'data_subject_request' } });
     const scope = { orgId } as unknown as OrgScope;
     expect(blobs.raw.has(rawBlobName(scope, { locationId, fileId: done }))).toBe(false);
-    expect(await server.connection.collection('tw_files').findOne({ _id: oid(later) })).toMatchObject({ purgeRaw: true, rawDeletedAt: null });
-
-    // The busy file is read, then its original goes.
+    // A file in an import nobody started goes now too: kept unread, never read afterwards.
+    expect(blobs.raw.has(rawBlobName(scope, { locationId, fileId: later }))).toBe(false);
+    expect(await server.connection.collection('tw_files').findOne({ _id: oid(later) })).toMatchObject({
+      status: 'kept', outcome: 'raw_deleted', name: 'CSV or text file', rawDeletedAt: expect.any(Date) as unknown,
+    });
     const importId = (uploaded.body.import as { id: string }).id;
     await call(server, `${base(locationId)}/imports/${importId}/start`, { session: member, json: {} });
     await server.reader?.settled();
-    expect(await server.connection.collection('tw_files').findOne({ _id: oid(later) })).toMatchObject({ status: 'read', rawDeletedAt: expect.any(Date) as unknown });
-    expect(blobs.raw.has(rawBlobName(scope, { locationId, fileId: later }))).toBe(false);
+    expect(await server.connection.collection('tw_files').findOne({ _id: oid(later) })).toMatchObject({ status: 'kept', outcome: 'raw_deleted', result: null });
+    expect(await count('tw_sales_days', { orgId: oid(orgId) })).toBe(0);
     expect(JSON.stringify([...server.logs, await auditEvents(server)])).not.toContain('Zqxj');
     expect(server.logs.join('\n')).toContain('"by":"staff"');
+  });
+
+  it('deletes the original of a file waiting on a question, and drops the question so its import finishes', async () => {
+    const { orgId, member } = await team('Purge Waiting Grill');
+    const locationId = await addLocation(server, { orgId, name: 'Main' });
+    const uploaded = await uploadFile(server, locationId, member, 'either.csv', Buffer.from('Date,Guests\n03/04/2025,60\n04/03/2025,50\n'));
+    const fileId = uploaded.body.file?.id ?? '';
+    const importId = (uploaded.body.import as { id: string }).id;
+    await call(server, `${base(locationId)}/imports/${importId}/start`, { session: member, json: {} });
+    await server.reader?.settled();
+    expect(await server.connection.collection('tw_imports').findOne({ _id: oid(importId) })).toMatchObject({ status: 'waiting', question: { fileId } });
+
+    const res = await call(server, `/api/admin/orgs/${orgId}/originals/delete`, { session: staff, json: { basis: 'data_subject_request' } });
+    expect(await res.json()).toEqual({ deletedOriginals: 1, skippedBusy: 0 });
+    expect(blobs.raw.has(rawBlobName({ orgId } as unknown as OrgScope, { locationId, fileId }))).toBe(false);
+    expect(await server.connection.collection('tw_files').findOne({ _id: oid(fileId) })).toMatchObject({ status: 'kept', outcome: 'raw_deleted' });
+    await server.reader?.settled();
+    expect(await server.connection.collection('tw_imports').findOne({ _id: oid(importId) })).toMatchObject({ status: 'done', question: null });
+  });
+
+  it('flags a file still uploading, and never reads it once its upload completes', async () => {
+    const { orgId, member } = await team('Purge Uploading Grill');
+    const locationId = await addLocation(server, { orgId, name: 'Main' });
+    const bytes = Buffer.from('Date,Guests\n2025-01-01,1\n');
+    const created = await call(server, filesPath(locationId), { session: member, json: { name: SENTINEL_NAME, sizeBytes: bytes.length, purpose: 'history' } });
+    const { file, import: { id: importId } } = await created.json() as Created;
+
+    const res = await call(server, `/api/admin/orgs/${orgId}/originals/delete`, { session: staff, json: { basis: 'data_subject_request' } });
+    expect(await res.json()).toEqual({ deletedOriginals: 0, skippedBusy: 1 });
+    const event = (await auditEvents(server)).find((e) => e.action === 'org.originals_deleted' && String(e.orgId) === orgId);
+    expect(event?.details).toMatchObject({ count: 1 });
+    expect(await server.connection.collection('tw_files').findOne({ _id: oid(file.id) })).toMatchObject({ status: 'uploading', purgeRaw: true });
+
+    expect((await putChunk(server, filesPath(locationId, `/${file.id}/chunks/0`), member, bytes)).status).toBe(200);
+    expect((await call(server, filesPath(locationId, `/${file.id}/complete`), { session: member, json: {} })).status).toBe(200);
+    await call(server, `${base(locationId)}/imports/${importId}/start`, { session: member, json: {} });
+    await server.reader?.settled();
+    expect(await server.connection.collection('tw_files').findOne({ _id: oid(file.id) })).toMatchObject({
+      status: 'kept', outcome: 'raw_deleted', name: 'CSV or text file', rawDeletedAt: expect.any(Date) as unknown,
+    });
+    expect(blobs.raw.has(rawBlobName({ orgId } as unknown as OrgScope, { locationId, fileId: file.id }))).toBe(false);
+    expect(await count('tw_sales_days', { orgId: oid(orgId) })).toBe(0);
   });
 
   it('answers 404 for an unknown organization', async () => {

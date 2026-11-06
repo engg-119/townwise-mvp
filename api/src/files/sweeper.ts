@@ -1,5 +1,5 @@
 // The daily file sweep (spec 11A, retention): one replica a day, under a lease in tw_file_sweeps. It discards upload
-// sessions past their 24 hours, deletes originals a year after upload, deletes files dropped but never sent for
+// sessions past their 24 hours, deletes originals a year after upload (read or not), deletes files dropped but never sent for
 // reading after 30 days, finishes staff purges of files that were busy, drops daily upload counters after 3 days, and
 // deletes blobs whose file row is gone (and that are a day old, so a file being written is never taken). The lookups
 // span organizations, so they live in stores/cross-tenant.ts; every effect runs through the tenant stores with the
@@ -17,7 +17,7 @@ import {
 import type { TownwiseStores } from '../stores/index.ts';
 import { BlobMissingError, type FileBlobs, type ListedBlob } from './blobs.ts';
 import { RAW_RETENTION_DAYS } from './limits.ts';
-import { deleteOneOriginal, isBusy } from './remove.ts';
+import { purgeOriginal } from './remove.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Files dropped but never sent for reading. */
@@ -113,9 +113,9 @@ export function createFileSweeper(deps: {
       for (const item of list) {
         const scope = scopeForSweep(item);
         const file = await stores.files.get(scope, item.locationId, item.id);
-        if (file?.rawDeletedAt !== null || isBusy(file)) continue;
-        await deleteOneOriginal(stores, blobs, scope, file, at);
-        counts[key] += 1;
+        // Not read yet (a question nobody answered, an import nobody started) still goes: kept unread, then deleted.
+        if (file === null) continue;
+        if (await purgeOriginal(stores, blobs, scope, file, at) === 'deleted') counts[key] += 1;
       }
     }
     for (const item of found.abandonedImports) {

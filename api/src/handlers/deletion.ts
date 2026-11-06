@@ -11,7 +11,7 @@ import { z } from 'zod';
 import { applyRecorded, recordBefore, recordNotApplied } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import { scopeForStaffOrg, type Principal } from '../access/policy.ts';
-import { deleteOriginals, removeStoredFiles, type RemovedFiles } from '../files/remove.ts';
+import { purgeEveryOriginal, removeStoredFiles, type RemovedFiles } from '../files/remove.ts';
 import { normalizeEmail } from '../normalize-email.ts';
 import type { AuditEventInput } from '../stores/audit-events.ts';
 import { deletePersonRecords, findActiveSeat, peopleRecords } from '../stores/cross-tenant.ts';
@@ -100,13 +100,14 @@ const purgeBody = z.strictObject({ basis: z.enum(['data_subject_request', 'org_r
  * POST /api/admin/orgs/:orgId/originals/delete { basis } (spec 11A): every original file of the organization, for a
  * person's deletion request (a diner, a server or anyone named in an export), without anyone reading the files.
  * Recorded before the effect by the staff rule; the cleaned copies, reports and days stay, since they hold dates and
- * numbers only. A file the reader still needs is flagged, and its original goes once it is read.
+ * numbers only. A file not read yet is kept unread (`raw_deleted`) and its original deleted now; one still uploading or
+ * being read is flagged, and its original goes as soon as that ends (files/remove.ts purgeOriginal).
  */
 export async function purgeOriginals(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const staff = staffOf(principal);
   const { scope } = await scopeForStaffOrg(ctx.stores.orgs, staff, parseInput(objectId, req.params.orgId));
   const { basis } = parseInput(purgeBody, req.body);
-  const originals = await ctx.stores.files.originals(scope, null);
+  const originals = [...await ctx.stores.files.originals(scope, null), ...await ctx.stores.files.uploading(scope, null)];
   const blobs = ctx.files;
   if (originals.length > 0 && blobs === null) throw new AppError(503, 'files_unavailable', 'Stored files are off');
   const event: AuditEventInput = {
@@ -117,7 +118,9 @@ export async function purgeOriginals(ctx: TownwiseContext, req: Request, res: Re
   const eventId = await recordBefore(ctx, event);
   const result = blobs === null
     ? { deletedOriginals: 0, skippedBusy: 0 }
-    : await applyRecorded(ctx, event, eventId, () => deleteOriginals(ctx.stores, blobs, scope, originals, { now: ctx.now(), flagBusy: true }));
+    : await applyRecorded(ctx, event, eventId, () => purgeEveryOriginal(ctx.stores, blobs, scope, originals, ctx.now()));
+  // A waiting file's question was dropped: its import is queued again, for the reader to finish.
+  ctx.nudgeFiles();
   ctx.logger.info({ orgId: scope.orgId, count: result.deletedOriginals, skippedBusy: result.skippedBusy, by: 'staff' }, 'townwise.originals_deleted');
   res.status(200).json(result);
 }

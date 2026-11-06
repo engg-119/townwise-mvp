@@ -49,19 +49,20 @@ export interface DeletedOriginals {
 }
 
 /** A file the reader still needs (not yet read, or waiting on a question): its original stays until it is done. */
-export function isBusy(file: FileRecord): boolean {
+function isBusy(file: FileRecord): boolean {
   return !(['read', 'kept', 'failed'] as const).some((status) => status === file.status);
 }
 
+/** The kept outcome of a file whose original was deleted before Townwise read it (a staff purge, or retention). */
+export const RAW_DELETED = 'raw_deleted';
+
 /**
- * Deletes the originals of `files` (spec 11A, 11.2 of the storage contract): each blob, then the name (replaced by the
- * kind's label) and the ZIP entry paths, since either can name a person. The cleaned copy, the report and the days
- * stay. A busy file is skipped; with `flagBusy` (the staff purge) it is flagged so the reader deletes its original as
- * soon as it is done, and the daily sweep catches any the reader missed.
+ * Deletes the originals of `files` that Townwise is done with (the owner's "delete originals", spec 11A, 11.2 of the
+ * storage contract): each blob, then the name (replaced by the kind's label) and the ZIP entry paths, since either can
+ * name a person. The cleaned copy, the report and the days stay. A busy file is skipped and counted.
  */
 export async function deleteOriginals(
-  stores: Pick<TownwiseStores, 'files' | 'fileEntries'>, blobs: FileBlobs, scope: OrgScope, files: readonly FileRecord[],
-  input: { now: Date; flagBusy: boolean },
+  stores: Pick<TownwiseStores, 'files' | 'fileEntries'>, blobs: FileBlobs, scope: OrgScope, files: readonly FileRecord[], now: Date,
 ): Promise<DeletedOriginals> {
   let deletedOriginals = 0;
   let skippedBusy = 0;
@@ -69,17 +70,61 @@ export async function deleteOriginals(
     if (file.rawDeletedAt !== null) continue;
     if (isBusy(file)) {
       skippedBusy += 1;
-      if (input.flagBusy) await stores.files.flagPurge(scope, file.id);
       continue;
     }
-    await deleteOneOriginal(stores, blobs, scope, file, input.now);
+    await deleteOneOriginal(stores, blobs, scope, file, now);
     deletedOriginals += 1;
   }
   return { deletedOriginals, skippedBusy };
 }
 
+/**
+ * One original that must go whatever the reader still wanted from it (a staff purge for a person's deletion request,
+ * or retention). Read, kept or failed: deleted. Not read yet (stored, queued or waiting): kept as `raw_deleted` first,
+ * so no reader claims it, with its import's question dropped if it was waiting, then deleted. Uploading or being read:
+ * flagged (`purgeRaw`); the reader never reads a flagged file and deletes the original once it is done, and the daily
+ * sweep finishes any it missed. Resolves `deleted`, `flagged`, or `gone` (already deleted, or being deleted whole).
+ */
+export async function purgeOriginal(
+  stores: Pick<TownwiseStores, 'files' | 'fileEntries' | 'imports'>, blobs: FileBlobs, scope: OrgScope, file: FileRecord, now: Date,
+): Promise<'deleted' | 'flagged' | 'gone'> {
+  if (file.rawDeletedAt !== null || file.status === 'deleting') return 'gone';
+  if (!isBusy(file)) {
+    await deleteOneOriginal(stores, blobs, scope, file, now);
+    return 'deleted';
+  }
+  if (file.status === 'stored' || file.status === 'queued' || file.status === 'waiting') {
+    const before = await stores.files.keepUnread(scope, file.id, RAW_DELETED);
+    if (before !== null) {
+      if (before.status === 'waiting' && before.importId !== null) {
+        const record = await stores.imports.get(scope, before.locationId, before.importId);
+        if (record?.question?.fileId === file.id) await stores.imports.clearQuestion(scope, record.id, record.question.id);
+      }
+      await deleteOneOriginal(stores, blobs, scope, before, now);
+      return 'deleted';
+    }
+    // A reader claimed it meanwhile (or it is being deleted): the flag covers the first, and is harmless for the second.
+  }
+  await stores.files.flagPurge(scope, file.id);
+  return 'flagged';
+}
+
+/** The staff purge of `files`: each original deleted now, or flagged (counted as `skippedBusy`) until it can be. */
+export async function purgeEveryOriginal(
+  stores: Pick<TownwiseStores, 'files' | 'fileEntries' | 'imports'>, blobs: FileBlobs, scope: OrgScope, files: readonly FileRecord[], now: Date,
+): Promise<DeletedOriginals> {
+  let deletedOriginals = 0;
+  let skippedBusy = 0;
+  for (const file of files) {
+    const done = await purgeOriginal(stores, blobs, scope, file, now);
+    if (done === 'deleted') deletedOriginals += 1;
+    if (done === 'flagged') skippedBusy += 1;
+  }
+  return { deletedOriginals, skippedBusy };
+}
+
 /** One original: the blob (a missing one counts as deleted), then the name and the entry paths. */
-export async function deleteOneOriginal(
+async function deleteOneOriginal(
   stores: Pick<TownwiseStores, 'files' | 'fileEntries'>, blobs: FileBlobs, scope: OrgScope, file: FileRecord, now: Date,
 ): Promise<void> {
   try {

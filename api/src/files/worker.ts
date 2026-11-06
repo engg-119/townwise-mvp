@@ -19,7 +19,7 @@ import type { TownwiseStores } from '../stores/index.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import { BlobMissingError, type FileBlobs } from './blobs.ts';
 import { cleanCsv } from './clean.ts';
-import { deleteOneOriginal, isBusy } from './remove.ts';
+import { purgeOriginal, RAW_DELETED } from './remove.ts';
 import type { ExtractModel } from './extract/model.ts';
 import type { RedactedProfile } from './extract/profile.ts';
 import type { ColumnChoice } from './extract/prompt.ts';
@@ -238,6 +238,12 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
       logger.info({ fileId: file.id, kind: file.kind, outcome }, status === 'kept' ? 'townwise.file_kept' : 'townwise.file_failed');
       return false;
     };
+    if (file.purgeRaw) {
+      // A staff purge flagged it: never read, kept unread; purgeIfFlagged then deletes the original.
+      await stores.files.settle(scope, file.id, { status: 'kept', outcome: RAW_DELETED, report: null, readMs: null });
+      logger.info({ fileId: file.id, kind: file.kind, outcome: RAW_DELETED }, 'townwise.file_kept');
+      return false;
+    }
     if (file.attempts > MAX_ATTEMPTS) return kept('internal', 'failed');
     if (file.rawDeletedAt !== null) return kept('raw_missing', 'failed');
     try {
@@ -289,11 +295,14 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
     }
   }
 
-  /** A staff purge found this file busy: now that the reader is done with it, its original goes (spec 11A). */
+  /**
+   * A staff purge flagged this file while it was read: now that the reader is done with it (read, kept, failed, back in
+   * the queue, or waiting on a question), its original goes (spec 11A).
+   */
   async function purgeIfFlagged(scope: OrgScope, locationId: string, fileId: string): Promise<void> {
     const file = await stores.files.get(scope, locationId, fileId);
-    if (file?.purgeRaw !== true || file.rawDeletedAt !== null || isBusy(file)) return;
-    await deleteOneOriginal(stores, blobs, scope, file, now());
+    if (file?.purgeRaw !== true || file.status === 'reading') return;
+    if (await purgeOriginal(stores, blobs, scope, file, now()) !== 'deleted') return;
     logger.info({ orgId: scope.orgId, locationId, count: 1, by: 'staff' }, 'townwise.originals_deleted');
   }
 
@@ -317,8 +326,9 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
         }
         continue;
       }
-      if (await readOne(scope, record, file, location)) return;
+      const asked = await readOne(scope, record, file, location);
       await purgeIfFlagged(scope, file.locationId, file.id);
+      if (asked) return;
     }
   }
 

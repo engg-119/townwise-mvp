@@ -164,7 +164,8 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'file.deleted': return 'Deleted a file';
     case 'file.raw_deleted': return 'Deleted a file’s original';
     case 'files.raw_deleted_all': return `Deleted ${text(d.count)} original files of a location`;
-    case 'org.originals_deleted': return `Deleted ${text(d.count)} original files, for ${ORIGINALS_BASIS[text(d.basis)] ?? 'another reason'}`;
+    case 'org.originals_deleted':
+      return `Purged ${text(d.count)} original files, for ${ORIGINALS_BASIS[text(d.basis)] ?? 'another reason'}: each deleted at once, or as soon as Townwise finishes uploading or reading it`;
     case 'note.created': return noteSummary('Added', d);
     case 'note.updated': return noteSummary('Edited', d);
     case 'note.deleted': return noteSummary('Deleted', d);

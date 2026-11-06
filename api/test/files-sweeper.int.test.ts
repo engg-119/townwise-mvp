@@ -111,6 +111,23 @@ describe('the daily file sweep', () => {
     expect((await fileDoc(flagged))?.purgeRaw).toBeUndefined();
   });
 
+  it('deletes the original of a file never read a year after upload, keeping the file unread', async () => {
+    const waiting = await seed('waiting.csv');
+    await server.connection.collection('tw_files').updateOne(
+      { _id: oid(waiting) }, { $set: { status: 'waiting', result: null, uploadedAt: new Date(server.clock.now().getTime() - 366 * DAY) } },
+    );
+    expect(await sweeper.runOnce()).toMatchObject({ expiredOriginals: 1 });
+    expect(await fileDoc(waiting)).toMatchObject({ status: 'kept', outcome: 'raw_deleted', rawDeletedAt: expect.any(Date) as unknown });
+    expect(blobs.raw.has(rawBlobName(scope, { locationId, fileId: waiting }))).toBe(false);
+  });
+
+  it('finishes a staff purge of a flagged file whose upload completed but that was never read', async () => {
+    const stored = await seed('stored.csv');
+    await server.connection.collection('tw_files').updateOne({ _id: oid(stored) }, { $set: { status: 'stored', result: null, purgeRaw: true } });
+    expect(await sweeper.runOnce()).toMatchObject({ purged: 1 });
+    expect(await fileDoc(stored)).toMatchObject({ status: 'kept', outcome: 'raw_deleted', rawDeletedAt: expect.any(Date) as unknown });
+  });
+
   it('drops daily upload counters after 3 days', async () => {
     const today = server.clock.now().toISOString().slice(0, 10);
     const old = new Date(server.clock.now().getTime() - 4 * DAY).toISOString().slice(0, 10);
