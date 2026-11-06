@@ -347,7 +347,7 @@ Each location is `{ id, name, town, coverage, calibration, notesCount, lastUploa
 | `POST /api/org/locations/:locationId/sales/uploads` | member; 256 KB; limiter `uploads` | `{ days }` (see Sales upload) | 201 `{ upload, coverage, calibration }` | 400; 404; 413; 429 |
 | `DELETE /api/org/locations/:locationId/sales` | org_admin | | 200 `{ deletedDays, deletedUploads, deletedFiles }`: the location's stored files go too, and so do its forecast runs and its answers to TownwiseAI’s questions (notes stay, closure notes saved from answers included) | 404; 409 `import_running` (one of its files is being read); 503 `files_unavailable` (stored files are off while it has files) |
 
-`sales/history` answers every stored day, oldest first, as columns of equal length: `days` is `{ date, guests, netSalesCents, upload }`, where `upload` indexes `uploads` (the upload that last wrote the day, or -1 if it has no record). `uploads` lists every upload a day references, newest first, each `{ id, uploadedAt, uploadedByEmail, status, firstDate, lastDate, file }`; `file` is null until stored files link uploads to files. Neither sales read logs anything.
+`sales/history` answers every stored day, oldest first, as columns of equal length: `days` is `{ date, guests, netSalesCents, upload }`, where `upload` indexes `uploads` (the upload that last wrote the day, or -1 if it has no record). `uploads` lists every upload a day references, newest first, each `{ id, uploadedAt, uploadedByEmail, status, firstDate, lastDate, file }`; `file` is the stored file the upload was read from, `{ id, name, kind }`, or null for a browser upload, a deleted file, and every upload while stored files are off; `name` is null during view-as. Neither sales read logs anything.
 
 ### Calendar
 

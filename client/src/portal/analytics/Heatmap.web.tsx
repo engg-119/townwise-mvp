@@ -15,7 +15,9 @@ import { WEEKDAY_NAMES, WEEK_ORDER } from './words';
 // selection. While a day is selected, moving focus moves the selection with it. A mouse or pen over a cell
 // previews it (one delegated handler, touch ignored) and leaving the grid restores the selection. Nothing animates.
 // Not interactive (Home, Reading): one picture named by `label`, with no focusable cell. It fits its width rather
-// than scrolling sideways, because a keyboard could not scroll a picture with nothing in it to focus.
+// than scrolling sideways, because a keyboard could not scroll a picture with nothing in it to focus. So that its
+// month labels never run together on a phone ("JanFebMar"), a narrow picture labels every other month (Jan, Mar,
+// May...) and a very narrow one every third (Jan, Apr, Jul, Oct), by a container query on its own width.
 
 const C = theme.color;
 const MINT = '123, 210, 180';
@@ -23,6 +25,13 @@ const LEVEL_ALPHA = [0, 0.25, 0.45, 0.7, 1] as const;
 const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const GAP = 3;
 const HEAD = 40;
+/**
+ * Month starts can be 4 week columns apart, and a label is 3 mono characters, 22px at 12px in Chromium and WebKit.
+ * In a picture under the first width, a full 53-week year ((width - HEAD) / 53 a column) leaves under 2px between two
+ * labels, so it labels every other month (8 columns apart); under the second, every third (12 columns apart).
+ */
+const EVERY_OTHER_BELOW = 360;
+const EVERY_THIRD_BELOW = 220;
 
 // Hover and selection outlines live in one React-rendered stylesheet, as PortalStyles does (covered by the
 // existing style-src 'unsafe-inline'), so hovering re-renders nothing. The keyboard focus ring is the portal's.
@@ -30,7 +39,16 @@ const CSS = [
   `.tw-hm [data-sel="1"]{box-shadow:0 0 0 1px ${C.mint},inset 0 0 0 1px ${C.ground}}`,
   `@media (hover:hover){.tw-hm-live [data-date]:hover:not([data-sel="1"]){box-shadow:0 0 0 1px ${C.white}}}`,
   '.tw-hm-live [data-date]{cursor:pointer}',
+  '.tw-hm-fit{container-type:inline-size}',
+  `@container (width < ${String(EVERY_OTHER_BELOW)}px){.tw-hm-fit .tw-hm-m2{display:none}}`,
+  `@container (width < ${String(EVERY_THIRD_BELOW)}px){.tw-hm-fit .tw-hm-m2{display:inline}.tw-hm-fit .tw-hm-m3{display:none}}`,
 ].join('\n');
+
+/** The classes that hide a month's label in a narrow picture: off every other month, then off every third. */
+function monthClass(month: number): string | undefined {
+  const names = [(month - 1) % 2 === 0 ? null : 'tw-hm-m2', (month - 1) % 3 === 0 ? null : 'tw-hm-m3'].filter((name) => name !== null);
+  return names.length === 0 ? undefined : names.join(' ');
+}
 
 const SR_ONLY = {
   position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0 0 0 0)',
@@ -91,7 +109,7 @@ const YearGrid = memo(function YearGrid(props: {
             draw into it. */}
         <span style={{ gridColumnStart: 1, gridRowStart: 1, position: 'sticky', left: 0, zIndex: 1, background: C.ground }} />
         {block.months.map((month) => (
-          <span key={month.month} style={{ gridColumnStart: month.col + 2, gridRowStart: 1, whiteSpace: 'nowrap' }}>
+          <span key={month.month} className={monthClass(month.month)} style={{ gridColumnStart: month.col + 2, gridRowStart: 1, whiteSpace: 'nowrap' }}>
             {MONTHS_SHORT[month.month - 1]}
           </span>
         ))}
@@ -195,7 +213,7 @@ export function Heatmap(props: HeatmapProps): React.JSX.Element {
 
   if (!interactive) {
     return (
-      <div role="img" aria-label={props.label} className="tw-hm" style={{ display: 'grid', gap: 12 }}>
+      <div role="img" aria-label={props.label} className="tw-hm tw-hm-fit" style={{ display: 'grid', gap: 12 }}>
         <style href="townwise-heatmap" precedence="default">{CSS}</style>
         <div style={{ display: 'grid', gap: 16 }}>
           {blocks.map((block) => <YearGrid key={block.year} block={block} interactive={false} active={null} selected={selected} />)}

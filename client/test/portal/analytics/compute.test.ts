@@ -14,7 +14,7 @@ import {
 } from '../../../src/portal/analytics/filters';
 import { byDate, decodeHistory } from '../../../src/portal/analytics/history';
 import { levelsFor } from '../../../src/portal/analytics/levels';
-import { dayPanel, noteWords, type PanelInput } from '../../../src/portal/analytics/panel';
+import { dayPanel, fileLine, noteWords, type PanelInput } from '../../../src/portal/analytics/panel';
 import { longDate, shortDate, signedPercent } from '../../../src/portal/analytics/words';
 import { addDays } from '../../../src/portal/locations/dates';
 import {
@@ -633,7 +633,7 @@ describe('the day panel', () => {
         id: party.id, words: 'Private event, more guests than usual', dates: null, weekdays: null,
         expected: 'Expected guests: 80', detail: 'Rehearsal dinner', addedBy: `Added by ${OWNER_EMAIL}`,
       }],
-      source: { line: `From the upload on Nov 4, 2026 by ${OWNER_EMAIL}.`, warning: null, file: null },
+      source: { line: `From the upload on Nov 4, 2026 by ${OWNER_EMAIL}.`, warning: null, file: null, fileLine: null, finished: true },
     });
   });
 
@@ -648,10 +648,21 @@ describe('the day panel', () => {
 
   test('an unfinished upload and a missing upload record say so', () => {
     expect(dayPanel('2026-11-24', input).source).toEqual({
-      line: `From the upload on Nov 25, 2026 by ${OWNER_EMAIL}.`, warning: 'This upload didn’t finish.', file: null,
+      line: `From the upload on Nov 25, 2026 by ${OWNER_EMAIL}.`, warning: 'This upload didn’t finish.', file: null, fileLine: null, finished: false,
     });
     const missing = byDate([{ ...day('2026-11-24', 150), upload: -1 }]);
-    expect(dayPanel('2026-11-24', { ...input, byDate: missing }).source).toEqual({ line: 'Upload record not found.', warning: null, file: null });
+    expect(dayPanel('2026-11-24', { ...input, byDate: missing }).source).toEqual({
+      line: 'Upload record not found.', warning: null, file: null, fileLine: null, finished: false,
+    });
+  });
+
+  test('F4: the stored file the upload was read from, by name and kind; under view-as the line says the name is hidden', () => {
+    const file = { id: '00000000-0000-0000-0000-00000000f001', name: 'sample-sales.csv', kind: 'text' as const };
+    const withFile = { ...input, uploads: [upload({ file }), ...uploads.slice(1)] };
+    expect(dayPanel('2026-11-21', withFile).source).toEqual({
+      line: `From the upload on Nov 4, 2026 by ${OWNER_EMAIL}.`, warning: null, file, fileLine: 'File: sample-sales.csv (CSV or text file).', finished: true,
+    });
+    expect(fileLine({ ...file, name: null, kind: 'xlsx' })).toBe('File: Excel file. Its name is hidden in view-as.');
   });
 
   test('closed and left-out days say so, and a thin baseline says it is not enough', () => {

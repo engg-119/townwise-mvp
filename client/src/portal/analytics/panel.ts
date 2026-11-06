@@ -1,3 +1,4 @@
+import { KIND_LABEL as FILE_KIND_LABEL } from '../files/copy';
 import { formatCount, formatDate } from '../format';
 import type { Note } from '../locations/api';
 import { addDays, formatRange } from '../locations/dates';
@@ -64,7 +65,18 @@ export interface PanelSource {
   line: string;
   /** "This upload didn't finish." for an upload still applying. */
   warning: string | null;
+  /** The stored file the upload was read from (F1); null for a browser upload, a deleted file, or files off. */
   file: HistoryUpload['file'];
+  /** "File: sales-2026.csv (CSV or text file)."; null with no file. */
+  fileLine: string | null;
+  /** The upload finished, so its file's cleaned copy exists to download. */
+  finished: boolean;
+}
+
+/** The stored file's name and kind; under view-as the API sends no name, and the line says so. */
+export function fileLine(file: NonNullable<HistoryUpload['file']>): string {
+  const kind = FILE_KIND_LABEL[file.kind];
+  return file.name === null ? `File: ${kind}. Its name is hidden in view-as.` : `File: ${file.name} (${kind}).`;
 }
 
 export interface DayPanelData {
@@ -100,11 +112,13 @@ function calendarNoteFor(date: string, calendar: PanelInput['calendar']): string
 
 function sourceOf(day: DayRecord, uploads: readonly HistoryUpload[]): PanelSource {
   const upload = day.upload < 0 ? undefined : uploads[day.upload];
-  if (upload === undefined) return { line: 'Upload record not found.', warning: null, file: null };
+  if (upload === undefined) return { line: 'Upload record not found.', warning: null, file: null, fileLine: null, finished: false };
   return {
     line: `From the upload on ${formatDate(upload.uploadedAt)} by ${upload.uploadedByEmail}.`,
     warning: upload.status === 'applying' ? 'This upload didn’t finish.' : null,
     file: upload.file,
+    fileLine: upload.file === null ? null : fileLine(upload.file),
+    finished: upload.status === 'applied',
   };
 }
 

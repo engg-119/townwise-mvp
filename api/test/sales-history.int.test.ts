@@ -1,14 +1,18 @@
 // GET /api/org/locations/:locationId/sales/history (spec 10.10): every stored day, oldest first, in columns, each
-// naming the upload that last wrote it; members read it, view-as reads are logged with ids only, and no figure
-// reaches a log line.
+// naming the upload that last wrote it and (F1) the stored file that upload was read from; members read it, view-as
+// reads are logged with ids only and see no file name, and no figure or file name reaches a log line.
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { Types } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { SalesHistory } from '../src/handlers/sales.ts';
+import { createMemoryFileBlobs, type MemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import { NO_COVERAGE } from '../src/stores/sales-days.ts';
-import { addLocation, addSeat, createOrg } from './helpers/fixtures.ts';
+import { addGrant, addLocation, addSeat, createOrg } from './helpers/fixtures.ts';
+import { filesPath, seedReadFile, uploadFile } from './helpers/files.ts';
 import {
   call, MINUTE, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
@@ -19,14 +23,14 @@ interface Team { orgId: string; admin: TestSession; adminEmail: string; member: 
 
 let team: Team;
 
-async function newTeam(name: string): Promise<Team> {
-  const orgId = await createOrg(server, { name });
+async function newTeam(name: string, on: TownwiseTestServer = server): Promise<Team> {
+  const orgId = await createOrg(on, { name });
   const adminEmail = `admin-${randomUUID().slice(0, 8)}@example.test`;
   const memberEmail = `member-${randomUUID().slice(0, 8)}@example.test`;
-  const admin = await signIn(server, adminEmail);
-  const member = await signIn(server, memberEmail);
-  await addSeat(server, { orgId, userId: admin.userId, email: adminEmail, role: 'org_admin' });
-  await addSeat(server, { orgId, userId: member.userId, email: memberEmail });
+  const admin = await signIn(on, adminEmail);
+  const member = await signIn(on, memberEmail);
+  await addSeat(on, { orgId, userId: admin.userId, email: adminEmail, role: 'org_admin' });
+  await addSeat(on, { orgId, userId: member.userId, email: memberEmail });
   return { orgId, admin, adminEmail, member, memberEmail };
 }
 
@@ -41,12 +45,14 @@ function newLocation(orgId = team.orgId): Promise<string> {
   return addLocation(server, { orgId, name: `Room ${randomUUID().slice(0, 6)}` });
 }
 
-function history(locationId: string, session: TestSession = team.member): Promise<Response> {
-  return call(server, `/api/org/locations/${locationId}/sales/history`, { session });
+function history(locationId: string, session: TestSession = team.member, on: TownwiseTestServer = server): Promise<Response> {
+  return call(on, `/api/org/locations/${locationId}/sales/history`, { session });
 }
 
-async function upload(locationId: string, session: TestSession, days: { date: string; guests: number | null; netSalesCents: number | null }[]): Promise<string> {
-  const res = await call(server, `/api/org/locations/${locationId}/sales/uploads`, { session, json: { days } });
+async function upload(
+  locationId: string, session: TestSession, days: { date: string; guests: number | null; netSalesCents: number | null }[], on: TownwiseTestServer = server,
+): Promise<string> {
+  const res = await call(on, `/api/org/locations/${locationId}/sales/uploads`, { session, json: { days } });
   expect(res.status).toBe(201);
   return (await res.json() as { upload: { id: string } }).upload.id;
 }
@@ -182,5 +188,101 @@ describe('during view-as', () => {
     const logs = server.logs.join('\n');
     for (const secret of ['13579', '87654321', team.memberEmail, team.adminEmail, 'Helping with the heatmap']) expect(logs).not.toContain(secret);
     expect((await call(server, '/api/admin/view-as/end', { session: staff, json: {} })).status).toBe(200);
+  });
+});
+
+describe('while stored files are off', () => {
+  it('names no file, even for an upload a stored file says it wrote', async () => {
+    const locationId = await newLocation();
+    const uploadId = await upload(locationId, team.admin, [{ date: '2026-05-01', guests: 40, netSalesCents: null }]);
+    const fileId = await seedReadFile(server, createMemoryFileBlobs(), {
+      orgId: team.orgId, locationId, uploadedBy: team.admin.userId, name: 'stored.csv', raw: Buffer.from('z'), clean: 'date\r\n',
+    });
+    await server.connection.collection('tw_files').updateOne({ _id: new Types.ObjectId(fileId) }, { $set: { uploadId: new Types.ObjectId(uploadId) } });
+    const body = await (await history(locationId)).json() as SalesHistory;
+    expect(body.uploads.map((each) => each.file)).toEqual([null]);
+  });
+});
+
+// F1 (storage2.md 16.2): an upload the file reader wrote names its stored file, for the day panel's "Where it came
+// from". A browser upload names none, a deleted file is gone from it, and view-as sees the kind but never the name.
+// Its server, with stored files on, drops the shared test database when it starts, so this block runs last.
+describe('the stored file an upload was read from', () => {
+  const FILE_NAME = 'day-level.csv';
+  let files: TownwiseTestServer;
+  let blobs: MemoryFileBlobs;
+  let kitchen: Team;
+
+  beforeAll(async () => {
+    blobs = createMemoryFileBlobs();
+    files = await startTownwiseServer({ files: blobs, reader: {} });
+    kitchen = await newTeam('Files Kitchen', files);
+  });
+  afterAll(async () => { await files.close(); });
+  beforeEach(async () => { await files.redis.flushdb(); });
+  afterEach(async () => { await removeStaffFactor(files); });
+
+  async function read(locationId: string): Promise<string> {
+    const bytes = readFileSync(join(import.meta.dirname, 'fixtures', 'sales-files', FILE_NAME));
+    const done = await uploadFile(files, locationId, kitchen.member, FILE_NAME, bytes);
+    expect(done.status).toBe(200);
+    const fileId = done.body.file?.id ?? '';
+    const importId = (done.body.import as { id: string }).id;
+    expect((await call(files, `/api/org/locations/${locationId}/imports/${importId}/start`, { session: kitchen.member, json: {} })).status).toBe(202);
+    await files.reader?.settled();
+    return fileId;
+  }
+
+  async function uploadsOf(locationId: string, session: TestSession = kitchen.member): Promise<SalesHistory['uploads']> {
+    const res = await history(locationId, session, files);
+    expect(res.status).toBe(200);
+    return (await res.json() as SalesHistory).uploads;
+  }
+
+  it('names the file the reader wrote days from, gives a browser upload none, and drops a deleted file', async () => {
+    const locationId = await addLocation(files, { orgId: kitchen.orgId, name: `Room ${randomUUID().slice(0, 6)}` });
+    const fileId = await read(locationId);
+    files.clock.advance(MINUTE);
+    const browser = await upload(locationId, kitchen.admin, [{ date: '2026-05-01', guests: 40, netSalesCents: null }], files);
+    files.logs.length = 0;
+    const uploads = await uploadsOf(locationId);
+    expect(uploads).toHaveLength(2);
+    expect(uploads[0]).toMatchObject({ id: browser, file: null });
+    expect(uploads[1]?.file).toEqual({ id: fileId, name: FILE_NAME, kind: 'text' });
+    expect(files.logs.join('\n')).not.toContain(FILE_NAME);
+
+    expect((await call(files, filesPath(locationId, `/${fileId}`), { session: kitchen.member, method: 'DELETE' })).status).toBe(200);
+    const after = await uploadsOf(locationId);
+    // The file's days stay, so its upload is still listed, now with no file.
+    expect(after.map((each) => each.file)).toEqual([null, null]);
+  });
+
+  it('gives the kind but never the name during view-as', async () => {
+    const locationId = await addLocation(files, { orgId: kitchen.orgId, name: `Room ${randomUUID().slice(0, 6)}` });
+    const fileId = await read(locationId);
+    const staff = await signInStaff(files);
+    await addGrant(files, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: kitchen.member.userId, orgId: kitchen.orgId });
+    files.logs.length = 0;
+    const uploads = await uploadsOf(locationId, staff);
+    expect(uploads.map((each) => each.file)).toEqual([{ id: fileId, name: null, kind: 'text' }]);
+    expect(files.logs.join('\n')).not.toContain(FILE_NAME);
+  });
+
+  it('finds a file past the first page of the location’s files', async () => {
+    const locationId = await addLocation(files, { orgId: kitchen.orgId, name: `Room ${randomUUID().slice(0, 6)}` });
+    const uploadId = await upload(locationId, kitchen.admin, [{ date: '2026-05-01', guests: 40, netSalesCents: null }], files);
+    const fileId = await seedReadFile(files, blobs, {
+      orgId: kitchen.orgId, locationId, uploadedBy: kitchen.admin.userId, name: 'oldest.csv', raw: Buffer.from('z'), clean: 'date\r\n',
+    });
+    const rows = files.connection.collection('tw_files');
+    await rows.updateOne({ _id: new Types.ObjectId(fileId) }, { $set: { uploadId: new Types.ObjectId(uploadId) } });
+    // 100 newer files, read from no upload of this location, fill the first page.
+    const seeded = await rows.findOne({ _id: new Types.ObjectId(fileId) });
+    if (seeded === null) throw new Error('no seeded file');
+    await rows.insertMany(Array.from({ length: 100 }, (_, index) => ({
+      ...seeded, _id: new Types.ObjectId(), name: `newer-${String(index)}.csv`, uploadId: new Types.ObjectId(),
+    })));
+    const uploads = await uploadsOf(locationId);
+    expect(uploads.map((each) => each.file)).toEqual([{ id: fileId, name: 'oldest.csv', kind: 'text' }]);
   });
 });
