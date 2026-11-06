@@ -420,7 +420,7 @@ Indexes: `{ userId: 1 }` unique with `partialFilterExpression: { status: 'pendin
 | `name` | string | 1 to 80 |
 | `nameKey` | string | `name` trimmed, lowercased, inner spaces collapsed |
 | `town` | `{ townId: TownId \| null; name: string; state: string }` | |
-| `placeId` | string or null | the request’s Google place id, copied at approval (F3 step 7); null for a location added from P10; never edited; older documents read as null |
+| `placeId` | string or null | the Google place id. Approval copies the request’s (F3 step 7). An org admin sets or changes it through the Places search on Add location (P10) or Location settings (P16), and the API stores Google’s current id once the town is checked against Google (10.3). Null otherwise: a location added without the search, a `placeId: null` write, or a town changed by hand. Older documents read as null |
 | `createdAt`, `createdBy` | | |
 
 Indexes: `{ orgId: 1, nameKey: 1 }` unique; `{ orgId: 1, createdAt: 1 }`. Limit: 25 per organization. [CONFIRM: 25 locations]
@@ -733,7 +733,7 @@ interface AuditEvent {
 | `member.role_changed` | `email`, `from`, `to` |
 | `member.removed` | `email`, `wasStatus` |
 | `member.left` | `email` |
-| `location.created`, `location.updated`, `location.deleted` | `name`, `townId` |
+| `location.created`, `location.updated`, `location.deleted` | `name`, `townId`; from `POST` and `PATCH /api/org/locations` also `hasPlace` (boolean: whether the location has a Google place after the write; never the place id or an address; approval’s `location.created` leaves it out) |
 | `sales.uploaded` | `locationId`, `dayCount`, `inserted`, `replaced`, `firstDate`, `lastDate`; from the file reader also `fileId` and `via: 'file'`, with the uploader as actor |
 | `sales.deleted` | `locationId`, `deletedDays`, `deletedFiles` |
 | `file.uploaded` | `locationId`, `kind`, `sizeBytes` |
@@ -802,7 +802,7 @@ type Calibration =
   | { state: 'not_calibrated'; dayCount: number; firstDate: string; lastDate: string };
 
 interface LocationSummary {
-  id: string; name: string; town: Town; coverage: Coverage; calibration: Calibration;
+  id: string; name: string; town: Town; placeId: string | null; coverage: Coverage; calibration: Calibration;
   notesCount: number; lastUploadAt: string | null;
 }
 
@@ -847,33 +847,36 @@ Only `GET /api/me` fills `welcome`; every other answer that carries a `MeRespons
 
 ### 10.2a Places search
 
-Two routes let the request form find the business on Google Places (New). The API calls Google itself, so the browser talks only to the API and the CSP does not change. Both are `signed_in`, take a 2 KB body and use the `places` limiter (10.8).
+Two routes let the request form (P3), Add location (P10) and Location settings (P16) find the business on Google Places (New). The API calls Google itself, so the browser talks only to the API, except for the map image below, which it loads from Google (the CSP's `img-src` allows `https://maps.googleapis.com`). Both are `signed_in`, take a 2 KB body and use the `places` limiter (10.8).
 
 | Method and path | Request | Success | Extra errors |
 |---|---|---|---|
 | `POST /api/places/autocomplete` | `{ input, sessionToken? }`, `input` 2 to 120 characters after trimming, `sessionToken` a version 4 UUID | 200 `{ suggestions, sessionToken }`, up to 5 `{ placeId, name, detail }` (`detail` empty when Google has none) | 400 `invalid_request`; 413; 429; 503 `places_unavailable` |
-| `POST /api/places/details` | `{ placeId, sessionToken }`, `placeId` as in 6.3, `sessionToken` required | 200 `{ place: { placeId, address, town } }`, `town` a `TownInput` or null | 400 `invalid_request`; 404 `place_not_found` (Google answered 404, or 400 `INVALID_ARGUMENT` for the id); 413; 429; 503 `places_unavailable` |
+| `POST /api/places/details` | `{ placeId, sessionToken }`, `placeId` as in 6.3, `sessionToken` required | 200 `{ place: { placeId, address, town, map } }`, `town` a `TownInput` or null, `map` `{ url, width: 640, height: 320 }` or null | 400 `invalid_request`; 404 `place_not_found` (Google answered 404, or 400 `INVALID_ARGUMENT` for the id); 413; 429; 503 `places_unavailable` |
 
 - Off until `GOOGLE_PLACES_API_KEY` is set: both routes answer 503 `places_unavailable` to every request, and the client shows the manual fields. Google failing, or not answering within 5 seconds, answers the same.
 - Both calls of one search carry the same session token; Google bills the typing and the pick as one session, and the details call ends it. Without a token, autocomplete makes one and returns it. The server checks only its format and keeps no record of it.
 - Autocomplete asks for US results in English, of any business type. `name` is Google’s main text and `detail` its secondary text. Details asks for the place’s id, formatted address and address components only; `address` is for display, and the client keeps the name from the suggestion it picked. `placeId` in the answer is Google’s current id for the place, which can differ from the one sent.
 - `town` is one of the twelve researched towns when the locality, postal town, sublocality or `administrative_area_level_3` matches one by name and state, ignoring case, or when any of them is an alias (Lake Placid, NY is `north-elba-ny`; North Conway, NH is `conway-nh`). Otherwise it is `{ townId: null, name, state }`, named by the first of those components. It is null outside the 50 states and DC, or when no usable town name exists. [CONFIRM: the town matching rules, which are not yet checked against live Google answers]
-- Nothing from these routes is stored. The typed text, place ids, addresses and Google’s answers never reach a log or an audit event; a Google failure logs `townwise.places_failed { routeId, code, status, errType }`.
-- [Build note: details will also answer `place.map`, a static map image as a `data:` URL or null (best effort), for the found card. It is specified here when it ships.]
+- Nothing from these routes is stored. The typed text, place ids, addresses, Google’s answers and the signed map URL never reach a log or an audit event; a Google failure logs `townwise.places_failed { routeId, code, status, errType }`.
+- `map` is a Google Maps Static image of the place for the found card: `url` is a `https://maps.googleapis.com/maps/api/staticmap` URL the API signs with `GOOGLE_MAPS_SIGNING_SECRET`, holding `GOOGLE_MAPS_STATIC_KEY`, a key restricted to the Maps Static API with unsigned requests refused. The browser or the native app loads it straight from Google, which sees the viewer’s IP address; the API never fetches, relays or keeps the image. `map` is null while either variable is unset, and a map URL is never unsigned (`api/README.md`, Places search).
+- The request form (P3) uses the search while it is on (Places unit). Step 1 of 3, "Find your restaurant": one field ("Search for your restaurant or bar") whose suggestions come from autocomplete, debounced 250 ms, nothing under 2 characters, one call at a time, one session token per search (the API's, from the first answer). On web it is an ARIA combobox with a listbox (Down, Up, Enter, Escape); on native each suggestion is a button. A status line says how many places match the text searched ("3 places match “Lou”."), so each answer reads differently and is heard once, and "Results from Google Maps." credits Google. Picking one calls details and shows "Here's what we found": the map when there is one, the name from the suggestion, Google's address, the town line (one of the twelve, another town, or "Townwise works with businesses in a US town, and Google Maps puts this place in none.", which has no Looks right), and "From Google Maps. Townwise keeps Google's id for the place and its town, not the address or the map." The card's heading takes focus. "Looks right" opens Step 2 of 3, "About you", and moves focus to its heading: the form with the place in place of Town (and "Change place" back to Step 1, which moves focus to the search field, as "Search again" does), Organization name filled with the place's name when empty (for the requester to edit), and the request sends `placeId` with the place's town. "Can't find it? Enter it yourself" opens the form as it is without the search, which offers "Search Google Maps instead". The client learns whether the search is on by sending autocomplete `{}`: 503 `places_unavailable` is off, 400 `invalid_request` is on, and Google is not called. While off, under view-as (nothing is sent), for a rejected request (its answers are filled in) and after a 503 during the search (with "Google Maps isn't answering right now, so you can enter your restaurant yourself."), the form is as it is without the search. Step 3 is the history upload after approval.
 
 ### 10.3 Organization and locations
 
 | Method and path | Policy | Request | Success | Extra errors |
 |---|---|---|---|---|
-| `GET /api/org` | member | | 200 `{ org: { id, name }, role, locations: LocationSummary[], requestedLocationCount: number \| null }` | |
+| `GET /api/org` | member | | 200 `{ org: { id, name }, role, locations: LocationSummary[], requestedLocationCount: number \| null, placeSearch: boolean }` (`placeSearch`: the Places search is on, 10.2a) | |
 | `PATCH /api/org` | org_admin | `{ name }` | 200 `{ org }` | |
 | `GET /api/org/staff-activity` | org_admin | | 200 `{ events: StaffActivityView[] }` (newest 50 events on this organization whose actor role is `superadmin`) | |
 | `POST /api/org/leave` | member | `{}` | 200 `MeResponse` | 409 `last_admin` |
-| `POST /api/org/locations` | org_admin | `{ name, town: TownInput }` | 201 `{ location: LocationSummary }` | 409 `location_name_taken`, `location_limit`; 400 `unknown_town` |
-| `PATCH /api/org/locations/:locationId` | org_admin | `{ name?, town? }`, at least one | 200 `{ location }` | 404; 409 `location_name_taken` |
+| `POST /api/org/locations` | org_admin | `{ name, town: TownInput, placeId?: string \| null }` | 201 `{ location: LocationSummary }` | 409 `location_name_taken`, `location_limit`; 400 `unknown_town`; with a `placeId`: 400 `unknown_place`, `place_not_supported`, `place_town_mismatch`; 429; 503 `places_unavailable` |
+| `PATCH /api/org/locations/:locationId` | org_admin | `{ name?, town?, placeId?: string \| null }`, at least one; a `placeId` needs `town`; null takes the place off | 200 `{ location }` | 404; 409 `location_name_taken`; with a `placeId`: as `POST` |
 | `DELETE /api/org/locations/:locationId` | org_admin | | 204 | 404; 409 `location_has_data` (any sales day or note) |
 
 [CONFIRM: org admins can rename their own organization]
+
+A location's Google place (Places unit; P10, P16 "Change this location's place"): the API asks Google for the place (Place Details, a session of its own) and takes its town with the 10.2a rules; the town sent must be that town (one of the twelve by id, another by name ignoring case and by state), else 400 `place_town_mismatch`. Google not knowing the place is 400 `unknown_place`; outside the 50 states and DC or with no town, 400 `place_not_supported`; the search off or Google failing, 503 `places_unavailable` (`townwise.places_failed` with the route id). Each write with a place spends one call of the account's `townwise:places` budget (10.8) before Google is asked: used up, 429 `rate_limited`; its store down, 503 `places_unavailable`. A write without a place spends none. The location stores Google's current id and the place's town, nothing else. A town changed by hand takes the place off; a rename or the same town keeps it. `location.created` and `location.updated` add `hasPlace`, never the id. P10 and P16 offer the search only while `placeSearch` is true and never under view-as; P10 starts with it ("Search Google Maps for the location", "Looks right" fills Name and gives the town, "Can't find it? Enter it yourself"), and a 503 on Add leaves the fields with the place's town filled in and "Google Maps isn't answering right now, so the place wasn't added. Check the town, then add the location without it." Focus follows the steps: "Looks right" on P10 moves it to the place in the form, and opening P16's search moves it to the field and closing it (Cancel, Use this place, or a refusal) to the line that says whether the location is linked. P16's section says whether the location is linked, finds a place with "Use this place" (with "Using this place moves {name} to {town}." when the town changes) and answers "Saved."; its Town field says "Changing the town here takes the Google Maps place off this location." while linked.
 
 ### 10.4 Sales
 
@@ -992,7 +995,7 @@ Built with the rate-limit module and keyed on `acct:<userId>`, a key the caller 
 | `townwise:uploads` | the upload route | 30 per hour | allow |
 | `townwise:requests` | `POST /api/access-requests` | 5 per day | deny (503 `unavailable`) |
 | `townwise:view-as` | `POST /api/admin/view-as` | 20 per hour | deny (503 `unavailable`) |
-| `townwise:places` | both Places routes together | 300 per hour | deny (503 `unavailable`) |
+| `townwise:places` | both Places routes together; each location write with a `placeId` also spends one (10.3) | 300 per hour | deny (503 `unavailable`; on a location write, 503 `places_unavailable`) |
 | `townwise:files` | `POST .../files` (10.11) | 120 per hour | allow |
 | `townwise:file-chunks` | `PUT .../files/:fileId/chunks/:index` | 1,500 per hour | allow |
 | `townwise:downloads` | both file downloads together | 300 per hour | allow |
@@ -1013,6 +1016,7 @@ A search is 10 to 15 debounced autocompletes and one details call, so `townwise:
 | 403 | `staff_setup_required`, `staff_reauth_required` | staff gate | route per 4.3 |
 | 403 | `view_as_read_only` | a non-GET without the `staff` policy during view-as | should not happen: controls are disabled |
 | 404 | `place_not_found` | the details route: Google has no such place (10.2a) | the client keeps the manual fields |
+| 400 | `unknown_place`, `place_not_supported`, `place_town_mismatch` | a location write with a `placeId` (10.3): Google has no such place, it has no US town, or the sent town is not its town | “Google Maps answered differently this time.”, then the search again |
 | 404 | `not_found` | unknown id, or an id in another organization | “This {thing} isn’t available.” with a way back |
 | 409 | `view_as_active` | any route with the `staff` policy, any method, during view-as; a second view-as start racing the first | re-read `/api/me` |
 | 409 | `no_invite`, `already_in_org`, `request_exists`, `request_not_pending`, `requester_has_org`, `last_admin`, `location_name_taken`, `location_limit`, `location_has_data`, `note_limit`, `member_limit`, `person_has_seat`, `org_not_suspended` | as in the tables | inline copy per page |
@@ -1020,7 +1024,7 @@ A search is 10 to 15 debounced autocompletes and one details call, so `townwise:
 | 415 | `unsupported_media_type` | server-core | client bug |
 | 429 | `rate_limited` | Section 10.8, with `retryAfterSeconds` | “Too many attempts. Try again in {minutes} minutes.” |
 | 500 | `internal` | server | “Something went wrong on our side. Try again in a minute.” |
-| 503 | `places_unavailable` | a Places route while the search is off, or Google failed or timed out (10.2a) | the client shows the manual fields |
+| 503 | `places_unavailable` | a Places route while the search is off, or Google failed or timed out (10.2a); a location write with a `placeId` for the same reasons, or while the `places` limiter’s store is down (10.3) | the client shows the manual fields |
 | 503 | `unavailable` | a deny-when-down limiter, a store outage, or a staff action whose audit write failed (9.3) | “Townwise isn’t responding. Try again in a minute.” |
 | 400 | `purpose_unavailable` | `POST .../files` with a purpose other than `history` (10.11) | client bug |
 | 403 | `view_as_no_download` | a file download during view-as | controls are hidden |
@@ -1276,6 +1280,8 @@ Chunked sessions, because the Container Apps ingress closes a request at 240 sec
 | Reading | text streamed (the upload cap); workbooks and Word documents 10 MiB, 2,000 parts, 64 MiB a part, 200 MiB declared, 100 to 1 a part over 1 MiB, `word/document.xml` 50 MiB; PDFs 25 MiB, 1,000 pages, 20,000 text items a page; 2,000,000 rows, 200 columns, 10 sheets; 192 MiB of heap and 20 minutes a file |
 | ZIP archives | 20,000 entries and 2 GiB declared, every depth together; 100 to 1 for the archive and for each entry over 1 MiB; a 16 MiB central directory; a ZIP inside a ZIP opened from memory up to 50 MiB (50 MiB of them at once), one inside that never opened |
 | AI column step | 2 calls a file, 5 a ZIP (at most one a family of its tables), 20 an import; `TOWNWISE_FILES_MONTHLY_BUDGET_USD` per organization per month (default 5; 0 turns it off) |
+
+The drop screen (P11 step 3) is the client of these routes, through `client/src/portal/files/` (storage2 15.3): it never hard-codes a cap, sends each file’s name and size only in the create body, and offers the browser path (11.1) while stored files are off.
 
 ### 11A.3 Kinds
 
@@ -1574,7 +1580,7 @@ The sections are Home (`/locations/[id]`), Analytics (`/locations/[id]/analytics
 
 ### 15.8 Statement moments
 
-Two full-screen statements reveal word by word, hold, then dissolve into the page underneath. [Build note: the pieces are built (`client/src/portal/moments/`) and the server side is live; the player is not mounted in `PortalGate` yet, so nothing plays until the client wiring lands.]
+Two full-screen statements reveal word by word, hold, then dissolve into the page underneath. [Build note: `MomentProvider` (`client/src/portal/moments/`) is mounted in `PortalGate` and decides both moments from each access answer with `momentFor` (`moments.ts`).]
 
 | Moment | When | Lead (`white`) | Follow (`text2`) |
 |---|---|---|---|
@@ -1587,8 +1593,9 @@ Two full-screen statements reveal word by word, hold, then dissolve into the pag
 - **Timing.** The first word starts at 120ms. Each word fades in over 200ms (`--ease-out`), 80ms after the one before, closer together when a line would take longer than 640ms. A clause or a sentence inside a line holds 140ms more (at most twice a line). The follow starts 360ms after the lead lands, holds 1.4s once it lands, and the layer fades out over 200ms. Request received for a two-word name is gone at about 3.3s, and every moment ends within 5 seconds.
 - **Reduced motion.** Both lines whole at once, still for 2.4s, then gone at once.
 - **Any input ends it.** A press, touch or wheel is absorbed (it never reaches the page under the opaque layer) and fades the layer out; once that press is over, presses reach the page. On web a press is over when its click has landed on the layer, or 350ms after it lifts if no click comes, because a touch's click is aimed when the finger lifts; under reduced motion the layer goes at that point too. A key removes it at once and still does its job on the page (Tab moves focus). Repeats and lone modifier keys are ignored, and so is any input in the first 300ms, so the press that sent a request can’t end its moment. Android back dismisses it and is consumed. A moment that would start in a hidden tab keeps its ground up and waits until the tab is visible.
-- **Screen readers.** The visual words are hidden from assistive tech, and the statement is said once, as plain text: on web through a polite status region that exists before any moment, on native through an announcement. On native with a screen reader running there are no visuals at all. The layer never takes focus.
+- **Screen readers.** The visual words are hidden from assistive tech, and the statement is said once, as plain text: on web through a polite live region that exists before any moment (`aria-live="polite"` without `role="status"`, so it never competes with a page's own status notice), on native through an announcement. On native with a screen reader running there are no visuals at all. The layer never takes focus.
 - **One player.** `MomentProvider` in `PortalGate` plays one moment at a time; a page may call `useMoment().play(statement)` for its own statements and hold its own entrance while `useMoment().playing`.
+- **When it decides.** On every new access answer (`GET /api/me`, or an answer applied in its place), in the same render, so the layer and `playing` are up before the page paints. Request received needs this session's previous answer in `no_org`, `rejected` or `removed` and the new one `pending`: a fresh load or Check again on Waiting plays nothing, and neither does a decline that returns an invited person to Waiting. Each moment is keyed (the request's id; the person and the organization for the welcome) and plays once in a session, so a later re-read that still carries `welcome` (its `POST` failed) does not replay it. Under view-as, or on the first answer after it, nothing plays and nothing is posted. Nothing is stored on the device.
 
 ---
 
@@ -1647,6 +1654,7 @@ Every page below lists its content top to bottom, its one primary action, and it
   - Town: a select grouped “College towns” (six) and “Seasonal and event towns” (six), then “Another town”, which reveals Town name and State.
   - Number of locations (1 to 50).
   - “Anything we should know? (optional)”, with the helper “Don’t include guest names or sales figures.”
+- While the Google Places search is on, Step 1 “Find your restaurant” comes before these fields, and a confirmed place takes Town’s place (10.2a).
 - Primary: “Send request”.
 - Side column, “What happens next”, numbered 01 to 03: “Someone on our team reviews your request.”, “We don’t send email yet. Check back here.”, “Once you’re approved, you’ll upload your sales history and see your town.”
 - Footer line: “Signed in as {email}. Using the wrong Google account? Sign out and continue with another one.”
@@ -1722,7 +1730,7 @@ Primary: “Sign in again” (kit `POST /auth/logout`, then `/sign-in`).
 | Error | Network copy with Try again |
 | Success | The list, or the redirect. After a join, the notice “You joined {org}. {inviter} added {email}. Not your team? Leave {org}.” (F1) |
 
-**P10. Add location (`/locations/new`, org admins).** Fields: Name, and Town (as P3). Primary: “Add location”. Errors: “Another location already uses that name.” and “You’ve reached 25 locations. Write to hello@townwise.tech for more.” On success it opens the new location’s Home (P11).
+**P10. Add location (`/locations/new`, org admins).** Fields: Name, and Town (as P3); while the Google Places search is on, the form starts with it (10.3). Primary: “Add location”. Errors: “Another location already uses that name.” and “You’ve reached 25 locations. Write to hello@townwise.tech for more.” On success it opens the new location’s Home (P11).
 
 **P11. Home (`/locations/[id]`, the location’s first page)**
 
@@ -1735,7 +1743,14 @@ Home replaced the Forecast page here (owner decision, 2026-11-05); its data chec
 - **Last week, {Oct 26} to {Nov 1}** (panel), “Against the same week last year”: on web, seven pairs of bars (last week solid `mint`, last year outlined `line`, aria-hidden) with the key and the printed scale; on native the text and the table only (D21). “Last week: {1,020} guests, {4%} more than the same week last year ({980}), compared over 7 days.”, or “on the {n} days both weeks have” when partial: the totals and the change are over the days with data in both weeks. States: “Your history ends {date}. Upload the days since to compare last week.” with the upload link (web), when the history ends before last week; “No {guests} stored for last week, so there is nothing to compare yet.” with the same link, when it reaches past a gap; “No data for the same week last year, so there is nothing to compare yet.”; no days in common; no history. “Show the numbers”: Day, Last week, Last year, Change. When forecasts arrive (14.3) this card compares forecast with what happened; until then it never shows a prediction.
 - **This month in {Town}**, eyebrow “{November 2026}”: the month as a grid (aria-hidden, with a key: a white corner for a town event or holiday, a `text2` corner for a note, this week outlined); every event and note on the month in date order with its sources (“Veterans Day. Federal holiday.”, “Your note: Private event, more guests than usual.”); for one of the twelve towns, “Food-service jobs in {Grafton County}, {November} 2024: {97.4} (2024 average = 100).” with “County, not town. Employment is a stand-in for demand.” and the BLS source; “Your {November} in past years” with one line per past year, newest first, at most three (“{118} guests a day over {30} days in 2025, {9%} below your 2025 daily average over {364} days.”, closed days left out; the year’s day count shows how much of that year the history covers); and **Who’s in town**: the month’s people in town (13.2, `GET .../people-in-town` for the month, read on its own; `client/src/portal/estimates/PeopleInTownSummary.tsx`): the term periods in words (“Fall term classes until Tue, Nov 17.”), a headcount range per run of days only where every input has a source (“About {9,500} to {10,500} people in town, from {2} sources.”), otherwise “Townwise can’t put a number on how many people are in {town} yet.” with a Planned tag, “A headcount from public counts is planned.”; “Your Saturdays averaged …” when the location has days both in term and between terms; and the provenance lines naming each source host as a link. A town Townwise hasn’t researched says so. A failed read shows its error and Try again in that place only.
 - **Your history** (panel, root `nativeID` “home-history” for the Reading screen’s animation): “{n} days”, “{first} to {last}. {n} missing days in between. Last upload {date} by {email}.”, the newest year as a heatmap that takes no focus (web; `role="img"` named by its summary), and links “See it in Analytics” and “Upload sales history” (web; native says where to upload).
-- **While onboarding’s `needsHistory(org, locations)` is true** (54’s, agreement 1): its HistoryStep takes the place of Bar order, Last week and Your history; This week (calendar only) and This month still show. [Until 54’s onboarding merges, `home/onboarding.ts` stands in: true when the organization has locations and none has a stored day, with a step that offers P13’s upload.]
+- **While onboarding’s `needsHistory(org, locations)` is true** (agreement 1 with session 54: the organization has locations and none has a stored day) and this location’s own history has no day: step 3, below, takes the place of Bar order, Last week and Your history; This week (calendar only) and This month still show.
+- **Step 3, Your history** (`client/src/portal/onboarding/`, `HistoryStep`; the Home2-Drop and Home2-Reading boards; 11A, 10.11). Mono “Step 3 of 3: Your history”, then “Drop in everything you have” and “Drop your exports as they are, as many as you have. Townwise reads the date, guest count and net sales for each day from them on its server.” Two columns from 1024px: the drop on the left; on the right the location card (“Your restaurant”, the name, the town and its kind) and “What Townwise keeps” (the files, stored privately with no public internet address, each original deleted after 365 days or sooner when deleted; from each file the three values a day and a cleaned copy; download or delete them on Sales data). On the first view of a fresh step the card moves from the left into the rail once (280ms) while the drop fades in; with reduced motion, on narrower screens and on native it is simply in place. Nothing is kept in browser storage.
+  - **Drop** (web): a dashed zone, “Drop files here”, “Many files at once is fine, by dragging them here or choosing them.”, the accept hint (11A’s cap from the create answer, never a constant) and “Choose files” (`multiple`, any type). Files dragged anywhere on the step drop there (“Drop to add {n} files”); one dropped elsewhere on the page is ignored, so the browser never opens it over the app and stops the uploads. Each file is its own row through the upload queue (storage2 15.2): name, size, a progress bar, “{speed} · About {t} left” or “Estimating”, “Waiting to upload”, “Reconnecting…”, the refusal’s words, and Cancel or Remove; above the rows “{n} files, {size} · About {t} left to upload”. Files from an earlier visit still uploading show “Upload interrupted. Drop it again.” with Remove. Primary “Read my history”, disabled with “Add at least one file.” until a file is stored. Then “What to drop in”: daily sales summaries; sales reports as Excel, CSV or PDF (a PDF needs a table, scans can’t be read); ZIPs of exports; check-level exports (item-level don’t work); as many years as you have; closures and events go on the Notes page (notes inside files aren’t read).
+  - **The browser path** (11.1) is always linked under the drop as “Prefer to send only daily totals? Read the file in your browser instead.”, and after a refusal or a failed status read as “Or read a CSV file in your browser and send only the date, guest count and net sales for each day.” While stored files are off (503 `files_unavailable`, from the status read or a create) the drop is replaced by “Read a file in your browser” and P13’s “Upload sales history”.
+  - **Reading** (“Reading your history”, “You can close this page. Townwise keeps reading on its server, and Home shows your history when it’s done.”): “{done} of {n} files read · {About {t} left to read, Estimating, Waiting for a turn or Waiting for your answer}”; each file’s line (11A.6) with its own time left to read or “Estimating”, a bar when the server knows the total, a ZIP’s count and “See what’s inside” (its files inside, each with its status and reason, as on Sales data); the question (ImportQuestion) when the reader needs an answer; every file kept and not used with its reason; “Found so far” from the import’s counts; and the calendar of days read so far (the analytics heatmap, one picture named by its summary, unread days of the drawn years up to yesterday as “Not read yet”), re-read when the import applies more days. New drops join the started import. Native shows the same in words, with no calendar and no drop (“Drop your files from a computer at townwise.tech.”).
+  - **Done**: “Done. {n} days, {first} to {last}.” and “Opening Home.”; after 2.5 seconds, or on “Go to Home now”, Home and the organization load again and the step leaves; on web Home’s history card grows from where the calendar was (280ms; reduced motion: it just appears), and focus moves to it when the step held focus. While this screen still has uploads running it waits (“Some files are still uploading. Going to Home now stops them.”). An import that found no day says “Done. Townwise found no days it could use in these files.”, keeps every file’s reason listed and the drop zone open.
+  - **View-as**: no drop and no upload (no file input, the queue never created), “Choose files”, “Read my history” and the browser path’s link disabled with the read-only line, file names shown as their kind; the status reads run as any GET does.
+  - A screen reader hears one status line when the step changes (reading, a question, done), never a time left or a byte count.
 - No primary button of Home’s own.
 
 | State | Shows |
@@ -1816,6 +1831,7 @@ Home replaced the Forecast page here (owner decision, 2026-11-05); its data chec
 **P16. Location settings (`/locations/[id]/settings`, org admins)**
 
 - Fields: Name, and Town. Primary: “Save changes”.
+- While the Google Places search is on, a section “Change this location’s place” (10.3).
 - A section “Delete location”. When the location has no sales and no notes, it shows an outline “Delete location” with a typed-name confirmation. Otherwise it says “Delete this location’s sales data and notes first.”
 - States: loading; the field error “Another location already uses that name.”; success notice “Saved.”; after a delete, `/dashboard` with “Deleted {name}.”
 
@@ -2126,6 +2142,7 @@ Client tests:
 - the view-as banner renders, and writes are disabled;
 - the twelve town ids in the client’s `towns.ts` match the same literal list as the api test;
 - statement moments (`test/portal/moments/`): the copy and the timeline (`timing.test.ts`, `moments.test.ts`), and the player on native and web (`provider.test.native.tsx`, `provider.test.web.tsx`): one moment at a time, said once, hidden from assistive tech, dismissed by a key at once and by a press after the grace period, reduced motion, a native screen reader, Android back and a hidden tab.
+- which moment plays when (`moments.test.ts` > `momentFor`; `decisions.test.native.tsx` and `decisions.test.web.tsx`, the whole app with `PortalGate`): the send's `pending` answer covers the redirect to Waiting with request received; a fresh load of Waiting plays nothing; the welcome is up, with `playing` true, in the first render of the first page; it posts `/api/me/welcome` once and a re-read does not replay it; under view-as nothing plays or posts; the live region says it once.
 - Analytics (`test/portal/analytics/`): the compute modules (`compute.test.ts`); the heatmap’s grids, one tab stop, keys, hover preview, the Day panel’s sources and the filters’ effect on the marks and the basis line, with no write and no storage, the same under view-as (`heatmap.test.web.tsx`); the native month list, its Day panel and the thin and empty copy (`analytics.test.native.tsx`); the shared checkbox (`test/portal/ui/checkbox.test.*.tsx`).
 
 ---
@@ -2242,6 +2259,12 @@ Each is marked inline with “lead default”:
 ---
 
 ## 23. Changelog
+
+**2026-11-06, places search in the app.** The Google Places search is on P3 (Step 1, “Find your restaurant”), P10 and P16 while it is on (10.2a); P3 learns that by sending autocomplete `{}`, and P10 and P16 from `placeSearch` in `GET /api/org` (10.3). `POST` and `PATCH /api/org/locations` take a `placeId`: the API asks Google for the place, refuses a town that isn’t its own, stores Google’s current id, and spends one call of the `places` budget for it (6.4, 10.3, 10.8, 10.9). `location.created` and `location.updated` add `hasPlace` (9.2). A location keeps the place’s id and town, never the address or the map.
+
+**2026-11-06, onboarding step 3.** Home shows the drop screen (P11, “Step 3, Your history”) while the organization has locations and none has a stored day: files go to stored files (10.11, 11A) through the upload queue, the import is read on the server with its questions on the screen, and Done hands over to Home. While stored files are off (503 `files_unavailable`) it offers the browser upload (11.1) instead. It replaces `home/onboarding.ts`’s stub.
+
+**2026-11-06, statement moments on.** `MomentProvider` is mounted in `PortalGate`, and the two moments play (15.8): request received when this session's access goes to `pending`, and the welcome while `GET /api/me` carries it (`welcome` joins the client's `MeResponse` schema). Never under view-as. The web live region drops `role="status"` so it never competes with a page's notice. Tests in Section 20.
 
 **2026-11-06, forecast runs.** Staff import a model run's outputs for a location (`townwise.forecast-run/1`, 14.4) from P21 as a draft, then publish, withdraw or delete it, each a staff action in the org's staff activity (9.2, 10.7). Owners, view-as and TownwiseAI's `get_forecast` read published runs only, the newest one whose data ends before each day, with ranges, labels made in code, actuals and live accuracy; the model card shows the run (10.13). Two collections (6.20, 6.21), deleted with the location's sales data, the location and the organization. Nothing is published yet (owner decision 2026-11-05: Sawtooth's v3 once it joins and consents).
 

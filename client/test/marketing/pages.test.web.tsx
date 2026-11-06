@@ -285,6 +285,13 @@ test('Privacy makes the three commitments and no longer says the app has no uplo
   expect(text).toContain('Effective November 5, 2026. Last updated November 6, 2026.');
   expect(text).toContain('public facts about its town (its calendar, and who is likely in town, with the public sources behind them). TownwiseAI never reads your files');
   expect(text).toContain('Answers are deleted with the location’s sales data, the location or the organization.');
+  // Stored files (privacy pass 2), Google Places and Maps (1b) and the welcome marker (1c).
+  expect(text).not.toContain('The file itself never reaches our server');
+  expect(text).toContain('we delete each original 365 days after it was sent, or sooner when you delete it');
+  expect(text).toContain('never its rows, its name or your restaurant’s name');
+  expect(text).toContain('A deleted file can be recovered by us for 7 days, then it is gone.');
+  expect(text).toContain('When a found place shows a map, your browser or app loads the map image straight from Google, so Google sees your IP address. We keep only Google’s id for the place.');
+  expect(text).toContain('When you first open Townwise after approval, we note that we showed you the welcome, and when.');
   expect(text).toContain('the proposal’s wording stays only in your conversation, and in your notes if you save it.');
   expect(text).not.toMatch(/no place to upload|before any upload exists|email account holders/i);
 });

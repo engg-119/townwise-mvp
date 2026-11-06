@@ -19,7 +19,7 @@ import { BAR_ORDER_BODY } from '../../../src/portal/home/BarOrder';
 import { FORECAST_LINE } from '../../../src/portal/home/Home';
 import { PEOPLE_HEAD } from '../../../src/portal/home/ThisMonth';
 import type { LocationSummary, MeResponse } from '../../../src/portal/schemas';
-import { ACCESS, deferred, fakePortalApi, locationOf, meOf, offline, orgOf, viewAsMe, type FakePortalApi } from '../../helpers/portal';
+import { ACCESS, deferred, fakePortalApi, locationOf, meOf, offline, orgOf, refusal, viewAsMe, type FakePortalApi } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { analyticsFake, calendarBody, historyBody, holiday, note, run, townEvent } from '../analytics/fakes';
 import { NOVEMBER } from '../estimates/fakes';
@@ -84,6 +84,8 @@ function portal(options: {
     [CALENDAR]: calendarBody({ events: EVENTS, ...options.calendar }),
     [AGENT]: options.agent ?? { questions: QUESTIONS, activity: [] },
     [PEOPLE]: options.people ?? NOVEMBER,
+    // Stored files are off, as in production today.
+    [`${PATH}/imports/current`]: refusal(503, 'files_unavailable'),
   });
   const base = fake.json.bind(fake);
   if (options.pending === true) fake.json = (path, schema, opts) => (path.endsWith('/sales/history') ? deferred<never>().promise : base(path, schema, opts));
@@ -274,7 +276,7 @@ test('last week: no recent days, no last year, and a partial week that names its
 test('while needsHistory is true, the history step takes the place of the cards that need days, and this week still shows', async () => {
   const empty = [locationOf('l1', 'Main Street Bar', { townId: 'hanover-nh', name: 'Hanover', state: 'NH' })];
   await renderApp('/locations/l1', portal({ me: meOf(ACCESS.admin), locations: empty, days: [] }));
-  expect(await screen.findByRole('heading', { name: 'Add your sales history' })).toBeTruthy();
+  expect(await screen.findByRole('heading', { name: 'Drop in everything you have' })).toBeTruthy();
   expect(screen.getByText('No sales history yet. Home shows Hanover’s researched calendar and your notes.')).toBeTruthy();
   expect(screen.getByRole('heading', { name: 'What’s on the calendar, and how this week went before' })).toBeTruthy();
   expect(screen.getByText('Sample game')).toBeTruthy();
@@ -292,7 +294,7 @@ test('no days here but another location has some: the cards stay, each saying so
   expect(await screen.findByText('No sales history yet for this location.')).toBeTruthy();
   expect(screen.getByText('No sales history yet, so there is nothing to compare.')).toBeTruthy();
   expect(screen.getByRole('heading', { name: 'Order suggestions are planned' })).toBeTruthy();
-  expect(screen.queryByRole('heading', { name: 'Add your sales history' })).toBeNull();
+  expect(screen.queryByRole('heading', { name: 'Drop in everything you have' })).toBeNull();
 });
 
 test('view-as shows the same page and writes nothing', async () => {

@@ -135,6 +135,7 @@ The access request can start by finding the business on Google Places (New). The
 - `town` is a `TownInput` the access request accepts unchanged. It is one of the twelve researched towns when the locality, postal town, sublocality or `administrative_area_level_3` (town or township) matches one by name and state, ignoring case, or when any of them is an alias: Lake Placid, NY is `north-elba-ny` and North Conway, NH is `conway-nh`. Otherwise it is `{ townId: null, name, state }`, named by the first of those components. It is null when the place is outside the 50 states and DC (a territory included: its country component is not `US`, or its state is not in the fixed list), or has no usable town name.
 - Details also answers `map`: a dark Google Maps Static image of the place with a mint pin, as `{ url, width: 640, height: 320 }` (drawn at scale 2, 1280 by 640 pixels; the client sizes it by the 2:1 ratio). `url` is a `https://maps.googleapis.com/maps/api/staticmap` URL for Google's current id of the place, signed by the API with `GOOGLE_MAPS_SIGNING_SECRET` (`src/places/static-map.ts`), and the browser or the native app loads it from Google, which sees the viewer's IP address. The API never fetches, relays or keeps the image. The URL holds `GOOGLE_MAPS_STATIC_KEY`, a key of its own restricted to the Maps Static API with unsigned requests refused (`../infra/README.md`, step 17), so the key alone draws nothing. `map` is null while the map is off (either variable unset); a map URL is never made unsigned. Signing is local, so the map never fails or delays the answer.
 - Nothing from these routes is stored. The typed text, place ids, addresses, Google's answers and the signed map URL never reach a log or an audit event; a Google failure logs `townwise.places_failed` with the route id and a code. [CONFIRM: the town matching rules, which are not yet checked against live Google answers]
+- Places unit: the client offers the search in three places, and only while it is on: the access request (P3, Steps 1 and 2), Add location (P10) and a location's settings (P16, "Change this location's place"). Before P3 shows it, the client sends autocomplete an empty body, which answers 503 `places_unavailable` while the search is off and 400 `invalid_request` while it is on, with no call to Google (pinned by `test/places-off.int.test.ts` and `test/places.int.test.ts`); P10 and P16 read `placeSearch` from `GET /api/org` instead. Under view-as the client sends neither. A location keeps Google's id for the place the org admin confirmed and the town read from its address (see Organization and locations). The place's name only fills in Name (P10) or Organization name (P3) for the person to edit; the address, the suggestions, the typed text and the map are not kept.
 
 ### Team
 
@@ -260,7 +261,7 @@ Each location’s calibration state is derived from its sales days on every read
 | `member.role_changed` | `email`, `from`, `to` | after, by an org admin; before, by staff |
 | `member.removed` | `email`, `wasStatus` | after, by an org admin; before, by staff |
 | `member.left` | `email` | after |
-| `location.created`, `location.updated`, `location.deleted` | `name`, `townId` | after |
+| `location.created`, `location.updated`, `location.deleted` | `name`, `townId`; from `POST` and `PATCH /api/org/locations` also `hasPlace` (whether the location has a Google place after the write; never the id or an address; approval's `location.created` leaves it out) | after |
 | `sales.uploaded` | `locationId`, `dayCount`, `inserted`, `replaced`, `firstDate`, `lastDate`; from the file reader also `fileId` and `via` (`file`), with the uploader as actor | after |
 | `file.uploaded` | `locationId`, `kind`, `sizeBytes` | after |
 | `file.deleted` | `locationId`, `kind`, `reason` (`owner`) | after |
@@ -327,15 +328,17 @@ See Places search. `placeId` in the answer is Google's current id for the place,
 
 | Method and path | Policy | Request | Success | Errors |
 |---|---|---|---|---|
-| `GET /api/org` | member | | 200 `{ org, role, locations, requestedLocationCount }` | |
+| `GET /api/org` | member | | 200 `{ org, role, locations, requestedLocationCount, placeSearch }`; `placeSearch` is whether the Places search is on | |
 | `PATCH /api/org` | org_admin | `{ name }`, 2 to 120 characters | 200 `{ org }` | 400 |
 | `GET /api/org/staff-activity` | org_admin | | 200 `{ events }`, the newest 50 staff actions on this organization, each marked `applied` (see Audit and logs) | |
 | `POST /api/org/leave` | member | `{}` exactly | 200, as `GET /api/me` (`removed`, `byYou`) | 400; 409 `last_admin` |
-| `POST /api/org/locations` | org_admin | `{ name, town }` | 201 `{ location }` | 409 `location_name_taken`, `location_limit`; 400 `unknown_town` |
-| `PATCH /api/org/locations/:locationId` | org_admin | `{ name?, town? }`, at least one | 200 `{ location }` | 404; 409 `location_name_taken`; 400 `unknown_town` |
+| `POST /api/org/locations` | org_admin | `{ name, town, placeId? }`, `placeId` as on access requests, or null | 201 `{ location }` | 409 `location_name_taken`, `location_limit`; 400 `unknown_town`; with a `placeId`: 400 `unknown_place`, `place_not_supported`, `place_town_mismatch`; 429 `rate_limited`; 503 `places_unavailable` |
+| `PATCH /api/org/locations/:locationId` | org_admin | `{ name?, town?, placeId? }`, at least one; a `placeId` needs `town`; `placeId: null` takes the place off | 200 `{ location }` | 404; 409 `location_name_taken`; 400 `unknown_town`; with a `placeId`: as `POST` |
 | `DELETE /api/org/locations/:locationId` | org_admin | | 204 | 404; 409 `location_has_data` (any sales day or note) |
 
-Each location is `{ id, name, town, coverage, calibration, notesCount, lastUploadAt }`. An organization holds at most 25 locations. [CONFIRM: 25 locations]
+Each location is `{ id, name, town, placeId, coverage, calibration, notesCount, lastUploadAt }`. An organization holds at most 25 locations. [CONFIRM: 25 locations]
+
+A location's Google place (Places unit): an org admin picks it with the Places search, and the client sends its id with the town the confirm card showed. The API never takes that town on the client's word: it asks Google for the place (Place Details, the same field mask as the details route, in a session of its own), takes the town from its address components with the details route's rules (`townOfAddress` in `src/handlers/places.ts`), and refuses the write when the sent town is another (400 `place_town_mismatch`; one of the twelve by id, another town by name ignoring case and by state). Google not knowing the place is 400 `unknown_place`; a place outside the 50 states and DC, or with no usable town, is 400 `place_not_supported`; the search being off, or Google failing or taking over 5 seconds, is 503 `places_unavailable` (logged as `townwise.places_failed` with route id `org.locations.create` or `org.locations.update`). The location stores Google's current id for the place and the place's town; nothing else Google answers. A town changed by hand on `PATCH` (without a `placeId`) takes the place off, since the place no longer describes the location; a rename, or a save of the same town, keeps it. Each write with a place id makes one billed Place Details call, after the policy, the location lookup and the location limit, so a refused or foreign request never reaches Google. That call is spent first from the account's `townwise:places` budget, the one the Places routes share: a used-up budget is 429 `rate_limited`, and a store outage is 503 `places_unavailable` (the routes carry no limiter of their own, so a write without a place id spends nothing and works during an outage, as before). The audit events say only whether the location has a place (`hasPlace`), never the id or the address.
 
 ### Sales
 
@@ -472,7 +475,7 @@ A question is `{ id, kind: 'weekday', weekday, from, to, noSalesCount, weekdayCo
 | `townwise:requests` | `POST /api/access-requests`, per account | 5 per day | deny (503 `unavailable`) |
 | `townwise:view-as` | `POST /api/admin/view-as`, per account | 20 per hour | deny (503 `unavailable`) |
 | `townwise:chat` | `POST /api/org/locations/:locationId/chat/turns`, per account | 60 per hour | deny (503 `unavailable`) |
-| `townwise:places` | both Places routes together, per account | 300 per hour | deny (503 `unavailable`) |
+| `townwise:places` | both Places routes together, per account; each location write with a `placeId` also spends one (Organization and locations) | 300 per hour | deny (503 `unavailable`; on a location write, 503 `places_unavailable`) |
 | `townwise:files` | `POST .../files` (opening an upload), per account | 120 per hour | allow |
 | `townwise:file-chunks` | `PUT .../files/:fileId/chunks/:index`, per account | 1,500 per hour | allow |
 | `townwise:downloads` | both file downloads together, per account | 300 per hour | allow |
@@ -494,7 +497,7 @@ Every Townwise collection takes the `tw_` prefix. Every tenant document carries 
 | `tw_orgs` | name, status, who created it and from which request |
 | `tw_members` | invitations and seats in one collection: email, role, status, who added it and when |
 | `tw_access_requests` | the request form (with the optional Google place id; documents from before it read as none), its status and the decision message |
-| `tw_locations` | name, town and the optional Google place id (set only by approval from a request, never edited; older documents read as none) |
+| `tw_locations` | name, town and the optional Google place id (set by approval from a request, or by an org admin through the Places search with the town checked against Google; taken off with `placeId: null` or a town changed by hand; older documents read as none) |
 | `tw_sales_days` | date, guests and net sales in cents per location per day, and nothing else |
 | `tw_uploads` | per upload: counts, first and last dates, and who sent it; never a file name |
 | `tw_notes` | the note’s fields and the author’s user id |

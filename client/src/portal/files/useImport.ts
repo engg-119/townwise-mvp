@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AppState } from 'react-native';
 
+import { hasCode } from '../errors';
 import { usePortal } from '../PortalProvider';
 import { currentImport, getImport, type ImportView } from './api';
 
 // An import's status, polled (storage 13.1, storage2 15.1): every 2 seconds while files are waiting or being
 // read, every 10 seconds while it is open or waiting for an answer, and not at all once it is done. A poll that
 // falls due while the page is hidden (web) or the app is in the background waits until it is back. After an error
-// the next poll is 10 seconds later, and the error is returned until a poll succeeds.
+// the next poll is 10 seconds later, and the error is returned until a poll succeeds. While stored files are off
+// (503 files_unavailable) nothing is polled: the answer won't change until a deploy turns them on, so the screen
+// shows its other way in, and Refresh reads again.
 
 export const FAST_POLL_MS = 2_000;
 export const SLOW_POLL_MS = 10_000;
@@ -36,7 +39,7 @@ export interface ImportPoll {
   /** Null before the first answer, and when `current` finds no import. */
   import: ImportView | null;
   loading: boolean;
-  /** The last poll's error, until a poll succeeds. */
+  /** The last poll's error, until a poll succeeds. 503 files_unavailable ends polling until Refresh. */
   error: unknown;
   /** Reads again now (after Read my history, an answer, or a drop). */
   refresh: () => void;
@@ -57,10 +60,11 @@ export function useImport(locationId: string, importId: string): ImportPoll {
     let due = false;
     let view: ImportView | null = null;
     let failed = false;
+    let off = false;
     const read = (): Promise<ImportView | null> => (importId === 'current' ? currentImport(api, locationId) : getImport(api, locationId, importId));
 
     function schedule(): void {
-      const delay = pollDelay(view, failed);
+      const delay = off ? null : pollDelay(view, failed);
       if (delay !== null) timer = setTimeout(() => { void poll(); }, delay);
     }
 
@@ -79,6 +83,7 @@ export function useImport(locationId: string, importId: string): ImportPoll {
       } catch (error) {
         if (!live) return;
         failed = true;
+        off = hasCode(error, 503, 'files_unavailable');
         setState((previous) => ({ key, view: previous.key === key ? previous.view : null, error, loaded: true }));
       }
       schedule();

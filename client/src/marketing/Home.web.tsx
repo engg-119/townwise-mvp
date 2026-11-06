@@ -186,7 +186,7 @@ export default function Home(): React.JSX.Element {
             </div>
             <div className="faq-i">
               <h3 className="h3">What data do I need to give you?</h3>
-              <p>Your daily guest counts and net sales, from a CSV export of your point-of-sale system. Once you have access, you upload the file in the app on the web. Your browser reads it and sends us only the date, guest count and net sales for each day, for one location. The file itself never reaches our server. Townwise is designed to start from public local information and improve as your history comes in, and we are testing how much history it takes to make a real difference.</p>
+              <p>Your daily guest counts and net sales, from a CSV export of your point-of-sale system. Once you have access, you drop your files in the app, and we store them privately for your organization and read the date, guest count and net sales for each day. Or your browser can read a CSV and send us only those three values a day, without the file. Townwise is designed to start from public local information and improve as your history comes in, and we are testing how much history it takes to make a real difference.</p>
             </div>
             <div className="faq-i">
               <h3 className="h3">Is my sales data shared, or used to train forecasts for other restaurants?</h3>

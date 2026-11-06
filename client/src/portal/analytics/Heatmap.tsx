@@ -12,7 +12,7 @@ import type { DayRecord } from './history';
 import { metricNumber, metricText, shortDate, type Metric } from './words';
 
 // The heatmap's props (home.md 4.4, build plan 8.3), shared with Heatmap.web.tsx, which draws the grid. Home
-// mounts it with `interactive={false}` and 54's Reading screen with `pending` too.
+// mounts it with `interactive={false}` and onboarding's Reading screen (onboarding/HistoryStep) with `pending` too.
 //
 // Native has no grid (D21): a month list, newest first, each month a 44px row with its days and average; pressing
 // a month opens its days as 44px rows (date, value, marks in words), and pressing a day selects it and shows
