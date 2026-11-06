@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
+import { Animated } from 'react-native';
 
 import type { FileView, ImportView } from '../../../src/portal/files/api';
 import { FORECAST_LINE } from '../../../src/portal/home/Home';
@@ -43,6 +44,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  Reflect.deleteProperty(window, 'matchMedia');
   jest.useRealTimers();
   jest.restoreAllMocks();
 });
@@ -329,6 +331,76 @@ test('done: the step says what it found and hands over to Home, which shows the 
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: STEP.goHome })); await Promise.resolve(); });
   await waitFor(() => { expect(document.getElementById('home-history')).not.toBeNull(); });
   expect(screen.queryByRole('region', { name: STEP.readingTitle })).toBeNull();
+});
+
+/** The location's org once the import applied its days, so Home draws its history card. */
+function readDays(api: FakePortalApi, analytics: AnalyticsFake): void {
+  analytics.answers[HISTORY] = historyBody(DAYS);
+  api.org = orgOf('org_admin', [locationOf('l1', 'Main Street Bar', HANOVER, {
+    coverage: { dayCount: 3, guestsDayCount: 3, netSalesDayCount: 3, firstDate: '2026-10-01', lastDate: '2026-10-03', missingDays: 0 },
+  })]);
+}
+
+const READING = importViewOf('i1', {
+  status: 'reading', startedAt: '2026-11-05T17:00:00.000Z',
+  files: [fileViewOf('f9', { name: 'old.csv', status: 'reading', result: null })],
+  progress: { filesTotal: 1, filesDone: 0, bytesTotal: 2048, bytesDone: 0 },
+});
+const DONE = importViewOf('i1', { status: 'done', finishedAt: '2026-11-05T17:01:00.000Z', found: READ_FOUND, files: [fileViewOf('f9', { name: 'old.csv' })] });
+
+test('done: with nothing still sending, Home takes over by itself after 2.5 seconds', async () => {
+  const { files, analytics, api } = await show(meOf(ACCESS.admin), { import: READING });
+  await screen.findByRole('region', { name: STEP.readingTitle });
+  readDays(api, analytics);
+  files.current = { import: DONE };
+  // The 2-second poll finds it done.
+  expect(await screen.findByText(STEP.opening, {}, { timeout: 4000 })).toBeTruthy();
+  expect(document.getElementById('home-history')).toBeNull();
+  await waitFor(() => { expect(document.getElementById('home-history')).not.toBeNull(); }, { timeout: 5000 });
+  expect(screen.queryByRole('region', { name: STEP.readingTitle })).toBeNull();
+}, 20_000);
+
+test('a file dropped while reading joins the import, and Done waits for it before Home takes over', async () => {
+  const { files, analytics, api } = await show(meOf(ACCESS.admin), { import: READING });
+  await screen.findByRole('region', { name: STEP.readingTitle });
+  choose([zeros('late.csv', 4)]);
+  await waitFor(() => { expect(files.puts).toHaveLength(1); });
+  expect(files.calls.filter((call) => call.method === 'POST' && call.path === '/files').map((call) => call.body)).toEqual(
+    [{ name: 'late.csv', sizeBytes: 4, purpose: 'history' }],
+  );
+  readDays(api, analytics);
+  files.current = { import: DONE };
+  expect(await screen.findByText(STEP.stayUploading, {}, { timeout: 4000 })).toBeTruthy();
+  // Well past the 2.5 seconds: still here, because leaving would stop the upload.
+  await act(() => new Promise((resolve) => { setTimeout(resolve, 3000); }));
+  expect(document.getElementById('home-history')).toBeNull();
+  expect(screen.getByRole('button', { name: STEP.goHome })).toBeTruthy();
+  await act(async () => { for (const put of files.puts.splice(0)) put.ok(); await Promise.resolve(); });
+  expect(await screen.findByText(STEP.opening)).toBeTruthy();
+  await waitFor(() => { expect(document.getElementById('home-history')).not.toBeNull(); }, { timeout: 5000 });
+}, 20_000);
+
+test('reduced motion: the calendar fills in with no fade', async () => {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    value: (query: string) => ({ matches: query === '(prefers-reduced-motion: reduce)', media: query, addEventListener: () => undefined, removeEventListener: () => undefined }),
+  });
+  const timing = jest.spyOn(Animated, 'timing');
+  const { analytics } = await show(meOf(ACCESS.admin), { import: { ...READING, appliedVersion: 1 } });
+  analytics.answers[HISTORY] = historyBody(DAYS);
+  await screen.findByRole('region', { name: STEP.readingTitle });
+  const calendar = document.getElementById('history-step-calendar');
+  if (calendar === null) throw new Error('no calendar');
+  await waitFor(() => { expect(within(calendar).getByRole('img').getAttribute('aria-label')).toMatch(/Oct 1, 2026 to Oct 3, 2026/); });
+  expect(timing).not.toHaveBeenCalled();
+});
+
+test('motion allowed: the calendar fades in each new batch of days', async () => {
+  const timing = jest.spyOn(Animated, 'timing');
+  const { analytics } = await show(meOf(ACCESS.admin), { import: { ...READING, appliedVersion: 1 } });
+  analytics.answers[HISTORY] = historyBody(DAYS);
+  await screen.findByRole('region', { name: STEP.readingTitle });
+  await waitFor(() => { expect(timing).toHaveBeenCalled(); });
 });
 
 test('nothing usable: the reasons stay listed with the drop zone, and no hand-over', async () => {
