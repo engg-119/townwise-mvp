@@ -11,7 +11,7 @@ import { ErrorNotice, LoadingLine, Notice } from '../ui/feedback';
 import { Small } from '../ui/text';
 
 // Small pieces the location pages share (spec 15.6, 15.7, P11 to P16): the not-available state, the upload
-// action (web only, D20), “Show the numbers”, data slots, and the pressed-button groups of the note form.
+// action (web only, D20), “Show the numbers”, and the pressed-button groups of the note form.
 
 export const NATIVE_UPLOAD = 'Upload from a computer at townwise.tech.';
 
@@ -65,11 +65,6 @@ export function ShowNumbers(props: { children: React.ReactNode }): React.JSX.Ele
       {open ? props.children : null}
     </View>
   );
-}
-
-/** A data slot of the illustrative layout (`{guests}`): never a sample value (spec 14.2, 15.7). */
-export function Slot(props: { children: string }): React.JSX.Element {
-  return <Text style={styles.slot}>{props.children}</Text>;
 }
 
 export interface ToggleOption<T extends string | number> { value: T; label: string; accessibilityLabel?: string }
@@ -141,10 +136,6 @@ const styles = StyleSheet.create({
   toggleBox: { width: 16, height: 16, borderWidth: 1, borderColor: c.line, alignItems: 'center', justifyContent: 'center' },
   toggleGlyph: { ...theme.type.mono, lineHeight: 14, color: c.text2 },
   toggleText: { ...theme.type.ui, color: c.white, textDecorationLine: 'underline', textDecorationColor: c.line },
-  slot: {
-    ...theme.type.monoUi, fontVariant: ['tabular-nums'], color: c.text2, borderWidth: 1, borderStyle: 'dashed', borderColor: c.line,
-    paddingHorizontal: 5,
-  },
   group: { gap: theme.space[2], minWidth: 0 },
   legend: { ...theme.type.ui, color: c.white },
   toggles: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space[2] },

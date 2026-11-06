@@ -161,19 +161,6 @@ test('view-as on Sales data: Upload, the closure-note link and Delete stay focus
   expect(window.location.pathname).toBe('/locations/l1/sales');
 });
 
-test('Forecast on web: the empty status’s primary is the upload link; under view-as it is disabled in place', async () => {
-  renderAt('/locations/l2', portal(meOf(ACCESS.admin)));
-  await screen.findByText('Not started');
-  const links = screen.getAllByRole('link', { name: 'Upload sales history' });
-  expect(links.map((link) => link.getAttribute('href'))).toEqual(['/locations/l2/sales/upload', '/locations/l2/sales/upload']);
-  cleanup();
-  renderAt('/locations/l2', portal(viewAsMe(ACCESS.admin)));
-  await screen.findByText('Not started');
-  const buttons = screen.getAllByRole('button', { name: 'Upload sales history' });
-  expect(buttons).toHaveLength(2);
-  for (const button of buttons) expectReadOnly(button, 'forecast-ro');
-});
-
 test('the note form on web: date inputs, pressed buttons, and the note it sends', async () => {
   const api = portal(meOf(ACCESS.member));
   api.answers['/api/org/locations/l1/notes'] = (body) => ({ note: noteOf('n9', { ...(body as NoteInput), createdByEmail: EMAIL }) });

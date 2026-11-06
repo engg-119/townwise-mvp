@@ -69,7 +69,7 @@ export function LocationSettings(): React.JSX.Element {
       if (hasCode(error, 404, 'not_found')) { setConfirming(false); reloadOrg(); return; }
       throw error;
     }
-    // Locations, or the one location left, whose Forecast tab Locations opens.
+    // Locations, or the one location left, whose Home Locations opens.
     showNotice({ text: `Deleted ${location.name}.` }, /^\/(dashboard|locations\/[^/]+)$/);
     reloadOrg();
     router.replace('/dashboard');

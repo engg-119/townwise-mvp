@@ -17,7 +17,7 @@ import { Columns, Panel, Section, Stack } from '../../../../src/portal/ui/layout
 import { Heading, Small } from '../../../../src/portal/ui/text';
 import { theme } from '../../../../src/theme';
 
-// P9. Locations (spec 16.3; the Dashboard board). One location: its Forecast tab, keeping any one-time notice.
+// P9. Locations (spec 16.3; the Dashboard board). One location: its Home, keeping any one-time notice.
 // Several: one row per location with its town, sales history, calibration in words, notes and the next step,
 // then the public profile of each of their towns. None: org admins get the Add location form inline; members
 // get a line saying their admin hasn't added one. After a join, the notice names who added them (F1).
@@ -93,7 +93,7 @@ export default function LocationsPage(): React.JSX.Element {
   const admin = access?.role === 'org_admin';
 
   if (state.status === 'loading') {
-    // Not the notice yet: with one location this page opens its Forecast tab, which shows it.
+    // Not the notice yet: with one location this page opens its Home, which shows it.
     return <Page eyebrow={orgName} title="Locations" notice={false}><LoadingLine text="Loading your locations" minHeight={400} /></Page>;
   }
   if (state.status === 'failed') {

@@ -336,7 +336,7 @@ For an organization signed outside the app: on `/admin/orgs`, “New organizatio
 
 ### F11. Upload sales history (web)
 
-Rules are in Section 11. The entry points are the Forecast tab checklist, the Sales data tab, and the empty states on both. An org admin’s upload replaces the days it covers; a member’s adds new days only and leaves existing days unchanged (D16, 11.4).
+Rules are in Section 11. The entry points are Home’s history step and upload links (P11), the Sales data tab, and its empty state. An org admin’s upload replaces the days it covers; a member’s adds new days only and leaves existing days unchanged (D16, 11.4).
 
 ### F13. Delete a person or an organization (staff)
 
@@ -344,7 +344,7 @@ Rules are in 10.7 (Deletion). Staff delete a person from People (P22) after remo
 
 ### F12. Add a note
 
-Rules are in Section 12. The entry points are the Notes tab, the Forecast checklist, and “Add a closure note” beside the missing-days count on Sales data, which prefills kind `closure` and effect `closed`.
+Rules are in Section 12. The entry points are the Notes tab and “Add a closure note” beside the missing-days count on Sales data, which prefills kind `closure` and effect `closed`.
 
 ---
 
@@ -1322,7 +1322,7 @@ Mockups add the chip [DECISION NEEDED: minimum days of history before calibratio
 
 ### 14.2 What the app never shows in v1
 
-No forecast numbers, ranges, reasons or accuracy. No “calibrating” or “calibrated” states, and no progress for a process that does not run. No sample values. The one forward-looking block is the design system’s own pattern (Section 16, P11): a layout headed “Illustrative layout, not real output”, with slots only. [CONFIRM: show the illustrative layout in the app]
+No forecast numbers, ranges, reasons or accuracy. No “calibrating” or “calibrated” states, and no progress for a process that does not run. No sample values. The one forward-looking block is the design system’s own pattern (Section 16, P11): a layout headed “Illustrative layout, not real output”, with slots only. [CONFIRM: show the illustrative layout in the app] Home replaced the Forecast page at P11 (owner decision, 2026-11-05), so the app shows no illustrative layout today.
 
 ### 14.3 Reserved for later (not in the v1 API)
 
@@ -1495,7 +1495,7 @@ Two full-screen statements reveal word by word, hold, then dissolve into the pag
 | P8 | `/staff/sign-in-again` | Staff sign in again | `staff_reauth_required` | Gate |
 | P9 | `/dashboard` | Locations, home and first-run | members | Client app |
 | P10 | `/locations/new` | Add location | org admins | Client app |
-| P11 | `/locations/[id]` | Forecast: calibration status, getting started, what the forecast will show | members | Client app |
+| P11 | `/locations/[id]` | Home: this week on the calendar and in past years, bar order (Planned), last week, this month in town, your history | members | Client app |
 | P12 | `/locations/[id]/sales` | Sales data | members | Client app |
 | P13 | `/locations/[id]/sales/upload` | Upload sales history (web) | members | Client app |
 | P14 | `/locations/[id]/notes` | Notes, the tuning step | members | Client app |
@@ -1597,7 +1597,7 @@ Primary: “Sign in again” (kit `POST /auth/logout`, then `/sign-in`).
 
 **P9. Locations (`/dashboard`)**
 
-- With one location, it redirects to that location’s Forecast tab and keeps any one-time notice.
+- With one location, it redirects to that location’s Home (P11) and keeps any one-time notice.
 - With several: eyebrow is the organization name, title “Locations”. Org admins get an outline “Add location” on the right. One row per location: name (link), town, “{n} days of sales” (`mono`), the calibration heading in words, and “{n} notes”. Rows are at least 44px, with a `raised` hover.
 - For org admins, while the request’s location count is higher than the locations created: “Your request mentioned {n} locations. Add the others when you’re ready.”
 
@@ -1609,27 +1609,29 @@ Primary: “Sign in again” (kit `POST /auth/logout`, then `/sign-in`).
 | Error | Network copy with Try again |
 | Success | The list, or the redirect. After a join, the notice “You joined {org}. {inviter} added {email}. Not your team? Leave {org}.” (F1) |
 
-**P10. Add location (`/locations/new`, org admins).** Fields: Name, and Town (as P3). Primary: “Add location”. Errors: “Another location already uses that name.” and “You’ve reached 25 locations. Write to hello@townwise.tech for more.” On success it opens the new location’s Forecast tab.
+**P10. Add location (`/locations/new`, org admins).** Fields: Name, and Town (as P3). Primary: “Add location”. Errors: “Another location already uses that name.” and “You’ve reached 25 locations. Write to hello@townwise.tech for more.” On success it opens the new location’s Home (P11).
 
-**P11. Forecast (`/locations/[id]`, the default tab)**
+**P11. Home (`/locations/[id]`, the location’s first page)**
 
-- Page header: as on every location page (15.2): the eyebrow “{location name}, {town}, {state}”, the page’s title, then the switcher and links at the side.
-- **Status panel.** Kicker `tw-eyebrow` “Calibration”, heading `tw-h3` “Not calibrated yet”, then the body for the state (14.1). Under it, the data checks as a two-column definition list in `mono`: Days with data, First day, Last day, Missing days in between, Days with guests, Days with net sales, Last upload (“{date} by {email}”).
-- **Getting started**, numbered 01 to 04 like the homepage’s How it works. Each row has a two-digit counter in `mono` `text3`, a `tw-h3` title, a `small` body, and the client’s progress in plain `mono` words at the right:
-  1. “Your town”. “Public data on what moves demand in {town}, {state}.” Progress, derived from the bundled town data (Section 13): “{n} drivers and {m} key dates, from public sources” (singular forms for one, “no key dates” for none); “Employment pattern only. Drivers aren’t researched yet.” for a listed town with no drivers (Nantucket today); “Not researched yet” for another town. Link: “See your town” (Town tab).
-  2. “Upload your sales history”. “Export a daily summary from your point-of-sale system.” Progress: “Not started”, or “{n} days, {first} to {last}”. Link: “Upload sales history” (web), or “Upload from a computer at townwise.tech” on native [CONFIRM: web address for native users].
-  3. “Calibration”. “Calibration is designed to tune the town model to your business: daily guests and sales, 7 and 28 days ahead, each day with a range and a reason. This isn’t built into the app yet.” Progress: “Not calibrated yet”. No StatusTag: a client’s own data state is plain words (15.6).
-  4. “Tell Townwise what it can’t see”. “Closures, private events and openings, saved with this location. Nothing reads them yet.” Progress: “{n} notes”. Link: “Add a note” (Notes tab). A second line has a StatusTag, Planned: “Talking to your model is planned.”
-- **What a forecast will show.** Kicker “Illustrative layout, not real output”. One illustrative row on a `panel` with slots only: `{weekday}` `{date}`, `{guests}` guests, range `{low}` to `{high}`, `{sales}` sales, `{reason}`. Under it, the homepage’s qualifier, “In development. None of this is available to restaurants yet.”, and directly below it three lines with StatusTags copied from the homepage’s What you get: “7-day forecast” In progress, “28-day forecast” In progress, “A reason for every swing” Planned.
-- Primary: “Upload sales history” while the state is `no_sales_data` (web). Otherwise the page has no primary.
+Home replaced the Forecast page here (owner decision, 2026-11-05); its data checks live in P24’s Your data. It is built around the Monday decisions: what is on this week, the bar order, last week against what happened, and this month in town. Until forecasts exist it shows only history and the calendar, never a guess: every figure is a sum, an average or a share of the location’s own stored days, always of a past day. No figure is shown for a day after the last day of data or after today. It reads `GET .../sales/history`, `GET .../notes` and `GET .../calendar` (10.4, 10.10) in parallel, from two years and four weeks before this week’s Monday to the later of this month’s last day and this week’s Sunday, and writes nothing. “Today” is the device’s date and weeks run Monday to Sunday (all twelve towns are Eastern). Built from `client/src/portal/home/` and `client/src/portal/analytics/week.ts`.
+
+- Page header (15.2): the title is “Week of {Monday}”.
+- Lead: “From your sales through {Wed, Nov 4, 2026} and {Hanover}’s researched calendar.” (“US federal holidays” for a town with no researched calendar; “No sales history yet. Home shows …” with no days). Then an In progress line, “Forecasts are in development. Until then, Home shows your history and the calendar, never a guess.”, and a Planned line, “Questions from TownwiseAI about your days are planned.” [Planned, F5: the count of TownwiseAI’s open questions, linked, replaces that line.] Side: outline “Ask TownwiseAI” (P25).
+- **This week in {Town}**, “What’s on the calendar, and how this week went before”. When last year’s same week has at least 5 days with data: its total, “Same week last year, {Mon, Nov 3} to {Sun, Nov 9, 2025}. From all 7 days.” (or “From {n} of its 7 days.”), “{+9%} against that year’s usual for those days, compared over {n} days.” (when at least 5 have a usual), the busiest day and the quietest open day. Always: “On the calendar this week: {title} ({weekday}), and {n} more.” or “Nothing on {Town}’s researched calendar this week.”, over holidays and town events only. Term and season periods span weeks, so they mark no day: each one covering the week is said once under that line with its whole span and sources (“Fall term classes. Term, Sep 14 to Nov 17, 2026.”), and with no holiday or event the line reads “No holiday or town event on {Town}’s researched calendar this week.” Then a row per day, Monday to Sunday (today in the selected-row idiom): Day (with this week’s own figure only for a past day with data), On the calendar (each event with its kind and “Source: {label}” links, each note in words with its detail, or “Nothing listed”), Last year and Two years ago (the same weekday 52 and 104 weeks earlier: “{Sat, Nov 8, 2025}: {241} guests”, “{+31%} vs usual”, closed, and the holidays and town events on that day; “No data”; the second column only when any of its days has data). The footnote defines both terms: “Last year means the same weekday 52 weeks earlier. Usual is your average for that weekday in the 4 weeks either side, leaving out closed days, days with a note, and holiday and event days.” [CONFIRM: the baseline for usual] The coverage line, always: “{Town}’s researched calendar covers {from} to {to} so far, plus US federal holidays.”, or the not-researched lines of P24’s Day panel. “Show the numbers”: Day, Last year, Two years ago, Usual (last year). With no days at all, only Day and On the calendar show.
+- **Bar order** (panel), StatusTag Planned, “Order suggestions are planned”: “Townwise will suggest how much more or less beer, wine and spirits to order each week, and by when. It needs a forecast and your usual weekly order first. Townwise can’t see your stock.” No inputs. One line of history when last year’s same week has data for Thursday to Sunday: “Last year this week, Thursday to Sunday brought {58%} of the week’s guests.” (with the day count when the week is partial). [DECISION NEEDED: where the usual order comes from]
+- **Last week, {Oct 26} to {Nov 1}** (panel), “Against the same week last year”: on web, seven pairs of bars (last week solid `mint`, last year outlined `line`, aria-hidden) with the key and the printed scale; on native the text and the table only (D21). “Last week: {1,020} guests, {4%} more than the same week last year ({980}), compared over 7 days.”, or “on the {n} days both weeks have” when partial: the totals and the change are over the days with data in both weeks. States: “Your history ends {date}. Upload the days since to compare last week.” with the upload link (web), when the history ends before last week; “No {guests} stored for last week, so there is nothing to compare yet.” with the same link, when it reaches past a gap; “No data for the same week last year, so there is nothing to compare yet.”; no days in common; no history. “Show the numbers”: Day, Last week, Last year, Change. When forecasts arrive (14.3) this card compares forecast with what happened; until then it never shows a prediction.
+- **This month in {Town}**, eyebrow “{November 2026}”: the month as a grid (aria-hidden, with a key: a white corner for a town event or holiday, a `text2` corner for a note, this week outlined); every event and note on the month in date order with its sources (“Veterans Day. Federal holiday.”, “Your note: Private event, more guests than usual.”); for one of the twelve towns, “Food-service jobs in {Grafton County}, {November} 2024: {97.4} (2024 average = 100).” with “County, not town. Employment is a stand-in for demand.” and the BLS source; “Your {November} in past years” with one line per past year, newest first, at most three (“{118} guests a day over {30} days in 2025, {9%} below your 2025 daily average over {364} days.”, closed days left out; the year’s day count shows how much of that year the history covers); and a Planned line, “An estimate of how many people are in town each day is planned.” [Planned, F8: the people in town summary mounts here, labelled as model output.]
+- **Your history** (panel, root `nativeID` “home-history” for the Reading screen’s animation): “{n} days”, “{first} to {last}. {n} missing days in between. Last upload {date} by {email}.”, the newest year as a heatmap that takes no focus (web; `role="img"` named by its summary), and links “See it in Analytics” and “Upload sales history” (web; native says where to upload).
+- **While onboarding’s `needsHistory(org, locations)` is true** (54’s, agreement 1): its HistoryStep takes the place of Bar order, Last week and Your history; This week (calendar only) and This month still show. [Until 54’s onboarding merges, `home/onboarding.ts` stands in: true when the organization has locations and none has a stored day, with a step that offers P13’s upload.]
+- No primary button of Home’s own.
 
 | State | Shows |
 |---|---|
 | Loading | “Loading {location}” |
-| Empty | The `no_sales_data` status, with checklist step 02 selected (selected-row idiom) |
+| Empty | No days here: the calendar parts, and each card saying it has no history (“No sales history yet for this location.”, “No sales history yet, so there is nothing to compare.”); the HistoryStep while `needsHistory` |
 | Error | Network copy with Try again. A location id that is not in the organization (deleted, or never theirs): “This location isn’t available.” and a link to Locations. |
 | Success | As above |
-| View-as | Upload links disabled |
+| View-as | The same page; the upload links are disabled with the read-only line |
 
 **P12. Sales data (`/locations/[id]/sales`)**
 
