@@ -4,7 +4,7 @@ import { Platform, StyleSheet, View, type ViewStyle } from 'react-native';
 import { theme } from '../../theme';
 import { formatCount, formatDate, plural } from '../format';
 import { useBreakpoint, useLoad } from '../hooks';
-import { addDays, formatMonth, localToday } from '../locations/dates';
+import { addDays, formatMonth, localToday, monthRange } from '../locations/dates';
 import { fetchNotes, type Note } from '../locations/api';
 import { LoadFailure, Loading, ShowNumbers, UploadAction } from '../locations/parts';
 import { usePortal, useReadOnly } from '../PortalProvider';
@@ -21,7 +21,7 @@ import {
 } from './aggregates';
 import { BarChart, EffectBar, HorizontalBars, LineChart } from './AnalyticsCharts';
 import { calendarRange, fetchCalendar, fetchSalesHistory, type Calendar, type SalesHistory } from './api';
-import { canFocus, focusBounds, heatmapMonths, heatmapSummary } from './cells';
+import { canFocus, focusBounds, heatmapMonths, heatmapSummary, MONTH_ROWS_LINE } from './cells';
 import { DayPanel } from './DayPanel';
 import { dayContext } from './days';
 import { basisLine, defaultFilters, metricsWithData, toggleYear, yearsWithData, type Filters as FilterState } from './filters';
@@ -129,10 +129,24 @@ function AnalyticsView(props: { data: Data; today: string; locationId: string; r
 
   const shown = preview ?? selected;
   const base = selected ?? shown;
-  const step = (by: number): (() => void) | null => {
+  /**
+   * The day before or after `from`. Web draws every day in the checked years; native draws only the months in its
+   * list, so there a step into a month with no row jumps to the nearest listed month's edge (a seasonal closure),
+   * and stops at the first and last listed months.
+   */
+  const neighbour = (from: string, by: -1 | 1): string | null => {
+    const next = addDays(from, by);
+    if (!native || months.some((row) => row.month === next.slice(0, 7))) return next;
+    const month = next.slice(0, 7);
+    const target = by < 0 ? months.find((row) => row.month < month) : months.findLast((row) => row.month > month);
+    if (target === undefined) return null;
+    const range = monthRange(target.month);
+    return by < 0 ? range.to : range.from;
+  };
+  const step = (by: -1 | 1): (() => void) | null => {
     if (base === null || bounds === null) return null;
-    const next = addDays(base, by);
-    if (!canFocus(next, bounds)) return null;
+    const next = neighbour(base, by);
+    if (next === null || !canFocus(next, bounds)) return null;
     return () => { setSelected(next); setPreview(null); setFocusKey((key) => key + 1); };
   };
   const panelData = shown === null ? null : dayPanel(shown, {
@@ -170,6 +184,7 @@ function AnalyticsView(props: { data: Data; today: string; locationId: string; r
         {native ? (
           <Stack gap={12}>
             {heatmap}
+            <Small>{MONTH_ROWS_LINE}</Small>
             <Small>{summary}</Small>
             <Basis line={basis} />
           </Stack>

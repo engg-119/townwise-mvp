@@ -303,6 +303,9 @@ export interface MonthRow {
   mean: number;
 }
 
+/** Printed by native's month list, whose averages are heatmapMonths', so they never seem to contradict the basis line. */
+export const MONTH_ROWS_LINE = 'Month averages count every day with a value in the years you checked, including days your filters leave out.';
+
 /**
  * Per month of the shown years with a value for the metric, newest first: the days, their total and their average.
  * Every value counts, kept or left out by the filters, because this is the table behind the cells ("Show the

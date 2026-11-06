@@ -12,6 +12,7 @@ jest.mock('expo-splash-screen', () => ({
 import * as SecureStore from 'expo-secure-store';
 import { cleanup, fireEvent, screen, within } from 'expo-router/testing-library';
 
+import { MONTH_ROWS_LINE } from '../../../src/portal/analytics/cells';
 import { PANEL_EMPTY } from '../../../src/portal/analytics/panel';
 import type { MeResponse } from '../../../src/portal/schemas';
 import { ACCESS, fakePortalApi, meOf, orgOf, viewAsMe, type FakePortalApi } from '../../helpers/portal';
@@ -104,4 +105,41 @@ test('thin and empty states say what is missing', async () => {
   expect(await screen.findByText('No sales history yet.')).toBeTruthy();
   expect(screen.getByText('Upload from a computer at townwise.tech.')).toBeTruthy();
   expect(screen.getByRole('checkbox', { name: 'Closed days' }).props.accessibilityState).toMatchObject({ disabled: true });
+});
+
+// A seasonal closure: no rows in Jan 2026, and Christmas 2025 all zero (a closed day the filters leave out).
+const SEASONAL = run('2025-09-01', '2026-11-04', (date) => {
+  if (date.startsWith('2026-01')) return null;
+  return date === '2025-12-25' ? 0 : 100;
+});
+
+test('Previous day and Next day stay on days the month list shows, skipping a month with no rows', async () => {
+  await renderApp('/locations/l1/analytics', portal(meOf(ACCESS.member), SEASONAL));
+  const months = await screen.findByLabelText('Months, daily guests');
+  expect(within(months).queryByRole('button', { name: /^Jan 2026,/ })).toBeNull();
+  await fireEvent.press(within(months).getByRole('button', { name: /^Dec 2025,/ }));
+  await fireEvent.press(within(screen.getByLabelText('Days in Dec 2025')).getByRole('button', { name: /^Wed, Dec 31, 2025\./ }));
+  expect(screen.getByRole('heading', { name: 'Wednesday, Dec 31, 2025' })).toBeTruthy();
+  // Next day jumps over January, which has no row, and the panel follows under Feb 1.
+  await fireEvent.press(screen.getByRole('button', { name: 'Next day' }));
+  expect(screen.getByRole('heading', { name: 'Sunday, Feb 1, 2026' })).toBeTruthy();
+  expect(screen.getByLabelText('Days in Feb 2026')).toBeTruthy();
+  await fireEvent.press(screen.getByRole('button', { name: 'Previous day' }));
+  expect(screen.getByRole('heading', { name: 'Wednesday, Dec 31, 2025' })).toBeTruthy();
+  // On the first day of data there is no earlier row, so Previous day is off and the panel stays.
+  await fireEvent.press(within(months).getByRole('button', { name: /^Sep 2025,/ }));
+  await fireEvent.press(within(screen.getByLabelText('Days in Sep 2025')).getByRole('button', { name: /^Mon, Sep 1, 2025\./ }));
+  expect(screen.getByRole('heading', { name: 'Monday, Sep 1, 2025' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Previous day' }).props.accessibilityState).toMatchObject({ disabled: true });
+  await fireEvent.press(screen.getByRole('button', { name: 'Previous day' }));
+  expect(screen.getByRole('heading', { name: 'Monday, Sep 1, 2025' })).toBeTruthy();
+});
+
+test('the month rows say they count the days the filters leave out (T)', async () => {
+  await renderApp('/locations/l1/analytics', portal(meOf(ACCESS.member), SEASONAL));
+  const months = await screen.findByLabelText('Months, daily guests');
+  // Dec 2025 counts its closed zero day in the month's average, while the basis line leaves it out.
+  expect(within(months).getByRole('button', { name: /^Dec 2025,/ }).props.accessibilityLabel).toBe('Dec 2025, 31 days with data, 97 guests on average');
+  expect(screen.getAllByText('Based on 398 days with a guest count. Leaves out 1 closed day.').length).toBeGreaterThan(0);
+  expect(screen.getByText(MONTH_ROWS_LINE)).toBeTruthy();
 });
