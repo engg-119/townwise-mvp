@@ -8,6 +8,7 @@ jest.mock('expo-splash-screen', () => ({
 }));
 
 import { act, cleanup, fireEvent, screen, waitFor } from 'expo-router/testing-library';
+import { AccessibilityInfo } from 'react-native';
 
 import type { LocationSummary, OrgResponse } from '../../../src/portal/schemas';
 import {
@@ -260,5 +261,78 @@ describe('P16 Change this location’s place', () => {
     await renderApp('/locations/l1/settings', off.api);
     expect(await screen.findByRole('heading', { name: 'Name and town' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: 'Change this location’s place' })).toBeNull();
+  });
+});
+
+describe('focus follows the steps', () => {
+  // On native the screen reader moves to what replaced the part that had it (places/focus.ts); the web's focus() is
+  // pinned in places-search.test.web.tsx. Each entry names where it moved: a field by its label, text by its words.
+  function focusMoves(): () => string[] {
+    const moves: string[] = [];
+    // Read when the event is sent: what the screen reader would say then.
+    jest.spyOn(AccessibilityInfo, 'sendAccessibilityEvent').mockImplementation((node) => {
+      const props = (node as unknown as { props: { accessibilityLabel?: string; children?: unknown } }).props;
+      moves.push(props.accessibilityLabel ?? String(props.children));
+    });
+    return () => moves;
+  }
+  afterEach(() => { jest.restoreAllMocks(); });
+
+  test('P3: the card, then Looks right to the Step 2 heading, Change place to the field, and Search again to the field', async () => {
+    const moves = focusMoves();
+    const api = fakePortalApi({ me: meOf(ACCESS.noOrg) });
+    installPlaces(api);
+    await renderApp('/request-access', api);
+    await find(SEARCH, 'Lou');
+    // The page opening takes no focus.
+    expect(moves()).toEqual([]);
+    await pick('Lou’s Restaurant, Hanover, NH, USA');
+    await fireEvent.press(screen.getByRole('button', { name: 'Looks right' }));
+    await fireEvent.press(await screen.findByRole('button', { name: 'Change place' }));
+    await screen.findByText('Step 1 of 3');
+    await find(SEARCH, 'Lou');
+    await pick('Lou’s Bakery, Norwich, VT, USA');
+    await fireEvent.press(screen.getByRole('button', { name: 'Search again' }));
+    expect(moves()).toEqual(['Here’s what we found', 'About you', SEARCH, 'Here’s what we found', SEARCH]);
+  });
+
+  test('P10: Looks right moves to the place in the form', async () => {
+    const moves = focusMoves();
+    const api = fakePortalApi({ me: meOf(ACCESS.admin), org: placed(orgOf('org_admin')) });
+    installPlaces(api);
+    await renderApp('/locations/new', api);
+    await find('Search Google Maps for the location', 'Lou');
+    await pick('Lou’s Restaurant, Hanover, NH, USA');
+    await fireEvent.press(screen.getByRole('button', { name: 'Looks right' }));
+    await screen.findByLabelText('Name');
+    expect(moves()).toEqual(['Here’s what we found', 'On Google Maps']);
+  });
+
+  test('P16: opening moves to the field; Cancel and Use this place move to the line that says whether it is linked', async () => {
+    const moves = focusMoves();
+    const locations = [{ ...FIRST, placeId: null }, SECOND];
+    const api = fakePortalApi({
+      me: meOf(ACCESS.admin), org: placed(orgOf('org_admin', locations)),
+      fallback: locationsFake({ sales: { l1: salesOf([]), l2: salesOf([]) } }),
+    });
+    installPlaces(api);
+    const moved = locationOf('l1', 'Main Street Bar', { townId: null, name: 'Norwich', state: 'VT' }, { placeId: 'ChIJTestPlace0002' });
+    api.answers['/api/org/locations/l1'] = () => {
+      api.org = placed(orgOf('org_admin', [moved, SECOND]));
+      return { location: moved };
+    };
+    await renderApp('/locations/l1/settings', api);
+    await fireEvent.press(await screen.findByRole('button', { name: 'Find this location’s place' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Cancel' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Find this location’s place' }));
+    await find('Search Google Maps for this location', 'Lou');
+    await pick('Lou’s Bakery, Norwich, VT, USA');
+    await fireEvent.press(screen.getByRole('button', { name: 'Use this place' }));
+    await screen.findByText('Saved.');
+    expect(moves()).toEqual([
+      'Search Google Maps for this location', 'Not linked to a place on Google Maps.',
+      'Search Google Maps for this location', 'Here’s what we found',
+      'Linked to a place on Google Maps. Townwise keeps only Google’s id for it.',
+    ]);
   });
 });

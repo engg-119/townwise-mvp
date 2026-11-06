@@ -21,7 +21,8 @@ import { checkTown, EMPTY_TOWN, TOWN_COPY, TownFields, townValueOf, type TownMes
 // the primary “Add location”. POST /api/org/locations; on success the organization reloads and the new
 // location's Home opens. While the Google Places search is on (GET /api/org `placeSearch`), the form starts with it:
 // the confirmed place fills Name and gives the town, and “Can’t find it? Enter it yourself” opens the fields as they
-// are without it. With the search off, and under view-as, the form is the fields alone.
+// are without it. With the search off, and under view-as, the form is the fields alone. Focus follows the steps: Looks
+// right moves it to the place in the form, and Change place or Search Google Maps instead to the search field.
 
 export const LOCATION_COPY = {
   name: 'Enter the location’s name.',
@@ -98,6 +99,7 @@ export function AddLocationForm(): React.JSX.Element {
         {placeLine === null ? null : <ErrorNotice message={placeLine} />}
         <PlaceSearch
           api={api}
+          autoFocus={chosen !== null}
           label="Search Google Maps for the location"
           helper="Type its name. Google Maps suggests places in the US."
           confirmLabel="Looks right"
@@ -131,7 +133,7 @@ export function AddLocationForm(): React.JSX.Element {
       {place === null
         ? <TownFields value={town} onChange={setTown} {...(messages.town === undefined ? {} : { messages: messages.town })} {...ro} />
         : (
-          <PlaceSummary place={place}>
+          <PlaceSummary place={place} focusOnMount>
             <Actions>
               <Button variant="outline" label="Change place" onPress={() => { setMode({ kind: 'search' }); }} />
             </Actions>

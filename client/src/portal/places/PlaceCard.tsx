@@ -1,5 +1,4 @@
-import { useEffect, useRef } from 'react';
-import { AccessibilityInfo, Platform, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
 import { useBreakpoint } from '../hooks';
@@ -7,12 +6,13 @@ import type { Town } from '../schemas';
 import { townLabel, type FoundPlace } from '../onboarding/places';
 import { webAria } from '../ui/aria';
 import { Small } from '../ui/text';
+import { SCRIPT_FOCUS, useFocusOnMount } from './focus';
 import { PlaceMap } from './PlaceMap';
 
 // "Here's what we found" (the onboarding proposal's Step 1, the Home2-Confirm board): Google's map of the place, then
 // the name from the pick, Google's address and the town Townwise matched, with where it came from. It takes focus when
 // it appears, since the search it replaces had it. PlaceSummary is the same facts in one block, for the form a
-// confirmed place fills in. Nothing animates.
+// confirmed place fills in; it takes focus when the page asks, since the card it replaces had it. Nothing animates.
 
 /** What the card says about the town: one of the twelve, another town, or none Townwise can use. */
 export function townLine(town: Town | null): string {
@@ -25,28 +25,10 @@ export const GOOGLE_SOURCE = 'From Google Maps. Townwise keeps only Google’s i
 
 type Host = React.ComponentRef<typeof Text>;
 
-/** On web the heading takes focus from script only (tabIndex -1 keeps it out of the tab order). */
-const SCRIPT_FOCUS: object = Platform.OS === 'web' ? { tabIndex: -1 } : {};
-
-/** Moves focus (web) or the screen reader (native) to the card's heading once, when it mounts. */
-function useFocusOnMount(): React.RefObject<Host | null> {
-  const ref = useRef<Host>(null);
-  useEffect(() => {
-    const node = ref.current;
-    if (node === null) return;
-    if (Platform.OS === 'web') {
-      (node as unknown as { focus?: () => void }).focus?.();
-      return;
-    }
-    AccessibilityInfo.sendAccessibilityEvent(node, 'focus');
-  }, []);
-  return ref;
-}
-
 export function PlaceCard(props: { place: FoundPlace; note?: string | null; children?: React.ReactNode }): React.JSX.Element {
   const { place } = props;
   const { phone } = useBreakpoint();
-  const heading = useFocusOnMount();
+  const heading = useFocusOnMount<Host>();
   return (
     <View style={styles.card}>
       <PlaceMap map={place.map} label={`Map of the area around ${place.name}`} />
@@ -67,12 +49,16 @@ export function PlaceCard(props: { place: FoundPlace; note?: string | null; chil
   );
 }
 
-/** The confirmed place in a form: what it is, where it came from, and a way to change it. */
-export function PlaceSummary(props: { place: FoundPlace; children?: React.ReactNode }): React.JSX.Element {
+/**
+ * The confirmed place in a form: what it is, where it came from, and a way to change it. `focusOnMount` moves focus
+ * to it when it appears (P10, after Looks right).
+ */
+export function PlaceSummary(props: { place: FoundPlace; focusOnMount?: boolean; children?: React.ReactNode }): React.JSX.Element {
   const { place } = props;
+  const kicker = useFocusOnMount<Host>(props.focusOnMount === true);
   return (
     <View style={[styles.card, styles.summary]} role="group" aria-label="Your place on Google Maps">
-      <Text style={styles.kicker}>On Google Maps</Text>
+      <Text ref={kicker} {...SCRIPT_FOCUS} style={styles.kicker}>On Google Maps</Text>
       <Text style={styles.name}>{place.name}</Text>
       <Text style={styles.fact}>{place.address}</Text>
       <Text style={styles.fact}>{townLine(place.town)}</Text>

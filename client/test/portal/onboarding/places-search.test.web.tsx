@@ -8,7 +8,7 @@ import { installPlaces, MAP_URL, type PlacesFake } from './places-fakes';
 // PlaceSearch on web: an ARIA 1.2 combobox. The input owns a listbox of options named by place and town; Down and Up
 // move the active option (aria-activedescendant, aria-selected), Enter picks it, Escape closes the list and then
 // clears the text; a mouse press picks without taking focus from the field. The status is one polite live region
-// that each answer replaces whole. Picking moves focus to the confirm card's heading.
+// that each answer replaces whole. Picking moves focus to the confirm card's heading, and Search again back to the field.
 
 afterEach(() => {
   cleanup();
@@ -17,7 +17,7 @@ afterEach(() => {
 
 const LABEL = 'Search for your restaurant or bar';
 
-function setup(): { places: PlacesFake; onConfirm: jest.Mock<undefined, [UsablePlace]> } {
+function setup(opts: { autoFocus?: boolean } = {}): { places: PlacesFake; onConfirm: jest.Mock<undefined, [UsablePlace]> } {
   jest.useFakeTimers();
   const api = fakePortalApi({ me: meOf(ACCESS.noOrg) });
   const places = installPlaces(api);
@@ -25,6 +25,7 @@ function setup(): { places: PlacesFake; onConfirm: jest.Mock<undefined, [UsableP
   render(
     <PlaceSearch
       api={api}
+      {...(opts.autoFocus === undefined ? {} : { autoFocus: opts.autoFocus })}
       label={LABEL}
       helper="Type its name. Google Maps suggests places in the US."
       confirmLabel="Looks right"
@@ -129,4 +130,21 @@ test('the status is one polite live region, replaced whole by each answer, and d
   await search('Lou');
   expect(screen.getAllByRole('status')).toHaveLength(1);
   expect(status.textContent).toBe('3 places match “Lou”. Pick one to see what Google Maps has for it.');
+});
+
+test('the field takes focus when the page opens the search from a button, and back from the card after Search again', async () => {
+  setup();
+  expect(document.activeElement).toBe(document.body);
+  cleanup();
+  setup({ autoFocus: true });
+  expect(document.activeElement).toBe(screen.getByRole('combobox', { name: LABEL }));
+  const box = await search('Lou');
+  fireEvent.keyDown(box, { key: 'ArrowDown' });
+  fireEvent.keyDown(box, { key: 'Enter' });
+  await settle();
+  expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Here’s what we found' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Search again' }));
+  const again = screen.getByRole<HTMLInputElement>('combobox', { name: LABEL });
+  expect(again.value).toBe('Lou');
+  expect(document.activeElement).toBe(again);
 });

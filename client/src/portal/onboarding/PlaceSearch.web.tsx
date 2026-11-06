@@ -1,16 +1,18 @@
 import { useId, useState } from 'react';
 
 import { theme } from '../../theme';
+import { useFocusOnMount } from '../places/focus';
 import { FieldFrame, useFieldIds } from '../ui/FormField';
 import { MAX_SEARCH_LENGTH, type PlaceSuggestion } from './places';
-import { PlaceSearchShell, type PlaceFieldProps, type PlaceSearchProps } from './PlaceSearchParts';
+import { fieldFocus, PlaceSearchShell, type PlaceFieldProps, type PlaceSearchProps } from './PlaceSearchParts';
 import { usePlaceSearch } from './usePlaceSearch';
 
 // The Google Places search on web: an ARIA 1.2 combobox (a real <input role="combobox"> that owns a listbox of
 // suggestions, aria-activedescendant for the active one), styled like FormField with mint on focus. Down and Up move
 // through the suggestions, Enter picks the active one, Escape closes the list, then clears the text; the mouse picks
-// on press without taking focus from the field. The status line (PlaceSearchParts.tsx) says how many places match
-// the text searched, once per answer. Nothing animates.
+// on press without taking focus from the field. The field takes focus when it comes back after a pick (Search
+// again) or when the page opened the search from a button. The status line (PlaceSearchParts.tsx) says how many
+// places match the text searched, once per answer. Nothing animates.
 
 export type { PlaceSearchProps } from './PlaceSearchParts';
 
@@ -28,6 +30,7 @@ function WebField({ props, state, statusId }: PlaceFieldProps): React.JSX.Elemen
   const ids = useFieldIds();
   const listId = `${ids.label}-list`;
   const [focused, setFocused] = useState(false);
+  const input = useFocusOnMount<HTMLInputElement>(fieldFocus(props, state));
   const { suggestions } = state;
   // The active suggestion and whether the list is closed belong to one answer: a new answer starts with none active
   // and the list open.
@@ -70,6 +73,7 @@ function WebField({ props, state, statusId }: PlaceFieldProps): React.JSX.Elemen
     <FieldFrame label={props.label} {...(props.helper === undefined ? {} : { helper: props.helper })} ids={ids}>
       <div style={{ display: 'flex', flexDirection: 'column' }}>
         <input
+          ref={input}
           type="text"
           role="combobox"
           aria-autocomplete="list"

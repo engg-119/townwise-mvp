@@ -55,6 +55,11 @@ export interface PlaceSearchState {
   gone: boolean;
   /** 503 places_unavailable: the search went off, or Google isn't answering. */
   unavailable: boolean;
+  /**
+   * A suggestion was picked: the field gave way to the loading line and the card, so when it comes back (Search again,
+   * or a pick that failed) it takes focus back.
+   */
+  picked: boolean;
   pick: (suggestion: PlaceSuggestion) => void;
   /** Back to the search with the same text, in a new session. */
   again: () => void;
@@ -74,6 +79,7 @@ export function usePlaceSearch(api: ApiClient): PlaceSearchState {
   const [error, setError] = useState<unknown>(null);
   const [gone, setGone] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
+  const [picked, setPicked] = useState(false);
 
   const live = useRef(true);
   const token = useRef<string | null>(null);
@@ -165,6 +171,7 @@ export function usePlaceSearch(api: ApiClient): PlaceSearchState {
     timer.current = null;
     queued.current = null;
     setPicking(suggestion);
+    setPicked(true);
     setError(null);
     setGone(false);
     placeDetails(api, suggestion.placeId, sessionToken).then(
@@ -192,7 +199,7 @@ export function usePlaceSearch(api: ApiClient): PlaceSearchState {
     schedule(query);
   }, [query, schedule]);
 
-  return { query, setQuery, suggestions, searched, searching, picking, found, error, gone, unavailable, pick, again };
+  return { query, setQuery, suggestions, searched, searching, picking, found, error, gone, unavailable, picked, pick, again };
 }
 
 /**

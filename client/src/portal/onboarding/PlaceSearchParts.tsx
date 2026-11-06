@@ -33,6 +33,8 @@ export interface PlaceSearchProps {
   onManual: () => void;
   /** 503 places_unavailable: the page shows its manual fields with its own line. */
   onUnavailable: () => void;
+  /** Focus the field when it appears: the page opened the search from a button (Change place, Search instead). */
+  autoFocus?: boolean;
 }
 
 /** The field's part: the input and its suggestions, given the state and the status line's id. */
@@ -40,6 +42,11 @@ export interface PlaceFieldProps {
   props: PlaceSearchProps;
   state: PlaceSearchState;
   statusId: string;
+}
+
+/** The field takes focus when it appears if the page asks, or when it comes back after a pick (Search again). */
+export function fieldFocus(props: PlaceSearchProps, state: PlaceSearchState): boolean {
+  return props.autoFocus === true || state.picked;
 }
 
 export function PlaceSearchShell(p: { props: PlaceSearchProps; state: PlaceSearchState; field: React.ReactNode; statusId: string }): React.JSX.Element {

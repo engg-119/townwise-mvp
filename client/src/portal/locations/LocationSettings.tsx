@@ -1,14 +1,15 @@
 import { useCallback, useState } from 'react';
 import { useRouter } from 'expo-router';
-import { View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { LOCATION_COPY } from '../AddLocationForm';
 import type { TownInput } from '../api';
 import { hasCode } from '../errors';
-import { useAction } from '../hooks';
+import { useAction, useBreakpoint } from '../hooks';
 import { PlaceSearch } from '../onboarding/PlaceSearch';
 import { placeChanged, placesUnavailable, setLocationPlace, townLabel, type UsablePlace } from '../onboarding/places';
 import { usePlaceSearchAvailability } from '../onboarding/usePlaceSearch';
+import { SCRIPT_FOCUS, useFocusOnMount } from '../places/focus';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { locationHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
@@ -19,6 +20,7 @@ import { FormField } from '../ui/FormField';
 import { Columns, Section, Stack } from '../ui/layout';
 import { Small } from '../ui/text';
 import { checkTown, TOWN_COPY, TownFields, townValueOf, type TownMessages, type TownValue } from '../ui/TownFields';
+import { theme } from '../../theme';
 import { deleteLocation, updateLocation } from './api';
 
 // P16 Location settings (spec 16.3, org admins; the route guard sends members to Locations): Name and Town with
@@ -29,7 +31,8 @@ import { deleteLocation, updateLocation } from './api';
 // the link to Locations (spec 10.9). Under view-as every write is disabled in place.
 // While the Google Places search is on (GET /api/org `placeSearch`), “Change this location’s place” finds the
 // location on Google Maps; using a place sets it and its town (PATCH with `placeId`), and a town changed by hand
-// takes the place off (api/README.md, Organization and locations).
+// takes the place off (api/README.md, Organization and locations). The search takes focus when it opens; when it
+// closes (Use this place, Cancel, or Google failing) focus moves to the line that says whether the location is linked.
 
 const READ_ONLY_ID = 'location-settings-ro';
 const PLACE_READ_ONLY_ID = 'location-place-ro';
@@ -63,25 +66,33 @@ export function LocationSettings(): React.JSX.Element {
   const settingsPath = locationHref(location.id, 'settings');
   const search = usePlaceSearchAvailability(api, { known: org.placeSearch === true, readOnly: false });
   const [finding, setFinding] = useState(false);
+  /** How many times the search closed: the linked line remounts with each, and takes focus (useFocusOnMount). */
+  const [closed, setClosed] = useState(0);
+  const stopFinding = useCallback((): void => { setFinding(false); setClosed((n) => n + 1); }, []);
   const [placeLine, setPlaceLine] = useState<string | null>(null);
-  const linked = location.placeId !== undefined && location.placeId !== null;
+  // The place the last place save answered, until the organization's reload shows it: the linked line is right when
+  // it takes focus, not a moment later.
+  const [savedPlaceId, setSavedPlaceId] = useState<string | null>(null);
+  if (savedPlaceId !== null && location.placeId === savedPlaceId) setSavedPlaceId(null);
+  const linked = savedPlaceId !== null || (location.placeId !== undefined && location.placeId !== null);
 
   const placeSave = useAction(useCallback(async (place: UsablePlace) => {
     try {
       const saved = await setLocationPlace(api, location.id, place);
       // The Name and town form shows the place's town, so its next save keeps the place.
       setTown(townValueOf(saved.town));
+      setSavedPlaceId(saved.placeId ?? null);
     } catch (error) {
-      if (placesUnavailable(error)) { setFinding(false); setPlaceLine(PLACE_SETTINGS_COPY.unavailable); return; }
-      if (placeChanged(error)) { setFinding(false); setPlaceLine(PLACE_SETTINGS_COPY.changed); return; }
+      if (placesUnavailable(error)) { stopFinding(); setPlaceLine(PLACE_SETTINGS_COPY.unavailable); return; }
+      if (placeChanged(error)) { stopFinding(); setPlaceLine(PLACE_SETTINGS_COPY.changed); return; }
       if (hasCode(error, 404, 'not_found')) { reloadOrg(); return; }
       throw error;
     }
-    setFinding(false);
+    stopFinding();
     setPlaceLine(null);
     showNotice({ text: 'Saved.' }, settingsPath);
     reloadOrg();
-  }, [api, location.id, reloadOrg, showNotice, settingsPath]));
+  }, [api, location.id, reloadOrg, showNotice, settingsPath, stopFinding]));
 
   const save = useAction(useCallback(async (input: { name: string; town: TownInput }) => {
     try {
@@ -92,7 +103,9 @@ export function LocationSettings(): React.JSX.Element {
       if (hasCode(error, 404, 'not_found')) { reloadOrg(); return; }
       throw error;
     }
-    // The organization reloads, so the header shows the new name; the notice shows once this page is back.
+    // The organization reloads, so the header shows the new name; the notice shows once this page is back. A town
+    // changed by hand may have taken the place off: the reload says.
+    setSavedPlaceId(null);
     showNotice({ text: 'Saved.' }, settingsPath);
     reloadOrg();
   }, [api, location.id, reloadOrg, showNotice, settingsPath]));
@@ -160,11 +173,12 @@ export function LocationSettings(): React.JSX.Element {
             main={(
               <Stack gap={20}>
                 {readOnly ? <ReadOnlyLine text={line} nativeID={PLACE_READ_ONLY_ID} /> : null}
-                <Small>{linked ? PLACE_SETTINGS_COPY.linked : PLACE_SETTINGS_COPY.unlinked}</Small>
+                <LinkedLine key={closed} text={linked ? PLACE_SETTINGS_COPY.linked : PLACE_SETTINGS_COPY.unlinked} focus={closed > 0} />
                 {placeLine === null ? null : <ErrorNotice message={placeLine} />}
                 {finding && !readOnly ? (
                   <PlaceSearch
                     api={api}
+                    autoFocus
                     label="Search Google Maps for this location"
                     helper="Type its name. Google Maps suggests places in the US."
                     confirmLabel="Use this place"
@@ -175,8 +189,8 @@ export function LocationSettings(): React.JSX.Element {
                       : `Using this place moves ${location.name} to ${townLabel(place.town)}.`)}
                     onConfirm={(place) => { placeSave.run(place); }}
                     manualLabel="Cancel"
-                    onManual={() => { setFinding(false); }}
-                    onUnavailable={() => { setFinding(false); setPlaceLine(PLACE_SETTINGS_COPY.unavailable); }}
+                    onManual={stopFinding}
+                    onUnavailable={() => { stopFinding(); setPlaceLine(PLACE_SETTINGS_COPY.unavailable); }}
                   />
                 ) : (
                   <Actions>
@@ -230,7 +244,22 @@ export function LocationSettings(): React.JSX.Element {
   );
 }
 
+/** Whether the location is linked: Small's text (ui/text.tsx) with a ref, to take focus when the search closes. */
+function LinkedLine(props: { text: string; focus: boolean }): React.JSX.Element {
+  const { phone } = useBreakpoint();
+  const line = useFocusOnMount<React.ComponentRef<typeof Text>>(props.focus);
+  return (
+    <Text ref={line} {...SCRIPT_FOCUS} style={[phone ? theme.type.sub : theme.type.small, styles.linked]}>
+      {props.text}
+    </Text>
+  );
+}
+
 /** The same town by name and state, as the card shows it. */
 function sameTownLabel(a: { name: string; state: string }, b: { name: string; state: string }): boolean {
   return a.name.toLowerCase() === b.name.toLowerCase() && a.state === b.state;
 }
+
+const styles = StyleSheet.create({
+  linked: { color: theme.color.text2 },
+});

@@ -4,14 +4,16 @@ import { StyleSheet, Text, View } from 'react-native';
 import { sendAccessRequest, type AccessRequestInput } from '../../../../src/portal/api';
 import { hasCode } from '../../../../src/portal/errors';
 import { NumberedList, personEmail, SideHeading, SignedInLine } from '../../../../src/portal/gate';
-import { useAction } from '../../../../src/portal/hooks';
+import { useAction, useBreakpoint } from '../../../../src/portal/hooks';
 import { PlaceSearch } from '../../../../src/portal/onboarding/PlaceSearch';
 import { sendAccessRequestAt, townInputOf, type UsablePlace } from '../../../../src/portal/onboarding/places';
 import { usePlaceSearchAvailability } from '../../../../src/portal/onboarding/usePlaceSearch';
+import { SCRIPT_FOCUS, useFocusOnMount } from '../../../../src/portal/places/focus';
 import { PlaceSummary } from '../../../../src/portal/places/PlaceCard';
 import { usePortal, useReadOnly } from '../../../../src/portal/PortalProvider';
 import { Page } from '../../../../src/portal/shell/Page';
 import type { Access } from '../../../../src/portal/schemas';
+import { webAria } from '../../../../src/portal/ui/aria';
 import { Actions, Button } from '../../../../src/portal/ui/Button';
 import { ErrorNotice, LoadingLine, ReadOnlyLine } from '../../../../src/portal/ui/feedback';
 import { FormField } from '../../../../src/portal/ui/FormField';
@@ -27,7 +29,8 @@ import { theme } from '../../../../src/theme';
 // restaurant” searches Google Maps and confirms the place on its card; Step 2 “About you” is the form, with the place
 // in place of Town and its name in Organization name, and the request carries its `placeId`. “Can’t find it? Enter it
 // yourself” opens the form as it is without the search. With the search off, under view-as, and for a rejected request
-// (its answers are filled in), the form is as it was without it.
+// (its answers are filled in), the form is as it was without it. Focus follows the steps: Looks right moves it to the
+// Step 2 heading, and Change place or Search Google Maps instead to the search field (places/focus.ts).
 
 interface Form {
   orgName: string;
@@ -178,6 +181,7 @@ export default function RequestAccessPage(): React.JSX.Element {
                 <StepHeader step={1} title="Find your restaurant" />
                 <PlaceSearch
                   api={api}
+                  autoFocus={chosen !== null}
                   label="Search for your restaurant or bar"
                   helper="Type its name. Google Maps suggests places in the US."
                   confirmLabel="Looks right"
@@ -194,7 +198,7 @@ export default function RequestAccessPage(): React.JSX.Element {
             ) : null}
             {search !== 'checking' && mode.kind === 'form' ? (
               <Stack gap={20}>
-                {place === null ? null : <StepHeader step={2} title="About you" />}
+                {place === null ? null : <StepHeader step={2} title="About you" focus />}
                 {placeLine === null ? null : <ErrorNotice message={placeLine} />}
                 <ReadOnlyLine text={line} nativeID={readOnlyId} />
                 <FormField
@@ -292,18 +296,26 @@ export default function RequestAccessPage(): React.JSX.Element {
   );
 }
 
-/** “Step N of 3” over the step's heading: the onboarding's three steps, the third after approval (Home). */
-function StepHeader(props: { step: 1 | 2; title: string }): React.JSX.Element {
+/**
+ * “Step N of 3” over the step's heading: the onboarding's three steps, the third after approval (Home). The heading is
+ * Heading's (ui/text.tsx) with a ref, so `focus` can move focus to it when it appears (Step 2, after Looks right).
+ */
+function StepHeader(props: { step: 1 | 2; title: string; focus?: boolean }): React.JSX.Element {
+  const { phone } = useBreakpoint();
+  const heading = useFocusOnMount<React.ComponentRef<typeof Text>>(props.focus === true);
   return (
     <View style={styles.step}>
       <Eyebrow>{`Step ${String(props.step)} of 3`}</Eyebrow>
-      <Heading>{props.title}</Heading>
+      <Text ref={heading} role="heading" {...webAria({ 'aria-level': 2 })} {...SCRIPT_FOCUS} style={[phone ? theme.type.h3Phone : theme.type.h3, styles.heading]}>
+        {props.title}
+      </Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   step: { gap: theme.space[2] },
+  heading: { color: theme.color.white },
   // The board's panel body: `small`, `text2`, at every width.
   panelBody: { ...theme.type.small, color: theme.color.text2 },
 });

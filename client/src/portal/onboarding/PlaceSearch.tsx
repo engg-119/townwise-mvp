@@ -2,14 +2,17 @@ import { useId, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { theme } from '../../theme';
+import { useFocusOnMount } from '../places/focus';
 import { FieldFrame, fieldStyles, useFieldIds } from '../ui/FormField';
 import { MAX_SEARCH_LENGTH } from './places';
-import { PlaceSearchShell, type PlaceFieldProps, type PlaceSearchProps } from './PlaceSearchParts';
+import { fieldFocus, PlaceSearchShell, type PlaceFieldProps, type PlaceSearchProps } from './PlaceSearchParts';
 import { usePlaceSearch } from './usePlaceSearch';
 
 // The Google Places search on iOS and Android (PlaceSearch.web.tsx is the web's combobox): a search field, and under
 // it each suggestion as a button named by the place and its town, then the confirm card (PlaceSearchParts.tsx). The
-// status line under the field says how many places match the text searched, once per answer. Nothing animates.
+// status line under the field says how many places match the text searched, once per answer. The screen reader moves
+// to the field when it comes back after a pick (Search again) or when the page opened the search from a button.
+// Nothing animates.
 
 export type { PlaceSearchProps } from './PlaceSearchParts';
 
@@ -22,9 +25,11 @@ export function PlaceSearch(props: PlaceSearchProps): React.JSX.Element {
 function NativeField({ props, state }: PlaceFieldProps): React.JSX.Element {
   const ids = useFieldIds();
   const [focused, setFocused] = useState(false);
+  const input = useFocusOnMount<React.ComponentRef<typeof TextInput>>(fieldFocus(props, state));
   return (
     <FieldFrame label={props.label} {...(props.helper === undefined ? {} : { helper: props.helper })} ids={ids}>
       <TextInput
+        ref={input}
         accessibilityLabel={props.label}
         {...(props.helper === undefined ? {} : { accessibilityHint: props.helper })}
         value={state.query}
