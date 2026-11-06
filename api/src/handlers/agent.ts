@@ -2,8 +2,10 @@
 // the activity, both computed at read time from the location's own records; POST .../agent/questions/:questionId
 // answers one question. There are no transactions, so an answer is ordered for retries: claim the question
 // (tw_agent_answers, which gives it its note id once), write the closure note a `closed` answer makes with that id,
-// then mark the answer done. A retry, a crash between the steps or a second tab end with one note. Logs and the audit
-// event carry ids and the answer only.
+// then mark the answer done. A retry, a crash between the steps or a second tab end with one note. A `closed` try whose
+// note is written stands over a different answer (the note exists); any other answer stands only if the row still holds
+// it when it is marked done, else the request answers with what the row holds. Logs and the audit event carry ids and
+// the answer only.
 import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
@@ -91,32 +93,29 @@ export async function answerQuestion(ctx: TownwiseContext, req: Request, res: Re
     // Answered already, by an earlier press, another tab or a colleague: answer with that.
     result = { question: { id: questionId, answer: existing.answer }, note: await answerNote(ctx, caller, location, existing) };
   } else {
-    // Only a question the panel asks now, unless an earlier try of this answer stopped after its claim.
-    if (existing === null && !(await currentQuestions(ctx, caller, location)).questions.some((q) => q.id === questionId)) {
+    // An earlier `closed` try that wrote its note and stopped before `done` is finished as `closed`, whatever this answer
+    // is: the note exists. Otherwise only a question the panel asks now, so a stale panel cannot answer days that
+    // have since gained sales or a note.
+    const noteWritten = existing?.answer === 'closed'
+      && (await ctx.stores.notes.find(scope, location.id, existing.noteId)) !== null;
+    if (!noteWritten && !(await currentQuestions(ctx, caller, location)).questions.some((q) => q.id === questionId)) {
       throw notFound();
     }
-    const claimed = await answers.claim(scope, key, { answer, now: ctx.now() });
-    if (claimed === null) {
-      const row = await answers.find(scope, key);
-      if (row === null) throw notFound();
-      result = { question: { id: questionId, answer: row.answer }, note: await answerNote(ctx, caller, location, row) };
-    } else {
-      let note: NoteRecord | null = null;
-      if (claimed.answer === 'closed') {
-        note = await addNote(ctx, caller, location, noteContent(closureNoteOf(asked), utcDay(ctx.now())), { id: claimed.noteId });
-      }
-      if (await answers.markDone(scope, key, ctx.now())) {
-        await recordAfter(ctx, {
-          ...actorOf(caller), at: ctx.now(), orgId: scope.orgId, action: 'agent.question_answered',
-          target: { type: 'location', id: location.id },
-          details: { locationId: location.id, questionId, answer: claimed.answer },
-        });
-      }
-      result = {
-        question: { id: questionId, answer: claimed.answer },
-        note: note === null ? null : noteView(note, await currentEmail(ctx, note.createdBy), caller),
-      };
+    const claimed = await answers.claim(scope, key, { answer: noteWritten ? 'closed' : answer, now: ctx.now() });
+    if (claimed !== null && claimed.answer === 'closed') {
+      await addNote(ctx, caller, location, noteContent(closureNoteOf(asked), utcDay(ctx.now())), { id: claimed.noteId });
     }
+    if (claimed !== null && await answers.markDone(scope, key, { answer: claimed.answer, now: ctx.now() })) {
+      await recordAfter(ctx, {
+        ...actorOf(caller), at: ctx.now(), orgId: scope.orgId, action: 'agent.question_answered',
+        target: { type: 'location', id: location.id },
+        details: { locationId: location.id, questionId, answer: claimed.answer },
+      });
+    }
+    // Answer with what the row holds now: this answer, or the one another tab or colleague stored first.
+    const row = await answers.find(scope, key);
+    if (row === null) throw notFound();
+    result = { question: { id: questionId, answer: row.answer }, note: await answerNote(ctx, caller, location, row) };
   }
   ctx.logger.info({ orgId: scope.orgId, locationId: location.id, answer: result.question.answer }, 'townwise.agent_answer');
   res.status(200).json(result);

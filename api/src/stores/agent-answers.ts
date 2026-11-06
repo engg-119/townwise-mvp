@@ -2,7 +2,9 @@
 // location's days with no sales, keyed by the question's id (dates and a weekday number only). An answer claims its row
 // (`saving`), writes the closure note a `closed` answer makes with the row's `noteId`, then marks it `done`, so a retry
 // or a second tab finishes the same note instead of making another (handlers/agent.ts). Every row gets its `noteId`
-// when it is inserted, whatever the answer. It holds no person id (the audit event carries the actor) and no text.
+// when it is inserted, whatever the answer. A `closed` answer whose note is written overrules a different answer sent
+// at the same time, as a saved proposal overrules Not now (stores/chat-proposals.ts): the note exists. It holds no person
+// id (the audit event carries the actor) and no text.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
@@ -69,8 +71,12 @@ export interface AgentAnswerStore {
    * to this answer, keeping its `noteId`. Null when it is already done.
    */
   claim(scope: OrgScope, key: AnswerKey, input: { answer: QuestionAnswer; now: Date }): Promise<AnswerRecord | null>;
-  /** `saving` to `done`. True only for the call that moved it, so the answer is recorded once. */
-  markDone(scope: OrgScope, key: AnswerKey, now: Date): Promise<boolean>;
+  /**
+   * `saving` to `done` with the claimed answer, only while the row still holds it. `closed`, called once its note is
+   * written, also moves a row a different answer took or finished meanwhile. True only for the call that changed the
+   * row, so each answer stored is recorded once.
+   */
+  markDone(scope: OrgScope, key: AnswerKey, input: { answer: QuestionAnswer; now: Date }): Promise<boolean>;
   /** Resolves the number deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
   /** Organization deletion (spec 10.7). */
@@ -118,8 +124,14 @@ export function createAgentAnswerStore(connection: Connection): AgentAnswerStore
         }
       }
     },
-    async markDone(scope, key, now) {
-      const result = await Answer.updateOne({ ...keyOf(scope, key), status: 'saving' }, { $set: { status: 'done', updatedAt: now } });
+    async markDone(scope, key, input) {
+      const held = input.answer === 'closed'
+        ? { $or: [{ status: 'saving' as const }, { answer: trusted({ $ne: 'closed' as const }) }] }
+        : { status: 'saving' as const, answer: input.answer };
+      const result = await Answer.updateOne(
+        { ...keyOf(scope, key), ...held },
+        { $set: { answer: input.answer, status: 'done', updatedAt: input.now } },
+      );
       return result.modifiedCount === 1;
     },
     async removeForLocation(scope, locationId) {

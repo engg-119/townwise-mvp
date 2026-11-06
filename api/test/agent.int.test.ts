@@ -7,7 +7,9 @@ import { randomUUID } from 'node:crypto';
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { scopeForNewOrg } from '../src/access/policy.ts';
 import type { AgentPanel, AnswerResult } from '../src/handlers/agent.ts';
+import { createAgentAnswerStore } from '../src/stores/agent-answers.ts';
 import { addGrant, addLocation, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import {
   call, logLines, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
@@ -74,6 +76,24 @@ function notesOf(locationId: string): Promise<Record<string, unknown>[]> {
 
 function answerRows(locationId: string): Promise<Record<string, unknown>[]> {
   return server.connection.collection('tw_agent_answers').find({ locationId: new Types.ObjectId(locationId) }).toArray();
+}
+
+/** A claim that stopped before `done`, as a try that failed after it leaves it; with its closure note written, or not. */
+async function stoppedClaim(locationId: string, answer: string, written: boolean): Promise<Types.ObjectId> {
+  const noteId = new Types.ObjectId();
+  const at = server.clock.now();
+  await server.connection.collection('tw_agent_answers').insertOne({
+    orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), questionId: GAP_ID, answer,
+    noteId, status: 'saving', createdAt: at, updatedAt: at,
+  });
+  if (written) {
+    await server.connection.collection('tw_notes').insertOne({
+      _id: noteId, orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), kind: 'closure',
+      startDate: '2026-05-12', endDate: '2026-05-13', weekdays: null, effect: 'closed', expectedGuests: null, detail: null,
+      createdBy: member.userId, createdAt: at, updatedAt: at,
+    });
+  }
+  return noteId;
 }
 
 async function eventsAt(locationId: string, action: string): Promise<Record<string, unknown>[]> {
@@ -166,19 +186,7 @@ describe('answering closed', () => {
   it('after an answer that stopped after its claim finishes it with the claimed note id: its note written, or not', async () => {
     for (const written of [true, false]) {
       const locationId = await askedLocation();
-      const noteId = new Types.ObjectId();
-      const at = server.clock.now();
-      await server.connection.collection('tw_agent_answers').insertOne({
-        orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), questionId: GAP_ID, answer: 'closed',
-        noteId, status: 'saving', createdAt: at, updatedAt: at,
-      });
-      if (written) {
-        await server.connection.collection('tw_notes').insertOne({
-          _id: noteId, orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), kind: 'closure',
-          startDate: '2026-05-12', endDate: '2026-05-13', weekdays: null, effect: 'closed', expectedGuests: null, detail: null,
-          createdBy: member.userId, createdAt: at, updatedAt: at,
-        });
-      }
+      const noteId = await stoppedClaim(locationId, 'closed', written);
       // With its note written the gap is explained and no longer asked, and the answer still finishes.
       expect((await panel(locationId)).body.questions.map((q) => q.id)).toEqual(written ? [WEEKDAY_ID] : [WEEKDAY_ID, GAP_ID]);
       const { status, body } = await answer(locationId, GAP_ID, { answer: 'closed' });
@@ -188,6 +196,88 @@ describe('answering closed', () => {
       expect(await eventsAt(locationId, 'agent.question_answered')).toHaveLength(1);
       expect(await answerRows(locationId)).toEqual([expect.objectContaining({ status: 'done', noteId })]);
     }
+  });
+
+  it('after a closed answer that stopped with its note written, a different answer finishes it as closed', async () => {
+    for (const next of ['open', 'not_sure']) {
+      const locationId = await askedLocation();
+      const noteId = await stoppedClaim(locationId, 'closed', true);
+      const { status, body } = await answer(locationId, GAP_ID, { answer: next }, colleague);
+      expect({ next, status, answer: body.question.answer, noteId: body.note?.id })
+        .toEqual({ next, status: 200, answer: 'closed', noteId: noteId.toHexString() });
+      expect(await answerRows(locationId)).toEqual([expect.objectContaining({ answer: 'closed', status: 'done', noteId })]);
+      expect((await eventsAt(locationId, 'agent.question_answered')).map((e) => e.details))
+        .toEqual([{ locationId, questionId: GAP_ID, answer: 'closed' }]);
+      expect(await notesOf(locationId)).toHaveLength(1);
+      expect((await panel(locationId)).body.activity).toEqual([expect.objectContaining({ kind: 'note_saved', via: 'question' })]);
+    }
+  });
+
+  it('a stopped claim without its note is not finished once its days are no longer asked about', async () => {
+    for (const stopped of ['closed', 'open']) {
+      const locationId = await askedLocation();
+      await stoppedClaim(locationId, stopped, false);
+      // The gap's days gain sales, so a stale panel's answer names a question no longer asked.
+      await server.connection.collection('tw_sales_days').insertMany(['2026-05-12', '2026-05-13'].map((date) => ({
+        orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), date, guests: 10, netSalesCents: null,
+        uploadId: new Types.ObjectId(), updatedAt: server.clock.now(),
+      })));
+      expect((await panel(locationId)).body.questions.map((q) => q.id)).toEqual([WEEKDAY_ID]);
+      expect({ stopped, ...(await answer(locationId, GAP_ID, { answer: 'closed' })) })
+        .toMatchObject({ stopped, status: 404, body: { error: 'not_found' } });
+      expect(await notesOf(locationId)).toHaveLength(0);
+      expect(await eventsAt(locationId, 'agent.question_answered')).toHaveLength(0);
+    }
+  });
+
+  it('two members answering differently at once end with a row, a last audit event and notes that agree', async () => {
+    for (let round = 0; round < 6; round += 1) {
+      const locationId = await askedLocation();
+      const [first, second] = round % 2 === 0 ? [member, colleague] : [colleague, member];
+      const results = await Promise.all([
+        answer(locationId, GAP_ID, { answer: 'closed' }, first), answer(locationId, GAP_ID, { answer: 'open' }, second),
+      ]);
+      expect(results.map((r) => r.status)).toEqual([200, 200]);
+      const rows = await answerRows(locationId);
+      expect(rows).toEqual([expect.objectContaining({ status: 'done' })]);
+      const stored = rows[0]?.answer;
+      const events = await eventsAt(locationId, 'agent.question_answered');
+      expect((events.at(-1)?.details as { answer?: string }).answer).toBe(stored);
+      const notes = await notesOf(locationId);
+      expect(notes.map((n) => (n._id as Types.ObjectId).toHexString()))
+        .toEqual(stored === 'closed' ? [(rows[0]?.noteId as Types.ObjectId).toHexString()] : []);
+      expect((await answer(locationId, GAP_ID, { answer: 'not_sure' })).body.question.answer).toBe(stored);
+    }
+  });
+
+  it('marking done: a different answer that took the row loses it, and a closed answer whose note is written overrules it', async () => {
+    // The orders the handler cannot pin over HTTP: a claim, another tab's different claim, then each one's markDone.
+    const staff = { kind: 'staff', actor: { userId: 'staff-0000', email: 'staff@example.test', sessionId: 'session-0000', verifiedUntil: '' } } as const;
+    const scope = scopeForNewOrg(staff, orgId);
+    const store = createAgentAnswerStore(server.connection);
+    const now = server.clock.now();
+    // [first claim, second claim, first's markDone, second's markDone, the answer stored]
+    const orders = [
+      ['open', 'not_sure', false, true, 'not_sure'],
+      ['closed', 'open', true, false, 'closed'],
+      ['open', 'closed', false, true, 'closed'],
+    ] as const;
+    for (const [first, second, firstDone, secondDone, stored] of orders) {
+      const key = { locationId: await askedLocation(), questionId: GAP_ID };
+      const claimed = await store.claim(scope, key, { answer: first, now });
+      expect(await store.claim(scope, key, { answer: second, now })).toMatchObject({ answer: second, noteId: claimed?.noteId });
+      const done = [await store.markDone(scope, key, { answer: first, now }), await store.markDone(scope, key, { answer: second, now })];
+      expect({ first, second, done, row: await store.find(scope, key) })
+        .toMatchObject({ first, second, done: [firstDone, secondDone], row: { answer: stored, status: 'done' } });
+    }
+    // A closed answer whose note is written also takes back a row a different answer finished first.
+    const key = { locationId: await askedLocation(), questionId: GAP_ID };
+    await store.claim(scope, key, { answer: 'closed', now });
+    await store.claim(scope, key, { answer: 'open', now });
+    expect(await store.markDone(scope, key, { answer: 'open', now })).toBe(true);
+    expect(await store.markDone(scope, key, { answer: 'closed', now })).toBe(true);
+    expect(await store.markDone(scope, key, { answer: 'closed', now })).toBe(false);
+    expect(await store.find(scope, key)).toMatchObject({ answer: 'closed', status: 'done' });
   });
 
   it('at a location with 1,000 notes is 409 note_limit; the question stays, and another answer then works', async () => {
