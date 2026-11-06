@@ -101,6 +101,7 @@ describe('POST /api/admin/view-as', () => {
         startedAt: now.toISOString(), endsAt: expiresAt.toISOString(),
       },
       staff: { verifiedUntil: new Date(now.getTime() + 60 * MINUTE).toISOString() },
+      welcome: null,
     });
     expect(body.access.state).toBe('pending');
     expect(await me(staff)).toEqual(body);

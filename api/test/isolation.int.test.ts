@@ -62,6 +62,8 @@ async function snapshotOf(org: Tenant): Promise<string> {
   for (const name of [
     'tw_members', 'tw_locations', 'tw_sales_days', 'tw_uploads', 'tw_notes', 'tw_view_as_grants', 'tw_audit_events',
     'tw_chat_conversations', 'tw_chat_live_turns', 'tw_chat_usage',
+    // U11, statement moments.
+    'tw_welcomes',
   ]) {
     docs.push(await server.connection.collection(name).find({ orgId }).sort({ _id: 1 }).toArray());
   }
@@ -107,7 +109,9 @@ describe('isolation through the route table', () => {
         ...(route.method === 'GET' || route.method === 'DELETE' ? {} : { json: bIds() }),
       });
       const text = await res.text();
-      if (route.method !== 'GET') expect(res.status).toBeGreaterThanOrEqual(400);
+      // A write with no path id and no body (U11's POST /me/welcome) carries none of B's ids: it acts on A's own seat.
+      const carriesIds = route.path.includes('/:') || route.bodyLimit !== 'none';
+      if (route.method !== 'GET' && carriesIds) expect(res.status).toBeGreaterThanOrEqual(400);
       for (const secret of [...bSecrets(), b.inviteId, bInvitesAMember]) expect(text).not.toContain(secret);
       expect(await snapshotOf(b)).toBe(before);
     });
