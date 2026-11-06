@@ -262,3 +262,15 @@ test('one day of history: year over year says what is missing and offers older h
   expect(screen.getByRole('link', { name: 'Upload older history' }).getAttribute('href')).toBe('/locations/l1/sales/upload');
   expect(screen.getByText('Townwise needs each kind of day to happen at least twice before it can say how much it moves your numbers.')).toBeTruthy();
 });
+
+test('unchecking the selected day’s year clears the selection', async () => {
+  await ready();
+  fireEvent.click(cell('2025-11-27'));
+  expect(await screen.findByRole('region', { name: 'Thursday, Nov 27, 2025' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('checkbox', { name: '2025' }));
+  expect(await screen.findByText(PANEL_EMPTY)).toBeTruthy();
+  // A filter that keeps the year keeps the selection.
+  fireEvent.click(cell('2026-10-17'));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Closed days' }));
+  expect(await screen.findByRole('region', { name: 'Saturday, Oct 17, 2026' })).toBeTruthy();
+});

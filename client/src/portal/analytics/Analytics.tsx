@@ -93,12 +93,21 @@ function AnalyticsView(props: { data: Data; today: string; locationId: string; r
   const nights = useMemo(() => nightTypes(input), [input]);
   const found = useMemo(() => drivers(input), [input]);
 
-
-  const onFilters = useCallback((next: FilterState) => { setFilters(next); setKeepOne(false); }, []);
+  /** Whether the heatmap still draws `date` under these filters: its year is checked, and on native its month has a row. */
+  const shows = (date: string, next: FilterState): boolean => {
+    if (!next.years.includes(Number(date.slice(0, 4)))) return false;
+    return !native || heatmapMonths({ days, metric: next.metric, years: next.years }).some((row) => row.month === date.slice(0, 7));
+  };
+  const applyFilters = (next: FilterState): void => {
+    setFilters(next);
+    if (selected !== null && !shows(selected, next)) setSelected(null);
+    if (preview !== null && !shows(preview, next)) setPreview(null);
+  };
+  const onFilters = (next: FilterState): void => { applyFilters(next); setKeepOne(false); };
   const onYear = (year: number, checked: boolean): void => {
     const result = toggleYear(filters, year, checked);
     setKeepOne(result.refused);
-    setFilters(result.filters);
+    applyFilters(result.filters);
   };
 
   const uploadLink = (label: string): React.JSX.Element | null => {
