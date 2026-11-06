@@ -114,6 +114,29 @@ test('Search again starts a new session with the same text', async () => {
   expect(places.detailCalls.map((call) => call.sessionToken)).toEqual(['token-1', 'token-2']);
 });
 
+test('a pick while an autocomplete runs ends the session: the late answer brings back neither its token nor its suggestions', async () => {
+  const { places } = await setup();
+  await type('Lou');
+  await wait(250);
+  const restaurant = await screen.findByRole('button', { name: 'Lou’s Restaurant, Hanover, NH, USA' });
+  places.holding = true;
+  await type('Lou’s');
+  await wait(250);
+  expect(places.autocompletes.at(-1)).toEqual({ input: 'Lou’s', sessionToken: 'token-1' });
+  await fireEvent.press(restaurant);
+  expect(places.detailCalls).toEqual([{ placeId: 'ChIJTestPlace0001', sessionToken: 'token-1' }]);
+  expect(await screen.findByText('Here’s what we found')).toBeTruthy();
+  places.holding = false;
+  await act(async () => { for (const release of places.held.splice(0)) release(); await Promise.resolve(); });
+  await wait(0);
+  expect(screen.getByText('Here’s what we found')).toBeTruthy();
+  await fireEvent.press(screen.getByRole('button', { name: 'Search again' }));
+  await wait(250);
+  expect(places.autocompletes.at(-1)).toEqual({ input: 'Lou’s', sessionToken: undefined });
+  await fireEvent.press(await screen.findByRole('button', { name: 'Lou’s Restaurant, Hanover, NH, USA' }));
+  expect(places.detailCalls.map((call) => call.sessionToken)).toEqual(['token-1', 'token-2']);
+});
+
 test('a place outside a US town has no Looks right, only Search again and the manual fields', async () => {
   const { onConfirm, onManual } = await setup();
   await type('Lou');

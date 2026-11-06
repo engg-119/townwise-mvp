@@ -77,6 +77,8 @@ export function usePlaceSearch(api: ApiClient): PlaceSearchState {
 
   const live = useRef(true);
   const token = useRef<string | null>(null);
+  /** The session's number: a pick or Search again starts the next, and an older session's late answer is dropped. */
+  const session = useRef(0);
   /** The text the next answer must match to be shown. */
   const wanted = useRef('');
   const inflight = useRef(false);
@@ -101,9 +103,11 @@ export function usePlaceSearch(api: ApiClient): PlaceSearchState {
     }
     inflight.current = true;
     setSearching(true);
+    const sentIn = session.current;
     autocompletePlaces(api, input, token.current).then(
       (answer) => {
-        if (!live.current) return;
+        // The session ended while it ran (a pick): its token must not come back.
+        if (!live.current || sentIn !== session.current) return;
         token.current = answer.sessionToken;
         if (input === wanted.current) {
           setSuggestions(answer.suggestions);
@@ -113,7 +117,7 @@ export function usePlaceSearch(api: ApiClient): PlaceSearchState {
       (caught: unknown) => {
         if (!live.current) return;
         if (placesUnavailable(caught)) setUnavailable(true);
-        else if (input === wanted.current) setError(caught);
+        else if (input === wanted.current && sentIn === session.current) setError(caught);
       },
     ).finally(() => {
       inflight.current = false;
@@ -156,6 +160,7 @@ export function usePlaceSearch(api: ApiClient): PlaceSearchState {
     if (sessionToken === null) return;
     // The details call ends the session, whatever it answers.
     token.current = null;
+    session.current += 1;
     if (timer.current !== null) clearTimeout(timer.current);
     timer.current = null;
     queued.current = null;
@@ -179,6 +184,8 @@ export function usePlaceSearch(api: ApiClient): PlaceSearchState {
   }, [api]);
 
   const again = useCallback((): void => {
+    token.current = null;
+    session.current += 1;
     setFound(null);
     setSuggestions([]);
     setSearched(null);
