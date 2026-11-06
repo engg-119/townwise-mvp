@@ -12,8 +12,9 @@ import { decodeHistory, type DayRecord } from '../analytics/history';
 import { hasCode } from '../errors';
 import { removeFile, startImport, type FileView, type ImportView } from '../files/api';
 import {
-  acceptHint, actionError, entriesLine, fileLine, fileName, formatSize, overallLine, queueLine, readingLine, timeLeft,
+  acceptHint, actionError, fileLine, fileName, formatSize, overallLine, queueLine, readingLine, timeLeft,
 } from '../files/copy';
+import { ZipEntries } from '../files/FileList';
 import { ImportQuestion } from '../files/ImportQuestion';
 import { useImport } from '../files/useImport';
 import { useUploadQueue, type QueuedUpload } from '../files/uploadQueue';
@@ -272,7 +273,7 @@ function RowView(props: {
       <Mono>{formatSize(file.sizeBytes)}</Mono>
       {progress === null ? null : <Bar value={progress} label={`${fileName(file)}, read`} />}
       <Small white>{`${fileLine(file)}${eta}`}</Small>
-      {file.entries === null ? null : <Small>{entriesLine(file.entries)}</Small>}
+      {file.entries === null ? null : <ZipEntries locationId={props.locationId} file={file} entries={file.entries} />}
       {removable ? (
         <Actions>
           <RemoveFile

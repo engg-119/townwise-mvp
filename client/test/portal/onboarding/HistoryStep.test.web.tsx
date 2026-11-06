@@ -12,7 +12,7 @@ import { fakeAuth } from '../../helpers/fakes';
 import { ACCESS, EMAIL, fakePortalApi, locationOf, meOf, orgOf, refusal, viewAsMe, type FakePortalApi } from '../../helpers/portal';
 import { analyticsFake, calendarBody, historyBody, run, type AnalyticsFake } from '../analytics/fakes';
 import { NOVEMBER } from '../estimates/fakes';
-import { fileViewOf, filesFake, importViewOf, type FilesFake } from '../files/fakes';
+import { entryOf, fileViewOf, filesFake, importViewOf, type FilesFake } from '../files/fakes';
 
 // Onboarding step 3 on Home, on web (spec P11, 11A; storage2 2.1, 2.2, 13 and 15.3): the drop zone with what to
 // drop in and the location card beside it, many files uploading at once with their own progress and time left, Read
@@ -289,7 +289,7 @@ test('reading: the question, each file kept and not used with its reason, a ZIPâ
       fileViewOf('f4', { name: 'toast.zip', kind: 'zip', status: 'kept', outcome: 'nothing_usable', result: null, entries: { total: 12, used: 0, kept: 12 } }),
     ],
   });
-  const { analytics } = await show(meOf(ACCESS.admin), { import: view });
+  const { analytics, files } = await show(meOf(ACCESS.admin), { import: view });
   analytics.answers[HISTORY] = historyBody(DAYS);
   expect(await screen.findByRole('heading', { name: 'Which column has the date of each sale?' })).toBeTruthy();
   expect(screen.getByText('3 of 4 files read Â· Waiting for your answer')).toBeTruthy();
@@ -297,6 +297,11 @@ test('reading: the question, each file kept and not used with its reason, a ZIPâ
   expect(screen.getByText('Kept, not used: Townwise canâ€™t read old Excel files yet. Save it as .xlsx or CSV and drop it again.')).toBeTruthy();
   expect(screen.getByText('Kept, not used: none of the files inside had daily sales Townwise could use.')).toBeTruthy();
   expect(screen.getByText('12 files inside: 0 used, 12 kept, not used')).toBeTruthy();
+  // A ZIP's files inside, each with its own status and reason (storage2 2.2).
+  files.entries['f4:'] = { entries: [entryOf(0, { status: 'kept', outcome: 'system_file', dayCount: null })], next: null };
+  fireEvent.click(screen.getByRole('button', { name: 'See whatâ€™s inside' }));
+  const inside = await screen.findByRole('list', { name: 'Files inside toast.zip' });
+  expect(within(inside).getByText('export/day-0.csv')).toBeTruthy();
   expect(screen.getByText('3 days, Oct 1, 2026 to Oct 3, 2026.')).toBeTruthy();
   // The calendar is one picture named by its summary.
   const calendar = document.getElementById('history-step-calendar');

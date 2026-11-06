@@ -78,6 +78,20 @@ function Entries(props: { locationId: string; file: FileView }): React.JSX.Eleme
   );
 }
 
+/** A ZIP's count and "See what's inside", its paginated entry list (storage2 2.2): on Sales data and the drop step. */
+export function ZipEntries(props: { locationId: string; file: FileView; entries: NonNullable<FileView['entries']> }): React.JSX.Element {
+  const [open, setOpen] = useState(false);
+  return (
+    <View style={styles.zip}>
+      <Small>{entriesLine(props.entries)}</Small>
+      <Pressable role="button" aria-expanded={open} onPress={() => { setOpen((value) => !value); }} style={styles.toggle}>
+        <Text style={styles.toggleText}>{open ? COPY.hideEntries : COPY.showEntries}</Text>
+      </Pressable>
+      {open ? <Entries locationId={props.locationId} file={props.file} /> : null}
+    </View>
+  );
+}
+
 function FileRow(props: {
   locationId: string;
   file: FileView;
@@ -86,7 +100,6 @@ function FileRow(props: {
   const { file } = props;
   const { api } = usePortal();
   const { readOnly } = useReadOnly();
-  const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState<'raw' | 'clean' | null>(null);
   const [error, setError] = useState<unknown>(null);
   // The API sends every flag false under view-as; the row doesn't rely on that alone.
@@ -113,15 +126,7 @@ function FileRow(props: {
       <Small>{meta}</Small>
       <Small white>{fileLine(file)}</Small>
       {file.rawAvailable || file.status === 'uploading' ? null : <Small>{COPY.rawGone}</Small>}
-      {file.entries === null ? null : (
-        <View style={styles.zip}>
-          <Small>{entriesLine(file.entries)}</Small>
-          <Pressable role="button" aria-expanded={open} onPress={() => { setOpen((value) => !value); }} style={styles.toggle}>
-            <Text style={styles.toggleText}>{open ? COPY.hideEntries : COPY.showEntries}</Text>
-          </Pressable>
-          {open ? <Entries locationId={props.locationId} file={file} /> : null}
-        </View>
-      )}
+      {file.entries === null ? null : <ZipEntries locationId={props.locationId} file={file} entries={file.entries} />}
       {(canRaw || canClean) && !CAN_SAVE_FILES ? <Small>{COPY.nativeDownload}</Small> : null}
       <Actions>
         {canRaw && CAN_SAVE_FILES ? (
