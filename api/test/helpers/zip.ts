@@ -8,6 +8,10 @@ export interface TestEntry {
   /** Written as the entry's uncompressed size instead of the real one. */
   readonly declaredSize?: number;
   readonly store?: boolean;
+  /** General-purpose flags as written (bit 0 marks an encrypted entry); 0x800 (UTF-8 names) by default. */
+  readonly flags?: number;
+  /** The method written in the headers, whatever the data is (for an unsupported method). */
+  readonly method?: number;
 }
 
 /** CRC-32 (the ZIP polynomial). */
@@ -20,21 +24,24 @@ function crc32(data: Buffer): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-export function zipOf(entries: readonly TestEntry[]): Buffer {
+/** `zip64` writes every size and offset in the ZIP64 extra field and ends with a ZIP64 directory record. */
+export function zipOf(entries: readonly TestEntry[], options: { zip64?: boolean } = {}): Buffer {
+  const zip64 = options.zip64 === true;
   const locals: Buffer[] = [];
   const centrals: Buffer[] = [];
   let offset = 0;
   for (const entry of entries) {
     const raw = Buffer.isBuffer(entry.data) ? entry.data : Buffer.from(entry.data, 'utf8');
     const data = entry.store === true ? raw : deflateRawSync(raw);
-    const method = entry.store === true ? 0 : 8;
+    const method = entry.method ?? (entry.store === true ? 0 : 8);
+    const flags = entry.flags ?? 0x800;
     const name = Buffer.from(entry.name, 'utf8');
     const crc = crc32(raw);
     const size = entry.declaredSize ?? raw.length;
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(20, 4);
-    local.writeUInt16LE(0x800, 6);
+    local.writeUInt16LE(flags, 6);
     local.writeUInt16LE(method, 8);
     local.writeUInt32LE(crc, 14);
     local.writeUInt32LE(data.length, 18);
@@ -45,24 +52,47 @@ export function zipOf(entries: readonly TestEntry[]): Buffer {
     central.writeUInt32LE(0x02014b50, 0);
     central.writeUInt16LE(20, 4);
     central.writeUInt16LE(20, 6);
-    central.writeUInt16LE(0x800, 8);
+    central.writeUInt16LE(flags, 8);
     central.writeUInt16LE(method, 10);
     central.writeUInt32LE(crc, 16);
-    central.writeUInt32LE(data.length, 20);
-    central.writeUInt32LE(size, 24);
+    central.writeUInt32LE(zip64 ? 0xffffffff : data.length, 20);
+    central.writeUInt32LE(zip64 ? 0xffffffff : size, 24);
     central.writeUInt16LE(name.length, 28);
-    central.writeUInt32LE(offset, 42);
-    centrals.push(central, name);
+    central.writeUInt32LE(zip64 ? 0xffffffff : offset, 42);
+    if (zip64) {
+      const extra = Buffer.alloc(28);
+      extra.writeUInt16LE(0x0001, 0);
+      extra.writeUInt16LE(24, 2);
+      extra.writeBigUInt64LE(BigInt(size), 4);
+      extra.writeBigUInt64LE(BigInt(data.length), 12);
+      extra.writeBigUInt64LE(BigInt(offset), 20);
+      central.writeUInt16LE(extra.length, 30);
+      centrals.push(central, name, extra);
+    } else {
+      centrals.push(central, name);
+    }
     offset += local.length + name.length + data.length;
   }
   const directory = Buffer.concat(centrals);
   const end = Buffer.alloc(22);
   end.writeUInt32LE(0x06054b50, 0);
-  end.writeUInt16LE(entries.length, 8);
-  end.writeUInt16LE(entries.length, 10);
-  end.writeUInt32LE(directory.length, 12);
-  end.writeUInt32LE(offset, 16);
-  return Buffer.concat([...locals, directory, end]);
+  end.writeUInt16LE(zip64 ? 0xffff : entries.length, 8);
+  end.writeUInt16LE(zip64 ? 0xffff : entries.length, 10);
+  end.writeUInt32LE(zip64 ? 0xffffffff : directory.length, 12);
+  end.writeUInt32LE(zip64 ? 0xffffffff : offset, 16);
+  if (!zip64) return Buffer.concat([...locals, directory, end]);
+  const record = Buffer.alloc(56);
+  record.writeUInt32LE(0x06064b50, 0);
+  record.writeBigUInt64LE(44n, 4);
+  record.writeBigUInt64LE(BigInt(entries.length), 24);
+  record.writeBigUInt64LE(BigInt(entries.length), 32);
+  record.writeBigUInt64LE(BigInt(directory.length), 40);
+  record.writeBigUInt64LE(BigInt(offset), 48);
+  const locator = Buffer.alloc(20);
+  locator.writeUInt32LE(0x07064b50, 0);
+  locator.writeBigUInt64LE(BigInt(offset + directory.length), 8);
+  locator.writeUInt32LE(1, 16);
+  return Buffer.concat([...locals, directory, record, locator, end]);
 }
 
 function cellXml(value: string | number, column: number, row: number, dated: boolean): string {

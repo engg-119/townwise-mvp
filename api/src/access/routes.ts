@@ -9,13 +9,16 @@ import {
   addOrgMembers, approveRequest, changeOrgMemberRole, createOrg, getOrg, listOrgs, listPeople, listRequests, lookupPerson,
   queryAudit, rejectRequest, removeOrgMember, signOutEverywhere, updateOrg,
 } from '../handlers/admin.ts';
+import { answerQuestion, getAgent } from '../handlers/agent.ts';
 import { getLocationCalendar } from '../handlers/calendar.ts';
 import { deleteConversation, getChat, getConversation, postTurn } from '../handlers/chat.ts';
 import { actOnProposal } from '../handlers/chat-proposals.ts';
-import { deleteOrg, deletePerson } from '../handlers/deletion.ts';
+import { deleteOrg, deletePerson, purgeOriginals } from '../handlers/deletion.ts';
+import { getEstimatesAbout, getForecast, getPeopleInTown } from '../handlers/estimates.ts';
+import { deleteForecastRun, importForecastRun, listForecastRuns, publishForecastRun, withdrawForecastRun } from '../handlers/forecast-runs.ts';
 import {
-  answerImport, completeFile, createFile, currentImport, deleteFile, deleteRaw, downloadClean, downloadRaw, getFile, getImport,
-  listFiles, putChunk, startImport,
+  answerImport, completeFile, createFile, currentImport, deleteFile, deleteLocationOriginals, deleteRaw, downloadClean, downloadRaw, getFile, getImport,
+  listEntries, listFiles, putChunk, startImport,
 } from '../handlers/files.ts';
 import { createLocation, deleteLocation, getOwnOrg, updateLocation } from '../handlers/locations.ts';
 import { declineInvite, getMe, joinInvite, recordWelcome } from '../handlers/me.ts';
@@ -38,11 +41,11 @@ export interface TownwiseRoute {
   readonly path: `/${string}`;
   readonly policy: Policy;
   /**
-   * 'none' for GET and DELETE; '2kb' on the Places and files JSON routes; '8kb' on a TownwiseAI proposal; '256kb' only
-   * on the upload route; 'stream' only on the chunk route, whose handler reads the raw body itself after the policy has
-   * passed.
+   * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer; '2kb' on the Places and files JSON routes; '8kb'
+   * on a TownwiseAI proposal; '256kb' only on the upload route and (U13B) the staff forecast import; 'stream' only on the
+   * chunk route, whose handler reads the raw body itself after the policy has passed.
    */
-  readonly bodyLimit: 'none' | '2kb' | '8kb' | '32kb' | '256kb' | 'stream';
+  readonly bodyLimit: 'none' | '1kb' | '2kb' | '8kb' | '32kb' | '256kb' | 'stream';
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
   readonly limiter?: 'uploads' | 'requests' | 'view-as' | 'chat' | 'places' | 'files' | 'file_chunks' | 'downloads';
   readonly handler: (ctx: TownwiseContext, req: Request, res: Response, principal: Principal) => Promise<void>;
@@ -147,6 +150,10 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     handler: getFile,
   },
   {
+    id: 'org.files.entries', method: 'GET', path: '/org/locations/:locationId/files/:fileId/entries', policy: 'member',
+    bodyLimit: 'none', handler: listEntries,
+  },
+  {
     id: 'org.files.raw', method: 'GET', path: '/org/locations/:locationId/files/:fileId/raw', policy: 'member', bodyLimit: 'none',
     limiter: 'downloads', handler: downloadRaw,
   },
@@ -161,6 +168,10 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.files.remove', method: 'DELETE', path: '/org/locations/:locationId/files/:fileId', policy: 'member',
     bodyLimit: 'none', handler: deleteFile,
+  },
+  {
+    id: 'org.originals.remove', method: 'DELETE', path: '/org/locations/:locationId/originals', policy: 'org_admin',
+    bodyLimit: 'none', handler: deleteLocationOriginals,
   },
   {
     id: 'org.imports.current', method: 'GET', path: '/org/locations/:locationId/imports/current', policy: 'member',
@@ -195,6 +206,26 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.chat.proposal', method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/proposals/:proposalId',
     policy: 'member', bodyLimit: '8kb', handler: actOnProposal,
+  },
+  // U9 (TownwiseAI): the side panel's questions and activity, and answering a question.
+  { id: 'org.agent.get', method: 'GET', path: '/org/locations/:locationId/agent', policy: 'member', bodyLimit: 'none', handler: getAgent },
+  {
+    id: 'org.agent.answer', method: 'POST', path: '/org/locations/:locationId/agent/questions/:questionId', policy: 'member',
+    bodyLimit: '1kb', handler: answerQuestion,
+  },
+  // U13A, estimates (spec 10.13): people in town and "How Townwise estimates". Reads with no limiter.
+  {
+    id: 'org.people.get', method: 'GET', path: '/org/locations/:locationId/people-in-town', policy: 'member',
+    bodyLimit: 'none', handler: getPeopleInTown,
+  },
+  {
+    id: 'org.estimates.about', method: 'GET', path: '/org/locations/:locationId/estimates/about', policy: 'member',
+    bodyLimit: 'none', handler: getEstimatesAbout,
+  },
+  // U13B, forecast runs (spec 10.13, 14.4): the published forecast, a member read with no limiter.
+  {
+    id: 'org.forecast.get', method: 'GET', path: '/org/locations/:locationId/forecast', policy: 'member', bodyLimit: 'none',
+    handler: getForecast,
   },
 
   { id: 'org.members.list', method: 'GET', path: '/org/members', policy: 'org_admin', bodyLimit: 'none', handler: listMembers },
@@ -234,6 +265,27 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     id: 'admin.orgs.members.remove', method: 'DELETE', path: '/admin/orgs/:orgId/members/:memberId', policy: 'staff',
     bodyLimit: 'none', handler: removeOrgMember,
   },
+  // U13B, forecast runs from the staff console (spec 10.13, 14.4): import as a draft, publish, withdraw, delete.
+  {
+    id: 'admin.forecasts.list', method: 'GET', path: '/admin/orgs/:orgId/forecast-runs', policy: 'staff', bodyLimit: 'none',
+    handler: listForecastRuns,
+  },
+  {
+    id: 'admin.forecasts.import', method: 'POST', path: '/admin/orgs/:orgId/locations/:locationId/forecast-runs', policy: 'staff',
+    bodyLimit: '256kb', handler: importForecastRun,
+  },
+  {
+    id: 'admin.forecasts.publish', method: 'POST', path: '/admin/orgs/:orgId/forecast-runs/:runId/publish', policy: 'staff',
+    bodyLimit: '32kb', handler: publishForecastRun,
+  },
+  {
+    id: 'admin.forecasts.withdraw', method: 'POST', path: '/admin/orgs/:orgId/forecast-runs/:runId/withdraw', policy: 'staff',
+    bodyLimit: '32kb', handler: withdrawForecastRun,
+  },
+  {
+    id: 'admin.forecasts.remove', method: 'DELETE', path: '/admin/orgs/:orgId/forecast-runs/:runId', policy: 'staff',
+    bodyLimit: 'none', handler: deleteForecastRun,
+  },
   { id: 'admin.people.list', method: 'GET', path: '/admin/people', policy: 'staff', bodyLimit: 'none', handler: listPeople },
   {
     id: 'admin.people.lookup', method: 'GET', path: '/admin/people/lookup', policy: 'staff', bodyLimit: 'none',
@@ -244,6 +296,10 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     bodyLimit: '32kb', handler: signOutEverywhere,
   },
   { id: 'admin.people.delete', method: 'POST', path: '/admin/people/delete', policy: 'staff', bodyLimit: '32kb', handler: deletePerson },
+  {
+    id: 'admin.orgs.originals.remove', method: 'POST', path: '/admin/orgs/:orgId/originals/delete', policy: 'staff', bodyLimit: '32kb',
+    handler: purgeOriginals,
+  },
   { id: 'admin.audit.list', method: 'GET', path: '/admin/audit', policy: 'staff', bodyLimit: 'none', handler: queryAudit },
   {
     id: 'admin.view_as.start', method: 'POST', path: '/admin/view-as', policy: 'staff', bodyLimit: '32kb',

@@ -93,7 +93,7 @@ describe('the request', () => {
     const two = requestParams([{ role: 'user', content: 'Two' }, { role: 'assistant', content: 'Reply' }, { role: 'user', content: 'Three' }]);
     expect(JSON.stringify([one.system, one.tools])).toBe(JSON.stringify([two.system, two.tools]));
     expect(SYSTEM_PROMPT).not.toMatch(/\d/);
-    expect(TOOLS.map((tool) => tool.eager_input_streaming)).toEqual([true, true, true, true, true]);
+    expect(TOOLS.every((tool) => tool.eager_input_streaming === true)).toBe(true);
   });
 });
 
@@ -101,12 +101,41 @@ describe('the system prompt', () => {
   it('names TownwiseAI, asks for a source for every figure, asks when data does not add up, and keeps guest names out', () => {
     for (const rule of [
       'You are TownwiseAI, Townwise\'s assistant.',
-      'When you give a figure, say where it came from: their sales, their notes or the town profile.',
+      'When you give a figure, say where it came from: their sales, their notes or public town data (the town profile, the town calendar or people in town).',
       'If something in the data doesn\'t add up, ask the owner instead of guessing.',
       'Never ask for, repeat or store guest names or other personal details about guests or staff.',
-      'Townwise has no forecast for this location yet. Never claim or suggest that one exists, and don\'t predict figures.',
       'The owner sees the proposal as a card and decides whether to save it, so never say a note was saved.',
     ]) expect(SYSTEM_PROMPT).toContain(rule);
+  });
+});
+
+describe('the system prompt, estimates (U13A)', () => {
+  it('reads today in the town’s time zone, separates kinds of figures, says what is missing and never estimates on its own', () => {
+    for (const rule of [
+      'It gives the location\'s name, its town, today\'s date and weekday in the town\'s time zone, and how much sales history it has.',
+      'Every date in tool results comes with its weekday; use it instead of working weekdays out yourself.',
+      'get_town_calendar for the town\'s term dates, events and holidays with their sources, and get_people_in_town for who is likely in town each day',
+      'Townwise\'s figures come in kinds. Say which kind each figure is: the owner\'s own history (get_sales_days, get_location_overview), public town data (get_town_profile, get_town_calendar, get_people_in_town), and, when it exists, Townwise\'s forecast.',
+      'get_people_in_town gives a headcount range only where public counts support one. When it gives none, say so and describe what Townwise does know: the term, events, holidays and the season.',
+      'Attendance at an event is not the number of extra people in town.',
+      'When you say how the town affects this location, use the location\'s own history by term state from get_people_in_town, with its day counts.',
+      'When an input is missing (no term dates for those days, no headcount, no sales for those days, or a town Townwise hasn\'t researched), say which input is missing instead of filling the gap.',
+      'Never produce an estimate, range or headcount of your own.',
+    ]) expect(SYSTEM_PROMPT).toContain(rule);
+  });
+});
+
+describe('the system prompt, forecasts (U13B)', () => {
+  it('reads the published forecast first, gives ranges never the middle alone, names the model and never makes one up', () => {
+    for (const rule of [
+      'Before discussing upcoming demand, call get_forecast. If it says no forecast is available, say Townwise has no forecast for those dates yet and answer from history and the town calendar. Never make up a forecast, a range or a headcount.',
+      'Give a forecast as its range, low to high, and say that about eight in ten days land inside it. Never give the middle number alone. For a week, use the forecast\'s week rows; never add up daily ranges.',
+      'A booked day in the forecast is a private buyout: it has no walk-in range, so don\'t give one.',
+      'Say which model made the forecast and when, if the owner asks how it was made. Mention its accuracy, including misses, when the owner is deciding something with it.',
+      'Only call a day busier or quieter than usual from the forecast when it gives vsBaselinePct; otherwise compare with the owner\'s history and say so.',
+      'The forecast can\'t answer "what if" questions. Say so, and say what a note would let Townwise take into account.',
+    ]) expect(SYSTEM_PROMPT).toContain(rule);
+    expect(SYSTEM_PROMPT).not.toContain('Townwise has no forecast for this location yet.');
   });
 });
 

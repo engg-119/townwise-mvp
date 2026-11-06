@@ -30,6 +30,8 @@ export const KEPT_CODES = [
   'word_no_table', 'notes_not_read_yet', 'item_level', 'no_sales_columns', 'decimal_comma', 'needs_help', 'too_large_to_read',
   'no_header', 'no_dates', 'repeated_dates', 'too_many_days', 'too_many_locations', 'not_a_workbook', 'too_complex',
   'bad_encoding', 'zip_too_big', 'zip_bomb', 'zip_damaged', 'zip_empty', 'nothing_usable',
+  // U3: a staff purge or the retention sweep deleted the original of a file not read yet (spec 11A.6).
+  'raw_deleted',
 ] as const;
 /** Our faults: the file is stored and we look into it. */
 export const FAILED_CODES = ['internal', 'raw_missing'] as const;

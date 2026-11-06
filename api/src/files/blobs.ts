@@ -9,6 +9,7 @@ import type { Readable } from 'node:stream';
 import { BlobServiceClient, RestError, type ContainerClient } from '@azure/storage-blob';
 
 import type { OrgScope } from '../access/policy.ts';
+import type { AzureTokenSource } from '../azure-identity.ts';
 
 export const RAW_CONTAINER = 'client-raw';
 export const CLEAN_CONTAINER = 'client-clean';
@@ -54,6 +55,36 @@ export interface FileBlobs {
   /** A missing blob counts as deleted. */
   deleteRaw(scope: OrgScope, ref: BlobRef): Promise<void>;
   deleteClean(scope: OrgScope, ref: BlobRef): Promise<void>;
+  /**
+   * Every committed blob of the organization, or of one of its locations, in both containers. Resolves how many were
+   * deleted; a retry completes the work. Unfinished uploads are discarded first, one by one (discardUpload).
+   */
+  removePrefix(scope: OrgScope, locationId: string | null): Promise<number>;
+  /** Every committed blob in both containers whose name is Townwise's id form, for the sweeper's orphan check. */
+  listAll(): AsyncIterable<ListedBlob>;
+}
+
+/** A blob the sweeper found: the ids its name holds, and when it was last written. */
+export interface ListedBlob {
+  readonly container: 'raw' | 'clean';
+  readonly orgId: string;
+  readonly locationId: string;
+  readonly fileId: string;
+  readonly lastModified: Date;
+}
+
+const BLOB_NAME = /^([0-9a-f]{24})\/([0-9a-f]{24})\/([0-9a-f]{24})(\.csv)?$/;
+
+/** The ids in a blob name, or null for a name that is not Townwise's (it is then never touched). */
+export function parseBlobName(container: 'raw' | 'clean', name: string, lastModified: Date): ListedBlob | null {
+  const match = BLOB_NAME.exec(name);
+  if (match === null || (container === 'clean') !== (match[4] === '.csv')) return null;
+  return { container, orgId: match[1] ?? '', locationId: match[2] ?? '', fileId: match[3] ?? '', lastModified };
+}
+
+/** The prefix of an organization's blobs, or of one location's. */
+export function blobPrefix(scope: OrgScope, locationId: string | null): string {
+  return locationId === null ? `${scope.orgId}/` : `${scope.orgId}/${locationId}/`;
 }
 
 export function rawBlobName(scope: OrgScope, ref: BlobRef): string {
@@ -72,6 +103,19 @@ export function blockId(index: number): string {
 /** A managed identity token source (structurally a TokenCredential). */
 export interface BlobTokenSource {
   getToken(scopes: string | string[]): Promise<{ token: string; expiresOnTimestamp: number } | null>;
+}
+
+/** The resource the managed identity endpoint issues Blob Storage tokens for. */
+export const STORAGE_RESOURCE = 'https://storage.azure.com';
+
+/**
+ * The SDK's TokenCredential over the shared managed identity token source (azure-identity.ts). The SDK asks for the
+ * scope `https://storage.azure.com/.default`; the Container Apps endpoint takes a resource, which is always this one,
+ * whatever scope is asked. A failure leaves as the source's AzureIdentityError, which `mapped` turns into
+ * BlobUnavailableError with its name only.
+ */
+export function storageCredential(tokens: AzureTokenSource): BlobTokenSource {
+  return { getToken: () => tokens.getToken(STORAGE_RESOURCE) };
 }
 
 function mapped(err: unknown): Error {
@@ -160,6 +204,29 @@ function blobsOver(service: BlobServiceClient, chunks: BlobServiceClient): FileB
     },
     deleteClean(scope, ref) {
       return guarded(async () => { await clean.getBlobClient(cleanBlobName(scope, ref)).deleteIfExists(); });
+    },
+    removePrefix(scope, locationId) {
+      return guarded(async () => {
+        let deleted = 0;
+        for (const container of [raw, clean]) {
+          for await (const blob of container.listBlobsFlat({ prefix: blobPrefix(scope, locationId) })) {
+            if ((await container.getBlobClient(blob.name).deleteIfExists()).succeeded) deleted += 1;
+          }
+        }
+        return deleted;
+      });
+    },
+    async *listAll() {
+      try {
+        for (const [which, container] of [['raw', raw], ['clean', clean]] as const) {
+          for await (const blob of container.listBlobsFlat()) {
+            const listed = parseBlobName(which, blob.name, blob.properties.lastModified);
+            if (listed !== null) yield listed;
+          }
+        }
+      } catch (err) {
+        throw mapped(err);
+      }
     },
   };
 }

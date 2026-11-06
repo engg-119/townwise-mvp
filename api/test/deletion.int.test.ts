@@ -32,6 +32,10 @@ afterEach(async () => { await server.authStores.totp.remove(staff.userId); });
 const TENANT_COLLECTIONS = [
   'tw_members', 'tw_locations', 'tw_sales_days', 'tw_uploads', 'tw_notes', 'tw_chat_conversations', 'tw_chat_live_turns',
   'tw_chat_usage', 'tw_chat_proposals',
+  // U9, TownwiseAI's questions.
+  'tw_agent_answers',
+  // U13B.
+  'tw_forecast_runs', 'tw_forecasts',
 ] as const;
 
 /** A tw_chat_proposals record (spec 6.16): the author dismissed a proposal in one of their conversations. */
@@ -127,6 +131,11 @@ async function populatedOrg(name: string, status: 'active' | 'suspended'): Promi
   await addNote(server, { orgId, locationId, detail: `${name} note detail`, createdBy: member.session.userId });
   await addConversation(server, { orgId, locationId, userId: member.session.userId, text: `${name} chat` });
   await addProposal({ orgId, locationId, userId: member.session.userId });
+  // U9: an answer to a TownwiseAI question.
+  await server.connection.collection('tw_agent_answers').insertOne({
+    orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), questionId: 'gap_2026-05-03_2026-05-04',
+    answer: 'not_sure', noteId: new Types.ObjectId(), status: 'done', createdAt: server.clock.now(), updatedAt: server.clock.now(),
+  });
   await addLiveTurn(server, { orgId, userId: member.session.userId });
   await addChatUsage(server, { orgId, month: '2026-06', costMicroUsd: 1_250_000 });
   await addGrant(server, { actorUserId: staff.userId, sessionId: randomUUID(), targetUserId: member.session.userId, orgId });
@@ -180,9 +189,14 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
     expect(await res?.json()).toEqual({
       deletedDays: 2, deletedUploads: 1, deletedNotes: 1, deletedLocations: 2, deletedSeats: 4, redactedEvents: 4,
     });
-    // The event is written before the effect; the organization row is deleted last, then sales days and chat usage swept again.
+    // The event is written before the effect; the organization row is deleted last, then sales days, chat usage and
+    // (U13B) forecasts swept again.
     expect(writes[0]).toBe('insert tw_audit_events');
-    expect(writes.slice(-3)).toEqual(['delete tw_orgs', 'delete tw_sales_days', 'delete tw_chat_usage']);
+    // Stored files (none here) are swept again after the row too: imports first. Then (U13B) forecast rows, then runs.
+    expect(writes.slice(-6)).toEqual([
+      'delete tw_orgs', 'delete tw_imports', 'delete tw_sales_days', 'delete tw_chat_usage',
+      'delete tw_forecasts', 'delete tw_forecast_runs',
+    ]);
 
     const orgId = new Types.ObjectId(doomed.orgId);
     for (const name of TENANT_COLLECTIONS) expect({ name, n: await count(name, { orgId }) }).toEqual({ name, n: 0 });
@@ -298,6 +312,22 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
       expect(await errorOf(await deleteOrg(org.orgId))).toEqual({ status: 503, error: 'unavailable' });
     });
     expect(await snapshotOf(org)).toBe(before);
+  });
+
+  it('is refused with 503 files_unavailable, recorded as not applied, when stored files are off but it has files', async () => {
+    const org = await populatedOrg('Files Left Behind Cafe', 'suspended');
+    await server.connection.collection('tw_files').insertOne({ orgId: new Types.ObjectId(org.orgId), locationId: new Types.ObjectId(), status: 'read' });
+    const records = async (): Promise<string> => {
+      const docs: unknown[] = [await server.connection.collection('tw_orgs').findOne({ _id: new Types.ObjectId(org.orgId) })];
+      for (const name of TENANT_COLLECTIONS) docs.push(await server.connection.collection(name).find({ orgId: new Types.ObjectId(org.orgId) }).toArray());
+      return JSON.stringify(docs);
+    };
+    const before = await records();
+    expect(await errorOf(await deleteOrg(org.orgId))).toEqual({ status: 503, error: 'files_unavailable' });
+    expect(await records()).toBe(before);
+    const events = (await auditEvents(server)).filter((event) => String(event.orgId) === org.orgId);
+    expect(events.at(-1)).toMatchObject({ action: 'staff_action.not_applied', details: { code: 'files_unavailable' } });
+    expect(await count('tw_files', { orgId: new Types.ObjectId(org.orgId) })).toBe(1);
   });
 
   it('answers 404 for an unknown organization and 400 for a malformed id', async () => {

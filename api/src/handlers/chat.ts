@@ -15,7 +15,7 @@ import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import { runTurn, type TurnEvent } from '../chat/turn.ts';
 import { chatMessageViews, OPEN, type ChatMessageView, type ProposalState, type ShownProposal } from '../chat/view.ts';
-import { utcDay } from '../dates.ts';
+import { localDay, timeZoneOf } from '../time-zones.ts';
 import type { ConversationOwner, ConversationRecord, ConversationSummary } from '../stores/chat-conversations.ts';
 import { loadLocation, memberOf } from './locations.ts';
 import { sameNoteContent } from './notes.ts';
@@ -115,7 +115,8 @@ export async function getConversation(ctx: TownwiseContext, req: Request, res: R
   };
   const body: ConversationView = {
     id: conversation.id, title: conversation.title, updatedAt: conversation.updatedAt.toISOString(),
-    messages: chatMessageViews(conversation.messages, utcDay(ctx.now()), stateOf),
+    // U13A: input views re-read their dates against the town's local day, as the tools ran them.
+    messages: chatMessageViews(conversation.messages, localDay(ctx.now(), timeZoneOf(location.town).timeZone), stateOf),
   };
   res.status(200).json(body);
 }
@@ -176,6 +177,7 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   const model = ctx.chat;
   if (model === null) throw new AppError(503, 'chat_unavailable', 'TownwiseAI isn’t turned on yet');
   const owner = ownerOf(caller, location.id);
+  const { timeZone } = timeZoneOf(location.town);
   if (body.conversationId !== undefined) {
     const existing = await ctx.stores.chatConversations.find(scope, owner, body.conversationId);
     if (existing === null) throw notFound();
@@ -233,7 +235,8 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
     send('conversation', { id: conversationId, title });
     const result = await runTurn({
       model,
-      tools: { ctx, scope, location, today: utcDay(ctx.now()) },
+      // U13A: today is the town's local date, so an evening turn is not already tomorrow.
+      tools: { ctx, scope, location, today: localDay(ctx.now(), timeZone), timeZone },
       history,
       userMessage: { role: 'user', content: body.content },
       signal,

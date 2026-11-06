@@ -108,6 +108,7 @@ export const KEPT_REASON = {
   zip_damaged: 'this ZIP is damaged.',
   zip_empty: 'this ZIP is empty.',
   nothing_usable: 'none of the files inside had daily sales Townwise could use.',
+  raw_deleted: 'its original was deleted before Townwise read it.',
   system_file: 'it’s a system file your computer added.',
   nested_zip: 'it’s a ZIP inside a ZIP inside a ZIP, too deep to open.',
   zip_method: 'it’s compressed in a way Townwise can’t unpack. Zip it again with your computer’s built-in tool.',

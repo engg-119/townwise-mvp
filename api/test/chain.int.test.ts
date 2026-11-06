@@ -1,6 +1,7 @@
 // The route chain (spec 7.2) and the staff gate (D2), through /api and the test-only /probe table.
 import { randomUUID } from 'node:crypto';
 
+import { Types } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { TOWNWISE_ROUTES } from '../src/access/routes.ts';
@@ -93,12 +94,18 @@ describe('GET is side-effect free (7.3)', () => {
     const fileId = await seedReadFile(server, blobs, {
       orgId, locationId, uploadedBy: admin.userId, name: 'sales.csv', raw: Buffer.from('Date\n'), clean: 'date,guests,net_sales\r\n',
     });
+    // A ZIP's, so its entries route answers too (with no entries).
+    await server.connection.collection('tw_files').updateOne({ _id: new Types.ObjectId(fileId) }, { $set: { kind: 'zip' } });
     const importId = String((await server.connection.collection('tw_files').findOne({}, { sort: { _id: -1 } }))?.importId);
     const ids: Record<string, string> = { orgId, locationId, townId: 'hanover-nh', fileId, importId };
     const query: Record<string, string> = {
       'admin.people.lookup': `?q=${encodeURIComponent(memberEmail)}`,
       'org.sales.days': '?from=2026-01-01&to=2026-05-31',
       'org.calendar.get': '?from=2026-01-01&to=2026-05-31',
+      // U13A.
+      'org.people.get': '?from=2026-05-01&to=2026-05-31',
+      // U13B.
+      'org.forecast.get': '?from=2026-05-01&to=2026-05-31',
     };
     const gets = TOWNWISE_ROUTES.filter((route) => route.method === 'GET')
       .map((route) => `/api${route.path.replace(/:([A-Za-z]+)/g, (_m, name: string) => ids[name] ?? '')}${query[route.id] ?? ''}`);

@@ -209,6 +209,22 @@ describe('DELETE /api/org/locations/:locationId', () => {
     expect(await proposals.countDocuments({ locationId: new Types.ObjectId(doomed) })).toBe(0);
     expect(await proposals.countDocuments({ locationId: new Types.ObjectId(kept) })).toBe(1);
   });
+
+  // U9, TownwiseAI's questions.
+  it('deletes the answers to TownwiseAI’s questions about the location with it, and no other location’s', async () => {
+    const t = await team('Answer Group');
+    const doomed = await addLocation(server, { orgId: t.orgId, name: 'Doomed' });
+    const kept = await addLocation(server, { orgId: t.orgId, name: 'Kept' });
+    const answers = server.connection.collection('tw_agent_answers');
+    const at = server.clock.now();
+    await answers.insertMany([doomed, kept].map((locationId) => ({
+      orgId: new Types.ObjectId(t.orgId), locationId: new Types.ObjectId(locationId), questionId: 'gap_2026-05-03_2026-05-04',
+      answer: 'open', noteId: new Types.ObjectId(), status: 'done', createdAt: at, updatedAt: at,
+    })));
+    expect((await remove(t.admin, doomed)).status).toBe(204);
+    expect(await answers.countDocuments({ locationId: new Types.ObjectId(doomed) })).toBe(0);
+    expect(await answers.countDocuments({ locationId: new Types.ObjectId(kept) })).toBe(1);
+  });
 });
 
 describe('GET /api/towns/:townId', () => {

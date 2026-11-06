@@ -138,17 +138,25 @@ export async function deleteLocation(ctx: TownwiseContext, req: Request, res: Re
   const admin = orgAdmin(principal);
   const { scope } = admin;
   const location = await loadLocation(ctx, scope, req.params.locationId);
-  const [hasDays, hasNotes] = await Promise.all([
+  // Stored files are data too (spec 11A): deleting the sales data deletes them.
+  const [hasDays, hasNotes, hasFiles] = await Promise.all([
     ctx.stores.salesDays.hasAny(scope, location.id),
     ctx.stores.notes.hasAny(scope, location.id),
+    ctx.stores.files.hasAny(scope, location.id),
   ]);
-  if (hasDays || hasNotes) throw new AppError(409, 'location_has_data', 'Delete the location’s sales data and notes first');
+  if (hasDays || hasNotes || hasFiles) throw new AppError(409, 'location_has_data', 'Delete the location’s sales data and notes first');
   if (!(await ctx.stores.locations.remove(scope, location.id))) throw notFound();
   // Records of uploads that never wrote a day (a crash leaves `applying`) go with it, and so do its tuning chats,
   // which nothing could reach without the location.
   await ctx.stores.uploads.removeForLocation(scope, location.id);
   await ctx.stores.chatConversations.removeForLocation(scope, location.id);
   await ctx.stores.chatProposals.removeForLocation(scope, location.id);
+  // U9: answers to TownwiseAI's questions about the location's days.
+  await ctx.stores.agentAnswers.removeForLocation(scope, location.id);
+  // An empty import left open goes too.
+  await ctx.stores.imports.removeForLocation(scope, location.id);
+  // U13B: forecasts staff imported for it, even with no sales data left.
+  await ctx.stores.forecasts.removeForLocation(scope, location.id);
   await recordAfter(ctx, {
     ...actorOf(admin), at: ctx.now(), orgId: scope.orgId, action: 'location.deleted',
     target: { type: 'location', id: location.id },

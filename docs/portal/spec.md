@@ -336,7 +336,7 @@ For an organization signed outside the app: on `/admin/orgs`, “New organizatio
 
 ### F11. Upload sales history (web)
 
-Rules are in Section 11. The entry points are the Forecast tab checklist, the Sales data tab, and the empty states on both. An org admin’s upload replaces the days it covers; a member’s adds new days only and leaves existing days unchanged (D16, 11.4).
+Rules are in Section 11. The entry points are Home’s history step and upload links (P11), the Sales data tab, and its empty state. An org admin’s upload replaces the days it covers; a member’s adds new days only and leaves existing days unchanged (D16, 11.4).
 
 ### F13. Delete a person or an organization (staff)
 
@@ -344,7 +344,7 @@ Rules are in 10.7 (Deletion). Staff delete a person from People (P22) after remo
 
 ### F12. Add a note
 
-Rules are in Section 12. The entry points are the Notes tab, the Forecast checklist, and “Add a closure note” beside the missing-days count on Sales data, which prefills kind `closure` and effect `closed`.
+Rules are in Section 12. The entry points are the Notes tab and “Add a closure note” beside the missing-days count on Sales data, which prefills kind `closure` and effect `closed`.
 
 ---
 
@@ -467,28 +467,37 @@ Fields are in Section 9. Indexes: `{ at: -1 }`, `{ orgId: 1, at: -1 }`, `{ actor
 
 ### 6.10 Isolation rules
 
-1. Every tenant document (`tw_members`, `tw_locations`, `tw_sales_days`, `tw_uploads`, `tw_notes`, `tw_files`, `tw_imports`, `tw_upload_days`) carries `orgId`. Every tenant compound index leads with `orgId`, except the two seat indexes, which are keyed by the person.
-2. Tenant store functions take a branded `OrgScope` as their first argument and add `orgId: scope.orgId` to every filter, update, delete and insert. Only `api/src/access/policy.ts` can mint an `OrgScope`, and only through these five functions:
+1. Every tenant document (`tw_members`, `tw_locations`, `tw_sales_days`, `tw_uploads`, `tw_notes`, `tw_files`, `tw_imports`, `tw_upload_days`, `tw_file_entries`, `tw_files_usage`) carries `orgId`. Every tenant compound index leads with `orgId`, except the two seat indexes, which are keyed by the person.
+2. Tenant store functions take a branded `OrgScope` as their first argument and add `orgId: scope.orgId` to every filter, update, delete and insert. Only `api/src/access/policy.ts` can mint an `OrgScope`, and only through these six functions:
    - `scopeOf(memberPrincipal)`: member routes (rule 3).
    - `scopeForStaffOrg(staff, orgId)`: `/api/admin/orgs/:orgId/*` (rule 5). It reads the organization first and answers 404 if it is absent.
    - `scopeForNewOrg(staff, orgId)`: approval (F3) and staff creation (F10) only, for the organization those handlers just created.
    - `scopeForJoinedInvite(invite)`: the join handler only, after its compare-and-set succeeds.
    - `scopeForClaimedImport(claim)`: the file reader only (`files/worker.ts`, 11A), for the organization of the import it just claimed.
+   - `scopeForSweep(found)`: the daily file sweep only (`files/sweeper.ts`, 11A.7), for the organization of a file, an import or a blob it found.
 3. Handlers on `/api/org/*` take the organization only from the principal. No member route carries an organization id in its path, query or body.
 4. Location-scoped routes first load `{ _id: locationId, orgId }`. Another organization’s location answers 404 `not_found`, exactly like a location that does not exist. Children (sales, uploads, notes) copy `orgId` and `locationId` from that read.
 5. Staff routes on `/api/admin/orgs/:orgId/*` mint a scope from the path through one function that requires the `staff` principal and reads the organization first (404 if absent).
 6. Responses never include another organization’s ids or names, except the invitation list shown to its invitee.
 7. Path ids are parsed with the mongo module’s `objectId` schema, so a malformed id is 400. Filter values are zod scalars. The only operators are built in code and wrapped in `trusted(...)` (**Exists**).
-8. Operations keyed by a person, or spanning organizations, live in one file, `api/src/stores/cross-tenant.ts`, with a closed list: `findActiveSeat(userId)`, `findOpenInvites(email)`, `claimInvite(inviteId, email, userId)`, `declineInvite(inviteId, email)`, `latestRemovedSeat(userId)`, `adminOrgStats()`, `peopleRecords()`, `deletePersonRecords(userId, email)` (10.7, Deletion) and the file reader's `claimNextImport()` (11A). Only `access/resolve.ts`, the join and decline handlers, the staff handlers and `files/worker.ts` import it, and a test enforces that list.
+8. Operations keyed by a person, or spanning organizations, live in one file, `api/src/stores/cross-tenant.ts`, with a closed list: `findActiveSeat(userId)`, `findOpenInvites(email)`, `claimInvite(inviteId, email, userId)`, `declineInvite(inviteId, email)`, `latestRemovedSeat(userId)`, `adminOrgStats()`, `peopleRecords()`, `deletePersonRecords(userId, email)` (10.7, Deletion), the file reader's `claimNextImport()` (11A) and the daily file sweep's `claimFileSweep()`, `finishFileSweep()`, `sweepCandidates()`, `removeOldUploadDays()` and `existingFileIds()` (11A.7). Only `access/resolve.ts`, the join and decline handlers, the staff handlers, `files/worker.ts` and `files/sweeper.ts` import it, and a test enforces that list.
 9. Stored files' blob names are ids only, `{orgId}/{locationId}/{fileId}`, built in `api/src/files/blobs.ts` from the scope's `orgId` and ids the files store already checked belong to it; no request value becomes a path. `blobs.ts` is the only file that imports the Azure SDK, and `chat/*` imports no file code (test-enforced). One API identity reaches every organization's blobs, so isolation is in code and tests; the custom role keeps the API to the two client-file containers, and the private endpoint keeps the data plane off the internet.
 
 ### 6.11 `tw_files`
 
-One row per stored file (11A). `_id` (the file id, used in blob names), `orgId`, `locationId`, `importId`, `purpose` (`'history'`), `uploadedBy` (userId), `uploaderRole` (`'org_admin' | 'member'` at upload; decides replace or add, 11.4), `uploadedAt`, `name` (the original file name: last path part, control characters removed, NFC, at most 255 characters; shown to the organization only, never logged, audited, put in a blob name or a URL, or sent to a model), `kind` (`'text' | 'xlsx' | 'xls' | 'pdf' | 'docx' | 'doc' | 'zip' | 'other'`), `sizeBytes`, `fingerprint` (SHA-256 over the chunk size and each chunk's SHA-256 in order, `townwise-chunks-v1:{chunkSize}:{hashes}`, so the same file uploaded again matches; it is not the file's plain SHA-256), `upload` (while uploading: `{ chunkSize, chunkCount, chunks: ({ bytes, sha256 } | null)[], head (first 8 KiB, base64), expiresAt }`; null after complete), `status` (`'uploading' | 'stored' | 'queued' | 'reading' | 'waiting' | 'read' | 'kept' | 'failed' | 'deleting'`), `outcome` (11A.6), `progress` (while reading: `{ phase, done, total, unit, phaseStartedAt, updatedAt }`), `readStartedAt`, `readMs`, `answers` (per sheet index), `uploadId`, `result` (counts and dates), `report` (11A.5), `cleanBytes`, `rawDeletedAt` (the name becomes the kind's label then), `attempts`. `strict: 'throw'`. Indexes: `{ orgId: 1, locationId: 1, uploadedAt: -1 }`, `{ orgId: 1, importId: 1, uploadedAt: 1 }`, `{ orgId: 1, locationId: 1, fingerprint: 1 }`, `{ status: 1, 'upload.expiresAt': 1 }` (the sweeper, later).
+One row per stored file (11A). `_id` (the file id, used in blob names), `orgId`, `locationId`, `importId`, `purpose` (`'history'`), `uploadedBy` (userId), `uploaderRole` (`'org_admin' | 'member'` at upload; decides replace or add, 11.4), `uploadedAt`, `name` (the original file name: last path part, control characters removed, NFC, at most 255 characters; shown to the organization only, never logged, audited, put in a blob name or a URL, or sent to a model), `kind` (`'text' | 'xlsx' | 'xls' | 'pdf' | 'docx' | 'doc' | 'zip' | 'other'`), `sizeBytes`, `fingerprint` (SHA-256 over the chunk size and each chunk's SHA-256 in order, `townwise-chunks-v1:{chunkSize}:{hashes}`, so the same file uploaded again matches; it is not the file's plain SHA-256), `upload` (while uploading: `{ chunkSize, chunkCount, chunks: ({ bytes, sha256 } | null)[], head (first 8 KiB, base64), expiresAt }`; null after complete), `status` (`'uploading' | 'stored' | 'queued' | 'reading' | 'waiting' | 'read' | 'kept' | 'failed' | 'deleting'`), `outcome` (11A.6), `progress` (while reading: `{ phase, done, total, unit, phaseStartedAt, updatedAt }`), `readStartedAt`, `readMs`, `answers` (per sheet index), `uploadId`, `result` (counts and dates), `report` (11A.5), `cleanBytes`, `rawDeletedAt` (the name becomes the kind's label then, a workbook's sheet names in `report.sheets` become `Sheet 1`, `Sheet 2` and so on, and a ZIP's entry paths are cleared), `attempts`, `entries` (a ZIP's `{ total, used, kept }`, once listed), `modelCalls` and `costMicroUsd` (the AI column step's calls for this file, 11A.4), `aiChoices` (each call's answer, column indexes only, keyed by a SHA-256 of the redacted profile it was asked about, so a re-read of the same table reuses it without a call), `purgeRaw` (set by a staff purge while the file was busy, 10.7). The person's answers are keyed by sheet index, or `family:<signature>` for a family of a ZIP's tables. `strict: 'throw'`. Indexes: `{ orgId: 1, locationId: 1, uploadedAt: -1 }`, `{ orgId: 1, importId: 1, uploadedAt: 1 }`, `{ orgId: 1, locationId: 1, fingerprint: 1 }`, `{ status: 1, 'upload.expiresAt': 1 }`, `{ status: 1, uploadedAt: 1 }` and `{ purgeRaw: 1 }` (sparse) (the sweep).
 
 ### 6.12 `tw_imports`
 
 A batch of files dropped for one location (11A). `orgId`, `locationId`, `createdBy`, `createdAt`, `lastDropAt`, `status` (`'open' | 'queued' | 'reading' | 'waiting' | 'done'`), `activeLocation` (equals `locationId` until done, then unset), `startedAt`, `finishedAt`, `question` (11A.4, while waiting), `appliedVersion` (+1 each time a file's days are written), `drops` (+1 each time a file completes into it), `lease` (`{ owner, until }`), `claimedAt`, `bytesRead`, `msRead` (over its finished files, for the reading speed). Indexes: `{ activeLocation: 1 }` unique with a `$type` partial filter (one active import per location; two first drops race on it and the loser reads the winner), `{ orgId: 1, locationId: 1, createdAt: -1 }`, `{ status: 1, startedAt: 1 }` (the reader's claim).
+
+### 6.13 `tw_files_usage`
+
+What the file reader's AI column step (11A.4) has cost each organization per UTC month: `{ orgId, month (YYYY-MM), costMicroUsd, updatedAt }`, unique `{ orgId: 1, month: 1 }`, only ever `$inc`'d. Apart from `tw_chat_usage`, so neither budget eats the other's. Deleted with the organization.
+
+### 6.14 `tw_file_sweeps`
+
+One document, `{ _id: 'sweeper', owner, leaseUntil, lastRunAt }`: the daily file sweep's leader lease across replicas (11A.7). Cross-tenant by nature, so only `stores/cross-tenant.ts` reads or writes it.
 
 ### 6.15 `tw_welcomes`
 
@@ -518,11 +527,56 @@ What the author did with each note TownwiseAI proposed in their conversation (10
 
 Indexes: `{ orgId: 1, conversationId: 1, proposalId: 1 }` unique; `{ orgId: 1, locationId: 1 }`. It never holds the note's content. Deleted with the conversation, the location, the organization (10.7) and the author's person deletion (10.7, by `userId`); notes saved from proposals stay with the organization. Rows left by a crash during a conversation's delete, or by a Save racing it, hold only ids and go with the location, the organization or the person (`tuning-chat.md` section 5).
 
+### 6.17 `tw_agent_answers`
+
+The answers to TownwiseAI's questions about a location's days with no sales (10.12). One document per question answered; none means it is still asked.
+
+| Field | Type | Rule |
+|---|---|---|
+| `_id` | ObjectId | |
+| `orgId`, `locationId` | ObjectId | from the caller's seat and the location route |
+| `questionId` | string | `weekday_{0-6}_{from}_{to}` or `gap_{from}_{to}`: dates and a weekday number only |
+| `answer` | `'closed' \| 'open' \| 'not_sure'` | a later try of a `saving` answer may change it, unless it is `closed` with its note written; a `done` one stands, except that a `closed` try whose note is written overrules a different answer finished at the same moment |
+| `noteId` | ObjectId | set when the document is inserted, whatever the answer, so every try of a `closed` answer writes the same closure note |
+| `status` | `'saving' \| 'done'` | `saving` between the claim and the end; the question is still asked until `done` |
+| `createdAt`, `updatedAt` | Date | |
+
+Index: `{ orgId: 1, locationId: 1, questionId: 1 }` unique. No person id (the audit event `agent.question_answered` carries the actor) and no text. Deleted with the location's sales data (10.4: an answer was about those days, so the same days uploaded again are asked about again), the location and the organization (10.7); a person's deletion has nothing of it to delete. Closure notes saved from answers stay with the organization, as every note does.
+
+### 6.18 `tw_file_entries`
+
+One row per entry of a stored ZIP (11A.4): `{ orgId, locationId, fileId, index (central-directory order), path (sanitized: control characters removed, NFC, at most 300 characters; shown to the organization only, null under view-as, cleared when the ZIP's original is deleted), depth (1 or 2), kind, sizeBytes (declared, uncompressed), status ('used' | 'kept' | 'failed'), outcome, family (its table's header signature), dayCount }`. Unique `{ orgId: 1, fileId: 1, index: 1 }`; `{ orgId: 1, locationId: 1 }`. Written in batches of 500 when the ZIP is read, replaced on a re-read; deleted with the file, the location's sales data and the organization.
+
 ### 6.19 `tw_upload_days`
 
 `{ orgId, day (YYYY-MM-DD, UTC), bytes, updatedAt }`, unique `{ orgId: 1, day: 1 }`. Creating an upload reserves its size with a conditional `$inc` that fails past the daily cap; cancelling an unfinished upload the same day gives it back.
 
-(6.13, 6.14, 6.17 and 6.18 are numbered for the units still in flight.)
+### 6.20 `tw_forecast_runs`
+
+One per forecast run file staff imported for a location (14.4). Outputs and metadata only; the model never reaches the API.
+
+| Field | Type | Rule |
+|---|---|---|
+| `_id` | ObjectId | the run id |
+| `orgId`, `locationId` | ObjectId | from the staff route's organization and a location loaded with its scope |
+| `metric` | `'guests'` | |
+| `model` | `{ family, version, notebookCommit }` | family `hybrid_linear_xgboost \| linear_median \| weekday_median`; version `v{n}`; the `modeling/` commit |
+| `trainingSource` | `'files_from_owner'` | `'townwise_uploads'` is reserved until the DECISION NEEDED in 14.1 is answered |
+| `trainedFrom`, `dataThrough`, `madeAt` | `YYYY-MM-DD` | the first and last day of sales the model saw, and when it was made |
+| `frozen` | `{ files: { name, sha256 }[] } \| null` | the frozen CSVs in `modeling/forecasts/` it was exported from |
+| `interval` | `{ level: 0.8, widened }` | |
+| `backtest` | `{ from, to, weeks, weeklyTypicalErrorPct, weeksOver20Pct, weeklyRangePct } \| null` | typed in from the forecasts README |
+| `range`, `dayCount`, `weekCount` | | the first and last day; counts |
+| `fileSha256` | string | over the file's canonical JSON |
+| `status` | `'importing' \| 'draft' \| 'published' \| 'withdrawn'` | |
+| `importedBy`, `publishedBy` | string \| null | staff user ids; set to null on that person's deletion |
+| `importedAt`, `publishedAt`, `withdrawnAt` | Date \| null | |
+
+Indexes: `{ orgId: 1, locationId: 1, fileSha256: 1 }` unique; `{ orgId: 1, locationId: 1, status: 1, dataThrough: -1 }`; `{ orgId: 1, importedAt: -1 }`. Strict (`'throw'`). Deleted with its rows by staff, with the location, with the location's sales data and with the organization (10.7).
+
+### 6.21 `tw_forecasts`
+
+One row per day and per week of a run: `orgId`, `locationId`, `runId`, `span` (`'day' | 'week'`), `from`, `to` (equal for a day), `status` (a day's `open | closed | booked`; null for a week), `low`, `mid`, `high` (null on a closed or booked day), `baseline` (null unless the run recorded one), `openDays` (a week's), `reasons` (`{ kind, ref, effectPct }[]`, kind `weekday | term | event | holiday | level | closure | booking`; `ref` a town calendar id or group, kept only when it names an entry on that day). Labels are never stored. Indexes: `{ orgId: 1, locationId: 1, runId: 1, span: 1, from: 1 }` unique; `{ orgId: 1, locationId: 1, span: 1, from: 1 }`; `{ orgId: 1, runId: 1 }`. Strict (`'throw'`); rows are built field by field and upserted on their key, so a retried import writes only what is missing.
 
 ---
 
@@ -681,11 +735,15 @@ interface AuditEvent {
 | `member.left` | `email` |
 | `location.created`, `location.updated`, `location.deleted` | `name`, `townId` |
 | `sales.uploaded` | `locationId`, `dayCount`, `inserted`, `replaced`, `firstDate`, `lastDate`; from the file reader also `fileId` and `via: 'file'`, with the uploader as actor |
-| `sales.deleted` | `locationId`, `deletedDays` |
+| `sales.deleted` | `locationId`, `deletedDays`, `deletedFiles` |
 | `file.uploaded` | `locationId`, `kind`, `sizeBytes` |
 | `file.deleted` | `locationId`, `kind`, `reason: 'owner'` |
 | `file.raw_deleted` | `locationId`, `kind` |
+| `files.raw_deleted_all` | `locationId`, `count` (an org admin deleted every original of a location) |
+| `org.originals_deleted` | `count`, `basis` (`data_subject_request`, `org_request` or `other`, an enum, never free text); staff, target the organization, recorded before the effect (9.3), and shown in the organization's staff activity |
 | `note.created`, `note.updated`, `note.deleted` | `locationId`, `kind`, `startDate`, `endDate` |
+| `agent.question_answered` | `locationId`, `questionId` (dates and a weekday number only), `answer` (`closed`, `open` or `not_sure`); a `closed` answer's closure note is also recorded `note.created` (10.12) |
+| `forecast.imported`, `forecast.published`, `forecast.withdrawn`, `forecast.deleted` | `locationId`, `modelVersion`, `from`, `to`, `dayCount` (target `forecast_run`; staff actions, written before the effect; never a figure) |
 | `view_as.started` | `targetUserId`, `targetEmail`, `reason`, `expiresAt` |
 | `view_as.ended` | `endReason` (`ended`, `replaced` or `expired`) |
 | `people.signed_out_everywhere` | none (written before the effect, 9.3; the revoked count is in the response) |
@@ -825,7 +883,7 @@ Two routes let the request form find the business on Google Places (New). The AP
 | `GET /api/org/locations/:locationId/sales/days?from=&to=` | member | dates `YYYY-MM-DD`, `from <= to`, span at most 366 days | 200 `{ days: SalesDay[] }` | 400; 404 |
 | `GET /api/org/locations/:locationId/sales/history` | member | | 200 `SalesHistory` (10.10): every stored day, oldest first | 400; 404 |
 | `POST /api/org/locations/:locationId/sales/uploads` | member, 256 KB, limiter `uploads` | `{ days: SalesDay[] }` (Section 11.3) | 201 `{ upload: UploadView, coverage, calibration }`; a member’s upload adds new days only (11.4) | 400; 404; 413; 429 |
-| `DELETE /api/org/locations/:locationId/sales` | org_admin | | 200 `{ deletedDays, deletedUploads }` | 404 |
+| `DELETE /api/org/locations/:locationId/sales` | org_admin | | 200 `{ deletedDays, deletedUploads, deletedFiles }`: with the days and upload records go the location's stored files (11A), forecast runs (6.20, 6.21) and answers to TownwiseAI's questions (6.17); notes stay, closure notes saved from answers included | 404; 409 `import_running`; 503 `files_unavailable` (10.9) |
 
 Month sums run over the days that have a value. A month whose days have no guest counts returns `guests: null`.
 
@@ -860,10 +918,16 @@ Every route here has policy `staff`, except `view-as/end`, which has `staff_self
 | `POST /api/admin/orgs` | `{ name, adminEmail }` [Build note: and an optional `id`, which makes a retry idempotent (F10)] | 201 `{ org: { id, name }, result: AddResult }` [Build note: 200, the same shape, for a repeat of that `id`] | |
 | `GET /api/admin/orgs/:orgId` | | 200 `{ org: { id, name, status, createdAt, fromRequestId, suspendedAt }, members: MemberView[], locations: { id, name, town, coverage, notesCount, lastUploadAt }[], recent: AuditEventView[] }` (counts only, D7; newest 20 events) [Build note: `org` also carries `fromRequestSentAt`, the request’s `createdAt` for P21’s “From request {date}”, or null without a request or once it is deleted] | 404 |
 | `PATCH /api/admin/orgs/:orgId` | `{ name?, status?: 'active' \| 'suspended' }` | 200 `{ org }` | 404 |
-| `DELETE /api/admin/orgs/:orgId` | | 200 `{ deletedDays, deletedUploads, deletedNotes, deletedLocations, deletedSeats, redactedEvents }` | 404; 409 `org_not_suspended` |
+| `DELETE /api/admin/orgs/:orgId` | | 200 `{ deletedDays, deletedUploads, deletedNotes, deletedLocations, deletedSeats, redactedEvents }` | 404; 409 `org_not_suspended`; 503 `files_unavailable` (stored files are off while it has files) |
+| `POST /api/admin/orgs/:orgId/originals/delete` | `{ basis: 'data_subject_request' \| 'org_request' \| 'other' }` | 200 `{ deletedOriginals, skippedBusy }` | 400; 404; 503 `files_unavailable` |
 | `POST /api/admin/orgs/:orgId/members` | as 10.6 | as 10.6 | 404 |
 | `PATCH /api/admin/orgs/:orgId/members/:memberId` | as 10.6 | as 10.6 | 404; 409 `last_admin` |
 | `DELETE /api/admin/orgs/:orgId/members/:memberId` | | 204 | 404; 409 `last_admin` |
+| `GET /api/admin/orgs/:orgId/forecast-runs` | | 200 `{ runs }` (14.4), newest import first, at most 100 | 404 |
+| `POST /api/admin/orgs/:orgId/locations/:locationId/forecast-runs` | a run file (14.4), up to 256 KB | 201 `{ run }` (draft); 200 `{ run }` for a file the location already has | 400 `invalid_forecast_file` `{ issues: { path, code }[] }`; 404 |
+| `POST /api/admin/orgs/:orgId/forecast-runs/:runId/publish` | `{}` | 200 `{ run }` | 404; 409 `forecast_run_not_draft` |
+| `POST /api/admin/orgs/:orgId/forecast-runs/:runId/withdraw` | `{}` | 200 `{ run }` | 404; 409 `forecast_run_importing` |
+| `DELETE /api/admin/orgs/:orgId/forecast-runs/:runId` | | 204 | 404 |
 | `GET /api/admin/people?kind=` | | 200 `{ people: PersonView[], truncated: boolean }` (up to 1,000) | |
 | `GET /api/admin/people/lookup?q=<exact email>` | | 200 `{ person: PersonView \| null }` | |
 | `POST /api/admin/people/:userId/sign-out-everywhere` | `{}` | 200 `{ revoked: number }` | 400 `invalid_target` (staff); 404 |
@@ -898,6 +962,7 @@ People come only from Townwise records and config: staff from `TOWNWISE_SUPERADM
   1. Refuse a staff address (400 `invalid_target`) and a person who holds an active seat (409 `person_has_seat`; staff remove the seat first, and the last-admin rule still applies). Answer 404 when there is no kit user and no Townwise record for the email. [Build note: after step 3 the server checks for an active seat again, since a join or an approval can seat the person while the deletion runs. One found then answers 409 `person_has_seat`, recorded as `staff_action.not_applied` (`person_has_seat`), before steps 4 and 5; the records step 3 deleted stay deleted, and a retry after the seat is removed completes the work. An approval that seats the person after this check finds the request gone and takes the seat back (F3 step 8); a join needs an invitation, which step 3 deleted, so only one added later can seat them, which the runbook checks for (Section 19, item 7).]
   2. Audit `person.deleted` with ids only.
   3. Through `deletePersonRecords(userId, email)` (6.10 rule 8): delete the person’s access requests (by `userId`), their open invitations in every organization (`inviteEmail == email`), and their removed seats (`userId`, `status: 'removed'`). [Build note: also their tuning chat conversations, live turns and TownwiseAI proposal records in every organization (`tw_chat_conversations`, `tw_chat_live_turns`, `tw_chat_proposals`, by `userId`), which postdate this list (`tuning-chat.md`), and their welcome markers in every organization (`tw_welcomes`, by `userId`, 6.15; not counted in the answer). Notes they saved from proposals stay, as every note does. The 404 in step 1 counts audit events as Townwise records, because the audit log keeps an address until its person is deleted (Section 17).]
+     [Build note: and set `importedBy` and `publishedBy` to null on the forecast runs the person imported or published (6.20), in every organization.]
   4. When a kit user exists: call `revokeAllSessions(userId)` and `authStores.totp.remove(userId)` (both public, **Exists**).
   5. `redact` the email in the audit log (9.3).
   6. Answer the counts and `kitUserId`. The kit’s user record and its revoked session records are then deleted by hand, as a runbook step, because the kit has no user delete (Section 19, item 7). Until then, the person can still continue with Google, and they resolve to `no_org`.
@@ -905,11 +970,15 @@ People come only from Townwise records and config: staff from `TOWNWISE_SUPERADM
   Notes and uploads the person wrote stay with their organization; the author shows as “Deleted person” once the kit user is gone. View-as grants keep only ids and the staff-written reason.
 - **Delete an organization** (`DELETE /api/admin/orgs/:orgId`). The organization must be suspended first (409 `org_not_suspended`), so its members have already seen the paused page.
   1. Audit `org.deleted` with ids only.
-  2. Through `scopeForStaffOrg`: delete its `tw_sales_days`, `tw_uploads`, `tw_notes`, `tw_locations` and `tw_members`, and its access request (`fromRequestId`). [Build note: also its `tw_chat_conversations`, `tw_chat_live_turns`, `tw_chat_usage` and `tw_chat_proposals`, which postdate this list (`tuning-chat.md`), and its `tw_welcomes` (6.15). The response keeps the six counts above.]
+  2. Through `scopeForStaffOrg`: delete its `tw_sales_days`, `tw_uploads`, `tw_notes`, `tw_locations` and `tw_members`, and its access request (`fromRequestId`). [Build note: also its `tw_chat_conversations`, `tw_chat_live_turns`, `tw_chat_usage` and `tw_chat_proposals`, which postdate this list (`tuning-chat.md`), and its `tw_welcomes` (6.15), `tw_agent_answers` (6.17), `tw_forecast_runs` and `tw_forecasts` (6.20, 6.21). The response keeps the six counts above.]
   3. `redact` its name and its locations’ names in the audit log (9.3).
-  4. Delete the `tw_orgs` row last, so a retry still finds the organization. [Build note: the delete matches `status: 'suspended'`, so an organization reactivated during the deletion keeps its row and the answer is 409 `org_not_suspended`, recorded as `staff_action.not_applied`; the records already deleted stay deleted, and suspending it and deleting again finishes. After the row goes, its `tw_sales_days` and `tw_chat_usage` are swept once more, since an upload or a tuning chat turn in flight can upsert after the first sweep; the late days count in `deletedDays`. This narrows the gap without closing it: a chat turn started before the suspension can still add chat usage for up to 150 seconds, an upload still running can write days after the second sweep, and its `tw_uploads` row, if written after the first sweep, is never swept.]
+  
+  [Build note: stored files (11A) go first, before any other record: its imports, every unfinished upload discarded (its staged chunks dropped at once), every blob under `{orgId}/` in both containers, its `tw_file_entries`, `tw_files`, `tw_upload_days` and `tw_files_usage`. When stored files are off but the organization has file rows, nothing is deleted and the answer is 503 `files_unavailable`, recorded as `staff_action.not_applied` (`files_unavailable`), so blobs are never left behind silently. After the row goes, its stored files are swept once more (a reader mid-file can write a cleaned copy late), and the daily sweep's orphan check catches anything later still. Logged as `townwise.org_files_deleted { orgId, deletedFiles, deletedBlobs }`; the response keeps its six counts.]
+  4. Delete the `tw_orgs` row last, so a retry still finds the organization. [Build note: the delete matches `status: 'suspended'`, so an organization reactivated during the deletion keeps its row and the answer is 409 `org_not_suspended`, recorded as `staff_action.not_applied`; the records already deleted stay deleted, and suspending it and deleting again finishes. After the row goes, its `tw_sales_days` and `tw_chat_usage` are swept once more, since an upload or a tuning chat turn in flight can upsert after the first sweep; the late days count in `deletedDays`. This narrows the gap without closing it: a chat turn started before the suspension can still add chat usage for up to 150 seconds, an upload still running can write days after the second sweep, and its `tw_uploads` row, if written after the first sweep, is never swept. Forecast runs and their rows are swept then too, since a staff import already past its organization check can still write them.]
   
   Former members then resolve to `no_org`. View-as grants keep only ids.
+- **Purge an organization's originals** (`POST /api/admin/orgs/:orgId/originals/delete { basis }`). For a person's deletion request about someone named inside an export (a diner, a server): their details exist only in the original files (and possibly in a file's name, a ZIP's entry paths or a workbook's sheet names, all cleared with the original), never in the cleaned copies, the rest of the reports or the days. Staff delete the originals without reading them. The read-only check counts the originals; the event `org.originals_deleted { count, basis }` is recorded first; then each original is deleted, its name replaced by the kind's label and its entry paths cleared. A file not read yet (stored, queued, or waiting on a question, which is dropped so its import can finish) is first kept unread with the outcome `raw_deleted`, so the reader never reads it. A file still uploading or being read is flagged (`purgeRaw`): the reader never reads a flagged file, and its original goes as soon as the upload or the read ends; the daily sweep finishes any it missed. The event's `count` is every original found; the answer's `skippedBusy` counts the flagged ones. The cleaned copies, reports and days stay.
+- **A person's own deletion** (above) leaves the files they uploaded with their organization, as uploads and notes; the uploader shows as “Deleted person”.
 
 [DECISION NEEDED: retention periods. The mechanism above exists in v1; how long each record is kept before staff delete it is still open (Section 17).]
 
@@ -956,10 +1025,11 @@ A search is 10 to 15 debounced autocompletes and one details call, so `townwise:
 | 400 | `purpose_unavailable` | `POST .../files` with a purpose other than `history` (10.11) | client bug |
 | 403 | `view_as_no_download` | a file download during view-as | controls are hidden |
 | 404 | `no_clean_file` | the cleaned-copy download of a file that produced no days | the button is hidden |
-| 409 | `import_full`, `too_many_uploading`, `storage_full`, `daily_upload_limit`, `file_not_uploading`, `chunks_missing`, `file_duplicate`, `file_busy`, `import_not_open`, `import_empty`, `question_stale` | the stored-files routes (10.11); `storage_full` carries `storedBytesLeft`, `daily_upload_limit` `resetsAt`, `chunks_missing` `missing`, `file_duplicate` `fileId` | words per code in the files module |
+| 404 | `no_entries` | the entries list of a file that is not a ZIP | client bug |
+| 409 | `import_full`, `too_many_uploading`, `storage_full`, `daily_upload_limit`, `file_not_uploading`, `chunks_missing`, `file_duplicate`, `file_busy`, `import_not_open`, `import_empty`, `question_stale`, `import_running` | the stored-files routes (10.11), and deleting a location's sales data while one of its files is being read (`import_running`); `storage_full` carries `storedBytesLeft`, `daily_upload_limit` `resetsAt`, `chunks_missing` `missing`, `file_duplicate` `fileId` | words per code in the files module |
 | 410 | `upload_expired`, `raw_expired` | an upload session past 24 hours; an original already deleted | “Drop it again.” / the download is hidden |
 | 413 | `file_too_large` | `POST .../files` over 200 MiB, with `maxBytes` | “This file is over 200 MB. Split it or zip it.” |
-| 503 | `files_unavailable` | every stored-files route while `FILES_BLOB_ACCOUNT_URL` is unset | the browser upload (P13) instead |
+| 503 | `files_unavailable` | every stored-files route while `FILES_BLOB_ACCOUNT_URL` is unset; deleting a location's sales data, or an organization, that has stored files while they are off | the browser upload (P13) instead |
 | 503 | `uploads_busy`, `storage_unavailable` | a replica at 12 chunk streams (`Retry-After: 2`); blob storage refused or failed (`Retry-After: 5`) | the upload queue waits and retries |
 
 ### 10.10 Calendar and sales history
@@ -1022,18 +1092,20 @@ All under `/api/org/locations/:locationId`, all members, all 503 `files_unavaila
 | `org.files.complete` | `POST /files/:fileId/complete` | the uploader | 2 KB `{}` | |
 | `org.files.list` | `GET /files?before=` | member | | |
 | `org.files.get` | `GET /files/:fileId` | member | | |
+| `org.files.entries` | `GET /files/:fileId/entries?after=` | member | | |
 | `org.files.raw` | `GET /files/:fileId/raw?part=` | the uploader or an org admin | | `downloads` |
 | `org.files.clean` | `GET /files/:fileId/clean` | member | | `downloads` |
 | `org.files.remove_raw` | `DELETE /files/:fileId/raw` | the uploader or an org admin | | |
 | `org.files.remove` | `DELETE /files/:fileId` | the uploader or an org admin | | |
+| `org.originals.remove` | `DELETE /originals` | org admin | | |
 | `org.imports.current` | `GET /imports/current` (declared before `:importId`) | member | | |
 | `org.imports.get` | `GET /imports/:importId` | member | | |
 | `org.imports.start` | `POST /imports/:importId/start` | member | 2 KB `{}` | |
 | `org.imports.answer` | `POST /imports/:importId/answer` | member | 2 KB `{ questionId, choice }` | |
 
-`PUT` is allowed only with `bodyLimit: 'stream'`, and `'stream'` only on `org.files.chunk` (boot refuses anything else). The chunk handler reads the body itself after the policy passed, and a chunk it refuses is answered with the connection closed, unread.
+`PUT` is allowed only with `bodyLimit: 'stream'`, and `'stream'` only on `org.files.chunk` (boot refuses anything else). The staff purge of an organization's originals is `admin.orgs.originals.remove` (10.7). The chunk handler reads the body itself after the policy passed, and a chunk it refuses is answered with the connection closed, unread.
 
-### 10.12 TownwiseAI proposals
+### 10.12 TownwiseAI proposals and side panel
 
 `POST /api/org/locations/:locationId/chat/:conversationId/proposals/:proposalId` (`org.chat.proposal`, member, body `8kb`, `writes` only). The conversation's author saves a note TownwiseAI proposed, as shown or edited first, or sets it aside. Contract and views: `docs/portal/tuning-chat.md` section 2.
 
@@ -1046,6 +1118,68 @@ All under `/api/org/locations/:locationId`, all members, all 503 `files_unavaila
 - No transactions (DocumentDB): the save claims the proposal in `tw_chat_proposals` (6.16), writes the note with the claim's `noteId`, then marks it `saved`. A retry, a crash between the steps or two tabs pressing Save end with one note; only the request that wrote it records `note.created`. Saving a saved proposal again, or setting it aside, answers its saved state.
 - `GET .../chat/:conversationId` shows each proposal's `status` (`open`, `saved` or `dismissed`) and `noteId`. One with no record reads as saved when a note the author wrote at the location says exactly the same, so a proposal added with the notes route is not offered twice; a colleague's note never counts (`tuning-chat.md` section 2, [CONFIRM]).
 - Logged as `townwise.chat_proposal { orgId, locationId, conversationId, status, edited }`, never the note's text.
+
+**Side panel.** `GET /api/org/locations/:locationId/agent` (`org.agent.get`, member, no body, no limiter) and `POST /api/org/locations/:locationId/agent/questions/:questionId` (`org.agent.answer`, member, body `1kb`, `writes` only). Both work whether or not the chat is on. Contract: `docs/portal/tuning-chat.md` section 8.
+
+| Route | Success | Errors |
+|---|---|---|
+| GET | 200 `{ questions: Question[], activity: ActivityItem[] }`, both computed at read time | 400; 404 |
+| POST `{ answer: 'closed' \| 'open' \| 'not_sure' }` | 200 `{ question: { id, answer }, note: Note \| null }` | 400 `invalid_request` (body, or an id that is not `weekday_`/`gap_` with dates); 404 (the location, or a question not asked now); 409 `note_limit`; 403 `view_as_read_only`; 429 |
+
+- **Questions** are rules over the location's own days, never an estimate, over the last 365 days of coverage (from the later of the first day and 364 days before the last day with sales, to that last day). A weekday question (`{ id, kind: 'weekday', weekday, from, to, noSalesCount, weekdayCount }`) asks about a weekday with no sales on at least 60% of its counted days, with at least 4 of them, that no closure note and no earlier answer explains. A day counts from the first day with sales in the window (the question's `from`), and only when its week (Monday to Sunday) has sales on another day, so a week with no data at all never makes a weekday look closed. A gap question (`{ id, kind: 'gap', from, to, dayCount }`) asks about a run of consecutive days with no sales that no note and no earlier answer explains; a weekday the location is usually closed on (the 60% rule over all its counted days) bridges a run but never starts or ends one, and a run the window cuts off before its first day with sales is not asked. At most 5, weekdays first, then gaps newest first. An answered question's days are not asked about again until the location's sales data is deleted, which deletes the answers too. [CONFIRM: 60% of a weekday's days, at least 4 of them]
+- **Answers.** `closed` saves a closure note (`effect: 'closed'`) over the question's days, the weekday only for a weekday question, through Section 12's rules and the note limit, recorded `note.created`; `open` (the data is missing) and `not_sure` save nothing. The answer belongs to the location: answering one already done, by anyone, answers what was saved. No transactions: the answer claims its question in `tw_agent_answers` (6.17), writes the note with the claim's `noteId`, then marks the answer `done` and records `agent.question_answered` once. A retry, a crash between the steps or several tabs end with one note. A question whose claim stopped before `done` is still asked, and its next answer finishes it, with that answer, while the question is still asked; a stopped `closed` claim whose note is written finishes as `closed` whatever the next answer is. An answer is marked `done` only while the row still holds it, and the request answers with what the row holds; a `closed` answer whose note is written overrules a different answer sent at the same moment (the note exists), as a saved proposal overrules Not now.
+- **Activity** (`ActivityItem`, newest 20) lists only real, dated records of the location: `{ at, kind: 'upload_applied', firstDate, lastDate, dayCount }` for applied uploads, `{ at, kind: 'note_saved', via: 'chat' | 'question', noteId, noteKind, startDate, endDate }` for notes the caller saved from their own proposals and closure notes saved by answers (left out once the note is deleted), and `{ at, kind: 'question_answered', questionId, answer }` for `open` and `not_sure`. Later sources append their own kinds (stored files' `file_processed`, forecasts' `forecast_made`); a client shows a kind it does not know as nothing. Never a file name, a note's detail or a figure.
+- Logged as `townwise.agent_answer { orgId, locationId, answer }`. Under view-as the GET is logged `townwise.view_as_read`, and the POST is refused by the guard.
+
+### 10.13 Estimates
+
+People in town and "How Townwise estimates" (13.2), and the published forecast (14.4). All three are `member` GETs in `TOWNWISE_ROUTES` with no body and no route limiter (`app:api-ceiling` still applies), allowed during view-as, where the chain logs `townwise.view_as_read`. None logs or audits anything. The build contract, with every field, is `docs/portal/estimates.md`; the staff routes that import and publish forecast runs are in 10.7.
+
+| Method and path | Policy | Request | Success | Extra errors |
+|---|---|---|---|---|
+| `GET /api/org/locations/:locationId/people-in-town?from=&to=` | member | `from` and `to` as `YYYY-MM-DD`, exactly those two keys; `from` on or after 2010-01-01; `from <= to`; at most 92 days counting both ends; `to` at most 400 days after the server’s UTC day | 200 `PeopleInTownWindow` | 400 `invalid_request`, with no field details; 404 |
+| `GET /api/org/locations/:locationId/estimates/about` | member | | 200 `EstimatesAbout` | 400 (malformed id); 404 |
+| `GET /api/org/locations/:locationId/forecast?from=&to=` | member | as people in town, but at most 31 days and `from` at most 400 days before the server’s UTC day | 200 `ForecastWindow` (14.4) | 400 `invalid_request`; 404 |
+
+```ts
+interface PeopleInTownWindow {
+  available: boolean;                  // false only for a town outside the twelve
+  reason: 'town_not_researched' | null;
+  from: string; to: string;
+  town: { name: string; state: string; kind: 'college' | 'seasonal' | 'event' | null };
+  timeZone: string;                    // the town's IANA zone
+  periods: {                           // consecutive days with identical components, merged
+    from: string; to: string; fromWeekday: Weekday; toWeekday: Weekday;
+    termState: 'in_session' | 'finals' | 'between_terms' | 'summer_session' | 'unknown';
+    termLabel: string | null;          // 'Fall term classes', 'Between terms (from the term dates)'
+    termSourceIds: string[];
+    headcount: { low: number; high: number; sourceIds: string[]; excludes: string[] } | null;
+    headcountWhy: 'no_population' | 'visitors_unknown' | 'no_term_dates' | 'no_enrollment' | null;
+    events: { id: string; title: string; kind: 'event' | 'holiday'; attendanceHigh: number | null; sourceIds: string[] }[];
+  }[];
+  season: { month: string; countyFoodServiceJobsIndex: number; baseYear: number; county: string; sourceIds: string[] }[];
+  visitors: { month: string; label: string; perDayAverage: number; sourceIds: string[] }[];
+  yourHistory: {                       // this location's open regular days with a known term state
+    metric: 'guests' | 'netSales';     // mean: whole guests, or whole US dollars
+    cells: { state: TermState; weekday: Weekday; days: number; mean: number | null }[];   // mean null under 3 days
+    first: string | null; last: string | null;
+  };
+  sources: { id: string; label: string; url: string; confidence: 'high' | 'medium' | 'low' | null }[];
+  caveats: string[];
+}
+
+interface EstimatesAbout {
+  version: string;
+  card: { estimates: string; inputs: string[]; cannotSee: string[]; limits: string[]; checked: string; whoCanSee: string };
+  location: { name: string; town: { name: string; state: string } };
+  today: { date: string; weekday: Weekday; timeZone: string; approximate: boolean };
+  forecast: { run: ForecastRunView | null; live: LiveAccuracy | null };   // the newest published run (14.4) and its own live accuracy, or both null
+  calendar: { researched: boolean; covers: { from: string; to: string } | null };
+  people: { headcountInputs: ('residents' | 'studentHousing' | 'enrollment' | 'housingCloses' | 'eventAttendance' | 'visitors')[]; sources: PeopleSource[] };
+}
+```
+
+TownwiseAI reads the same window through `get_people_in_town`, the calendar through `get_town_calendar` and the published forecast through `get_forecast` (`tuning-chat.md` section 4), and its "today" is the town's local date (13.2). Home and Analytics keep the device's local date; both are Eastern for the twelve towns.
 
 ---
 
@@ -1137,11 +1271,13 @@ Chunked sessions, because the Container Apps ingress closes a request at 240 sec
 | An import / a location / uploading at once in a location | 50 / 500 / 10 files |
 | An organization | 5 GiB stored (originals not deleted), 2 GiB uploaded a UTC day |
 | An upload session | 24 hours; after that it counts toward no cap above |
-| Reading | text streamed (the upload cap); workbooks 10 MiB, 2,000 parts, 64 MiB a part, 200 MiB declared, 100 to 1 a part over 1 MiB; 2,000,000 rows, 200 columns, 10 sheets; 192 MiB of heap and 20 minutes a file |
+| Reading | text streamed (the upload cap); workbooks and Word documents 10 MiB, 2,000 parts, 64 MiB a part, 200 MiB declared, 100 to 1 a part over 1 MiB, `word/document.xml` 50 MiB; PDFs 25 MiB, 1,000 pages, 20,000 text items a page; 2,000,000 rows, 200 columns, 10 sheets; 192 MiB of heap and 20 minutes a file |
+| ZIP archives | 20,000 entries and 2 GiB declared, every depth together; 100 to 1 for the archive and for each entry over 1 MiB; a 16 MiB central directory; a ZIP inside a ZIP opened from memory up to 50 MiB (50 MiB of them at once), one inside that never opened |
+| AI column step | 2 calls a file, 5 a ZIP (at most one a family of its tables), 20 an import; `TOWNWISE_FILES_MONTHLY_BUDGET_USD` per organization per month (default 5; 0 turns it off) |
 
 ### 11A.3 Kinds
 
-No file is refused for its type; the browser's MIME type is ignored. From the extension and the first bytes: `%PDF-` is `pdf`; a ZIP signature is `xlsx` (.xlsx, .xlsm), `docx`, `other` (.numbers, kept `numbers`) or `zip`; an OLE container is `xls` (kept `old_excel`), `doc` (kept `old_word`) or, for .xlsx, .xlsm and .docx, a password-protected file (kept `encrypted`); images are kept `image`; text extensions with a UTF-16 mark or no NUL byte are `text`; anything else is kept `type_not_read`. In this build `text` and `xlsx` are read; `zip`, `pdf` and `docx` are kept as `type_not_read` until their stages land.
+No file is refused for its type; the browser's MIME type is ignored. From the extension and the first bytes: `%PDF-` is `pdf`; a ZIP signature is `xlsx` (.xlsx, .xlsm), `docx`, `other` (.numbers, kept `numbers`) or `zip`; an OLE container is `xls` (kept `old_excel`), `doc` (kept `old_word`) or, for .xlsx, .xlsm and .docx, a password-protected file (kept `encrypted`); images are kept `image`; text extensions with a UTF-16 mark or no NUL byte are `text`; anything else is kept `type_not_read`. `text`, `xlsx`, `pdf`, `docx` and `zip` are read; a ZIP's entries are told apart the same way, from their names and first inflated bytes.
 
 ### 11A.4 Reading
 
@@ -1151,27 +1287,43 @@ Each file is read in a worker thread with memory and time limits; the main threa
 
 The mapping, in order, with the person's answers overriding each step: the date column (a guessed date header, earlier names first, `business date` before `date`; else the one column of dates; a tie is a question); the date order (proven by a part above 12 over the whole column, else a question); guests and net sales (guessed headers; else a question among the number columns, or kept `notes_not_read_yet` when there are none); the location (a guessed location column with one value is ignored, a value equal to the location's name is used, otherwise a question; over 50 values is kept `too_many_locations`); and after the second pass, what one row is (no repeated date is day-level; repeats with check headers and no item headers are checks, added up; item headers are kept `item_level`; otherwise a question). Header guesses extend the browser's: date `business date`, `date`, `day`, `order date`, `opened date`, `closed date`; guests `guests`, `covers`, `guest count`, `total guests`, `number of guests`, `# of guests`; net sales `net sales`, `net amount`, `net revenue`, `sales (net)`, `net`; location `location`, `restaurant`, `store`, `site`; checks `check`, `check #`, `check number`, `order id`, `order #`, `order number`; items `item`, `menu item`, `qty`, `quantity`, `modifier`. [CONFIRM: header guesses]
 
-A question pauses the import (`waiting`) and names the file and sheet. Its options are header names, the location column's values (the D11 exception) or fixed ids, never other cells, and always `not_sure`, which keeps the file as `needs_help`. An answer is stored on the file and the file is read again from the start. The file moves back to the queue (or to `kept`) before the import does, while no reader can claim the import, and that move is the compare-and-set a second answer loses with 409 `question_stale`.
+**When the rules find no guests or net sales column** (the `columns` question) and the person has not answered it, the AI column step may choose them. The parse thread builds a redacted profile: each column's header text (at most 40 characters), the kind of its values, how filled it is, a count of its distinct values in four buckets, and for number columns whether they are whole and the order of magnitude of the median; and up to 15 rows with every cell replaced by a token (`<date:iso>`, `<date:slash>`, `<int>`, `<decimal>`, `<money>`, `<empty>`, `<text>`). Only that profile crosses to the main thread, which asks Claude Opus 5.5 at low effort (`api/src/files/extract/`, structured output `{ guests, netSales, confidence }`, the chat's server-side refusal fallback, 60 seconds, the SDK's logger off). No row, figure, file name, ZIP entry path, sheet name, organization or location name, paragraph or text outside a table is ever in the request (`test/files/profile.test.ts` pins it). A confident choice of number columns is applied and reported as `ai`; an unsure one becomes the question's suggestion; off (no `ANTHROPIC_API_KEY`), out of budget, or failed, the person is asked. Each call is charged to `tw_files_usage` (6.13) and the file after it returns, whatever it answered; the budget is checked before each call. Never retried beyond the SDK.
+
+**PDFs** are read in the parse thread with `unpdf` (a serverless pdf.js; fonts never loaded, nothing rendered, nothing logged below errors). Each page's text items are grouped into lines (the same baseline within 2 points). A table starts at a header line, one whose items include a date header and a guests or net sales header; the header items' extents make the column bands (midpoints between neighbours); each following line's items fall into the band their centre is in; a line with fewer than two filled bands, or one that starts with "total", ends the table. A header repeated on a later page continues its table. Kept: `encrypted`, `pdf_scanned` (no text on any page), `pdf_no_table`, `too_complex` (over 1,000 pages or 20,000 items a page). **Word documents** (`.docx`) pass the package guards, then each top-level `w:tbl` of `word/document.xml` is read with `saxen` into rows of cells; none: `word_no_table`. Every table of a PDF or a Word document is read as a workbook's sheet is. Text outside tables never leaves the thread.
+
+**ZIP archives** are read in place: the parse thread asks the main thread for byte ranges, which answers them from storage, continuing one open download while the reads are in order, so the archive is never downloaded whole. The central directory (and its ZIP64 record) is read from the end, and the archive guards (the table in 11A.2, plus entry ranges that overlap the next entry, the overlapping-entry bomb) run on declared sizes before anything is inflated; any failure keeps the whole ZIP (`zip_too_big`, `zip_bomb`), as does an entry that inflates past its declared size (`zip_damaged`). Each entry is a file of its own: `__MACOSX/` and `.DS_Store` are `system_file`, an encrypted entry `encrypted`, a method other than stored or deflate `zip_method`, a ZIP inside a ZIP inside the ZIP `nested_zip`. Its tables are read as **families**: every table with the same normalized header row (its signature is the SHA-256 of the names, its label the first six). A family's mapping is decided once, on the stats of all its tables together (so a date order is proven across daily files), with the person's answers under `family:<signature>`; one aggregator runs across all its tables, so check rows split across daily files add up per date. Families with a guests or net sales header are read first; the others only when none of those gave days, and are otherwise kept `no_sales_columns` without a question. Families that gave days are ranked (rules before AI before answers; day-level before check-level; more dates first; then signature order) and each adds only dates no higher-ranked family produced, so two report types covering the same days are never added together; a family that added none is `other_table_used`. The ZIP is one `tw_uploads` record and one cleaned copy. Its entries are listed in `tw_file_entries` (6.18) with what became of each; none used keeps the ZIP as `nothing_usable`, or with its families' one shared reason.
+
+A question pauses the import (`waiting`) and names the file and sheet, or for a ZIP the family by its label. Its options are header names, the location column's values (the D11 exception) or fixed ids, never other cells, and always `not_sure`, which keeps the file as `needs_help`. An answer is stored on the file and the file is read again from the start. The file moves back to the queue (or to `kept`) before the import does, while no reader can claim the import, and that move is the compare-and-set a second answer loses with 409 `question_stale`.
 
 ### 11A.5 Products
 
 1. **Days** through the existing store and rules (11.3, 11.4): an org admin's file replaces the days it covers, a member's adds new days only. One `tw_uploads` record per file, created once and kept on the file, so a retry reuses it.
 2. **Cleaned copy** `client-clean/{orgId}/{locationId}/{fileId}.csv`: `date,guests,net_sales`, CRLF, net sales in dollars with two decimals, empty for none. Nothing else.
-3. **Report** on the file: the sheets and what became of each, the header row, the header names mapped, which rule or answer decided each column and the row mode, the location value chosen, the date order, the encoding, rows and days, skipped rows by number (never a value), excluded days with reasons, closed days, missing days, and how many days already had data. No data cell except the location value.
+3. **Report** on the file: the sheets and what became of each, the header row, the header names mapped, which rule or answer decided each column and the row mode, the location value chosen, the date order, the encoding, rows and days, skipped rows by number (never a value), excluded days with reasons, closed days, missing days, and how many days already had data. No data cell except the location value. A ZIP's report adds `families`: per family (at most 50) its label, how many tables, whether it was used, its row mode, the days it added and why (`sales`, `other_table_used` or the reason it was kept). `decidedBy` names `rules`, `ai` or `you` for each field.
 
 ### 11A.6 Status, outcomes and time left
 
-`read` (shown as Used), `kept` (stored, not used, with the reason) or `failed` (only our fault: `internal`, `raw_missing`). Kept outcomes in this build: `old_excel`, `old_word`, `numbers`, `encrypted`, `image`, `type_not_read`, `too_large_to_read`, `not_a_table`, `no_header`, `no_dates`, `notes_not_read_yet`, `too_many_locations`, `item_level`, `decimal_comma`, `repeated_dates`, `too_many_days`, `not_a_workbook`, `too_complex`, `bad_encoding`, `needs_help`.
+`read` (shown as Used), `kept` (stored, not used, with the reason) or `failed` (only our fault: `internal`, `raw_missing`). Kept outcomes: `old_excel`, `old_word`, `numbers`, `encrypted`, `image`, `type_not_read`, `too_large_to_read`, `not_a_table`, `no_header`, `no_dates`, `notes_not_read_yet`, `no_sales_columns`, `too_many_locations`, `item_level`, `decimal_comma`, `repeated_dates`, `too_many_days`, `not_a_workbook`, `too_complex`, `bad_encoding`, `needs_help`, `pdf_no_table`, `pdf_scanned`, `word_no_table`, `zip_too_big`, `zip_bomb`, `zip_damaged`, `zip_empty`, `nothing_usable`, `raw_deleted` (the original was deleted before Townwise read it: a staff purge, or retention). A ZIP entry's outcome is one of those that applies to one file, or `system_file`, `nested_zip`, `zip_method` or `other_table_used`. A PDF's progress counts pages; a ZIP's (phase `unpacking`) counts the compressed bytes read, over both passes.
 
 Time left is measured, never guessed: a reading file's from its own rate in the current phase, only after 3 seconds and 5 percent; a queued file's from the reading file's plus the queued bytes before it at the speed this import's finished files were read, so the first file of an import says "Estimating" until it finishes; null above six hours and while the import waits for a turn (queued 10 seconds, unclaimed). Rounded up to 5 seconds. Progress is written at most every 2 seconds.
 
 ### 11A.7 Downloads, deletion and view-as
 
-Downloads stream through the API (no SAS: the account has no public endpoint), as attachments with `nosniff`, `no-store` and `default-src 'none'; sandbox`. The original goes only to its uploader and the organization's admins, in 32 MiB parts when asked; the cleaned copy to every member. Deleting the original keeps the cleaned copy, report and days and replaces the name with the kind's label (a name can itself name a person). It is refused (409 `file_busy`) until the file is read, kept or failed: a file not yet read still needs its original, and reading one whose original the person deleted would fail it as our fault. Deleting the whole file stays open, except while it is being read. Deleting a file removes both blobs and the row, and says how many days stay; an unfinished upload is cancelled (its staged blocks discarded at once) and its bytes given back. Under view-as, names are null, nothing downloads, and every write is refused; each read logs `townwise.view_as_read` as every GET does.
+Downloads stream through the API (no SAS: the account has no public endpoint), as attachments with `nosniff`, `no-store` and `default-src 'none'; sandbox`. The original goes only to its uploader and the organization's admins, in 32 MiB parts when asked; the cleaned copy to every member. Deleting the original keeps the cleaned copy, report and days and replaces the name with the kind's label, and a workbook's sheet names in the report with `Sheet 1`, `Sheet 2` and so on (either can itself name a person). It is refused (409 `file_busy`) until the file is read, kept or failed: a file not yet read still needs its original, and reading one whose original the person deleted would fail it as our fault. Deleting the whole file stays open, except while it is being read. Deleting a file removes both blobs and the row, and says how many days stay; an unfinished upload is cancelled (its staged blocks discarded at once) and its bytes given back. Under view-as, names and ZIP entry paths are null, nothing downloads, and every write is refused; each read logs `townwise.view_as_read` as every GET does.
 
-### 11A.8 Later stages
+An org admin can delete every original of a location at once (`DELETE /originals`, the "delete my files" control): each one the reader is done with goes as a single one does, and the rest are skipped and counted (`files.raw_deleted_all`). Deleting a location's sales data deletes its stored files too: imports first, unfinished uploads discarded, every blob under `{orgId}/{locationId}/`, the entry lists and the rows (409 `import_running` while one of its files is being read; 503 `files_unavailable` when stored files are off but it has files); `sales.deleted` counts `deletedFiles`. Files are data for a location's deletion (409 `location_has_data`). An organization's deletion and the staff purge of its originals are in 10.7.
 
-Not in this build: reading ZIP archives (one file, entries listed, ranged reads, bomb guards), PDF and Word tables, and the AI step for header and columns; deleting files with a location's sales data, a location and an organization; the daily sweeper (unfinished uploads after 24 hours, originals after 365 days with a 400-day lifecycle backstop, never-read drops after 30 days) and the staff purge of an organization's originals for a person's deletion request. Stored files stay off in production until they land.
+**Retention** [CONFIRM: retention periods]. The daily sweep (`api/src/files/sweeper.ts`), one replica a day under the `tw_file_sweeps` lease (6.14), discards upload sessions past their 24 hours, deletes originals 365 days after upload, read or not (a file never read is kept unread as `raw_deleted`; name and entry paths cleared; the cleaned copy, report and days stay; the storage lifecycle rule is the backstop at 400 days), deletes files dropped into an import never sent for reading 30 days after its last drop (with the import), finishes staff purges of flagged files, drops daily upload counters after 3 days, and deletes blobs whose file row is gone once they are a day old. It logs counts only.
+
+### 11A.8 Not in this build
+
+- Old Excel (`.xls`) and Word (`.doc`) files are kept, not read; reading them needs a library from outside the registry (an owner question).
+- Text and notes inside files (closure lists, event notes) are stored with the original and never read or sent to any model.
+- The AI step chooses guests and net sales columns only; it never chooses the header row, the date column or the location value.
+- Other upload purposes (a calendar upload, a TownwiseAI attachment) and the processor registry they would use: `POST /files` answers 400 `purpose_unavailable` for anything but `history`.
+- Malware scanning (Defender for Storage) is off: nothing stored is executed, rendered or served inline.
+
+Stored files stay off in production until the client pieces, the drop screen and the privacy page ship with them (`infra/README.md`, step 18).
 
 ---
 
@@ -1235,6 +1387,20 @@ Term entries follow one convention, which the term state reads: `kind: 'term'`, 
 
 Headcount inputs (residents, students in college housing, enrollment, whether dorms close between terms) are not part of the calendar. None is researched yet for any town; they stay empty, and say so, until a teammate researches them with a source for each number (13.2).
 
+### 13.2 People in town
+
+Who is likely in a location's town each day, from public sources, in `api/src/people-in-town/` (pure, stored nowhere), for the people in town route (10.13), Home's month card and TownwiseAI. It never invents a number: a headcount is printed only when every input to it has a stored source, and otherwise is null with the reason.
+
+- **Term state**, from the calendar's term entries (13.1 convention): `in_session` when a classes entry covers the day (`summer_session` for summer classes, when most of the college is away), `finals` when a finals entry does, `between_terms` only when the last entry before the day is a finals entry and the next one after it a classes entry, and `unknown` otherwise, including the days between classes and finals and any day outside the researched span. Hanover's calendar ends with fall 2026 finals, so from Nov 26, 2026 its days read `unknown` until the winter 2027 term is added.
+- **Events and holidays** from the calendar, each with its sources; term and season entries are context, never events.
+- **Season**: the county’s 2024 food-service jobs index for each month (Section 13’s data, labelled as employment, not people).
+- **Headcount** (`api/src/people-in-town/estimate.ts`), only for a college town with a researched population: residents plus or minus their 90% margin in session and during finals; between terms, low minus enrollment and high minus students in college housing when housing is known to close; in the summer session, low minus enrollment; an event with a researched attendance figure raises only the high end (attendees may already live in town), and one without is listed as left out. Low is rounded down and high up to the nearest 100, never below 0. No multipliers, shares or fitted constants. Seasonal and event towns get none in v1 (`visitors_unknown`): no public source turns visits into people present on a day.
+- **Researched inputs** (`api/src/people-in-town/sources.ts`): resident population with its margin, students in college housing, enrollment (one institution per town), whether housing closes between terms, event attendance and visitor counts, each with a source id whose source has a label, an https URL, the date retrieved and a confidence. Empty for every town today (owner decision, 2026-11-05); `api/test/people-sources.test.ts` holds the rules a filled entry must pass.
+- **Your history by term state**: the location’s mean guests (net sales, in whole dollars, when no day has guests) by term state and weekday over its open regular days, with day counts; a cell under 3 days has no mean. Open regular uses the client's day classes (closed, noted, holiday, event, regular), pinned on both sides by the shared fixture `day-classes.json`.
+- **Sources and caveats**: every number names source ids that resolve in `sources` (`bls-qcew` for the jobs index, `cal-{n}` for calendar sources, researched ids as given); caveats are fixed sentences chosen by which inputs were used.
+- **Today** for TownwiseAI is the town’s local date (`api/src/time-zones.ts`): the twelve towns are `America/New_York`; another town gets its state's most populous zone, marked approximate in the thirteen states split between two.
+- **Honest gaps**: with no headcount, Home's card says “Townwise can’t put a number on how many people are in {town} yet.” with a Planned tag; the model card says no forecast exists yet with an In progress tag, how far the town's calendar is researched, and that no public count is researched; a town outside the twelve says Townwise hasn’t researched it.
+
 ---
 
 ## 14. Calibration and forecast states
@@ -1254,11 +1420,24 @@ Mockups add the chip [DECISION NEEDED: minimum days of history before calibratio
 
 ### 14.2 What the app never shows in v1
 
-No forecast numbers, ranges, reasons or accuracy. No “calibrating” or “calibrated” states, and no progress for a process that does not run. No sample values. The one forward-looking block is the design system’s own pattern (Section 16, P11): a layout headed “Illustrative layout, not real output”, with slots only. [CONFIRM: show the illustrative layout in the app]
+No forecast numbers, ranges, reasons or accuracy, except from a run staff published (14.4). [Build note: owners see a published run on the model card and through TownwiseAI; Home and Analytics keep showing none until a later change.] No “calibrating” or “calibrated” states, and no progress for a process that does not run. No sample values. The one forward-looking block is the design system’s own pattern (Section 16, P11): a layout headed “Illustrative layout, not real output”, with slots only. [CONFIRM: show the illustrative layout in the app] Home replaced the Forecast page at P11 (owner decision, 2026-11-05), so the app shows no illustrative layout today.
 
 ### 14.3 Reserved for later (not in the v1 API)
 
-`queued`, `calibrating`, `calibrated` (with model version and fitted date), `stale` (sales or notes changed since the last fit) and `failed`. They arrive with model storage, as a `tw_calibrations` collection keyed by location. The forecast shape, also reserved: `{ horizon: 7 | 28; frozenAt; modelVersion; interval: 0.8; days: { date; guests: { low, mid, high }; netSalesCents: { low, mid, high }; reasons: { text, source }[] }[] }`.
+`queued`, `calibrating`, `calibrated` (with model version and fitted date), `stale` (sales or notes changed since the last fit) and `failed`. They arrive with model storage, as a `tw_calibrations` collection keyed by location. The forecast shape, also reserved: `{ horizon: 7 | 28; frozenAt; modelVersion; interval: 0.8; days: { date; guests: { low, mid, high }; netSalesCents: { low, mid, high }; reasons: { text, source }[] }[] }`. [Build note: forecasts now arrive as staff-imported runs in the shape of 14.4 (guests only, reasons labelled in code, never free text); the calibration states and `tw_calibrations` stay reserved.]
+
+### 14.4 Forecast runs
+
+The API never computes a forecast and never holds a model. Staff export a run's outputs on the team's computers (`modeling/export_forecast_run.py`, from the frozen files in `modeling/forecasts/`, written to the gitignored `modeling/outputs/`), import the run file for one location from P21, and publish it. [Build note: owner decision 2026-11-05: staff may import and publish Sawtooth's frozen v3 forecast once Sawtooth is an organization in Townwise and the owner confirms its consent to see it and to its being sent to Anthropic through TownwiseAI. The build ships the machinery only; nothing is published.]
+
+- **The run file** (`townwise.forecast-run/1`, `api/src/forecasts/file.ts`, at most 256 KB as sent: P21 reads the file in the browser, refuses one over 2 MB on disk unread, and checks the 256 KB on the parsed file as compact JSON, so the exporter's indenting doesn't count; strict at every level): `schema`, `metric: 'guests'`, `model { family, version, notebookCommit }`, `trainingSource: 'files_from_owner'`, `trainedFrom`, `dataThrough`, `madeAt`, `frozen`, `interval { level: 0.8, widened }`, `backtest`, `days` (1 to 400: `date`, `status`, `low`, `mid`, `high`, `baseline`, up to 6 `reasons { kind, ref, effectPct }`) and `weeks` (up to 60: `from`, `to`, `openDays`, `low`, `mid`, `high`). No location id, name, note, URL or other free text. Rules: `trainedFrom <= dataThrough <= madeAt <= today`; every day after `dataThrough` and within 400 days of it, each once; an open day has `low <= mid <= high` (0 to 20,000), a closed or booked day no numbers; only term, event and holiday reasons may carry a `ref`; each week lies inside one Monday-to-Sunday week, on days the file has, without overlap, with `openDays` between its open days and its open and booked days. A refusal is 400 `invalid_forecast_file` with at most 50 `{ path, code }` issues, never a value.
+- **Import** (staff, 10.7): the run is upserted on `{ orgId, locationId, fileSha256 }` as `importing`, its rows upserted on their key (a duplicate key from a concurrent import of the same file is a row the other one wrote, not an error), and it becomes `draft` when every row is there. The same file again answers 200 with the run; a run left `importing` finishes on the retry. Publish is a compare-and-set from `draft`; withdraw from `draft` or `published`. Each is a staff action (9.2), written before the effect and listed in the org's Townwise staff activity.
+- **Who sees it.** Owners, view-as and TownwiseAI read published runs only: drafts, unfinished imports and withdrawn runs never show. For each date the reader uses the newest published run whose `dataThrough` is before it, so no forecast is shown for a day its model saw. Week rows come only from a run that supplied every day of the week, and are the run's own, never sums of days.
+- **Labels** are made in code (`api/src/forecasts/reasons.ts`): the weekday; the term from the town calendar's term state on the day; an event or holiday by the calendar entry its `ref` names (by id, or a group with one entry that day), a federal holiday on the day, or plain words ("Town event", "Holiday"); "Your recent level", "Closed", "Private event booked". A partner's text can never reach a label.
+- **Accuracy.** Each past day carries its stored guests and whether they landed in the range. Live accuracy is per run: it counts the open days that have passed which that run supplied (the reader chose it for them), booked days left out, as WAPE with the in-range count, misses included, and is null under 5 of its own scored days. A newer run is never credited with an older run's days, so a run published today reads "not scored yet" even when older runs have been scored. A day is past once it has ended in the town (its local date, `localDay`, 10.13), on the forecast route, the model card and in TownwiseAI alike. Scored weeks are not listed separately: a week row in a read carries its `actual` and `inRange`. A week's actual is summed only when all its open days have passed and none was booked.
+- **Read view** (`ForecastWindow`): `{ available, reason: 'no_published_forecast' | 'not_covered' | null, runs: (ForecastRunView & { live: LiveAccuracy | null })[], days: ForecastDayView[], weeks: ForecastWeekView[], notCovered: { from, to }[] }`, each run with its own live accuracy. `ForecastRunView` is `{ id, metric, model: { family, version, label }, trainingSource, trainedFrom, dataThrough, madeAt, frozen, interval, backtest }`; a day `{ date, weekday, status, low, mid, high, baseline, reasons: { kind, label, effectPct, sources }[], runId, madeAt, madeAfterDay, actual, inRange }`; a week `{ from, to, openDays, low, mid, high, runId, madeAt, actual, inRange }`; `LiveAccuracy` `{ days, inRange, typicalErrorPct, from, to }`. Numbers are raw; clients and TownwiseAI round low down and high up.
+- **TownwiseAI** reads it through `get_forecast { from, to }` (at most 31 days, from at most 92 days back), which answers "Townwise has no forecast for this location yet." when none is published; its prompt gives every forecast as a range, never the middle alone, uses week rows for weeks, names the model when asked, mentions accuracy and misses when the owner is deciding, and never makes up a forecast (`tuning-chat.md` section 4).
+- **Deletion.** Runs and rows go with the location's sales data (they are derived from it), the location, the organization, and by staff delete; a person's deletion clears their staff id (10.7). Fitted models and the partner's exports stay on the team's computers, with a deletion duty in the runbook (`infra/README.md`, Forecasts).
 
 ---
 
@@ -1427,7 +1606,7 @@ Two full-screen statements reveal word by word, hold, then dissolve into the pag
 | P8 | `/staff/sign-in-again` | Staff sign in again | `staff_reauth_required` | Gate |
 | P9 | `/dashboard` | Locations, home and first-run | members | Client app |
 | P10 | `/locations/new` | Add location | org admins | Client app |
-| P11 | `/locations/[id]` | Forecast: calibration status, getting started, what the forecast will show | members | Client app |
+| P11 | `/locations/[id]` | Home: this week on the calendar and in past years, bar order (Planned), last week, this month in town, your history | members | Client app |
 | P12 | `/locations/[id]/sales` | Sales data | members | Client app |
 | P13 | `/locations/[id]/sales/upload` | Upload sales history (web) | members | Client app |
 | P14 | `/locations/[id]/notes` | Notes, the tuning step | members | Client app |
@@ -1440,7 +1619,7 @@ Two full-screen statements reveal word by word, hold, then dissolve into the pag
 | P21 | `/admin/orgs/[orgId]` | Organization detail: team, locations, suspend, view as, delete | staff | Staff console |
 | P22 | `/admin/people` | People: everyone across organizations, sign out everywhere, delete | staff | Staff console |
 | P23 | `/admin/audit` | Audit log | staff | Staff console |
-| P24 | `/locations/[id]/analytics` | Analytics: your days, your town’s calendar and your notes (**In progress**: until it is built, the page says so and links to Sales data) | members | Client app |
+| P24 | `/locations/[id]/analytics` | Analytics: your days, your town’s calendar and your notes | members | Client app |
 | P25 | `/locations/[id]/agent` | TownwiseAI, the tuning chat (`/locations/[id]/chat` redirects here) | members | Client app |
 
 Components that are not routes: C1 View-as dialog, C2 View-as banner (15.5), C3 Approve dialog, C4 Reject dialog, C5 New organization dialog, C6 Note form, C7 Confirm dialogs (deletion dialogs ask for the typed name or email, 15.7).
@@ -1529,7 +1708,7 @@ Primary: “Sign in again” (kit `POST /auth/logout`, then `/sign-in`).
 
 **P9. Locations (`/dashboard`)**
 
-- With one location, it redirects to that location’s Forecast tab and keeps any one-time notice.
+- With one location, it redirects to that location’s Home (P11) and keeps any one-time notice.
 - With several: eyebrow is the organization name, title “Locations”. Org admins get an outline “Add location” on the right. One row per location: name (link), town, “{n} days of sales” (`mono`), the calibration heading in words, and “{n} notes”. Rows are at least 44px, with a `raised` hover.
 - For org admins, while the request’s location count is higher than the locations created: “Your request mentioned {n} locations. Add the others when you’re ready.”
 
@@ -1541,27 +1720,29 @@ Primary: “Sign in again” (kit `POST /auth/logout`, then `/sign-in`).
 | Error | Network copy with Try again |
 | Success | The list, or the redirect. After a join, the notice “You joined {org}. {inviter} added {email}. Not your team? Leave {org}.” (F1) |
 
-**P10. Add location (`/locations/new`, org admins).** Fields: Name, and Town (as P3). Primary: “Add location”. Errors: “Another location already uses that name.” and “You’ve reached 25 locations. Write to hello@townwise.tech for more.” On success it opens the new location’s Forecast tab.
+**P10. Add location (`/locations/new`, org admins).** Fields: Name, and Town (as P3). Primary: “Add location”. Errors: “Another location already uses that name.” and “You’ve reached 25 locations. Write to hello@townwise.tech for more.” On success it opens the new location’s Home (P11).
 
-**P11. Forecast (`/locations/[id]`, the default tab)**
+**P11. Home (`/locations/[id]`, the location’s first page)**
 
-- Page header: as on every location page (15.2): the eyebrow “{location name}, {town}, {state}”, the page’s title, then the switcher and links at the side.
-- **Status panel.** Kicker `tw-eyebrow` “Calibration”, heading `tw-h3` “Not calibrated yet”, then the body for the state (14.1). Under it, the data checks as a two-column definition list in `mono`: Days with data, First day, Last day, Missing days in between, Days with guests, Days with net sales, Last upload (“{date} by {email}”).
-- **Getting started**, numbered 01 to 04 like the homepage’s How it works. Each row has a two-digit counter in `mono` `text3`, a `tw-h3` title, a `small` body, and the client’s progress in plain `mono` words at the right:
-  1. “Your town”. “Public data on what moves demand in {town}, {state}.” Progress, derived from the bundled town data (Section 13): “{n} drivers and {m} key dates, from public sources” (singular forms for one, “no key dates” for none); “Employment pattern only. Drivers aren’t researched yet.” for a listed town with no drivers (Nantucket today); “Not researched yet” for another town. Link: “See your town” (Town tab).
-  2. “Upload your sales history”. “Export a daily summary from your point-of-sale system.” Progress: “Not started”, or “{n} days, {first} to {last}”. Link: “Upload sales history” (web), or “Upload from a computer at townwise.tech” on native [CONFIRM: web address for native users].
-  3. “Calibration”. “Calibration is designed to tune the town model to your business: daily guests and sales, 7 and 28 days ahead, each day with a range and a reason. This isn’t built into the app yet.” Progress: “Not calibrated yet”. No StatusTag: a client’s own data state is plain words (15.6).
-  4. “Tell Townwise what it can’t see”. “Closures, private events and openings, saved with this location. Nothing reads them yet.” Progress: “{n} notes”. Link: “Add a note” (Notes tab). A second line has a StatusTag, Planned: “Talking to your model is planned.”
-- **What a forecast will show.** Kicker “Illustrative layout, not real output”. One illustrative row on a `panel` with slots only: `{weekday}` `{date}`, `{guests}` guests, range `{low}` to `{high}`, `{sales}` sales, `{reason}`. Under it, the homepage’s qualifier, “In development. None of this is available to restaurants yet.”, and directly below it three lines with StatusTags copied from the homepage’s What you get: “7-day forecast” In progress, “28-day forecast” In progress, “A reason for every swing” Planned.
-- Primary: “Upload sales history” while the state is `no_sales_data` (web). Otherwise the page has no primary.
+Home replaced the Forecast page here (owner decision, 2026-11-05); its data checks live in P24’s Your data. It is built around the Monday decisions: what is on this week, the bar order, last week against what happened, and this month in town. Until forecasts exist it shows only history and the calendar, never a guess: every figure is a sum, an average or a share of the location’s own stored days, always of a past day. No figure is shown for a day after the last day of data or after today. It reads `GET .../sales/history`, `GET .../notes` and `GET .../calendar` (10.4, 10.10) in parallel, from two years and four weeks before this week’s Monday to the later of this month’s last day and this week’s Sunday, and writes nothing. “Today” is the device’s date and weeks run Monday to Sunday (all twelve towns are Eastern). Built from `client/src/portal/home/` and `client/src/portal/analytics/week.ts`.
+
+- Page header (15.2): the title is “Week of {Monday}”.
+- Lead: “From your sales through {Wed, Nov 4, 2026} and {Hanover}’s researched calendar.” (“US federal holidays” for a town with no researched calendar; “No sales history yet. Home shows …” with no days). Then an In progress line, “Forecasts are in development. Until then, Home shows your history and the calendar, never a guess.”, and a Planned line, “TownwiseAI’s questions about days with no sales are on its page; a count here is planned.” [Planned, F5: the count of TownwiseAI’s open questions, linked, replaces that line.] Side: outline “Ask TownwiseAI” (P25).
+- **This week in {Town}**, “What’s on the calendar, and how this week went before”. When last year’s same week has at least 5 days with data: its total, “Same week last year, {Mon, Nov 3} to {Sun, Nov 9, 2025}. From all 7 days.” (or “From {n} of its 7 days.”), “{+9%} against that year’s usual for those days, compared over {n} days.” (when at least 5 have a usual), the busiest day and the quietest open day. Always: “On the calendar this week: {title} ({weekday}), and {n} more.” or “Nothing on {Town}’s researched calendar this week.”, over holidays and town events only. Term and season periods span weeks, so they mark no day: each one covering the week is said once under that line with its whole span and sources (“Fall term classes. Term, Sep 14 to Nov 17, 2026.”), and with no holiday or event the line reads “No holiday or town event on {Town}’s researched calendar this week.” Then a row per day, Monday to Sunday (today in the selected-row idiom): Day (with this week’s own figure only for a past day with data), On the calendar (each event with its kind and “Source: {label}” links, each note in words with its detail, or “Nothing listed”), Last year and Two years ago (the same weekday 52 and 104 weeks earlier: “{Sat, Nov 8, 2025}: {241} guests”, “{+31%} vs usual”, closed, and the holidays and town events on that day; “No data”; the second column only when any of its days has data). The footnote defines both terms: “Last year means the same weekday 52 weeks earlier. Usual is your average for that weekday in the 4 weeks either side, leaving out closed days, days with a note, and holiday and event days.” [CONFIRM: the baseline for usual] The coverage line, always: “{Town}’s researched calendar covers {from} to {to} so far, plus US federal holidays.”, or the not-researched lines of P24’s Day panel. “Show the numbers”: Day, Last year, Two years ago, Usual (last year). With no days at all, only Day and On the calendar show.
+- **Bar order** (panel), StatusTag Planned, “Order suggestions are planned”: “Townwise will suggest how much more or less beer, wine and spirits to order each week, and by when. It needs a forecast and your usual weekly order first. Townwise can’t see your stock.” No inputs. One line of history when last year’s same week has data for Thursday to Sunday: “Last year this week, Thursday to Sunday brought {58%} of the week’s guests.” (with the day count when the week is partial). [DECISION NEEDED: where the usual order comes from]
+- **Last week, {Oct 26} to {Nov 1}** (panel), “Against the same week last year”: on web, seven pairs of bars (last week solid `mint`, last year outlined `line`, aria-hidden) with the key and the printed scale; on native the text and the table only (D21). “Last week: {1,020} guests, {4%} more than the same week last year ({980}), compared over 7 days.”, or “on the {n} days both weeks have” when partial: the totals and the change are over the days with data in both weeks. States: “Your history ends {date}. Upload the days since to compare last week.” with the upload link (web), when the history ends before last week; “No {guests} stored for last week, so there is nothing to compare yet.” with the same link, when it reaches past a gap; “No data for the same week last year, so there is nothing to compare yet.”; no days in common; no history. “Show the numbers”: Day, Last week, Last year, Change. When forecasts arrive (14.3) this card compares forecast with what happened; until then it never shows a prediction.
+- **This month in {Town}**, eyebrow “{November 2026}”: the month as a grid (aria-hidden, with a key: a white corner for a town event or holiday, a `text2` corner for a note, this week outlined); every event and note on the month in date order with its sources (“Veterans Day. Federal holiday.”, “Your note: Private event, more guests than usual.”); for one of the twelve towns, “Food-service jobs in {Grafton County}, {November} 2024: {97.4} (2024 average = 100).” with “County, not town. Employment is a stand-in for demand.” and the BLS source; “Your {November} in past years” with one line per past year, newest first, at most three (“{118} guests a day over {30} days in 2025, {9%} below your 2025 daily average over {364} days.”, closed days left out; the year’s day count shows how much of that year the history covers); and a Planned line, “An estimate of how many people are in town each day is planned.” [Planned, F8: the people in town summary mounts here, labelled as model output.]
+- **Your history** (panel, root `nativeID` “home-history” for the Reading screen’s animation): “{n} days”, “{first} to {last}. {n} missing days in between. Last upload {date} by {email}.”, the newest year as a heatmap that takes no focus (web; `role="img"` named by its summary), and links “See it in Analytics” and “Upload sales history” (web; native says where to upload).
+- **While onboarding’s `needsHistory(org, locations)` is true** (54’s, agreement 1): its HistoryStep takes the place of Bar order, Last week and Your history; This week (calendar only) and This month still show. [Until 54’s onboarding merges, `home/onboarding.ts` stands in: true when the organization has locations and none has a stored day, with a step that offers P13’s upload.]
+- No primary button of Home’s own.
 
 | State | Shows |
 |---|---|
 | Loading | “Loading {location}” |
-| Empty | The `no_sales_data` status, with checklist step 02 selected (selected-row idiom) |
+| Empty | No days here: the calendar parts, and each card saying it has no history (“No sales history yet for this location.”, “No sales history yet, so there is nothing to compare.”); the HistoryStep while `needsHistory` |
 | Error | Network copy with Try again. A location id that is not in the organization (deleted, or never theirs): “This location isn’t available.” and a link to Locations. |
 | Success | As above |
-| View-as | Upload links disabled |
+| View-as | The same page; the upload links are disabled with the read-only line |
 
 **P12. Sales data (`/locations/[id]/sales`)**
 
@@ -1670,6 +1851,58 @@ Primary: “Sign in again” (kit `POST /auth/logout`, then `/sign-in`).
 - States: loading, and network error with Try again.
 - View-as: every write is disabled.
 
+**P24. Analytics (`/locations/[id]/analytics`)**
+
+Every figure is a count or an average of the location’s own stored days that the filters keep, from `GET .../sales/history`, `GET .../notes` and `GET .../calendar` (10.4, 10.10). Nothing is estimated, nothing is shown for a day after today, and a figure with too few days behind it says so instead. The page writes nothing; its filters live in the page’s state only (never the URL or storage) and reset when it closes. Built from `client/src/portal/analytics/`.
+
+- Lead: “{n} days, {first} to {last}.”
+- **Filters**, one block that drives the page (labelled groups in a row on desktop, stacked on phones; a change never animates or moves focus):
+  - Colour by: Guests (default when any day has guests) or Net sales, a radio group with one tab stop whose arrows move the choice. A metric with no data is disabled, with “No guest counts in your history.” or “No net sales in your history.”
+  - Show on the calendar (checkboxes, all on): Town events, Holidays, Your notes, Closures. They change only the heatmap’s marks and labels.
+  - Include in the numbers: Closed days (off), Days with a note (on; closures follow Closed days only), Holiday and event days (on). They change every average, chart, type of night and the heatmap’s levels; a value they leave out is drawn as “Left out”.
+  - Years: one per year with data, all on. Unchecking the last is refused: the box stays checked and “Keep at least one year.” describes it.
+  - The checkbox is a shared control (`ui/Checkbox`): a real `<input type="checkbox">` in its `<label>` on web, a Pressable with the checkbox role and state on native; checked takes the `mint` fill with an `on-mint` check; disabled keeps its focus with `aria-disabled`.
+- **Every day.** The heatmap (web): one grid per checked year, newest first, 7 weekday rows (Monday first) by week columns of square cells; four `mint` levels from the quartiles of the kept values, “No data” `raised`, “Left out” `state`, closed outlined, a white corner square for a holiday or town event and a `text2` one for a note. A visible legend above; under it the summary (“{Daily guests}, {first} to {last}. Busiest: … Quietest open day: … {n} closed days.” and what the town calendar covers) and the basis line; “Show the numbers” is the month table (Month, Days with data, Total, Average; every value in the checked years, kept or left out). Each year is `role="grid"` named “{year}, daily {guests}”, with row headers; each cell’s label says everything its fill and marks show. One tab stop for the whole heatmap, starting at the selected day or the last day with data: arrows move a day (up and down) or a week (left and right), Home and End the week’s Monday and Sunday, PageUp and PageDown 52 weeks across years, Ctrl+Home and Ctrl+End the first and last day with data; Enter or Space selects, Escape clears, and while a day is selected the selection follows focus. Days after today are blank and never focusable. A mouse or pen over a cell previews it; leaving the grid restores the selection. Native (D21): a month list, newest first (“{month}, {n} days with data, {average} on average”); a month opens its days as 44px rows (date, value, marks in words), and a day opens the Day panel under its row.
+- **Day panel** (columns 9 to 12 and sticky from 1024px; under the heatmap below): the date and its status (Closed, No data for this day, Left out of the numbers by your filters, Today); Your numbers (Guests, Net sales, Usual for a {weekday} with the day count and the day’s change, Same day last year); On the town calendar, each event with its kind, dates and “Source: {label}” links, and the line when the town’s research doesn’t cover the day; Your notes in words with “Open Notes”; Where it came from (“From the upload on {date} by {email}.”, “This upload didn’t finish.”, “Upload record not found.”); Previous day and Next day (they move the selection, and on web focus the matching cell); “Ask TownwiseAI about this day”. Empty: “Point at or select a day to see everything Townwise has for it. Use the arrow keys to move between days.” [Planned, F4: the stored file’s kind and name, “Download cleaned CSV” and Your files, once uploads link to stored files.]
+- **Weekly shape**, **By month**, **Year over year**, **By type of night**: each a text summary, the chart (web: inline SVG, `aria-hidden`, `mint` 2px marks with square ends, printed scale “Scale 0 to {n} guests. Scale fitted to this location.”; year over year draws the newest year `mint` and older years `line`, each labelled with its year, months that are not complete as hollow points), the basis line and “Show the numbers”. Year over year compares only months with at least 15 kept days in both years and says what is missing otherwise, with “Upload older history” when older exports would help. A type of night with fewer than 2 nights shows its count and “Not enough nights yet.”
+- **Biggest drivers**: a table (#, Driver, an effect bar from 50% fewer to 50% more on web, Effect, Seen), “(rough)” under 4 days, the footnote on how effects are measured, the basis line, and a Planned line: “Weather as a driver.” With nothing seen twice: “Townwise needs each kind of day to happen at least twice before it can say how much it moves your numbers.” [CONFIRM: driver thresholds] [CONFIRM: the baseline for usual]
+- [Planned, F9: “How Townwise estimates”, the model card, above Your data.]
+- **Your data**: the data checks (Days with data, First day, Last day, Missing days in between, Days with guests, Days with net sales, Last upload “{date} by {email}”), “Analytics reads your stored days, your notes and your town’s calendar. It changes nothing and keeps nothing, not even your filters: they reset when you leave the page.”, and a link to Sales data.
+
+| State | Shows |
+|---|---|
+| Loading | “Loading analytics” |
+| Empty | The filters, disabled, and “No sales history yet.” with “Upload sales history” (web) or “Upload from a computer at townwise.tech.” (native) |
+| Error | Network copy with Try again; 404 as on P11 |
+| Success | As above |
+| View-as | The same page; the upload links are disabled with the read-only line |
+
+**P25. TownwiseAI (`/locations/[id]/agent`, members; `/locations/[id]/chat` redirects here)**
+
+The location's chat with TownwiseAI and its side panel (server contract: `docs/portal/tuning-chat.md` and 10.12). The page's h1 is “TownwiseAI”, under the eyebrow naming the location. From 1024px the chatbox takes columns 1 to 8 and fills the screen, and the side panel takes 9 to 12 and scrolls on its own. Below 1024px one column under a three-way switch, Chat, Questions ({n}) and Activity; the chat keeps its state while another view shows. On phones the location's compact header and the switch sit at the top of what scrolls, and the composer is one row.
+
+- **Header**: the open conversation's title, or “New conversation”; **Conversations** opens the list under it (each row: title and date, and **Delete**, which asks “Delete this conversation?” with “TownwiseAI’s replies and your messages in it are deleted. Notes you saved from it stay.”; Escape closes the list and returns focus); **New chat**. Both off while a reply streams.
+- **Empty conversation**: “Ask TownwiseAI about {location}”, a line saying what it reads (from the tool table), and up to four chips. Ask chips send at once and show only when Townwise can answer them (“How did last week go?” when the last sales day is within 10 days, “Which days last month were unusual?” with 60 days of sales, “What’s coming up in {next month} in {town}?” for a researched town, “What should I upload?” with no sales); Tell chips (“We’re closed on …”, “We have a private event on …”) fill the composer. No chip asks for a forecast. With no sales: “You haven’t uploaded sales yet, so TownwiseAI can only use your notes and {town}’s town profile.” and Upload sales (web).
+- **Messages**: “You” in a square panel (right-aligned at 80% from 641px); TownwiseAI's reply as its parts in streamed order: text, tool cards, more text, proposal cards. “TownwiseAI is thinking…” while nothing is being written or read. Text deltas are drawn at most every 32ms. Under a finished reply, the **Based on** line, built in the client from that reply's tool cards and never written by the model (“Based on your sales from Oct 1 to Oct 31, 2026, your 12 notes, and Hanover’s town profile (bls.gov).”; no reads: “Based on this conversation only.”). A failed or stopped reply keeps what arrived, says it wasn't saved, and offers **Try again**, which sends the same message as a new turn.
+- **Tool cards**: one row per call, a mono status word (Reading, Read, Couldn’t read) and what it read, with a detail line from the call's result view (dates, counts and source links only). Once the reply is done the group folds to “Read {n} things” with Show and Hide; a row opens to its views as a definition list and its https sources, which open in a new tab. A tool the client has no words for reads “Looking something up”. The words live in `client/src/chat/tools.ts`, with rows for every registered tool and for `get_town_calendar` and `get_people_in_town` ahead of their landing.
+- **Proposed note card**: Kind, Date or Dates, Weekdays, Effect, Expected guests and Detail (dates and counts in mono mint). **Save note**, **Edit first** (the note form, filled in) and **Not now** (folds to “Not now.” with Show the note; recorded, still saveable). Saved: “Saved to Notes.” or “Saved to Notes, with your changes.” with Open Notes, and focus moves to it. The actions wait until the reply is stored; a card from a reply that wasn't kept says so and saves through the notes route. Errors stay on the card (note limit, a note Townwise couldn't accept, not found).
+- **Composer**: label “Ask about your sales, or tell TownwiseAI what it can’t see” (the input's name on phones), and under it “Leave out guest names. TownwiseAI answers from {what it reads}.” Grows to 200px, then scrolls; 4,000 characters, with a counter from 3,600. Web: Enter sends, Shift+Enter is a new line, and Enter while an input method composes does nothing. Send becomes Stop while a reply streams. No attachments.
+- **Scrolling**: the log keeps its end in view until the person scrolls up more than 4px; coming back within 40px of the end pins it again; a **Latest** button shows while content grows below the view.
+- **Side panel**: **Questions for you** (“{n} open”): rule-based questions from the location's own sales and notes (a weekday with no sales on most of its days in weeks with sales on other days, a run of days with no sales), each with what it saw, three answers and a help line saying what an answer does; answered, it says what it did. Empty: “No questions right now.” A Planned tag: “TownwiseAI’s own research (unusual nights, town events it finds) is planned.” **What it’s been doing** (newest first): only real, dated events (uploads read, notes saved from a card or an answer, answers given); an event kind the client doesn't know shows as nothing. Empty: “Nothing yet. Upload sales or save a note and it shows here.” **This month’s budget**: “{Month}: {n}% used. Resets {Mon} 1.”, and from 80% “Most of {Month}’s budget is used. TownwiseAI pauses when it runs out.” [CONFIRM: show owners the monthly chat budget, as percent used] **How TownwiseAI works** (closed by default): what it reads, what it can't see (the weather, staffing, bookings not in notes, guest names), that it never saves a note without you, that Townwise has no forecast for this location yet, and that messages and the data it reads go to Anthropic (with a Privacy link).
+- A live region (polite) says “TownwiseAI is replying”, each thing it starts reading, and “TownwiseAI replied”, never the streamed text; the log is `role="log"`. Card fade-ins (200ms) and Latest (150ms) are instant under reduced motion.
+
+[Build note: the side panel reads `GET .../agent` as `{ questions, activity }` and reads each item on its own, dropping any it doesn't know. A question is `{ id, kind: 'weekday', weekday, from, to, noSalesCount, weekdayCount }` (no sales on `noSalesCount` of the `weekdayCount` days of that weekday in weeks with sales on other days, worded “{Location} has no sales on {noSalesCount} of the {weekdayCount} Mondays in weeks with sales on other days.”) or `{ id, kind: 'gap', from, to, dayCount }`, as `api/README.md` (Tuning chat) documents them; an activity item is `{ at, kind: 'upload_applied', firstDate, lastDate, dayCount }`, `{ at, kind: 'note_saved', via: 'chat' | 'question', noteId, noteKind, startDate, endDate }` or `{ at, kind: 'question_answered', questionId, answer: 'open' | 'not_sure' }`. The words are the client's, so the API sends ids, dates and counts only. An answer is `POST .../agent/questions/:questionId` `{ answer: 'closed' | 'open' | 'not_sure' }`, answered `{ question: { id, answer }, note }`; a 404 reads the panel again.]
+
+| State | Shows |
+|---|---|
+| Loading | “Loading TownwiseAI…” in the chat column; the side panel loads on its own |
+| Not found | “This location wasn’t found.” |
+| Error | The error and Try again (each of the chat and the side panel) |
+| Off | “TownwiseAI isn’t turned on yet.”; the side panel still loads |
+| Budget used up | In place of the composer: “{Org} has used its TownwiseAI budget for {Month}. It comes back on {Mon} 1. Home and Analytics don’t depend on it.” [CONFIRM: what owners see when the budget runs out] |
+| View-as | Everything reads; Send, Stop, New chat, Delete, the chips, Try again, Save note, Edit first, Not now and the answers stay in place, disabled, described by the one read-only line |
+| Success | As above. Nothing is kept in browser or device storage. |
+
 ### 16.4 Staff console pages
 
 **P19. Requests (`/admin`)**
@@ -1714,6 +1947,7 @@ Primary: “Sign in again” (kit `POST /auth/logout`, then `/sign-in`).
 - **Team**: P17’s table and add form, with a “View as” text link on each active member. Above the add form: “Addresses you add here show as added by Townwise staff. Don’t add your own addresses.”
 - **Locations**, metadata only: Name, Town, Days, First day, Last day, Notes, Last upload. Under the table: “Sales figures and notes are visible only through View as.”
 - **Recent activity**: the newest 20 audit events for this organization, with a link to `/admin/audit` filtered to it.
+- **Forecasts** (14.4) [Build note: the section's component is `client/src/portal/console/ForecastRuns.tsx`]: kicker "Staff only". One line: "A forecast is a draft until you publish it. {org}’s members and TownwiseAI see only published forecasts, never the model. Each import, publish, withdrawal and deletion is listed in {org}’s Townwise staff activity." Per location a table (Model, Dates with the day count, Trained to, Made, Status, Actions), or "No forecast imported for {location}." Actions: primary "Publish" on a draft only, text "Withdraw" on a draft or published run, outline "Delete" on every run, each through a console dialog whose body ends "Its admins see this in their Townwise staff activity." **Import a forecast** (web only; native says "Import a forecast for {org} from a computer."): a location select and "Choose a run file"; the browser reads the file and shows "For {location}: Model {v}, guests, {n} days ({k} open) from {first} to {last}, trained to {date}, made {date}." and "Saved as a draft; owners and TownwiseAI see it only after you publish it." before "Import". Problems read "{path} {words}." from the issue codes, never a value. No figure from a run shows in the console.
 - **Delete organization**, last on the page. While the organization is active: “Suspend {org} before deleting it.” and no button. While suspended: an outline “Delete organization”. Its dialog: “This deletes {org}: its {n} locations, their sales data and notes, its team and its request. The audit log keeps the events, with the organization’s and locations’ names removed. This can’t be undone. Type {org} to confirm.” On success, `/admin/orgs` with the notice “Deleted {org}.” (The notice uses the name typed into the dialog; the server no longer has it.)
 - States: loading; 404 “This organization doesn’t exist.”; network error; success. 409 `org_not_suspended`: “Suspend {org} before deleting it.”
 
@@ -1745,7 +1979,8 @@ Primary: “Sign in again” (kit `POST /auth/logout`, then `/sign-in`).
 - Townwise server code logs ids and counts only: `userId`, `orgId`, `locationId`, `memberId`, `requestId`, `grantId`, `uploadId`, `routeId`. It never logs emails, names, organization or location names, note text, request notes, view-as reasons, figures, file content or request bodies. This matches the privacy page’s promise for sign-in logs (“its own log lines carry your account ID, never your email address”).
 - Product log lines: `townwise.view_as_read`, `townwise.upload_applied`, `townwise.audit_write_failed` (error level), `townwise.access_denied { policy, code }`, `townwise.email_sent { kind, requestId, orgId? }` (info), `townwise.email_failed { kind, requestId, orgId?, code, status, upstreamCode, errType }` (warn; D14), and the stored-files lines in `api/README.md` (Audit and logs), which carry ids, kinds, sizes, counts and codes. An email’s log line never holds its address, subject or body. A stored-files line never holds a file name, header, sheet name, location value, cell, figure or the storage SDK's message; the SDK's own logger stays off.
 - The welcome’s first name and organization name travel only in the `GET /api/me` body, never in a URL, log line or audit event. The welcome marker (6.15) is deleted with the organization and with the person.
-- A stored file is read only by the file reader and returned only to its organization; TownwiseAI and every model read `tw_sales_days`, notes and the town calendar, never files (6.10 rule 9).
+- Forecast runs (14.4) log `townwise.forecast_imported { orgId, locationId, runId, days, weeks }` and `townwise.forecast_status { orgId, runId, status }`, never a figure or the run file; their audit events carry the model version, dates and day count only. The run file holds no free text, and the model, its features and its training rows never reach the API.
+- A stored file is read only by the file reader and returned only to its organization; TownwiseAI and every model read `tw_sales_days`, notes and the town calendar, never files (6.10 rule 9). The one exception is the AI column step (11A.4), which sends Anthropic a redacted profile of one table (header text and value tokens), never a row, a figure, a file name or an entry path; only `chat/model.ts` and `files/extract/model.ts` construct a model client (test-enforced).
 - The audit log (a database record) holds emails, organization names and view-as reasons. It never holds figures, note text, request notes or decision messages.
 - The client never logs (expo-shell rule 12, **Exists**) and never persists the file or the parsed rows.
 - **The privacy page must change before the portal ships.** The sentences on `feature/townwise-web` that become false are listed in 22.4. The new content needs to cover:
@@ -1781,7 +2016,8 @@ Primary: “Sign in again” (kit `POST /auth/logout`, then `/sign-in`).
 | Upload | constants | 3,660 days, 256 KB, 50 MB file in the browser | [CONFIRM] |
 | Caps | constants | 25 locations per organization; 1,000 notes per location; 20 emails per add; 200 people per organization | [CONFIRM] |
 | Stored files | constants | 11A.2's table | `api/src/files/limits.ts` [CONFIRM] |
-| `FILES_BLOB_ACCOUNT_URL`, `FILES_AZURITE_CONNECTION_STRING` | env, not secret | the client files account URL; Azurite's connection string in development only (production refuses it) | `api/src/config.ts` |
+| `FILES_BLOB_ACCOUNT_URL`, `FILES_AZURITE_CONNECTION_STRING` | env, not secret | the client files account URL; Azurite's connection string in development only (production refuses it) | `api/src/config.ts`. In Azure the API signs in with its managed identity (`IDENTITY_ENDPOINT`, `IDENTITY_HEADER`, `AZURE_CLIENT_ID`) through the token source email uses, or boot fails |
+| `TOWNWISE_FILES_MONTHLY_BUDGET_USD` | env, not secret | 5 (0 to 1,000; 0 turns the AI column step off) | the file reader's AI spend per organization per month (11A.4); on only with `ANTHROPIC_API_KEY` [CONFIRM] |
 | Clock | dependency | the one `now` function `main.ts` passes to both `createAuth` and `createTownwiseApi` | 7.1 |
 | `EMAIL_ENDPOINT` | env, not secret | the Communication Services endpoint, a bare `https://*.communication.azure.com` origin | Absent turns email off (D14). Set together with `EMAIL_SENDER`; email also needs the managed identity (`IDENTITY_ENDPOINT`, `IDENTITY_HEADER`, `AZURE_CLIENT_ID`), or boot fails |
 | `EMAIL_SENDER` | env, not secret | `no-reply@townwise.tech` | D14 |
@@ -1870,6 +2106,7 @@ Named tests:
 - **Notes:** `detail` is absent from logs and audit.
 - **Deletion:** deleting a person with an active seat is 409 `person_has_seat`; otherwise their requests, invitations and removed seats are gone, and no audit event holds their email.
 - **Deletion:** deleting an active organization is 409 `org_not_suspended`; deleting a suspended one leaves no tenant document with its `orgId`, and no audit event holds its name.
+- **Forecast runs (14.4):** `api/test/forecast-file.test.ts` (strict shape, cross-field rules, issues without values, labels from code), `forecast-score.test.ts`, `forecast-runs.int.test.ts` (import, retry, publish and withdraw, staff only, staff activity, deletion), `estimates.int.test.ts` (drafts invisible, newest eligible run per date, actuals and live accuracy), `chat-estimate-tools.test.ts` (`get_forecast`), and `client/test/portal/console/forecasts.test.web.tsx`.
 - **Audit:** every mutation writes its event with only the allowlisted keys.
 - **Email:** normalization matches the kit for case and spaces.
 - **Towns:** `api/test/towns.test.ts` matches `api/src/towns.ts` against the literal list of twelve ids (Section 13).
@@ -1887,6 +2124,7 @@ Client tests:
 - the view-as banner renders, and writes are disabled;
 - the twelve town ids in the client’s `towns.ts` match the same literal list as the api test;
 - statement moments (`test/portal/moments/`): the copy and the timeline (`timing.test.ts`, `moments.test.ts`), and the player on native and web (`provider.test.native.tsx`, `provider.test.web.tsx`): one moment at a time, said once, hidden from assistive tech, dismissed by a key at once and by a press after the grace period, reduced motion, a native screen reader, Android back and a hidden tab.
+- Analytics (`test/portal/analytics/`): the compute modules (`compute.test.ts`); the heatmap’s grids, one tab stop, keys, hover preview, the Day panel’s sources and the filters’ effect on the marks and the basis line, with no write and no storage, the same under view-as (`heatmap.test.web.tsx`); the native month list, its Day panel and the thin and empty copy (`analytics.test.native.tsx`); the shared checkbox (`test/portal/ui/checkbox.test.*.tsx`).
 
 ---
 
@@ -1983,7 +2221,7 @@ Each is marked inline with “lead default”:
 - Retention and deletion terms for the privacy page (17, 10.7).
 - Whether staff may copy a client’s uploaded days into research notebooks, for that client’s calibration only, and how the copy is recorded, shown to org admins and deleted (14.1).
 - What happens to a raw export a client sent directly once that client uploads through the portal (17). Recommended: delete it once its days are in the portal.
-- Retention periods for stored files (11A.8). Defaults [CONFIRM]: originals 365 days (lifecycle backstop 400), cleaned copies and reports until the file, its location's sales data or the organization is deleted, never-read drops 30 days, unfinished uploads 24 hours, deleted blobs 7 days in soft delete, storage access logs 365 days.
+- Retention periods for stored files (11A.7). Defaults [CONFIRM]: originals 365 days (lifecycle backstop 400), cleaned copies and reports until the file, its location's sales data or the organization is deleted, never-read drops 30 days, unfinished uploads 24 hours, deleted blobs 7 days in soft delete, storage access logs 365 days.
 
 ### 22.4 Conflicts in existing copy
 
@@ -2002,6 +2240,12 @@ Each is marked inline with “lead default”:
 ---
 
 ## 23. Changelog
+
+**2026-11-06, forecast runs.** Staff import a model run's outputs for a location (`townwise.forecast-run/1`, 14.4) from P21 as a draft, then publish, withdraw or delete it, each a staff action in the org's staff activity (9.2, 10.7). Owners, view-as and TownwiseAI's `get_forecast` read published runs only, the newest one whose data ends before each day, with ranges, labels made in code, actuals and live accuracy; the model card shows the run (10.13). Two collections (6.20, 6.21), deleted with the location's sales data, the location and the organization. Nothing is published yet (owner decision 2026-11-05: Sawtooth's v3 once it joins and consents).
+
+**2026-11-05, stored files (stages 5 to 9).** ZIP archives read in place with bomb guards, entries listed in `tw_file_entries` (6.18) and served by `GET .../files/:fileId/entries`, and their tables read as families; PDF tables (`unpdf`) and Word tables (`saxen`); the AI column step on a redacted profile within a monthly budget (`tw_files_usage`, 6.13; `TOWNWISE_FILES_MONTHLY_BUDGET_USD`, 18); stored files deleted with a location's sales data and an organization, the owner's "delete every original" (`DELETE .../originals`), the staff purge for a person's deletion request (10.7), and the daily sweep for retention (11A.7, `tw_file_sweeps`, 6.14); two audit actions (9.2) and `deletedFiles` on `sales.deleted`. Stored files in Azure sign in with the managed identity. Still off in production (11A.8).
+
+**2026-11-05, Analytics page.** P24 is built (16.1, 16.3): the filters, the heatmap with its keys and the Day panel, the weekly shape, by month, year over year, types of night, the biggest drivers and Your data, from the two reads of 10.4 and 10.10 and the notes. A shared checkbox joins the portal’s controls. The page writes nothing and keeps its filters in its own state. The model card (F9) and the day panel’s file details (F4) are Planned.
 
 **2026-11-05, calendar and sales history.** Two member reads, `GET .../sales/history` and `GET .../calendar` (10.4, 10.10), for Home, Analytics and TownwiseAI. The town calendar (13.1) merges computed federal holidays, the profile’s key dates and researched entries; Hanover’s entries come from the committed public `modeling/dartmouth_calendar_2025_2026.csv`, each with its source and confidence. Headcount inputs stay empty until researched. Tests in Section 20.
 

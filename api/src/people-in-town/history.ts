@@ -1,0 +1,87 @@
+// "Your history by term state" (spec 13.2): how this location's own open regular days ran in each term state and
+// weekday. It is the honest answer to how the town moves this location's demand while no forecast exists. Pure.
+//
+// The day classes are the client's (client/src/portal/analytics/days.ts), ported here and pinned by the
+// shared fixture test/fixtures/day-classes.json (client copy: client/test/portal/analytics/day-classes.json). A change
+// to one side needs the other and the fixture.
+import type { NoteContent } from '../stores/notes.ts';
+import type { SalesDay } from '../stores/sales-days.ts';
+import { weekdayOf, type Weekday } from '../time-zones.ts';
+import type { TownEvent } from '../town-calendar.ts';
+import { TERM_STATES, type TermState } from './term.ts';
+
+export type DayClass = 'closed' | 'noted' | 'holiday' | 'event' | 'regular';
+
+/** A cell needs this many days, or its mean is null. */
+export const MIN_CELL_DAYS = 3;
+
+export interface HistoryCell { state: TermState; weekday: Weekday; days: number; mean: number | null }
+
+export interface YourHistory {
+  /** guests when any stored day has guests, else netSales. */
+  metric: 'guests' | 'netSales';
+  /** Known term states only, in TERM_STATES order, Monday first. `mean` is whole guests, or whole US dollars. */
+  cells: HistoryCell[];
+  /** The first and last day counted, or null when none was. */
+  first: string | null;
+  last: string | null;
+}
+
+type ClassNote = Pick<NoteContent, 'startDate' | 'endDate' | 'weekdays' | 'effect'>;
+type ClassEvent = Pick<TownEvent, 'start' | 'end' | 'kind'>;
+
+function covers(note: ClassNote, date: string): boolean {
+  if (date < note.startDate || date > note.endDate) return false;
+  return note.weekdays === null || note.weekdays.includes(new Date(`${date}T00:00:00.000Z`).getUTCDay());
+}
+
+function isAllZero(day: Pick<SalesDay, 'guests' | 'netSalesCents'>): boolean {
+  if (day.guests === 0) return day.netSalesCents === 0 || day.netSalesCents === null;
+  return day.guests === null && day.netSalesCents === 0;
+}
+
+/**
+ * The first that applies: closed (a covering note's effect is closed, or the stored row is all zero), noted (a
+ * covering note that does not close it), holiday, event, regular. Term and season entries never make a day irregular.
+ */
+export function classOfDay(
+  date: string, day: Pick<SalesDay, 'guests' | 'netSalesCents'> | undefined, notes: readonly ClassNote[], events: readonly ClassEvent[],
+): DayClass {
+  const covering = notes.filter((note) => covers(note, date));
+  const on = events.filter((event) => event.start <= date && date <= event.end);
+  if (covering.some((note) => note.effect === 'closed') || (day !== undefined && isAllZero(day))) return 'closed';
+  if (covering.length > 0) return 'noted';
+  if (on.some((event) => event.kind === 'holiday')) return 'holiday';
+  if (on.some((event) => event.kind === 'event')) return 'event';
+  return 'regular';
+}
+
+const WEEK: readonly Weekday[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/** Every stored open regular day whose term state is known, by term state and weekday. */
+export function yourHistory(
+  days: readonly SalesDay[], notes: readonly ClassNote[], events: readonly ClassEvent[], termStateOf: (date: string) => TermState,
+): YourHistory {
+  const metric = days.some((day) => day.guests !== null) ? 'guests' : 'netSales';
+  const sums = new Map<string, { days: number; total: number }>();
+  let first: string | null = null;
+  let last: string | null = null;
+  for (const day of days) {
+    const value = metric === 'guests' ? day.guests : day.netSalesCents;
+    if (value === null) continue;
+    const state = termStateOf(day.date);
+    if (state === 'unknown' || classOfDay(day.date, day, notes, events) !== 'regular') continue;
+    const key = `${state}|${weekdayOf(day.date)}`;
+    const sum = sums.get(key) ?? { days: 0, total: 0 };
+    sums.set(key, { days: sum.days + 1, total: sum.total + value });
+    if (first === null || day.date < first) first = day.date;
+    if (last === null || day.date > last) last = day.date;
+  }
+  const cells = TERM_STATES.flatMap((state) => WEEK.flatMap((weekday): HistoryCell[] => {
+    const sum = sums.get(`${state}|${weekday}`);
+    if (sum === undefined) return [];
+    const mean = sum.total / sum.days / (metric === 'guests' ? 1 : 100);
+    return [{ state, weekday, days: sum.days, mean: sum.days < MIN_CELL_DAYS ? null : Math.round(mean) }];
+  }));
+  return { metric, cells, first, last };
+}

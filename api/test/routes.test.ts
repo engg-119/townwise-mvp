@@ -67,6 +67,37 @@ describe('route table', () => {
     ]);
   });
 
+  it('U13A: people in town and how Townwise estimates are member reads with no body and no limiter', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id === 'org.people.get' || r.id === 'org.estimates.about')
+      .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));
+    expect(rows).toEqual([
+      { id: 'org.people.get', method: 'GET', path: '/org/locations/:locationId/people-in-town', policy: 'member', bodyLimit: 'none', limiter: undefined },
+      { id: 'org.estimates.about', method: 'GET', path: '/org/locations/:locationId/estimates/about', policy: 'member', bodyLimit: 'none', limiter: undefined },
+    ]);
+  });
+
+  it('U13B: the forecast is a member read; forecast runs are staff routes with their body limits and no limiter', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id === 'org.forecast.get' || r.id.startsWith('admin.forecasts.'))
+      .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));
+    expect(rows).toEqual([
+      { id: 'org.forecast.get', method: 'GET', path: '/org/locations/:locationId/forecast', policy: 'member', bodyLimit: 'none', limiter: undefined },
+      { id: 'admin.forecasts.list', method: 'GET', path: '/admin/orgs/:orgId/forecast-runs', policy: 'staff', bodyLimit: 'none', limiter: undefined },
+      {
+        id: 'admin.forecasts.import', method: 'POST', path: '/admin/orgs/:orgId/locations/:locationId/forecast-runs', policy: 'staff',
+        bodyLimit: '256kb', limiter: undefined,
+      },
+      {
+        id: 'admin.forecasts.publish', method: 'POST', path: '/admin/orgs/:orgId/forecast-runs/:runId/publish', policy: 'staff',
+        bodyLimit: '32kb', limiter: undefined,
+      },
+      {
+        id: 'admin.forecasts.withdraw', method: 'POST', path: '/admin/orgs/:orgId/forecast-runs/:runId/withdraw', policy: 'staff',
+        bodyLimit: '32kb', limiter: undefined,
+      },
+      { id: 'admin.forecasts.remove', method: 'DELETE', path: '/admin/orgs/:orgId/forecast-runs/:runId', policy: 'staff', bodyLimit: 'none', limiter: undefined },
+    ]);
+  });
+
   it('boot refuses a duplicate method and path', () => {
     expect(() => { assertRouteTable([route({ id: 'a' }), route({ id: 'b' })]); }).toThrow(ConfigError);
   });
@@ -98,6 +129,9 @@ describe('route table', () => {
     expect(table('org.files.complete')).toEqual({ method: 'POST', path: `${base}/files/:fileId/complete`, policy: 'member', bodyLimit: '2kb' });
     expect(table('org.files.list')).toEqual({ method: 'GET', path: `${base}/files`, policy: 'member', bodyLimit: 'none' });
     expect(table('org.files.get')).toEqual({ method: 'GET', path: `${base}/files/:fileId`, policy: 'member', bodyLimit: 'none' });
+    expect(table('org.originals.remove')).toEqual({ method: 'DELETE', path: `${base}/originals`, policy: 'org_admin', bodyLimit: 'none' });
+    expect(table('admin.orgs.originals.remove')).toEqual({ method: 'POST', path: '/admin/orgs/:orgId/originals/delete', policy: 'staff', bodyLimit: '32kb' });
+    expect(table('org.files.entries')).toEqual({ method: 'GET', path: `${base}/files/:fileId/entries`, policy: 'member', bodyLimit: 'none' });
     expect(table('org.files.raw')).toEqual({ method: 'GET', path: `${base}/files/:fileId/raw`, policy: 'member', bodyLimit: 'none', limiter: 'downloads' });
     expect(table('org.files.clean')).toEqual({ method: 'GET', path: `${base}/files/:fileId/clean`, policy: 'member', bodyLimit: 'none', limiter: 'downloads' });
     expect(table('org.files.remove_raw')).toEqual({ method: 'DELETE', path: `${base}/files/:fileId/raw`, policy: 'member', bodyLimit: 'none' });
@@ -116,6 +150,17 @@ describe('route table', () => {
       method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/proposals/:proposalId', policy: 'member', bodyLimit: '8kb',
     });
     expect(proposal?.limiter).toBeUndefined();
+  });
+
+  // U9, TownwiseAI's side panel.
+  it('the side panel is a member GET, and answering a question a member POST with a 1kb body and no route limiter', () => {
+    const base = '/org/locations/:locationId';
+    expect(TOWNWISE_ROUTES.find((entry) => entry.id === 'org.agent.get')).toMatchObject({
+      method: 'GET', path: `${base}/agent`, policy: 'member', bodyLimit: 'none',
+    });
+    const answer = TOWNWISE_ROUTES.find((entry) => entry.id === 'org.agent.answer');
+    expect(answer).toMatchObject({ method: 'POST', path: `${base}/agent/questions/:questionId`, policy: 'member', bodyLimit: '1kb' });
+    expect(answer?.limiter).toBeUndefined();
   });
 
   it('boot refuses staff_self on any route except POST /admin/view-as/end', () => {

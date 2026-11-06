@@ -1,7 +1,8 @@
-import { Forecast } from '../../../../../../src/portal/locations/Forecast';
+import { Home } from '../../../../../../src/portal/home/Home';
 
-// P11 Forecast (/locations/[locationId], members; the default tab): docs/portal/spec.md 16.3 and 14. Rendered
-// inside the location layout, which draws the header, the switcher and the tabs.
-export default function ForecastTab(): React.JSX.Element {
-  return <Forecast />;
+// P11 Home (/locations/[locationId], members; the location's first page): docs/portal/spec.md 16.3. The page lives
+// in src/portal/home/; it reads and writes nothing of its own, so view-as shows it unchanged. Rendered inside the
+// location layout, which draws the header and the switcher.
+export default function HomeTab(): React.JSX.Element {
+  return <Home />;
 }

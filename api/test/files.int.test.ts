@@ -369,6 +369,19 @@ describe('downloads and deletion', () => {
     expect(JSON.stringify(await auditEvents(server))).not.toContain('Zqxj');
   });
 
+  it('replaces a workbook’s sheet names in its report when its owner deletes the original', async () => {
+    const locationId = await newLocation();
+    const fileId = await seedReadFile(server, blobs, {
+      orgId: team.orgId, locationId, uploadedBy: team.member.userId, name: 'book.xlsx', raw: Buffer.from('x'), clean: 'date\r\n',
+    });
+    await server.connection.collection('tw_files').updateOne({ _id: new Types.ObjectId(fileId) }, {
+      $set: { kind: 'xlsx', report: { rows: 1, days: 1, sheets: [{ name: 'Zqxj wedding', used: true, why: 'sales' }] } },
+    });
+    expect((await call(server, filesPath(locationId, `/${fileId}/raw`), { session: team.member, method: 'DELETE' })).status).toBe(200);
+    const detail = await (await call(server, filesPath(locationId, `/${fileId}`), { session: team.member })).json() as { report: Record<string, unknown> };
+    expect(detail.report).toEqual({ rows: 1, days: 1, sheets: [{ name: 'Sheet 1', used: true, why: 'sales' }] });
+  });
+
   it('keeps the original of a file not yet read: 409 file_busy while it is stored or queued', async () => {
     const locationId = await newLocation();
     const stored = await uploadFile(server, locationId, team.member, 'unread.csv', csv(2, 'unread'));
@@ -427,6 +440,24 @@ describe('view-as', () => {
     expect((await putChunk(server, filesPath(locationId, `/${fileId}/chunks/0`), staff, Buffer.from('a'))).status).toBe(403);
     expect(await errorOf(await call(server, filesPath(locationId, `/${fileId}`), { session: staff, method: 'DELETE' }))).toEqual({ status: 403, error: 'view_as_read_only' });
   });
+
+  it('lists a ZIP’s entries without their paths', async () => {
+    const locationId = await newLocation();
+    const fileId = await seedReadFile(server, blobs, {
+      orgId: team.orgId, locationId, uploadedBy: team.member.userId, name: 'export.zip', raw: Buffer.from('z'), clean: 'date\r\n',
+    });
+    await server.connection.collection('tw_files').updateOne({ _id: new Types.ObjectId(fileId) }, { $set: { kind: 'zip' } });
+    await server.connection.collection('tw_file_entries').insertOne({
+      orgId: new Types.ObjectId(team.orgId), locationId: new Types.ObjectId(locationId), fileId: new Types.ObjectId(fileId), index: 0,
+      path: SENTINEL_NAME, depth: 1, kind: 'text', sizeBytes: 1, status: 'used', outcome: null, family: null, dayCount: null,
+    });
+    const own = await call(server, filesPath(locationId, `/${fileId}/entries`), { session: team.member });
+    expect(await own.json()).toEqual({ entries: [expect.objectContaining({ index: 0, path: SENTINEL_NAME, status: 'used' })], next: null });
+    staff = await signInStaff(server);
+    await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: team.member.userId, orgId: team.orgId });
+    const viewed = await call(server, filesPath(locationId, `/${fileId}/entries`), { session: staff });
+    expect(await viewed.json()).toEqual({ entries: [expect.objectContaining({ index: 0, path: null, status: 'used' })], next: null });
+  });
 });
 
 describe('isolation', () => {
@@ -453,6 +484,7 @@ describe('isolation', () => {
         ...ofLocation,
         { method: 'GET', path: `${base}/files/${fileId}` },
         { method: 'GET', path: `${base}/files/${fileId}/raw` },
+        { method: 'GET', path: `${base}/files/${fileId}/entries` },
         { method: 'GET', path: `${base}/files/${fileId}/clean` },
         { method: 'POST', path: `${base}/files/${fileId}/complete`, json: {} },
         { method: 'DELETE', path: `${base}/files/${fileId}/raw` },

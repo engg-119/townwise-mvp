@@ -5,7 +5,7 @@ import { LinkButton } from '../../../../../src/portal/ui/Button';
 import { Columns, Stack } from '../../../../../src/portal/ui/layout';
 
 // P10 Add location (/locations/new, org admins; the route guard sends members to Locations): docs/portal/spec.md
-// 16.3. Name and Town with the primary “Add location”, which opens the new location's Forecast tab, and Cancel
+// 16.3. Name and Town with the primary “Add location”, which opens the new location's Home, and Cancel
 // back to Locations. Under view-as the form is read-only (AddLocationForm).
 export default function AddLocationPage(): React.JSX.Element {
   const { me } = usePortal();

@@ -1,7 +1,7 @@
 // Sales history per location (spec 10.4, 11, 14.1, P12, P13). The browser parses the file and sends only
 // { date, guests, netSalesCents } per day. The body is never logged, and no figure goes into a log line or an
 // audit event: only ids, counts and dates.
-import { parseInput } from '@ckeith26/server-core';
+import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 
@@ -10,6 +10,7 @@ import type { TownwiseContext } from '../app.ts';
 import type { Principal } from '../access/policy.ts';
 import { calibrationOf } from '../calibration.ts';
 import { daysBetween, EARLIEST_DATE, isoDate, utcDay } from '../dates.ts';
+import { removeStoredFiles } from '../files/remove.ts';
 import { currentEmail, DELETED_PERSON } from '../people.ts';
 import type { Coverage } from '../stores/sales-days.ts';
 import type { UploadRecord } from '../stores/uploads.ts';
@@ -192,17 +193,34 @@ export async function uploadSales(ctx: TownwiseContext, req: Request, res: Respo
   });
 }
 
-/** DELETE /api/org/locations/:locationId/sales: every day and upload record of the location. Notes stay. */
+/**
+ * DELETE /api/org/locations/:locationId/sales: every day and upload record of the location, its stored files, (U13B) its
+ * forecasts and its answers to TownwiseAI's questions. Notes stay.
+ */
 export async function deleteSales(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const admin = orgAdmin(principal);
   const { scope } = admin;
   const location = await loadLocation(ctx, scope, req.params.locationId);
+  // The location's stored files go with its sales data (spec 11A), but not while Townwise is reading one of them.
+  if ((await ctx.stores.imports.active(scope, location.id))?.status === 'reading') {
+    throw new AppError(409, 'import_running', 'Townwise is reading this location’s files; try again when it is done');
+  }
+  const removed = await removeStoredFiles(ctx.stores, ctx.files, scope, location.id);
+  if (removed === 'files_unavailable') throw new AppError(503, 'files_unavailable', 'Stored files are off');
   const deletedDays = await ctx.stores.salesDays.removeForLocation(scope, location.id);
   const deletedUploads = await ctx.stores.uploads.removeForLocation(scope, location.id);
+  // U13B: forecasts are made from the sales data, so they go with it.
+  await ctx.stores.forecasts.removeForLocation(scope, location.id);
+  // Answers to TownwiseAI's questions were about these days, so they go too, after the days: with no days left no
+  // question is asked, and the same days uploaded again are asked about again. Closure notes they saved stay.
+  await ctx.stores.agentAnswers.removeForLocation(scope, location.id);
   await recordAfter(ctx, {
     ...actorOf(admin), at: ctx.now(), orgId: scope.orgId, action: 'sales.deleted',
     target: { type: 'location', id: location.id },
-    details: { locationId: location.id, deletedDays },
+    details: { locationId: location.id, deletedDays, deletedFiles: removed.deletedFiles },
   });
-  res.status(200).json({ deletedDays, deletedUploads });
+  if (removed.deletedFiles > 0) {
+    ctx.logger.info({ orgId: scope.orgId, locationId: location.id, ...removed }, 'townwise.location_files_deleted');
+  }
+  res.status(200).json({ deletedDays, deletedUploads, deletedFiles: removed.deletedFiles });
 }

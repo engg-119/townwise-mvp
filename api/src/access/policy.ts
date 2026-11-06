@@ -3,7 +3,8 @@ import type { AuthContext } from '@ckeith26/auth';
 import { AppError } from '@ckeith26/server-core';
 import type { Request } from 'express';
 
-import type { ClaimedImport, JoinedSeat } from '../stores/cross-tenant.ts';
+import type { ListedBlob } from '../files/blobs.ts';
+import type { ClaimedImport, JoinedSeat, SweptFile, SweptImport } from '../stores/cross-tenant.ts';
 import type { OrgRecord, OrgStore } from '../stores/orgs.ts';
 import type { Access, ResolvedSeat, Resolution, Role } from './resolve.ts';
 
@@ -33,6 +34,11 @@ export function scopeForJoinedInvite(seat: JoinedSeat): OrgScope {
 /** The file reader only (files/worker.ts), for the organization of the import it just claimed. */
 export function scopeForClaimedImport(claim: ClaimedImport): OrgScope {
   return mint(claim.orgId);
+}
+
+/** The daily file sweep only (files/sweeper.ts), for the organization of a file, an import or a blob it found. */
+export function scopeForSweep(found: SweptFile | SweptImport | ListedBlob): OrgScope {
+  return mint(found.orgId);
 }
 
 /** Approval (F3) and staff creation (F10) only, for the organization that handler just created. */

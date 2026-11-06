@@ -15,7 +15,7 @@ import { checkTown, EMPTY_TOWN, TOWN_COPY, TownFields, type TownMessages, type T
 
 // The Add location form (spec P10; inline on Locations when an org admin has none yet, P9): Name and Town, with
 // the primary “Add location”. POST /api/org/locations; on success the organization reloads and the new
-// location's Forecast tab opens.
+// location's Home opens.
 
 export const LOCATION_COPY = {
   name: 'Enter the location’s name.',

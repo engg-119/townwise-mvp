@@ -1,6 +1,7 @@
 // Deletion (spec D22, F13, 10.7): staff delete a person's Townwise records, or a suspended organization's. Both follow
 // the staff audit rule (9.3): read-only checks, then the event (ids only), then the effect, which deletes by filter so
-// a retry completes the work, and then redacts the email or names in older events. The tuning chat's records go too.
+// a retry completes the work, and then redacts the email or names in older events. The tuning chat's records go too,
+// and so do forecast runs (U13B); a person's deletion clears their staff id from the runs they imported or published.
 // The kit has no user delete (spec 19, item 7): a deleted person's kit user record is deleted by hand afterwards, as a
 // runbook step (api/README.md).
 import { objectId } from '@ckeith26/mongo';
@@ -11,6 +12,7 @@ import { z } from 'zod';
 import { applyRecorded, recordBefore, recordNotApplied } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import { scopeForStaffOrg, type Principal } from '../access/policy.ts';
+import { purgeEveryOriginal, removeStoredFiles, type RemovedFiles } from '../files/remove.ts';
 import { normalizeEmail } from '../normalize-email.ts';
 import type { AuditEventInput } from '../stores/audit-events.ts';
 import { deletePersonRecords, findActiveSeat, peopleRecords } from '../stores/cross-tenant.ts';
@@ -42,6 +44,12 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
   const eventId = await recordBefore(ctx, event);
   const counts = await applyRecorded(ctx, event, eventId, async () => {
     const { stores } = ctx;
+    // Stored files first (spec 11A): when they are off but rows exist, nothing is deleted and the deletion is refused,
+    // so blobs are never left behind silently.
+    const files = await removeStoredFiles(stores, ctx.files, scope, null);
+    if (files === 'files_unavailable') return 'files_unavailable' as const;
+    await stores.uploadDays.removeForOrg(scope);
+    await stores.filesUsage.removeForOrg(scope);
     const firstDays = await stores.salesDays.removeForOrg(scope);
     const deletedUploads = await stores.uploads.removeForOrg(scope);
     const deletedNotes = await stores.notes.removeForOrg(scope);
@@ -50,12 +58,20 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     await stores.chatUsage.removeForOrg(scope);
     await stores.welcomes.removeForOrg(scope);
     await stores.chatProposals.removeForOrg(scope);
+    // U9, TownwiseAI's questions.
+    await stores.agentAnswers.removeForOrg(scope);
+    // U13B: forecast runs and their rows.
+    await stores.forecasts.removeForOrg(scope);
     const deletedLocations = await stores.locations.removeForOrg(scope);
     const deletedSeats = await stores.members.removeForOrg(scope);
     if (org.fromRequestId !== null) await stores.requests.remove(org.fromRequestId);
     const redactedEvents = await stores.audit.redact({ kind: 'org', orgId: scope.orgId, requestId: org.fromRequestId });
     // A row still there after a failed removal was reactivated; a missing one was deleted by a concurrent retry.
     if (!(await stores.orgs.remove(scope)) && (await stores.orgs.findById(scope.orgId)) !== null) return null;
+    // A reader mid-file can write a cleaned copy after the first pass, and an upload in flight its last chunk: the
+    // stored files are swept again, and the daily sweep's orphan check catches anything later still.
+    const late = await removeStoredFiles(stores, ctx.files, scope, null);
+    logFiles(ctx, scope.orgId, files, late === 'files_unavailable' ? { deletedFiles: 0, deletedBlobs: 0 } : late);
     // With the row gone no new request starts, so this second sweep catches sales days and chat usage that requests
     // already running wrote after the first. It narrows the gap, not closes it: a tuning chat turn started before the
     // suspension can still add chat usage for up to 150 seconds (its time limit), an upload still running can write
@@ -63,13 +79,57 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     // carry only the deleted organization's id.
     const lateDays = await stores.salesDays.removeForOrg(scope);
     await stores.chatUsage.removeForOrg(scope);
+    // U13B: a staff forecast import already past its organization check can still write a run and rows.
+    await stores.forecasts.removeForOrg(scope);
     return { deletedDays: firstDays + lateDays, deletedUploads, deletedNotes, deletedLocations, deletedSeats, redactedEvents };
   });
+  if (counts === 'files_unavailable') {
+    await recordNotApplied(ctx, event, eventId, 'files_unavailable');
+    throw new AppError(503, 'files_unavailable', 'Stored files are off, so the organization’s files cannot be deleted');
+  }
   if (counts === null) {
     await recordNotApplied(ctx, event, eventId, 'org_not_suspended');
     throw new AppError(409, 'org_not_suspended', 'The organization was reactivated while it was being deleted');
   }
   res.status(200).json(counts);
+}
+
+function logFiles(ctx: TownwiseContext, orgId: string, first: RemovedFiles, late: RemovedFiles): void {
+  const deletedFiles = first.deletedFiles + late.deletedFiles;
+  const deletedBlobs = first.deletedBlobs + late.deletedBlobs;
+  if (deletedFiles > 0 || deletedBlobs > 0) ctx.logger.info({ orgId, deletedFiles, deletedBlobs }, 'townwise.org_files_deleted');
+}
+
+/** An enum, never free text, so no diner's or server's name can land in the audit log. */
+const purgeBody = z.strictObject({ basis: z.enum(['data_subject_request', 'org_request', 'other']) });
+
+/**
+ * POST /api/admin/orgs/:orgId/originals/delete { basis } (spec 11A): every original file of the organization, for a
+ * person's deletion request (a diner, a server or anyone named in an export), without anyone reading the files.
+ * Recorded before the effect by the staff rule; the cleaned copies, reports and days stay, since they hold dates and
+ * numbers only. A file not read yet is kept unread (`raw_deleted`) and its original deleted now; one still uploading or
+ * being read is flagged, and its original goes as soon as that ends (files/remove.ts purgeOriginal).
+ */
+export async function purgeOriginals(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const staff = staffOf(principal);
+  const { scope } = await scopeForStaffOrg(ctx.stores.orgs, staff, parseInput(objectId, req.params.orgId));
+  const { basis } = parseInput(purgeBody, req.body);
+  const originals = [...await ctx.stores.files.originals(scope, null), ...await ctx.stores.files.uploading(scope, null)];
+  const blobs = ctx.files;
+  if (originals.length > 0 && blobs === null) throw new AppError(503, 'files_unavailable', 'Stored files are off');
+  const event: AuditEventInput = {
+    ...actorOf(staff), at: ctx.now(), orgId: scope.orgId, action: 'org.originals_deleted',
+    target: { type: 'org', id: scope.orgId },
+    details: { count: originals.length, basis },
+  };
+  const eventId = await recordBefore(ctx, event);
+  const result = blobs === null
+    ? { deletedOriginals: 0, skippedBusy: 0 }
+    : await applyRecorded(ctx, event, eventId, () => purgeEveryOriginal(ctx.stores, blobs, scope, originals, ctx.now()));
+  // A waiting file's question was dropped: its import is queued again, for the reader to finish.
+  ctx.nudgeFiles();
+  ctx.logger.info({ orgId: scope.orgId, count: result.deletedOriginals, skippedBusy: result.skippedBusy, by: 'staff' }, 'townwise.originals_deleted');
+  res.status(200).json(result);
 }
 
 /**

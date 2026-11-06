@@ -1,0 +1,328 @@
+{
+  "about": "Shared day-class cases (spec 13.2): api/src/people-in-town/history.ts classOfDay and client/src/portal/analytics/days.ts classOf must both give each case's class. The api copy is test/fixtures/day-classes.json; client/test/portal/analytics/day-classes.json must stay identical. Synthetic values only.",
+  "cases": [
+    {
+      "name": "an open day with no note or event",
+      "date": "2026-11-07",
+      "day": {
+        "guests": 120,
+        "netSalesCents": 240000
+      },
+      "notes": [],
+      "events": [],
+      "class": "regular"
+    },
+    {
+      "name": "a day with no stored row is no data, never closed",
+      "date": "2026-11-07",
+      "day": null,
+      "notes": [],
+      "events": [],
+      "class": "regular"
+    },
+    {
+      "name": "guests 0 and net sales 0 is closed",
+      "date": "2026-11-07",
+      "day": {
+        "guests": 0,
+        "netSalesCents": 0
+      },
+      "notes": [],
+      "events": [],
+      "class": "closed"
+    },
+    {
+      "name": "guests 0 with no net sales is closed",
+      "date": "2026-11-07",
+      "day": {
+        "guests": 0,
+        "netSalesCents": null
+      },
+      "notes": [],
+      "events": [],
+      "class": "closed"
+    },
+    {
+      "name": "no guests with net sales 0 is closed",
+      "date": "2026-11-07",
+      "day": {
+        "guests": null,
+        "netSalesCents": 0
+      },
+      "notes": [],
+      "events": [],
+      "class": "closed"
+    },
+    {
+      "name": "guests 0 with net sales is open",
+      "date": "2026-11-07",
+      "day": {
+        "guests": 0,
+        "netSalesCents": 5000
+      },
+      "notes": [],
+      "events": [],
+      "class": "regular"
+    },
+    {
+      "name": "a closure note closes the day",
+      "date": "2026-11-07",
+      "day": {
+        "guests": 120,
+        "netSalesCents": 240000
+      },
+      "notes": [
+        {
+          "startDate": "2026-11-07",
+          "endDate": "2026-11-07",
+          "weekdays": null,
+          "effect": "closed"
+        }
+      ],
+      "events": [],
+      "class": "closed"
+    },
+    {
+      "name": "a closure note on other weekdays leaves the day open",
+      "date": "2026-11-07",
+      "day": {
+        "guests": 120,
+        "netSalesCents": 240000
+      },
+      "notes": [
+        {
+          "startDate": "2026-11-01",
+          "endDate": "2026-11-30",
+          "weekdays": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "effect": "closed"
+        }
+      ],
+      "events": [],
+      "class": "regular"
+    },
+    {
+      "name": "a note on this weekday that does not close it marks it noted",
+      "date": "2026-11-07",
+      "day": {
+        "guests": 120,
+        "netSalesCents": 240000
+      },
+      "notes": [
+        {
+          "startDate": "2026-11-01",
+          "endDate": "2026-11-30",
+          "weekdays": [
+            0,
+            6
+          ],
+          "effect": "more_guests"
+        }
+      ],
+      "events": [],
+      "class": "noted"
+    },
+    {
+      "name": "a closure note with another effect is noted",
+      "date": "2026-11-07",
+      "day": {
+        "guests": 120,
+        "netSalesCents": 240000
+      },
+      "notes": [
+        {
+          "startDate": "2026-11-07",
+          "endDate": "2026-11-07",
+          "weekdays": null,
+          "effect": "unknown"
+        }
+      ],
+      "events": [],
+      "class": "noted"
+    },
+    {
+      "name": "closed wins over noted",
+      "date": "2026-11-07",
+      "day": {
+        "guests": 120,
+        "netSalesCents": 240000
+      },
+      "notes": [
+        {
+          "startDate": "2026-11-07",
+          "endDate": "2026-11-07",
+          "weekdays": null,
+          "effect": "fewer_guests"
+        },
+        {
+          "startDate": "2026-11-07",
+          "endDate": "2026-11-07",
+          "weekdays": null,
+          "effect": "closed"
+        }
+      ],
+      "events": [],
+      "class": "closed"
+    },
+    {
+      "name": "noted wins over a holiday",
+      "date": "2026-11-07",
+      "day": {
+        "guests": 120,
+        "netSalesCents": 240000
+      },
+      "notes": [
+        {
+          "startDate": "2026-11-07",
+          "endDate": "2026-11-07",
+          "weekdays": null,
+          "effect": "more_guests"
+        }
+      ],
+      "events": [
+        {
+          "start": "2026-11-07",
+          "end": "2026-11-07",
+          "kind": "holiday"
+        }
+      ],
+      "class": "noted"
+    },
+    {
+      "name": "a holiday",
+      "date": "2026-11-07",
+      "day": {
+        "guests": 120,
+        "netSalesCents": 240000
+      },
+      "notes": [],
+      "events": [
+        {
+          "start": "2026-11-07",
+          "end": "2026-11-07",
+          "kind": "holiday"
+        }
+      ],
+      "class": "holiday"
+    },
+    {
+      "name": "a holiday wins over an event",
+      "date": "2026-11-07",
+      "day": {
+        "guests": 120,
+        "netSalesCents": 240000
+      },
+      "notes": [],
+      "events": [
+        {
+          "start": "2026-11-07",
+          "end": "2026-11-07",
+          "kind": "event"
+        },
+        {
+          "start": "2026-11-07",
+          "end": "2026-11-07",
+          "kind": "holiday"
+        }
+      ],
+      "class": "holiday"
+    },
+    {
+      "name": "a town event",
+      "date": "2026-11-07",
+      "day": {
+        "guests": 120,
+        "netSalesCents": 240000
+      },
+      "notes": [],
+      "events": [
+        {
+          "start": "2026-11-07",
+          "end": "2026-11-07",
+          "kind": "event"
+        }
+      ],
+      "class": "event"
+    },
+    {
+      "name": "inside a multi-day event",
+      "date": "2026-11-07",
+      "day": {
+        "guests": 120,
+        "netSalesCents": 240000
+      },
+      "notes": [],
+      "events": [
+        {
+          "start": "2026-11-06",
+          "end": "2026-11-08",
+          "kind": "event"
+        }
+      ],
+      "class": "event"
+    },
+    {
+      "name": "a term entry is context, never irregular",
+      "date": "2026-11-07",
+      "day": {
+        "guests": 120,
+        "netSalesCents": 240000
+      },
+      "notes": [],
+      "events": [
+        {
+          "start": "2026-09-14",
+          "end": "2026-11-17",
+          "kind": "term"
+        }
+      ],
+      "class": "regular"
+    },
+    {
+      "name": "a season entry is context, never irregular",
+      "date": "2026-11-07",
+      "day": {
+        "guests": 120,
+        "netSalesCents": 240000
+      },
+      "notes": [],
+      "events": [
+        {
+          "start": "2026-06-01",
+          "end": "2026-08-31",
+          "kind": "season"
+        }
+      ],
+      "class": "regular"
+    },
+    {
+      "name": "a note or event on other days leaves the day regular",
+      "date": "2026-11-07",
+      "day": {
+        "guests": 120,
+        "netSalesCents": 240000
+      },
+      "notes": [
+        {
+          "startDate": "2026-11-08",
+          "endDate": "2026-11-08",
+          "weekdays": null,
+          "effect": "closed"
+        }
+      ],
+      "events": [
+        {
+          "start": "2026-11-06",
+          "end": "2026-11-06",
+          "kind": "event"
+        }
+      ],
+      "class": "regular"
+    }
+  ]
+}

@@ -85,6 +85,11 @@ export interface ChatProposalStore {
   markSaved(scope: OrgScope, key: ProposalKey, now: Date): Promise<void>;
   /** Sets the proposal aside, unless it is saved. Resolves the row either way. */
   dismiss(scope: OrgScope, key: ProposalKey, input: ProposalOwner & { now: Date }): Promise<ProposalRecord>;
+  /**
+   * The note ids of the author's saved proposals at the location, most recently saved first (TownwiseAI's activity,
+   * spec 10.12).
+   */
+  listSaved(scope: OrgScope, owner: ProposalOwner, limit: number): Promise<string[]>;
   /** Resolves the number deleted. */
   removeForConversation(scope: OrgScope, conversationId: string): Promise<number>;
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
@@ -154,6 +159,12 @@ export function createChatProposalStore(connection: Connection): ChatProposalSto
       const saved = await Proposal.findOne(keyOf(scope, key)).lean();
       if (saved === null) throw new Error('a saved proposal was not found');
       return toRecord(saved);
+    },
+    async listSaved(scope, owner, limit) {
+      const docs = await Proposal.find({
+        orgId: new Types.ObjectId(scope.orgId), locationId: new Types.ObjectId(owner.locationId), userId: owner.userId, status: 'saved',
+      }, { _id: 0, noteId: 1 }).sort({ updatedAt: -1, _id: -1 }).limit(limit).lean();
+      return docs.map((doc) => doc.noteId.toHexString());
     },
     async removeForConversation(scope, conversationId) {
       const result = await Proposal.deleteMany({
