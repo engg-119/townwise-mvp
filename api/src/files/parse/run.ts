@@ -31,7 +31,7 @@ export type FileOutcome =
   | { kind: 'question'; question: FileQuestion }
   | { kind: 'days'; days: SalesDay[]; report: FileReport; entries?: EntryRow[] };
 
-export type ParseKind = 'text' | 'xlsx' | 'zip';
+export type ParseKind = 'text' | 'xlsx' | 'pdf' | 'docx' | 'zip';
 
 export type ThreadIn =
   | {

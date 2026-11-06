@@ -56,6 +56,11 @@ describe('isolation (source)', () => {
       .toEqual([]);
   });
 
+  it('only files/parse/pdf.ts imports the PDF parser, and only files/parse/docx.ts the XML parser', () => {
+    expect(sourceFiles().filter((file) => file.text.includes('from \'unpdf\'')).map((file) => file.path)).toEqual(['files/parse/pdf.ts']);
+    expect(sourceFiles().filter((file) => file.text.includes('from \'saxen\'')).map((file) => file.path)).toEqual(['files/parse/docx.ts']);
+  });
+
   it('only access/policy.ts mints the reader’s scope, and only files/worker.ts asks for it', () => {
     const callers = sourceFiles().filter((file) => file.text.includes('scopeForClaimedImport(')).map((file) => file.path).sort();
     expect(callers).toEqual(['access/policy.ts', 'files/worker.ts']);

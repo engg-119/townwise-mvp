@@ -5,7 +5,7 @@
 // never to a log or a model.
 import type { FileAnswers, FileKind } from '../../stores/files.ts';
 import {
-  ENTRY_PATH_CHARS, HEAD_BYTES, NESTED_ZIP_BYTES, NESTED_ZIP_TOTAL_BYTES, XLSX_READ_BYTES, ZIP_MAX_DECLARED_BYTES,
+  DOCX_READ_BYTES, ENTRY_PATH_CHARS, HEAD_BYTES, NESTED_ZIP_BYTES, PDF_READ_BYTES, NESTED_ZIP_TOTAL_BYTES, XLSX_READ_BYTES, ZIP_MAX_DECLARED_BYTES,
   ZIP_MAX_DIRECTORY_BYTES, ZIP_MAX_ENTRIES, ZIP_MAX_RATIO, ZIP_PIECE_BYTES, ZIP_RATIO_FLOOR_BYTES, ZIP_WINDOW_BYTES,
 } from '../limits.ts';
 import { sniff } from '../sniff.ts';
@@ -19,6 +19,8 @@ import type { SalesDay } from './days.ts';
 import type { KeptOutcome } from './mapping.ts';
 import type { TableReport } from './table.ts';
 import { decoderFor, detectEncoding, ENCODING_PROBE_BYTES, type TextEncoding } from './text.ts';
+import { readWord } from './docx.ts';
+import { readPdf } from './pdf.ts';
 import { readWorkbook, type Sheet } from './xlsx.ts';
 
 /** Why one entry was not used: the kept codes, and four of its own. */
@@ -164,24 +166,38 @@ function textTable(source: Source, entry: ZipEntry): TableSource {
   };
 }
 
-/** Each sheet of a workbook entry, read again from the entry for each pass (one workbook is held at a time). */
-function workbookTables(source: Source, entry: ZipEntry, sheetCount: number, cache: { entry: ZipEntry | null; sheets: Sheet[] }): TableSource[] {
-  const sheets = async (): Promise<Sheet[]> => {
+type Tables = { kind: 'tables'; tables: Sheet[] } | { kind: 'kept'; outcome: KeptOutcome };
+
+/** A buffered entry's tables: a workbook's sheets, a PDF's tables or a Word document's. */
+async function tablesOfEntry(kind: 'xlsx' | 'pdf' | 'docx', bytes: Buffer): Promise<Tables> {
+  if (kind === 'pdf') return readPdf(bytes);
+  if (kind === 'docx') return readWord(bytes);
+  const book = await readWorkbook(bytes);
+  return book.kind === 'kept' ? book : { kind: 'tables', tables: book.sheets };
+}
+
+/** Each table of a buffered entry, read again from the entry for each pass (one entry's tables are held at a time). */
+function bufferedTables(
+  source: Source, entry: ZipEntry, kind: 'xlsx' | 'pdf' | 'docx', count: number, cache: { entry: ZipEntry | null; tables: Sheet[] },
+): TableSource[] {
+  const tables = async (): Promise<Sheet[]> => {
     if (cache.entry !== entry) {
-      const book = await readWorkbook(await wholeOf(source, entry));
-      if (book.kind === 'kept') throw new TableKept(book.outcome);
+      const found = await tablesOfEntry(kind, await wholeOf(source, entry));
+      if (found.kind === 'kept') throw new TableKept(found.outcome);
       cache.entry = entry;
-      cache.sheets = book.sheets;
+      cache.tables = found.tables;
     }
-    return cache.sheets;
+    return cache.tables;
   };
-  return Array.from({ length: sheetCount }, (_, index): TableSource => ({
+  return Array.from({ length: count }, (_, index): TableSource => ({
     delimiter: () => ',',
     async visit(visit) {
-      for (const row of (await sheets())[index]?.rows ?? []) visit(row);
+      for (const row of (await tables())[index]?.rows ?? []) visit(row);
     },
   }));
 }
+
+const READ_CAPS = { xlsx: XLSX_READ_BYTES, pdf: PDF_READ_BYTES, docx: DOCX_READ_BYTES } as const;
 
 interface Planned {
   readonly row: EntryRow;
@@ -208,7 +224,7 @@ export async function readArchive(
 ): Promise<ArchiveOutcome> {
   const planned: Planned[] = [];
   const tables: TableSource[] = [];
-  const workbook = { entry: null as ZipEntry | null, sheets: [] as Sheet[] };
+  const cache = { entry: null as ZipEntry | null, tables: [] as Sheet[] };
   let declared = 0;
   let entryCount = 0;
   let nestedBytes = 0;
@@ -242,19 +258,20 @@ export async function readArchive(
         item.tables.push(tables.length);
         tables.push(textTable(source, entry));
         return;
-      case 'xlsx': {
-        if (entry.uncompressedSize > XLSX_READ_BYTES) { keep('too_large_to_read'); return; }
-        let book;
+      case 'xlsx': case 'pdf': case 'docx': {
+        const kind = sniffed.kind;
+        if (entry.uncompressedSize > READ_CAPS[kind]) { keep('too_large_to_read'); return; }
+        let found: Tables;
         try {
-          book = await readWorkbook(await wholeOf(source, entry));
+          found = await tablesOfEntry(kind, await wholeOf(source, entry));
         } catch (err) {
           if (err instanceof TableKept) { keep(err.outcome); return; }
           throw err;
         }
-        if (book.kind === 'kept') { keep(book.outcome); return; }
-        workbook.entry = entry;
-        workbook.sheets = book.sheets;
-        for (const table of workbookTables(source, entry, book.sheets.length, workbook)) {
+        if (found.kind === 'kept') { keep(found.outcome); return; }
+        cache.entry = entry;
+        cache.tables = found.tables;
+        for (const table of bufferedTables(source, entry, kind, found.tables.length, cache)) {
           item.tables.push(tables.length);
           tables.push(table);
         }
@@ -289,7 +306,6 @@ export async function readArchive(
         return;
       }
       default:
-        // PDF and Word tables are read by a later stage; until then they are kept, and say so.
         { keep('type_not_read'); return; }
     }
   };

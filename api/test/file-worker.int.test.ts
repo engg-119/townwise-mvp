@@ -187,6 +187,27 @@ describe('reading stored files', () => {
     expect(await days(locationId)).toEqual([{ date: '2025-01-01', guests: 120, netSalesCents: 345_650 }]);
   });
 
+  it('reads a PDF’s table and a Word document’s table, and keeps each with the reason when it has none', async () => {
+    const { pdfOf, row } = await import('./helpers/pdf.ts');
+    const { zipOf } = await import('./helpers/zip.ts');
+    const locationId = await newLocation();
+    const pdf = pdfOf([{ texts: [...row(700, [[72, 'Date'], [200, 'Guests']]), ...row(685, [[72, '2025-02-01'], [200, '9']])] }]);
+    const letter = pdfOf([{ texts: [{ text: 'Dear owner', x: 72, y: 700 }] }]);
+    const word = zipOf([
+      { name: '[Content_Types].xml', data: '<Types/>' },
+      { name: 'word/document.xml', data: '<w:document><w:body><w:p><w:r><w:t>Only words</w:t></w:r></w:p></w:body></w:document>' },
+    ]);
+    const { importId } = await drop(locationId, member, 'sales.pdf', pdf);
+    await drop(locationId, member, 'letter.pdf', letter);
+    await drop(locationId, member, 'notes.docx', word);
+    await start(locationId, importId);
+    const done = await settledImport(locationId, importId);
+    expect(done.files.map((file) => [file.kind, file.status, file.outcome])).toEqual([
+      ['pdf', 'read', null], ['pdf', 'kept', 'pdf_no_table'], ['docx', 'kept', 'word_no_table'],
+    ]);
+    expect(await days(locationId)).toEqual([{ date: '2025-02-01', guests: 9, netSalesCents: null }]);
+  });
+
   it('reads a ZIP in place: its entries listed with what became of each, one question for a family, then its days', async () => {
     const { zipOf } = await import('./helpers/zip.ts');
     const locationId = await newLocation();

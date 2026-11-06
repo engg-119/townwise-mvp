@@ -79,3 +79,11 @@ export const ENTRY_PATH_CHARS = 300;
 export const MAX_REPORTED_FAMILIES = 50;
 /** tw_file_entries rows written per insert. */
 export const ENTRY_BATCH = 500;
+
+/** PDF and Word (spec 11A): buffered in the parse thread. */
+export const PDF_READ_BYTES = 25 * MIB;
+export const PDF_MAX_PAGES = 1000;
+export const PDF_MAX_ITEMS_PER_PAGE = 20_000;
+export const DOCX_READ_BYTES = 10 * MIB;
+/** word/document.xml, uncompressed. */
+export const DOCX_MAX_DOCUMENT_BYTES = 50 * MIB;

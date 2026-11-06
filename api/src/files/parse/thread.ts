@@ -11,7 +11,9 @@ import type { KeptOutcome } from './mapping.ts';
 import type { FileOutcome, FileReport, ThreadIn, ThreadOut } from './run.ts';
 import { dayTotals, readTable, type TableReport } from './table.ts';
 import { decoderFor, detectEncoding, encodingLabel, ENCODING_PROBE_BYTES, type TextEncoding } from './text.ts';
-import { readWorkbook } from './xlsx.ts';
+import { readWord } from './docx.ts';
+import { readPdf } from './pdf.ts';
+import { readWorkbook, type Sheet } from './xlsx.ts';
 
 const port = parentPort;
 if (port === null) throw new Error('thread.ts runs only as a worker thread');
@@ -26,6 +28,7 @@ let onChunk: (bytes: Uint8Array) => void = () => undefined;
 let onEnd: () => void = () => undefined;
 let received = 0;
 let progressTotal: number | null = null;
+let pagesOnly = false;
 const pendingReads = new Map<number, (bytes: Buffer) => void>();
 let nextReadId = 0;
 
@@ -49,7 +52,8 @@ port.on('message', (message: ThreadIn) => {
     return;
   }
   if (message.type === 'begin') {
-    progressTotal = message.kind === 'xlsx' ? null : message.sizeBytes * 2;
+    progressTotal = message.kind === 'text' || message.kind === 'zip' ? message.sizeBytes * 2 : null;
+    pagesOnly = message.kind === 'pdf';
     void run(message).then((outcome) => { post({ type: 'result', outcome }); });
     return;
   }
@@ -57,7 +61,8 @@ port.on('message', (message: ThreadIn) => {
     const bytes = new Uint8Array(message.data);
     received += bytes.length;
     onChunk(bytes);
-    post({ type: 'progress', done: received, total: progressTotal });
+    // A PDF's progress is in pages, once it is read; the bytes it arrives in are not counted.
+    if (!pagesOnly) post({ type: 'progress', done: received, total: progressTotal });
     post({ type: 'ack' });
     return;
   }
@@ -147,15 +152,34 @@ function merge(target: Map<string, SalesDay>, days: readonly SalesDay[], replace
   for (const day of days) if (replace || !target.has(day.date)) target.set(day.date, day);
 }
 
-/** A workbook: every sheet is a table of its own; the ones that map to sales are used, in sheet order. */
-async function readXlsx(begin: Extract<ThreadIn, { type: 'begin' }>): Promise<FileOutcome> {
+/** The whole file, fed in pieces (a workbook, a PDF or a Word document). */
+function wholeFile(): Promise<Buffer> {
   const parts: Uint8Array[] = [];
-  const whole = await new Promise<Buffer>((resolve) => {
+  return new Promise<Buffer>((resolve) => {
     onChunk = (bytes) => { parts.push(bytes); };
     onEnd = () => { resolve(Buffer.concat(parts)); };
   });
+}
+
+/** A buffered file's tables: a workbook's sheets, a PDF's tables or a Word document's. */
+async function tablesOf(begin: Extract<ThreadIn, { type: 'begin' }>): Promise<{ kind: 'tables'; tables: Sheet[] } | { kind: 'kept'; outcome: KeptOutcome }> {
+  const whole = await wholeFile();
+  if (begin.kind === 'pdf') {
+    return readPdf(whole, (done, total) => { post({ type: 'progress', done, total }); });
+  }
+  if (begin.kind === 'docx') return readWord(whole);
   const workbook = await readWorkbook(whole);
-  if (workbook.kind === 'kept') return { kind: 'kept', outcome: workbook.outcome, report: null };
+  return workbook.kind === 'kept' ? workbook : { kind: 'tables', tables: workbook.sheets };
+}
+
+/**
+ * Every sheet (or table) is a table of its own; the ones that map to sales are used, in order. A question names the
+ * sheet by its index.
+ */
+async function readSheets(begin: Extract<ThreadIn, { type: 'begin' }>): Promise<FileOutcome> {
+  const found = await tablesOf(begin);
+  if (found.kind === 'kept') return { kind: 'kept', outcome: found.outcome, report: null };
+  const workbook = { sheets: found.tables };
   const sheets: FileReport['sheets'] = [];
   const days = new Map<string, SalesDay>();
   let primary: TableReport | null = null;
@@ -196,5 +220,5 @@ async function readZipFile(begin: Extract<ThreadIn, { type: 'begin' }>): Promise
 
 function run(begin: Extract<ThreadIn, { type: 'begin' }>): Promise<FileOutcome> {
   if (begin.kind === 'zip') return readZipFile(begin);
-  return begin.kind === 'text' ? readText(begin) : readXlsx(begin);
+  return begin.kind === 'text' ? readText(begin) : readSheets(begin);
 }

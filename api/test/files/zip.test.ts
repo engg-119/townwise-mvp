@@ -97,7 +97,7 @@ describe('entries', () => {
       [3, 'odd.csv', 'other', 'kept', 'zip_method'],
       [4, 'photo.png', 'other', 'kept', 'image'],
       [5, 'old.xls', 'xls', 'kept', 'old_excel'],
-      [6, 'report.pdf', 'pdf', 'kept', 'type_not_read'],
+      [6, 'report.pdf', 'pdf', 'kept', 'not_a_table'],
     ]);
     expect(outcome.report.families).toEqual([expect.objectContaining({ label: ['Date', 'Guests', 'Net Sales'], used: true, dayCount: 2, why: 'sales' })]);
   });
@@ -113,6 +113,22 @@ describe('entries', () => {
       ['inner.zip/b.csv', 2, 'used', null],
       ['inner.zip/deeper.zip', 2, 'kept', 'nested_zip'],
     ]);
+  });
+
+  it('reads PDF and Word entries as tables, joining the family of a CSV with the same header', async () => {
+    const { pdfOf, row } = await import('../helpers/pdf.ts');
+    const pdf = pdfOf([{ texts: [...row(700, [[72, 'Date'], [200, 'Guests']]), ...row(685, [[72, '2025-01-02'], [200, '4']])] }]);
+    const word = zipOf([
+      { name: '[Content_Types].xml', data: '<Types/>' },
+      { name: 'word/document.xml', data: '<w:document><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Date</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Guests</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>2025-01-03</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>6</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>' },
+    ]);
+    const outcome = await read(zipOf([
+      { name: 'a.csv', data: 'Date,Guests\n2025-01-01,2\n' }, { name: 'b.pdf', data: pdf }, { name: 'c.docx', data: word },
+    ]));
+    expect(outcome).toMatchObject({ kind: 'days', days: [{ date: '2025-01-01', guests: 2 }, { date: '2025-01-02', guests: 4 }, { date: '2025-01-03', guests: 6 }] });
+    if (outcome.kind !== 'days') return;
+    expect(outcome.entries.map((entry) => [entry.kind, entry.status])).toEqual([['text', 'used'], ['pdf', 'used'], ['docx', 'used']]);
+    expect(outcome.report.families).toEqual([expect.objectContaining({ entries: 3, dayCount: 3 })]);
   });
 
   it('strips control characters from entry paths', async () => {

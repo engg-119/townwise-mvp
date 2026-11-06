@@ -19,7 +19,7 @@ import type { TownwiseStores } from '../stores/index.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import { BlobMissingError, type FileBlobs } from './blobs.ts';
 import { cleanCsv } from './clean.ts';
-import { APPLY_BATCH_DAYS, ENTRY_BATCH, HEAD_BYTES, MAX_ATTEMPTS, PROGRESS_WRITE_MS, READ_TIME_MS, XLSX_READ_BYTES } from './limits.ts';
+import { APPLY_BATCH_DAYS, DOCX_READ_BYTES, ENTRY_BATCH, HEAD_BYTES, PDF_READ_BYTES, MAX_ATTEMPTS, PROGRESS_WRITE_MS, READ_TIME_MS, XLSX_READ_BYTES } from './limits.ts';
 import type { EntryRow } from './parse/archive.ts';
 import { runParse, type FileOutcome, type ParseInput, type ParseKind } from './parse/run.ts';
 import { sniff } from './sniff.ts';
@@ -64,8 +64,8 @@ function unreadOutcome(file: FileRecord, head: Uint8Array | null): string | null
     case 'xls': return 'old_excel';
     case 'doc': return 'old_word';
     case 'zip': return null;
-    // PDFs and Word tables are read by a later stage; until then they are kept, and say so.
-    case 'pdf': case 'docx': return 'type_not_read';
+    case 'pdf': return file.sizeBytes > PDF_READ_BYTES ? 'too_large_to_read' : null;
+    case 'docx': return file.sizeBytes > DOCX_READ_BYTES ? 'too_large_to_read' : null;
     case 'other': return (head === null ? null : sniff(file.name, head).outcome) ?? 'type_not_read';
   }
 }
@@ -194,7 +194,7 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
       const unread = unreadOutcome(file, await headOf(scope, file));
       if (unread !== null) return await kept(unread);
       let lastWrite = 0;
-      const kind: ParseKind = file.kind === 'xlsx' || file.kind === 'zip' ? file.kind : 'text';
+      const kind: ParseKind = file.kind === 'xlsx' || file.kind === 'zip' || file.kind === 'pdf' || file.kind === 'docx' ? file.kind : 'text';
       const ref = { locationId: file.locationId, fileId: file.id };
       const outcome = await parse({
         kind,
@@ -211,7 +211,8 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
           if (at - lastWrite < PROGRESS_WRITE_MS) return;
           lastWrite = at;
           const progress: FileProgress = {
-            phase: kind === 'zip' ? 'unpacking' : 'reading', done, total, unit: 'bytes', phaseStartedAt: startedAt, updatedAt: now(),
+            phase: kind === 'zip' ? 'unpacking' : 'reading', done, total, unit: kind === 'pdf' ? 'pages' : 'bytes',
+            phaseStartedAt: startedAt, updatedAt: now(),
           };
           void stores.files.setProgress(scope, file.id, progress).catch(() => undefined);
         },
