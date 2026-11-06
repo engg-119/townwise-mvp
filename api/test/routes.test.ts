@@ -67,6 +67,15 @@ describe('route table', () => {
     ]);
   });
 
+  it('U13A: people in town and how Townwise estimates are member reads with no body and no limiter', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id === 'org.people.get' || r.id === 'org.estimates.about')
+      .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));
+    expect(rows).toEqual([
+      { id: 'org.people.get', method: 'GET', path: '/org/locations/:locationId/people-in-town', policy: 'member', bodyLimit: 'none', limiter: undefined },
+      { id: 'org.estimates.about', method: 'GET', path: '/org/locations/:locationId/estimates/about', policy: 'member', bodyLimit: 'none', limiter: undefined },
+    ]);
+  });
+
   it('boot refuses a duplicate method and path', () => {
     expect(() => { assertRouteTable([route({ id: 'a' }), route({ id: 'b' })]); }).toThrow(ConfigError);
   });

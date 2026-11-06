@@ -23,6 +23,7 @@ import type { FileBlobs } from '../../src/files/blobs.ts';
 import { createFileWorker, type FileWorker, type FileWorkerDeps } from '../../src/files/worker.ts';
 import type { MailTransport } from '../../src/mail/acs.ts';
 import { createMailer, OFF_MAILER, type Mailer } from '../../src/mail/mailer.ts';
+import type { PeopleData } from '../../src/people-in-town/sources.ts';
 import { createTownwiseStores } from '../../src/stores/index.ts';
 import type { PlacesClient } from '../../src/places/google.ts';
 import type { StaticMapSigner } from '../../src/places/static-map.ts';
@@ -101,6 +102,8 @@ export async function startTownwiseServer(opts?: {
   files?: FileBlobs;
   /** Runs the file reader on `files`; tests drive it with nudge() and settled(). */
   reader?: Pick<FileWorkerDeps, 'parse' | 'leaseMs'>;
+  /** U13A: synthetic headcount inputs for people in town; absent, the committed (empty) sources. */
+  peopleData?: PeopleData;
 }): Promise<TownwiseTestServer> {
   const env: Record<string, string> = {
     NODE_ENV: 'test',
@@ -162,7 +165,7 @@ export async function startTownwiseServer(opts?: {
     const deps = {
       config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now: clock.now, chat: opts?.chat,
       chatTurnTimeLimitMs: opts?.chatTurnTimeLimitMs, places: opts?.places, mailer, placesMap: opts?.placesMap,
-      files, fileWorker: reader ?? undefined,
+      files, fileWorker: reader ?? undefined, peopleData: opts?.peopleData,
     };
     const apiRouter = createTownwiseApi(deps);
     const routes: RouteMount[] = [{ path: '/auth', router: auth.router }, { path: '/api', router: apiRouter }];

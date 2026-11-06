@@ -99,6 +99,8 @@ describe('GET is side-effect free (7.3)', () => {
       'admin.people.lookup': `?q=${encodeURIComponent(memberEmail)}`,
       'org.sales.days': '?from=2026-01-01&to=2026-05-31',
       'org.calendar.get': '?from=2026-01-01&to=2026-05-31',
+      // U13A.
+      'org.people.get': '?from=2026-05-01&to=2026-05-31',
     };
     const gets = TOWNWISE_ROUTES.filter((route) => route.method === 'GET')
       .map((route) => `/api${route.path.replace(/:([A-Za-z]+)/g, (_m, name: string) => ids[name] ?? '')}${query[route.id] ?? ''}`);
