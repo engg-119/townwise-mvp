@@ -4,15 +4,14 @@
 // failure is a PlacesUnavailableError carrying a code and Google's HTTP status, never a message or a body from Google.
 import { z } from 'zod';
 
+import { PLACE_ID_PATTERN } from '../place-id.ts';
+
 const PLACES_API = 'https://places.googleapis.com/v1';
 /** Each call to Google, from the request to the last byte of the answer. */
 export const PLACES_TIMEOUT_MS = 5000;
 const MAX_SUGGESTIONS = 5;
 /** Place Details Essentials: no displayName (the client keeps the name from the suggestion it picked). */
 const DETAILS_FIELD_MASK = 'id,formattedAddress,addressComponents';
-
-/** The place ids the details route accepts, and the only ones autocomplete passes on. */
-export const PLACE_ID_PATTERN = /^[A-Za-z0-9_-]{10,300}$/;
 
 export interface PlaceSuggestion { placeId: string; name: string; detail: string }
 export interface AddressComponent { longText: string; shortText: string; types: readonly string[] }

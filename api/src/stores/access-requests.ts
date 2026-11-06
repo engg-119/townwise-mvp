@@ -15,6 +15,7 @@ export interface AccessRequestFields {
   town: Town;
   locationCount: number;
   note: string | null;
+  placeId: string | null;
   status: AccessRequestStatus;
   createdAt: Date;
   decidedAt: Date | null;
@@ -34,6 +35,7 @@ function accessRequestSchema(): Schema<AccessRequestFields> {
     town: { type: townFieldSchema(), required: true },
     locationCount: { type: Number, required: true, min: 1, max: 50 },
     note: { type: String, default: null, maxlength: 1000 },
+    placeId: { type: String, default: null, maxlength: 512 },
     status: { type: String, required: true, enum: ['pending', 'approved', 'rejected', 'withdrawn'] },
     createdAt: { type: Date, required: true },
     decidedAt: { type: Date, default: null },
@@ -65,6 +67,7 @@ export interface AccessRequestRecord {
   readonly town: Town;
   readonly locationCount: number;
   readonly note: string | null;
+  readonly placeId: string | null;
   readonly status: AccessRequestStatus;
   readonly createdAt: Date;
   readonly decidedAt: Date | null;
@@ -82,6 +85,7 @@ export interface NewAccessRequest {
   readonly town: Town;
   readonly locationCount: number;
   readonly note: string | null;
+  readonly placeId: string | null;
   readonly createdAt: Date;
 }
 
@@ -116,6 +120,8 @@ function toRecord(doc: AccessRequestFields & { _id: Types.ObjectId }): AccessReq
     town: { townId: doc.town.townId, name: doc.town.name, state: doc.town.state },
     locationCount: doc.locationCount,
     note: doc.note,
+    // Requests stored before place ids have no such field.
+    placeId: doc.placeId ?? null,
     status: doc.status,
     createdAt: doc.createdAt,
     decidedAt: doc.decidedAt,
@@ -155,6 +161,7 @@ export function createAccessRequestStore(connection: Connection): AccessRequestS
           town: { townId: input.town.townId, name: input.town.name, state: input.town.state },
           locationCount: input.locationCount,
           note: input.note,
+          placeId: input.placeId,
           status: 'pending',
           createdAt: input.createdAt,
           decidedAt: null,

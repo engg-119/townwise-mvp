@@ -8,7 +8,8 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 
 import type { TownwiseContext } from '../app.ts';
-import { PLACE_ID_PATTERN, PlacesUnavailableError, type AddressComponent, type PlacesClient } from '../places/google.ts';
+import { placeIdSchema } from '../place-id.ts';
+import { PlacesUnavailableError, type AddressComponent, type PlacesClient } from '../places/google.ts';
 import { TOWNS, US_STATE_CODES, type Town, type TownId, type TownRecord } from '../towns.ts';
 
 /** A version 4 UUID, any case. The server checks the format only; Google groups the calls by it. */
@@ -20,7 +21,7 @@ const autocompleteBody = z.object({
   sessionToken: sessionTokenSchema.optional(),
 });
 const detailsBody = z.object({
-  placeId: z.string().regex(PLACE_ID_PATTERN),
+  placeId: placeIdSchema,
   sessionToken: sessionTokenSchema,
 });
 

@@ -3,7 +3,7 @@ import { Schema, trusted, type Connection, type Model, type Types } from 'mongoo
 /** Each action and the only detail keys it may carry (spec 9.2). Never figures, note text, request notes,
  *  decision messages, file content or tokens. */
 export const AUDIT_DETAIL_KEYS = {
-  'access_request.created': ['orgName', 'townId', 'townName'],
+  'access_request.created': ['orgName', 'townId', 'townName', 'hasPlace'],
   'access_request.approved': ['orgId'],
   'access_request.rejected': ['hasMessage'],
   'access_request.withdrawn': ['reason'],

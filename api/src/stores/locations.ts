@@ -18,6 +18,7 @@ export interface LocationFields {
   name: string;
   nameKey: string;
   town: Town;
+  placeId: string | null;
   createdAt: Date;
   createdBy: string;
 }
@@ -28,6 +29,7 @@ function locationSchema(): Schema<LocationFields> {
     name: { type: String, required: true, minlength: 1, maxlength: 80 },
     nameKey: { type: String, required: true },
     town: { type: townFieldSchema(), required: true },
+    placeId: { type: String, default: null, maxlength: 512 },
     createdAt: { type: Date, required: true },
     createdBy: { type: String, required: true },
   }, { strict: true, versionKey: false, read: 'primary' });
@@ -51,6 +53,7 @@ export interface LocationRecord {
   readonly id: string;
   readonly name: string;
   readonly town: Town;
+  readonly placeId: string | null;
   readonly createdAt: Date;
 }
 
@@ -68,7 +71,7 @@ export interface LocationStore {
     Promise<'updated' | 'not_found' | 'name_taken'>;
   remove(scope: OrgScope, locationId: string): Promise<boolean>;
   /** F3 step 7: the location with this name in the organization, inserted once (`$setOnInsert`), so a retry finds it. */
-  ensureByName(scope: OrgScope, input: { name: string; town: Town; createdAt: Date; createdBy: string }):
+  ensureByName(scope: OrgScope, input: { name: string; town: Town; placeId: string | null; createdAt: Date; createdBy: string }):
     Promise<{ id: string; inserted: boolean }>;
   /** Organization deletion (spec 10.7). Resolves the number deleted. */
   removeForOrg(scope: OrgScope): Promise<number>;
@@ -79,6 +82,8 @@ function toLocation(doc: LocationFields & { _id: Types.ObjectId }): LocationReco
     id: doc._id.toHexString(),
     name: doc.name,
     town: { townId: doc.town.townId, name: doc.town.name, state: doc.town.state },
+    // Locations stored before place ids have no such field.
+    placeId: doc.placeId ?? null,
     createdAt: doc.createdAt,
   };
 }
@@ -104,6 +109,7 @@ export function createLocationStore(connection: Connection): LocationStore {
           name: input.name.trim(),
           nameKey: locationNameKey(input.name),
           town: { townId: input.town.townId, name: input.town.name, state: input.town.state },
+          placeId: null,
           createdAt: input.createdAt,
           createdBy: input.createdBy,
         });
@@ -140,6 +146,7 @@ export function createLocationStore(connection: Connection): LocationStore {
           $setOnInsert: {
             name: input.name.trim(),
             town: { townId: input.town.townId, name: input.town.name, state: input.town.state },
+            placeId: input.placeId,
             createdAt: input.createdAt,
             createdBy: input.createdBy,
           },
