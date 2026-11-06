@@ -494,7 +494,7 @@ What the author did with each note TownwiseAI proposed in their conversation (10
 | `edited` | boolean | the saved note differs from the proposal ("Edit first") |
 | `createdAt`, `updatedAt` | Date | |
 
-Indexes: `{ orgId: 1, conversationId: 1, proposalId: 1 }` unique; `{ orgId: 1, locationId: 1 }`. It never holds the note's content. Deleted with the conversation, the location, the organization (10.7) and the author's person deletion (10.7, by `userId`); notes saved from proposals stay with the organization.
+Indexes: `{ orgId: 1, conversationId: 1, proposalId: 1 }` unique; `{ orgId: 1, locationId: 1 }`. It never holds the note's content. Deleted with the conversation, the location, the organization (10.7) and the author's person deletion (10.7, by `userId`); notes saved from proposals stay with the organization. Rows left by a crash during a conversation's delete, or by a Save racing it, hold only ids and go with the location, the organization or the person (`tuning-chat.md` section 5).
 
 ---
 
