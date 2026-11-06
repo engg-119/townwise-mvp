@@ -2,10 +2,13 @@
 // public town profile route.
 import { randomUUID } from 'node:crypto';
 
+import type { Request, Response as ExpressResponse } from 'express';
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import type { LocationSummary } from '../src/handlers/locations.ts';
+import type { TownwiseContext } from '../src/app.ts';
+import type { Principal } from '../src/access/policy.ts';
+import { createLocation, type LocationSummary } from '../src/handlers/locations.ts';
 import type { TownProfile } from '../src/handlers/towns.ts';
 import { createGooglePlacesClient } from '../src/places/google.ts';
 import {
@@ -13,7 +16,7 @@ import {
 } from './helpers/fixtures.ts';
 import { fakePlaces, placeDetails, usAddress } from './helpers/places-fetch.ts';
 import {
-  call, logLines, signIn, signInStaff, startTownwiseServer, writesDuring, type TestSession, type TownwiseTestServer,
+  call, limiterKey, logLines, signIn, signInStaff, startTownwiseServer, writesDuring, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
 
 let server: TownwiseTestServer;
@@ -403,6 +406,33 @@ describe('a location’s Google place, with the Places search on', () => {
     await nothingLeaked();
   });
 
+  it('a write with a place spends one call of the Places budget; a used-up budget is 429 before Google is asked; a write without a place spends none', async () => {
+    const t = await placedTeam('Budget Group');
+    const budget = limiterKey('townwise:places', t.admin.userId);
+    fake.script({ kind: 'json', body: hanoverPlace() });
+    expect((await createAt(t.admin, { name: 'Counted', town: { townId: 'hanover-nh' }, placeId: PLACE_ID })).status).toBe(201);
+    expect(await placed.redis.get(budget)).toBe('1');
+
+    // The budget the Places routes share (places.int.test.ts): the 301st call in an hour is refused.
+    await placed.redis.set(budget, '300', 'EX', 3600);
+    const locationId = await addLocation(placed, { orgId: t.orgId, name: 'Over Budget' });
+    const writes = await writesDuring(placed, async () => {
+      const refused = await patchAt(t.admin, locationId, { town: { townId: 'hanover-nh' }, placeId: PLACE_ID });
+      expect(await errorOf(refused)).toEqual({ status: 429, error: 'rate_limited' });
+      expect(refused.headers.get('retry-after')).not.toBeNull();
+      expect(await errorOf(await createAt(t.admin, { name: 'Over', town: { townId: 'hanover-nh' }, placeId: PLACE_ID })))
+        .toEqual({ status: 429, error: 'rate_limited' });
+    });
+    expect(writes).toEqual([]);
+    expect(fake.calls).toHaveLength(1);
+
+    const spent = await placed.redis.get(budget);
+    expect((await createAt(t.admin, { name: 'By Hand', town: { townId: 'hanover-nh' } })).status).toBe(201);
+    expect((await patchAt(t.admin, locationId, { name: 'Renamed' })).status).toBe(200);
+    expect(await placed.redis.get(budget)).toBe(spent);
+    expect(fake.calls).toHaveLength(1);
+  });
+
   it('another organization’s location answers 404 like an unknown one, and Google is not asked', async () => {
     const owner = await placedTeam('Owner Place Group');
     const other = await placedTeam('Other Place Group');
@@ -432,5 +462,34 @@ describe('a location’s Google place, with the Places search on', () => {
     } finally {
       await placed.authStores.totp.remove(staff.userId);
     }
+  });
+});
+
+describe('the Places budget while its store is down', () => {
+  // No server: a Redis client whose connection has ended stands for the outage (the limiter refuses without waiting).
+  const redis = { status: 'end' };
+
+  it('a location write with a place answers 503 places_unavailable and Google is not asked; without a place it goes on', async () => {
+    let asked = 0;
+    let counted = 0;
+    const ctx = {
+      places: { details: () => { asked += 1; return Promise.resolve(null); } },
+      redis,
+      now: () => new Date('2026-06-01T12:00:00.000Z'),
+      stores: { locations: { count: () => { counted += 1; return Promise.resolve(0); }, create: () => Promise.resolve(null) } },
+    } as unknown as TownwiseContext;
+    const admin = {
+      kind: 'member', userId: '000000000000000000000001', email: 'admin@example.test', role: 'org_admin', memberId: '000000000000000000000002',
+      scope: { orgId: '000000000000000000000003' }, viewAs: null,
+    } as unknown as Principal;
+    const res = {} as ExpressResponse;
+    const withPlace = { body: { name: 'Outage', town: { townId: 'hanover-nh' }, placeId: 'ChIJTestPlace0001' } } as Request;
+    await expect(createLocation(ctx, withPlace, res, admin)).rejects.toMatchObject({ status: 503, code: 'places_unavailable' });
+    expect(asked).toBe(0);
+    // Without a place the limiter isn't consulted: the write reaches the store (whose null answer is a taken name).
+    const byHand = { body: { name: 'Outage', town: { townId: 'hanover-nh' } } } as Request;
+    await expect(createLocation(ctx, byHand, res, admin)).rejects.toMatchObject({ status: 409, code: 'location_name_taken' });
+    expect(counted).toBe(2);
+    expect(asked).toBe(0);
   });
 });

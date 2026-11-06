@@ -6,6 +6,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { objectId } from '@ckeith26/mongo';
+import { createRateLimiter, RateLimiterUnavailableError, type RateLimiter } from '@ckeith26/rate-limit';
 import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
@@ -50,6 +51,36 @@ function placesUnavailable(): AppError {
   return new AppError(503, 'places_unavailable', 'Place search isn’t available right now');
 }
 
+/**
+ * The Places routes' per-account budget (ROUTE_LIMITS.places in ../access/routes.ts; same name, so the same Redis
+ * count). The location routes carry no route limiter, since a write without a place never calls Google; a write with
+ * one spends a call from this budget before Google is asked.
+ */
+const PLACES_BUDGET = { name: 'townwise:places', limit: 300, windowSeconds: 3600 } as const;
+const placesBudgets = new WeakMap<TownwiseContext['redis'], RateLimiter>();
+
+/**
+ * Spends one call of the caller's Places budget: 429 rate_limited when it is used up, and, since every call costs
+ * money, 503 places_unavailable when the store can't count it (the page keeps its manual fields).
+ */
+async function spendPlacesCall(ctx: TownwiseContext, userId: string): Promise<void> {
+  let limiter = placesBudgets.get(ctx.redis);
+  if (limiter === undefined) {
+    limiter = createRateLimiter({ redis: ctx.redis, ...PLACES_BUDGET });
+    placesBudgets.set(ctx.redis, limiter);
+  }
+  let decision;
+  try {
+    decision = await limiter.consume(`acct:${userId}`);
+  } catch (err) {
+    if (!(err instanceof RateLimiterUnavailableError)) throw err;
+    throw placesUnavailable();
+  }
+  if (!decision.allowed) {
+    throw new AppError(429, 'rate_limited', 'Too many requests. Try again later.', { retryAfterSeconds: decision.retryAfterSeconds });
+  }
+}
+
 /** The same town: one of the twelve by id, another town by name (ignoring case) and state. */
 function sameTown(a: Town, b: Town): boolean {
   if (a.townId !== null || b.townId !== null) return a.townId === b.townId;
@@ -58,13 +89,17 @@ function sameTown(a: Town, b: Town): boolean {
 
 /**
  * The place an org admin picked, checked with Google: its current id and its own town, which must be the town the
- * client sent. 503 places_unavailable while the search is off or Google fails (logged by route id and code only, as
+ * client sent. The call is spent from the admin's Places budget first (spendPlacesCall). 503 places_unavailable while
+ * the search is off or Google fails (logged by route id and code only, as
  * the Places routes do); 400 unknown_place when Google has no such place; 400 place_not_supported outside the 50
  * states and DC or without a town; 400 place_town_mismatch when the sent town is another.
  */
-async function checkedPlace(ctx: TownwiseContext, routeId: string, placeId: string, sent: Town): Promise<{ placeId: string; town: Town }> {
+async function checkedPlace(
+  ctx: TownwiseContext, routeId: string, userId: string, placeId: string, sent: Town,
+): Promise<{ placeId: string; town: Town }> {
   const places = ctx.places;
   if (places === null) throw placesUnavailable();
+  await spendPlacesCall(ctx, userId);
   let place: PlaceDetails | null;
   try {
     // A session of its own: the client's search session ended with its details call.
@@ -147,7 +182,7 @@ export async function createLocation(ctx: TownwiseContext, req: Request, res: Re
   }
   const place = body.placeId === undefined || body.placeId === null
     ? { placeId: null, town: sent }
-    : await checkedPlace(ctx, 'org.locations.create', body.placeId, sent);
+    : await checkedPlace(ctx, 'org.locations.create', admin.userId, body.placeId, sent);
   const now = ctx.now();
   const location = await ctx.stores.locations.create(scope, {
     name: body.name, town: place.town, placeId: place.placeId, createdAt: now, createdBy: admin.userId,
@@ -180,7 +215,7 @@ export async function updateLocation(ctx: TownwiseContext, req: Request, res: Re
   }
   let placeId = body.placeId;
   if (typeof placeId === 'string' && town !== undefined) {
-    ({ placeId, town } = await checkedPlace(ctx, 'org.locations.update', placeId, town));
+    ({ placeId, town } = await checkedPlace(ctx, 'org.locations.update', admin.userId, placeId, town));
   } else if (placeId === undefined && town !== undefined && location.placeId !== null && !sameTown(town, location.town)) {
     placeId = null;
   }
