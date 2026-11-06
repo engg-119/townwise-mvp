@@ -35,7 +35,7 @@ test('our copy uses U+2019 apostrophes, no exclamation marks and no em dashes', 
   for (const line of lines) {
     expect(line).not.toContain(STRAIGHT_QUOTE);
     expect(line).not.toContain('!');
-    expect(line).not.toContain('—');
+    expect(line).not.toContain('\u2014');
   }
   expect(requestReceivedStatement('Hanover Inn').lead).toContain('’');
 });
