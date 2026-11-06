@@ -475,7 +475,7 @@ A question is `{ id, kind: 'weekday', weekday, from, to, noSalesCount, weekdayCo
 | `townwise:requests` | `POST /api/access-requests`, per account | 5 per day | deny (503 `unavailable`) |
 | `townwise:view-as` | `POST /api/admin/view-as`, per account | 20 per hour | deny (503 `unavailable`) |
 | `townwise:chat` | `POST /api/org/locations/:locationId/chat/turns`, per account | 60 per hour | deny (503 `unavailable`) |
-| `townwise:places` | both Places routes together, per account | 300 per hour | deny (503 `unavailable`) |
+| `townwise:places` | both Places routes together, per account; each location write with a `placeId` also spends one (Organization and locations) | 300 per hour | deny (503 `unavailable`; on a location write, 503 `places_unavailable`) |
 | `townwise:files` | `POST .../files` (opening an upload), per account | 120 per hour | allow |
 | `townwise:file-chunks` | `PUT .../files/:fileId/chunks/:index`, per account | 1,500 per hour | allow |
 | `townwise:downloads` | both file downloads together, per account | 300 per hour | allow |
