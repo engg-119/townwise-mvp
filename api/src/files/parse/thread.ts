@@ -4,10 +4,11 @@
 // numbers, dates and counts, or a question whose options are header names or the location column's values.
 import { parentPort } from 'node:worker_threads';
 
+import type { ColumnChoice } from '../extract/prompt.ts';
 import { readArchive } from './archive.ts';
 import { CsvPushReader, detectTableDelimiter, stripBom, type Delimiter } from './csv.ts';
 import type { SalesDay } from './days.ts';
-import type { KeptOutcome } from './mapping.ts';
+import type { ChooseColumns, KeptOutcome } from './mapping.ts';
 import type { FileOutcome, FileReport, ThreadIn, ThreadOut } from './run.ts';
 import { dayTotals, readTable, type TableReport } from './table.ts';
 import { decoderFor, detectEncoding, encodingLabel, ENCODING_PROBE_BYTES, type TextEncoding } from './text.ts';
@@ -32,6 +33,17 @@ let pagesOnly = false;
 const pendingReads = new Map<number, (bytes: Buffer) => void>();
 let nextReadId = 0;
 
+const pendingChoices = new Map<number, (choice: ColumnChoice | null) => void>();
+
+/** The AI column step, asked through the main thread: only the redacted profile leaves this thread. */
+const choose: ChooseColumns = (profile) => {
+  const id = nextReadId;
+  nextReadId += 1;
+  const answered = new Promise<ColumnChoice | null>((resolve) => { pendingChoices.set(id, resolve); });
+  post({ type: 'model', id, profile });
+  return answered;
+};
+
 /** A ZIP's ranged read, answered by the main thread from storage. */
 function requestRange(offset: number, count: number): Promise<Buffer> {
   const id = nextReadId;
@@ -42,6 +54,11 @@ function requestRange(offset: number, count: number): Promise<Buffer> {
 }
 
 port.on('message', (message: ThreadIn) => {
+  if (message.type === 'choice') {
+    pendingChoices.get(message.id)?.(message.choice);
+    pendingChoices.delete(message.id);
+    return;
+  }
   if (message.type === 'bytes') {
     const bytes = Buffer.from(message.data);
     received += bytes.length;
@@ -132,7 +149,7 @@ async function readText(begin: Extract<ThreadIn, { type: 'begin' }>): Promise<Fi
   });
   try {
     const outcome = await readTable(pass, {
-      answers: begin.answers['0'] ?? {}, locationName: begin.locationName, latest: begin.latest, delimiter: () => found.delimiter,
+      answers: begin.answers['0'] ?? {}, locationName: begin.locationName, latest: begin.latest, delimiter: () => found.delimiter, choose,
     });
     if (outcome.kind === 'kept') return { kind: 'kept', outcome: outcome.outcome, report: null };
     if (outcome.kind === 'question') return { kind: 'question', question: { ...outcome.question, sheet: 0 } };
@@ -192,7 +209,7 @@ async function readSheets(begin: Extract<ThreadIn, { type: 'begin' }>): Promise<
     }
     const outcome = await readTable(
       (visit) => { for (const row of sheet.rows) visit(row); return Promise.resolve(); },
-      { answers: begin.answers[String(index)] ?? {}, locationName: begin.locationName, latest: begin.latest, delimiter: () => ',' },
+      { answers: begin.answers[String(index)] ?? {}, locationName: begin.locationName, latest: begin.latest, delimiter: () => ',', choose },
     );
     if (outcome.kind === 'question') return { kind: 'question', question: { ...outcome.question, sheet: index } };
     if (outcome.kind === 'kept') {
@@ -212,7 +229,9 @@ async function readSheets(begin: Extract<ThreadIn, { type: 'begin' }>): Promise<
 
 /** A ZIP, read in place through ranged reads. */
 async function readZipFile(begin: Extract<ThreadIn, { type: 'begin' }>): Promise<FileOutcome> {
-  const outcome = await readArchive(requestRange, begin.sizeBytes, { answers: begin.answers, locationName: begin.locationName, latest: begin.latest });
+  const outcome = await readArchive(requestRange, begin.sizeBytes, {
+    answers: begin.answers, locationName: begin.locationName, latest: begin.latest, choose,
+  });
   if (outcome.kind === 'question') return outcome;
   if (outcome.kind === 'kept') return { kind: 'kept', outcome: outcome.outcome, report: null, entries: outcome.entries };
   return { kind: 'days', days: outcome.days, report: { ...outcome.report, sheets: [], encoding: null }, entries: outcome.entries };

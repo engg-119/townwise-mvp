@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ColumnProfile } from '../../src/files/parse/columns.ts';
-import { decideMapping, decideRowMode, type FirstPass } from '../../src/files/parse/mapping.ts';
+import { decideMapping, decideMappingWithModel, decideRowMode, type FirstPass } from '../../src/files/parse/mapping.ts';
 
 const profile = (kind: ColumnProfile['kind'], extra: Partial<ColumnProfile> = {}): ColumnProfile => ({
   name: '', kind, slashDates: false, order: null, mixedOrder: false, ...extra,
@@ -87,5 +87,31 @@ describe('mapping (spec 11A, the reader’s rules)', () => {
     expect(decideRowMode(3, ['Date', 'Guests'], 'check')).toEqual({ kind: 'mode', rowMode: 'check', by: 'you' });
     expect(decideRowMode(3, ['Date', 'Guests'], 'day')).toEqual({ kind: 'kept', outcome: 'repeated_dates' });
     expect(decideRowMode(0, ['Date', 'Guests'], 'item')).toEqual({ kind: 'kept', outcome: 'item_level' });
+  });
+
+  describe('the AI column step', () => {
+    const unclear = pass(['Business Date', 'Total A', 'Total B', 'Note'], [profile('dates'), profile('numbers'), profile('numbers'), profile('text')]);
+
+    it('applies a confident choice of number columns, marked ai', async () => {
+      const decision = await decideMappingWithModel(unclear, {}, 'Main', () => Promise.resolve({ guests: 1, netSales: 2, confidence: 'high' }));
+      expect(decision).toMatchObject({ kind: 'mapping', mapping: { guests: 1, netSales: 2 }, decidedBy: { guests: 'ai', netSales: 'ai', date: 'rules' } });
+    });
+
+    it('suggests an unsure choice in the question, and ignores a choice of a column that is not numbers', async () => {
+      expect(await decideMappingWithModel(unclear, {}, 'Main', () => Promise.resolve({ guests: 1, netSales: null, confidence: 'low' })))
+        .toMatchObject({ kind: 'question', question: { kind: 'columns', suggested: 'guests:1,netSales:none' } });
+      expect(await decideMappingWithModel(unclear, {}, 'Main', () => Promise.resolve({ guests: 3, netSales: null, confidence: 'high' })))
+        .toMatchObject({ kind: 'question', question: { kind: 'columns', suggested: null } });
+      expect(await decideMappingWithModel(unclear, {}, 'Main', () => Promise.resolve(null))).toMatchObject({ kind: 'question', question: { kind: 'columns' } });
+    });
+
+    it('is never asked when the rules decide, or when the person already answered', async () => {
+      let asked = 0;
+      const choose = () => { asked += 1; return Promise.resolve(null); };
+      await decideMappingWithModel(pass(['Date', 'Guests'], [profile('dates'), profile('numbers')]), {}, 'Main', choose);
+      expect(await decideMappingWithModel(unclear, { guests: 2, netSales: null }, 'Main', choose))
+        .toMatchObject({ kind: 'mapping', decidedBy: { guests: 'you' } });
+      expect(asked).toBe(0);
+    });
   });
 });

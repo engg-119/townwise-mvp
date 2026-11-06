@@ -19,7 +19,13 @@ import type { TownwiseStores } from '../stores/index.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import { BlobMissingError, type FileBlobs } from './blobs.ts';
 import { cleanCsv } from './clean.ts';
-import { APPLY_BATCH_DAYS, DOCX_READ_BYTES, ENTRY_BATCH, HEAD_BYTES, PDF_READ_BYTES, MAX_ATTEMPTS, PROGRESS_WRITE_MS, READ_TIME_MS, XLSX_READ_BYTES } from './limits.ts';
+import type { ExtractModel } from './extract/model.ts';
+import type { RedactedProfile } from './extract/profile.ts';
+import type { ColumnChoice } from './extract/prompt.ts';
+import {
+  APPLY_BATCH_DAYS, DOCX_READ_BYTES, ENTRY_BATCH, HEAD_BYTES, MODEL_CALLS_PER_FILE, MODEL_CALLS_PER_IMPORT, MODEL_CALLS_PER_ZIP,
+  PDF_READ_BYTES, MAX_ATTEMPTS, PROGRESS_WRITE_MS, READ_TIME_MS, XLSX_READ_BYTES,
+} from './limits.ts';
 import type { EntryRow } from './parse/archive.ts';
 import { runParse, type FileOutcome, type ParseInput, type ParseKind } from './parse/run.ts';
 import { sniff } from './sniff.ts';
@@ -38,6 +44,10 @@ export interface FileWorkerDeps {
   readonly heartbeatMs?: number;
   /** Tests pass shorter parse limits. */
   readonly parse?: (input: ParseInput) => Promise<FileOutcome>;
+  /** The AI column step (spec 11A); absent (no ANTHROPIC_API_KEY), the reader asks the person instead. */
+  readonly extract?: ExtractModel | undefined;
+  /** Its monthly spend limit per organization, in US dollars; 0 turns it off. */
+  readonly filesMonthlyBudgetUsd?: number;
 }
 
 export interface FileWorker {
@@ -96,6 +106,37 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
     } catch {
       logger.error({ action: 'sales.uploaded', orgId: scope.orgId, targetId: file.id }, 'townwise.audit_write_failed');
     }
+  }
+
+  /**
+   * The AI column step for one file, within its bounds: 2 calls a file (5 a ZIP, at most one a family), 20 an import,
+   * and the organization's monthly budget, checked before each call and charged after it whatever its outcome. Off,
+   * spent or failed, it answers null and the person is asked instead. Never retried beyond the SDK.
+   */
+  function columnStep(scope: OrgScope, record: ImportRecord, file: FileRecord): ((profile: RedactedProfile) => Promise<ColumnChoice | null>) | undefined {
+    const extract = deps.extract;
+    const budget = Math.round((deps.filesMonthlyBudgetUsd ?? 0) * 1_000_000);
+    if (extract === undefined || budget <= 0) return undefined;
+    const perFile = file.kind === 'zip' ? MODEL_CALLS_PER_ZIP : MODEL_CALLS_PER_FILE;
+    let calls = file.modelCalls;
+    return async (profile) => {
+      if (calls >= perFile) return null;
+      const others = (await stores.files.inImport(scope, record.id)).reduce((sum, other) => sum + (other.id === file.id ? 0 : other.modelCalls), 0);
+      if (others + calls >= MODEL_CALLS_PER_IMPORT) return null;
+      const month = now().toISOString().slice(0, 7);
+      if (await stores.filesUsage.costMicroUsd(scope, month) >= budget) return null;
+      calls += 1;
+      const result = await extract.chooseColumns(profile, abort.signal);
+      if (result.kind === 'failed') {
+        logger.warn({ fileId: file.id, errType: result.errType, status: result.status }, 'townwise.extract_model_failed');
+        await stores.files.addModelCall(scope, file.id, 0);
+        return null;
+      }
+      await stores.filesUsage.add(scope, month, result.costMicroUsd, now());
+      await stores.files.addModelCall(scope, file.id, result.costMicroUsd);
+      logger.info({ fileId: file.id, costMicroUsd: result.costMicroUsd, answered: result.choice !== null }, 'townwise.extract_model_call');
+      return result.choice;
+    };
   }
 
   /** A ZIP's entry rows, written before the file settles; the counts go on the file. Null for any other file. */
@@ -196,6 +237,7 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
       let lastWrite = 0;
       const kind: ParseKind = file.kind === 'xlsx' || file.kind === 'zip' || file.kind === 'pdf' || file.kind === 'docx' ? file.kind : 'text';
       const ref = { locationId: file.locationId, fileId: file.id };
+      const step = columnStep(scope, record, file);
       const outcome = await parse({
         kind,
         sizeBytes: file.sizeBytes,
@@ -203,6 +245,7 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
         locationName: location.name,
         latest: utcDay(now(), 1),
         replace: file.uploaderRole === 'org_admin',
+        ...(step === undefined ? {} : { chooseColumns: step }),
         open: (signal) => blobs.openRaw(scope, ref, undefined, signal),
         openAt: (offset, signal) => blobs.openRaw(scope, ref, { offset, count: file.sizeBytes - offset }, signal),
         signal: abort.signal,

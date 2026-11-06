@@ -12,14 +12,15 @@ import { createAnthropicChatModel } from './chat/model.ts';
 import { configSchema as townwiseSchema, filesBackendOf, resolveTownwiseConfig, type FilesBackend } from './config.ts';
 import { createSendMagicLink } from './email.ts';
 import { createAzureFileBlobs, createAzuriteFileBlobs, storageCredential, type FileBlobs } from './files/blobs.ts';
+import { createAnthropicExtractModel } from './files/extract/model.ts';
 import { createFileWorker } from './files/worker.ts';
 import { createAcsTransport } from './mail/acs.ts';
 import { createMailer, OFF_MAILER } from './mail/mailer.ts';
 import { createGooglePlacesClient } from './places/google.ts';
 import { createStaticMapSigner, signingSecretSchema } from './places/static-map.ts';
 
-// ANTHROPIC_API_KEY and GOOGLE_PLACES_API_KEY are optional: absent, the tuning chat or the Places proxy is off. Each
-// goes no further than the client built here. IDENTITY_ENDPOINT and IDENTITY_HEADER are set by Container Apps for the
+// ANTHROPIC_API_KEY and GOOGLE_PLACES_API_KEY are optional: absent, the tuning chat and the file reader's AI column
+// step, or the Places proxy, are off. Each goes no further than the clients built here. IDENTITY_ENDPOINT and IDENTITY_HEADER are set by Container Apps for the
 // managed identity, and AZURE_CLIENT_ID by containerapp.tf; they are read only when email or stored files are on. The confirm card's
 // map needs both GOOGLE_MAPS_STATIC_KEY and GOOGLE_MAPS_SIGNING_SECRET: without either there is no map, never an
 // unsigned one. A malformed secret refuses boot.
@@ -63,7 +64,7 @@ const azureTokensFor = (feature: string): AzureTokenSource => {
   return azureTokens;
 };
 // Email (spec D14) is on when EMAIL_ENDPOINT is set; it then needs the managed identity, or boot fails.
-const { email, emailReplyTo, webUrl } = resolveTownwiseConfig(config);
+const { email, emailReplyTo, webUrl, filesMonthlyBudgetUsd } = resolveTownwiseConfig(config);
 const mailer = email === null ? OFF_MAILER : createMailer({
   transport: createAcsTransport({
     endpoint: email.endpoint,
@@ -82,9 +83,11 @@ async function fileBlobsFor(backend: FilesBackend | null): Promise<FileBlobs | u
   return createAzureFileBlobs(backend.accountUrl, storageCredential(azureTokensFor('FILES_BLOB_ACCOUNT_URL')));
 }
 const files = await fileBlobsFor(filesBackendOf(config));
-// The file reader runs in this process while stored files are on (files/worker.ts).
+// The file reader runs in this process while stored files are on (files/worker.ts). Its AI column step is on with the
+// same ANTHROPIC_API_KEY as the tuning chat, within TOWNWISE_FILES_MONTHLY_BUDGET_USD.
 const fileWorker = files === undefined ? undefined : createFileWorker({
   connection: mongo.connection, stores: createTownwiseStores(mongo.connection), authStores, blobs: files, logger, now,
+  extract: ANTHROPIC_API_KEY === undefined ? undefined : createAnthropicExtractModel(ANTHROPIC_API_KEY), filesMonthlyBudgetUsd,
 });
 const api = createTownwiseApi({
   config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now, chat, places, placesMap, mailer,

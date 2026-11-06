@@ -6,7 +6,10 @@ import { isBlankRecord } from './csv.ts';
 import { LocationValues, Profiler, type ColumnProfile } from './columns.ts';
 import { DayAggregator, type DaysResult, type ExclusionReason, type RowTally, type SalesDay } from './days.ts';
 import { findHeader, guessOne } from './header.ts';
-import { decideMapping, decideRowMode, type DecidedBy, type Decision, type FirstPass, type KeptOutcome, type QuestionDraft } from './mapping.ts';
+import {
+  decideMappingWithModel, decideRowMode, type ChooseColumns, type Decider, type DecidedBy, type Decision, type FirstPass, type KeptOutcome,
+  type QuestionDraft,
+} from './mapping.ts';
 import type { SheetAnswers } from '../../stores/files.ts';
 import type { Delimiter } from './csv.ts';
 import { HEADER_SEARCH_ROWS, MAX_CLOSED_DATES, MAX_COLUMNS, MAX_ROWS } from '../limits.ts';
@@ -16,7 +19,7 @@ import { HEADER_SEARCH_ROWS, MAX_CLOSED_DATES, MAX_COLUMNS, MAX_ROWS } from '../
 export interface TableReport {
   headerRow: number;
   mapping: { date: string; guests: string | null; netSales: string | null; location: string | null };
-  decidedBy: DecidedBy & { rowMode: 'rules' | 'you' };
+  decidedBy: DecidedBy & { rowMode: Decider };
   locationValue: string | null;
   rowMode: 'day' | 'check';
   dateOrder: 'month_first' | 'day_first' | null;
@@ -41,6 +44,9 @@ export type TableOutcome =
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** Rows kept for the AI column step's profile (only tokens and the header leave the thread). */
+const PROFILE_SAMPLE_ROWS = 200;
+
 /** At most 200 columns of a record. */
 export function trimmed(cells: readonly string[]): string[] {
   return cells.length > MAX_COLUMNS ? cells.slice(0, MAX_COLUMNS) : [...cells];
@@ -56,6 +62,7 @@ export class TableStats {
   private readonly profiler: Profiler;
   private readonly locationColumn: number | null;
   private readonly locations: LocationValues | null;
+  private readonly sample: string[][] = [];
 
   constructor(header: readonly string[]) {
     this.header = header;
@@ -67,6 +74,7 @@ export class TableStats {
   add(row: readonly string[]): void {
     this.profiler.add(row);
     this.locations?.add(row);
+    if (this.sample.length < PROFILE_SAMPLE_ROWS) this.sample.push([...row]);
   }
 
   /** The findings, with the header row of the table they are reported for (1-based). */
@@ -78,6 +86,7 @@ export class TableStats {
       locationColumn: this.locationColumn,
       locationValues: this.locations?.values() ?? [],
       tooManyLocations: this.locations?.more ?? false,
+      sample: this.sample,
     };
   }
 }
@@ -170,7 +179,7 @@ export class SecondPassReader {
 
 /** A used table's report, from its first pass, its mapping, its row mode and its days. */
 export function tableReport(
-  pass: FirstPass, decision: Extract<Decision, { kind: 'mapping' }>, rowMode: 'day' | 'check', rowModeBy: 'rules' | 'you',
+  pass: FirstPass, decision: Extract<Decision, { kind: 'mapping' }>, rowMode: 'day' | 'check', rowModeBy: Decider,
   result: DaysResult,
 ): TableReport {
   const { mapping } = decision;
@@ -207,13 +216,13 @@ export function tableReport(
  */
 export async function readTable(
   pass: (visit: (cells: readonly string[]) => void) => Promise<void>,
-  input: { answers: SheetAnswers; locationName: string; latest: string; delimiter: () => Delimiter },
+  input: { answers: SheetAnswers; locationName: string; latest: string; delimiter: () => Delimiter; choose?: ChooseColumns },
 ): Promise<TableOutcome> {
   const first = new FirstPassReader();
   await pass((cells) => { first.add(cells); });
   const found = first.finish();
   if ('kind' in found) return found;
-  const decision = decideMapping(found, input.answers, input.locationName);
+  const decision = await decideMappingWithModel(found, input.answers, input.locationName, input.choose);
   if (decision.kind !== 'mapping') return decision;
   if (input.answers.rowMode === 'item') return { kind: 'kept', outcome: 'item_level' };
   // Day mode only when the person said so; otherwise add up, and tell the row mode from the repeats afterwards.

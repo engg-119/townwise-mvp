@@ -8,6 +8,8 @@
 import { Worker, type ResourceLimits } from 'node:worker_threads';
 
 import type { FileAnswers } from '../../stores/files.ts';
+import type { RedactedProfile } from '../extract/profile.ts';
+import type { ColumnChoice } from '../extract/prompt.ts';
 import type { EntryRow } from './archive.ts';
 import type { FamilyReport } from './families.ts';
 import { READ_TIME_MS, THREAD_CHUNK_BYTES, THREAD_LIMITS } from '../limits.ts';
@@ -44,7 +46,9 @@ export type ThreadIn =
   | { type: 'chunk'; data: ArrayBuffer }
   | { type: 'end' }
   /** The bytes a `read` asked for (fewer only at the end of the file). */
-  | { type: 'bytes'; id: number; data: ArrayBuffer };
+  | { type: 'bytes'; id: number; data: ArrayBuffer }
+  /** The AI column step's answer to a `model` request; null when there is none (off, over budget, failed, declined). */
+  | { type: 'choice'; id: number; choice: ColumnChoice | null };
 
 export type ThreadOut =
   | { type: 'ack' }
@@ -52,6 +56,8 @@ export type ThreadOut =
   | { type: 'progress'; done: number; total: number | null }
   /** A ZIP's thread asks for `count` bytes from `offset`. */
   | { type: 'read'; id: number; offset: number; count: number }
+  /** The thread asks the AI column step about one table; only the redacted profile crosses. */
+  | { type: 'model'; id: number; profile: RedactedProfile }
   | { type: 'result'; outcome: FileOutcome };
 
 export interface ParseInput {
@@ -66,6 +72,8 @@ export interface ParseInput {
   /** The file's bytes from `offset` to its end (a ZIP's ranged reads). Required for a ZIP. */
   readonly openAt?: (offset: number, signal: AbortSignal) => Promise<AsyncIterable<Uint8Array>>;
   readonly onProgress: (done: number, total: number | null) => void;
+  /** The AI column step (the worker applies its bounds and budget); absent, the thread asks the person instead. */
+  readonly chooseColumns?: (profile: RedactedProfile) => Promise<ColumnChoice | null>;
   readonly signal?: AbortSignal;
   /** Tests shorten these. */
   readonly timeMs?: number;
@@ -168,11 +176,17 @@ export async function runParse(input: ParseInput): Promise<FileOutcome> {
   const openAt = input.openAt;
   const ranges = openAt === undefined ? null : new RangeServer(openAt, stop.signal);
   // Progress is reported and ranged reads are answered here; every other message is returned.
-  const nextReply = async (): Promise<Exclude<ThreadOut, { type: 'progress' | 'read' }>> => {
+  const nextReply = async (): Promise<Exclude<ThreadOut, { type: 'progress' | 'read' | 'model' }>> => {
     for (;;) {
       const message = await Promise.race([messages.next(), timeout]);
       if (message.type === 'progress') {
         input.onProgress(message.done, message.total);
+        continue;
+      }
+      if (message.type === 'model') {
+        const choose = input.chooseColumns;
+        const choice = choose === undefined ? null : await Promise.race([choose(message.profile), timeout]);
+        worker.postMessage({ type: 'choice', id: message.id, choice } satisfies ThreadIn);
         continue;
       }
       if (message.type === 'read') {

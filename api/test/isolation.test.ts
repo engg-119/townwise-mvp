@@ -56,6 +56,11 @@ describe('isolation (source)', () => {
       .toEqual([]);
   });
 
+  it('only chat/model.ts and files/extract/model.ts construct a model client', () => {
+    const constructs = sourceFiles().filter((file) => /^import Anthropic(?:,| )[^;]*from '@anthropic-ai\/sdk';/m.test(file.text)).map((file) => file.path).sort();
+    expect(constructs).toEqual(['chat/model.ts', 'files/extract/model.ts']);
+  });
+
   it('only files/parse/pdf.ts imports the PDF parser, and only files/parse/docx.ts the XML parser', () => {
     expect(sourceFiles().filter((file) => file.text.includes('from \'unpdf\'')).map((file) => file.path)).toEqual(['files/parse/pdf.ts']);
     expect(sourceFiles().filter((file) => file.text.includes('from \'saxen\'')).map((file) => file.path)).toEqual(['files/parse/docx.ts']);

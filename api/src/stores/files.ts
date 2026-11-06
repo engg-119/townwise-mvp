@@ -98,7 +98,10 @@ interface FileFields {
   cleanBytes: number | null;
   rawDeletedAt: Date | null;
   attempts: number;
-  entries: EntryCounts | null;
+  /** Absent on rows written before ZIPs were read, as are the two counters. */
+  entries?: EntryCounts | null;
+  modelCalls?: number;
+  costMicroUsd?: number;
 }
 
 function fileSchema(): Schema<FileFields> {
@@ -128,6 +131,8 @@ function fileSchema(): Schema<FileFields> {
     rawDeletedAt: { type: Date, default: null },
     attempts: { type: Number, required: true, default: 0 },
     entries: { type: Schema.Types.Mixed, default: null },
+    modelCalls: { type: Number, required: true, default: 0 },
+    costMicroUsd: { type: Number, required: true, default: 0 },
   }, { strict: 'throw', versionKey: false, read: 'primary', minimize: false });
   schema.index({ orgId: 1, locationId: 1, uploadedAt: -1 });
   schema.index({ orgId: 1, importId: 1, uploadedAt: 1 });
@@ -168,6 +173,9 @@ export interface FileRecord {
   readonly rawDeletedAt: Date | null;
   readonly attempts: number;
   readonly entries: EntryCounts | null;
+  /** The AI column step's calls for this file, and their cost in micro-dollars. */
+  readonly modelCalls: number;
+  readonly costMicroUsd: number;
 }
 
 function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
@@ -197,6 +205,8 @@ function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
     rawDeletedAt: doc.rawDeletedAt,
     attempts: doc.attempts,
     entries: doc.entries ?? null,
+    modelCalls: doc.modelCalls ?? 0,
+    costMicroUsd: doc.costMicroUsd ?? 0,
   };
 }
 
@@ -253,6 +263,8 @@ export interface FileStore {
   startReading(scope: OrgScope, fileId: string, now: Date): Promise<FileRecord | null>;
   setProgress(scope: OrgScope, fileId: string, progress: FileProgress): Promise<void>;
   setUploadId(scope: OrgScope, fileId: string, uploadId: string): Promise<void>;
+  /** One AI column step call for the file, and what it cost. */
+  addModelCall(scope: OrgScope, fileId: string, costMicroUsd: number): Promise<void>;
   /** The reader's last word on a file: read, kept, failed or waiting (a question). */
   settle(scope: OrgScope, fileId: string, input: {
     status: 'read' | 'kept' | 'failed' | 'waiting' | 'queued';
@@ -388,6 +400,9 @@ export function createFileStore(connection: Connection): FileStore {
     },
     async setUploadId(scope, fileId, uploadId) {
       await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, { $set: { uploadId: oid(uploadId) } });
+    },
+    async addModelCall(scope, fileId, costMicroUsd) {
+      await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, { $inc: { modelCalls: 1, costMicroUsd } });
     },
     async settle(scope, fileId, input) {
       const set: Record<string, unknown> = { status: input.status, outcome: input.outcome, progress: null };

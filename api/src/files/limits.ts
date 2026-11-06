@@ -87,3 +87,8 @@ export const PDF_MAX_ITEMS_PER_PAGE = 20_000;
 export const DOCX_READ_BYTES = 10 * MIB;
 /** word/document.xml, uncompressed. */
 export const DOCX_MAX_DOCUMENT_BYTES = 50 * MIB;
+
+/** The AI column step (spec 11A): calls per file, per ZIP (at most one a family of its tables) and per import. */
+export const MODEL_CALLS_PER_FILE = 2;
+export const MODEL_CALLS_PER_ZIP = 5;
+export const MODEL_CALLS_PER_IMPORT = 20;

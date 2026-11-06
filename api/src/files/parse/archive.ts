@@ -16,7 +16,7 @@ import {
 import { CsvPushReader, detectTableDelimiter, stripBom, type Delimiter } from './csv.ts';
 import { readFamilies, TableKept, type FamilyQuestion, type FamilyReport, type TableSource } from './families.ts';
 import type { SalesDay } from './days.ts';
-import type { KeptOutcome } from './mapping.ts';
+import type { ChooseColumns, KeptOutcome } from './mapping.ts';
 import type { TableReport } from './table.ts';
 import { decoderFor, detectEncoding, ENCODING_PROBE_BYTES, type TextEncoding } from './text.ts';
 import { readWord } from './docx.ts';
@@ -220,7 +220,7 @@ async function listingOf(read: RangeRead, size: number, maxEntries: number): Pro
 
 /** Reads the stored ZIP of `size` bytes through `read`. */
 export async function readArchive(
-  read: RangeRead, size: number, input: { answers: FileAnswers; locationName: string; latest: string },
+  read: RangeRead, size: number, input: { answers: FileAnswers; locationName: string; latest: string; choose?: ChooseColumns },
 ): Promise<ArchiveOutcome> {
   const planned: Planned[] = [];
   const tables: TableSource[] = [];

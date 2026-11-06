@@ -11,7 +11,7 @@ import type { FileAnswers } from '../../stores/files.ts';
 import type { Delimiter } from './csv.ts';
 import { DayAggregator, MAX_DAYS, type SalesDay } from './days.ts';
 import { guessesFor, normalizedHeader } from './header.ts';
-import { decideMapping, decideRowMode, type Decider, type Decision, type KeptOutcome, type QuestionDraft } from './mapping.ts';
+import { decideMappingWithModel, decideRowMode, type ChooseColumns, type Decider, type Decision, type KeptOutcome, type QuestionDraft } from './mapping.ts';
 import { dayTotals, FirstPassReader, TableStats, tableReport, trimmed, type TableReport } from './table.ts';
 
 /** A table cannot be read for a reason of its own (its entry's encoding, say); the others carry on. */
@@ -89,7 +89,7 @@ function questionFor(family: Family, question: QuestionDraft): FamiliesOutcome {
   return { kind: 'question', question: { ...question, sheet: 0, family: family.signature, familyLabel: labelOf(family.header).join(', ') } };
 }
 
-const DECIDER_RANK: Readonly<Record<Decider, number>> = { rules: 0, you: 2 };
+const DECIDER_RANK: Readonly<Record<Decider, number>> = { rules: 0, ai: 1, you: 2 };
 
 /** rules before AI before answers; day-level before check-level; more dates first; then signature order. */
 function rank(a: Family, b: Family): number {
@@ -110,7 +110,7 @@ function hasSalesColumns(header: readonly string[], answers: FileAnswers[string]
  */
 export async function readFamilies(
   tables: readonly TableSource[],
-  input: { answers: FileAnswers; locationName: string; latest: string },
+  input: { answers: FileAnswers; locationName: string; latest: string; choose?: ChooseColumns },
 ): Promise<FamiliesOutcome> {
   const families = new Map<string, Family>();
   const fates: TableFate[] = tables.map(() => ({ used: false, outcome: 'not_a_table', family: null }));
@@ -153,7 +153,7 @@ export async function readFamilies(
     const answers = input.answers[familyKey(family.signature)] ?? {};
     const firstMember = family.members[0];
     if (firstMember === undefined) return null;
-    const decision = decideMapping(family.stats.firstPass(firstMember.headerRow), answers, input.locationName);
+    const decision = await decideMappingWithModel(family.stats.firstPass(firstMember.headerRow), answers, input.locationName, input.choose);
     if (decision.kind === 'question') return questionFor(family, decision.question);
     if (decision.kind === 'kept') {
       family.outcome = decision.outcome;
