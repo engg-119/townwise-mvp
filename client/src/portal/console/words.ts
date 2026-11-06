@@ -76,6 +76,8 @@ export const AUDIT_ACTIONS: readonly { value: string; label: string }[] = [
   { value: 'file.uploaded', label: 'File uploaded' },
   { value: 'file.deleted', label: 'File deleted' },
   { value: 'file.raw_deleted', label: 'Original deleted' },
+  { value: 'files.raw_deleted_all', label: 'Originals deleted' },
+  { value: 'org.originals_deleted', label: 'Originals purged' },
   { value: 'note.created', label: 'Note added' },
   { value: 'note.updated', label: 'Note changed' },
   { value: 'note.deleted', label: 'Note deleted' },

@@ -332,7 +332,7 @@ describe('DELETE /api/org/locations/:locationId/sales', () => {
 
     const res = await call(server, `/api/org/locations/${locationId}/sales`, { method: 'DELETE', session: team.admin });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ deletedDays: 3, deletedUploads: 2 });
+    expect(await res.json()).toEqual({ deletedDays: 3, deletedUploads: 2, deletedFiles: 0 });
     expect(await storedDays(locationId)).toEqual([]);
     expect(await server.connection.collection('tw_uploads').countDocuments({ locationId: new Types.ObjectId(locationId) })).toBe(0);
     expect(await storedDays(other)).toHaveLength(1);
@@ -342,7 +342,7 @@ describe('DELETE /api/org/locations/:locationId/sales', () => {
     expect(after.calibration).toEqual({ state: 'no_sales_data' });
     const event = (await auditEvents(server)).filter((e) => e.action === 'sales.deleted').at(-1);
     expect(event).toMatchObject({ actorUserId: team.admin.userId, actorRole: 'org_admin', target: { type: 'location', id: locationId } });
-    expect(event?.details).toEqual({ locationId, deletedDays: 3 });
+    expect(event?.details).toEqual({ locationId, deletedDays: 3, deletedFiles: 0 });
   });
 });
 

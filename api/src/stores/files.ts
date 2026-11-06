@@ -102,6 +102,8 @@ interface FileFields {
   entries?: EntryCounts | null;
   modelCalls?: number;
   costMicroUsd?: number;
+  /** A staff purge found the file busy: its original goes as soon as the reader is done with it. */
+  purgeRaw?: boolean;
 }
 
 function fileSchema(): Schema<FileFields> {
@@ -133,6 +135,7 @@ function fileSchema(): Schema<FileFields> {
     entries: { type: Schema.Types.Mixed, default: null },
     modelCalls: { type: Number, required: true, default: 0 },
     costMicroUsd: { type: Number, required: true, default: 0 },
+    purgeRaw: { type: Boolean },
   }, { strict: 'throw', versionKey: false, read: 'primary', minimize: false });
   schema.index({ orgId: 1, locationId: 1, uploadedAt: -1 });
   schema.index({ orgId: 1, importId: 1, uploadedAt: 1 });
@@ -176,6 +179,7 @@ export interface FileRecord {
   /** The AI column step's calls for this file, and their cost in micro-dollars. */
   readonly modelCalls: number;
   readonly costMicroUsd: number;
+  readonly purgeRaw: boolean;
 }
 
 function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
@@ -207,6 +211,7 @@ function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
     entries: doc.entries ?? null,
     modelCalls: doc.modelCalls ?? 0,
     costMicroUsd: doc.costMicroUsd ?? 0,
+    purgeRaw: doc.purgeRaw === true,
   };
 }
 
@@ -252,6 +257,16 @@ export interface FileStore {
   remove(scope: OrgScope, fileId: string): Promise<boolean>;
   /** The original is gone: the name becomes the kind's label (it can itself name a person). */
   rawDeleted(scope: OrgScope, fileId: string, at: Date, label: string): Promise<void>;
+  /** Any file row at the location, or in the organization (a location with files has data). */
+  hasAny(scope: OrgScope, locationId: string | null): Promise<boolean>;
+  /** Files still uploading, at one location or across the organization (to discard their staged chunks). */
+  uploading(scope: OrgScope, locationId: string | null): Promise<FileRecord[]>;
+  /** Files whose original is still stored, at one location or across the organization. */
+  originals(scope: OrgScope, locationId: string | null): Promise<FileRecord[]>;
+  /** A staff purge found the file busy: the reader deletes its original once it is done. */
+  flagPurge(scope: OrgScope, fileId: string): Promise<void>;
+  removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
+  removeForOrg(scope: OrgScope): Promise<number>;
 
   /**
    * The reader's next file in a started import: queued, reading (a previous attempt that stopped), or stored. A stored
@@ -380,7 +395,31 @@ export function createFileStore(connection: Connection): FileStore {
       return (await File.deleteOne({ _id: oid(fileId), orgId: org(scope) })).deletedCount === 1;
     },
     async rawDeleted(scope, fileId, at, label) {
-      await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, { $set: { rawDeletedAt: at, name: label } });
+      await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, { $set: { rawDeletedAt: at, name: label }, $unset: { purgeRaw: '' } });
+    },
+    async hasAny(scope, locationId) {
+      const filter: Record<string, unknown> = { orgId: org(scope) };
+      if (locationId !== null) filter.locationId = oid(locationId);
+      return (await File.exists(filter)) !== null;
+    },
+    async uploading(scope, locationId) {
+      const filter: Record<string, unknown> = { orgId: org(scope), status: 'uploading' };
+      if (locationId !== null) filter.locationId = oid(locationId);
+      return (await File.find(filter).lean()).map(toFile);
+    },
+    async originals(scope, locationId) {
+      const filter: Record<string, unknown> = { orgId: org(scope), rawDeletedAt: null, status: trusted({ $nin: ['uploading', 'deleting'] }) };
+      if (locationId !== null) filter.locationId = oid(locationId);
+      return (await File.find(filter).sort({ uploadedAt: 1 }).lean()).map(toFile);
+    },
+    async flagPurge(scope, fileId) {
+      await File.updateOne({ _id: oid(fileId), orgId: org(scope), rawDeletedAt: null }, { $set: { purgeRaw: true } });
+    },
+    async removeForLocation(scope, locationId) {
+      return (await File.deleteMany({ orgId: org(scope), locationId: oid(locationId) })).deletedCount;
+    },
+    async removeForOrg(scope) {
+      return (await File.deleteMany({ orgId: org(scope) })).deletedCount;
     },
     async nextToRead(scope, importId) {
       const doc = await File.findOne({ orgId: org(scope), importId: oid(importId), status: trusted({ $in: READABLE }) })

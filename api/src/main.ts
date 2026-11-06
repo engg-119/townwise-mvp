@@ -13,6 +13,7 @@ import { configSchema as townwiseSchema, filesBackendOf, resolveTownwiseConfig, 
 import { createSendMagicLink } from './email.ts';
 import { createAzureFileBlobs, createAzuriteFileBlobs, storageCredential, type FileBlobs } from './files/blobs.ts';
 import { createAnthropicExtractModel } from './files/extract/model.ts';
+import { createFileSweeper } from './files/sweeper.ts';
 import { createFileWorker } from './files/worker.ts';
 import { createAcsTransport } from './mail/acs.ts';
 import { createMailer, OFF_MAILER } from './mail/mailer.ts';
@@ -89,20 +90,28 @@ const fileWorker = files === undefined ? undefined : createFileWorker({
   connection: mongo.connection, stores: createTownwiseStores(mongo.connection), authStores, blobs: files, logger, now,
   extract: ANTHROPIC_API_KEY === undefined ? undefined : createAnthropicExtractModel(ANTHROPIC_API_KEY), filesMonthlyBudgetUsd,
 });
+// The daily sweep (retention, unfinished uploads, orphans) runs while stored files are on; one replica takes it a day.
+const fileSweeper = files === undefined ? undefined : createFileSweeper({
+  connection: mongo.connection, stores: createTownwiseStores(mongo.connection), blobs: files, logger, now,
+});
 const api = createTownwiseApi({
   config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now, chat, places, placesMap, mailer,
   files, fileWorker,
 });
 await ensureIndexes(mongo.connection, { logger });   // after every store has registered its models
 fileWorker?.start();
+fileSweeper?.start();
 await redis.ready(3000);                             // bounded; logs and continues on false
 const ceiling = createRateLimiter({ redis: redis.client, name: 'app:api-ceiling', limit: 2000, windowSeconds: 60 });
 const server = createServer({
   config, logger,
   routes: [{ path: '/auth', router: auth.router }, { path: '/api', router: api }],
   middleware: [rateLimit({ limiter: ceiling, key: ipKey, whenStoreDown: 'allow', logger })],
-  // The mail drain first, after the HTTP drain: a send still in flight when its 2 seconds end is lost. The reader
-  // stops next, while the database is still open.
-  onShutdown: [{ name: 'mail', close: () => mailer.idle() }, ...(fileWorker === undefined ? [] : [fileWorker]), redis, mongo],
+  // The mail drain first, after the HTTP drain: a send still in flight when its 2 seconds end is lost. The reader and
+  // the sweeper stop next, while the database is still open.
+  onShutdown: [
+    { name: 'mail', close: () => mailer.idle() }, ...(fileWorker === undefined ? [] : [fileWorker]),
+    ...(fileSweeper === undefined ? [] : [fileSweeper]), redis, mongo,
+  ],
 });
 await server.listen();

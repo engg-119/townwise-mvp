@@ -18,17 +18,18 @@ import { utcDay } from '../dates.ts';
 import { BlobMissingError, BlobUnavailableError, type BlobRef, type FileBlobs } from '../files/blobs.ts';
 import { importEta, type ImportEta } from '../files/eta.ts';
 import {
-  CHUNK_BYTES, DAILY_UPLOAD_BYTES, FILES_PER_IMPORT, FILES_PER_LOCATION, MAX_CHUNKS, MAX_FILE_BYTES, RAW_PART_BYTES,
+  CHUNK_BYTES, DAILY_UPLOAD_BYTES, FILES_PER_IMPORT, FILES_PER_LOCATION, MAX_CHUNKS, MAX_FILE_BYTES, RAW_PART_BYTES, RAW_RETENTION_DAYS,
   RECENT_IMPORT_MS, STORED_BYTES_PER_ORG, UPLOAD_SESSION_MS, UPLOADING_PER_LOCATION,
 } from '../files/limits.ts';
 import { familyKey } from '../files/parse/families.ts';
+import { deleteOriginals } from '../files/remove.ts';
 import { kindLabel, kindOfName, sanitizeName, sniff } from '../files/sniff.ts';
 import { ChunkLengthError, createStreamGate, fingerprintOf, receiveChunk } from '../files/upload.ts';
 import { currentEmail } from '../people.ts';
 import type { FileKind, FileRecord, FileResult, FileStatus } from '../stores/files.ts';
 import type { ImportQuestion, ImportRecord, ImportStatus } from '../stores/imports.ts';
 import { loadLocation, memberOf } from './locations.ts';
-import { actorOf } from './team.ts';
+import { actorOf, orgAdmin } from './team.ts';
 
 /** Spec 10.11: what the client sees of a file. `deleting` is never shown. */
 export interface FileView {
@@ -78,8 +79,7 @@ export interface UploadLimits {
   maxFileBytes: number; chunkSize: number; dailyBytesLeft: number; storedBytesLeft: number; filesLeftInImport: number;
 }
 
-/** Originals are deleted a year after upload (spec 22.3). [CONFIRM: retention periods] */
-export const RAW_RETENTION_MS = 365 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const LIST_PAGE = 200;
 const ENTRIES_PAGE = 200;
 const DONE_STATUSES: readonly FileStatus[] = ['read', 'kept', 'failed'];
@@ -165,7 +165,7 @@ function fileView(member: MemberPrincipal, file: FileRecord, email: string, eta:
     result: file.result,
     hasClean: file.cleanBytes !== null,
     rawAvailable,
-    rawExpiresAt: rawAvailable ? new Date(file.uploadedAt.getTime() + RAW_RETENTION_MS).toISOString() : null,
+    rawExpiresAt: rawAvailable ? new Date(file.uploadedAt.getTime() + RAW_RETENTION_DAYS * DAY_MS).toISOString() : null,
     canDownloadRaw: mayManage && rawAvailable,
     canDownloadClean: !viewAs && file.cleanBytes !== null,
     canDelete: mayManage,
@@ -637,6 +637,25 @@ export async function deleteFile(ctx: TownwiseContext, req: Request, res: Respon
   }
   ctx.logger.info({ fileId: file.id }, 'townwise.file_deleted');
   res.status(200).json({ deleted: true, daysKept: file.result?.dayCount ?? 0 });
+}
+
+/**
+ * DELETE /originals (org admins): the "delete my files" control. Every original of the location that Townwise is done
+ * with is deleted; the cleaned copies, reports and days stay. A file not yet read is skipped and counted.
+ */
+export async function deleteLocationOriginals(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const blobs = filesOn(ctx);
+  const admin = orgAdmin(principal);
+  const { scope } = admin;
+  const location = await loadLocation(ctx, scope, req.params.locationId);
+  const originals = await ctx.stores.files.originals(scope, location.id);
+  const result = await deleteOriginals(ctx.stores, blobs, scope, originals, { now: ctx.now(), flagBusy: false });
+  await recordAfter(ctx, {
+    ...actorOf(admin), at: ctx.now(), orgId: scope.orgId, action: 'files.raw_deleted_all',
+    target: { type: 'location', id: location.id }, details: { locationId: location.id, count: result.deletedOriginals },
+  });
+  ctx.logger.info({ orgId: scope.orgId, locationId: location.id, count: result.deletedOriginals, by: 'owner' }, 'townwise.originals_deleted');
+  res.status(200).json(result);
 }
 
 // ---- Imports --------------------------------------------------------------------------------------------------

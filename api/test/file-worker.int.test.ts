@@ -246,6 +246,20 @@ describe('reading stored files', () => {
     expect([refused.status, ((await refused.json()) as { error: string }).error]).toEqual([404, 'no_entries']);
   });
 
+  it('never puts a ZIP entry path or anything inside the ZIP in a log line or an audit event', async () => {
+    const { zipOf } = await import('./helpers/zip.ts');
+    const locationId = await newLocation();
+    server.logs.length = 0;
+    const zip = zipOf([{ name: `${SENTINEL}/sales.csv`, data: `Date,Guests,Net Sales,Notes\n2025-03-01,4,4817.29,${SENTINEL}\n` }]);
+    const { importId } = await drop(locationId, member, `${SENTINEL}.zip`, zip);
+    await start(locationId, importId);
+    const done = await settledImport(locationId, importId);
+    expect(done.files[0]).toMatchObject({ status: 'read', entries: { total: 1, used: 1, kept: 0 } });
+    const stored = JSON.stringify([...server.logs, await auditEvents(server)]);
+    for (const secret of [SENTINEL, '4817.29', 'Notes']) expect(stored).not.toContain(secret);
+    expect(server.logs.join('\n')).toContain('townwise.file_entries');
+  });
+
   it('never puts a file name, a header, a location value or a cell in a log line, an audit event or an import view’s report', async () => {
     const locationId = await newLocation('Main Street');
     server.logs.length = 0;

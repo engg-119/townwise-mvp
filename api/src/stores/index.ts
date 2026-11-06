@@ -7,6 +7,7 @@ import { createChatLiveTurnStore, type ChatLiveTurnStore } from './chat-live-tur
 import { createChatProposalStore, type ChatProposalStore } from './chat-proposals.ts';
 import { createChatUsageStore, type ChatUsageStore } from './chat-usage.ts';
 import { createFileEntryStore, type FileEntryStore } from './file-entries.ts';
+import { fileSweepModel } from './file-sweeps.ts';
 import { createFileStore, type FileStore } from './files.ts';
 import { createFilesUsageStore, type FilesUsageStore } from './files-usage.ts';
 import { createImportStore, type ImportStore } from './imports.ts';
@@ -47,6 +48,8 @@ export interface TownwiseStores {
 
 /** Registers every Townwise model on `connection`; call it before ensureIndexes. */
 export function createTownwiseStores(connection: Connection): TownwiseStores {
+  // The file sweep's lease (cross-tenant, read only through stores/cross-tenant.ts) registers with the rest.
+  fileSweepModel(connection);
   return {
     orgs: createOrgStore(connection),
     requests: createAccessRequestStore(connection),

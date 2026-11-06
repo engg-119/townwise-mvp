@@ -182,7 +182,8 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
     });
     // The event is written before the effect; the organization row is deleted last, then sales days and chat usage swept again.
     expect(writes[0]).toBe('insert tw_audit_events');
-    expect(writes.slice(-3)).toEqual(['delete tw_orgs', 'delete tw_sales_days', 'delete tw_chat_usage']);
+    // Stored files (none here) are swept again after the row too: imports first.
+    expect(writes.slice(-4)).toEqual(['delete tw_orgs', 'delete tw_imports', 'delete tw_sales_days', 'delete tw_chat_usage']);
 
     const orgId = new Types.ObjectId(doomed.orgId);
     for (const name of TENANT_COLLECTIONS) expect({ name, n: await count(name, { orgId }) }).toEqual({ name, n: 0 });
@@ -298,6 +299,22 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
       expect(await errorOf(await deleteOrg(org.orgId))).toEqual({ status: 503, error: 'unavailable' });
     });
     expect(await snapshotOf(org)).toBe(before);
+  });
+
+  it('is refused with 503 files_unavailable, recorded as not applied, when stored files are off but it has files', async () => {
+    const org = await populatedOrg('Files Left Behind Cafe', 'suspended');
+    await server.connection.collection('tw_files').insertOne({ orgId: new Types.ObjectId(org.orgId), locationId: new Types.ObjectId(), status: 'read' });
+    const records = async (): Promise<string> => {
+      const docs: unknown[] = [await server.connection.collection('tw_orgs').findOne({ _id: new Types.ObjectId(org.orgId) })];
+      for (const name of TENANT_COLLECTIONS) docs.push(await server.connection.collection(name).find({ orgId: new Types.ObjectId(org.orgId) }).toArray());
+      return JSON.stringify(docs);
+    };
+    const before = await records();
+    expect(await errorOf(await deleteOrg(org.orgId))).toEqual({ status: 503, error: 'files_unavailable' });
+    expect(await records()).toBe(before);
+    const events = (await auditEvents(server)).filter((event) => String(event.orgId) === org.orgId);
+    expect(events.at(-1)).toMatchObject({ action: 'staff_action.not_applied', details: { code: 'files_unavailable' } });
+    expect(await count('tw_files', { orgId: new Types.ObjectId(org.orgId) })).toBe(1);
   });
 
   it('answers 404 for an unknown organization and 400 for a malformed id', async () => {

@@ -19,6 +19,7 @@ import type { TownwiseStores } from '../stores/index.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import { BlobMissingError, type FileBlobs } from './blobs.ts';
 import { cleanCsv } from './clean.ts';
+import { deleteOneOriginal, isBusy } from './remove.ts';
 import type { ExtractModel } from './extract/model.ts';
 import type { RedactedProfile } from './extract/profile.ts';
 import type { ColumnChoice } from './extract/prompt.ts';
@@ -280,6 +281,14 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
     }
   }
 
+  /** A staff purge found this file busy: now that the reader is done with it, its original goes (spec 11A). */
+  async function purgeIfFlagged(scope: OrgScope, locationId: string, fileId: string): Promise<void> {
+    const file = await stores.files.get(scope, locationId, fileId);
+    if (file?.purgeRaw !== true || file.rawDeletedAt !== null || isBusy(file)) return;
+    await deleteOneOriginal(stores, blobs, scope, file, now());
+    logger.info({ orgId: scope.orgId, locationId, count: 1, by: 'staff' }, 'townwise.originals_deleted');
+  }
+
   async function work(scope: OrgScope, claim: ClaimedImport): Promise<void> {
     const org = await stores.orgs.findById(scope.orgId);
     if (org?.status !== 'active') {
@@ -301,6 +310,7 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
         continue;
       }
       if (await readOne(scope, record, file, location)) return;
+      await purgeIfFlagged(scope, file.locationId, file.id);
     }
   }
 

@@ -157,6 +157,10 @@ export interface ImportStore {
   deferLease(scope: OrgScope, importId: string, owner: string, until: Date): Promise<void>;
   /** Done, unless another file completed into it since the reader looked (`drops` moved). */
   finish(scope: OrgScope, importId: string, input: { owner: string; drops: number; now: Date }): Promise<boolean>;
+  /** Deletes one import (the sweeper's never-read drop, once its files are gone). */
+  remove(scope: OrgScope, importId: string): Promise<void>;
+  removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
+  removeForOrg(scope: OrgScope): Promise<number>;
   /** Deletes an open import with no files left. */
   removeIfEmptyOpen(scope: OrgScope, importId: string, fileCount: number): Promise<void>;
   /** ImportView.found: the days this import's uploads wrote, from tw_sales_days. */
@@ -248,6 +252,15 @@ export function createImportStore(connection: Connection): ImportStore {
         { $set: { status: 'done', finishedAt: input.now, lease: null }, $unset: { activeLocation: '' } },
       );
       return result.matchedCount === 1;
+    },
+    async remove(scope, importId) {
+      await Import.deleteOne({ _id: oid(importId), orgId: org(scope) });
+    },
+    async removeForLocation(scope, locationId) {
+      return (await Import.deleteMany({ orgId: org(scope), locationId: oid(locationId) })).deletedCount;
+    },
+    async removeForOrg(scope) {
+      return (await Import.deleteMany({ orgId: org(scope) })).deletedCount;
     },
     async removeIfEmptyOpen(scope, importId, fileCount) {
       if (fileCount > 0) return;

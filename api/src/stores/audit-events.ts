@@ -22,11 +22,14 @@ export const AUDIT_DETAIL_KEYS = {
   'location.updated': ['name', 'townId'],
   'location.deleted': ['name', 'townId'],
   'sales.uploaded': ['locationId', 'dayCount', 'inserted', 'replaced', 'firstDate', 'lastDate', 'fileId', 'via'],
-  'sales.deleted': ['locationId', 'deletedDays'],
+  'sales.deleted': ['locationId', 'deletedDays', 'deletedFiles'],
   // Stored files (spec 11A): never a file name or anything from a file.
   'file.uploaded': ['locationId', 'kind', 'sizeBytes'],
   'file.deleted': ['locationId', 'kind', 'reason'],
   'file.raw_deleted': ['locationId', 'kind'],
+  'files.raw_deleted_all': ['locationId', 'count'],
+  // Staff: an organization's originals purged for a deletion request. The basis is an enum, never free text.
+  'org.originals_deleted': ['count', 'basis'],
   'note.created': ['locationId', 'kind', 'startDate', 'endDate'],
   'note.updated': ['locationId', 'kind', 'startDate', 'endDate'],
   'note.deleted': ['locationId', 'kind', 'startDate', 'endDate'],

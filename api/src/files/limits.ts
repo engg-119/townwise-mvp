@@ -92,3 +92,9 @@ export const DOCX_MAX_DOCUMENT_BYTES = 50 * MIB;
 export const MODEL_CALLS_PER_FILE = 2;
 export const MODEL_CALLS_PER_ZIP = 5;
 export const MODEL_CALLS_PER_IMPORT = 20;
+
+/**
+ * Originals are deleted this long after upload by the daily sweep (FileView.rawExpiresAt); the storage lifecycle rule is
+ * the backstop at 400 days. [CONFIRM: retention periods]
+ */
+export const RAW_RETENTION_DAYS = 365;
