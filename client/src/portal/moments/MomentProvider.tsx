@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { AccessibilityInfo, Platform, StyleSheet, Text, View } from 'react-native';
 
 import { useReducedMotion } from '../../motion';
@@ -11,7 +11,9 @@ import { StatementOverlay } from './StatementOverlay';
 // statement is announced and the moment ends at once, since an opaque layer would catch VoiceOver's activation.
 // On web, a moment that would start in a hidden tab keeps its ground up and waits until the tab is visible.
 //
-// It always renders {children}{overlay}{live region} in that order, so the children never remount.
+// It always renders {children}{overlay}{live region} in that order, so the children never remount. Each play has its
+// own id, the overlay's key, so a moment that follows another in the same commit starts fresh instead of keeping the
+// last one's words and finished timeline.
 
 export interface MomentApi {
   /** True from the commit a moment is decided until its layer is gone (native with a screen reader: announced). */
@@ -71,16 +73,19 @@ export function MomentProvider(props: { children: React.ReactNode }): React.JSX.
   const reduced = useReducedMotion();
   const screenReader = useScreenReader();
   const hidden = useSyncExternalStore(subscribeVisibility, tabHidden, () => false);
-  const [current, setCurrent] = useState<Statement | null>(null);
+  const [current, setCurrent] = useState<{ statement: Statement; id: number } | null>(null);
   const [announcement, setAnnouncement] = useState('');
+  const plays = useRef(0);
 
   const play = useCallback((statement: Statement) => {
-    setCurrent((playing) => playing ?? statement);
+    plays.current += 1;
+    const id = plays.current;
+    setCurrent((playing) => playing ?? { statement, id });
   }, []);
 
   const onStart = useCallback(() => {
     if (current === null) return;
-    const text = spokenStatement(current);
+    const text = spokenStatement(current.statement);
     if (Platform.OS === 'web') setAnnouncement(text);
     else AccessibilityInfo.announceForAccessibility(text);
   }, [current]);
@@ -95,10 +100,11 @@ export function MomentProvider(props: { children: React.ReactNode }): React.JSX.
   let overlay: React.ReactNode = null;
   if (current !== null) {
     overlay = screenReader === true
-      ? <AnnounceOnly onStart={onStart} onDone={onDone} />
+      ? <AnnounceOnly key={current.id} onStart={onStart} onDone={onDone} />
       : (
         <StatementOverlay
-          statement={current}
+          key={current.id}
+          statement={current.statement}
           reduced={screenReader === null ? null : reduced}
           waiting={hidden}
           onStart={onStart}

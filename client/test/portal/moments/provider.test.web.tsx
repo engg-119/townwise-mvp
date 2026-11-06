@@ -1,8 +1,9 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { useEffect } from 'react';
 import { Pressable, Text, View } from 'react-native';
 
 import {
-  MomentProvider, requestReceivedStatement, useMoment, welcomeStatement, type Statement,
+  MomentProvider, requestReceivedStatement, useMoment, welcomeStatement, type MomentApi, type Statement,
 } from '../../../src/portal/moments';
 
 // The moment player on web (spec 15.8), driven by useMoment().play(): the live region, aria-hidden visuals, keyboard
@@ -204,6 +205,30 @@ test('a press held through the automatic exit keeps the layer until it ends', ()
   expect(pointerEventsOf(shownLayer())).toBe('auto');
   fireEvent.pointerUp(shownLayer());
   fireEvent.click(shownLayer());
+  expect(layer()).toBeNull();
+});
+
+test('a moment played in the same commit the last one ends starts fresh', () => {
+  const api: Pick<MomentApi, 'play'> = { play: () => undefined };
+  function Grab(): null {
+    const { play } = useMoment();
+    useEffect(() => { api.play = play; }, [play]);
+    return null;
+  }
+  render(<MomentProvider><Grab /></MomentProvider>);
+  act(() => { api.play(RECEIVED); });
+  advance(400);
+  // The key ends the first moment and the page plays the next one, in one batch.
+  act(() => {
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+    api.play(WELCOME);
+  });
+  expect(screen.getByText('Welcome')).toBeTruthy();
+  expect(screen.queryByText('received')).toBeNull();
+  expect(region().textContent).toBe('Welcome to Townwise, Sam. Hanover Inn, ready to set up.');
+  advance(3399);
+  expect(layer()).not.toBeNull();
+  advance(1);
   expect(layer()).toBeNull();
 });
 
