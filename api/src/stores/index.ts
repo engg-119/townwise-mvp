@@ -7,6 +7,7 @@ import { createChatLiveTurnStore, type ChatLiveTurnStore } from './chat-live-tur
 import { createChatProposalStore, type ChatProposalStore } from './chat-proposals.ts';
 import { createChatUsageStore, type ChatUsageStore } from './chat-usage.ts';
 import { createFileStore, type FileStore } from './files.ts';
+import { createForecastStore, type ForecastStore } from './forecasts.ts';
 import { createImportStore, type ImportStore } from './imports.ts';
 import { createLocationStore, type LocationStore } from './locations.ts';
 import { createMemberStore, type MemberStore } from './members.ts';
@@ -39,6 +40,8 @@ export interface TownwiseStores {
   readonly files: FileStore;
   readonly imports: ImportStore;
   readonly uploadDays: UploadDayStore;
+  /** U13B, forecast runs (spec 14.4). */
+  readonly forecasts: ForecastStore;
 }
 
 /** Registers every Townwise model on `connection`; call it before ensureIndexes. */
@@ -62,5 +65,7 @@ export function createTownwiseStores(connection: Connection): TownwiseStores {
     files: createFileStore(connection),
     imports: createImportStore(connection),
     uploadDays: createUploadDayStore(connection),
+    // U13B, forecast runs.
+    forecasts: createForecastStore(connection),
   };
 }

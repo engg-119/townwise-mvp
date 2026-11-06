@@ -1,0 +1,327 @@
+{
+  "schema": "townwise.forecast-run/1",
+  "metric": "guests",
+  "model": {
+    "family": "hybrid_linear_xgboost",
+    "version": "v9",
+    "notebookCommit": "0000000"
+  },
+  "trainingSource": "files_from_owner",
+  "trainedFrom": "2025-01-01",
+  "dataThrough": "2026-04-30",
+  "madeAt": "2026-05-01",
+  "frozen": null,
+  "interval": {
+    "level": 0.8,
+    "widened": true
+  },
+  "backtest": {
+    "from": "2026-01-05",
+    "to": "2026-03-15",
+    "weeks": 10,
+    "weeklyTypicalErrorPct": 10,
+    "weeksOver20Pct": 1,
+    "weeklyRangePct": {
+      "below": 20,
+      "above": 20
+    }
+  },
+  "days": [
+    {
+      "date": "2026-05-01",
+      "status": "open",
+      "low": 80,
+      "mid": 100,
+      "high": 120,
+      "baseline": null,
+      "reasons": [
+        {
+          "kind": "weekday",
+          "ref": null,
+          "effectPct": null
+        },
+        {
+          "kind": "term",
+          "ref": "hanover-nh:classes:spring",
+          "effectPct": null
+        }
+      ]
+    },
+    {
+      "date": "2026-05-02",
+      "status": "open",
+      "low": 80,
+      "mid": 100,
+      "high": 120,
+      "baseline": null,
+      "reasons": [
+        {
+          "kind": "weekday",
+          "ref": null,
+          "effectPct": null
+        },
+        {
+          "kind": "term",
+          "ref": "hanover-nh:classes:spring",
+          "effectPct": null
+        }
+      ]
+    },
+    {
+      "date": "2026-05-03",
+      "status": "open",
+      "low": 80,
+      "mid": 100,
+      "high": 120,
+      "baseline": null,
+      "reasons": [
+        {
+          "kind": "weekday",
+          "ref": null,
+          "effectPct": null
+        },
+        {
+          "kind": "term",
+          "ref": "hanover-nh:classes:spring",
+          "effectPct": null
+        }
+      ]
+    },
+    {
+      "date": "2026-05-04",
+      "status": "closed",
+      "low": null,
+      "mid": null,
+      "high": null,
+      "baseline": null,
+      "reasons": [
+        {
+          "kind": "closure",
+          "ref": null,
+          "effectPct": null
+        }
+      ]
+    },
+    {
+      "date": "2026-05-05",
+      "status": "open",
+      "low": 80,
+      "mid": 100,
+      "high": 120,
+      "baseline": null,
+      "reasons": [
+        {
+          "kind": "weekday",
+          "ref": null,
+          "effectPct": null
+        },
+        {
+          "kind": "term",
+          "ref": "hanover-nh:classes:spring",
+          "effectPct": null
+        }
+      ]
+    },
+    {
+      "date": "2026-05-06",
+      "status": "open",
+      "low": 80,
+      "mid": 100,
+      "high": 120,
+      "baseline": null,
+      "reasons": [
+        {
+          "kind": "weekday",
+          "ref": null,
+          "effectPct": null
+        },
+        {
+          "kind": "term",
+          "ref": "hanover-nh:classes:spring",
+          "effectPct": null
+        }
+      ]
+    },
+    {
+      "date": "2026-05-07",
+      "status": "open",
+      "low": 80,
+      "mid": 100,
+      "high": 120,
+      "baseline": null,
+      "reasons": [
+        {
+          "kind": "weekday",
+          "ref": null,
+          "effectPct": null
+        },
+        {
+          "kind": "term",
+          "ref": "hanover-nh:classes:spring",
+          "effectPct": null
+        }
+      ]
+    },
+    {
+      "date": "2026-05-08",
+      "status": "open",
+      "low": 80,
+      "mid": 100,
+      "high": 120,
+      "baseline": null,
+      "reasons": [
+        {
+          "kind": "weekday",
+          "ref": null,
+          "effectPct": null
+        },
+        {
+          "kind": "term",
+          "ref": "hanover-nh:classes:spring",
+          "effectPct": null
+        }
+      ]
+    },
+    {
+      "date": "2026-05-09",
+      "status": "open",
+      "low": 80,
+      "mid": 100,
+      "high": 120,
+      "baseline": null,
+      "reasons": [
+        {
+          "kind": "weekday",
+          "ref": null,
+          "effectPct": null
+        },
+        {
+          "kind": "term",
+          "ref": "hanover-nh:classes:spring",
+          "effectPct": null
+        },
+        {
+          "kind": "event",
+          "ref": "hanover-nh:not-on-the-calendar",
+          "effectPct": 10
+        }
+      ]
+    },
+    {
+      "date": "2026-05-10",
+      "status": "open",
+      "low": 80,
+      "mid": 100,
+      "high": 120,
+      "baseline": null,
+      "reasons": [
+        {
+          "kind": "weekday",
+          "ref": null,
+          "effectPct": null
+        },
+        {
+          "kind": "term",
+          "ref": "hanover-nh:classes:spring",
+          "effectPct": null
+        }
+      ]
+    },
+    {
+      "date": "2026-05-11",
+      "status": "closed",
+      "low": null,
+      "mid": null,
+      "high": null,
+      "baseline": null,
+      "reasons": [
+        {
+          "kind": "closure",
+          "ref": null,
+          "effectPct": null
+        }
+      ]
+    },
+    {
+      "date": "2026-05-12",
+      "status": "open",
+      "low": 80,
+      "mid": 100,
+      "high": 120,
+      "baseline": null,
+      "reasons": [
+        {
+          "kind": "weekday",
+          "ref": null,
+          "effectPct": null
+        },
+        {
+          "kind": "term",
+          "ref": "hanover-nh:classes:spring",
+          "effectPct": null
+        }
+      ]
+    },
+    {
+      "date": "2026-05-13",
+      "status": "booked",
+      "low": null,
+      "mid": null,
+      "high": null,
+      "baseline": null,
+      "reasons": [
+        {
+          "kind": "booking",
+          "ref": null,
+          "effectPct": null
+        }
+      ]
+    },
+    {
+      "date": "2026-05-14",
+      "status": "open",
+      "low": 80,
+      "mid": 100,
+      "high": 120,
+      "baseline": null,
+      "reasons": [
+        {
+          "kind": "weekday",
+          "ref": null,
+          "effectPct": null
+        },
+        {
+          "kind": "term",
+          "ref": "hanover-nh:classes:spring",
+          "effectPct": null
+        }
+      ]
+    }
+  ],
+  "weeks": [
+    {
+      "from": "2026-05-01",
+      "to": "2026-05-03",
+      "openDays": 3,
+      "low": 240,
+      "mid": 300,
+      "high": 360
+    },
+    {
+      "from": "2026-05-04",
+      "to": "2026-05-10",
+      "openDays": 6,
+      "low": 480,
+      "mid": 600,
+      "high": 720
+    },
+    {
+      "from": "2026-05-11",
+      "to": "2026-05-14",
+      "openDays": 3,
+      "low": 240,
+      "mid": 300,
+      "high": 360
+    }
+  ]
+}

@@ -192,13 +192,15 @@ export async function uploadSales(ctx: TownwiseContext, req: Request, res: Respo
   });
 }
 
-/** DELETE /api/org/locations/:locationId/sales: every day and upload record of the location. Notes stay. */
+/** DELETE /api/org/locations/:locationId/sales: every day and upload record of the location, and (U13B) its forecasts. Notes stay. */
 export async function deleteSales(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const admin = orgAdmin(principal);
   const { scope } = admin;
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const deletedDays = await ctx.stores.salesDays.removeForLocation(scope, location.id);
   const deletedUploads = await ctx.stores.uploads.removeForLocation(scope, location.id);
+  // U13B: forecasts are made from the sales data, so they go with it.
+  await ctx.stores.forecasts.removeForLocation(scope, location.id);
   await recordAfter(ctx, {
     ...actorOf(admin), at: ctx.now(), orgId: scope.orgId, action: 'sales.deleted',
     target: { type: 'location', id: location.id },

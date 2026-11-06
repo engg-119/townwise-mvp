@@ -9,6 +9,7 @@ import type { ChatModel } from './chat/model.ts';
 import { TURN_TIME_LIMIT_MS } from './chat/turn.ts';
 import { resolveTownwiseConfig, type ResolvedTownwiseConfig, type TownwiseConfig } from './config.ts';
 import type { FileBlobs } from './files/blobs.ts';
+import { createForecastReader, type ForecastReader } from './forecasts/reader.ts';
 import { OFF_MAILER, type Mailer } from './mail/mailer.ts';
 import { createPeopleInTownReader, type PeopleInTownReader } from './people-in-town/reader.ts';
 import { PEOPLE_DATA, type PeopleData } from './people-in-town/sources.ts';
@@ -48,10 +49,12 @@ export interface TownwiseDeps {
 
 /**
  * U13A: the readers TownwiseAI's tools and the estimates routes share (spec 13.2). The town calendar is pure public
- * data, read straight from town-calendar.ts. Forecast runs add their reader here.
+ * data, read straight from town-calendar.ts. U13B adds the published forecast runs.
  */
 export interface TownwisePorts {
   readonly peopleInTown: PeopleInTownReader;
+  /** U13B: published forecast runs only (spec 14.4). */
+  readonly forecasts: ForecastReader;
 }
 
 /** What every route handler receives besides the request and the principal. */
@@ -102,7 +105,11 @@ export function createTownwiseApi(deps: TownwiseDeps, routes: readonly TownwiseR
     placesMap: deps.placesMap ?? null,
     files: deps.files ?? null,
     nudgeFiles: () => { deps.fileWorker?.nudge(); },
-    ports: { peopleInTown: createPeopleInTownReader({ stores, data: deps.peopleData ?? PEOPLE_DATA }) },
+    ports: {
+      peopleInTown: createPeopleInTownReader({ stores, data: deps.peopleData ?? PEOPLE_DATA }),
+      // U13B.
+      forecasts: createForecastReader({ stores }),
+    },
   };
   // No router-wide body parser: each route mounts its own limit after the policy passes (spec 7.2 step 6).
   const router = express.Router();

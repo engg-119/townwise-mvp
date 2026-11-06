@@ -179,6 +179,8 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
     'org.sales.days': '?from=2026-01-01&to=2026-05-31', 'org.calendar.get': '?from=2026-01-01&to=2026-05-31',
     // U13A.
     'org.people.get': '?from=2026-05-01&to=2026-05-31',
+    // U13B.
+    'org.forecast.get': '?from=2026-05-01&to=2026-05-31',
   };
 
   it('covers the team, location, sales, note, tuning chat and proposal routes', () => {
@@ -190,6 +192,8 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
       'org.files.create', 'org.files.chunk', 'org.files.complete', 'org.files.list', 'org.files.get', 'org.files.raw', 'org.files.clean',
       'org.files.remove_raw', 'org.files.remove', 'org.imports.current', 'org.imports.get', 'org.imports.start', 'org.imports.answer',
       'org.people.get', 'org.estimates.about',
+      // U13B.
+      'org.forecast.get',
     ]));
   });
 

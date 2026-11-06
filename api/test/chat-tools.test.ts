@@ -14,6 +14,8 @@ const FROZEN_NAMES = [
   'get_location_overview', 'get_sales_days', 'list_notes', 'get_town_profile', 'propose_note',
   // U13A.
   'get_town_calendar', 'get_people_in_town',
+  // U13B.
+  'get_forecast',
 ];
 
 describe('the tool registry', () => {
@@ -30,7 +32,7 @@ describe('the tool registry', () => {
 
   it('finds a tool by name and nothing for an unknown one', () => {
     expect(toolNamed('list_notes')?.definition.name).toBe('list_notes');
-    expect(toolNamed('get_forecast')).toBeUndefined();
+    expect(toolNamed('get_weather')).toBeUndefined();
   });
 });
 

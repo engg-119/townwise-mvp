@@ -1,19 +1,24 @@
 // GET .../people-in-town and GET .../estimates/about (spec 10.13, 13.2): Hanover's term state and calendar with no
 // headcount until its inputs are researched, a synthetic researched entry giving a range, a seasonal town and a town
 // outside the twelve, the model card with no forecast, strict ranges, 404 across organizations, view-as reads, and
-// no log line of their own. Every figure is synthetic.
+// no log line of their own. U13B: the published forecast (drafts and withdrawn runs invisible, the newest eligible
+// run per date, actuals and live accuracy) and the model card's run state. Every figure is synthetic.
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { utcDay } from '../src/dates.ts';
 import { MODEL_CARD, MODEL_CARD_VERSION, type EstimatesAbout } from '../src/estimates/about.ts';
+import type { ForecastWindow } from '../src/forecasts/reader.ts';
 import type { PeopleInTownWindow } from '../src/people-in-town/estimate.ts';
 import type { PeopleData } from '../src/people-in-town/sources.ts';
 import type { Town } from '../src/towns.ts';
 import { addGrant, addLocation, addNote, addSalesDay, addSeat, createOrg } from './helpers/fixtures.ts';
-import { call, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
+import {
+  call, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
+} from './helpers/server.ts';
 
 const RESEARCHED: PeopleData = {
   sources: [{ id: 'census-test', label: 'Synthetic census table', url: 'https://census.example.test/p1', retrieved: '2026-11-01', confidence: 'high' }],
@@ -144,6 +149,128 @@ describe('GET /api/org/locations/:locationId/estimates/about', () => {
     const body = await (await call(server, `/api/org/locations/${amherst}/estimates/about`, { session: member })).json() as EstimatesAbout;
     expect(body.people).toEqual({ headcountInputs: ['residents'], sources: RESEARCHED.sources });
     expect(body.calendar).toEqual({ researched: true, covers: expect.any(Object) as unknown });
+  });
+});
+
+// U13B.
+describe('GET /api/org/locations/:locationId/forecast, and the model card’s run state', () => {
+  const RUN = JSON.parse(readFileSync(new URL('fixtures/forecast-run.json', import.meta.url), 'utf8')) as {
+    days: { date: string; low: number | null; mid: number | null; high: number | null }[];
+    weeks: { from: string }[];
+  } & Record<string, unknown>;
+  /** The same model a week later: trained through May 7, forecasting May 8 to 14 a little higher. */
+  const LATER = {
+    ...structuredClone(RUN), dataThrough: '2026-05-07', madeAt: '2026-05-08',
+    days: structuredClone(RUN.days).filter((day) => day.date > '2026-05-07').map((day) => (day.mid === null ? day : { ...day, low: 90, mid: 110, high: 130 })),
+    weeks: structuredClone(RUN.weeks).filter((week) => week.from > '2026-05-07'),
+  };
+  let staff: TestSession;
+  let forecasted: string;
+
+  beforeAll(async () => {
+    staff = await signInStaff(server);
+    forecasted = await addLocation(server, { orgId, name: 'Forecast Room' });
+    for (const [date, guests] of [['2026-05-01', 100], ['2026-05-02', 100], ['2026-05-03', 100], ['2026-05-05', 100], ['2026-05-06', 130], ['2026-05-07', 100]] as const) {
+      await addSalesDay(server, { orgId, locationId: forecasted, date, guests, netSalesCents: guests * 1000 });
+    }
+  });
+  afterAll(async () => { await removeStaffFactor(server); });
+
+  async function staffImport(body: unknown): Promise<string> {
+    const res = await call(server, `/api/admin/orgs/${orgId}/locations/${forecasted}/forecast-runs`, { session: staff, json: body });
+    expect(res.status).toBe(201);
+    return (await res.json() as { run: { id: string } }).run.id;
+  }
+  async function staffChange(runId: string, verb: 'publish' | 'withdraw'): Promise<void> {
+    expect((await call(server, `/api/admin/orgs/${orgId}/forecast-runs/${runId}/${verb}`, { session: staff, json: {} })).status).toBe(200);
+  }
+  async function forecast(query = '?from=2026-05-01&to=2026-05-14', session = member): Promise<ForecastWindow> {
+    const res = await call(server, `/api/org/locations/${forecasted}/forecast${query}`, { session });
+    expect(res.status).toBe(200);
+    return await res.json() as ForecastWindow;
+  }
+  async function about(): Promise<EstimatesAbout> {
+    return await (await call(server, `/api/org/locations/${forecasted}/estimates/about`, { session: member })).json() as EstimatesAbout;
+  }
+
+  let first: string;
+
+  it('says no forecast while none is published, and a draft stays invisible', async () => {
+    const none = { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], notCovered: [{ from: '2026-05-01', to: '2026-05-14' }], live: null };
+    expect(await forecast()).toEqual(none);
+    first = await staffImport(RUN);
+    expect(await forecast()).toEqual(none);
+    expect((await about()).forecast).toEqual({ run: null, live: null });
+  });
+
+  it('once published: every day with its range, reasons in words, actuals, and the run’s own week rows', async () => {
+    await staffChange(first, 'publish');
+    const body = await forecast();
+    expect(body).toMatchObject({ available: true, reason: null, notCovered: [] });
+    expect(body.runs).toEqual([expect.objectContaining({ id: first, model: { family: 'hybrid_linear_xgboost', version: 'v9', label: 'Townwise demand model v9' } })]);
+    expect(body.days).toHaveLength(14);
+    expect(body.days[0]).toEqual({
+      date: '2026-05-01', weekday: 'Fri', status: 'open', low: 80, mid: 100, high: 120, baseline: null,
+      reasons: [
+        { kind: 'weekday', label: 'Friday', effectPct: null, sources: [] },
+        { kind: 'term', label: 'Spring term classes', effectPct: null, sources: expect.any(Array) as unknown },
+      ],
+      runId: first, madeAt: '2026-05-01', madeAfterDay: true, actual: 100, inRange: true,
+    });
+    expect(body.days.find((day) => day.date === '2026-05-06')).toMatchObject({ actual: 130, inRange: false, madeAfterDay: false });
+    expect(body.days.find((day) => day.date === '2026-05-04')).toMatchObject({ status: 'closed', low: null, inRange: null });
+    expect(body.days.find((day) => day.date === '2026-05-13')).toMatchObject({ status: 'booked', low: null, inRange: null });
+    expect(body.days.find((day) => day.date === '2026-05-09')?.reasons.map((reason) => reason.label)).toEqual(['Saturday', 'Spring term classes', 'Town event']);
+    // Weeks are the run's own rows; the first week's three open days all have actuals.
+    expect(body.weeks.map((week) => [week.from, week.to, week.mid, week.actual, week.inRange])).toEqual([
+      ['2026-05-01', '2026-05-03', 300, 300, true], ['2026-05-04', '2026-05-10', 600, null, null], ['2026-05-11', '2026-05-14', 300, null, null],
+    ]);
+    // Six scored days, one missed: |30| over 630 guests.
+    expect(body.live).toEqual({ days: 6, inRange: 5, typicalErrorPct: 4.8, from: '2026-05-01', to: '2026-05-07' });
+  });
+
+  it('uses the newest published run whose data ends before each day, and weeks only wholly from one run', async () => {
+    const later = await staffImport(LATER);
+    await staffChange(later, 'publish');
+    const body = await forecast();
+    expect(body.runs.map((run) => run.id)).toEqual([later, first]);
+    expect(body.days.filter((day) => day.runId === later).map((day) => day.date)).toEqual([
+      '2026-05-08', '2026-05-09', '2026-05-10', '2026-05-11', '2026-05-12', '2026-05-13', '2026-05-14',
+    ]);
+    expect(body.days.find((day) => day.date === '2026-05-08')).toMatchObject({ low: 90, mid: 110, high: 130 });
+    expect(body.days.find((day) => day.date === '2026-05-07')).toMatchObject({ runId: first, mid: 100 });
+    // May 4 to 10 mixes two runs, so no week row covers it.
+    expect(body.weeks.map((week) => [week.from, week.runId])).toEqual([['2026-05-01', first], ['2026-05-11', later]]);
+    const card = await about();
+    expect(card.forecast.run).toMatchObject({ id: later, dataThrough: '2026-05-07', madeAt: '2026-05-08', interval: { level: 0.8, widened: true } });
+    expect(card.forecast.live).toMatchObject({ days: 6, inRange: 5 });
+    await staffChange(later, 'withdraw');
+    expect((await forecast()).runs.map((run) => run.id)).toEqual([first]);
+    expect((await about()).forecast.run).toMatchObject({ id: first });
+  });
+
+  it('a range the forecast doesn’t reach says which days it doesn’t cover', async () => {
+    const body = await forecast('?from=2026-05-12&to=2026-05-20');
+    expect(body).toMatchObject({ available: true, notCovered: [{ from: '2026-05-15', to: '2026-05-20' }] });
+    expect(await forecast('?from=2026-05-20&to=2026-05-25')).toMatchObject({ available: false, reason: 'not_covered', days: [] });
+  });
+
+  it('answers 400 for more than 31 days, a start more than 400 days back, or an extra key', async () => {
+    for (const query of ['?from=2026-05-01&to=2026-06-01', '?from=2025-04-26&to=2025-05-01', '?from=2026-05-01&to=2026-05-02&x=1', '']) {
+      const res = await call(server, `/api/org/locations/${forecasted}/forecast${query}`, { session: member });
+      expect({ query, status: res.status }).toEqual({ query, status: 400 });
+    }
+    expect((await call(server, `/api/org/locations/${forecasted}/forecast?from=2026-05-01&to=2026-05-31`, { session: member })).status).toBe(200);
+  });
+
+  it('is readable under view-as, showing only what the person sees, and logs no figure', async () => {
+    await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: member.userId, orgId });
+    server.logs.length = 0;
+    const seen = await forecast('?from=2026-05-01&to=2026-05-14', staff);
+    expect(seen.runs.map((run) => run.id)).toEqual([first]);
+    expect(server.logs.filter((line) => line.includes('townwise.')).every((line) => line.includes('townwise.view_as_read'))).toBe(true);
+    expect(server.logs.join('\n')).not.toMatch(/"(low|mid|high|actual|guests)"/);
+    await server.connection.collection('tw_view_as_grants').deleteMany({ actorUserId: staff.userId });
   });
 });
 

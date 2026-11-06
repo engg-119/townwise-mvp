@@ -163,6 +163,11 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'note.deleted': return noteSummary('Deleted', d);
     case 'chat.turn_completed': return 'Asked the tuning chat about a location';
     case 'chat.conversation_deleted': return 'Deleted a tuning chat conversation';
+    // U13B.
+    case 'forecast.imported': return `Imported a forecast (model ${text(d.modelVersion)}) for ${text(d.from)} to ${text(d.to)}`;
+    case 'forecast.published': return `Published a forecast (model ${text(d.modelVersion)}) for ${text(d.from)} to ${text(d.to)}`;
+    case 'forecast.withdrawn': return `Withdrew a forecast (model ${text(d.modelVersion)}) for ${text(d.from)} to ${text(d.to)}`;
+    case 'forecast.deleted': return `Deleted a forecast (model ${text(d.modelVersion)}) for ${text(d.from)} to ${text(d.to)}`;
     case 'view_as.started': return `Viewed as ${text(d.targetEmail)}`;
     case 'view_as.ended':
       if (d.endReason === 'expired') return 'View-as expired';
