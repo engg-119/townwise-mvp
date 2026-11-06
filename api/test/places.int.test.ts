@@ -123,7 +123,7 @@ describe('validation: 400 invalid_request, and Google is not called', () => {
   it('autocomplete: input 2 to 120 characters after trimming, and an optional version 4 UUID', async () => {
     const bad: unknown[] = [
       {}, { input: '' }, { input: ' a ' }, { input: 'x'.repeat(121) }, { input: 42 }, { input: ['Lou'] },
-      { input: 'Lou', sessionToken: 'not-a-uuid' }, { input: 'Lou', sessionToken: '6f1c2f7e-3b0a-1c39-9d2e-5a7b8c9d0e1f' },
+      { input: 'Lou', sessionToken: 'not-a-uuid' }, { input: 'Lou', sessionToken: '00000000-0000-1000-8000-000000000000' },
       { input: 'Lou', sessionToken: null },
     ];
     for (const json of bad) expect({ json, ...(await errorOf(await autocomplete(json))) }).toEqual({ json, status: 400, error: 'invalid_request' });

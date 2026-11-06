@@ -9,7 +9,7 @@ import { resolveTown, townInputSchema } from '../src/towns.ts';
 import { component, fakePlaces, placeDetails, placePrediction, queryPrediction, usAddress } from './helpers/places-fetch.ts';
 
 const KEY = 'test-places-key';
-const TOKEN = '6f1c2f7e-3b0a-4c39-9d2e-5a7b8c9d0e1f';
+const TOKEN = '00000000-0000-4000-8000-000000000000';
 const PLACE_ID = 'ChIJTestPlace0001';
 
 const fake = fakePlaces();
