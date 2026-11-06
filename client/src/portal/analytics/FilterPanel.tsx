@@ -91,7 +91,10 @@ export function FilterPanel(props: {
             onChange={(checked) => { props.onYear(year, checked); }}
           />
         ))}
-        {props.keepOneYear ? <Text nativeID={KEEP_ONE_ID} style={styles.help}>{KEEP_ONE_YEAR}</Text> : null}
+        {/* Always present, so a screen reader announces the text when the last year's box is refused. */}
+        <View nativeID={`${KEEP_ONE_ID}-live`} aria-live="polite">
+          {props.keepOneYear ? <Text nativeID={KEEP_ONE_ID} style={styles.help}>{KEEP_ONE_YEAR}</Text> : null}
+        </View>
       </Group>
     </View>
   );

@@ -284,3 +284,13 @@ test('unchecking the selected day’s year clears the selection', async () => {
   fireEvent.click(screen.getByRole('checkbox', { name: 'Closed days' }));
   expect(await screen.findByRole('region', { name: 'Saturday, Oct 17, 2026' })).toBeTruthy();
 });
+
+test('"Keep at least one year." is read from a polite live region that is there before it is needed', async () => {
+  await ready();
+  const region = document.getElementById('analytics-keep-year-live');
+  expect(region?.getAttribute('aria-live')).toBe('polite');
+  expect(region?.textContent).toBe('');
+  fireEvent.click(screen.getByRole('checkbox', { name: '2025' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: '2026' }));
+  expect(region?.textContent).toBe('Keep at least one year.');
+});
