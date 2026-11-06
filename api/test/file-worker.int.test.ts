@@ -190,14 +190,15 @@ describe('reading stored files', () => {
   it('never puts a file name, a header, a location value or a cell in a log line, an audit event or an import view’s report', async () => {
     const locationId = await newLocation('Main Street');
     server.logs.length = 0;
-    const text = `Date,Location,Guests,Net Sales,Notes\n2025-01-01,Main Street,10,100,${SENTINEL}\n2025-01-01,Elm Street,20,200,${SENTINEL}\n`;
+    // Figures with a decimal point, which no id or timestamp in a log line can contain by chance.
+    const text = `Date,Location,Guests,Net Sales,Notes\n2025-01-01,Main Street,10,7391.58,${SENTINEL}\n2025-01-01,Elm Street,20,6284.17,${SENTINEL}\n`;
     const { file, importId } = await drop(locationId, member, `${SENTINEL}.csv`, Buffer.from(text));
     await start(locationId, importId);
     const done = await settledImport(locationId, importId);
     expect(done.files[0]?.status).toBe('read');
     const report = (await (await call(server, `${base(locationId)}/files/${file.id}`, { session: member })).json() as { report: unknown }).report;
     const stored = JSON.stringify([...server.logs, await auditEvents(server)]);
-    for (const secret of [SENTINEL, 'Elm Street', 'Notes', '100']) expect(stored).not.toContain(secret);
+    for (const secret of [SENTINEL, 'Elm Street', 'Notes', '7391.58', '6284.17']) expect(stored).not.toContain(secret);
     // The report names headers and the location value chosen, but no other cell.
     expect(JSON.stringify(report)).not.toContain(SENTINEL);
     expect(JSON.stringify(report)).not.toContain('Elm Street');
