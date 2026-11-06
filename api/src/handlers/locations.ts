@@ -1,6 +1,10 @@
 // The organization and its locations (spec 10.3, P9, P10, P16): members read them, org admins add, change and
 // delete locations. The organization comes only from the principal's scope, and every location route loads
-// { _id, orgId } first (spec 6.10 rule 4).
+// { _id, orgId } first (spec 6.10 rule 4). A location can carry the Google place id the org admin picked: the server
+// asks Google for that place and takes its town the way the Places search does (townOfAddress), so a client never
+// sets a town for a place on its own word. Neither the id nor the address reaches a log or an audit event.
+import { randomUUID } from 'node:crypto';
+
 import { objectId } from '@ckeith26/mongo';
 import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
@@ -10,14 +14,17 @@ import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import { calibrationOf, type Calibration } from '../calibration.ts';
+import { placeIdSchema } from '../place-id.ts';
+import { PlacesUnavailableError, type PlaceDetails } from '../places/google.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import { NO_COVERAGE, type Coverage } from '../stores/sales-days.ts';
 import { resolveTown, townInputSchema, type Town } from '../towns.ts';
+import { townOfAddress } from './places.ts';
 import { actorOf, orgAdmin } from './team.ts';
 
 /** Spec 10.1. */
 export interface LocationSummary {
-  id: string; name: string; town: Town; coverage: Coverage; calibration: Calibration;
+  id: string; name: string; town: Town; placeId: string | null; coverage: Coverage; calibration: Calibration;
   notesCount: number; lastUploadAt: string | null;
 }
 
@@ -25,9 +32,11 @@ export interface LocationSummary {
 const MAX_LOCATIONS = 25;
 
 const nameSchema = z.string().trim().min(1).max(80);
-const createBody = z.object({ name: nameSchema, town: townInputSchema });
-const updateBody = z.object({ name: nameSchema.optional(), town: townInputSchema.optional() })
-  .refine((body) => body.name !== undefined || body.town !== undefined);
+const createBody = z.object({ name: nameSchema, town: townInputSchema, placeId: placeIdSchema.nullish() });
+/** A place id comes with the town the client showed for it, which must be the place's own; null takes the place off. */
+const updateBody = z.object({ name: nameSchema.optional(), town: townInputSchema.optional(), placeId: placeIdSchema.nullable().optional() })
+  .refine((body) => body.name !== undefined || body.town !== undefined || body.placeId !== undefined)
+  .refine((body) => typeof body.placeId !== 'string' || body.town !== undefined);
 
 function notFound(): AppError {
   return new AppError(404, 'not_found', 'Not found');
@@ -35,6 +44,41 @@ function notFound(): AppError {
 
 function unknownTown(): AppError {
   return new AppError(400, 'unknown_town', 'Unknown town');
+}
+
+function placesUnavailable(): AppError {
+  return new AppError(503, 'places_unavailable', 'Place search isn’t available right now');
+}
+
+/** The same town: one of the twelve by id, another town by name (ignoring case) and state. */
+function sameTown(a: Town, b: Town): boolean {
+  if (a.townId !== null || b.townId !== null) return a.townId === b.townId;
+  return a.name.trim().toLowerCase() === b.name.trim().toLowerCase() && a.state === b.state;
+}
+
+/**
+ * The place an org admin picked, checked with Google: its current id and its own town, which must be the town the
+ * client sent. 503 places_unavailable while the search is off or Google fails (logged by route id and code only, as
+ * the Places routes do); 400 unknown_place when Google has no such place; 400 place_not_supported outside the 50
+ * states and DC or without a town; 400 place_town_mismatch when the sent town is another.
+ */
+async function checkedPlace(ctx: TownwiseContext, routeId: string, placeId: string, sent: Town): Promise<{ placeId: string; town: Town }> {
+  const places = ctx.places;
+  if (places === null) throw placesUnavailable();
+  let place: PlaceDetails | null;
+  try {
+    // A session of its own: the client's search session ended with its details call.
+    place = await places.details(placeId, randomUUID());
+  } catch (err) {
+    if (!(err instanceof PlacesUnavailableError)) throw err;
+    ctx.logger.warn({ routeId, code: err.code, status: err.status, errType: err.errType }, 'townwise.places_failed');
+    throw placesUnavailable();
+  }
+  if (place === null) throw new AppError(400, 'unknown_place', 'Unknown place');
+  const town = townOfAddress(place.addressComponents);
+  if (town === null) throw new AppError(400, 'place_not_supported', 'Townwise works with places in a US town');
+  if (!sameTown(town, sent)) throw new AppError(400, 'place_town_mismatch', 'That town isn’t the place’s town');
+  return { placeId: place.placeId, town };
 }
 
 /** The member policy already passed; this narrows the principal for the handler. */
@@ -60,13 +104,17 @@ async function summarizer(ctx: TownwiseContext, scope: OrgScope): Promise<(locat
   return (location) => {
     const covered = coverage.get(location.id) ?? NO_COVERAGE;
     return {
-      id: location.id, name: location.name, town: location.town, coverage: covered, calibration: calibrationOf(covered),
-      notesCount: notes.get(location.id) ?? 0, lastUploadAt: uploads.get(location.id)?.toISOString() ?? null,
+      id: location.id, name: location.name, town: location.town, placeId: location.placeId, coverage: covered,
+      calibration: calibrationOf(covered), notesCount: notes.get(location.id) ?? 0,
+      lastUploadAt: uploads.get(location.id)?.toISOString() ?? null,
     };
   };
 }
 
-/** GET /api/org. `requestedLocationCount` is the location count of the request the organization was approved from. */
+/**
+ * GET /api/org. `requestedLocationCount` is the location count of the request the organization was approved from;
+ * `placeSearch` says whether the Google Places search is on, so P10 and P16 offer it only then.
+ */
 export async function getOwnOrg(ctx: TownwiseContext, _req: Request, res: Response, principal: Principal): Promise<void> {
   const member = memberOf(principal);
   const { scope } = member;
@@ -83,6 +131,7 @@ export async function getOwnOrg(ctx: TownwiseContext, _req: Request, res: Respon
     role: member.role,
     locations: locations.map(summarize),
     requestedLocationCount: request?.locationCount ?? null,
+    placeSearch: ctx.places !== null,
   });
 }
 
@@ -91,24 +140,33 @@ export async function createLocation(ctx: TownwiseContext, req: Request, res: Re
   const admin = orgAdmin(principal);
   const { scope } = admin;
   const body = parseInput(createBody, req.body);
-  const town = resolveTown(body.town);
-  if (town === null) throw unknownTown();
+  const sent = resolveTown(body.town);
+  if (sent === null) throw unknownTown();
   if (await ctx.stores.locations.count(scope) >= MAX_LOCATIONS) {
     throw new AppError(409, 'location_limit', 'The organization has reached its location limit');
   }
+  const place = body.placeId === undefined || body.placeId === null
+    ? { placeId: null, town: sent }
+    : await checkedPlace(ctx, 'org.locations.create', body.placeId, sent);
   const now = ctx.now();
-  const location = await ctx.stores.locations.create(scope, { name: body.name, town, createdAt: now, createdBy: admin.userId });
+  const location = await ctx.stores.locations.create(scope, {
+    name: body.name, town: place.town, placeId: place.placeId, createdAt: now, createdBy: admin.userId,
+  });
   if (location === null) throw new AppError(409, 'location_name_taken', 'Another location already uses that name');
   await recordAfter(ctx, {
     ...actorOf(admin), at: now, orgId: scope.orgId, action: 'location.created',
     target: { type: 'location', id: location.id },
-    details: { name: location.name, townId: location.town.townId },
+    details: { name: location.name, townId: location.town.townId, hasPlace: location.placeId !== null },
   });
   const summarize = await summarizer(ctx, scope);
   res.status(201).json({ location: summarize(location) });
 }
 
-/** PATCH /api/org/locations/:locationId (P16): name, town or both. */
+/**
+ * PATCH /api/org/locations/:locationId (P16): name, town, place, or any of them. A place id sets the place and its
+ * town (checkedPlace); null takes the place off; a town changed by hand takes the place off too, since the place no
+ * longer describes the location.
+ */
 export async function updateLocation(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const admin = orgAdmin(principal);
   const { scope } = admin;
@@ -120,14 +178,20 @@ export async function updateLocation(ctx: TownwiseContext, req: Request, res: Re
     if (resolved === null) throw unknownTown();
     town = resolved;
   }
-  const outcome = await ctx.stores.locations.update(scope, location.id, { name: body.name, town });
+  let placeId = body.placeId;
+  if (typeof placeId === 'string' && town !== undefined) {
+    ({ placeId, town } = await checkedPlace(ctx, 'org.locations.update', placeId, town));
+  } else if (placeId === undefined && town !== undefined && location.placeId !== null && !sameTown(town, location.town)) {
+    placeId = null;
+  }
+  const outcome = await ctx.stores.locations.update(scope, location.id, { name: body.name, town, placeId });
   if (outcome === 'name_taken') throw new AppError(409, 'location_name_taken', 'Another location already uses that name');
   const updated = outcome === 'updated' ? await ctx.stores.locations.find(scope, location.id) : null;
   if (updated === null) throw notFound();
   await recordAfter(ctx, {
     ...actorOf(admin), at: ctx.now(), orgId: scope.orgId, action: 'location.updated',
     target: { type: 'location', id: updated.id },
-    details: { name: updated.name, townId: updated.town.townId },
+    details: { name: updated.name, townId: updated.town.townId, hasPlace: updated.placeId !== null },
   });
   const summarize = await summarizer(ctx, scope);
   res.status(200).json({ location: summarize(updated) });

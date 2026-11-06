@@ -1,4 +1,5 @@
-// The organization and its locations (spec 10.3, 6.4, P9, P10, P16), and the public town profile route.
+// The organization and its locations (spec 10.3, 6.4, P9, P10, P16), with the Google place an org admin picks, and the
+// public town profile route.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
@@ -6,10 +7,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { LocationSummary } from '../src/handlers/locations.ts';
 import type { TownProfile } from '../src/handlers/towns.ts';
+import { createGooglePlacesClient } from '../src/places/google.ts';
 import {
   addLocation, addNote, addRequest, addSalesDay, addSeat, addUpload, auditEvents, createOrg,
 } from './helpers/fixtures.ts';
-import { call, signIn, startTownwiseServer, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
+import { fakePlaces, placeDetails, usAddress } from './helpers/places-fetch.ts';
+import {
+  call, logLines, signIn, signInStaff, startTownwiseServer, writesDuring, type TestSession, type TownwiseTestServer,
+} from './helpers/server.ts';
 
 let server: TownwiseTestServer;
 
@@ -18,6 +23,7 @@ afterAll(async () => { await server.close(); });
 beforeEach(async () => { await server.redis.flushdb(); });
 
 const NO_SALES = {
+  placeId: null,
   coverage: { dayCount: 0, guestsDayCount: 0, netSalesDayCount: 0, firstDate: null, lastDate: null, missingDays: 0 },
   calibration: { state: 'no_sales_data' },
   notesCount: 0,
@@ -74,7 +80,7 @@ describe('GET /api/org', () => {
       org: { id: t.orgId, name: 'Summary Diner' },
       locations: [
         {
-          id: busy, name: 'Busy Room', town,
+          id: busy, name: 'Busy Room', town, placeId: null,
           coverage: { dayCount: 2, guestsDayCount: 1, netSalesDayCount: 1, firstDate: '2026-05-01', lastDate: '2026-05-04', missingDays: 2 },
           calibration: { state: 'not_calibrated', dayCount: 2, firstDate: '2026-05-01', lastDate: '2026-05-04' },
           notesCount: 1, lastUploadAt: uploadedAt.toISOString(),
@@ -82,6 +88,7 @@ describe('GET /api/org', () => {
         { id: quiet, name: 'Quiet Room', town, ...NO_SALES },
       ],
       requestedLocationCount: 3,
+      placeSearch: false,
     };
     const asAdmin = await call(server, '/api/org', { session: t.admin });
     expect(asAdmin.status).toBe(200);
@@ -105,10 +112,11 @@ describe('POST /api/org/locations', () => {
     const { location } = await res.json() as { location: LocationSummary };
     expect(location).toEqual({ id: location.id, name: 'Harbor Room', town: { townId: 'bar-harbor-me', name: 'Bar Harbor', state: 'ME' }, ...NO_SALES });
     const event = (await auditEvents(server)).find((e) => (e.target as { id: string }).id === location.id);
-    expect(event).toMatchObject({ action: 'location.created', actorUserId: t.admin.userId, actorRole: 'org_admin', details: { name: 'Harbor Room', townId: 'bar-harbor-me' } });
+    expect(event).toMatchObject({
+      action: 'location.created', actorUserId: t.admin.userId, actorRole: 'org_admin', details: { name: 'Harbor Room', townId: 'bar-harbor-me', hasPlace: false },
+    });
     expect(String(event?.orgId)).toBe(t.orgId);
     expect(await server.connection.collection('tw_locations').findOne({ _id: new Types.ObjectId(location.id) })).toMatchObject({ placeId: null });
-    expect(location).not.toHaveProperty('placeId');
 
     const elsewhere = await create(t.admin, { name: 'Coast Room', town: { townId: null, name: ' Kennebunkport ', state: 'ME' } });
     expect(elsewhere.status).toBe(201);
@@ -153,14 +161,27 @@ describe('PATCH /api/org/locations/:locationId', () => {
     const moved = await patch(t.admin, first, { town: { townId: 'ithaca-ny' } });
     expect((await moved.json() as { location: LocationSummary }).location).toMatchObject({ name: 'Front Room', town: { townId: 'ithaca-ny', name: 'Ithaca', state: 'NY' } });
     expect((await auditEvents(server)).filter((e) => e.action === 'location.updated').slice(-2).map((e) => e.details)).toEqual([
-      { name: 'Front Room', townId: 'hanover-nh' }, { name: 'Front Room', townId: 'ithaca-ny' },
+      { name: 'Front Room', townId: 'hanover-nh', hasPlace: false }, { name: 'Front Room', townId: 'ithaca-ny', hasPlace: false },
     ]);
 
-    // A place id is not editable here: PATCH strips it and a stored one survives a rename and a move.
+    // A stored place survives a rename and a save of the same town, and goes when the town changes by hand or with null.
     const locations = server.connection.collection('tw_locations');
+    const placeOf = async (): Promise<unknown> => (await locations.findOne({ _id: new Types.ObjectId(first) }))?.placeId;
     await locations.updateOne({ _id: new Types.ObjectId(first) }, { $set: { placeId: 'ChIJTestPlace0001' } });
-    expect((await patch(t.admin, first, { name: 'Front Hall', placeId: 'ChIJTestPlace0009' })).status).toBe(200);
-    expect(await locations.findOne({ _id: new Types.ObjectId(first) })).toMatchObject({ name: 'Front Hall', placeId: 'ChIJTestPlace0001' });
+    expect((await patch(t.admin, first, { name: 'Front Hall' })).status).toBe(200);
+    const kept = await patch(t.admin, first, { name: 'Front Hall', town: { townId: 'ithaca-ny' } });
+    expect((await kept.json() as { location: LocationSummary }).location.placeId).toBe('ChIJTestPlace0001');
+    expect((await patch(t.admin, first, { town: { townId: 'stowe-vt' } })).status).toBe(200);
+    expect(await placeOf()).toBeNull();
+    await locations.updateOne({ _id: new Types.ObjectId(first) }, { $set: { placeId: 'ChIJTestPlace0001' } });
+    expect((await patch(t.admin, first, { placeId: null })).status).toBe(200);
+    expect(await placeOf()).toBeNull();
+    // With the search off a place id can't be checked: 503, and nothing changes.
+    expect(await errorOf(await patch(t.admin, first, { name: 'Front Room', town: { townId: 'ithaca-ny' }, placeId: 'ChIJTestPlace0009' })))
+      .toEqual({ status: 503, error: 'places_unavailable' });
+    expect(await errorOf(await create(t.admin, { name: 'Placed', town: { townId: 'ithaca-ny' }, placeId: 'ChIJTestPlace0009' })))
+      .toEqual({ status: 503, error: 'places_unavailable' });
+    expect(await locations.findOne({ _id: new Types.ObjectId(first) })).toMatchObject({ name: 'Front Hall', town: { townId: 'stowe-vt' }, placeId: null });
     expect((await patch(t.admin, first, { name: 'Front Room' })).status).toBe(200);
 
     expect(await errorOf(await patch(t.admin, first, { name: 'SECOND' }))).toEqual({ status: 409, error: 'location_name_taken' });
@@ -250,5 +271,166 @@ describe('GET /api/towns/:townId', () => {
     const person = await signIn(server, `waiting-${randomUUID().slice(0, 8)}@example.test`);
     expect(await errorOf(await call(server, '/api/towns/springfield-ma', { session: person }))).toEqual({ status: 404, error: 'not_found' });
     expect((await call(server, '/api/towns/hanover-nh')).status).toBe(401);
+  });
+});
+
+describe('a location’s Google place, with the Places search on', () => {
+  // A second server, with Google Places over a fake fetch (helpers/places-fetch.ts), last in the file because starting
+  // and closing a server drop the shared test database (as in sales-history.int.test.ts). Tests never call Google.
+  const fake = fakePlaces();
+  let placed: TownwiseTestServer;
+  // Sentinels: neither may reach a log or an audit event.
+  const PLACE_ID = 'ChIJTestPlace0001';
+  const CURRENT_ID = 'ChIJTestPlace0002';
+  const ADDRESS = '8 Test Street, Hanover, NH 03755, USA';
+  const HANOVER = { townId: 'hanover-nh', name: 'Hanover', state: 'NH' };
+  const hanoverPlace = (id = CURRENT_ID): unknown => placeDetails(id, ADDRESS, usAddress({ locality: 'Hanover', state: 'NH' }));
+
+  beforeAll(async () => {
+    placed = await startTownwiseServer({ places: createGooglePlacesClient('test-places-key', { fetch: fake.fetch, timeoutMs: 200 }) });
+  });
+  afterAll(async () => { await placed.close(); });
+  beforeEach(async () => {
+    fake.reset();
+    await placed.redis.flushdb();
+  });
+
+  async function placedTeam(name: string): Promise<Team> {
+    const orgId = await createOrg(placed, { name });
+    const adminEmail = `admin-${randomUUID().slice(0, 8)}@example.test`;
+    const memberEmail = `member-${randomUUID().slice(0, 8)}@example.test`;
+    const admin = await signIn(placed, adminEmail);
+    const member = await signIn(placed, memberEmail);
+    await addSeat(placed, { orgId, userId: admin.userId, email: adminEmail, role: 'org_admin' });
+    await addSeat(placed, { orgId, userId: member.userId, email: memberEmail });
+    return { orgId, admin, adminEmail, member };
+  }
+
+  const createAt = (session: TestSession, body: unknown): Promise<Response> => call(placed, '/api/org/locations', { session, json: body });
+  const patchAt = (session: TestSession, locationId: string, body: unknown): Promise<Response> =>
+    call(placed, `/api/org/locations/${locationId}`, { method: 'PATCH', session, json: body });
+  const stored = (locationId: string): Promise<Record<string, unknown> | null> =>
+    placed.connection.collection('tw_locations').findOne({ _id: new Types.ObjectId(locationId) });
+
+  /** Neither the place id nor the address in any log line or audit event. */
+  async function nothingLeaked(): Promise<void> {
+    const text = JSON.stringify([logLines(placed), await auditEvents(placed)]);
+    for (const secret of [PLACE_ID, CURRENT_ID, ADDRESS]) expect(text).not.toContain(secret);
+  }
+
+  it('GET /api/org says the search is on', async () => {
+    const t = await placedTeam('Search Group');
+    expect(await (await call(placed, '/api/org', { session: t.admin })).json()).toMatchObject({ placeSearch: true });
+  });
+
+  it('adds a location at a place Google knows, with Google’s current id and town; the audit event says only that it has one', async () => {
+    const t = await placedTeam('Placed Group');
+    fake.script({ kind: 'json', body: hanoverPlace() });
+    const res = await createAt(t.admin, { name: 'Main Street', town: { townId: 'hanover-nh' }, placeId: PLACE_ID });
+    expect(res.status).toBe(201);
+    const { location } = await res.json() as { location: LocationSummary };
+    expect(location).toMatchObject({ name: 'Main Street', town: HANOVER, placeId: CURRENT_ID });
+    expect(await stored(location.id)).toMatchObject({ placeId: CURRENT_ID, town: HANOVER });
+    expect(fake.calls).toHaveLength(1);
+    expect(fake.calls[0]?.url).toMatch(new RegExp(`^https://places\\.googleapis\\.com/v1/places/${PLACE_ID}\\?sessionToken=[0-9a-f-]{36}$`));
+    const event = (await auditEvents(placed)).find((e) => (e.target as { id: string }).id === location.id);
+    expect(event).toMatchObject({ action: 'location.created', details: { name: 'Main Street', townId: 'hanover-nh', hasPlace: true } });
+    await nothingLeaked();
+  });
+
+  it('a place in another town keeps Google’s name for it; a sent town in another case is the same town', async () => {
+    const t = await placedTeam('Norwich Group');
+    fake.script({ kind: 'json', body: placeDetails(PLACE_ID, 'Norwich, VT, USA', usAddress({ locality: 'Norwich', state: 'VT' })) });
+    const res = await createAt(t.admin, { name: 'River Room', town: { townId: null, name: 'norwich', state: 'VT' }, placeId: PLACE_ID });
+    expect(res.status).toBe(201);
+    expect((await res.json() as { location: LocationSummary }).location).toMatchObject({
+      town: { townId: null, name: 'Norwich', state: 'VT' }, placeId: PLACE_ID,
+    });
+  });
+
+  it('refuses a town that isn’t the place’s, a place Google doesn’t know or outside the US, and Google failing; nothing is added', async () => {
+    const t = await placedTeam('Refused Place Group');
+    fake.script(
+      { kind: 'json', body: hanoverPlace() },
+      { kind: 'json', status: 404, body: { error: { code: 404, status: 'NOT_FOUND' } } },
+      { kind: 'json', body: placeDetails(PLACE_ID, 'San Juan, Puerto Rico', usAddress({ locality: 'San Juan', state: 'San Juan', country: 'PR' })) },
+      { kind: 'json', status: 500, body: { error: { code: 500, status: 'INTERNAL' } } },
+    );
+    const body = (town: unknown): unknown => ({ name: 'Refused', town, placeId: PLACE_ID });
+    const writes = await writesDuring(placed, async () => {
+      expect(await errorOf(await createAt(t.admin, body({ townId: 'stowe-vt' })))).toEqual({ status: 400, error: 'place_town_mismatch' });
+      expect(await errorOf(await createAt(t.admin, body({ townId: 'hanover-nh' })))).toEqual({ status: 400, error: 'unknown_place' });
+      expect(await errorOf(await createAt(t.admin, body({ townId: 'hanover-nh' })))).toEqual({ status: 400, error: 'place_not_supported' });
+      expect(await errorOf(await createAt(t.admin, body({ townId: 'hanover-nh' })))).toEqual({ status: 503, error: 'places_unavailable' });
+    });
+    expect(writes).toEqual([]);
+    expect(logLines(placed).filter((line) => line.msg === 'townwise.places_failed').at(-1))
+      .toMatchObject({ routeId: 'org.locations.create', code: 'upstream_status', status: 500 });
+    // Refused before Google is asked: a malformed id, an unknown town, a member.
+    expect(await errorOf(await createAt(t.admin, { name: 'Refused', town: { townId: 'hanover-nh' }, placeId: 'ChIJ short' })))
+      .toEqual({ status: 400, error: 'invalid_request' });
+    expect(await errorOf(await createAt(t.admin, body({ townId: 'springfield-ma' })))).toEqual({ status: 400, error: 'unknown_town' });
+    expect(await errorOf(await createAt(t.member, body({ townId: 'hanover-nh' })))).toEqual({ status: 403, error: 'forbidden' });
+    expect(fake.calls).toHaveLength(4);
+    await nothingLeaked();
+  });
+
+  it('PATCH sets the place and its town, needs the town with a place id, and takes the place off with null', async () => {
+    const t = await placedTeam('Patch Place Group');
+    const locationId = await addLocation(placed, { orgId: t.orgId, name: 'Upper Room' });
+    await patchAt(t.admin, locationId, { town: { townId: 'stowe-vt' } });
+    expect(await errorOf(await patchAt(t.admin, locationId, { placeId: PLACE_ID }))).toEqual({ status: 400, error: 'invalid_request' });
+    expect(fake.calls).toHaveLength(0);
+
+    fake.script({ kind: 'json', body: hanoverPlace() });
+    const res = await patchAt(t.admin, locationId, { town: { townId: 'hanover-nh' }, placeId: PLACE_ID });
+    expect(res.status).toBe(200);
+    expect((await res.json() as { location: LocationSummary }).location).toMatchObject({ name: 'Upper Room', town: HANOVER, placeId: CURRENT_ID });
+
+    fake.script({ kind: 'json', body: hanoverPlace() });
+    expect(await errorOf(await patchAt(t.admin, locationId, { town: { townId: 'stowe-vt' }, placeId: PLACE_ID })))
+      .toEqual({ status: 400, error: 'place_town_mismatch' });
+    expect(await stored(locationId)).toMatchObject({ town: HANOVER, placeId: CURRENT_ID });
+
+    expect((await patchAt(t.admin, locationId, { placeId: null })).status).toBe(200);
+    expect(await stored(locationId)).toMatchObject({ town: HANOVER, placeId: null });
+    expect((await auditEvents(placed)).filter((e) => e.action === 'location.updated' && (e.target as { id: string }).id === locationId)
+      .map((e) => e.details)).toEqual([
+      { name: 'Upper Room', townId: 'stowe-vt', hasPlace: false },
+      { name: 'Upper Room', townId: 'hanover-nh', hasPlace: true },
+      { name: 'Upper Room', townId: 'hanover-nh', hasPlace: false },
+    ]);
+    await nothingLeaked();
+  });
+
+  it('another organization’s location answers 404 like an unknown one, and Google is not asked', async () => {
+    const owner = await placedTeam('Owner Place Group');
+    const other = await placedTeam('Other Place Group');
+    const locationId = await addLocation(placed, { orgId: owner.orgId, name: 'Their Room' });
+    const body = { town: { townId: 'hanover-nh' }, placeId: PLACE_ID };
+    expect(await errorOf(await patchAt(other.admin, locationId, body))).toEqual({ status: 404, error: 'not_found' });
+    expect(await errorOf(await patchAt(other.admin, new Types.ObjectId().toHexString(), body))).toEqual({ status: 404, error: 'not_found' });
+    expect(fake.calls).toHaveLength(0);
+    expect(await stored(locationId)).toMatchObject({ name: 'Their Room', placeId: null });
+  });
+
+  it('under view-as both writes answer 403 view_as_read_only: nothing is written and Google is not asked', async () => {
+    const t = await placedTeam('Viewed Place Group');
+    const locationId = await addLocation(placed, { orgId: t.orgId, name: 'Viewed Room' });
+    const staff = await signInStaff(placed);
+    try {
+      const started = await call(placed, '/api/admin/view-as', { session: staff, json: { userId: t.admin.userId, reason: 'Checking the place search' } });
+      expect(started.status).toBe(201);
+      const body = { name: 'Viewed Two', town: { townId: 'hanover-nh' }, placeId: PLACE_ID };
+      const writes = await writesDuring(placed, async () => {
+        expect(await errorOf(await createAt(staff, body))).toEqual({ status: 403, error: 'view_as_read_only' });
+        expect(await errorOf(await patchAt(staff, locationId, body))).toEqual({ status: 403, error: 'view_as_read_only' });
+      });
+      expect(writes).toEqual([]);
+      expect(fake.calls).toHaveLength(0);
+      expect((await call(placed, '/api/admin/view-as/end', { session: staff, json: {} })).status).toBe(200);
+    } finally {
+      await placed.authStores.totp.remove(staff.userId);
+    }
   });
 });

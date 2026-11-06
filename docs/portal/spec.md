@@ -802,7 +802,7 @@ type Calibration =
   | { state: 'not_calibrated'; dayCount: number; firstDate: string; lastDate: string };
 
 interface LocationSummary {
-  id: string; name: string; town: Town; coverage: Coverage; calibration: Calibration;
+  id: string; name: string; town: Town; placeId: string | null; coverage: Coverage; calibration: Calibration;
   notesCount: number; lastUploadAt: string | null;
 }
 
@@ -860,20 +860,23 @@ Two routes let the request form find the business on Google Places (New). The AP
 - `town` is one of the twelve researched towns when the locality, postal town, sublocality or `administrative_area_level_3` matches one by name and state, ignoring case, or when any of them is an alias (Lake Placid, NY is `north-elba-ny`; North Conway, NH is `conway-nh`). Otherwise it is `{ townId: null, name, state }`, named by the first of those components. It is null outside the 50 states and DC, or when no usable town name exists. [CONFIRM: the town matching rules, which are not yet checked against live Google answers]
 - Nothing from these routes is stored. The typed text, place ids, addresses and Google’s answers never reach a log or an audit event; a Google failure logs `townwise.places_failed { routeId, code, status, errType }`.
 - [Build note: details will also answer `place.map`, a static map image as a `data:` URL or null (best effort), for the found card. It is specified here when it ships.]
+- The request form (P3) uses the search while it is on (Places unit). Step 1 of 3, "Find your restaurant": one field ("Search for your restaurant or bar") whose suggestions come from autocomplete, debounced 250 ms, nothing under 2 characters, one call at a time, one session token per search (the API's, from the first answer). On web it is an ARIA combobox with a listbox (Down, Up, Enter, Escape); on native each suggestion is a button. A status line says how many places match, once per answer, and "Results from Google Maps." credits Google. Picking one calls details and shows "Here's what we found": the map when there is one, the name from the suggestion, Google's address, the town line (one of the twelve, another town, or "Townwise works with businesses in a US town, and Google Maps puts this place in none.", which has no Looks right), and "From Google Maps. Townwise keeps only Google's id for the place." "Looks right" opens Step 2 of 3, "About you": the form with the place in place of Town (and "Change place" back to Step 1), Organization name filled with the place's name when empty, and the request sends `placeId` with the place's town. "Can't find it? Enter it yourself" opens the form as it is without the search, which offers "Search Google Maps instead". The client learns whether the search is on by sending autocomplete `{}`: 503 `places_unavailable` is off, 400 `invalid_request` is on, and Google is not called. While off, under view-as (nothing is sent), for a rejected request (its answers are filled in) and after a 503 during the search (with "Google Maps isn't answering right now, so you can enter your restaurant yourself."), the form is as it is without the search. Step 3 is the history upload after approval.
 
 ### 10.3 Organization and locations
 
 | Method and path | Policy | Request | Success | Extra errors |
 |---|---|---|---|---|
-| `GET /api/org` | member | | 200 `{ org: { id, name }, role, locations: LocationSummary[], requestedLocationCount: number \| null }` | |
+| `GET /api/org` | member | | 200 `{ org: { id, name }, role, locations: LocationSummary[], requestedLocationCount: number \| null, placeSearch: boolean }` (`placeSearch`: the Places search is on, 10.2a) | |
 | `PATCH /api/org` | org_admin | `{ name }` | 200 `{ org }` | |
 | `GET /api/org/staff-activity` | org_admin | | 200 `{ events: StaffActivityView[] }` (newest 50 events on this organization whose actor role is `superadmin`) | |
 | `POST /api/org/leave` | member | `{}` | 200 `MeResponse` | 409 `last_admin` |
-| `POST /api/org/locations` | org_admin | `{ name, town: TownInput }` | 201 `{ location: LocationSummary }` | 409 `location_name_taken`, `location_limit`; 400 `unknown_town` |
-| `PATCH /api/org/locations/:locationId` | org_admin | `{ name?, town? }`, at least one | 200 `{ location }` | 404; 409 `location_name_taken` |
+| `POST /api/org/locations` | org_admin | `{ name, town: TownInput, placeId?: string \| null }` | 201 `{ location: LocationSummary }` | 409 `location_name_taken`, `location_limit`; 400 `unknown_town`; with a `placeId`: 400 `unknown_place`, `place_not_supported`, `place_town_mismatch`; 503 `places_unavailable` |
+| `PATCH /api/org/locations/:locationId` | org_admin | `{ name?, town?, placeId?: string \| null }`, at least one; a `placeId` needs `town`; null takes the place off | 200 `{ location }` | 404; 409 `location_name_taken`; with a `placeId`: as `POST` |
 | `DELETE /api/org/locations/:locationId` | org_admin | | 204 | 404; 409 `location_has_data` (any sales day or note) |
 
 [CONFIRM: org admins can rename their own organization]
+
+A location's Google place (Places unit; P10, P16 "Change this location's place"): the API asks Google for the place (Place Details, a session of its own) and takes its town with the 10.2a rules; the town sent must be that town (one of the twelve by id, another by name ignoring case and by state), else 400 `place_town_mismatch`. Google not knowing the place is 400 `unknown_place`; outside the 50 states and DC or with no town, 400 `place_not_supported`; the search off or Google failing, 503 `places_unavailable` (`townwise.places_failed` with the route id). The location stores Google's current id and the place's town, nothing else. A town changed by hand takes the place off; a rename or the same town keeps it. `location.created` and `location.updated` add `hasPlace`, never the id. P10 and P16 offer the search only while `placeSearch` is true and never under view-as; P10 starts with it ("Search Google Maps for the location", "Looks right" fills Name and gives the town, "Can't find it? Enter it yourself"), and a 503 on Add leaves the fields with the place's town filled in and "Google Maps isn't answering right now, so the place wasn't added. Check the town, then add the location without it." P16's section says whether the location is linked, finds a place with "Use this place" (with "Using this place moves {name} to {town}." when the town changes) and answers "Saved."; its Town field says "Changing the town here takes the Google Maps place off this location." while linked.
 
 ### 10.4 Sales
 
@@ -1013,6 +1016,7 @@ A search is 10 to 15 debounced autocompletes and one details call, so `townwise:
 | 403 | `staff_setup_required`, `staff_reauth_required` | staff gate | route per 4.3 |
 | 403 | `view_as_read_only` | a non-GET without the `staff` policy during view-as | should not happen: controls are disabled |
 | 404 | `place_not_found` | the details route: Google has no such place (10.2a) | the client keeps the manual fields |
+| 400 | `unknown_place`, `place_not_supported`, `place_town_mismatch` | a location write with a `placeId` (10.3): Google has no such place, it has no US town, or the sent town is not its town | “Google Maps answered differently this time.”, then the search again |
 | 404 | `not_found` | unknown id, or an id in another organization | “This {thing} isn’t available.” with a way back |
 | 409 | `view_as_active` | any route with the `staff` policy, any method, during view-as; a second view-as start racing the first | re-read `/api/me` |
 | 409 | `no_invite`, `already_in_org`, `request_exists`, `request_not_pending`, `requester_has_org`, `last_admin`, `location_name_taken`, `location_limit`, `location_has_data`, `note_limit`, `member_limit`, `person_has_seat`, `org_not_suspended` | as in the tables | inline copy per page |

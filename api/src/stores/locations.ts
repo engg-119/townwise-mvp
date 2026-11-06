@@ -65,9 +65,10 @@ export interface LocationStore {
   find(scope: OrgScope, locationId: string): Promise<LocationRecord | null>;
   count(scope: OrgScope): Promise<number>;
   /** Null when this organization already has a location with that name (the unique nameKey index). */
-  create(scope: OrgScope, input: { name: string; town: Town; createdAt: Date; createdBy: string }): Promise<LocationRecord | null>;
-  /** Sets the fields given; `name_taken` when another location of this organization has that name. */
-  update(scope: OrgScope, locationId: string, input: { name?: string | undefined; town?: Town | undefined }):
+  create(scope: OrgScope, input: { name: string; town: Town; placeId: string | null; createdAt: Date; createdBy: string }):
+    Promise<LocationRecord | null>;
+  /** Sets the fields given (`placeId` null clears it); `name_taken` when another location of this organization has that name. */
+  update(scope: OrgScope, locationId: string, input: { name?: string | undefined; town?: Town | undefined; placeId?: string | null | undefined }):
     Promise<'updated' | 'not_found' | 'name_taken'>;
   remove(scope: OrgScope, locationId: string): Promise<boolean>;
   /** F3 step 7: the location with this name in the organization, inserted once (`$setOnInsert`), so a retry finds it. */
@@ -109,7 +110,7 @@ export function createLocationStore(connection: Connection): LocationStore {
           name: input.name.trim(),
           nameKey: locationNameKey(input.name),
           town: { townId: input.town.townId, name: input.town.name, state: input.town.state },
-          placeId: null,
+          placeId: input.placeId,
           createdAt: input.createdAt,
           createdBy: input.createdBy,
         });
@@ -126,6 +127,7 @@ export function createLocationStore(connection: Connection): LocationStore {
         set.nameKey = locationNameKey(input.name);
       }
       if (input.town !== undefined) set.town = { townId: input.town.townId, name: input.town.name, state: input.town.state };
+      if (input.placeId !== undefined) set.placeId = input.placeId;
       try {
         const result = await Location.updateOne({ _id: locationId, orgId: scope.orgId }, { $set: set });
         return result.matchedCount === 1 ? 'updated' : 'not_found';
