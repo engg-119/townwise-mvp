@@ -3,6 +3,7 @@ import { ScrollView, StyleSheet, View } from 'react-native';
 
 import { theme } from '../../theme';
 import { hasCode } from '../errors';
+import { FileList } from '../files/FileList';
 import { formatCount, formatDate, plural } from '../format';
 import { useAction, useLoad } from '../hooks';
 import { usePortal, useReadOnly } from '../PortalProvider';
@@ -25,7 +26,8 @@ import { SalesChart } from './SalesChart';
 // numbers” everywhere, D21), By month, Uploads, and, for org admins, Delete all sales data behind a typed-name
 // confirmation. A 404 on the delete means the location was deleted in the meantime: the organization reloads, and
 // the location layout says “This location isn’t available.” with the link to Locations (spec 10.9). Under view-as,
-// Upload, Delete and the closure-note link are disabled in place.
+// Upload, Delete and the closure-note link are disabled in place. Your files (files/FileList) follows Uploads
+// when stored files are on.
 
 const READ_ONLY_ID = 'sales-ro';
 
@@ -119,6 +121,7 @@ export function SalesData(): React.JSX.Element {
         {sales.uploads.length === 0 ? null : (
           <Section kicker="Newest first" title="Uploads"><UploadsTable uploads={sales.uploads} /></Section>
         )}
+        <FileList locationId={location.id} />
       </View>
     );
   }
@@ -180,6 +183,7 @@ export function SalesData(): React.JSX.Element {
       {sales.uploads.length === 0 ? null : (
         <Section kicker="Newest first" title="Uploads"><UploadsTable uploads={sales.uploads} /></Section>
       )}
+      <FileList locationId={location.id} />
       {admin ? (
         <Section kicker="Admins only" title="Delete sales data">
           <Actions>
