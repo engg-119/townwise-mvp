@@ -99,6 +99,12 @@ function pathWithBIds(path: string): string {
   return path.replace(/:([A-Za-z]+)/g, (_match, name: string) => bIds()[name] ?? new Types.ObjectId().toHexString());
 }
 
+/**
+ * Writes that carry none of B's ids (no path id, no body) and act on the caller's own seat, so they succeed. Each
+ * entry is a deliberate exemption from the 4xx check; B's snapshot is still compared.
+ */
+const SELF_WRITES = new Set(['me.welcome']); // U11, statement moments.
+
 describe('isolation through the route table', () => {
   for (const route of TOWNWISE_ROUTES) {
     it(`${route.method} /api${route.path}: A’s member presenting B’s ids reads nothing of B and changes nothing`, async () => {
@@ -109,9 +115,8 @@ describe('isolation through the route table', () => {
         ...(route.method === 'GET' || route.method === 'DELETE' ? {} : { json: bIds() }),
       });
       const text = await res.text();
-      // A write with no path id and no body (U11's POST /me/welcome) carries none of B's ids: it acts on A's own seat.
-      const carriesIds = route.path.includes('/:') || route.bodyLimit !== 'none';
-      if (route.method !== 'GET' && carriesIds) expect(res.status).toBeGreaterThanOrEqual(400);
+      if (SELF_WRITES.has(route.id)) expect(res.status).toBe(204);
+      else if (route.method !== 'GET') expect(res.status).toBeGreaterThanOrEqual(400);
       for (const secret of [...bSecrets(), b.inviteId, bInvitesAMember]) expect(text).not.toContain(secret);
       expect(await snapshotOf(b)).toBe(before);
     });
