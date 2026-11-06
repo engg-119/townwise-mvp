@@ -1,0 +1,107 @@
+jest.mock('@react-native-google-signin/google-signin', () => {
+  const mocked: unknown = jest.requireActual('../../helpers/googleSigninMock');
+  return mocked;
+});
+// Every function of the secure store is a mock, so the test can say none was called.
+jest.mock('expo-secure-store');
+jest.mock('expo-splash-screen', () => ({
+  preventAutoHideAsync: jest.fn(() => Promise.resolve()),
+  hideAsync: jest.fn(() => Promise.resolve()),
+}));
+
+import * as SecureStore from 'expo-secure-store';
+import { cleanup, fireEvent, screen, within } from 'expo-router/testing-library';
+
+import { PANEL_EMPTY } from '../../../src/portal/analytics/panel';
+import type { MeResponse } from '../../../src/portal/schemas';
+import { ACCESS, fakePortalApi, meOf, orgOf, viewAsMe, type FakePortalApi } from '../../helpers/portal';
+import { renderApp } from '../../helpers/renderApp';
+import { analyticsFake, calendarBody, day, historyBody, holiday, note, run } from './fakes';
+
+// P24 Analytics on native (home.md 4.4, D21): no grid and no SVG; a month list, newest first, whose days open the
+// Day panel under their row, with every section's summary, basis line and numbers. Synthetic days only. The page
+// stores nothing (P) and its copy is honest when the data is thin (T).
+
+beforeEach(() => {
+  jest.useFakeTimers({
+    now: new Date(2026, 10, 5, 12, 0, 0),
+    doNotFake: [
+      'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'setImmediate', 'clearImmediate', 'nextTick', 'queueMicrotask',
+      'requestAnimationFrame', 'cancelAnimationFrame', 'requestIdleCallback', 'cancelIdleCallback', 'hrtime', 'performance',
+    ],
+  });
+});
+
+afterEach(async () => {
+  await cleanup();
+  jest.useRealTimers();
+});
+
+const PATH = '/api/org/locations/l1';
+const DAYS = run('2025-09-01', '2026-11-04', (date) => 100 + (new Date(`${date}T00:00:00Z`).getUTCDay() === 6 ? 40 : 0));
+
+function portal(me: MeResponse, days = DAYS): FakePortalApi {
+  const from = days[0]?.date.slice(0, 4) ?? '2026';
+  const fake = analyticsFake({
+    [`${PATH}/sales/history`]: historyBody(days),
+    [`${PATH}/notes`]: { notes: [note({ startDate: '2026-10-10', detail: 'A rehearsal dinner.' })] },
+    [`${PATH}/calendar?from=${from}-01-01&to=2026-12-31`]: calendarBody({ events: [holiday('2025-11-27', 'Thanksgiving Day', 'us:thanksgiving', 'Thanksgiving')] }),
+  });
+  return fakePortalApi({ me, org: orgOf(me.access.state === 'member' ? me.access.role : 'member'), fallback: fake });
+}
+
+test('a month list, newest first; a month opens its days, and a day opens the Day panel under its row', async () => {
+  await renderApp('/locations/l1/analytics', portal(meOf(ACCESS.member)));
+  expect(await screen.findByText('430 days, Sep 1, 2025 to Nov 4, 2026.')).toBeTruthy();
+  const months = screen.getByLabelText('Months, daily guests');
+  const rows = within(months).getAllByRole('button');
+  expect(rows[0]?.props.accessibilityLabel).toBe('Nov 2026, 4 days with data, 100 guests on average');
+  expect(rows.at(-1)?.props.accessibilityLabel).toMatch(/^Sep 2025, 30 days with data, /);
+  // On native the Day panel shows only under a selected day's row.
+  expect(screen.queryByText(PANEL_EMPTY)).toBeNull();
+  await fireEvent.press(within(months).getByRole('button', { name: /^Oct 2026,/ }));
+  const days = screen.getByLabelText('Days in Oct 2026');
+  const saturday = within(days).getByRole('button', { name: 'Sat, Oct 10, 2026. 140 guests, $2,800. 1 note.' });
+  expect(within(days).getByText('140, Your note')).toBeTruthy();
+  await fireEvent.press(saturday);
+  expect(screen.getByRole('heading', { name: 'Saturday, Oct 10, 2026' })).toBeTruthy();
+  expect(screen.getByText('A rehearsal dinner.')).toBeTruthy();
+  expect(screen.getByText('From the upload on Nov 4, 2026 by owner@example.com.')).toBeTruthy();
+  // Next day moves the selection, and the panel follows it.
+  await fireEvent.press(screen.getByRole('button', { name: 'Next day' }));
+  expect(screen.getByRole('heading', { name: 'Sunday, Oct 11, 2026' })).toBeTruthy();
+  // No SVG on native: the summaries, basis lines and tables carry the numbers.
+  expect(screen.getByText('Your busiest day is Saturday, 140 guests on average; your quietest is Monday, 100.')).toBeTruthy();
+  expect(screen.getAllByText(/^Based on 430 days with a guest count\.$/).length).toBeGreaterThan(0);
+  expect(screen.queryByText(/^Scale 0 to/)).toBeNull();
+});
+
+test('the filters change the numbers and the basis line, and nothing is stored', async () => {
+  await renderApp('/locations/l1/analytics', portal(viewAsMe(ACCESS.member)));
+  await screen.findByLabelText('Months, daily guests');
+  const store = Object.values(SecureStore).filter((value) => jest.isMockFunction(value));
+  for (const fn of store) fn.mockClear();
+  expect(screen.getAllByText('Based on 430 days with a guest count.').length).toBeGreaterThan(0);
+  await fireEvent.press(screen.getByRole('checkbox', { name: 'Days with a note' }));
+  expect(screen.getAllByText('Based on 429 days with a guest count. Leaves out 1 day with a note.').length).toBeGreaterThan(0);
+  await fireEvent.press(screen.getByRole('checkbox', { name: '2025' }));
+  expect(screen.getAllByText(/^Based on 307 days with a guest count\. Leaves out 1 day with a note\. Only 2026\.$/).length).toBeGreaterThan(0);
+  await fireEvent.press(screen.getByRole('checkbox', { name: '2026' }));
+  expect(screen.getByRole('checkbox', { name: '2026' }).props.accessibilityState).toMatchObject({ checked: true });
+  expect(screen.getByText('Keep at least one year.')).toBeTruthy();
+  expect(store).toContain(SecureStore.setItemAsync);
+  for (const fn of store) expect(fn).not.toHaveBeenCalled();
+});
+
+test('thin and empty states say what is missing', async () => {
+  await renderApp('/locations/l1/analytics', portal(meOf(ACCESS.member), [day('2026-11-04', 90)]));
+  expect(await screen.findByText(/^Year over year needs at least one full year before this one\. You have 1 month so far\./)).toBeTruthy();
+  expect(screen.getByText('Townwise needs each kind of day to happen at least twice before it can say how much it moves your numbers.')).toBeTruthy();
+  expect(screen.getByText('Regular nights: 1 night. Not enough nights yet.')).toBeTruthy();
+  await cleanup();
+
+  await renderApp('/locations/l1/analytics', portal(meOf(ACCESS.member), []));
+  expect(await screen.findByText('No sales history yet.')).toBeTruthy();
+  expect(screen.getByText('Upload from a computer at townwise.tech.')).toBeTruthy();
+  expect(screen.getByRole('checkbox', { name: 'Closed days' }).props.accessibilityState).toMatchObject({ disabled: true });
+});

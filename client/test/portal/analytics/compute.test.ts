@@ -5,7 +5,7 @@ import {
 import { calendarRange, fetchCalendar, fetchSalesHistory, salesHistorySchema, townEventSchema } from '../../../src/portal/analytics/api';
 import { usual } from '../../../src/portal/analytics/baseline';
 import {
-  calendarCoverageLine, cellLabel, colOf, focusBounds, heatmapBlocks, heatmapSummary, initialFocus, moveFocus, rowOf,
+  calendarCoverageLine, cellLabel, colOf, focusBounds, heatmapBlocks, heatmapMonths, heatmapSummary, initialFocus, moveFocus, rowOf,
   type Cell, type HeatmapInput,
 } from '../../../src/portal/analytics/cells';
 import { classOf, dayContext, EMPTY_CONTEXT, eventsOn, isClosed, notesOn } from '../../../src/portal/analytics/days';
@@ -536,6 +536,17 @@ describe('heatmap cells', () => {
     expect(calendarCoverageLine(calendarBody({ town: { townId: 'nantucket-ma', name: 'Nantucket', state: 'MA' }, researched: false, covers: null })))
       .toBe('Townwise’s Nantucket calendar has no researched town events yet, so only US federal holidays are marked.');
   });
+});
+
+// U7 PR2: the table behind the cells ("Show the numbers" on web, the month list on native).
+test('heatmapMonths: per month of the shown years, newest first, every value counted, kept or left out', () => {
+  const days = [day('2025-12-30', 10), day('2026-01-02', 20), day('2026-01-03', 0), day('2026-01-04', null, 5000), day('2026-02-01', 40)];
+  expect(heatmapMonths({ days, metric: 'guests', years: [2025, 2026] })).toEqual([
+    { month: '2026-02', days: 1, total: 40, mean: 40 },
+    { month: '2026-01', days: 2, total: 20, mean: 10 },
+    { month: '2025-12', days: 1, total: 10, mean: 10 },
+  ]);
+  expect(heatmapMonths({ days, metric: 'netSales', years: [2026] }).map((row) => [row.month, row.days])).toEqual([['2026-02', 1], ['2026-01', 3]]);
 });
 
 describe('heatmap keys', () => {
