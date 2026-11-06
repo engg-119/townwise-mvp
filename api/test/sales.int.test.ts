@@ -344,6 +344,36 @@ describe('DELETE /api/org/locations/:locationId/sales', () => {
     expect(event).toMatchObject({ actorUserId: team.admin.userId, actorRole: 'org_admin', target: { type: 'location', id: locationId } });
     expect(event?.details).toEqual({ locationId, deletedDays: 3, deletedFiles: 0 });
   });
+
+  it('also deletes its answers to TownwiseAI’s questions, so the same days uploaded again are asked about again', async () => {
+    const locationId = await newLocation();
+    const other = await newLocation();
+    // Four weeks with no sales on Tuesday 2026-04-14 and Wednesday 2026-04-15: TownwiseAI asks about that gap.
+    const GAP = 'gap_2026-04-14_2026-04-15';
+    const days = daysEnding('2026-04-28', 28, () => ({ guests: 10, netSalesCents: null }))
+      .filter((each) => each.date !== '2026-04-14' && each.date !== '2026-04-15');
+    const asked = async (id: string): Promise<string[]> => {
+      const res = await call(server, `/api/org/locations/${id}/agent`, { session: team.admin });
+      return ((await res.json()) as { questions: { id: string }[] }).questions.map((question) => question.id);
+    };
+    const answers = (id: string): Promise<number> =>
+      server.connection.collection('tw_agent_answers').countDocuments({ locationId: new Types.ObjectId(id) });
+    for (const id of [locationId, other]) {
+      expect((await upload(id, { days })).status).toBe(201);
+      expect(await asked(id)).toContain(GAP);
+      const res = await call(server, `/api/org/locations/${id}/agent/questions/${GAP}`, { session: team.admin, json: { answer: 'open' } });
+      expect(res.status).toBe(200);
+      expect(await asked(id)).not.toContain(GAP);
+    }
+
+    expect((await call(server, `/api/org/locations/${locationId}/sales`, { method: 'DELETE', session: team.admin })).status).toBe(200);
+    expect(await answers(locationId)).toBe(0);
+    expect(await answers(other)).toBe(1);
+    // An answer said what was true of the deleted days; uploaded again, they are asked about again.
+    expect((await upload(locationId, { days })).status).toBe(201);
+    expect(await asked(locationId)).toContain(GAP);
+    expect(await asked(other)).not.toContain(GAP);
+  });
 });
 
 describe('the uploads limiter', () => {
