@@ -35,8 +35,11 @@ import { ThisWeek } from './ThisWeek';
 const READ_ONLY_ID = 'home-ro';
 
 export const FORECAST_LINE = 'Forecasts are in development. Until then, Home shows your history and the calendar, never a guess.';
-/** F5 (build plan section 7) replaces this line with the count of TownwiseAI's open questions, once it exists. */
-export const QUESTIONS_PLANNED = 'Questions from TownwiseAI about your days are planned.';
+/**
+ * TownwiseAI's questions are on its page (P25's side panel); F5 (build plan section 7) replaces this line with their
+ * count, linked.
+ */
+export const QUESTIONS_PLANNED = 'TownwiseAI’s questions about days with no sales are on its page; a count here is planned.';
 
 interface Data {
   history: SalesHistory;

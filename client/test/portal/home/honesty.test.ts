@@ -94,4 +94,7 @@ test('the fixed copy names what is not built yet and promises nothing', () => {
   }
   expect(LAST_YEAR_FOOTNOTE).not.toMatch(FORECAST_WORDING);
   expect(FORECAST_LINE).toMatch(/never a guess/);
+  // TownwiseAI's questions exist on its page (U9 step 4, U10), so only Home's count of them (F5) is planned.
+  expect(QUESTIONS_PLANNED).not.toMatch(/questions .* are planned/i);
+  expect(QUESTIONS_PLANNED).toMatch(/on its page/);
 });
