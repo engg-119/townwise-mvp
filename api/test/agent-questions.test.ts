@@ -75,6 +75,40 @@ describe('weekday closures', () => {
     const blanks: SalesDay[] = range(FROM, TO).filter((day) => weekday(day) === 2).map((date) => ({ date, guests: null, netSalesCents: null }));
     expect(questionsFor({ ...base, days: [...base.days, ...blanks] }).map((q) => q.id)).toEqual([`weekday_2_${FROM}_${TO}`]);
   });
+
+  it('counts only weeks with sales on another day, from the first day with sales in the window', () => {
+    // An older upload and the latest two months: the window holds no data before 2025-11-01, which no question asks about.
+    const both = new Set([...range('2024-11-01', '2024-12-31'), ...range('2025-11-01', '2025-12-31')]);
+    const window = questionWindow({ firstDate: '2024-11-01', lastDate: '2025-12-31' });
+    expect(window).toEqual({ from: '2025-01-01', to: '2025-12-31' });
+    const days = input('2024-11-01', '2025-12-31', (day) => !both.has(day)).days.filter((day) => day.date >= (window?.from ?? ''));
+    expect(questionsFor({ coverage: { firstDate: '2024-11-01', lastDate: '2025-12-31' }, days, notes: [], answered: [] })).toEqual([]);
+    // Eight months missing whole: one gap question, and no weekday looks closed.
+    const hole = (day: string) => day >= '2025-03-01' && day <= '2025-10-31';
+    expect(questionsFor(input('2025-01-01', '2025-12-31', hole))).toEqual([
+      { id: 'gap_2025-03-01_2025-10-31', kind: 'gap', from: '2025-03-01', to: '2025-10-31', dayCount: 245 },
+    ]);
+    // Closed on Mondays through the same hole: the Mondays of the weeks with data, from the first day with sales.
+    const closedToo = input('2025-01-01', '2025-12-31', (day) => hole(day) || weekday(day) === 1);
+    const asked = questionsFor(closedToo);
+    expect(asked[0]).toEqual({
+      id: 'weekday_1_2025-01-01_2025-12-31', kind: 'weekday', weekday: 1, from: '2025-01-01', to: '2025-12-31',
+      noSalesCount: 18, weekdayCount: 18,
+    });
+    // The gap is trimmed to the days that are not closed Mondays.
+    expect(asked.slice(1).map((q) => q.id)).toEqual(['gap_2025-03-01_2025-10-31']);
+  });
+
+  it('a weekday question starts at the first day with sales in the window', () => {
+    const late = '2026-01-14';
+    const days = input(FROM, TO, (day) => day < late || weekday(day) === 1).days;
+    expect(questionsFor({ coverage: { firstDate: late, lastDate: TO }, days, notes: [], answered: [] })).toEqual([{
+      id: `weekday_1_${late}_${TO}`, kind: 'weekday', weekday: 1, from: late, to: TO, noSalesCount: 8, weekdayCount: 8,
+    }]);
+    // The same days with the coverage reaching back further: the window starts earlier, the question does not.
+    expect(questionsFor({ coverage: { firstDate: '2025-06-01', lastDate: TO }, days, notes: [], answered: [] }).map((q) => q.id))
+      .toEqual([`weekday_1_${late}_${TO}`]);
+  });
 });
 
 describe('gaps', () => {
@@ -134,7 +168,8 @@ describe('answered questions', () => {
   it('an answered weekday covers its days in that window only, so the next window does not ask again soon', () => {
     const closed = (day: string) => weekday(day) === 1;
     const answered = [`weekday_1_${FROM}_${TO}`];
-    // Two more weeks of data: 2 of 12 Mondays are unexplained, under 60%, and a closed Monday starts no gap.
+    // Two more weeks of data: 2 of the 11 Mondays from the first day with sales are unexplained, under 60%, and a closed
+    // Monday starts no gap.
     expect(questionsFor(input(FROM, '2026-03-29', closed, { answered }))).toEqual([]);
   });
 });

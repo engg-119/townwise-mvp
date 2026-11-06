@@ -3,11 +3,13 @@
 // no clock. Nothing here estimates, scores or predicts; a question only says which days have no sales and asks why.
 //
 // - The window is the last 365 days of coverage, from max(first day, last day - 364) to the last day with sales.
-// - A weekday question asks "closed on Mondays?" when at least 60% of that weekday's days in the window have no
-//   sales and are not explained (by a closure note, or by an earlier answer), with at least 4 of that weekday in the
-//   window.
+//   Questions look only from the first day with sales in the window: before it the window holds no data at all.
+// - A weekday question asks "closed on Mondays?" when at least 60% of that weekday's counted days have no sales and
+//   are not explained (by a closure note, or by an earlier answer), with at least 4 counted days. A day counts only
+//   when its week (Monday to Sunday) has sales on another day, so a week with no data at all, a long hole in the data
+//   or a seasonal closure, never makes a weekday look closed. The question runs from the first day with sales.
 // - A gap question asks about each run of consecutive days with no sales that no note or earlier answer explains.
-//   Days of a weekday the location is usually closed on (60% rule on all its days) never start or end a gap, but
+//   Days of a weekday the location is usually closed on (60% rule on all its counted days) never start or end a gap, but
 //   bridge one. A run that starts the window before the first day with sales is cut off by the window, so it is not
 //   asked.
 // - An answered question's days are never asked about again. At most 5 questions: weekdays first, then gaps newest
@@ -37,7 +39,7 @@ export type AskedQuestion =
 export type Question =
   | {
     readonly id: string; readonly kind: 'weekday'; readonly weekday: number; readonly from: string; readonly to: string;
-    /** Days of this weekday in the window with no sales, and all days of this weekday in the window. */
+    /** Counted days of this weekday with no sales, and all its counted days (weeks with sales on another day). */
     readonly noSalesCount: number; readonly weekdayCount: number;
   }
   | { readonly id: string; readonly kind: 'gap'; readonly from: string; readonly to: string; readonly dayCount: number };
@@ -63,6 +65,11 @@ function plusDays(day: string, days: number): string {
 
 function weekdayOf(day: string): number {
   return new Date(timeOf(day)).getUTCDay();
+}
+
+/** The Monday that starts `day`'s week. */
+function weekOf(day: string): string {
+  return plusDays(day, -((weekdayOf(day) + 6) % 7));
 }
 
 /** The days from `from` to `to`, inclusive. */
@@ -128,42 +135,49 @@ export function questionsFor(input: QuestionInput): Question[] {
     return asked === null ? [] : [asked];
   });
   const closures = input.notes.filter(isClosure);
-  const dates = datesIn(window.from, window.to);
+  const all = datesIn(window.from, window.to);
+  const firstWithSales = all.findIndex((day) => withSales.has(day));
+  const dates = firstWithSales < 0 ? [] : all.slice(firstWithSales);
+  const from = dates[0];
+  if (from === undefined) return [];
   const answeredAbout = (day: string): boolean => answered.some((asked) => asksAbout(asked, day));
+  const salesInWeek = new Map<string, number>();
+  for (const day of dates) if (withSales.has(day)) salesInWeek.set(weekOf(day), (salesInWeek.get(weekOf(day)) ?? 0) + 1);
+  /** Whether the location had sales on another day of `day`'s week. */
+  const weekHasSales = (day: string): boolean => (salesInWeek.get(weekOf(day)) ?? 0) > (withSales.has(day) ? 1 : 0);
 
-  // Weekdays: the share of each weekday's days with no sales, over all of them and over those still unexplained.
+  // Weekdays: the share of each weekday's counted days with no sales, over all of them and over those still unexplained.
   const weekdayQuestions: Question[] = [];
   const closedWeekdays = new Set<number>();
   for (let weekday = 0; weekday < 7; weekday += 1) {
-    const ofWeekday = dates.filter((day) => weekdayOf(day) === weekday);
+    const ofWeekday = dates.filter((day) => weekdayOf(day) === weekday && weekHasSales(day));
     if (ofWeekday.length < WEEKDAY_MIN_DAYS) continue;
     const noSales = ofWeekday.filter((day) => !withSales.has(day));
     if (noSales.length >= WEEKDAY_SHARE * ofWeekday.length) closedWeekdays.add(weekday);
     const unexplained = noSales.filter((day) => !closures.some((note) => noteCovers(note, day)) && !answeredAbout(day));
     if (unexplained.length < WEEKDAY_SHARE * ofWeekday.length) continue;
-    const asked: AskedQuestion = { kind: 'weekday', weekday, from: window.from, to: window.to };
+    const asked: AskedQuestion = { kind: 'weekday', weekday, from, to: window.to };
     weekdayQuestions.push({ id: questionId(asked), ...asked, noSalesCount: noSales.length, weekdayCount: ofWeekday.length });
   }
 
-  // Gaps: runs of days with no sales, from the first day with sales in the window.
+  // Gaps: runs of days with no sales.
   const explained = (day: string): boolean => input.notes.some((note) => noteCovers(note, day)) || answeredAbout(day);
   const closedDay = (day: string): boolean => closedWeekdays.has(weekdayOf(day));
   const gapQuestions: Question[] = [];
-  const firstWithSales = dates.findIndex((day) => withSales.has(day));
   let run: string[] = [];
   const endRun = (): void => {
     // A usually closed weekday never starts or ends a gap.
     const start = run.findIndex((day) => !closedDay(day));
     const end = run.findLastIndex((day) => !closedDay(day));
-    const from = run[start];
-    const to = run[end];
-    if (from !== undefined && to !== undefined) {
-      const asked: AskedQuestion = { kind: 'gap', from, to };
-      gapQuestions.push({ id: questionId(asked), ...asked, dayCount: daysBetween(from, to) + 1 });
+    const first = run[start];
+    const last = run[end];
+    if (first !== undefined && last !== undefined) {
+      const asked: AskedQuestion = { kind: 'gap', from: first, to: last };
+      gapQuestions.push({ id: questionId(asked), ...asked, dayCount: daysBetween(first, last) + 1 });
     }
     run = [];
   };
-  for (const day of firstWithSales < 0 ? [] : dates.slice(firstWithSales)) {
+  for (const day of dates) {
     if (!withSales.has(day) && (closedDay(day) || !explained(day))) run.push(day);
     else endRun();
   }
