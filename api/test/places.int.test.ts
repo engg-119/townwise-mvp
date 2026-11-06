@@ -84,7 +84,7 @@ describe('details', () => {
     const res = await details({ placeId: PLACE_ID, sessionToken });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
-      place: { placeId: PLACE_ID, address: ADDRESS, town: { townId: 'hanover-nh', name: 'Hanover', state: 'NH' } },
+      place: { placeId: PLACE_ID, address: ADDRESS, town: { townId: 'hanover-nh', name: 'Hanover', state: 'NH' }, map: null },
     });
     expect(fake.calls[0]?.url).toBe(`https://places.googleapis.com/v1/places/${PLACE_ID}?sessionToken=${sessionToken}`);
   });
@@ -95,9 +95,9 @@ describe('details', () => {
       { kind: 'json', body: placeDetails(PLACE_ID, 'San Juan, Puerto Rico', usAddress({ locality: 'San Juan', state: 'San Juan', country: 'PR' })) },
     );
     expect(await (await details({ placeId: PLACE_ID, sessionToken: randomUUID() })).json())
-      .toEqual({ place: { placeId: PLACE_ID, address: 'Norwich, VT, USA', town: { townId: null, name: 'Norwich', state: 'VT' } } });
+      .toEqual({ place: { placeId: PLACE_ID, address: 'Norwich, VT, USA', town: { townId: null, name: 'Norwich', state: 'VT' }, map: null } });
     expect(await (await details({ placeId: PLACE_ID, sessionToken: randomUUID() })).json())
-      .toEqual({ place: { placeId: PLACE_ID, address: 'San Juan, Puerto Rico', town: null } });
+      .toEqual({ place: { placeId: PLACE_ID, address: 'San Juan, Puerto Rico', town: null, map: null } });
   });
 
   it('Google’s 404, or 400 INVALID_ARGUMENT on the id, is 404 place_not_found', async () => {

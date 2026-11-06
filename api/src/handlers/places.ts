@@ -1,6 +1,6 @@
 // POST /api/places/autocomplete and POST /api/places/details: the Places proxy that finds the business when someone
-// requests access. Nothing from these routes is stored, and the typed text, place ids, addresses and Google's answers
-// never reach a log or an audit event: a failure logs the route id and a code only.
+// requests access. Nothing from these routes is stored, and the typed text, place ids, addresses, Google's answers and
+// the signed map URL never reach a log or an audit event: a failure logs the route id and a code only.
 import { randomUUID } from 'node:crypto';
 
 import { AppError, parseInput } from '@ckeith26/server-core';
@@ -98,13 +98,22 @@ export async function placesAutocomplete(ctx: TownwiseContext, req: Request, res
   res.status(200).json({ suggestions, sessionToken });
 }
 
-/** Request `{ placeId, sessionToken }`, which ends Google's billed session. Answers `{ place: { placeId, address, town } }`. */
+/**
+ * Request `{ placeId, sessionToken }`, which ends Google's billed session. Answers `{ place: { placeId, address, town,
+ * map } }`: `map` is a signed Maps Static URL of Google's current id for the place, which the browser loads from
+ * Google, or null while the map is off.
+ */
 export async function placesDetails(ctx: TownwiseContext, req: Request, res: Response): Promise<void> {
   const places = placesOf(ctx);
   const body = parseInput(detailsBody, req.body);
   const place = await ask(ctx, 'places.details', () => places.details(body.placeId, body.sessionToken));
   if (place === null) throw new AppError(404, 'place_not_found', 'Place not found');
   res.status(200).json({
-    place: { placeId: place.placeId, address: place.formattedAddress, town: townOfAddress(place.addressComponents) },
+    place: {
+      placeId: place.placeId,
+      address: place.formattedAddress,
+      town: townOfAddress(place.addressComponents),
+      map: ctx.placesMap?.mapOf(place.placeId) ?? null,
+    },
   });
 }

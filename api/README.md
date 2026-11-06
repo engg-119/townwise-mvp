@@ -111,14 +111,15 @@ A signed-in person whose kit user no longer exists gets 401 `unauthenticated`. T
 
 ### Places search
 
-The access request can start by finding the business on Google Places (New). The API calls Google itself, so the browser talks only to the API and the CSP does not change.
+The access request can start by finding the business on Google Places (New). The API calls Google Places itself, so the search goes only to the API. The one exception is the confirm card's map, an image the browser loads straight from Google (below), which is why the web CSP's `img-src` allows `https://maps.googleapis.com`.
 
 - Off until `GOOGLE_PLACES_API_KEY` is set: both routes answer 503 `places_unavailable` to every request, and the client shows the manual fields. Google failing, or not answering within 5 seconds, also answers 503 `places_unavailable`.
 - The client sends `POST /api/places/autocomplete` as the person types (debounced, 2 characters or more), then `POST /api/places/details` for the suggestion they pick. Both carry the same session token, a version 4 UUID the client makes once per search; Google bills the typing and the pick as one session, and the details call ends it. Without a token, autocomplete makes one and returns it, for the client to send from then on. The server checks only the token's format and keeps no record of it.
 - Autocomplete asks Google for US results in English, of any business type, and answers up to 5 place suggestions (`name` is Google's main text, `detail` its secondary text, such as "Hanover, NH, USA").
 - Details asks for the place's id, formatted address and address components only (`X-Goog-FieldMask: id,formattedAddress,addressComponents`). `address` is for display; the client keeps the name from the suggestion it picked.
 - `town` is a `TownInput` the access request accepts unchanged. It is one of the twelve researched towns when the locality, postal town, sublocality or `administrative_area_level_3` (town or township) matches one by name and state, ignoring case, or when any of them is an alias: Lake Placid, NY is `north-elba-ny` and North Conway, NH is `conway-nh`. Otherwise it is `{ townId: null, name, state }`, named by the first of those components. It is null when the place is outside the 50 states and DC (a territory included: its country component is not `US`, or its state is not in the fixed list), or has no usable town name.
-- Nothing from these routes is stored. The typed text, place ids, addresses and Google's answers never reach a log or an audit event; a Google failure logs `townwise.places_failed` with the route id and a code. [CONFIRM: the town matching rules, which are not yet checked against live Google answers]
+- Details also answers `map`: a dark Google Maps Static image of the place with a mint pin, as `{ url, width: 640, height: 320 }` (drawn at scale 2, 1280 by 640 pixels; the client sizes it by the 2:1 ratio). `url` is a `https://maps.googleapis.com/maps/api/staticmap` URL for Google's current id of the place, signed by the API with `GOOGLE_MAPS_SIGNING_SECRET` (`src/places/static-map.ts`), and the browser or the native app loads it from Google, which sees the viewer's IP address. The API never fetches, relays or keeps the image. The URL holds `GOOGLE_MAPS_STATIC_KEY`, a key of its own restricted to the Maps Static API with unsigned requests refused (`../infra/README.md`, step 17), so the key alone draws nothing. `map` is null while the map is off (either variable unset); a map URL is never made unsigned. Signing is local, so the map never fails or delays the answer.
+- Nothing from these routes is stored. The typed text, place ids, addresses, Google's answers and the signed map URL never reach a log or an audit event; a Google failure logs `townwise.places_failed` with the route id and a code. [CONFIRM: the town matching rules, which are not yet checked against live Google answers]
 
 ### Team
 
@@ -261,7 +262,7 @@ Member routes take the organization from the caller’s own seat, never from the
 | Method and path | Policy | Request | Success | Errors |
 |---|---|---|---|---|
 | `POST /api/places/autocomplete` | signed_in; 2 KB; limiter `places` | `{ input, sessionToken? }`, input 2 to 120 characters after trimming, `sessionToken` a version 4 UUID | 200 `{ suggestions, sessionToken }`, up to 5 `{ placeId, name, detail }` (`detail` empty when Google has none) | 400; 413; 429; 503 `places_unavailable` |
-| `POST /api/places/details` | signed_in; 2 KB; limiter `places` | `{ placeId, sessionToken }`, `placeId` 10 to 512 letters, digits, `_` or `-` (`api/src/place-id.ts`) | 200 `{ place: { placeId, address, town } }`, `town` a `TownInput` or null | 400; 404 `place_not_found` (Google answered 404, or 400 `INVALID_ARGUMENT` for the id); 413; 429; 503 `places_unavailable` |
+| `POST /api/places/details` | signed_in; 2 KB; limiter `places` | `{ placeId, sessionToken }`, `placeId` 10 to 512 letters, digits, `_` or `-` (`api/src/place-id.ts`) | 200 `{ place: { placeId, address, town, map } }`, `town` a `TownInput` or null, `map` `{ url, width: 640, height: 320 }` or null | 400; 404 `place_not_found` (Google answered 404, or 400 `INVALID_ARGUMENT` for the id); 413; 429; 503 `places_unavailable` |
 
 See Places search. `placeId` in the answer is Google's current id for the place, which can differ from the one sent.
 
@@ -415,8 +416,10 @@ Townwise reads the kit’s data only through its store functions (`users.findByI
 | `TOWNWISE_CHAT_MONTHLY_BUDGET_USD` | api (`src/config.ts`) | no | no | `20`: the tuning chat’s monthly spend limit per organization, in dollars, 0 to 10,000 |
 | `ANTHROPIC_API_KEY` | api (`src/main.ts`) | no | yes | empty locally, which turns the tuning chat off; in production a Key Vault reference when `enable_chat` is on (`../infra/README.md`, step 16) |
 | `GOOGLE_PLACES_API_KEY` | api (`src/main.ts`) | no | yes | empty locally, which turns the Places search off; in production a Key Vault reference when `enable_places` is on (`../infra/README.md`, step 17) |
+| `GOOGLE_MAPS_STATIC_KEY` | api (`src/main.ts`) | no | yes | empty locally, which leaves the confirm card without a map; a key restricted to the Maps Static API, which ends up in the map URL the browser loads; in production a Key Vault reference when `enable_places` is on (step 17) |
+| `GOOGLE_MAPS_SIGNING_SECRET` | api (`src/main.ts`) | no | yes | empty locally, which leaves the confirm card without a map; Google's URL signing secret (URL-safe base64; a malformed value refuses boot), never sent anywhere; in production a Key Vault reference when `enable_places` is on (step 17) |
 
-`.env.example` lists every variable above except `LOG_LEVEL`, `HTTP_KEEP_ALIVE_TIMEOUT_MS` and `SHUTDOWN_TIMEOUT_MS`, which take their defaults. It holds local values and placeholders only: the two key rings, the Google client ids, the staff list, the Anthropic key and the Places key are empty. Key rotation for the two key rings is in `kit/auth/MODULE.md`.
+`.env.example` lists every variable above except `LOG_LEVEL`, `HTTP_KEEP_ALIVE_TIMEOUT_MS` and `SHUTDOWN_TIMEOUT_MS`, which take their defaults. It holds local values and placeholders only: the two key rings, the Google client ids, the staff list, the Anthropic key, the Places key, the Maps static key and its signing secret are empty. Key rotation for the two key rings is in `kit/auth/MODULE.md`.
 
 ## Kit modules
 

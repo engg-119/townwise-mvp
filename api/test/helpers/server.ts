@@ -20,6 +20,7 @@ import { createTownwiseApi } from '../../src/app.ts';
 import type { ChatModel } from '../../src/chat/model.ts';
 import { configSchema as townwiseSchema } from '../../src/config.ts';
 import type { PlacesClient } from '../../src/places/google.ts';
+import type { StaticMapSigner } from '../../src/places/static-map.ts';
 
 export const WEB_ORIGIN = 'https://app.example.test';
 export const STAFF_EMAIL = 'staff@townwise.test';
@@ -80,6 +81,8 @@ export async function startTownwiseServer(opts?: {
   chatTurnTimeLimitMs?: number;
   /** Google Places, over a fake fetch (helpers/places-fetch.ts); absent, the Places proxy is off. */
   places?: PlacesClient;
+  /** Signs the confirm card's map URL (src/places/static-map.ts); absent, details answers map: null. */
+  placesMap?: StaticMapSigner;
 }): Promise<TownwiseTestServer> {
   const env: Record<string, string> = {
     NODE_ENV: 'test',
@@ -132,7 +135,7 @@ export async function startTownwiseServer(opts?: {
     });
     const deps = {
       config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now: clock.now, chat: opts?.chat,
-      chatTurnTimeLimitMs: opts?.chatTurnTimeLimitMs, places: opts?.places,
+      chatTurnTimeLimitMs: opts?.chatTurnTimeLimitMs, places: opts?.places, placesMap: opts?.placesMap,
     };
     const apiRouter = createTownwiseApi(deps);
     const routes: RouteMount[] = [{ path: '/auth', router: auth.router }, { path: '/api', router: apiRouter }];

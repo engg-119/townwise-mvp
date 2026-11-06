@@ -10,13 +10,17 @@ import { createAnthropicChatModel } from './chat/model.ts';
 import { configSchema as townwiseSchema } from './config.ts';
 import { createSendMagicLink } from './email.ts';
 import { createGooglePlacesClient } from './places/google.ts';
+import { createStaticMapSigner, signingSecretSchema } from './places/static-map.ts';
 
 // ANTHROPIC_API_KEY and GOOGLE_PLACES_API_KEY are optional: absent, the tuning chat or the Places proxy is off. Each
-// goes no further than the client built here.
-const { ANTHROPIC_API_KEY, GOOGLE_PLACES_API_KEY, ...config } = loadEnv(z.object({
+// goes no further than the client built here. The confirm card's map needs both GOOGLE_MAPS_STATIC_KEY and
+// GOOGLE_MAPS_SIGNING_SECRET: without either there is no map, never an unsigned one. A malformed secret refuses boot.
+const { ANTHROPIC_API_KEY, GOOGLE_PLACES_API_KEY, GOOGLE_MAPS_STATIC_KEY, GOOGLE_MAPS_SIGNING_SECRET, ...config } = loadEnv(z.object({
   ...serverSchema.shape, ...mongoSchema.shape, ...redisSchema.shape, ...authSchema.shape, ...townwiseSchema.shape,
   ANTHROPIC_API_KEY: z.string().optional(),
   GOOGLE_PLACES_API_KEY: z.string().optional(),
+  GOOGLE_MAPS_STATIC_KEY: z.string().optional(),
+  GOOGLE_MAPS_SIGNING_SECRET: signingSecretSchema.optional(),
 }), process.env);
 const logger = createLogger(config);
 const mongo = await connectMongo({ config, logger });
@@ -32,7 +36,11 @@ const auth = createAuth({
 });
 const chat = ANTHROPIC_API_KEY === undefined ? undefined : createAnthropicChatModel(ANTHROPIC_API_KEY);
 const places = GOOGLE_PLACES_API_KEY === undefined ? undefined : createGooglePlacesClient(GOOGLE_PLACES_API_KEY);
-const api = createTownwiseApi({ config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now, chat, places });
+const placesMap = GOOGLE_MAPS_STATIC_KEY === undefined || GOOGLE_MAPS_SIGNING_SECRET === undefined
+  ? undefined : createStaticMapSigner(GOOGLE_MAPS_STATIC_KEY, GOOGLE_MAPS_SIGNING_SECRET);
+const api = createTownwiseApi({
+  config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now, chat, places, placesMap,
+});
 await ensureIndexes(mongo.connection, { logger });   // after every store has registered its models
 await redis.ready(3000);                             // bounded; logs and continues on false
 const ceiling = createRateLimiter({ redis: redis.client, name: 'app:api-ceiling', limit: 2000, windowSeconds: 60 });
