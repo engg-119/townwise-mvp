@@ -186,6 +186,9 @@ test('before any sales are uploaded, what TownwiseAI can use leaves out the sale
   expect(readsLine({ town: 'Bend', hasTownProfile: false }, { sales: false })).toBe('your notes and the town calendar');
   expect(readsLine({ ...CTX, hasForecast: true }, { sales: false }))
     .toBe('your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and Townwise’s forecast');
+  // A context that says the location has no sales leaves them out of every line built from it.
+  expect(readsLine({ ...CTX, hasSales: false })).toBe('your notes, Hanover’s town profile, the town calendar and who’s likely in Hanover');
+  expect(readsLine({ ...CTX, hasSales: true })).toBe(readsLine(CTX));
 });
 
 test('an opened card lists the views in words, and never a field it has no words for', () => {

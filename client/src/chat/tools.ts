@@ -21,9 +21,10 @@ export interface ToolStep {
 /**
  * What the copy may name: the location's town ("Hanover"), whether Townwise has researched its town profile, and
  * (F10) whether GET .../estimates/about says a forecast is published for the location. `hasForecast` is true only once
- * that read says so; absent or false, nothing claims a forecast.
+ * that read says so; absent or false, nothing claims a forecast. `hasSales` false (the location has no sales days yet)
+ * leaves the sales out of every line built from the table, so no line claims TownwiseAI answers from them.
  */
-export interface ToolContext { town: string; hasTownProfile: boolean; hasForecast?: boolean }
+export interface ToolContext { town: string; hasTownProfile: boolean; hasForecast?: boolean; hasSales?: boolean }
 
 export interface SourceLink { host: string; url: string }
 
@@ -321,12 +322,13 @@ export function basedOnLine(steps: readonly ToolStep[], ctx: ToolContext): strin
 
 /**
  * What TownwiseAI reads, from the registered tools: "your sales, your notes and Hanover’s town profile". With
- * `sales: false`, what it can use before any sales are uploaded.
+ * `sales: false`, or a context whose `hasSales` is false, what it can use before any sales are uploaded.
  */
 export function readsLine(ctx: ToolContext, opts: { sales?: boolean } = {}): string {
+  const sales = opts.sales ?? ctx.hasSales;
   const reads: string[] = [];
   for (const row of Object.values(TOOLS)) {
-    if (opts.sales === false && row.needsSales === true) continue;
+    if (sales === false && row.needsSales === true) continue;
     const read = row.reads?.(ctx);
     if (read !== undefined && read !== null && !reads.includes(read)) reads.push(read);
   }
