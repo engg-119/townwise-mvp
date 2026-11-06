@@ -178,16 +178,24 @@ export function FileList(props: { locationId: string }): React.JSX.Element | nul
   const [failure, setFailure] = useState<unknown>(null);
 
   const { state, reload } = useLoad(useCallback(() => listFiles(api, props.locationId), [api, props.locationId]));
+  // The last list of this location, shown while a reload (after a delete) runs, so the section, its notice and
+  // focus stay put instead of the whole section leaving until the list answers.
+  const [shown, setShown] = useState<{ locationId: string; files: FileView[] } | null>(null);
+  if (state.status === 'ready' && (shown?.files !== state.data || shown.locationId !== props.locationId)) {
+    setShown({ locationId: props.locationId, files: state.data });
+  }
+  const kept = shown?.locationId === props.locationId ? shown.files : null;
 
-  if (state.status === 'loading') return null;
   if (state.status === 'failed') {
     if (hidden(state.error)) return null;
     return <Section kicker="Stored privately for your organization" title={COPY.yourFiles}><ErrorNotice error={state.error} onRetry={reload} /></Section>;
   }
-  const files = [...state.data, ...older.files];
+  const first = state.status === 'ready' ? state.data : kept;
+  if (first === null) return null;
+  const files = [...first, ...older.files];
   if (files.length === 0 && notice === null) return null;
   const last = files.at(-1);
-  const canPageOlder = !older.done && state.data.length + older.files.length >= PAGE && last !== undefined;
+  const canPageOlder = !older.done && first.length + older.files.length >= PAGE && last !== undefined;
   const anyRaw = files.some((file) => file.rawAvailable && file.status !== 'uploading');
 
   const fresh = (): void => {

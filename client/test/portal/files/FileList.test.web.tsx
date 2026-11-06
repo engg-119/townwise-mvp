@@ -152,6 +152,18 @@ test('Delete original says what stays before it runs, then deletes only the orig
   expect(fake.calls.filter((call) => call.method === 'DELETE').map((call) => call.path)).toEqual(['/files/f1/raw']);
 });
 
+test('while the list reloads after a delete, the section and its notice stay on screen', async () => {
+  const fake = setup(meOf(ACCESS.admin), FILES);
+  await list();
+  // The reload after the delete never answers.
+  fake.lists[''] = new Promise(() => undefined);
+  fireEvent.click(screen.getByRole('button', { name: 'Delete original: march.csv' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Delete original' });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Delete original' }));
+  expect(await screen.findByText('Original deleted. The cleaned copy and days stay.')).toBeTruthy();
+  expect(within(screen.getByRole('list', { name: 'Your files' })).getAllByRole('listitem')).toHaveLength(3);
+});
+
 test('a download refused for too many requests says when to try, not that an upload will retry', async () => {
   const fake = setup(meOf(ACCESS.admin), FILES);
   fake.downloads['/files/f1/clean'] = () => refusal(429, 'rate_limited', 120);
