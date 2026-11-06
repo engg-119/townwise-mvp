@@ -32,6 +32,8 @@ export const AUDIT_DETAIL_KEYS = {
   'note.deleted': ['locationId', 'kind', 'startDate', 'endDate'],
   'chat.turn_completed': ['locationId', 'conversationId', 'model', 'calls', 'inputTokens', 'outputTokens', 'stopReason'],
   'chat.conversation_deleted': ['locationId', 'conversationId'],
+  // U9, TownwiseAI's questions: the question's id holds only dates and a weekday number.
+  'agent.question_answered': ['locationId', 'questionId', 'answer'],
   'view_as.started': ['targetUserId', 'targetEmail', 'reason', 'expiresAt'],
   'view_as.ended': ['endReason'],
   'people.signed_out_everywhere': [],

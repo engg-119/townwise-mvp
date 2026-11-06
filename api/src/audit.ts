@@ -124,6 +124,11 @@ function roleWord(value: AuditDetails[string] | undefined): string {
   return value === 'org_admin' ? 'admin' : text(value);
 }
 
+/** U9: what an answer to TownwiseAI's question about days with no sales said. */
+const QUESTION_ANSWER_WORDS: Readonly<Record<string, string>> = {
+  closed: 'closed on those days', open: 'the data is missing', not_sure: 'not sure',
+};
+
 const NOTE_KINDS: Readonly<Record<string, string>> = {
   closure: 'closure', private_event: 'private event', opening: 'opening', other: 'other',
 };
@@ -163,6 +168,8 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'note.deleted': return noteSummary('Deleted', d);
     case 'chat.turn_completed': return 'Asked the tuning chat about a location';
     case 'chat.conversation_deleted': return 'Deleted a tuning chat conversation';
+    case 'agent.question_answered':
+      return `Answered TownwiseAI’s question about days with no sales: ${QUESTION_ANSWER_WORDS[text(d.answer)] ?? text(d.answer)}`;
     case 'view_as.started': return `Viewed as ${text(d.targetEmail)}`;
     case 'view_as.ended':
       if (d.endReason === 'expired') return 'View-as expired';

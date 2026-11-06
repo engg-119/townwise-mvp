@@ -1,6 +1,7 @@
 import type { Connection } from 'mongoose';
 
 import { createAccessRequestStore, type AccessRequestStore } from './access-requests.ts';
+import { createAgentAnswerStore, type AgentAnswerStore } from './agent-answers.ts';
 import { createAuditEventStore, type AuditEventStore } from './audit-events.ts';
 import { createChatConversationStore, type ChatConversationStore } from './chat-conversations.ts';
 import { createChatLiveTurnStore, type ChatLiveTurnStore } from './chat-live-turns.ts';
@@ -33,6 +34,8 @@ export interface TownwiseStores {
   readonly chatLiveTurns: ChatLiveTurnStore;
   readonly chatUsage: ChatUsageStore;
   readonly chatProposals: ChatProposalStore;
+  /** U9, TownwiseAI's questions. */
+  readonly agentAnswers: AgentAnswerStore;
   /** U11, statement moments. */
   readonly welcomes: WelcomeStore;
   /** Stored files (spec 11A). */
@@ -57,6 +60,8 @@ export function createTownwiseStores(connection: Connection): TownwiseStores {
     chatLiveTurns: createChatLiveTurnStore(connection),
     chatUsage: createChatUsageStore(connection),
     chatProposals: createChatProposalStore(connection),
+    // U9, TownwiseAI's questions.
+    agentAnswers: createAgentAnswerStore(connection),
     // U11, statement moments.
     welcomes: createWelcomeStore(connection),
     files: createFileStore(connection),

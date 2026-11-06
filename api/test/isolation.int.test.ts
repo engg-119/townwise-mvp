@@ -66,6 +66,11 @@ async function tenant(name: string): Promise<Tenant> {
   });
   const importId = String((await server.connection.collection('tw_files').findOne({ _id: new Types.ObjectId(fileId) }))?.importId);
   await withProposal(conversationId);
+  // U9: an answer to a TownwiseAI question.
+  await server.connection.collection('tw_agent_answers').insertOne({
+    orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), questionId: 'gap_2026-05-02_2026-05-03',
+    answer: 'open', noteId: new Types.ObjectId(), status: 'done', createdAt: server.clock.now(), updatedAt: server.clock.now(),
+  });
   return { orgId, name, admin, member, inviteId, seatIds, locationId, locationName, noteId, conversationId, fileId, importId };
 }
 
@@ -95,6 +100,8 @@ async function snapshotOf(org: Tenant): Promise<string> {
     'tw_upload_days',
     // U11, statement moments.
     'tw_welcomes',
+    // U9, TownwiseAI's questions.
+    'tw_agent_answers',
   ]) {
     docs.push(await server.connection.collection(name).find({ orgId }).sort({ _id: 1 }).toArray());
   }
@@ -174,6 +181,7 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
     'org.files.create': { name: 'a.csv', sizeBytes: 10, purpose: 'history' },
     'org.imports.answer': { questionId: 'q', choice: 'not_sure' },
     'org.chat.proposal': { action: 'dismiss' },
+    'org.agent.answer': { answer: 'not_sure' },
   };
   const QUERY: Record<string, string> = {
     'org.sales.days': '?from=2026-01-01&to=2026-05-31', 'org.calendar.get': '?from=2026-01-01&to=2026-05-31',
@@ -187,6 +195,7 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
       'org.chat.proposal',
       'org.files.create', 'org.files.chunk', 'org.files.complete', 'org.files.list', 'org.files.get', 'org.files.raw', 'org.files.clean',
       'org.files.remove_raw', 'org.files.remove', 'org.imports.current', 'org.imports.get', 'org.imports.start', 'org.imports.answer',
+      'org.agent.get', 'org.agent.answer',
     ]));
   });
 
@@ -198,7 +207,7 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
       };
       const aOwn: Record<string, string> = {
         memberId: a.inviteId, locationId: a.locationId, noteId: a.noteId, conversationId: a.conversationId, fileId: a.fileId,
-        importId: a.importId, index: '0', proposalId: 'toolu_proposal0001',
+        importId: a.importId, index: '0', proposalId: 'toolu_proposal0001', questionId: 'gap_2026-05-02_2026-05-03',
       };
       const params = [...route.path.matchAll(/:([A-Za-z]+)/g)].map((match) => match[1] ?? '');
       let cases = 0;
