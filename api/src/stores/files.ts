@@ -205,12 +205,6 @@ export interface NewFile {
 /** What the reader takes in a started import (nextToRead). */
 const READABLE: FileStatus[] = ['queued', 'reading', 'stored'];
 
-/**
- * Statuses the reader is busy with or will be: the original must stay. A stored file is read once its import starts,
- * and a file whose original its owner deleted would be failed as raw_missing, blaming Townwise for the person's choice.
- */
-export const BUSY_STATUSES: readonly FileStatus[] = ['uploading', 'stored', 'queued', 'reading', 'waiting'];
-
 /** Tenant store: every function takes the OrgScope first and filters on its orgId. */
 export interface FileStore {
   create(scope: OrgScope, locationId: string, input: NewFile): Promise<FileRecord>;
