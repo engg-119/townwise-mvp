@@ -184,13 +184,18 @@ function Suggestions(): React.JSX.Element {
   );
 }
 
-/** "Prefer to send only daily totals?" and the link to P13 (storage2 13). Web only: native has no upload. */
-function DailyTotals(props: { locationId: string; lead?: string }): React.JSX.Element | null {
+/**
+ * "Prefer to send only daily totals?" and the link to P13 (storage2 13). Web only: native has no upload. Under
+ * view-as it is disabled in place, described by the read-only line, as UploadAction is.
+ */
+function DailyTotals(props: { locationId: string; lead?: string; readOnlyId: string | null }): React.JSX.Element | null {
   if (Platform.OS !== 'web') return null;
   return (
     <View style={styles.daily}>
       <Small>{props.lead ?? STEP.dailyTotalsAsk}</Small>
-      <LinkButton variant="link" href={`${locationHref(props.locationId, 'sales')}/upload`} label={STEP.dailyTotalsLink} />
+      {props.readOnlyId === null
+        ? <LinkButton variant="link" href={`${locationHref(props.locationId, 'sales')}/upload`} label={STEP.dailyTotalsLink} />
+        : <Button variant="link" label={STEP.dailyTotalsLink} disabled describedBy={props.readOnlyId} />}
     </View>
   );
 }
@@ -524,7 +529,11 @@ export function HistoryStep(props: { onDone?: () => void }): React.JSX.Element {
         {zone}
         {list}
         {CAN_DROP ? readButton : null}
-        <DailyTotals locationId={location.id} {...(refused || poll.error !== null ? { lead: STEP.refusedOffer } : {})} />
+        <DailyTotals
+          locationId={location.id}
+          readOnlyId={readOnly ? RO_ID : null}
+          {...(refused || poll.error !== null ? { lead: STEP.refusedOffer } : {})}
+        />
         <Suggestions />
       </Stack>
     );

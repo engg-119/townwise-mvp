@@ -333,6 +333,11 @@ test('view-as: no drop and no upload, the controls disabled with the read-only l
   expect(choose.getAttribute('aria-describedby')).toBe('history-step-ro');
   expect(within(region).getByText('Read-only while viewing as gm@example.org.')).toBeTruthy();
   expect(within(region).getByRole('button', { name: STEP.read }).getAttribute('aria-disabled')).toBe('true');
+  // The browser upload is no way in either: disabled in place like Home's other upload links.
+  expect(within(region).queryByRole('link', { name: STEP.dailyTotalsLink })).toBeNull();
+  const daily = within(region).getByRole('button', { name: STEP.dailyTotalsLink });
+  expect(daily.getAttribute('aria-disabled')).toBe('true');
+  expect(daily.getAttribute('aria-describedby')).toBe('history-step-ro');
   // The name is the kind's label under view-as, and no row can be removed.
   expect(within(region).getByText('CSV or text file, uploaded Nov 5, 2026')).toBeTruthy();
   expect(within(region).queryByRole('button', { name: /^Remove / })).toBeNull();
