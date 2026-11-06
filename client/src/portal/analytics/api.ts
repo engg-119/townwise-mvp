@@ -71,7 +71,15 @@ export type SalesHistory = z.infer<typeof salesHistorySchema>;
 export const EVENT_KINDS = ['holiday', 'event', 'term', 'season'] as const;
 export type EventKind = (typeof EVENT_KINDS)[number];
 
-/** Spec 10.10 TownEvent. `start` and `end` are inclusive; `group` names a recurring kind of day, for drivers. */
+const sourceSchema = z.object({ label: z.string(), url: z.string() });
+
+/** A web link: http or https. A regex, so the check does not lean on each platform's `URL` support. */
+const WEB_LINK = /^https?:\/\//i;
+
+/**
+ * Spec 10.10 TownEvent. `start` and `end` are inclusive; `group` names a recurring kind of day, for drivers. A
+ * source whose url is not an http or https link is dropped, so no page renders it as a link.
+ */
 export const townEventSchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -81,7 +89,7 @@ export const townEventSchema = z.object({
   scope: z.enum(['national', 'town']),
   group: z.string().nullable(),
   groupLabel: z.string().nullable(),
-  sources: z.array(z.object({ label: z.string(), url: z.string() })),
+  sources: z.array(sourceSchema).transform((sources) => sources.filter((source) => WEB_LINK.test(source.url))),
 });
 export type TownEvent = z.infer<typeof townEventSchema>;
 

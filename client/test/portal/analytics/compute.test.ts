@@ -2,7 +2,7 @@ import {
   analyticsInput, byMonth, DRIVERS_EMPTY, DRIVERS_FOOTNOTE, driverLine, drivers, monthSummary, nightLine, nightTypes, seenText, weeklyShape,
   weeklySummary, yearOverYear, yearOverYearSummary,
 } from '../../../src/portal/analytics/aggregates';
-import { calendarRange, fetchCalendar, fetchSalesHistory, salesHistorySchema } from '../../../src/portal/analytics/api';
+import { calendarRange, fetchCalendar, fetchSalesHistory, salesHistorySchema, townEventSchema } from '../../../src/portal/analytics/api';
 import { usual } from '../../../src/portal/analytics/baseline';
 import {
   calendarCoverageLine, cellLabel, colOf, focusBounds, heatmapBlocks, heatmapSummary, initialFocus, moveFocus, rowOf,
@@ -73,6 +73,21 @@ describe('the two reads', () => {
     expect(api.paths).toEqual([path]);
     expect(calendar.events).toEqual([thanksgiving]);
     expect(calendar.covers).toEqual({ from: '2026-09-14', to: '2027-01-05' });
+  });
+
+  test('a source link that is not http or https is dropped, so no page renders it', () => {
+    const event = townEvent({
+      title: 'Homecoming',
+      start: '2026-10-16',
+      sources: [
+        { label: 'home.dartmouth.edu', url: 'https://home.dartmouth.edu/' },
+        { label: 'old site', url: 'http://example.com/' },
+        { label: 'script', url: 'javascript:alert(1)' },
+        { label: 'data', url: ' data:text/html,hi' },
+        { label: 'relative', url: '/events' },
+      ],
+    });
+    expect(townEventSchema.parse(event).sources.map((source) => source.label)).toEqual(['home.dartmouth.edu', 'old site']);
   });
 
   test('calendarRange runs from January 1 of the first year with data to the end of this year, inside the API rules', () => {
