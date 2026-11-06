@@ -122,7 +122,7 @@ describe('get_town_calendar', () => {
     const { parsed } = await run('get_town_calendar', { from: '2026-11-15', to: '2026-11-30' });
     expect(parsed).toMatchObject({
       from: '2026-11-15', to: '2026-11-30', town: { name: 'Hanover', state: 'NH' }, researched: true,
-      covers: { from: '2025-01-06', to: '2027-01-05' },
+      covers: { from: '2025-01-06', to: '2027-06-13' },
     });
     const events = parsed.events as Record<string, unknown>[];
     expect(events.find((event) => event.id === 'hanover-nh:2026-11-20:fall-term-finals')).toEqual({

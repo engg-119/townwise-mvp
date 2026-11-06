@@ -147,8 +147,8 @@ describe('townCalendarCovers', () => {
   });
 
   it('spans the town’s researched events over all years', () => {
-    // Hanover: winter 2025 classes (the seed) to the winter 2027 key date.
-    expect(townCalendarCovers('hanover-nh')).toEqual({ from: '2025-01-06', to: '2027-01-05' });
+    // Hanover: winter 2025 classes (the seed) to Commencement 2027 (the registrar's 2026-27 key dates).
+    expect(townCalendarCovers('hanover-nh')).toEqual({ from: '2025-01-06', to: '2027-06-13' });
     // Amherst: its three key dates only.
     const amherst = townEvents('amherst-ma', EVERYTHING).filter((event) => event.scope === 'town');
     expect(townCalendarCovers('amherst-ma')).toEqual({ from: amherst[0]?.start, to: amherst.at(-1)?.end });
@@ -189,7 +189,7 @@ describe('the researched calendar data', () => {
     }
   });
 
-  it('seeds Hanover from modeling/dartmouth_calendar_2025_2026.csv, one entry per row, dates, source and confidence exact', () => {
+  it('seeds Hanover from modeling/dartmouth_calendar_2025_2026.csv, one entry per row, then the registrar’s 2027 terms', () => {
     const csv = readFileSync(new URL('../../modeling/dartmouth_calendar_2025_2026.csv', import.meta.url), 'utf8');
     const [header, ...rows] = csvRows(csv);
     expect(header).toEqual(['event', 'kind', 'start_date', 'end_date', 'source_url', 'confidence', 'notes']);
@@ -207,6 +207,16 @@ describe('the researched calendar data', () => {
       start: entry.start, end: entry.end, kind: entry.kind, group: entry.group, url: entry.sources[0]?.url, confidence: entry.confidence,
     }));
     expect(rows).toHaveLength(38);
-    expect(seeded).toEqual(expected);
+    expect(seeded.slice(0, rows.length)).toEqual(expected);
+    // Researched after the CSV, from the registrar's 2026-27 key dates; the CSV feeds the modeling notebook and is left alone.
+    const registrar = 'https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027-key-dates';
+    const term = (group: string, start: string, end: string) => ({ start, end, kind: 'term', group: `hanover-nh:${group}`, url: registrar, confidence: 'high' });
+    expect(seeded.slice(rows.length)).toEqual([
+      term('classes:winter', '2027-01-05', '2027-03-09'),
+      term('finals:winter', '2027-03-12', '2027-03-16'),
+      term('classes:spring', '2027-03-29', '2027-06-02'),
+      term('finals:spring', '2027-06-04', '2027-06-08'),
+      { start: '2027-06-13', end: '2027-06-13', kind: 'event', group: 'hanover-nh:commencement', url: registrar, confidence: 'high' },
+    ]);
   });
 });

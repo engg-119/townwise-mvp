@@ -158,4 +158,15 @@ export const TOWN_CALENDAR: readonly TownCalendarEntry[] = [
   homeFootball('Harvard', '2026-10-30', medium(FIVE_YEAR_OCT_2026)),
   // Kickoff time not yet published.
   homeFootball('Brown', '2026-11-21', medium(FOOTBALL_2026_FBSCHEDULES)),
+
+  // Researched after the seed file (2026-11-06), so Hanover's term state stays known past fall 2026 finals. The
+  // modeling team's CSV stops at fall 2026 and feeds demand_model_v0.ipynb, so these rows live only here, and
+  // api/test/town-calendar.test.ts pins them apart from the CSV's rows.
+  classes('winter', '2027-01-05', '2027-03-09', high(REGISTRAR_2026_27)),
+  // Scheduled exams end 2027-03-15; the exam period ends 2027-03-16.
+  finals('winter', '2027-03-12', '2027-03-16', high(REGISTRAR_2026_27)),
+  classes('spring', '2027-03-29', '2027-06-02', high(REGISTRAR_2026_27)),
+  // Scheduled exams end 2027-06-07; the exam period ends 2027-06-08.
+  finals('spring', '2027-06-04', '2027-06-08', high(REGISTRAR_2026_27)),
+  event('Commencement', 'commencement', 'Commencement', '2027-06-13', '2027-06-13', high(REGISTRAR_2026_27)),
 ];
