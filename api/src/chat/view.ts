@@ -12,10 +12,20 @@ import type { NoteContent } from '../stores/notes.ts';
 import { inputViewOf, resultViewOf, toolNamed, type ToolView } from './tools/registry.ts';
 import { NOT_RUN } from './turn.ts';
 
-/** A note proposal, with the id of the propose_note call that made it. */
-export interface ProposalView extends NoteContent {
+/** What the author did with a proposal (tw_chat_proposals). `noteId` is the saved note's id, else null. */
+export interface ProposalState {
+  readonly status: 'open' | 'saved' | 'dismissed';
+  readonly noteId: string | null;
+}
+
+export const OPEN: ProposalState = { status: 'open', noteId: null };
+
+/** A note proposal shown to the owner, with the id of the propose_note call that made it. */
+export interface ShownProposal extends NoteContent {
   readonly id: string;
 }
+
+export type ProposalView = ShownProposal & ProposalState;
 
 export type ChatPart =
   | { type: 'text'; text: string }
@@ -40,14 +50,18 @@ function blocksOf(param: BetaMessageParam): readonly BetaContentBlockParam[] {
 }
 
 /** The part for one tool call, or null for a call that never ran, has no result, or names no registered tool. */
-function partOf(block: BetaToolUseBlockParam, result: BetaToolResultBlockParam | undefined, today: string): ChatPart | null {
+function partOf(
+  block: BetaToolUseBlockParam, result: BetaToolResultBlockParam | undefined, today: string, stateOf: (proposal: ShownProposal) => ProposalState,
+): ChatPart | null {
   if (result === undefined || toolNamed(block.name) === undefined) return null;
   const error = result.is_error === true;
   if (error && typeof result.content === 'string' && result.content.startsWith(NOT_RUN)) return null;
   if (block.name === 'propose_note' && !error) {
     // A proposal was shown when its call got a result that is not an error.
     const note = readNoteContent(block.input, today);
-    return note === null ? null : { type: 'proposal', proposal: { ...note, id: block.id } };
+    if (note === null) return null;
+    const shown = { ...note, id: block.id };
+    return { type: 'proposal', proposal: { ...shown, ...stateOf(shown) } };
   }
   return {
     type: 'tool', id: block.id, name: block.name, state: error ? 'error' : 'done',
@@ -64,8 +78,13 @@ function entry(role: 'user' | 'assistant', at: Date, parts: ChatPart[]): ChatMes
   };
 }
 
-/** `today` (UTC) re-reads each call's input, which was valid when it ran, through the same rules. */
-export function chatMessageViews(stored: readonly StoredMessage[], today: string): ChatMessageView[] {
+/**
+ * `today` (UTC) re-reads each call's input, which was valid when it ran, through the same rules. `stateOf` says what
+ * became of each proposal; without it every proposal reads as open.
+ */
+export function chatMessageViews(
+  stored: readonly StoredMessage[], today: string, stateOf: (proposal: ShownProposal) => ProposalState = () => OPEN,
+): ChatMessageView[] {
   const messages = stored.map((message) => ({ at: message.at, param: JSON.parse(message.param) as BetaMessageParam }));
   const results = new Map<string, BetaToolResultBlockParam>();
   for (const { param } of messages) {
@@ -97,7 +116,7 @@ export function chatMessageViews(stored: readonly StoredMessage[], today: string
         if (last?.type === 'text') last.text += block.text;
         else reply.parts.push({ type: 'text', text: block.text });
       } else if (block.type === 'tool_use') {
-        const part = partOf(block, results.get(block.id), today);
+        const part = partOf(block, results.get(block.id), today, stateOf);
         if (part !== null) reply.parts.push(part);
       }
     }

@@ -148,6 +148,7 @@ export async function deleteLocation(ctx: TownwiseContext, req: Request, res: Re
   // which nothing could reach without the location.
   await ctx.stores.uploads.removeForLocation(scope, location.id);
   await ctx.stores.chatConversations.removeForLocation(scope, location.id);
+  await ctx.stores.chatProposals.removeForLocation(scope, location.id);
   await recordAfter(ctx, {
     ...actorOf(admin), at: ctx.now(), orgId: scope.orgId, action: 'location.deleted',
     target: { type: 'location', id: location.id },

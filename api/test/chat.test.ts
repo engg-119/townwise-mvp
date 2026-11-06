@@ -136,12 +136,12 @@ describe('the history view', () => {
       { role: 'user', at: at.toISOString(), text: 'Were we closed?', proposals: [], parts: [] },
       {
         role: 'assistant', at: later.toISOString(), text: 'Let me look. \n\nYou have two notes.\n\nI proposed it.',
-        proposals: [{ ...note, id: 'p1' }],
+        proposals: [{ ...note, id: 'p1', status: 'open', noteId: null }],
         parts: [
           { type: 'text', text: 'Let me look. ' },
           { type: 'tool', id: 't1', name: 'list_notes', state: 'done', input: null, result: { count: 2 } },
           { type: 'text', text: 'You have two notes.' },
-          { type: 'proposal', proposal: { ...note, id: 'p1' } },
+          { type: 'proposal', proposal: { ...note, id: 'p1', status: 'open', noteId: null } },
           { type: 'text', text: 'I proposed it.' },
         ],
       },
@@ -169,6 +169,18 @@ describe('the history view', () => {
       { type: 'text', text: 'Cut off' },
     ]);
     expect(reply?.proposals).toEqual([]);
+  });
+
+  it('says what became of each proposal through stateOf, by its call id', () => {
+    const views = chatMessageViews(stored([
+      { role: 'user', content: 'Two closures' },
+      { role: 'assistant', content: [toolUse('p1', 'propose_note', note), toolUse('p2', 'propose_note', { ...note, startDate: '2026-06-21', endDate: '2026-06-21' })] },
+      { role: 'user', content: [result('p1', 'Shown'), result('p2', 'Shown')] },
+    ]), '2026-06-01', (proposal) => (proposal.id === 'p1' ? { status: 'saved', noteId: 'n1' } : { status: 'dismissed', noteId: null }));
+    expect(views[1]?.proposals.map(({ id, status, noteId, startDate }) => ({ id, status, noteId, startDate }))).toEqual([
+      { id: 'p1', status: 'saved', noteId: 'n1', startDate: '2026-06-20' },
+      { id: 'p2', status: 'dismissed', noteId: null, startDate: '2026-06-21' },
+    ]);
   });
 
   it('shows a reply of thinking only as nothing, and keeps a valid range’s input view', () => {

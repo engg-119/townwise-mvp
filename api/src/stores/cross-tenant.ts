@@ -10,6 +10,7 @@ import type { Role } from '../access/resolve.ts';
 import { accessRequestModel, type AccessRequestStatus } from './access-requests.ts';
 import { chatConversationModel } from './chat-conversations.ts';
 import { chatLiveTurnModel } from './chat-live-turns.ts';
+import { chatProposalModel } from './chat-proposals.ts';
 import { locationModel } from './locations.ts';
 import { memberModel } from './members.ts';
 import { orgModel } from './orgs.ts';
@@ -254,7 +255,8 @@ export interface DeletedPersonRecords {
 
 /**
  * Person deletion (spec 10.7 step 3): their access requests, their open invitations in every organization, their
- * removed seats, and their tuning chat conversations and live turns in every organization. Never an active seat: the
+ * removed seats, and their tuning chat conversations, live turns and proposal records in every organization (the notes
+ * they saved from proposals stay with the organization, as every note does). Never an active seat: the
  * handler refuses a person who holds one. An address with no kit user has only invitations. Deletes by filter, so a
  * retry completes the work.
  */
@@ -270,5 +272,6 @@ export async function deletePersonRecords(
   const removed = (await Member.deleteMany({ userId, status: 'removed' })).deletedCount;
   const conversations = (await chatConversationModel(connection).deleteMany({ userId })).deletedCount;
   const liveTurns = (await chatLiveTurnModel(connection).deleteMany({ userId })).deletedCount;
+  await chatProposalModel(connection).deleteMany({ userId });
   return { requests, seats: invites + removed, conversations, liveTurns };
 }

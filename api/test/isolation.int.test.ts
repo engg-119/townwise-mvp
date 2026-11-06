@@ -23,7 +23,10 @@ interface Tenant {
   inviteId: string;
   /** The admin's and the member's seat ids. */
   seatIds: string[];
-  /** A location with a sales day, an upload record, a note and a tuning chat conversation, both the member's. */
+  /**
+   * A location with a sales day, an upload record, a note and a tuning chat conversation, both the member's. The
+   * conversation also holds a note proposal, `toolu_proposal0001`, shown to the member and not yet acted on.
+   */
   locationId: string;
   locationName: string;
   noteId: string;
@@ -52,7 +55,24 @@ async function tenant(name: string): Promise<Tenant> {
   await addUpload(server, { orgId, locationId, uploadedAt: server.clock.now(), status: 'applied' });
   const noteId = await addNote(server, { orgId, locationId, detail: `${name} private note`, createdBy: member.session.userId });
   const conversationId = await addConversation(server, { orgId, locationId, userId: member.session.userId, text: `${name} private chat` });
+  await withProposal(conversationId);
   return { orgId, name, admin, member, inviteId, seatIds, locationId, locationName, noteId, conversationId };
+}
+
+/** Appends a turn in which TownwiseAI proposed a note, `toolu_proposal0001`, that the owner was shown. */
+async function withProposal(conversationId: string): Promise<void> {
+  const at = server.clock.now();
+  const note = { kind: 'closure', startDate: '2026-05-04', endDate: '2026-05-04', weekdays: null, effect: 'closed', expectedGuests: null, detail: null };
+  const params = [
+    { role: 'user', content: 'We close on May 4.' },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_proposal0001', name: 'propose_note', input: note }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_proposal0001', content: 'Shown to the owner as a proposal.' }] },
+    { role: 'assistant', content: [{ type: 'text', text: 'Proposed.' }] },
+  ];
+  await server.connection.collection('tw_chat_conversations').updateOne(
+    { _id: new Types.ObjectId(conversationId) },
+    { $push: { messages: { $each: params.map((param) => ({ at, param: JSON.stringify(param) })) } } } as Record<string, unknown>,
+  );
 }
 
 /** Every Townwise document that belongs to B, serialized, so any change shows. */
@@ -61,7 +81,7 @@ async function snapshotOf(org: Tenant): Promise<string> {
   const docs: unknown[] = [await server.connection.collection('tw_orgs').findOne({ _id: orgId })];
   for (const name of [
     'tw_members', 'tw_locations', 'tw_sales_days', 'tw_uploads', 'tw_notes', 'tw_view_as_grants', 'tw_audit_events',
-    'tw_chat_conversations', 'tw_chat_live_turns', 'tw_chat_usage',
+    'tw_chat_conversations', 'tw_chat_live_turns', 'tw_chat_usage', 'tw_chat_proposals',
   ]) {
     docs.push(await server.connection.collection(name).find({ orgId }).sort({ _id: 1 }).toArray());
   }
@@ -127,14 +147,15 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
     'org.notes.create': NOTE,
     'org.notes.update': NOTE,
     'org.chat.turn': { content: 'Hello from A' },
+    'org.chat.proposal': { action: 'dismiss' },
   };
   const QUERY: Record<string, string> = { 'org.sales.days': '?from=2026-01-01&to=2026-05-31' };
 
-  it('covers the team, location, sales, note and tuning chat routes', () => {
+  it('covers the team, location, sales, note, tuning chat and proposal routes', () => {
     expect(tenantRoutesWithIds.map((route) => route.id)).toEqual(expect.arrayContaining([
       'org.members.update', 'org.members.remove', 'org.locations.update', 'org.locations.remove', 'org.sales.get',
       'org.sales.days', 'org.sales.upload', 'org.sales.remove', 'org.notes.list', 'org.notes.create', 'org.notes.update',
-      'org.notes.remove', 'org.chat.get', 'org.chat.conversation', 'org.chat.turn', 'org.chat.remove',
+      'org.notes.remove', 'org.chat.get', 'org.chat.conversation', 'org.chat.turn', 'org.chat.remove', 'org.chat.proposal',
     ]));
   });
 
@@ -145,6 +166,7 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
       };
       const aOwn: Record<string, string> = {
         memberId: a.inviteId, locationId: a.locationId, noteId: a.noteId, conversationId: a.conversationId,
+        proposalId: 'toolu_proposal0001',
       };
       const params = [...route.path.matchAll(/:([A-Za-z]+)/g)].map((match) => match[1] ?? '');
       let cases = 0;
@@ -190,6 +212,30 @@ describe('isolation, case by case', () => {
     expect(await res.json()).toMatchObject({ error: 'already_in_org' });
     expect(await snapshotOf(a)).toBe(beforeA);
     expect(await snapshotOf(b)).toBe(beforeB);
+  });
+
+  it('A’s member cannot save or set aside B’s proposals by any mix of ids, though they can act on their own', async () => {
+    const before = await snapshotOf(b);
+    const proposals = server.connection.collection('tw_chat_proposals');
+    const mixes = [
+      [b.locationId, b.conversationId], [a.locationId, b.conversationId], [b.locationId, a.conversationId],
+    ] as const;
+    for (const [location, conversation] of mixes) {
+      for (const json of [{ action: 'save' }, { action: 'dismiss' }]) {
+        const res = await call(server, `/api/org/locations/${location}/chat/${conversation}/proposals/toolu_proposal0001`, {
+          session: a.member.session, json,
+        });
+        const text = await res.text();
+        expect({ location, conversation, status: res.status }).toEqual({ location, conversation, status: 404 });
+        for (const secret of bSecrets()) expect(text).not.toContain(secret);
+      }
+    }
+    expect(await snapshotOf(b)).toBe(before);
+    const own = await call(server, `/api/org/locations/${a.locationId}/chat/${a.conversationId}/proposals/toolu_proposal0001`, {
+      session: a.member.session, json: { action: 'dismiss' },
+    });
+    expect(own.status).toBe(200);
+    await proposals.deleteMany({ orgId: new Types.ObjectId(a.orgId) });
   });
 
   it('declining B’s invitation addressed to someone else is 409 no_invite', async () => {

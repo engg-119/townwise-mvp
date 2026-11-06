@@ -1,13 +1,13 @@
 # Tuning chat: build contract
 
-Status: built 2026-11-04 on `feature/tuning-chat`. This replaces the portal spec's D13 default ("notes first, AI chat later") for the chat itself; notes stay the only thing that tunes a location. The chat helps an owner write good notes. It never writes one without the owner pressing **Add note**.
+Status: built 2026-11-04 on `feature/tuning-chat`. This replaces the portal spec's D13 default ("notes first, AI chat later") for the chat itself; notes stay the only thing that tunes a location. The chat helps an owner write good notes. It never writes one without the owner pressing **Save note**.
 
 The essentials only. Patterns come from the Coffee Chats chat (streaming over a POST, a budget checked before a turn and recorded after it, a compare-and-set finish, a cap on tool calls per turn, tool results treated as data), rewritten for the Anthropic SDK. Left out for now: background jobs and resumable streams, message trees, regenerate and edit, history compaction, attachments, memory, voice.
 
 ## 1. Behaviour
 
 - A member of an organization opens a location and chats with an assistant about that location's demand: closures, private events, openings, unusual days.
-- The assistant reads the location's sales coverage and totals, its daily rows for a date range, its existing notes, and its town profile. It can **propose** a note. The proposal appears as a card; **Add note** posts it to the existing notes route as the person (normal validation and audit), **Dismiss** drops it.
+- The assistant reads the location's sales coverage and totals, its daily rows for a date range, its existing notes, and its town profile. It can **propose** a note. The proposal appears as a card: **Save note** saves it as shown, **Edit first** lets the person change it and then saves that, both through the proposal route (the notes rules and audit as for any note), and **Not now** sets it aside, still saveable later. What became of each proposal is recorded, so a reload never offers a saved one again.
 - Conversations are private to their author, per location. Staff in view-as can read the target's conversations (GET) and cannot send (the view-as guard already refuses every non-GET).
 - The feature is off until `ANTHROPIC_API_KEY` is set. Off means the GET answers `enabled: false` and the POST answers 503 `chat_unavailable`.
 
@@ -18,17 +18,20 @@ The essentials only. Patterns come from the Coffee Chats chat (streaming over a 
 | `GET /org/locations/:locationId/chat` | none | none | `{ enabled, budget, conversations }` |
 | `GET /org/locations/:locationId/chat/:conversationId` | none | none | `{ id, title, updatedAt, messages }` |
 | `POST /org/locations/:locationId/chat/turns` | 32kb | `chat` | `text/event-stream` (section 3) |
-| `DELETE /org/locations/:locationId/chat/:conversationId` | none | none | 204 |
+| `DELETE /org/locations/:locationId/chat/:conversationId` | none | none | 204; the conversation's proposal records go too |
+| `POST /org/locations/:locationId/chat/:conversationId/proposals/:proposalId` | 8kb | none | `{ proposal: { id, status, noteId, edited }, note }` |
 
 - `budget`: `{ month: "YYYY-MM", usedUsd: number, limitUsd: number, exhausted: boolean }` for the caller's organization, calendar month in UTC. `usedUsd` rounded to cents.
 - `conversations`: the caller's own for this location, newest `updatedAt` first, at most 50: `{ id, title, updatedAt, turnCount }`.
 - `messages`, oldest first: one entry per message the person wrote, and one per run of TownwiseAI's replies to it, with the tool-result messages between them folded in: `{ role: "user" | "assistant", at, text, proposals: ProposalView[], parts: Part[] }`. `at` is when the entry's first stored message was produced. `parts` replays a reply in order and is `[]` for the person's message:
   - `{ type: "text", text }`, consecutive text blocks joined;
   - `{ type: "tool", id, name, state: "done" | "error", input, result }`, one per tool call that ran, with the same views the stream sent (section 4); `propose_note` calls that showed a note are `proposal` parts instead;
-  - `{ type: "proposal", proposal: ProposalView }`, where `ProposalView` is the `NoteProposal` plus `id`, the `propose_note` call's id.
+  - `{ type: "proposal", proposal: ProposalView }`, where `ProposalView` is the `NoteProposal` plus `id` (the `propose_note` call's id), `status` (`"open" | "saved" | "dismissed"`) and `noteId` (the saved note's id, else null). A save still in progress reads as `open`, so pressing Save again finishes it. A proposal with no record reads as `saved`, with that note's id, when a note of the location says exactly the same (a proposal added with the notes route before proposals were recorded).
   
   `text` (every text part, joined by a blank line) and `proposals` (every proposal part's proposal) are kept for clients that read only those. Thinking blocks, raw tool results, calls answered "Not run" (a reply cut off at `max_tokens`, or more than 5 calls at once) and calls to unknown tools are never returned.
 - Another person's conversation id, or one from another location, is 404.
+- The proposal POST: `proposalId` is a `propose_note` call's id (1 to 128 letters, digits, `_` or `-`; else 400). Body `{ action: "save", note?: NoteProposal }`, where `note` is the person's edit ("Edit first") and its absence saves the proposal as shown, or `{ action: "dismiss" }`. 200 `{ proposal: { id, status: "saved" | "dismissed", noteId, edited }, note }`, with `note` the saved note in the notes route's view (null when dismissed, or when the author has deleted the note since). Errors: 400 `invalid_request` (the body, or an edit that breaks a notes rule); 404 (the location, the caller's conversation, or no shown proposal with this id: one whose `propose_note` call got an error result never was); 409 `note_limit`; 403 `view_as_read_only` under view-as; 429 from `writes`.
+- A save claims the proposal in `tw_chat_proposals` (`saving`; the row gets its `noteId` when it is first inserted), writes the note with that id, records `note.created` only if this request wrote it, then marks the proposal `saved`. Saving a saved proposal again, or setting it aside, answers its saved state; two tabs pressing Save at the same time, or a press after a crash between the steps, end with the same one note. Setting aside a proposal that is not saved records it `dismissed`; it can still be saved later.
 - POST body: `{ conversationId?: string, content: string }`, content trimmed, 1 to 4000 characters. No `conversationId` starts a new conversation titled from the first 60 characters of the content.
 - Errors before the stream starts are normal JSON errors: 400 validation, 404, 503 `chat_unavailable`, 409 `chat_turn_in_progress` (the caller already has a live turn in this organization, in any conversation or location, a new conversation included), 409 `conversation_full`, 409 `chat_budget_exhausted`, 429 from the limiter.
 - One live turn per person per organization: of several concurrent POSTs from one person, exactly one streams. The claim is released when the turn ends, however it ends, and a claim older than 3 minutes may be taken over.
@@ -90,6 +93,7 @@ Each tool call's card shows an input view and a result view: dates, counts and s
 ## 5. Storage and budget
 
 - `tw_chat_conversations`: `orgId`, `locationId`, `userId`, `title`, `messages` (the API message params, complete), `turnCount`, `liveTurn: { turnId, startedAt } | null`, `createdAt`, `updatedAt`. Index `{ orgId, locationId, userId, updatedAt: -1 }`. Every store call takes an `OrgScope`. Caps: 40 turns, or 1.5 MB of stored messages, then 409 `conversation_full`. A live-turn claim older than 3 minutes may be taken over.
+- `tw_chat_proposals` (spec 6.16): `orgId`, `locationId`, `conversationId`, `userId`, `proposalId`, `status` (`saving`, `saved` or `dismissed`), `noteId`, `edited`, `createdAt`, `updatedAt`. Unique `{ orgId, conversationId, proposalId }`; index `{ orgId, locationId }`. Never the note's content. Deleted with its conversation (after it, so a failed delete never re-offers a saved proposal), its location, its organization, and its author's person deletion. Notes saved from proposals stay with the organization, as every note does.
 - `tw_chat_usage`: one document per `{ orgId, month }` with `costMicroUsd` (integer, `$inc`). Cost is recorded after every model call, from `usage` (input, output, cache read, cache write) and a price table keyed by the model that actually answered (`message.model`): Opus 5.5 $4 / $20 per million input / output, cache reads $0.20, cache writes 1.25 times input; any other or unknown model is priced at the most expensive row. Round each call up to a whole micro-dollar.
 - Monthly limit per organization: `TOWNWISE_CHAT_MONTHLY_BUDGET_USD` (default 20). Checked before a turn starts; a turn already running finishes, so one turn can overrun by its own cost.
 - Audit `chat.turn_completed` after a saved turn, details `{ locationId, conversationId, model, calls, inputTokens, outputTokens, stopReason }`. Never message text. `chat.conversation_deleted` with `{ locationId, conversationId }`.
@@ -122,5 +126,5 @@ Each tool call's card shows an input view and a result view: dates, counts and s
 - **Failed and aborted calls** are charged from the usage seen in `message_start` and `message_delta`. Output tokens arrive only in `message_delta`, so a call aborted or failed after `message_start` but before `message_delta` is charged its input and an output estimate: min(`max_tokens`, max(ceil(streamed characters / 3), ceil(seconds since `message_start` × 150))), at the output price of the model that was answering. Streamed characters are those of text, thinking and tool-input deltas; the time term covers thinking that is billed but not streamed.
 - **Unparseable tool input** is the SDK's plain `AnthropicError` (no class of its own; every API failure is an `APIError`). Those retries count toward the 8 calls.
 - **A taken-over turn** (its claim lost after 3 minutes) saves nothing and ends with `error` `internal`. A failed, aborted, timed-out or refused first turn deletes the conversation it created.
-- **Deleting a location** deletes its conversations.
+- **Deleting a location** deletes its conversations and their proposal records.
 - **Infra**: the runbook section is step 16 of `infra/README.md`.

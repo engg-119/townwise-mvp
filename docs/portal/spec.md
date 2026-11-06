@@ -479,6 +479,23 @@ Fields are in Section 9. Indexes: `{ at: -1 }`, `{ orgId: 1, at: -1 }`, `{ actor
 7. Path ids are parsed with the mongo module’s `objectId` schema, so a malformed id is 400. Filter values are zod scalars. The only operators are built in code and wrapped in `trusted(...)` (**Exists**).
 8. Operations keyed by a person, or spanning organizations, live in one file, `api/src/stores/cross-tenant.ts`, with a closed list: `findActiveSeat(userId)`, `findOpenInvites(email)`, `claimInvite(inviteId, email, userId)`, `declineInvite(inviteId, email)`, `latestRemovedSeat(userId)`, `adminOrgStats()`, `peopleRecords()` and `deletePersonRecords(userId, email)` (10.7, Deletion). Only `access/resolve.ts`, the join and decline handlers and the staff handlers import it, and a test enforces that list.
 
+### 6.16 `tw_chat_proposals`
+
+What the author did with each note TownwiseAI proposed in their conversation (10.12). One document per proposal they acted on; none means the proposal is still open.
+
+| Field | Type | Rule |
+|---|---|---|
+| `_id` | ObjectId | |
+| `orgId`, `locationId`, `conversationId` | ObjectId | from the caller's seat and their own conversation |
+| `userId` | string | the conversation's author |
+| `proposalId` | string | the `propose_note` call's id, 1 to 128 of `A-Za-z0-9_-` |
+| `status` | `'saving' \| 'saved' \| 'dismissed'` | `saving` between the claim and the note's write; reads as open |
+| `noteId` | ObjectId | set when the document is inserted, a dismissed one too, so every try of a save writes the same note |
+| `edited` | boolean | the saved note differs from the proposal ("Edit first") |
+| `createdAt`, `updatedAt` | Date | |
+
+Indexes: `{ orgId: 1, conversationId: 1, proposalId: 1 }` unique; `{ orgId: 1, locationId: 1 }`. It never holds the note's content. Deleted with the conversation, the location, the organization (10.7) and the author's person deletion (10.7, by `userId`); notes saved from proposals stay with the organization.
+
 ---
 
 ## 7. Authorization in one place
@@ -842,7 +859,7 @@ People come only from Townwise records and config: staff from `TOWNWISE_SUPERADM
 - **Delete a person** (`POST /api/admin/people/delete { email }`). The server normalizes the email and looks up the kit user with `users.findByEmail` (there may be none, for an address that was only invited).
   1. Refuse a staff address (400 `invalid_target`) and a person who holds an active seat (409 `person_has_seat`; staff remove the seat first, and the last-admin rule still applies). Answer 404 when there is no kit user and no Townwise record for the email. [Build note: after step 3 the server checks for an active seat again, since a join or an approval can seat the person while the deletion runs. One found then answers 409 `person_has_seat`, recorded as `staff_action.not_applied` (`person_has_seat`), before steps 4 and 5; the records step 3 deleted stay deleted, and a retry after the seat is removed completes the work. An approval that seats the person after this check finds the request gone and takes the seat back (F3 step 8); a join needs an invitation, which step 3 deleted, so only one added later can seat them, which the runbook checks for (Section 19, item 7).]
   2. Audit `person.deleted` with ids only.
-  3. Through `deletePersonRecords(userId, email)` (6.10 rule 8): delete the person’s access requests (by `userId`), their open invitations in every organization (`inviteEmail == email`), and their removed seats (`userId`, `status: 'removed'`). [Build note: also their tuning chat conversations and live turns in every organization (`tw_chat_conversations`, `tw_chat_live_turns`, by `userId`), which postdate this list (`tuning-chat.md`). The 404 in step 1 counts audit events as Townwise records, because the audit log keeps an address until its person is deleted (Section 17).]
+  3. Through `deletePersonRecords(userId, email)` (6.10 rule 8): delete the person’s access requests (by `userId`), their open invitations in every organization (`inviteEmail == email`), and their removed seats (`userId`, `status: 'removed'`). [Build note: also their tuning chat conversations, live turns and TownwiseAI proposal records in every organization (`tw_chat_conversations`, `tw_chat_live_turns`, `tw_chat_proposals`, by `userId`), which postdate this list (`tuning-chat.md`); notes they saved from proposals stay, as every note does. The 404 in step 1 counts audit events as Townwise records, because the audit log keeps an address until its person is deleted (Section 17).]
   4. When a kit user exists: call `revokeAllSessions(userId)` and `authStores.totp.remove(userId)` (both public, **Exists**).
   5. `redact` the email in the audit log (9.3).
   6. Answer the counts and `kitUserId`. The kit’s user record and its revoked session records are then deleted by hand, as a runbook step, because the kit has no user delete (Section 19, item 7). Until then, the person can still continue with Google, and they resolve to `no_org`.
@@ -850,7 +867,7 @@ People come only from Townwise records and config: staff from `TOWNWISE_SUPERADM
   Notes and uploads the person wrote stay with their organization; the author shows as “Deleted person” once the kit user is gone. View-as grants keep only ids and the staff-written reason.
 - **Delete an organization** (`DELETE /api/admin/orgs/:orgId`). The organization must be suspended first (409 `org_not_suspended`), so its members have already seen the paused page.
   1. Audit `org.deleted` with ids only.
-  2. Through `scopeForStaffOrg`: delete its `tw_sales_days`, `tw_uploads`, `tw_notes`, `tw_locations` and `tw_members`, and its access request (`fromRequestId`). [Build note: also its `tw_chat_conversations`, `tw_chat_live_turns` and `tw_chat_usage`, which postdate this list (`tuning-chat.md`). The response keeps the six counts above.]
+  2. Through `scopeForStaffOrg`: delete its `tw_sales_days`, `tw_uploads`, `tw_notes`, `tw_locations` and `tw_members`, and its access request (`fromRequestId`). [Build note: also its `tw_chat_conversations`, `tw_chat_live_turns`, `tw_chat_usage` and `tw_chat_proposals`, which postdate this list (`tuning-chat.md`). The response keeps the six counts above.]
   3. `redact` its name and its locations’ names in the audit log (9.3).
   4. Delete the `tw_orgs` row last, so a retry still finds the organization. [Build note: the delete matches `status: 'suspended'`, so an organization reactivated during the deletion keeps its row and the answer is 409 `org_not_suspended`, recorded as `staff_action.not_applied`; the records already deleted stay deleted, and suspending it and deleting again finishes. After the row goes, its `tw_sales_days` and `tw_chat_usage` are swept once more, since an upload or a tuning chat turn in flight can upsert after the first sweep; the late days count in `deletedDays`. This narrows the gap without closing it: a chat turn started before the suspension can still add chat usage for up to 150 seconds, an upload still running can write days after the second sweep, and its `tw_uploads` row, if written after the first sweep, is never swept.]
   
@@ -895,6 +912,19 @@ A search is 10 to 15 debounced autocompletes and one details call, so `townwise:
 | 500 | `internal` | server | “Something went wrong on our side. Try again in a minute.” |
 | 503 | `places_unavailable` | a Places route while the search is off, or Google failed or timed out (10.2a) | the client shows the manual fields |
 | 503 | `unavailable` | a deny-when-down limiter, a store outage, or a staff action whose audit write failed (9.3) | “Townwise isn’t responding. Try again in a minute.” |
+
+### 10.12 TownwiseAI proposals
+
+`POST /api/org/locations/:locationId/chat/:conversationId/proposals/:proposalId` (`org.chat.proposal`, member, body `8kb`, `writes` only). The conversation's author saves a note TownwiseAI proposed, as shown or edited first, or sets it aside. Contract and views: `docs/portal/tuning-chat.md` section 2.
+
+| Request | Success | Errors |
+|---|---|---|
+| `{ action: 'save', note?: NoteInput }` (`note` is the author's edit) or `{ action: 'dismiss' }` | 200 `{ proposal: { id, status: 'saved' \| 'dismissed', noteId, edited }, note: Note \| null }` | 400 `invalid_request` (body, malformed id, or an edit that breaks a Section 12 rule); 404 (the location is not the caller's organization's, the conversation is not the caller's in this location, or no proposal with this id was shown); 409 `note_limit`; 403 `view_as_read_only`; 429 |
+
+- Only the author's press saves a note, and only a proposal they were shown: a `propose_note` call with valid input and a result that is not an error. The note goes through Section 12's rules again and is audited `note.created`, as from the notes route.
+- No transactions (DocumentDB): the save claims the proposal in `tw_chat_proposals` (6.16), writes the note with the claim's `noteId`, then marks it `saved`. A retry, a crash between the steps or two tabs pressing Save end with one note; only the request that wrote it records `note.created`. Saving a saved proposal again, or setting it aside, answers its saved state.
+- `GET .../chat/:conversationId` shows each proposal's `status` (`open`, `saved` or `dismissed`) and `noteId`. One with no record reads as saved when a note of the location says exactly the same, so a proposal added with the notes route is not offered twice.
+- Logged as `townwise.chat_proposal { orgId, locationId, conversationId, status, edited }`, never the note's text.
 
 ---
 

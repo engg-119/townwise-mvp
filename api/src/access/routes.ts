@@ -10,6 +10,7 @@ import {
   queryAudit, rejectRequest, removeOrgMember, signOutEverywhere, updateOrg,
 } from '../handlers/admin.ts';
 import { deleteConversation, getChat, getConversation, postTurn } from '../handlers/chat.ts';
+import { actOnProposal } from '../handlers/chat-proposals.ts';
 import { deleteOrg, deletePerson } from '../handlers/deletion.ts';
 import { createLocation, deleteLocation, getOwnOrg, updateLocation } from '../handlers/locations.ts';
 import { declineInvite, getMe, joinInvite } from '../handlers/me.ts';
@@ -30,8 +31,8 @@ export interface TownwiseRoute {
   /** Under /api. */
   readonly path: `/${string}`;
   readonly policy: Policy;
-  /** 'none' for GET and DELETE; '2kb' on the Places routes; '256kb' only on the upload route. */
-  readonly bodyLimit: 'none' | '2kb' | '32kb' | '256kb';
+  /** 'none' for GET and DELETE; '2kb' on the Places routes; '8kb' on a TownwiseAI proposal; '256kb' only on the upload route. */
+  readonly bodyLimit: 'none' | '2kb' | '8kb' | '32kb' | '256kb';
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
   readonly limiter?: 'uploads' | 'requests' | 'view-as' | 'chat' | 'places';
   readonly handler: (ctx: TownwiseContext, req: Request, res: Response, principal: Principal) => Promise<void>;
@@ -118,6 +119,11 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.chat.remove', method: 'DELETE', path: '/org/locations/:locationId/chat/:conversationId', policy: 'member',
     bodyLimit: 'none', handler: deleteConversation,
+  },
+  // U9 (TownwiseAI): saving or setting aside a proposed note.
+  {
+    id: 'org.chat.proposal', method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/proposals/:proposalId',
+    policy: 'member', bodyLimit: '8kb', handler: actOnProposal,
   },
 
   { id: 'org.members.list', method: 'GET', path: '/org/members', policy: 'org_admin', bodyLimit: 'none', handler: listMembers },

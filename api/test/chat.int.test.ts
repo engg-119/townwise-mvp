@@ -333,10 +333,11 @@ describe('tools', () => {
     // One reply: its proposal card, then its text.
     expect(view.messages.map((m) => [m.role, m.text, m.proposals])).toEqual([
       ['user', 'We have a rehearsal dinner on June 20.', []],
-      ['assistant', 'I proposed the dinner as a note.', [{ ...proposal, id: 'p1' }]],
+      ['assistant', 'I proposed the dinner as a note.', [{ ...proposal, id: 'p1', status: 'open', noteId: null }]],
     ]);
     expect(view.messages[1]?.parts).toEqual([
-      { type: 'proposal', proposal: { ...proposal, id: 'p1' } }, { type: 'text', text: 'I proposed the dinner as a note.' },
+      { type: 'proposal', proposal: { ...proposal, id: 'p1', status: 'open', noteId: null } },
+      { type: 'text', text: 'I proposed the dinner as a note.' },
     ]);
 
     const added = await call(server, `/api/org/locations/${locationId}/notes`, { session: author.session, json: proposal });

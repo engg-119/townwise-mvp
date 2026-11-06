@@ -1,7 +1,7 @@
 // Notes, the tuning step (spec 10.5, 12, P14): structured notes per location for what sales can't show. Only the
 // tuning chat reads them yet. Authors edit and delete their own; org admins edit and delete any. `detail` is never
 // logged and never copied into an audit event.
-import { objectId } from '@ckeith26/mongo';
+import { isDuplicateKeyError, objectId } from '@ckeith26/mongo';
 import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
@@ -11,6 +11,7 @@ import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, Principal } from '../access/policy.ts';
 import { daysBetween, EARLIEST_DATE, isoDate, plusYears, utcDay } from '../dates.ts';
 import { currentEmail, DELETED_PERSON } from '../people.ts';
+import type { LocationRecord } from '../stores/locations.ts';
 import type { NoteContent, NoteRecord } from '../stores/notes.ts';
 import { loadLocation, memberOf } from './locations.ts';
 import { actorOf } from './team.ts';
@@ -71,8 +72,15 @@ export function readNoteContent(raw: unknown, today: string): NoteContent | null
   return valid ? content : null;
 }
 
+/** True when the two notes say the same thing, field by field. */
+export function sameNoteContent(a: NoteContent, b: NoteContent): boolean {
+  return a.kind === b.kind && a.startDate === b.startDate && a.endDate === b.endDate && a.effect === b.effect
+    && a.expectedGuests === b.expectedGuests && a.detail === b.detail
+    && JSON.stringify(a.weekdays) === JSON.stringify(b.weekdays);
+}
+
 /** The note in a request body; 400 invalid_request when any rule fails. */
-function noteContent(raw: unknown, today: string): NoteContent {
+export function noteContent(raw: unknown, today: string): NoteContent {
   const content = readNoteContent(raw, today);
   if (content === null) throw invalid();
   return content;
@@ -82,7 +90,7 @@ function canEdit(caller: MemberPrincipal, note: NoteRecord): boolean {
   return caller.role === 'org_admin' || note.createdBy === caller.userId;
 }
 
-function noteView(note: NoteRecord, createdByEmail: string, caller: MemberPrincipal): NoteView {
+export function noteView(note: NoteRecord, createdByEmail: string, caller: MemberPrincipal): NoteView {
   return {
     id: note.id,
     kind: note.kind,
@@ -122,22 +130,45 @@ export async function listNotes(ctx: TownwiseContext, req: Request, res: Respons
   res.status(200).json({ notes: notes.map((note) => noteView(note, emails.get(note.createdBy) ?? DELETED_PERSON, caller)) });
 }
 
-/** POST /api/org/locations/:locationId/notes. */
-export async function createNote(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
-  const caller = memberOf(principal);
+/**
+ * Adds a note to the location as the caller: the note limit (409 note_limit), the write, and `note.created`. With
+ * `id` (a TownwiseAI proposal's save), a note that already holds it, made by an earlier try or a racing request, is
+ * returned as it is, and only the request that wrote it records the event.
+ */
+export async function addNote(
+  ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord, content: NoteContent, opts: { id?: string } = {},
+): Promise<NoteRecord> {
   const { scope } = caller;
-  const now = ctx.now();
-  const content = noteContent(req.body, utcDay(now));
-  const location = await loadLocation(ctx, scope, req.params.locationId);
-  if (await ctx.stores.notes.count(scope, location.id) >= MAX_NOTES) {
+  const { notes } = ctx.stores;
+  const { id } = opts;
+  const existing = id === undefined ? null : await notes.find(scope, location.id, id);
+  if (existing !== null) return existing;
+  if (await notes.count(scope, location.id) >= MAX_NOTES) {
     throw new AppError(409, 'note_limit', 'This location has reached its note limit');
   }
-  const note = await ctx.stores.notes.create(scope, location.id, content, { createdBy: caller.userId, now });
+  const now = ctx.now();
+  let note: NoteRecord;
+  try {
+    note = await notes.create(scope, location.id, content, { createdBy: caller.userId, now, ...(id === undefined ? {} : { id }) });
+  } catch (err) {
+    const raced = id !== undefined && isDuplicateKeyError(err) ? await notes.find(scope, location.id, id) : null;
+    if (raced !== null) return raced;
+    throw err;
+  }
   await recordAfter(ctx, {
     ...actorOf(caller), at: now, orgId: scope.orgId, action: 'note.created',
     target: { type: 'note', id: note.id },
     details: noteDetails(location.id, note),
   });
+  return note;
+}
+
+/** POST /api/org/locations/:locationId/notes. */
+export async function createNote(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const caller = memberOf(principal);
+  const content = noteContent(req.body, utcDay(ctx.now()));
+  const location = await loadLocation(ctx, caller.scope, req.params.locationId);
+  const note = await addNote(ctx, caller, location, content);
   res.status(201).json({ note: noteView(note, caller.email, caller) });
 }
 
