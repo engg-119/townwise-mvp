@@ -490,12 +490,6 @@ One row per stored file (11A). `_id` (the file id, used in blob names), `orgId`,
 
 A batch of files dropped for one location (11A). `orgId`, `locationId`, `createdBy`, `createdAt`, `lastDropAt`, `status` (`'open' | 'queued' | 'reading' | 'waiting' | 'done'`), `activeLocation` (equals `locationId` until done, then unset), `startedAt`, `finishedAt`, `question` (11A.4, while waiting), `appliedVersion` (+1 each time a file's days are written), `drops` (+1 each time a file completes into it), `lease` (`{ owner, until }`), `claimedAt`, `bytesRead`, `msRead` (over its finished files, for the reading speed). Indexes: `{ activeLocation: 1 }` unique with a `$type` partial filter (one active import per location; two first drops race on it and the loser reads the winner), `{ orgId: 1, locationId: 1, createdAt: -1 }`, `{ status: 1, startedAt: 1 }` (the reader's claim).
 
-### 6.19 `tw_upload_days`
-
-`{ orgId, day (YYYY-MM-DD, UTC), bytes, updatedAt }`, unique `{ orgId: 1, day: 1 }`. Creating an upload reserves its size with a conditional `$inc` that fails past the daily cap; cancelling an unfinished upload the same day gives it back.
-
-(6.13 to 6.18 are numbered for the units still in flight.)
-
 ### 6.15 `tw_welcomes`
 
 | Field | Type | Rule |
@@ -523,6 +517,12 @@ What the author did with each note TownwiseAI proposed in their conversation (10
 | `createdAt`, `updatedAt` | Date | |
 
 Indexes: `{ orgId: 1, conversationId: 1, proposalId: 1 }` unique; `{ orgId: 1, locationId: 1 }`. It never holds the note's content. Deleted with the conversation, the location, the organization (10.7) and the author's person deletion (10.7, by `userId`); notes saved from proposals stay with the organization. Rows left by a crash during a conversation's delete, or by a Save racing it, hold only ids and go with the location, the organization or the person (`tuning-chat.md` section 5).
+
+### 6.19 `tw_upload_days`
+
+`{ orgId, day (YYYY-MM-DD, UTC), bytes, updatedAt }`, unique `{ orgId: 1, day: 1 }`. Creating an upload reserves its size with a conditional `$inc` that fails past the daily cap; cancelling an unfinished upload the same day gives it back.
+
+(6.13, 6.14, 6.17 and 6.18 are numbered for the units still in flight.)
 
 ---
 
@@ -962,28 +962,6 @@ A search is 10 to 15 debounced autocompletes and one details call, so `townwise:
 | 503 | `files_unavailable` | every stored-files route while `FILES_BLOB_ACCOUNT_URL` is unset | the browser upload (P13) instead |
 | 503 | `uploads_busy`, `storage_unavailable` | a replica at 12 chunk streams (`Retry-After: 2`); blob storage refused or failed (`Retry-After: 5`) | the upload queue waits and retries |
 
-### 10.11 Files and imports
-
-All under `/api/org/locations/:locationId`, all members, all 503 `files_unavailable` while stored files are off; every non-GET also passes `townwise:writes`, and view-as refuses every non-GET (403 `view_as_read_only`) and both downloads (403 `view_as_no_download`). The full table, with each route's errors, is `api/README.md` (Stored files); the shapes are in 11A.
-
-| id | Method and path | Who | Body | Limiter |
-|---|---|---|---|---|
-| `org.files.create` | `POST /files` | member | 2 KB `{ name, sizeBytes, purpose: 'history' }` | `files` |
-| `org.files.chunk` | `PUT /files/:fileId/chunks/:index` | the uploader | raw, exact `Content-Length` (`bodyLimit: 'stream'`, this route only) | `file_chunks` |
-| `org.files.complete` | `POST /files/:fileId/complete` | the uploader | 2 KB `{}` | |
-| `org.files.list` | `GET /files?before=` | member | | |
-| `org.files.get` | `GET /files/:fileId` | member | | |
-| `org.files.raw` | `GET /files/:fileId/raw?part=` | the uploader or an org admin | | `downloads` |
-| `org.files.clean` | `GET /files/:fileId/clean` | member | | `downloads` |
-| `org.files.remove_raw` | `DELETE /files/:fileId/raw` | the uploader or an org admin | | |
-| `org.files.remove` | `DELETE /files/:fileId` | the uploader or an org admin | | |
-| `org.imports.current` | `GET /imports/current` (declared before `:importId`) | member | | |
-| `org.imports.get` | `GET /imports/:importId` | member | | |
-| `org.imports.start` | `POST /imports/:importId/start` | member | 2 KB `{}` | |
-| `org.imports.answer` | `POST /imports/:importId/answer` | member | 2 KB `{ questionId, choice }` | |
-
-`PUT` is allowed only with `bodyLimit: 'stream'`, and `'stream'` only on `org.files.chunk` (boot refuses anything else). The chunk handler reads the body itself after the policy passed, and a chunk it refuses is answered with the connection closed, unread.
-
 ### 10.10 Calendar and sales history
 
 Two reads for Home, Analytics and TownwiseAI. Both are `member` GETs in `TOWNWISE_ROUTES` with no body and no route limiter (`app:api-ceiling` still applies). Both are allowed during view-as, where the chain logs `townwise.view_as_read` with the grant id and route id only. Neither handler logs or audits anything, and neither imports `stores/cross-tenant.ts`.
@@ -1032,6 +1010,28 @@ interface TownEvent {
 - The history route exists because `sales/days` caps at 366 days, and the heatmap and year over year need every year. It reads the days and the referenced uploads in two queries, and one current email per distinct uploader (10.1, “Deleted person”). Aggregates (weekly shape, months, drivers) are computed in the client from this one response.
 - `file` is always null until stored files link uploads to files; then `name` is null during view-as.
 - The calendar is location-scoped, not `/towns/:townId`, so a town outside the twelve still gets its holidays, and a restaurant’s own calendar can join the same response later as a separate field.
+
+### 10.11 Files and imports
+
+All under `/api/org/locations/:locationId`, all members, all 503 `files_unavailable` while stored files are off; every non-GET also passes `townwise:writes`, and view-as refuses every non-GET (403 `view_as_read_only`) and both downloads (403 `view_as_no_download`). The full table, with each route's errors, is `api/README.md` (Stored files); the shapes are in 11A.
+
+| id | Method and path | Who | Body | Limiter |
+|---|---|---|---|---|
+| `org.files.create` | `POST /files` | member | 2 KB `{ name, sizeBytes, purpose: 'history' }` | `files` |
+| `org.files.chunk` | `PUT /files/:fileId/chunks/:index` | the uploader | raw, exact `Content-Length` (`bodyLimit: 'stream'`, this route only) | `file_chunks` |
+| `org.files.complete` | `POST /files/:fileId/complete` | the uploader | 2 KB `{}` | |
+| `org.files.list` | `GET /files?before=` | member | | |
+| `org.files.get` | `GET /files/:fileId` | member | | |
+| `org.files.raw` | `GET /files/:fileId/raw?part=` | the uploader or an org admin | | `downloads` |
+| `org.files.clean` | `GET /files/:fileId/clean` | member | | `downloads` |
+| `org.files.remove_raw` | `DELETE /files/:fileId/raw` | the uploader or an org admin | | |
+| `org.files.remove` | `DELETE /files/:fileId` | the uploader or an org admin | | |
+| `org.imports.current` | `GET /imports/current` (declared before `:importId`) | member | | |
+| `org.imports.get` | `GET /imports/:importId` | member | | |
+| `org.imports.start` | `POST /imports/:importId/start` | member | 2 KB `{}` | |
+| `org.imports.answer` | `POST /imports/:importId/answer` | member | 2 KB `{ questionId, choice }` | |
+
+`PUT` is allowed only with `bodyLimit: 'stream'`, and `'stream'` only on `org.files.chunk` (boot refuses anything else). The chunk handler reads the body itself after the policy passed, and a chunk it refuses is answered with the connection closed, unread.
 
 ### 10.12 TownwiseAI proposals
 
