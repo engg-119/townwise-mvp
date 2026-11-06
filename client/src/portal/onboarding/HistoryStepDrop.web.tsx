@@ -1,14 +1,34 @@
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 
 import { Button } from '../ui/Button';
 
 // The drop step's browser pieces (storage2 2.1): files dropped anywhere on the step, and the picker, which takes
 // any number of files of any type. Each File goes to the upload queue as it is; nothing here opens or reads one.
 // While the step can't upload (view-as), a drop is caught and ignored, so the browser doesn't open the file in the
-// tab either, and the picker is a disabled button with no file input behind it.
+// tab either, and the picker is a disabled button with no file input behind it. A file dropped just outside the
+// step (on the cards below it, or the page's margin) is caught on the window and ignored: opening it in the tab
+// would leave the app and stop every upload still sending.
 
-function hasFiles(event: React.DragEvent): boolean {
-  return Array.from(event.dataTransfer.types).includes('Files');
+function hasFiles(event: { dataTransfer: DataTransfer | null }): boolean {
+  return Array.from(event.dataTransfer?.types ?? []).includes('Files');
+}
+
+/** While the step is shown, a file dragged anywhere else on the page drops nowhere. */
+function useWindowDropGuard(): void {
+  useEffect(() => {
+    const guard = (event: DragEvent): void => {
+      // The step's own handlers run first and take its drops.
+      if (event.defaultPrevented || !hasFiles(event)) return;
+      event.preventDefault();
+      if (event.type === 'dragover' && event.dataTransfer !== null) event.dataTransfer.dropEffect = 'none';
+    };
+    window.addEventListener('dragover', guard);
+    window.addEventListener('drop', guard);
+    return () => {
+      window.removeEventListener('dragover', guard);
+      window.removeEventListener('drop', guard);
+    };
+  }, []);
 }
 
 export function DropArea(props: {
@@ -20,6 +40,7 @@ export function DropArea(props: {
 }): React.JSX.Element {
   const depth = useRef(0);
   const { enabled, onFiles, onOver } = props;
+  useWindowDropGuard();
   return (
     <div
       style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}

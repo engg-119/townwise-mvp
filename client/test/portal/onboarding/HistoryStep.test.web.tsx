@@ -239,6 +239,22 @@ test('files dropped anywhere on the step are added, and the zone says how many a
   await waitFor(() => { expect(files.calls.filter((call) => call.method === 'POST' && call.path === '/files')).toHaveLength(1); });
 });
 
+test('files dropped just outside the step are caught and ignored, so the browser never opens them over the page', async () => {
+  const { files } = await show(meOf(ACCESS.admin), { import: null });
+  await screen.findByRole('heading', { name: STEP.dropHeading });
+  const dataTransfer = { types: ['Files'], items: [{}], files: [zeros('stray.csv', 4)], dropEffect: 'copy' };
+  // fireEvent answers false when a listener prevented the browser's default (opening the file in the tab).
+  expect(fireEvent.dragOver(document.body, { dataTransfer })).toBe(false);
+  expect(dataTransfer.dropEffect).toBe('none');
+  expect(fireEvent.drop(document.body, { dataTransfer })).toBe(false);
+  // A drag of text or a link is left alone.
+  expect(fireEvent.drop(document.body, { dataTransfer: { types: ['text/plain'], items: [], files: [] } })).toBe(true);
+  expect(files.calls.filter((call) => call.method === 'POST')).toEqual([]);
+  // Inside the step a drop still adds the file.
+  fireEvent.drop(screen.getByText(STEP.lead), { dataTransfer });
+  await waitFor(() => { expect(files.calls.filter((call) => call.method === 'POST' && call.path === '/files')).toHaveLength(1); });
+});
+
 test('a refusal says why on its row and offers the browser upload', async () => {
   const { files } = await show(meOf(ACCESS.admin), { import: null });
   await screen.findByRole('heading', { name: STEP.dropHeading });
