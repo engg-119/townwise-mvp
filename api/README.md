@@ -11,7 +11,7 @@ Needs Node 24 (`nvm use` reads `.nvmrc`) and Docker. From the repo root:
 ```sh
 nvm use
 npm install
-docker compose up -d    # Mongo on 27017, Valkey (Redis) on 6379; stop a local mongod first if 27017 is taken
+docker compose up -d    # Mongo on 27017, Valkey (Redis) on 6379, Azurite (blobs) on 10000; stop a local mongod first if 27017 is taken
 grep -v -E '^AUTH_(JWT|ENCRYPTION)_KEYS=' api/.env.example > api/.env.local
 printf 'AUTH_JWT_KEYS=k1:%s\nAUTH_ENCRYPTION_KEYS=e1:%s\n' "$(openssl rand -base64 32)" "$(openssl rand -base64 32)" >> api/.env.local
 npm run dev -w @townwise/api
@@ -415,6 +415,8 @@ Townwise reads the kit’s data only through its store functions (`users.findByI
 | `TOWNWISE_CHAT_MONTHLY_BUDGET_USD` | api (`src/config.ts`) | no | no | `20`: the tuning chat’s monthly spend limit per organization, in dollars, 0 to 10,000 |
 | `ANTHROPIC_API_KEY` | api (`src/main.ts`) | no | yes | empty locally, which turns the tuning chat off; in production a Key Vault reference when `enable_chat` is on (`../infra/README.md`, step 16) |
 | `GOOGLE_PLACES_API_KEY` | api (`src/main.ts`) | no | yes | empty locally, which turns the Places search off; in production a Key Vault reference when `enable_places` is on (`../infra/README.md`, step 17) |
+| `FILES_BLOB_ACCOUNT_URL` | api (`src/config.ts`) | no | no | empty locally, which turns stored files off (every files route answers 503 `files_unavailable`); `http://127.0.0.1:10000/devstoreaccount1` with Azurite; in production `https://sttwfiles2d2c15bf.blob.core.windows.net` (HTTPS required), commented in `production.env` until `../infra/README.md`, step 18. The API authenticates with its managed identity |
+| `FILES_AZURITE_CONNECTION_STRING` | api (`src/config.ts`) | no | no | development and tests only (production refuses it): `UseDevelopmentStorage=true` with `docker compose up -d`, which also starts Azurite on 10000; the API then creates the two containers itself |
 
 `.env.example` lists every variable above except `LOG_LEVEL`, `HTTP_KEEP_ALIVE_TIMEOUT_MS` and `SHUTDOWN_TIMEOUT_MS`, which take their defaults. It holds local values and placeholders only: the two key rings, the Google client ids, the staff list, the Anthropic key and the Places key are empty. Key rotation for the two key rings is in `kit/auth/MODULE.md`.
 

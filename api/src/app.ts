@@ -8,6 +8,7 @@ import { mountTownwiseRoutes, TOWNWISE_ROUTES, type TownwiseRoute } from './acce
 import type { ChatModel } from './chat/model.ts';
 import { TURN_TIME_LIMIT_MS } from './chat/turn.ts';
 import { resolveTownwiseConfig, type ResolvedTownwiseConfig, type TownwiseConfig } from './config.ts';
+import type { FileBlobs } from './files/blobs.ts';
 import type { PlacesClient } from './places/google.ts';
 import { createTownwiseStores, type TownwiseStores } from './stores/index.ts';
 
@@ -26,6 +27,10 @@ export interface TownwiseDeps {
   readonly chatTurnTimeLimitMs?: number | undefined;
   /** Google Places for the Places proxy; absent turns it off (main.ts builds it only when GOOGLE_PLACES_API_KEY is set). */
   readonly places?: PlacesClient | undefined;
+  /** Client file storage; absent turns stored files off (main.ts builds it only when FILES_BLOB_ACCOUNT_URL is set). */
+  readonly files?: FileBlobs | undefined;
+  /** Wakes the file reader (files/worker.ts) after an import starts or a file is queued. */
+  readonly fileWorker?: { nudge(): void } | undefined;
 }
 
 /** What every route handler receives besides the request and the principal. */
@@ -43,6 +48,9 @@ export interface TownwiseContext {
   readonly chatTurnTimeLimitMs: number;
   /** Null while the Places proxy is off. */
   readonly places: PlacesClient | null;
+  /** Null while stored files are off. */
+  readonly files: FileBlobs | null;
+  readonly nudgeFiles: () => void;
 }
 
 /**
@@ -62,6 +70,8 @@ export function createTownwiseApi(deps: TownwiseDeps, routes: readonly TownwiseR
     chat: deps.chat ?? null,
     chatTurnTimeLimitMs: deps.chatTurnTimeLimitMs ?? TURN_TIME_LIMIT_MS,
     places: deps.places ?? null,
+    files: deps.files ?? null,
+    nudgeFiles: () => { deps.fileWorker?.nudge(); },
   };
   // No router-wide body parser: each route mounts its own limit after the policy passes (spec 7.2 step 6).
   const router = express.Router();

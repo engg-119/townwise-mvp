@@ -34,4 +34,9 @@ describe('isolation (source)', () => {
     const casts = sourceFiles().filter((file) => /as OrgScope\b/.test(file.text)).map((file) => file.path);
     expect(casts).toEqual(['access/policy.ts']);
   });
+
+  it('only files/blobs.ts imports the Azure storage SDK', () => {
+    const importers = sourceFiles().filter((file) => file.text.includes('from \'@azure/storage-blob\'')).map((file) => file.path);
+    expect(importers).toEqual(['files/blobs.ts']);
+  });
 });

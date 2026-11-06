@@ -1,14 +1,15 @@
 // Composition root, from api/kit/server-core/MODULE.md "Wire it in". The only file that reads process.env.
 import { z } from 'zod';
-import { configSchema as serverSchema, createLogger, createServer, loadEnv } from '@ckeith26/server-core';
+import { ConfigError, configSchema as serverSchema, createLogger, createServer, loadEnv } from '@ckeith26/server-core';
 import { configSchema as mongoSchema, connectMongo, ensureIndexes } from '@ckeith26/mongo';
 import { configSchema as redisSchema, createRedis } from '@ckeith26/redis';
 import { createRateLimiter, ipKey, rateLimit } from '@ckeith26/rate-limit';
 import { configSchema as authSchema, createAuth, createMongoAuthStores } from '@ckeith26/auth';
 import { createTownwiseApi } from './app.ts';
 import { createAnthropicChatModel } from './chat/model.ts';
-import { configSchema as townwiseSchema } from './config.ts';
+import { configSchema as townwiseSchema, filesBackendOf, type FilesBackend } from './config.ts';
 import { createSendMagicLink } from './email.ts';
+import { createAzuriteFileBlobs, type FileBlobs } from './files/blobs.ts';
 import { createGooglePlacesClient } from './places/google.ts';
 
 // ANTHROPIC_API_KEY and GOOGLE_PLACES_API_KEY are optional: absent, the tuning chat or the Places proxy is off. Each
@@ -32,7 +33,18 @@ const auth = createAuth({
 });
 const chat = ANTHROPIC_API_KEY === undefined ? undefined : createAnthropicChatModel(ANTHROPIC_API_KEY);
 const places = GOOGLE_PLACES_API_KEY === undefined ? undefined : createGooglePlacesClient(GOOGLE_PLACES_API_KEY);
-const api = createTownwiseApi({ config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now, chat, places });
+
+// Stored files are off unless FILES_BLOB_ACCOUNT_URL is set (api/production.env keeps it commented until the runbook's
+// "Enable file storage" step). Locally, Azurite through its connection string; config.ts refuses that in production.
+async function fileBlobsFor(backend: FilesBackend | null): Promise<FileBlobs | undefined> {
+  if (backend === null) return undefined;
+  if (backend.kind === 'azurite') return createAzuriteFileBlobs(backend.connectionString);
+  // SEAM (U1, api/src/azure-identity.ts): the managed identity token source is not built yet. When it lands, this
+  // becomes createAzureFileBlobs(backend.accountUrl, <its TokenCredential adapter for https://storage.azure.com>).
+  throw new ConfigError('FILES_BLOB_ACCOUNT_URL', 'stored files in Azure need the managed identity token source, which is not built yet');
+}
+const files = await fileBlobsFor(filesBackendOf(config));
+const api = createTownwiseApi({ config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now, chat, places, files });
 await ensureIndexes(mongo.connection, { logger });   // after every store has registered its models
 await redis.ready(3000);                             // bounded; logs and continues on false
 const ceiling = createRateLimiter({ redis: redis.client, name: 'app:api-ceiling', limit: 2000, windowSeconds: 60 });
