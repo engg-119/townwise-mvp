@@ -79,6 +79,20 @@ function AnalyticsView(props: { data: Data; today: string; locationId: string; r
   const { metric } = filters;
   const basis = useMemo(() => basisLine(days, filters, context), [days, filters, context]);
   const { coverage } = history;
+  const native = Platform.OS !== 'web';
+  // The aggregates, so a hover preview (which re-renders the page) recomputes none of them.
+  const months = useMemo(() => heatmapMonths({ days, metric, years: filters.years }), [days, metric, filters.years]);
+  const summary = useMemo(
+    () => heatmapSummary({ days, metric, context, included: input.included, years: filters.years }, calendar) ?? '',
+    [days, metric, context, input.included, filters.years, calendar],
+  );
+  const bounds = useMemo(() => focusBounds(days, filters.years, today), [days, filters.years, today]);
+  const weekly = useMemo(() => weeklyShape(input), [input]);
+  const monthly = useMemo(() => byMonth(input), [input]);
+  const yoy = useMemo(() => yearOverYear(input), [input]);
+  const nights = useMemo(() => nightTypes(input), [input]);
+  const found = useMemo(() => drivers(input), [input]);
+
 
   const onFilters = useCallback((next: FilterState) => { setFilters(next); setKeepOne(false); }, []);
   const onYear = (year: number, checked: boolean): void => {
@@ -114,7 +128,6 @@ function AnalyticsView(props: { data: Data; today: string; locationId: string; r
   }
 
   const shown = preview ?? selected;
-  const bounds = focusBounds(days, filters.years, today);
   const base = selected ?? shown;
   const step = (by: number): (() => void) | null => {
     if (base === null || bounds === null) return null;
@@ -126,7 +139,6 @@ function AnalyticsView(props: { data: Data; today: string; locationId: string; r
     byDate: index, context, uploads: history.uploads, metric, included: input.included, today, lastDate: coverage.lastDate, calendar,
   });
   const panel = <DayPanel data={panelData} locationId={locationId} onPrev={step(-1)} onNext={step(1)} />;
-  const summary = heatmapSummary({ days, metric, context, included: input.included, years: filters.years }, calendar) ?? '';
   const heatmap = (
     <Heatmap
       days={days}
@@ -145,14 +157,6 @@ function AnalyticsView(props: { data: Data; today: string; locationId: string; r
       panel={panel}
     />
   );
-  const native = Platform.OS !== 'web';
-  const months = heatmapMonths({ days, metric, years: filters.years });
-
-  const weekly = weeklyShape(input);
-  const monthly = byMonth(input);
-  const yoy = yearOverYear(input);
-  const nights = nightTypes(input);
-  const found = drivers(input);
   const number = (value: number | null): string => (value === null ? 'No data' : metricNumber(value, metric));
 
   return (
