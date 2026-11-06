@@ -1,8 +1,8 @@
 // Operations keyed by a person, or spanning organizations (spec 6.10 rule 8). The list is closed:
-// findActiveSeat, findOpenInvites, claimInvite, declineInvite, latestRemovedSeat, adminOrgStats, peopleRecords
-// and deletePersonRecords.
-// Only access/resolve.ts, the join and decline handlers and the staff handlers (admin.ts, deletion.ts) import this
-// file (test/isolation.test.ts enforces the list).
+// findActiveSeat, findOpenInvites, claimInvite, declineInvite, latestRemovedSeat, adminOrgStats, peopleRecords,
+// deletePersonRecords, and the file reader's claimNextImport.
+// Only access/resolve.ts, the join and decline handlers, the staff handlers (admin.ts, deletion.ts) and the file
+// reader (files/worker.ts) import this file (test/isolation.test.ts enforces the list).
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { trusted, type Connection, type Types } from 'mongoose';
 
@@ -10,11 +10,14 @@ import type { Role } from '../access/resolve.ts';
 import { accessRequestModel, type AccessRequestStatus } from './access-requests.ts';
 import { chatConversationModel } from './chat-conversations.ts';
 import { chatLiveTurnModel } from './chat-live-turns.ts';
+import { chatProposalModel } from './chat-proposals.ts';
+import { importModel } from './imports.ts';
 import { locationModel } from './locations.ts';
 import { memberModel } from './members.ts';
 import { orgModel } from './orgs.ts';
 import { HAS_VALUE, SALES_DAYS_COLLECTION } from './sales-days.ts';
 import { UPLOADS_COLLECTION } from './uploads.ts';
+import { welcomeModel } from './welcomes.ts';
 
 export interface ActiveSeat { readonly id: string; readonly orgId: string; readonly role: Role }
 
@@ -254,9 +257,10 @@ export interface DeletedPersonRecords {
 
 /**
  * Person deletion (spec 10.7 step 3): their access requests, their open invitations in every organization, their
- * removed seats, and their tuning chat conversations and live turns in every organization. Never an active seat: the
- * handler refuses a person who holds one. An address with no kit user has only invitations. Deletes by filter, so a
- * retry completes the work.
+ * removed seats, their tuning chat conversations, live turns and proposal records, and their welcome markers, in every
+ * organization (the notes they saved from proposals stay with the organization, as every note does). Never an active
+ * seat: the handler refuses a person who holds one. An address with no kit user has only invitations. Deletes by
+ * filter, so a retry completes the work.
  */
 export async function deletePersonRecords(
   connection: Connection,
@@ -270,5 +274,32 @@ export async function deletePersonRecords(
   const removed = (await Member.deleteMany({ userId, status: 'removed' })).deletedCount;
   const conversations = (await chatConversationModel(connection).deleteMany({ userId })).deletedCount;
   const liveTurns = (await chatLiveTurnModel(connection).deleteMany({ userId })).deletedCount;
+  await chatProposalModel(connection).deleteMany({ userId });
+  // U11: the welcome markers, in every organization. Not counted, so the audit details are unchanged.
+  await welcomeModel(connection).deleteMany({ userId });
   return { requests, seats: invites + removed, conversations, liveTurns };
+}
+
+/** An import the file reader claimed. Only access/policy.ts's scopeForClaimedImport turns it into an OrgScope. */
+export interface ClaimedImport {
+  readonly id: string;
+  readonly orgId: string;
+  readonly locationId: string;
+}
+
+/**
+ * The file reader's claim (spec 11A), across organizations: the oldest started import that is queued with no live
+ * lease, or reading under a lease that ran out (its replica stopped). The claim takes the lease for `leaseMs`.
+ */
+export async function claimNextImport(
+  connection: Connection,
+  input: { readonly owner: string; readonly now: Date; readonly leaseMs: number },
+): Promise<ClaimedImport | null> {
+  const doc = await importModel(connection).findOneAndUpdate(
+    { status: trusted({ $in: ['queued', 'reading'] }), $or: [{ lease: null }, { 'lease.until': trusted({ $lt: input.now }) }] },
+    { $set: { status: 'reading', lease: { owner: input.owner, until: new Date(input.now.getTime() + input.leaseMs) }, claimedAt: input.now } },
+    { sort: { startedAt: 1, _id: 1 }, returnDocument: 'after' },
+  ).lean();
+  if (doc === null) return null;
+  return { id: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString() };
 }

@@ -18,11 +18,11 @@ afterEach(async () => {
   await cleanup();
 });
 
-// The chat inside the portal, as it ships: it calls the portal's api, which answers /api/me and /api/org and passes
+// TownwiseAI inside the portal, as it ships: it calls the portal's api, which answers /api/me and /api/org and passes
 // the chat's own routes to `api`.
 async function renderChat(api: FakeChatApi) {
-  const { router } = await renderApp('/locations/l1/chat', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: api }));
-  await screen.findAllByRole('heading', { name: 'Main Street Bar' });
+  const { router } = await renderApp('/locations/l1/agent', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: api }));
+  await screen.findByText('Main Street Bar, Hanover, NH');
   return router;
 }
 
@@ -39,8 +39,9 @@ async function send(text: string): Promise<void> {
 
 test('shows the location, its conversations and a labelled composer', async () => {
   await renderChat(fakeChatApi());
-  // The location header names it; the chat doesn't repeat it.
-  expect(screen.getAllByRole('heading', { name: 'Main Street Bar' })).toHaveLength(1);
+  // The location header names it in the eyebrow, with TownwiseAI as the page's one h1; the chat doesn't repeat it.
+  expect(screen.getAllByText('Main Street Bar, Hanover, NH')).toHaveLength(1);
+  expect(screen.getAllByRole('heading', { name: 'TownwiseAI' })).toHaveLength(1);
   expect(screen.getByRole('button', { name: 'Back to locations' })).toBeTruthy();
   expect(screen.getByRole('button', { name: /^Earlier chat, Nov 2, 2026$/ })).toBeTruthy();
   expect(screen.getByLabelText('Message')).toBeTruthy();
@@ -51,7 +52,7 @@ test('off: says the chat isn’t turned on yet, with no composer', async () => {
   const api = fakeChatApi();
   api.summary = { ...SUMMARY, enabled: false };
   await renderChat(api);
-  expect(screen.getByText('The tuning chat isn’t turned on yet.')).toBeTruthy();
+  expect(screen.getByText('TownwiseAI isn’t turned on yet.')).toBeTruthy();
   expect(screen.queryByLabelText('Message')).toBeNull();
 });
 
@@ -59,7 +60,7 @@ test('budget used up: says so in place of the composer', async () => {
   const api = fakeChatApi();
   api.summary = { ...SUMMARY, budget: { ...SUMMARY.budget, exhausted: true } };
   await renderChat(api);
-  expect(screen.getByText('This month’s chat budget is used up. The chat opens again next month.')).toBeTruthy();
+  expect(screen.getByText('This month’s TownwiseAI budget is used up. TownwiseAI opens again next month.')).toBeTruthy();
   expect(screen.queryByLabelText('Message')).toBeNull();
   expect(screen.getByRole('button', { name: /^Earlier chat/ })).toBeTruthy();
 });

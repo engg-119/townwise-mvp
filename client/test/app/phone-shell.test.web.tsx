@@ -11,7 +11,7 @@ import { fakeAuth } from '../helpers/fakes';
 import { ACCESS, EMAIL, fakePortalApi, INVITE, meOf, orgOf, SECOND_INVITE, viewAsMe } from '../helpers/portal';
 
 // The client app's frame on phones, on web (spec 15.2, 15.5, 15.7): the top bar at 320px, the view-as banner's two
-// rows, and the tuning chat, which needs the screen for the conversation.
+// rows, and TownwiseAI, which needs the screen for the conversation.
 
 class ResizeObserverPolyfill {
   observe(): void { return undefined; }
@@ -57,7 +57,7 @@ describe.each([
 ])('at 320px, for %s', (_who, me) => {
   test('Sign out holds its width and the organization name takes the squeeze with an ellipsis', async () => {
     renderAt('/locations/l1/notes', me);
-    await screen.findByRole('heading', { level: 1, name: 'Main Street Bar' });
+    await screen.findByRole('heading', { level: 1, name: 'Notes' });
     const signOut = within(screen.getByRole('banner')).getByRole('button', { name: 'Sign out' });
     // The box around Sign out never shrinks, so Sign out can't pass the 16px margin or wrap to “Sign / out”.
     expect(style(parentOf(signOut)).flexShrink).toBe('0');
@@ -118,26 +118,29 @@ test('at 320px the view-as banner is two rows: its words as one paragraph, then 
 describe.each([
   ['a member', meOf(ACCESS.member)],
   ['staff viewing as a member', viewAsMe(ACCESS.member)],
-])('the chat at 320px, for %s', (_who, me) => {
-  test('a compact header (the name on one line, no eyebrow or switcher) and the tabs scroll with the thread; the composer stays below', async () => {
-    renderAt('/locations/l1/chat', me);
+])('TownwiseAI at 320px, for %s', (_who, me) => {
+  test('a compact header (the eyebrow, and the title on one line, no switcher) scrolls with the thread; the sections stay in the top bar; the composer stays below', async () => {
+    renderAt('/locations/l1/agent', me);
     // While the chat loads, the header sits above the loading line; then it moves into the thread.
     const thread = await screen.findByTestId('chat-thread');
-    const title = screen.getByRole('heading', { level: 1, name: 'Main Street Bar' });
-    expect(screen.getAllByRole('heading', { name: 'Main Street Bar' })).toEqual([title]);
+    const title = screen.getByRole('heading', { level: 1, name: 'TownwiseAI' });
+    expect(screen.getAllByRole('heading', { level: 1 })).toEqual([title]);
     expect(style(title).whiteSpace).toBe('nowrap');
     expect(style(title).textOverflow).toBe('ellipsis');
     expect(screen.queryByRole('combobox', { name: 'Location' })).toBeNull();
-    expect(screen.queryByText('Hanover, NH')).toBeNull();
+    expect(screen.queryByRole('link', { name: 'All locations' })).toBeNull();
     expect(thread.contains(title)).toBe(true);
-    expect(within(thread).getByRole('region', { name: 'Location sections' })).toBeTruthy();
+    expect(thread.contains(screen.getByText('Main Street Bar, Hanover, NH'))).toBe(true);
+    const sections = screen.getByRole('region', { name: 'Sections' });
+    expect(thread.contains(sections)).toBe(false);
+    expect(within(sections).getByRole('link', { name: 'TownwiseAI' }).getAttribute('aria-current')).toBe('page');
     const composer = screen.getByLabelText('Message');
     expect(thread.contains(composer)).toBe(false);
     expect(screen.getByRole('button', { name: 'Send' })).toBeTruthy();
   });
 
   test('the composer is one row: the input, named Message with no label drawn, at one line, and Send beside it', async () => {
-    renderAt('/locations/l1/chat', me);
+    renderAt('/locations/l1/agent', me);
     await screen.findByTestId('chat-thread');
     const input = screen.getByLabelText('Message');
     expect(screen.queryByText('Message')).toBeNull();
@@ -159,7 +162,7 @@ test('at 320px the composer grows with its text, up to its maximum, and starts o
     get(this: HTMLTextAreaElement) { return this.value.split('\n').length * 24 + 20; },
   });
   try {
-    renderAt('/locations/l1/chat', meOf(ACCESS.member));
+    renderAt('/locations/l1/agent', meOf(ACCESS.member));
     await screen.findByTestId('chat-thread');
     const input = screen.getByLabelText<HTMLTextAreaElement>('Message');
     expect(input.style.height).toBe('46px');

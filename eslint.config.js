@@ -10,7 +10,7 @@ const expoEnvMessage =
 export default defineConfig(
   {
     ignores: ['**/node_modules/**', '**/.vitest/**', '**/.expo/**', '**/.expo-export/**', '**/dist/**',
-      'tooling/test/fixtures/**'],
+      'tooling/test/fixtures/**', '.worktrees/**'],
   },
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,

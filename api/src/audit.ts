@@ -155,6 +155,9 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'location.deleted': return `Deleted the location ${text(d.name)}`;
     case 'sales.uploaded': return `Uploaded ${text(d.dayCount)} days of sales data, ${text(d.firstDate)} to ${text(d.lastDate)}`;
     case 'sales.deleted': return `Deleted ${text(d.deletedDays)} days of sales data`;
+    case 'file.uploaded': return 'Uploaded a file';
+    case 'file.deleted': return 'Deleted a file';
+    case 'file.raw_deleted': return 'Deleted a file’s original';
     case 'note.created': return noteSummary('Added', d);
     case 'note.updated': return noteSummary('Edited', d);
     case 'note.deleted': return noteSummary('Deleted', d);

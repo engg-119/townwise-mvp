@@ -1,5 +1,5 @@
-// The tuning chat (docs/portal/tuning-chat.md): a member talks with an assistant about one location's demand, and it
-// can propose notes the member adds through the notes route. Conversations are private to their author, per
+// TownwiseAI (docs/portal/tuning-chat.md): a member talks with an assistant about one location's demand, and it can
+// propose notes the member saves (handlers/chat-proposals.ts). Conversations are private to their author, per
 // location. Message text, tool inputs and tool results never reach a log or an audit event: only ids, counts, stop
 // reasons and codes do.
 import { randomUUID } from 'node:crypto';
@@ -14,10 +14,11 @@ import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import { runTurn, type TurnEvent } from '../chat/turn.ts';
-import { chatMessageViews, type ChatMessageView } from '../chat/view.ts';
+import { chatMessageViews, OPEN, type ChatMessageView, type ProposalState, type ShownProposal } from '../chat/view.ts';
 import { utcDay } from '../dates.ts';
 import type { ConversationOwner, ConversationRecord, ConversationSummary } from '../stores/chat-conversations.ts';
 import { loadLocation, memberOf } from './locations.ts';
+import { sameNoteContent } from './notes.ts';
 import { actorOf } from './team.ts';
 
 /** Section 2. */
@@ -41,11 +42,11 @@ const turnBody = z.object({
   content: z.string().trim().min(1).max(4000),
 });
 
-function notFound(): AppError {
+export function notFound(): AppError {
   return new AppError(404, 'not_found', 'Not found');
 }
 
-function ownerOf(caller: MemberPrincipal, locationId: string): ConversationOwner {
+export function ownerOf(caller: MemberPrincipal, locationId: string): ConversationOwner {
   return { locationId, userId: caller.userId };
 }
 
@@ -97,9 +98,24 @@ export async function getConversation(ctx: TownwiseContext, req: Request, res: R
   const conversationId = parseInput(objectId, req.params.conversationId);
   const conversation = await ctx.stores.chatConversations.find(caller.scope, ownerOf(caller, location.id), conversationId);
   if (conversation === null) throw notFound();
+  const [rows, notes] = await Promise.all([
+    ctx.stores.chatProposals.list(caller.scope, conversation.id),
+    ctx.stores.notes.list(caller.scope, location.id),
+  ]);
+  const byId = new Map(rows.map((row) => [row.proposalId, row]));
+  const stateOf = (proposal: ShownProposal): ProposalState => {
+    const row = byId.get(proposal.id);
+    // A save that has not finished reads as open: pressing Save again finishes the same note.
+    if (row !== undefined) return row.status === 'saving' ? OPEN : { status: row.status, noteId: row.status === 'saved' ? row.noteId : null };
+    // A proposal added with the notes route (the Add note button before proposals were recorded) reads as saved when a
+    // note the author wrote at this location says exactly the same, so it is not offered twice. Only the author could
+    // press Add note in their own conversation, so a colleague's note never counts.
+    const same = notes.find((note) => note.createdBy === caller.userId && sameNoteContent(note, proposal));
+    return same === undefined ? OPEN : { status: 'saved', noteId: same.id };
+  };
   const body: ConversationView = {
     id: conversation.id, title: conversation.title, updatedAt: conversation.updatedAt.toISOString(),
-    messages: chatMessageViews(conversation.messages, utcDay(ctx.now())),
+    messages: chatMessageViews(conversation.messages, utcDay(ctx.now()), stateOf),
   };
   res.status(200).json(body);
 }
@@ -111,6 +127,8 @@ export async function deleteConversation(ctx: TownwiseContext, req: Request, res
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const conversationId = parseInput(objectId, req.params.conversationId);
   if (!(await ctx.stores.chatConversations.remove(scope, ownerOf(caller, location.id), conversationId))) throw notFound();
+  // After the conversation: while it exists its proposals keep their state, so none is offered for a second note.
+  await ctx.stores.chatProposals.removeForConversation(scope, conversationId);
   await recordAfter(ctx, {
     ...actorOf(caller), at: ctx.now(), orgId: scope.orgId, action: 'chat.conversation_deleted',
     target: { type: 'conversation', id: conversationId },
@@ -156,7 +174,7 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   const body = parseInput(turnBody, req.body);
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const model = ctx.chat;
-  if (model === null) throw new AppError(503, 'chat_unavailable', 'The tuning chat isn’t turned on yet');
+  if (model === null) throw new AppError(503, 'chat_unavailable', 'TownwiseAI isn’t turned on yet');
   const owner = ownerOf(caller, location.id);
   if (body.conversationId !== undefined) {
     const existing = await ctx.stores.chatConversations.find(scope, owner, body.conversationId);
@@ -164,7 +182,7 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
     if (isFull(existing)) throw new AppError(409, 'conversation_full', 'This conversation is full. Start a new one.');
   }
   if ((await budgetOf(ctx, scope)).exhausted) {
-    throw new AppError(409, 'chat_budget_exhausted', 'Your organization’s tuning chat budget for this month is used up');
+    throw new AppError(409, 'chat_budget_exhausted', 'Your organization’s TownwiseAI budget for this month is used up');
   }
   const now = ctx.now();
   const claim: TurnClaim = { turnId: randomUUID(), now, staleBefore: new Date(now.getTime() - STALE_TURN_MS) };

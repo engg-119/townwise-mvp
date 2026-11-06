@@ -1,7 +1,7 @@
 import { ConfigError, loadEnv } from '@ckeith26/server-core';
 import { describe, expect, it } from 'vitest';
 
-import { configSchema, resolveTownwiseConfig } from '../src/config.ts';
+import { configSchema, filesBackendOf, resolveTownwiseConfig } from '../src/config.ts';
 
 function parse(value: string | undefined): readonly string[] {
   return loadEnv(configSchema, { TOWNWISE_SUPERADMIN_EMAILS: value }).TOWNWISE_SUPERADMIN_EMAILS;
@@ -37,7 +37,10 @@ describe('config', () => {
   });
 
   it('production refuses an empty staff list; development and test allow it', () => {
-    const budget = { TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20 };
+    const budget = {
+      TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20, TOWNWISE_WEB_URL: 'http://localhost:8081',
+      FILES_BLOB_ACCOUNT_URL: undefined, FILES_AZURITE_CONNECTION_STRING: undefined,
+    };
     expect(() => resolveTownwiseConfig({ NODE_ENV: 'production', TOWNWISE_SUPERADMIN_EMAILS: [], ...budget })).toThrow(ConfigError);
     expect(resolveTownwiseConfig({ NODE_ENV: 'development', TOWNWISE_SUPERADMIN_EMAILS: [], ...budget }).superadminEmails.size).toBe(0);
     const resolved = resolveTownwiseConfig({ NODE_ENV: 'production', TOWNWISE_SUPERADMIN_EMAILS: ['staff@townwise.test'], ...budget });
@@ -52,5 +55,101 @@ describe('config', () => {
     expect(budget('35.5')).toBe(35.5);
     expect(budget('0')).toBe(0);
     for (const bad of ['-1', 'twenty', '10001']) expect(() => budget(bad)).toThrow(ConfigError);
+  });
+
+  describe('email (spec D14)', () => {
+    const ENDPOINT = 'https://acs-townwise-0000.unitedstates.communication.azure.com';
+    const SENDER = 'no-reply@townwise.test';
+
+    function resolve(env: Record<string, string | undefined>, nodeEnv: 'production' | 'development' = 'development') {
+      return resolveTownwiseConfig({ NODE_ENV: nodeEnv, ...loadEnv(configSchema, { TOWNWISE_SUPERADMIN_EMAILS: 'staff@townwise.test', ...env }) });
+    }
+
+    function problemsOf(run: () => unknown): string[] {
+      try {
+        run();
+      } catch (err) {
+        expect(err).toBeInstanceOf(ConfigError);
+        return (err as ConfigError).problems.map((problem) => problem.variable);
+      }
+      return expect.unreachable();
+    }
+
+    it('is off by default, with the local web origin and no Reply-To; empty values count as unset', () => {
+      expect(resolve({})).toMatchObject({ email: null, emailReplyTo: null, webUrl: 'http://localhost:8081' });
+      expect(resolve({ EMAIL_ENDPOINT: '', EMAIL_SENDER: '', TOWNWISE_EMAIL_REPLY_TO: '', TOWNWISE_WEB_URL: '' }).email).toBeNull();
+    });
+
+    it('is on with an endpoint and a sender; the endpoint and web URL lose a trailing slash', () => {
+      const resolved = resolve({
+        EMAIL_ENDPOINT: `${ENDPOINT}/`, EMAIL_SENDER: SENDER, TOWNWISE_EMAIL_REPLY_TO: 'team@townwise.test', TOWNWISE_WEB_URL: 'https://townwise.test/',
+      }, 'production');
+      expect(resolved).toMatchObject({
+        email: { endpoint: ENDPOINT, sender: SENDER }, emailReplyTo: 'team@townwise.test', webUrl: 'https://townwise.test',
+      });
+    });
+
+    it('needs EMAIL_ENDPOINT and EMAIL_SENDER together', () => {
+      expect(problemsOf(() => resolve({ EMAIL_ENDPOINT: ENDPOINT }))).toEqual(['EMAIL_SENDER']);
+      expect(problemsOf(() => resolve({ EMAIL_SENDER: SENDER }))).toEqual(['EMAIL_ENDPOINT']);
+    });
+
+    it('refuses an endpoint that is not https on *.communication.azure.com, or has a path, without echoing it', () => {
+      for (const bad of [
+        'http://acs-townwise-0000.unitedstates.communication.azure.com',
+        'https://sentinel-host.example.test',
+        'https://acs.communication.azure.com.sentinel-host.example.test',
+        `${ENDPOINT}/sentinel-path`,
+        `${ENDPOINT}?sentinel=1`,
+      ]) {
+        try {
+          resolve({ EMAIL_ENDPOINT: bad, EMAIL_SENDER: SENDER });
+          expect.unreachable(bad);
+        } catch (err) {
+          expect(err).toBeInstanceOf(ConfigError);
+          expect((err as ConfigError).problems.map((problem) => problem.variable)).toEqual(['EMAIL_ENDPOINT']);
+          expect(String(err)).not.toContain('sentinel');
+        }
+      }
+    });
+
+    it('refuses a sender or Reply-To that is not an address, and a web URL with a path or another scheme', () => {
+      expect(problemsOf(() => resolve({ EMAIL_ENDPOINT: ENDPOINT, EMAIL_SENDER: 'no-reply' }))).toEqual(['EMAIL_SENDER']);
+      expect(problemsOf(() => resolve({ TOWNWISE_EMAIL_REPLY_TO: 'team' }))).toEqual(['TOWNWISE_EMAIL_REPLY_TO']);
+      expect(problemsOf(() => resolve({ TOWNWISE_WEB_URL: 'https://townwise.test/sign-in' }))).toEqual(['TOWNWISE_WEB_URL']);
+      expect(problemsOf(() => resolve({ TOWNWISE_WEB_URL: 'ftp://townwise.test' }))).toEqual(['TOWNWISE_WEB_URL']);
+    });
+
+    it('production refuses an http web URL while email is on, and allows it while email is off', () => {
+      expect(problemsOf(() => resolve({ EMAIL_ENDPOINT: ENDPOINT, EMAIL_SENDER: SENDER }, 'production'))).toEqual(['TOWNWISE_WEB_URL']);
+      expect(resolve({ EMAIL_ENDPOINT: ENDPOINT, EMAIL_SENDER: SENDER }).webUrl).toBe('http://localhost:8081');
+      expect(resolve({}, 'production').email).toBeNull();
+    });
+  });
+
+  it('turns stored files on with an account URL, and refuses Azurite and a plain-HTTP account in production, without echoing either', () => {
+    const files = (env: Record<string, string>, nodeEnv: 'production' | 'development') =>
+      filesBackendOf({ ...loadEnv(configSchema, env), NODE_ENV: nodeEnv });
+    expect(files({}, 'production')).toBeNull();
+    expect(files({ FILES_BLOB_ACCOUNT_URL: '' }, 'development')).toBeNull();
+    expect(files({ FILES_BLOB_ACCOUNT_URL: 'https://sttwfiles2d2c15bf.blob.core.windows.net' }, 'production'))
+      .toEqual({ kind: 'azure', accountUrl: 'https://sttwfiles2d2c15bf.blob.core.windows.net' });
+    const azurite = { FILES_BLOB_ACCOUNT_URL: 'http://127.0.0.1:10000/devstoreaccount1', FILES_AZURITE_CONNECTION_STRING: 'UseDevelopmentStorage=true' };
+    expect(files(azurite, 'development')).toEqual({ kind: 'azurite', connectionString: 'UseDevelopmentStorage=true' });
+    for (const env of [azurite, { FILES_BLOB_ACCOUNT_URL: 'http://sttwfiles2d2c15bf.blob.core.windows.net' }]) {
+      try {
+        files(env, 'production');
+        expect.unreachable();
+      } catch (err) {
+        expect(err).toBeInstanceOf(ConfigError);
+        expect(String(err)).not.toContain('UseDevelopmentStorage');
+        expect(String(err)).not.toContain('sttwfiles');
+      }
+    }
+    expect(() => resolveTownwiseConfig({
+      NODE_ENV: 'production', TOWNWISE_SUPERADMIN_EMAILS: ['staff@townwise.test'], TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20,
+      TOWNWISE_WEB_URL: 'http://localhost:8081', ...azurite,
+    })).toThrow(ConfigError);
+    expect(() => loadEnv(configSchema, { FILES_BLOB_ACCOUNT_URL: 'not a url' })).toThrow(ConfigError);
   });
 });

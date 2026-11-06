@@ -65,6 +65,7 @@ describe('a live grant', () => {
         endsAt: new Date(startedAt.getTime() + 30 * MINUTE).toISOString(),
       },
       staff: { verifiedUntil: new Date(startedAt.getTime() + 60 * MINUTE).toISOString() },
+      welcome: null,
     });
   });
 

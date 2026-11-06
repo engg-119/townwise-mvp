@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { normalizeEmail } from './normalize-email.ts';
 
 const MAX_STAFF = 20;
+const ACS_HOST = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.communication\.azure\.com$/;
 
 /** Spread into the one loadEnv call in main.ts. Messages never include the values. */
 export const configSchema = z.object({
@@ -26,6 +27,18 @@ export const configSchema = z.object({
   }),
   /** The tuning chat's monthly spend limit per organization, in US dollars (docs/portal/tuning-chat.md section 5). */
   TOWNWISE_CHAT_MONTHLY_BUDGET_USD: z.coerce.number().min(0).max(10_000).default(20),
+  /** The Communication Services endpoint, https://<resource>.communication.azure.com. Absent turns email off (spec D14). */
+  EMAIL_ENDPOINT: z.url({ protocol: /^https$/, hostname: ACS_HOST }).optional(),
+  /** The From address, a sender username on the verified domain. Required with EMAIL_ENDPOINT. */
+  EMAIL_SENDER: z.email().optional(),
+  /** Reply-To on every Townwise email. Absent, no Reply-To is set and the footer doesn't offer replies. */
+  TOWNWISE_EMAIL_REPLY_TO: z.email().optional(),
+  /** The web app's origin, for links in emails. */
+  TOWNWISE_WEB_URL: z.url({ protocol: /^https?$/ }).default('http://localhost:8081'),
+  /** The client files storage account (spec 11A). Absent or empty turns stored files off (503 files_unavailable). */
+  FILES_BLOB_ACCOUNT_URL: z.preprocess((value) => (value === '' ? undefined : value), z.url().optional()),
+  /** Development and tests only: Azurite's connection string, used instead of the managed identity. */
+  FILES_AZURITE_CONNECTION_STRING: z.preprocess((value) => (value === '' ? undefined : value), z.string().optional()),
 });
 
 export type TownwiseConfig = z.infer<typeof configSchema>;
@@ -33,17 +46,69 @@ export type TownwiseConfig = z.infer<typeof configSchema>;
 export interface ResolvedTownwiseConfig {
   readonly superadminEmails: ReadonlySet<string>;
   readonly chatMonthlyBudgetUsd: number;
+  /** Null while email is off. `endpoint` is a bare origin. */
+  readonly email: { readonly endpoint: string; readonly sender: string } | null;
+  readonly emailReplyTo: string | null;
+  /** A bare origin, with no trailing slash. */
+  readonly webUrl: string;
 }
 
-/** Production refuses an empty staff list (spec Section 18). */
+/** The URL's origin, or null when it has a path, query, fragment or credentials. */
+function bareOrigin(value: string): string | null {
+  const url = new URL(value);
+  if (url.pathname !== '/' || url.search !== '' || url.hash !== '' || url.username !== '' || url.password !== '') return null;
+  return url.origin;
+}
+
+/** Where stored files live, or null while they are off. */
+export type FilesBackend =
+  | { readonly kind: 'azure'; readonly accountUrl: string }
+  | { readonly kind: 'azurite'; readonly connectionString: string };
+
+/** Production refuses Azurite and any account URL that is not HTTPS. */
+export function filesBackendOf(
+  config: Pick<TownwiseConfig, 'FILES_BLOB_ACCOUNT_URL' | 'FILES_AZURITE_CONNECTION_STRING'> & Pick<ServerConfig, 'NODE_ENV'>,
+): FilesBackend | null {
+  const accountUrl = config.FILES_BLOB_ACCOUNT_URL;
+  const azurite = config.FILES_AZURITE_CONNECTION_STRING;
+  if (config.NODE_ENV === 'production') {
+    if (azurite !== undefined) throw new ConfigError('FILES_AZURITE_CONNECTION_STRING', 'is for development only');
+    if (accountUrl !== undefined && !accountUrl.startsWith('https://')) {
+      throw new ConfigError('FILES_BLOB_ACCOUNT_URL', 'production requires an https URL');
+    }
+  }
+  if (accountUrl === undefined) return null;
+  return azurite === undefined ? { kind: 'azure', accountUrl } : { kind: 'azurite', connectionString: azurite };
+}
+
+/**
+ * Production refuses an empty staff list, email with an http web URL, and Azurite for stored files; email needs both
+ * its variables (spec Section 18).
+ */
 export function resolveTownwiseConfig(
   config: TownwiseConfig & Pick<ServerConfig, 'NODE_ENV'>,
 ): ResolvedTownwiseConfig {
   if (config.NODE_ENV === 'production' && config.TOWNWISE_SUPERADMIN_EMAILS.length === 0) {
     throw new ConfigError('TOWNWISE_SUPERADMIN_EMAILS', 'production requires at least one staff address');
   }
+  if ((config.EMAIL_ENDPOINT === undefined) !== (config.EMAIL_SENDER === undefined)) {
+    throw new ConfigError(config.EMAIL_ENDPOINT === undefined ? 'EMAIL_ENDPOINT' : 'EMAIL_SENDER', 'set EMAIL_ENDPOINT and EMAIL_SENDER together');
+  }
+  const endpoint = config.EMAIL_ENDPOINT === undefined ? null : bareOrigin(config.EMAIL_ENDPOINT);
+  if (config.EMAIL_ENDPOINT !== undefined && endpoint === null) {
+    throw new ConfigError('EMAIL_ENDPOINT', 'expected a bare origin, with no path or query');
+  }
+  const webUrl = bareOrigin(config.TOWNWISE_WEB_URL);
+  if (webUrl === null) throw new ConfigError('TOWNWISE_WEB_URL', 'expected a bare origin, with no path or query');
+  if (config.NODE_ENV === 'production' && endpoint !== null && !webUrl.startsWith('https:')) {
+    throw new ConfigError('TOWNWISE_WEB_URL', 'production email requires https');
+  }
+  filesBackendOf(config);
   return {
     superadminEmails: new Set(config.TOWNWISE_SUPERADMIN_EMAILS),
     chatMonthlyBudgetUsd: config.TOWNWISE_CHAT_MONTHLY_BUDGET_USD,
+    email: endpoint === null || config.EMAIL_SENDER === undefined ? null : { endpoint, sender: config.EMAIL_SENDER },
+    emailReplyTo: config.TOWNWISE_EMAIL_REPLY_TO ?? null,
+    webUrl,
   };
 }

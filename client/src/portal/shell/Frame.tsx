@@ -9,7 +9,7 @@ import { fetchPendingCount } from '../api';
 import { COPY } from '../errors';
 import { useAction } from '../hooks';
 import { useOptionalPortal, usePortal, useReadOnly } from '../PortalProvider';
-import { clientNav, consoleNav, isFillRoute } from '../routing';
+import { clientNav, consoleNav, isFillRoute, navLocationId } from '../routing';
 import { ErrorNotice } from '../ui/feedback';
 import { Wrap } from '../ui/layout';
 import { MessageFocus } from '../ui/messageFocus';
@@ -20,7 +20,7 @@ import { Footer, TopBar } from './TopBar';
 import { VIEW_AS_LINE_ID } from './ViewAsBanner';
 
 // The four frames of spec 15.1 (Public is the existing sign-in). Each is a scroll view: the top bar, the page in
-// <main>, then the slim footer. The tuning chat fills the screen instead, so its frame does not scroll and has
+// <main>, then the slim footer. TownwiseAI fills the screen instead, so its frame does not scroll and has
 // no footer. The shell around every frame holds the skip link (the first focusable element) and, during view-as,
 // the banner above the frame, where it stays in view as the page scrolls.
 
@@ -116,20 +116,26 @@ export function GateFrame(props: { children: React.ReactNode }): React.JSX.Eleme
   );
 }
 
-/** Members and org admins, and staff viewing as one of them. */
+/**
+ * Members and org admins, and staff viewing as one of them. The top bar's sections open a location, so the frame
+ * loads the organization (once per access, shared with every page) to know which ones there are.
+ */
 export function ClientFrame(props: { children: React.ReactNode }): React.JSX.Element {
-  const { me } = usePortal();
+  const { me, org, ensureOrg, lastLocationId } = usePortal();
   const pathname = usePathname();
   const { readOnly } = useReadOnly();
   const signOut = useSignOut();
   const { access } = me;
+  const member = access.state === 'member';
+  useEffect(() => { if (member && org === null) ensureOrg(); }, [member, org, ensureOrg]);
   if (access.state !== 'member') return <GateFrame>{props.children}</GateFrame>;
+  const locations = org?.status === 'ready' ? org.data.locations : null;
   const bar = (
     <TopBar
       kind="client"
       email={me.user.email}
       orgName={access.org.name}
-      nav={clientNav(access.role, pathname)}
+      nav={clientNav(access.role, pathname, navLocationId(pathname, lastLocationId, locations))}
       {...signOutState(readOnly)}
       onSignOut={signOut.run}
     />

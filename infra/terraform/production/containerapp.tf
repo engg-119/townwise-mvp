@@ -111,7 +111,7 @@ resource "azurerm_container_app" "api" {
         value = "rediss://127.0.0.1:6379/0"
       }
 
-      # For DefaultAzureCredential (Communication Services email) once the API sends mail.
+      # The user-assigned identity the API asks for tokens as (api/src/azure-identity.ts), for its emails.
       env {
         name  = "AZURE_CLIENT_ID"
         value = azurerm_user_assigned_identity.api.client_id

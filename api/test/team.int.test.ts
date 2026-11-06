@@ -12,10 +12,13 @@ import { holdCalls } from './helpers/hold.ts';
 import {
   call, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
+import { createCapturingTransport } from './helpers/mail.ts';
 
 let server: TownwiseTestServer;
+/** Nothing in this file may send an email (spec D14: only a request and its approval do). */
+const mail = createCapturingTransport();
 
-beforeAll(async () => { server = await startTownwiseServer(); });
+beforeAll(async () => { server = await startTownwiseServer({ mailTransport: mail }); });
 afterAll(async () => { await server.close(); });
 beforeEach(async () => { await server.redis.flushdb(); });
 afterEach(async () => { await removeStaffFactor(server); });
@@ -478,5 +481,16 @@ describe('audit', () => {
       const allowed: readonly string[] = AUDIT_DETAIL_KEYS[event.action as AuditAction];
       expect(Object.keys(event.details as object).every((key) => allowed.includes(key))).toBe(true);
     }
+  });
+});
+
+describe('email (spec D14)', () => {
+  it('adding people, a staff-created organization’s admin invitation and every flow above send no email', async () => {
+    const { admin: { session } } = await orgWithAdmin('Mail Org');
+    expect((await call(server, '/api/org/members', { session, json: { emails: [uniqueEmail('mail-invitee')] } })).status).toBe(200);
+    const staff = await signInStaff(server);
+    expect((await call(server, '/api/admin/orgs', { session: staff, json: { name: 'Mail Staff Org', adminEmail: uniqueEmail('mail-admin') } })).status).toBe(201);
+    await server.mailer.idle();
+    expect(mail.sent).toEqual([]);
   });
 });

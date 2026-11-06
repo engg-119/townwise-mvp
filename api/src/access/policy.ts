@@ -3,7 +3,7 @@ import type { AuthContext } from '@ckeith26/auth';
 import { AppError } from '@ckeith26/server-core';
 import type { Request } from 'express';
 
-import type { JoinedSeat } from '../stores/cross-tenant.ts';
+import type { ClaimedImport, JoinedSeat } from '../stores/cross-tenant.ts';
 import type { OrgRecord, OrgStore } from '../stores/orgs.ts';
 import type { Access, ResolvedSeat, Resolution, Role } from './resolve.ts';
 
@@ -28,6 +28,11 @@ function scopeOf(seat: ResolvedSeat): OrgScope {
 /** The join handler only, after its compare-and-set succeeds. */
 export function scopeForJoinedInvite(seat: JoinedSeat): OrgScope {
   return mint(seat.orgId);
+}
+
+/** The file reader only (files/worker.ts), for the organization of the import it just claimed. */
+export function scopeForClaimedImport(claim: ClaimedImport): OrgScope {
+  return mint(claim.orgId);
 }
 
 /** Approval (F3) and staff creation (F10) only, for the organization that handler just created. */

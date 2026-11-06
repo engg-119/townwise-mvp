@@ -109,7 +109,8 @@ test('a refusal before the stream starts is the API’s JSON error, mapped as re
     [jsonResponse(409, { error: 'chat_turn_in_progress' }), { kind: 'http', status: 409, code: 'chat_turn_in_progress' }],
     [jsonResponse(409, { error: 'chat_budget_exhausted' }), { kind: 'http', status: 409, code: 'chat_budget_exhausted' }],
     [jsonResponse(429, { error: 'rate_limited' }, { 'Retry-After': '120' }), { kind: 'http', status: 429, retryAfterSeconds: 120 }],
-    [jsonResponse(503, { error: 'chat_unavailable', message: 'key missing' }), { kind: 'http', status: 503, code: null }],
+    // A 5xx keeps its machine code (503 uploads_busy and files_unavailable need it) but never its message.
+    [jsonResponse(503, { error: 'chat_unavailable', message: 'key missing' }), { kind: 'http', status: 503, code: 'chat_unavailable', detail: null }],
   ];
   for (const [response, expected] of rows) {
     const { client } = cookieClient(() => response);

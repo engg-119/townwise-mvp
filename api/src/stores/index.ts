@@ -4,14 +4,19 @@ import { createAccessRequestStore, type AccessRequestStore } from './access-requ
 import { createAuditEventStore, type AuditEventStore } from './audit-events.ts';
 import { createChatConversationStore, type ChatConversationStore } from './chat-conversations.ts';
 import { createChatLiveTurnStore, type ChatLiveTurnStore } from './chat-live-turns.ts';
+import { createChatProposalStore, type ChatProposalStore } from './chat-proposals.ts';
 import { createChatUsageStore, type ChatUsageStore } from './chat-usage.ts';
+import { createFileStore, type FileStore } from './files.ts';
+import { createImportStore, type ImportStore } from './imports.ts';
 import { createLocationStore, type LocationStore } from './locations.ts';
 import { createMemberStore, type MemberStore } from './members.ts';
 import { createNoteStore, type NoteStore } from './notes.ts';
 import { createOrgStore, type OrgStore } from './orgs.ts';
 import { createSalesDayStore, type SalesDayStore } from './sales-days.ts';
+import { createUploadDayStore, type UploadDayStore } from './upload-days.ts';
 import { createUploadStore, type UploadStore } from './uploads.ts';
 import { createViewAsGrantStore, type ViewAsGrantStore } from './view-as-grants.ts';
+import { createWelcomeStore, type WelcomeStore } from './welcomes.ts';
 
 export interface TownwiseStores {
   readonly orgs: OrgStore;
@@ -27,6 +32,13 @@ export interface TownwiseStores {
   readonly chatConversations: ChatConversationStore;
   readonly chatLiveTurns: ChatLiveTurnStore;
   readonly chatUsage: ChatUsageStore;
+  readonly chatProposals: ChatProposalStore;
+  /** U11, statement moments. */
+  readonly welcomes: WelcomeStore;
+  /** Stored files (spec 11A). */
+  readonly files: FileStore;
+  readonly imports: ImportStore;
+  readonly uploadDays: UploadDayStore;
 }
 
 /** Registers every Townwise model on `connection`; call it before ensureIndexes. */
@@ -44,5 +56,11 @@ export function createTownwiseStores(connection: Connection): TownwiseStores {
     chatConversations: createChatConversationStore(connection),
     chatLiveTurns: createChatLiveTurnStore(connection),
     chatUsage: createChatUsageStore(connection),
+    chatProposals: createChatProposalStore(connection),
+    // U11, statement moments.
+    welcomes: createWelcomeStore(connection),
+    files: createFileStore(connection),
+    imports: createImportStore(connection),
+    uploadDays: createUploadDayStore(connection),
   };
 }

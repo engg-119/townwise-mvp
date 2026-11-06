@@ -58,12 +58,64 @@ describe('route table', () => {
     expect(() => { assertRouteTable(TOWNWISE_ROUTES); }).not.toThrow();
   });
 
+  it('serves sales history and the town calendar as member GETs with no body and no route limiter (spec 10.10)', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id === 'org.sales.history' || r.id === 'org.calendar.get')
+      .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));
+    expect(rows).toEqual([
+      { id: 'org.sales.history', method: 'GET', path: '/org/locations/:locationId/sales/history', policy: 'member', bodyLimit: 'none', limiter: undefined },
+      { id: 'org.calendar.get', method: 'GET', path: '/org/locations/:locationId/calendar', policy: 'member', bodyLimit: 'none', limiter: undefined },
+    ]);
+  });
+
   it('boot refuses a duplicate method and path', () => {
     expect(() => { assertRouteTable([route({ id: 'a' }), route({ id: 'b' })]); }).toThrow(ConfigError);
   });
 
   it('boot refuses a GET with a body limit', () => {
     expect(() => { assertRouteTable([route({ method: 'GET', bodyLimit: '32kb' })]); }).toThrow(ConfigError);
+  });
+
+  it('boot refuses a PUT without a streamed body, and a streamed body on any route but the chunk route', () => {
+    expect(() => { assertRouteTable([route({ method: 'PUT', bodyLimit: '32kb' })]); }).toThrow(ConfigError);
+    expect(() => { assertRouteTable([route({ method: 'PUT', bodyLimit: 'stream' })]); }).toThrow(ConfigError);
+    expect(() => { assertRouteTable([route({ id: 'org.files.chunk', method: 'POST', bodyLimit: 'stream' })]); }).toThrow(ConfigError);
+    expect(() => { assertRouteTable([route({ id: 'org.files.chunk', method: 'PUT', bodyLimit: 'stream' })]); }).not.toThrow();
+  });
+
+  it('declares every stored-files route with its policy, body limit and limiter, current before :importId', () => {
+    const table = (id: string): Pick<TownwiseRoute, 'method' | 'path' | 'policy' | 'bodyLimit' | 'limiter'> | undefined => {
+      const found = TOWNWISE_ROUTES.find((candidate) => candidate.id === id);
+      return found === undefined ? undefined : {
+        method: found.method, path: found.path, policy: found.policy, bodyLimit: found.bodyLimit,
+        ...(found.limiter === undefined ? {} : { limiter: found.limiter }),
+      };
+    };
+    const base = '/org/locations/:locationId';
+    expect(table('org.files.create')).toEqual({ method: 'POST', path: `${base}/files`, policy: 'member', bodyLimit: '2kb', limiter: 'files' });
+    expect(table('org.files.chunk')).toEqual({
+      method: 'PUT', path: `${base}/files/:fileId/chunks/:index`, policy: 'member', bodyLimit: 'stream', limiter: 'file_chunks',
+    });
+    expect(table('org.files.complete')).toEqual({ method: 'POST', path: `${base}/files/:fileId/complete`, policy: 'member', bodyLimit: '2kb' });
+    expect(table('org.files.list')).toEqual({ method: 'GET', path: `${base}/files`, policy: 'member', bodyLimit: 'none' });
+    expect(table('org.files.get')).toEqual({ method: 'GET', path: `${base}/files/:fileId`, policy: 'member', bodyLimit: 'none' });
+    expect(table('org.files.raw')).toEqual({ method: 'GET', path: `${base}/files/:fileId/raw`, policy: 'member', bodyLimit: 'none', limiter: 'downloads' });
+    expect(table('org.files.clean')).toEqual({ method: 'GET', path: `${base}/files/:fileId/clean`, policy: 'member', bodyLimit: 'none', limiter: 'downloads' });
+    expect(table('org.files.remove_raw')).toEqual({ method: 'DELETE', path: `${base}/files/:fileId/raw`, policy: 'member', bodyLimit: 'none' });
+    expect(table('org.files.remove')).toEqual({ method: 'DELETE', path: `${base}/files/:fileId`, policy: 'member', bodyLimit: 'none' });
+    expect(table('org.imports.current')).toEqual({ method: 'GET', path: `${base}/imports/current`, policy: 'member', bodyLimit: 'none' });
+    expect(table('org.imports.get')).toEqual({ method: 'GET', path: `${base}/imports/:importId`, policy: 'member', bodyLimit: 'none' });
+    expect(table('org.imports.start')).toEqual({ method: 'POST', path: `${base}/imports/:importId/start`, policy: 'member', bodyLimit: '2kb' });
+    expect(table('org.imports.answer')).toEqual({ method: 'POST', path: `${base}/imports/:importId/answer`, policy: 'member', bodyLimit: '2kb' });
+    const ids = TOWNWISE_ROUTES.map((candidate) => candidate.id);
+    expect(ids.indexOf('org.imports.current')).toBeLessThan(ids.indexOf('org.imports.get'));
+  });
+
+  it('saving or setting aside a TownwiseAI proposal is a member POST with an 8kb body and no route limiter', () => {
+    const proposal = TOWNWISE_ROUTES.find((entry) => entry.id === 'org.chat.proposal');
+    expect(proposal).toMatchObject({
+      method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/proposals/:proposalId', policy: 'member', bodyLimit: '8kb',
+    });
+    expect(proposal?.limiter).toBeUndefined();
   });
 
   it('boot refuses staff_self on any route except POST /admin/view-as/end', () => {
@@ -126,14 +178,14 @@ describe('view-as guard', () => {
   };
 
   it('answers 409 view_as_active on every staff route, any method, before anything else', () => {
-    for (const method of ['GET', 'POST', 'PATCH', 'DELETE'] as const) {
+    for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const) {
       expect(refusal(method, 'staff', 'viewAsMember')).toBe('view_as_active');
     }
   });
 
   it('answers 403 view_as_read_only on every other non-GET, and lets GETs and staff_self through', () => {
     for (const policy of ['signed_in', 'member', 'org_admin'] as const) {
-      for (const method of ['POST', 'PATCH', 'DELETE'] as const) expect(refusal(method, policy, 'viewAsPending')).toBe('view_as_read_only');
+      for (const method of ['POST', 'PUT', 'PATCH', 'DELETE'] as const) expect(refusal(method, policy, 'viewAsPending')).toBe('view_as_read_only');
       expect(refusal('GET', policy, 'viewAsMember')).toBeNull();
     }
     expect(refusal('POST', 'staff_self', 'viewAsMember')).toBeNull();

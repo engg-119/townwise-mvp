@@ -42,7 +42,8 @@ resource "azurerm_subnet" "endpoints" {
   private_endpoint_network_policies = "NetworkSecurityGroupEnabled"
 }
 
-# The database's private endpoint accepts only the DocumentDB port, only from the apps subnet.
+# The private endpoints accept only their own ports, only from the apps subnet: the database's (database.tf) on the
+# DocumentDB port, and the client files account's (files.tf) on HTTPS.
 resource "azurerm_network_security_group" "endpoints" {
   name                = "nsg-townwise-endpoints"
   resource_group_name = local.rg
@@ -58,6 +59,18 @@ resource "azurerm_network_security_group" "endpoints" {
     source_port_range          = "*"
     destination_address_prefix = one(azurerm_subnet.endpoints.address_prefixes)
     destination_port_range     = "10260"
+  }
+
+  security_rule {
+    name                       = "allow-apps-to-blob"
+    priority                   = 110
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_address_prefix      = one(azurerm_subnet.apps.address_prefixes)
+    source_port_range          = "*"
+    destination_address_prefix = one(azurerm_subnet.endpoints.address_prefixes)
+    destination_port_range     = "443"
   }
 
   security_rule {

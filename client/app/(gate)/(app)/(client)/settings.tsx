@@ -88,7 +88,7 @@ export default function SettingsPage(): React.JSX.Element {
               <Small>
                 {'Locations have their own pages. Add one from '}
                 <Link href="/dashboard" style={styles.link}>Locations</Link>
-                {'. Rename one or change its town on that location’s Settings tab.'}
+                {'. Rename one or change its town from Location settings on that location’s page.'}
               </Small>
             )}
           />
