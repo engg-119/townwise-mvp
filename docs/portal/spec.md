@@ -258,15 +258,15 @@ Branches:
 
 ### F2. Request access
 
-1. A person in `no_org` lands on `/request-access`. The form asks for organization name, their name, their role, the town (one of the twelve, or another town and state), number of locations and an optional note.
-2. `POST /api/access-requests`. A unique partial index allows one pending request per user. Audit `access_request.created`.
+1. A person in `no_org` lands on `/request-access`. The form asks for organization name, their name, their role, the town (one of the twelve, or another town and state), number of locations and an optional note. The business can be found on Google Places first (10.2a); the request then also carries its Google place id (`placeId`), optional.
+2. `POST /api/access-requests`. A unique partial index allows one pending request per user. Audit `access_request.created`, with `hasPlace` and never the place id. [CONFIRM: a request keeps the place the requester picked; staff check it by hand]
 3. `/waiting` shows what was sent, “We don’t send email yet, so check back here.”, and the public profile of the town they named. [CONFIRM: town profile while waiting]
 
 **F2b. Invited while pending.** At the next `GET /api/me` the person is `invited`, with `pendingRequest` set. `/joining` does not join on load. It names the organization and who added them, and offers “Join {org}” and “Not my team”. Join withdraws the request. “Not my team” deletes the invitation, and the request stays with staff, so an invitation the person never chose cannot skip staff review. This is also how staff place a requester into an existing organization: they add the requester’s email on that organization’s page, and the requester presses Join.
 
 ### F3. Staff approve a request
 
-1. Staff open `/admin` (Requests, Pending) and read the request: organization, contact name and role, email (and the email at request time if it changed), town, location count, note, sent date. A warning shows when the requester already holds a seat.
+1. Staff open `/admin` (Requests, Pending) and read the request: organization, contact name and role, email (and the email at request time if it changed), town, location count, note, the place id when there is one, sent date. A warning shows when the requester already holds a seat.
 2. Staff validate the person by hand, outside Townwise: for example, the email domain matches the restaurant, or a phone call. [CONFIRM: what “validated manually” means in practice]
 3. “Approve” opens a dialog with the organization name and first location name, both prefilled and editable, and the town shown.
 4. `POST /api/admin/requests/:requestId/approve { orgName, locationName }`:
@@ -276,7 +276,7 @@ Branches:
    4. Generate `orgId`. Audit `access_request.approved` with it, before the change (staff events are written first, 9.3).
    5. Compare-and-set the request from `pending` to `approved`, with `orgId`, `decidedAt` and `decidedBy`. No match: 409 `request_not_pending` (another staff member got there first), and the server writes `staff_action.not_applied`.
    6. Upsert the organization `{ _id: orgId }` with `$setOnInsert`: name, `active`, `createdAt`, `createdBy`, `fromRequestId`. Audit `org.created` on insert.
-   7. Upsert the first location keyed by `{ orgId, nameKey }` with `$setOnInsert`: name, and the town from the request. Audit `location.created` on insert.
+   7. Upsert the first location keyed by `{ orgId, nameKey }` with `$setOnInsert`: name, the town from the request, and its `placeId` (null when it has none; a retry keeps the first value). Audit `location.created` on insert.
    8. Insert the requester’s seat: `role: 'org_admin'`, `status: 'active'`, `userId`, `activeUserId`, `joinedAt`, `email` (the requester’s current kit email). A duplicate key in this organization counts as success. A duplicate in another organization (the requester joined elsewhere in the gap) answers 409 `requester_has_org`; the organization then exists with no admin, and its detail page shows “No admin yet”. Audit `member.joined`. [Build note: after inserting the seat, the server reads the request again. Gone means the requester was deleted meanwhile (10.7, Deletion): the seat is deleted, and, when nobody else is in it, the organization and first location made for the request, with their names redacted as in an organization deletion; no `member.joined` is written, and the answer is 404, with `staff_action.not_applied` (`not_found`) for the approval event this call wrote.]
 5. The requester sees their organization at their next `GET /api/me`. No email is sent.
 
@@ -402,6 +402,7 @@ Email changes: the kit updates `users.email` when Google is authoritative for a 
 | `town` | `{ townId: TownId \| null; name: string; state: string }` | Section 13 |
 | `locationCount` | integer | 1 to 50 |
 | `note` | string or null | up to 1,000; shown to staff only as plain text |
+| `placeId` | string or null | optional Google place id, 10 to 512 letters, digits, `_` or `-` (`api/src/place-id.ts`) [CONFIRM: place ID format]; documents from before it read as null; set by the requester, so staff check it by hand [CONFIRM: a request keeps the place the requester picked; staff check it by hand] |
 | `status` | `'pending' \| 'approved' \| 'rejected' \| 'withdrawn'` | |
 | `createdAt`, `decidedAt`, `decidedBy` | | |
 | `decisionMessage` | string or null | up to 500; shown to the requester on rejection |
@@ -418,6 +419,7 @@ Indexes: `{ userId: 1 }` unique with `partialFilterExpression: { status: 'pendin
 | `name` | string | 1 to 80 |
 | `nameKey` | string | `name` trimmed, lowercased, inner spaces collapsed |
 | `town` | `{ townId: TownId \| null; name: string; state: string }` | |
+| `placeId` | string or null | the request’s Google place id, copied at approval (F3 step 7); null for a location added from P10; never edited; older documents read as null |
 | `createdAt`, `createdBy` | | |
 
 Indexes: `{ orgId: 1, nameKey: 1 }` unique; `{ orgId: 1, createdAt: 1 }`. Limit: 25 per organization. [CONFIRM: 25 locations]
@@ -519,8 +521,8 @@ interface TownwiseRoute {
   readonly method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   readonly path: `/${string}`;                  // under /api
   readonly policy: Policy;
-  readonly bodyLimit: 'none' | '32kb' | '256kb'; // 'none' for GET and DELETE; '256kb' only on the upload route
-  readonly limiter?: 'uploads' | 'requests' | 'view-as';   // 'writes' applies to every non-GET automatically, before resolveAccess
+  readonly bodyLimit: 'none' | '2kb' | '32kb' | '256kb'; // 'none' for GET and DELETE; '2kb' only on the two Places routes; '256kb' only on the upload route
+  readonly limiter?: 'uploads' | 'requests' | 'view-as' | 'chat' | 'places';   // 'writes' applies to every non-GET automatically, before resolveAccess
   readonly handler: (req: Request, res: Response, principal: Principal) => Promise<void>;
 }
 ```
@@ -543,7 +545,7 @@ interface TownwiseRoute {
    - `staff`: passes only for a principal of kind `staff`, which never carries view-as. `staff_setup_required` and `staff_reauth_required` answer 403 with those codes. Everyone else gets 403 `forbidden`, and the staff checks run after the email check, so a non-staff caller never learns anything about staff two-step state.
    - `staff_self`: the signed-in person’s own staff gate (`self`: TOTP enabled, session created after `enabledAt`, under 60 minutes), computed before the view-as substitution. It passes for a `staff` principal and for any principal in view-as, because a grant is live only while its actor passes that gate. Otherwise it answers exactly as `staff` does. Used only by `POST /api/admin/view-as/end`.
 6. **Body parser**, `express.json({ limit })`, when the spec names a body limit. The guard and the policies never read the body, so a refused request is never parsed. The `/api` router mounts no router-wide parser, so the upload route’s 256 KB parser never widens the others (server-core: body parsing is per router, **Exists**).
-7. **Route limiter**, when named (`uploads`, `requests`, `view-as`; Section 10.8), keyed on `acct:<userId>`.
+7. **Route limiter**, when named (`uploads`, `requests`, `view-as`, `places`; Section 10.8; `chat` in `docs/portal/tuning-chat.md`), keyed on `acct:<userId>`.
 8. The handler receives the principal. For member routes, `principal.scope` is the only organization it can use.
 
 Boot throws if two specs share a method and path, if a GET spec names a body limit, or if any route other than `view-as/end` uses `staff_self`. Paths not in the table reach server-core’s `notFound` (**Exists**).
@@ -616,7 +618,7 @@ interface AuditEvent {
 
 | Action | Details |
 |---|---|
-| `access_request.created` | `orgName`, `townId`, `townName` |
+| `access_request.created` | `orgName`, `townId`, `townName`, `hasPlace` (boolean; never the place id or an address) |
 | `access_request.approved` | `orgId` |
 | `access_request.rejected` | `hasMessage` |
 | `access_request.withdrawn` | `reason: 'joined_org'` |
@@ -674,7 +676,8 @@ type TownInput = { townId: TownId } | { townId: null; name: string; state: strin
 
 interface AccessRequestView {
   id: string; orgName: string; contactName: string; contactRole: string; town: Town;
-  locationCount: number; note: string | null; status: 'pending' | 'approved' | 'rejected' | 'withdrawn';
+  locationCount: number; note: string | null; placeId: string | null;
+  status: 'pending' | 'approved' | 'rejected' | 'withdrawn';
   createdAt: string; decidedAt: string | null; decisionMessage: string | null;
 }
 
@@ -728,7 +731,23 @@ Emails shown for people (`uploadedByEmail`, `createdByEmail`, `MemberView.email`
 | `GET /api/me` | signed_in | | 200 `MeResponse` | |
 | `POST /api/me/join` | signed_in | `{ inviteId }` | 200 `MeResponse` | 403 `forbidden` (staff); 409 `no_invite`, `already_in_org` |
 | `POST /api/me/decline` | signed_in | `{ inviteId }` | 200 `MeResponse` | 403 `forbidden` (staff); 409 `no_invite` |
-| `POST /api/access-requests` | signed_in, in `no_org`, `rejected` or `removed` | `{ orgName, contactName, contactRole, town: TownInput, locationCount, note? }` | 201 `MeResponse` (state `pending`) | 403 `forbidden` (staff or another state); 409 `request_exists`; 400 `unknown_town`; 429 |
+| `POST /api/access-requests` | signed_in, in `no_org`, `rejected` or `removed` | `{ orgName, contactName, contactRole, town: TownInput, locationCount, note?, placeId? }`, `placeId` a Google place id or null | 201 `MeResponse` (state `pending`; the request answers `placeId`, null when none) | 403 `forbidden` (staff or another state); 409 `request_exists`; 400 `unknown_town`; 400 `invalid_request` (a malformed `placeId` included); 429 |
+
+### 10.2a Places search
+
+Two routes let the request form find the business on Google Places (New). The API calls Google itself, so the browser talks only to the API and the CSP does not change. Both are `signed_in`, take a 2 KB body and use the `places` limiter (10.8).
+
+| Method and path | Request | Success | Extra errors |
+|---|---|---|---|
+| `POST /api/places/autocomplete` | `{ input, sessionToken? }`, `input` 2 to 120 characters after trimming, `sessionToken` a version 4 UUID | 200 `{ suggestions, sessionToken }`, up to 5 `{ placeId, name, detail }` (`detail` empty when Google has none) | 400 `invalid_request`; 413; 429; 503 `places_unavailable` |
+| `POST /api/places/details` | `{ placeId, sessionToken }`, `placeId` as in 6.3, `sessionToken` required | 200 `{ place: { placeId, address, town } }`, `town` a `TownInput` or null | 400 `invalid_request`; 404 `place_not_found` (Google answered 404, or 400 `INVALID_ARGUMENT` for the id); 413; 429; 503 `places_unavailable` |
+
+- Off until `GOOGLE_PLACES_API_KEY` is set: both routes answer 503 `places_unavailable` to every request, and the client shows the manual fields. Google failing, or not answering within 5 seconds, answers the same.
+- Both calls of one search carry the same session token; Google bills the typing and the pick as one session, and the details call ends it. Without a token, autocomplete makes one and returns it. The server checks only its format and keeps no record of it.
+- Autocomplete asks for US results in English, of any business type. `name` is Google’s main text and `detail` its secondary text. Details asks for the place’s id, formatted address and address components only; `address` is for display, and the client keeps the name from the suggestion it picked. `placeId` in the answer is Google’s current id for the place, which can differ from the one sent.
+- `town` is one of the twelve researched towns when the locality, postal town, sublocality or `administrative_area_level_3` matches one by name and state, ignoring case, or when any of them is an alias (Lake Placid, NY is `north-elba-ny`; North Conway, NH is `conway-nh`). Otherwise it is `{ townId: null, name, state }`, named by the first of those components. It is null outside the 50 states and DC, or when no usable town name exists. [CONFIRM: the town matching rules, which are not yet checked against live Google answers]
+- Nothing from these routes is stored. The typed text, place ids, addresses and Google’s answers never reach a log or an audit event; a Google failure logs `townwise.places_failed { routeId, code, status, errType }`.
+- [Build note: details will also answer `place.map`, a static map image as a `data:` URL or null (best effort), for the found card. It is specified here when it ships.]
 
 ### 10.3 Organization and locations
 
@@ -849,6 +868,9 @@ Built with the rate-limit module and keyed on `acct:<userId>`, a key the caller 
 | `townwise:uploads` | the upload route | 30 per hour | allow |
 | `townwise:requests` | `POST /api/access-requests` | 5 per day | deny (503 `unavailable`) |
 | `townwise:view-as` | `POST /api/admin/view-as` | 20 per hour | deny (503 `unavailable`) |
+| `townwise:places` | both Places routes together | 300 per hour | deny (503 `unavailable`) |
+
+A search is 10 to 15 debounced autocompletes and one details call, so `townwise:places` allows about 20 searches an hour. The Places routes are POSTs, so `townwise:writes` counts them too.
 
 ### 10.9 Error codes
 
@@ -863,6 +885,7 @@ Built with the rate-limit module and keyed on `acct:<userId>`, a key the caller 
 | 403 | `forbidden` | role too low, not staff, not the note’s author | re-read `/api/me`; hide the control |
 | 403 | `staff_setup_required`, `staff_reauth_required` | staff gate | route per 4.3 |
 | 403 | `view_as_read_only` | a non-GET without the `staff` policy during view-as | should not happen: controls are disabled |
+| 404 | `place_not_found` | the details route: Google has no such place (10.2a) | the client keeps the manual fields |
 | 404 | `not_found` | unknown id, or an id in another organization | “This {thing} isn’t available.” with a way back |
 | 409 | `view_as_active` | any route with the `staff` policy, any method, during view-as; a second view-as start racing the first | re-read `/api/me` |
 | 409 | `no_invite`, `already_in_org`, `request_exists`, `request_not_pending`, `requester_has_org`, `last_admin`, `location_name_taken`, `location_limit`, `location_has_data`, `note_limit`, `member_limit`, `person_has_seat`, `org_not_suspended` | as in the tables | inline copy per page |
@@ -870,6 +893,7 @@ Built with the rate-limit module and keyed on `acct:<userId>`, a key the caller 
 | 415 | `unsupported_media_type` | server-core | client bug |
 | 429 | `rate_limited` | Section 10.8, with `retryAfterSeconds` | “Too many attempts. Try again in {minutes} minutes.” |
 | 500 | `internal` | server | “Something went wrong on our side. Try again in a minute.” |
+| 503 | `places_unavailable` | a Places route while the search is off, or Google failed or timed out (10.2a) | the client shows the manual fields |
 | 503 | `unavailable` | a deny-when-down limiter, a store outage, or a staff action whose audit write failed (9.3) | “Townwise isn’t responding. Try again in a minute.” |
 
 ---
@@ -1725,6 +1749,8 @@ Each is marked inline with “lead default”:
 ---
 
 ## 23. Changelog
+
+**2026-11-05, Google place id.** An access request and a location carry an optional Google place id (F2, F3, 6.3, 6.4, 10.1, 10.2). Approval copies it to the first location. `access_request.created` records only `hasPlace` (9.2). The two Places routes, the `places` limiter and their error codes are in 7.2, 10.2a, 10.8 and 10.9.
 
 **2026-11-04, critic review.** Twenty-three findings applied. Where one conflicted with a lead default, the default stayed and the conflict went into its [CONFIRM] note.
 

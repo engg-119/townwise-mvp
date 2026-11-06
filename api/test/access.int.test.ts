@@ -92,7 +92,7 @@ describe('GET /api/me states (4.2)', () => {
     expect((await me(session)).access).toEqual({ state: 'no_org' });
   });
 
-  it('pending with the request', async () => {
+  it('pending with the request; one stored before place ids reads placeId as null', async () => {
     const { email, session } = await person('pending');
     const requestId = await addRequest(server, { userId: session.userId, email, status: 'pending', orgName: 'Moose Tavern' });
     expect((await me(session)).access).toEqual({
@@ -100,9 +100,15 @@ describe('GET /api/me states (4.2)', () => {
       request: {
         id: requestId, orgName: 'Moose Tavern', contactName: 'Fixture Contact', contactRole: 'Owner',
         town: { townId: 'hanover-nh', name: 'Hanover', state: 'NH' }, locationCount: 1, note: null, status: 'pending',
-        createdAt: server.clock.now().toISOString(), decidedAt: null, decisionMessage: null,
+        createdAt: server.clock.now().toISOString(), decidedAt: null, decisionMessage: null, placeId: null,
       },
     });
+  });
+
+  it('a request stored with a place id answers it', async () => {
+    const { email, session } = await person('place');
+    await addRequest(server, { userId: session.userId, email, status: 'pending', placeId: 'ChIJTestPlace0001' });
+    expect((await me(session)).access).toMatchObject({ state: 'pending', request: { placeId: 'ChIJTestPlace0001' } });
   });
 
   it('an invitation outranks a pending request and carries it as pendingRequest', async () => {

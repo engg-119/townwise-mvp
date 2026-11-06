@@ -65,6 +65,8 @@ export async function addRequest(
   opts: {
     userId: string; email: string; status: 'pending' | 'approved' | 'rejected' | 'withdrawn';
     orgName?: string; createdAt?: Date; decidedAt?: Date; decisionMessage?: string;
+    /** Left out of the document when undefined, as in requests stored before place ids. */
+    placeId?: string;
   },
 ): Promise<string> {
   const _id = new Types.ObjectId();
@@ -73,6 +75,7 @@ export async function addRequest(
     contactName: 'Fixture Contact', contactRole: 'Owner', town: TOWN, locationCount: 1, note: null,
     status: opts.status, createdAt: opts.createdAt ?? server.clock.now(), decidedAt: opts.decidedAt ?? null,
     decidedBy: null, decisionMessage: opts.decisionMessage ?? null, orgId: null, withdrawnReason: null,
+    ...(opts.placeId === undefined ? {} : { placeId: opts.placeId }),
   });
   return _id.toHexString();
 }

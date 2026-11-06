@@ -35,10 +35,10 @@ function uniqueEmail(name: string): string {
 }
 
 /** A person who signed in and sent a request through the API. */
-async function requester(name: string): Promise<Requester> {
+async function requester(name: string, placeId?: string): Promise<Requester> {
   const email = uniqueEmail(name);
   const session = await signIn(server, email);
-  const res = await call(server, '/api/access-requests', { session, json: REQUEST });
+  const res = await call(server, '/api/access-requests', { session, json: placeId === undefined ? REQUEST : { ...REQUEST, placeId } });
   expect(res.status).toBe(201);
   const body = await res.json() as MeResponse;
   return { email, session, requestId: body.access.state === 'pending' ? body.access.request.id : '' };
@@ -119,7 +119,7 @@ describe('GET /api/admin/requests', () => {
       town: { townId: 'bar-harbor-me', name: 'Bar Harbor', state: 'ME' }, locationCount: 3, note: REQUEST.note,
       status: 'pending', createdAt: expect.any(String) as string, decidedAt: null, decisionMessage: null,
       requester: { userId: first.session.userId, email: first.email }, emailAtRequest: first.email,
-      requesterHasOrg: false, decidedBy: null, orgId: null,
+      requesterHasOrg: false, decidedBy: null, orgId: null, placeId: null,
     });
     expect(body.requests[1]?.requesterHasOrg).toBe(true);
 
@@ -152,7 +152,7 @@ describe('POST /api/admin/requests/:requestId/approve (F3)', () => {
     expect(locations).toHaveLength(1);
     expect(locations[0]).toMatchObject({
       name: 'Main  Street', nameKey: 'main street', town: { townId: 'bar-harbor-me', name: 'Bar Harbor', state: 'ME' },
-      createdAt: server.clock.now(), createdBy: staff.userId,
+      createdAt: server.clock.now(), createdBy: staff.userId, placeId: null,
     });
     const seats = await server.connection.collection('tw_members').find({ orgId: oid }).toArray();
     expect(seats).toHaveLength(1);
@@ -178,6 +178,48 @@ describe('POST /api/admin/requests/:requestId/approve (F3)', () => {
       { name: 'Main  Street', townId: 'bar-harbor-me' },
       { email: person.email, role: 'org_admin' },
     ]);
+  });
+
+  it('the first location gets the request’s place ID; a request without one gives null; a retry leaves an existing location alone', async () => {
+    const placeId = 'ChIJTestPlace0002';
+    const placed = await requester('placed', placeId);
+    expect((await me(placed.session)).access).toMatchObject({ state: 'pending', request: { placeId } });
+    const listed = await (await call(server, '/api/admin/requests', { session: staff })).json() as { requests: AdminRequestView[] };
+    expect(listed.requests.find((r) => r.id === placed.requestId)?.placeId).toBe(placeId);
+
+    server.logs.length = 0;
+    const res = await approve(placed.requestId, { orgName: 'Placed Kitchen', locationName: 'Main Street' });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { org: { id: string }; request: AdminRequestView };
+    expect(body.request.placeId).toBe(placeId);
+    const orgId = new Types.ObjectId(body.org.id);
+    expect(await server.connection.collection('tw_locations').find({ orgId }).toArray()).toMatchObject([{ placeId }]);
+    const events = await eventsAbout(placed.requestId, body.org.id);
+    expect(JSON.stringify(events)).not.toContain(placeId);
+    expect(server.logs.join('\n')).not.toContain(placeId);
+
+    // A retry of a half-finished approval whose location already exists skips step 7, so the location keeps
+    // the place it was inserted with.
+    const half = await requester('halfplace', 'ChIJTestPlace0003');
+    const halfOrg = new Types.ObjectId();
+    await server.connection.collection('tw_access_requests').updateOne(
+      { _id: new Types.ObjectId(half.requestId) },
+      { $set: { status: 'approved', orgId: halfOrg, decidedAt: server.clock.now(), decidedBy: staff.userId } },
+    );
+    await server.connection.collection('tw_orgs').insertOne({
+      _id: halfOrg, name: 'Half Place', status: 'active', createdAt: server.clock.now(), createdBy: staff.userId,
+      fromRequestId: new Types.ObjectId(half.requestId), suspendedAt: null,
+    });
+    await server.connection.collection('tw_locations').insertOne({
+      orgId: halfOrg, name: 'Main Street', nameKey: 'main street', town: { townId: 'bar-harbor-me', name: 'Bar Harbor', state: 'ME' },
+      createdAt: server.clock.now(), createdBy: staff.userId, placeId,
+    });
+    expect((await approve(half.requestId, { orgName: 'Half Place', locationName: 'Main Street' })).status).toBe(200);
+    expect(await server.connection.collection('tw_locations').find({ orgId: halfOrg }).toArray()).toMatchObject([{ placeId }]);
+
+    const plain = await requester('plain');
+    const plainBody = await (await approve(plain.requestId)).json() as { org: { id: string } };
+    expect(await server.connection.collection('tw_locations').find({ orgId: new Types.ObjectId(plainBody.org.id) }).toArray()).toMatchObject([{ placeId: null }]);
   });
 
   it('answers 409 request_not_pending for a decided request, 404 for an unknown one, 400 for bad input, and writes nothing', async () => {

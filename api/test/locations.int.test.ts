@@ -107,6 +107,8 @@ describe('POST /api/org/locations', () => {
     const event = (await auditEvents(server)).find((e) => (e.target as { id: string }).id === location.id);
     expect(event).toMatchObject({ action: 'location.created', actorUserId: t.admin.userId, actorRole: 'org_admin', details: { name: 'Harbor Room', townId: 'bar-harbor-me' } });
     expect(String(event?.orgId)).toBe(t.orgId);
+    expect(await server.connection.collection('tw_locations').findOne({ _id: new Types.ObjectId(location.id) })).toMatchObject({ placeId: null });
+    expect(location).not.toHaveProperty('placeId');
 
     const elsewhere = await create(t.admin, { name: 'Coast Room', town: { townId: null, name: ' Kennebunkport ', state: 'ME' } });
     expect(elsewhere.status).toBe(201);
@@ -153,6 +155,13 @@ describe('PATCH /api/org/locations/:locationId', () => {
     expect((await auditEvents(server)).filter((e) => e.action === 'location.updated').slice(-2).map((e) => e.details)).toEqual([
       { name: 'Front Room', townId: 'hanover-nh' }, { name: 'Front Room', townId: 'ithaca-ny' },
     ]);
+
+    // A place id is not editable here: PATCH strips it and a stored one survives a rename and a move.
+    const locations = server.connection.collection('tw_locations');
+    await locations.updateOne({ _id: new Types.ObjectId(first) }, { $set: { placeId: 'ChIJTestPlace0001' } });
+    expect((await patch(t.admin, first, { name: 'Front Hall', placeId: 'ChIJTestPlace0009' })).status).toBe(200);
+    expect(await locations.findOne({ _id: new Types.ObjectId(first) })).toMatchObject({ name: 'Front Hall', placeId: 'ChIJTestPlace0001' });
+    expect((await patch(t.admin, first, { name: 'Front Room' })).status).toBe(200);
 
     expect(await errorOf(await patch(t.admin, first, { name: 'SECOND' }))).toEqual({ status: 409, error: 'location_name_taken' });
     expect(await errorOf(await patch(t.admin, first, {}))).toEqual({ status: 400, error: 'invalid_request' });

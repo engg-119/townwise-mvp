@@ -103,9 +103,9 @@ A signed-in person whose kit user no longer exists gets 401 `unauthenticated`. T
 
 ### Requesting access and approval
 
-1. A person in `no_org`, `rejected` or `removed` sends `POST /api/access-requests`: organization name, their name and role, the town, the number of locations and an optional note. Each person has at most one pending request. Their state becomes `pending`.
+1. A person in `no_org`, `rejected` or `removed` sends `POST /api/access-requests`: organization name, their name and role, the town, the number of locations, an optional note and an optional Google place id (`placeId`, from the Places search). Each person has at most one pending request. Their state becomes `pending`.
 2. Staff validate the person by hand, outside Townwise, for example by matching the email domain to the restaurant or by phone. [CONFIRM: what “validated manually” means]
-3. Approve (`POST /api/admin/requests/:requestId/approve`) creates the organization, its first location in the requested town, and the requester’s org admin seat. A retry completes the work. If the requester is deleted while it runs (their request goes with them), the approval takes back what it made for them and answers 404 (Deletion). [CONFIRM: first location at approval]
+3. Approve (`POST /api/admin/requests/:requestId/approve`) creates the organization, its first location in the requested town (with the request’s `placeId`, or none), and the requester’s org admin seat. A retry completes the work. If the requester is deleted while it runs (their request goes with them), the approval takes back what it made for them and answers 404 (Deletion). [CONFIRM: first location at approval] [CONFIRM: a request keeps the place the requester picked; staff check it by hand]
 4. Reject (`POST /api/admin/requests/:requestId/reject`) stores an optional message of up to 500 characters, which the requester sees. They may send a new request. [CONFIRM: rejected people may request again]
 5. The requester sees the result at their next `GET /api/me`.
 
@@ -117,7 +117,7 @@ The access request can start by finding the business on Google Places (New). The
 - The client sends `POST /api/places/autocomplete` as the person types (debounced, 2 characters or more), then `POST /api/places/details` for the suggestion they pick. Both carry the same session token, a version 4 UUID the client makes once per search; Google bills the typing and the pick as one session, and the details call ends it. Without a token, autocomplete makes one and returns it, for the client to send from then on. The server checks only the token's format and keeps no record of it.
 - Autocomplete asks Google for US results in English, of any business type, and answers up to 5 place suggestions (`name` is Google's main text, `detail` its secondary text, such as "Hanover, NH, USA").
 - Details asks for the place's id, formatted address and address components only (`X-Goog-FieldMask: id,formattedAddress,addressComponents`). `address` is for display; the client keeps the name from the suggestion it picked.
-- `town` is a `TownInput` the access request accepts unchanged. It is one of the twelve researched towns when the locality, postal town, sublocality or `administrative_area_level_3` (town or township) matches one by name and state, ignoring case, or when the locality is an alias: Lake Placid, NY is `north-elba-ny` and North Conway, NH is `conway-nh`. Otherwise it is `{ townId: null, name, state }`, named by the first of those components. It is null when the place is outside the 50 states and DC (a territory included: its country component is not `US`, or its state is not in the fixed list), or has no usable town name.
+- `town` is a `TownInput` the access request accepts unchanged. It is one of the twelve researched towns when the locality, postal town, sublocality or `administrative_area_level_3` (town or township) matches one by name and state, ignoring case, or when any of them is an alias: Lake Placid, NY is `north-elba-ny` and North Conway, NH is `conway-nh`. Otherwise it is `{ townId: null, name, state }`, named by the first of those components. It is null when the place is outside the 50 states and DC (a territory included: its country component is not `US`, or its state is not in the fixed list), or has no usable town name.
 - Nothing from these routes is stored. The typed text, place ids, addresses and Google's answers never reach a log or an audit event; a Google failure logs `townwise.places_failed` with the route id and a code. [CONFIRM: the town matching rules, which are not yet checked against live Google answers]
 
 ### Team
@@ -196,7 +196,7 @@ Each location’s calibration state is derived from its sales days on every read
 
 | Action | Details | Written |
 |---|---|---|
-| `access_request.created` | `orgName`, `townId`, `townName` | after, by the requester |
+| `access_request.created` | `orgName`, `townId`, `townName`, `hasPlace` (whether a place id was sent; never the id, which would outlive the redaction of a deleted organization, and never an address) | after, by the requester |
 | `access_request.approved` | `orgId` | before, by staff |
 | `access_request.rejected` | `hasMessage` | before, by staff |
 | `access_request.withdrawn` | `reason` (`joined_org`) | after, on join |
@@ -253,7 +253,7 @@ Member routes take the organization from the caller’s own seat, never from the
 | `GET /api/me` | signed_in | | 200 `{ user, access, viewAs, staff }` | |
 | `POST /api/me/join` | signed_in | `{ inviteId }` | 200, as `GET /api/me` | 403 `forbidden` (staff); 409 `no_invite`, `already_in_org` |
 | `POST /api/me/decline` | signed_in | `{ inviteId }` | 200, as `GET /api/me` | 403 `forbidden` (staff); 409 `no_invite` |
-| `POST /api/access-requests` | signed_in; limiter `requests` | `{ orgName, contactName, contactRole, town, locationCount, note? }` | 201, as `GET /api/me` (`pending`) | 403 `forbidden` (staff, or any state but `no_org`, `rejected`, `removed`); 409 `request_exists`; 400 `unknown_town` |
+| `POST /api/access-requests` | signed_in; limiter `requests` | `{ orgName, contactName, contactRole, town, locationCount, note?, placeId? }`, `placeId` 10 to 512 letters, digits, `_` or `-`, or null [CONFIRM: place ID format] | 201, as `GET /api/me` (`pending`); the request view answers `placeId`, null when none | 403 `forbidden` (staff, or any state but `no_org`, `rejected`, `removed`); 409 `request_exists`; 400 `unknown_town`; 400 `invalid_request` (a malformed `placeId` included) |
 | `GET /api/towns/:townId` | signed_in | | 200 `{ profile }` | 404 |
 
 ### Places
@@ -261,7 +261,7 @@ Member routes take the organization from the caller’s own seat, never from the
 | Method and path | Policy | Request | Success | Errors |
 |---|---|---|---|---|
 | `POST /api/places/autocomplete` | signed_in; 2 KB; limiter `places` | `{ input, sessionToken? }`, input 2 to 120 characters after trimming, `sessionToken` a version 4 UUID | 200 `{ suggestions, sessionToken }`, up to 5 `{ placeId, name, detail }` (`detail` empty when Google has none) | 400; 413; 429; 503 `places_unavailable` |
-| `POST /api/places/details` | signed_in; 2 KB; limiter `places` | `{ placeId, sessionToken }`, `placeId` 10 to 300 letters, digits, `_` or `-` | 200 `{ place: { placeId, address, town } }`, `town` a `TownInput` or null | 400; 404 `place_not_found` (Google answered 404, or 400 `INVALID_ARGUMENT` for the id); 413; 429; 503 `places_unavailable` |
+| `POST /api/places/details` | signed_in; 2 KB; limiter `places` | `{ placeId, sessionToken }`, `placeId` 10 to 512 letters, digits, `_` or `-` (`api/src/place-id.ts`) | 200 `{ place: { placeId, address, town } }`, `town` a `TownInput` or null | 400; 404 `place_not_found` (Google answered 404, or 400 `INVALID_ARGUMENT` for the id); 413; 429; 503 `places_unavailable` |
 
 See Places search. `placeId` in the answer is Google's current id for the place, which can differ from the one sent.
 
@@ -376,8 +376,8 @@ Every Townwise collection takes the `tw_` prefix. Every tenant document carries 
 |---|---|
 | `tw_orgs` | name, status, who created it and from which request |
 | `tw_members` | invitations and seats in one collection: email, role, status, who added it and when |
-| `tw_access_requests` | the request form, its status and the decision message |
-| `tw_locations` | name and town |
+| `tw_access_requests` | the request form (with the optional Google place id; documents from before it read as none), its status and the decision message |
+| `tw_locations` | name, town and the optional Google place id (set only by approval from a request, never edited; older documents read as none) |
 | `tw_sales_days` | date, guests and net sales in cents per location per day, and nothing else |
 | `tw_uploads` | per upload: counts, first and last dates, and who sent it; never a file name |
 | `tw_notes` | the note’s fields and the author’s user id |

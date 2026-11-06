@@ -133,10 +133,10 @@ describe('validation: 400 invalid_request, and Google is not called', () => {
     expect(fake.calls).toHaveLength(2);
   });
 
-  it('details: a place id of 10 to 300 letters, digits, _ or -, and a required version 4 UUID', async () => {
+  it('details: a place id of 10 to 512 letters, digits, _ or -, and a required version 4 UUID', async () => {
     const sessionToken = randomUUID();
     const bad: unknown[] = [
-      {}, { placeId: PLACE_ID }, { sessionToken }, { placeId: 'ChIJshort', sessionToken }, { placeId: 'x'.repeat(301), sessionToken },
+      {}, { placeId: PLACE_ID }, { sessionToken }, { placeId: 'ChIJshort', sessionToken }, { placeId: 'x'.repeat(513), sessionToken },
       { placeId: '../../places/ChIJabc', sessionToken }, { placeId: 'ChIJ abcdefgh', sessionToken }, { placeId: 'ChIJabcdefgh?x=1', sessionToken },
       { placeId: PLACE_ID, sessionToken: 'not-a-uuid' },
     ];
