@@ -2,7 +2,7 @@
 
 Townwise backend: one Node process (`src/main.ts`) composed from the kit modules in `kit/` (copied from camkeith/modules; versions in `../KIT.md`). Sign-in is Google only.
 
-It mounts two routers. The kit’s `/auth` handles sign-in, sessions and two-step sign-in. Townwise’s `/api` (`src/app.ts`, routes in `src/access/routes.ts`) handles access, organizations, locations, sales data, notes, the tuning chat, the team and the staff console. No kit file is changed; all Townwise code is under `api/`. "The build spec" and "spec Section N" in this README and in code comments mean `../docs/portal/spec.md`.
+It mounts two routers. The kit’s `/auth` handles sign-in, sessions and two-step sign-in. Townwise’s `/api` (`src/app.ts`, routes in `src/access/routes.ts`) handles access, the Places search, organizations, locations, sales data, notes, the tuning chat, the team and the staff console. No kit file is changed; all Townwise code is under `api/`. "The build spec" and "spec Section N" in this README and in code comments mean `../docs/portal/spec.md`.
 
 ## Run locally
 
@@ -109,6 +109,17 @@ A signed-in person whose kit user no longer exists gets 401 `unauthenticated`. T
 4. Reject (`POST /api/admin/requests/:requestId/reject`) stores an optional message of up to 500 characters, which the requester sees. They may send a new request. [CONFIRM: rejected people may request again]
 5. The requester sees the result at their next `GET /api/me`.
 
+### Places search
+
+The access request can start by finding the business on Google Places (New). The API calls Google itself, so the browser talks only to the API and the CSP does not change.
+
+- Off until `GOOGLE_PLACES_API_KEY` is set: both routes answer 503 `places_unavailable` to every request, and the client shows the manual fields. Google failing, or not answering within 5 seconds, also answers 503 `places_unavailable`.
+- The client sends `POST /api/places/autocomplete` as the person types (debounced, 2 characters or more), then `POST /api/places/details` for the suggestion they pick. Both carry the same session token, a version 4 UUID the client makes once per search; Google bills the typing and the pick as one session, and the details call ends it. Without a token, autocomplete makes one and returns it, for the client to send from then on. The server checks only the token's format and keeps no record of it.
+- Autocomplete asks Google for US results in English, of any business type, and answers up to 5 place suggestions (`name` is Google's main text, `detail` its secondary text, such as "Hanover, NH, USA").
+- Details asks for the place's id, formatted address and address components only (`X-Goog-FieldMask: id,formattedAddress,addressComponents`). `address` is for display; the client keeps the name from the suggestion it picked.
+- `town` is a `TownInput` the access request accepts unchanged. It is one of the twelve researched towns when the locality, postal town, sublocality or `administrative_area_level_3` (town or township) matches one by name and state, ignoring case, or when the locality is an alias: Lake Placid, NY is `north-elba-ny` and North Conway, NH is `conway-nh`. Otherwise it is `{ townId: null, name, state }`, named by the first of those components. It is null when the place is outside the 50 states and DC (a territory included: its country component is not `US`, or its state is not in the fixed list), or has no usable town name.
+- Nothing from these routes is stored. The typed text, place ids, addresses and Google's answers never reach a log or an audit event; a Google failure logs `townwise.places_failed` with the route id and a code. [CONFIRM: the town matching rules, which are not yet checked against live Google answers]
+
 ### Team
 
 - An org admin adds up to 20 addresses at once, with a role (default member). [CONFIRM: role chosen at invite, default member] Each address is normalized as the kit does (trimmed, lowercased) and gets one result: `invited`, `already_invited`, `already_member` or `invalid`.
@@ -210,7 +221,7 @@ Each location’s calibration state is derived from its sales days on every read
 | `people.signed_out_everywhere` | none (the event’s `orgId` is the person’s organization, or null) | before, by staff |
 | `person.deleted` | `userId` (null for an address that never signed in) | before, by staff |
 | `staff_action.not_applied` | `eventId`, `code` | after a staff effect fails or is refused |
-- Townwise log lines carry ids and counts only: `townwise.access_denied { policy, code }`, `townwise.view_as_read { grantId, routeId }`, `townwise.upload_applied { orgId, locationId, uploadId, dayCount }`, `townwise.audit_write_failed { action, orgId, targetId }`, and for the tuning chat `townwise.chat_turn`, `townwise.chat_turn_failed`, `townwise.chat_turn_aborted` and `townwise.chat_turn_not_saved` (`{ orgId, locationId, conversationId, calls, costMicroUsd }` with the stop reason, or the code and error class; `timeout` has no error class), and `townwise.chat_live_turn_not_released` (`{ orgId, locationId, errType }`). No route puts an email, a name or a figure in its path or query, because server-core logs the URL. The one exception is the people lookup’s `q`, which server-core redacts.
+- Townwise log lines carry ids and counts only: `townwise.access_denied { policy, code }`, `townwise.view_as_read { grantId, routeId }`, `townwise.places_failed { routeId, code, status, errType }` (code `upstream_status` with Google's HTTP status, `network` with the error class, `timeout` or `bad_response`), `townwise.upload_applied { orgId, locationId, uploadId, dayCount }`, `townwise.audit_write_failed { action, orgId, targetId }`, and for the tuning chat `townwise.chat_turn`, `townwise.chat_turn_failed`, `townwise.chat_turn_aborted` and `townwise.chat_turn_not_saved` (`{ orgId, locationId, conversationId, calls, costMicroUsd }` with the stop reason, or the code and error class; `timeout` has no error class), and `townwise.chat_live_turn_not_released` (`{ orgId, locationId, errType }`). No route puts an email, a name or a figure in its path or query, because server-core logs the URL. The one exception is the people lookup’s `q`, which server-core redacts.
 
 ## Endpoints
 
@@ -221,7 +232,7 @@ Every route is JSON under `/api` and runs one chain, built from the table in `sr
 3. `resolveAccess`.
 4. The view-as guard.
 5. The route’s policy.
-6. The body parser: 32 KB, or 256 KB on the upload route; none on GET and DELETE. It runs after the policy, so a refused request is never parsed.
+6. The body parser: 32 KB, 2 KB on the two Places routes, or 256 KB on the upload route; none on GET and DELETE. It runs after the policy, so a refused request is never parsed.
 7. The route’s own limiter, if it has one.
 8. The handler.
 
@@ -244,6 +255,15 @@ Member routes take the organization from the caller’s own seat, never from the
 | `POST /api/me/decline` | signed_in | `{ inviteId }` | 200, as `GET /api/me` | 403 `forbidden` (staff); 409 `no_invite` |
 | `POST /api/access-requests` | signed_in; limiter `requests` | `{ orgName, contactName, contactRole, town, locationCount, note? }` | 201, as `GET /api/me` (`pending`) | 403 `forbidden` (staff, or any state but `no_org`, `rejected`, `removed`); 409 `request_exists`; 400 `unknown_town` |
 | `GET /api/towns/:townId` | signed_in | | 200 `{ profile }` | 404 |
+
+### Places
+
+| Method and path | Policy | Request | Success | Errors |
+|---|---|---|---|---|
+| `POST /api/places/autocomplete` | signed_in; 2 KB; limiter `places` | `{ input, sessionToken? }`, input 2 to 120 characters after trimming, `sessionToken` a version 4 UUID | 200 `{ suggestions, sessionToken }`, up to 5 `{ placeId, name, detail }` (`detail` empty when Google has none) | 400; 413; 429; 503 `places_unavailable` |
+| `POST /api/places/details` | signed_in; 2 KB; limiter `places` | `{ placeId, sessionToken }`, `placeId` 10 to 300 letters, digits, `_` or `-` | 200 `{ place: { placeId, address, town } }`, `town` a `TownInput` or null | 400; 404 `place_not_found` (Google answered 404, or 400 `INVALID_ARGUMENT` for the id); 413; 429; 503 `places_unavailable` |
+
+See Places search. `placeId` in the answer is Google's current id for the place, which can differ from the one sent.
 
 `user` is always the signed-in person, the staff member during view-as. `town` is `{ townId }` for one of the twelve researched towns (`src/towns.ts`), or `{ townId: null, name, state }` for another town, with a two-letter US state code. A town profile is public data: the county’s 2024 food-service employment pattern (BLS QCEW) against the Northeast, drivers and key dates with sources, and caveats. `src/town-profiles.ts` is a generated copy of the homepage’s town data; its header names the generator, which is not in this repo.
 
@@ -338,8 +358,9 @@ The console never returns sales figures or note text. People come only from Town
 | `townwise:requests` | `POST /api/access-requests`, per account | 5 per day | deny (503 `unavailable`) |
 | `townwise:view-as` | `POST /api/admin/view-as`, per account | 20 per hour | deny (503 `unavailable`) |
 | `townwise:chat` | `POST /api/org/locations/:locationId/chat/turns`, per account | 60 per hour | deny (503 `unavailable`) |
+| `townwise:places` | both Places routes together, per account | 300 per hour | deny (503 `unavailable`) |
 
-A refused request is 429 `rate_limited` with `retryAfterSeconds`. Account keys are `acct:<userId>`, which the rate-limit module hashes before storing. [CONFIRM: limits]
+A search is 10 to 15 autocompletes (debounced at 250 ms, nothing under 2 characters) and one details call, so `townwise:places` allows about 20 searches an hour, and two or three in a few minutes stay well inside it and inside `townwise:writes`, which counts them too. A refused request is 429 `rate_limited` with `retryAfterSeconds`. Account keys are `acct:<userId>`, which the rate-limit module hashes before storing. [CONFIRM: limits]
 
 ### Not built yet
 
@@ -393,8 +414,9 @@ Townwise reads the kit’s data only through its store functions (`users.findByI
 | `TOWNWISE_SUPERADMIN_EMAILS` | api (`src/config.ts`) | in production | no | staff addresses, comma-separated, at most 20, normalized like the kit; empty locally [CONFIRM: production refuses an empty list] |
 | `TOWNWISE_CHAT_MONTHLY_BUDGET_USD` | api (`src/config.ts`) | no | no | `20`: the tuning chat’s monthly spend limit per organization, in dollars, 0 to 10,000 |
 | `ANTHROPIC_API_KEY` | api (`src/main.ts`) | no | yes | empty locally, which turns the tuning chat off; in production a Key Vault reference when `enable_chat` is on (`../infra/README.md`, step 16) |
+| `GOOGLE_PLACES_API_KEY` | api (`src/main.ts`) | no | yes | empty locally, which turns the Places search off; in production a Key Vault reference when `enable_places` is on (`../infra/README.md`, step 17) |
 
-`.env.example` lists every variable above except `LOG_LEVEL`, `HTTP_KEEP_ALIVE_TIMEOUT_MS` and `SHUTDOWN_TIMEOUT_MS`, which take their defaults. It holds local values and placeholders only: the two key rings, the Google client ids, the staff list and the Anthropic key are empty. Key rotation for the two key rings is in `kit/auth/MODULE.md`.
+`.env.example` lists every variable above except `LOG_LEVEL`, `HTTP_KEEP_ALIVE_TIMEOUT_MS` and `SHUTDOWN_TIMEOUT_MS`, which take their defaults. It holds local values and placeholders only: the two key rings, the Google client ids, the staff list, the Anthropic key and the Places key are empty. Key rotation for the two key rings is in `kit/auth/MODULE.md`.
 
 ## Kit modules
 

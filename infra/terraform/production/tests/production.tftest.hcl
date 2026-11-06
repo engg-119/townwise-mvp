@@ -349,6 +349,15 @@ run "key_vault" {
   }
 
   assert {
+    condition = (
+      !var.enable_places &&
+      !contains([for secret in azurerm_container_app.api.secret : secret.name], "google-places-api-key") &&
+      !contains([for env in azurerm_container_app.api.template[0].container[0].env : env.name], "GOOGLE_PLACES_API_KEY")
+    )
+    error_message = "By default the Places search is off: no Google Places key secret, no GOOGLE_PLACES_API_KEY, no role on it."
+  }
+
+  assert {
     condition = toset([for key, assignment in azurerm_role_assignment.job_secret_read : "${assignment.principal_id} ${element(split("/", assignment.scope), length(split("/", assignment.scope)) - 1)}"]) == toset([
       "00000000-0000-0000-0000-0000000000b1 mongodb-backup-uri",
       "00000000-0000-0000-0000-0000000000c1 db-admin-password",
@@ -403,6 +412,38 @@ run "chat_enabled" {
       alltrue([for secret in azurerm_container_app.api.secret : secret.value == null])
     )
     error_message = "With the chat on, ANTHROPIC_API_KEY is a Key Vault reference to anthropic-api-key, with no value in Terraform."
+  }
+}
+
+run "places_enabled" {
+  command = plan
+
+  variables {
+    enable_places = true
+  }
+
+  assert {
+    condition = toset([for key, assignment in azurerm_role_assignment.api_secret_read : assignment.scope]) == toset([
+      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/mongodb-uri",
+      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/auth-jwt-keys",
+      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/auth-encryption-keys",
+      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/google-places-api-key",
+      ]) && alltrue([
+      for key, assignment in azurerm_role_assignment.api_secret_read :
+      assignment.role_definition_name == "Key Vault Secrets User" && assignment.principal_id == "00000000-0000-0000-0000-0000000000ee"
+    ])
+    error_message = "With the Places search on, the app's identity reads the Google Places key by one more secret-scoped assignment, and nothing wider."
+  }
+
+  assert {
+    condition = (
+      toset([for env in azurerm_container_app.api.template[0].container[0].env : "${env.name}=${coalesce(env.secret_name, "-")}" if env.secret_name != null]) == toset([
+        "MONGODB_URI=mongodb-uri", "AUTH_JWT_KEYS=auth-jwt-keys", "AUTH_ENCRYPTION_KEYS=auth-encryption-keys", "GOOGLE_PLACES_API_KEY=google-places-api-key",
+      ]) &&
+      contains([for secret in azurerm_container_app.api.secret : secret.key_vault_secret_id], "https://kv-townwise-2d2c15bf.vault.azure.net/secrets/google-places-api-key") &&
+      alltrue([for secret in azurerm_container_app.api.secret : secret.value == null])
+    )
+    error_message = "With the Places search on, GOOGLE_PLACES_API_KEY is a Key Vault reference to google-places-api-key, with no value in Terraform."
   }
 }
 
