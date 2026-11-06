@@ -345,6 +345,43 @@ describe('tools', () => {
     expect((await added.json() as { note: unknown }).note).toMatchObject(proposal);
   });
 
+  it('a streamed proposal can be acted on only after its turn’s done; one from a failed turn was never kept', async () => {
+    const proposalPath = (conversationId: string, proposalId: string): string =>
+      `/api/org/locations/${locationId}/chat/${conversationId}/proposals/${proposalId}`;
+    const save = async (conversationId: string, proposalId: string): Promise<{ status: number; noteId?: string }> => {
+      const res = await call(server, proposalPath(conversationId, proposalId), { session: author.session, json: { action: 'save' } });
+      const body = await res.json() as { proposal?: { noteId: string } };
+      return body.proposal === undefined ? { status: res.status } : { status: res.status, noteId: body.proposal.noteId };
+    };
+    model.script({ kind: 'message', message: message([text('Tell me about the dinner.')]) });
+    const id = conversationIdOf((await turn({ content: 'A dinner is coming up.' })).events);
+
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    model.script(
+      { kind: 'message', message: message([toolUse('p_live', 'propose_note', PROPOSAL)]) },
+      { kind: 'message', message: message([text('Proposed.')]), gate },
+    );
+    const live = await call(server, turnsPath(), { session: author.session, json: { conversationId: id, content: 'It is June 20.' } });
+    expect(live.status).toBe(200);
+    // The second model call has started, so the proposal event was sent; the turn's messages are not stored yet.
+    await until(() => Promise.resolve(model.calls.length === 2));
+    expect(await save(id, 'p_live')).toEqual({ status: 404 });
+    release();
+    expect(shape(parseSse(await live.text()))).toEqual(['conversation', 'tool', 'proposal', 'tool', 'text', 'done']);
+    const saved = await save(id, 'p_live');
+    expect(saved.status).toBe(200);
+
+    model.script(
+      { kind: 'message', message: message([toolUse('p_failed', 'propose_note', { ...PROPOSAL, startDate: '2026-06-21', endDate: '2026-06-21' })]) },
+      { kind: 'error', error: new InternalServerError(500, { type: 'error', error: { type: 'api_error', message: 'Down' } }, undefined, new Headers(), 'api_error') },
+    );
+    const failed = await turn({ conversationId: id, content: 'And June 21?' });
+    expect(shape(failed.events)).toEqual(['conversation', 'tool', 'proposal', 'tool', 'error']);
+    expect(await save(id, 'p_failed')).toEqual({ status: 404 });
+    await server.connection.collection('tw_notes').deleteOne({ _id: new Types.ObjectId(saved.noteId) });
+  });
+
   it('an invalid propose_note is an is_error result: a tool error event, no proposal, nothing shown later', async () => {
     model.script(
       { kind: 'message', message: message([toolUse('p2', 'propose_note', { ...PROPOSAL, endDate: '2026-06-19' })]) },
