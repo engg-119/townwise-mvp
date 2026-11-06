@@ -427,6 +427,24 @@ describe('view-as', () => {
     expect((await putChunk(server, filesPath(locationId, `/${fileId}/chunks/0`), staff, Buffer.from('a'))).status).toBe(403);
     expect(await errorOf(await call(server, filesPath(locationId, `/${fileId}`), { session: staff, method: 'DELETE' }))).toEqual({ status: 403, error: 'view_as_read_only' });
   });
+
+  it('lists a ZIP’s entries without their paths', async () => {
+    const locationId = await newLocation();
+    const fileId = await seedReadFile(server, blobs, {
+      orgId: team.orgId, locationId, uploadedBy: team.member.userId, name: 'export.zip', raw: Buffer.from('z'), clean: 'date\r\n',
+    });
+    await server.connection.collection('tw_files').updateOne({ _id: new Types.ObjectId(fileId) }, { $set: { kind: 'zip' } });
+    await server.connection.collection('tw_file_entries').insertOne({
+      orgId: new Types.ObjectId(team.orgId), locationId: new Types.ObjectId(locationId), fileId: new Types.ObjectId(fileId), index: 0,
+      path: SENTINEL_NAME, depth: 1, kind: 'text', sizeBytes: 1, status: 'used', outcome: null, family: null, dayCount: null,
+    });
+    const own = await call(server, filesPath(locationId, `/${fileId}/entries`), { session: team.member });
+    expect(await own.json()).toEqual({ entries: [expect.objectContaining({ index: 0, path: SENTINEL_NAME, status: 'used' })], next: null });
+    staff = await signInStaff(server);
+    await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: team.member.userId, orgId: team.orgId });
+    const viewed = await call(server, filesPath(locationId, `/${fileId}/entries`), { session: staff });
+    expect(await viewed.json()).toEqual({ entries: [expect.objectContaining({ index: 0, path: null, status: 'used' })], next: null });
+  });
 });
 
 describe('isolation', () => {
@@ -453,6 +471,7 @@ describe('isolation', () => {
         ...ofLocation,
         { method: 'GET', path: `${base}/files/${fileId}` },
         { method: 'GET', path: `${base}/files/${fileId}/raw` },
+        { method: 'GET', path: `${base}/files/${fileId}/entries` },
         { method: 'GET', path: `${base}/files/${fileId}/clean` },
         { method: 'POST', path: `${base}/files/${fileId}/complete`, json: {} },
         { method: 'DELETE', path: `${base}/files/${fileId}/raw` },

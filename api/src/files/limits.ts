@@ -56,3 +56,26 @@ export const PROGRESS_WRITE_MS = 2000;
 export const APPLY_BATCH_DAYS = 1000;
 /** Closed dates kept on a file's result and an import's totals. */
 export const MAX_CLOSED_DATES = 60;
+
+/** ZIP archives (spec 11A): checked on the central directory before anything is inflated. */
+export const ZIP_MAX_ENTRIES = 20_000;
+export const ZIP_MAX_DIRECTORY_BYTES = 16 * MIB;
+/** Declared uncompressed bytes, every depth together. */
+export const ZIP_MAX_DECLARED_BYTES = 2 * GIB;
+/** Declared uncompressed bytes to the archive's size, and to an entry's compressed size for entries over 1 MiB. */
+export const ZIP_MAX_RATIO = 100;
+export const ZIP_RATIO_FLOOR_BYTES = MIB;
+/** A ZIP inside a ZIP is opened from memory up to this size; one inside that is never opened. */
+export const NESTED_ZIP_BYTES = 50 * MIB;
+/** Nested ZIPs held in memory at once, together. */
+export const NESTED_ZIP_TOTAL_BYTES = 100 * MIB;
+/** Compressed bytes asked of storage at a time while an entry streams. */
+export const ZIP_PIECE_BYTES = MIB;
+/** Small reads (headers, small entries) are served from a window of this size. */
+export const ZIP_WINDOW_BYTES = 256 * KIB;
+/** A ZIP entry's path, as stored and shown to the organization. */
+export const ENTRY_PATH_CHARS = 300;
+/** Families listed on a ZIP's report. */
+export const MAX_REPORTED_FAMILIES = 50;
+/** tw_file_entries rows written per insert. */
+export const ENTRY_BATCH = 500;

@@ -41,22 +41,64 @@ export type TableOutcome =
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-function trimmed(cells: readonly string[]): string[] {
+/** At most 200 columns of a record. */
+export function trimmed(cells: readonly string[]): string[] {
   return cells.length > MAX_COLUMNS ? cells.slice(0, MAX_COLUMNS) : [...cells];
 }
 
-/** The first pass. `add` takes every record in order, the header and anything above it included. */
+/**
+ * What a first pass learns about a table's columns from the rows under its header: each column's profile and the
+ * location column's values. A ZIP's tables of one family (the same header) share one, so a date order is proven over
+ * all of them together.
+ */
+export class TableStats {
+  readonly header: readonly string[];
+  private readonly profiler: Profiler;
+  private readonly locationColumn: number | null;
+  private readonly locations: LocationValues | null;
+
+  constructor(header: readonly string[]) {
+    this.header = header;
+    this.profiler = new Profiler(header);
+    this.locationColumn = guessOne('location', header);
+    this.locations = this.locationColumn === null ? null : new LocationValues(this.locationColumn);
+  }
+
+  add(row: readonly string[]): void {
+    this.profiler.add(row);
+    this.locations?.add(row);
+  }
+
+  /** The findings, with the header row of the table they are reported for (1-based). */
+  firstPass(headerRow: number): FirstPass {
+    return {
+      header: this.header,
+      headerRow,
+      profiles: this.profiler.finish(),
+      locationColumn: this.locationColumn,
+      locationValues: this.locations?.values() ?? [],
+      tooManyLocations: this.locations?.more ?? false,
+    };
+  }
+}
+
+/**
+ * The first pass. `add` takes every record in order, the header and anything above it included. `adopt` gives the
+ * stats the rows under a found header go to (a ZIP family's); by default the table has its own.
+ */
 export class FirstPassReader {
   private readonly head: string[][] = [];
-  private header: string[] | null = null;
+  private readonly adopt: (header: readonly string[]) => TableStats;
+  private stats: TableStats | null = null;
   private headerRow = 0;
-  private profiler: Profiler | null = null;
-  private locations: LocationValues | null = null;
-  private locationColumn: number | null = null;
   private search: ReturnType<typeof findHeader> | null = null;
   rows = 0;
   /** More rows than the reader takes (2,000,000). */
   tooMany = false;
+
+  constructor(adopt: (header: readonly string[]) => TableStats = (header) => new TableStats(header)) {
+    this.adopt = adopt;
+  }
 
   add(cells: readonly string[]): void {
     this.rows += 1;
@@ -77,20 +119,15 @@ export class FirstPassReader {
     if (this.search.kind !== 'found') return;
     const index = this.search.index;
     const header = (this.head[index] ?? []).map((name) => name.trim());
-    this.header = header;
     this.headerRow = index + 1;
-    this.profiler = new Profiler(header);
-    this.locationColumn = guessOne('location', header);
-    if (this.locationColumn !== null) this.locations = new LocationValues(this.locationColumn);
+    this.stats = this.adopt(header);
     for (const cells of this.head.slice(index + 1)) this.data(cells);
     this.head.length = 0;
   }
 
   private data(cells: readonly string[]): void {
-    if (this.profiler === null || isBlankRecord(cells)) return;
-    const row = trimmed(cells);
-    this.profiler.add(row);
-    this.locations?.add(row);
+    if (this.stats === null || isBlankRecord(cells)) return;
+    this.stats.add(trimmed(cells));
   }
 
   /** The first pass's findings, or why the table cannot be read. */
@@ -98,17 +135,10 @@ export class FirstPassReader {
     if (this.tooMany) return { kind: 'kept', outcome: 'too_complex' };
     if (this.search === null) this.settleHeader();
     const search = this.search ?? findHeader([]);
-    if (search.kind !== 'found' || this.header === null || this.profiler === null) {
+    if (search.kind !== 'found' || this.stats === null) {
       return { kind: 'kept', outcome: search.kind === 'found' ? 'no_header' : search.kind };
     }
-    return {
-      header: this.header,
-      headerRow: this.headerRow,
-      profiles: this.profiler.finish(),
-      locationColumn: this.locationColumn,
-      locationValues: this.locations?.values() ?? [],
-      tooManyLocations: this.locations?.more ?? false,
-    };
+    return this.stats.firstPass(this.headerRow);
   }
 }
 
@@ -138,7 +168,8 @@ export class SecondPassReader {
   }
 }
 
-function report(
+/** A used table's report, from its first pass, its mapping, its row mode and its days. */
+export function tableReport(
   pass: FirstPass, decision: Extract<Decision, { kind: 'mapping' }>, rowMode: 'day' | 'check', rowModeBy: 'rules' | 'you',
   result: DaysResult,
 ): TableReport {
@@ -193,5 +224,21 @@ export async function readTable(
   if (result.kind !== 'days') return { kind: 'kept', outcome: result.kind };
   const mode = decideRowMode(second.repeatedDays(), found.header, input.answers.rowMode);
   if (mode.kind !== 'mode') return mode;
-  return { kind: 'days', days: result.days, report: report(found, decision, mode.rowMode, mode.by, result) };
+  return { kind: 'days', days: result.days, report: tableReport(found, decision, mode.rowMode, mode.by, result) };
+}
+
+/** A report's totals over merged days (several sheets, or several tables of a ZIP). */
+export function dayTotals(days: readonly SalesDay[]): Pick<TableReport, 'firstDate' | 'lastDate' | 'guestsDayCount' | 'netSalesDayCount' | 'closedDates' | 'missingDays' | 'days'> {
+  const first = days[0]?.date ?? '';
+  const last = days.at(-1)?.date ?? '';
+  const span = first === '' ? 0 : (Date.parse(last) - Date.parse(first)) / DAY_MS + 1;
+  return {
+    days: days.length,
+    firstDate: first,
+    lastDate: last,
+    guestsDayCount: days.filter((day) => day.guests !== null).length,
+    netSalesDayCount: days.filter((day) => day.netSalesCents !== null).length,
+    closedDates: days.filter((day) => day.guests === 0 && (day.netSalesCents ?? 0) === 0).map((day) => day.date).slice(0, MAX_CLOSED_DATES),
+    missingDays: Math.max(0, span - days.length),
+  };
 }

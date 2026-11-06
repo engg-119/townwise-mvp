@@ -21,6 +21,7 @@ import {
   CHUNK_BYTES, DAILY_UPLOAD_BYTES, FILES_PER_IMPORT, FILES_PER_LOCATION, MAX_CHUNKS, MAX_FILE_BYTES, RAW_PART_BYTES,
   RECENT_IMPORT_MS, STORED_BYTES_PER_ORG, UPLOAD_SESSION_MS, UPLOADING_PER_LOCATION,
 } from '../files/limits.ts';
+import { familyKey } from '../files/parse/families.ts';
 import { kindLabel, kindOfName, sanitizeName, sniff } from '../files/sniff.ts';
 import { ChunkLengthError, createStreamGate, fingerprintOf, receiveChunk } from '../files/upload.ts';
 import { currentEmail } from '../people.ts';
@@ -45,6 +46,11 @@ export interface FileView {
   hasClean: boolean;
   rawAvailable: boolean; rawExpiresAt: string | null;
   canDownloadRaw: boolean; canDownloadClean: boolean; canDelete: boolean; canDeleteRaw: boolean;
+}
+
+export interface EntryView {
+  index: number; path: string | null; depth: 1 | 2; kind: FileKind; sizeBytes: number;
+  status: 'used' | 'kept' | 'failed'; outcome: string | null; dayCount: number | null;
 }
 
 export interface QuestionView {
@@ -75,6 +81,7 @@ export interface UploadLimits {
 /** Originals are deleted a year after upload (spec 22.3). [CONFIRM: retention periods] */
 export const RAW_RETENTION_MS = 365 * 24 * 60 * 60 * 1000;
 const LIST_PAGE = 200;
+const ENTRIES_PAGE = 200;
 const DONE_STATUSES: readonly FileStatus[] = ['read', 'kept', 'failed'];
 
 /** One counter per process: chunk streams on this replica (spec 11A, back-pressure). */
@@ -154,7 +161,7 @@ function fileView(member: MemberPrincipal, file: FileRecord, email: string, eta:
     progress: progress === null ? null : { phase: progress.phase, done: progress.done, total: progress.total, unit: progress.unit },
     etaSeconds: file.status === 'queued' || file.status === 'reading' ? eta?.files.get(file.id) ?? null : null,
     queuePosition: file.status === 'queued' ? eta?.positions.get(file.id) ?? null : null,
-    entries: null,
+    entries: file.entries,
     result: file.result,
     hasClean: file.cleanBytes !== null,
     rawAvailable,
@@ -210,7 +217,7 @@ async function importView(ctx: TownwiseContext, member: MemberPrincipal, record:
     question: question === null ? null : {
       id: question.id, fileId: question.fileId, sheet: question.sheet, kind: question.kind,
       fileName: member.viewAs !== null || asked === undefined ? null : asked.name,
-      options: question.options.map((option) => ({ ...option })), suggested: question.suggested, family: null,
+      options: question.options.map((option) => ({ ...option })), suggested: question.suggested, family: question.familyLabel ?? null,
     },
     appliedVersion: record.appliedVersion,
   };
@@ -458,6 +465,26 @@ export async function getFile(ctx: TownwiseContext, req: Request, res: Response,
   res.status(200).json({ file: view, report: file.report });
 }
 
+const entriesQuery = z.object({ after: z.coerce.number().int().min(0).max(1_000_000).optional() });
+
+/** GET /files/:fileId/entries?after=: a ZIP's entries, 200 a page in archive order. Paths are null under view-as. */
+export async function listEntries(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  filesOn(ctx);
+  const member = memberOf(principal);
+  const { scope } = member;
+  const { after } = parseInput(entriesQuery, req.query);
+  const location = await loadLocation(ctx, scope, req.params.locationId);
+  const file = await loadFile(ctx, scope, location.id, req.params.fileId);
+  if (file.kind !== 'zip') throw new AppError(404, 'no_entries', 'This file is not an archive');
+  const rows = await ctx.stores.fileEntries.page(scope, file.id, after ?? null, ENTRIES_PAGE + 1);
+  const page = rows.slice(0, ENTRIES_PAGE);
+  const entries: EntryView[] = page.map((row) => ({
+    index: row.index, path: member.viewAs !== null ? null : row.path, depth: row.depth, kind: row.kind, sizeBytes: row.sizeBytes,
+    status: row.status, outcome: row.outcome, dayCount: row.dayCount,
+  }));
+  res.status(200).json({ entries, next: rows.length > ENTRIES_PAGE ? page.at(-1)?.index ?? null : null });
+}
+
 // ---- Downloads ------------------------------------------------------------------------------------------------
 
 function asciiName(name: string): string {
@@ -558,6 +585,7 @@ export async function deleteRaw(ctx: TownwiseContext, req: Request, res: Respons
   if (file.rawDeletedAt !== null) throw new AppError(410, 'raw_expired', 'The original was already deleted');
   await blobCall(ctx, 'delete_raw', () => blobs.deleteRaw(scope, refOf(file)), () => undefined);
   await ctx.stores.files.rawDeleted(scope, file.id, ctx.now(), kindLabel(file.kind));
+  await ctx.stores.fileEntries.clearPaths(scope, file.id);
   await recordAfter(ctx, {
     ...actorOf(member), at: ctx.now(), orgId: scope.orgId, action: 'file.raw_deleted',
     target: { type: 'file', id: file.id }, details: { locationId: location.id, kind: file.kind },
@@ -590,6 +618,7 @@ export async function deleteFile(ctx: TownwiseContext, req: Request, res: Respon
     await blobCall(ctx, 'delete_raw', () => blobs.deleteRaw(scope, ref), () => undefined);
     await blobCall(ctx, 'delete_clean', () => blobs.deleteClean(scope, ref), () => undefined);
   }
+  await ctx.stores.fileEntries.removeForFile(scope, file.id);
   await ctx.stores.files.remove(scope, file.id);
   if (file.importId !== null) {
     const record = await ctx.stores.imports.get(scope, location.id, file.importId);
@@ -702,7 +731,7 @@ export async function answerImport(ctx: TownwiseContext, req: Request, res: Resp
   // compare-and-set, so a second answer to the same question finds it no longer waiting.
   const moved = effect === 'not_sure'
     ? await ctx.stores.files.keepWaiting(scope, question.fileId, 'needs_help')
-    : await ctx.stores.files.answer(scope, question.fileId, question.sheet, effect);
+    : await ctx.stores.files.answer(scope, question.fileId, question.family === undefined ? String(question.sheet) : familyKey(question.family), effect);
   if (!moved) throw new AppError(409, 'question_stale', 'That question was already answered');
   await ctx.stores.imports.clearQuestion(scope, record.id, question.id);
   ctx.nudgeFiles();

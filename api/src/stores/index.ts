@@ -6,6 +6,7 @@ import { createChatConversationStore, type ChatConversationStore } from './chat-
 import { createChatLiveTurnStore, type ChatLiveTurnStore } from './chat-live-turns.ts';
 import { createChatProposalStore, type ChatProposalStore } from './chat-proposals.ts';
 import { createChatUsageStore, type ChatUsageStore } from './chat-usage.ts';
+import { createFileEntryStore, type FileEntryStore } from './file-entries.ts';
 import { createFileStore, type FileStore } from './files.ts';
 import { createImportStore, type ImportStore } from './imports.ts';
 import { createLocationStore, type LocationStore } from './locations.ts';
@@ -39,6 +40,7 @@ export interface TownwiseStores {
   readonly files: FileStore;
   readonly imports: ImportStore;
   readonly uploadDays: UploadDayStore;
+  readonly fileEntries: FileEntryStore;
 }
 
 /** Registers every Townwise model on `connection`; call it before ensureIndexes. */
@@ -62,5 +64,6 @@ export function createTownwiseStores(connection: Connection): TownwiseStores {
     files: createFileStore(connection),
     imports: createImportStore(connection),
     uploadDays: createUploadDayStore(connection),
+    fileEntries: createFileEntryStore(connection),
   };
 }

@@ -46,11 +46,12 @@ describe('isolation (source)', () => {
       .map((match) => posix.normalize(posix.join(posix.dirname(file.path), match[1] ?? '')));
     const importersOf = (target: string): string[] => sourceFiles().filter((file) => imports(file).includes(target)).map((file) => file.path).sort();
     const fileCode = (path: string): boolean => path.startsWith('files/')
-      || ['handlers/files.ts', 'handlers/sales.ts', 'handlers/locations.ts', 'handlers/deletion.ts', 'stores/index.ts', 'main.ts'].includes(path);
-    for (const target of ['stores/files.ts', 'files/blobs.ts', 'files/worker.ts']) {
+      || ['handlers/files.ts', 'handlers/sales.ts', 'handlers/locations.ts', 'handlers/deletion.ts', 'stores/index.ts', 'stores/file-entries.ts', 'main.ts'].includes(path);
+    for (const target of ['stores/files.ts', 'stores/file-entries.ts', 'files/blobs.ts', 'files/worker.ts']) {
       expect(importersOf(target).filter((path) => !fileCode(path))).toEqual([]);
     }
-    expect(importersOf('stores/files.ts')).toEqual(['stores/index.ts']);
+    expect(importersOf('stores/files.ts')).toEqual(['stores/file-entries.ts', 'stores/index.ts']);
+    expect(importersOf('stores/file-entries.ts')).toEqual(['stores/index.ts']);
     expect(sourceFiles().filter((file) => file.path.startsWith('chat/') && imports(file).some((path) => path.startsWith('files/') || path === 'stores/files.ts')))
       .toEqual([]);
   });

@@ -11,10 +11,13 @@ import type { DateOrder } from './values.ts';
 
 export type Decider = 'rules' | 'you';
 
-/** Every reason a table, or a whole file, is kept without being used. */
+/** Every reason a table, or a whole file, is kept without being used (spec 11A.6). */
 export type KeptOutcome =
   | 'not_a_table' | 'no_header' | 'no_dates' | 'notes_not_read_yet' | 'too_many_locations' | 'item_level'
-  | 'decimal_comma' | 'repeated_dates' | 'too_many_days' | 'too_complex' | 'bad_encoding' | 'not_a_workbook';
+  | 'decimal_comma' | 'repeated_dates' | 'too_many_days' | 'too_complex' | 'bad_encoding' | 'not_a_workbook'
+  | 'no_sales_columns' | 'too_large_to_read' | 'encrypted' | 'old_excel' | 'old_word' | 'numbers' | 'image' | 'type_not_read'
+  | 'pdf_no_table' | 'pdf_scanned' | 'word_no_table'
+  | 'zip_too_big' | 'zip_bomb' | 'zip_damaged' | 'zip_empty' | 'nothing_usable';
 
 export interface QuestionDraft {
   readonly kind: QuestionKind;

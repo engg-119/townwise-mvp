@@ -21,6 +21,9 @@ export interface ImportQuestion {
   readonly kind: QuestionKind;
   readonly options: readonly { readonly id: string; readonly label: string }[];
   readonly suggested: string | null;
+  /** For a ZIP: the family of tables asked about (its signature) and its label (its first header names). */
+  readonly family?: string;
+  readonly familyLabel?: string;
 }
 
 interface ImportFields {

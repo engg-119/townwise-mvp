@@ -2,10 +2,14 @@
 // at most 1 MiB, each transferred and acknowledged before the next, so the thread's input is bounded; a text file is
 // fed twice when the thread asks. Out of memory or out of time terminates the thread and the file is kept as
 // too_complex; the API process is untouched. The time limit covers the file's reads from storage too: a stalled read
-// is aborted, so it never holds the replica's reader or the import's lease.
+// is aborted, so it never holds the replica's reader or the import's lease. A ZIP is not fed: the thread asks for the
+// byte ranges it needs (its directory, then each entry), and this side answers each from storage, continuing one open
+// download while the reads are in order.
 import { Worker, type ResourceLimits } from 'node:worker_threads';
 
 import type { FileAnswers } from '../../stores/files.ts';
+import type { EntryRow } from './archive.ts';
+import type { FamilyReport } from './families.ts';
 import { READ_TIME_MS, THREAD_CHUNK_BYTES, THREAD_LIMITS } from '../limits.ts';
 import type { SalesDay } from './days.ts';
 import type { KeptOutcome, QuestionDraft } from './mapping.ts';
@@ -15,32 +19,43 @@ import type { TableReport } from './table.ts';
 export type FileReport = TableReport & {
   sheets: { name: string; used: boolean; why: string }[];
   encoding: 'utf-8' | 'utf-16' | 'windows-1252' | null;
+  /** A ZIP's tables by family. */
+  families?: FamilyReport[];
 };
 
+/** A question about one file; for a ZIP, about one family of its tables (`family` is its signature). */
+export type FileQuestion = QuestionDraft & { sheet: number; family?: string; familyLabel?: string };
+
 export type FileOutcome =
-  | { kind: 'kept'; outcome: KeptOutcome; report: null }
-  | { kind: 'question'; question: QuestionDraft & { sheet: number } }
-  | { kind: 'days'; days: SalesDay[]; report: FileReport };
+  | { kind: 'kept'; outcome: KeptOutcome; report: null; entries?: EntryRow[] }
+  | { kind: 'question'; question: FileQuestion }
+  | { kind: 'days'; days: SalesDay[]; report: FileReport; entries?: EntryRow[] };
+
+export type ParseKind = 'text' | 'xlsx' | 'zip';
 
 export type ThreadIn =
   | {
-    type: 'begin'; kind: 'text' | 'xlsx'; sizeBytes: number; answers: FileAnswers; locationName: string;
+    type: 'begin'; kind: ParseKind; sizeBytes: number; answers: FileAnswers; locationName: string;
     /** The last date the reader accepts (the server's UTC date plus one). */
     latest: string;
     /** An org admin's file: a later sheet's day replaces an earlier sheet's. */
     replace: boolean;
   }
   | { type: 'chunk'; data: ArrayBuffer }
-  | { type: 'end' };
+  | { type: 'end' }
+  /** The bytes a `read` asked for (fewer only at the end of the file). */
+  | { type: 'bytes'; id: number; data: ArrayBuffer };
 
 export type ThreadOut =
   | { type: 'ack' }
   | { type: 'again' }
   | { type: 'progress'; done: number; total: number | null }
+  /** A ZIP's thread asks for `count` bytes from `offset`. */
+  | { type: 'read'; id: number; offset: number; count: number }
   | { type: 'result'; outcome: FileOutcome };
 
 export interface ParseInput {
-  readonly kind: 'text' | 'xlsx';
+  readonly kind: ParseKind;
   readonly sizeBytes: number;
   readonly answers: FileAnswers;
   readonly locationName: string;
@@ -48,6 +63,8 @@ export interface ParseInput {
   readonly replace: boolean;
   /** The file's bytes, from the start; called once per pass. `signal` aborts at the time limit. */
   readonly open: (signal: AbortSignal) => Promise<AsyncIterable<Uint8Array>>;
+  /** The file's bytes from `offset` to its end (a ZIP's ranged reads). Required for a ZIP. */
+  readonly openAt?: (offset: number, signal: AbortSignal) => Promise<AsyncIterable<Uint8Array>>;
   readonly onProgress: (done: number, total: number | null) => void;
   readonly signal?: AbortSignal;
   /** Tests shorten these. */
@@ -83,6 +100,52 @@ function inbox(worker: Worker): { next(): Promise<ThreadOut> } {
 
 class TimeLimit extends Error {}
 
+/**
+ * Answers a thread's ranged reads from storage. Reads in order continue one open download; a read elsewhere opens a
+ * new one from its offset.
+ */
+class RangeServer {
+  private iterator: AsyncIterator<Uint8Array> | null = null;
+  private position = -1;
+  private leftover: Buffer = Buffer.alloc(0);
+  private readonly openAt: (offset: number, signal: AbortSignal) => Promise<AsyncIterable<Uint8Array>>;
+  private readonly signal: AbortSignal;
+
+  constructor(openAt: (offset: number, signal: AbortSignal) => Promise<AsyncIterable<Uint8Array>>, signal: AbortSignal) {
+    this.openAt = openAt;
+    this.signal = signal;
+  }
+
+  async read(offset: number, count: number): Promise<Buffer> {
+    if (this.iterator === null || offset !== this.position) {
+      await this.close();
+      this.iterator = (await this.openAt(offset, this.signal))[Symbol.asyncIterator]();
+      this.position = offset;
+      this.leftover = Buffer.alloc(0);
+    }
+    const parts: Buffer[] = [this.leftover];
+    let have = this.leftover.length;
+    while (have < count) {
+      const next = await this.iterator.next();
+      if (next.done === true) break;
+      const part = Buffer.from(next.value);
+      parts.push(part);
+      have += part.length;
+    }
+    const all = Buffer.concat(parts);
+    const out = all.subarray(0, count);
+    this.leftover = Buffer.from(all.subarray(count));
+    this.position = offset + out.length;
+    return out;
+  }
+
+  async close(): Promise<void> {
+    const iterator = this.iterator;
+    this.iterator = null;
+    await iterator?.return?.().catch(() => undefined);
+  }
+}
+
 function isTooComplex(err: unknown): boolean {
   if (err instanceof TimeLimit) return true;
   return err instanceof Error && 'code' in err && (err as { code?: unknown }).code === 'ERR_WORKER_OUT_OF_MEMORY';
@@ -102,12 +165,24 @@ export async function runParse(input: ParseInput): Promise<FileOutcome> {
   });
   // Raced below; this keeps a rejection while nothing is racing it from going unhandled.
   timeout.catch(() => undefined);
-  // Every message the thread sends but the acks and the final answer is progress.
-  const nextReply = async (): Promise<Exclude<ThreadOut, { type: 'progress' }>> => {
+  const openAt = input.openAt;
+  const ranges = openAt === undefined ? null : new RangeServer(openAt, stop.signal);
+  // Progress is reported and ranged reads are answered here; every other message is returned.
+  const nextReply = async (): Promise<Exclude<ThreadOut, { type: 'progress' | 'read' }>> => {
     for (;;) {
       const message = await Promise.race([messages.next(), timeout]);
-      if (message.type !== 'progress') return message;
-      input.onProgress(message.done, message.total);
+      if (message.type === 'progress') {
+        input.onProgress(message.done, message.total);
+        continue;
+      }
+      if (message.type === 'read') {
+        if (ranges === null) throw new Error('parse thread asked for a range of a file it was fed');
+        const bytes = await Promise.race([ranges.read(message.offset, message.count), timeout]);
+        const data = new Uint8Array(bytes).buffer;
+        worker.postMessage({ type: 'bytes', id: message.id, data } satisfies ThreadIn, [data]);
+        continue;
+      }
+      return message;
     }
   };
   const pass = async (): Promise<void> => {
@@ -133,7 +208,7 @@ export async function runParse(input: ParseInput): Promise<FileOutcome> {
       type: 'begin', kind: input.kind, sizeBytes: input.sizeBytes, answers: input.answers, locationName: input.locationName,
       latest: input.latest, replace: input.replace,
     } satisfies ThreadIn);
-    await feed();
+    if (input.kind !== 'zip') await feed();
     for (;;) {
       const reply = await nextReply();
       if (reply.type === 'result') return reply.outcome;
@@ -145,6 +220,7 @@ export async function runParse(input: ParseInput): Promise<FileOutcome> {
   } finally {
     clearTimeout(timer);
     stop.abort();
+    await ranges?.close();
     await worker.terminate();
   }
 }

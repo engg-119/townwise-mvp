@@ -20,18 +20,18 @@ describe('workbooks (spec 11A)', () => {
     });
   });
 
-  it('refuses a declared-size bomb and a huge entry before inflating anything, and an archive without a workbook', () => {
+  it('refuses a declared-size bomb and a huge entry before inflating anything, and an archive without a workbook', async () => {
     const parts = [{ name: '[Content_Types].xml', data: '<x/>' }, { name: 'xl/workbook.xml', data: '<x/>' }];
-    expect(checkWorkbookArchive(zipOf(parts))).toBe('ok');
-    expect(checkWorkbookArchive(zipOf([...parts, { name: 'xl/big.xml', data: 'a'.repeat(2000), declaredSize: 2 * 1024 * 1024 }]))).toBe('too_complex');
-    expect(checkWorkbookArchive(zipOf([...parts, { name: 'xl/huge.xml', data: 'a', declaredSize: 65 * 1024 * 1024, store: true }]))).toBe('too_complex');
-    expect(checkWorkbookArchive(zipOf([parts[0] ?? { name: '', data: '' }]))).toBe('not_a_workbook');
-    expect(checkWorkbookArchive(Buffer.from('not a zip'))).toBe('not_a_workbook');
+    expect(await checkWorkbookArchive(zipOf(parts))).toBe('ok');
+    expect(await checkWorkbookArchive(zipOf([...parts, { name: 'xl/big.xml', data: 'a'.repeat(2000), declaredSize: 2 * 1024 * 1024 }]))).toBe('too_complex');
+    expect(await checkWorkbookArchive(zipOf([...parts, { name: 'xl/huge.xml', data: 'a', declaredSize: 65 * 1024 * 1024, store: true }]))).toBe('too_complex');
+    expect(await checkWorkbookArchive(zipOf([parts[0] ?? { name: '', data: '' }]))).toBe('not_a_workbook');
+    expect(await checkWorkbookArchive(Buffer.from('not a zip'))).toBe('not_a_workbook');
   });
 
-  it('lists a ZIP’s central directory', () => {
-    const entries = listZip(zipOf([{ name: 'a.csv', data: 'x,y\n' }, { name: 'é.txt', data: '', store: true }]), 10);
+  it('lists a ZIP’s central directory', async () => {
+    const entries = await listZip(zipOf([{ name: 'a.csv', data: 'x,y\n' }, { name: 'é.txt', data: '', store: true }]), 10);
     expect(entries.map((entry) => [entry.name, entry.method, entry.uncompressedSize])).toEqual([['a.csv', 8, 4], ['é.txt', 0, 0]]);
-    expect(() => listZip(zipOf([{ name: 'a', data: '' }, { name: 'b', data: '' }]), 1)).toThrow(/too many entries/);
+    await expect(listZip(zipOf([{ name: 'a', data: '' }, { name: 'b', data: '' }]), 1)).rejects.toThrow(/too many entries/);
   });
 });

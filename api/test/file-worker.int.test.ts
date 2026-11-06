@@ -187,6 +187,44 @@ describe('reading stored files', () => {
     expect(await days(locationId)).toEqual([{ date: '2025-01-01', guests: 120, netSalesCents: 345_650 }]);
   });
 
+  it('reads a ZIP in place: its entries listed with what became of each, one question for a family, then its days', async () => {
+    const { zipOf } = await import('./helpers/zip.ts');
+    const locationId = await newLocation();
+    const header = 'Business Date,Total A,Total B\n';
+    const zip = zipOf([
+      { name: 'export/2025-01-01.csv', data: `${header}2025-01-01,5,50.00\n` },
+      { name: 'export/2025-01-02.csv', data: `${header}2025-01-02,6,60.00\n` },
+      { name: 'export/readme.txt', data: 'Nothing to see' },
+    ]);
+    const { file, importId } = await drop(locationId, member, 'export.zip', zip);
+    expect(file.kind).toBe('zip');
+    await start(locationId, importId);
+    const waiting = await settledImport(locationId, importId);
+    expect(waiting).toMatchObject({ status: 'waiting', question: { kind: 'columns', family: 'Business Date, Total A, Total B', fileId: file.id } });
+    const answered = await call(server, `${base(locationId)}/imports/${importId}/answer`, {
+      session: member, json: { questionId: waiting.question?.id, choice: 'guests:1,netSales:2' },
+    });
+    expect(answered.status).toBe(200);
+    const done = await settledImport(locationId, importId);
+    expect(done.files[0]).toMatchObject({ status: 'read', entries: { total: 3, used: 2, kept: 1 }, result: { dayCount: 2 } });
+    expect(await days(locationId)).toEqual([
+      { date: '2025-01-01', guests: 5, netSalesCents: 5000 }, { date: '2025-01-02', guests: 6, netSalesCents: 6000 },
+    ]);
+    const report = (await (await call(server, `${base(locationId)}/files/${file.id}`, { session: member })).json() as { report: Record<string, unknown> }).report;
+    expect(report.families).toEqual([expect.objectContaining({ label: ['Business Date', 'Total A', 'Total B'], entries: 2, used: true, dayCount: 2 })]);
+    const listed = async (): Promise<unknown[]> => ((await (await call(server, `${base(locationId)}/files/${file.id}/entries`, { session: member }))
+      .json()) as { entries: { path: string | null; status: string; outcome: string | null }[] }).entries.map((entry) => [entry.path, entry.status, entry.outcome]);
+    expect(await listed()).toEqual([
+      ['export/2025-01-01.csv', 'used', null], ['export/2025-01-02.csv', 'used', null], ['export/readme.txt', 'kept', 'not_a_table'],
+    ]);
+    // Deleting the original deletes the paths inside it too (a path can name a person); what became of each stays.
+    expect((await call(server, `${base(locationId)}/files/${file.id}/raw`, { session: member, method: 'DELETE' })).status).toBe(200);
+    expect(await listed()).toEqual([[null, 'used', null], [null, 'used', null], [null, 'kept', 'not_a_table']]);
+    const notZip = await drop(locationId, member, 'plain.csv', Buffer.from('Date,Guests\n2024-01-01,1\n'));
+    const refused = await call(server, `${base(locationId)}/files/${notZip.file.id}/entries`, { session: member });
+    expect([refused.status, ((await refused.json()) as { error: string }).error]).toEqual([404, 'no_entries']);
+  });
+
   it('never puts a file name, a header, a location value or a cell in a log line, an audit event or an import view’s report', async () => {
     const locationId = await newLocation('Main Street');
     server.logs.length = 0;

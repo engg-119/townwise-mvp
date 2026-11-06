@@ -15,7 +15,7 @@ import { actOnProposal } from '../handlers/chat-proposals.ts';
 import { deleteOrg, deletePerson } from '../handlers/deletion.ts';
 import {
   answerImport, completeFile, createFile, currentImport, deleteFile, deleteRaw, downloadClean, downloadRaw, getFile, getImport,
-  listFiles, putChunk, startImport,
+  listEntries, listFiles, putChunk, startImport,
 } from '../handlers/files.ts';
 import { createLocation, deleteLocation, getOwnOrg, updateLocation } from '../handlers/locations.ts';
 import { declineInvite, getMe, joinInvite, recordWelcome } from '../handlers/me.ts';
@@ -145,6 +145,10 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.files.get', method: 'GET', path: '/org/locations/:locationId/files/:fileId', policy: 'member', bodyLimit: 'none',
     handler: getFile,
+  },
+  {
+    id: 'org.files.entries', method: 'GET', path: '/org/locations/:locationId/files/:fileId/entries', policy: 'member',
+    bodyLimit: 'none', handler: listEntries,
   },
   {
     id: 'org.files.raw', method: 'GET', path: '/org/locations/:locationId/files/:fileId/raw', policy: 'member', bodyLimit: 'none',

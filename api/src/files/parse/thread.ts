@@ -4,11 +4,12 @@
 // numbers, dates and counts, or a question whose options are header names or the location column's values.
 import { parentPort } from 'node:worker_threads';
 
+import { readArchive } from './archive.ts';
 import { CsvPushReader, detectTableDelimiter, stripBom, type Delimiter } from './csv.ts';
 import type { SalesDay } from './days.ts';
 import type { KeptOutcome } from './mapping.ts';
 import type { FileOutcome, FileReport, ThreadIn, ThreadOut } from './run.ts';
-import { readTable, type TableReport } from './table.ts';
+import { dayTotals, readTable, type TableReport } from './table.ts';
 import { decoderFor, detectEncoding, encodingLabel, ENCODING_PROBE_BYTES, type TextEncoding } from './text.ts';
 import { readWorkbook } from './xlsx.ts';
 
@@ -25,10 +26,30 @@ let onChunk: (bytes: Uint8Array) => void = () => undefined;
 let onEnd: () => void = () => undefined;
 let received = 0;
 let progressTotal: number | null = null;
+const pendingReads = new Map<number, (bytes: Buffer) => void>();
+let nextReadId = 0;
+
+/** A ZIP's ranged read, answered by the main thread from storage. */
+function requestRange(offset: number, count: number): Promise<Buffer> {
+  const id = nextReadId;
+  nextReadId += 1;
+  const answered = new Promise<Buffer>((resolve) => { pendingReads.set(id, resolve); });
+  post({ type: 'read', id, offset, count });
+  return answered;
+}
 
 port.on('message', (message: ThreadIn) => {
+  if (message.type === 'bytes') {
+    const bytes = Buffer.from(message.data);
+    received += bytes.length;
+    // A ZIP's entries are each read twice (once to find the tables' headers, once to add their rows up).
+    post({ type: 'progress', done: Math.min(received, progressTotal ?? received), total: progressTotal });
+    pendingReads.get(message.id)?.(bytes);
+    pendingReads.delete(message.id);
+    return;
+  }
   if (message.type === 'begin') {
-    progressTotal = message.kind === 'text' ? message.sizeBytes * 2 : null;
+    progressTotal = message.kind === 'xlsx' ? null : message.sizeBytes * 2;
     void run(message).then((outcome) => { post({ type: 'result', outcome }); });
     return;
   }
@@ -126,21 +147,6 @@ function merge(target: Map<string, SalesDay>, days: readonly SalesDay[], replace
   for (const day of days) if (replace || !target.has(day.date)) target.set(day.date, day);
 }
 
-function totals(days: readonly SalesDay[]): Pick<TableReport, 'firstDate' | 'lastDate' | 'guestsDayCount' | 'netSalesDayCount' | 'closedDates' | 'missingDays' | 'days'> {
-  const first = days[0]?.date ?? '';
-  const last = days.at(-1)?.date ?? '';
-  const span = first === '' ? 0 : (Date.parse(last) - Date.parse(first)) / 86_400_000 + 1;
-  return {
-    days: days.length,
-    firstDate: first,
-    lastDate: last,
-    guestsDayCount: days.filter((day) => day.guests !== null).length,
-    netSalesDayCount: days.filter((day) => day.netSalesCents !== null).length,
-    closedDates: days.filter((day) => day.guests === 0 && (day.netSalesCents ?? 0) === 0).map((day) => day.date).slice(0, 60),
-    missingDays: Math.max(0, span - days.length),
-  };
-}
-
 /** A workbook: every sheet is a table of its own; the ones that map to sales are used, in sheet order. */
 async function readXlsx(begin: Extract<ThreadIn, { type: 'begin' }>): Promise<FileOutcome> {
   const parts: Uint8Array[] = [];
@@ -177,9 +183,18 @@ async function readXlsx(begin: Extract<ThreadIn, { type: 'begin' }>): Promise<Fi
   }
   if (primary === null) return { kind: 'kept', outcome: firstOutcome ?? 'not_a_table', report: null };
   const merged = [...days.values()].sort((a, b) => (a.date < b.date ? -1 : 1));
-  return { kind: 'days', days: merged, report: { ...primary, ...totals(merged), rows, sheets, encoding: null } };
+  return { kind: 'days', days: merged, report: { ...primary, ...dayTotals(merged), rows, sheets, encoding: null } };
+}
+
+/** A ZIP, read in place through ranged reads. */
+async function readZipFile(begin: Extract<ThreadIn, { type: 'begin' }>): Promise<FileOutcome> {
+  const outcome = await readArchive(requestRange, begin.sizeBytes, { answers: begin.answers, locationName: begin.locationName, latest: begin.latest });
+  if (outcome.kind === 'question') return outcome;
+  if (outcome.kind === 'kept') return { kind: 'kept', outcome: outcome.outcome, report: null, entries: outcome.entries };
+  return { kind: 'days', days: outcome.days, report: { ...outcome.report, sheets: [], encoding: null }, entries: outcome.entries };
 }
 
 function run(begin: Extract<ThreadIn, { type: 'begin' }>): Promise<FileOutcome> {
+  if (begin.kind === 'zip') return readZipFile(begin);
   return begin.kind === 'text' ? readText(begin) : readXlsx(begin);
 }

@@ -13,14 +13,15 @@ import { scopeForClaimedImport, type OrgScope } from '../access/policy.ts';
 import { utcDay } from '../dates.ts';
 import { DELETED_PERSON } from '../people.ts';
 import { claimNextImport, type ClaimedImport } from '../stores/cross-tenant.ts';
-import type { FileProgress, FileRecord, FileResult } from '../stores/files.ts';
+import type { EntryCounts, FileProgress, FileRecord, FileResult } from '../stores/files.ts';
 import type { ImportRecord } from '../stores/imports.ts';
 import type { TownwiseStores } from '../stores/index.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import { BlobMissingError, type FileBlobs } from './blobs.ts';
 import { cleanCsv } from './clean.ts';
-import { APPLY_BATCH_DAYS, HEAD_BYTES, MAX_ATTEMPTS, PROGRESS_WRITE_MS, READ_TIME_MS, XLSX_READ_BYTES } from './limits.ts';
-import { runParse, type FileOutcome, type ParseInput } from './parse/run.ts';
+import { APPLY_BATCH_DAYS, ENTRY_BATCH, HEAD_BYTES, MAX_ATTEMPTS, PROGRESS_WRITE_MS, READ_TIME_MS, XLSX_READ_BYTES } from './limits.ts';
+import type { EntryRow } from './parse/archive.ts';
+import { runParse, type FileOutcome, type ParseInput, type ParseKind } from './parse/run.ts';
 import { sniff } from './sniff.ts';
 
 export interface FileWorkerDeps {
@@ -62,8 +63,9 @@ function unreadOutcome(file: FileRecord, head: Uint8Array | null): string | null
     case 'xlsx': return file.sizeBytes > XLSX_READ_BYTES ? 'too_large_to_read' : null;
     case 'xls': return 'old_excel';
     case 'doc': return 'old_word';
-    // ZIP archives, PDFs and Word tables are read by later stages; until then they are kept, and say so.
-    case 'zip': case 'pdf': case 'docx': return 'type_not_read';
+    case 'zip': return null;
+    // PDFs and Word tables are read by a later stage; until then they are kept, and say so.
+    case 'pdf': case 'docx': return 'type_not_read';
     case 'other': return (head === null ? null : sniff(file.name, head).outcome) ?? 'type_not_read';
   }
 }
@@ -94,6 +96,15 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
     } catch {
       logger.error({ action: 'sales.uploaded', orgId: scope.orgId, targetId: file.id }, 'townwise.audit_write_failed');
     }
+  }
+
+  /** A ZIP's entry rows, written before the file settles; the counts go on the file. Null for any other file. */
+  async function listEntries(scope: OrgScope, file: FileRecord, rows: readonly EntryRow[] | undefined): Promise<EntryCounts | null> {
+    if (rows === undefined) return null;
+    await stores.fileEntries.replace(scope, file.locationId, file.id, rows, ENTRY_BATCH);
+    const counts = { total: rows.length, used: rows.filter((row) => row.status === 'used').length, kept: rows.filter((row) => row.status === 'kept').length };
+    logger.info({ fileId: file.id, ...counts }, 'townwise.file_entries');
+    return counts;
   }
 
   /** The file's days into tw_sales_days, its cleaned copy, and its result. */
@@ -132,13 +143,16 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
       ...counts, closedDates: report.closedDates, missingDays: report.missingDays, uploadId,
     };
     const readMs = now().getTime() - startedAt.getTime();
+    const entries = await listEntries(scope, file, outcome.entries);
     const settled = await stores.files.settle(scope, file.id, {
       status: 'read', outcome: null, result, report: { ...report, overlap: { days: matched, replaced: replace } },
-      cleanBytes: Buffer.byteLength(csv), readMs,
+      cleanBytes: Buffer.byteLength(csv), readMs, ...(entries === null ? {} : { entries }),
     });
     if (!settled) {
-      // The file was deleted while it was read: its days stay, like any deleted file's, but not its cleaned copy.
+      // The file was deleted while it was read: its days stay, like any deleted file's, but not its cleaned copy or
+      // its entry list.
       await blobs.deleteClean(scope, { locationId: file.locationId, fileId: file.id });
+      await stores.fileEntries.removeForFile(scope, file.id);
       return;
     }
     await stores.imports.applied(scope, record.id);
@@ -164,8 +178,12 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
     const file = await stores.files.startReading(scope, queued.id, now());
     if (file === null) return false;
     const startedAt = now();
-    const kept = async (outcome: string, status: 'kept' | 'failed' = 'kept'): Promise<boolean> => {
-      await stores.files.settle(scope, file.id, { status, outcome, report: null, readMs: now().getTime() - startedAt.getTime() });
+    const kept = async (outcome: string, status: 'kept' | 'failed' = 'kept', rows?: readonly EntryRow[]): Promise<boolean> => {
+      const entries = await listEntries(scope, file, rows);
+      const settled = await stores.files.settle(scope, file.id, {
+        status, outcome, report: null, readMs: now().getTime() - startedAt.getTime(), ...(entries === null ? {} : { entries }),
+      });
+      if (!settled && entries !== null) await stores.fileEntries.removeForFile(scope, file.id);
       if (status === 'kept') await stores.imports.addThroughput(scope, record.id, file.sizeBytes, now().getTime() - startedAt.getTime());
       logger.info({ fileId: file.id, kind: file.kind, outcome }, status === 'kept' ? 'townwise.file_kept' : 'townwise.file_failed');
       return false;
@@ -176,24 +194,29 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
       const unread = unreadOutcome(file, await headOf(scope, file));
       if (unread !== null) return await kept(unread);
       let lastWrite = 0;
+      const kind: ParseKind = file.kind === 'xlsx' || file.kind === 'zip' ? file.kind : 'text';
+      const ref = { locationId: file.locationId, fileId: file.id };
       const outcome = await parse({
-        kind: file.kind === 'xlsx' ? 'xlsx' : 'text',
+        kind,
         sizeBytes: file.sizeBytes,
         answers: file.answers,
         locationName: location.name,
         latest: utcDay(now(), 1),
         replace: file.uploaderRole === 'org_admin',
-        open: (signal) => blobs.openRaw(scope, { locationId: file.locationId, fileId: file.id }, undefined, signal),
+        open: (signal) => blobs.openRaw(scope, ref, undefined, signal),
+        openAt: (offset, signal) => blobs.openRaw(scope, ref, { offset, count: file.sizeBytes - offset }, signal),
         signal: abort.signal,
         onProgress: (done, total) => {
           const at = now().getTime();
           if (at - lastWrite < PROGRESS_WRITE_MS) return;
           lastWrite = at;
-          const progress: FileProgress = { phase: 'reading', done, total, unit: 'bytes', phaseStartedAt: startedAt, updatedAt: now() };
+          const progress: FileProgress = {
+            phase: kind === 'zip' ? 'unpacking' : 'reading', done, total, unit: 'bytes', phaseStartedAt: startedAt, updatedAt: now(),
+          };
           void stores.files.setProgress(scope, file.id, progress).catch(() => undefined);
         },
       });
-      if (outcome.kind === 'kept') return await kept(outcome.outcome);
+      if (outcome.kind === 'kept') return await kept(outcome.outcome, 'kept', outcome.entries);
       if (outcome.kind === 'question') {
         const question = { ...outcome.question, id: randomBytes(8).toString('hex'), fileId: file.id };
         await stores.files.settle(scope, file.id, { status: 'waiting', outcome: null });

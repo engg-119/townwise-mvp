@@ -54,7 +54,13 @@ export interface FileResult {
   readonly uploadId: string;
 }
 
-/** The person's answers to this file's questions, per sheet index ("0" for a text file). */
+/** A ZIP's entry counts, once its entries are listed. */
+export interface EntryCounts { readonly total: number; readonly used: number; readonly kept: number }
+
+/**
+ * The person's answers to this file's questions, per sheet index ("0" for a text file), or per family of a ZIP's tables
+ * (`family:<signature>`).
+ */
 export interface SheetAnswers {
   readonly dateColumn?: number;
   readonly dateOrder?: 'month_first' | 'day_first';
@@ -92,6 +98,7 @@ interface FileFields {
   cleanBytes: number | null;
   rawDeletedAt: Date | null;
   attempts: number;
+  entries: EntryCounts | null;
 }
 
 function fileSchema(): Schema<FileFields> {
@@ -120,6 +127,7 @@ function fileSchema(): Schema<FileFields> {
     cleanBytes: { type: Number, default: null },
     rawDeletedAt: { type: Date, default: null },
     attempts: { type: Number, required: true, default: 0 },
+    entries: { type: Schema.Types.Mixed, default: null },
   }, { strict: 'throw', versionKey: false, read: 'primary', minimize: false });
   schema.index({ orgId: 1, locationId: 1, uploadedAt: -1 });
   schema.index({ orgId: 1, importId: 1, uploadedAt: 1 });
@@ -159,6 +167,7 @@ export interface FileRecord {
   readonly cleanBytes: number | null;
   readonly rawDeletedAt: Date | null;
   readonly attempts: number;
+  readonly entries: EntryCounts | null;
 }
 
 function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
@@ -187,6 +196,7 @@ function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
     cleanBytes: doc.cleanBytes,
     rawDeletedAt: doc.rawDeletedAt,
     attempts: doc.attempts,
+    entries: doc.entries ?? null,
   };
 }
 
@@ -251,11 +261,15 @@ export interface FileStore {
     report?: Record<string, unknown> | null;
     cleanBytes?: number | null;
     readMs?: number | null;
+    entries?: EntryCounts | null;
   }): Promise<boolean>;
   /** "Not sure": the waiting file is kept, unread, with this outcome. False when it was no longer waiting. */
   keepWaiting(scope: OrgScope, fileId: string, outcome: string): Promise<boolean>;
-  /** An answer: merged into the sheet's answers, and the file goes back to the queue. False when it was no longer waiting. */
-  answer(scope: OrgScope, fileId: string, sheet: number, answers: SheetAnswers): Promise<boolean>;
+  /**
+   * An answer: merged into the answers under `key` (a sheet index, or a ZIP family's key), and the file goes back to the
+   * queue. False when it was no longer waiting.
+   */
+  answer(scope: OrgScope, fileId: string, key: string, answers: SheetAnswers): Promise<boolean>;
 }
 
 export function createFileStore(connection: Connection): FileStore {
@@ -381,6 +395,7 @@ export function createFileStore(connection: Connection): FileStore {
       if (input.report !== undefined) set.report = input.report;
       if (input.cleanBytes !== undefined) set.cleanBytes = input.cleanBytes;
       if (input.readMs !== undefined) set.readMs = input.readMs;
+      if (input.entries !== undefined) set.entries = input.entries;
       const result = await File.updateOne({ _id: oid(fileId), orgId: org(scope), status: 'reading' }, { $set: set });
       return result.matchedCount === 1;
     },
@@ -388,9 +403,9 @@ export function createFileStore(connection: Connection): FileStore {
       const result = await File.updateOne({ _id: oid(fileId), orgId: org(scope), status: 'waiting' }, { $set: { status: 'kept', outcome } });
       return result.matchedCount === 1;
     },
-    async answer(scope, fileId, sheet, answers) {
+    async answer(scope, fileId, key, answers) {
       const set: Record<string, unknown> = { status: 'queued', attempts: 0 };
-      for (const [key, value] of Object.entries(answers)) set[`answers.${String(sheet)}.${key}`] = value;
+      for (const [field, value] of Object.entries(answers)) set[`answers.${key}.${field}`] = value;
       const result = await File.updateOne({ _id: oid(fileId), orgId: org(scope), status: 'waiting' }, { $set: set });
       return result.matchedCount === 1;
     },
