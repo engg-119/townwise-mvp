@@ -206,6 +206,15 @@ test('under view-as files show as kinds and dates, with no download or delete, a
   expect(document.body.textContent).not.toContain('march.csv');
 });
 
+test('under view-as no download or delete shows even if a file’s flags allow them', async () => {
+  setup(viewAsMe(ACCESS.admin), FILES.map((file) => ({ ...file, name: null })));
+  const rows = within(await list()).getAllByRole('listitem');
+  for (const row of rows) {
+    const buttons = within(row).queryAllByRole('button').map((button) => button.textContent);
+    expect(buttons.filter((label) => label !== 'See what’s inside')).toEqual([]);
+  }
+});
+
 test('while stored files are off, P12 has no Your files section', async () => {
   setup(meOf(ACCESS.admin), refusal(503, 'files_unavailable'));
   expect(await screen.findByRole('heading', { name: 'Uploads' })).toBeTruthy();

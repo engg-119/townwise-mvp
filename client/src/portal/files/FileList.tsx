@@ -25,9 +25,9 @@ import { CAN_SAVE_FILES, saveFile } from './download';
 // inside, and the actions its flags allow: Download original, Download cleaned CSV, Delete original (keeps the
 // cleaned copy and days) and Delete file (keeps the days). Org admins also get "Delete all originals for this
 // location". Each delete says in words what stays before it runs. Under view-as the API sends no names and no
-// download or delete rights, so the list shows kinds and dates, and "Delete all originals" is disabled in place.
-// Downloads are web only; native says where to download. While stored files are off (503 files_unavailable) the
-// section doesn't show; any other failure shows the error with Try again.
+// download or delete rights, so the list shows kinds and dates, and "Delete all originals" is disabled in place;
+// the rows also check view-as themselves. Downloads are web only; native says where to download. While stored files
+// are off (503 files_unavailable) the section doesn't show; any other failure shows the error with Try again.
 
 const PAGE = 200;
 const READ_ONLY_ID = 'files-ro';
@@ -84,11 +84,15 @@ function FileRow(props: {
 }): React.JSX.Element {
   const { file } = props;
   const { api } = usePortal();
+  const { readOnly } = useReadOnly();
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState<'raw' | 'clean' | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const canRaw = file.canDownloadRaw && file.rawAvailable;
-  const canClean = file.canDownloadClean && file.hasClean;
+  // The API sends every flag false under view-as; the row doesn't rely on that alone.
+  const canRaw = !readOnly && file.canDownloadRaw && file.rawAvailable;
+  const canClean = !readOnly && file.canDownloadClean && file.hasClean;
+  const canDeleteRaw = !readOnly && file.canDeleteRaw && file.rawAvailable;
+  const canDelete = !readOnly && file.canDelete;
 
   const save = (which: 'raw' | 'clean'): void => {
     if (saving !== null) return;
@@ -137,7 +141,7 @@ function FileRow(props: {
             onPress={() => { save('clean'); }}
           />
         ) : null}
-        {file.canDeleteRaw && file.rawAvailable ? (
+        {canDeleteRaw ? (
           <Button
             variant="link"
             label={COPY.deleteRaw}
@@ -145,7 +149,7 @@ function FileRow(props: {
             onPress={() => { props.onConfirm({ kind: 'raw', file }); }}
           />
         ) : null}
-        {file.canDelete ? (
+        {canDelete ? (
           <Button
             variant="link"
             label={COPY.deleteFile}
