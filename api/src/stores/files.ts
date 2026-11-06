@@ -73,6 +73,15 @@ export interface SheetAnswers {
 }
 export type FileAnswers = Readonly<Record<string, SheetAnswers>>;
 
+/** One AI column step answer, as the reader saves it (column indexes only); null when the model could not tell. */
+export interface SavedColumnChoice {
+  readonly guests: number | null;
+  readonly netSales: number | null;
+  readonly confidence: 'high' | 'low';
+}
+/** The AI column step's answers for a file, by a hash of the redacted profile each was asked about. */
+export type FileColumnChoices = Readonly<Record<string, SavedColumnChoice | null>>;
+
 interface FileFields {
   orgId: Types.ObjectId;
   locationId: Types.ObjectId;
@@ -102,6 +111,8 @@ interface FileFields {
   entries?: EntryCounts | null;
   modelCalls?: number;
   costMicroUsd?: number;
+  /** Absent on rows written before the reader saved the AI step's answers. */
+  aiChoices?: FileColumnChoices;
   /** A staff purge found the file busy: its original goes as soon as the reader is done with it. */
   purgeRaw?: boolean;
 }
@@ -135,6 +146,7 @@ function fileSchema(): Schema<FileFields> {
     entries: { type: Schema.Types.Mixed, default: null },
     modelCalls: { type: Number, required: true, default: 0 },
     costMicroUsd: { type: Number, required: true, default: 0 },
+    aiChoices: { type: Schema.Types.Mixed, default: () => ({}) },
     purgeRaw: { type: Boolean },
   }, { strict: 'throw', versionKey: false, read: 'primary', minimize: false });
   schema.index({ orgId: 1, locationId: 1, uploadedAt: -1 });
@@ -179,6 +191,8 @@ export interface FileRecord {
   /** The AI column step's calls for this file, and their cost in micro-dollars. */
   readonly modelCalls: number;
   readonly costMicroUsd: number;
+  /** Its answers, so a re-read (after a later question, or a retry) asks the model nothing it already answered. */
+  readonly aiChoices: FileColumnChoices;
   readonly purgeRaw: boolean;
 }
 
@@ -211,6 +225,7 @@ function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
     entries: doc.entries ?? null,
     modelCalls: doc.modelCalls ?? 0,
     costMicroUsd: doc.costMicroUsd ?? 0,
+    aiChoices: doc.aiChoices ?? {},
     purgeRaw: doc.purgeRaw === true,
   };
 }
@@ -278,8 +293,8 @@ export interface FileStore {
   startReading(scope: OrgScope, fileId: string, now: Date): Promise<FileRecord | null>;
   setProgress(scope: OrgScope, fileId: string, progress: FileProgress): Promise<void>;
   setUploadId(scope: OrgScope, fileId: string, uploadId: string): Promise<void>;
-  /** One AI column step call for the file, and what it cost. */
-  addModelCall(scope: OrgScope, fileId: string, costMicroUsd: number): Promise<void>;
+  /** One AI column step call for the file, what it cost and, when the model answered, its answer under `saved.key`. */
+  addModelCall(scope: OrgScope, fileId: string, costMicroUsd: number, saved?: { key: string; choice: SavedColumnChoice | null }): Promise<void>;
   /** The reader's last word on a file: read, kept, failed or waiting (a question). */
   settle(scope: OrgScope, fileId: string, input: {
     status: 'read' | 'kept' | 'failed' | 'waiting' | 'queued';
@@ -440,8 +455,10 @@ export function createFileStore(connection: Connection): FileStore {
     async setUploadId(scope, fileId, uploadId) {
       await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, { $set: { uploadId: oid(uploadId) } });
     },
-    async addModelCall(scope, fileId, costMicroUsd) {
-      await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, { $inc: { modelCalls: 1, costMicroUsd } });
+    async addModelCall(scope, fileId, costMicroUsd, saved) {
+      const update: Record<string, unknown> = { $inc: { modelCalls: 1, costMicroUsd } };
+      if (saved !== undefined) update.$set = { [`aiChoices.${saved.key}`]: saved.choice };
+      await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, update);
     },
     async settle(scope, fileId, input) {
       const set: Record<string, unknown> = { status: input.status, outcome: input.outcome, progress: null };

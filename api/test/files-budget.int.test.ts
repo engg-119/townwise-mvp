@@ -102,6 +102,26 @@ describe('the AI column step', () => {
     expect(server.logs.join('\n')).toContain('"errType":"InternalServerError"');
   });
 
+  it('remembers a confident choice, so a later question and its answer make no second call and keep it the AI’s', async () => {
+    answers = [{ kind: 'answered', choice: { guests: 2, netSales: 3, confidence: 'high' }, costMicroUsd: 40_000 }];
+    const located = 'Business Date,Location,Total A,Total B\n2025-01-01,North,41,7391.58\n2025-01-01,South,37,6284.17\n'
+      + '2025-01-02,North,40,7000.00\n2025-01-02,South,30,6000.00\n';
+    const { file, done, locationId } = await readOne(located);
+    expect(done).toMatchObject({ status: 'waiting', question: { kind: 'location_value' } });
+    const north = done.question?.options.find((option) => option.label === 'North')?.id;
+    const res = await call(server, `/api/org/locations/${locationId}/imports/${done.id}/answer`, {
+      session: member, json: { questionId: done.question?.id, choice: north },
+    });
+    expect(res.status).toBe(200);
+    await server.reader?.settled();
+    const detail = await (await call(server, `/api/org/locations/${locationId}/files/${file.id}`, { session: member })).json() as { file: FileView; report: Record<string, unknown> };
+    expect(detail.file).toMatchObject({ status: 'read', result: { dayCount: 2 } });
+    expect(detail.report.decidedBy).toMatchObject({ guests: 'ai', netSales: 'ai', location: 'you' });
+    expect(asked).toHaveLength(1);
+    expect(await server.connection.collection('tw_files').findOne({ _id: new Types.ObjectId(file.id) })).toMatchObject({ modelCalls: 1, costMicroUsd: 40_000 });
+    expect(await usage()).toMatchObject({ costMicroUsd: 40_000 });
+  });
+
   it('never asks the model when the rules find the columns', async () => {
     await readOne('Date,Guests,Net Sales\n2025-01-01,4,40.00\n');
     expect(asked).toHaveLength(0);

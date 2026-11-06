@@ -3,7 +3,7 @@
 // days through the existing sales-days store. One file per replica at a time; one active import per location, so a
 // location's files are never read concurrently. Shaped as createFileWorker(deps) so it can move to a job unchanged.
 // Logs carry ids, kinds, counts and codes only: never a file name, header, sheet name, location value or figure.
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 import type { AuthStores } from '@ckeith26/auth';
 import type { Logger } from '@ckeith26/server-core';
@@ -112,7 +112,9 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
   /**
    * The AI column step for one file, within its bounds: 2 calls a file (5 a ZIP, at most one a family), 20 an import,
    * and the organization's monthly budget, checked before each call and charged after it whatever its outcome. Off,
-   * spent or failed, it answers null and the person is asked instead. Never retried beyond the SDK.
+   * spent or failed, it answers null and the person is asked instead. Never retried beyond the SDK. An answer is saved
+   * on the file by a hash of the profile, so a re-read of the same table (after a later question, or a retry) reuses it
+   * without a call: the mapping the person answered against stays the one used, and stays the AI's.
    */
   function columnStep(scope: OrgScope, record: ImportRecord, file: FileRecord): ((profile: RedactedProfile) => Promise<ColumnChoice | null>) | undefined {
     const extract = deps.extract;
@@ -120,7 +122,11 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
     if (extract === undefined || budget <= 0) return undefined;
     const perFile = file.kind === 'zip' ? MODEL_CALLS_PER_ZIP : MODEL_CALLS_PER_FILE;
     let calls = file.modelCalls;
+    const saved = new Map(Object.entries(file.aiChoices));
     return async (profile) => {
+      const key = createHash('sha256').update(JSON.stringify(profile)).digest('hex');
+      const known = saved.get(key);
+      if (known !== undefined) return known;
       if (calls >= perFile) return null;
       const others = (await stores.files.inImport(scope, record.id)).reduce((sum, other) => sum + (other.id === file.id ? 0 : other.modelCalls), 0);
       if (others + calls >= MODEL_CALLS_PER_IMPORT) return null;
@@ -133,8 +139,10 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
         await stores.files.addModelCall(scope, file.id, 0);
         return null;
       }
+      const choice = result.choice === null ? null : { guests: result.choice.guests, netSales: result.choice.netSales, confidence: result.choice.confidence };
+      saved.set(key, choice);
       await stores.filesUsage.add(scope, month, result.costMicroUsd, now());
-      await stores.files.addModelCall(scope, file.id, result.costMicroUsd);
+      await stores.files.addModelCall(scope, file.id, result.costMicroUsd, { key, choice });
       logger.info({ fileId: file.id, costMicroUsd: result.costMicroUsd, answered: result.choice !== null }, 'townwise.extract_model_call');
       return result.choice;
     };
