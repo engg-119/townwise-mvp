@@ -64,6 +64,8 @@ export const viewAsSchema = z.object({
 });
 export type ViewAs = z.infer<typeof viewAsSchema>;
 
+export const welcomeSchema = z.object({ firstName: z.string().nullable(), restaurant: z.string() });
+
 /** GET /api/me, and the answer of join, decline, access requests and view-as start and end. */
 export const meResponseSchema = z.object({
   /** Always the signed-in person: the staff member during view-as. */
@@ -72,6 +74,8 @@ export const meResponseSchema = z.object({
   access: accessSchema,
   viewAs: viewAsSchema.nullable(),
   staff: z.object({ verifiedUntil: z.string() }).nullable(),
+  /** GET /api/me only: the first visit after approval (spec 15.8). Other answers carry null. */
+  welcome: welcomeSchema.nullable().optional(),
 });
 export type MeResponse = z.infer<typeof meResponseSchema>;
 
