@@ -18,6 +18,8 @@ const PATH = '/api/admin/orgs/o1';
 
 function serve(api: ConsoleApi, detail: unknown): void {
   api.routes[`GET ${PATH}`] = () => detail;
+  // U13B: the Forecasts section reads the organization's forecast runs.
+  api.routes[`GET ${PATH}/forecast-runs`] = () => ({ runs: [] });
 }
 
 function gets(api: ConsoleApi): number {
@@ -323,6 +325,8 @@ describe('a change that saved, then the page couldn’t read the organization ag
     let next: unknown = orgDetail();
     let failing = false;
     api.routes[`GET ${PATH}`] = () => (failing ? offline() : next);
+    // U13B: the Forecasts section's read, which this failure leaves alone.
+    api.routes[`GET ${PATH}/forecast-runs`] = () => ({ runs: [] });
     return { fail: () => { failing = true; }, heal: (detail) => { failing = false; next = detail; } };
   }
 
@@ -522,4 +526,18 @@ describe('a change that saved, then a read that finds the organization deleted, 
     expect(document.activeElement?.contains(line)).toBe(true);
     expect(writes(api)).toHaveLength(1);
   });
+});
+
+test('U13B: the Forecasts section sits after the locations, says drafts stay hidden until published, and offers the import', async () => {
+  const api = consoleApi();
+  serve(api, orgDetail());
+  renderAt('/admin/orgs/o1', api);
+  expect(await screen.findByRole('heading', { name: 'Forecasts' })).toBeTruthy();
+  expect(screen.getByText(`A forecast is a draft until you publish it. ${NAME}’s members and TownwiseAI see only published forecasts, never the model. Each import, publish, withdrawal and deletion is listed in ${NAME}’s Townwise staff activity.`)).toBeTruthy();
+  expect(await screen.findByText('No forecast imported for Hanover.')).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Import a forecast' })).toBeTruthy();
+  const headings = screen.getAllByRole('heading').map((heading) => heading.textContent);
+  expect(headings.indexOf('Forecasts')).toBeGreaterThan(headings.indexOf('Locations'));
+  expect(headings.indexOf('Forecasts')).toBeLessThan(headings.indexOf('Recent activity'));
+  expect(api.calls.some((call) => call.method === 'GET' && call.path === `${PATH}/forecast-runs`)).toBe(true);
 });
