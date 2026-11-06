@@ -27,10 +27,10 @@ function days(count: number): string {
 export function questionCopy(question: Question, locationName: string): QuestionCopy {
   if (question.kind === 'weekday') {
     const name = weekdayName(question.weekday);
-    const range = rangeText(question.startDate, question.endDate);
+    const range = rangeText(question.from, question.to);
     return {
       heading: `Are you closed on ${name}?`,
-      context: `${locationName} has no sales on ${formatCount(question.missing)} of the last ${formatCount(question.weeks)} ${name}.`,
+      context: `${locationName} has no sales on ${formatCount(question.noSalesCount)} of the ${formatCount(question.weekdayCount)} ${name} in weeks with sales on other days.`,
       answers: [
         { value: 'closed', label: `Yes, closed ${name}` },
         { value: 'open', label: 'No, the data is missing' },
@@ -39,10 +39,10 @@ export function questionCopy(question: Question, locationName: string): Question
       help: `Yes saves a closure note for ${name} from ${range}. Any answer stops this question.`,
     };
   }
-  const one = question.startDate === question.endDate;
+  const one = question.from === question.to;
   return {
-    heading: one ? `Were you closed on ${rangeText(question.startDate, question.endDate)}?` : `Were you closed ${rangeText(question.startDate, question.endDate)}?`,
-    context: one ? 'There are no sales for this day.' : `There are no sales for these ${days(question.days)}.`,
+    heading: one ? `Were you closed on ${rangeText(question.from, question.to)}?` : `Were you closed ${rangeText(question.from, question.to)}?`,
+    context: one ? 'There are no sales for this day.' : `There are no sales for these ${days(question.dayCount)}.`,
     answers: [
       { value: 'closed', label: 'Yes, we were closed' },
       { value: 'open', label: 'No, the data is missing' },

@@ -235,14 +235,18 @@ export function addNote(api: ApiClient, locationId: string, note: NoteProposal):
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
+// The shapes api/README.md (Tuning chat) and docs/portal/tuning-chat.md section 8 document.
 const questionSchema = z.discriminatedUnion('kind', [
-  /** A weekday with no sales on most of its weeks: `missing` of the last `weeks` of them, from `startDate` to `endDate`. */
+  /**
+   * A weekday with no sales on most of its counted days, from `from` (the first day with sales in the window) to `to`:
+   * `noSalesCount` of the `weekdayCount` days of that weekday in weeks with sales on other days.
+   */
   z.object({
-    id: z.string(), kind: z.literal('weekday'), weekday: z.number().int().min(0).max(6), startDate: dateSchema, endDate: dateSchema,
-    missing: z.number().int(), weeks: z.number().int(),
+    id: z.string(), kind: z.literal('weekday'), weekday: z.number().int().min(0).max(6), from: dateSchema, to: dateSchema,
+    noSalesCount: z.number().int(), weekdayCount: z.number().int(),
   }),
-  /** A run of `days` days with no sales and no note. */
-  z.object({ id: z.string(), kind: z.literal('gap'), startDate: dateSchema, endDate: dateSchema, days: z.number().int() }),
+  /** A run of `dayCount` days with no sales and no note. */
+  z.object({ id: z.string(), kind: z.literal('gap'), from: dateSchema, to: dateSchema, dayCount: z.number().int() }),
 ]);
 export type Question = z.infer<typeof questionSchema>;
 

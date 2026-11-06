@@ -262,7 +262,7 @@ describe('the side panel at 1280px', () => {
     expect(within(side).getByRole('heading', { name: 'Questions for you' })).toBeTruthy();
     expect(await within(side).findByText('2 open')).toBeTruthy();
     expect(within(side).getByRole('heading', { name: 'Are you closed on Mondays?' })).toBeTruthy();
-    expect(within(side).getByText('Main Street Bar has no sales on 41 of the last 52 Mondays.')).toBeTruthy();
+    expect(within(side).getByText('Main Street Bar has no sales on 41 of the 52 Mondays in weeks with sales on other days.')).toBeTruthy();
     expect(within(side).getByText('Yes saves a closure note for Mondays from Nov 3, 2025 to Nov 2, 2026. Any answer stops this question.')).toBeTruthy();
     expect(within(side).getByRole('heading', { name: 'Were you closed Feb 1 to Feb 3, 2026?' })).toBeTruthy();
     expect(within(side).getByText('There are no sales for these 3 days.')).toBeTruthy();

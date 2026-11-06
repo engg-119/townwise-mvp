@@ -1,6 +1,6 @@
-import { chatEventOf } from '../../src/chat/api';
+import { chatEventOf, loadAgentPanel } from '../../src/chat/api';
 import { dayText, formatDate, formatDates, guestsText, rangeText, weekdayName, weekdaysText } from '../../src/chat/format';
-import { PROPOSAL } from '../helpers/chat';
+import { fakeChatApi, PROPOSAL } from '../helpers/chat';
 
 test('a proposal reads in plain words', () => {
   expect(formatDate('2026-03-01')).toBe('March 1, 2026');
@@ -40,4 +40,13 @@ test('stream events are read by type; unknown events and data that does not matc
   expect(chatEventOf({ event: 'tool', data: '{"id":"t1","name":"list_notes","state":"later"}' })).toBeNull();
   expect(chatEventOf({ event: 'text', data: 'not json' })).toBeNull();
   expect(chatEventOf({ event: 'message', data: '{}' })).toBeNull();
+});
+
+test('the side panel reads questions in the shape the API documents', async () => {
+  // Copied from api/README.md (Tuning chat) and docs/portal/tuning-chat.md section 8, so the two sides can't drift.
+  const api = fakeChatApi();
+  const weekday = { id: 'weekday_1_2026-01-05_2026-10-26', kind: 'weekday', weekday: 1, from: '2026-01-05', to: '2026-10-26', noSalesCount: 30, weekdayCount: 40 };
+  const gap = { id: 'gap_2026-03-02_2026-03-04', kind: 'gap', from: '2026-03-02', to: '2026-03-04', dayCount: 3 };
+  api.panel = { questions: [weekday, gap], activity: [] };
+  expect(await loadAgentPanel(api, 'l1')).toEqual({ questions: [weekday, gap], activity: [] });
 });

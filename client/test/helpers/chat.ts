@@ -57,8 +57,9 @@ export function noteOf(content: Record<string, unknown>, id = 'n1'): Record<stri
 
 export const PANEL = {
   questions: [
-    { id: 'weekday_1_2025-11-03_2026-11-02', kind: 'weekday', weekday: 1, startDate: '2025-11-03', endDate: '2026-11-02', missing: 41, weeks: 52 },
-    { id: 'gap_2026-02-01_2026-02-03', kind: 'gap', startDate: '2026-02-01', endDate: '2026-02-03', days: 3 },
+    // The shapes api/README.md (Tuning chat) documents for GET .../agent.
+    { id: 'weekday_1_2025-11-03_2026-11-02', kind: 'weekday', weekday: 1, from: '2025-11-03', to: '2026-11-02', noSalesCount: 41, weekdayCount: 52 },
+    { id: 'gap_2026-02-01_2026-02-03', kind: 'gap', from: '2026-02-01', to: '2026-02-03', dayCount: 3 },
     // A kind this client doesn't know yet: left out.
     { id: 'later_0001', kind: 'something_later' },
   ],
