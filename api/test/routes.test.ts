@@ -58,6 +58,15 @@ describe('route table', () => {
     expect(() => { assertRouteTable(TOWNWISE_ROUTES); }).not.toThrow();
   });
 
+  it('serves sales history and the town calendar as member GETs with no body and no route limiter (spec 10.10)', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id === 'org.sales.history' || r.id === 'org.calendar.get')
+      .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));
+    expect(rows).toEqual([
+      { id: 'org.sales.history', method: 'GET', path: '/org/locations/:locationId/sales/history', policy: 'member', bodyLimit: 'none', limiter: undefined },
+      { id: 'org.calendar.get', method: 'GET', path: '/org/locations/:locationId/calendar', policy: 'member', bodyLimit: 'none', limiter: undefined },
+    ]);
+  });
+
   it('boot refuses a duplicate method and path', () => {
     expect(() => { assertRouteTable([route({ id: 'a' }), route({ id: 'b' })]); }).toThrow(ConfigError);
   });

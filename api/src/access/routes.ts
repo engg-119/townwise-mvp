@@ -9,6 +9,7 @@ import {
   addOrgMembers, approveRequest, changeOrgMemberRole, createOrg, getOrg, listOrgs, listPeople, listRequests, lookupPerson,
   queryAudit, rejectRequest, removeOrgMember, signOutEverywhere, updateOrg,
 } from '../handlers/admin.ts';
+import { getLocationCalendar } from '../handlers/calendar.ts';
 import { deleteConversation, getChat, getConversation, postTurn } from '../handlers/chat.ts';
 import { deleteOrg, deletePerson } from '../handlers/deletion.ts';
 import { createLocation, deleteLocation, getOwnOrg, updateLocation } from '../handlers/locations.ts';
@@ -17,7 +18,7 @@ import { createNote, deleteNote, listNotes, updateNote } from '../handlers/notes
 import { getStaffActivity, leaveOrg, renameOrg } from '../handlers/org.ts';
 import { placesAutocomplete, placesDetails } from '../handlers/places.ts';
 import { createAccessRequest } from '../handlers/requests.ts';
-import { deleteSales, getSales, getSalesDays, uploadSales } from '../handlers/sales.ts';
+import { deleteSales, getSales, getSalesDays, getSalesHistory, uploadSales } from '../handlers/sales.ts';
 import { addMembers, changeRole, listMembers, removeMember } from '../handlers/team.ts';
 import { getTownProfile } from '../handlers/towns.ts';
 import { endViewAs, startViewAs } from '../handlers/view-as.ts';
@@ -81,6 +82,15 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.sales.days', method: 'GET', path: '/org/locations/:locationId/sales/days', policy: 'member', bodyLimit: 'none',
     handler: getSalesDays,
+  },
+  // Spec 10.10: sales history and the town calendar.
+  {
+    id: 'org.sales.history', method: 'GET', path: '/org/locations/:locationId/sales/history', policy: 'member',
+    bodyLimit: 'none', handler: getSalesHistory,
+  },
+  {
+    id: 'org.calendar.get', method: 'GET', path: '/org/locations/:locationId/calendar', policy: 'member', bodyLimit: 'none',
+    handler: getLocationCalendar,
   },
   {
     id: 'org.sales.upload', method: 'POST', path: '/org/locations/:locationId/sales/uploads', policy: 'member',

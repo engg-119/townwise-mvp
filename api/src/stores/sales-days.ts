@@ -45,6 +45,9 @@ export function salesDayModel(connection: Connection): Model<SalesDayFields> {
 /** Spec 10.1. */
 export interface SalesDay { date: string; guests: number | null; netSalesCents: number | null }
 
+/** A stored day with the upload that last wrote it (spec 10.10, the history route). */
+export interface SalesDayWithUpload extends SalesDay { uploadId: string }
+
 /** Spec 10.1. */
 export interface Coverage {
   dayCount: number;
@@ -85,6 +88,8 @@ export interface SalesDayStore {
   months(scope: OrgScope, locationId: string): Promise<SalesMonth[]>;
   /** The days from `from` to `to`, inclusive, oldest first. */
   days(scope: OrgScope, locationId: string, range: { from: string; to: string }): Promise<SalesDay[]>;
+  /** Every stored day of the location, oldest first, each with the upload that last wrote it. */
+  history(scope: OrgScope, locationId: string): Promise<SalesDayWithUpload[]>;
   /**
    * Spec 11.4 step 2: one unordered bulkWrite of upserts keyed by { orgId, locationId, date }. `replace` sets each
    * day in full, nulls included; otherwise each day is written only if it does not exist yet. `matched` counts the
@@ -169,6 +174,15 @@ export function createSalesDayStore(connection: Connection): SalesDayStore {
         .sort({ date: 1 })
         .lean();
       return docs.map((doc) => ({ date: doc.date, guests: doc.guests ?? null, netSalesCents: doc.netSalesCents ?? null }));
+    },
+    async history(scope, locationId) {
+      const docs = await SalesDay
+        .find(ofLocation(scope, locationId), { _id: 0, date: 1, guests: 1, netSalesCents: 1, uploadId: 1 })
+        .sort({ date: 1 })
+        .lean();
+      return docs.map((doc) => ({
+        date: doc.date, guests: doc.guests ?? null, netSalesCents: doc.netSalesCents ?? null, uploadId: doc.uploadId.toHexString(),
+      }));
     },
     async apply(scope, locationId, input) {
       const key = ofLocation(scope, locationId);

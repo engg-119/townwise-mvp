@@ -128,13 +128,15 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
     'org.notes.update': NOTE,
     'org.chat.turn': { content: 'Hello from A' },
   };
-  const QUERY: Record<string, string> = { 'org.sales.days': '?from=2026-01-01&to=2026-05-31' };
+  const QUERY: Record<string, string> = {
+    'org.sales.days': '?from=2026-01-01&to=2026-05-31', 'org.calendar.get': '?from=2026-01-01&to=2026-05-31',
+  };
 
   it('covers the team, location, sales, note and tuning chat routes', () => {
     expect(tenantRoutesWithIds.map((route) => route.id)).toEqual(expect.arrayContaining([
       'org.members.update', 'org.members.remove', 'org.locations.update', 'org.locations.remove', 'org.sales.get',
       'org.sales.days', 'org.sales.upload', 'org.sales.remove', 'org.notes.list', 'org.notes.create', 'org.notes.update',
-      'org.notes.remove', 'org.chat.get', 'org.chat.conversation', 'org.chat.turn', 'org.chat.remove',
+      'org.notes.remove', 'org.sales.history', 'org.calendar.get', 'org.chat.get', 'org.chat.conversation', 'org.chat.turn', 'org.chat.remove',
     ]));
   });
 
