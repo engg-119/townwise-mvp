@@ -211,3 +211,12 @@ test('while stored files are off, P12 has no Your files section', async () => {
   expect(await screen.findByRole('heading', { name: 'Uploads' })).toBeTruthy();
   await waitFor(() => { expect(screen.queryByRole('heading', { name: 'Your files' })).toBeNull(); });
 });
+
+test('any other failure to list shows Your files with the error and Try again, then the list', async () => {
+  const fake = setup(meOf(ACCESS.admin), refusal(503, 'storage_unavailable'));
+  await screen.findByRole('heading', { name: 'Your files' });
+  expect(screen.getByText('Townwise isn’t responding. Try again in a minute.')).toBeTruthy();
+  fake.lists[''] = FILES;
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  expect(within(await screen.findByRole('list', { name: 'Your files' })).getAllByRole('listitem')).toHaveLength(3);
+});

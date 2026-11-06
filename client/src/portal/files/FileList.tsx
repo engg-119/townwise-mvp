@@ -27,7 +27,7 @@ import { CAN_SAVE_FILES, saveFile } from './download';
 // location". Each delete says in words what stays before it runs. Under view-as the API sends no names and no
 // download or delete rights, so the list shows kinds and dates, and "Delete all originals" is disabled in place.
 // Downloads are web only; native says where to download. While stored files are off (503 files_unavailable) the
-// section doesn't show.
+// section doesn't show; any other failure shows the error with Try again.
 
 const PAGE = 200;
 const READ_ONLY_ID = 'files-ro';
@@ -37,9 +37,10 @@ type Confirm =
   | { kind: 'raw'; file: FileView }
   | { kind: 'all' };
 
-/** No list to show: files are off (503), or the location went away (404, which its own page says). */
+/** No list to show: files are off (503 files_unavailable), or the location went away (404, which its own page says). */
 function hidden(error: unknown): boolean {
-  return error instanceof ApiError && error.kind === 'http' && (error.status === 503 || error.status === 404);
+  if (!(error instanceof ApiError) || error.kind !== 'http') return false;
+  return (error.status === 503 && error.code === 'files_unavailable') || error.status === 404;
 }
 
 function Entries(props: { locationId: string; file: FileView }): React.JSX.Element {
