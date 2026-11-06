@@ -1047,6 +1047,55 @@ All under `/api/org/locations/:locationId`, all members, all 503 `files_unavaila
 - `GET .../chat/:conversationId` shows each proposal's `status` (`open`, `saved` or `dismissed`) and `noteId`. One with no record reads as saved when a note the author wrote at the location says exactly the same, so a proposal added with the notes route is not offered twice; a colleague's note never counts (`tuning-chat.md` section 2, [CONFIRM]).
 - Logged as `townwise.chat_proposal { orgId, locationId, conversationId, status, edited }`, never the note's text.
 
+### 10.13 Estimates
+
+People in town and "How Townwise estimates" (13.2). Both are `member` GETs in `TOWNWISE_ROUTES` with no body and no route limiter (`app:api-ceiling` still applies), allowed during view-as, where the chain logs `townwise.view_as_read`. Neither handler logs or audits anything, and nothing is stored. The build contract, with every field, is `docs/portal/estimates.md`; the forecast and staff routes arrive with forecast runs (14).
+
+| Method and path | Policy | Request | Success | Extra errors |
+|---|---|---|---|---|
+| `GET /api/org/locations/:locationId/people-in-town?from=&to=` | member | `from` and `to` as `YYYY-MM-DD`, exactly those two keys; `from` on or after 2010-01-01; `from <= to`; at most 92 days counting both ends; `to` at most 400 days after the server’s UTC day | 200 `PeopleInTownWindow` | 400 `invalid_request`, with no field details; 404 |
+| `GET /api/org/locations/:locationId/estimates/about` | member | | 200 `EstimatesAbout` | 400 (malformed id); 404 |
+
+```ts
+interface PeopleInTownWindow {
+  available: boolean;                  // false only for a town outside the twelve
+  reason: 'town_not_researched' | null;
+  from: string; to: string;
+  town: { name: string; state: string; kind: 'college' | 'seasonal' | 'event' | null };
+  timeZone: string;                    // the town's IANA zone
+  periods: {                           // consecutive days with identical components, merged
+    from: string; to: string; fromWeekday: Weekday; toWeekday: Weekday;
+    termState: 'in_session' | 'finals' | 'between_terms' | 'summer_session' | 'unknown';
+    termLabel: string | null;          // 'Fall term classes', 'Between terms (from the term dates)'
+    termSourceIds: string[];
+    headcount: { low: number; high: number; sourceIds: string[]; excludes: string[] } | null;
+    headcountWhy: 'no_population' | 'visitors_unknown' | 'no_term_dates' | 'no_enrollment' | null;
+    events: { id: string; title: string; kind: 'event' | 'holiday'; attendanceHigh: number | null; sourceIds: string[] }[];
+  }[];
+  season: { month: string; countyFoodServiceJobsIndex: number; baseYear: number; county: string; sourceIds: string[] }[];
+  visitors: { month: string; label: string; perDayAverage: number; sourceIds: string[] }[];
+  yourHistory: {                       // this location's open regular days with a known term state
+    metric: 'guests' | 'netSales';     // mean: whole guests, or whole US dollars
+    cells: { state: TermState; weekday: Weekday; days: number; mean: number | null }[];   // mean null under 3 days
+    first: string | null; last: string | null;
+  };
+  sources: { id: string; label: string; url: string; confidence: 'high' | 'medium' | 'low' | null }[];
+  caveats: string[];
+}
+
+interface EstimatesAbout {
+  version: string;
+  card: { estimates: string; inputs: string[]; cannotSee: string[]; limits: string[]; checked: string; whoCanSee: string };
+  location: { name: string; town: { name: string; state: string } };
+  today: { date: string; weekday: Weekday; timeZone: string; approximate: boolean };
+  forecast: { run: null; live: null };                       // until forecast runs (14)
+  calendar: { researched: boolean; covers: { from: string; to: string } | null };
+  people: { headcountInputs: ('residents' | 'studentHousing' | 'enrollment' | 'housingCloses' | 'eventAttendance' | 'visitors')[]; sources: PeopleSource[] };
+}
+```
+
+TownwiseAI reads the same window through `get_people_in_town` and the calendar through `get_town_calendar` (`tuning-chat.md` section 4), and its "today" is the town's local date (13.2). Home and Analytics keep the device's local date; both are Eastern for the twelve towns.
+
 ---
 
 ## 11. Upload format and validation
@@ -1234,6 +1283,20 @@ Term entries follow one convention, which the term state reads: `kind: 'term'`, 
 `townCalendarCovers(townId)` is the span of the town’s researched events (key dates and entries) over all years, or null; `researched` is true when it is not null. Hanover covers 2025-01-06 to 2027-01-05, with only key dates after fall 2026 finals. A town outside the twelve, and a listed town with nothing researched (Nantucket), get holidays only.
 
 Headcount inputs (residents, students in college housing, enrollment, whether dorms close between terms) are not part of the calendar. None is researched yet for any town; they stay empty, and say so, until a teammate researches them with a source for each number (13.2).
+
+### 13.2 People in town
+
+Who is likely in a location's town each day, from public sources, in `api/src/people-in-town/` (pure, stored nowhere), for the people in town route (10.13), Home's month card and TownwiseAI. It never invents a number: a headcount is printed only when every input to it has a stored source, and otherwise is null with the reason.
+
+- **Term state**, from the calendar's term entries (13.1 convention): `in_session` when a classes entry covers the day (`summer_session` for summer classes, when most of the college is away), `finals` when a finals entry does, `between_terms` only when the last entry before the day is a finals entry and the next one after it a classes entry, and `unknown` otherwise, including the days between classes and finals and any day outside the researched span. Hanover's calendar ends with fall 2026 finals, so from Nov 26, 2026 its days read `unknown` until the winter 2027 term is added.
+- **Events and holidays** from the calendar, each with its sources; term and season entries are context, never events.
+- **Season**: the county’s 2024 food-service jobs index for each month (Section 13’s data, labelled as employment, not people).
+- **Headcount** (`api/src/people-in-town/estimate.ts`), only for a college town with a researched population: residents plus or minus their 90% margin in session and during finals; between terms, low minus enrollment and high minus students in college housing when housing is known to close; in the summer session, low minus enrollment; an event with a researched attendance figure raises only the high end (attendees may already live in town), and one without is listed as left out. Low is rounded down and high up to the nearest 100, never below 0. No multipliers, shares or fitted constants. Seasonal and event towns get none in v1 (`visitors_unknown`): no public source turns visits into people present on a day.
+- **Researched inputs** (`api/src/people-in-town/sources.ts`): resident population with its margin, students in college housing, enrollment (one institution per town), whether housing closes between terms, event attendance and visitor counts, each with a source id whose source has a label, an https URL, the date retrieved and a confidence. Empty for every town today (owner decision, 2026-11-05); `api/test/people-sources.test.ts` holds the rules a filled entry must pass.
+- **Your history by term state**: the location’s mean guests (net sales, in whole dollars, when no day has guests) by term state and weekday over its open regular days, with day counts; a cell under 3 days has no mean. Open regular uses the client's day classes (closed, noted, holiday, event, regular), pinned on both sides by the shared fixture `day-classes.json`.
+- **Sources and caveats**: every number names source ids that resolve in `sources` (`bls-qcew` for the jobs index, `cal-{n}` for calendar sources, researched ids as given); caveats are fixed sentences chosen by which inputs were used.
+- **Today** for TownwiseAI is the town’s local date (`api/src/time-zones.ts`): the twelve towns are `America/New_York`; another town gets its state's most populous zone, marked approximate in the thirteen states split between two.
+- **Honest gaps**: with no headcount, Home's card says “Townwise can’t put a number on how many people are in {town} yet.” with a Planned tag; the model card says no forecast exists yet with an In progress tag, how far the town's calendar is researched, and that no public count is researched; a town outside the twelve says Townwise hasn’t researched it.
 
 ---
 
