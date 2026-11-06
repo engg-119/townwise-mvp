@@ -505,6 +505,8 @@ export function useTuningChat(api: ApiClient, locationId: string, onNoteAdded?: 
       const last = message.parts.at(-1);
       if (part.type === 'text') message.parts.push({ type: 'text', key: nextKey(), text: part.text });
       else if (part.type === 'tool') {
+        // As while it streamed: a propose_note call that got an error shows nothing.
+        if (isHiddenTool(part.name)) continue;
         const step: ToolStep = { id: part.id, name: part.name, state: part.state, input: part.input, result: part.result };
         if (last?.type === 'tools') last.steps.push(step);
         else message.parts.push({ type: 'tools', key: nextKey(), steps: [step] });

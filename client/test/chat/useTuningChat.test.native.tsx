@@ -478,6 +478,28 @@ test('opening a conversation replays its parts and what became of each proposal;
   expect(chat.current.state).toMatchObject({ conversationId: null, messages: [] });
 });
 
+test('a propose_note call that got an error replays hidden, as it streamed', async () => {
+  const api = fakeChatApi();
+  const failed = { type: 'tool', id: 'toolu_test_0003', name: 'propose_note', state: 'error', input: null, result: null };
+  const [asked] = CONVERSATION.messages;
+  api.conversation = {
+    ...CONVERSATION,
+    messages: [asked, {
+      role: 'assistant', text: 'Last December you were open every day.', proposals: [], at: '2026-11-02T15:00:00.000Z',
+      parts: [
+        { type: 'text', text: 'Last December you were open every day.' }, { type: 'tool', state: 'done', ...SALES_STEP }, failed,
+        { type: 'text', text: 'I couldn’t write that note.' }, failed,
+      ],
+    }],
+  };
+  const chat = await ready(api);
+  await act(() => { chat.current.openConversation('c1'); });
+  await waitFor(() => { expect(chat.current.state.conversationLoading).toBe(false); });
+  const answered = chat.current.state.messages[1];
+  expect(answered?.parts.map((part) => part.type)).toEqual(['text', 'tools', 'text']);
+  expect(answered === undefined ? [] : stepsOf(answered)).toEqual([{ ...SALES_STEP, state: 'done' }]);
+});
+
 test('deleting a conversation removes it from the list, and deleting the open one starts a new one', async () => {
   const api = fakeChatApi();
   const chat = await ready(api);
