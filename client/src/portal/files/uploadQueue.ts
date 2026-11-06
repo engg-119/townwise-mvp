@@ -57,6 +57,12 @@ export interface UploadQueue extends QueueSnapshot {
   add: (files: readonly UploadSource[]) => void;
   /** Stops a file and deletes what the server has of it; a waiting file just leaves the queue. */
   cancel: (key: string) => void;
+  /**
+   * A finished upload the screen deleted itself (an awaited removeFile that succeeded) leaves the queue, with no
+   * request of its own. Only a `done` file: cancel's delete is not awaited, so a stored file is never removed
+   * through it.
+   */
+  forget: (key: string) => void;
 }
 
 /** What the queue reads of a File. */
@@ -152,6 +158,7 @@ function stopsQueue(error: unknown): boolean {
 export interface QueueEngine {
   add: (files: readonly UploadSource[]) => void;
   cancel: (key: string) => void;
+  forget: (key: string) => void;
   snapshot: () => QueueSnapshot;
   /** Leaving the screen: unfinished uploads stop, and the server shows them as interrupted. */
   dispose: () => void;
@@ -451,6 +458,12 @@ export function createUploadQueue(deps: {
     pump();
   }
 
+  function forget(key: string): void {
+    const entry = entries.find((candidate) => candidate.key === key);
+    if (entry?.state !== 'done') return;
+    set(entry, 'cancelled');
+  }
+
   function dispose(): void {
     disposed = true;
     for (const entry of entries) entry.controller?.abort();
@@ -458,11 +471,11 @@ export function createUploadQueue(deps: {
     sampler = null;
   }
 
-  return { add, cancel, snapshot, dispose };
+  return { add, cancel, forget, snapshot, dispose };
 }
 
 /**
- * The queue for a screen (54's HistoryStep): one per location, stopped when the screen closes. Under view-as no
+ * The queue for a screen (onboarding's HistoryStep): one per location, stopped when the screen closes. Under view-as no
  * queue is created and `add` does nothing.
  */
 export function useUploadQueue(locationId: string, opts: { purpose?: FilePurpose } = {}): UploadQueue {
@@ -485,7 +498,8 @@ export function useUploadQueue(locationId: string, opts: { purpose?: FilePurpose
 
   const add = useCallback((files: readonly UploadSource[]) => { engine.current?.add(files); }, []);
   const cancel = useCallback((key: string) => { engine.current?.cancel(key); }, []);
+  const forget = useCallback((key: string) => { engine.current?.forget(key); }, []);
   // A snapshot of a queue this screen no longer uses (another location, or view-as) is not shown.
   const snapshot = !readOnly && state.owner === owner ? state.snapshot : EMPTY_SNAPSHOT;
-  return { ...snapshot, add, cancel };
+  return { ...snapshot, add, cancel, forget };
 }

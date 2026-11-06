@@ -33,7 +33,8 @@ import { ThisWeek } from './ThisWeek';
 // past day. It reads three routes in parallel (sales history, notes, the town calendar), then on their own TownwiseAI's
 // questions (for the lead's count) and the month's people in town (in This month), and writes nothing, so view-as
 // shows it unchanged with its upload links disabled. "Today" is the device's date; weeks run Monday to
-// Sunday. While onboarding's needsHistory is true, 54's HistoryStep takes the place of the cards that need days.
+// Sunday. While onboarding's needsHistory is true, its HistoryStep takes the place of the cards that need days, and
+// when it has read the history Home loads again.
 
 const READ_ONLY_ID = 'home-ro';
 
@@ -83,7 +84,9 @@ function Row(props: { left: React.ReactNode; right: React.ReactNode; split: [num
   );
 }
 
-function HomeView(props: { data: Data; today: string; locationId: string; needs: boolean; readOnlyId: string | null; readOnlyText: string }): React.JSX.Element {
+function HomeView(props: {
+  data: Data; today: string; locationId: string; needs: boolean; readOnlyId: string | null; readOnlyText: string; onHistory: () => void;
+}): React.JSX.Element {
   const { data, today, locationId, needs, readOnlyId } = props;
   const { history, notes, calendar } = data;
   const days = useMemo(() => decodeHistory(history), [history]);
@@ -111,7 +114,7 @@ function HomeView(props: { data: Data; today: string; locationId: string; needs:
         </View>
         <Actions><LinkButton variant="outline" href={locationHref(locationId, 'agent')} label="Ask TownwiseAI" /></Actions>
       </View>
-      {needs ? <View style={styles.step}><HistoryStep /></View> : null}
+      {needs ? <View style={styles.step}><HistoryStep onDone={props.onHistory} /></View> : null}
       <View style={styles.block}>
         <ThisWeek week={week} calendar={calendar} metric={metric} history={hasDays} />
       </View>
@@ -164,7 +167,9 @@ export function Home(): React.JSX.Element {
       data={state.data}
       today={today}
       locationId={location.id}
-      needs={needsHistory(org, org.locations)}
+      // The step also leaves once Home's own fresh history has days, whichever of the two reloads answers first.
+      needs={needsHistory(org, org.locations) && state.data.history.coverage.dayCount === 0}
+      onHistory={reload}
       readOnlyId={readOnlyId}
       readOnlyText={line}
     />
