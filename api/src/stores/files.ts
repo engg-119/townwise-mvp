@@ -247,6 +247,8 @@ export interface FileStore {
     cleanBytes?: number | null;
     readMs?: number | null;
   }): Promise<boolean>;
+  /** "Not sure": the waiting file is kept, unread, with this outcome. */
+  keepWaiting(scope: OrgScope, fileId: string, outcome: string): Promise<void>;
   /** An answer: merged into the sheet's answers, and the file goes back to the queue. */
   answer(scope: OrgScope, fileId: string, sheet: number, answers: SheetAnswers): Promise<boolean>;
 }
@@ -373,6 +375,9 @@ export function createFileStore(connection: Connection): FileStore {
       if (input.readMs !== undefined) set.readMs = input.readMs;
       const result = await File.updateOne({ _id: oid(fileId), orgId: org(scope), status: 'reading' }, { $set: set });
       return result.matchedCount === 1;
+    },
+    async keepWaiting(scope, fileId, outcome) {
+      await File.updateOne({ _id: oid(fileId), orgId: org(scope), status: 'waiting' }, { $set: { status: 'kept', outcome } });
     },
     async answer(scope, fileId, sheet, answers) {
       const set: Record<string, unknown> = { status: 'queued', attempts: 0 };

@@ -19,6 +19,7 @@ import type { TownwiseRoute } from '../../src/access/routes.ts';
 import { createTownwiseApi } from '../../src/app.ts';
 import type { ChatModel } from '../../src/chat/model.ts';
 import { configSchema as townwiseSchema } from '../../src/config.ts';
+import type { FileBlobs } from '../../src/files/blobs.ts';
 import type { PlacesClient } from '../../src/places/google.ts';
 
 export const WEB_ORIGIN = 'https://app.example.test';
@@ -80,6 +81,8 @@ export async function startTownwiseServer(opts?: {
   chatTurnTimeLimitMs?: number;
   /** Google Places, over a fake fetch (helpers/places-fetch.ts); absent, the Places proxy is off. */
   places?: PlacesClient;
+  /** Client file storage (memory-blobs.ts, or Azurite); absent, stored files are off. */
+  files?: FileBlobs;
 }): Promise<TownwiseTestServer> {
   const env: Record<string, string> = {
     NODE_ENV: 'test',
@@ -132,7 +135,7 @@ export async function startTownwiseServer(opts?: {
     });
     const deps = {
       config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now: clock.now, chat: opts?.chat,
-      chatTurnTimeLimitMs: opts?.chatTurnTimeLimitMs, places: opts?.places,
+      chatTurnTimeLimitMs: opts?.chatTurnTimeLimitMs, places: opts?.places, files: opts?.files,
     };
     const apiRouter = createTownwiseApi(deps);
     const routes: RouteMount[] = [{ path: '/auth', router: auth.router }, { path: '/api', router: apiRouter }];
