@@ -1,5 +1,6 @@
-// The tuning chat (docs/portal/tuning-chat.md sections 1 to 5) against a scripted model (helpers/chat-model.ts): the
-// GET shapes, author-only and per-location access, view-as, the event stream for answers, tool loops, proposals,
+// TownwiseAI (docs/portal/tuning-chat.md sections 1 to 5) against a scripted model (helpers/chat-model.ts): the
+// GET shapes, author-only and per-location access, view-as, the event stream for answers, tool loops with the views
+// each tool card shows (streamed, and again after a reload), proposals,
 // the call and per-reply tool limits, refusals, cut-off replies and provider errors, disconnects, the live-turn claims
 // (per conversation and per person), the caps, the budget and cost, byte-for-byte replay of thinking blocks, and audit
 // events and logs free of message text.
@@ -13,7 +14,8 @@ import type { BetaMessageParam, BetaToolResultBlockParam } from '@anthropic-ai/s
 import { Types } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { SYSTEM_PROMPT, TOOLS } from '../src/chat/prompt.ts';
+import { SYSTEM_PROMPT } from '../src/chat/prompt.ts';
+import { TOOLS } from '../src/chat/tools/registry.ts';
 import type { ChatSummary, ConversationView } from '../src/handlers/chat.ts';
 import {
   addConversation, addGrant, addLocation, addNote, addSalesDay, addSeat, auditEvents, createOrg,
@@ -190,8 +192,11 @@ describe('a plain answer', () => {
     expect(view).toEqual({
       id, title: 'What changed in May?', updatedAt: at,
       messages: [
-        { role: 'user', text: 'What changed in May?', proposals: [], at },
-        { role: 'assistant', text: 'May was steady, with two busy Fridays.', proposals: [], at },
+        { role: 'user', text: 'What changed in May?', proposals: [], parts: [], at },
+        {
+          role: 'assistant', text: 'May was steady, with two busy Fridays.', proposals: [],
+          parts: [{ type: 'text', text: 'May was steady, with two busy Fridays.' }], at,
+        },
       ],
     });
   });
@@ -249,12 +254,19 @@ describe('tools', () => {
     );
     const { events } = await turn({ content: 'How did the Taproom do?' });
     expect(shape(events)).toEqual(['conversation', ...Array<string>(10).fill('tool'), 'text', 'done']);
+    const may = { from: '2026-05-01', to: '2026-05-31' };
+    const town = { available: true, town: { name: 'Hanover', state: 'NH' }, sources: expect.any(Array) as unknown };
+    const views = [
+      { id: 't1', name: 'get_location_overview', input: null, result: { firstDate: '2026-05-01', lastDate: '2026-05-02', dayCount: 2, missingDays: 0, monthCount: 1 } },
+      { id: 't2', name: 'get_sales_days', input: may, result: { ...may, dayCount: 2, guestsDayCount: 2, netSalesDayCount: 1 } },
+      { id: 't3', name: 'list_notes', input: null, result: { count: 1 } },
+      { id: 't4', name: 'get_town_profile', input: null, result: town },
+    ];
+    // Each call streams `running` with its input view, then `done` with its result view, or `error` with none.
     expect(eventData(events, 'tool')).toEqual([
-      { name: 'get_location_overview', state: 'running' }, { name: 'get_location_overview', state: 'done' },
-      { name: 'get_sales_days', state: 'running' }, { name: 'get_sales_days', state: 'done' },
-      { name: 'list_notes', state: 'running' }, { name: 'list_notes', state: 'done' },
-      { name: 'get_town_profile', state: 'running' }, { name: 'get_town_profile', state: 'done' },
-      { name: 'get_sales_days', state: 'running' }, { name: 'get_sales_days', state: 'error' },
+      ...views.flatMap((view) => [{ ...view, state: 'running', result: null }, { ...view, state: 'done' }]),
+      { id: 't5', name: 'get_sales_days', state: 'running', input: null, result: null },
+      { id: 't5', name: 'get_sales_days', state: 'error', input: null, result: null },
     ]);
 
     const sent = messagesOf(model.calls[1]);
@@ -285,6 +297,16 @@ describe('tools', () => {
     const system = JSON.stringify(model.calls[1]?.params.system);
     for (const value of ['Taproom', 'Hanover', 'Chat Tavern', orgId, locationId, '2026']) expect(system).not.toContain(value);
     expect(JSON.stringify(model.calls[0]?.params.tools)).toBe(JSON.stringify(TOOLS));
+
+    // A reload shows the same cards, in order, then the reply's text.
+    const view = await (await call(server, `/api/org/locations/${locationId}/chat/${conversationIdOf(events)}`, { session: author.session }))
+      .json() as ConversationView;
+    expect(view.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(view.messages[1]?.parts).toEqual([
+      ...views.map((v) => ({ type: 'tool', ...v, state: 'done' })),
+      { type: 'tool', id: 't5', name: 'get_sales_days', state: 'error', input: null, result: null },
+      { type: 'text', text: 'Taproom had 230 guests over two days.' },
+    ]);
   });
 
   it('a valid propose_note streams a proposal, writes no note, and the proposal posts unchanged to the notes route', async () => {
@@ -296,8 +318,11 @@ describe('tools', () => {
     const { events } = await turn({ content: 'We have a rehearsal dinner on June 20.' });
     expect(shape(events)).toEqual(['conversation', 'tool', 'proposal', 'tool', 'text', 'done']);
     const proposal = { ...PROPOSAL, weekdays: [5, 6] };
-    expect(eventData(events, 'proposal')).toEqual([{ proposal }]);
-    expect(eventData(events, 'tool')).toEqual([{ name: 'propose_note', state: 'running' }, { name: 'propose_note', state: 'done' }]);
+    expect(eventData(events, 'proposal')).toEqual([{ id: 'p1', proposal }]);
+    expect(eventData(events, 'tool')).toEqual([
+      { id: 'p1', name: 'propose_note', state: 'running', input: null, result: null },
+      { id: 'p1', name: 'propose_note', state: 'done', input: null, result: null },
+    ]);
     expect(toolResults(messagesOf(model.calls[1])[2])).toEqual([{
       type: 'tool_result', tool_use_id: 'p1', content: 'Shown to the owner as a proposal. They decide whether to add it.',
     }]);
@@ -305,15 +330,56 @@ describe('tools', () => {
 
     const id = conversationIdOf(events);
     const view = await (await call(server, `/api/org/locations/${locationId}/chat/${id}`, { session: author.session })).json() as ConversationView;
+    // One reply: its proposal card, then its text.
     expect(view.messages.map((m) => [m.role, m.text, m.proposals])).toEqual([
       ['user', 'We have a rehearsal dinner on June 20.', []],
-      ['assistant', '', [proposal]],
-      ['assistant', 'I proposed the dinner as a note.', []],
+      ['assistant', 'I proposed the dinner as a note.', [{ ...proposal, id: 'p1', status: 'open', noteId: null }]],
+    ]);
+    expect(view.messages[1]?.parts).toEqual([
+      { type: 'proposal', proposal: { ...proposal, id: 'p1', status: 'open', noteId: null } },
+      { type: 'text', text: 'I proposed the dinner as a note.' },
     ]);
 
     const added = await call(server, `/api/org/locations/${locationId}/notes`, { session: author.session, json: proposal });
     expect(added.status).toBe(201);
     expect((await added.json() as { note: unknown }).note).toMatchObject(proposal);
+  });
+
+  it('a streamed proposal can be acted on only after its turn’s done; one from a failed turn was never kept', async () => {
+    const proposalPath = (conversationId: string, proposalId: string): string =>
+      `/api/org/locations/${locationId}/chat/${conversationId}/proposals/${proposalId}`;
+    const save = async (conversationId: string, proposalId: string): Promise<{ status: number; noteId?: string }> => {
+      const res = await call(server, proposalPath(conversationId, proposalId), { session: author.session, json: { action: 'save' } });
+      const body = await res.json() as { proposal?: { noteId: string } };
+      return body.proposal === undefined ? { status: res.status } : { status: res.status, noteId: body.proposal.noteId };
+    };
+    model.script({ kind: 'message', message: message([text('Tell me about the dinner.')]) });
+    const id = conversationIdOf((await turn({ content: 'A dinner is coming up.' })).events);
+
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    model.script(
+      { kind: 'message', message: message([toolUse('p_live', 'propose_note', PROPOSAL)]) },
+      { kind: 'message', message: message([text('Proposed.')]), gate },
+    );
+    const live = await call(server, turnsPath(), { session: author.session, json: { conversationId: id, content: 'It is June 20.' } });
+    expect(live.status).toBe(200);
+    // The second model call has started, so the proposal event was sent; the turn's messages are not stored yet.
+    await until(() => Promise.resolve(model.calls.length === 2));
+    expect(await save(id, 'p_live')).toEqual({ status: 404 });
+    release();
+    expect(shape(parseSse(await live.text()))).toEqual(['conversation', 'tool', 'proposal', 'tool', 'text', 'done']);
+    const saved = await save(id, 'p_live');
+    expect(saved.status).toBe(200);
+
+    model.script(
+      { kind: 'message', message: message([toolUse('p_failed', 'propose_note', { ...PROPOSAL, startDate: '2026-06-21', endDate: '2026-06-21' })]) },
+      { kind: 'error', error: new InternalServerError(500, { type: 'error', error: { type: 'api_error', message: 'Down' } }, undefined, new Headers(), 'api_error') },
+    );
+    const failed = await turn({ conversationId: id, content: 'And June 21?' });
+    expect(shape(failed.events)).toEqual(['conversation', 'tool', 'proposal', 'tool', 'error']);
+    expect(await save(id, 'p_failed')).toEqual({ status: 404 });
+    await server.connection.collection('tw_notes').deleteOne({ _id: new Types.ObjectId(saved.noteId) });
   });
 
   it('an invalid propose_note is an is_error result: a tool error event, no proposal, nothing shown later', async () => {
@@ -323,7 +389,10 @@ describe('tools', () => {
     );
     const { events } = await turn({ content: 'Add the dinner.' });
     expect(shape(events)).toEqual(['conversation', 'tool', 'tool', 'text', 'done']);
-    expect(eventData(events, 'tool')).toEqual([{ name: 'propose_note', state: 'running' }, { name: 'propose_note', state: 'error' }]);
+    expect(eventData(events, 'tool')).toEqual([
+      { id: 'p2', name: 'propose_note', state: 'running', input: null, result: null },
+      { id: 'p2', name: 'propose_note', state: 'error', input: null, result: null },
+    ]);
     expect(toolResults(messagesOf(model.calls[1])[2])[0]).toMatchObject({ tool_use_id: 'p2', is_error: true });
     const view = await (await call(server, `/api/org/locations/${locationId}/chat/${conversationIdOf(events)}`, { session: author.session }))
       .json() as ConversationView;
@@ -388,7 +457,10 @@ describe('stop reasons', () => {
       { kind: 'message', message: message([text('You have one closure recorded.')], { model: 'claude-opus-5' }) },
     );
     const { events } = await turn({ content: 'What have I recorded?' });
-    expect(eventData(events, 'tool')).toEqual([{ name: 'list_notes', state: 'running' }, { name: 'list_notes', state: 'done' }]);
+    expect(eventData(events, 'tool')).toEqual([
+      { id: 't-kept', name: 'list_notes', state: 'running', input: null, result: null },
+      { id: 't-kept', name: 'list_notes', state: 'done', input: null, result: { count: expect.any(Number) as unknown } },
+    ]);
 
     const sent = messagesOf(model.calls[1]);
     expect(sent[1]).toEqual({ role: 'assistant', content: [

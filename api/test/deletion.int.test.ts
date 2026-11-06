@@ -1,5 +1,6 @@
 // Deletion (spec D22, F13, 9.3, 10.7, 19 item 7): staff delete a suspended organization's records, or a person's.
-// Each writes its event first, deletes by filter (the tuning chat's records included), and redacts the audit log.
+// Each writes its event first, deletes by filter (the tuning chat's records, TownwiseAI's proposal records included),
+// and redacts the audit log.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
@@ -30,8 +31,18 @@ afterEach(async () => { await server.authStores.totp.remove(staff.userId); });
 /** Every tenant collection: each document carries orgId. */
 const TENANT_COLLECTIONS = [
   'tw_members', 'tw_locations', 'tw_sales_days', 'tw_uploads', 'tw_notes', 'tw_chat_conversations', 'tw_chat_live_turns',
-  'tw_chat_usage',
+  'tw_chat_usage', 'tw_chat_proposals',
 ] as const;
+
+/** A tw_chat_proposals record (spec 6.16): the author dismissed a proposal in one of their conversations. */
+async function addProposal(opts: { orgId: string; locationId: string; userId: string }): Promise<void> {
+  const at = server.clock.now();
+  await server.connection.collection('tw_chat_proposals').insertOne({
+    orgId: new Types.ObjectId(opts.orgId), locationId: new Types.ObjectId(opts.locationId), conversationId: new Types.ObjectId(),
+    userId: opts.userId, proposalId: 'toolu_proposal0001', status: 'dismissed', noteId: new Types.ObjectId(), edited: false,
+    createdAt: at, updatedAt: at,
+  });
+}
 
 interface Person { email: string; session: TestSession }
 
@@ -115,6 +126,7 @@ async function populatedOrg(name: string, status: 'active' | 'suspended'): Promi
   await addUpload(server, { orgId, locationId, uploadedAt: server.clock.now(), status: 'applied' });
   await addNote(server, { orgId, locationId, detail: `${name} note detail`, createdBy: member.session.userId });
   await addConversation(server, { orgId, locationId, userId: member.session.userId, text: `${name} chat` });
+  await addProposal({ orgId, locationId, userId: member.session.userId });
   await addLiveTurn(server, { orgId, userId: member.session.userId });
   await addChatUsage(server, { orgId, month: '2026-06', costMicroUsd: 1_250_000 });
   await addGrant(server, { actorUserId: staff.userId, sessionId: randomUUID(), targetUserId: member.session.userId, orgId });
@@ -313,6 +325,7 @@ async function doomedPerson(name: string): Promise<DoomedPerson> {
   const olderSeat = await addRemovedSeat(server, { orgId: olderOrgId, userId, email: seatEmail, removedAt: server.clock.now(), removedBy: 'e'.repeat(24) });
   const noteId = await addNote(server, { orgId: formerOrgId, locationId, detail: 'Written before leaving', createdBy: userId });
   await addConversation(server, { orgId: formerOrgId, locationId, userId, text: `${name} private chat` });
+  await addProposal({ orgId: formerOrgId, locationId, userId });
   await addLiveTurn(server, { orgId: formerOrgId, userId });
   const inviting = await createOrg(server, { name: `${name} Inviting Cafe` });
   const paused = await createOrg(server, { name: `${name} Paused Inviter`, status: 'suspended' });
@@ -360,6 +373,7 @@ async function snapshotOfPerson(target: Person): Promise<string> {
     await server.connection.collection('tw_members').find({ $or: [{ userId }, { inviteEmail: target.email }] }).sort({ _id: 1 }).toArray(),
     await server.connection.collection('tw_chat_conversations').find({ userId }).sort({ _id: 1 }).toArray(),
     await server.connection.collection('tw_chat_live_turns').find({ userId }).sort({ _id: 1 }).toArray(),
+    await server.connection.collection('tw_chat_proposals').find({ userId }).sort({ _id: 1 }).toArray(),
     await server.connection.collection('tw_audit_events').find({ $or: [{ actorUserId: userId }, { 'details.email': target.email }] }).sort({ _id: 1 }).toArray(),
     await server.authStores.totp.get(userId),
   ];
@@ -375,6 +389,7 @@ describe('POST /api/admin/people/delete', () => {
     const sharer = await person('sharer');
     await addSeat(server, { orgId: doomed.formerOrgId, userId: sharer.session.userId, email: sharer.email });
     await addConversation(server, { orgId: doomed.formerOrgId, locationId: doomed.locationId, userId: sharer.session.userId, text: 'Sharer chat' });
+    await addProposal({ orgId: doomed.formerOrgId, locationId: doomed.locationId, userId: sharer.session.userId });
     await addLiveTurn(server, { orgId: doomed.formerOrgId, userId: sharer.session.userId });
     await addRemovedSeat(server, {
       orgId: bystander.formerOrgId, userId: sharer.session.userId, email: sharer.email, removedAt: server.clock.now(), removedBy: 'e'.repeat(24),
@@ -394,6 +409,7 @@ describe('POST /api/admin/people/delete', () => {
     expect(await count('tw_members', { inviteEmail: doomed.person.email })).toBe(0);
     expect(await count('tw_chat_conversations', { userId })).toBe(0);
     expect(await count('tw_chat_live_turns', { userId })).toBe(0);
+    expect(await count('tw_chat_proposals', { userId })).toBe(0);
     expect(await server.authStores.totp.get(userId)).toBeNull();
     for (const session of [doomed.person.session, doomed.second]) {
       expect(await errorOf(await call(server, '/api/me', { session }))).toEqual({ status: 401, error: 'unauthenticated' });

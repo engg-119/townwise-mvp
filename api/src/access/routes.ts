@@ -11,6 +11,7 @@ import {
 } from '../handlers/admin.ts';
 import { getLocationCalendar } from '../handlers/calendar.ts';
 import { deleteConversation, getChat, getConversation, postTurn } from '../handlers/chat.ts';
+import { actOnProposal } from '../handlers/chat-proposals.ts';
 import { deleteOrg, deletePerson } from '../handlers/deletion.ts';
 import {
   answerImport, completeFile, createFile, currentImport, deleteFile, deleteRaw, downloadClean, downloadRaw, getFile, getImport,
@@ -37,10 +38,11 @@ export interface TownwiseRoute {
   readonly path: `/${string}`;
   readonly policy: Policy;
   /**
-   * 'none' for GET and DELETE; '2kb' on the Places and files JSON routes; '256kb' only on the upload route; 'stream' only
-   * on the chunk route, whose handler reads the raw body itself after the policy has passed.
+   * 'none' for GET and DELETE; '2kb' on the Places and files JSON routes; '8kb' on a TownwiseAI proposal; '256kb' only
+   * on the upload route; 'stream' only on the chunk route, whose handler reads the raw body itself after the policy has
+   * passed.
    */
-  readonly bodyLimit: 'none' | '2kb' | '32kb' | '256kb' | 'stream';
+  readonly bodyLimit: 'none' | '2kb' | '8kb' | '32kb' | '256kb' | 'stream';
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
   readonly limiter?: 'uploads' | 'requests' | 'view-as' | 'chat' | 'places' | 'files' | 'file_chunks' | 'downloads';
   readonly handler: (ctx: TownwiseContext, req: Request, res: Response, principal: Principal) => Promise<void>;
@@ -188,6 +190,11 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.chat.remove', method: 'DELETE', path: '/org/locations/:locationId/chat/:conversationId', policy: 'member',
     bodyLimit: 'none', handler: deleteConversation,
+  },
+  // U9 (TownwiseAI): saving or setting aside a proposed note.
+  {
+    id: 'org.chat.proposal', method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/proposals/:proposalId',
+    policy: 'member', bodyLimit: '8kb', handler: actOnProposal,
   },
 
   { id: 'org.members.list', method: 'GET', path: '/org/members', policy: 'org_admin', bodyLimit: 'none', handler: listMembers },

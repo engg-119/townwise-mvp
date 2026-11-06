@@ -4,6 +4,7 @@ import { createAccessRequestStore, type AccessRequestStore } from './access-requ
 import { createAuditEventStore, type AuditEventStore } from './audit-events.ts';
 import { createChatConversationStore, type ChatConversationStore } from './chat-conversations.ts';
 import { createChatLiveTurnStore, type ChatLiveTurnStore } from './chat-live-turns.ts';
+import { createChatProposalStore, type ChatProposalStore } from './chat-proposals.ts';
 import { createChatUsageStore, type ChatUsageStore } from './chat-usage.ts';
 import { createFileStore, type FileStore } from './files.ts';
 import { createImportStore, type ImportStore } from './imports.ts';
@@ -31,6 +32,7 @@ export interface TownwiseStores {
   readonly chatConversations: ChatConversationStore;
   readonly chatLiveTurns: ChatLiveTurnStore;
   readonly chatUsage: ChatUsageStore;
+  readonly chatProposals: ChatProposalStore;
   /** U11, statement moments. */
   readonly welcomes: WelcomeStore;
   /** Stored files (spec 11A). */
@@ -54,6 +56,7 @@ export function createTownwiseStores(connection: Connection): TownwiseStores {
     chatConversations: createChatConversationStore(connection),
     chatLiveTurns: createChatLiveTurnStore(connection),
     chatUsage: createChatUsageStore(connection),
+    chatProposals: createChatProposalStore(connection),
     // U11, statement moments.
     welcomes: createWelcomeStore(connection),
     files: createFileStore(connection),

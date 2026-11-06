@@ -110,6 +110,14 @@ describe('route table', () => {
     expect(ids.indexOf('org.imports.current')).toBeLessThan(ids.indexOf('org.imports.get'));
   });
 
+  it('saving or setting aside a TownwiseAI proposal is a member POST with an 8kb body and no route limiter', () => {
+    const proposal = TOWNWISE_ROUTES.find((entry) => entry.id === 'org.chat.proposal');
+    expect(proposal).toMatchObject({
+      method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/proposals/:proposalId', policy: 'member', bodyLimit: '8kb',
+    });
+    expect(proposal?.limiter).toBeUndefined();
+  });
+
   it('boot refuses staff_self on any route except POST /admin/view-as/end', () => {
     expect(() => { assertRouteTable([route({ policy: 'staff_self', path: '/admin/view-as' })]); }).toThrow(ConfigError);
     expect(() => { assertRouteTable([route({ policy: 'staff_self', path: '/admin/view-as/end' })]); }).not.toThrow();
