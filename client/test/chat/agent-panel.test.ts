@@ -15,7 +15,7 @@ const fixture = JSON.parse(readFileSync(join(__dirname, 'agent-panel.json'), 'ut
 
 test('the fixture holds both question kinds and every activity kind the API sends', () => {
   expect(fixture.panel.questions.map((q) => (q as { kind: string }).kind)).toEqual(['weekday', 'gap']);
-  expect(fixture.panel.activity.map((a) => (a as { kind: string }).kind)).toEqual(['note_saved', 'question_answered', 'upload_applied']);
+  expect(fixture.panel.activity.map((a) => (a as { kind: string }).kind)).toEqual(['note_saved', 'question_answered', 'upload_applied', 'file_processed']);
 });
 
 test('the side panel reads every question and activity item the API answers, dropping none', async () => {

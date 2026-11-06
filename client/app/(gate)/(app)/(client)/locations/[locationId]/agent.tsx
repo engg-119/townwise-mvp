@@ -1,11 +1,15 @@
-import { useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useLocalSearchParams } from 'expo-router';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { aboutDraft } from '../../../../../../src/chat/about';
 import { useAgentPanel } from '../../../../../../src/chat/useAgentPanel';
 import { useTuningChat } from '../../../../../../src/chat/useTuningChat';
 import { AgentChat, type AgentChatContext } from '../../../../../../src/chat/ui/AgentChat';
 import { ActivitySection, AgentSidePanel, BudgetSection, HowItWorks, QuestionsSection } from '../../../../../../src/chat/ui/AgentSidePanel';
-import { useBreakpoint } from '../../../../../../src/portal/hooks';
+import { fetchEstimatesAbout } from '../../../../../../src/portal/estimates/api';
+import { useBreakpoint, useLoad } from '../../../../../../src/portal/hooks';
+import { localToday } from '../../../../../../src/portal/locations/dates';
 import { useOrgRefreshOnLeave } from '../../../../../../src/portal/locations/parts';
 import { usePortal, useReadOnly } from '../../../../../../src/portal/PortalProvider';
 import { useLocation, useScrollingHead } from '../../../../../../src/portal/shell/LocationShell';
@@ -20,6 +24,10 @@ import { theme } from '../../../../../../src/theme';
 // location's compact header and the switch sit at the top of what scrolls, so the conversation gets the screen.
 // Under view-as (spec 15.5) everything reads, and every write control stays in place, disabled, described by the one
 // read-only line. The logic is in src/chat; this file only lays it out.
+// F7: `?about=YYYY-MM-DD` (for a link such as Analytics' day panel, which doesn't pass the date yet) fills an empty
+// composer with "Tell me about Sat, Nov 21" and sends nothing; a date that isn't valid is ignored. F10: GET
+// .../estimates/about says whether a forecast is published, for what TownwiseAI says it reads and How TownwiseAI
+// works' forecast line.
 
 const READ_ONLY_ID = 'chat-ro';
 
@@ -63,6 +71,18 @@ export default function TownwiseAIScreen(): React.JSX.Element {
   const chat = useTuningChat(api, location.id, markOrgStale);
   const panel = useAgentPanel(api, location.id, markOrgStale);
   const head = useScrollingHead();
+  const about = useLoad(useCallback(() => fetchEstimatesAbout(api, location.id), [api, location.id]));
+  const params = useLocalSearchParams<{ about?: string | string[] }>();
+  const draft = aboutDraft(params.about, localToday());
+  const filled = useRef<string | null>(null);
+  const { setDraft } = chat;
+  const empty = chat.state.draft === '';
+  useEffect(() => {
+    // Once per address: what the person types afterwards, or a New chat, is theirs.
+    if (draft === null || filled.current === draft) return;
+    filled.current = draft;
+    if (empty) setDraft(draft);
+  }, [draft, empty, setDraft]);
   const [view, setView] = useState<View3>('chat');
   // iOS: the keyboard avoider measures itself from its parent, so it is offset by the header above it.
   const root = useRef<React.ComponentRef<typeof View>>(null);
@@ -76,6 +96,7 @@ export default function TownwiseAIScreen(): React.JSX.Element {
     orgName: org.org.name,
     hasSales: location.coverage.dayCount > 0,
     hasTownProfile: location.town.townId !== null,
+    hasForecast: about.state.status === 'ready' && about.state.data.forecast.run !== null,
     coverage: { dayCount: location.coverage.dayCount, lastDate: location.coverage.lastDate },
   };
   const questions = panel.state.status === 'ready'
@@ -91,7 +112,16 @@ export default function TownwiseAIScreen(): React.JSX.Element {
         </View>
         <View style={styles.side}>
           <ScrollView style={styles.fill} contentContainerStyle={styles.sideContent} testID="agent-side">
-            <AgentSidePanel panel={panel} budget={chat.state.budget} ctx={ctx} locationName={location.name} readOnlyId={readOnlyId} />
+            <AgentSidePanel
+              panel={panel}
+              budget={chat.state.budget}
+              ctx={ctx}
+              locationId={location.id}
+              locationName={location.name}
+              readOnlyId={readOnlyId}
+              about={about.state}
+              onRetryAbout={about.reload}
+            />
           </ScrollView>
         </View>
       </View>
@@ -115,7 +145,7 @@ export default function TownwiseAIScreen(): React.JSX.Element {
               <>
                 <ActivitySection panel={panel} />
                 <BudgetSection budget={chat.state.budget} />
-                <HowItWorks ctx={ctx} />
+                <HowItWorks ctx={ctx} locationId={location.id} about={about.state} onRetryAbout={about.reload} />
               </>
             )}
           </ScrollView>
