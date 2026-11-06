@@ -22,6 +22,7 @@ import { configSchema as townwiseSchema } from '../../src/config.ts';
 import type { MailTransport } from '../../src/mail/acs.ts';
 import { createMailer, OFF_MAILER, type Mailer } from '../../src/mail/mailer.ts';
 import type { PlacesClient } from '../../src/places/google.ts';
+import type { StaticMapSigner } from '../../src/places/static-map.ts';
 
 export const WEB_ORIGIN = 'https://app.example.test';
 export const STAFF_EMAIL = 'staff@townwise.test';
@@ -89,6 +90,8 @@ export async function startTownwiseServer(opts?: {
   places?: PlacesClient;
   /** Townwise's emails, through a capturing transport (helpers/mail.ts); absent, email is off. */
   mailTransport?: MailTransport;
+  /** Signs the confirm card's map URL (src/places/static-map.ts); absent, details answers map: null. */
+  placesMap?: StaticMapSigner;
 }): Promise<TownwiseTestServer> {
   const env: Record<string, string> = {
     NODE_ENV: 'test',
@@ -144,7 +147,7 @@ export async function startTownwiseServer(opts?: {
       : createMailer({ transport: opts.mailTransport, logger, webUrl: MAIL_WEB_URL, replyTo: MAIL_REPLY_TO });
     const deps = {
       config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now: clock.now, chat: opts?.chat,
-      chatTurnTimeLimitMs: opts?.chatTurnTimeLimitMs, places: opts?.places, mailer,
+      chatTurnTimeLimitMs: opts?.chatTurnTimeLimitMs, places: opts?.places, mailer, placesMap: opts?.placesMap,
     };
     const apiRouter = createTownwiseApi(deps);
     const routes: RouteMount[] = [{ path: '/auth', router: auth.router }, { path: '/api', router: apiRouter }];

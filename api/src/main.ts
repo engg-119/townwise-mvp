@@ -13,14 +13,22 @@ import { createSendMagicLink } from './email.ts';
 import { createAcsTransport } from './mail/acs.ts';
 import { createMailer, OFF_MAILER } from './mail/mailer.ts';
 import { createGooglePlacesClient } from './places/google.ts';
+import { createStaticMapSigner, signingSecretSchema } from './places/static-map.ts';
 
 // ANTHROPIC_API_KEY and GOOGLE_PLACES_API_KEY are optional: absent, the tuning chat or the Places proxy is off. Each
 // goes no further than the client built here. IDENTITY_ENDPOINT and IDENTITY_HEADER are set by Container Apps for the
-// managed identity, and AZURE_CLIENT_ID by containerapp.tf; they are read only when email is on.
-const { ANTHROPIC_API_KEY, GOOGLE_PLACES_API_KEY, IDENTITY_ENDPOINT, IDENTITY_HEADER, AZURE_CLIENT_ID, ...config } = loadEnv(z.object({
+// managed identity, and AZURE_CLIENT_ID by containerapp.tf; they are read only when email is on. The confirm card's
+// map needs both GOOGLE_MAPS_STATIC_KEY and GOOGLE_MAPS_SIGNING_SECRET: without either there is no map, never an
+// unsigned one. A malformed secret refuses boot.
+const {
+  ANTHROPIC_API_KEY, GOOGLE_PLACES_API_KEY, GOOGLE_MAPS_STATIC_KEY, GOOGLE_MAPS_SIGNING_SECRET,
+  IDENTITY_ENDPOINT, IDENTITY_HEADER, AZURE_CLIENT_ID, ...config
+} = loadEnv(z.object({
   ...serverSchema.shape, ...mongoSchema.shape, ...redisSchema.shape, ...authSchema.shape, ...townwiseSchema.shape,
   ANTHROPIC_API_KEY: z.string().optional(),
   GOOGLE_PLACES_API_KEY: z.string().optional(),
+  GOOGLE_MAPS_STATIC_KEY: z.string().optional(),
+  GOOGLE_MAPS_SIGNING_SECRET: signingSecretSchema.optional(),
   IDENTITY_ENDPOINT: z.string().optional(),
   IDENTITY_HEADER: z.string().optional(),
   AZURE_CLIENT_ID: z.string().optional(),
@@ -39,6 +47,8 @@ const auth = createAuth({
 });
 const chat = ANTHROPIC_API_KEY === undefined ? undefined : createAnthropicChatModel(ANTHROPIC_API_KEY);
 const places = GOOGLE_PLACES_API_KEY === undefined ? undefined : createGooglePlacesClient(GOOGLE_PLACES_API_KEY);
+const placesMap = GOOGLE_MAPS_STATIC_KEY === undefined || GOOGLE_MAPS_SIGNING_SECRET === undefined
+  ? undefined : createStaticMapSigner(GOOGLE_MAPS_STATIC_KEY, GOOGLE_MAPS_SIGNING_SECRET);
 // Email (spec D14) is on when EMAIL_ENDPOINT is set; it then needs the managed identity, or boot fails.
 const { email, emailReplyTo, webUrl } = resolveTownwiseConfig(config);
 const mailer = email === null ? OFF_MAILER : createMailer({
@@ -52,7 +62,9 @@ const mailer = email === null ? OFF_MAILER : createMailer({
   }),
   logger, webUrl, replyTo: emailReplyTo,
 });
-const api = createTownwiseApi({ config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now, chat, places, mailer });
+const api = createTownwiseApi({
+  config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now, chat, places, placesMap, mailer,
+});
 await ensureIndexes(mongo.connection, { logger });   // after every store has registered its models
 await redis.ready(3000);                             // bounded; logs and continues on false
 const ceiling = createRateLimiter({ redis: redis.client, name: 'app:api-ceiling', limit: 2000, windowSeconds: 60 });
