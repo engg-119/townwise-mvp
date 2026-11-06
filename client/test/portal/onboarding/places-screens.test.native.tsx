@@ -229,7 +229,7 @@ describe('P16 Change this location’s place', () => {
     expect(sentWrites(api)).toEqual([{
       method: 'PATCH', path: '/api/org/locations/l1', body: { town: { townId: null, name: 'Norwich', state: 'VT' }, placeId: 'ChIJTestPlace0002' },
     }]);
-    expect(await screen.findByText('Linked to a place on Google Maps. Townwise keeps only Google’s id for it.')).toBeTruthy();
+    expect(await screen.findByText('Linked to a place on Google Maps. Townwise keeps Google’s id for it and its town.')).toBeTruthy();
     // The Name and town form now shows the place's town, so saving it keeps the place.
     expect(screen.getByLabelText('Town name').props.value).toBe('Norwich');
     expect(screen.getByText('Changing the town here takes the Google Maps place off this location.')).toBeTruthy();
@@ -332,7 +332,7 @@ describe('focus follows the steps', () => {
     expect(moves()).toEqual([
       'Search Google Maps for this location', 'Not linked to a place on Google Maps.',
       'Search Google Maps for this location', 'Here’s what we found',
-      'Linked to a place on Google Maps. Townwise keeps only Google’s id for it.',
+      'Linked to a place on Google Maps. Townwise keeps Google’s id for it and its town.',
     ]);
   });
 });

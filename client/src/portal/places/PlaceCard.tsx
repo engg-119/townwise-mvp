@@ -21,7 +21,7 @@ export function townLine(town: Town | null): string {
   return `${townLabel(town)}. Townwise hasn’t researched this town yet, so you’ll see your own data without a town profile.`;
 }
 
-export const GOOGLE_SOURCE = 'From Google Maps. Townwise keeps only Google’s id for the place.';
+export const GOOGLE_SOURCE = 'From Google Maps. Townwise keeps Google’s id for the place and its town, not the address or the map.';
 
 type Host = React.ComponentRef<typeof Text>;
 

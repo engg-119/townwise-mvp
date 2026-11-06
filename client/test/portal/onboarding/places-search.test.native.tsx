@@ -90,7 +90,7 @@ test('one session: the API’s token on every later call and on the pick; the ca
   expect(screen.getByText('Lou’s Restaurant')).toBeTruthy();
   expect(screen.getByText('3 Main St, Hanover, NH 03755, USA')).toBeTruthy();
   expect(screen.getByText('Hanover, NH, one of the twelve towns Townwise has researched.')).toBeTruthy();
-  expect(screen.getByText('From Google Maps. Townwise keeps only Google’s id for the place.')).toBeTruthy();
+  expect(screen.getByText('From Google Maps. Townwise keeps Google’s id for the place and its town, not the address or the map.')).toBeTruthy();
   expect(screen.getByLabelText('Map of the area around Lou’s Restaurant').props.source).toEqual({ uri: MAP_URL });
   await fireEvent.press(screen.getByRole('button', { name: 'Looks right' }));
   expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({

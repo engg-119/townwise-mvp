@@ -70,7 +70,7 @@ describe('the words', () => {
     expect(townLine({ townId: null, name: 'Norwich', state: 'VT' }))
       .toBe('Norwich, VT. Townwise hasn’t researched this town yet, so you’ll see your own data without a town profile.');
     expect(townLine(null)).toBe('Townwise works with businesses in a US town, and Google Maps puts this place in none.');
-    expect(GOOGLE_SOURCE).toBe('From Google Maps. Townwise keeps only Google’s id for the place.');
+    expect(GOOGLE_SOURCE).toBe('From Google Maps. Townwise keeps Google’s id for the place and its town, not the address or the map.');
   });
 
   test('the status line counts the answer, says when nothing matches, and nothing before an answer', () => {

@@ -39,7 +39,7 @@ const PLACE_READ_ONLY_ID = 'location-place-ro';
 const HAS_DATA = 'Delete this location’s sales data and notes first.';
 
 export const PLACE_SETTINGS_COPY = {
-  linked: 'Linked to a place on Google Maps. Townwise keeps only Google’s id for it.',
+  linked: 'Linked to a place on Google Maps. Townwise keeps Google’s id for it and its town.',
   unlinked: 'Not linked to a place on Google Maps.',
   byHand: 'Changing the town here takes the Google Maps place off this location.',
   unavailable: 'Google Maps isn’t answering right now. Nothing changed; try again later.',
