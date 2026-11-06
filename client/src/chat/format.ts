@@ -1,11 +1,13 @@
 import type { NoteProposal } from './api';
 
-// Plain words for a note proposal and the chat's status lines. The note copy follows the portal spec's notes
-// list (P14): the kind, "{start} to {end}", "{Mondays} only", the effect in words and "About {n} guests".
+// Plain words for a note proposal and TownwiseAI's dates. The note copy follows the portal spec's notes list (P14):
+// the kind, "{start} to {end}", "{Mondays} only", the effect in words and "About {n} guests". Tool copy is in
+// tools.ts.
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 /** 0 is Sunday, as in the notes API. */
+const SHORT_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const WEEKDAYS = ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays'];
 
 export const KIND_LABEL: Record<NoteProposal['kind'], string> = {
@@ -21,18 +23,6 @@ export const EFFECT_LABEL: Record<NoteProposal['effect'], string> = {
   fewer_guests: 'Fewer guests than usual',
   unknown: 'Not sure',
 };
-
-const TOOL_LABEL: Record<string, string> = {
-  get_location_overview: 'Reading the sales summary',
-  get_sales_days: 'Reading sales history',
-  list_notes: 'Reading your notes',
-  get_town_profile: 'Reading the town profile',
-  propose_note: 'Writing a note',
-};
-
-export function toolLabel(name: string): string {
-  return TOOL_LABEL[name] ?? 'Looking something up';
-}
 
 /** A calendar date, YYYY-MM-DD, in words ("March 3, 2026"), read without a time zone. */
 export function formatDate(date: string): string {
@@ -68,4 +58,34 @@ export function formatDay(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '';
   return `${SHORT_MONTHS[date.getMonth()] ?? ''} ${String(date.getDate())}, ${String(date.getFullYear())}`;
+}
+
+function partsOf(date: string): { year: string; month: string; day: number; weekday: string } | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  const month = match === null ? undefined : SHORT_MONTHS[Number(match[2]) - 1];
+  if (match === null || month === undefined) return null;
+  const weekday = SHORT_WEEKDAYS[new Date(`${date}T00:00:00.000Z`).getUTCDay()] ?? '';
+  return { year: match[1] ?? '', month, day: Number(match[3]), weekday };
+}
+
+/** A range of calendar dates, short: "Oct 1 to Oct 31, 2026", "Dec 20, 2025 to Jan 3, 2026", or "Oct 1, 2026". */
+export function rangeText(from: string, to: string): string {
+  const start = partsOf(from);
+  const end = partsOf(to);
+  if (start === null || end === null) return from === to ? from : `${from} to ${to}`;
+  const endText = `${end.month} ${String(end.day)}, ${end.year}`;
+  if (from === to) return endText;
+  if (start.year === end.year) return `${start.month} ${String(start.day)} to ${endText}`;
+  return `${start.month} ${String(start.day)}, ${start.year} to ${endText}`;
+}
+
+/** A calendar date with its weekday: "Thu, Nov 26, 2026". */
+export function dayText(date: string): string {
+  const parts = partsOf(date);
+  return parts === null ? date : `${parts.weekday}, ${parts.month} ${String(parts.day)}, ${parts.year}`;
+}
+
+/** The plural weekday name ("Mondays"), 0 being Sunday. */
+export function weekdayName(weekday: number): string {
+  return WEEKDAYS[weekday] ?? String(weekday);
 }

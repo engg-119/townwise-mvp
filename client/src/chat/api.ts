@@ -1,10 +1,12 @@
 import { z } from 'zod';
 
 import type { ApiClient } from '../api/client';
+import { createNote, noteSchema, type Note } from '../portal/locations/api';
 import type { SseEvent } from '../api/sse';
 
-// The tuning chat's API (docs/portal/tuning-chat.md, sections 2 and 3). Schemas strip unknown keys; an event
-// whose data does not match is dropped, so a stream that loses its `done` reads as cut off.
+// TownwiseAI's API (docs/portal/tuning-chat.md, sections 2 and 3; spec 10.12) and its side panel (GET and POST
+// .../agent, spec P25). Schemas strip unknown keys; an event whose data does not match is dropped, so a stream that
+// loses its `done` reads as cut off. A tool view is dates, counts and source links only, never a figure.
 
 /** Exactly the body of POST /api/org/locations/:locationId/notes. */
 const noteProposalSchema = z.object({
@@ -39,6 +41,21 @@ function proposalOf(raw: z.infer<typeof noteProposalSchema>): NoteProposal {
   };
 }
 
+/** What a tool card shows of a call's input or result: the server's view, read field by field (src/chat/tools.ts). */
+export type ToolView = Record<string, unknown>;
+const viewSchema = z.record(z.string(), z.unknown()).nullable();
+
+const proposalStatusSchema = z.enum(['open', 'saved', 'dismissed']);
+const proposalViewSchema = noteProposalSchema.extend({ id: z.string(), status: proposalStatusSchema, noteId: z.string().nullable() });
+
+const partSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('text'), text: z.string() }),
+  z.object({
+    type: z.literal('tool'), id: z.string(), name: z.string(), state: z.enum(['done', 'error']), input: viewSchema, result: viewSchema,
+  }),
+  z.object({ type: z.literal('proposal'), proposal: proposalViewSchema }),
+]);
+
 const budgetSchema = z.object({ month: z.string(), usedUsd: z.number(), limitUsd: z.number(), exhausted: z.boolean() });
 const conversationSummarySchema = z.object({ id: z.string(), title: z.string(), updatedAt: z.string(), turnCount: z.number() });
 const chatSummarySchema = z.object({
@@ -53,7 +70,8 @@ const conversationSchema = z.object({
   messages: z.array(z.object({
     role: z.enum(['user', 'assistant']),
     text: z.string(),
-    proposals: z.array(noteProposalSchema),
+    proposals: z.array(proposalViewSchema),
+    parts: z.array(partSchema).default([]),
     at: z.string(),
   })),
 });
@@ -61,21 +79,36 @@ const conversationSchema = z.object({
 export type Budget = z.infer<typeof budgetSchema>;
 export type ConversationSummary = z.infer<typeof conversationSummarySchema>;
 export type ChatSummary = z.infer<typeof chatSummarySchema>;
-export interface StoredMessage { role: 'user' | 'assistant'; text: string; proposals: NoteProposal[] }
+
+/** A proposal as GET .../chat/:conversationId shows it: the note, the call's id, and what the author did with it. */
+export interface ProposalView extends NoteProposal {
+  id: string;
+  status: 'open' | 'saved' | 'dismissed';
+  noteId: string | null;
+}
+
+export type StoredPart =
+  | { type: 'text'; text: string }
+  | { type: 'tool'; id: string; name: string; state: 'done' | 'error'; input: ToolView | null; result: ToolView | null }
+  | { type: 'proposal'; proposal: ProposalView };
+
+export interface StoredMessage { role: 'user' | 'assistant'; text: string; parts: StoredPart[] }
 
 export type ChatEvent =
   | { type: 'conversation'; id: string; title: string }
   | { type: 'text'; delta: string }
-  | { type: 'tool'; name: string; state: 'running' | 'done' | 'error' }
-  | { type: 'proposal'; proposal: NoteProposal }
+  | { type: 'tool'; id: string; name: string; state: 'running' | 'done' | 'error'; input: ToolView | null; result: ToolView | null }
+  | { type: 'proposal'; id: string; proposal: NoteProposal }
   | { type: 'done'; stopReason: string }
   | { type: 'error'; code: string };
 
 const eventSchemas = {
   conversation: z.object({ id: z.string(), title: z.string() }),
   text: z.object({ delta: z.string() }),
-  tool: z.object({ name: z.string(), state: z.enum(['running', 'done', 'error']) }),
-  proposal: z.object({ proposal: noteProposalSchema }),
+  tool: z.object({
+    id: z.string(), name: z.string(), state: z.enum(['running', 'done', 'error']), input: viewSchema.default(null), result: viewSchema.default(null),
+  }),
+  proposal: z.object({ id: z.string(), proposal: noteProposalSchema }),
   done: z.object({ stopReason: z.string() }),
   error: z.object({ code: z.string() }),
 };
@@ -103,7 +136,7 @@ export function chatEventOf(sse: SseEvent): ChatEvent | null {
     }
     case 'proposal': {
       const parsed = eventSchemas.proposal.safeParse(data);
-      return parsed.success ? { type: 'proposal', proposal: proposalOf(parsed.data.proposal) } : null;
+      return parsed.success ? { type: 'proposal', id: parsed.data.id, proposal: proposalOf(parsed.data.proposal) } : null;
     }
     case 'done': {
       const parsed = eventSchemas.done.safeParse(data);
@@ -122,17 +155,30 @@ function locationPath(locationId: string): `/${string}` {
   return `/api/org/locations/${encodeURIComponent(locationId)}`;
 }
 
+function conversationPath(locationId: string, conversationId: string): `/${string}` {
+  return `${locationPath(locationId)}/chat/${encodeURIComponent(conversationId)}`;
+}
+
 export function loadChat(api: ApiClient, locationId: string): Promise<ChatSummary> {
   return api.json(`${locationPath(locationId)}/chat`, chatSummarySchema);
 }
 
+function proposalViewOf(raw: z.infer<typeof proposalViewSchema>): ProposalView {
+  return { ...proposalOf(raw), id: raw.id, status: raw.status, noteId: raw.noteId };
+}
+
 export async function loadConversation(api: ApiClient, locationId: string, conversationId: string): Promise<StoredMessage[]> {
-  const conversation = await api.json(`${locationPath(locationId)}/chat/${encodeURIComponent(conversationId)}`, conversationSchema);
+  const conversation = await api.json(conversationPath(locationId, conversationId), conversationSchema);
   return conversation.messages.map((message) => ({
     role: message.role,
     text: message.text,
-    proposals: message.proposals.map(proposalOf),
+    parts: message.parts.map((part): StoredPart => (part.type === 'proposal' ? { type: 'proposal', proposal: proposalViewOf(part.proposal) } : part)),
   }));
+}
+
+/** 204. The conversation's proposal records go with it; notes saved from it stay. */
+export async function deleteConversation(api: ApiClient, locationId: string, conversationId: string): Promise<void> {
+  await api.request(conversationPath(locationId, conversationId), { method: 'DELETE' });
 }
 
 /** One turn. No `conversationId` starts a new conversation. Resolves when the stream ends. */
@@ -154,7 +200,91 @@ export function sendTurn(
   });
 }
 
-/** Posts a proposal to the notes route as the person: the server's validation and audit apply. */
-export async function addNote(api: ApiClient, locationId: string, proposal: NoteProposal): Promise<void> {
-  await api.request(`${locationPath(locationId)}/notes`, { method: 'POST', body: proposal });
+const proposalResultSchema = z.object({
+  proposal: z.object({ id: z.string(), status: z.enum(['saved', 'dismissed']), noteId: z.string().nullable(), edited: z.boolean() }),
+  note: noteSchema.nullable(),
+});
+export type ProposalResult = z.infer<typeof proposalResultSchema>;
+
+/**
+ * Saves a stored proposal as shown, or as the author edited it (`note`), through the proposal route (spec 10.12):
+ * the notes rules and audit apply, and a retry or a second tab ends with the same one note.
+ */
+export function saveProposal(
+  api: ApiClient, locationId: string, ids: { conversationId: string; proposalId: string }, note?: NoteProposal,
+): Promise<ProposalResult> {
+  const body = note === undefined ? { action: 'save' } : { action: 'save', note };
+  return api.json(`${conversationPath(locationId, ids.conversationId)}/proposals/${encodeURIComponent(ids.proposalId)}`, proposalResultSchema, {
+    method: 'POST', body,
+  });
+}
+
+/** Not now: recorded, so a reload keeps it set aside; it can still be saved. A saved proposal answers saved. */
+export function dismissProposal(api: ApiClient, locationId: string, ids: { conversationId: string; proposalId: string }): Promise<ProposalResult> {
+  return api.json(`${conversationPath(locationId, ids.conversationId)}/proposals/${encodeURIComponent(ids.proposalId)}`, proposalResultSchema, {
+    method: 'POST', body: { action: 'dismiss' },
+  });
+}
+
+/** A proposal from a turn the server never kept: the notes route, as the person. */
+export function addNote(api: ApiClient, locationId: string, note: NoteProposal): Promise<Note> {
+  return createNote(api, locationId, note);
+}
+
+// The side panel (spec P25). Questions and activity are ids, dates and counts; the words are the client's.
+
+const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
+const questionSchema = z.discriminatedUnion('kind', [
+  /** A weekday with no sales on most of its weeks: `missing` of the last `weeks` of them, from `startDate` to `endDate`. */
+  z.object({
+    id: z.string(), kind: z.literal('weekday'), weekday: z.number().int().min(0).max(6), startDate: dateSchema, endDate: dateSchema,
+    missing: z.number().int(), weeks: z.number().int(),
+  }),
+  /** A run of `days` days with no sales and no note. */
+  z.object({ id: z.string(), kind: z.literal('gap'), startDate: dateSchema, endDate: dateSchema, days: z.number().int() }),
+]);
+export type Question = z.infer<typeof questionSchema>;
+
+const activitySchema = z.discriminatedUnion('kind', [
+  z.object({ at: z.string(), kind: z.literal('upload_applied'), firstDate: dateSchema, lastDate: dateSchema, dayCount: z.number().int() }),
+  z.object({
+    at: z.string(), kind: z.literal('note_saved'), via: z.enum(['chat', 'question']), noteId: z.string(),
+    noteKind: noteProposalSchema.shape.kind, startDate: dateSchema, endDate: dateSchema,
+  }),
+  z.object({ at: z.string(), kind: z.literal('question_answered'), questionId: z.string(), answer: z.enum(['open', 'not_sure']) }),
+]);
+export type ActivityItem = z.infer<typeof activitySchema>;
+
+// Items are read one by one: a question or an activity kind this client doesn't know yet is left out, never shown
+// as a placeholder.
+const panelSchema = z.object({ questions: z.array(z.unknown()), activity: z.array(z.unknown()) });
+
+export interface AgentPanel { questions: Question[]; activity: ActivityItem[] }
+
+function known<T>(items: readonly unknown[], schema: z.ZodType<T>): T[] {
+  return items.flatMap((item) => {
+    const parsed = schema.safeParse(item);
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
+export async function loadAgentPanel(api: ApiClient, locationId: string): Promise<AgentPanel> {
+  const panel = await api.json(`${locationPath(locationId)}/agent`, panelSchema);
+  return { questions: known(panel.questions, questionSchema), activity: known(panel.activity, activitySchema) };
+}
+
+export type QuestionAnswer = 'closed' | 'open' | 'not_sure';
+
+const answerResultSchema = z.object({
+  question: z.object({ id: z.string(), answer: z.enum(['closed', 'open', 'not_sure']) }),
+  note: noteSchema.nullable(),
+});
+export type AnswerResult = z.infer<typeof answerResultSchema>;
+
+/** `closed` saves a closure note over the question's days; every answer stops the question being asked again. */
+export function answerQuestion(api: ApiClient, locationId: string, questionId: string, answer: QuestionAnswer): Promise<AnswerResult> {
+  return api.json(`${locationPath(locationId)}/agent/questions/${encodeURIComponent(questionId)}`, answerResultSchema, {
+    method: 'POST', body: { answer },
+  });
 }

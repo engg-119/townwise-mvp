@@ -69,14 +69,19 @@ export function emptyDraft(kind: NoteKind = 'closure'): NoteDraft {
 }
 
 export function draftOf(note: Note): NoteDraft {
+  return draftOfContent(note);
+}
+
+/** The form's draft of a note's content: a saved note, or one TownwiseAI proposed (its card's Edit first). */
+export function draftOfContent(content: NoteInput): NoteDraft {
   return {
-    kind: note.kind,
-    startDate: note.startDate,
-    endDate: note.endDate === note.startDate ? '' : note.endDate,
-    weekdays: note.weekdays ?? [],
-    effect: note.effect,
-    expectedGuests: note.expectedGuests === null ? '' : String(note.expectedGuests),
-    detail: note.detail ?? '',
+    kind: content.kind,
+    startDate: content.startDate,
+    endDate: content.endDate === content.startDate ? '' : content.endDate,
+    weekdays: content.weekdays ?? [],
+    effect: content.effect,
+    expectedGuests: content.expectedGuests === null ? '' : String(content.expectedGuests),
+    detail: content.detail ?? '',
   };
 }
 
