@@ -1654,6 +1654,7 @@ Every page below lists its content top to bottom, its one primary action, and it
   - Town: a select grouped “College towns” (six) and “Seasonal and event towns” (six), then “Another town”, which reveals Town name and State.
   - Number of locations (1 to 50).
   - “Anything we should know? (optional)”, with the helper “Don’t include guest names or sales figures.”
+- While the Google Places search is on, Step 1 “Find your restaurant” comes before these fields, and a confirmed place takes Town’s place (10.2a).
 - Primary: “Send request”.
 - Side column, “What happens next”, numbered 01 to 03: “Someone on our team reviews your request.”, “We don’t send email yet. Check back here.”, “Once you’re approved, you’ll upload your sales history and see your town.”
 - Footer line: “Signed in as {email}. Using the wrong Google account? Sign out and continue with another one.”
@@ -1729,7 +1730,7 @@ Primary: “Sign in again” (kit `POST /auth/logout`, then `/sign-in`).
 | Error | Network copy with Try again |
 | Success | The list, or the redirect. After a join, the notice “You joined {org}. {inviter} added {email}. Not your team? Leave {org}.” (F1) |
 
-**P10. Add location (`/locations/new`, org admins).** Fields: Name, and Town (as P3). Primary: “Add location”. Errors: “Another location already uses that name.” and “You’ve reached 25 locations. Write to hello@townwise.tech for more.” On success it opens the new location’s Home (P11).
+**P10. Add location (`/locations/new`, org admins).** Fields: Name, and Town (as P3); while the Google Places search is on, the form starts with it (10.3). Primary: “Add location”. Errors: “Another location already uses that name.” and “You’ve reached 25 locations. Write to hello@townwise.tech for more.” On success it opens the new location’s Home (P11).
 
 **P11. Home (`/locations/[id]`, the location’s first page)**
 
@@ -1830,6 +1831,7 @@ Home replaced the Forecast page here (owner decision, 2026-11-05); its data chec
 **P16. Location settings (`/locations/[id]/settings`, org admins)**
 
 - Fields: Name, and Town. Primary: “Save changes”.
+- While the Google Places search is on, a section “Change this location’s place” (10.3).
 - A section “Delete location”. When the location has no sales and no notes, it shows an outline “Delete location” with a typed-name confirmation. Otherwise it says “Delete this location’s sales data and notes first.”
 - States: loading; the field error “Another location already uses that name.”; success notice “Saved.”; after a delete, `/dashboard` with “Deleted {name}.”
 
