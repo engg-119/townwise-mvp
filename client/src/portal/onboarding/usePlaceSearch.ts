@@ -195,11 +195,14 @@ export function usePlaceSearch(api: ApiClient): PlaceSearchState {
   return { query, setQuery, suggestions, searched, searching, picking, found, error, gone, unavailable, pick, again };
 }
 
-/** What a screen reader hears once per answer, and what the search shows under the field. */
+/**
+ * What a screen reader hears once per answer, and what the search shows under the field. The sentence names the text it
+ * answers, so two answers with the same count still read differently (a live region speaks only a change).
+ */
 export function searchStatus(state: Pick<PlaceSearchState, 'searched' | 'suggestions' | 'gone'>): string | null {
   if (state.gone) return 'Google Maps can’t find that place any more. Search again, or enter it yourself.';
   if (state.searched === null) return null;
   const count = state.suggestions.length;
   if (count === 0) return `No places match “${state.searched}”. Check the spelling, or enter it yourself.`;
-  return `${String(count)} ${count === 1 ? 'place matches' : 'places match'}. Pick one to see what Google Maps has for it.`;
+  return `${String(count)} ${count === 1 ? 'place matches' : 'places match'} “${state.searched}”. Pick one to see what Google Maps has for it.`;
 }

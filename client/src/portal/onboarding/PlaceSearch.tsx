@@ -9,7 +9,7 @@ import { usePlaceSearch } from './usePlaceSearch';
 
 // The Google Places search on iOS and Android (PlaceSearch.web.tsx is the web's combobox): a search field, and under
 // it each suggestion as a button named by the place and its town, then the confirm card (PlaceSearchParts.tsx). The
-// status line under the field says how many places match, once per answer. Nothing animates.
+// status line under the field says how many places match the text searched, once per answer. Nothing animates.
 
 export type { PlaceSearchProps } from './PlaceSearchParts';
 

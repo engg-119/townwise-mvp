@@ -76,8 +76,8 @@ describe('the words', () => {
   test('the status line counts the answer, says when nothing matches, and nothing before an answer', () => {
     const one = [{ placeId: 'ChIJTestPlace0001', name: 'Lou’s', detail: '' }];
     expect(searchStatus({ searched: null, suggestions: [], gone: false })).toBeNull();
-    expect(searchStatus({ searched: 'Lou', suggestions: one, gone: false })).toBe('1 place matches. Pick one to see what Google Maps has for it.');
-    expect(searchStatus({ searched: 'Lou', suggestions: [...one, ...one], gone: false })).toBe('2 places match. Pick one to see what Google Maps has for it.');
+    expect(searchStatus({ searched: 'Lou', suggestions: one, gone: false })).toBe('1 place matches “Lou”. Pick one to see what Google Maps has for it.');
+    expect(searchStatus({ searched: 'Lou', suggestions: [...one, ...one], gone: false })).toBe('2 places match “Lou”. Pick one to see what Google Maps has for it.');
     expect(searchStatus({ searched: 'Zzz', suggestions: [], gone: false })).toBe('No places match “Zzz”. Check the spelling, or enter it yourself.');
     expect(searchStatus({ searched: null, suggestions: [], gone: true })).toBe('Google Maps can’t find that place any more. Search again, or enter it yourself.');
   });

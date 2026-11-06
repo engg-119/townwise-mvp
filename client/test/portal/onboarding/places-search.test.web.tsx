@@ -128,5 +128,5 @@ test('the status is one polite live region, replaced whole by each answer, and d
   expect(box.getAttribute('aria-describedby')?.split(' ')).toContain(status.id);
   await search('Lou');
   expect(screen.getAllByRole('status')).toHaveLength(1);
-  expect(status.textContent).toBe('3 places match. Pick one to see what Google Maps has for it.');
+  expect(status.textContent).toBe('3 places match “Lou”. Pick one to see what Google Maps has for it.');
 });

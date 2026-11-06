@@ -73,7 +73,7 @@ test('typing waits 250ms, sends nothing under 2 characters, and the suggestions 
   expect(places.autocompletes).toEqual([{ input: 'Lou', sessionToken: undefined }]);
   expect(await screen.findByRole('button', { name: 'Lou’s Restaurant, Hanover, NH, USA' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Lou’s Bakery, Norwich, VT, USA' })).toBeTruthy();
-  expect(screen.getByText('3 places match. Pick one to see what Google Maps has for it.')).toBeTruthy();
+  expect(screen.getByText('3 places match “Lou”. Pick one to see what Google Maps has for it.')).toBeTruthy();
   expect(screen.getByText('Results from Google Maps.')).toBeTruthy();
 });
 
@@ -194,7 +194,7 @@ test('503 places_unavailable, from the search or the pick, hands the page its ma
   expect(onUnavailable).toHaveBeenCalledTimes(1);
 });
 
-test('iOS hears each status once, as a whole sentence, when an answer changes it', async () => {
+test('iOS hears each answer once, as a whole sentence, even when the count is the same', async () => {
   // The native project runs as iOS (jest-expo/ios), which reads no live region, so the status is announced.
   const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation(() => undefined);
   // The preset's mock keeps the calls of earlier tests.
@@ -203,7 +203,13 @@ test('iOS hears each status once, as a whole sentence, when an answer changes it
   await type('Lou');
   await wait(250);
   await screen.findByRole('button', { name: 'Lou’s Restaurant, Hanover, NH, USA' });
+  // The same text again (spaces are trimmed) is not a new answer.
   await type('Lou ');
   await wait(250);
-  expect(announce.mock.calls).toEqual([['3 places match. Pick one to see what Google Maps has for it.']]);
+  await type('Lou’s');
+  await wait(250);
+  expect(announce.mock.calls).toEqual([
+    ['3 places match “Lou”. Pick one to see what Google Maps has for it.'],
+    ['3 places match “Lou’s”. Pick one to see what Google Maps has for it.'],
+  ]);
 });

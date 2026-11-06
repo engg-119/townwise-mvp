@@ -9,8 +9,8 @@ import { usePlaceSearch } from './usePlaceSearch';
 // The Google Places search on web: an ARIA 1.2 combobox (a real <input role="combobox"> that owns a listbox of
 // suggestions, aria-activedescendant for the active one), styled like FormField with mint on focus. Down and Up move
 // through the suggestions, Enter picks the active one, Escape closes the list, then clears the text; the mouse picks
-// on press without taking focus from the field. The status line (PlaceSearchParts.tsx) says how many places match,
-// once per answer. Nothing animates.
+// on press without taking focus from the field. The status line (PlaceSearchParts.tsx) says how many places match
+// the text searched, once per answer. Nothing animates.
 
 export type { PlaceSearchProps } from './PlaceSearchParts';
 
