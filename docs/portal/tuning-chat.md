@@ -117,8 +117,7 @@ Each tool call's card shows an input view and a result view: dates, counts and s
 ## 7. Client (`client`, web and native)
 
 - `src/api/client.ts` gains a streaming request: same auth and refresh as `request`, no timeout once headers arrive, `fetch` from `expo/fetch` on native and the global `fetch` on web, a pure SSE parser with unit tests, and an `AbortSignal` for Stop.
-- The dashboard lists the organization's locations (from `GET /api/org`), each linking to `/locations/[locationId]/chat`. A person with no organization sees a short line instead of an error.
-- `app/(gate)/(app)/locations/[locationId]/chat.tsx`: location name and a back link; the conversation list with **New conversation**; the messages; the streaming reply with a one-line tool status ("Reading sales history"); proposal cards with **Add note** and **Dismiss**; a composer with **Send** and **Stop**; states for off ("The tuning chat isn't turned on yet."), budget used up, errors, and loading. Built from `src/ui` and `src/theme` (white primary button, mint accent only for data). Every control has an accessible label.
+- The page is the Agent page, `/locations/[locationId]/agent` (`app/(gate)/(app)/(client)/locations/[locationId]/agent.tsx`), labelled TownwiseAI in the location's top bar; `/locations/[locationId]/chat` redirects there. Spec P25 describes it: the conversations, messages with tool cards and proposal cards, the composer, the side panel (section 8) and every state. The tool cards' words come from `src/chat/tools.ts`, one row per registered tool.
 - Privacy page, "Who else sees it": add Anthropic as the provider that receives chat messages and the location data the assistant reads, with a `[DECISION NEEDED]` chip for the retention and training wording, matching the page's existing chips.
 
 ## 8. Side panel: questions and activity (spec 10.12)
