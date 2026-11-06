@@ -39,7 +39,8 @@ export const COPY = {
   notSureHelp: 'Not sure keeps this file stored but not used, and Townwise moves on to the next one.',
   answer: 'Continue',
   answering: 'Saving…',
-  rawExpired: 'The original was deleted after a year. The cleaned copy and days stay.',
+  /** Deleted by a person, by staff or by retention: the file view doesn't say which, so neither do the words. */
+  rawGone: 'The original was deleted. The cleaned copy and days stay.',
   rawDeleted: 'Original deleted. The cleaned copy and days stay.',
 } as const;
 
@@ -227,7 +228,7 @@ export const UPLOAD_ERROR = {
   view_as_no_download: 'Files can’t be downloaded while viewing as someone else.',
   no_access: 'You no longer have access to this organization.',
   rate_limited: 'Too many uploads at once. Townwise will try again in a moment.',
-  raw_expired: 'The original was deleted after a year. The cleaned copy and days stay.',
+  raw_expired: 'The original was deleted. The cleaned copy and days stay.',
   file_busy: 'This file is still uploading or being read. Try again when it’s done.',
   no_clean_file: 'This file added no days, so there is no cleaned copy.',
   no_entries: 'This file isn’t a ZIP archive.',

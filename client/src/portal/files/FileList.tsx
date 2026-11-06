@@ -106,7 +106,7 @@ function FileRow(props: {
       <Text style={styles.name}>{fileName(file)}</Text>
       <Small>{meta}</Small>
       <Small white>{fileLine(file)}</Small>
-      {file.rawAvailable || file.status === 'uploading' ? null : <Small>{COPY.rawExpired}</Small>}
+      {file.rawAvailable || file.status === 'uploading' ? null : <Small>{COPY.rawGone}</Small>}
       {file.entries === null ? null : (
         <View style={styles.zip}>
           <Small>{entriesLine(file.entries)}</Small>

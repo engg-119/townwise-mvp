@@ -100,10 +100,11 @@ test('each file says what Townwise did with it, and a ZIP lists the files inside
   expect(within(inside).queryByRole('button', { name: 'Show more' })).toBeNull();
 });
 
-test('downloads and deletes follow each file’s flags; an expired original says what stays', async () => {
+test('downloads and deletes follow each file’s flags; a deleted original says what stays, without guessing why', async () => {
   setup(meOf(ACCESS.member), [
     fileViewOf('f1', { name: 'mine.csv' }),
     fileViewOf('f2', { name: 'theirs.csv', canDownloadRaw: false, canDelete: false, canDeleteRaw: false }),
+    // Uploaded today with no original: it was deleted by a person, not by the year's retention.
     fileViewOf('f3', { name: 'old.csv', rawAvailable: false, rawExpiresAt: null }),
   ]);
   const rows = within(await list()).getAllByRole('listitem');
@@ -111,7 +112,8 @@ test('downloads and deletes follow each file’s flags; an expired original says
   expect(names(at(rows, 0))).toEqual(['Download original', 'Download cleaned CSV', 'Delete original', 'Delete file']);
   expect(names(at(rows, 1))).toEqual(['Download cleaned CSV']);
   expect(names(at(rows, 2))).toEqual(['Download cleaned CSV', 'Delete file']);
-  expect(within(at(rows, 2)).getByText('The original was deleted after a year. The cleaned copy and days stay.')).toBeTruthy();
+  expect(within(at(rows, 2)).getByText('The original was deleted. The cleaned copy and days stay.')).toBeTruthy();
+  expect(document.body.textContent).not.toContain('after a year');
   // Only org admins delete every original at once.
   expect(screen.queryByRole('button', { name: 'Delete all originals for this location' })).toBeNull();
 });
