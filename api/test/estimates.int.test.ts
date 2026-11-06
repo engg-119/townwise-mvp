@@ -17,7 +17,7 @@ import type { PeopleData } from '../src/people-in-town/sources.ts';
 import type { Town } from '../src/towns.ts';
 import { addGrant, addLocation, addNote, addSalesDay, addSeat, createOrg } from './helpers/fixtures.ts';
 import {
-  call, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
+  call, MINUTE, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
 
 const RESEARCHED: PeopleData = {
@@ -309,5 +309,36 @@ describe('both routes', () => {
     await call(server, `/api/org/locations/${hanover}/estimates/about`, { session: member });
     expect(server.logs.filter((line) => line.includes('townwise.'))).toEqual([]);
     expect(server.logs.join('\n')).not.toMatch(/"(guests|mean|headcount|netSales)"/);
+  });
+});
+
+// U13B. Last in the file: it moves the clock into the evening of June 1 in Hanover (June 2 in UTC).
+describe('the forecast read’s today', () => {
+  it('is the town’s local day, so a day still under way there is not yet past', async () => {
+    await removeStaffFactor(server);
+    const staff = await signInStaff(server);
+    const evening = await addLocation(server, { orgId, name: 'Evening Room' });
+    await addSalesDay(server, { orgId, locationId: evening, date: '2026-06-01', guests: 100, netSalesCents: 100_000 });
+    const file = {
+      ...(JSON.parse(readFileSync(new URL('fixtures/forecast-run.json', import.meta.url), 'utf8')) as Record<string, unknown>),
+      dataThrough: '2026-05-31', madeAt: '2026-06-01',
+      days: [{ date: '2026-06-01', status: 'open', low: 80, mid: 100, high: 120, baseline: null, reasons: [] }], weeks: [],
+    };
+    const imported = await call(server, `/api/admin/orgs/${orgId}/locations/${evening}/forecast-runs`, { session: staff, json: file });
+    expect(imported.status).toBe(201);
+    const runId = (await imported.json() as { run: { id: string } }).run.id;
+    expect((await call(server, `/api/admin/orgs/${orgId}/forecast-runs/${runId}/publish`, { session: staff, json: {} })).status).toBe(200);
+    await removeStaffFactor(server);
+    // 02:00 UTC on June 2 is 22:00 on June 1 in Hanover.
+    server.clock.advance(14 * 60 * MINUTE);
+    // A fresh session: the first one's token has expired by now.
+    const email = `evening-${randomUUID().slice(0, 8)}@example.test`;
+    const later = await signIn(server, email);
+    await addSeat(server, { orgId, userId: later.userId, email });
+    const res = await call(server, `/api/org/locations/${evening}/forecast?from=2026-06-01&to=2026-06-01`, { session: later });
+    expect(res.status).toBe(200);
+    expect((await res.json() as ForecastWindow).days).toEqual([expect.objectContaining({ date: '2026-06-01', actual: null, inRange: null })]);
+    const about = await (await call(server, `/api/org/locations/${evening}/estimates/about`, { session: later })).json() as EstimatesAbout;
+    expect(about.today.date).toBe('2026-06-01');
   });
 });

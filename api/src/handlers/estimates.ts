@@ -13,6 +13,7 @@ import { daysBetween, EARLIEST_DATE, isoDate, utcDay } from '../dates.ts';
 import { estimatesAbout } from '../estimates/about.ts';
 import { MAX_FORECAST_RANGE_DAYS } from '../forecasts/reader.ts';
 import { MAX_PEOPLE_RANGE_DAYS } from '../people-in-town/estimate.ts';
+import { localDay, timeZoneOf } from '../time-zones.ts';
 import { loadLocation, memberOf } from './locations.ts';
 
 /** How far ahead a range may end, from the server's UTC day (as the calendar route). */
@@ -37,8 +38,9 @@ export async function getEstimatesAbout(ctx: TownwiseContext, req: Request, res:
   const { scope } = memberOf(principal);
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const now = ctx.now();
-  // U13B: the newest published run and its live accuracy; none until staff publish one.
-  const forecast = await ctx.ports.forecasts.latest(scope, location.id, utcDay(now));
+  // U13B: the newest published run and its own live accuracy; none until staff publish one. Today is the town's, as
+  // TownwiseAI's, so the card and the chat score the same days.
+  const forecast = await ctx.ports.forecasts.latest(scope, location.id, localDay(now, timeZoneOf(location.town).timeZone));
   res.status(200).json(estimatesAbout(location, ctx.ports.peopleInTown.data, now, forecast));
 }
 
@@ -57,5 +59,6 @@ export async function getForecast(ctx: TownwiseContext, req: Request, res: Respo
   const now = ctx.now();
   const range = parseInput(forecastQuery(utcDay(now, -MAX_FORECAST_DAYS_BACK), utcDay(now, MAX_DAYS_AHEAD)), req.query);
   const location = await loadLocation(ctx, scope, req.params.locationId);
-  res.status(200).json(await ctx.ports.forecasts.window(scope, location, range, utcDay(now)));
+  // Today is the town's, as for the model card and TownwiseAI: a day counts as past only once it has ended there.
+  res.status(200).json(await ctx.ports.forecasts.window(scope, location, range, localDay(now, timeZoneOf(location.town).timeZone)));
 }
