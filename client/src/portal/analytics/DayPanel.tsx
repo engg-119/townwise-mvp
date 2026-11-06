@@ -1,20 +1,66 @@
 import { Link, type Href } from 'expo-router';
+import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
+import { downloadClean } from '../files/api';
+import { actionError, cleanName, COPY as FILE_COPY } from '../files/copy';
+import { CAN_SAVE_FILES, saveFile } from '../files/download';
+import { usePortal, useReadOnly } from '../PortalProvider';
 import { locationHref } from '../routing';
 import { Actions, Button, LinkButton } from '../ui/Button';
 import { DefinitionList } from '../ui/DataTable';
+import { Messages } from '../ui/feedback';
 import { Heading, Mono, Small } from '../ui/text';
-import { PANEL_EMPTY, NO_NOTES, type DayPanelData } from './panel';
+import { PANEL_EMPTY, NO_NOTES, type DayPanelData, type PanelSource } from './panel';
 
 // The Day panel (home.md 4.5), one file for both platforms: everything Townwise has for one day, from panel.ts.
 // Sections in order, a section with nothing in it left out (Your numbers and Your notes always show): the date and
-// its status, Your numbers, On the town calendar with each event's sources, Your notes, Where it came from, then
-// Previous day, Next day and a link to TownwiseAI. It never writes, so it is the same under view-as. Note text and
-// figures are only on screen; nothing here logs.
+// its status, Your numbers, On the town calendar with each event's sources, Your notes, Where it came from (with the
+// stored file the upload was read from, F4), then Previous day, Next day and a link that opens TownwiseAI with this
+// day in its composer (`?about=`; the Agent page only fills the box, it never sends). It never writes. Under view-as
+// the file's name is not sent and "Download cleaned CSV" is not offered, as on Your files; the API refuses it there
+// too. Note text, figures and the file name are only on screen; nothing here logs.
 
 const HEADING_ID = 'analytics-day-heading';
+
+/** F4: the stored file's kind and name, "Download cleaned CSV" (web, members, a finished upload) and Your files. */
+function FileSource(props: { locationId: string; source: PanelSource }): React.JSX.Element | null {
+  const { api } = usePortal();
+  const { readOnly } = useReadOnly();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const { file, fileLine } = props.source;
+  if (file === null || fileLine === null) return null;
+  const canClean = !readOnly && props.source.finished;
+  const save = (): void => {
+    if (saving) return;
+    setSaving(true);
+    setError(null);
+    downloadClean(api, props.locationId, file.id).then(
+      (blob) => { saveFile(blob, cleanName(file)); setSaving(false); },
+      (caught: unknown) => { setError(caught); setSaving(false); },
+    );
+  };
+  return (
+    <>
+      <Small>{fileLine}</Small>
+      {canClean && !CAN_SAVE_FILES ? <Small>{FILE_COPY.nativeDownload}</Small> : null}
+      <Actions>
+        {canClean && CAN_SAVE_FILES ? (
+          <Button
+            variant="link"
+            label={saving ? FILE_COPY.downloading : FILE_COPY.downloadClean}
+            disabled={saving}
+            onPress={save}
+          />
+        ) : null}
+        <LinkButton href={locationHref(props.locationId, 'sales')} label={`Open ${FILE_COPY.yourFiles}`} />
+      </Actions>
+      {error === null ? null : <Messages live="alert" items={[actionError(error)]} />}
+    </>
+  );
+}
 
 function Part(props: { title: string; children: React.ReactNode }): React.JSX.Element {
   return (
@@ -84,8 +130,7 @@ export function DayPanel(props: {
         <Part title="Where it came from">
           <Small>{data.source.line}</Small>
           {data.source.warning === null ? null : <Small>{data.source.warning}</Small>}
-          {/* F4 (build plan section 7): the stored file's kind and name, "Download cleaned CSV" and a link to Your
-              files mount here once uploads link to stored files. Until then `source.file` is always null. */}
+          <FileSource key={data.date} locationId={props.locationId} source={data.source} />
         </Part>
       )}
 
@@ -94,7 +139,7 @@ export function DayPanel(props: {
           <Button variant="outline" label="Previous day" disabled={props.onPrev === null} {...(props.onPrev === null ? {} : { onPress: props.onPrev })} />
           <Button variant="outline" label="Next day" disabled={props.onNext === null} {...(props.onNext === null ? {} : { onPress: props.onNext })} />
         </Actions>
-        <LinkButton href={locationHref(props.locationId, 'agent')} label="Ask TownwiseAI about this day" />
+        <LinkButton href={`${locationHref(props.locationId, 'agent')}?about=${data.date}`} label="Ask TownwiseAI about this day" />
       </View>
     </View>
   );

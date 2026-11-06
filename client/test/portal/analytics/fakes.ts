@@ -129,6 +129,8 @@ export function calendarBody(fields: Partial<Calendar> = {}): Calendar {
 export interface AnalyticsFake extends ApiClient {
   /** Bodies by path; an ApiError rejects. */
   answers: Record<string, unknown>;
+  /** Files a GET through `request` downloads, by path (a stored file's cleaned copy). */
+  downloads: Record<string, Blob>;
   paths: string[];
 }
 
@@ -136,6 +138,7 @@ export function analyticsFake(answers: Record<string, unknown> = {}): AnalyticsF
   const refuse = (): Promise<never> => Promise.reject(new ApiError('http', 'not_found', { status: 404, code: 'not_found' }));
   const fake: AnalyticsFake = {
     answers,
+    downloads: {},
     paths: [],
     json<T>(path: `/${string}`, schema: z.ZodType<T>, opts?: RequestOptions): Promise<T> {
       fake.paths.push(path);
@@ -145,7 +148,12 @@ export function analyticsFake(answers: Record<string, unknown> = {}): AnalyticsF
       if (answer === undefined) return refuse();
       return Promise.resolve(schema.parse(answer));
     },
-    request: refuse,
+    request(path: `/${string}`, opts?: RequestOptions): Promise<Response> {
+      fake.paths.push(path);
+      const file = fake.downloads[path];
+      if ((opts?.method ?? 'GET') !== 'GET' || file === undefined) return refuse();
+      return Promise.resolve({ ok: true, status: 200, blob: () => Promise.resolve(file) } as unknown as Response);
+    },
     stream: refuse,
     logout: () => Promise.resolve(),
   };

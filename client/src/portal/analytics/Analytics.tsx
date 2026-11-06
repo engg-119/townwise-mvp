@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { Platform, StyleSheet, View, type ViewStyle } from 'react-native';
 
 import { theme } from '../../theme';
+import { ModelCard } from '../estimates/ModelCard';
 import { formatCount, formatDate, plural } from '../format';
 import { useBreakpoint, useLoad } from '../hooks';
 import { addDays, formatMonth, localToday, monthRange } from '../locations/dates';
@@ -33,11 +34,11 @@ import { MONTH_NAMES, metricNumber, signedPercent, WEEKDAY_NAMES } from './words
 import { YourData } from './YourData';
 
 // P24 Analytics (/locations/[id]/analytics, members; home.md 4, spec 16.3): the filters, every day as a heatmap
-// with the Day panel, then the weekly shape, by month, year over year, by type of night, the biggest drivers and
-// Your data. Every figure is an average or count of the location's own stored days that the filters keep, from
+// with the Day panel, then the weekly shape, by month, year over year, by type of night, the biggest drivers, the
+// model card ("How Townwise estimates", F9) and Your data. Every figure is an average or count of the location's own stored days that the filters keep, from
 // the compute modules beside this file; a section with too few days says so instead of showing a number. Every
-// section prints the same basis line. The page reads three routes (sales history, notes, the town calendar),
-// writes nothing and keeps its filters in component state only, so view-as shows it unchanged; only its upload
+// section prints the same basis line. The page reads three routes (sales history, notes, the town calendar), and
+// the model card reads its own (estimates/about); the page writes nothing and keeps its filters in component state only, so view-as shows it unchanged; only its upload
 // links are disabled there.
 
 const READ_ONLY_ID = 'analytics-ro';
@@ -338,8 +339,7 @@ function AnalyticsView(props: { data: Data; today: string; locationId: string; r
         </View>
       </ChartSection>
 
-      {/* F9 (build plan section 7): "How Townwise estimates", the model card (estimates/ModelCard), mounts here,
-          above Your data, once U13A lands it. */}
+      <Section><Columns main={<ModelCard locationId={locationId} />} /></Section>
 
       <ChartSection title="Your data">
         <YourData coverage={coverage} uploads={history.uploads} locationId={locationId} />

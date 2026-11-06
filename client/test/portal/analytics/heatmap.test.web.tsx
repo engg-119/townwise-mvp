@@ -11,12 +11,15 @@ import type { MeResponse } from '../../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
 import { ACCESS, EMAIL, fakePortalApi, meOf, orgOf, viewAsMe, type FakePortalApi } from '../../helpers/portal';
-import { analyticsFake, calendarBody, day, historyBody, holiday, note, run, townEvent } from './fakes';
+import { ABOUT } from '../estimates/fakes';
+import { analyticsFake, calendarBody, day, historyBody, holiday, note, run, townEvent, upload, type AnalyticsFake } from './fakes';
 
 // P24 Analytics on web (home.md 4.4, 4.5, spec 16.3): the heatmap's grids, its one tab stop and keys, hover
 // previews, the Day panel with the upload, the event's source link and the note, and the filters that change the
-// marks and the basis line. Synthetic days only. Pillars: the panel names its sources (T); a filter changes the
-// basis line (E); the page writes nothing and keeps nothing in storage, and is the same under view-as (P).
+// marks and the basis line, the stored file a day came from (F4), the link that opens TownwiseAI with the day, and
+// the model card above Your data (F9). Synthetic days only. Pillars: the panel names its sources and its file (T); a
+// filter changes the basis line (E); the page writes nothing and keeps nothing in storage, and under view-as the
+// file's name and download are left out (P).
 
 class ResizeObserverPolyfill {
   observe(): void { return undefined; }
@@ -56,9 +59,12 @@ const EVENTS = [
   townEvent({ start: '2026-10-17', title: 'Sample homecoming' }),
 ];
 
-function portal(me: MeResponse, days = DAYS): FakePortalApi {
+const FILE = { id: '00000000-0000-0000-0000-00000000f001', name: 'sample-sales.csv', kind: 'text' as const };
+
+function portal(me: MeResponse, days = DAYS, uploads = [upload()]): FakePortalApi {
   const fake = analyticsFake({
-    [`${PATH}/sales/history`]: historyBody(days),
+    [`${PATH}/sales/history`]: historyBody(days, uploads),
+    [`${PATH}/estimates/about`]: ABOUT,
     [`${PATH}/notes`]: { notes: [NOTE] },
     [`${PATH}/calendar?from=2025-01-01&to=2026-12-31`]: calendarBody({ events: EVENTS }),
     [`${PATH}/calendar?from=2026-01-01&to=2026-12-31`]: calendarBody({ events: [] }),
@@ -167,7 +173,8 @@ test('Enter selects: the panel has the numbers, the event with its source, the n
   expect(within(day).getByText('A rehearsal dinner.')).toBeTruthy();
   expect(within(day).getByText('From the upload on Nov 4, 2026 by owner@example.com.')).toBeTruthy();
   expect(within(day).getByRole('link', { name: 'Open Notes' }).getAttribute('href')).toBe('/locations/l1/notes');
-  expect(within(day).getByRole('link', { name: 'Ask TownwiseAI about this day' }).getAttribute('href')).toBe('/locations/l1/agent');
+  // The day goes to the Agent page in its address, which only fills the composer with it.
+  expect(within(day).getByRole('link', { name: 'Ask TownwiseAI about this day' }).getAttribute('href')).toBe('/locations/l1/agent?about=2026-10-10');
   // While a day is selected, the keys move the selection with focus.
   key('ArrowRight');
   const event = await screen.findByRole('region', { name: 'Saturday, Oct 17, 2026' });
@@ -297,6 +304,60 @@ test('"Keep at least one year." is read from a polite live region that is there 
   expect(region?.textContent).toBe('Keep at least one year.');
 });
 
+test('F4: Where it came from names the stored file, downloads its cleaned copy and links to Your files', async () => {
+  const saved: string[] = [];
+  Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: () => 'blob:https://townwise.tech/0000' });
+  Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: () => undefined });
+  jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { saved.push(this.download); });
+  const api = await ready(portal(meOf(ACCESS.member), DAYS, [upload({ file: FILE })]));
+  const fake = api.fallback as AnalyticsFake;
+  fake.downloads[`${PATH}/files/${FILE.id}/clean`] = new Blob(['date,guests,net_sales\r\n']);
+  fireEvent.click(cell('2026-10-10'));
+  const day = await screen.findByRole('region', { name: 'Saturday, Oct 10, 2026' });
+  expect(within(day).getByText('File: sample-sales.csv (CSV or text file).')).toBeTruthy();
+  expect(within(day).getByRole('link', { name: 'Open Your files' }).getAttribute('href')).toBe('/locations/l1/sales');
+  fireEvent.click(within(day).getByRole('button', { name: 'Download cleaned CSV' }));
+  await waitFor(() => { expect(saved).toEqual(['sample-sales-townwise.csv']); });
+  expect(api.calls.filter((call) => call.method !== 'GET')).toEqual([]);
+});
+
+test('F4: an upload that didn’t finish offers no download, and a browser upload names no file', async () => {
+  const api = await ready(portal(meOf(ACCESS.member), DAYS, [upload({ file: FILE, status: 'applying' })]));
+  fireEvent.click(cell('2026-10-10'));
+  const day = await screen.findByRole('region', { name: 'Saturday, Oct 10, 2026' });
+  expect(within(day).getByText('This upload didn’t finish.')).toBeTruthy();
+  expect(within(day).getByText('File: sample-sales.csv (CSV or text file).')).toBeTruthy();
+  expect(within(day).queryByRole('button', { name: 'Download cleaned CSV' })).toBeNull();
+  cleanup();
+  await ready(portal(meOf(ACCESS.member)));
+  fireEvent.click(cell('2026-10-10'));
+  const plain = await screen.findByRole('region', { name: 'Saturday, Oct 10, 2026' });
+  expect(within(plain).queryByText(/^File: /)).toBeNull();
+  expect(within(plain).queryByRole('link', { name: 'Open Your files' })).toBeNull();
+  expect(api.calls.some((call) => call.path.includes('/files/'))).toBe(false);
+});
+
+test('F4 under view-as: the file by kind only, no download, and still the link to Your files', async () => {
+  const api = await ready(portal(viewAsMe(ACCESS.member), DAYS, [upload({ file: { ...FILE, name: null } })]));
+  fireEvent.click(cell('2026-10-10'));
+  const day = await screen.findByRole('region', { name: 'Saturday, Oct 10, 2026' });
+  expect(within(day).getByText('File: CSV or text file. Its name is hidden in view-as.')).toBeTruthy();
+  expect(within(day).queryByRole('button', { name: 'Download cleaned CSV' })).toBeNull();
+  expect(within(day).getByRole('link', { name: 'Open Your files' })).toBeTruthy();
+  expect(api.calls.some((call) => call.path.includes('/files/'))).toBe(false);
+});
+
+test('F9: “How Townwise estimates” sits above Your data, says there is no forecast yet, and names what it reads', async () => {
+  await ready();
+  const card = await screen.findByRole('region', { name: 'How Townwise estimates' });
+  expect(await within(card).findByText('Townwise has no forecast for Test Taproom yet. Home and TownwiseAI use your history and Hanover’s calendar until it does.')).toBeTruthy();
+  expect(within(card).getByText('In progress')).toBeTruthy();
+  const headings = screen.getAllByRole('heading').map((each) => each.textContent);
+  expect(headings.indexOf('How Townwise estimates')).toBe(headings.indexOf('Your data') - 1);
+  expect(headings.indexOf('Biggest drivers')).toBeLessThan(headings.indexOf('How Townwise estimates'));
+  expect(screen.getByText(READS_LINE)).toBeTruthy();
+});
+
 test('interactive={false} (Home, Reading): one picture named by its label, nothing focusable, no grid, pending days dashed', () => {
   const days = run('2026-10-01', '2026-10-20', () => 100);
   render(
@@ -326,4 +387,34 @@ test('interactive={false} (Home, Reading): one picture named by its label, nothi
     expect(each.style.overflowX).not.toBe('auto');
     expect(each.style.minWidth).not.toBe('720px');
   }
+});
+
+test('interactive={false}: a narrow picture labels every other month, then every third, and the labels stay hidden from readers', () => {
+  const days = run('2026-01-01', '2026-11-04', () => 100);
+  render(
+    <Heatmap
+      days={days}
+      metric="guests"
+      marks={{ townEvents: true, holidays: true, notes: true, closures: true }}
+      context={dayContext([], [])}
+      included={() => true}
+      years={[2026]}
+      interactive={false}
+      label="Daily guests, Jan 1, 2026 to Nov 4, 2026."
+      today="2026-11-05"
+    />,
+  );
+  const picture = screen.getByRole('img');
+  // The picture is its own size container; the rules for its width are in the heatmap's stylesheet.
+  expect(picture.className.split(' ')).toContain('tw-hm-fit');
+  const css = [...document.querySelectorAll('style')].map((each) => each.textContent).join('\n');
+  expect(css).toContain('.tw-hm-fit{container-type:inline-size}');
+  expect(css).toContain('@container (width < 360px){.tw-hm-fit .tw-hm-m2{display:none}}');
+  expect(css).toContain('@container (width < 220px){.tw-hm-fit .tw-hm-m2{display:inline}.tw-hm-fit .tw-hm-m3{display:none}}');
+  const labels = [...picture.querySelectorAll<HTMLElement>('[aria-hidden="true"] span')].filter((each) => /^[A-Z][a-z]{2}$/.test(each.textContent));
+  const classOf = (month: string): string => labels.find((each) => each.textContent === month)?.className ?? 'missing';
+  expect(labels.map((each) => each.textContent)).toEqual(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']);
+  // A year block draws every month. Every other month keeps Jan, Mar, May, Jul, Sep, Nov; every third keeps Jan, Apr, Jul, Oct.
+  expect(['Jan', 'Feb', 'Mar', 'Apr', 'Jul'].map(classOf)).toEqual(['', 'tw-hm-m2 tw-hm-m3', 'tw-hm-m3', 'tw-hm-m2', '']);
+  for (const each of labels) expect(each.closest('[aria-hidden="true"]')).not.toBeNull();
 });
