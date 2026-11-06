@@ -61,7 +61,7 @@ describe('P16 Location settings', () => {
     expect(writes(api)).toEqual([{
       method: 'PATCH', path: '/api/org/locations/l1', body: { name: 'Main Street Tavern', town: { townId: null, name: 'Norwich', state: 'VT' } },
     }]);
-    expect(screen.getByRole('heading', { name: 'Main Street Tavern' })).toBeTruthy();
+    expect(screen.getByText('Main Street Tavern, Norwich, VT')).toBeTruthy();
     expect(router.getPathname()).toBe('/locations/l1/settings');
   });
 
@@ -233,7 +233,7 @@ describe('P10 Add location', () => {
     await fireEvent.press(screen.getByRole('button', { name: 'Add location' }));
     await waitFor(() => { expect(router.getPathname()).toBe('/locations/l9'); });
     expect(writes(api)).toEqual([{ method: 'POST', path: '/api/org/locations', body: { name: 'Harbor Room', town: { townId: 'stowe-vt' } } }]);
-    expect(await screen.findByRole('heading', { name: 'Harbor Room' })).toBeTruthy();
+    expect(await screen.findByText('Harbor Room, Stowe, VT')).toBeTruthy();
   });
 
   test('Cancel returns to Locations', async () => {

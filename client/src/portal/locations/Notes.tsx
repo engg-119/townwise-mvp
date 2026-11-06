@@ -24,7 +24,7 @@ import { LoadFailure, Loading, useOrgRefreshOnLeave } from './parts';
 
 // P14 Notes, the tuning step (spec 16.3, 12): the intro, “Add a note” opening C6 inline above the lists, then
 // “Coming up” (ending today or later) and “Past”. Authors edit and delete their own notes; org admins any
-// (`canEdit`). Under view-as, Add, Edit and Delete are disabled in place. Only the tuning chat reads notes yet
+// (`canEdit`). Under view-as, Add, Edit and Delete are disabled in place. Only TownwiseAI (the tuning chat) reads notes yet
 // (api/src/handlers/notes.ts), so the intro says that instead of the spec's “Nothing reads them yet.” Sales data's “Add a closure note.” opens the form as a closure (`?new=closure`).
 // A 404 on a write means the note, or its location, was deleted in the meantime (spec 10.9): the form or dialog
 // closes, an edit or delete says “This note isn’t available.”, and the list loads again, which shows “This
@@ -218,7 +218,7 @@ export function Notes(): React.JSX.Element {
           <Stack>
             <Body>
               Notes record what your sales can’t show: a closure, a private event, an opening. Add past ones to explain unusual
-              days, and upcoming ones for the dates ahead. Townwise keeps them with this location. Only the tuning chat reads them yet.
+              days, and upcoming ones for the dates ahead. Townwise keeps them with this location. Only TownwiseAI reads them yet.
             </Body>
             <View style={styles.tagline}>
               <StatusTag kind="planned" label="Planned" />
