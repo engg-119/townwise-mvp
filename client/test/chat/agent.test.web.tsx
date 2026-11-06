@@ -203,6 +203,29 @@ describe('a tool card', () => {
     });
     expect(live?.textContent).toBe('TownwiseAI replied');
   });
+
+  test('opening an earlier conversation announces nothing: only a reply to this visit’s message is news', async () => {
+    const api = fakeChatApi();
+    renderAt('/locations/l1/agent', api);
+    fireEvent.click(await screen.findByRole('button', { name: 'Conversations' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Earlier chat, Nov 2, 2026' }));
+    await screen.findByText('Last December you were open every day.');
+    const live = document.querySelector('[aria-live="polite"]');
+    expect(live?.textContent).toBe('');
+    fireEvent.change(screen.getByLabelText(COMPOSER_LABEL), { target: { value: 'And January?' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => { expect(api.turns).toHaveLength(1); });
+    await stream(() => {
+      turn(api).emit('text', { delta: 'January was quiet.' });
+      turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0 });
+      turn(api).end();
+    });
+    expect(live?.textContent).toBe('TownwiseAI replied');
+    // Opening it again replays the reply, which is not news.
+    fireEvent.click(screen.getByRole('button', { name: 'Conversations' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Earlier chat, Nov 2, 2026' }));
+    await waitFor(() => { expect(live?.textContent).toBe(''); });
+  });
 });
 
 test('a town profile card’s sources open in a new tab', async () => {

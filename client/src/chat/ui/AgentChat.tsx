@@ -34,11 +34,16 @@ export interface AgentChatContext extends ToolContext {
 
 type Scroller = React.ComponentRef<typeof ScrollView>;
 
-/** What the live region says, from the chat's state: one sentence at a time, never the streamed text. */
-function announcementOf(chat: TuningChat, ctx: ToolContext): string {
+/**
+ * What the live region says, from the chat's state: one sentence at a time, never the streamed text. Only a reply to
+ * a message sent on this visit is news: `before` holds the keys of the messages shown when it was sent (null when
+ * nothing has been sent since the conversation opened), so a reply opened from history, or the one left when a turn
+ * is taken back, says nothing.
+ */
+function announcementOf(chat: TuningChat, ctx: ToolContext, before: ReadonlySet<string> | null): string {
   const { state } = chat;
   const reply = state.messages.at(-1);
-  if (reply?.role !== 'assistant') return '';
+  if (reply?.role !== 'assistant' || before === null || before.has(reply.key)) return '';
   if (reply.state === 'streaming') {
     const running = stepsOf(reply).filter((step) => step.state === 'running').at(-1);
     return running === undefined ? 'TownwiseAI is replying' : toolLine(running, ctx).sentence;
@@ -75,7 +80,8 @@ export function AgentChat(props: {
   // The pin lives in a ref (every scroll event moves it); only whether Latest shows is drawn.
   const pin = useRef<PinState>(INITIAL_PIN);
   const [behind, setBehind] = useState(false);
-  const announcement = announcementOf(chat, ctx);
+  const [before, setBefore] = useState<ReadonlySet<string> | null>(null);
+  const announcement = announcementOf(chat, ctx, before);
 
   useEffect(() => {
     if (announcement !== '' && Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(announcement);
@@ -90,11 +96,13 @@ export function AgentChat(props: {
   }
 
   function send(run: () => void): void {
+    setBefore(new Set(state.messages.map((message) => message.key)));
     run();
     apply({ type: 'send' });
   }
 
   function opened(run: () => void): void {
+    setBefore(null);
     run();
     apply({ type: 'opened' });
   }
