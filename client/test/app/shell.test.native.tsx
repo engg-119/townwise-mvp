@@ -10,12 +10,15 @@ jest.mock('expo-splash-screen', () => ({
 import { Dimensions } from 'react-native';
 import { cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing-library';
 
+import { calendarRange } from '../../src/portal/analytics/api';
 import { formatTime } from '../../src/portal/format';
+import { localToday } from '../../src/portal/locations/dates';
 import type { MeResponse } from '../../src/portal/schemas';
 import {
   ACCESS, EMAIL, fakePortalApi, meOf, offline, orgOf, STAFF_EMAIL, staffMe, viewAsMe, writes,
 } from '../helpers/portal';
 import { renderApp } from '../helpers/renderApp';
+import { analyticsFake, calendarBody, day, historyBody } from '../portal/analytics/fakes';
 
 const WINDOW = Dimensions.get('window');
 
@@ -124,11 +127,18 @@ describe('location pages (spec 15.2)', () => {
     expect(navLink('Home').props.accessibilityState).toMatchObject({ selected: false });
   });
 
-  test('Analytics is in progress for now: it says so, under its own title, and leads to Sales data, which it marks', async () => {
-    const { router } = await renderApp('/locations/l1/analytics', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') }));
+  // U7: Analytics replaced U5's In progress stub (spec P24); its own suites are under test/portal/analytics/.
+  test('Analytics opens under its own title and is marked, and leads to Sales data, which marks it too', async () => {
+    const path = '/api/org/locations/l1';
+    const fallback = analyticsFake({
+      [`${path}/sales/history`]: historyBody([day('2026-02-04', 50)]),
+      [`${path}/notes`]: { notes: [] },
+      [`${path}/calendar?${new URLSearchParams(calendarRange('2026-02-04', localToday())).toString()}`]: calendarBody(),
+    });
+    const { router } = await renderApp('/locations/l1/analytics', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback }));
     expect(await screen.findByRole('heading', { name: 'Analytics' })).toBeTruthy();
-    expect(screen.getByText('In progress')).toBeTruthy();
-    expect(screen.getByText('Analytics isn’t built yet. Your daily totals are on Sales data.')).toBeTruthy();
+    expect(await screen.findByText('1 day, Feb 4, 2026 to Feb 4, 2026.')).toBeTruthy();
+    expect(screen.queryByText('In progress')).toBeNull();
     expect(navLink('Analytics').props.accessibilityState).toMatchObject({ selected: true });
     await fireEvent.press(screen.getByRole('link', { name: 'Sales data' }));
     expect(router.getPathname()).toBe('/locations/l1/sales');

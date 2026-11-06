@@ -291,3 +291,37 @@ export function heatmapSummary(
   ];
   return parts.filter((part): part is string => part !== null).join(' ');
 }
+
+// The numbers behind the cells
+
+export interface MonthRow {
+  /** "2026-11". */
+  month: string;
+  /** Days with a value for the metric. */
+  days: number;
+  total: number;
+  mean: number;
+}
+
+/** Printed by native's month list, whose averages are heatmapMonths', so they never seem to contradict the basis line. */
+export const MONTH_ROWS_LINE = 'Month averages count every day with a value in the years you checked, including days your filters leave out.';
+
+/**
+ * Per month of the shown years with a value for the metric, newest first: the days, their total and their average.
+ * Every value counts, kept or left out by the filters, because this is the table behind the cells ("Show the
+ * numbers" on web, the month list on native).
+ */
+export function heatmapMonths(input: Pick<HeatmapInput, 'days' | 'metric' | 'years'>): MonthRow[] {
+  const years = new Set(input.years);
+  const sums = new Map<string, { days: number; total: number }>();
+  for (const day of input.days) {
+    const value = valueOf(day, input.metric);
+    if (value === null || !years.has(Number(day.date.slice(0, 4)))) continue;
+    const month = day.date.slice(0, 7);
+    const sum = sums.get(month) ?? { days: 0, total: 0 };
+    sums.set(month, { days: sum.days + 1, total: sum.total + value });
+  }
+  return [...sums.entries()]
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([month, sum]) => ({ month, days: sum.days, total: sum.total, mean: sum.total / sum.days }));
+}

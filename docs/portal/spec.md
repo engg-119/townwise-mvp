@@ -1508,7 +1508,7 @@ Two full-screen statements reveal word by word, hold, then dissolve into the pag
 | P21 | `/admin/orgs/[orgId]` | Organization detail: team, locations, suspend, view as, delete | staff | Staff console |
 | P22 | `/admin/people` | People: everyone across organizations, sign out everywhere, delete | staff | Staff console |
 | P23 | `/admin/audit` | Audit log | staff | Staff console |
-| P24 | `/locations/[id]/analytics` | Analytics: your days, your town’s calendar and your notes (**In progress**: until it is built, the page says so and links to Sales data) | members | Client app |
+| P24 | `/locations/[id]/analytics` | Analytics: your days, your town’s calendar and your notes | members | Client app |
 | P25 | `/locations/[id]/agent` | TownwiseAI, the tuning chat (`/locations/[id]/chat` redirects here) | members | Client app |
 
 Components that are not routes: C1 View-as dialog, C2 View-as banner (15.5), C3 Approve dialog, C4 Reject dialog, C5 New organization dialog, C6 Note form, C7 Confirm dialogs (deletion dialogs ask for the typed name or email, 15.7).
@@ -1737,6 +1737,32 @@ Primary: “Sign in again” (kit `POST /auth/logout`, then `/sign-in`).
 - **Sign out**: “Sign out” and “Sign out on every device” (kit `POST /auth/logout-all`, **Exists**; the shell has no screen for it yet), both text links. [CONFIRM: add sign out on every device]
 - States: loading, and network error with Try again.
 - View-as: every write is disabled.
+
+**P24. Analytics (`/locations/[id]/analytics`)**
+
+Every figure is a count or an average of the location’s own stored days that the filters keep, from `GET .../sales/history`, `GET .../notes` and `GET .../calendar` (10.4, 10.10). Nothing is estimated, nothing is shown for a day after today, and a figure with too few days behind it says so instead. The page writes nothing; its filters live in the page’s state only (never the URL or storage) and reset when it closes. Built from `client/src/portal/analytics/`.
+
+- Lead: “{n} days, {first} to {last}.”
+- **Filters**, one block that drives the page (labelled groups in a row on desktop, stacked on phones; a change never animates or moves focus):
+  - Colour by: Guests (default when any day has guests) or Net sales, a radio group with one tab stop whose arrows move the choice. A metric with no data is disabled, with “No guest counts in your history.” or “No net sales in your history.”
+  - Show on the calendar (checkboxes, all on): Town events, Holidays, Your notes, Closures. They change only the heatmap’s marks and labels.
+  - Include in the numbers: Closed days (off), Days with a note (on; closures follow Closed days only), Holiday and event days (on). They change every average, chart, type of night and the heatmap’s levels; a value they leave out is drawn as “Left out”.
+  - Years: one per year with data, all on. Unchecking the last is refused: the box stays checked and “Keep at least one year.” describes it.
+  - The checkbox is a shared control (`ui/Checkbox`): a real `<input type="checkbox">` in its `<label>` on web, a Pressable with the checkbox role and state on native; checked takes the `mint` fill with an `on-mint` check; disabled keeps its focus with `aria-disabled`.
+- **Every day.** The heatmap (web): one grid per checked year, newest first, 7 weekday rows (Monday first) by week columns of square cells; four `mint` levels from the quartiles of the kept values, “No data” `raised`, “Left out” `state`, closed outlined, a white corner square for a holiday or town event and a `text2` one for a note. A visible legend above; under it the summary (“{Daily guests}, {first} to {last}. Busiest: … Quietest open day: … {n} closed days.” and what the town calendar covers) and the basis line; “Show the numbers” is the month table (Month, Days with data, Total, Average; every value in the checked years, kept or left out). Each year is `role="grid"` named “{year}, daily {guests}”, with row headers; each cell’s label says everything its fill and marks show. One tab stop for the whole heatmap, starting at the selected day or the last day with data: arrows move a day (up and down) or a week (left and right), Home and End the week’s Monday and Sunday, PageUp and PageDown 52 weeks across years, Ctrl+Home and Ctrl+End the first and last day with data; Enter or Space selects, Escape clears, and while a day is selected the selection follows focus. Days after today are blank and never focusable. A mouse or pen over a cell previews it; leaving the grid restores the selection. Native (D21): a month list, newest first (“{month}, {n} days with data, {average} on average”); a month opens its days as 44px rows (date, value, marks in words), and a day opens the Day panel under its row.
+- **Day panel** (columns 9 to 12 and sticky from 1024px; under the heatmap below): the date and its status (Closed, No data for this day, Left out of the numbers by your filters, Today); Your numbers (Guests, Net sales, Usual for a {weekday} with the day count and the day’s change, Same day last year); On the town calendar, each event with its kind, dates and “Source: {label}” links, and the line when the town’s research doesn’t cover the day; Your notes in words with “Open Notes”; Where it came from (“From the upload on {date} by {email}.”, “This upload didn’t finish.”, “Upload record not found.”); Previous day and Next day (they move the selection, and on web focus the matching cell); “Ask TownwiseAI about this day”. Empty: “Point at or select a day to see everything Townwise has for it. Use the arrow keys to move between days.” [Planned, F4: the stored file’s kind and name, “Download cleaned CSV” and Your files, once uploads link to stored files.]
+- **Weekly shape**, **By month**, **Year over year**, **By type of night**: each a text summary, the chart (web: inline SVG, `aria-hidden`, `mint` 2px marks with square ends, printed scale “Scale 0 to {n} guests. Scale fitted to this location.”; year over year draws the newest year `mint` and older years `line`, each labelled with its year, months that are not complete as hollow points), the basis line and “Show the numbers”. Year over year compares only months with at least 15 kept days in both years and says what is missing otherwise, with “Upload older history” when older exports would help. A type of night with fewer than 2 nights shows its count and “Not enough nights yet.”
+- **Biggest drivers**: a table (#, Driver, an effect bar from 50% fewer to 50% more on web, Effect, Seen), “(rough)” under 4 days, the footnote on how effects are measured, the basis line, and a Planned line: “Weather as a driver.” With nothing seen twice: “Townwise needs each kind of day to happen at least twice before it can say how much it moves your numbers.” [CONFIRM: driver thresholds] [CONFIRM: the baseline for usual]
+- [Planned, F9: “How Townwise estimates”, the model card, above Your data.]
+- **Your data**: the data checks (Days with data, First day, Last day, Missing days in between, Days with guests, Days with net sales, Last upload “{date} by {email}”), “Analytics reads your stored days, your notes and your town’s calendar. It changes nothing and keeps nothing, not even your filters: they reset when you leave the page.”, and a link to Sales data.
+
+| State | Shows |
+|---|---|
+| Loading | “Loading analytics” |
+| Empty | The filters, disabled, and “No sales history yet.” with “Upload sales history” (web) or “Upload from a computer at townwise.tech.” (native) |
+| Error | Network copy with Try again; 404 as on P11 |
+| Success | As above |
+| View-as | The same page; the upload links are disabled with the read-only line |
 
 **P25. TownwiseAI (`/locations/[id]/agent`, members; `/locations/[id]/chat` redirects here)**
 
@@ -1982,6 +2008,7 @@ Client tests:
 - the view-as banner renders, and writes are disabled;
 - the twelve town ids in the client’s `towns.ts` match the same literal list as the api test;
 - statement moments (`test/portal/moments/`): the copy and the timeline (`timing.test.ts`, `moments.test.ts`), and the player on native and web (`provider.test.native.tsx`, `provider.test.web.tsx`): one moment at a time, said once, hidden from assistive tech, dismissed by a key at once and by a press after the grace period, reduced motion, a native screen reader, Android back and a hidden tab.
+- Analytics (`test/portal/analytics/`): the compute modules (`compute.test.ts`); the heatmap’s grids, one tab stop, keys, hover preview, the Day panel’s sources and the filters’ effect on the marks and the basis line, with no write and no storage, the same under view-as (`heatmap.test.web.tsx`); the native month list, its Day panel and the thin and empty copy (`analytics.test.native.tsx`); the shared checkbox (`test/portal/ui/checkbox.test.*.tsx`).
 
 ---
 
@@ -2099,6 +2126,8 @@ Each is marked inline with “lead default”:
 ## 23. Changelog
 
 **2026-11-05, stored files (stages 5 to 9).** ZIP archives read in place with bomb guards, entries listed in `tw_file_entries` (6.18) and served by `GET .../files/:fileId/entries`, and their tables read as families; PDF tables (`unpdf`) and Word tables (`saxen`); the AI column step on a redacted profile within a monthly budget (`tw_files_usage`, 6.13; `TOWNWISE_FILES_MONTHLY_BUDGET_USD`, 18); stored files deleted with a location's sales data and an organization, the owner's "delete every original" (`DELETE .../originals`), the staff purge for a person's deletion request (10.7), and the daily sweep for retention (11A.7, `tw_file_sweeps`, 6.14); two audit actions (9.2) and `deletedFiles` on `sales.deleted`. Stored files in Azure sign in with the managed identity. Still off in production (11A.8).
+
+**2026-11-05, Analytics page.** P24 is built (16.1, 16.3): the filters, the heatmap with its keys and the Day panel, the weekly shape, by month, year over year, types of night, the biggest drivers and Your data, from the two reads of 10.4 and 10.10 and the notes. A shared checkbox joins the portal’s controls. The page writes nothing and keeps its filters in its own state. The model card (F9) and the day panel’s file details (F4) are Planned.
 
 **2026-11-05, calendar and sales history.** Two member reads, `GET .../sales/history` and `GET .../calendar` (10.4, 10.10), for Home, Analytics and TownwiseAI. The town calendar (13.1) merges computed federal holidays, the profile’s key dates and researched entries; Hanover’s entries come from the committed public `modeling/dartmouth_calendar_2025_2026.csv`, each with its source and confidence. Headcount inputs stay empty until researched. Tests in Section 20.
 
