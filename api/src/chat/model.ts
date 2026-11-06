@@ -1,6 +1,6 @@
 // The model behind the tuning chat, as a port (docs/portal/tuning-chat.md section 6). main.ts builds the real one when
-// ANTHROPIC_API_KEY is set and passes it to createTownwiseApi; tests pass a scripted fake. Nothing else in the API
-// constructs a client.
+// ANTHROPIC_API_KEY is set and passes it to createTownwiseApi; tests pass a scripted fake. The only other file that
+// constructs a client is files/extract/model.ts (the file reader's AI column step), which sends a redacted profile only.
 import Anthropic from '@anthropic-ai/sdk';
 import type {
   BetaMessage, BetaMessageStreamParams, BetaRawMessageStreamEvent,

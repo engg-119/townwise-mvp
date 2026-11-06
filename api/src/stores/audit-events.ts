@@ -22,16 +22,26 @@ export const AUDIT_DETAIL_KEYS = {
   'location.updated': ['name', 'townId'],
   'location.deleted': ['name', 'townId'],
   'sales.uploaded': ['locationId', 'dayCount', 'inserted', 'replaced', 'firstDate', 'lastDate', 'fileId', 'via'],
-  'sales.deleted': ['locationId', 'deletedDays'],
+  'sales.deleted': ['locationId', 'deletedDays', 'deletedFiles'],
   // Stored files (spec 11A): never a file name or anything from a file.
   'file.uploaded': ['locationId', 'kind', 'sizeBytes'],
   'file.deleted': ['locationId', 'kind', 'reason'],
   'file.raw_deleted': ['locationId', 'kind'],
+  'files.raw_deleted_all': ['locationId', 'count'],
+  // Staff: an organization's originals purged for a deletion request. The basis is an enum, never free text.
+  'org.originals_deleted': ['count', 'basis'],
   'note.created': ['locationId', 'kind', 'startDate', 'endDate'],
   'note.updated': ['locationId', 'kind', 'startDate', 'endDate'],
   'note.deleted': ['locationId', 'kind', 'startDate', 'endDate'],
   'chat.turn_completed': ['locationId', 'conversationId', 'model', 'calls', 'inputTokens', 'outputTokens', 'stopReason'],
   'chat.conversation_deleted': ['locationId', 'conversationId'],
+  // U9, TownwiseAI's questions: the question's id holds only dates and a weekday number.
+  'agent.question_answered': ['locationId', 'questionId', 'answer'],
+  // U13B, forecast runs (spec 14.4): ids, the model version, the dates and the day count, never a figure.
+  'forecast.imported': ['locationId', 'modelVersion', 'from', 'to', 'dayCount'],
+  'forecast.published': ['locationId', 'modelVersion', 'from', 'to', 'dayCount'],
+  'forecast.withdrawn': ['locationId', 'modelVersion', 'from', 'to', 'dayCount'],
+  'forecast.deleted': ['locationId', 'modelVersion', 'from', 'to', 'dayCount'],
   'view_as.started': ['targetUserId', 'targetEmail', 'reason', 'expiresAt'],
   'view_as.ended': ['endReason'],
   'people.signed_out_everywhere': [],
@@ -41,7 +51,10 @@ export const AUDIT_DETAIL_KEYS = {
 
 export type AuditAction = keyof typeof AUDIT_DETAIL_KEYS;
 export type AuditActorRole = 'superadmin' | 'org_admin' | 'member' | 'user';
-export type AuditTargetType = 'org' | 'member' | 'request' | 'location' | 'upload' | 'note' | 'user' | 'grant' | 'conversation' | 'file';
+export type AuditTargetType =
+  | 'org' | 'member' | 'request' | 'location' | 'upload' | 'note' | 'user' | 'grant' | 'conversation' | 'file'
+  // U13B.
+  | 'forecast_run';
 export type AuditDetails = Record<string, string | number | boolean | null>;
 
 export interface AuditEventFields {

@@ -38,6 +38,8 @@ export interface UploadDayStore {
   reserve(scope: OrgScope, day: string, bytes: number, cap: number, now: Date): Promise<boolean>;
   /** Gives back a cancelled upload's bytes (same UTC day only). */
   refund(scope: OrgScope, day: string, bytes: number, now: Date): Promise<void>;
+  /** Organization deletion (spec 10.7). */
+  removeForOrg(scope: OrgScope): Promise<number>;
 }
 
 export function createUploadDayStore(connection: Connection): UploadDayStore {
@@ -59,6 +61,9 @@ export function createUploadDayStore(connection: Connection): UploadDayStore {
         { $inc: { bytes }, $set: { updatedAt: now } },
       );
       return result.matchedCount === 1;
+    },
+    async removeForOrg(scope) {
+      return (await UploadDay.deleteMany({ orgId: new Types.ObjectId(scope.orgId) })).deletedCount;
     },
     async refund(scope, day, bytes, now) {
       await UploadDay.updateOne({ ...key(scope, day), bytes: trusted({ $gte: bytes }) }, { $inc: { bytes: -bytes }, $set: { updatedAt: now } });

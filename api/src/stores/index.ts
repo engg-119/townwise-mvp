@@ -1,12 +1,17 @@
 import type { Connection } from 'mongoose';
 
 import { createAccessRequestStore, type AccessRequestStore } from './access-requests.ts';
+import { createAgentAnswerStore, type AgentAnswerStore } from './agent-answers.ts';
 import { createAuditEventStore, type AuditEventStore } from './audit-events.ts';
 import { createChatConversationStore, type ChatConversationStore } from './chat-conversations.ts';
 import { createChatLiveTurnStore, type ChatLiveTurnStore } from './chat-live-turns.ts';
 import { createChatProposalStore, type ChatProposalStore } from './chat-proposals.ts';
 import { createChatUsageStore, type ChatUsageStore } from './chat-usage.ts';
+import { createFileEntryStore, type FileEntryStore } from './file-entries.ts';
+import { fileSweepModel } from './file-sweeps.ts';
 import { createFileStore, type FileStore } from './files.ts';
+import { createFilesUsageStore, type FilesUsageStore } from './files-usage.ts';
+import { createForecastStore, type ForecastStore } from './forecasts.ts';
 import { createImportStore, type ImportStore } from './imports.ts';
 import { createLocationStore, type LocationStore } from './locations.ts';
 import { createMemberStore, type MemberStore } from './members.ts';
@@ -33,16 +38,24 @@ export interface TownwiseStores {
   readonly chatLiveTurns: ChatLiveTurnStore;
   readonly chatUsage: ChatUsageStore;
   readonly chatProposals: ChatProposalStore;
+  /** U9, TownwiseAI's questions. */
+  readonly agentAnswers: AgentAnswerStore;
   /** U11, statement moments. */
   readonly welcomes: WelcomeStore;
   /** Stored files (spec 11A). */
   readonly files: FileStore;
   readonly imports: ImportStore;
   readonly uploadDays: UploadDayStore;
+  readonly fileEntries: FileEntryStore;
+  readonly filesUsage: FilesUsageStore;
+  /** U13B, forecast runs (spec 14.4). */
+  readonly forecasts: ForecastStore;
 }
 
 /** Registers every Townwise model on `connection`; call it before ensureIndexes. */
 export function createTownwiseStores(connection: Connection): TownwiseStores {
+  // The file sweep's lease (cross-tenant, read only through stores/cross-tenant.ts) registers with the rest.
+  fileSweepModel(connection);
   return {
     orgs: createOrgStore(connection),
     requests: createAccessRequestStore(connection),
@@ -57,10 +70,16 @@ export function createTownwiseStores(connection: Connection): TownwiseStores {
     chatLiveTurns: createChatLiveTurnStore(connection),
     chatUsage: createChatUsageStore(connection),
     chatProposals: createChatProposalStore(connection),
+    // U9, TownwiseAI's questions.
+    agentAnswers: createAgentAnswerStore(connection),
     // U11, statement moments.
     welcomes: createWelcomeStore(connection),
     files: createFileStore(connection),
     imports: createImportStore(connection),
     uploadDays: createUploadDayStore(connection),
+    fileEntries: createFileEntryStore(connection),
+    filesUsage: createFilesUsageStore(connection),
+    // U13B, forecast runs.
+    forecasts: createForecastStore(connection),
   };
 }

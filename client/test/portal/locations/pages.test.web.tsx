@@ -3,6 +3,7 @@ import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
+import { COMPOSER_LABEL } from '../../../src/chat/ui/Composer';
 import { fmt1, fmtSigned, side } from '../../../src/marketing/format';
 import type { Note, NoteInput } from '../../../src/portal/locations/api';
 import { addDays, localToday } from '../../../src/portal/locations/dates';
@@ -160,19 +161,6 @@ test('view-as on Sales data: Upload, the closure-note link and Delete stay focus
   expect(window.location.pathname).toBe('/locations/l1/sales');
 });
 
-test('Forecast on web: the empty status’s primary is the upload link; under view-as it is disabled in place', async () => {
-  renderAt('/locations/l2', portal(meOf(ACCESS.admin)));
-  await screen.findByText('Not started');
-  const links = screen.getAllByRole('link', { name: 'Upload sales history' });
-  expect(links.map((link) => link.getAttribute('href'))).toEqual(['/locations/l2/sales/upload', '/locations/l2/sales/upload']);
-  cleanup();
-  renderAt('/locations/l2', portal(viewAsMe(ACCESS.admin)));
-  await screen.findByText('Not started');
-  const buttons = screen.getAllByRole('button', { name: 'Upload sales history' });
-  expect(buttons).toHaveLength(2);
-  for (const button of buttons) expectReadOnly(button, 'forecast-ro');
-});
-
 test('the note form on web: date inputs, pressed buttons, and the note it sends', async () => {
   const api = portal(meOf(ACCESS.member));
   api.answers['/api/org/locations/l1/notes'] = (body) => ({ note: noteOf('n9', { ...(body as NoteInput), createdByEmail: EMAIL }) });
@@ -233,13 +221,14 @@ test('view-as on Notes and Location settings: every write is aria-disabled or re
   expectReadOnly(screen.getByRole('button', { name: 'Delete location' }), 'location-settings-ro');
 });
 
-test('view-as in the tuning chat: the message field is read-only and Send is aria-disabled, with the line', async () => {
+test('view-as in TownwiseAI: the message field is read-only and Send is aria-disabled, with the line', async () => {
   const chat = fakeChatApi();
   renderAt('/locations/l1/chat', fakePortalApi({ me: viewAsMe(ACCESS.member), org: orgOf('member'), fallback: chat }));
-  const field = await screen.findByLabelText('Message');
+  const field = await screen.findByLabelText(COMPOSER_LABEL);
   await waitFor(() => { expect(document.getElementById('chat-ro')).toBeTruthy(); });
   expect(field.getAttribute('aria-readonly')).toBe('true');
-  expect(field.getAttribute('aria-describedby')).toBe('chat-ro');
+  // The read-only line, then the composer's privacy line (U10).
+  expect(field.getAttribute('aria-describedby')).toBe('chat-ro composer-help');
   expectReadOnly(screen.getByRole('button', { name: 'Send' }), 'chat-ro');
   fireEvent.click(screen.getByRole('button', { name: 'Send' }));
   expect(chat.turns).toHaveLength(0);

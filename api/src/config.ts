@@ -37,6 +37,11 @@ export const configSchema = z.object({
   TOWNWISE_WEB_URL: z.url({ protocol: /^https?$/ }).default('http://localhost:8081'),
   /** The client files storage account (spec 11A). Absent or empty turns stored files off (503 files_unavailable). */
   FILES_BLOB_ACCOUNT_URL: z.preprocess((value) => (value === '' ? undefined : value), z.url().optional()),
+  /**
+   * The file reader's AI column step's monthly spend limit per organization, in US dollars (spec 11A); 0 turns the step
+   * off. Apart from the tuning chat's budget.
+   */
+  TOWNWISE_FILES_MONTHLY_BUDGET_USD: z.coerce.number().min(0).max(1000).default(5),
   /** Development and tests only: Azurite's connection string, used instead of the managed identity. */
   FILES_AZURITE_CONNECTION_STRING: z.preprocess((value) => (value === '' ? undefined : value), z.string().optional()),
 });
@@ -46,6 +51,7 @@ export type TownwiseConfig = z.infer<typeof configSchema>;
 export interface ResolvedTownwiseConfig {
   readonly superadminEmails: ReadonlySet<string>;
   readonly chatMonthlyBudgetUsd: number;
+  readonly filesMonthlyBudgetUsd: number;
   /** Null while email is off. `endpoint` is a bare origin. */
   readonly email: { readonly endpoint: string; readonly sender: string } | null;
   readonly emailReplyTo: string | null;
@@ -107,6 +113,7 @@ export function resolveTownwiseConfig(
   return {
     superadminEmails: new Set(config.TOWNWISE_SUPERADMIN_EMAILS),
     chatMonthlyBudgetUsd: config.TOWNWISE_CHAT_MONTHLY_BUDGET_USD,
+    filesMonthlyBudgetUsd: config.TOWNWISE_FILES_MONTHLY_BUDGET_USD,
     email: endpoint === null || config.EMAIL_SENDER === undefined ? null : { endpoint, sender: config.EMAIL_SENDER },
     emailReplyTo: config.TOWNWISE_EMAIL_REPLY_TO ?? null,
     webUrl,

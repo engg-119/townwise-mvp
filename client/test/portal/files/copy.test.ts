@@ -32,6 +32,12 @@ test('every kept code of a file or a ZIP entry has its own reason', () => {
   }
 });
 
+test('a file whose original was deleted before it was read says so (U3’s raw_deleted)', () => {
+  expect(KEPT_CODES).toContain('raw_deleted');
+  expect(copy.fileLine(fileViewOf('f1', { status: 'kept', outcome: 'raw_deleted' })))
+    .toBe('Kept, not used: its original was deleted before Townwise read it.');
+});
+
 test('a kept code the client doesn’t know yet still says the file was kept, never nothing', () => {
   expect(copy.fileLine(fileViewOf('f1', { status: 'kept', outcome: 'a_code_from_later' }))).toBe('Kept, not used.');
   expect(copy.entryLine(entryOf(0, { status: 'kept', outcome: null }))).toBe('Kept, not used.');

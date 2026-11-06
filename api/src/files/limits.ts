@@ -56,3 +56,48 @@ export const PROGRESS_WRITE_MS = 2000;
 export const APPLY_BATCH_DAYS = 1000;
 /** Closed dates kept on a file's result and an import's totals. */
 export const MAX_CLOSED_DATES = 60;
+
+/** ZIP archives (spec 11A): checked on the central directory before anything is inflated. */
+export const ZIP_MAX_ENTRIES = 20_000;
+export const ZIP_MAX_DIRECTORY_BYTES = 16 * MIB;
+/** Declared uncompressed bytes, every depth together. */
+export const ZIP_MAX_DECLARED_BYTES = 2 * GIB;
+/** Declared uncompressed bytes to the archive's size, and to an entry's compressed size for entries over 1 MiB. */
+export const ZIP_MAX_RATIO = 100;
+export const ZIP_RATIO_FLOOR_BYTES = MIB;
+/** A ZIP inside a ZIP is opened from memory up to this size; one inside that is never opened. */
+export const NESTED_ZIP_BYTES = 50 * MIB;
+/**
+ * Nested ZIPs held in memory at once, together, for the whole read. Buffers live outside V8's heap, so the thread's
+ * resource limits do not bound them: this cap does, within the replica's memory.
+ */
+export const NESTED_ZIP_TOTAL_BYTES = 50 * MIB;
+/** Compressed bytes asked of storage at a time while an entry streams. */
+export const ZIP_PIECE_BYTES = MIB;
+/** Small reads (headers, small entries) are served from a window of this size. */
+export const ZIP_WINDOW_BYTES = 256 * KIB;
+/** A ZIP entry's path, as stored and shown to the organization. */
+export const ENTRY_PATH_CHARS = 300;
+/** Families listed on a ZIP's report. */
+export const MAX_REPORTED_FAMILIES = 50;
+/** tw_file_entries rows written per insert. */
+export const ENTRY_BATCH = 500;
+
+/** PDF and Word (spec 11A): buffered in the parse thread. */
+export const PDF_READ_BYTES = 25 * MIB;
+export const PDF_MAX_PAGES = 1000;
+export const PDF_MAX_ITEMS_PER_PAGE = 20_000;
+export const DOCX_READ_BYTES = 10 * MIB;
+/** word/document.xml, uncompressed. */
+export const DOCX_MAX_DOCUMENT_BYTES = 50 * MIB;
+
+/** The AI column step (spec 11A): calls per file, per ZIP (at most one a family of its tables) and per import. */
+export const MODEL_CALLS_PER_FILE = 2;
+export const MODEL_CALLS_PER_ZIP = 5;
+export const MODEL_CALLS_PER_IMPORT = 20;
+
+/**
+ * Originals are deleted this long after upload by the daily sweep (FileView.rawExpiresAt); the storage lifecycle rule is
+ * the backstop at 400 days. [CONFIRM: retention periods]
+ */
+export const RAW_RETENTION_DAYS = 365;

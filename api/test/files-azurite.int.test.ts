@@ -95,4 +95,26 @@ describe('Azure blob storage (Azurite)', () => {
     await expect(staging).rejects.toBeDefined();
     await expect(blobs.openRaw(scope, other)).rejects.toBeInstanceOf(BlobMissingError);
   });
+
+  it('lists Townwise’s blobs by their ids, and deletes every blob under a location’s or an organization’s prefix only', async () => {
+    const signal = new AbortController().signal;
+    const at = (orgId: string, locationId: string, fileId: string) => ({ scope: { orgId } as unknown as OrgScope, ref: { locationId, fileId } });
+    const kept = at('000000000000000000000009', '000000000000000000000010', '000000000000000000000900');
+    const first = at(scope.orgId, '000000000000000000000020', '000000000000000000000400');
+    const second = at(scope.orgId, '000000000000000000000030', '000000000000000000000500');
+    for (const { scope: s, ref: r } of [kept, first, second]) {
+      await blobs.stageChunk(s, r, 0, Readable.from([chunk(0x61, 2)]), 2, signal);
+      await blobs.commitChunks(s, r, 1);
+      await blobs.writeClean(s, r, 'date\r\n');
+    }
+    const listed: string[] = [];
+    for await (const blob of blobs.listAll()) listed.push(`${blob.container}:${blob.fileId}`);
+    expect(listed).toEqual(expect.arrayContaining(['raw:000000000000000000000400', 'clean:000000000000000000000400', 'raw:000000000000000000000900']));
+    expect(await blobs.removePrefix(first.scope, first.ref.locationId)).toBe(2);
+    await expect(blobs.openRaw(first.scope, first.ref)).rejects.toBeInstanceOf(BlobMissingError);
+    expect((await bytesOf(await blobs.openRaw(second.scope, second.ref))).toString()).toBe('aa');
+    expect(await blobs.removePrefix(scope, null)).toBeGreaterThanOrEqual(2);
+    await expect(blobs.openRaw(second.scope, second.ref)).rejects.toBeInstanceOf(BlobMissingError);
+    expect((await bytesOf(await blobs.openRaw(kept.scope, kept.ref))).toString()).toBe('aa');
+  });
 });

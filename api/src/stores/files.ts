@@ -54,7 +54,13 @@ export interface FileResult {
   readonly uploadId: string;
 }
 
-/** The person's answers to this file's questions, per sheet index ("0" for a text file). */
+/** A ZIP's entry counts, once its entries are listed. */
+export interface EntryCounts { readonly total: number; readonly used: number; readonly kept: number }
+
+/**
+ * The person's answers to this file's questions, per sheet index ("0" for a text file), or per family of a ZIP's tables
+ * (`family:<signature>`).
+ */
 export interface SheetAnswers {
   readonly dateColumn?: number;
   readonly dateOrder?: 'month_first' | 'day_first';
@@ -66,6 +72,15 @@ export interface SheetAnswers {
   readonly netSales?: number | null;
 }
 export type FileAnswers = Readonly<Record<string, SheetAnswers>>;
+
+/** One AI column step answer, as the reader saves it (column indexes only); null when the model could not tell. */
+export interface SavedColumnChoice {
+  readonly guests: number | null;
+  readonly netSales: number | null;
+  readonly confidence: 'high' | 'low';
+}
+/** The AI column step's answers for a file, by a hash of the redacted profile each was asked about. */
+export type FileColumnChoices = Readonly<Record<string, SavedColumnChoice | null>>;
 
 interface FileFields {
   orgId: Types.ObjectId;
@@ -92,6 +107,14 @@ interface FileFields {
   cleanBytes: number | null;
   rawDeletedAt: Date | null;
   attempts: number;
+  /** Absent on rows written before ZIPs were read, as are the two counters. */
+  entries?: EntryCounts | null;
+  modelCalls?: number;
+  costMicroUsd?: number;
+  /** Absent on rows written before the reader saved the AI step's answers. */
+  aiChoices?: FileColumnChoices;
+  /** A staff purge found the file busy: its original goes as soon as the reader is done with it. */
+  purgeRaw?: boolean;
 }
 
 function fileSchema(): Schema<FileFields> {
@@ -120,11 +143,19 @@ function fileSchema(): Schema<FileFields> {
     cleanBytes: { type: Number, default: null },
     rawDeletedAt: { type: Date, default: null },
     attempts: { type: Number, required: true, default: 0 },
+    entries: { type: Schema.Types.Mixed, default: null },
+    modelCalls: { type: Number, required: true, default: 0 },
+    costMicroUsd: { type: Number, required: true, default: 0 },
+    aiChoices: { type: Schema.Types.Mixed, default: () => ({}) },
+    purgeRaw: { type: Boolean },
   }, { strict: 'throw', versionKey: false, read: 'primary', minimize: false });
   schema.index({ orgId: 1, locationId: 1, uploadedAt: -1 });
   schema.index({ orgId: 1, importId: 1, uploadedAt: 1 });
   schema.index({ orgId: 1, locationId: 1, fingerprint: 1 });
   schema.index({ status: 1, 'upload.expiresAt': 1 });
+  // The daily sweep across organizations (stores/cross-tenant.ts): originals past retention, and flagged purges.
+  schema.index({ status: 1, uploadedAt: 1 });
+  schema.index({ purgeRaw: 1 }, { sparse: true });
   return schema;
 }
 
@@ -159,6 +190,13 @@ export interface FileRecord {
   readonly cleanBytes: number | null;
   readonly rawDeletedAt: Date | null;
   readonly attempts: number;
+  readonly entries: EntryCounts | null;
+  /** The AI column step's calls for this file, and their cost in micro-dollars. */
+  readonly modelCalls: number;
+  readonly costMicroUsd: number;
+  /** Its answers, so a re-read (after a later question, or a retry) asks the model nothing it already answered. */
+  readonly aiChoices: FileColumnChoices;
+  readonly purgeRaw: boolean;
 }
 
 function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
@@ -187,6 +225,11 @@ function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
     cleanBytes: doc.cleanBytes,
     rawDeletedAt: doc.rawDeletedAt,
     attempts: doc.attempts,
+    entries: doc.entries ?? null,
+    modelCalls: doc.modelCalls ?? 0,
+    costMicroUsd: doc.costMicroUsd ?? 0,
+    aiChoices: doc.aiChoices ?? {},
+    purgeRaw: doc.purgeRaw === true,
   };
 }
 
@@ -230,8 +273,26 @@ export interface FileStore {
   /** Moves a file into another import, as stored (a drop that landed after its import finished). */
   reassign(scope: OrgScope, fileId: string, importId: string): Promise<void>;
   remove(scope: OrgScope, fileId: string): Promise<boolean>;
-  /** The original is gone: the name becomes the kind's label (it can itself name a person). */
-  rawDeleted(scope: OrgScope, fileId: string, at: Date, label: string): Promise<void>;
+  /**
+   * The original is gone: the name becomes the kind's label (it can itself name a person), and so do a workbook's
+   * sheet names in the report when `sheets` is given.
+   */
+  rawDeleted(scope: OrgScope, fileId: string, at: Date, label: string, sheets?: readonly Record<string, unknown>[]): Promise<void>;
+  /** Any file row at the location, or in the organization (a location with files has data). */
+  hasAny(scope: OrgScope, locationId: string | null): Promise<boolean>;
+  /** Files still uploading, at one location or across the organization (to discard their staged chunks). */
+  uploading(scope: OrgScope, locationId: string | null): Promise<FileRecord[]>;
+  /** Files whose original is still stored, at one location or across the organization. */
+  originals(scope: OrgScope, locationId: string | null): Promise<FileRecord[]>;
+  /** A staff purge found the file uploading or being read: its original goes once that ends. */
+  flagPurge(scope: OrgScope, fileId: string): Promise<void>;
+  /**
+   * A file not read yet (stored, queued or waiting) whose original is about to be deleted: kept, with `outcome`, so no
+   * reader claims it. The record as it was, or null when it had moved on (claimed by a reader, or deleted).
+   */
+  keepUnread(scope: OrgScope, fileId: string, outcome: string): Promise<FileRecord | null>;
+  removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
+  removeForOrg(scope: OrgScope): Promise<number>;
 
   /**
    * The reader's next file in a started import: queued, reading (a previous attempt that stopped), or stored. A stored
@@ -243,6 +304,8 @@ export interface FileStore {
   startReading(scope: OrgScope, fileId: string, now: Date): Promise<FileRecord | null>;
   setProgress(scope: OrgScope, fileId: string, progress: FileProgress): Promise<void>;
   setUploadId(scope: OrgScope, fileId: string, uploadId: string): Promise<void>;
+  /** One AI column step call for the file, what it cost and, when the model answered, its answer under `saved.key`. */
+  addModelCall(scope: OrgScope, fileId: string, costMicroUsd: number, saved?: { key: string; choice: SavedColumnChoice | null }): Promise<void>;
   /** The reader's last word on a file: read, kept, failed or waiting (a question). */
   settle(scope: OrgScope, fileId: string, input: {
     status: 'read' | 'kept' | 'failed' | 'waiting' | 'queued';
@@ -251,11 +314,15 @@ export interface FileStore {
     report?: Record<string, unknown> | null;
     cleanBytes?: number | null;
     readMs?: number | null;
+    entries?: EntryCounts | null;
   }): Promise<boolean>;
   /** "Not sure": the waiting file is kept, unread, with this outcome. False when it was no longer waiting. */
   keepWaiting(scope: OrgScope, fileId: string, outcome: string): Promise<boolean>;
-  /** An answer: merged into the sheet's answers, and the file goes back to the queue. False when it was no longer waiting. */
-  answer(scope: OrgScope, fileId: string, sheet: number, answers: SheetAnswers): Promise<boolean>;
+  /**
+   * An answer: merged into the answers under `key` (a sheet index, or a ZIP family's key), and the file goes back to the
+   * queue. False when it was no longer waiting.
+   */
+  answer(scope: OrgScope, fileId: string, key: string, answers: SheetAnswers): Promise<boolean>;
 }
 
 export function createFileStore(connection: Connection): FileStore {
@@ -353,8 +420,42 @@ export function createFileStore(connection: Connection): FileStore {
     async remove(scope, fileId) {
       return (await File.deleteOne({ _id: oid(fileId), orgId: org(scope) })).deletedCount === 1;
     },
-    async rawDeleted(scope, fileId, at, label) {
-      await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, { $set: { rawDeletedAt: at, name: label } });
+    async rawDeleted(scope, fileId, at, label, sheets) {
+      const set: Record<string, unknown> = { rawDeletedAt: at, name: label };
+      if (sheets !== undefined) set['report.sheets'] = sheets;
+      await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, { $set: set, $unset: { purgeRaw: '' } });
+    },
+    async hasAny(scope, locationId) {
+      const filter: Record<string, unknown> = { orgId: org(scope) };
+      if (locationId !== null) filter.locationId = oid(locationId);
+      return (await File.exists(filter)) !== null;
+    },
+    async uploading(scope, locationId) {
+      const filter: Record<string, unknown> = { orgId: org(scope), status: 'uploading' };
+      if (locationId !== null) filter.locationId = oid(locationId);
+      return (await File.find(filter).lean()).map(toFile);
+    },
+    async originals(scope, locationId) {
+      const filter: Record<string, unknown> = { orgId: org(scope), rawDeletedAt: null, status: trusted({ $nin: ['uploading', 'deleting'] }) };
+      if (locationId !== null) filter.locationId = oid(locationId);
+      return (await File.find(filter).sort({ uploadedAt: 1 }).lean()).map(toFile);
+    },
+    async flagPurge(scope, fileId) {
+      await File.updateOne({ _id: oid(fileId), orgId: org(scope), rawDeletedAt: null }, { $set: { purgeRaw: true } });
+    },
+    async keepUnread(scope, fileId, outcome) {
+      const doc = await File.findOneAndUpdate(
+        { _id: oid(fileId), orgId: org(scope), status: trusted({ $in: ['stored', 'queued', 'waiting'] }) },
+        { $set: { status: 'kept', outcome, progress: null } },
+        { returnDocument: 'before' },
+      ).lean();
+      return doc === null ? null : toFile(doc);
+    },
+    async removeForLocation(scope, locationId) {
+      return (await File.deleteMany({ orgId: org(scope), locationId: oid(locationId) })).deletedCount;
+    },
+    async removeForOrg(scope) {
+      return (await File.deleteMany({ orgId: org(scope) })).deletedCount;
     },
     async nextToRead(scope, importId) {
       const doc = await File.findOne({ orgId: org(scope), importId: oid(importId), status: trusted({ $in: READABLE }) })
@@ -375,12 +476,18 @@ export function createFileStore(connection: Connection): FileStore {
     async setUploadId(scope, fileId, uploadId) {
       await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, { $set: { uploadId: oid(uploadId) } });
     },
+    async addModelCall(scope, fileId, costMicroUsd, saved) {
+      const update: Record<string, unknown> = { $inc: { modelCalls: 1, costMicroUsd } };
+      if (saved !== undefined) update.$set = { [`aiChoices.${saved.key}`]: saved.choice };
+      await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, update);
+    },
     async settle(scope, fileId, input) {
       const set: Record<string, unknown> = { status: input.status, outcome: input.outcome, progress: null };
       if (input.result !== undefined) set.result = input.result;
       if (input.report !== undefined) set.report = input.report;
       if (input.cleanBytes !== undefined) set.cleanBytes = input.cleanBytes;
       if (input.readMs !== undefined) set.readMs = input.readMs;
+      if (input.entries !== undefined) set.entries = input.entries;
       const result = await File.updateOne({ _id: oid(fileId), orgId: org(scope), status: 'reading' }, { $set: set });
       return result.matchedCount === 1;
     },
@@ -388,9 +495,9 @@ export function createFileStore(connection: Connection): FileStore {
       const result = await File.updateOne({ _id: oid(fileId), orgId: org(scope), status: 'waiting' }, { $set: { status: 'kept', outcome } });
       return result.matchedCount === 1;
     },
-    async answer(scope, fileId, sheet, answers) {
+    async answer(scope, fileId, key, answers) {
       const set: Record<string, unknown> = { status: 'queued', attempts: 0 };
-      for (const [key, value] of Object.entries(answers)) set[`answers.${String(sheet)}.${key}`] = value;
+      for (const [field, value] of Object.entries(answers)) set[`answers.${key}.${field}`] = value;
       const result = await File.updateOne({ _id: oid(fileId), orgId: org(scope), status: 'waiting' }, { $set: set });
       return result.matchedCount === 1;
     },

@@ -96,7 +96,7 @@ export function patternGap(profile: TownProfileData): string {
 }
 
 /**
- * What Townwise has on a town, for the Forecast checklist and the Locations page (spec P11 step 1):
+ * What Townwise has on a town, for the Locations page:
  * "{n} drivers and {m} key dates, from public sources", the drivers-not-researched line, or "Not researched yet".
  */
 export function townResearchLine(townId: string | null): string {

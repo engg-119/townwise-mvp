@@ -76,11 +76,20 @@ export const AUDIT_ACTIONS: readonly { value: string; label: string }[] = [
   { value: 'file.uploaded', label: 'File uploaded' },
   { value: 'file.deleted', label: 'File deleted' },
   { value: 'file.raw_deleted', label: 'Original deleted' },
+  { value: 'files.raw_deleted_all', label: 'Originals deleted' },
+  { value: 'org.originals_deleted', label: 'Originals purged' },
   { value: 'note.created', label: 'Note added' },
   { value: 'note.updated', label: 'Note changed' },
   { value: 'note.deleted', label: 'Note deleted' },
   { value: 'chat.turn_completed', label: 'Tuning chat used' },
   { value: 'chat.conversation_deleted', label: 'Tuning chat deleted' },
+  // U9, TownwiseAI's questions.
+  { value: 'agent.question_answered', label: 'TownwiseAI question answered' },
+  // U13B, forecast runs.
+  { value: 'forecast.imported', label: 'Forecast imported' },
+  { value: 'forecast.published', label: 'Forecast published' },
+  { value: 'forecast.withdrawn', label: 'Forecast withdrawn' },
+  { value: 'forecast.deleted', label: 'Forecast deleted' },
   { value: 'view_as.started', label: 'View-as started' },
   { value: 'view_as.ended', label: 'View-as ended' },
   { value: 'people.signed_out_everywhere', label: 'Signed out everywhere' },
@@ -90,6 +99,11 @@ export const AUDIT_ACTIONS: readonly { value: string; label: string }[] = [
 
 const NOTE_KIND: Readonly<Record<string, string>> = {
   closure: 'Closure', private_event: 'Private event', opening: 'Opening', other: 'Other',
+};
+
+/** U9: the answer to a TownwiseAI question about days with no sales. */
+const QUESTION_ANSWER: Readonly<Record<string, string>> = {
+  closed: 'Closed on those days', open: 'The data is missing', not_sure: 'Not sure',
 };
 
 const END_REASON: Readonly<Record<string, string>> = {
@@ -137,6 +151,17 @@ export function auditDetails(event: Pick<AuditEvent, 'action' | 'details'>): str
     }
     case 'view_as.ended':
       return END_REASON[text(d.endReason)] ?? '';
+    case 'agent.question_answered':
+      return QUESTION_ANSWER[text(d.answer)] ?? '';
+    // U13B: the model version, the dates and the day count, never a figure.
+    case 'forecast.imported':
+    case 'forecast.published':
+    case 'forecast.withdrawn':
+    case 'forecast.deleted': {
+      const span = text(d.from) === '' || text(d.to) === '' ? '' : `${formatDate(text(d.from))} to ${formatDate(text(d.to))}`;
+      const days = count(d.dayCount) === '' ? '' : `${count(d.dayCount)} days`;
+      return [text(d.modelVersion) === '' ? '' : `Model ${text(d.modelVersion)}`, span, days].filter((part) => part !== '').join(', ');
+    }
     default:
       return '';
   }

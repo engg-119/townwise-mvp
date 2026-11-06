@@ -172,6 +172,7 @@ describe('a plain answer', () => {
     expect(params).not.toHaveProperty('thinking');
     expect(params?.tools?.map((tool) => ('name' in tool ? tool.name : null))).toEqual([
       'get_location_overview', 'get_sales_days', 'list_notes', 'get_town_profile', 'propose_note',
+      'get_town_calendar', 'get_people_in_town', 'get_forecast',
     ]);
     expect(params?.tools?.every((tool) => 'eager_input_streaming' in tool && tool.eager_input_streaming === true)).toBe(true);
 
@@ -278,6 +279,8 @@ describe('tools', () => {
     expect(content(0)).toEqual({
       location: { name: 'Taproom', town: { name: 'Hanover', state: 'NH' } },
       today: '2026-06-01',
+      todayWeekday: 'Mon',
+      timeZone: 'America/New_York',
       coverage: { firstDate: '2026-05-01', lastDate: '2026-05-02', dayCount: 2, guestsDayCount: 2, netSalesDayCount: 1, missingDays: 0 },
       calibration: 'not_calibrated',
       townProfile: true,

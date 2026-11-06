@@ -8,13 +8,18 @@ import type { ColumnProfile } from './columns.ts';
 import type { Mapping, RowMode } from './days.ts';
 import { guessesFor, guessOne, hasAny } from './header.ts';
 import type { DateOrder } from './values.ts';
+import { redactedProfile, type RedactedProfile } from '../extract/profile.ts';
+import type { ColumnChoice } from '../extract/prompt.ts';
 
-export type Decider = 'rules' | 'you';
+export type Decider = 'rules' | 'ai' | 'you';
 
-/** Every reason a table, or a whole file, is kept without being used. */
+/** Every reason a table, or a whole file, is kept without being used (spec 11A.6). */
 export type KeptOutcome =
   | 'not_a_table' | 'no_header' | 'no_dates' | 'notes_not_read_yet' | 'too_many_locations' | 'item_level'
-  | 'decimal_comma' | 'repeated_dates' | 'too_many_days' | 'too_complex' | 'bad_encoding' | 'not_a_workbook';
+  | 'decimal_comma' | 'repeated_dates' | 'too_many_days' | 'too_complex' | 'bad_encoding' | 'not_a_workbook'
+  | 'no_sales_columns' | 'too_large_to_read' | 'encrypted' | 'old_excel' | 'old_word' | 'numbers' | 'image' | 'type_not_read'
+  | 'pdf_no_table' | 'pdf_scanned' | 'word_no_table'
+  | 'zip_too_big' | 'zip_bomb' | 'zip_damaged' | 'zip_empty' | 'nothing_usable';
 
 export interface QuestionDraft {
   readonly kind: QuestionKind;
@@ -33,6 +38,8 @@ export interface FirstPass {
   readonly locationColumn: number | null;
   readonly locationValues: readonly string[];
   readonly tooManyLocations: boolean;
+  /** The first rows under the header (at most 200), for the AI column step's redacted profile. */
+  readonly sample?: readonly (readonly string[])[];
 }
 
 export interface DecidedBy {
@@ -64,8 +71,11 @@ function inRange(header: readonly string[], index: number | null | undefined): i
   return typeof index === 'number' && Number.isInteger(index) && index >= 0 && index < header.length;
 }
 
-/** Steps 1 to 4: the date column, its order, guests and net sales, and the location value. */
-export function decideMapping(pass: FirstPass, answers: SheetAnswers, locationName: string): Decision {
+/**
+ * Steps 1 to 4: the date column, its order, guests and net sales, and the location value. `columnsBy` is who chose the
+ * guests and net sales columns in `answers` (the person, or the AI step's confident choice).
+ */
+export function decideMapping(pass: FirstPass, answers: SheetAnswers, locationName: string, columnsBy: Decider = 'you'): Decision {
   const { header, profiles } = pass;
 
   let date: number;
@@ -100,15 +110,15 @@ export function decideMapping(pass: FirstPass, answers: SheetAnswers, locationNa
 
   let guests: number | null;
   let netSales: number | null;
-  let columnsBy: Decider;
+  let chosenBy: Decider;
   if (answers.guests !== undefined || answers.netSales !== undefined) {
     guests = inRange(header, answers.guests) ? answers.guests : null;
     netSales = inRange(header, answers.netSales) ? answers.netSales : null;
-    columnsBy = 'you';
+    chosenBy = columnsBy;
   } else {
     guests = guessOne('guests', header);
     netSales = guessOne('netSales', header);
-    columnsBy = 'rules';
+    chosenBy = 'rules';
     if (guests === null && netSales === null) {
       const numbers = profiles.flatMap((candidate, index) => (candidate.kind === 'numbers' && index !== date ? [index] : []));
       if (numbers.length === 0) return { kind: 'kept', outcome: 'notes_not_read_yet' };
@@ -148,7 +158,7 @@ export function decideMapping(pass: FirstPass, answers: SheetAnswers, locationNa
     kind: 'mapping',
     mapping: { date, guests, netSales, location, locationValue, dateOrder },
     decidedBy: {
-      date: dateBy, dateOrder: orderBy, guests: guests === null ? null : columnsBy, netSales: netSales === null ? null : columnsBy,
+      date: dateBy, dateOrder: orderBy, guests: guests === null ? null : chosenBy, netSales: netSales === null ? null : chosenBy,
       location: locationBy,
     },
   };
@@ -173,4 +183,28 @@ export function decideRowMode(repeatedDays: number, header: readonly string[], a
   if (items) return { kind: 'kept', outcome: 'item_level' };
   if (hasAny('check', header)) return { kind: 'mode', rowMode: 'check', by: 'rules' };
   return question('row_mode', [{ id: 'day', label: 'day' }, { id: 'check', label: 'check' }, { id: 'item', label: 'item' }], null);
+}
+
+/** The AI column step, as the parse thread offers it: a redacted profile in, the model's choice (or null) out. */
+export type ChooseColumns = (profile: RedactedProfile) => Promise<ColumnChoice | null>;
+
+/**
+ * decideMapping, with the AI step when the rules cannot find guests or net sales (the `columns` question) and the
+ * person has not answered it. A confident choice of number columns is applied, marked `ai`; an unsure one becomes the
+ * question's suggestion; none, or no step, leaves the question as it was.
+ */
+export async function decideMappingWithModel(
+  pass: FirstPass, answers: SheetAnswers, locationName: string, choose: ChooseColumns | undefined,
+): Promise<Decision> {
+  const decision = decideMapping(pass, answers, locationName);
+  if (choose === undefined || decision.kind !== 'question' || decision.question.kind !== 'columns') return decision;
+  const choice = await choose(redactedProfile(pass.header, pass.profiles.map((profile) => profile.kind), pass.sample ?? []));
+  if (choice === null) return decision;
+  const usable = (index: number | null): boolean => index === null || pass.profiles[index]?.kind === 'numbers';
+  if (!usable(choice.guests) || !usable(choice.netSales) || (choice.guests === null && choice.netSales === null)) return decision;
+  if (choice.confidence === 'high') {
+    return decideMapping(pass, { ...answers, guests: choice.guests, netSales: choice.netSales }, locationName, 'ai');
+  }
+  const suggested = `guests:${choice.guests === null ? 'none' : String(choice.guests)},netSales:${choice.netSales === null ? 'none' : String(choice.netSales)}`;
+  return { kind: 'question', question: { ...decision.question, suggested } };
 }

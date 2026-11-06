@@ -31,3 +31,14 @@ export function viewOf<T>(content: string, schema: z.ZodType<T>, view: (value: T
   const parsed = schema.safeParse(raw);
   return parsed.success ? view(parsed.data) : null;
 }
+
+/** U13A: at most this many source links on a card. */
+const MAX_SOURCE_LINKS = 5;
+
+/** U13A: the distinct https links among `urls`, in order, at most 5, each with its host (no www.) for display. */
+export function sourceLinks(urls: readonly string[]): { host: string; url: string }[] {
+  return [...new Set(urls)].flatMap((url) => {
+    const parsed = URL.parse(url);
+    return parsed?.protocol === 'https:' ? [{ host: parsed.hostname.replace(/^www\./, ''), url }] : [];
+  }).slice(0, MAX_SOURCE_LINKS);
+}
