@@ -6,8 +6,8 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-import { Types } from 'mongoose';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import mongoose, { Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { StaffActivityView } from '../src/audit.ts';
 import type { StaffForecastRunView } from '../src/handlers/forecast-runs.ts';
@@ -107,6 +107,29 @@ describe('import', () => {
     expect(res.status).toBe(201);
     expect((await res.json() as { run: StaffForecastRunView }).run).toMatchObject({ id: run.id, status: 'draft' });
     expect(await count('tw_forecasts', { runId })).toBe(ROWS);
+  });
+
+  it('finishes when a concurrent import of the same file wrote some of its rows first (duplicate keys)', async () => {
+    const t = await team();
+    // The other import's upserts won on two keys: this bulk write's other ops ran, then it reports E11000 for those.
+    const Row = server.connection.models.TwForecast;
+    if (Row === undefined) throw new Error('no TwForecast model');
+    const original = Row.bulkWrite.bind(Row);
+    const raced = new mongoose.mongo.MongoBulkWriteError(
+      { message: 'E11000 duplicate key error', code: 11000, writeErrors: [{ code: 11000, index: 0 }, { code: 11000, index: 1 }] as never },
+      {} as never,
+    );
+    const spy = vi.spyOn(Row, 'bulkWrite').mockImplementationOnce(async (...args: Parameters<typeof original>) => {
+      await original(...args);
+      throw raced;
+    });
+    try {
+      const run = await imported(t);
+      expect(run.status).toBe('draft');
+      expect(await count('tw_forecasts', { runId: new Types.ObjectId(run.id) })).toBe(ROWS);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('answers 400 invalid_forecast_file with paths and codes only, and writes nothing', async () => {

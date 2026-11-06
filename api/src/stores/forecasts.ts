@@ -6,7 +6,7 @@
 // outputs only (numbers, status, reason kinds, calendar refs, effects); labels are made in code. Both schemas are
 // strict: 'throw' and rows are built field by field. Nothing here logs.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
-import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
+import mongoose, { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
 import type { DayStatus, ForecastRunFile, ReasonKind } from '../forecasts/file.ts';
@@ -320,7 +320,7 @@ export function createForecastStore(connection: Connection): ForecastStore {
     async writeRows(scope, locationId, runId, rows) {
       if (rows.length === 0) return;
       const base = { ...org(scope), locationId: new Types.ObjectId(locationId), runId: new Types.ObjectId(runId) };
-      await Row.bulkWrite(rows.map((row) => ({
+      const ops = rows.map((row) => ({
         updateOne: {
           filter: { ...base, span: row.span, from: row.from },
           update: {
@@ -331,7 +331,15 @@ export function createForecastStore(connection: Connection): ForecastStore {
           },
           upsert: true,
         },
-      })), { ordered: false });
+      }));
+      try {
+        await Row.bulkWrite(ops, { ordered: false });
+      } catch (err) {
+        // Two imports of the same file upserted the same rows at once: each duplicate key is a row the other one wrote
+        // (every other op still ran, unordered). The caller's countRows decides whether the run is complete.
+        if (!(err instanceof mongoose.mongo.MongoBulkWriteError)) throw err;
+        if ([err.writeErrors].flat().some((writeError) => writeError.code !== 11000)) throw err;
+      }
     },
     countRows(scope, runId) {
       return Row.countDocuments({ ...org(scope), runId: new Types.ObjectId(runId) });
