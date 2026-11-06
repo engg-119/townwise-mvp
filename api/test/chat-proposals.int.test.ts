@@ -7,8 +7,10 @@ import { randomUUID } from 'node:crypto';
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { scopeForNewOrg } from '../src/access/policy.ts';
 import type { ConversationView } from '../src/handlers/chat.ts';
 import type { ProposalResult } from '../src/handlers/chat-proposals.ts';
+import { createChatProposalStore } from '../src/stores/chat-proposals.ts';
 import { addGrant, addLocation, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import {
   call, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
@@ -221,6 +223,20 @@ describe('saving a proposal', () => {
 });
 
 describe('setting a proposal aside', () => {
+  it('a Not now that lands while a Save is writing its note is overruled: the proposal ends saved', async () => {
+    // The race the handler cannot order: claim, then another tab's Not now, then the note's write and markSaved.
+    const id = await conversationWithProposal();
+    const staff = { kind: 'staff', actor: { userId: 'staff-0000', email: 'staff@example.test', sessionId: 'session-0000', verifiedUntil: '' } } as const;
+    const scope = scopeForNewOrg(staff, orgId);
+    const store = createChatProposalStore(server.connection);
+    const key = { conversationId: id, proposalId: 'toolu_proposal0001' };
+    const owner = { locationId, userId: author.userId, now: server.clock.now() };
+    const claimed = await store.claimSave(scope, key, { ...owner, edited: false });
+    expect(await store.dismiss(scope, key, owner)).toMatchObject({ status: 'dismissed', noteId: claimed?.noteId });
+    await store.markSaved(scope, key, server.clock.now());
+    expect(await store.find(scope, key)).toEqual({ ...claimed, status: 'saved' });
+  });
+
   it('Not now records it as dismissed after a reload, and it can still be saved later', async () => {
     const id = await conversationWithProposal();
     const dismissed = await act(id, { action: 'dismiss' });

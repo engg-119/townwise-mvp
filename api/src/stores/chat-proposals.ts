@@ -78,7 +78,10 @@ export interface ChatProposalStore {
    * keeping its `noteId`. Null when it is already saved.
    */
   claimSave(scope: OrgScope, key: ProposalKey, input: ProposalOwner & { edited: boolean; now: Date }): Promise<ProposalRecord | null>;
-  /** `saving` to `saved`. */
+  /**
+   * `saving` or `dismissed` to `saved`, once the claimed note is written. A Not now from another tab can land between
+   * the claim and this call; the note exists by then, so it is overruled.
+   */
   markSaved(scope: OrgScope, key: ProposalKey, now: Date): Promise<void>;
   /** Sets the proposal aside, unless it is saved. Resolves the row either way. */
   dismiss(scope: OrgScope, key: ProposalKey, input: ProposalOwner & { now: Date }): Promise<ProposalRecord>;
@@ -143,7 +146,7 @@ export function createChatProposalStore(connection: Connection): ChatProposalSto
       return moveUnlessSaved(scope, key, { status: 'saving', edited: input.edited }, input, input.now);
     },
     async markSaved(scope, key, now) {
-      await Proposal.updateOne({ ...keyOf(scope, key), status: 'saving' }, { $set: { status: 'saved', updatedAt: now } });
+      await Proposal.updateOne({ ...keyOf(scope, key), status: trusted({ $ne: 'saved' }) }, { $set: { status: 'saved', updatedAt: now } });
     },
     async dismiss(scope, key, input) {
       const moved = await moveUnlessSaved(scope, key, { status: 'dismissed' }, input, input.now);
