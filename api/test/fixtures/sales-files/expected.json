@@ -1,0 +1,164 @@
+{
+  "locationName": "Main Street",
+  "latest": "2026-06-02",
+  "files": {
+    "day-level.csv": {
+      "outcome": "days",
+      "days": [
+        {
+          "date": "2025-01-01",
+          "guests": 120,
+          "netSalesCents": 345600
+        },
+        {
+          "date": "2025-01-02",
+          "guests": 98,
+          "netSalesCents": 289050
+        },
+        {
+          "date": "2025-01-04",
+          "guests": 0,
+          "netSalesCents": 0
+        }
+      ]
+    },
+    "check-level.csv": {
+      "outcome": "days",
+      "days": [
+        {
+          "date": "2025-02-01",
+          "guests": 6,
+          "netSalesCents": 12550
+        },
+        {
+          "date": "2025-02-02",
+          "guests": 3,
+          "netSalesCents": 6000
+        }
+      ]
+    },
+    "slash-day-first.csv": {
+      "outcome": "days",
+      "days": [
+        {
+          "date": "2025-03-13",
+          "guests": 50,
+          "netSalesCents": 50000
+        },
+        {
+          "date": "2025-03-14",
+          "guests": 60,
+          "netSalesCents": 60025
+        }
+      ]
+    },
+    "slash-month-first.csv": {
+      "outcome": "days",
+      "days": [
+        {
+          "date": "2025-03-13",
+          "guests": 50,
+          "netSalesCents": null
+        },
+        {
+          "date": "2025-03-14",
+          "guests": 60,
+          "netSalesCents": null
+        }
+      ]
+    },
+    "slash-either.csv": {
+      "outcome": "question",
+      "kind": "date_order"
+    },
+    "semicolon-decimal-comma.csv": {
+      "outcome": "kept",
+      "code": "decimal_comma"
+    },
+    "semicolon-dot.csv": {
+      "outcome": "days",
+      "days": [
+        {
+          "date": "2025-04-01",
+          "guests": 10,
+          "netSalesCents": 98000
+        },
+        {
+          "date": "2025-04-02",
+          "guests": 11,
+          "netSalesCents": 1200
+        }
+      ]
+    },
+    "repeated-dates.csv": {
+      "outcome": "question",
+      "kind": "row_mode"
+    },
+    "item-level.csv": {
+      "outcome": "kept",
+      "code": "item_level"
+    },
+    "bom-crlf-quoted.csv": {
+      "outcome": "days",
+      "days": [
+        {
+          "date": "2025-06-01",
+          "guests": 10,
+          "netSalesCents": null
+        },
+        {
+          "date": "2025-06-02",
+          "guests": 11,
+          "netSalesCents": null
+        }
+      ]
+    },
+    "location.csv": {
+      "outcome": "days",
+      "days": [
+        {
+          "date": "2025-01-01",
+          "guests": 10,
+          "netSalesCents": null
+        },
+        {
+          "date": "2025-01-02",
+          "guests": 11,
+          "netSalesCents": null
+        }
+      ]
+    },
+    "location-unknown.csv": {
+      "outcome": "question",
+      "kind": "location_value"
+    },
+    "title-block.csv": {
+      "outcome": "days",
+      "days": [
+        {
+          "date": "2025-07-01",
+          "guests": 40,
+          "netSalesCents": 120000
+        }
+      ]
+    },
+    "notes-only.csv": {
+      "outcome": "kept",
+      "code": "notes_not_read_yet"
+    },
+    "tab.tsv": {
+      "outcome": "days",
+      "days": [
+        {
+          "date": "2025-09-01",
+          "guests": 30,
+          "netSalesCents": 30000
+        }
+      ]
+    },
+    "no-header.csv": {
+      "outcome": "kept",
+      "code": "no_header"
+    }
+  }
+}

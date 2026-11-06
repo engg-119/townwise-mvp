@@ -6,13 +6,16 @@ import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { TOWNWISE_ROUTES } from '../src/access/routes.ts';
+import { createMemoryFileBlobs, type MemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import {
   addConversation, addInvite, addLocation, addNote, addRequest, addSalesDay, addSeat, addUpload, createOrg,
 } from './helpers/fixtures.ts';
+import { seedReadFile } from './helpers/files.ts';
 import { PROBE_ROUTES } from './helpers/probe.ts';
 import { call, signIn, startTownwiseServer, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
 
 let server: TownwiseTestServer;
+let blobs: MemoryFileBlobs;
 
 interface Tenant {
   orgId: string;
@@ -28,6 +31,9 @@ interface Tenant {
   locationName: string;
   noteId: string;
   conversationId: string;
+  /** A read file of the location (original and cleaned copy stored) and its import. */
+  fileId: string;
+  importId: string;
 }
 
 let a: Tenant;
@@ -52,7 +58,11 @@ async function tenant(name: string): Promise<Tenant> {
   await addUpload(server, { orgId, locationId, uploadedAt: server.clock.now(), status: 'applied' });
   const noteId = await addNote(server, { orgId, locationId, detail: `${name} private note`, createdBy: member.session.userId });
   const conversationId = await addConversation(server, { orgId, locationId, userId: member.session.userId, text: `${name} private chat` });
-  return { orgId, name, admin, member, inviteId, seatIds, locationId, locationName, noteId, conversationId };
+  const fileId = await seedReadFile(server, blobs, {
+    orgId, locationId, uploadedBy: member.session.userId, name: `${name} sales.csv`, raw: Buffer.from('Date,Guests\n'), clean: 'date,guests,net_sales\r\n',
+  });
+  const importId = String((await server.connection.collection('tw_files').findOne({ _id: new Types.ObjectId(fileId) }))?.importId);
+  return { orgId, name, admin, member, inviteId, seatIds, locationId, locationName, noteId, conversationId, fileId, importId };
 }
 
 /** Every Townwise document that belongs to B, serialized, so any change shows. */
@@ -61,7 +71,7 @@ async function snapshotOf(org: Tenant): Promise<string> {
   const docs: unknown[] = [await server.connection.collection('tw_orgs').findOne({ _id: orgId })];
   for (const name of [
     'tw_members', 'tw_locations', 'tw_sales_days', 'tw_uploads', 'tw_notes', 'tw_view_as_grants', 'tw_audit_events',
-    'tw_chat_conversations', 'tw_chat_live_turns', 'tw_chat_usage',
+    'tw_chat_conversations', 'tw_chat_live_turns', 'tw_chat_usage', 'tw_files', 'tw_imports', 'tw_upload_days',
   ]) {
     docs.push(await server.connection.collection(name).find({ orgId }).sort({ _id: 1 }).toArray());
   }
@@ -71,7 +81,8 @@ async function snapshotOf(org: Tenant): Promise<string> {
 }
 
 beforeAll(async () => {
-  server = await startTownwiseServer({ probe: PROBE_ROUTES });
+  blobs = createMemoryFileBlobs();
+  server = await startTownwiseServer({ probe: PROBE_ROUTES, files: blobs });
   a = await tenant('Alpine Tavern');
   b = await tenant('Beachside Bistro');
   bInvitesAMember = await addInvite(server, { orgId: b.orgId, email: a.member.email, invitedBy: b.admin.session.userId });
@@ -84,13 +95,16 @@ beforeEach(async () => { await server.redis.flushdb(); });
 function bIds(): Record<string, string> {
   return {
     orgId: b.orgId, inviteId: b.inviteId, memberId: b.inviteId, userId: b.member.session.userId,
-    locationId: b.locationId, noteId: b.noteId, conversationId: b.conversationId,
+    locationId: b.locationId, noteId: b.noteId, conversationId: b.conversationId, fileId: b.fileId, importId: b.importId,
   };
 }
 
 /** What B's tenant data must never leak. */
 function bSecrets(): string[] {
-  return [b.orgId, b.name, b.admin.email, b.member.email, b.locationId, b.locationName, b.noteId, b.conversationId, `${b.name} private chat`];
+  return [
+    b.orgId, b.name, b.admin.email, b.member.email, b.locationId, b.locationName, b.noteId, b.conversationId, `${b.name} private chat`,
+    b.fileId, b.importId,
+  ];
 }
 
 function pathWithBIds(path: string): string {
@@ -127,6 +141,8 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
     'org.notes.create': NOTE,
     'org.notes.update': NOTE,
     'org.chat.turn': { content: 'Hello from A' },
+    'org.files.create': { name: 'a.csv', sizeBytes: 10, purpose: 'history' },
+    'org.imports.answer': { questionId: 'q', choice: 'not_sure' },
   };
   const QUERY: Record<string, string> = { 'org.sales.days': '?from=2026-01-01&to=2026-05-31' };
 
@@ -135,6 +151,8 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
       'org.members.update', 'org.members.remove', 'org.locations.update', 'org.locations.remove', 'org.sales.get',
       'org.sales.days', 'org.sales.upload', 'org.sales.remove', 'org.notes.list', 'org.notes.create', 'org.notes.update',
       'org.notes.remove', 'org.chat.get', 'org.chat.conversation', 'org.chat.turn', 'org.chat.remove',
+      'org.files.create', 'org.files.chunk', 'org.files.complete', 'org.files.list', 'org.files.get', 'org.files.raw', 'org.files.clean',
+      'org.files.remove_raw', 'org.files.remove', 'org.imports.current', 'org.imports.get', 'org.imports.start', 'org.imports.answer',
     ]));
   });
 
@@ -142,9 +160,11 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
     it(`${route.method} /api${route.path}: A’s org admin presenting any of B’s ids, with A’s own ids elsewhere, gets 404 not_found, and B is unchanged`, async () => {
       const bOwn: Record<string, string[]> = {
         memberId: [b.inviteId, ...b.seatIds], locationId: [b.locationId], noteId: [b.noteId], conversationId: [b.conversationId],
+        fileId: [b.fileId], importId: [b.importId],
       };
       const aOwn: Record<string, string> = {
-        memberId: a.inviteId, locationId: a.locationId, noteId: a.noteId, conversationId: a.conversationId,
+        memberId: a.inviteId, locationId: a.locationId, noteId: a.noteId, conversationId: a.conversationId, fileId: a.fileId,
+        importId: a.importId, index: '0',
       };
       const params = [...route.path.matchAll(/:([A-Za-z]+)/g)].map((match) => match[1] ?? '');
       let cases = 0;

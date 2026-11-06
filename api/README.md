@@ -159,10 +159,24 @@ Staff delete on request (the privacy page’s promise). Both actions write their
 
 ### Sales upload
 
-1. The upload carries only the date, guest count and net sales of each day, for one location: exactly `{ days: [{ date, guests, netSalesCents }] }`. In the build spec, the client parses the file in the browser, so the export itself never reaches the server; that upload page is not in this branch. [CONFIRM: browser-side parsing, three fields]
+1. The upload carries only the date, guest count and net sales of each day, for one location: exactly `{ days: [{ date, guests, netSalesCents }] }`. The client parses the file in the browser, so on this path the export itself never reaches the server. Stored files (below) are the other path. [CONFIRM: browser-side parsing, three fields]
 2. The server checks it strictly. Any other key, in the body or in a day, is 400 and nothing is written. It takes 1 to 3,660 days with unique dates, from 2010-01-01 to the server’s UTC date plus one day. Guests are a whole number from 0 to 20,000, or null. Net sales are whole cents from 0 to 100,000,000, or null. Each day needs at least one of the two. This route alone takes bodies up to 256 KB. [CONFIRM: ten years per upload; caps; earliest date]
 3. An org admin’s upload replaces the days it covers. A member’s adds new days only and reports the days it left alone as `kept`. [CONFIRM: members add new days only]
 4. Each stored day has exactly eight keys: `_id`, `orgId`, `locationId`, `date`, `guests`, `netSalesCents`, `uploadId` and `updatedAt`. The upload record holds counts and dates, never a file name. A crash leaves the record `applying`; sending the same days again is safe, because every day is an upsert.
+
+### Stored files and the file reader
+
+The other way in for sales history (spec 11A): a person drops their exports as they are, and Townwise reads them on the server. Off until `FILES_BLOB_ACCOUNT_URL` is set (every route below answers 503 `files_unavailable`), so the browser upload above stays as the fallback and as the choice to send only daily totals. [CONFIRM: every cap and limit below]
+
+1. **Upload, in chunks.** `POST /files { name, sizeBytes, purpose: 'history' }` opens an upload session in the location's active import (one per location; the first drop creates it, `open`) and answers with the caps (`limits`). The browser sends each 8 MiB chunk as `PUT /files/:fileId/chunks/:index` with an exact `Content-Length`; the API streams it through a hashing Transform into Azure's Put Block, so no request holds a file, and a dropped connection retries one chunk. `POST /files/:fileId/complete` commits the chunks, tells the kind from the extension and first bytes, and drops a second copy of a file already stored for the location (409 `file_duplicate`). Caps: 200 MiB a file, 50 files an import, 500 a location, 10 uploading at once in a location, 5 GiB stored and 2 GiB uploaded a UTC day per organization. A replica takes 12 chunk streams at once; the 13th answers 503 `uploads_busy` with `Retry-After: 2`.
+2. **No file is refused for its type.** CSV, TSV and text files and Excel workbooks (.xlsx, .xlsm) are read. Old Excel (.xls) and Word (.doc), Numbers files, password-protected Office files, images and anything else are kept and say why. ZIP archives, PDFs and Word (.docx) files are kept for now as `type_not_read`; later stages read them.
+3. **Read my history.** `POST /imports/:importId/start` queues every stored file; files that complete later are queued too. The file reader runs in each API replica (`src/files/worker.ts`): it claims the oldest started import under a 90-second lease (renewed every 30 seconds, taken over when a replica stops), reads its files one at a time in upload order, and skips a suspended organization's. Each file is read in a worker thread with 192 MiB of heap and 20 minutes; past either it is kept as `too_complex`, and the API carries on. Text is streamed twice (the first pass finds the header row under any title block, profiles every column and proves the date order; the second adds rows up per date), in UTF-8, UTF-16 or windows-1252.
+4. **Rules first, then the person.** The reader's column logic is the browser's (`src/files/parse/` ports `client/src/portal/upload/`, held to the same fixtures), with longer header guess lists [CONFIRM: header guesses]. What the rules cannot settle (two date columns, an unproven date order, which columns are guests and net sales, which location value is this location, what one row is) becomes one question on the import, whose options are header names or the location column's values, never other cells. The import waits; `POST /imports/:importId/answer { questionId, choice }` stores the answer on the file and reads it again, and "not sure" keeps it as `needs_help`.
+5. **Days, a cleaned copy and a report.** A read file's days go through the same store and rules as the browser upload: an org admin's replace the days they cover, a member's add new days only. Each file has one `tw_uploads` record (kept on the file, so a retry reuses it), a cleaned copy (`date,guests,net_sales`) and a report: header names, the header row, which rule or answer decided each column, row and day counts, skipped rows by number, and dates. The report holds no data cell except the location value chosen.
+6. **Status and time left.** `GET /imports/:importId` (polled) shows each file's status and outcome, its progress in the current phase, and `etaSeconds`: measured, never guessed, and null ("Estimating") until three seconds and five percent in, until a file of the import has finished (for queued files), and while the import waits for a turn.
+7. **Downloads and deletion.** The original streams back to its uploader and the organization's admins (in 32 MiB parts for large files), the cleaned copy to every member, both as attachments that are never rendered. Deleting the original keeps the cleaned copy, the report and the days, and replaces the stored name with the kind. Deleting a file removes the original, the cleaned copy and the record; its days stay. Under view-as, names are null, nothing downloads, and every write is refused.
+
+Not in this build yet (spec 11A, later stages): reading ZIP archives, PDFs and Word tables; the AI step for columns the rules cannot find; files removed with a location's sales data or an organization's deletion, the daily sweeper (unfinished uploads, the one-year retention of originals, never-read drops), and the staff purge of originals for a person's deletion request. Stored files stay off in production until those land (`../infra/README.md`, step 18).
 
 ### Notes (the tuning step)
 
@@ -211,7 +225,10 @@ Each location’s calibration state is derived from its sales days on every read
 | `member.removed` | `email`, `wasStatus` | after, by an org admin; before, by staff |
 | `member.left` | `email` | after |
 | `location.created`, `location.updated`, `location.deleted` | `name`, `townId` | after |
-| `sales.uploaded` | `locationId`, `dayCount`, `inserted`, `replaced`, `firstDate`, `lastDate` | after |
+| `sales.uploaded` | `locationId`, `dayCount`, `inserted`, `replaced`, `firstDate`, `lastDate`; from the file reader also `fileId` and `via` (`file`), with the uploader as actor | after |
+| `file.uploaded` | `locationId`, `kind`, `sizeBytes` | after |
+| `file.deleted` | `locationId`, `kind`, `reason` (`owner`) | after |
+| `file.raw_deleted` | `locationId`, `kind` | after |
 | `sales.deleted` | `locationId`, `deletedDays` | after |
 | `note.created`, `note.updated`, `note.deleted` | `locationId`, `kind`, `startDate`, `endDate` | after |
 | `chat.turn_completed` | `locationId`, `conversationId`, `model`, `calls`, `inputTokens`, `outputTokens`, `stopReason` | after |
@@ -221,7 +238,7 @@ Each location’s calibration state is derived from its sales days on every read
 | `people.signed_out_everywhere` | none (the event’s `orgId` is the person’s organization, or null) | before, by staff |
 | `person.deleted` | `userId` (null for an address that never signed in) | before, by staff |
 | `staff_action.not_applied` | `eventId`, `code` | after a staff effect fails or is refused |
-- Townwise log lines carry ids and counts only: `townwise.access_denied { policy, code }`, `townwise.view_as_read { grantId, routeId }`, `townwise.places_failed { routeId, code, status, errType }` (code `upstream_status` with Google's HTTP status, `network` with the error class, `timeout` or `bad_response`), `townwise.upload_applied { orgId, locationId, uploadId, dayCount }`, `townwise.audit_write_failed { action, orgId, targetId }`, and for the tuning chat `townwise.chat_turn`, `townwise.chat_turn_failed`, `townwise.chat_turn_aborted` and `townwise.chat_turn_not_saved` (`{ orgId, locationId, conversationId, calls, costMicroUsd }` with the stop reason, or the code and error class; `timeout` has no error class), and `townwise.chat_live_turn_not_released` (`{ orgId, locationId, errType }`). No route puts an email, a name or a figure in its path or query, because server-core logs the URL. The one exception is the people lookup’s `q`, which server-core redacts.
+- Townwise log lines carry ids and counts only: `townwise.access_denied { policy, code }`, `townwise.view_as_read { grantId, routeId }`, `townwise.places_failed { routeId, code, status, errType }` (code `upstream_status` with Google's HTTP status, `network` with the error class, `timeout` or `bad_response`), `townwise.upload_applied { orgId, locationId, uploadId, dayCount }`, `townwise.audit_write_failed { action, orgId, targetId }`, and for the tuning chat `townwise.chat_turn`, `townwise.chat_turn_failed`, `townwise.chat_turn_aborted` and `townwise.chat_turn_not_saved` (`{ orgId, locationId, conversationId, calls, costMicroUsd }` with the stop reason, or the code and error class; `timeout` has no error class), and `townwise.chat_live_turn_not_released` (`{ orgId, locationId, errType }`). Stored files log `townwise.file_upload_started { orgId, locationId, fileId, importId, sizeBytes, chunkCount }`, `townwise.file_stored { fileId, kind, sizeBytes, durationMs }`, `townwise.file_upload_cancelled { fileId, receivedBytes }`, `townwise.uploads_busy { active }`, `townwise.blob_failed { op, errType, status }`, `townwise.file_downloaded` and `townwise.file_download_stopped { fileId, which }`, `townwise.file_deleted { fileId }`, `townwise.originals_deleted { orgId, locationId, count, by }`, `townwise.import_started`, `townwise.file_read { orgId, locationId, fileId, importId, dayCount, durationMs }`, `townwise.file_kept` and `townwise.file_failed { fileId, kind, outcome }`, `townwise.file_question { fileId, kind }`, `townwise.file_answered`, `townwise.file_read_failed { fileId, errType }`, `townwise.import_done { importId, files, durationMs }` and `townwise.file_worker_failed { importId, errType }`: never a file name, header, sheet name, location value, cell or figure, and never the storage SDK's own message. No route puts an email, a name or a figure in its path or query, because server-core logs the URL. The one exception is the people lookup’s `q`, which server-core redacts.
 
 ## Endpoints
 
@@ -232,7 +249,7 @@ Every route is JSON under `/api` and runs one chain, built from the table in `sr
 3. `resolveAccess`.
 4. The view-as guard.
 5. The route’s policy.
-6. The body parser: 32 KB, 2 KB on the two Places routes, or 256 KB on the upload route; none on GET and DELETE. It runs after the policy, so a refused request is never parsed.
+6. The body parser: 32 KB, 2 KB on the two Places routes and the files JSON routes, or 256 KB on the upload route; none on GET and DELETE. It runs after the policy, so a refused request is never parsed. The chunk route has no parser: its handler streams the raw body after the policy passed, and a refused chunk's connection is closed unread.
 7. The route’s own limiter, if it has one.
 8. The handler.
 
@@ -289,6 +306,28 @@ Each location is `{ id, name, town, coverage, calibration, notesCount, lastUploa
 | `GET /api/org/locations/:locationId/sales/days?from=&to=` | member | `YYYY-MM-DD` dates, at most 366 days inclusive | 200 `{ days }` | 400; 404 |
 | `POST /api/org/locations/:locationId/sales/uploads` | member; 256 KB; limiter `uploads` | `{ days }` (see Sales upload) | 201 `{ upload, coverage, calibration }` | 400; 404; 413; 429 |
 | `DELETE /api/org/locations/:locationId/sales` | org_admin | | 200 `{ deletedDays, deletedUploads }` | 404 |
+
+### Stored files
+
+All under `/api/org/locations/:locationId`, all 503 `files_unavailable` while stored files are off. A file or import id from another organization, or another location, answers 404 like an unknown one. Detail fields sit beside `error` and `message`.
+
+| Method and path | Policy | Request | Success | Errors |
+|---|---|---|---|---|
+| `POST /files` | member; 2 KB; limiter `files` | `{ name, sizeBytes, purpose: 'history' }` | 201 `{ file, import: { id, status }, limits }` | 400 `invalid_request`, `purpose_unavailable`; 404; 413 `file_too_large { maxBytes }`; 409 `import_full`, `too_many_uploading`, `storage_full { storedBytesLeft }`, `daily_upload_limit { resetsAt }` |
+| `PUT /files/:fileId/chunks/:index` | member (the uploader); raw body; limiter `file_chunks` | `application/octet-stream`, exact `Content-Length` (8 MiB, or the remainder) | 200 `{ index, receivedBytes, chunksReceived }` | 400; 403 `forbidden`; 404; 409 `file_not_uploading`; 410 `upload_expired`; 503 `uploads_busy` (`Retry-After: 2`), `storage_unavailable` (`Retry-After: 5`) |
+| `POST /files/:fileId/complete` | member (the uploader) | `{}` | 200 `{ file, import }` | 403; 404; 409 `chunks_missing { missing }`, `file_duplicate { fileId }`, `file_not_uploading`; 503 `storage_unavailable` |
+| `GET /files?before=` | member | | 200 `{ files }`, newest first, 200 a page; other people's unfinished uploads left out | 400; 404 |
+| `GET /files/:fileId` | member | | 200 `{ file, report }` | 400; 404 |
+| `GET /files/:fileId/raw?part=` | member (the uploader or an org admin); limiter `downloads` | `part` 0-based, 32 MiB each | 200, the original as an attachment | 400; 403 `forbidden`, `view_as_no_download`; 404; 409 `file_busy`; 410 `raw_expired` |
+| `GET /files/:fileId/clean` | member; limiter `downloads` | | 200, `text/csv` attachment | 403 `view_as_no_download`; 404 `not_found`, `no_clean_file` |
+| `DELETE /files/:fileId/raw` | member (the uploader or an org admin) | | 200 `{ deleted: true }` | 403; 404; 409 `file_busy`; 410 `raw_expired` |
+| `DELETE /files/:fileId` | member (the uploader or an org admin) | | 200 `{ deleted: true, daysKept }`; an unfinished upload is cancelled and its bytes given back | 403; 404; 409 `file_busy` (being read) |
+| `GET /imports/current` | member | | 200 `{ import }`: the active one, or one finished in the last 24 hours, or null | 404 |
+| `GET /imports/:importId` | member | | 200 `{ import }` | 400; 404 |
+| `POST /imports/:importId/start` | member | `{}` | 202 `{ import }` | 404; 409 `import_not_open`, `import_empty` |
+| `POST /imports/:importId/answer` | member | `{ questionId, choice }` | 200 `{ import }` | 400; 404; 409 `question_stale` |
+
+A file is `{ id, importId, purpose, name, kind, sizeBytes, uploadedAt, uploadedByEmail, status, outcome, upload, progress, etaSeconds, queuePosition, entries, result, hasClean, rawAvailable, rawExpiresAt, canDownloadRaw, canDownloadClean, canDelete, canDeleteRaw }`; `kind` is `text`, `xlsx`, `xls`, `pdf`, `docx`, `doc`, `zip` or `other`, and `status` is `uploading`, `stored`, `queued`, `reading`, `waiting`, `read` (shown as Used), `kept` or `failed`. An import is `{ id, locationId, status, createdAt, startedAt, finishedAt, files, found, progress, etaSeconds, waitingForTurn, question, appliedVersion }`, where `found` counts the days this import's files wrote and `appliedVersion` moves each time a file's days are written. A question is `{ id, fileId, fileName, sheet, kind, options: [{ id, label }], suggested, family }` (`kind` is `date_column`, `date_order`, `location_value`, `row_mode` or `columns`; for `columns` the choice is `guests:<id>,netSales:<id>`; every question offers `not_sure`).
 
 ### Notes
 
@@ -359,8 +398,11 @@ The console never returns sales figures or note text. People come only from Town
 | `townwise:view-as` | `POST /api/admin/view-as`, per account | 20 per hour | deny (503 `unavailable`) |
 | `townwise:chat` | `POST /api/org/locations/:locationId/chat/turns`, per account | 60 per hour | deny (503 `unavailable`) |
 | `townwise:places` | both Places routes together, per account | 300 per hour | deny (503 `unavailable`) |
+| `townwise:files` | `POST .../files` (opening an upload), per account | 120 per hour | allow |
+| `townwise:file-chunks` | `PUT .../files/:fileId/chunks/:index`, per account | 1,500 per hour | allow |
+| `townwise:downloads` | both file downloads together, per account | 300 per hour | allow |
 
-A search is 10 to 15 autocompletes (debounced at 250 ms, nothing under 2 characters) and one details call, so `townwise:places` allows about 20 searches an hour, and two or three in a few minutes stay well inside it and inside `townwise:writes`, which counts them too. A refused request is 429 `rate_limited` with `retryAfterSeconds`. Account keys are `acct:<userId>`, which the rate-limit module hashes before storing. [CONFIRM: limits]
+The daily byte cap, not the files limiters, bounds what an organization can upload. A search is 10 to 15 autocompletes (debounced at 250 ms, nothing under 2 characters) and one details call, so `townwise:places` allows about 20 searches an hour, and two or three in a few minutes stay well inside it and inside `townwise:writes`, which counts them too. A refused request is 429 `rate_limited` with `retryAfterSeconds`. Account keys are `acct:<userId>`, which the rate-limit module hashes before storing. [CONFIRM: limits]
 
 ### Not built yet
 
@@ -386,6 +428,11 @@ Every Townwise collection takes the `tw_` prefix. Every tenant document carries 
 | `tw_chat_conversations` | per author and location: the title, every API message param of the conversation as JSON with its time, the turn count and the live-turn claim |
 | `tw_chat_live_turns` | per organization and person: the one live tuning chat turn’s id and start time |
 | `tw_chat_usage` | per organization and UTC month: the tuning chat’s cost in whole micro-dollars |
+| `tw_files` | per stored file: the original name (shown to the organization only, never logged), kind, size, a fingerprint over its chunks, the upload session while uploading, status and outcome, progress while reading, the person's answers, the result (counts and dates), the report (header names, row numbers, dates, counts, the location value chosen), and when the original was deleted |
+| `tw_imports` | per batch of files dropped for one location: status, the reader's lease, the current question, how much has been read and how fast, and a counter of days written |
+| `tw_upload_days` | per organization and UTC day: bytes started uploading, for the daily cap |
+
+Stored files live in Azure Blob Storage (`../infra/terraform/production/files.tf`), in `client-raw` (originals) and `client-clean` (cleaned copies), named by ids only: `{orgId}/{locationId}/{fileId}`. `src/files/blobs.ts` builds every name from the caller's `OrgScope` and is the only file that imports the Azure SDK.
 
 Townwise reads the kit’s data only through its store functions (`users.findById`, `users.findByEmail`, `totp.get`), and changes it only through `totp.remove` and the kit’s `revokeAllSessions`, for sign out everywhere and person deletion. Deleting a kit user is a runbook step (Deletion).
 

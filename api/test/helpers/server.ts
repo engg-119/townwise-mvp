@@ -20,6 +20,8 @@ import { createTownwiseApi } from '../../src/app.ts';
 import type { ChatModel } from '../../src/chat/model.ts';
 import { configSchema as townwiseSchema } from '../../src/config.ts';
 import type { FileBlobs } from '../../src/files/blobs.ts';
+import { createFileWorker, type FileWorker, type FileWorkerDeps } from '../../src/files/worker.ts';
+import { createTownwiseStores } from '../../src/stores/index.ts';
 import type { PlacesClient } from '../../src/places/google.ts';
 
 export const WEB_ORIGIN = 'https://app.example.test';
@@ -45,6 +47,8 @@ export interface TownwiseTestServer {
   /** The /api router createTownwiseApi returned. */
   readonly apiRouter: Router;
   readonly mail: MagicLinkMessage[];
+  /** The file reader, when the server was started with `reader`. */
+  readonly reader: FileWorker | null;
   close(): Promise<void>;
 }
 
@@ -83,6 +87,8 @@ export async function startTownwiseServer(opts?: {
   places?: PlacesClient;
   /** Client file storage (memory-blobs.ts, or Azurite); absent, stored files are off. */
   files?: FileBlobs;
+  /** Runs the file reader on `files`; tests drive it with nudge() and settled(). */
+  reader?: Pick<FileWorkerDeps, 'parse' | 'leaseMs'>;
 }): Promise<TownwiseTestServer> {
   const env: Record<string, string> = {
     NODE_ENV: 'test',
@@ -133,15 +139,20 @@ export async function startTownwiseServer(opts?: {
         return Promise.resolve();
       },
     });
+    const files = opts?.files;
+    const reader = files === undefined || opts?.reader === undefined ? null : createFileWorker({
+      connection: mongo.connection, stores: createTownwiseStores(mongo.connection), authStores, blobs: files, logger, now: clock.now,
+      replicaId: 'test-reader', pollMs: 60_000, ...opts.reader,
+    });
     const deps = {
       config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now: clock.now, chat: opts?.chat,
-      chatTurnTimeLimitMs: opts?.chatTurnTimeLimitMs, places: opts?.places, files: opts?.files,
+      chatTurnTimeLimitMs: opts?.chatTurnTimeLimitMs, places: opts?.places, files, fileWorker: reader ?? undefined,
     };
     const apiRouter = createTownwiseApi(deps);
     const routes: RouteMount[] = [{ path: '/auth', router: auth.router }, { path: '/api', router: apiRouter }];
     if (opts?.probe !== undefined) routes.push({ path: '/probe', router: createTownwiseApi(deps, opts.probe) });
     await ensureIndexes(mongo.connection, { logger, buildAtBoot: () => true });
-    const server = createServer({ config, logger, routes, onShutdown: [redis, mongo], exit: () => undefined });
+    const server = createServer({ config, logger, routes, onShutdown: reader === null ? [redis, mongo] : [reader, redis, mongo], exit: () => undefined });
     const listened = await server.listen();
     return {
       url: `http://127.0.0.1:${String(listened.port)}`,
@@ -154,6 +165,7 @@ export async function startTownwiseServer(opts?: {
       commands,
       apiRouter,
       mail,
+      reader,
       close: () => server.shutdown('test'),
     };
   } catch (err) {

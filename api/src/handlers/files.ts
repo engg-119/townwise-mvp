@@ -395,27 +395,35 @@ export async function completeFile(ctx: TownwiseContext, req: Request, res: Resp
 }
 
 /**
- * The file just stored joins its import for good: `noteDrop` bumps the import so the reader cannot finish past it. If
- * the import started meanwhile the file is queued; if it finished meanwhile, the file moves into the location's next
- * import.
+ * The file just stored joins its import for good. `noteDrop` bumps the import after the file's status is set, so the
+ * reader can never finish an import past it: a file stored while its import started is queued and bumped again, and
+ * a file whose import finished meanwhile moves into the location's next import.
  */
 async function place(ctx: TownwiseContext, member: MemberPrincipal, file: FileRecord): Promise<{ file: FileRecord; import: ImportRecord }> {
   const { scope } = member;
-  const importId = file.importId ?? '';
-  const now = ctx.now();
-  const noted = await ctx.stores.imports.noteDrop(scope, importId, now);
-  if (noted !== null) {
-    if (noted.status === 'open') return { file, import: noted };
-    const queued = file.status === 'queued' ? file : await ctx.stores.files.move(scope, file.id, ['stored'], 'queued');
+  let current = file;
+  for (;;) {
+    const now = ctx.now();
+    const noted = await ctx.stores.imports.noteDrop(scope, current.importId ?? '', now);
+    if (noted === null) {
+      // Its import was started and has finished: the person asked for it to be read, so the next import starts too.
+      const next = await ctx.stores.imports.joinOrCreate(scope, current.locationId, { userId: member.userId, now });
+      if (next.status === 'open') {
+        await ctx.stores.imports.start(scope, next.id, now);
+        await ctx.stores.files.queueStored(scope, next.id);
+      }
+      await ctx.stores.files.reassign(scope, current.id, next.id, 'queued');
+      current = { ...current, importId: next.id, status: 'queued' };
+      continue;
+    }
+    if (noted.status === 'open') return { file: current, import: noted };
+    if (current.status === 'stored') {
+      current = await ctx.stores.files.move(scope, current.id, ['stored'], 'queued') ?? { ...current, status: 'queued' };
+      continue;
+    }
     ctx.nudgeFiles();
-    return { file: queued ?? file, import: noted };
+    return { file: current, import: noted };
   }
-  const next = await ctx.stores.imports.joinOrCreate(scope, file.locationId, { userId: member.userId, now });
-  const status = next.status === 'open' ? 'stored' : 'queued';
-  await ctx.stores.files.reassign(scope, file.id, next.id, status);
-  await ctx.stores.imports.noteDrop(scope, next.id, now);
-  if (status === 'queued') ctx.nudgeFiles();
-  return { file: { ...file, importId: next.id, status }, import: next };
 }
 
 // ---- Reading the list ---------------------------------------------------------------------------------------------
