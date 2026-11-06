@@ -101,7 +101,7 @@ function isPasswordError(err: unknown): boolean {
 
 /**
  * A PDF's tables. `onPage` reports pages read. Encrypted: kept `encrypted`; no text on any page: `pdf_scanned`; text but
- * no table: `pdf_no_table`; more pages than the reader takes: `too_complex`; not readable as a PDF: `not_a_table`.
+ * no table: `pdf_no_table`; more pages than the reader takes: `too_complex`; not readable as a PDF, or a page that cannot be read: `not_a_table`.
  */
 export async function readPdf(buffer: Buffer, onPage: (done: number, total: number) => void = () => undefined): Promise<PdfTables> {
   let document;
@@ -118,8 +118,15 @@ export async function readPdf(buffer: Buffer, onPage: (done: number, total: numb
     const pages: PdfItem[][] = [];
     let anyText = false;
     for (let number = 1; number <= document.numPages; number += 1) {
-      const page = await document.getPage(number);
-      const content = await page.getTextContent();
+      let content;
+      let page;
+      try {
+        page = await document.getPage(number);
+        content = await page.getTextContent();
+      } catch {
+        // A damaged page: the PDF is kept, like one pdf.js cannot open at all (the time limit ends the thread instead).
+        return { kind: 'kept', outcome: 'not_a_table' };
+      }
       if (content.items.length > PDF_MAX_ITEMS_PER_PAGE) return { kind: 'kept', outcome: 'too_complex' };
       const items: PdfItem[] = [];
       for (const item of content.items) {

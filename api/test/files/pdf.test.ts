@@ -65,6 +65,12 @@ describe('PDF tables', () => {
     expect(await parse(Buffer.from('%PDF-1.4\nnot really'))).toMatchObject({ kind: 'kept' });
   });
 
+  it('keeps a PDF whose page cannot be read as not_a_table, instead of failing the read', async () => {
+    const damaged = pdfOf([{ texts: line(700, 'Date', 'Guests', 'Net Sales') }, { texts: line(685, '2025-01-01', '1', '1.00') }], { brokenPage: 1 });
+    expect(await readPdf(damaged)).toEqual({ kind: 'kept', outcome: 'not_a_table' });
+    expect(await parse(damaged)).toEqual({ kind: 'kept', outcome: 'not_a_table', report: null });
+  });
+
   it('keeps a PDF over the page cap, and one past the thread’s time limit, as too_complex', async () => {
     const pages = Array.from({ length: PDF_MAX_PAGES + 1 }, () => ({}));
     expect(await readPdf(pdfOf(pages))).toEqual({ kind: 'kept', outcome: 'too_complex' });

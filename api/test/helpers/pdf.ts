@@ -1,6 +1,7 @@
 // A minimal PDF writer for tests (no binary fixtures): pages of text drawn at known positions in Helvetica (one of the
 // standard fonts, so no font file is embedded), with a correct cross-reference table. `encrypted` adds a standard
-// security handler whose password the reader does not have; `drawing` puts a line on a page with no text.
+// security handler whose password the reader does not have; `drawing` puts a line on a page with no text; `brokenPage`
+// points that page's entry in the page tree at an object the file does not have (a damaged page).
 
 export interface PdfText { readonly text: string; readonly x: number; readonly y: number }
 
@@ -10,7 +11,7 @@ function escaped(text: string): string {
   return text.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
 }
 
-export function pdfOf(pages: readonly PdfPage[], options: { encrypted?: boolean } = {}): Buffer {
+export function pdfOf(pages: readonly PdfPage[], options: { encrypted?: boolean; brokenPage?: number } = {}): Buffer {
   const objects: string[] = [];
   const add = (body: string): number => {
     objects.push(body);
@@ -29,7 +30,7 @@ export function pdfOf(pages: readonly PdfPage[], options: { encrypted?: boolean 
     kids.push(add(`<< /Type /Page /Parent ${String(pagesObject)} 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${String(font)} 0 R >> >> /Contents ${String(content)} 0 R >>`));
   }
   objects[catalog - 1] = `<< /Type /Catalog /Pages ${String(pagesObject)} 0 R >>`;
-  objects[pagesObject - 1] = `<< /Type /Pages /Kids [${kids.map((kid) => `${String(kid)} 0 R`).join(' ')}] /Count ${String(kids.length)} >>`;
+  objects[pagesObject - 1] = `<< /Type /Pages /Kids [${kids.map((kid, index) => `${String(index === options.brokenPage ? kid + 1000 : kid)} 0 R`).join(' ')}] /Count ${String(kids.length)} >>`;
   const encrypt = options.encrypted === true
     ? add(`<< /Filter /Standard /V 1 /R 2 /O <${'00'.repeat(32)}> /U <${'11'.repeat(32)}> /P -4 >>`)
     : null;

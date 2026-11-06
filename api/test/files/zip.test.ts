@@ -131,6 +131,15 @@ describe('entries', () => {
     expect(outcome.report.families).toEqual([expect.objectContaining({ entries: 3, dayCount: 3 })]);
   });
 
+  it('keeps a damaged PDF entry and still reads the CSV beside it', async () => {
+    const { pdfOf, row } = await import('../helpers/pdf.ts');
+    const damaged = pdfOf([{ texts: row(700, [[72, 'Date'], [200, 'Guests']]) }, { texts: row(685, [[72, '2025-01-02'], [200, '4']]) }], { brokenPage: 1 });
+    const outcome = await read(zipOf([{ name: 'a.csv', data: `Date,Guests,Net Sales\n${day('2025-01-01', 10)}` }, { name: 'b.pdf', data: damaged }]));
+    expect(outcome).toMatchObject({ kind: 'days', days: [{ date: '2025-01-01', guests: 10 }] });
+    if (outcome.kind !== 'days') return;
+    expect(outcome.entries.map((entry) => [entry.path, entry.status, entry.outcome])).toEqual([['a.csv', 'used', null], ['b.pdf', 'kept', 'not_a_table']]);
+  });
+
   it('strips control characters from entry paths', async () => {
     const outcome = await read(zipOf([{ name: 'a\u0007b.txt', data: 'just words' }]));
     expect(outcome.kind === 'question' ? [] : outcome.entries.map((row) => row.path)).toEqual(['ab.txt']);
