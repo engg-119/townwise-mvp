@@ -284,9 +284,42 @@ describe('year over year', () => {
     const days = run('2026-03-01', '2026-10-31', () => 100);
     const result = yearOverYear(analyticsInput(days, EMPTY_CONTEXT, defaultFilters(days)));
     expect(result.summary).toBeNull();
+    expect(result.gap).toBe('history');
     expect(yearOverYearSummary(result)).toBe(
       'Year over year needs at least one full year before this one. You have 8 months so far. Older exports from your point-of-sale system would fill it in.',
     );
+  });
+
+  test('early in January it compares the newest pair of years that share a month, and says why the newest is left out', () => {
+    const days = [
+      ...run('2024-01-01', '2025-12-31', () => 100), ...run('2026-01-01', '2026-12-31', () => 105), ...run('2027-01-01', '2027-01-10', () => 90),
+    ];
+    const result = yearOverYear(analyticsInput(days, EMPTY_CONTEXT, defaultFilters(days)));
+    expect(result.years).toEqual([2024, 2025, 2026, 2027]);
+    expect(result.gap).toBeNull();
+    expect(result.summary).toMatchObject({ year: 2026, against: 2025, months: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] });
+    expect(result.skipped).toEqual({ year: 2027, against: 2026 });
+    expect(yearOverYearSummary(result)).toBe(
+      '2026 is running about 5% ahead of 2025, comparing 12 months (January to December) with at least 15 days in both years. '
+      + '2027 is not compared yet: no month has at least 15 days in both 2027 and 2026.',
+    );
+  });
+
+  test('with one year checked but more on file it asks for a second year, not older exports', () => {
+    const days = run('2025-01-01', '2026-11-04', () => 100);
+    const result = yearOverYear(analyticsInput(days, EMPTY_CONTEXT, filtersFor(days, { years: [2026] })));
+    expect(result.summary).toBeNull();
+    expect(result.gap).toBe('checked');
+    expect(result.monthsWithData).toBe(11);
+    expect(yearOverYearSummary(result)).toBe('Check at least two years to compare.');
+  });
+
+  test('with two checked years that share no month, and more on file, it says so', () => {
+    const days = [...run('2024-01-01', '2024-12-31', () => 100), ...run('2025-01-01', '2025-01-10', () => 100), ...run('2026-03-01', '2026-04-30', () => 100)];
+    const result = yearOverYear(analyticsInput(days, EMPTY_CONTEXT, filtersFor(days, { years: [2025, 2026] })));
+    expect(result.summary).toBeNull();
+    expect(result.gap).toBe('checked');
+    expect(yearOverYearSummary(result)).toBe('No month has at least 15 days in two of the years you checked.');
   });
 });
 

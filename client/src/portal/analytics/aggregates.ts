@@ -131,7 +131,14 @@ export interface YearOverYear {
   /** Per year (ascending), months 1 to 12. */
   cells: YearMonthStat[];
   summary: YearOverYearSummary | null;
-  /** Distinct months with any value for the metric, for the "not enough yet" line. */
+  /** The newest checked pair, left out because no month has 15 days in both (early January); null otherwise. */
+  skipped: { year: number; against: number } | null;
+  /**
+   * Why there is no summary: `history` when every year on file is checked and still nothing compares (older exports
+   * would help), `checked` when unchecked years have data. Null with a summary.
+   */
+  gap: 'history' | 'checked' | null;
+  /** Distinct months in the checked years with any value for the metric, for the "not enough yet" line. */
   monthsWithData: number;
 }
 
@@ -139,7 +146,29 @@ function daysInMonth(year: number, month: number): number {
   return new Date(Date.UTC(year, month, 0)).getUTCDate();
 }
 
-/** Average per day per month for each checked year, and the newest year against the one before it. */
+/** The months with at least 15 kept days in both years, and the change over them; null when none or a zero base. */
+function compare(cells: readonly YearMonthStat[], year: number, against: number): YearOverYearSummary | null {
+  const cell = (y: number, month: number): YearMonthStat | undefined => cells.find((each) => each.year === y && each.month === month);
+  const months: number[] = [];
+  let now = 0;
+  let before = 0;
+  for (let month = 1; month <= 12; month += 1) {
+    const a = cell(year, month);
+    const b = cell(against, month);
+    const nowMean = a !== undefined && a.n >= YOY_MIN_DAYS ? a.meanPerDay : null;
+    const beforeMean = b !== undefined && b.n >= YOY_MIN_DAYS ? b.meanPerDay : null;
+    if (nowMean === null || beforeMean === null) continue;
+    months.push(month);
+    now += nowMean;
+    before += beforeMean;
+  }
+  return months.length > 0 && before > 0 ? { year, against, change: now / before - 1, months } : null;
+}
+
+/**
+ * Average per day per month for each checked year, and the newest checked year against the one before it. When
+ * that pair shares no month with 15 days in both (January 1 to 14 of every year), the newest pair that does.
+ */
 export function yearOverYear(input: AnalyticsInput): YearOverYear {
   const values = new Map<string, number[]>();
   for (const point of points(input)) {
@@ -156,39 +185,39 @@ export function yearOverYear(input: AnalyticsInput): YearOverYear {
     return { year, month, n: list.length, daysInMonth: total, meanPerDay: mean(list), complete: list.length === total };
   }));
   const withData = years.filter((year) => cells.some((cell) => cell.year === year && cell.n > 0));
-  const year = withData.at(-1);
-  const against = withData.at(-2);
   let summary: YearOverYearSummary | null = null;
-  if (year !== undefined && against !== undefined) {
-    const cell = (y: number, month: number): YearMonthStat | undefined => cells.find((each) => each.year === y && each.month === month);
-    const months: number[] = [];
-    let now = 0;
-    let before = 0;
-    for (let month = 1; month <= 12; month += 1) {
-      const a = cell(year, month);
-      const b = cell(against, month);
-      const nowMean = a !== undefined && a.n >= YOY_MIN_DAYS ? a.meanPerDay : null;
-      const beforeMean = b !== undefined && b.n >= YOY_MIN_DAYS ? b.meanPerDay : null;
-      if (nowMean === null || beforeMean === null) continue;
-      months.push(month);
-      now += nowMean;
-      before += beforeMean;
-    }
-    if (months.length > 0 && before > 0) summary = { year, against, change: now / before - 1, months };
+  for (let index = withData.length - 1; index >= 1 && summary === null; index -= 1) {
+    summary = compare(cells, withData[index] ?? 0, withData[index - 1] ?? 0);
   }
+  const newest = withData.at(-1);
+  const before = withData.at(-2);
+  const skipped = summary !== null && newest !== undefined && before !== undefined && summary.year !== newest
+    ? { year: newest, against: before }
+    : null;
+  const checked = new Set(years);
+  const withMetric = input.days.filter((day) => valueOf(day, input.filters.metric) !== null);
+  const unchecked = withMetric.some((day) => !checked.has(Number(day.date.slice(0, 4))));
+  const gap = summary !== null ? null : unchecked ? 'checked' : 'history';
   const monthsWithData = new Set(
-    input.days.filter((day) => valueOf(day, input.filters.metric) !== null).map((day) => day.date.slice(0, 7)),
+    withMetric.filter((day) => checked.has(Number(day.date.slice(0, 4)))).map((day) => day.date.slice(0, 7)),
   ).size;
-  return { years, cells, summary, monthsWithData };
+  return { years, cells, summary, skipped, gap, monthsWithData };
 }
 
 /**
  * "2026 is running about 4% ahead of 2025, comparing 10 months (January to October) with at least 15 days in both
- * years." Without a month to compare, the line that says what is missing.
+ * years." Without a month to compare, the line that says what is missing: a second checked year when unchecked
+ * years have data, else older history (the page shows "Upload older history" only for `gap: 'history'`).
  */
 export function yearOverYearSummary(result: YearOverYear): string {
   const { summary } = result;
   if (summary === null) {
+    if (result.gap === 'checked') {
+      const checkedWithData = new Set(result.cells.filter((cell) => cell.n > 0).map((cell) => cell.year)).size;
+      return checkedWithData < 2
+        ? 'Check at least two years to compare.'
+        : `No month has at least ${String(YOY_MIN_DAYS)} days in two of the years you checked.`;
+    }
     return 'Year over year needs at least one full year before this one. '
       + `You have ${plural(result.monthsWithData, 'month', 'months')} so far. `
       + 'Older exports from your point-of-sale system would fill it in.';
@@ -200,7 +229,10 @@ export function yearOverYearSummary(result: YearOverYear): string {
   const first = MONTH_NAMES[(summary.months[0] ?? 1) - 1] ?? '';
   const last = MONTH_NAMES[(summary.months.at(-1) ?? 1) - 1] ?? '';
   const span = summary.months.length === 1 ? `1 month (${first})` : `${String(summary.months.length)} months (${first} to ${last})`;
-  return `${String(summary.year)} is running ${direction}, comparing ${span} with at least ${String(YOY_MIN_DAYS)} days in both years.`;
+  const line = `${String(summary.year)} is running ${direction}, comparing ${span} with at least ${String(YOY_MIN_DAYS)} days in both years.`;
+  if (result.skipped === null) return line;
+  const { year, against } = result.skipped;
+  return `${line} ${String(year)} is not compared yet: no month has at least ${String(YOY_MIN_DAYS)} days in both ${String(year)} and ${String(against)}.`;
 }
 
 // By type of night
