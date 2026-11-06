@@ -180,13 +180,14 @@ describe('POST /api/admin/requests/:requestId/approve (F3)', () => {
     ]);
   });
 
-  it('the first location gets the request’s place ID; a request without one gives null; a retry keeps it', async () => {
+  it('the first location gets the request’s place ID; a request without one gives null; a retry leaves an existing location alone', async () => {
     const placeId = 'ChIJTestPlace0002';
     const placed = await requester('placed', placeId);
     expect((await me(placed.session)).access).toMatchObject({ state: 'pending', request: { placeId } });
     const listed = await (await call(server, '/api/admin/requests', { session: staff })).json() as { requests: AdminRequestView[] };
     expect(listed.requests.find((r) => r.id === placed.requestId)?.placeId).toBe(placeId);
 
+    server.logs.length = 0;
     const res = await approve(placed.requestId, { orgName: 'Placed Kitchen', locationName: 'Main Street' });
     expect(res.status).toBe(200);
     const body = await res.json() as { org: { id: string }; request: AdminRequestView };
@@ -195,8 +196,10 @@ describe('POST /api/admin/requests/:requestId/approve (F3)', () => {
     expect(await server.connection.collection('tw_locations').find({ orgId }).toArray()).toMatchObject([{ placeId }]);
     const events = await eventsAbout(placed.requestId, body.org.id);
     expect(JSON.stringify(events)).not.toContain(placeId);
+    expect(server.logs.join('\n')).not.toContain(placeId);
 
-    // A retry that finds the location already inserted keeps its value, whatever the request holds now.
+    // A retry of a half-finished approval whose location already exists skips step 7, so the location keeps
+    // the place it was inserted with.
     const half = await requester('halfplace', 'ChIJTestPlace0003');
     const halfOrg = new Types.ObjectId();
     await server.connection.collection('tw_access_requests').updateOne(

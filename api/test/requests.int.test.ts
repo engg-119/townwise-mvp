@@ -92,6 +92,7 @@ describe('POST /api/access-requests', () => {
 
   it('stores the picked place, answers it in Waiting, and records only hasPlace', async () => {
     const { session } = await person('placed');
+    server.logs.length = 0;
     const res = await send(session, { ...VALID, placeId: PLACE_ID });
     expect(res.status).toBe(201);
     const body = await res.json() as MeResponse;
@@ -102,12 +103,18 @@ describe('POST /api/access-requests', () => {
     expect(events).toHaveLength(1);
     expect(events[0]?.details).toEqual({ orgName: 'Lou’s Diner Group', townId: 'hanover-nh', townName: 'Hanover', hasPlace: true });
     expect(JSON.stringify(events)).not.toContain(PLACE_ID);
+    expect(server.logs.join('\n')).not.toContain(PLACE_ID);
   });
 
   it('an explicit null place is stored as null with hasPlace false', async () => {
     const { session } = await person('nullplace');
-    expect((await send(session, { ...VALID, placeId: null })).status).toBe(201);
+    const res = await send(session, { ...VALID, placeId: null });
+    expect(res.status).toBe(201);
     expect(await requestsOf(session.userId)).toMatchObject([{ placeId: null }]);
+    const body = await res.json() as MeResponse;
+    const requestId = body.access.state === 'pending' ? body.access.request.id : '';
+    const events = (await auditEvents(server)).filter((event) => (event.target as { id: string }).id === requestId);
+    expect(events.map((event) => event.details)).toEqual([{ orgName: 'Lou’s Diner Group', townId: 'hanover-nh', townName: 'Hanover', hasPlace: false }]);
   });
 
   it('a malformed place ID is 400 invalid_request and nothing is stored', async () => {
@@ -122,6 +129,7 @@ describe('POST /api/access-requests', () => {
   it('an address in the body is neither stored nor answered', async () => {
     const { session } = await person('address');
     const address = '1 Sentinel Way, Hanover, NH 03755, USA';
+    server.logs.length = 0;
     const res = await send(session, { ...VALID, placeId: PLACE_ID, address, formattedAddress: address, place: { address } });
     expect(res.status).toBe(201);
     expect(JSON.stringify(await res.json())).not.toContain('Sentinel Way');
@@ -129,6 +137,7 @@ describe('POST /api/access-requests', () => {
     expect(JSON.stringify(stored)).not.toContain('Sentinel Way');
     expect(Object.keys(stored[0] ?? {})).not.toContain('address');
     expect(JSON.stringify(await auditEvents(server))).not.toContain('Sentinel Way');
+    expect(server.logs.join('\n')).not.toContain('Sentinel Way');
   });
 
   it('stores another town with townId null; an id outside the twelve is 400 unknown_town', async () => {

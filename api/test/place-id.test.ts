@@ -1,4 +1,4 @@
-// The Google place id pattern shared by the Places proxy and access requests (spec 10.x).
+// The Google place id pattern shared by the Places proxy and access requests (spec 6.3, 10.2a).
 import { describe, expect, it } from 'vitest';
 
 import { PLACE_ID_PATTERN, placeIdSchema } from '../src/place-id.ts';

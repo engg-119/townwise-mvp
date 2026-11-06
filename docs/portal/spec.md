@@ -522,7 +522,7 @@ interface TownwiseRoute {
   readonly path: `/${string}`;                  // under /api
   readonly policy: Policy;
   readonly bodyLimit: 'none' | '2kb' | '32kb' | '256kb'; // 'none' for GET and DELETE; '2kb' only on the two Places routes; '256kb' only on the upload route
-  readonly limiter?: 'uploads' | 'requests' | 'view-as' | 'places';   // 'writes' applies to every non-GET automatically, before resolveAccess
+  readonly limiter?: 'uploads' | 'requests' | 'view-as' | 'chat' | 'places';   // 'writes' applies to every non-GET automatically, before resolveAccess
   readonly handler: (req: Request, res: Response, principal: Principal) => Promise<void>;
 }
 ```
@@ -545,7 +545,7 @@ interface TownwiseRoute {
    - `staff`: passes only for a principal of kind `staff`, which never carries view-as. `staff_setup_required` and `staff_reauth_required` answer 403 with those codes. Everyone else gets 403 `forbidden`, and the staff checks run after the email check, so a non-staff caller never learns anything about staff two-step state.
    - `staff_self`: the signed-in person’s own staff gate (`self`: TOTP enabled, session created after `enabledAt`, under 60 minutes), computed before the view-as substitution. It passes for a `staff` principal and for any principal in view-as, because a grant is live only while its actor passes that gate. Otherwise it answers exactly as `staff` does. Used only by `POST /api/admin/view-as/end`.
 6. **Body parser**, `express.json({ limit })`, when the spec names a body limit. The guard and the policies never read the body, so a refused request is never parsed. The `/api` router mounts no router-wide parser, so the upload route’s 256 KB parser never widens the others (server-core: body parsing is per router, **Exists**).
-7. **Route limiter**, when named (`uploads`, `requests`, `view-as`, `places`; Section 10.8), keyed on `acct:<userId>`.
+7. **Route limiter**, when named (`uploads`, `requests`, `view-as`, `places`; Section 10.8; `chat` in `docs/portal/tuning-chat.md`), keyed on `acct:<userId>`.
 8. The handler receives the principal. For member routes, `principal.scope` is the only organization it can use.
 
 Boot throws if two specs share a method and path, if a GET spec names a body limit, or if any route other than `view-as/end` uses `staff_self`. Paths not in the table reach server-core’s `notFound` (**Exists**).
@@ -745,8 +745,9 @@ Two routes let the request form find the business on Google Places (New). The AP
 - Off until `GOOGLE_PLACES_API_KEY` is set: both routes answer 503 `places_unavailable` to every request, and the client shows the manual fields. Google failing, or not answering within 5 seconds, answers the same.
 - Both calls of one search carry the same session token; Google bills the typing and the pick as one session, and the details call ends it. Without a token, autocomplete makes one and returns it. The server checks only its format and keeps no record of it.
 - Autocomplete asks for US results in English, of any business type. `name` is Google’s main text and `detail` its secondary text. Details asks for the place’s id, formatted address and address components only; `address` is for display, and the client keeps the name from the suggestion it picked. `placeId` in the answer is Google’s current id for the place, which can differ from the one sent.
-- `town` is one of the twelve researched towns when the locality, postal town, sublocality or `administrative_area_level_3` matches one by name and state, ignoring case, or when the locality is an alias (Lake Placid, NY is `north-elba-ny`; North Conway, NH is `conway-nh`). Otherwise it is `{ townId: null, name, state }`, named by the first of those components. It is null outside the 50 states and DC, or when no usable town name exists. [CONFIRM: the town matching rules, which are not yet checked against live Google answers]
+- `town` is one of the twelve researched towns when the locality, postal town, sublocality or `administrative_area_level_3` matches one by name and state, ignoring case, or when any of them is an alias (Lake Placid, NY is `north-elba-ny`; North Conway, NH is `conway-nh`). Otherwise it is `{ townId: null, name, state }`, named by the first of those components. It is null outside the 50 states and DC, or when no usable town name exists. [CONFIRM: the town matching rules, which are not yet checked against live Google answers]
 - Nothing from these routes is stored. The typed text, place ids, addresses and Google’s answers never reach a log or an audit event; a Google failure logs `townwise.places_failed { routeId, code, status, errType }`.
+- [Build note: details will also answer `place.map`, a static map image as a `data:` URL or null (best effort), for the found card. It is specified here when it ships.]
 
 ### 10.3 Organization and locations
 
