@@ -1,7 +1,7 @@
 import type { QueuedUpload } from '../../../src/portal/files/uploadQueue';
 import {
-  calendarYears, cardMoves, doneLine, filesReadLine, foundLines, importToStart, mergeRows, needsHistory, overLine, pendingRange,
-  phaseOf, rowProgress, sendingCount, statusLine, STEP, storedCount, SUGGESTIONS,
+  calendarYears, cardMoves, doneLine, filesReadLine, foundLines, importToStart, mergeRows, needsHistory, nextEntrance, overLine,
+  pendingRange, phaseOf, rowProgress, sendingCount, statusLine, STEP, storedCount, SUGGESTIONS,
 } from '../../../src/portal/onboarding/history';
 import { locationOf, orgOf } from '../../helpers/portal';
 import { fileViewOf, importViewOf } from '../files/fakes';
@@ -106,6 +106,18 @@ test('the card moves only once, on a wide screen, with motion allowed, on a fres
   expect(cardMoves({ ...base, played: true })).toBe(false);
   expect(cardMoves({ ...base, hasImport: true })).toBe(false);
   expect(cardMoves({ ...base, phase: 'reading' })).toBe(false);
+});
+
+test('the card’s entrance waits for the first status read and for the welcome to finish, then is decided once', () => {
+  const ready = { loaded: true, momentPlaying: false, moves: true };
+  expect(nextEntrance('wait', ready)).toBe('play');
+  expect(nextEntrance('wait', { ...ready, moves: false })).toBe('still');
+  expect(nextEntrance('wait', { ...ready, loaded: false })).toBe('wait');
+  // The welcome plays on the first Home visit after approval: the move waits for it instead of playing behind it.
+  expect(nextEntrance('wait', { ...ready, momentPlaying: true })).toBe('wait');
+  // Once decided, nothing changes it, a later moment included.
+  expect(nextEntrance('play', { ...ready, momentPlaying: true, moves: false })).toBe('play');
+  expect(nextEntrance('still', ready)).toBe('still');
 });
 
 test('found so far, the files line and the done line come from the import’s own counts', () => {

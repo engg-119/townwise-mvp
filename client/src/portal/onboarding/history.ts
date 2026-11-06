@@ -118,6 +118,19 @@ export function cardMoves(input: { reduced: boolean | null; desktop: boolean; pl
   return input.reduced === false && input.desktop && !input.played && input.phase === 'drop' && !input.hasImport;
 }
 
+/** Whether the card moves (`play`), shows in place (`still`) or is not decided yet (`wait`). */
+export type Entrance = 'wait' | 'play' | 'still';
+
+/**
+ * The card's entrance, decided once: at the first status read, and never while a statement moment plays. The welcome
+ * plays on the first Home visit after approval, which is when this step shows, so deciding under it would spend the
+ * card's one move behind the overlay (spec 15.8 lets a page hold its entrance while `useMoment().playing`).
+ */
+export function nextEntrance(current: Entrance, input: { loaded: boolean; momentPlaying: boolean; moves: boolean }): Entrance {
+  if (current !== 'wait' || !input.loaded || input.momentPlaying) return current;
+  return input.moves ? 'play' : 'still';
+}
+
 /** The "Found so far" lines (storage2 2.2), from the import's own counts. */
 export function foundLines(found: ImportView['found']): string[] {
   if (found.dayCount === 0 || found.firstDate === null || found.lastDate === null) return ['No days yet.'];

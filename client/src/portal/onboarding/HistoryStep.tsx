@@ -22,6 +22,7 @@ import { townLabel } from '../format';
 import { useAction, useBreakpoint } from '../hooks';
 import { localToday } from '../locations/dates';
 import { UploadAction } from '../locations/parts';
+import { useMoment } from '../moments';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { locationHref } from '../routing';
 import type { LocationSummary } from '../schemas';
@@ -33,8 +34,8 @@ import { ErrorNotice, LoadingLine, Messages, ReadOnlyLine, StatusTag } from '../
 import { Panel, Stack } from '../ui/layout';
 import { Body, Eyebrow, Heading, Mono, Small } from '../ui/text';
 import {
-  calendarYears, cardMoves, doneLine, filesReadLine, foundLines, importToStart, mergeRows, overLine, pendingRange, phaseOf,
-  rowProgress, sendingCount, statusLine, STEP, storedCount, SUGGESTIONS, type Phase, type Row,
+  calendarYears, cardMoves, doneLine, filesReadLine, foundLines, importToStart, mergeRows, nextEntrance, overLine, pendingRange,
+  phaseOf, rowProgress, sendingCount, statusLine, STEP, storedCount, SUGGESTIONS, type Entrance, type Phase, type Row,
 } from './history';
 import { arriveAtHome, boxOf } from './historyMotion';
 import { CAN_DROP, DropArea, FilePicker } from './HistoryStepDrop';
@@ -64,8 +65,6 @@ const [E1, E2, E3, E4] = theme.motion.easeInOut;
 
 /** Locations whose card already moved into the rail since the app loaded (memory only, never stored). */
 const PLAYED = new Set<string>();
-
-type Entrance = 'wait' | 'play' | 'still';
 
 /**
  * The card's one move into the rail: it starts over the reading column and slides right while the drop zone
@@ -350,6 +349,7 @@ export function HistoryStep(props: { onDone?: () => void }): React.JSX.Element {
   const { api, reloadOrg } = usePortal();
   const { readOnly, line } = useReadOnly();
   const reduced = useReducedMotion();
+  const moment = useMoment();
   const { desktop } = useBreakpoint();
   const queue = useUploadQueue(location.id);
   const poll = useImport(location.id, 'current');
@@ -409,9 +409,12 @@ export function HistoryStep(props: { onDone?: () => void }): React.JSX.Element {
   // The card moves into the rail once, decided at the first status read.
   const eligible = reduced === false && desktop && !PLAYED.has(location.id);
   const [entrance, setEntrance] = useState<Entrance>(eligible ? 'wait' : 'still');
-  if (entrance === 'wait' && loaded) {
-    setEntrance(cardMoves({ reduced, desktop, played: PLAYED.has(location.id), phase, hasImport: view !== null }) && !filesOff ? 'play' : 'still');
-  }
+  const decided = nextEntrance(entrance, {
+    loaded,
+    momentPlaying: moment.playing,
+    moves: cardMoves({ reduced, desktop, played: PLAYED.has(location.id), phase, hasImport: view !== null }) && !filesOff,
+  });
+  if (decided !== entrance) setEntrance(decided);
   const motion = useEntrance(entrance, location.id);
 
   const dropping = !readOnly && !filesOff;
