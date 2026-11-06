@@ -311,6 +311,21 @@ test('cancel stops a file and deletes what the server has; a waiting file leaves
   expect(last.overall.files).toBe(2);
 });
 
+test('forget drops a finished upload the screen deleted itself, with no request; it never touches one still sending', async () => {
+  start();
+  queue.add([sourceOf('a.csv', 4), sourceOf('b.csv', 8)]);
+  await flush();
+  fake.puts[0]?.ok();
+  await flush();
+  expect(states()).toEqual(['done', 'sending']);
+  queue.forget(last.items[1]?.key ?? '');
+  queue.forget(last.items[0]?.key ?? '');
+  await flush();
+  expect(states()).toEqual(['cancelled', 'sending']);
+  expect(fake.calls.filter((call) => call.method === 'DELETE')).toEqual([]);
+  expect(last.overall.files).toBe(1);
+});
+
 test('a file cancelled while it is being created is deleted once the server answers', async () => {
   start();
   let answer: (value: unknown) => void = () => undefined;

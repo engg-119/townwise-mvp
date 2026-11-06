@@ -179,6 +179,54 @@ test('many files upload at once, each with its own progress and line, then Read 
   expect(setItem).not.toHaveBeenCalled();
 });
 
+/** One file uploaded by this screen and listed by the server as stored, with Read my history enabled. */
+async function uploadOne(files: FilesFake): Promise<HTMLElement> {
+  await screen.findByRole('heading', { name: STEP.dropHeading });
+  choose([zeros('sales.csv', 4)]);
+  files.current = { import: importViewOf('i1', { files: [fileViewOf('f1', { name: 'sales.csv', status: 'stored', result: null, hasClean: false })] }) };
+  await sendAll(files, 1);
+  const read = await screen.findByRole('button', { name: STEP.read });
+  await waitFor(() => { expect(read.getAttribute('aria-disabled')).toBeNull(); });
+  return read;
+}
+
+test('Remove on a file this screen just uploaded that the server refuses to delete: the row stays and says why', async () => {
+  const { files } = await show(meOf(ACCESS.admin), { import: null });
+  const read = await uploadOne(files);
+  files.answers['DELETE /files/f1'] = () => refusal(503, 'storage_unavailable');
+  fireEvent.click(screen.getByRole('button', { name: 'Remove sales.csv' }));
+  expect(await screen.findByRole('alert')).toBeTruthy();
+  expect(files.calls.filter((call) => call.method === 'DELETE').map((call) => call.path)).toEqual(['/files/f1']);
+  // Still stored on the server, so still listed and still counted for Read my history.
+  expect(within(screen.getByRole('list', { name: 'Your files' })).getByText('sales.csv')).toBeTruthy();
+  expect(read.getAttribute('aria-disabled')).toBeNull();
+});
+
+test('Remove on a file this screen just uploaded: once the server deletes it, the row leaves', async () => {
+  const { files } = await show(meOf(ACCESS.admin), { import: null });
+  const read = await uploadOne(files);
+  files.answers['DELETE /files/f1'] = () => {
+    files.current = { import: importViewOf('i1', { files: [] }) };
+    return undefined;
+  };
+  fireEvent.click(screen.getByRole('button', { name: 'Remove sales.csv' }));
+  await waitFor(() => { expect(screen.queryByRole('list', { name: 'Your files' })).toBeNull(); });
+  expect(read.getAttribute('aria-disabled')).toBe('true');
+  expect(files.calls.filter((call) => call.method === 'DELETE').map((call) => call.path)).toEqual(['/files/f1']);
+});
+
+test('Cancel on a file still sending stops it and deletes what the server has', async () => {
+  const { files } = await show(meOf(ACCESS.admin), { import: null });
+  await screen.findByRole('heading', { name: STEP.dropHeading });
+  choose([zeros('slow.csv', 8)]);
+  const cancel = await screen.findByRole('button', { name: 'Cancel slow.csv' });
+  await waitFor(() => { expect(files.puts).toHaveLength(1); });
+  fireEvent.click(cancel);
+  await waitFor(() => { expect(screen.queryByRole('list', { name: 'Your files' })).toBeNull(); });
+  expect(files.puts[0]?.signal?.aborted).toBe(true);
+  expect(files.calls.filter((call) => call.method === 'DELETE').map((call) => call.path)).toEqual(['/files/f1']);
+});
+
 test('files dropped anywhere on the step are added, and the zone says how many are coming', async () => {
   const { files } = await show(meOf(ACCESS.member), { import: null });
   await screen.findByRole('heading', { name: STEP.dropHeading });

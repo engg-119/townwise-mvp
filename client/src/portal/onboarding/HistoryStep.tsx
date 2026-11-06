@@ -195,6 +195,11 @@ function DailyTotals(props: { locationId: string; lead?: string }): React.JSX.El
   );
 }
 
+/**
+ * Remove on a stored file, from this visit or an earlier one: the row leaves only once the server deleted it, and a
+ * refusal is said on the row (storage2 15.3 step 2). The queue's cancel is not used here: its delete is not
+ * awaited, so a refused delete would hide a file the server still reads.
+ */
 function RemoveFile(props: { locationId: string; file: FileView; onRemoved: () => void }): React.JSX.Element {
   const { api } = usePortal();
   const { locationId, file, onRemoved } = props;
@@ -223,9 +228,10 @@ function RowView(props: {
   row: Row;
   locationId: string;
   readOnly: boolean;
-  /** This screen's upload of the file, when it has one: its Remove goes through the queue. */
+  /** This screen's upload of the file, when it has one: it leaves the queue once the file is deleted. */
   queued: QueuedUpload | undefined;
   cancel: (key: string) => void;
+  forget: (key: string) => void;
   onRemoved: () => void;
 }): React.JSX.Element {
   const { row, readOnly } = props;
@@ -264,16 +270,14 @@ function RowView(props: {
       {file.entries === null ? null : <Small>{entriesLine(file.entries)}</Small>}
       {removable ? (
         <Actions>
-          {props.queued === undefined
-            ? <RemoveFile locationId={props.locationId} file={file} onRemoved={props.onRemoved} />
-            : (
-              <Button
-                variant="link"
-                label={STEP.remove}
-                accessibilityLabel={`${STEP.remove} ${fileName(file)}`}
-                onPress={() => { const key = props.queued?.key; if (key !== undefined) props.cancel(key); }}
-              />
-            )}
+          <RemoveFile
+            locationId={props.locationId}
+            file={file}
+            onRemoved={() => {
+              if (props.queued !== undefined) props.forget(props.queued.key);
+              props.onRemoved();
+            }}
+          />
         </Actions>
       ) : null}
     </View>
@@ -436,6 +440,7 @@ export function HistoryStep(props: { onDone?: () => void }): React.JSX.Element {
             readOnly={readOnly}
             queued={row.kind === 'file' ? byFile.get(row.file.id) : undefined}
             cancel={queue.cancel}
+            forget={queue.forget}
             onRemoved={refresh}
           />
         ))}
