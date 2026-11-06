@@ -1,5 +1,5 @@
 import {
-  analyticsInput, byMonth, DRIVERS_EMPTY, driverLine, drivers, monthSummary, nightLine, nightTypes, seenText, weeklyShape,
+  analyticsInput, byMonth, DRIVERS_EMPTY, DRIVERS_FOOTNOTE, driverLine, drivers, monthSummary, nightLine, nightTypes, seenText, weeklyShape,
   weeklySummary, yearOverYear, yearOverYearSummary,
 } from '../../../src/portal/analytics/aggregates';
 import { calendarRange, fetchCalendar, fetchSalesHistory, salesHistorySchema } from '../../../src/portal/analytics/api';
@@ -411,6 +411,17 @@ describe('biggest drivers', () => {
     ];
     const found = drivers(analyticsInput(days, dayContext([], [...events, ...terms]), defaultFilters(days)));
     expect(found.map((each) => each.key)).toEqual(['us:thanksgiving']);
+  });
+
+  test('note days are measured even when the filters leave them out, and the footnote says so', () => {
+    const base = defaultFilters(days);
+    const left = drivers(analyticsInput(days, dayContext(notes, []), { ...base, include: { ...base.include, noted: false } }));
+    expect(left.map((each) => [each.key, each.dates.length])).toEqual([['notes:private_event', 4]]);
+    expect(DRIVERS_FOOTNOTE).toBe(
+      'Each effect compares those days with your usual for that weekday in the 4 weeks around them. '
+      + 'Fewer than 4 days is thin evidence, so Townwise marks those rough. Holiday, event and note days are always '
+      + 'measured, even when your filters leave them out of the other numbers.',
+    );
   });
 
   test('keeps the top 8', () => {

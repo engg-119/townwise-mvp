@@ -309,8 +309,8 @@ export const DRIVER_SOLID = 4;
 export const DRIVER_TOP = 8;
 
 export const DRIVERS_FOOTNOTE = 'Each effect compares those days with your usual for that weekday in the 4 weeks around them. '
-  + 'Fewer than 4 days is thin evidence, so Townwise marks those rough. Holiday and event days are always measured, '
-  + 'even when your filters leave them out of the other numbers.';
+  + 'Fewer than 4 days is thin evidence, so Townwise marks those rough. Holiday, event and note days are always '
+  + 'measured, even when your filters leave them out of the other numbers.';
 
 export const DRIVERS_EMPTY = 'Townwise needs each kind of day to happen at least twice before it can say how much it moves your numbers.';
 
