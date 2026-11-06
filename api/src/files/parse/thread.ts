@@ -4,13 +4,17 @@
 // numbers, dates and counts, or a question whose options are header names or the location column's values.
 import { parentPort } from 'node:worker_threads';
 
+import type { ColumnChoice } from '../extract/prompt.ts';
+import { readArchive } from './archive.ts';
 import { CsvPushReader, detectTableDelimiter, stripBom, type Delimiter } from './csv.ts';
 import type { SalesDay } from './days.ts';
-import type { KeptOutcome } from './mapping.ts';
+import type { ChooseColumns, KeptOutcome } from './mapping.ts';
 import type { FileOutcome, FileReport, ThreadIn, ThreadOut } from './run.ts';
-import { readTable, type TableReport } from './table.ts';
+import { dayTotals, readTable, type TableReport } from './table.ts';
 import { decoderFor, detectEncoding, encodingLabel, ENCODING_PROBE_BYTES, type TextEncoding } from './text.ts';
-import { readWorkbook } from './xlsx.ts';
+import { readWord } from './docx.ts';
+import { readPdf } from './pdf.ts';
+import { readWorkbook, type Sheet } from './xlsx.ts';
 
 const port = parentPort;
 if (port === null) throw new Error('thread.ts runs only as a worker thread');
@@ -25,10 +29,48 @@ let onChunk: (bytes: Uint8Array) => void = () => undefined;
 let onEnd: () => void = () => undefined;
 let received = 0;
 let progressTotal: number | null = null;
+let pagesOnly = false;
+const pendingReads = new Map<number, (bytes: Buffer) => void>();
+let nextReadId = 0;
+
+const pendingChoices = new Map<number, (choice: ColumnChoice | null) => void>();
+
+/** The AI column step, asked through the main thread: only the redacted profile leaves this thread. */
+const choose: ChooseColumns = (profile) => {
+  const id = nextReadId;
+  nextReadId += 1;
+  const answered = new Promise<ColumnChoice | null>((resolve) => { pendingChoices.set(id, resolve); });
+  post({ type: 'model', id, profile });
+  return answered;
+};
+
+/** A ZIP's ranged read, answered by the main thread from storage. */
+function requestRange(offset: number, count: number): Promise<Buffer> {
+  const id = nextReadId;
+  nextReadId += 1;
+  const answered = new Promise<Buffer>((resolve) => { pendingReads.set(id, resolve); });
+  post({ type: 'read', id, offset, count });
+  return answered;
+}
 
 port.on('message', (message: ThreadIn) => {
+  if (message.type === 'choice') {
+    pendingChoices.get(message.id)?.(message.choice);
+    pendingChoices.delete(message.id);
+    return;
+  }
+  if (message.type === 'bytes') {
+    const bytes = Buffer.from(message.data);
+    received += bytes.length;
+    // A ZIP's entries are each read twice (once to find the tables' headers, once to add their rows up).
+    post({ type: 'progress', done: Math.min(received, progressTotal ?? received), total: progressTotal });
+    pendingReads.get(message.id)?.(bytes);
+    pendingReads.delete(message.id);
+    return;
+  }
   if (message.type === 'begin') {
-    progressTotal = message.kind === 'text' ? message.sizeBytes * 2 : null;
+    progressTotal = message.kind === 'text' || message.kind === 'zip' ? message.sizeBytes * 2 : null;
+    pagesOnly = message.kind === 'pdf';
     void run(message).then((outcome) => { post({ type: 'result', outcome }); });
     return;
   }
@@ -36,7 +78,8 @@ port.on('message', (message: ThreadIn) => {
     const bytes = new Uint8Array(message.data);
     received += bytes.length;
     onChunk(bytes);
-    post({ type: 'progress', done: received, total: progressTotal });
+    // A PDF's progress is in pages, once it is read; the bytes it arrives in are not counted.
+    if (!pagesOnly) post({ type: 'progress', done: received, total: progressTotal });
     post({ type: 'ack' });
     return;
   }
@@ -106,7 +149,7 @@ async function readText(begin: Extract<ThreadIn, { type: 'begin' }>): Promise<Fi
   });
   try {
     const outcome = await readTable(pass, {
-      answers: begin.answers['0'] ?? {}, locationName: begin.locationName, latest: begin.latest, delimiter: () => found.delimiter,
+      answers: begin.answers['0'] ?? {}, locationName: begin.locationName, latest: begin.latest, delimiter: () => found.delimiter, choose,
     });
     if (outcome.kind === 'kept') return { kind: 'kept', outcome: outcome.outcome, report: null };
     if (outcome.kind === 'question') return { kind: 'question', question: { ...outcome.question, sheet: 0 } };
@@ -126,30 +169,34 @@ function merge(target: Map<string, SalesDay>, days: readonly SalesDay[], replace
   for (const day of days) if (replace || !target.has(day.date)) target.set(day.date, day);
 }
 
-function totals(days: readonly SalesDay[]): Pick<TableReport, 'firstDate' | 'lastDate' | 'guestsDayCount' | 'netSalesDayCount' | 'closedDates' | 'missingDays' | 'days'> {
-  const first = days[0]?.date ?? '';
-  const last = days.at(-1)?.date ?? '';
-  const span = first === '' ? 0 : (Date.parse(last) - Date.parse(first)) / 86_400_000 + 1;
-  return {
-    days: days.length,
-    firstDate: first,
-    lastDate: last,
-    guestsDayCount: days.filter((day) => day.guests !== null).length,
-    netSalesDayCount: days.filter((day) => day.netSalesCents !== null).length,
-    closedDates: days.filter((day) => day.guests === 0 && (day.netSalesCents ?? 0) === 0).map((day) => day.date).slice(0, 60),
-    missingDays: Math.max(0, span - days.length),
-  };
-}
-
-/** A workbook: every sheet is a table of its own; the ones that map to sales are used, in sheet order. */
-async function readXlsx(begin: Extract<ThreadIn, { type: 'begin' }>): Promise<FileOutcome> {
+/** The whole file, fed in pieces (a workbook, a PDF or a Word document). */
+function wholeFile(): Promise<Buffer> {
   const parts: Uint8Array[] = [];
-  const whole = await new Promise<Buffer>((resolve) => {
+  return new Promise<Buffer>((resolve) => {
     onChunk = (bytes) => { parts.push(bytes); };
     onEnd = () => { resolve(Buffer.concat(parts)); };
   });
+}
+
+/** A buffered file's tables: a workbook's sheets, a PDF's tables or a Word document's. */
+async function tablesOf(begin: Extract<ThreadIn, { type: 'begin' }>): Promise<{ kind: 'tables'; tables: Sheet[] } | { kind: 'kept'; outcome: KeptOutcome }> {
+  const whole = await wholeFile();
+  if (begin.kind === 'pdf') {
+    return readPdf(whole, (done, total) => { post({ type: 'progress', done, total }); });
+  }
+  if (begin.kind === 'docx') return readWord(whole);
   const workbook = await readWorkbook(whole);
-  if (workbook.kind === 'kept') return { kind: 'kept', outcome: workbook.outcome, report: null };
+  return workbook.kind === 'kept' ? workbook : { kind: 'tables', tables: workbook.sheets };
+}
+
+/**
+ * Every sheet (or table) is a table of its own; the ones that map to sales are used, in order. A question names the
+ * sheet by its index.
+ */
+async function readSheets(begin: Extract<ThreadIn, { type: 'begin' }>): Promise<FileOutcome> {
+  const found = await tablesOf(begin);
+  if (found.kind === 'kept') return { kind: 'kept', outcome: found.outcome, report: null };
+  const workbook = { sheets: found.tables };
   const sheets: FileReport['sheets'] = [];
   const days = new Map<string, SalesDay>();
   let primary: TableReport | null = null;
@@ -162,7 +209,7 @@ async function readXlsx(begin: Extract<ThreadIn, { type: 'begin' }>): Promise<Fi
     }
     const outcome = await readTable(
       (visit) => { for (const row of sheet.rows) visit(row); return Promise.resolve(); },
-      { answers: begin.answers[String(index)] ?? {}, locationName: begin.locationName, latest: begin.latest, delimiter: () => ',' },
+      { answers: begin.answers[String(index)] ?? {}, locationName: begin.locationName, latest: begin.latest, delimiter: () => ',', choose },
     );
     if (outcome.kind === 'question') return { kind: 'question', question: { ...outcome.question, sheet: index } };
     if (outcome.kind === 'kept') {
@@ -177,9 +224,20 @@ async function readXlsx(begin: Extract<ThreadIn, { type: 'begin' }>): Promise<Fi
   }
   if (primary === null) return { kind: 'kept', outcome: firstOutcome ?? 'not_a_table', report: null };
   const merged = [...days.values()].sort((a, b) => (a.date < b.date ? -1 : 1));
-  return { kind: 'days', days: merged, report: { ...primary, ...totals(merged), rows, sheets, encoding: null } };
+  return { kind: 'days', days: merged, report: { ...primary, ...dayTotals(merged), rows, sheets, encoding: null } };
+}
+
+/** A ZIP, read in place through ranged reads. */
+async function readZipFile(begin: Extract<ThreadIn, { type: 'begin' }>): Promise<FileOutcome> {
+  const outcome = await readArchive(requestRange, begin.sizeBytes, {
+    answers: begin.answers, locationName: begin.locationName, latest: begin.latest, choose,
+  });
+  if (outcome.kind === 'question') return outcome;
+  if (outcome.kind === 'kept') return { kind: 'kept', outcome: outcome.outcome, report: null, entries: outcome.entries };
+  return { kind: 'days', days: outcome.days, report: { ...outcome.report, sheets: [], encoding: null }, entries: outcome.entries };
 }
 
 function run(begin: Extract<ThreadIn, { type: 'begin' }>): Promise<FileOutcome> {
-  return begin.kind === 'text' ? readText(begin) : readXlsx(begin);
+  if (begin.kind === 'zip') return readZipFile(begin);
+  return begin.kind === 'text' ? readText(begin) : readSheets(begin);
 }

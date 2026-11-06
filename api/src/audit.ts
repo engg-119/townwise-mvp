@@ -46,6 +46,7 @@ export const NOT_APPLIED_REASONS = {
   conflict: 'Another change got there first',
   person_has_seat: 'The person holds a seat in an organization',
   org_not_suspended: 'The organization was reactivated first',
+  files_unavailable: 'Stored files were off, so their files could not be deleted',
   unavailable: 'Townwise was briefly unavailable',
   internal: 'Something went wrong on Townwise’s side',
 } as const;
@@ -124,6 +125,10 @@ function roleWord(value: AuditDetails[string] | undefined): string {
   return value === 'org_admin' ? 'admin' : text(value);
 }
 
+const ORIGINALS_BASIS: Readonly<Record<string, string>> = {
+  data_subject_request: 'a person’s deletion request', org_request: 'the organization’s request', other: 'another reason',
+};
+
 /** U9: what an answer to TownwiseAI's question about days with no sales said. */
 const QUESTION_ANSWER_WORDS: Readonly<Record<string, string>> = {
   closed: 'closed on those days', open: 'the data is missing', not_sure: 'not sure',
@@ -163,6 +168,9 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'file.uploaded': return 'Uploaded a file';
     case 'file.deleted': return 'Deleted a file';
     case 'file.raw_deleted': return 'Deleted a file’s original';
+    case 'files.raw_deleted_all': return `Deleted ${text(d.count)} original files of a location`;
+    case 'org.originals_deleted':
+      return `Purged ${text(d.count)} original files, for ${ORIGINALS_BASIS[text(d.basis)] ?? 'another reason'}: each deleted at once, or as soon as Townwise finishes uploading or reading it`;
     case 'note.created': return noteSummary('Added', d);
     case 'note.updated': return noteSummary('Edited', d);
     case 'note.deleted': return noteSummary('Deleted', d);

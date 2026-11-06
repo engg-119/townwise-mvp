@@ -1,21 +1,25 @@
 // Operations keyed by a person, or spanning organizations (spec 6.10 rule 8). The list is closed:
 // findActiveSeat, findOpenInvites, claimInvite, declineInvite, latestRemovedSeat, adminOrgStats, peopleRecords,
-// deletePersonRecords, and the file reader's claimNextImport.
-// Only access/resolve.ts, the join and decline handlers, the staff handlers (admin.ts, deletion.ts) and the file
-// reader (files/worker.ts) import this file (test/isolation.test.ts enforces the list).
+// deletePersonRecords, the file reader's claimNextImport, and the daily file sweep's claimFileSweep, finishFileSweep,
+// sweepCandidates, removeOldUploadDays and existingFileIds.
+// Only access/resolve.ts, the join and decline handlers, the staff handlers (admin.ts, deletion.ts), the file reader
+// (files/worker.ts) and the file sweeper (files/sweeper.ts) import this file (test/isolation.test.ts enforces the list).
 import { isDuplicateKeyError } from '@ckeith26/mongo';
-import { trusted, type Connection, type Types } from 'mongoose';
+import { trusted, Types, type Connection } from 'mongoose';
 
 import type { Role } from '../access/resolve.ts';
 import { accessRequestModel, type AccessRequestStatus } from './access-requests.ts';
 import { chatConversationModel } from './chat-conversations.ts';
 import { chatLiveTurnModel } from './chat-live-turns.ts';
 import { chatProposalModel } from './chat-proposals.ts';
+import { fileModel, type FileStatus } from './files.ts';
+import { fileSweepModel } from './file-sweeps.ts';
 import { importModel } from './imports.ts';
 import { locationModel } from './locations.ts';
 import { memberModel } from './members.ts';
 import { orgModel } from './orgs.ts';
 import { HAS_VALUE, SALES_DAYS_COLLECTION } from './sales-days.ts';
+import { uploadDayModel } from './upload-days.ts';
 import { UPLOADS_COLLECTION } from './uploads.ts';
 import { welcomeModel } from './welcomes.ts';
 
@@ -302,4 +306,99 @@ export async function claimNextImport(
   ).lean();
   if (doc === null) return null;
   return { id: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString() };
+}
+
+const SWEEP_ID = 'sweeper';
+
+/**
+ * The daily file sweep's lease (spec 11A, 6.14): true when this replica holds it now. Taken only when no other holds a
+ * live lease and the last sweep finished `everyMs` or more ago; the first sweep ever creates the document.
+ */
+export async function claimFileSweep(
+  connection: Connection, input: { readonly owner: string; readonly now: Date; readonly leaseMs: number; readonly everyMs: number },
+): Promise<boolean> {
+  const Sweep = fileSweepModel(connection);
+  const until = new Date(input.now.getTime() + input.leaseMs);
+  const claimed = await Sweep.findOneAndUpdate(
+    {
+      _id: SWEEP_ID, leaseUntil: trusted({ $lt: input.now }),
+      $or: [{ lastRunAt: null }, { lastRunAt: trusted({ $lte: new Date(input.now.getTime() - input.everyMs) }) }],
+    },
+    { $set: { owner: input.owner, leaseUntil: until } },
+  ).lean();
+  if (claimed !== null) return true;
+  try {
+    await Sweep.create({ _id: SWEEP_ID, owner: input.owner, leaseUntil: until, lastRunAt: null });
+    return true;
+  } catch (err) {
+    if (isDuplicateKeyError(err)) return false;
+    throw err;
+  }
+}
+
+/** The sweep is done: the next one is due `everyMs` from now. */
+export async function finishFileSweep(connection: Connection, input: { readonly owner: string; readonly now: Date }): Promise<void> {
+  await fileSweepModel(connection).updateOne({ _id: SWEEP_ID, owner: input.owner }, { $set: { lastRunAt: input.now, leaseUntil: input.now } });
+}
+
+/** A file the sweep acts on. Only access/policy.ts's scopeForSweep turns it into an OrgScope. */
+export interface SweptFile {
+  readonly id: string;
+  readonly orgId: string;
+  readonly locationId: string;
+}
+
+/** An import never sent for reading. */
+export interface SweptImport {
+  readonly id: string;
+  readonly orgId: string;
+  readonly locationId: string;
+}
+
+export interface SweepCandidates {
+  /** Upload sessions past their expiry. */
+  readonly expiredUploads: readonly SweptFile[];
+  /** Originals uploaded before `originalsBefore`, still stored, of files not uploading or being read. */
+  readonly expiredOriginals: readonly SweptFile[];
+  /** Files a staff purge flagged while they were uploading or being read, now neither. */
+  readonly purges: readonly SweptFile[];
+  /** Imports still open whose last drop was before `dropsBefore`. */
+  readonly abandonedImports: readonly SweptImport[];
+}
+
+/** Every status but uploading, reading and deleting: a file whose original the sweep may delete (files/remove.ts). */
+const SWEEPABLE: FileStatus[] = ['stored', 'queued', 'waiting', 'read', 'kept', 'failed'];
+
+/** What the daily sweep has to do, across organizations, `limit` of each at most. */
+export async function sweepCandidates(
+  connection: Connection, input: { readonly now: Date; readonly originalsBefore: Date; readonly dropsBefore: Date; readonly limit: number },
+): Promise<SweepCandidates> {
+  const File = fileModel(connection);
+  const file = (doc: { _id: Types.ObjectId; orgId: Types.ObjectId; locationId: Types.ObjectId }): SweptFile => ({
+    id: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString(),
+  });
+  const [expiredUploads, expiredOriginals, purges, abandonedImports] = await Promise.all([
+    File.find({ status: 'uploading', 'upload.expiresAt': trusted({ $lte: input.now }) }).limit(input.limit).lean(),
+    File.find({ rawDeletedAt: null, uploadedAt: trusted({ $lt: input.originalsBefore }), status: trusted({ $in: SWEEPABLE }) }).limit(input.limit).lean(),
+    File.find({ purgeRaw: true, rawDeletedAt: null, status: trusted({ $in: SWEEPABLE }) }).limit(input.limit).lean(),
+    importModel(connection).find({ status: 'open', lastDropAt: trusted({ $lt: input.dropsBefore }) }).limit(input.limit).lean(),
+  ]);
+  return {
+    expiredUploads: expiredUploads.map(file),
+    expiredOriginals: expiredOriginals.map(file),
+    purges: purges.map(file),
+    abandonedImports: abandonedImports.map((doc) => ({ id: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString() })),
+  };
+}
+
+/** Daily upload counters for days before `beforeDay` (YYYY-MM-DD), every organization's. Resolves the number deleted. */
+export async function removeOldUploadDays(connection: Connection, beforeDay: string): Promise<number> {
+  return (await uploadDayModel(connection).deleteMany({ day: trusted({ $lt: beforeDay }) })).deletedCount;
+}
+
+/** Which of `ids` (file ids) still have a row, in any organization: the orphan check for blobs. */
+export async function existingFileIds(connection: Connection, ids: readonly string[]): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const docs = await fileModel(connection).find({ _id: trusted({ $in: ids.map((id) => new Types.ObjectId(id)) }) }, { _id: 1 }).lean();
+  return new Set(docs.map((doc) => doc._id.toHexString()));
 }

@@ -396,23 +396,21 @@ Stored files (`api/README.md`, Files; `docs/portal/spec.md` 11A) are off until t
 
 **Wait for all of these before step 3.** Raw exports hold other people's personal data (diner names, phones, card details), so files go on only in one release with:
 
-- every stage of the file storage work through deletion (`docs/portal/spec.md` 11A.8): ZIP, PDF and Word reading, the AI column step, and the stage that deletes stored files;
 - the file storage client pieces and the drop screen (HistoryStep) that mounts them;
-- the privacy page's stored-files wording, because the privacy page's promise changes with it.
+- the privacy page's stored-files wording, because the privacy page's promise changes with it: stored files, ZIP, PDF and Word reading, the AI column step's redacted profile going to Anthropic, the retention periods once confirmed, the owner's "delete originals", and the staff purge for a person's deletion request.
 
-Before step 3, check on `develop` that each of these deletion paths removes the `tw_files` and `tw_imports` rows it covers and both blobs of each file (`client-raw` and `client-clean`), that an organization's deletion also removes its `tw_upload_days` rows, and that each path has a passing test:
+The API side is in the build (spec 11A): ZIP, PDF and Word reading, the AI column step, and every deletion path. Before step 3, check on `develop` that each still has a passing test (`npm test -w @townwise/api`):
 
-- deleting a location's sales data;
-- deleting a location;
-- deleting an organization;
-- the daily sweeper (unfinished uploads after 24 hours, originals after 365 days, never-read drops after 30 days);
-- the staff purge of an organization's originals for a person's deletion request.
+- deleting a location's sales data, a location, an organization, and an org admin's "delete originals" (`api/test/files-deletion.int.test.ts`);
+- an organization's deletion refused while stored files are off but it has files (`api/test/deletion.int.test.ts`);
+- the daily sweep: unfinished uploads after 24 hours, originals after 365 days, never-read drops after 30 days, staff purges finished, orphan blobs (`api/test/files-sweeper.int.test.ts`);
+- the staff purge of an organization's originals for a person's deletion request (`api/test/files-deletion.int.test.ts`).
 
-If any is missing, stop: the 400-day lifecycle rule is the only other thing that would remove those files. `api/README.md` (Files) and spec 11A.8 say what is not in the build yet.
+If any fails, stop: the 400-day lifecycle rule is the only other thing that would remove those files. The AI column step runs only when `ANTHROPIC_API_KEY` is also set (step 16), within `TOWNWISE_FILES_MONTHLY_BUDGET_USD` (`api/production.env`, 5 dollars an organization a month).
 
 1. **Apply.** `terraform plan` and `terraform apply` from `infra/terraform/production`. The plan adds the account `sttwfiles2d2c15bf`, its two containers, the custom role "Townwise client files", the two container-scoped assignments for the app's identity, the lifecycle rule, the diagnostic setting, the private DNS zone `privatelink.blob.core.windows.net` and its VNet link, the private endpoint `pe-townwise-files`, and the NSG rule `allow-apps-to-blob`. Storage is managed through Resource Manager only (`data_plane_available = false`), so the apply never needs the blob endpoint, which no laptop or runner can reach.
 2. **Wait about 10 minutes** for the role assignments to reach the data plane. Until then the API's blob calls are refused, which it answers as 503 `storage_unavailable`.
-3. **Turn it on.** Uncomment `FILES_BLOB_ACCOUNT_URL=https://sttwfiles2d2c15bf.blob.core.windows.net` in `api/production.env` and merge to `main`. The value is public; the API authenticates with its managed identity (`AZURE_CLIENT_ID`, already set). Until the shared managed identity token source (`api/src/azure-identity.ts`) is in the API, the API refuses to start with this set (`api/src/main.ts`), so this step waits for it.
+3. **Turn it on.** Uncomment `FILES_BLOB_ACCOUNT_URL=https://sttwfiles2d2c15bf.blob.core.windows.net` in `api/production.env` and merge to `main`. The value is public; the API authenticates with its managed identity (`AZURE_CLIENT_ID`, already set) through the shared token source (`api/src/azure-identity.ts`), and refuses to start if the identity's variables are missing.
 4. **Check from outside:** `curl -sI https://sttwfiles2d2c15bf.blob.core.windows.net/client-raw` from a laptop must fail (the name resolves to a public address that refuses, because public network access is disabled).
 5. **Check in the app:** signed in as a test organization's admin, drop a small CSV, read it, download the original and the cleaned copy, delete it. Then drop a file over 64 MiB from a browser throttled to DevTools "Slow 4G" and confirm it completes: each 8 MiB chunk is its own request, so none comes near the 240-second ingress timeout.
 6. **Check the access log:** the audit account's `insights-logs-storagewrite` and `insights-logs-storagedelete` containers hold entries for those calls, made by the app's identity, with blob names that are ids only.

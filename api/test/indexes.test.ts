@@ -25,7 +25,7 @@ describe('indexes', () => {
       // U9, TownwiseAI's questions.
       'tw_agent_answers',
       'tw_audit_events', 'tw_chat_conversations', 'tw_chat_live_turns', 'tw_chat_proposals', 'tw_chat_usage',
-      'tw_files', 'tw_imports', 'tw_locations', 'tw_members', 'tw_notes', 'tw_orgs', 'tw_sales_days', 'tw_upload_days',
+      'tw_file_entries', 'tw_file_sweeps', 'tw_files', 'tw_files_usage', 'tw_imports', 'tw_locations', 'tw_members', 'tw_notes', 'tw_orgs', 'tw_sales_days', 'tw_upload_days',
       'tw_uploads', 'tw_view_as_grants',
       // U11, statement moments.
       'tw_welcomes',
@@ -133,11 +133,25 @@ describe('indexes', () => {
     expect(files).toContainEqual([{ orgId: 1, importId: 1, uploadedAt: 1 }, expect.anything()]);
     expect(files).toContainEqual([{ orgId: 1, locationId: 1, fingerprint: 1 }, expect.anything()]);
     expect(files).toContainEqual([{ status: 1, 'upload.expiresAt': 1 }, expect.anything()]);
+    expect(files).toContainEqual([{ status: 1, uploadedAt: 1 }, expect.anything()]);
+    expect(files).toContainEqual([{ purgeRaw: 1 }, expect.objectContaining({ sparse: true })]);
     expect(connection.models.TwFile?.schema.get('strict')).toBe('throw');
     expect(indexesOf(connection, 'TwImport')).toContainEqual([
       { activeLocation: 1 },
       expect.objectContaining({ unique: true, partialFilterExpression: { activeLocation: { $type: 'objectId' } } }),
     ]);
     expect(indexesOf(connection, 'TwUploadDay')).toContainEqual([{ orgId: 1, day: 1 }, expect.objectContaining({ unique: true })]);
+  });
+
+  it('keeps the file reader’s AI spend apart from the chat’s, one counter per organization per month', () => {
+    expect(indexesOf(registered(), 'TwFilesUsage')).toContainEqual([{ orgId: 1, month: 1 }, expect.objectContaining({ unique: true })]);
+  });
+
+  it('lists a ZIP’s entries once each, in archive order', () => {
+    const connection = registered();
+    const entries = indexesOf(connection, 'TwFileEntry');
+    expect(entries).toContainEqual([{ orgId: 1, fileId: 1, index: 1 }, expect.objectContaining({ unique: true })]);
+    expect(entries).toContainEqual([{ orgId: 1, locationId: 1 }, expect.anything()]);
+    expect(connection.models.TwFileEntry?.schema.get('strict')).toBe('throw');
   });
 });

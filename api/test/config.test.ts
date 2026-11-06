@@ -39,7 +39,7 @@ describe('config', () => {
   it('production refuses an empty staff list; development and test allow it', () => {
     const budget = {
       TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20, TOWNWISE_WEB_URL: 'http://localhost:8081',
-      FILES_BLOB_ACCOUNT_URL: undefined, FILES_AZURITE_CONNECTION_STRING: undefined,
+      FILES_BLOB_ACCOUNT_URL: undefined, FILES_AZURITE_CONNECTION_STRING: undefined, TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5,
     };
     expect(() => resolveTownwiseConfig({ NODE_ENV: 'production', TOWNWISE_SUPERADMIN_EMAILS: [], ...budget })).toThrow(ConfigError);
     expect(resolveTownwiseConfig({ NODE_ENV: 'development', TOWNWISE_SUPERADMIN_EMAILS: [], ...budget }).superadminEmails.size).toBe(0);
@@ -55,6 +55,15 @@ describe('config', () => {
     expect(budget('35.5')).toBe(35.5);
     expect(budget('0')).toBe(0);
     for (const bad of ['-1', 'twenty', '10001']) expect(() => budget(bad)).toThrow(ConfigError);
+  });
+
+  it('reads the file reader’s AI budget in dollars, 5 by default, 0 turning it off, and refuses anything outside 0 to 1,000', () => {
+    const budget = (value: string | undefined): number =>
+      loadEnv(configSchema, { TOWNWISE_FILES_MONTHLY_BUDGET_USD: value }).TOWNWISE_FILES_MONTHLY_BUDGET_USD;
+    expect(budget(undefined)).toBe(5);
+    expect(budget('0')).toBe(0);
+    expect(budget('12.5')).toBe(12.5);
+    for (const bad of ['-1', 'five', '1001']) expect(() => budget(bad)).toThrow(ConfigError);
   });
 
   describe('email (spec D14)', () => {
@@ -148,7 +157,7 @@ describe('config', () => {
     }
     expect(() => resolveTownwiseConfig({
       NODE_ENV: 'production', TOWNWISE_SUPERADMIN_EMAILS: ['staff@townwise.test'], TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20,
-      TOWNWISE_WEB_URL: 'http://localhost:8081', ...azurite,
+      TOWNWISE_WEB_URL: 'http://localhost:8081', TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5, ...azurite,
     })).toThrow(ConfigError);
     expect(() => loadEnv(configSchema, { FILES_BLOB_ACCOUNT_URL: 'not a url' })).toThrow(ConfigError);
   });

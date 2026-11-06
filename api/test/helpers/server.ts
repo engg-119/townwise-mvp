@@ -100,7 +100,7 @@ export async function startTownwiseServer(opts?: {
   /** Client file storage (memory-blobs.ts, or Azurite); absent, stored files are off. */
   files?: FileBlobs;
   /** Runs the file reader on `files`; tests drive it with nudge() and settled(). */
-  reader?: Pick<FileWorkerDeps, 'parse' | 'leaseMs'>;
+  reader?: Partial<Pick<FileWorkerDeps, 'parse' | 'leaseMs' | 'extract' | 'filesMonthlyBudgetUsd'>>;
 }): Promise<TownwiseTestServer> {
   const env: Record<string, string> = {
     NODE_ENV: 'test',

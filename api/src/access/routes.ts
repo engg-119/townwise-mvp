@@ -13,10 +13,10 @@ import { answerQuestion, getAgent } from '../handlers/agent.ts';
 import { getLocationCalendar } from '../handlers/calendar.ts';
 import { deleteConversation, getChat, getConversation, postTurn } from '../handlers/chat.ts';
 import { actOnProposal } from '../handlers/chat-proposals.ts';
-import { deleteOrg, deletePerson } from '../handlers/deletion.ts';
+import { deleteOrg, deletePerson, purgeOriginals } from '../handlers/deletion.ts';
 import {
-  answerImport, completeFile, createFile, currentImport, deleteFile, deleteRaw, downloadClean, downloadRaw, getFile, getImport,
-  listFiles, putChunk, startImport,
+  answerImport, completeFile, createFile, currentImport, deleteFile, deleteLocationOriginals, deleteRaw, downloadClean, downloadRaw, getFile, getImport,
+  listEntries, listFiles, putChunk, startImport,
 } from '../handlers/files.ts';
 import { createLocation, deleteLocation, getOwnOrg, updateLocation } from '../handlers/locations.ts';
 import { declineInvite, getMe, joinInvite, recordWelcome } from '../handlers/me.ts';
@@ -148,6 +148,10 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     handler: getFile,
   },
   {
+    id: 'org.files.entries', method: 'GET', path: '/org/locations/:locationId/files/:fileId/entries', policy: 'member',
+    bodyLimit: 'none', handler: listEntries,
+  },
+  {
     id: 'org.files.raw', method: 'GET', path: '/org/locations/:locationId/files/:fileId/raw', policy: 'member', bodyLimit: 'none',
     limiter: 'downloads', handler: downloadRaw,
   },
@@ -162,6 +166,10 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.files.remove', method: 'DELETE', path: '/org/locations/:locationId/files/:fileId', policy: 'member',
     bodyLimit: 'none', handler: deleteFile,
+  },
+  {
+    id: 'org.originals.remove', method: 'DELETE', path: '/org/locations/:locationId/originals', policy: 'org_admin',
+    bodyLimit: 'none', handler: deleteLocationOriginals,
   },
   {
     id: 'org.imports.current', method: 'GET', path: '/org/locations/:locationId/imports/current', policy: 'member',
@@ -251,6 +259,10 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     bodyLimit: '32kb', handler: signOutEverywhere,
   },
   { id: 'admin.people.delete', method: 'POST', path: '/admin/people/delete', policy: 'staff', bodyLimit: '32kb', handler: deletePerson },
+  {
+    id: 'admin.orgs.originals.remove', method: 'POST', path: '/admin/orgs/:orgId/originals/delete', policy: 'staff', bodyLimit: '32kb',
+    handler: purgeOriginals,
+  },
   { id: 'admin.audit.list', method: 'GET', path: '/admin/audit', policy: 'staff', bodyLimit: 'none', handler: queryAudit },
   {
     id: 'admin.view_as.start', method: 'POST', path: '/admin/view-as', policy: 'staff', bodyLimit: '32kb',

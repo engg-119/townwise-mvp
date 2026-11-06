@@ -17,11 +17,16 @@ export interface Sheet {
 
 export type Workbook = { readonly kind: 'sheets'; readonly sheets: Sheet[] } | { readonly kind: 'kept'; readonly outcome: 'not_a_workbook' | 'too_complex' };
 
-/** The archive guards: entry count, declared sizes, ratio, and the two parts every workbook has. */
-export function checkWorkbookArchive(buffer: Buffer): 'ok' | 'not_a_workbook' | 'too_complex' {
+/**
+ * The archive guards: entry count, declared sizes, ratio, and the parts every package of this kind has (a workbook's
+ * by default; a Word document passes its own).
+ */
+export async function checkWorkbookArchive(
+  buffer: Buffer, required: readonly string[] = ['[Content_Types].xml', 'xl/workbook.xml'],
+): Promise<'ok' | 'not_a_workbook' | 'too_complex'> {
   let entries;
   try {
-    entries = listZip(buffer, XLSX_MAX_ENTRIES);
+    entries = await listZip(buffer, XLSX_MAX_ENTRIES);
   } catch (err) {
     if (err instanceof ZipFormatError && err.message.includes('too many entries')) return 'too_complex';
     return 'not_a_workbook';
@@ -34,7 +39,7 @@ export function checkWorkbookArchive(buffer: Buffer): 'ok' | 'not_a_workbook' | 
   }
   if (declared > XLSX_MAX_DECLARED_BYTES) return 'too_complex';
   const names = new Set(entries.map((entry) => entry.name));
-  return names.has('[Content_Types].xml') && names.has('xl/workbook.xml') ? 'ok' : 'not_a_workbook';
+  return required.every((name) => names.has(name)) ? 'ok' : 'not_a_workbook';
 }
 
 function cellText(value: unknown): string {
@@ -47,7 +52,7 @@ function cellText(value: unknown): string {
 }
 
 export async function readWorkbook(buffer: Buffer): Promise<Workbook> {
-  const check = checkWorkbookArchive(buffer);
+  const check = await checkWorkbookArchive(buffer);
   if (check !== 'ok') return { kind: 'kept', outcome: check };
   let sheets;
   try {
