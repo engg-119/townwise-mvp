@@ -160,8 +160,13 @@ test('while the list reloads after a delete, the section and its notice stay on 
   fireEvent.click(screen.getByRole('button', { name: 'Delete original: march.csv' }));
   const dialog = await screen.findByRole('dialog', { name: 'Delete original' });
   fireEvent.click(within(dialog).getByRole('button', { name: 'Delete original' }));
-  expect(await screen.findByText('Original deleted. The cleaned copy and days stay.')).toBeTruthy();
+  const notice = await screen.findByText('Original deleted. The cleaned copy and days stay.');
   expect(within(screen.getByRole('list', { name: 'Your files' })).getAllByRole('listitem')).toHaveLength(3);
+  // The delete takes its opener away once the list answers, so focus goes to the line that says how it ended.
+  await waitFor(() => {
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement?.contains(notice)).toBe(true);
+  });
 });
 
 test('a download refused for too many requests says when to try, not that an upload will retry', async () => {

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ApiError } from '../../api/client';
@@ -11,6 +11,7 @@ import { Actions, Button } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { ErrorNotice, Messages, Notice, ReadOnlyLine } from '../ui/feedback';
 import { Section, Stack } from '../ui/layout';
+import { MessageFocus, useFocusMessage } from '../ui/messageFocus';
 import { Mono, Small } from '../ui/text';
 import {
   downloadClean, downloadRaw, listEntries, listFiles, removeFile, removeOriginals, removeRaw, type EntryView, type FileView,
@@ -163,9 +164,21 @@ function FileRow(props: {
   );
 }
 
-/** Mounted under the location layout (P12), which gives it the location's name and the person's role. */
-export function FileList(props: { locationId: string }): React.JSX.Element | null {
+/**
+ * Mounted under the location layout (P12), which gives it the location's name and the person's role. A delete
+ * takes away its opener (the button, or the whole row, once the list reloads), so focus moves to the line that says
+ * how it ended.
+ */
+export function FileList(props: { locationId: string }): React.JSX.Element {
+  return <MessageFocus><Files locationId={props.locationId} /></MessageFocus>;
+}
+
+function Files(props: { locationId: string }): React.JSX.Element | null {
   const { api } = usePortal();
+  const focusMessage = useFocusMessage();
+  // Asked one update after the dialog closes: in that update its focus trap still holds focus.
+  const [ended, setEnded] = useState(0);
+  useEffect(() => { if (ended > 0) focusMessage(); }, [ended, focusMessage]);
   const { location, org } = useLocation();
   const admin = org.role === 'org_admin';
   const { readOnly, line } = useReadOnly();
@@ -216,8 +229,8 @@ export function FileList(props: { locationId: string }): React.JSX.Element | nul
     if (confirm === null || pending) return;
     setPending(true);
     setFailure(null);
-    const done = (line: string): void => { setPending(false); setConfirm(null); setNotice(line); fresh(); };
-    const failed = (error: unknown): void => { setPending(false); setConfirm(null); setFailure(error); fresh(); };
+    const done = (line: string): void => { setPending(false); setConfirm(null); setNotice(line); setEnded((n) => n + 1); fresh(); };
+    const failed = (error: unknown): void => { setPending(false); setConfirm(null); setFailure(error); setEnded((n) => n + 1); fresh(); };
     if (confirm.kind === 'file') {
       removeFile(api, props.locationId, confirm.file.id).then((result) => { done(deletedFileLine(result.daysKept)); }, failed);
     } else if (confirm.kind === 'raw') {
@@ -237,7 +250,7 @@ export function FileList(props: { locationId: string }): React.JSX.Element | nul
     <Section kicker="Stored privately for your organization" title={COPY.yourFiles}>
       <Stack>
         {notice === null ? null : <Notice text={notice} />}
-        {failure === null ? null : <Messages live="alert" items={[actionError(failure)]} />}
+        {failure === null ? null : <Messages live="alert" takesFocus items={[actionError(failure)]} />}
         <Small>{COPY.storedPrivately}</Small>
         {admin && anyRaw ? (
           <Actions>
