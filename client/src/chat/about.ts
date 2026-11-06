@@ -1,7 +1,6 @@
 import { addDays, EARLIEST_DATE, isCalendarDate } from '../portal/locations/dates';
 
-// F7: the Agent page's `?about=YYYY-MM-DD`, for a link such as the Analytics day panel's "Ask TownwiseAI about this
-// day" (which still opens the page without a date: that one-line change belongs to the panel's owners). It only fills
+// F7: the Agent page's `?about=YYYY-MM-DD` (the Analytics day panel's "Ask TownwiseAI about this day"). It only fills
 // the composer, "Tell me about Sat, Nov 21", and sends nothing: the person reads it, adds to it and sends it. A value
 // that is not one real date from 2010-01-01 to 400 days after today (get_day's range) is ignored.
 

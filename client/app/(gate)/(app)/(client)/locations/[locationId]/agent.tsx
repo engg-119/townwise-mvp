@@ -24,10 +24,9 @@ import { theme } from '../../../../../../src/theme';
 // location's compact header and the switch sit at the top of what scrolls, so the conversation gets the screen.
 // Under view-as (spec 15.5) everything reads, and every write control stays in place, disabled, described by the one
 // read-only line. The logic is in src/chat; this file only lays it out.
-// F7: `?about=YYYY-MM-DD` (for a link such as Analytics' day panel, which doesn't pass the date yet) fills an empty
-// composer with "Tell me about Sat, Nov 21" and sends nothing; a date that isn't valid is ignored. F10: GET
-// .../estimates/about says whether a forecast is published, for what TownwiseAI says it reads and How TownwiseAI
-// works' forecast line.
+// F7: `?about=YYYY-MM-DD` (from Analytics' day panel) fills an empty composer with "Tell me about Sat, Nov 21" and
+// sends nothing; a date that isn't valid is ignored. F10: GET .../estimates/about says whether a forecast is published,
+// for what TownwiseAI says it reads and How TownwiseAI works' forecast line.
 
 const READ_ONLY_ID = 'chat-ro';
 
