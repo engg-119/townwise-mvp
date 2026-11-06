@@ -97,26 +97,6 @@ resource "azurerm_dns_cname_record" "acs_dkim" {
   record              = each.value.value
 }
 
-# Mail to townwise.tech (hello@, the address the site and the emails' Reply-To give) is received by ImprovMX,
-# which forwards it to Townwise staff. The owner keeps the alias and its recipients in ImprovMX, so no address is
-# published in DNS. ImprovMX only receives: it never sends as townwise.tech, so SPF and DMARC are unchanged.
-resource "azurerm_dns_mx_record" "apex" {
-  name                = "@"
-  zone_name           = azurerm_dns_zone.main.name
-  resource_group_name = local.rg
-  ttl                 = 3600
-
-  record {
-    preference = 10
-    exchange   = "mx1.improvmx.com"
-  }
-
-  record {
-    preference = 20
-    exchange   = "mx2.improvmx.com"
-  }
-}
-
 # Reject from day one, for the apex and every subdomain, with strict DKIM alignment. Only Communication
 # Services sends as townwise.tech, and it DKIM-signs with the selector1/selector2 keys above. Before any other
 # sender is added (a newsletter tool, a help desk), it must DKIM-sign as townwise.tech with an aligned key, or
