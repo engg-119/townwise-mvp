@@ -333,7 +333,7 @@ describe('P6 Joining', () => {
     await fireEvent.press(screen.getByText('Leave Test Group'));
     expect(router.getPathname()).toBe('/settings');
     // Shown once.
-    await fireEvent.press(screen.getByRole('link', { name: 'Locations' }));
+    await fireEvent.press(screen.getByRole('link', { name: 'Home' }));
     await waitFor(() => { expect(router.getPathname()).toBe('/locations/l1'); });
     expect(screen.queryByText(/You joined Test Group/)).toBeNull();
   });
@@ -488,7 +488,7 @@ describe('P8 Staff sign in again, and the P7 staff notice', () => {
   test('members see two-step settings in the client app, with no staff notice', async () => {
     await renderApp('/settings/security', fakePortalApi({ me: meOf(ACCESS.member) }));
     expect(await screen.findByRole('heading', { name: 'Two-step sign-in' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Locations' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Settings' })).toBeTruthy();
     expect(screen.queryByText(/Townwise staff accounts need two-step sign-in/)).toBeNull();
   });
 });

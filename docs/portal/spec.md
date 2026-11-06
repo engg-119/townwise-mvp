@@ -1058,12 +1058,10 @@ Every signed-in frame ends with a slim footer: a 1px `border` rule, then one `mo
 +--------------------------------------------------------------------------------------+
 | VIEWING AS  {email}, {Role} at {org}. Read-only until {time}.        [End view-as]   |  view-as only (15.5)
 +--------------------------------------------------------------------------------------+
-| Townwise | {Org name}     Locations   Team   Settings                {email} Sign out |  top bar, 64px, ground
+| Townwise | {Org}  Home Analytics TownwiseAI Notes Town Upload   Team Settings  {email} Sign out |  top bar
 +--------------------------------------------------------------------------------------+
-| HANOVER, NH                                                 Location [{name}    v]   |  page header
-| {Location name}                                                                      |
-|                                                                                      |
-| [■ Forecast]   Sales data   Notes   Town   Settings                                  |  tabs (location pages)
+| {LOCATION NAME}, HANOVER, NH          Location [{name} v]  All locations  Location settings |  page header
+| {Page title}                                                                         |
 +--------------------------------------------------------------------------------------+
 | content, 12 columns                                                                  |
 |                                                                                      |
@@ -1076,35 +1074,32 @@ Every signed-in frame ends with a slim footer: a 1px `border` rule, then one `mo
 - **Top bar.** At least `nav-height` (64px), with a 1px `border` rule below. In order:
   - the wordmark “Townwise” (`wordmark`, `white`), which links to `/dashboard`;
   - a 1px `border` vertical rule, 20px tall, then the organization name in `ui`, `text2`;
-  - the nav links in `ui`, `text2`, `space-6` apart, turning `white` on hover and with `aria-current="page"`, as Nav does;
+  - the nav links in `ui`, `text2`, `space-6` apart, turning `white` on hover and with `aria-current="page"`, as Nav does. On the client app they are the location’s sections (15.3), then Team and Settings as a group at the nav’s far end;
   - right (`margin-left: auto`): the signed-in email in `mono`, `text3`, then “Sign out” as a text link.
   
   `<header>` holds `<nav aria-label="Main">`, and the skip link is the first focusable element (Nav, **Exists**).
-- **Below 900px** (`bp-nav-wrap`), the nav links wrap to a second row under a `border` rule. They never hide: the app has no footer that repeats them. At 640px and below the email hides; the organization name stays and truncates with an ellipsis.
+- **Below 900px** (`bp-nav-wrap`; below 1280px when the client app’s bar carries a location’s sections, which need the room), the nav links wrap to a second row under a `border` rule. They never hide: the app has no footer that repeats them. At 640px and below the email hides; the organization name stays and truncates with an ellipsis, and the client app’s second row is one line that scrolls sideways in a focusable region (`role="region"`, `tabindex="0"`, `aria-label="Sections"`), reaching into the side margins and scrolled to keep the current link in view.
 - **Page header.** `space-8` above, `space-6` below.
   - Left, columns 1 to 8: the eyebrow (`tw-eyebrow`, `text3`), then the page title as the page’s one `<h1>`, styled `tw-h2` (40/44, then 32/36 below 1024px, then 28/32 at 640px and below), `text-wrap: balance`.
-  - Right, columns 9 to 12, aligned to the title’s last baseline: the page’s actions (at most one primary) or the location switcher.
+  - Right, columns 9 to 12, aligned to the title’s last baseline: the page’s actions (at most one primary), or on location pages the location switcher, “All locations” and “Location settings”.
+  - On location pages the eyebrow is “{Location name}, {Town}, {ST}” and the title is the page’s own: Home “Week of {Mon d, yyyy}” (the Monday of the current week, on the device’s calendar), Analytics “Analytics”, Sales data “Sales data”, Upload “Upload”, Notes “Notes”, Town “Town”, TownwiseAI “TownwiseAI”, Location settings “Location settings”. “All locations” (a text link to `/dashboard`) shows only with more than one location; “Location settings” (a text link) only for org admins, and not on that page itself. On phones TownwiseAI’s header is compact (the eyebrow, and the title on one line, with no side links) and scrolls away with the conversation.
   - Below 1024px the two stack.
   - Gate pages use the same header with the lead paragraph (`sub`, `text2`) under the title, in columns 1 to 7, and an optional side column 9 to 12, as on the SignIn artboard.
-- **Location switcher.** Shown only when the organization has more than one location. It is a labeled select (“Location”) styled like a FormField input, and changing it navigates to the same tab of the other location.
-- **Tabs** (location pages). A row of links in `ui`, at least 44px tall, `space-1` apart, with a 1px `border` rule under the row.
-  - Unselected: `text2`, with a `raised` fill on hover.
-  - Selected (`aria-current="page"`): the design system’s selected-row idiom, which is a `raised` fill, a 1px `border` outline, the 6px `mint` square before the label, and a `mint` label.
-  - Tabs: Forecast, Sales data, Notes, Town, and Settings for org admins.
-  - On phones the row scrolls sideways in a focusable region (`role="region"`, `tabindex="0"`, `aria-label="Location sections"`).
+- **Location switcher.** Shown only when the organization has more than one location. It is a labeled select (“Location”) styled like a FormField input, and changing it navigates to the same page of the other location.
+- **No location tabs.** The location’s sections are in the top bar (15.3); Sales data is reached from Analytics and from Upload’s result, and Location settings from the page header.
 - **Content.** Sections are separated by a 1px `border` rule with `space-8` between them. Panels have a `panel` fill, a 1px `border`, square corners, and `space-5` padding (`space-4` at 640px and below). Never put a `raised` fill inside a `raised` surface; outline the inner element with `line` instead. Reading width for forms and prose is columns 1 to 7; the side column 9 to 12 holds help text and summaries.
 
 ### 15.3 Navigation per role
 
-| Who | Top bar nav | Location tabs | Notes |
+| Who | Top bar nav | Page header links | Notes |
 |---|---|---|---|
-| Member | Locations, Settings | Forecast, Sales data, Notes, Town | No Team. Upload and notes are allowed (D16). |
-| Org admin | Locations, Team, Settings | Forecast, Sales data, Notes, Town, Settings | |
+| Member | Home, Analytics, TownwiseAI, Notes, Town, Upload; then Settings | All locations (more than one location) | No Team. Upload and notes are allowed (D16). |
+| Org admin | Home, Analytics, TownwiseAI, Notes, Town, Upload; then Team, Settings | All locations (more than one), Location settings | |
 | Staff | Requests, Organizations, People, Audit log | none | Staff console frame (15.4). |
-| Staff in view-as | the target’s items | the target’s tabs | Client app frame under the banner; no console items. |
+| Staff in view-as | the target’s items | the target’s links | Client app frame under the banner; no console items. |
 | Signed in, no organization | none | none | Gate frame. |
 
-“Locations” goes to `/dashboard`, which redirects to the only location’s Forecast tab when there is one. Settings is the account page, `/settings`. Two-step sign-in (`/settings/security`, **Exists**) is reached from Settings.
+The sections are Home (`/locations/[id]`), Analytics (`/locations/[id]/analytics`), TownwiseAI (`/locations/[id]/agent`), Notes, Town and Upload (`/locations/[id]/sales/upload`). They open the location in the path; on a page outside a location (Locations, Team, Settings), the last location opened in this sign-in, held in memory only and never in storage, else the organization’s first. With no location the bar has only Team and Settings. `aria-current="page"` marks the section of the current page; Analytics is also marked (`aria-current="true"`) on Sales data, which lives under it, and on Location settings no section is marked. The wordmark goes to `/dashboard` (Locations), which redirects to the only location’s Home when there is one. Settings is the account page, `/settings`. Two-step sign-in (`/settings/security`, **Exists**) is reached from Settings.
 
 ### 15.4 How the staff console differs
 
@@ -1202,6 +1197,8 @@ Every signed-in frame ends with a slim footer: a 1px `border` rule, then one `mo
 | P21 | `/admin/orgs/[orgId]` | Organization detail: team, locations, suspend, view as, delete | staff | Staff console |
 | P22 | `/admin/people` | People: everyone across organizations, sign out everywhere, delete | staff | Staff console |
 | P23 | `/admin/audit` | Audit log | staff | Staff console |
+| P24 | `/locations/[id]/analytics` | Analytics: your days, your town’s calendar and your notes (**In progress**: until it is built, the page says so and links to Sales data) | members | Client app |
+| P25 | `/locations/[id]/agent` | TownwiseAI, the tuning chat (`/locations/[id]/chat` redirects here) | members | Client app |
 
 Components that are not routes: C1 View-as dialog, C2 View-as banner (15.5), C3 Approve dialog, C4 Reject dialog, C5 New organization dialog, C6 Note form, C7 Confirm dialogs (deletion dialogs ask for the typed name or email, 15.7).
 
@@ -1305,7 +1302,7 @@ Primary: “Sign in again” (kit `POST /auth/logout`, then `/sign-in`).
 
 **P11. Forecast (`/locations/[id]`, the default tab)**
 
-- Page header: eyebrow “{town}, {state}”, title {location name}, the location switcher when there are several locations, then the tabs.
+- Page header: as on every location page (15.2): the eyebrow “{location name}, {town}, {state}”, the page’s title, then the switcher and links at the side.
 - **Status panel.** Kicker `tw-eyebrow` “Calibration”, heading `tw-h3` “Not calibrated yet”, then the body for the state (14.1). Under it, the data checks as a two-column definition list in `mono`: Days with data, First day, Last day, Missing days in between, Days with guests, Days with net sales, Last upload (“{date} by {email}”).
 - **Getting started**, numbered 01 to 04 like the homepage’s How it works. Each row has a two-digit counter in `mono` `text3`, a `tw-h3` title, a `small` body, and the client’s progress in plain `mono` words at the right:
   1. “Your town”. “Public data on what moves demand in {town}, {state}.” Progress, derived from the bundled town data (Section 13): “{n} drivers and {m} key dates, from public sources” (singular forms for one, “no key dates” for none); “Employment pattern only. Drivers aren’t researched yet.” for a listed town with no drivers (Nantucket today); “Not researched yet” for another town. Link: “See your town” (Town tab).

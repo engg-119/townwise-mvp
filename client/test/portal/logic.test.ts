@@ -3,7 +3,7 @@ import { mapTowns } from '../../src/marketing/map/mapState';
 import { errorCopy, needsRecheck, tooManyAttempts } from '../../src/portal/errors';
 import { formatCount, formatDate, formatTime, plural } from '../../src/portal/format';
 import {
-  clientNav, consoleNav, HOME, homeFor, isAllowed, isFillRoute, locationTabs, tabOf,
+  clientNav, consoleNav, HOME, homeFor, isAllowed, isFillRoute, locationHref, navLocationId, pageTitle, tabOf, type TabKey,
 } from '../../src/portal/routing';
 import { meResponseSchema, orgResponseSchema, type Access } from '../../src/portal/schemas';
 import {
@@ -16,8 +16,8 @@ const ALL: [string, Access][] = Object.entries(ACCESS);
 
 const GATE = ['/request-access', '/waiting', '/no-access', '/joining', '/staff/sign-in-again'];
 const MEMBER = [
-  '/dashboard', '/settings', '/locations/l1', '/locations/l1/sales', '/locations/l1/sales/upload', '/locations/l1/notes',
-  '/locations/l1/town', '/locations/l1/chat',
+  '/dashboard', '/settings', '/locations/l1', '/locations/l1/analytics', '/locations/l1/sales', '/locations/l1/sales/upload',
+  '/locations/l1/notes', '/locations/l1/town', '/locations/l1/agent', '/locations/l1/chat',
 ];
 const ADMIN_ONLY = ['/team', '/locations/new', '/locations/l1/settings'];
 const CONSOLE = ['/admin', '/admin/orgs', '/admin/orgs/o1', '/admin/people', '/admin/audit'];
@@ -77,14 +77,58 @@ describe('access routing (spec 4.3)', () => {
 });
 
 describe('navigation per role (spec 15.3)', () => {
-  test('members: Locations and Settings; org admins add Team', () => {
-    expect(clientNav('member', '/dashboard').map((item) => [item.label, item.href, item.current])).toEqual([
-      ['Locations', '/dashboard', 'page'], ['Settings', '/settings', null],
+  const rows = (items: ReturnType<typeof clientNav>): (string | boolean | null)[][] =>
+    items.map((item) => [item.label, item.href, item.current, item.end === true]);
+
+  test('members: the location’s sections, then Settings as the right-hand group', () => {
+    expect(rows(clientNav('member', '/locations/l1', 'l1'))).toEqual([
+      ['Home', '/locations/l1', 'page', false], ['Analytics', '/locations/l1/analytics', null, false],
+      ['TownwiseAI', '/locations/l1/agent', null, false], ['Notes', '/locations/l1/notes', null, false],
+      ['Town', '/locations/l1/town', null, false], ['Upload', '/locations/l1/sales/upload', null, false],
+      ['Settings', '/settings', null, true],
     ]);
-    expect(clientNav('org_admin', '/locations/l1/notes').map((item) => [item.label, item.current])).toEqual([
-      ['Locations', 'true'], ['Team', null], ['Settings', null],
-    ]);
-    expect(clientNav('org_admin', '/settings/security').map((item) => item.current)).toEqual([null, null, 'true']);
+  });
+
+  test('org admins add Team, which starts the right-hand group', () => {
+    expect(rows(clientNav('org_admin', '/team', 'l1')).slice(-2)).toEqual([['Team', '/team', 'page', true], ['Settings', '/settings', null, false]]);
+    expect(clientNav('org_admin', '/settings/security', 'l1').map((item) => item.current).slice(-2)).toEqual([null, 'true']);
+  });
+
+  test('with no location (none yet, or the organization still loading off a location page) only Team and Settings', () => {
+    expect(rows(clientNav('member', '/dashboard', null))).toEqual([['Settings', '/settings', null, true]]);
+    expect(clientNav('org_admin', '/dashboard', null).map((item) => item.label)).toEqual(['Team', 'Settings']);
+  });
+
+  test('current: each section on its own page; Analytics also on Sales data, which lives under it; Upload alone on upload', () => {
+    const current = (path: string): [string, string | null][] =>
+      clientNav('org_admin', path, 'l1').filter((item) => item.current !== null).map((item) => [item.label, item.current]);
+    expect(current('/locations/l1/analytics')).toEqual([['Analytics', 'page']]);
+    expect(current('/locations/l1/sales')).toEqual([['Analytics', 'true']]);
+    expect(current('/locations/l1/sales/upload')).toEqual([['Upload', 'page']]);
+    expect(current('/locations/l1/agent')).toEqual([['TownwiseAI', 'page']]);
+    expect(current('/locations/l1/notes/')).toEqual([['Notes', 'page']]);
+    expect(current('/locations/l1/town')).toEqual([['Town', 'page']]);
+    // Location settings is the header's link, not a top bar item; Settings is the account page.
+    expect(current('/locations/l1/settings')).toEqual([]);
+    expect(current('/settings')).toEqual([['Settings', 'page']]);
+    // Off a location the sections open another location, so none of them is current.
+    expect(current('/dashboard')).toEqual([]);
+  });
+
+  test('the sections open the location in the path, else the last one opened, else the organization’s first', () => {
+    const locations = [{ id: 'l1' }, { id: 'l2' }];
+    expect(navLocationId('/locations/l2/notes', 'l1', locations)).toBe('l2');
+    expect(navLocationId('/settings', 'l2', locations)).toBe('l2');
+    expect(navLocationId('/settings', null, locations)).toBe('l1');
+    // A location the organization no longer has is passed over, whether in the path or remembered.
+    expect(navLocationId('/locations/l404', 'l404', locations)).toBe('l1');
+    expect(navLocationId('/team', 'l404', locations)).toBe('l1');
+    // While the organization loads, the path and the last location are taken on trust; with neither, no sections.
+    expect(navLocationId('/locations/l2/town', null, null)).toBe('l2');
+    expect(navLocationId('/settings', 'l2', null)).toBe('l2');
+    expect(navLocationId('/settings', null, null)).toBeNull();
+    expect(navLocationId('/dashboard', 'l1', [])).toBeNull();
+    expect(navLocationId('/locations/new', null, locations)).toBe('l1');
   });
 
   test('staff: Requests with its count, Organizations, People, Audit log', () => {
@@ -94,17 +138,40 @@ describe('navigation per role (spec 15.3)', () => {
     ]);
   });
 
-  test('location tabs: Forecast, Sales data, Notes, Town, Chat, and Settings for org admins', () => {
-    expect(locationTabs('l1', 'member', '/locations/l1').map((tab) => [tab.label, tab.href, tab.current])).toEqual([
-      ['Forecast', '/locations/l1', true], ['Sales data', '/locations/l1/sales', false], ['Notes', '/locations/l1/notes', false],
-      ['Town', '/locations/l1/town', false], ['Chat', '/locations/l1/chat', false],
-    ]);
-    expect(locationTabs('l1', 'org_admin', '/locations/l1/sales/upload').map((tab) => [tab.key, tab.current])).toEqual([
-      ['forecast', false], ['sales', true], ['notes', false], ['town', false], ['chat', false], ['settings', false],
-    ]);
-    expect(tabOf('/locations/l1/settings')).toBe('settings');
+  test('every location page’s section, address and title', () => {
+    const today = new Date(2026, 10, 5);
+    const pages: [string, TabKey, string][] = [
+      ['/locations/l1', 'home', 'Week of Nov 2, 2026'],
+      ['/locations/l1/analytics', 'analytics', 'Analytics'],
+      ['/locations/l1/sales', 'sales', 'Sales data'],
+      ['/locations/l1/sales/upload', 'upload', 'Upload'],
+      ['/locations/l1/notes', 'notes', 'Notes'],
+      ['/locations/l1/town', 'town', 'Town'],
+      ['/locations/l1/agent', 'agent', 'TownwiseAI'],
+      ['/locations/l1/settings', 'settings', 'Location settings'],
+    ];
+    for (const [path, key, title] of pages) {
+      expect(tabOf(path)).toBe(key);
+      expect(locationHref('l1', key)).toBe(path);
+      expect(pageTitle(key, today)).toBe(title);
+    }
+    // The old chat address belongs to TownwiseAI, where it redirects.
+    expect(tabOf('/locations/l1/chat')).toBe('agent');
+    expect(locationHref('a b')).toBe('/locations/a%20b');
+  });
+
+  test('Home’s title is the Monday of this week on the device’s calendar, across a month and a year', () => {
+    expect(pageTitle('home', new Date(2026, 10, 2))).toBe('Week of Nov 2, 2026');
+    expect(pageTitle('home', new Date(2026, 10, 8, 23, 59))).toBe('Week of Nov 2, 2026');
+    expect(pageTitle('home', new Date(2026, 9, 1))).toBe('Week of Sep 28, 2026');
+    expect(pageTitle('home', new Date(2027, 0, 1))).toBe('Week of Dec 28, 2026');
+  });
+
+  test('TownwiseAI (and the old chat address, while it redirects) fills the screen', () => {
+    expect(isFillRoute('/locations/l1/agent')).toBe(true);
     expect(isFillRoute('/locations/l1/chat')).toBe(true);
     expect(isFillRoute('/locations/l1')).toBe(false);
+    expect(isFillRoute('/locations/l1/analytics')).toBe(false);
   });
 });
 

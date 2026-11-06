@@ -31,32 +31,57 @@ function linkNames(region: string, names: readonly string[]): string[] {
   return found;
 }
 
+const NAV = ['Home', 'Analytics', 'TownwiseAI', 'Notes', 'Town', 'Upload', 'Team', 'Settings'];
+
 function navLabels(): string[] {
-  return linkNames('Main', ['Locations', 'Team', 'Settings']);
+  return linkNames('Main', NAV);
+}
+
+function navLink(name: string) {
+  return within(screen.getByLabelText('Main')).getByRole('link', { name });
 }
 
 describe('the client app top bar (spec 15.2, 15.3)', () => {
-  test('members: the organization, Locations and Settings, the email and Sign out', async () => {
+  test('members: the organization, the first location’s sections and Settings, the email and Sign out', async () => {
     const signOut = jest.fn(() => Promise.resolve());
     const { router } = await renderApp('/dashboard', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') }), { signOut });
     await screen.findByText('Main Street Bar');
-    expect(navLabels()).toEqual(['Locations', 'Settings']);
-    expect(screen.getByRole('link', { name: 'Locations' }).props.accessibilityState).toMatchObject({ selected: true });
+    expect(navLabels()).toEqual(['Home', 'Analytics', 'TownwiseAI', 'Notes', 'Town', 'Upload', 'Settings']);
+    // Off a location page no section is current.
+    for (const name of navLabels()) expect(navLink(name).props.accessibilityState).toMatchObject({ selected: false });
     expect(screen.getAllByText('Test Group').length).toBeGreaterThan(0);
     expect(screen.getByText(EMAIL)).toBeTruthy();
     await fireEvent.press(screen.getByRole('button', { name: 'Sign out' }));
     expect(signOut).toHaveBeenCalledTimes(1);
-    await fireEvent.press(screen.getByRole('link', { name: 'Settings' }));
+    await fireEvent.press(navLink('Settings'));
     expect(router.getPathname()).toBe('/settings');
-    expect(screen.getByRole('link', { name: 'Settings' }).props.accessibilityState).toMatchObject({ selected: true });
+    expect(navLink('Settings').props.accessibilityState).toMatchObject({ selected: true });
+    await fireEvent.press(navLink('Home'));
+    expect(router.getPathname()).toBe('/locations/l1');
+    expect(navLink('Home').props.accessibilityState).toMatchObject({ selected: true });
   });
 
   test('org admins add Team', async () => {
     const { router } = await renderApp('/dashboard', fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin') }));
     await screen.findByText('Main Street Bar');
-    expect(navLabels()).toEqual(['Locations', 'Team', 'Settings']);
-    await fireEvent.press(screen.getByRole('link', { name: 'Team' }));
+    expect(navLabels()).toEqual(NAV);
+    await fireEvent.press(navLink('Team'));
     expect(router.getPathname()).toBe('/team');
+  });
+
+  test('the sections keep opening the last location opened, from pages outside a location', async () => {
+    const { router } = await renderApp('/locations/l2/notes', fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin') }));
+    await screen.findByText('River Grill, Norwich, VT');
+    await fireEvent.press(navLink('Team'));
+    expect(router.getPathname()).toBe('/team');
+    await fireEvent.press(navLink('TownwiseAI'));
+    expect(router.getPathname()).toBe('/locations/l2/agent');
+  });
+
+  test('with no location yet the bar has only Team and Settings', async () => {
+    await renderApp('/dashboard', fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin', []) }));
+    expect(await screen.findByRole('heading', { name: 'Add your first location' })).toBeTruthy();
+    expect(navLabels()).toEqual(['Team', 'Settings']);
   });
 
   test('a sign-out the server could not finish says so', async () => {
@@ -67,13 +92,14 @@ describe('the client app top bar (spec 15.2, 15.3)', () => {
     expect(await screen.findByText('Couldn’t sign out. Check your connection and try again.')).toBeTruthy();
   });
 
-  test('at 320px the email hides and the nav stays', async () => {
+  test('at 320px the email hides and the nav stays, in a region that scrolls sideways', async () => {
     const spy = jest.spyOn(Dimensions, 'get').mockReturnValue({ ...WINDOW, width: 320 });
     try {
       await renderApp('/dashboard', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') }));
       await screen.findAllByText('Main Street Bar');
       expect(screen.queryByText(EMAIL)).toBeNull();
-      expect(navLabels()).toEqual(['Locations', 'Settings']);
+      expect(navLabels()).toEqual(['Home', 'Analytics', 'TownwiseAI', 'Notes', 'Town', 'Upload', 'Settings']);
+      expect(within(screen.getByLabelText('Sections')).getByLabelText('Main')).toBeTruthy();
       // The table stacks into label and value pairs.
       const table = screen.getByLabelText('Locations');
       expect(within(table).getAllByText('Sales history')).toHaveLength(2);
@@ -84,48 +110,61 @@ describe('the client app top bar (spec 15.2, 15.3)', () => {
 });
 
 describe('location pages (spec 15.2)', () => {
-  test('members: the header, Forecast selected, and no Settings tab', async () => {
+  test('members: the eyebrow names the location, the h1 the page; Home is current; no Location settings link', async () => {
     const { router } = await renderApp('/locations/l1', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') }));
-    expect(await screen.findByRole('heading', { name: 'Main Street Bar' })).toBeTruthy();
-    expect(screen.getByText('Hanover, NH')).toBeTruthy();
-    const tabs = screen.getByLabelText('Location sections');
-    expect(linkNames('Location sections', ['Forecast', 'Sales data', 'Notes', 'Town', 'Chat', 'Settings'])).toEqual([
-      'Forecast', 'Sales data', 'Notes', 'Town', 'Chat',
-    ]);
-    expect(screen.getByLabelText('Location sections')).toBeTruthy();
-    expect(within(tabs).getByRole('link', { name: 'Forecast' }).props.accessibilityState).toMatchObject({ selected: true });
-    await fireEvent.press(within(tabs).getByRole('link', { name: 'Sales data' }));
-    expect(router.getPathname()).toBe('/locations/l1/sales');
-    expect(within(screen.getByLabelText('Location sections')).getByRole('link', { name: 'Sales data' }).props.accessibilityState)
-      .toMatchObject({ selected: true });
+    expect(await screen.findByText('Main Street Bar, Hanover, NH')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: /^Week of [A-Z][a-z]{2} \d{1,2}, \d{4}$/ })).toBeTruthy();
+    expect(navLink('Home').props.accessibilityState).toMatchObject({ selected: true });
+    expect(screen.getByRole('link', { name: 'All locations' })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Location settings' })).toBeNull();
+    await fireEvent.press(navLink('Notes'));
+    expect(router.getPathname()).toBe('/locations/l1/notes');
+    expect(screen.getByRole('heading', { name: 'Notes' })).toBeTruthy();
+    expect(navLink('Notes').props.accessibilityState).toMatchObject({ selected: true });
+    expect(navLink('Home').props.accessibilityState).toMatchObject({ selected: false });
   });
 
-  test('org admins get the Settings tab; the switcher opens the same tab of another location', async () => {
+  test('Analytics is in progress for now: it says so, under its own title, and leads to Sales data, which it marks', async () => {
+    const { router } = await renderApp('/locations/l1/analytics', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') }));
+    expect(await screen.findByRole('heading', { name: 'Analytics' })).toBeTruthy();
+    expect(screen.getByText('In progress')).toBeTruthy();
+    expect(screen.getByText('Analytics isn’t built yet. Your daily totals are on Sales data.')).toBeTruthy();
+    expect(navLink('Analytics').props.accessibilityState).toMatchObject({ selected: true });
+    await fireEvent.press(screen.getByRole('link', { name: 'Sales data' }));
+    expect(router.getPathname()).toBe('/locations/l1/sales');
+    expect(await screen.findByRole('heading', { name: 'Sales data' })).toBeTruthy();
+    expect(navLink('Analytics').props.accessibilityState).toMatchObject({ selected: true });
+  });
+
+  test('org admins get Location settings in the header; the switcher opens the same page of another location', async () => {
     const { router } = await renderApp('/locations/l1/notes', fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin') }));
-    const tabs = await screen.findByLabelText('Location sections');
-    expect(within(tabs).getByRole('link', { name: 'Settings' })).toBeTruthy();
+    await screen.findByText('Main Street Bar, Hanover, NH');
+    await fireEvent.press(screen.getByRole('link', { name: 'Location settings' }));
+    expect(router.getPathname()).toBe('/locations/l1/settings');
+    expect(await screen.findByRole('heading', { name: 'Location settings' })).toBeTruthy();
+    // On its own page the link is not repeated.
+    expect(screen.queryByRole('link', { name: 'Location settings' })).toBeNull();
+    await fireEvent.press(navLink('Notes'));
     await fireEvent.press(screen.getByRole('button', { name: 'Location' }));
     await fireEvent.press(screen.getByRole('radio', { name: 'River Grill' }));
     expect(router.getPathname()).toBe('/locations/l2/notes');
-    expect(await screen.findByRole('heading', { name: 'River Grill' })).toBeTruthy();
-    expect(screen.getByText('Norwich, VT')).toBeTruthy();
+    expect(await screen.findByText('River Grill, Norwich, VT')).toBeTruthy();
+    expect(navLink('Notes').props.accessibilityState).toMatchObject({ selected: true });
   });
 
-  test('one location has no switcher', async () => {
+  test('one location has no switcher and no All locations', async () => {
     await renderApp('/locations/l1', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member', orgOf('member').locations.slice(0, 1)) }));
-    await screen.findByRole('heading', { name: 'Main Street Bar' });
+    await screen.findByText('Main Street Bar, Hanover, NH');
     expect(screen.queryByRole('button', { name: 'Location' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'All locations' })).toBeNull();
   });
 
   test('a location not in the organization is not available, with a way back', async () => {
     const { router } = await renderApp('/locations/l404', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') }));
     expect(await screen.findByText('This location isn’t available.')).toBeTruthy();
-    // The nav and the way back both lead to Locations.
-    const links = screen.getAllByRole('link', { name: 'Locations' });
-    expect(links).toHaveLength(2);
-    const back = links[1];
-    if (back === undefined) throw new Error('no way back');
-    await fireEvent.press(back);
+    // The sections open a location the organization has.
+    expect(navLink('Home').props.accessibilityState).toMatchObject({ selected: false });
+    await fireEvent.press(screen.getByRole('link', { name: 'Locations' }));
     expect(router.getPathname()).toBe('/dashboard');
   });
 });

@@ -5,9 +5,9 @@ import { View } from 'react-native';
 
 import { FilterTabs } from '../../src/portal/console/parts';
 import { MonthsTable } from '../../src/portal/locations/MonthsTable';
-import { locationTabs } from '../../src/portal/routing';
-import { LocationTabs } from '../../src/portal/shell/LocationShell';
+import { clientNav } from '../../src/portal/routing';
 import { PortalStyles } from '../../src/portal/shell/PortalStyles';
+import { TopBar } from '../../src/portal/shell/TopBar';
 import { LinkButton } from '../../src/portal/ui/Button';
 import { DataTable, MIN_FLEX_WIDTH, type Column } from '../../src/portal/ui/DataTable';
 import { Notice } from '../../src/portal/ui/feedback';
@@ -44,13 +44,17 @@ function nth(elements: HTMLElement[], index: number): HTMLElement {
   return element;
 }
 
+function parentOf(element: HTMLElement): HTMLElement {
+  if (element.parentElement === null) throw new Error('no parent');
+  return element.parentElement;
+}
+
 /** jsdom has no PointerEvent, so react-native-web listens for mouseenter. */
 function hover(element: Element): void {
   fireEvent.mouseEnter(element);
 }
 
 const RAISED = 'rgb(24, 28, 33)';
-const BORDER = 'rgb(52, 56, 62)';
 const LINE = 'rgb(123, 129, 135)';
 const WHITE = 'rgb(239, 242, 246)';
 
@@ -71,27 +75,62 @@ test('LinkButton keeps its box through Link asChild: 44px tall, the outline’s 
   expect(style(screen.getByRole('link', { name: 'See the audit log' })).minHeight).toBe('44px');
 });
 
-test('the location tabs: 44px links in a row, the selected one filled and outlined, a raised fill on hover, inside the margins', () => {
-  renderLinked(<LocationTabs tabs={locationTabs('l1', 'org_admin', '/locations/l1/notes')} />);
-  const nav = screen.getByRole('navigation', { name: 'Location' });
+function renderBar(path: string): void {
+  renderLinked(<TopBar kind="client" email="a@example.com" orgName="Test Group" nav={clientNav('org_admin', path, 'l1')} onSignOut={() => undefined} />);
+}
+
+test('on a phone the sections take one row in a focusable region that scrolls sideways, into the margins, with 44px links', () => {
+  renderBar('/locations/l1/notes');
+  const region = screen.getByRole('region', { name: 'Sections' });
+  expect(region.getAttribute('tabindex')).toBe('0');
+  // The scroller reaches the screen's edges, and its row starts again at the 16px margin, so the first and last
+  // link's focus ring is never cut off.
+  expect(style(region).marginLeft).toBe('-16px');
+  expect(style(region).marginRight).toBe('-16px');
+  const nav = within(region).getByRole('navigation', { name: 'Main' });
+  expect(style(parentOf(nav)).paddingLeft).toBe('16px');
+  expect(style(nav).flexWrap).toBe('nowrap');
+  expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual([
+    'Home', 'Analytics', 'TownwiseAI', 'Notes', 'Town', 'Upload', 'Team', 'Settings',
+  ]);
   const notes = within(nav).getByRole('link', { name: 'Notes' });
   expect(notes.getAttribute('aria-current')).toBe('page');
   expect(style(notes).minHeight).toBe('44px');
-  expect(style(notes).flexDirection).toBe('row');
-  expect(style(notes).backgroundColor).toBe(RAISED);
-  expect(style(notes).borderTopWidth).toBe('1px');
-  expect(style(notes).borderTopColor).toBe(BORDER);
-  const town = within(nav).getByRole('link', { name: 'Town' });
-  expect(style(town).minHeight).toBe('44px');
-  expect(style(town).backgroundColor).not.toBe(RAISED);
-  hover(town);
-  expect(style(town).backgroundColor).toBe(RAISED);
-  // The row's 4px padding stays inside the region, which no longer reaches 4px past the content's edges.
-  expect(style(screen.getByRole('region', { name: 'Location sections' })).marginLeft).toBe('0px');
-  expect(style(screen.getByRole('region', { name: 'Location sections' })).marginRight).toBe('0px');
+  expect(within(nav).getByRole('link', { name: 'Town' }).getAttribute('aria-current')).toBeNull();
 });
 
-test('the console’s status filters are styled as the location tabs, inside the margins', () => {
+test.each([768, 1279])('at %ipx the sections wrap in a second row under a rule, with Team and Settings at its far end', (at) => {
+  setWidth(at);
+  renderBar('/locations/l1/sales');
+  expect(screen.queryByRole('region', { name: 'Sections' })).toBeNull();
+  const nav = screen.getByRole('navigation', { name: 'Main' });
+  expect(style(parentOf(nav)).borderTopWidth).toBe('1px');
+  expect(style(nav).flexWrap).toBe('wrap');
+  expect(within(nav).getByRole('link', { name: 'Analytics' }).getAttribute('aria-current')).toBe('true');
+  expect(style(parentOf(within(nav).getByRole('link', { name: 'Team' }))).marginLeft).toBe('auto');
+});
+
+test('from 1280px the nav sits in the bar, the sections then Team and Settings, before the email and Sign out', () => {
+  setWidth(1280);
+  renderBar('/locations/l1/agent');
+  const banner = screen.getByRole('banner');
+  const nav = within(banner).getByRole('navigation', { name: 'Main' });
+  expect(within(nav).getByRole('link', { name: 'TownwiseAI' }).getAttribute('aria-current')).toBe('page');
+  const email = within(banner).getByText('a@example.com');
+  expect(nav.compareDocumentPosition(email) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(parentOf(nav).contains(email)).toBe(true);
+  expect(style(nav).flexGrow).toBe('1');
+});
+
+test('without a location the bar keeps its 900px wrap: Team and Settings sit in the bar', () => {
+  setWidth(900);
+  renderLinked(<TopBar kind="client" email="a@example.com" orgName="Test Group" nav={clientNav('org_admin', '/team', null)} onSignOut={() => undefined} />);
+  const nav = within(screen.getByRole('banner')).getByRole('navigation', { name: 'Main' });
+  expect(style(parentOf(nav)).borderTopWidth).not.toBe('1px');
+  expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual(['Team', 'Settings']);
+});
+
+test('the console’s status filters: 44px links in a row, the selected one filled, inside the margins', () => {
   renderLinked(
     <FilterTabs
       label="Requests by status"

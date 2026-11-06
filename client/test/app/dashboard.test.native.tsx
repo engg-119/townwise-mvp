@@ -85,8 +85,7 @@ test('one location opens its Forecast tab', async () => {
   const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member', [LOCATIONS[0] ?? locationOf('l1', 'x', { townId: null, name: 'x', state: 'VT' })]) });
   const { router } = await renderApp('/dashboard', api);
   await waitFor(() => { expect(router.getPathname()).toBe('/locations/l1'); });
-  expect(await screen.findByRole('heading', { name: 'Main Street Bar' })).toBeTruthy();
-  expect(screen.getByText('Hanover, NH')).toBeTruthy();
+  expect(await screen.findByText('Main Street Bar, Hanover, NH')).toBeTruthy();
 });
 
 test('empty, member: says the admin hasn’t added a location yet', async () => {
@@ -116,7 +115,7 @@ test('empty, org admin: the Add location form inline adds the first location and
   await fireEvent.press(screen.getByRole('button', { name: 'Add location' }));
   await waitFor(() => { expect(router.getPathname()).toBe('/locations/l9'); });
   expect(writes(api)).toEqual([{ method: 'POST', path: '/api/org/locations', body: { name: 'Harbor Room', town: { townId: 'stowe-vt' } } }]);
-  expect(await screen.findByRole('heading', { name: 'Harbor Room' })).toBeTruthy();
+  expect(await screen.findByText('Harbor Room, Stowe, VT')).toBeTruthy();
 });
 
 test('Add location says when the name is taken or the limit is reached', async () => {

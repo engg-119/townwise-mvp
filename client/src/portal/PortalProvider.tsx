@@ -15,7 +15,9 @@ import type { MeResponse, OrgResponse } from './schemas';
 // - `api`: the kit client, except that the access errors of 4.3 re-read GET /api/me so the layout routes again;
 // - the organization (GET /api/org), loaded once and shared by the frame, Locations and the location pages, and
 //   cleared whenever the access is read again;
-// - one-time page notices that survive a redirect ("You joined …", "View-as ended at …").
+// - one-time page notices that survive a redirect ("You joined …", "View-as ended at …");
+// - the last location opened in this sign-in, which the top bar's sections open from pages outside a location. It
+//   lives in this state only, never in storage, and is cleared with the organization.
 
 export interface Notice {
   text: string;
@@ -60,6 +62,9 @@ export interface Portal {
   pendingTick: number;
   /** Called after an approve or reject: the console nav's pending count reads again. */
   refreshPending: () => void;
+  /** The last location the location layout showed, or null; in memory only. */
+  lastLocationId: string | null;
+  openedLocation: (locationId: string) => void;
 }
 
 type MeLoad = { status: 'loading' } | { status: 'failed'; error: unknown } | { status: 'ready'; me: MeResponse };
@@ -88,6 +93,7 @@ export function PortalProvider(props: { children: React.ReactNode }): React.JSX.
   const [pendingTick, setPendingTick] = useState(0);
   const orgTicket = useRef(0);
   const orgStarted = useRef(false);
+  const [lastLocationId, setLastLocationId] = useState<string | null>(null);
 
   const applyMe = useCallback((next: MeResponse) => {
     const previous = current.current;
@@ -99,6 +105,7 @@ export function PortalProvider(props: { children: React.ReactNode }): React.JSX.
     orgTicket.current += 1;
     orgStarted.current = false;
     setOrg(null);
+    setLastLocationId(null);
     // Spec 15.5: when view-as ends (End, expiry, or the target changing organization), staff land on /admin
     // with the time it ended.
     if (previous?.viewAs != null && next.viewAs === null && next.access.state === 'staff') {
@@ -173,6 +180,8 @@ export function PortalProvider(props: { children: React.ReactNode }): React.JSX.
 
   const refreshPending = useCallback(() => { setPendingTick((value) => value + 1); }, []);
 
+  const openedLocation = useCallback((locationId: string) => { setLastLocationId(locationId); }, []);
+
   const showNotice = useCallback((next: Notice, where?: NoticeWhere) => {
     setNotice({ notice: next, where: where ?? null, shownAt: null });
   }, []);
@@ -188,8 +197,11 @@ export function PortalProvider(props: { children: React.ReactNode }): React.JSX.
   const me = meState.status === 'ready' ? meState.me : null;
   const portal = useMemo<Portal | null>(() => (me === null ? null : {
     me, api, applyMe, refreshMe, notice, showNotice, markNoticeShown, org, ensureOrg, reloadOrg,
-    pendingTick, refreshPending,
-  }), [me, api, applyMe, refreshMe, notice, showNotice, markNoticeShown, org, ensureOrg, reloadOrg, pendingTick, refreshPending]);
+    pendingTick, refreshPending, lastLocationId, openedLocation,
+  }), [
+    me, api, applyMe, refreshMe, notice, showNotice, markNoticeShown, org, ensureOrg, reloadOrg, pendingTick, refreshPending,
+    lastLocationId, openedLocation,
+  ]);
 
   const value = useMemo<PortalContextValue>(() => ({ meState, retry, portal, leftPath }), [meState, retry, portal, leftPath]);
   return <PortalContext.Provider value={value}>{props.children}</PortalContext.Provider>;

@@ -1,30 +1,30 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { Link, usePathname, useRouter } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, Text, View, type LayoutRectangle } from 'react-native';
+import { createContext, useContext, useEffect, useState } from 'react';
+import { usePathname, useRouter } from 'expo-router';
+import { StyleSheet, View } from 'react-native';
 
 import { theme } from '../../theme';
 import { townLabel } from '../format';
 import { useBreakpoint } from '../hooks';
 import { useOrg, usePortal } from '../PortalProvider';
-import { isFillRoute, locationHref, locationIdOf, locationTabs, tabOf, type LocationTab } from '../routing';
+import { isFillRoute, locationHref, locationIdOf, pageTitle, tabOf } from '../routing';
 import type { LocationSummary, MeResponse, OrgResponse } from '../schemas';
-import { webAria } from '../ui/aria';
 import { LinkButton } from '../ui/Button';
 import { ErrorNotice, LoadingLine, Notice } from '../ui/feedback';
-import { useHover } from '../ui/hover';
 import { Content, Wrap } from '../ui/layout';
 import { Select } from '../ui/Select';
-import { Title } from '../ui/text';
+import { Eyebrow, Title } from '../ui/text';
 import { PageHeader, PageNotice } from './Page';
 
-// The location pages' layout (spec 15.2, P11 to P16): the page header (eyebrow “{town}, {state}”, the location's
-// name as the h1, and the location switcher when the organization has more than one location), then the tabs,
-// then the tab's page. The tab pages render only their content.
+// The location pages' layout (spec 15.2, P11 to P16, P24, P25): the page header, then the page. The header's
+// eyebrow names the location (“{name}, {town}, {state}”), the page's one h1 is the page's own title (pageTitle),
+// and its side holds the location switcher and “All locations” when the organization has more than one location,
+// and “Location settings” for org admins. The location's sections are in the top bar (Frame), so the pages render
+// only their content.
 
-/** The organization the layout is showing (see LocationShell), for its tab pages. */
+/** The organization the layout is showing (see LocationShell), for its pages. */
 const ShownOrgContext = createContext<OrgResponse | null>(null);
 
-/** The location this layout is showing; tab pages read it instead of loading the organization again. */
+/** The location this layout is showing; its pages read it instead of loading the organization again. */
 export function useLocation(): { location: LocationSummary; org: OrgResponse } {
   const locationId = locationIdOf(usePathname());
   const org = useContext(ShownOrgContext);
@@ -34,9 +34,9 @@ export function useLocation(): { location: LocationSummary; org: OrgResponse } {
 }
 
 /**
- * On phones the Chat tab needs the screen: the layout hands it a compact header (the name on one line, with no
- * eyebrow or switcher) and the tabs instead of drawing them above it, and the chat puts them at the top of its
- * thread, so they scroll away with the conversation. Null on every other page, and on wider screens.
+ * On phones TownwiseAI needs the screen: the layout hands it a compact header (the eyebrow, and the title on one
+ * line, with no switcher or links) instead of drawing it above it, and the page puts it at the top of its
+ * thread, so it scrolls away with the conversation. Null on every other page, and on wider screens.
  */
 const ScrollingHeadContext = createContext<React.ReactNode>(null);
 
@@ -44,78 +44,17 @@ export function useScrollingHead(): React.ReactNode {
   return useContext(ScrollingHeadContext);
 }
 
-/** The row's padding after the last tab (`styles.tabs`), kept in view with the current tab. */
-const ROW_PADDING = 4;
-
-function Tab(props: { tab: LocationTab; onMeasure: (key: string, layout: LayoutRectangle) => void }): React.JSX.Element {
-  const { tab, onMeasure } = props;
-  const hover = useHover();
-  return (
-    <Link href={tab.href} asChild>
-      {/* A child of Link asChild takes one plain style object (ui/hover.ts). */}
-      <Pressable
-        role="link"
-        accessibilityState={{ selected: tab.current }}
-        {...webAria({ 'aria-current': tab.current ? 'page' : undefined })}
-        onHoverIn={hover.onHoverIn}
-        onHoverOut={hover.onHoverOut}
-        onLayout={(event) => { onMeasure(tab.key, event.nativeEvent.layout); }}
-        style={StyleSheet.flatten([styles.tab, tab.current ? styles.tabOn : hover.hovered ? styles.tabHover : null])}
-      >
-        <View style={[styles.square, tab.current ? styles.squareOn : null]} />
-        <Text style={[styles.tabText, tab.current ? styles.tabTextOn : null]}>{tab.label}</Text>
-      </Pressable>
-    </Link>
-  );
-}
-
-/**
- * The location's sections, in a focusable region that scrolls sideways when it doesn't fit. On a phone Chat, Town
- * and Settings sit past the right edge, so the row scrolls (without animating) to keep the current tab in view, on
- * mount and whenever the route changes.
- */
-export function LocationTabs(props: { tabs: readonly LocationTab[] }): React.JSX.Element {
-  const scroller = useRef<React.ComponentRef<typeof ScrollView>>(null);
-  const [viewport, setViewport] = useState(0);
-  const [spans, setSpans] = useState<Readonly<Record<string, { x: number; width: number }>>>({});
-  const current = props.tabs.find((tab) => tab.current)?.key;
-  const span = current === undefined ? undefined : spans[current];
-  // The least scroll that shows the whole current tab: none for the first tabs, the row's end for the last.
-  const target = span === undefined || viewport === 0 ? null : Math.max(0, span.x + span.width + ROW_PADDING - viewport);
-  useEffect(() => {
-    if (target !== null) scroller.current?.scrollTo({ x: target, animated: false });
-  }, [current, target]);
-  const measure = useCallback((key: string, { x, width }: LayoutRectangle) => {
-    setSpans((before) => (before[key]?.x === x && before[key].width === width ? before : { ...before, [key]: { x, width } }));
-  }, []);
-  return (
-    <View
-      role="region"
-      aria-label="Location sections"
-      focusable
-      onLayout={(event) => { setViewport(event.nativeEvent.layout.width); }}
-      style={styles.tabsRegion}
-    >
-      <ScrollView ref={scroller} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsScroll}>
-        <View role="navigation" aria-label="Location" style={styles.tabs}>
-          {props.tabs.map((tab) => <Tab key={tab.key} tab={tab} onMeasure={measure} />)}
-        </View>
-      </ScrollView>
-    </View>
-  );
-}
-
 export function LocationShell(props: { children: React.ReactNode }): React.JSX.Element {
   const pathname = usePathname();
   const locationId = locationIdOf(pathname);
   const router = useRouter();
-  const { me } = usePortal();
+  const { me, openedLocation } = usePortal();
   const { state, reload } = useOrg();
   const { phone } = useBreakpoint();
   const role = me.access.state === 'member' ? me.access.role : 'member';
-  // While the organization reloads after a write, the layout keeps showing the answer before it, so the tab page
+  // While the organization reloads after a write, the layout keeps showing the answer before it, so the page
   // stays mounted. Hiding it would unmount the location's navigator, and expo-router would move the address to
-  // the location's first tab (Forecast) before the new answer arrived. A location the old answer lacks waits.
+  // the location's first page (Home) before the new answer arrived. A location the old answer lacks waits.
   // A new GET /api/me clears cached organization data (spec 4.3), so the old answer is kept only for the `me` it
   // was read under.
   const [previous, setPrevious] = useState<{ org: OrgResponse; me: MeResponse } | null>(null);
@@ -123,6 +62,9 @@ export function LocationShell(props: { children: React.ReactNode }): React.JSX.E
   const kept = previous?.me === me ? previous.org : null;
   const shown = state.status === 'ready' ? state.data : state.status === 'loading' ? kept : null;
   const location = shown?.locations.find((candidate) => candidate.id === locationId);
+  const shownId = location?.id;
+  // The top bar's sections open this location from pages outside one, until another opens (memory only).
+  useEffect(() => { if (shownId !== undefined) openedLocation(shownId); }, [shownId, openedLocation]);
 
   if (state.status === 'failed') {
     return <Wrap><Content><ErrorNotice error={state.error} onRetry={reload} /></Content></Wrap>;
@@ -143,31 +85,40 @@ export function LocationShell(props: { children: React.ReactNode }): React.JSX.E
       </Wrap>
     );
   }
-  const switcher = locations.length > 1 ? (
-    <Select
-      label="Location"
-      compact
-      value={location.id}
-      items={locations.map((candidate) => ({ value: candidate.id, label: candidate.name }))}
-      onChange={(id) => { router.push(locationHref(id, tabOf(pathname))); }}
-    />
+  const tab = tabOf(pathname);
+  const eyebrow = `${location.name}, ${townLabel(location.town)}`;
+  const title = pageTitle(tab, new Date());
+  const several = locations.length > 1;
+  const side = several || (role === 'org_admin' && tab !== 'settings') ? (
+    <>
+      {several ? (
+        <Select
+          label="Location"
+          compact
+          value={location.id}
+          items={locations.map((candidate) => ({ value: candidate.id, label: candidate.name }))}
+          onChange={(id) => { router.push(locationHref(id, tab)); }}
+        />
+      ) : null}
+      {several ? <LinkButton href="/dashboard" label="All locations" /> : null}
+      {role === 'org_admin' && tab !== 'settings' ? <LinkButton href={locationHref(location.id, 'settings')} label="Location settings" /> : null}
+    </>
   ) : undefined;
-  const tabs = <LocationTabs tabs={locationTabs(location.id, role, pathname)} />;
   const page = <ShownOrgContext.Provider value={shown}>{props.children}</ShownOrgContext.Provider>;
   if (isFillRoute(pathname) && phone) {
-    const compact = <><Title lines={1}>{location.name}</Title>{tabs}</>;
+    const compact = (
+      <View style={styles.compact}>
+        <Eyebrow>{eyebrow}</Eyebrow>
+        <Title lines={1}>{title}</Title>
+      </View>
+    );
     return (
       <ScrollingHeadContext.Provider value={compact}>
         <View style={styles.fill}>{page}</View>
       </ScrollingHeadContext.Provider>
     );
   }
-  const head = (
-    <>
-      <PageHeader eyebrow={townLabel(location.town)} title={location.name} {...(switcher === undefined ? {} : { side: switcher })} />
-      {tabs}
-    </>
-  );
+  const head = <PageHeader eyebrow={eyebrow} title={title} {...(side === undefined ? {} : { side })} />;
   if (isFillRoute(pathname)) {
     return (
       <View style={styles.fill}>
@@ -187,23 +138,8 @@ export function LocationShell(props: { children: React.ReactNode }): React.JSX.E
   );
 }
 
-const c = theme.color;
-
 const styles = StyleSheet.create({
   fill: { flex: 1 },
   missing: { gap: theme.space[4], alignItems: 'flex-start' },
-  // The row's 4px padding, inside the region, leaves room for the first and last tab's focus ring in the scroller.
-  tabsRegion: { borderBottomWidth: 1, borderBottomColor: c.border },
-  tabsScroll: { flexGrow: 1 },
-  tabs: { flexDirection: 'row', columnGap: 4, padding: ROW_PADDING },
-  tab: {
-    flexDirection: 'row', alignItems: 'center', columnGap: 8, minHeight: 44, paddingHorizontal: 12, borderWidth: 1,
-    borderColor: 'transparent',
-  },
-  tabHover: { backgroundColor: c.raised },
-  tabOn: { backgroundColor: c.raised, borderColor: c.border },
-  square: { width: 6, height: 6 },
-  squareOn: { backgroundColor: c.mint },
-  tabText: { ...theme.type.ui, color: c.text2 },
-  tabTextOn: { color: c.mint },
+  compact: { gap: theme.space[1] },
 });

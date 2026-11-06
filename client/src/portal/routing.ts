@@ -1,3 +1,4 @@
+import { formatDate } from './format';
 import type { AccessState, MeResponse, Role } from './schemas';
 
 // Access routing (spec 4.3) and the navigation per role (15.3), as pure functions of GET /api/me and the path.
@@ -28,8 +29,11 @@ const GATE_PAGES: Readonly<Record<string, readonly AccessState[]>> = {
 };
 
 const ID = '[^/]+';
-/** Client app pages any member may open (P9, P11 to P15, P18, and the tuning chat). */
-const MEMBER_PAGES = new RegExp(`^/(dashboard|settings|locations/${ID}(/(sales|sales/upload|notes|town|chat))?)$`);
+/**
+ * Client app pages any member may open (P9, P11 to P15, P18, P24 Analytics, P25 TownwiseAI). `chat` is the tuning
+ * chat's old address, which redirects to `agent`.
+ */
+const MEMBER_PAGES = new RegExp(`^/(dashboard|settings|locations/${ID}(/(analytics|sales|sales/upload|notes|town|agent|chat))?)$`);
 /** Client app pages for org admins only (P10, P16, P17). Checked before MEMBER_PAGES: /locations/new is not an id. */
 const ADMIN_PAGES = new RegExp(`^/(team|locations/new|locations/${ID}/settings)$`);
 const CONSOLE_PAGES = /^\/admin(\/.*)?$/;
@@ -68,6 +72,8 @@ export interface NavItem {
   current: Current;
   /** The console's pending request count, printed after the label. */
   count?: number | null;
+  /** The item starts the bar's right-hand group (Team, Settings), after the location's sections. */
+  end?: boolean;
 }
 
 function currentFor(path: string, own: string, below: RegExp | null): Current {
@@ -75,13 +81,36 @@ function currentFor(path: string, own: string, below: RegExp | null): Current {
   return below?.test(path) === true ? 'true' : null;
 }
 
-/** The client app's top bar (15.3): Locations and Settings, with Team for org admins. */
-export function clientNav(role: Role, pathname: string): NavItem[] {
+export type TabKey = 'home' | 'analytics' | 'sales' | 'upload' | 'notes' | 'town' | 'agent' | 'settings';
+
+const TAB_SUFFIX: Readonly<Record<TabKey, string>> = {
+  home: '', analytics: '/analytics', sales: '/sales', upload: '/sales/upload', notes: '/notes', town: '/town', agent: '/agent',
+  settings: '/settings',
+};
+
+/** The location's sections in the top bar, in order (15.3). Sales data and Location settings are reached from pages. */
+const SECTIONS: readonly (readonly [TabKey, string])[] = [
+  ['home', 'Home'], ['analytics', 'Analytics'], ['agent', 'TownwiseAI'], ['notes', 'Notes'], ['town', 'Town'], ['upload', 'Upload'],
+];
+
+/**
+ * The client app's top bar (15.3): the sections of `locationId` (Home, Analytics, TownwiseAI, Notes, Town, Upload),
+ * then Team for org admins and Settings. With no location (none yet, or not known yet) only Team and Settings.
+ * Analytics also marks Sales data, which lives under it.
+ */
+export function clientNav(role: Role, pathname: string, locationId: string | null): NavItem[] {
   const path = normalize(pathname);
-  const items: NavItem[] = [{ label: 'Locations', href: '/dashboard', current: currentFor(path, '/dashboard', /^\/locations\//) }];
-  if (role === 'org_admin') items.push({ label: 'Team', href: '/team', current: currentFor(path, '/team', null) });
-  items.push({ label: 'Settings', href: '/settings', current: currentFor(path, '/settings', /^\/settings\//) });
-  return items;
+  const items: NavItem[] = [];
+  if (locationId !== null) {
+    for (const [key, label] of SECTIONS) {
+      const href = locationHref(locationId, key);
+      const current = currentFor(path, href, null) ?? (key === 'analytics' && path === locationHref(locationId, 'sales') ? 'true' : null);
+      items.push({ label, href, current });
+    }
+  }
+  const account: NavItem[] = role === 'org_admin' ? [{ label: 'Team', href: '/team', current: currentFor(path, '/team', null) }] : [];
+  account.push({ label: 'Settings', href: '/settings', current: currentFor(path, '/settings', /^\/settings\//) });
+  return [...items, ...account.map((item, index) => (index === 0 ? { ...item, end: true } : item))];
 }
 
 /** The staff console's top bar (15.4). */
@@ -95,25 +124,12 @@ export function consoleNav(pathname: string, pendingCount: number | null): NavIt
   ];
 }
 
-export type TabKey = 'forecast' | 'sales' | 'notes' | 'town' | 'chat' | 'settings';
-
-export interface LocationTab {
-  key: TabKey;
-  label: string;
-  href: string;
-  current: boolean;
-}
-
-const TAB_SUFFIX: Readonly<Record<TabKey, string>> = {
-  forecast: '', sales: '/sales', notes: '/notes', town: '/town', chat: '/chat', settings: '/settings',
-};
-
-/** The tab a location path belongs to; the upload step (P13) belongs to Sales data. */
+/** The section a location path belongs to. The old chat address belongs to TownwiseAI, where it redirects. */
 export function tabOf(pathname: string): TabKey {
   const rest = /^\/locations\/[^/]+(\/.*)?$/.exec(normalize(pathname))?.[1] ?? '';
-  if (rest === '/sales' || rest.startsWith('/sales/')) return 'sales';
-  const found = (Object.keys(TAB_SUFFIX) as TabKey[]).find((key) => TAB_SUFFIX[key] === rest && key !== 'forecast');
-  return found ?? 'forecast';
+  if (rest === '/chat') return 'agent';
+  const found = (Object.keys(TAB_SUFFIX) as TabKey[]).find((key) => TAB_SUFFIX[key] === rest && key !== 'home');
+  return found ?? 'home';
 }
 
 /**
@@ -125,19 +141,45 @@ export function locationIdOf(pathname: string): string | null {
   return id === undefined || id === 'new' ? null : decodeURIComponent(id);
 }
 
-export function locationHref(locationId: string, tab: TabKey = 'forecast'): string {
+export function locationHref(locationId: string, tab: TabKey = 'home'): string {
   return `/locations/${encodeURIComponent(locationId)}${TAB_SUFFIX[tab]}`;
 }
 
-/** Forecast, Sales data, Notes, Town and Chat, with Settings for org admins (15.2, 15.3). */
-export function locationTabs(locationId: string, role: Role, pathname: string): LocationTab[] {
-  const current = tabOf(pathname);
-  const tabs: [TabKey, string][] = [['forecast', 'Forecast'], ['sales', 'Sales data'], ['notes', 'Notes'], ['town', 'Town'], ['chat', 'Chat']];
-  if (role === 'org_admin') tabs.push(['settings', 'Settings']);
-  return tabs.map(([key, label]) => ({ key, label, href: locationHref(locationId, key), current: key === current }));
+/**
+ * The location the top bar's sections open: the one in the path, else the last one opened in this sign-in, else
+ * the organization's first. `locations` is null while the organization loads; an id is then taken on trust, and
+ * once it has loaded, an id it lacks is passed over. Null with no location.
+ */
+export function navLocationId(pathname: string, lastOpened: string | null, locations: readonly { id: string }[] | null): string | null {
+  const known = (id: string | null): id is string => id !== null && (locations === null || locations.some((location) => location.id === id));
+  const here = locationIdOf(pathname);
+  if (known(here)) return here;
+  if (known(lastOpened)) return lastOpened;
+  return locations?.[0]?.id ?? null;
 }
 
-/** The tuning chat lays itself out to fill the screen, so its frame does not scroll. */
+/** The Monday of `today`'s week, on the device's calendar, as “Nov 2, 2026”. */
+function weekOf(today: Date): string {
+  const monday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - ((today.getDay() + 6) % 7));
+  const two = (value: number): string => String(value).padStart(2, '0');
+  return formatDate(`${String(monday.getFullYear())}-${two(monday.getMonth() + 1)}-${two(monday.getDate())}`);
+}
+
+/** Each location page's h1, under the eyebrow that names the location (15.2). */
+export function pageTitle(tab: TabKey, today: Date): string {
+  switch (tab) {
+    case 'home': return `Week of ${weekOf(today)}`;
+    case 'analytics': return 'Analytics';
+    case 'sales': return 'Sales data';
+    case 'upload': return 'Upload';
+    case 'notes': return 'Notes';
+    case 'town': return 'Town';
+    case 'agent': return 'TownwiseAI';
+    case 'settings': return 'Location settings';
+  }
+}
+
+/** TownwiseAI lays itself out to fill the screen, so its frame does not scroll (and the old chat address, briefly). */
 export function isFillRoute(pathname: string): boolean {
-  return /^\/locations\/[^/]+\/chat$/.test(normalize(pathname));
+  return /^\/locations\/[^/]+\/(agent|chat)$/.test(normalize(pathname));
 }
