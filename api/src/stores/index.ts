@@ -12,6 +12,7 @@ import { createOrgStore, type OrgStore } from './orgs.ts';
 import { createSalesDayStore, type SalesDayStore } from './sales-days.ts';
 import { createUploadStore, type UploadStore } from './uploads.ts';
 import { createViewAsGrantStore, type ViewAsGrantStore } from './view-as-grants.ts';
+import { createWelcomeStore, type WelcomeStore } from './welcomes.ts';
 
 export interface TownwiseStores {
   readonly orgs: OrgStore;
@@ -27,6 +28,8 @@ export interface TownwiseStores {
   readonly chatConversations: ChatConversationStore;
   readonly chatLiveTurns: ChatLiveTurnStore;
   readonly chatUsage: ChatUsageStore;
+  /** U11, statement moments. */
+  readonly welcomes: WelcomeStore;
 }
 
 /** Registers every Townwise model on `connection`; call it before ensureIndexes. */
@@ -44,5 +47,7 @@ export function createTownwiseStores(connection: Connection): TownwiseStores {
     chatConversations: createChatConversationStore(connection),
     chatLiveTurns: createChatLiveTurnStore(connection),
     chatUsage: createChatUsageStore(connection),
+    // U11, statement moments.
+    welcomes: createWelcomeStore(connection),
   };
 }

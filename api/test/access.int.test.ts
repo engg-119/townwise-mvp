@@ -36,7 +36,9 @@ async function person(name: string): Promise<{ email: string; session: TestSessi
 describe('GET /api/me states (4.2)', () => {
   it('no_org for a new person, with the signed-in user and no staff block', async () => {
     const { email, session } = await person('new');
-    expect(await me(session)).toEqual({ user: { id: session.userId, email }, access: { state: 'no_org' }, viewAs: null, staff: null });
+    expect(await me(session)).toEqual({
+      user: { id: session.userId, email }, access: { state: 'no_org' }, viewAs: null, staff: null, welcome: null,
+    });
   });
 
   it('member with the organization and role of the active seat', async () => {
@@ -166,6 +168,7 @@ describe('staff branch (4.2 step 2)', () => {
     const session = await signIn(server, STAFF_EMAIL);
     expect(await me(session)).toEqual({
       user: { id: session.userId, email: STAFF_EMAIL }, access: { state: 'staff_setup_required' }, viewAs: null, staff: null,
+      welcome: null,
     });
   });
 
@@ -180,7 +183,7 @@ describe('staff branch (4.2 step 2)', () => {
     const session = await signInStaff(server);
     expect(await me(session)).toEqual({
       user: { id: session.userId, email: STAFF_EMAIL }, access: { state: 'staff' }, viewAs: null,
-      staff: { verifiedUntil: new Date(start.getTime() + 60 * MINUTE).toISOString() },
+      staff: { verifiedUntil: new Date(start.getTime() + 60 * MINUTE).toISOString() }, welcome: null,
     });
   });
 

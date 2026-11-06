@@ -62,6 +62,8 @@ async function snapshotOf(org: Tenant): Promise<string> {
   for (const name of [
     'tw_members', 'tw_locations', 'tw_sales_days', 'tw_uploads', 'tw_notes', 'tw_view_as_grants', 'tw_audit_events',
     'tw_chat_conversations', 'tw_chat_live_turns', 'tw_chat_usage',
+    // U11, statement moments.
+    'tw_welcomes',
   ]) {
     docs.push(await server.connection.collection(name).find({ orgId }).sort({ _id: 1 }).toArray());
   }
@@ -97,6 +99,12 @@ function pathWithBIds(path: string): string {
   return path.replace(/:([A-Za-z]+)/g, (_match, name: string) => bIds()[name] ?? new Types.ObjectId().toHexString());
 }
 
+/**
+ * Writes that carry none of B's ids (no path id, no body) and act on the caller's own seat, so they succeed. Each
+ * entry is a deliberate exemption from the 4xx check; B's snapshot is still compared.
+ */
+const SELF_WRITES = new Set(['me.welcome']); // U11, statement moments.
+
 describe('isolation through the route table', () => {
   for (const route of TOWNWISE_ROUTES) {
     it(`${route.method} /api${route.path}: A’s member presenting B’s ids reads nothing of B and changes nothing`, async () => {
@@ -107,7 +115,8 @@ describe('isolation through the route table', () => {
         ...(route.method === 'GET' || route.method === 'DELETE' ? {} : { json: bIds() }),
       });
       const text = await res.text();
-      if (route.method !== 'GET') expect(res.status).toBeGreaterThanOrEqual(400);
+      if (SELF_WRITES.has(route.id)) expect(res.status).toBe(204);
+      else if (route.method !== 'GET') expect(res.status).toBeGreaterThanOrEqual(400);
       for (const secret of [...bSecrets(), b.inviteId, bInvitesAMember]) expect(text).not.toContain(secret);
       expect(await snapshotOf(b)).toBe(before);
     });

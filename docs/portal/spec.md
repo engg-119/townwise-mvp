@@ -193,6 +193,7 @@ interface MeResponse {
   access: Access;                              // during view-as: the target's access
   viewAs: ViewAsView | null;
   staff: { verifiedUntil: string } | null;    // set whenever the signed-in person's own state is 'staff'
+  welcome: { firstName: string | null; restaurant: string } | null;   // GET /api/me only (15.8); null in every other answer
 }
 ```
 
@@ -479,6 +480,17 @@ Fields are in Section 9. Indexes: `{ at: -1 }`, `{ orgId: 1, at: -1 }`, `{ actor
 7. Path ids are parsed with the mongo module’s `objectId` schema, so a malformed id is 400. Filter values are zod scalars. The only operators are built in code and wrapped in `trusted(...)` (**Exists**).
 8. Operations keyed by a person, or spanning organizations, live in one file, `api/src/stores/cross-tenant.ts`, with a closed list: `findActiveSeat(userId)`, `findOpenInvites(email)`, `claimInvite(inviteId, email, userId)`, `declineInvite(inviteId, email)`, `latestRemovedSeat(userId)`, `adminOrgStats()`, `peopleRecords()` and `deletePersonRecords(userId, email)` (10.7, Deletion). Only `access/resolve.ts`, the join and decline handlers and the staff handlers import it, and a test enforces that list.
 
+### 6.15 `tw_welcomes`
+
+| Field | Type | Rule |
+|---|---|---|
+| `_id` | ObjectId | |
+| `orgId` | ObjectId | the organization the welcome was shown in |
+| `userId` | string | the person it was shown to |
+| `seenAt` | Date | when the client started showing it; a later record keeps the first time (`$setOnInsert`) |
+
+Index: `{ orgId: 1, userId: 1 }` unique. A display marker, not an action, so it has no audit event. Deleted with the organization (10.7) and with the person, in every organization. [Build note: numbered 6.15 by the build plan, which reserves 6.11 to 6.14 for stored files.]
+
 ---
 
 ## 7. Authorization in one place
@@ -728,10 +740,13 @@ Emails shown for people (`uploadedByEmail`, `createdByEmail`, `MemberView.email`
 
 | Method and path | Policy | Request | Success | Extra errors |
 |---|---|---|---|---|
-| `GET /api/me` | signed_in | | 200 `MeResponse` | |
+| `GET /api/me` | signed_in | | 200 `MeResponse`, with `welcome` filled for the welcome statement (15.8) | |
 | `POST /api/me/join` | signed_in | `{ inviteId }` | 200 `MeResponse` | 403 `forbidden` (staff); 409 `no_invite`, `already_in_org` |
 | `POST /api/me/decline` | signed_in | `{ inviteId }` | 200 `MeResponse` | 403 `forbidden` (staff); 409 `no_invite` |
+| `POST /api/me/welcome` | member; `writes` only | no body | 204, idempotent (the first `seenAt` stays) | 403 `no_access`; 403 `view_as_read_only`; 429 |
 | `POST /api/access-requests` | signed_in, in `no_org`, `rejected` or `removed` | `{ orgName, contactName, contactRole, town: TownInput, locationCount, note?, placeId? }`, `placeId` a Google place id or null | 201 `MeResponse` (state `pending`; the request answers `placeId`, null when none) | 403 `forbidden` (staff or another state); 409 `request_exists`; 400 `unknown_town`; 400 `invalid_request` (a malformed `placeId` included); 429 |
+
+Only `GET /api/me` fills `welcome`; every other answer that carries a `MeResponse` (join, decline, a request, view-as start and end, leaving) carries `welcome: null`. `GET /api/me` still writes nothing (7.3): `POST /api/me/welcome` records the marker (6.15). [Build note: the route is `me.welcome`, `bodyLimit: 'none'`, no route limiter and no audit event.]
 
 ### 10.2a Places search
 
@@ -842,7 +857,7 @@ People come only from Townwise records and config: staff from `TOWNWISE_SUPERADM
 - **Delete a person** (`POST /api/admin/people/delete { email }`). The server normalizes the email and looks up the kit user with `users.findByEmail` (there may be none, for an address that was only invited).
   1. Refuse a staff address (400 `invalid_target`) and a person who holds an active seat (409 `person_has_seat`; staff remove the seat first, and the last-admin rule still applies). Answer 404 when there is no kit user and no Townwise record for the email. [Build note: after step 3 the server checks for an active seat again, since a join or an approval can seat the person while the deletion runs. One found then answers 409 `person_has_seat`, recorded as `staff_action.not_applied` (`person_has_seat`), before steps 4 and 5; the records step 3 deleted stay deleted, and a retry after the seat is removed completes the work. An approval that seats the person after this check finds the request gone and takes the seat back (F3 step 8); a join needs an invitation, which step 3 deleted, so only one added later can seat them, which the runbook checks for (Section 19, item 7).]
   2. Audit `person.deleted` with ids only.
-  3. Through `deletePersonRecords(userId, email)` (6.10 rule 8): delete the person’s access requests (by `userId`), their open invitations in every organization (`inviteEmail == email`), and their removed seats (`userId`, `status: 'removed'`). [Build note: also their tuning chat conversations and live turns in every organization (`tw_chat_conversations`, `tw_chat_live_turns`, by `userId`), which postdate this list (`tuning-chat.md`). The 404 in step 1 counts audit events as Townwise records, because the audit log keeps an address until its person is deleted (Section 17).]
+  3. Through `deletePersonRecords(userId, email)` (6.10 rule 8): delete the person’s access requests (by `userId`), their open invitations in every organization (`inviteEmail == email`), and their removed seats (`userId`, `status: 'removed'`). [Build note: also their tuning chat conversations and live turns in every organization (`tw_chat_conversations`, `tw_chat_live_turns`, by `userId`), which postdate this list (`tuning-chat.md`), and their welcome markers in every organization (`tw_welcomes`, by `userId`, 6.15; not counted in the answer). The 404 in step 1 counts audit events as Townwise records, because the audit log keeps an address until its person is deleted (Section 17).]
   4. When a kit user exists: call `revokeAllSessions(userId)` and `authStores.totp.remove(userId)` (both public, **Exists**).
   5. `redact` the email in the audit log (9.3).
   6. Answer the counts and `kitUserId`. The kit’s user record and its revoked session records are then deleted by hand, as a runbook step, because the kit has no user delete (Section 19, item 7). Until then, the person can still continue with Google, and they resolve to `no_org`.
@@ -850,7 +865,7 @@ People come only from Townwise records and config: staff from `TOWNWISE_SUPERADM
   Notes and uploads the person wrote stay with their organization; the author shows as “Deleted person” once the kit user is gone. View-as grants keep only ids and the staff-written reason.
 - **Delete an organization** (`DELETE /api/admin/orgs/:orgId`). The organization must be suspended first (409 `org_not_suspended`), so its members have already seen the paused page.
   1. Audit `org.deleted` with ids only.
-  2. Through `scopeForStaffOrg`: delete its `tw_sales_days`, `tw_uploads`, `tw_notes`, `tw_locations` and `tw_members`, and its access request (`fromRequestId`). [Build note: also its `tw_chat_conversations`, `tw_chat_live_turns` and `tw_chat_usage`, which postdate this list (`tuning-chat.md`). The response keeps the six counts above.]
+  2. Through `scopeForStaffOrg`: delete its `tw_sales_days`, `tw_uploads`, `tw_notes`, `tw_locations` and `tw_members`, and its access request (`fromRequestId`). [Build note: also its `tw_chat_conversations`, `tw_chat_live_turns` and `tw_chat_usage`, which postdate this list (`tuning-chat.md`), and its `tw_welcomes` (6.15). The response keeps the six counts above.]
   3. `redact` its name and its locations’ names in the audit log (9.3).
   4. Delete the `tw_orgs` row last, so a retry still finds the organization. [Build note: the delete matches `status: 'suspended'`, so an organization reactivated during the deletion keeps its row and the answer is 409 `org_not_suspended`, recorded as `staff_action.not_applied`; the records already deleted stay deleted, and suspending it and deleting again finishes. After the row goes, its `tw_sales_days` and `tw_chat_usage` are swept once more, since an upload or a tuning chat turn in flight can upsert after the first sweep; the late days count in `deletedDays`. This narrows the gap without closing it: a chat turn started before the suspension can still add chat usage for up to 150 seconds, an upload still running can write days after the second sweep, and its `tw_uploads` row, if written after the first sweep, is never swept.]
   
@@ -1153,7 +1168,7 @@ Every signed-in frame ends with a slim footer: a 1px `border` rule, then one `mo
 - **The primary button is white** (`cta`): `white` fill, `ground` label, `text2` fill on hover. It is square, at least 44px tall, with a 15px `button` label and 18px side padding. **One primary per page**, for its main action; everything else is an outline button (`tw-ob`) or a text link (`tw-tl`). [CONFIRM: extends the Button rules to app screens, where labels vary by page]
 - **StatusTag only for build status and kinds.** In progress (6px mint square) and Planned (6px outlined square) describe Townwise features, as on the homepage; College town, Seasonal town and Event town describe towns. A client’s own data state (“Not calibrated yet”, “Active”, “Invited”) is plain words, never a tag.
 - **Charts** follow the design system: every chart has a text summary and “Show the numbers”, prints its scale and year, and keeps its SVG `aria-hidden`. Client sales series are `mint`, solid, 2px (`stroke-series`), with “Scale fitted to this location.” Town charts keep the Northeast dashed and the county solid.
-- **Motion.** State changes only, 150 to 200ms with `--ease-out`. No spinners, shimmer, pulsing or counters. One reduced-motion switch zeroes everything.
+- **Motion.** State changes only, 150 to 200ms with `--ease-out`. No spinners, shimmer, pulsing or counters. One reduced-motion switch zeroes everything. The one exception is the two statement moments of 15.8, whose words fade in over 200ms each, 80ms apart, and which end within 5 seconds; reduced motion shows them whole and still.
 - **Voice.** Second person to the operator, first person plural for the team, short declarative sentences, no exclamation marks. Say what exists, and only that. U+2019 apostrophes and curly quotes in every visible string, no em dashes, ranges as “80 to 115”, a true minus (U+2212) for negatives.
 
 ### 15.7 Shared patterns
@@ -1170,6 +1185,24 @@ Every signed-in frame ends with a slim footer: a 1px `border` rule, then one `mo
 - **Numbers and dates.** Every numeral is `mono`, tabular. Guests print as whole numbers with thousands commas (“{n} guests”). Money prints in whole dollars with a `$` and thousands commas, rounded half up [CONFIRM: whole dollars in v1]. Dates always print their year (“Mar 2, 2026”), and times as “3:42 PM” in the viewer’s time zone. Day counts print as “{n} days”. No sample values ever appear in mockups: use `{slots}` (Placeholder data slot) for every number that comes from data.
 - **Hit targets** are at least 44px. Every control shows the focus ring.
 - **Phone (640px and below).** One column, 16px side margins, the top bar and banner as above, tables stacked, dialogs full width with 16px margins. There is no horizontal page scroll.
+
+### 15.8 Statement moments
+
+Two full-screen statements reveal word by word, hold, then dissolve into the page underneath. [Build note: the pieces are built (`client/src/portal/moments/`) and the server side is live; the player is not mounted in `PortalGate` yet, so nothing plays until the client wiring lands.]
+
+| Moment | When | Lead (`white`) | Follow (`text2`) |
+|---|---|---|---|
+| Request received | right after a request is sent: the access goes from `no_org`, `rejected` or `removed` to `pending` in this session | We’ve received your request for {orgName}. | We’ll let you in soon. |
+| Welcome | the first visit after approval, while `GET /api/me` carries `welcome` | Welcome to Townwise, {firstName}. (Welcome to Townwise. when `firstName` is null) | {restaurant}, ready to set up. |
+
+- **Who gets the welcome.** Only the person whose approved request created the organization, while the organization has no sales day, never under view-as. Invited teammates and admins of organizations staff created have the Joining notice instead. `firstName` is the first word of the request’s contact name, or null for an honorific (`Mr`, `Mrs`, `Ms`, `Mx`, `Dr`, `Prof`), an initial or a word over 40 characters. The client calls `POST /api/me/welcome` once when the moment starts, so it plays once across devices. [CONFIRM: welcome for the requester only]
+- **Copy.** No doubled full stop when a name already ends a sentence. The follow line of the request moment repeats the held page’s own sentence, so it stays true whether or not the approval email has shipped.
+- **Layout.** A `ground` layer over the portal frame, the top bar included, with no shadow, gradient or blur. The wordmark sits exactly where the top bar draws it. The statement is flush left in the content column, at most 760px wide, vertically centered, both lines at the h2 scale for the breakpoint, 12px apart. Every word is laid out at full size from the first frame and only its opacity changes, so nothing shifts. No horizontal scroll at any width.
+- **Timing.** The first word starts at 120ms. Each word fades in over 200ms (`--ease-out`), 80ms after the one before, closer together when a line would take longer than 640ms. A clause or a sentence inside a line holds 140ms more (at most twice a line). The follow starts 360ms after the lead lands, holds 1.4s once it lands, and the layer fades out over 200ms. Request received for a two-word name is gone at about 3.3s, and every moment ends within 5 seconds.
+- **Reduced motion.** Both lines whole at once, still for 2.4s, then gone at once.
+- **Any input ends it.** A press, touch or wheel is absorbed (it never reaches the page under the opaque layer) and fades the layer out; once that press is over, presses reach the page. On web a press is over when its click has landed on the layer, or 350ms after it lifts if no click comes, because a touch's click is aimed when the finger lifts; under reduced motion the layer goes at that point too. A key removes it at once and still does its job on the page (Tab moves focus). Repeats and lone modifier keys are ignored, and so is any input in the first 300ms, so the press that sent a request can’t end its moment. Android back dismisses it and is consumed. A moment that would start in a hidden tab keeps its ground up and waits until the tab is visible.
+- **Screen readers.** The visual words are hidden from assistive tech, and the statement is said once, as plain text: on web through a polite status region that exists before any moment, on native through an announcement. On native with a screen reader running there are no visuals at all. The layer never takes focus.
+- **One player.** `MomentProvider` in `PortalGate` plays one moment at a time; a page may call `useMoment().play(statement)` for its own statements and hold its own entrance while `useMoment().playing`.
 
 ---
 
@@ -1504,6 +1537,7 @@ Primary: “Sign in again” (kit `POST /auth/logout`, then `/sign-in`).
 
 - Townwise server code logs ids and counts only: `userId`, `orgId`, `locationId`, `memberId`, `requestId`, `grantId`, `uploadId`, `routeId`. It never logs emails, names, organization or location names, note text, request notes, view-as reasons, figures, file content or request bodies. This matches the privacy page’s promise for sign-in logs (“its own log lines carry your account ID, never your email address”).
 - Product log lines: `townwise.view_as_read`, `townwise.upload_applied`, `townwise.audit_write_failed` (error level), `townwise.access_denied { policy, code }`.
+- The welcome’s first name and organization name travel only in the `GET /api/me` body, never in a URL, log line or audit event. The welcome marker (6.15) is deleted with the organization and with the person.
 - The audit log (a database record) holds emails, organization names and view-as reasons. It never holds figures, note text, request notes or decision messages.
 - The client never logs (expo-shell rule 12, **Exists**) and never persists the file or the parsed rows.
 - **The privacy page must change before the portal ships.** The sentences on `feature/townwise-web` that become false are listed in 22.4. The new content needs to cover:
@@ -1625,6 +1659,7 @@ Named tests:
 - **Email:** normalization matches the kit for case and spaces.
 - **Towns:** `api/test/towns.test.ts` matches `api/src/towns.ts` against the literal list of twelve ids (Section 13).
 - **Indexes:** `documentDbIndexProblems(connection)` is empty with the Townwise models registered (mongo MODULE.md, DocumentDB).
+- **Welcome:** `api/test/welcome.int.test.ts`: only the approved requester of an organization with no sales day gets it, with their first name and the organization’s name; `POST /api/me/welcome` is 204 twice and then `welcome` is null; teammates, staff-created organizations, view-as (GET null, POST 403 `view_as_read_only`), `pending` and `no_org` (POST 403 `no_access`) get none; join, decline and request answers carry null; deleting the organization or the person deletes the markers; no log line holds the name. `api/test/welcome.test.ts` pins `firstNameOf`.
 
 Client tests:
 
@@ -1633,7 +1668,8 @@ Client tests:
 - the CSV parser’s RFC 4180 cases, delimiters, date orders, number formats, row modes and per-day sums;
 - the mapper never renders a cell: a file whose cells contain a sentinel name must never show it, except a mapped location value;
 - the view-as banner renders, and writes are disabled;
-- the twelve town ids in the client’s `towns.ts` match the same literal list as the api test.
+- the twelve town ids in the client’s `towns.ts` match the same literal list as the api test;
+- statement moments (`test/portal/moments/`): the copy and the timeline (`timing.test.ts`, `moments.test.ts`), and the player on native and web (`provider.test.native.tsx`, `provider.test.web.tsx`): one moment at a time, said once, hidden from assistive tech, dismissed by a key at once and by a press after the grace period, reduced motion, a native screen reader, Android back and a hidden tab.
 
 ---
 
@@ -1749,6 +1785,8 @@ Each is marked inline with “lead default”:
 ---
 
 ## 23. Changelog
+
+**2026-11-05, statement moments.** Two statements reveal word by word over the portal (15.6, 15.8): request received and the welcome. `GET /api/me` carries `welcome` for the approved requester’s first visit (4.1, 10.2), recorded by `POST /api/me/welcome` in `tw_welcomes` (6.15), which is deleted with the organization and the person (10.7, 17).
 
 **2026-11-05, Google place id.** An access request and a location carry an optional Google place id (F2, F3, 6.3, 6.4, 10.1, 10.2). Approval copies it to the first location. `access_request.created` records only `hasPlace` (9.2). The two Places routes, the `places` limiter and their error codes are in 7.2, 10.2a, 10.8 and 10.9.
 

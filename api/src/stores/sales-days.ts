@@ -9,6 +9,13 @@ export const SALES_DAYS_COLLECTION = 'tw_sales_days';
 
 /** A day with guests or net sales (spec 10.1 Coverage). */
 export const HAS_VALUE = { $or: [{ guests: { $ne: null } }, { netSalesCents: { $ne: null } }] };
+/**
+ * HAS_VALUE for a model's find filters, which are sanitized and would drop its operators: each operator copied and
+ * marked trusted(), so the two cannot drift.
+ */
+const HAS_VALUE_FILTER = {
+  $or: HAS_VALUE.$or.map((clause) => Object.fromEntries(Object.entries(clause).map(([field, op]) => [field, trusted({ ...op })]))),
+};
 
 export interface SalesDayFields {
   orgId: Types.ObjectId;
@@ -94,6 +101,8 @@ export interface SalesDayStore {
     uploadId: string; days: readonly SalesDay[]; replace: boolean; now: Date;
   }): Promise<{ inserted: number; matched: number }>;
   hasAny(scope: OrgScope, locationId: string): Promise<boolean>;
+  /** Whether any location of the organization has a day with a value (the welcome's “ready to set up”). */
+  hasAnyForOrg(scope: OrgScope): Promise<boolean>;
   /** Resolves the number of days deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
   /** Organization deletion (spec 10.7). Resolves the number deleted. */
@@ -187,6 +196,9 @@ export function createSalesDayStore(connection: Connection): SalesDayStore {
     },
     async hasAny(scope, locationId) {
       return (await SalesDay.exists(ofLocation(scope, locationId))) !== null;
+    },
+    async hasAnyForOrg(scope) {
+      return (await SalesDay.exists({ orgId: new Types.ObjectId(scope.orgId), ...HAS_VALUE_FILTER })) !== null;
     },
     async removeForLocation(scope, locationId) {
       return (await SalesDay.deleteMany(ofLocation(scope, locationId))).deletedCount;
