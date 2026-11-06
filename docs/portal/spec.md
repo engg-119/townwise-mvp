@@ -733,7 +733,7 @@ interface AuditEvent {
 | `member.role_changed` | `email`, `from`, `to` |
 | `member.removed` | `email`, `wasStatus` |
 | `member.left` | `email` |
-| `location.created`, `location.updated`, `location.deleted` | `name`, `townId` |
+| `location.created`, `location.updated`, `location.deleted` | `name`, `townId`; from `POST` and `PATCH /api/org/locations` also `hasPlace` (boolean: whether the location has a Google place after the write; never the place id or an address; approval’s `location.created` leaves it out) |
 | `sales.uploaded` | `locationId`, `dayCount`, `inserted`, `replaced`, `firstDate`, `lastDate`; from the file reader also `fileId` and `via: 'file'`, with the uploader as actor |
 | `sales.deleted` | `locationId`, `deletedDays`, `deletedFiles` |
 | `file.uploaded` | `locationId`, `kind`, `sizeBytes` |
@@ -2257,6 +2257,10 @@ Each is marked inline with “lead default”:
 ---
 
 ## 23. Changelog
+
+**2026-11-06, places search in the app.** The Google Places search is on P3 (Step 1, “Find your restaurant”), P10 and P16 while it is on (10.2a); P3 learns that by sending autocomplete `{}`, and P10 and P16 from `placeSearch` in `GET /api/org` (10.3). `POST` and `PATCH /api/org/locations` take a `placeId`: the API asks Google for the place, refuses a town that isn’t its own, stores Google’s current id, and spends one call of the `places` budget for it (6.4, 10.3, 10.8, 10.9). `location.created` and `location.updated` add `hasPlace` (9.2). A location keeps the place’s id and town, never the address or the map.
+
+**2026-11-06, onboarding step 3.** Home shows the drop screen (P11, “Step 3, Your history”) while the organization has locations and none has a stored day: files go to stored files (10.11, 11A) through the upload queue, the import is read on the server with its questions on the screen, and Done hands over to Home. While stored files are off (503 `files_unavailable`) it offers the browser upload (11.1) instead. It replaces `home/onboarding.ts`’s stub.
 
 **2026-11-06, statement moments on.** `MomentProvider` is mounted in `PortalGate`, and the two moments play (15.8): request received when this session's access goes to `pending`, and the welcome while `GET /api/me` carries it (`welcome` joins the client's `MeResponse` schema). Never under view-as. The web live region drops `role="status"` so it never competes with a page's notice. Tests in Section 20.
 
