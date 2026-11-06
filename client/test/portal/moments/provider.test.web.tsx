@@ -135,20 +135,75 @@ test('input in the first 300ms is ignored, so the key that sent the request canâ
   expect(window.getComputedStyle(shownLayer()).pointerEvents).not.toBe('none');
 });
 
-test('a pointerdown fades it and the press does not reach the page', () => {
+function pointerEventsOf(root: HTMLElement): string {
+  return window.getComputedStyle(root).pointerEvents;
+}
+
+test('a press fades it and holds it until its click has landed, so the press does not reach the page', () => {
   pagePress.mockClear();
   show(RECEIVED);
   advance(400);
   const root = shownLayer();
+  // A touch's click is hit-tested when the finger lifts: the layer must still be there to take it.
   fireEvent.pointerDown(root);
+  expect(pointerEventsOf(root)).toBe('auto');
+  advance(50);
+  fireEvent.pointerUp(root);
+  expect(pointerEventsOf(root)).toBe('auto');
   fireEvent.mouseDown(root);
   fireEvent.click(root);
   expect(pagePress).not.toHaveBeenCalled();
-  // From that instant presses reach the page; the layer is gone after its 200ms fade.
-  expect(window.getComputedStyle(root).pointerEvents).toBe('none');
-  advance(199);
+  // From the click on, presses reach the page; the layer is gone at the end of its 200ms fade.
+  expect(pointerEventsOf(root)).toBe('none');
+  advance(149);
   expect(layer()).not.toBeNull();
   advance(1);
+  expect(layer()).toBeNull();
+});
+
+test('reduced motion: a press removes the layer once its click has landed, not on pointerdown', () => {
+  prefersReducedMotion();
+  show(RECEIVED);
+  advance(400);
+  const root = shownLayer();
+  fireEvent.pointerDown(root);
+  expect(layer()).not.toBeNull();
+  fireEvent.pointerUp(root);
+  expect(layer()).not.toBeNull();
+  fireEvent.click(root);
+  expect(layer()).toBeNull();
+});
+
+test('a lift with no click lets presses through after 350ms, and a cancelled press at once', () => {
+  show(RECEIVED);
+  advance(400);
+  fireEvent.pointerDown(shownLayer());
+  fireEvent.pointerUp(shownLayer());
+  // The 200ms fade is over, but the press still holds the layer until its click could have come.
+  advance(349);
+  expect(pointerEventsOf(shownLayer())).toBe('auto');
+  advance(1);
+  expect(layer()).toBeNull();
+  cleanup();
+
+  prefersReducedMotion();
+  show(RECEIVED);
+  advance(400);
+  fireEvent.pointerDown(shownLayer());
+  // A scroll took the touch over: no click follows.
+  fireEvent.pointerCancel(shownLayer());
+  expect(layer()).toBeNull();
+});
+
+test('a press held through the automatic exit keeps the layer until it ends', () => {
+  show(RECEIVED);
+  // In the grace period: it does not dismiss, but it is down on the layer.
+  advance(100);
+  fireEvent.pointerDown(shownLayer());
+  advance(5000);
+  expect(pointerEventsOf(shownLayer())).toBe('auto');
+  fireEvent.pointerUp(shownLayer());
+  fireEvent.click(shownLayer());
   expect(layer()).toBeNull();
 });
 

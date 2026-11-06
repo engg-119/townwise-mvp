@@ -25,6 +25,12 @@ export const HOLD_MS = 1400;
 export const EXIT_MS = 200;
 /** Input this soon after the timeline starts is ignored, so the press or Enter that sent a request can't end it. */
 export const GRACE_MS = 300;
+/**
+ * Web: after the last press on the layer lifts, the layer stays hit-testable until that press's click lands on it,
+ * or this long if no click comes. A touch's click is hit-tested when the finger lifts, so a layer that let presses
+ * through sooner would hand that click to the control underneath.
+ */
+export const CLICK_WAIT_MS = 350;
 /** Reduced motion: both lines whole and still for this long, then the layer goes at once. */
 export const REDUCED_HOLD_MS = 2400;
 

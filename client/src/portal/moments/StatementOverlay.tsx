@@ -6,7 +6,7 @@ import {
 import { theme } from '../../theme';
 import { useBreakpoint } from '../hooks';
 import { Wrap } from '../ui/layout';
-import { wordsOf, timeline, GRACE_MS, type Timeline } from './timing';
+import { wordsOf, timeline, CLICK_WAIT_MS, GRACE_MS, type Timeline } from './timing';
 import type { Statement } from './moments';
 import { WordReveal } from './WordReveal';
 
@@ -15,7 +15,10 @@ import { WordReveal } from './WordReveal';
 //
 // - It never takes focus and is hidden from assistive tech; the provider announces the statement once.
 // - A press, touch or wheel is absorbed (it never reaches the page under the opaque layer) and fades the layer out;
-//   from that instant the layer lets presses through. A key removes it at once and still does its job on the page.
+//   once that press is over, the layer lets presses through. A key removes it at once and still does its job on the
+//   page. On web a press is over when its click has landed on the layer (or CLICK_WAIT_MS after it lifts): a touch's
+//   click is hit-tested when the finger lifts, so letting presses through on pointerdown would hand it to the control
+//   underneath. The same hold keeps the layer in place through an automatic exit while a press is down on it.
 //   Input in the first GRACE_MS of the timeline is ignored, so the press that sent a request can't end its moment.
 // - Android back dismisses it and is consumed.
 // - The motion variant is fixed when the timeline starts; a later change of the setting is ignored.
@@ -51,15 +54,21 @@ export function StatementOverlay(props: StatementOverlayProps): React.JSX.Elemen
   const waiting = props.waiting === true;
   const { width } = useBreakpoint();
   const [plan, setPlan] = useState<Timeline | null>(null);
-  /** From the instant the layer starts to leave, presses reach the page. */
+  /** Once the layer is leaving and no press holds it, presses reach the page. */
   const [exiting, setExiting] = useState(false);
   const [clock] = useState(() => new Animated.Value(0));
   const [fade] = useState(() => new Animated.Value(1));
   const [words] = useState(() => ({ lead: wordsOf(statement.lead), follow: wordsOf(statement.follow) }));
   const callbacks = useRef({ onStart: props.onStart, onDone: props.onDone });
   useEffect(() => { callbacks.current = { onStart: props.onStart, onDone: props.onDone }; });
-  /** What the timers and listeners share; never read during render. */
-  const run = useRef({ startedAt: null as number | null, exiting: false, done: false, exitMs: 0, exitTimer: null as ReturnType<typeof setTimeout> | null });
+  /**
+   * What the timers and listeners share; never read during render. `pressed` counts presses down on the layer (web);
+   * `liftTimer` runs from the last one lifting until its click lands.
+   */
+  const run = useRef({
+    startedAt: null as number | null, exiting: false, faded: false, done: false, exitMs: 0,
+    exitTimer: null as ReturnType<typeof setTimeout> | null, pressed: 0, liftTimer: null as ReturnType<typeof setTimeout> | null,
+  });
 
   // The timeline starts once the motion setting is known and the tab is visible (adjusting state while rendering, so
   // the words and the start are in one commit).
@@ -72,21 +81,34 @@ export function StatementOverlay(props: StatementOverlayProps): React.JSX.Elemen
     if (state.done) return;
     state.done = true;
     if (state.exitTimer !== null) clearTimeout(state.exitTimer);
+    if (state.liftTimer !== null) clearTimeout(state.liftTimer);
     callbacks.current.onDone();
   }, []);
+
+  /** Once the layer is leaving and no press holds it: removed if faded, otherwise lets presses through. */
+  const settle = useCallback(() => {
+    const state = run.current;
+    if (state.done || !state.exiting || state.pressed > 0 || state.liftTimer !== null) return;
+    if (state.faded) finish();
+    else setExiting(true);
+  }, [finish]);
 
   const leave = useCallback(() => {
     const state = run.current;
     if (state.exiting || state.done) return;
     state.exiting = true;
-    setExiting(true);
     if (state.exitMs === 0) {
-      finish();
-      return;
+      state.faded = true;
+    } else {
+      Animated.timing(fade, { toValue: 0, duration: state.exitMs, easing: EASE_OUT, useNativeDriver: NATIVE_DRIVER }).start();
+      state.exitTimer = setTimeout(() => {
+        state.exitTimer = null;
+        state.faded = true;
+        settle();
+      }, state.exitMs);
     }
-    Animated.timing(fade, { toValue: 0, duration: state.exitMs, easing: EASE_OUT, useNativeDriver: NATIVE_DRIVER }).start();
-    state.exitTimer = setTimeout(finish, state.exitMs);
-  }, [fade, finish]);
+    settle();
+  }, [fade, settle]);
 
   /** Input counts only after the timeline started and its grace period passed. */
   const inputCounts = useCallback((): boolean => {
@@ -112,8 +134,9 @@ export function StatementOverlay(props: StatementOverlayProps): React.JSX.Elemen
   }, [plan, clock, leave]);
 
   useEffect(() => () => {
-    const { exitTimer } = run.current;
+    const { exitTimer, liftTimer } = run.current;
     if (exitTimer !== null) clearTimeout(exitTimer);
+    if (liftTimer !== null) clearTimeout(liftTimer);
   }, []);
 
   // Web keyboard: any key but a repeat or a lone modifier removes the layer at once (nothing animates on keyboard
@@ -138,6 +161,43 @@ export function StatementOverlay(props: StatementOverlayProps): React.JSX.Elemen
     return () => { subscription.remove(); };
   }, [leave]);
 
+  // Web: the end of a press on the layer, heard on window so a press released anywhere still ends. Its click ends the
+  // hold (bubbling, so after it has reached the layer); a lift waits CLICK_WAIT_MS for that click; a cancel (a scroll
+  // took over) sends none.
+  useEffect(() => {
+    if (Platform.OS !== 'web') return undefined;
+    const state = run.current;
+    const release = (): void => {
+      if (state.liftTimer !== null) clearTimeout(state.liftTimer);
+      state.liftTimer = null;
+      settle();
+    };
+    const onUp = (event: Event): void => {
+      if (state.pressed === 0) return;
+      state.pressed -= 1;
+      if (state.pressed > 0) return;
+      if (event.type === 'pointercancel') {
+        release();
+        return;
+      }
+      if (state.liftTimer !== null) clearTimeout(state.liftTimer);
+      state.liftTimer = setTimeout(release, CLICK_WAIT_MS);
+    };
+    const onClick = (): void => {
+      if (state.pressed === 0 && state.liftTimer === null) return;
+      state.pressed = 0;
+      release();
+    };
+    window.addEventListener('pointerup', onUp, true);
+    window.addEventListener('pointercancel', onUp, true);
+    window.addEventListener('click', onClick);
+    return () => {
+      window.removeEventListener('pointerup', onUp, true);
+      window.removeEventListener('pointercancel', onUp, true);
+      window.removeEventListener('click', onClick);
+    };
+  }, [settle]);
+
   // Web wheel: react-native-web forwards no onWheel, so it is a DOM listener on the layer.
   const surface = useRef<React.ComponentRef<typeof View>>(null);
   useEffect(() => {
@@ -154,7 +214,14 @@ export function StatementOverlay(props: StatementOverlayProps): React.JSX.Elemen
   };
   const pressProps = Platform.OS === 'web'
     ? {
-      onPointerDown: onPress,
+      // Every press down on the layer holds it, a press in the grace period too.
+      onPointerDown: () => {
+        const state = run.current;
+        state.pressed += 1;
+        if (state.liftTimer !== null) clearTimeout(state.liftTimer);
+        state.liftTimer = null;
+        onPress();
+      },
       // Keeps focus where the page put it: a press on a plain element would otherwise blur it.
       onMouseDown: (event: { preventDefault: () => void }) => { event.preventDefault(); },
     }
