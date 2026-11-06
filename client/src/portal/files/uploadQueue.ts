@@ -475,8 +475,8 @@ export function createUploadQueue(deps: {
 }
 
 /**
- * The queue for a screen (onboarding's HistoryStep): one per location, stopped when the screen closes. Under view-as no
- * queue is created and `add` does nothing.
+ * The queue for a screen (`onboarding/HistoryStep`, onboarding step 3 on Home): one per location, stopped when the
+ * screen closes. Under view-as no queue is created and `add` does nothing.
  */
 export function useUploadQueue(locationId: string, opts: { purpose?: FilePurpose } = {}): UploadQueue {
   const { api } = usePortal();
