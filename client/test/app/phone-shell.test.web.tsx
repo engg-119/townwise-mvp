@@ -3,6 +3,7 @@ import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
+import { COMPOSER_LABEL } from '../../src/chat/ui/Composer';
 import type { MeResponse } from '../../src/portal/schemas';
 import { VIEW_AS_LINE_ID } from '../../src/portal/shell/ViewAsBanner';
 import { appRoutes, seededRoot } from '../helpers/app';
@@ -134,16 +135,16 @@ describe.each([
     const sections = screen.getByRole('region', { name: 'Sections' });
     expect(thread.contains(sections)).toBe(false);
     expect(within(sections).getByRole('link', { name: 'TownwiseAI' }).getAttribute('aria-current')).toBe('page');
-    const composer = screen.getByLabelText('Message');
+    const composer = screen.getByLabelText(COMPOSER_LABEL);
     expect(thread.contains(composer)).toBe(false);
     expect(screen.getByRole('button', { name: 'Send' })).toBeTruthy();
   });
 
-  test('the composer is one row: the input, named Message with no label drawn, at one line, and Send beside it', async () => {
+  test('the composer is one row: the input, named by its label with no label drawn, at one line, and Send beside it', async () => {
     renderAt('/locations/l1/agent', me);
     await screen.findByTestId('chat-thread');
-    const input = screen.getByLabelText('Message');
-    expect(screen.queryByText('Message')).toBeNull();
+    const input = screen.getByLabelText(COMPOSER_LABEL);
+    expect(screen.queryByText(COMPOSER_LABEL)).toBeNull();
     expect(input.tagName).toBe('TEXTAREA');
     expect(input.getAttribute('rows')).toBe('1');
     expect(style(input).minHeight).toBe('44px');
@@ -164,11 +165,11 @@ test('at 320px the composer grows with its text, up to its maximum, and starts o
   try {
     renderAt('/locations/l1/agent', meOf(ACCESS.member));
     await screen.findByTestId('chat-thread');
-    const input = screen.getByLabelText<HTMLTextAreaElement>('Message');
+    const input = screen.getByLabelText<HTMLTextAreaElement>(COMPOSER_LABEL);
     expect(input.style.height).toBe('46px');
     fireEvent.change(input, { target: { value: 'Closed\nfor the\nholidays' } });
     expect(input.style.height).toBe('94px');
-    expect(style(input).maxHeight).toBe('160px');
+    expect(style(input).maxHeight).toBe('200px');
     fireEvent.change(input, { target: { value: '' } });
     expect(input.style.height).toBe('46px');
   } finally {

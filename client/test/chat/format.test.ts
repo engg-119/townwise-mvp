@@ -1,6 +1,6 @@
-import { chatEventOf } from '../../src/chat/api';
-import { formatDate, formatDates, guestsText, toolLabel, weekdaysText } from '../../src/chat/format';
-import { PROPOSAL } from '../helpers/chat';
+import { chatEventOf, loadAgentPanel } from '../../src/chat/api';
+import { dayText, formatDate, formatDates, guestsText, rangeText, weekdayName, weekdaysText } from '../../src/chat/format';
+import { fakeChatApi, PROPOSAL } from '../helpers/chat';
 
 test('a proposal reads in plain words', () => {
   expect(formatDate('2026-03-01')).toBe('March 1, 2026');
@@ -16,19 +16,37 @@ test('a proposal reads in plain words', () => {
   expect(guestsText(null)).toBeNull();
 });
 
-test('every tool has a status line, and an unknown one still says something', () => {
-  expect(['get_location_overview', 'get_sales_days', 'list_notes', 'get_town_profile', 'propose_note'].map(toolLabel)).toEqual([
-    'Reading the sales summary', 'Reading sales history', 'Reading your notes', 'Reading the town profile', 'Writing a note',
-  ]);
-  expect(toolLabel('something_new')).toBe('Looking something up');
+test('date ranges are short, with the year once when both ends share it', () => {
+  expect(rangeText('2026-10-01', '2026-10-31')).toBe('Oct 1 to Oct 31, 2026');
+  expect(rangeText('2025-12-20', '2026-01-03')).toBe('Dec 20, 2025 to Jan 3, 2026');
+  expect(rangeText('2026-10-01', '2026-10-01')).toBe('Oct 1, 2026');
+  expect(rangeText('soon', 'later')).toBe('soon to later');
+  expect(dayText('2026-11-26')).toBe('Thu, Nov 26, 2026');
+  expect(weekdayName(1)).toBe('Mondays');
 });
 
 test('stream events are read by type; unknown events and data that does not match are dropped', () => {
   expect(chatEventOf({ event: 'text', data: '{"delta":"Hi"}' })).toEqual({ type: 'text', delta: 'Hi' });
-  expect(chatEventOf({ event: 'proposal', data: JSON.stringify({ proposal: { ...PROPOSAL, weekdays: undefined, detail: undefined } }) }))
-    .toEqual({ type: 'proposal', proposal: { ...PROPOSAL, weekdays: null, detail: null } });
+  expect(chatEventOf({ event: 'proposal', data: JSON.stringify({ id: 'p1', proposal: { ...PROPOSAL, weekdays: undefined, detail: undefined } }) }))
+    .toEqual({ type: 'proposal', id: 'p1', proposal: { ...PROPOSAL, weekdays: null, detail: null } });
+  // A proposal without the call's id can't be saved through the proposal route: dropped.
+  expect(chatEventOf({ event: 'proposal', data: JSON.stringify({ proposal: PROPOSAL }) })).toBeNull();
+  expect(chatEventOf({ event: 'tool', data: '{"id":"t1","name":"list_notes","state":"done","input":null,"result":{"count":3}}' }))
+    .toEqual({ type: 'tool', id: 't1', name: 'list_notes', state: 'done', input: null, result: { count: 3 } });
+  // Views may be left out on running: they read as null.
+  expect(chatEventOf({ event: 'tool', data: '{"id":"t1","name":"list_notes","state":"running"}' }))
+    .toEqual({ type: 'tool', id: 't1', name: 'list_notes', state: 'running', input: null, result: null });
   expect(chatEventOf({ event: 'done', data: '{"stopReason":"end_turn","costUsd":0.01}' })).toEqual({ type: 'done', stopReason: 'end_turn' });
-  expect(chatEventOf({ event: 'tool', data: '{"name":"list_notes","state":"later"}' })).toBeNull();
+  expect(chatEventOf({ event: 'tool', data: '{"id":"t1","name":"list_notes","state":"later"}' })).toBeNull();
   expect(chatEventOf({ event: 'text', data: 'not json' })).toBeNull();
   expect(chatEventOf({ event: 'message', data: '{}' })).toBeNull();
+});
+
+test('the side panel reads questions in the shape the API documents', async () => {
+  // Copied from api/README.md (Tuning chat) and docs/portal/tuning-chat.md section 8, so the two sides can't drift.
+  const api = fakeChatApi();
+  const weekday = { id: 'weekday_1_2026-01-05_2026-10-26', kind: 'weekday', weekday: 1, from: '2026-01-05', to: '2026-10-26', noSalesCount: 30, weekdayCount: 40 };
+  const gap = { id: 'gap_2026-03-02_2026-03-04', kind: 'gap', from: '2026-03-02', to: '2026-03-04', dayCount: 3 };
+  api.panel = { questions: [weekday, gap], activity: [] };
+  expect(await loadAgentPanel(api, 'l1')).toEqual({ questions: [weekday, gap], activity: [] });
 });
