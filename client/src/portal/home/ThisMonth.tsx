@@ -10,8 +10,8 @@ import { eventLine, monthFactLine, monthFactsHead, monthGrid, monthItems, type M
 import { MONTH_NAMES, type Metric } from '../analytics/words';
 import { weekdaysLine } from '../locations/noteRules';
 import { useBreakpoint } from '../hooks';
+import { PeopleInTownSummary } from '../estimates/PeopleInTownSummary';
 import { DATA_YEAR, SOURCES, townProfile } from '../towns';
-import { StatusTag } from '../ui/feedback';
 import { Stack } from '../ui/layout';
 import { Eyebrow, Heading, Mono, Small } from '../ui/text';
 import { MonthGrid } from './MonthGrid';
@@ -19,12 +19,13 @@ import { MonthGrid } from './MonthGrid';
 // This month in {Town} (home.md 2.5): only sourced facts. The month as a grid, then every town event, holiday and
 // note on it in date order with its sources; the county's food-service employment for the month from the bundled
 // BLS data (one of the twelve towns only), with its caveat; and this month in the location's past years, each with
-// its day count. How many people are in town is not known yet, so that line is Planned (F8 mounts the estimate
-// here once it exists, labelled as model output).
+// its day count. Then who's in town: the month's people in town summary (spec 13.2), which reads on its own and
+// says the term periods in words, a headcount range only where every input has a source (otherwise that Townwise
+// can't put a number on it, Planned), the location's own days by term, and where each came from.
 
 const BLS = SOURCES.find((source) => source.url.startsWith('https://www.bls.gov/'));
 
-export const PEOPLE_PLANNED = 'An estimate of how many people are in town each day is planned.';
+export const PEOPLE_HEAD = 'Who’s in town';
 
 export function ThisMonth(props: {
   today: string;
@@ -32,8 +33,9 @@ export function ThisMonth(props: {
   calendar: Calendar;
   facts: readonly MonthFact[];
   metric: Metric;
+  locationId: string;
 }): React.JSX.Element {
-  const { today, context, calendar, facts, metric } = props;
+  const { today, context, calendar, facts, metric, locationId } = props;
   const town = calendar.town;
   const monthIndex = Number(today.slice(5, 7)) - 1;
   const monthName = MONTH_NAMES[monthIndex] ?? '';
@@ -85,10 +87,10 @@ export function ThisMonth(props: {
           <Mono tone="text3">Averages leave out closed days.</Mono>
         </Stack>
       )}
-      <View style={styles.planned}>
-        <StatusTag kind="planned" label="Planned" />
-        <Small>{PEOPLE_PLANNED}</Small>
-      </View>
+      <Stack gap={4}>
+        <Small white>{PEOPLE_HEAD}</Small>
+        <PeopleInTownSummary locationId={locationId} month={today.slice(0, 7)} />
+      </Stack>
     </View>
   );
 }
@@ -105,5 +107,4 @@ const styles = StyleSheet.create({
   dateWide: { width: 112 },
   body: { flex: 1, minWidth: 0, gap: 2 },
   source: { ...theme.type.mono, color: c.text2, minHeight: 44, lineHeight: 44, textDecorationLine: 'underline', textDecorationColor: c.line },
-  planned: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 12, rowGap: 8 },
 });

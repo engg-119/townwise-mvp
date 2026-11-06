@@ -5,8 +5,8 @@ import {
   mondayOf, monthFactLine, monthFacts, pastDay, sameWeekdayYearsAgo, summaryLabel, thisWeek, vsUsualLine, weekDates, type HomeInput,
 } from '../../../src/portal/analytics/week';
 import { BAR_ORDER_BODY } from '../../../src/portal/home/BarOrder';
-import { FORECAST_LINE, QUESTIONS_PLANNED } from '../../../src/portal/home/Home';
-import { PEOPLE_PLANNED } from '../../../src/portal/home/ThisMonth';
+import { FORECAST_LINE, questionsLabel } from '../../../src/portal/home/Home';
+import { PEOPLE_HEAD } from '../../../src/portal/home/ThisMonth';
 import { calendarBody, holiday, note, run, townEvent } from '../analytics/fakes';
 
 // Home's honesty rule (home.md 0, build plan 6 U8): no number is ever given for a day after the last day of data
@@ -88,13 +88,15 @@ test('no history at all: no figure anywhere', () => {
 });
 
 test('the fixed copy names what is not built yet and promises nothing', () => {
-  for (const line of [FORECAST_LINE, QUESTIONS_PLANNED, BAR_ORDER_BODY, PEOPLE_PLANNED]) {
+  for (const line of [FORECAST_LINE, BAR_ORDER_BODY, PEOPLE_HEAD]) {
     expect(line).not.toMatch(FORECAST_WORDING);
     expect(line).not.toMatch(/\d/);
   }
   expect(LAST_YEAR_FOOTNOTE).not.toMatch(FORECAST_WORDING);
   expect(FORECAST_LINE).toMatch(/never a guess/);
-  // TownwiseAI's questions exist on its page (U9 step 4, U10), so only Home's count of them (F5) is planned.
-  expect(QUESTIONS_PLANNED).not.toMatch(/questions .* are planned/i);
-  expect(QUESTIONS_PLANNED).toMatch(/on its page/);
+  // The questions link is a count of what GET .../agent asks, and nothing more.
+  expect(questionsLabel(1)).toBe('1 question from TownwiseAI');
+  expect(questionsLabel(5)).toBe('5 questions from TownwiseAI');
+  expect(questionsLabel(1200)).toBe('1,200 questions from TownwiseAI');
+  expect(questionsLabel(2)).not.toMatch(FORECAST_WORDING);
 });

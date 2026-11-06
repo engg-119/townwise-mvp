@@ -16,12 +16,13 @@ import type { Calendar } from '../../../src/portal/analytics/api';
 import type { DayRecord } from '../../../src/portal/analytics/history';
 import { LAST_YEAR_FOOTNOTE } from '../../../src/portal/analytics/week';
 import { BAR_ORDER_BODY } from '../../../src/portal/home/BarOrder';
-import { FORECAST_LINE, QUESTIONS_PLANNED } from '../../../src/portal/home/Home';
-import { PEOPLE_PLANNED } from '../../../src/portal/home/ThisMonth';
+import { FORECAST_LINE } from '../../../src/portal/home/Home';
+import { PEOPLE_HEAD } from '../../../src/portal/home/ThisMonth';
 import type { LocationSummary, MeResponse } from '../../../src/portal/schemas';
 import { ACCESS, deferred, fakePortalApi, locationOf, meOf, offline, orgOf, viewAsMe, type FakePortalApi } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { analyticsFake, calendarBody, historyBody, holiday, note, run, townEvent } from '../analytics/fakes';
+import { NOVEMBER } from '../estimates/fakes';
 
 // P11 Home on native (home.md 2, D21): no SVG and no heatmap, so every section keeps its words and its table.
 // Synthetic days only. Pillars: the In progress and Planned lines name what Townwise doesn't do yet and the
@@ -55,6 +56,13 @@ const EVENTS = [
   townEvent({ start: '2025-11-08', title: 'Sample game last year' }),
 ];
 const NOTES = [note({ startDate: '2026-11-06', detail: 'A rehearsal dinner.' })];
+const AGENT = `${PATH}/agent`;
+const PEOPLE = `${PATH}/people-in-town?from=2026-11-01&to=2026-11-30`;
+const GAP = (from: string, to: string, dayCount: number) => ({ id: `gap_${from}_${to}`, kind: 'gap', from, to, dayCount });
+const QUESTIONS = [
+  { id: 'weekday_1_2026-03-01_2026-05-31', kind: 'weekday', weekday: 1, from: '2026-03-01', to: '2026-05-31', noSalesCount: 13, weekdayCount: 13 },
+  GAP('2026-05-12', '2026-05-13', 2),
+];
 
 function portal(options: {
   me?: MeResponse;
@@ -64,12 +72,18 @@ function portal(options: {
   /** The history read never answers. */
   pending?: boolean;
   history?: unknown;
+  /** GET .../agent's body, or an error; two questions by default. */
+  agent?: unknown;
+  /** GET .../people-in-town's body for November, or an error. */
+  people?: unknown;
 } = {}): FakePortalApi {
   const me = options.me ?? meOf(ACCESS.member);
   const fake = analyticsFake({
     [`${PATH}/sales/history`]: options.history ?? historyBody(options.days ?? DAYS),
     [`${PATH}/notes`]: { notes: NOTES },
     [CALENDAR]: calendarBody({ events: EVENTS, ...options.calendar }),
+    [AGENT]: options.agent ?? { questions: QUESTIONS, activity: [] },
+    [PEOPLE]: options.people ?? NOVEMBER,
   });
   const base = fake.json.bind(fake);
   if (options.pending === true) fake.json = (path, schema, opts) => (path.endsWith('/sales/history') ? deferred<never>().promise : base(path, schema, opts));
@@ -86,7 +100,7 @@ test('with history: the lead, this week with the calendar and past years, bar or
   expect(screen.getByText('From your sales through Wed, Nov 4, 2026 and Hanover’s researched calendar.')).toBeTruthy();
   expect(screen.getByText(FORECAST_LINE)).toBeTruthy();
   expect(screen.getByText('In progress')).toBeTruthy();
-  expect(screen.getByText(QUESTIONS_PLANNED)).toBeTruthy();
+  expect(await screen.findByRole('link', { name: '2 questions from TownwiseAI' })).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Ask TownwiseAI' })).toBeTruthy();
 
   // This week: the summary of last year's same week, then each day.
@@ -127,8 +141,14 @@ test('with history: the lead, this week with the calendar and past years, bar or
   expect(screen.getByText('Your November in past years')).toBeTruthy();
   expect(screen.getByText(/^\d+ guests a day over 30 days in 2025, /)).toBeTruthy();
   expect(screen.getByText(/^\d+ guests a day over 30 days in 2024, /)).toBeTruthy();
-  expect(screen.getByText(PEOPLE_PLANNED)).toBeTruthy();
-  expect(screen.getAllByText('Planned')).toHaveLength(3);
+  // Who's in town: the people in town summary in place of the old Planned line, with its honest no-number line.
+  expect(screen.getByText(PEOPLE_HEAD)).toBeTruthy();
+  expect(await screen.findByText('Fall term classes until Tue, Nov 17.')).toBeTruthy();
+  expect(screen.getByText('Townwise can’t put a number on how many people are in Hanover yet.')).toBeTruthy();
+  expect(screen.getByText('A headcount from public counts is planned.')).toBeTruthy();
+  expect(screen.queryByText('An estimate of how many people are in town each day is planned.')).toBeNull();
+  // Bar order and the headcount; TownwiseAI's questions are no longer Planned.
+  expect(screen.getAllByText('Planned')).toHaveLength(2);
 
   // Your history; the heatmap is web only, and native says where to upload.
   expect(screen.getByRole('heading', { name: '795 days' })).toBeTruthy();
@@ -136,9 +156,9 @@ test('with history: the lead, this week with the calendar and past years, bar or
   expect(screen.getByRole('link', { name: 'See it in Analytics' })).toBeTruthy();
   expect(screen.getByText('Upload from a computer at townwise.tech.')).toBeTruthy();
 
-  // Three reads, in parallel, and no write; nothing stored.
+  // Three reads in parallel, then the questions and the month's people in town on their own; no write, nothing stored.
   const reads = api.calls.filter((call) => call.path.startsWith(PATH)).map((call) => call.path);
-  expect(reads.sort()).toEqual([CALENDAR, `${PATH}/notes`, `${PATH}/sales/history`].sort());
+  expect(reads.sort()).toEqual([AGENT, CALENDAR, PEOPLE, `${PATH}/notes`, `${PATH}/sales/history`].sort());
   expect(api.calls.filter((call) => call.method !== 'GET')).toEqual([]);
   for (const name of NO_STORE) expect(jest.mocked(SecureStore[name])).not.toHaveBeenCalled();
 });
@@ -157,6 +177,52 @@ test('a term period shows once with its span and source; the one-day event takes
   expect(screen.queryByText('Fall term classes')).toBeNull();
   // One source link under This week and one in This month's list, not one per day.
   expect(screen.getAllByRole('link', { name: 'Source: Registrar' })).toHaveLength(2);
+});
+
+test('the questions link counts what GET .../agent asks, and shows nothing with none or when the read fails', async () => {
+  await renderApp('/locations/l1', portal({ agent: { questions: [GAP('2026-05-12', '2026-05-13', 2)], activity: [] } }));
+  expect(await screen.findByRole('link', { name: '1 question from TownwiseAI' })).toBeTruthy();
+  await cleanup();
+
+  // A question kind this client doesn't know is not counted.
+  await renderApp('/locations/l1', portal({ agent: { questions: [...QUESTIONS, { id: 'later_1', kind: 'unusual_night' }], activity: [] } }));
+  expect(await screen.findByRole('link', { name: '2 questions from TownwiseAI' })).toBeTruthy();
+  await cleanup();
+
+  for (const agent of [{ questions: [], activity: [] }, offline()]) {
+    const api = portal({ agent });
+    await renderApp('/locations/l1', api);
+    await screen.findByText(FORECAST_LINE);
+    await screen.findByText('Fall term classes until Tue, Nov 17.');
+    expect(api.calls.some((call) => call.path === AGENT)).toBe(true);
+    expect(screen.queryByRole('link', { name: /questions? from TownwiseAI/ })).toBeNull();
+    expect(screen.queryByText(/a count here is planned/)).toBeNull();
+    // The rest of Home is unchanged, and a failed count raises no error of its own.
+    expect(screen.getByRole('link', { name: 'Ask TownwiseAI' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    await cleanup();
+  }
+});
+
+test('who’s in town: a headcount range with its sources when public counts support one; a failed read stays in its place', async () => {
+  const range = { low: 9500, high: 10_500, sourceIds: ['census-test', 'cal-1'], excludes: [] };
+  const counted = {
+    ...NOVEMBER,
+    periods: NOVEMBER.periods.map((each) => (each.termState === 'in_session' ? { ...each, headcount: range, headcountWhy: null } : each)),
+    sources: [...NOVEMBER.sources, { id: 'census-test', label: 'Synthetic census', url: 'https://census.example.test/p1', confidence: 'high' }],
+  };
+  await renderApp('/locations/l1', portal({ people: counted }));
+  expect(await screen.findByText('Fall term classes until Tue, Nov 17. About 9,500 to 10,500 people in town, from 2 sources.')).toBeTruthy();
+  expect(screen.getByText('census.example.test')).toBeTruthy();
+  expect(screen.queryByText('A headcount from public counts is planned.')).toBeNull();
+  await cleanup();
+
+  await renderApp('/locations/l1', portal({ people: offline() }));
+  expect(await screen.findByRole('button', { name: 'Try again' })).toBeTruthy();
+  // Only the summary failed: the rest of the month card and of Home still show.
+  expect(screen.getByText('Veterans Day. Federal holiday.')).toBeTruthy();
+  expect(screen.getByText(PEOPLE_HEAD)).toBeTruthy();
+  expect(screen.getByRole('heading', { name: '795 days' })).toBeTruthy();
 });
 
 test('show the numbers lists last year, two years ago and usual', async () => {
