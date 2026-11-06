@@ -82,6 +82,8 @@ test('a failed chunk retries after 1, 2, 4, 8 and 16 seconds, then the file fail
     await jest.advanceTimersByTimeAsync(1);
     expect(fake.puts).toHaveLength(attempt + 2);
     expect(fake.puts[attempt + 1]?.index).toBe(0);
+    // Reconnecting covers only the wait: the resend is sending.
+    expect(states()).toEqual(['sending']);
   }
   fake.puts[5]?.fail(refusal(500, 'internal'));
   await flush();
@@ -98,6 +100,8 @@ test('uploads_busy and 429 wait Retry-After and never count as attempts', async 
     await flush();
     expect(states()).toEqual(['retrying']);
     await jest.advanceTimersByTimeAsync(pause % 2 === 0 ? 2000 : 3000);
+    expect(fake.puts).toHaveLength(pause + 2);
+    expect(states()).toEqual(['sending']);
   }
   fake.puts[8]?.ok();
   await flush();
@@ -260,6 +264,25 @@ test('a retry pause keeps the average, and resent bytes count from the start of 
   // The second of waiting is not counted as zero speed.
   expect(last.items[0]?.bytesPerSecond).toBe(300 * KIB);
   expect(fake.puts).toHaveLength(2);
+});
+
+test('the resend after a retry pause is sending again, and its bytes move the speed', async () => {
+  start(1024 * KIB);
+  queue.add([sourceOf('a.csv', 2048 * KIB)]);
+  await flush();
+  fake.puts[0]?.progress(300 * KIB);
+  await jest.advanceTimersByTimeAsync(1000);
+  fake.puts[0]?.fail(new ApiError('network', 'The network request failed.'));
+  await flush();
+  expect(last.items[0]?.state).toBe('retrying');
+  await jest.advanceTimersByTimeAsync(1000);
+  expect(fake.puts).toHaveLength(2);
+  expect(last.items[0]?.state).toBe('sending');
+  // 600 KiB of the resend in its first second: 0.3 * 600 + 0.7 * 300 = 390 KiB/s.
+  fake.puts[1]?.progress(600 * KIB);
+  await jest.advanceTimersByTimeAsync(1000);
+  expect(last.items[0]?.bytesPerSecond).toBeCloseTo(390 * KIB, 6);
+  expect(last.items[0]?.sentBytes).toBe(600 * KIB);
 });
 
 test('cancel stops a file and deletes what the server has; a waiting file leaves without a request', async () => {

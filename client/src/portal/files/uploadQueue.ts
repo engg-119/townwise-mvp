@@ -243,6 +243,13 @@ export function createUploadQueue(deps: {
     syncSampler();
   }
 
+  /** Back from a pause: the request goes again, and the speed is measured from now. */
+  function resume(entry: Entry, state: UploadState): void {
+    entry.sampleAt = now();
+    entry.sampleTransferred = entry.transferred;
+    set(entry, state);
+  }
+
   function sleep(ms: number, signal: AbortSignal): Promise<void> {
     return new Promise((resolve, reject) => {
       if (signal.aborted) {
@@ -263,7 +270,8 @@ export function createUploadQueue(deps: {
 
   /**
    * Runs one request of a file, waiting out `uploads_busy` and 429 (not counted as attempts) and, when
-   * `retries` is set, retrying network errors and 5xx up to 5 times with backoff.
+   * `retries` is set, retrying network errors and 5xx up to 5 times with backoff. The item reads `retrying` only
+   * while it waits; the request after the wait runs in `state` again.
    */
   async function attempt<T>(entry: Entry, state: UploadState, retries: boolean, run: () => Promise<T>): Promise<T> {
     const signal = entry.controller?.signal ?? AbortSignal.abort();
@@ -271,15 +279,14 @@ export function createUploadQueue(deps: {
     for (;;) {
       if (signal.aborted) throw new Stopped();
       try {
-        const result = await run();
-        if (entry.state === 'retrying') set(entry, state);
-        return result;
+        return await run();
       } catch (error) {
         if (isAborted(signal)) throw new Stopped();
         const pause = pauseOf(error);
         if (pause !== null) {
           set(entry, 'retrying');
           await sleep(pause * 1000, signal);
+          resume(entry, state);
           continue;
         }
         if (!retries || !transient(error) || failures >= BACKOFF_SECONDS.length) throw error;
@@ -289,6 +296,7 @@ export function createUploadQueue(deps: {
         entry.loaded = 0;
         set(entry, 'retrying');
         await sleep(Math.max(backoff, asked), signal);
+        resume(entry, state);
       }
     }
   }
