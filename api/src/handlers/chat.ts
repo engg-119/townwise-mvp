@@ -108,8 +108,9 @@ export async function getConversation(ctx: TownwiseContext, req: Request, res: R
     // A save that has not finished reads as open: pressing Save again finishes the same note.
     if (row !== undefined) return row.status === 'saving' ? OPEN : { status: row.status, noteId: row.status === 'saved' ? row.noteId : null };
     // A proposal added with the notes route (the Add note button before proposals were recorded) reads as saved when a
-    // note of this location says exactly the same, so it is not offered twice.
-    const same = notes.find((note) => sameNoteContent(note, proposal));
+    // note the author wrote at this location says exactly the same, so it is not offered twice. Only the author could
+    // press Add note in their own conversation, so a colleague's note never counts.
+    const same = notes.find((note) => note.createdBy === caller.userId && sameNoteContent(note, proposal));
     return same === undefined ? OPEN : { status: 'saved', noteId: same.id };
   };
   const body: ConversationView = {

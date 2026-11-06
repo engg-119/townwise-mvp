@@ -245,6 +245,15 @@ describe('what a reload shows', () => {
     const { note } = await added.json() as { note: { id: string } };
     expect(await shownState(id)).toEqual([{ id: 'toolu_proposal0001', status: 'saved', noteId: note.id }]);
   });
+
+  it('a colleague’s note that says the same does not count: the proposal stays open, and saving it makes the author’s note', async () => {
+    const id = await conversationWithProposal();
+    expect((await call(server, `/api/org/locations/${locationId}/notes`, { session: colleague, json: PROPOSAL })).status).toBe(201);
+    expect(await shownState(id)).toEqual([{ id: 'toolu_proposal0001', status: 'open', noteId: null }]);
+    const { body } = await act(id, { action: 'save' });
+    expect(await shownState(id)).toEqual([{ id: 'toolu_proposal0001', status: 'saved', noteId: body.proposal.noteId }]);
+    expect((await notesOf()).map((note) => note.createdBy).sort()).toEqual([author.userId, colleague.userId].sort());
+  });
 });
 
 describe('who may act on a proposal', () => {
