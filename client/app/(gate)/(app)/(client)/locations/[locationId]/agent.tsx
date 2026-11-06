@@ -89,9 +89,11 @@ export default function TownwiseAIScreen(): React.JSX.Element {
         <View style={styles.main}>
           <AgentChat chat={chat} ctx={ctx} top={null} readOnlyId={readOnlyId} readOnlyLine={line} />
         </View>
-        <ScrollView style={styles.side} contentContainerStyle={styles.sideContent} testID="agent-side">
-          <AgentSidePanel panel={panel} budget={chat.state.budget} ctx={ctx} locationName={location.name} readOnlyId={readOnlyId} />
-        </ScrollView>
+        <View style={styles.side}>
+          <ScrollView style={styles.fill} contentContainerStyle={styles.sideContent} testID="agent-side">
+            <AgentSidePanel panel={panel} budget={chat.state.budget} ctx={ctx} locationName={location.name} readOnlyId={readOnlyId} />
+          </ScrollView>
+        </View>
       </View>
     );
   } else {
@@ -142,7 +144,7 @@ const styles = StyleSheet.create({
   wrap: { flex: 1, minHeight: 0, paddingTop: theme.space[4], paddingBottom: theme.space[4] },
   grid: { flex: 1, minHeight: 0, flexDirection: 'row', columnGap: theme.space.gutter },
   main: { flex: 8, minWidth: 0, minHeight: 0 },
-  side: { flex: 4, minWidth: 0 },
+  side: { flex: 4, minWidth: 0, minHeight: 0 },
   sideContent: { gap: theme.space[8], paddingBottom: theme.space[8] },
   hidden: { display: 'none' },
   lead: { gap: theme.space[4] },

@@ -129,84 +129,90 @@ export function AgentChat(props: {
   const month = MONTHS[Number(state.budget?.month.slice(5, 7) ?? '1') - 1] ?? '';
   const nextMonth = MONTHS[Number(state.budget?.month.slice(5, 7) ?? '1') % 12]?.slice(0, 3) ?? '';
 
+  // The chatbox's header stays above the log; on phones it scrolls with the thread, under the location's header.
+  const header = (
+    <ConversationHeader
+      title={title}
+      conversations={state.conversations}
+      openId={state.conversationId}
+      streaming={state.streaming}
+      readOnlyId={props.readOnlyId}
+      onOpen={(id) => { opened(() => { chat.openConversation(id); }); }}
+      onNew={() => { opened(chat.newConversation); }}
+      onDelete={chat.deleteConversation}
+    />
+  );
+
   return (
     <View style={styles.fill}>
+      {props.top === null ? header : null}
       <View style={styles.fill}>
-      <ScrollView
-        ref={scroll}
-        testID="chat-thread"
-        role="log"
-        aria-label="Conversation with TownwiseAI"
-        style={styles.fill}
-        contentContainerStyle={styles.thread}
-        keyboardShouldPersistTaps="handled"
-        scrollEventThrottle={16}
-        onScroll={(event: NativeSyntheticEvent<NativeScrollEvent>) => {
-          const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-          apply({ type: 'scroll', y: contentOffset.y, contentHeight: contentSize.height, viewportHeight: layoutMeasurement.height });
-        }}
-        onContentSizeChange={(_width, height) => { apply({ type: 'contentGrew', contentHeight: height }); }}
-      >
-        {props.top}
-        <ConversationHeader
-          title={title}
-          conversations={state.conversations}
-          openId={state.conversationId}
-          streaming={state.streaming}
-          readOnlyId={props.readOnlyId}
-          onOpen={(id) => { opened(() => { chat.openConversation(id); }); }}
-          onNew={() => { opened(chat.newConversation); }}
-          onDelete={chat.deleteConversation}
-        />
-        {state.conversationLoading ? <Text style={styles.muted}>Loading the conversation…</Text> : null}
-        {empty ? (
-          <View style={styles.empty}>
-            <Heading>{`Ask TownwiseAI about ${ctx.locationName}`}</Heading>
-            {ctx.hasSales ? (
-              <Text style={styles.body}>
-                {`It reads ${readsLine(ctx)}, and shows you each thing it reads. It suggests notes; you decide what’s saved.`}
-              </Text>
-            ) : (
-              <View style={styles.noSales}>
+        <ScrollView
+          ref={scroll}
+          testID="chat-thread"
+          role="log"
+          aria-label="Conversation with TownwiseAI"
+          style={styles.fill}
+          contentContainerStyle={[styles.thread, props.top === null ? styles.threadUnderHeader : null]}
+          keyboardShouldPersistTaps="handled"
+          scrollEventThrottle={16}
+          onScroll={(event: NativeSyntheticEvent<NativeScrollEvent>) => {
+            const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+            apply({ type: 'scroll', y: contentOffset.y, contentHeight: contentSize.height, viewportHeight: layoutMeasurement.height });
+          }}
+          onContentSizeChange={(_width, height) => { apply({ type: 'contentGrew', contentHeight: height }); }}
+        >
+          {props.top}
+          {props.top === null ? null : header}
+          {state.conversationLoading ? <Text style={styles.muted}>Loading the conversation…</Text> : null}
+          {empty ? (
+            <View style={styles.empty}>
+              <Heading>{`Ask TownwiseAI about ${ctx.locationName}`}</Heading>
+              {ctx.hasSales ? (
                 <Text style={styles.body}>
-                  {`You haven’t uploaded sales yet, so TownwiseAI can only use your notes and ${ctx.town}’s town profile.`}
+                  {`It reads ${readsLine(ctx)}, and shows you each thing it reads. It suggests notes; you decide what’s saved.`}
                 </Text>
-                {Platform.OS === 'web' ? <LinkButton href={locationHref(ctx.locationId, 'upload')} label="Upload sales" /> : null}
-              </View>
-            )}
-            <Suggestions
-              items={suggestions}
+              ) : (
+                <View style={styles.noSales}>
+                  <Text style={styles.body}>
+                    {`You haven’t uploaded sales yet, so TownwiseAI can only use your notes and ${ctx.town}’s town profile.`}
+                  </Text>
+                  {Platform.OS === 'web' ? <LinkButton href={locationHref(ctx.locationId, 'upload')} label="Upload sales" /> : null}
+                </View>
+              )}
+              <Suggestions
+                items={suggestions}
+                readOnlyId={props.readOnlyId}
+                busy={state.streaming || exhausted}
+                onAsk={(text) => { send(() => { chat.ask(text); }); }}
+                onTell={(text) => {
+                  chat.setDraft(text);
+                  composer.current?.focus();
+                }}
+              />
+            </View>
+          ) : null}
+          {state.messages.map((message) => (
+            <MessageView
+              key={message.key}
+              message={message}
+              ctx={ctx}
+              locationId={ctx.locationId}
+              actions={chat}
               readOnlyId={props.readOnlyId}
-              busy={state.streaming || exhausted}
-              onAsk={(text) => { send(() => { chat.ask(text); }); }}
-              onTell={(text) => {
-                chat.setDraft(text);
-                composer.current?.focus();
-              }}
+              canRetry={!state.streaming && !exhausted}
+              onRetry={(key) => { send(() => { chat.retry(key); }); }}
             />
+          ))}
+          {isThinking(chat) ? <Text style={styles.status}>TownwiseAI is thinking…</Text> : null}
+        </ScrollView>
+        {behind ? (
+          <View style={styles.latest}>
+            <FadeIn duration={theme.motion.select}>
+              <Button variant="outline" label="Latest" onPress={() => { apply({ type: 'latest' }); }} />
+            </FadeIn>
           </View>
         ) : null}
-        {state.messages.map((message) => (
-          <MessageView
-            key={message.key}
-            message={message}
-            ctx={ctx}
-            locationId={ctx.locationId}
-            actions={chat}
-            readOnlyId={props.readOnlyId}
-            canRetry={!state.streaming && !exhausted}
-            onRetry={(key) => { send(() => { chat.retry(key); }); }}
-          />
-        ))}
-        {isThinking(chat) ? <Text style={styles.status}>TownwiseAI is thinking…</Text> : null}
-      </ScrollView>
-      {behind ? (
-        <View style={styles.latest}>
-          <FadeIn duration={theme.motion.select}>
-            <Button variant="outline" label="Latest" onPress={() => { apply({ type: 'latest' }); }} />
-          </FadeIn>
-        </View>
-      ) : null}
       </View>
       <View style={styles.live} aria-live="polite" accessibilityLiveRegion="polite">
         <Text>{announcement}</Text>
@@ -248,6 +254,7 @@ const c = theme.color;
 const styles = StyleSheet.create({
   fill: { flex: 1, minHeight: 0 },
   thread: { gap: theme.space[5], paddingBottom: theme.space[4] },
+  threadUnderHeader: { paddingTop: theme.space[4] },
   body: { ...theme.type.sub, color: c.text2 },
   muted: { ...theme.type.small, color: c.text3 },
   status: { ...theme.type.small, color: c.text2 },
