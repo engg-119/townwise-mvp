@@ -12,11 +12,14 @@ import * as SecureStore from 'expo-secure-store';
 import { Dimensions, StyleSheet } from 'react-native';
 import { act, cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing-library';
 
+import { aboutDraft } from '../../src/chat/about';
 import { COMPOSER_LABEL } from '../../src/chat/ui/Composer';
+import { localToday } from '../../src/portal/locations/dates';
 import type { MeResponse } from '../../src/portal/schemas';
 import { fakeChatApi, PROPOSAL, PROPOSAL_ID, refusal as chatRefusal, SALES_STEP, SUMMARY, type FakeChatApi, type LiveTurn } from '../helpers/chat';
 import { ACCESS, fakePortalApi, LOCATIONS, locationOf, meOf, orgOf, refusal, staffMe, viewAsMe } from '../helpers/portal';
 import { renderApp } from '../helpers/renderApp';
+import { PUBLISHED, serveAbout } from './about-fakes';
 
 // P25 TownwiseAI on native (spec 16.3): the chatbox and its side panel inside the portal, against a fake of
 // the chat and side panel routes. The Pillars: every tool call is a card and the Based on line comes from the
@@ -34,9 +37,11 @@ function at(width: number): void {
   jest.spyOn(Dimensions, 'get').mockReturnValue({ ...WINDOW, width });
 }
 
-async function renderAgent(me: MeResponse, chat: FakeChatApi = fakeChatApi(), org = orgOf('member')) {
+async function renderAgent(me: MeResponse, chat: FakeChatApi = fakeChatApi(), org = orgOf('member'), path = '/locations/l1/agent') {
+  // F10: GET .../estimates/about, with no forecast unless the test served another answer.
+  if (!('about' in chat)) serveAbout(chat);
   const portal = fakePortalApi({ me, org, fallback: chat });
-  const rendered = await renderApp('/locations/l1/agent', portal);
+  const rendered = await renderApp(path, portal);
   await screen.findByText('Main Street Bar, Hanover, NH');
   return { chat, portal, ...rendered };
 }
@@ -89,7 +94,7 @@ describe('an empty conversation', () => {
   test('with no sales yet it says what TownwiseAI can use, and asks what to upload', async () => {
     const org = orgOf('member', [locationOf('l1', 'Main Street Bar', { townId: 'hanover-nh', name: 'Hanover', state: 'NH' })]);
     await renderAgent(meOf(ACCESS.member), fakeChatApi(), org);
-    expect(await screen.findByText('You haven’t uploaded sales yet, so TownwiseAI can only use your notes and Hanover’s town profile.')).toBeTruthy();
+    expect(await screen.findByText('You haven’t uploaded sales yet, so TownwiseAI can only use your notes, Hanover’s town profile, the town calendar and who’s likely in Hanover.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'What should I upload?' })).toBeTruthy();
   });
 
@@ -97,12 +102,12 @@ describe('an empty conversation', () => {
     at(1280);
     const org = orgOf('member', [locationOf('l1', 'Main Street Bar', { townId: null, name: 'Hanover', state: 'NH' })]);
     await renderAgent(meOf(ACCESS.member), fakeChatApi(), org);
-    expect(await screen.findByText('You haven’t uploaded sales yet, so TownwiseAI can only use your notes.')).toBeTruthy();
+    expect(await screen.findByText('You haven’t uploaded sales yet, so TownwiseAI can only use your notes and the town calendar.')).toBeTruthy();
     expect(screen.getByText('Leave out guest names. TownwiseAI answers from your sales, your notes and the town calendar.')).toBeTruthy();
     const side = await screen.findByTestId('agent-side');
     await fireEvent.press(within(side).getByRole('button', { name: 'How TownwiseAI works' }));
     expect(within(side).getByText('It reads your sales, your notes and the town calendar, and shows you each thing it reads.')).toBeTruthy();
-    expect(within(side).getByText('Townwise has no forecast for this location yet, so TownwiseAI answers from your history and your notes.')).toBeTruthy();
+    expect(await within(side).findByText('Townwise has no forecast for this location yet, so TownwiseAI answers from your sales, your notes and the town calendar.')).toBeTruthy();
     expect(screen.queryByText(/town profile/)).toBeNull();
   });
 });
@@ -306,13 +311,66 @@ describe('the side panel at 1280px', () => {
     await renderAgent(meOf(ACCESS.member));
     const side = await screen.findByTestId('agent-side');
     await fireEvent.press(within(side).getByRole('button', { name: 'How TownwiseAI works' }));
+    expect(await within(side).findByText('Townwise has no forecast for this location yet, so TownwiseAI answers from your sales, your notes, Hanover’s town profile, the town calendar and who’s likely in Hanover.')).toBeTruthy();
     for (const text of [
       'It reads your sales, your notes, Hanover’s town profile, the town calendar and who’s likely in Hanover, and shows you each thing it reads.',
       'It can’t see the weather, your staffing, your bookings unless you add them as notes, or guest names.',
       'It suggests notes; it never saves one without you.',
-      'Townwise has no forecast for this location yet, so TownwiseAI answers from your history, your notes and the town profile.',
     ]) expect(within(side).getByText(text)).toBeTruthy();
     expect(within(side).getByText(/Your messages and the data it reads go to Anthropic/)).toBeTruthy();
+  });
+
+  test('F10: once a forecast is published, what it reads and the forecast line say so by themselves, from estimates/about', async () => {
+    at(1280);
+    const chat = serveAbout(fakeChatApi(), PUBLISHED);
+    await renderAgent(meOf(ACCESS.member), chat);
+    const reads = 'your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and Townwise’s forecast';
+    expect(await screen.findByText(`Leave out guest names. TownwiseAI answers from ${reads}.`)).toBeTruthy();
+    const side = await screen.findByTestId('agent-side');
+    await fireEvent.press(within(side).getByRole('button', { name: 'How TownwiseAI works' }));
+    expect(within(side).getByText(`It reads ${reads}, and shows you each thing it reads.`)).toBeTruthy();
+    expect(within(side).getByText('TownwiseAI also reads the forecast Townwise published: Townwise demand model v9, trained on sales exports you sent Townwise from Jan 1, 2025 to Oct 21, 2026, made Nov 1, 2026.')).toBeTruthy();
+    expect(within(side).queryByText(/no forecast/)).toBeNull();
+    expect(chat.aboutLoads).toBe(1);
+  });
+
+  test('F10: if estimates/about can’t be read it claims nothing about a forecast, and Try again reads it again', async () => {
+    at(1280);
+    const chat = serveAbout(fakeChatApi(), chatRefusal(503, 'unavailable'));
+    await renderAgent(meOf(ACCESS.member), chat);
+    const side = await screen.findByTestId('agent-side');
+    await fireEvent.press(within(side).getByRole('button', { name: 'How TownwiseAI works' }));
+    expect(await within(side).findByText('Couldn’t check whether Townwise has a forecast for this location.')).toBeTruthy();
+    expect(screen.queryByText(/Townwise’s forecast/)).toBeNull();
+    serveAbout(chat, PUBLISHED);
+    await fireEvent.press(within(side).getByRole('button', { name: 'Try again' }));
+    expect(await within(side).findByText(/^TownwiseAI also reads the forecast Townwise published/)).toBeTruthy();
+    expect(chat.aboutLoads).toBe(2);
+  });
+
+  test('F10: How Townwise estimates opens the model card in a sheet, and Close shuts it', async () => {
+    at(1280);
+    await renderAgent(meOf(ACCESS.member));
+    const side = await screen.findByTestId('agent-side');
+    await fireEvent.press(within(side).getByRole('button', { name: 'How TownwiseAI works' }));
+    expect(screen.queryByRole('heading', { name: 'How Townwise estimates' })).toBeNull();
+    await fireEvent.press(within(side).getByRole('button', { name: 'How Townwise estimates' }));
+    expect(await screen.findByRole('heading', { name: 'How Townwise estimates' })).toBeTruthy();
+    expect(await screen.findByText('Townwise has no forecast for Main Street Bar yet. Home and TownwiseAI use your history and Hanover’s calendar until it does.')).toBeTruthy();
+    await fireEvent.press(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('heading', { name: 'How Townwise estimates' })).toBeNull();
+  });
+
+  test('F3: a stored file Townwise read shows with its dates and day count, never a name', async () => {
+    at(1280);
+    const chat = fakeChatApi();
+    chat.panel = {
+      questions: [],
+      activity: [{ at: '2026-11-02T15:00:00.000Z', kind: 'file_processed', fileId: '0000000000000000000000f1', firstDate: '2026-10-19', lastDate: '2026-10-25', dayCount: 7 }],
+    };
+    await renderAgent(meOf(ACCESS.member), chat);
+    const side = await screen.findByTestId('agent-side');
+    expect(await within(side).findByText('Read your file for Oct 19 to Oct 25, 2026, 7 days.')).toBeTruthy();
   });
 
   test('the side panel loads even while TownwiseAI is off, and an empty panel says so', async () => {
@@ -367,6 +425,30 @@ describe('phones', () => {
     expect(screen.getAllByRole('heading', { name: 'TownwiseAI' })).toHaveLength(1);
     expect(screen.getByRole('button', { name: 'Questions (2)' })).toBeTruthy();
     expect(screen.getByText(COMPOSER_LABEL)).toBeTruthy();
+  });
+});
+
+describe('F7: ?about=YYYY-MM-DD', () => {
+  test('fills the composer with the day and sends nothing; New chat and typing leave the person’s text alone', async () => {
+    const date = localToday();
+    const { chat } = await renderAgent(meOf(ACCESS.member), fakeChatApi(), orgOf('member'), `/locations/l1/agent?about=${date}`);
+    const expected = aboutDraft(date, localToday());
+    expect(expected).toMatch(/^Tell me about \w{3}, \w{3} \d{1,2}$/);
+    await waitFor(() => { expect(screen.getByLabelText(COMPOSER_LABEL).props.value).toBe(expected); });
+    expect(chat.turns).toHaveLength(0);
+    await fireEvent.changeText(screen.getByLabelText(COMPOSER_LABEL), '');
+    await fireEvent.press(screen.getByRole('button', { name: 'New chat' }));
+    expect(screen.getByLabelText(COMPOSER_LABEL).props.value).toBe('');
+    expect(chat.turns).toHaveLength(0);
+  });
+
+  test('ignores a malformed or out-of-range date', async () => {
+    for (const about of ['2026-02-30', 'tomorrow', '2009-12-31', '2999-01-01']) {
+      await renderAgent(meOf(ACCESS.member), fakeChatApi(), orgOf('member'), `/locations/l1/agent?about=${about}`);
+      expect(await screen.findByLabelText(COMPOSER_LABEL)).toBeTruthy();
+      expect(screen.getByLabelText(COMPOSER_LABEL).props.value).toBe('');
+      await cleanup();
+    }
   });
 });
 

@@ -2,6 +2,10 @@ import { useState } from 'react';
 import { Link } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import type { EstimatesAbout, ForecastRun } from '../../portal/estimates/api';
+import { formatDate } from '../../portal/format';
+import type { LoadState } from '../../portal/hooks';
+import { Button } from '../../portal/ui/Button';
 import { ErrorNotice, LoadingLine, StatusTag } from '../../portal/ui/feedback';
 import { Eyebrow, Heading } from '../../portal/ui/text';
 import { theme } from '../../theme';
@@ -9,12 +13,14 @@ import type { ActivityItem, Budget } from '../api';
 import { formatCount, KIND_LABEL, rangeText, weekdayName } from '../format';
 import { readsLine, type ToolContext } from '../tools';
 import type { AgentPanelState } from '../useAgentPanel';
+import { ModelCardSheet } from './ModelCardSheet';
 import { QuestionCard } from './QuestionCard';
 
 // The side panel (spec P25): Questions for you, What it's been doing, this month's budget, and How TownwiseAI
 // works. Every activity item is a real, dated event the server read from the location's own records; a kind this
 // client doesn't know shows as nothing. On desktop the four sit in the side column; below 1024px the page shows
-// Questions and Activity under its switch, each section on its own.
+// Questions and Activity under its switch, each section on its own. How TownwiseAI works says whether Townwise has
+// a forecast for the location from GET .../estimates/about (F10), and opens the model card in a sheet.
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -156,8 +162,31 @@ export function BudgetSection(props: { budget: Budget | null }): React.JSX.Eleme
   );
 }
 
-export function HowItWorks(props: { ctx: ToolContext }): React.JSX.Element {
+const TRAINED_ON: Readonly<Record<ForecastRun['trainingSource'], string>> = {
+  files_from_owner: 'sales exports you sent Townwise',
+};
+
+/**
+ * F10: How TownwiseAI works' forecast line, from GET .../estimates/about, so it says so by itself once staff publish a
+ * forecast for the location. Null while that read is loading.
+ */
+export function forecastLine(about: LoadState<EstimatesAbout>, ctx: ToolContext): string | null {
+  if (about.status === 'loading') return null;
+  if (about.status === 'failed') return 'Couldn’t check whether Townwise has a forecast for this location.';
+  const { run } = about.data.forecast;
+  if (run === null) return `Townwise has no forecast for this location yet, so TownwiseAI answers from ${readsLine({ ...ctx, hasForecast: false })}.`;
+  return `TownwiseAI also reads the forecast Townwise published: ${run.model.label}, trained on ${TRAINED_ON[run.trainingSource]} from ${formatDate(run.trainedFrom)} to ${formatDate(run.dataThrough)}, made ${formatDate(run.madeAt)}.`;
+}
+
+export function HowItWorks(props: {
+  ctx: ToolContext;
+  locationId: string;
+  about: LoadState<EstimatesAbout>;
+  onRetryAbout: () => void;
+}): React.JSX.Element {
   const [open, setOpen] = useState(false);
+  const [card, setCard] = useState(false);
+  const forecast = forecastLine(props.about, props.ctx);
   return (
     <View style={styles.section}>
       <Pressable
@@ -175,15 +204,16 @@ export function HowItWorks(props: { ctx: ToolContext }): React.JSX.Element {
           <Text style={styles.body}>{`It reads ${readsLine(props.ctx)}, and shows you each thing it reads.`}</Text>
           <Text style={styles.body}>It can’t see the weather, your staffing, your bookings unless you add them as notes, or guest names.</Text>
           <Text style={styles.body}>It suggests notes; it never saves one without you.</Text>
-          <Text style={styles.body}>
-            {`Townwise has no forecast for this location yet, so TownwiseAI answers from ${props.ctx.hasTownProfile ? 'your history, your notes and the town profile' : 'your history and your notes'}.`}
-          </Text>
+          {forecast === null ? null : <Text style={styles.body}>{forecast}</Text>}
+          {props.about.status === 'failed' ? <Button variant="link" label="Try again" onPress={props.onRetryAbout} /> : null}
+          <Button variant="link" label="How Townwise estimates" onPress={() => { setCard(true); }} />
           <Text style={styles.body}>
             Your messages and the data it reads go to Anthropic, which provides the AI model.{' '}
             <Link href="/privacy" style={styles.link}>Privacy</Link>
           </Text>
         </View>
       ) : null}
+      <ModelCardSheet visible={card} locationId={props.locationId} onClose={() => { setCard(false); }} />
     </View>
   );
 }
@@ -192,15 +222,18 @@ export function AgentSidePanel(props: {
   panel: AgentPanelState;
   budget: Budget | null;
   ctx: ToolContext;
+  locationId: string;
   locationName: string;
   readOnlyId: string | null;
+  about: LoadState<EstimatesAbout>;
+  onRetryAbout: () => void;
 }): React.JSX.Element {
   return (
     <View style={styles.panel}>
       <QuestionsSection panel={props.panel} locationName={props.locationName} readOnlyId={props.readOnlyId} />
       <ActivitySection panel={props.panel} />
       <BudgetSection budget={props.budget} />
-      <HowItWorks ctx={props.ctx} />
+      <HowItWorks ctx={props.ctx} locationId={props.locationId} about={props.about} onRetryAbout={props.onRetryAbout} />
     </View>
   );
 }
