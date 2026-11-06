@@ -420,7 +420,7 @@ Indexes: `{ userId: 1 }` unique with `partialFilterExpression: { status: 'pendin
 | `name` | string | 1 to 80 |
 | `nameKey` | string | `name` trimmed, lowercased, inner spaces collapsed |
 | `town` | `{ townId: TownId \| null; name: string; state: string }` | |
-| `placeId` | string or null | the request’s Google place id, copied at approval (F3 step 7); null for a location added from P10; never edited; older documents read as null |
+| `placeId` | string or null | the Google place id. Approval copies the request’s (F3 step 7). An org admin sets or changes it through the Places search on Add location (P10) or Location settings (P16), and the API stores Google’s current id once the town is checked against Google (10.3). Null otherwise: a location added without the search, a `placeId: null` write, or a town changed by hand. Older documents read as null |
 | `createdAt`, `createdBy` | | |
 
 Indexes: `{ orgId: 1, nameKey: 1 }` unique; `{ orgId: 1, createdAt: 1 }`. Limit: 25 per organization. [CONFIRM: 25 locations]
