@@ -45,7 +45,8 @@ export interface PendingPut {
   size: number;
   signal: AbortSignal | undefined;
   progress: (loaded: number) => void;
-  ok: () => void;
+  /** Answers 200; `silent` skips the final progress event, as a browser that reports none. */
+  ok: (opts?: { silent?: boolean }) => void;
   fail: (error: unknown) => void;
 }
 
@@ -156,8 +157,8 @@ export function filesFake(init?: { inner?: ApiClient; chunkSize?: number }): Fil
           fake.puts.push({
             fileId, index, size: upload.body.size, signal,
             progress: (loaded) => { upload.onProgress?.(loaded); },
-            ok: () => {
-              upload.onProgress?.(upload.body.size);
+            ok: (answer) => {
+              if (answer?.silent !== true) upload.onProgress?.(upload.body.size);
               const body = { index, receivedBytes: upload.body.size, chunksReceived: index + 1 };
               resolve({ ok: true, status: 200, json: () => Promise.resolve(body) } as unknown as Response);
             },

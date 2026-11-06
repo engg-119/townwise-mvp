@@ -340,6 +340,8 @@ export function createUploadQueue(deps: {
           },
         });
       });
+      // Bytes the browser sent without a progress event (some report none, or only part) count when acknowledged.
+      if (blob.size > entry.loaded) entry.transferred += blob.size - entry.loaded;
       entry.acked += blob.size;
       entry.loaded = 0;
       emit();

@@ -199,6 +199,21 @@ test('speed is an average of each second, with alpha 0.3; time left waits for 2 
   expect(last.overall).toEqual({ files: 1, bytes: 1024 * KIB, sentBytes: 300 * KIB, secondsLeft: 10 });
 });
 
+test('a browser that reports no upload progress still gets a speed from the chunks acknowledged', async () => {
+  start(256 * KIB);
+  queue.add([sourceOf('a.csv', 2048 * KIB)]);
+  await flush();
+  for (let second = 1; second <= 3; second += 1) {
+    fake.puts.at(-1)?.ok({ silent: true });
+    await flush();
+    fake.puts.at(-1)?.ok({ silent: true });
+    await jest.advanceTimersByTimeAsync(1000);
+  }
+  // Two 256 KiB chunks a second, with no progress event: 512 KiB/s, 512 KiB left, so 1 s, shown as 5.
+  expect(last.items[0]?.bytesPerSecond).toBeCloseTo(512 * KIB, 6);
+  expect(last.items[0]?.secondsLeft).toBe(5);
+});
+
 test('a slow start says Estimating until 256 KiB are sent, however long it takes', async () => {
   start(1024 * KIB);
   queue.add([sourceOf('a.csv', 1024 * KIB)]);
