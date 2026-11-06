@@ -10,7 +10,8 @@ import type { TownwiseContext } from '../app.ts';
 import type { Principal } from '../access/policy.ts';
 import { calibrationOf } from '../calibration.ts';
 import { daysBetween, EARLIEST_DATE, isoDate, utcDay } from '../dates.ts';
-import { currentEmail } from '../people.ts';
+import { currentEmail, DELETED_PERSON } from '../people.ts';
+import type { Coverage } from '../stores/sales-days.ts';
 import type { UploadRecord } from '../stores/uploads.ts';
 import { loadLocation, memberOf } from './locations.ts';
 import { actorOf, orgAdmin } from './team.ts';
@@ -20,6 +21,30 @@ export interface UploadView {
   id: string; uploadedAt: string; uploadedByEmail: string; status: 'applying' | 'applied';
   dayCount: number; inserted: number; replaced: number; kept: number; firstDate: string; lastDate: string;
   hasGuests: boolean; hasNetSales: boolean;
+}
+
+/**
+ * Spec 10.10. The stored file an upload was read from, for the day panel's provenance line. Always null until stored
+ * files link uploads to files; `name` is null during view-as.
+ */
+export interface HistoryFileLink {
+  id: string; name: string | null; kind: 'text' | 'xlsx' | 'xls' | 'pdf' | 'docx' | 'doc' | 'zip' | 'other';
+}
+
+/** Spec 10.10. */
+export interface HistoryUploadView {
+  id: string; uploadedAt: string; uploadedByEmail: string; status: 'applying' | 'applied'; firstDate: string; lastDate: string;
+  file: HistoryFileLink | null;
+}
+
+/**
+ * Spec 10.10: every stored day, oldest first, in columns of equal length. `upload` indexes `uploads` (newest first),
+ * the upload that last wrote the day, or is -1 when that upload has no record.
+ */
+export interface SalesHistory {
+  coverage: Coverage;
+  days: { date: string[]; guests: (number | null)[]; netSalesCents: (number | null)[]; upload: number[] };
+  uploads: HistoryUploadView[];
 }
 
 /** Spec 11.3 and 18. [CONFIRM: ten years per upload; caps of 20,000 guests and one million dollars a day] */
@@ -92,6 +117,42 @@ export async function getSalesDays(ctx: TownwiseContext, req: Request, res: Resp
   const range = parseInput(rangeQuery, req.query);
   const location = await loadLocation(ctx, scope, req.params.locationId);
   res.status(200).json({ days: await ctx.stores.salesDays.days(scope, location.id, range) });
+}
+
+/**
+ * GET /api/org/locations/:locationId/sales/history (spec 10.10): every stored day with the upload that wrote it, for
+ * the heatmap, the day panel and year over year. A read: it logs nothing and records nothing.
+ */
+export async function getSalesHistory(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const { scope } = memberOf(principal);
+  const location = await loadLocation(ctx, scope, req.params.locationId);
+  const [coverage, days] = await Promise.all([
+    ctx.stores.salesDays.coverage(scope, location.id),
+    ctx.stores.salesDays.history(scope, location.id),
+  ]);
+  const uploads = await ctx.stores.uploads.byIds(scope, location.id, [...new Set(days.map((d) => d.uploadId))]);
+  const emails = new Map(await Promise.all([...new Set(uploads.map((upload) => upload.uploadedBy))]
+    .map(async (userId) => [userId, await currentEmail(ctx, userId)] as const)));
+  const indexOf = new Map(uploads.map((upload, index) => [upload.id, index]));
+  const history: SalesHistory = {
+    coverage,
+    days: {
+      date: days.map((d) => d.date),
+      guests: days.map((d) => d.guests),
+      netSalesCents: days.map((d) => d.netSalesCents),
+      upload: days.map((d) => indexOf.get(d.uploadId) ?? -1),
+    },
+    uploads: uploads.map((upload) => ({
+      id: upload.id,
+      uploadedAt: upload.uploadedAt.toISOString(),
+      uploadedByEmail: emails.get(upload.uploadedBy) ?? DELETED_PERSON,
+      status: upload.status,
+      firstDate: upload.firstDate,
+      lastDate: upload.lastDate,
+      file: null,
+    })),
+  };
+  res.status(200).json(history);
 }
 
 /**

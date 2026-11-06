@@ -79,7 +79,8 @@ export interface NoteStore {
   find(scope: OrgScope, locationId: string, noteId: string): Promise<NoteRecord | null>;
   count(scope: OrgScope, locationId: string): Promise<number>;
   hasAny(scope: OrgScope, locationId: string): Promise<boolean>;
-  create(scope: OrgScope, locationId: string, content: NoteContent, input: { createdBy: string; now: Date }): Promise<NoteRecord>;
+  /** `id`, when given, becomes the note's id: a second create with it fails on the primary key. */
+  create(scope: OrgScope, locationId: string, content: NoteContent, input: { createdBy: string; now: Date; id?: string }): Promise<NoteRecord>;
   /** A full replace of the content; null when the note is gone. */
   replace(scope: OrgScope, locationId: string, noteId: string, content: NoteContent, now: Date): Promise<NoteRecord | null>;
   remove(scope: OrgScope, locationId: string, noteId: string): Promise<boolean>;
@@ -142,6 +143,7 @@ export function createNoteStore(connection: Connection): NoteStore {
     },
     async create(scope, locationId, content, input) {
       const doc = await Note.create({
+        ...(input.id === undefined ? {} : { _id: new Types.ObjectId(input.id) }),
         orgId: scope.orgId, locationId, ...fieldsOf(content), createdBy: input.createdBy, createdAt: input.now, updatedAt: input.now,
       });
       return toNote(doc.toObject());

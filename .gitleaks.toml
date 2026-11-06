@@ -1,6 +1,12 @@
 # No path allowlists and no value allowlists. A real secret in any tracked file, .env files included,
 # fails the build. PR scans use the base branch's copy of this file, so a change here applies only
-# after merge. The one exception type is history already on main that was rotated: an [[allowlists]]
-# table with a description (what, and when it was rotated) and commits = ["<sha>"]. Policy: T13.
+# after merge. The exception types, each an [[allowlists]] table with a description and
+# commits = ["<sha>"]: history already on main that was rotated (what, and when it was rotated); and,
+# with the owner's approval, a commit that reached a shared branch with a test value the scanner took
+# for a secret (what it was, and the commit that rewrote it). Policy: T13.
 [extend]
 useDefault = true
+
+[[allowlists]]
+description = "86e3484 (Places proxy, PR #43, 2026-11-05): two random-looking UUID session tokens in api/test/places.test.ts and api/test/places.int.test.ts, test fixtures and never secrets, so nothing to rotate. Rewritten as all-zero UUIDs in b00c709. Owner approved the exception on 2026-11-05."
+commits = ["86e3484d09f1455eb6ebc91f296f5e20e3d4fad0"]

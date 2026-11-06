@@ -15,9 +15,9 @@ import { fakeChatApi, PROPOSAL, refusal as chatRefusal, type FakeChatApi } from 
 import { ACCESS, fakePortalApi, LOCATIONS, meOf, orgOf, refusal, staffMe, viewAsMe } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 
-// The tuning chat inside the portal on native: view-as keeps every write control in place and disabled (spec
-// 15.5), and on phones a compact location header and the tabs scroll with the thread so the conversation gets the
-// screen.
+// TownwiseAI (the tuning chat) inside the portal on native: view-as keeps every write control in place and
+// disabled (spec 15.5), and on phones a compact location header scrolls with the thread so the conversation gets
+// the screen.
 
 afterEach(async () => {
   await cleanup();
@@ -26,8 +26,8 @@ afterEach(async () => {
 const WINDOW = Dimensions.get('window');
 
 async function renderChat(me: MeResponse, chat: FakeChatApi = fakeChatApi()): Promise<FakeChatApi> {
-  await renderApp('/locations/l1/chat', fakePortalApi({ me, org: orgOf('member'), fallback: chat }));
-  await screen.findAllByRole('heading', { name: 'Main Street Bar' });
+  await renderApp('/locations/l1/agent', fakePortalApi({ me, org: orgOf('member'), fallback: chat }));
+  await screen.findByText('Main Street Bar, Hanover, NH');
   return chat;
 }
 
@@ -77,7 +77,7 @@ describe('the portal’s client (spec 4.3)', () => {
       if (path === '/api/me') api.me = after;
       return answer;
     };
-    const { router, auth } = await renderApp('/locations/l1/chat', api);
+    const { router, auth } = await renderApp('/locations/l1/agent', api);
     expect(auth.api).toBe(api);
     return { api, router };
   }
@@ -97,7 +97,7 @@ describe('the portal’s client (spec 4.3)', () => {
 
   test('a note added from a card reads the organization again on leaving, so Locations shows the new count', async () => {
     const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: fakeChatApi() });
-    await renderApp('/locations/l1/chat', api);
+    await renderApp('/locations/l1/agent', api);
     await fireEvent.press(await screen.findByRole('button', { name: /^Earlier chat/ }));
     await fireEvent.press(await screen.findByRole('button', { name: 'Add note' }));
     expect(await screen.findByText('Note added.')).toBeTruthy();
@@ -113,19 +113,21 @@ describe('the portal’s client (spec 4.3)', () => {
 });
 
 describe('the chat’s height on phones', () => {
-  test('at 375px a compact header (the name on one line, no eyebrow or switcher) and the tabs sit at the top of the thread, and the composer stays below it', async () => {
+  test('at 375px a compact header (the eyebrow, and the title on one line, no switcher) sits at the top of the thread, the sections stay in the top bar, and the composer stays below', async () => {
     const spy = jest.spyOn(Dimensions, 'get').mockReturnValue({ ...WINDOW, width: 375 });
     try {
       await renderChat(meOf(ACCESS.member));
       const thread = await screen.findByTestId('chat-thread');
-      expect(within(thread).getByLabelText('Location sections')).toBeTruthy();
-      // The page's one h1 names the location, once, on one line, and scrolls away with the thread.
-      const title = within(thread).getByRole('heading', { name: 'Main Street Bar' });
-      expect(screen.getAllByRole('heading', { name: 'Main Street Bar' })).toEqual([title]);
+      // The page's one h1, TownwiseAI, on one line, scrolls away with the thread, under the eyebrow naming the location.
+      const title = within(thread).getByRole('heading', { name: 'TownwiseAI' });
+      expect(screen.getAllByRole('heading', { name: 'TownwiseAI' })).toEqual([title]);
       expect(title.props.numberOfLines).toBe(1);
-      // The organization has two locations, but the chat on a phone shows neither the switcher nor the town.
+      expect(within(thread).getByText('Main Street Bar, Hanover, NH')).toBeTruthy();
+      expect(within(thread).queryByLabelText('Sections')).toBeNull();
+      expect(screen.getByLabelText('Sections')).toBeTruthy();
+      // The organization has two locations, but the chat on a phone shows neither the switcher nor its links.
       expect(screen.queryByRole('button', { name: 'Location' })).toBeNull();
-      expect(screen.queryByText('Hanover, NH')).toBeNull();
+      expect(screen.queryByRole('link', { name: 'All locations' })).toBeNull();
       expect(within(thread).getByRole('button', { name: 'Back to locations' })).toBeTruthy();
       expect(within(thread).queryByLabelText('Message')).toBeNull();
       expect(screen.getByLabelText('Message')).toBeTruthy();
@@ -142,6 +144,8 @@ describe('the chat’s height on phones', () => {
     await fireEvent.press(screen.getByRole('button', { name: /^Earlier chat/ }));
     const card = (await screen.findByText('Proposed note')).parent;
     const bubble = screen.getByText('You').parent;
+    // Replies are labelled with the agent's name.
+    expect(within(screen.getByTestId('chat-thread')).getAllByText('TownwiseAI').length).toBeGreaterThan(0);
     for (const box of [card, bubble]) {
       expect(StyleSheet.flatten(box?.props.style)).toMatchObject({ borderWidth: 1, borderRadius: 0 });
     }
@@ -153,22 +157,23 @@ describe('the chat’s height on phones', () => {
       const chat = fakeChatApi();
       chat.chatError = chatRefusal(503, 'unavailable');
       await renderChat(meOf(ACCESS.member), chat);
-      expect(screen.getByLabelText('Location sections')).toBeTruthy();
+      expect(screen.getByRole('heading', { name: 'TownwiseAI' })).toBeTruthy();
+      expect(screen.getByText('Main Street Bar, Hanover, NH')).toBeTruthy();
       expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
     } finally {
       spy.mockRestore();
     }
   });
 
-  test('wider screens keep the full header, the switcher and the tabs above the chat, and name the location once', async () => {
+  test('wider screens keep the full header, with the switcher and All locations, above the chat, and name the location once', async () => {
     await renderChat(meOf(ACCESS.member));
     const thread = await screen.findByTestId('chat-thread');
-    expect(within(thread).queryByLabelText('Location sections')).toBeNull();
+    expect(within(thread).queryByRole('heading', { name: 'TownwiseAI' })).toBeNull();
     expect(within(thread).queryByRole('button', { name: 'Back to locations' })).toBeNull();
-    expect(screen.getByLabelText('Location sections')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Location' })).toBeTruthy();
-    expect(screen.getByText('Hanover, NH')).toBeTruthy();
-    expect(screen.getAllByRole('heading', { name: 'Main Street Bar' })).toHaveLength(1);
+    expect(screen.getByRole('link', { name: 'All locations' })).toBeTruthy();
+    expect(screen.getAllByText('Main Street Bar, Hanover, NH')).toHaveLength(1);
+    expect(screen.getAllByRole('heading', { name: 'TownwiseAI' })).toHaveLength(1);
     // The composer keeps its drawn label above the input.
     expect(screen.getByText('Message')).toBeTruthy();
   });

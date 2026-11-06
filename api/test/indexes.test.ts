@@ -21,8 +21,11 @@ describe('indexes', () => {
     const connection = registered();
     const collections = Object.values(connection.models).map((model) => model.collection.collectionName).sort();
     expect(collections).toEqual([
-      'tw_access_requests', 'tw_audit_events', 'tw_chat_conversations', 'tw_chat_live_turns', 'tw_chat_usage', 'tw_locations',
-      'tw_members', 'tw_notes', 'tw_orgs', 'tw_sales_days', 'tw_uploads', 'tw_view_as_grants',
+      'tw_access_requests', 'tw_audit_events', 'tw_chat_conversations', 'tw_chat_live_turns', 'tw_chat_proposals', 'tw_chat_usage',
+      'tw_files', 'tw_imports', 'tw_locations', 'tw_members', 'tw_notes', 'tw_orgs', 'tw_sales_days', 'tw_upload_days',
+      'tw_uploads', 'tw_view_as_grants',
+      // U11, statement moments.
+      'tw_welcomes',
     ]);
   });
 
@@ -56,13 +59,19 @@ describe('indexes', () => {
     ]);
   });
 
-  it('leads every tenant compound index with orgId, except the two seat indexes keyed by the person', () => {
+  it('leads every tenant compound index with orgId, except the two seat indexes keyed by the person and the files sweep', () => {
     const connection = registered();
-    for (const model of ['TwMember', 'TwLocation', 'TwSalesDay', 'TwUpload', 'TwNote', 'TwChatConversation', 'TwChatLiveTurn', 'TwChatUsage']) {
+    for (const model of [
+      'TwMember', 'TwLocation', 'TwSalesDay', 'TwUpload', 'TwNote', 'TwChatConversation', 'TwChatLiveTurn', 'TwChatUsage',
+      'TwChatProposal', 'TwFile', 'TwImport', 'TwUploadDay', 'TwWelcome',
+    ]) {
       for (const [fields] of indexesOf(connection, model)) {
         const keys = Object.keys(fields);
         if (keys.length < 2) continue;
         if (model === 'TwMember' && keys[0] === 'userId') continue;
+        // The sweeper's index spans organizations (stores/cross-tenant.ts); the reader's claim index is single-key.
+        if (model === 'TwFile' && keys[0] === 'status') continue;
+        if (model === 'TwImport' && keys[0] === 'status') continue;
         expect(keys[0]).toBe('orgId');
       }
     }
@@ -78,8 +87,23 @@ describe('indexes', () => {
     ]);
   });
 
+  it('keeps one record per TownwiseAI proposal per conversation, and finds a location’s for its deletion', () => {
+    const connection = registered();
+    expect(indexesOf(connection, 'TwChatProposal')).toContainEqual([
+      { orgId: 1, conversationId: 1, proposalId: 1 }, expect.objectContaining({ unique: true }),
+    ]);
+    expect(indexesOf(connection, 'TwChatProposal')).toContainEqual([{ orgId: 1, locationId: 1 }, expect.anything()]);
+  });
+
   it('keeps one live tuning chat turn per person per organization', () => {
     expect(indexesOf(registered(), 'TwChatLiveTurn')).toContainEqual([
+      { orgId: 1, userId: 1 }, expect.objectContaining({ unique: true }),
+    ]);
+  });
+
+  // U11, statement moments.
+  it('keeps one welcome marker per person per organization', () => {
+    expect(indexesOf(registered(), 'TwWelcome')).toContainEqual([
       { orgId: 1, userId: 1 }, expect.objectContaining({ unique: true }),
     ]);
   });
@@ -90,5 +114,20 @@ describe('indexes', () => {
       { orgId: 1, locationId: 1, date: 1 }, expect.objectContaining({ unique: true }),
     ]);
     expect(connection.models.TwSalesDay?.schema.get('strict')).toBe('throw');
+  });
+
+  it('stores files with a fingerprint per location, one active import per location, and one byte counter per organization per day', () => {
+    const connection = registered();
+    const files = indexesOf(connection, 'TwFile');
+    expect(files).toContainEqual([{ orgId: 1, locationId: 1, uploadedAt: -1 }, expect.anything()]);
+    expect(files).toContainEqual([{ orgId: 1, importId: 1, uploadedAt: 1 }, expect.anything()]);
+    expect(files).toContainEqual([{ orgId: 1, locationId: 1, fingerprint: 1 }, expect.anything()]);
+    expect(files).toContainEqual([{ status: 1, 'upload.expiresAt': 1 }, expect.anything()]);
+    expect(connection.models.TwFile?.schema.get('strict')).toBe('throw');
+    expect(indexesOf(connection, 'TwImport')).toContainEqual([
+      { activeLocation: 1 },
+      expect.objectContaining({ unique: true, partialFilterExpression: { activeLocation: { $type: 'objectId' } } }),
+    ]);
+    expect(indexesOf(connection, 'TwUploadDay')).toContainEqual([{ orgId: 1, day: 1 }, expect.objectContaining({ unique: true })]);
   });
 });

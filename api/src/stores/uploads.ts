@@ -1,6 +1,6 @@
 // tw_uploads (spec 6.6): one record per sales upload, with counts and dates only. It holds no file name (file names
 // can contain people's names), no column names, no row count and no figures.
-import { Schema, Types, type Connection, type Model } from 'mongoose';
+import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
 
@@ -80,6 +80,8 @@ export interface UploadStore {
   finish(scope: OrgScope, uploadId: string, counts: UploadCounts): Promise<void>;
   /** Newest first. */
   recent(scope: OrgScope, locationId: string, limit: number): Promise<UploadRecord[]>;
+  /** The location's uploads among `ids`, newest first; an id with no record is left out. */
+  byIds(scope: OrgScope, locationId: string, ids: readonly string[]): Promise<UploadRecord[]>;
   /** Resolves the number of records deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
   /** Organization deletion (spec 10.7). Resolves the number deleted. */
@@ -129,6 +131,11 @@ export function createUploadStore(connection: Connection): UploadStore {
     },
     async recent(scope, locationId, limit) {
       const docs = await Upload.find({ orgId: scope.orgId, locationId }).sort({ uploadedAt: -1, _id: -1 }).limit(limit).lean();
+      return docs.map(toUpload);
+    },
+    async byIds(scope, locationId, ids) {
+      if (ids.length === 0) return [];
+      const docs = await Upload.find({ orgId: scope.orgId, locationId, _id: trusted({ $in: [...ids] }) }).sort({ uploadedAt: -1, _id: -1 }).lean();
       return docs.map(toUpload);
     },
     async removeForLocation(scope, locationId) {

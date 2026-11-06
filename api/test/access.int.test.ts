@@ -36,7 +36,9 @@ async function person(name: string): Promise<{ email: string; session: TestSessi
 describe('GET /api/me states (4.2)', () => {
   it('no_org for a new person, with the signed-in user and no staff block', async () => {
     const { email, session } = await person('new');
-    expect(await me(session)).toEqual({ user: { id: session.userId, email }, access: { state: 'no_org' }, viewAs: null, staff: null });
+    expect(await me(session)).toEqual({
+      user: { id: session.userId, email }, access: { state: 'no_org' }, viewAs: null, staff: null, welcome: null,
+    });
   });
 
   it('member with the organization and role of the active seat', async () => {
@@ -92,7 +94,7 @@ describe('GET /api/me states (4.2)', () => {
     expect((await me(session)).access).toEqual({ state: 'no_org' });
   });
 
-  it('pending with the request', async () => {
+  it('pending with the request; one stored before place ids reads placeId as null', async () => {
     const { email, session } = await person('pending');
     const requestId = await addRequest(server, { userId: session.userId, email, status: 'pending', orgName: 'Moose Tavern' });
     expect((await me(session)).access).toEqual({
@@ -100,9 +102,15 @@ describe('GET /api/me states (4.2)', () => {
       request: {
         id: requestId, orgName: 'Moose Tavern', contactName: 'Fixture Contact', contactRole: 'Owner',
         town: { townId: 'hanover-nh', name: 'Hanover', state: 'NH' }, locationCount: 1, note: null, status: 'pending',
-        createdAt: server.clock.now().toISOString(), decidedAt: null, decisionMessage: null,
+        createdAt: server.clock.now().toISOString(), decidedAt: null, decisionMessage: null, placeId: null,
       },
     });
+  });
+
+  it('a request stored with a place id answers it', async () => {
+    const { email, session } = await person('place');
+    await addRequest(server, { userId: session.userId, email, status: 'pending', placeId: 'ChIJTestPlace0001' });
+    expect((await me(session)).access).toMatchObject({ state: 'pending', request: { placeId: 'ChIJTestPlace0001' } });
   });
 
   it('an invitation outranks a pending request and carries it as pendingRequest', async () => {
@@ -160,6 +168,7 @@ describe('staff branch (4.2 step 2)', () => {
     const session = await signIn(server, STAFF_EMAIL);
     expect(await me(session)).toEqual({
       user: { id: session.userId, email: STAFF_EMAIL }, access: { state: 'staff_setup_required' }, viewAs: null, staff: null,
+      welcome: null,
     });
   });
 
@@ -174,7 +183,7 @@ describe('staff branch (4.2 step 2)', () => {
     const session = await signInStaff(server);
     expect(await me(session)).toEqual({
       user: { id: session.userId, email: STAFF_EMAIL }, access: { state: 'staff' }, viewAs: null,
-      staff: { verifiedUntil: new Date(start.getTime() + 60 * MINUTE).toISOString() },
+      staff: { verifiedUntil: new Date(start.getTime() + 60 * MINUTE).toISOString() }, welcome: null,
     });
   });
 

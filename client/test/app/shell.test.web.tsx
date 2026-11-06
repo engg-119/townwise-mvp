@@ -59,19 +59,39 @@ test('the staff console: panel bar, kind tag, Requests with its count, the verif
   await waitFor(() => { expect(window.location.pathname).toBe('/admin/orgs'); });
 });
 
-test('the client app marks where you are: Locations below it, and the selected tab', async () => {
+test('the client app marks where you are in the top bar; the header names the location and the page', async () => {
   renderAt('/locations/l1/notes', fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin') }));
-  const tabs = await screen.findByRole('navigation', { name: 'Location' });
-  expect(within(tabs).getByRole('link', { name: 'Notes' }).getAttribute('aria-current')).toBe('page');
-  expect(within(tabs).getByRole('link', { name: 'Forecast' }).getAttribute('aria-current')).toBeNull();
+  expect(await screen.findByText('Main Street Bar, Hanover, NH')).toBeTruthy();
   const main = screen.getByRole('navigation', { name: 'Main' });
-  expect(within(main).getByRole('link', { name: 'Locations' }).getAttribute('aria-current')).toBe('true');
-  expect(screen.getByRole('region', { name: 'Location sections' })).toBeTruthy();
-  // The location switcher is a real select, labelled “Location”.
+  expect(within(main).getByRole('link', { name: 'Notes' }).getAttribute('aria-current')).toBe('page');
+  expect(within(main).getByRole('link', { name: 'Home' }).getAttribute('aria-current')).toBeNull();
+  expect(screen.getAllByRole('heading', { level: 1 }).map((heading) => heading.textContent)).toEqual(['Notes']);
+  expect(screen.getByRole('link', { name: 'All locations' }).getAttribute('href')).toBe('/dashboard');
+  expect(screen.getByRole('link', { name: 'Location settings' }).getAttribute('href')).toBe('/locations/l1/settings');
+  // The location switcher is a real select, labelled “Location”; the sections then open the other location.
   const switcher = screen.getByRole('combobox', { name: 'Location' });
   fireEvent.change(switcher, { target: { value: 'l2' } });
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l2/notes'); });
-  expect(await screen.findByRole('heading', { level: 1, name: 'River Grill' })).toBeTruthy();
+  expect(await screen.findByText('River Grill, Norwich, VT')).toBeTruthy();
+  expect(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Home' }).getAttribute('href')).toBe('/locations/l2');
+});
+
+test('the last location opened is kept in memory only: the sections open it from Team, and nothing reaches browser storage', async () => {
+  const setItem = jest.spyOn(Storage.prototype, 'setItem');
+  const cookie = document.cookie;
+  try {
+    renderAt('/locations/l2/notes', fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin') }));
+    expect(await screen.findByText('River Grill, Norwich, VT')).toBeTruthy();
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Team' }));
+    await waitFor(() => { expect(window.location.pathname).toBe('/team'); });
+    const main = screen.getByRole('navigation', { name: 'Main' });
+    expect(within(main).getByRole('link', { name: 'Home' }).getAttribute('href')).toBe('/locations/l2');
+    expect(within(main).getByRole('link', { name: 'Upload' }).getAttribute('href')).toBe('/locations/l2/sales/upload');
+    expect(setItem).not.toHaveBeenCalled();
+    expect(document.cookie).toBe(cookie);
+  } finally {
+    setItem.mockRestore();
+  }
 });
 
 test('skip to content is the first focusable element, then the view-as banner', async () => {

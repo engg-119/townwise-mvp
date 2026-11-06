@@ -8,6 +8,7 @@ import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import { isStaffPrincipal, type Principal } from '../access/policy.ts';
 import { resolveAccess } from '../access/resolve.ts';
+import { placeIdSchema } from '../place-id.ts';
 import { resolveTown, townInputSchema } from '../towns.ts';
 import { meResponse } from './me.ts';
 
@@ -18,6 +19,7 @@ const requestBody = z.object({
   town: townInputSchema,
   locationCount: z.number().int().min(1).max(50),
   note: z.string().trim().max(1000).nullish(),
+  placeId: placeIdSchema.nullish(),
 });
 
 /** Who may send a request: a signed-in person with no organization, a rejected request, or a removed seat. */
@@ -41,6 +43,7 @@ export async function createAccessRequest(ctx: TownwiseContext, req: Request, re
     town,
     locationCount: body.locationCount,
     note,
+    placeId: body.placeId ?? null,
     createdAt: now,
   });
   if (requestId === null) throw new AppError(409, 'request_exists', 'A request is already pending');
@@ -48,7 +51,8 @@ export async function createAccessRequest(ctx: TownwiseContext, req: Request, re
     actorUserId: principal.userId, actorEmail: principal.email, actorRole: 'user', viewAsGrantId: null,
     at: now, orgId: null, action: 'access_request.created',
     target: { type: 'request', id: requestId },
-    details: { orgName: body.orgName, townId: town.townId, townName: town.name },
+    details: { orgName: body.orgName, townId: town.townId, townName: town.name, hasPlace: body.placeId != null },
   });
+  ctx.mailer.send({ kind: 'request_received', orgName: body.orgName, town }, principal.email, { requestId });
   res.status(201).json(meResponse(await resolveAccess(ctx, authOf(req))));
 }

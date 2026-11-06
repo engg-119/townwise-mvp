@@ -8,6 +8,10 @@ import { mountTownwiseRoutes, TOWNWISE_ROUTES, type TownwiseRoute } from './acce
 import type { ChatModel } from './chat/model.ts';
 import { TURN_TIME_LIMIT_MS } from './chat/turn.ts';
 import { resolveTownwiseConfig, type ResolvedTownwiseConfig, type TownwiseConfig } from './config.ts';
+import type { FileBlobs } from './files/blobs.ts';
+import { OFF_MAILER, type Mailer } from './mail/mailer.ts';
+import type { PlacesClient } from './places/google.ts';
+import type { StaticMapSigner } from './places/static-map.ts';
 import { createTownwiseStores, type TownwiseStores } from './stores/index.ts';
 
 export interface TownwiseDeps {
@@ -23,6 +27,19 @@ export interface TownwiseDeps {
   readonly chat?: ChatModel | undefined;
   /** A tuning chat turn's time limit in milliseconds; tests shorten it. Absent, TURN_TIME_LIMIT_MS (150 seconds). */
   readonly chatTurnTimeLimitMs?: number | undefined;
+  /** Google Places for the Places proxy; absent turns it off (main.ts builds it only when GOOGLE_PLACES_API_KEY is set). */
+  readonly places?: PlacesClient | undefined;
+  /** Townwise's emails (spec D14); absent turns email off (main.ts builds it only when EMAIL_ENDPOINT is set). */
+  readonly mailer?: Mailer | undefined;
+  /**
+   * Signs the confirm card's map URL; absent turns the map off (main.ts builds it only when GOOGLE_MAPS_STATIC_KEY and
+   * GOOGLE_MAPS_SIGNING_SECRET are both set).
+   */
+  readonly placesMap?: StaticMapSigner | undefined;
+  /** Client file storage; absent turns stored files off (main.ts builds it only when FILES_BLOB_ACCOUNT_URL is set). */
+  readonly files?: FileBlobs | undefined;
+  /** Wakes the file reader (files/worker.ts) after an import starts or a file is queued. */
+  readonly fileWorker?: { nudge(): void } | undefined;
 }
 
 /** What every route handler receives besides the request and the principal. */
@@ -38,6 +55,15 @@ export interface TownwiseContext {
   /** Null while the tuning chat is off. */
   readonly chat: ChatModel | null;
   readonly chatTurnTimeLimitMs: number;
+  /** Null while the Places proxy is off. */
+  readonly places: PlacesClient | null;
+  /** Always set: OFF_MAILER while email is off, so a handler calls send either way. */
+  readonly mailer: Mailer;
+  /** Null while the map is off; the Places proxy can be on without it. */
+  readonly placesMap: StaticMapSigner | null;
+  /** Null while stored files are off. */
+  readonly files: FileBlobs | null;
+  readonly nudgeFiles: () => void;
 }
 
 /**
@@ -56,6 +82,11 @@ export function createTownwiseApi(deps: TownwiseDeps, routes: readonly TownwiseR
     stores: createTownwiseStores(deps.connection),
     chat: deps.chat ?? null,
     chatTurnTimeLimitMs: deps.chatTurnTimeLimitMs ?? TURN_TIME_LIMIT_MS,
+    places: deps.places ?? null,
+    mailer: deps.mailer ?? OFF_MAILER,
+    placesMap: deps.placesMap ?? null,
+    files: deps.files ?? null,
+    nudgeFiles: () => { deps.fileWorker?.nudge(); },
   };
   // No router-wide body parser: each route mounts its own limit after the policy passes (spec 7.2 step 6).
   const router = express.Router();

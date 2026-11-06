@@ -25,11 +25,13 @@ import Settings from '../../app/(gate)/(app)/(client)/settings';
 import AddLocation from '../../app/(gate)/(app)/(client)/locations/new';
 import LocationLayout from '../../app/(gate)/(app)/(client)/locations/[locationId]/_layout';
 import Forecast from '../../app/(gate)/(app)/(client)/locations/[locationId]/index';
+import Analytics from '../../app/(gate)/(app)/(client)/locations/[locationId]/analytics';
 import Sales from '../../app/(gate)/(app)/(client)/locations/[locationId]/sales/index';
 import Upload from '../../app/(gate)/(app)/(client)/locations/[locationId]/sales/upload';
 import Notes from '../../app/(gate)/(app)/(client)/locations/[locationId]/notes';
 import Town from '../../app/(gate)/(app)/(client)/locations/[locationId]/town';
 import LocationSettings from '../../app/(gate)/(app)/(client)/locations/[locationId]/settings';
+import Agent from '../../app/(gate)/(app)/(client)/locations/[locationId]/agent';
 import Chat from '../../app/(gate)/(app)/(client)/locations/[locationId]/chat';
 import ConsoleLayout from '../../app/(gate)/(app)/(console)/_layout';
 import Requests from '../../app/(gate)/(app)/(console)/admin/index';
@@ -83,11 +85,13 @@ export function appRoutes(root: React.ComponentType, overrides?: Record<string, 
     '(gate)/(app)/(client)/locations/new': AddLocation,
     '(gate)/(app)/(client)/locations/[locationId]/_layout': LocationLayout,
     '(gate)/(app)/(client)/locations/[locationId]/index': Forecast,
+    '(gate)/(app)/(client)/locations/[locationId]/analytics': Analytics,
     '(gate)/(app)/(client)/locations/[locationId]/sales/index': Sales,
     '(gate)/(app)/(client)/locations/[locationId]/sales/upload': Upload,
     '(gate)/(app)/(client)/locations/[locationId]/notes': Notes,
     '(gate)/(app)/(client)/locations/[locationId]/town': Town,
     '(gate)/(app)/(client)/locations/[locationId]/settings': LocationSettings,
+    '(gate)/(app)/(client)/locations/[locationId]/agent': Agent,
     '(gate)/(app)/(client)/locations/[locationId]/chat': Chat,
     '(gate)/(app)/(console)/_layout': ConsoleLayout,
     '(gate)/(app)/(console)/admin/index': Requests,

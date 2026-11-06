@@ -20,7 +20,7 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
         <Li>Our server logs each request: the address it came from, the browser or app that sent it, the page asked for and the result. The request log does not record your email address, your sign-in tokens, your cookies or what you send us.</Li>
         <Li>The Townwise app sends no telemetry: no analytics, no tracking, no crash reports. The sign-in page loads Google’s sign-in script, so Google sees that visit.</Li>
         <Li>When you upload sales history, your browser reads the file and sends us only the date, guest count and net sales for each day. The file itself never reaches our server.</Li>
-        <Li>Your sales data is used only to provide Townwise to your restaurant: its own forecasts and, when it is turned on, its tuning chat. It is not shared with or used for other restaurants, and it is not used to train AI models.</Li>
+        <Li>Your sales data is used only to provide Townwise to your restaurant: its own forecasts and TownwiseAI, its AI assistant. It is not shared with or used for other restaurants, and it is not used to train AI models.</Li>
         <Li>Townwise does not sell personal data.</Li>
       </Ul>
     ),
@@ -131,7 +131,7 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
         <P>To stop abuse, the server counts requests from each IP address: one limit for the whole service and a tighter one for sign-in, both over one-minute windows. Before a counter is stored, the key it belongs to (an IP address, an account ID or an email address) is replaced with a SHA-256 hash, so the store holds hashes, not addresses. IPv6 addresses are counted by their first half (the /64 network). Each counter is deleted when its window ends, counted from the first request in that window.</P>
         <P>If the email-link route is used (see Email), the request is also counted per IP address (hashed) for one hour, and per email address (hashed) for 15 minutes and for 24 hours.</P>
         <P>If you use authenticator codes, every code attempt is also counted per account, as a hash of your account ID, for 15 minutes and for 24 hours.</P>
-        <P>When you are signed in, some actions are also counted per account, as a hash of your account ID: every change for 10 minutes; uploads, tuning chat messages and staff view-as for one hour; and access requests for 24 hours.</P>
+        <P>When you are signed in, some actions are also counted per account, as a hash of your account ID: every change for 10 minutes; uploads, TownwiseAI messages and staff view-as for one hour; and access requests for 24 hours.</P>
         <P>A hash of an IP address is not anonymous: anyone who tries every possible address can match it. We treat these counters as personal data. The longest any IP-address counter is kept is one hour; the longest any account or email counter is kept is 24 hours.</P>
       </>
     ),
@@ -161,8 +161,8 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
         <Li><Strong>Access requests.</Strong> To request access, you sign in with Google and fill in a short form: your organization’s name, your name, your role, your town, how many locations you have and an optional note. We keep it with your email address at the time and the request’s status. Townwise staff read it to decide on it. If they turn it down, they may add a message, which you see.</Li>
         <Li><Strong>Your team.</Strong> An org admin can add teammates by email address, each with a role. We keep each address on the team, with its role and who added it, even before that person signs in. Townwise does not email them. Org admins can see the team; members cannot.</Li>
         <Li><Strong>Locations.</Strong> Each location’s name and town.</Li>
-        <Li><Strong>Notes.</Strong> Notes about unusual days: the kind, the dates and weekdays, the expected effect and number of guests, a detail of up to 280 characters, and who wrote it. Everyone on your organization’s team can see them. So far, only the tuning chat reads them.</Li>
-        <Li><Strong>Tuning chat conversations.</Strong> If you use the tuning chat, we keep your conversations for each location. They are private to you, except that Townwise staff using view-as as you can read them. We keep them until your account or your organization is deleted.</Li>
+        <Li><Strong>Notes.</Strong> Notes about unusual days: the kind, the dates and weekdays, the expected effect and number of guests, a detail of up to 280 characters, and who wrote it. Everyone on your organization’s team can see them. So far, only TownwiseAI reads them.</Li>
+        <Li><Strong>TownwiseAI conversations.</Strong> If you use TownwiseAI, we keep your conversations for each location. They are private to you, except that Townwise staff using view-as as you can read them. We keep them until your account or your organization is deleted.</Li>
         <Li><Strong>The audit record.</Strong> We record changes: who did what and when, such as who added a teammate, uploaded sales, wrote a note or started a view-as, with the reason given. It holds email addresses, organization and location names, and view-as reasons. It never holds sales figures, note text, request notes or decision messages. Org admins can see every Townwise staff action on their organization. Audit records are not deleted; when a person or an organization is deleted, their email address or names in it are replaced.</Li>
       </Ul>
     ),
@@ -174,7 +174,7 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
       <>
         <P><Strong>What an upload sends.</Strong> You upload sales history in the app, on the web. Your browser reads your point-of-sale export and sends us only the date, guest count and net sales for each day, for one location. The file itself never reaches our server, and neither do its name or its other columns.</P>
         <P><Strong>What we keep.</Strong> For each location, one record per day with the date, guests and net sales. For each upload, who sent it, when, how many days it added or replaced, and its first and last dates. We never keep the file name.</P>
-        <P><Strong>How we use it.</Strong> Your sales data is used only to provide Townwise to your restaurant: its own forecasts and, when it is turned on, its tuning chat. It is not shared with or used for other restaurants, and it is not used to train AI models.</P>
+        <P><Strong>How we use it.</Strong> Your sales data is used only to provide Townwise to your restaurant: its own forecasts and TownwiseAI, its AI assistant. It is not shared with or used for other restaurants, and it is not used to train AI models.</P>
         <P><Strong>Who can see it.</Strong></P>
         <Ul className="bul">
           <Li>The members and org admins of your organization.</Li>
@@ -201,7 +201,7 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
         <Ul className="bul">
           <Li><Strong>Google</Strong>, when you open the sign-in page (its sign-in script loads there) and when you sign in with your Google account, under Google’s privacy policy.</Li>
           <Li><Strong>Microsoft Azure</Strong>, which runs our servers and stores our database, its backups and our logs.</Li>
-          <Li><Strong>Anthropic</Strong>, which provides the AI model behind the tuning chat. The tuning chat is off in production until we turn it on, and while it is off nothing is sent to Anthropic. When it is on and you use it, Anthropic receives the messages you send and the location data the assistant reads to answer them: the location’s name and town, its sales totals and daily figures, its notes and its town profile. Anthropic processes them under its <A href={ANTHROPIC_TERMS_HREF}>Commercial Terms of Service</A>, which say Anthropic may not train models on that content.</Li>
+          <Li><Strong>Anthropic</Strong>, which provides the AI model behind TownwiseAI, the assistant on each location’s TownwiseAI page. Nothing is sent to Anthropic unless you use it. When you do, Anthropic receives the messages you send and the location data the assistant reads to answer them: the location’s name and town, its sales totals and daily figures, its notes and its town profile. Anthropic processes them under its <A href={ANTHROPIC_TERMS_HREF}>Commercial Terms of Service</A>, which say Anthropic may not train models on that content.</Li>
         </Ul>
         <P>Apart from Google’s sign-in script on the sign-in page, the Townwise app and server send your account and sign-in information to no one else. Townwise does not sell personal data.</P>
       </>
@@ -214,8 +214,8 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
       <>
         <Ul className="bul">
           <Li><Strong>Sign out</Strong> at any time; that ends the session and clears the cookies.</Li>
-          <Li><Strong>Delete your account:</Strong> there is no self-serve deletion yet. Write to <Mail /> and we will delete your account and its data within 30 days: your account record, sessions, any authenticator record, your access requests and invitations, your place on a team and your tuning chat conversations. Notes and uploads you added stay with your organization. In the audit record, your email address is replaced with “deleted person”. Log lines expire on the retention schedule above.</Li>
-          <Li><Strong>Delete your organization:</Strong> an org admin can ask us the same way to delete the organization’s account and its data, and we will do it within 30 days: its locations, sales data, uploads, notes, team and tuning chat conversations. In the audit record, its name and its locations’ names are replaced.</Li>
+          <Li><Strong>Delete your account:</Strong> there is no self-serve deletion yet. Write to <Mail /> and we will delete your account and its data within 30 days: your account record, sessions, any authenticator record, your access requests and invitations, your place on a team and your TownwiseAI conversations. Notes and uploads you added stay with your organization. In the audit record, your email address is replaced with “deleted person”. Log lines expire on the retention schedule above.</Li>
+          <Li><Strong>Delete your organization:</Strong> an org admin can ask us the same way to delete the organization’s account and its data, and we will do it within 30 days: its locations, sales data, uploads, notes, team and TownwiseAI conversations. In the audit record, its name and its locations’ names are replaced.</Li>
           <Li><Strong>Backups:</Strong> our nightly backups are kept for 30 days and then deleted, so deleted data can remain in a backup until then.</Li>
           <Li><Strong>If your access ends:</Strong> your account record and your organization’s data are not deleted automatically. You can ask us to delete them, and we will within 30 days, as above.</Li>
           <Li><Strong>Questions or corrections:</Strong> <Mail />.</Li>

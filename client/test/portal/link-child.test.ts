@@ -122,10 +122,10 @@ test('the scan reads the code: it passes only the allowlist and fails everything
   expect(problems).toHaveLength(13);
   expect(problems.filter((problem) => problem === null)).toEqual([]);
 
-  // The links the portal's shared pieces draw: LinkButton, the location tabs, the top bar's nav, the console's
-  // status filters and its row names.
-  expect(sites.length).toBeGreaterThanOrEqual(5);
-  for (const file of ['src/portal/ui/Button.tsx', 'src/portal/shell/LocationShell.tsx', 'src/portal/console/parts.tsx', 'src/portal/shell/TopBar.tsx']) {
+  // The links the portal's shared pieces draw: LinkButton, the top bar's nav (with the location's sections), the
+  // console's status filters and its row names.
+  expect(sites.length).toBeGreaterThanOrEqual(4);
+  for (const file of ['src/portal/ui/Button.tsx', 'src/portal/console/parts.tsx', 'src/portal/shell/TopBar.tsx']) {
     expect(sites.some((site) => site.where.startsWith(`${file}:`))).toBe(true);
   }
 });

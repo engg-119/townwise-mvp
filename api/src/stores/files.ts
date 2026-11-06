@@ -1,0 +1,398 @@
+// tw_files (spec 6.11): one row per stored file. `name` is the original file name, sanitized; it is shown to the
+// organization only and is never logged, audited, sent to a model, or put in a blob name or a URL. Blob names come
+// from the ids here (files/blobs.ts). Reports hold header names, row numbers, dates and counts, never a data cell
+// other than the location value the person chose. Nothing here logs.
+import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
+
+import type { OrgScope } from '../access/policy.ts';
+import type { Role } from '../access/resolve.ts';
+
+export const FILES_COLLECTION = 'tw_files';
+
+export const FILE_KINDS = ['text', 'xlsx', 'xls', 'pdf', 'docx', 'doc', 'zip', 'other'] as const;
+export type FileKind = (typeof FILE_KINDS)[number];
+
+export const FILE_STATUSES = ['uploading', 'stored', 'queued', 'reading', 'waiting', 'read', 'kept', 'failed', 'deleting'] as const;
+export type FileStatus = (typeof FILE_STATUSES)[number];
+
+/** One received chunk: its byte count and SHA-256 (hex). */
+export interface ChunkRecord { readonly bytes: number; readonly sha256: string }
+
+/** While `uploading` (spec 6.11). `head` is the first 8 KiB, base64, for telling the kind at complete. */
+export interface UploadSession {
+  readonly chunkSize: number;
+  readonly chunkCount: number;
+  readonly chunks: readonly (ChunkRecord | null)[];
+  readonly head: string | null;
+  readonly expiresAt: Date;
+}
+
+export type ProgressUnit = 'bytes' | 'pages' | 'days';
+
+/** While `reading`. */
+export interface FileProgress {
+  readonly phase: 'unpacking' | 'reading' | 'writing';
+  readonly done: number;
+  readonly total: number | null;
+  readonly unit: ProgressUnit;
+  readonly phaseStartedAt: Date;
+  readonly updatedAt: Date;
+}
+
+/** What a read file added (spec 6.11). */
+export interface FileResult {
+  readonly dayCount: number;
+  readonly firstDate: string;
+  readonly lastDate: string;
+  readonly guestsDayCount: number;
+  readonly netSalesDayCount: number;
+  readonly inserted: number;
+  readonly replaced: number;
+  readonly kept: number;
+  readonly closedDates: readonly string[];
+  readonly missingDays: number;
+  readonly uploadId: string;
+}
+
+/** The person's answers to this file's questions, per sheet index ("0" for a text file). */
+export interface SheetAnswers {
+  readonly dateColumn?: number;
+  readonly dateOrder?: 'month_first' | 'day_first';
+  /** The location column's value that is this location. */
+  readonly locationValue?: string;
+  readonly rowMode?: 'day' | 'check' | 'item';
+  /** A column index, or null for "none". */
+  readonly guests?: number | null;
+  readonly netSales?: number | null;
+}
+export type FileAnswers = Readonly<Record<string, SheetAnswers>>;
+
+interface FileFields {
+  orgId: Types.ObjectId;
+  locationId: Types.ObjectId;
+  importId: Types.ObjectId | null;
+  purpose: 'history';
+  uploadedBy: string;
+  uploaderRole: Role;
+  uploadedAt: Date;
+  name: string;
+  kind: FileKind;
+  sizeBytes: number;
+  fingerprint: string | null;
+  upload: UploadSession | null;
+  status: FileStatus;
+  outcome: string | null;
+  progress: FileProgress | null;
+  readStartedAt: Date | null;
+  readMs: number | null;
+  answers: FileAnswers;
+  uploadId: Types.ObjectId | null;
+  result: FileResult | null;
+  report: Record<string, unknown> | null;
+  cleanBytes: number | null;
+  rawDeletedAt: Date | null;
+  attempts: number;
+}
+
+function fileSchema(): Schema<FileFields> {
+  const schema = new Schema<FileFields>({
+    orgId: { type: Schema.Types.ObjectId, required: true },
+    locationId: { type: Schema.Types.ObjectId, required: true },
+    importId: { type: Schema.Types.ObjectId, default: null },
+    purpose: { type: String, required: true, enum: ['history'] },
+    uploadedBy: { type: String, required: true },
+    uploaderRole: { type: String, required: true, enum: ['org_admin', 'member'] },
+    uploadedAt: { type: Date, required: true },
+    name: { type: String, required: true },
+    kind: { type: String, required: true, enum: FILE_KINDS },
+    sizeBytes: { type: Number, required: true },
+    fingerprint: { type: String, default: null },
+    upload: { type: Schema.Types.Mixed, default: null },
+    status: { type: String, required: true, enum: FILE_STATUSES },
+    outcome: { type: String, default: null },
+    progress: { type: Schema.Types.Mixed, default: null },
+    readStartedAt: { type: Date, default: null },
+    readMs: { type: Number, default: null },
+    answers: { type: Schema.Types.Mixed, default: () => ({}) },
+    uploadId: { type: Schema.Types.ObjectId, default: null },
+    result: { type: Schema.Types.Mixed, default: null },
+    report: { type: Schema.Types.Mixed, default: null },
+    cleanBytes: { type: Number, default: null },
+    rawDeletedAt: { type: Date, default: null },
+    attempts: { type: Number, required: true, default: 0 },
+  }, { strict: 'throw', versionKey: false, read: 'primary', minimize: false });
+  schema.index({ orgId: 1, locationId: 1, uploadedAt: -1 });
+  schema.index({ orgId: 1, importId: 1, uploadedAt: 1 });
+  schema.index({ orgId: 1, locationId: 1, fingerprint: 1 });
+  schema.index({ status: 1, 'upload.expiresAt': 1 });
+  return schema;
+}
+
+/** Registers TwFile (tw_files) on first call. */
+export function fileModel(connection: Connection): Model<FileFields> {
+  const existing = connection.models.TwFile as Model<FileFields> | undefined;
+  return existing ?? connection.model<FileFields>('TwFile', fileSchema(), FILES_COLLECTION);
+}
+
+export interface FileRecord {
+  readonly id: string;
+  readonly locationId: string;
+  readonly importId: string | null;
+  readonly purpose: 'history';
+  readonly uploadedBy: string;
+  readonly uploaderRole: Role;
+  readonly uploadedAt: Date;
+  readonly name: string;
+  readonly kind: FileKind;
+  readonly sizeBytes: number;
+  readonly fingerprint: string | null;
+  readonly upload: UploadSession | null;
+  readonly status: FileStatus;
+  readonly outcome: string | null;
+  readonly progress: FileProgress | null;
+  readonly readStartedAt: Date | null;
+  readonly readMs: number | null;
+  readonly answers: FileAnswers;
+  readonly uploadId: string | null;
+  readonly result: FileResult | null;
+  readonly report: Record<string, unknown> | null;
+  readonly cleanBytes: number | null;
+  readonly rawDeletedAt: Date | null;
+  readonly attempts: number;
+}
+
+function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
+  return {
+    id: doc._id.toHexString(),
+    locationId: doc.locationId.toHexString(),
+    importId: doc.importId === null ? null : doc.importId.toHexString(),
+    purpose: doc.purpose,
+    uploadedBy: doc.uploadedBy,
+    uploaderRole: doc.uploaderRole,
+    uploadedAt: doc.uploadedAt,
+    name: doc.name,
+    kind: doc.kind,
+    sizeBytes: doc.sizeBytes,
+    fingerprint: doc.fingerprint,
+    upload: doc.upload,
+    status: doc.status,
+    outcome: doc.outcome,
+    progress: doc.progress,
+    readStartedAt: doc.readStartedAt,
+    readMs: doc.readMs,
+    answers: doc.answers,
+    uploadId: doc.uploadId === null ? null : doc.uploadId.toHexString(),
+    result: doc.result,
+    report: doc.report,
+    cleanBytes: doc.cleanBytes,
+    rawDeletedAt: doc.rawDeletedAt,
+    attempts: doc.attempts,
+  };
+}
+
+export interface NewFile {
+  readonly importId: string;
+  readonly uploadedBy: string;
+  readonly uploaderRole: Role;
+  readonly uploadedAt: Date;
+  readonly name: string;
+  readonly kind: FileKind;
+  readonly sizeBytes: number;
+  readonly chunkSize: number;
+  readonly expiresAt: Date;
+}
+
+/** What the reader takes in a started import (nextToRead). */
+const READABLE: FileStatus[] = ['queued', 'reading', 'stored'];
+
+/** Tenant store: every function takes the OrgScope first and filters on its orgId. */
+export interface FileStore {
+  create(scope: OrgScope, locationId: string, input: NewFile): Promise<FileRecord>;
+  get(scope: OrgScope, locationId: string, fileId: string): Promise<FileRecord | null>;
+  /** Newest first. Other people's unfinished uploads are left out. */
+  list(scope: OrgScope, locationId: string, input: { viewerId: string; before: string | null; limit: number }): Promise<FileRecord[]>;
+  /** Upload order. */
+  inImport(scope: OrgScope, importId: string): Promise<FileRecord[]>;
+  /** Live files only: an upload session past its expiry is abandoned and counts toward no cap. */
+  counts(scope: OrgScope, locationId: string, importId: string | null, now: Date): Promise<{ inImport: number; uploading: number; inLocation: number }>;
+  /** Bytes of originals not yet deleted, across the organization, leaving out expired upload sessions. */
+  storedBytes(scope: OrgScope, now: Date): Promise<number>;
+  /** Records a received chunk while the file is uploading; null when it no longer is. */
+  recordChunk(scope: OrgScope, fileId: string, index: number, chunk: ChunkRecord, head: string | null): Promise<FileRecord | null>;
+  /** Compare-and-set from uploading: the session ends, the kind and fingerprint are set. Null when another call won. */
+  finishUpload(scope: OrgScope, fileId: string, input: { fingerprint: string; kind: FileKind; status: 'stored' | 'queued' }): Promise<FileRecord | null>;
+  /** Another live file of the location with this fingerprint. */
+  duplicateOf(scope: OrgScope, locationId: string, fingerprint: string, exceptId: string): Promise<string | null>;
+  /** Every stored file of the import becomes queued. Resolves the number changed. */
+  queueStored(scope: OrgScope, importId: string): Promise<number>;
+  /** Compare-and-set one file from `from` to `to`. */
+  move(scope: OrgScope, fileId: string, from: readonly FileStatus[], to: FileStatus): Promise<FileRecord | null>;
+  /** Moves a file into another import, as stored (a drop that landed after its import finished). */
+  reassign(scope: OrgScope, fileId: string, importId: string): Promise<void>;
+  remove(scope: OrgScope, fileId: string): Promise<boolean>;
+  /** The original is gone: the name becomes the kind's label (it can itself name a person). */
+  rawDeleted(scope: OrgScope, fileId: string, at: Date, label: string): Promise<void>;
+
+  /**
+   * The reader's next file in a started import: queued, reading (a previous attempt that stopped), or stored. A stored
+   * file in a started import is one whose move to queued has not landed yet (start and queueStored, or a late drop, are
+   * separate writes), so the reader takes it rather than finish the import past it.
+   */
+  nextToRead(scope: OrgScope, importId: string): Promise<FileRecord | null>;
+  /** Marks the file reading and counts the attempt. Null when it was deleted or moved meanwhile. */
+  startReading(scope: OrgScope, fileId: string, now: Date): Promise<FileRecord | null>;
+  setProgress(scope: OrgScope, fileId: string, progress: FileProgress): Promise<void>;
+  setUploadId(scope: OrgScope, fileId: string, uploadId: string): Promise<void>;
+  /** The reader's last word on a file: read, kept, failed or waiting (a question). */
+  settle(scope: OrgScope, fileId: string, input: {
+    status: 'read' | 'kept' | 'failed' | 'waiting' | 'queued';
+    outcome: string | null;
+    result?: FileResult | null;
+    report?: Record<string, unknown> | null;
+    cleanBytes?: number | null;
+    readMs?: number | null;
+  }): Promise<boolean>;
+  /** "Not sure": the waiting file is kept, unread, with this outcome. False when it was no longer waiting. */
+  keepWaiting(scope: OrgScope, fileId: string, outcome: string): Promise<boolean>;
+  /** An answer: merged into the sheet's answers, and the file goes back to the queue. False when it was no longer waiting. */
+  answer(scope: OrgScope, fileId: string, sheet: number, answers: SheetAnswers): Promise<boolean>;
+}
+
+export function createFileStore(connection: Connection): FileStore {
+  const File = fileModel(connection);
+  const org = (scope: OrgScope): Types.ObjectId => new Types.ObjectId(scope.orgId);
+  const oid = (id: string): Types.ObjectId => new Types.ObjectId(id);
+  const after = { returnDocument: 'after' } as const;
+  return {
+    async create(scope, locationId, input) {
+      const doc = await File.create({
+        orgId: org(scope), locationId: oid(locationId), importId: oid(input.importId), purpose: 'history',
+        uploadedBy: input.uploadedBy, uploaderRole: input.uploaderRole, uploadedAt: input.uploadedAt, name: input.name,
+        kind: input.kind, sizeBytes: input.sizeBytes, fingerprint: null, status: 'uploading',
+        upload: {
+          chunkSize: input.chunkSize,
+          chunkCount: Math.ceil(input.sizeBytes / input.chunkSize),
+          chunks: Array.from({ length: Math.ceil(input.sizeBytes / input.chunkSize) }, () => null),
+          head: null,
+          expiresAt: input.expiresAt,
+        },
+        answers: {}, attempts: 0,
+      });
+      return toFile(doc.toObject());
+    },
+    async get(scope, locationId, fileId) {
+      const doc = await File.findOne({ _id: oid(fileId), orgId: org(scope), locationId: oid(locationId) }).lean();
+      return doc === null ? null : toFile(doc);
+    },
+    async list(scope, locationId, input) {
+      const filter: Record<string, unknown> = {
+        orgId: org(scope), locationId: oid(locationId), status: trusted({ $ne: 'deleting' }),
+        $or: [{ status: trusted({ $ne: 'uploading' }) }, { uploadedBy: input.viewerId }],
+      };
+      if (input.before !== null) filter._id = trusted({ $lt: oid(input.before) });
+      const docs = await File.find(filter).sort({ _id: -1 }).limit(input.limit).lean();
+      return docs.map(toFile);
+    },
+    async inImport(scope, importId) {
+      const docs = await File.find({ orgId: org(scope), importId: oid(importId), status: trusted({ $ne: 'deleting' }) })
+        .sort({ uploadedAt: 1, _id: 1 }).lean();
+      return docs.map(toFile);
+    },
+    async counts(scope, locationId, importId, now) {
+      const live = (): Record<string, unknown> => ({
+        orgId: org(scope), status: trusted({ $ne: 'deleting' as const }),
+        $nor: [{ status: 'uploading', 'upload.expiresAt': trusted({ $lte: now }) }],
+      });
+      const [inImport, uploading, inLocation] = await Promise.all([
+        importId === null ? 0 : File.countDocuments({ ...live(), importId: oid(importId) }),
+        File.countDocuments({ orgId: org(scope), locationId: oid(locationId), status: 'uploading', 'upload.expiresAt': trusted({ $gt: now }) }),
+        File.countDocuments({ ...live(), locationId: oid(locationId) }),
+      ]);
+      return { inImport, uploading, inLocation };
+    },
+    async storedBytes(scope, now) {
+      const rows = await connection.collection(FILES_COLLECTION).aggregate<{ bytes: number }>([
+        { $match: { orgId: org(scope), rawDeletedAt: null, $nor: [{ status: 'uploading', 'upload.expiresAt': { $lte: now } }] } },
+        { $group: { _id: null, bytes: { $sum: '$sizeBytes' } } },
+      ]).toArray();
+      return rows[0]?.bytes ?? 0;
+    },
+    async recordChunk(scope, fileId, index, chunk, head) {
+      const set: Record<string, unknown> = { [`upload.chunks.${String(index)}`]: { bytes: chunk.bytes, sha256: chunk.sha256 } };
+      if (head !== null) set['upload.head'] = head;
+      const doc = await File.findOneAndUpdate({ _id: oid(fileId), orgId: org(scope), status: 'uploading' }, { $set: set }, after).lean();
+      return doc === null ? null : toFile(doc);
+    },
+    async finishUpload(scope, fileId, input) {
+      const doc = await File.findOneAndUpdate(
+        { _id: oid(fileId), orgId: org(scope), status: 'uploading' },
+        { $set: { status: input.status, fingerprint: input.fingerprint, kind: input.kind, upload: null } },
+        after,
+      ).lean();
+      return doc === null ? null : toFile(doc);
+    },
+    async duplicateOf(scope, locationId, fingerprint, exceptId) {
+      const doc = await File.findOne({
+        orgId: org(scope), locationId: oid(locationId), fingerprint, _id: trusted({ $ne: oid(exceptId) }),
+        status: trusted({ $nin: ['uploading', 'deleting'] }),
+      }).lean();
+      return doc === null ? null : doc._id.toHexString();
+    },
+    async queueStored(scope, importId) {
+      return (await File.updateMany({ orgId: org(scope), importId: oid(importId), status: 'stored' }, { $set: { status: 'queued' } })).modifiedCount;
+    },
+    async move(scope, fileId, from, to) {
+      const doc = await File.findOneAndUpdate(
+        { _id: oid(fileId), orgId: org(scope), status: trusted({ $in: [...from] }) }, { $set: { status: to } }, after,
+      ).lean();
+      return doc === null ? null : toFile(doc);
+    },
+    async reassign(scope, fileId, importId) {
+      await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, { $set: { importId: oid(importId), status: 'stored' } });
+    },
+    async remove(scope, fileId) {
+      return (await File.deleteOne({ _id: oid(fileId), orgId: org(scope) })).deletedCount === 1;
+    },
+    async rawDeleted(scope, fileId, at, label) {
+      await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, { $set: { rawDeletedAt: at, name: label } });
+    },
+    async nextToRead(scope, importId) {
+      const doc = await File.findOne({ orgId: org(scope), importId: oid(importId), status: trusted({ $in: READABLE }) })
+        .sort({ uploadedAt: 1, _id: 1 }).lean();
+      return doc === null ? null : toFile(doc);
+    },
+    async startReading(scope, fileId, now) {
+      const doc = await File.findOneAndUpdate(
+        { _id: oid(fileId), orgId: org(scope), status: trusted({ $in: READABLE }) },
+        { $set: { status: 'reading', readStartedAt: now, progress: null }, $inc: { attempts: 1 } },
+        after,
+      ).lean();
+      return doc === null ? null : toFile(doc);
+    },
+    async setProgress(scope, fileId, progress) {
+      await File.updateOne({ _id: oid(fileId), orgId: org(scope), status: 'reading' }, { $set: { progress } });
+    },
+    async setUploadId(scope, fileId, uploadId) {
+      await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, { $set: { uploadId: oid(uploadId) } });
+    },
+    async settle(scope, fileId, input) {
+      const set: Record<string, unknown> = { status: input.status, outcome: input.outcome, progress: null };
+      if (input.result !== undefined) set.result = input.result;
+      if (input.report !== undefined) set.report = input.report;
+      if (input.cleanBytes !== undefined) set.cleanBytes = input.cleanBytes;
+      if (input.readMs !== undefined) set.readMs = input.readMs;
+      const result = await File.updateOne({ _id: oid(fileId), orgId: org(scope), status: 'reading' }, { $set: set });
+      return result.matchedCount === 1;
+    },
+    async keepWaiting(scope, fileId, outcome) {
+      const result = await File.updateOne({ _id: oid(fileId), orgId: org(scope), status: 'waiting' }, { $set: { status: 'kept', outcome } });
+      return result.matchedCount === 1;
+    },
+    async answer(scope, fileId, sheet, answers) {
+      const set: Record<string, unknown> = { status: 'queued', attempts: 0 };
+      for (const [key, value] of Object.entries(answers)) set[`answers.${String(sheet)}.${key}`] = value;
+      const result = await File.updateOne({ _id: oid(fileId), orgId: org(scope), status: 'waiting' }, { $set: set });
+      return result.matchedCount === 1;
+    },
+  };
+}

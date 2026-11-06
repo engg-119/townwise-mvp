@@ -107,6 +107,8 @@ describe('POST /api/org/locations', () => {
     const event = (await auditEvents(server)).find((e) => (e.target as { id: string }).id === location.id);
     expect(event).toMatchObject({ action: 'location.created', actorUserId: t.admin.userId, actorRole: 'org_admin', details: { name: 'Harbor Room', townId: 'bar-harbor-me' } });
     expect(String(event?.orgId)).toBe(t.orgId);
+    expect(await server.connection.collection('tw_locations').findOne({ _id: new Types.ObjectId(location.id) })).toMatchObject({ placeId: null });
+    expect(location).not.toHaveProperty('placeId');
 
     const elsewhere = await create(t.admin, { name: 'Coast Room', town: { townId: null, name: ' Kennebunkport ', state: 'ME' } });
     expect(elsewhere.status).toBe(201);
@@ -154,6 +156,13 @@ describe('PATCH /api/org/locations/:locationId', () => {
       { name: 'Front Room', townId: 'hanover-nh' }, { name: 'Front Room', townId: 'ithaca-ny' },
     ]);
 
+    // A place id is not editable here: PATCH strips it and a stored one survives a rename and a move.
+    const locations = server.connection.collection('tw_locations');
+    await locations.updateOne({ _id: new Types.ObjectId(first) }, { $set: { placeId: 'ChIJTestPlace0001' } });
+    expect((await patch(t.admin, first, { name: 'Front Hall', placeId: 'ChIJTestPlace0009' })).status).toBe(200);
+    expect(await locations.findOne({ _id: new Types.ObjectId(first) })).toMatchObject({ name: 'Front Hall', placeId: 'ChIJTestPlace0001' });
+    expect((await patch(t.admin, first, { name: 'Front Room' })).status).toBe(200);
+
     expect(await errorOf(await patch(t.admin, first, { name: 'SECOND' }))).toEqual({ status: 409, error: 'location_name_taken' });
     expect(await errorOf(await patch(t.admin, first, {}))).toEqual({ status: 400, error: 'invalid_request' });
     expect(await errorOf(await patch(t.admin, first, { town: { townId: 'springfield-ma' } }))).toEqual({ status: 400, error: 'unknown_town' });
@@ -183,6 +192,22 @@ describe('DELETE /api/org/locations/:locationId', () => {
     const event = (await auditEvents(server)).find((e) => e.action === 'location.deleted' && (e.target as { id: string }).id === empty);
     expect(event?.details).toEqual({ name: 'Empty', townId: 'hanover-nh' });
     expect(await errorOf(await remove(t.admin, empty))).toEqual({ status: 404, error: 'not_found' });
+  });
+
+  it('deletes the location’s TownwiseAI proposal records with it, and no other location’s', async () => {
+    const t = await team('Proposal Group');
+    const doomed = await addLocation(server, { orgId: t.orgId, name: 'Doomed' });
+    const kept = await addLocation(server, { orgId: t.orgId, name: 'Kept' });
+    const proposals = server.connection.collection('tw_chat_proposals');
+    const at = server.clock.now();
+    await proposals.insertMany([doomed, kept].map((locationId) => ({
+      orgId: new Types.ObjectId(t.orgId), locationId: new Types.ObjectId(locationId), conversationId: new Types.ObjectId(),
+      userId: t.member.userId, proposalId: 'toolu_proposal0001', status: 'dismissed', noteId: new Types.ObjectId(), edited: false,
+      createdAt: at, updatedAt: at,
+    })));
+    expect((await remove(t.admin, doomed)).status).toBe(204);
+    expect(await proposals.countDocuments({ locationId: new Types.ObjectId(doomed) })).toBe(0);
+    expect(await proposals.countDocuments({ locationId: new Types.ObjectId(kept) })).toBe(1);
   });
 });
 

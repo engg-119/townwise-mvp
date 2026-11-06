@@ -4,9 +4,11 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { TOWNWISE_ROUTES } from '../src/access/routes.ts';
+import { createMemoryFileBlobs, type MemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import {
   addGrant, addInvite, addLocation, addNote, addRequest, addSalesDay, addSeat, addUpload, createOrg,
 } from './helpers/fixtures.ts';
+import { seedReadFile } from './helpers/files.ts';
 import { PROBE_ROUTES } from './helpers/probe.ts';
 import {
   call, limiterKey, logLines, makeStaff, MINUTE, refresh, removeStaffFactor, signIn, signInStaff, startTownwiseServer,
@@ -14,8 +16,12 @@ import {
 } from './helpers/server.ts';
 
 let server: TownwiseTestServer;
+let blobs: MemoryFileBlobs;
 
-beforeAll(async () => { server = await startTownwiseServer({ probe: PROBE_ROUTES }); });
+beforeAll(async () => {
+  blobs = createMemoryFileBlobs();
+  server = await startTownwiseServer({ probe: PROBE_ROUTES, files: blobs });
+});
 afterAll(async () => { await server.close(); });
 beforeEach(async () => { await server.redis.flushdb(); });
 afterEach(async () => { await removeStaffFactor(server); });
@@ -84,10 +90,15 @@ describe('GET is side-effect free (7.3)', () => {
     await addSalesDay(server, { orgId, locationId, date: '2026-05-01', guests: 120, netSalesCents: 345_600 });
     await addUpload(server, { orgId, locationId, uploadedAt: server.clock.now(), status: 'applied' });
     await addNote(server, { orgId, locationId, detail: 'Closed for a staff day' });
-    const ids: Record<string, string> = { orgId, locationId, townId: 'hanover-nh' };
+    const fileId = await seedReadFile(server, blobs, {
+      orgId, locationId, uploadedBy: admin.userId, name: 'sales.csv', raw: Buffer.from('Date\n'), clean: 'date,guests,net_sales\r\n',
+    });
+    const importId = String((await server.connection.collection('tw_files').findOne({}, { sort: { _id: -1 } }))?.importId);
+    const ids: Record<string, string> = { orgId, locationId, townId: 'hanover-nh', fileId, importId };
     const query: Record<string, string> = {
       'admin.people.lookup': `?q=${encodeURIComponent(memberEmail)}`,
       'org.sales.days': '?from=2026-01-01&to=2026-05-31',
+      'org.calendar.get': '?from=2026-01-01&to=2026-05-31',
     };
     const gets = TOWNWISE_ROUTES.filter((route) => route.method === 'GET')
       .map((route) => `/api${route.path.replace(/:([A-Za-z]+)/g, (_m, name: string) => ids[name] ?? '')}${query[route.id] ?? ''}`);

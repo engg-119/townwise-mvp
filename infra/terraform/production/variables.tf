@@ -92,3 +92,9 @@ variable "enable_chat" {
   type        = bool
   default     = false
 }
+
+variable "enable_places" {
+  description = "Turn on the Places search and its map: the API gets GOOGLE_PLACES_API_KEY, GOOGLE_MAPS_STATIC_KEY and GOOGLE_MAPS_SIGNING_SECRET from the Key Vault secrets google-places-api-key, google-maps-static-key and google-maps-signing-secret, which must all be seeded first (infra/README.md, Enable the Places search). False leaves them off."
+  type        = bool
+  default     = false
+}

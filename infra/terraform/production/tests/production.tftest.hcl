@@ -272,6 +272,47 @@ override_resource {
 }
 
 override_resource {
+  target          = azurerm_storage_account.files
+  override_during = plan
+  values = {
+    id                    = "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.Storage/storageAccounts/sttwfiles2d2c15bf"
+    primary_blob_endpoint = "https://sttwfiles2d2c15bf.blob.core.windows.net/"
+  }
+}
+
+override_resource {
+  target          = azurerm_storage_container.client_raw
+  override_during = plan
+  values = {
+    id = "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.Storage/storageAccounts/sttwfiles2d2c15bf/blobServices/default/containers/client-raw"
+  }
+}
+
+override_resource {
+  target          = azurerm_storage_container.client_clean
+  override_during = plan
+  values = {
+    id = "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.Storage/storageAccounts/sttwfiles2d2c15bf/blobServices/default/containers/client-clean"
+  }
+}
+
+override_resource {
+  target          = azurerm_role_definition.client_files
+  override_during = plan
+  values = {
+    role_definition_resource_id = "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-00000000f101"
+  }
+}
+
+override_resource {
+  target          = azurerm_private_dns_zone.blob
+  override_during = plan
+  values = {
+    id = "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"
+  }
+}
+
+override_resource {
   target          = azurerm_monitor_action_group.ops
   override_during = plan
   values = {
@@ -349,6 +390,21 @@ run "key_vault" {
   }
 
   assert {
+    condition = (
+      !var.enable_places &&
+      length(setintersection(
+        toset([for secret in azurerm_container_app.api.secret : secret.name]),
+        toset(["google-places-api-key", "google-maps-static-key", "google-maps-signing-secret"]),
+      )) == 0 &&
+      length(setintersection(
+        toset([for env in azurerm_container_app.api.template[0].container[0].env : env.name]),
+        toset(["GOOGLE_PLACES_API_KEY", "GOOGLE_MAPS_STATIC_KEY", "GOOGLE_MAPS_SIGNING_SECRET"]),
+      )) == 0
+    )
+    error_message = "By default the Places search and its map are off: no Google Places key, Maps Static key or signing secret, none of GOOGLE_PLACES_API_KEY, GOOGLE_MAPS_STATIC_KEY or GOOGLE_MAPS_SIGNING_SECRET, no role on any of them."
+  }
+
+  assert {
     condition = toset([for key, assignment in azurerm_role_assignment.job_secret_read : "${assignment.principal_id} ${element(split("/", assignment.scope), length(split("/", assignment.scope)) - 1)}"]) == toset([
       "00000000-0000-0000-0000-0000000000b1 mongodb-backup-uri",
       "00000000-0000-0000-0000-0000000000c1 db-admin-password",
@@ -406,6 +462,43 @@ run "chat_enabled" {
   }
 }
 
+run "places_enabled" {
+  command = plan
+
+  variables {
+    enable_places = true
+  }
+
+  assert {
+    condition = toset([for key, assignment in azurerm_role_assignment.api_secret_read : assignment.scope]) == toset([
+      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/mongodb-uri",
+      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/auth-jwt-keys",
+      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/auth-encryption-keys",
+      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/google-places-api-key",
+      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/google-maps-static-key",
+      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/google-maps-signing-secret",
+      ]) && alltrue([
+      for key, assignment in azurerm_role_assignment.api_secret_read :
+      assignment.role_definition_name == "Key Vault Secrets User" && assignment.principal_id == "00000000-0000-0000-0000-0000000000ee"
+    ])
+    error_message = "With the Places search on, the app's identity reads the Google Places key, the Maps Static key and its signing secret by three more secret-scoped assignments, and nothing wider."
+  }
+
+  assert {
+    condition = (
+      toset([for env in azurerm_container_app.api.template[0].container[0].env : "${env.name}=${coalesce(env.secret_name, "-")}" if env.secret_name != null]) == toset([
+        "MONGODB_URI=mongodb-uri", "AUTH_JWT_KEYS=auth-jwt-keys", "AUTH_ENCRYPTION_KEYS=auth-encryption-keys", "GOOGLE_PLACES_API_KEY=google-places-api-key",
+        "GOOGLE_MAPS_STATIC_KEY=google-maps-static-key", "GOOGLE_MAPS_SIGNING_SECRET=google-maps-signing-secret",
+      ]) &&
+      contains([for secret in azurerm_container_app.api.secret : secret.key_vault_secret_id], "https://kv-townwise-2d2c15bf.vault.azure.net/secrets/google-places-api-key") &&
+      contains([for secret in azurerm_container_app.api.secret : secret.key_vault_secret_id], "https://kv-townwise-2d2c15bf.vault.azure.net/secrets/google-maps-static-key") &&
+      contains([for secret in azurerm_container_app.api.secret : secret.key_vault_secret_id], "https://kv-townwise-2d2c15bf.vault.azure.net/secrets/google-maps-signing-secret") &&
+      alltrue([for secret in azurerm_container_app.api.secret : secret.value == null])
+    )
+    error_message = "With the Places search on, GOOGLE_PLACES_API_KEY, GOOGLE_MAPS_STATIC_KEY and GOOGLE_MAPS_SIGNING_SECRET are Key Vault references to google-places-api-key, google-maps-static-key and google-maps-signing-secret, with no value in Terraform."
+  }
+}
+
 run "rbac_scopes" {
   command = plan
 
@@ -416,6 +509,7 @@ run "rbac_scopes" {
         values(azurerm_role_assignment.job_secret_read), values(azurerm_role_assignment.job_acr_pull),
         [azurerm_role_assignment.api_acr_pull, azurerm_role_assignment.api_email, azurerm_role_assignment.deploy_acr_push],
         [azurerm_role_assignment.backup_blob_create, azurerm_role_assignment.restore_blob_read],
+        [azurerm_role_assignment.api_files_raw, azurerm_role_assignment.api_files_clean],
       ) : !can(regex("^/subscriptions/[^/]+/?$", assignment.scope)) && !can(regex("^/subscriptions/[^/]+/resourceGroups/[^/]+/?$", assignment.scope))
     ])
     error_message = "Every production role assignment is scoped to a single resource: none at subscription or resource-group scope."
@@ -431,8 +525,11 @@ run "rbac_scopes" {
       ]) && alltrue([
       for assignment in values(azurerm_role_assignment.deployer) :
       assignment.role_definition_id == azurerm_role_definition.deployer.role_definition_resource_id
-    ]) && azurerm_role_assignment.api_email.role_definition_id == azurerm_role_definition.email_sender.role_definition_resource_id
-    error_message = "No Owner or Contributor anywhere in production; the deploy and email grants use their custom roles."
+      ]) && azurerm_role_assignment.api_email.role_definition_id == azurerm_role_definition.email_sender.role_definition_resource_id && alltrue([
+      for assignment in [azurerm_role_assignment.api_files_raw, azurerm_role_assignment.api_files_clean] :
+      assignment.role_definition_id == azurerm_role_definition.client_files.role_definition_resource_id
+    ])
+    error_message = "No Owner or Contributor anywhere in production; the deploy, email and client files grants use their custom roles."
   }
 
   assert {
@@ -467,7 +564,7 @@ run "web_headers" {
 
   assert {
     condition = output.web_headers == {
-      "Content-Security-Policy"    = "default-src 'none'; script-src 'self' https://accounts.google.com/gsi/client; style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style; img-src 'self' data:; font-src 'self'; connect-src 'self' https://api.townwise.tech https://accounts.google.com/gsi/; frame-src https://accounts.google.com/gsi/; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+      "Content-Security-Policy"    = "default-src 'none'; script-src 'self' https://accounts.google.com/gsi/client; style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style; img-src 'self' data: https://maps.googleapis.com; font-src 'self'; connect-src 'self' https://api.townwise.tech https://accounts.google.com/gsi/; frame-src https://accounts.google.com/gsi/; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
       "Cross-Origin-Opener-Policy" = "same-origin-allow-popups"
       "Strict-Transport-Security"  = "max-age=31536000; includeSubDomains"
       "Referrer-Policy"            = "strict-origin-when-cross-origin"
@@ -619,12 +716,12 @@ run "database_private_and_passwordless_in_state" {
   assert {
     condition = (
       toset([for rule in azurerm_network_security_group.endpoints.security_rule : "${rule.access} ${rule.direction} ${rule.source_address_prefix} ${rule.destination_port_range}"]) == toset([
-        "Allow Inbound 10.40.0.0/24 10260", "Deny Inbound * *",
+        "Allow Inbound 10.40.0.0/24 10260", "Allow Inbound 10.40.0.0/24 443", "Deny Inbound * *",
       ]) &&
       azurerm_subnet.endpoints.private_endpoint_network_policies == "NetworkSecurityGroupEnabled" &&
       azurerm_subnet_network_security_group_association.endpoints.subnet_id == azurerm_subnet.endpoints.id
     )
-    error_message = "The endpoint subnet's NSG admits only the apps subnet, only on 10260, and is enforced on private endpoints."
+    error_message = "The endpoint subnet's NSG admits only the apps subnet, only on 10260 (the database) and 443 (client files), and is enforced on private endpoints."
   }
 
   assert {
@@ -708,6 +805,116 @@ run "backups" {
       env.name != "BACKUP_BLOB"
     ])
     error_message = "The restore job names no dump by default; each execution must (infra/scripts/db-restore.sh)."
+  }
+}
+
+run "client_files" {
+  command = plan
+
+  assert {
+    condition = (
+      !azurerm_storage_account.files.shared_access_key_enabled &&
+      azurerm_storage_account.files.min_tls_version == "TLS1_2" &&
+      !azurerm_storage_account.files.allow_nested_items_to_be_public &&
+      azurerm_storage_account.files.default_to_oauth_authentication &&
+      azurerm_storage_account.files.public_network_access == "Disabled" &&
+      azurerm_storage_account.files.network_rules[0].default_action == "Deny" &&
+      azurerm_storage_account.files.network_rules[0].bypass == toset(["None"]) &&
+      length(azurerm_storage_account.files.network_rules[0].virtual_network_subnet_ids) == 0 &&
+      length(azurerm_storage_account.files.network_rules[0].ip_rules) == 0 &&
+      !azurerm_storage_account.files.blob_properties[0].versioning_enabled &&
+      !azurerm_storage_account.files.blob_properties[0].change_feed_enabled &&
+      azurerm_storage_account.files.blob_properties[0].delete_retention_policy[0].days == 7
+    )
+    error_message = "Client files: Entra ID only, TLS 1.2, public network access disabled, a deny-all firewall with no rules or bypass, no versions, soft delete 7 days."
+  }
+
+  assert {
+    condition = (
+      azurerm_private_endpoint.files.subnet_id == azurerm_subnet.endpoints.id &&
+      azurerm_private_endpoint.files.private_service_connection[0].private_connection_resource_id == azurerm_storage_account.files.id &&
+      azurerm_private_endpoint.files.private_service_connection[0].subresource_names == tolist(["blob"]) &&
+      azurerm_private_dns_zone.blob.name == "privatelink.blob.core.windows.net" &&
+      azurerm_private_endpoint.files.private_dns_zone_group[0].private_dns_zone_ids == tolist([azurerm_private_dns_zone.blob.id]) &&
+      azurerm_private_dns_zone_virtual_network_link.blob.virtual_network_id == azurerm_virtual_network.main.id &&
+      !azurerm_private_dns_zone_virtual_network_link.blob.registration_enabled
+    )
+    error_message = "One private endpoint (blob) in the endpoints subnet, resolved through privatelink.blob.core.windows.net linked to the VNet."
+  }
+
+  assert {
+    condition = (
+      azurerm_storage_container.client_raw.name == "client-raw" && azurerm_storage_container.client_raw.container_access_type == "private" &&
+      azurerm_storage_container.client_clean.name == "client-clean" && azurerm_storage_container.client_clean.container_access_type == "private"
+    )
+    error_message = "Two private containers: client-raw (originals) and client-clean (cleaned copies)."
+  }
+
+  assert {
+    condition = (
+      azurerm_role_definition.client_files.permissions[0].data_actions == toset([
+        "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read",
+        "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/write",
+        "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/add/action",
+        "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/delete",
+      ]) &&
+      try(length(azurerm_role_definition.client_files.permissions[0].actions), 0) == 0
+    )
+    error_message = "The client files role has exactly four blob data actions and no actions: no container changes, no user delegation key, so no SAS."
+  }
+
+  assert {
+    condition = (
+      toset([for assignment in [azurerm_role_assignment.api_files_raw, azurerm_role_assignment.api_files_clean] : assignment.scope]) == toset([
+        azurerm_storage_container.client_raw.id, azurerm_storage_container.client_clean.id,
+      ]) &&
+      alltrue([
+        for assignment in [azurerm_role_assignment.api_files_raw, azurerm_role_assignment.api_files_clean] :
+        assignment.principal_id == "00000000-0000-0000-0000-0000000000ee" &&
+        assignment.role_definition_id == azurerm_role_definition.client_files.role_definition_resource_id
+      ])
+    )
+    error_message = "The API identity holds the client files role on each container, never on the account."
+  }
+
+  assert {
+    condition = toset([
+      for assignment in [
+        azurerm_role_assignment.api_acr_pull, azurerm_role_assignment.api_email,
+        azurerm_role_assignment.api_files_raw, azurerm_role_assignment.api_files_clean,
+      ] : assignment.scope if strcontains(assignment.scope, "/providers/Microsoft.Storage/")
+      ]) == toset([azurerm_storage_container.client_raw.id, azurerm_storage_container.client_clean.id]) && alltrue([
+      for assignment in concat(
+        values(azurerm_role_assignment.job_secret_read), values(azurerm_role_assignment.job_acr_pull),
+        [azurerm_role_assignment.backup_blob_create, azurerm_role_assignment.restore_blob_read],
+      ) : !strcontains(assignment.scope, "/storageAccounts/sttwfiles")
+    ])
+    error_message = "The API identity's only storage roles are on the two client file containers (never the backup, audit or a models account), and no job identity has one on client files."
+  }
+
+  assert {
+    condition = (
+      azurerm_storage_management_policy.files.storage_account_id == azurerm_storage_account.files.id &&
+      azurerm_storage_management_policy.files.rule[0].filters[0].prefix_match == toset(["client-raw/"]) &&
+      azurerm_storage_management_policy.files.rule[0].actions[0].base_blob[0].delete_after_days_since_creation_greater_than == 400 &&
+      length(azurerm_storage_management_policy.files.rule) == 1
+    )
+    error_message = "Originals are deleted by lifecycle after 400 days as a backstop; nothing deletes cleaned copies."
+  }
+
+  assert {
+    condition = (
+      azurerm_monitor_diagnostic_setting.files_blob.target_resource_id == "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.Storage/storageAccounts/sttwfiles2d2c15bf/blobServices/default" &&
+      azurerm_monitor_diagnostic_setting.files_blob.storage_account_id == azurerm_storage_account.audit.id &&
+      azurerm_monitor_diagnostic_setting.files_blob.log_analytics_workspace_id == null &&
+      toset([for log in azurerm_monitor_diagnostic_setting.files_blob.enabled_log : log.category]) == toset(["StorageRead", "StorageWrite", "StorageDelete"])
+    )
+    error_message = "Every blob read, write and delete is logged to the audit account only, never to the capped workspace."
+  }
+
+  assert {
+    condition     = output.files_blob_endpoint == "https://sttwfiles2d2c15bf.blob.core.windows.net/"
+    error_message = "The files account's blob endpoint is an output for api/production.env."
   }
 }
 

@@ -115,7 +115,7 @@ Not taken, and why:
 | D11 | The column mapper never renders a cell, except the distinct values of a column the user names as the location column. | Names stay off the screen and out of screenshots. | [CONFIRM: no cell contents in the mapper] |
 | D12 | Calibration states in v1: no sales data, and not calibrated. No day threshold is shown. | No fake output. The homepage says the history needed is still being tested. | [CONFIRM: lead default, honest states] [DECISION NEEDED: minimum days of history before calibration] |
 | D13 | Tuning is structured notes per location: closure, private event, opening, other. An AI chat waits. | Lead default. | [CONFIRM: lead default, notes first, AI chat later] |
-| D14 | No email in v1. | Lead default. Azure Communication Services comes later. | [CONFIRM: lead default, no email in v1] |
+| D14 | Townwise sends two emails, each only to the person it concerns and only after the change it reports is written: request received (F2) and you’re in (F3, from the call that seats the requester). They come from `no-reply@townwise.tech` through Azure Communication Services, sent with the API’s managed identity, with Reply-To from `TOWNWISE_EMAIL_REPLY_TO`, no images and tracking off. Invitations, rejections, view-as and every other flow send none. A failed send is logged as a code, with no address, and never blocks, fails or retries the action. Email is off until `EMAIL_ENDPOINT` is set; production turns it on in the release whose F2, F3, P3, P4 and C3 copy stops saying “We don’t send email yet”. | Owner decision, 2026-11-05. People are held until staff approve, so they need to hear when they’re in. A rejection email waits on an owner question (whether it quotes the staff message). | Decided (owner, 2026-11-05) |
 | D15 | An organization has one or more locations. Sales, uploads and notes belong to a location. | Lead default. | [CONFIRM: lead default, per-location data] |
 | D16 | Members and org admins can upload and write notes. A member’s upload adds new days only; an org admin’s replaces the days it covers. Only org admins manage the team, locations, the organization name and deletion. | The person with POS access is often a manager. Replacing history is as destructive as deleting it, which is admin-only. | [CONFIRM: member permissions; members add new days only] |
 | D17 | No multi-document transactions. Writes are ordered so a retry completes them, and unique indexes catch races. | Local Mongo is standalone (`compose.yaml`), and production DocumentDB sets `retryWrites=false`. | none (a fact) |
@@ -193,6 +193,7 @@ interface MeResponse {
   access: Access;                              // during view-as: the target's access
   viewAs: ViewAsView | null;
   staff: { verifiedUntil: string } | null;    // set whenever the signed-in person's own state is 'staff'
+  welcome: { firstName: string | null; restaurant: string } | null;   // GET /api/me only (15.8); null in every other answer
 }
 ```
 
@@ -240,7 +241,7 @@ The gate also allows `/request-access` from `rejected` and `removed`, when the p
 ### F1. First sign-in with an invited email
 
 1. An org admin adds `{email}` on Team. A `tw_members` row is created with `status: 'invited'`, `inviteEmail: {email}` and the chosen role (default `member`). Audit `member.invited`.
-2. The admin tells the person. Townwise sends no email, and the Team page says so.
+2. The admin tells the person. Townwise doesn’t email invitations (D14), and the Team page says so.
 3. The person presses “Continue with Google”. The kit creates or finds their user (**Exists**).
 4. `GET /api/me` answers `invited`. With one invitation and no pending request, `/joining` shows “Joining {org}…” and who added them, and calls `POST /api/me/join { inviteId }` at once (lead default). With a pending request, or with two or more invitations, `/joining` lists them and waits for a press: Join on one, or “Not my team” on any (P6).
 5. The server compare-and-sets the invitation to `active`. It matches `_id`, `status: 'invited'`, `inviteEmail` equal to the caller’s current email, and an active organization. It sets `userId`, `activeUserId` and `joinedAt`, and unsets `inviteEmail`. Then it withdraws any pending request of the caller (`withdrawnReason: 'joined_org'`), audits `member.joined`, and answers the new `MeResponse`.
@@ -258,15 +259,15 @@ Branches:
 
 ### F2. Request access
 
-1. A person in `no_org` lands on `/request-access`. The form asks for organization name, their name, their role, the town (one of the twelve, or another town and state), number of locations and an optional note.
-2. `POST /api/access-requests`. A unique partial index allows one pending request per user. Audit `access_request.created`.
+1. A person in `no_org` lands on `/request-access`. The form asks for organization name, their name, their role, the town (one of the twelve, or another town and state), number of locations and an optional note. The business can be found on Google Places first (10.2a); the request then also carries its Google place id (`placeId`), optional.
+2. `POST /api/access-requests`. A unique partial index allows one pending request per user. Audit `access_request.created`, with `hasPlace` and never the place id. [CONFIRM: a request keeps the place the requester picked; staff check it by hand]
 3. `/waiting` shows what was sent, “We don’t send email yet, so check back here.”, and the public profile of the town they named. [CONFIRM: town profile while waiting]
 
 **F2b. Invited while pending.** At the next `GET /api/me` the person is `invited`, with `pendingRequest` set. `/joining` does not join on load. It names the organization and who added them, and offers “Join {org}” and “Not my team”. Join withdraws the request. “Not my team” deletes the invitation, and the request stays with staff, so an invitation the person never chose cannot skip staff review. This is also how staff place a requester into an existing organization: they add the requester’s email on that organization’s page, and the requester presses Join.
 
 ### F3. Staff approve a request
 
-1. Staff open `/admin` (Requests, Pending) and read the request: organization, contact name and role, email (and the email at request time if it changed), town, location count, note, sent date. A warning shows when the requester already holds a seat.
+1. Staff open `/admin` (Requests, Pending) and read the request: organization, contact name and role, email (and the email at request time if it changed), town, location count, note, the place id when there is one, sent date. A warning shows when the requester already holds a seat.
 2. Staff validate the person by hand, outside Townwise: for example, the email domain matches the restaurant, or a phone call. [CONFIRM: what “validated manually” means in practice]
 3. “Approve” opens a dialog with the organization name and first location name, both prefilled and editable, and the town shown.
 4. `POST /api/admin/requests/:requestId/approve { orgName, locationName }`:
@@ -276,7 +277,7 @@ Branches:
    4. Generate `orgId`. Audit `access_request.approved` with it, before the change (staff events are written first, 9.3).
    5. Compare-and-set the request from `pending` to `approved`, with `orgId`, `decidedAt` and `decidedBy`. No match: 409 `request_not_pending` (another staff member got there first), and the server writes `staff_action.not_applied`.
    6. Upsert the organization `{ _id: orgId }` with `$setOnInsert`: name, `active`, `createdAt`, `createdBy`, `fromRequestId`. Audit `org.created` on insert.
-   7. Upsert the first location keyed by `{ orgId, nameKey }` with `$setOnInsert`: name, and the town from the request. Audit `location.created` on insert.
+   7. Upsert the first location keyed by `{ orgId, nameKey }` with `$setOnInsert`: name, the town from the request, and its `placeId` (null when it has none; a retry keeps the first value). Audit `location.created` on insert.
    8. Insert the requester’s seat: `role: 'org_admin'`, `status: 'active'`, `userId`, `activeUserId`, `joinedAt`, `email` (the requester’s current kit email). A duplicate key in this organization counts as success. A duplicate in another organization (the requester joined elsewhere in the gap) answers 409 `requester_has_org`; the organization then exists with no admin, and its detail page shows “No admin yet”. Audit `member.joined`. [Build note: after inserting the seat, the server reads the request again. Gone means the requester was deleted meanwhile (10.7, Deletion): the seat is deleted, and, when nobody else is in it, the organization and first location made for the request, with their names redacted as in an organization deletion; no `member.joined` is written, and the answer is 404, with `staff_action.not_applied` (`not_found`) for the approval event this call wrote.]
 5. The requester sees their organization at their next `GET /api/me`. No email is sent.
 
@@ -402,6 +403,7 @@ Email changes: the kit updates `users.email` when Google is authoritative for a 
 | `town` | `{ townId: TownId \| null; name: string; state: string }` | Section 13 |
 | `locationCount` | integer | 1 to 50 |
 | `note` | string or null | up to 1,000; shown to staff only as plain text |
+| `placeId` | string or null | optional Google place id, 10 to 512 letters, digits, `_` or `-` (`api/src/place-id.ts`) [CONFIRM: place ID format]; documents from before it read as null; set by the requester, so staff check it by hand [CONFIRM: a request keeps the place the requester picked; staff check it by hand] |
 | `status` | `'pending' \| 'approved' \| 'rejected' \| 'withdrawn'` | |
 | `createdAt`, `decidedAt`, `decidedBy` | | |
 | `decisionMessage` | string or null | up to 500; shown to the requester on rejection |
@@ -418,6 +420,7 @@ Indexes: `{ userId: 1 }` unique with `partialFilterExpression: { status: 'pendin
 | `name` | string | 1 to 80 |
 | `nameKey` | string | `name` trimmed, lowercased, inner spaces collapsed |
 | `town` | `{ townId: TownId \| null; name: string; state: string }` | |
+| `placeId` | string or null | the request’s Google place id, copied at approval (F3 step 7); null for a location added from P10; never edited; older documents read as null |
 | `createdAt`, `createdBy` | | |
 
 Indexes: `{ orgId: 1, nameKey: 1 }` unique; `{ orgId: 1, createdAt: 1 }`. Limit: 25 per organization. [CONFIRM: 25 locations]
@@ -437,7 +440,7 @@ Indexes: `{ orgId: 1, locationId: 1, date: 1 }` unique. The schema is `strict: '
 
 ### 6.6 `tw_uploads`
 
-`_id`, `orgId`, `locationId`, `uploadedBy` (userId), `uploadedAt`, `status` (`'applying' | 'applied'`), `dayCount`, `inserted`, `replaced`, `kept` (days a member’s upload left unchanged because they already had data; always 0 for an org admin’s), `firstDate`, `lastDate`, `hasGuests`, `hasNetSales`. It holds no file name (file names can contain people’s names), no column names and no row count. Index: `{ orgId: 1, locationId: 1, uploadedAt: -1 }`.
+`_id`, `orgId`, `locationId`, `uploadedBy` (userId), `uploadedAt`, `status` (`'applying' | 'applied'`), `dayCount`, `inserted`, `replaced`, `kept` (days a member’s upload left unchanged because they already had data; always 0 for an org admin’s), `firstDate`, `lastDate`, `hasGuests`, `hasNetSales`. It holds no file name (file names can contain people’s names), no column names and no row count. Index: `{ orgId: 1, locationId: 1, uploadedAt: -1 }`. A stored file's days (11A) get their own record too, written by the file reader; until this record gains a `fileId` (with the sales history work, 10.10), the link is the file's `uploadId` (6.11).
 
 ### 6.7 `tw_notes`
 
@@ -464,18 +467,62 @@ Fields are in Section 9. Indexes: `{ at: -1 }`, `{ orgId: 1, at: -1 }`, `{ actor
 
 ### 6.10 Isolation rules
 
-1. Every tenant document (`tw_members`, `tw_locations`, `tw_sales_days`, `tw_uploads`, `tw_notes`) carries `orgId`. Every tenant compound index leads with `orgId`, except the two seat indexes, which are keyed by the person.
-2. Tenant store functions take a branded `OrgScope` as their first argument and add `orgId: scope.orgId` to every filter, update, delete and insert. Only `api/src/access/policy.ts` can mint an `OrgScope`, and only through these four functions:
+1. Every tenant document (`tw_members`, `tw_locations`, `tw_sales_days`, `tw_uploads`, `tw_notes`, `tw_files`, `tw_imports`, `tw_upload_days`) carries `orgId`. Every tenant compound index leads with `orgId`, except the two seat indexes, which are keyed by the person.
+2. Tenant store functions take a branded `OrgScope` as their first argument and add `orgId: scope.orgId` to every filter, update, delete and insert. Only `api/src/access/policy.ts` can mint an `OrgScope`, and only through these five functions:
    - `scopeOf(memberPrincipal)`: member routes (rule 3).
    - `scopeForStaffOrg(staff, orgId)`: `/api/admin/orgs/:orgId/*` (rule 5). It reads the organization first and answers 404 if it is absent.
    - `scopeForNewOrg(staff, orgId)`: approval (F3) and staff creation (F10) only, for the organization those handlers just created.
    - `scopeForJoinedInvite(invite)`: the join handler only, after its compare-and-set succeeds.
+   - `scopeForClaimedImport(claim)`: the file reader only (`files/worker.ts`, 11A), for the organization of the import it just claimed.
 3. Handlers on `/api/org/*` take the organization only from the principal. No member route carries an organization id in its path, query or body.
 4. Location-scoped routes first load `{ _id: locationId, orgId }`. Another organization’s location answers 404 `not_found`, exactly like a location that does not exist. Children (sales, uploads, notes) copy `orgId` and `locationId` from that read.
 5. Staff routes on `/api/admin/orgs/:orgId/*` mint a scope from the path through one function that requires the `staff` principal and reads the organization first (404 if absent).
 6. Responses never include another organization’s ids or names, except the invitation list shown to its invitee.
 7. Path ids are parsed with the mongo module’s `objectId` schema, so a malformed id is 400. Filter values are zod scalars. The only operators are built in code and wrapped in `trusted(...)` (**Exists**).
-8. Operations keyed by a person, or spanning organizations, live in one file, `api/src/stores/cross-tenant.ts`, with a closed list: `findActiveSeat(userId)`, `findOpenInvites(email)`, `claimInvite(inviteId, email, userId)`, `declineInvite(inviteId, email)`, `latestRemovedSeat(userId)`, `adminOrgStats()`, `peopleRecords()` and `deletePersonRecords(userId, email)` (10.7, Deletion). Only `access/resolve.ts`, the join and decline handlers and the staff handlers import it, and a test enforces that list.
+8. Operations keyed by a person, or spanning organizations, live in one file, `api/src/stores/cross-tenant.ts`, with a closed list: `findActiveSeat(userId)`, `findOpenInvites(email)`, `claimInvite(inviteId, email, userId)`, `declineInvite(inviteId, email)`, `latestRemovedSeat(userId)`, `adminOrgStats()`, `peopleRecords()`, `deletePersonRecords(userId, email)` (10.7, Deletion) and the file reader's `claimNextImport()` (11A). Only `access/resolve.ts`, the join and decline handlers, the staff handlers and `files/worker.ts` import it, and a test enforces that list.
+9. Stored files' blob names are ids only, `{orgId}/{locationId}/{fileId}`, built in `api/src/files/blobs.ts` from the scope's `orgId` and ids the files store already checked belong to it; no request value becomes a path. `blobs.ts` is the only file that imports the Azure SDK, and `chat/*` imports no file code (test-enforced). One API identity reaches every organization's blobs, so isolation is in code and tests; the custom role keeps the API to the two client-file containers, and the private endpoint keeps the data plane off the internet.
+
+### 6.11 `tw_files`
+
+One row per stored file (11A). `_id` (the file id, used in blob names), `orgId`, `locationId`, `importId`, `purpose` (`'history'`), `uploadedBy` (userId), `uploaderRole` (`'org_admin' | 'member'` at upload; decides replace or add, 11.4), `uploadedAt`, `name` (the original file name: last path part, control characters removed, NFC, at most 255 characters; shown to the organization only, never logged, audited, put in a blob name or a URL, or sent to a model), `kind` (`'text' | 'xlsx' | 'xls' | 'pdf' | 'docx' | 'doc' | 'zip' | 'other'`), `sizeBytes`, `fingerprint` (SHA-256 over the chunk size and each chunk's SHA-256 in order, `townwise-chunks-v1:{chunkSize}:{hashes}`, so the same file uploaded again matches; it is not the file's plain SHA-256), `upload` (while uploading: `{ chunkSize, chunkCount, chunks: ({ bytes, sha256 } | null)[], head (first 8 KiB, base64), expiresAt }`; null after complete), `status` (`'uploading' | 'stored' | 'queued' | 'reading' | 'waiting' | 'read' | 'kept' | 'failed' | 'deleting'`), `outcome` (11A.6), `progress` (while reading: `{ phase, done, total, unit, phaseStartedAt, updatedAt }`), `readStartedAt`, `readMs`, `answers` (per sheet index), `uploadId`, `result` (counts and dates), `report` (11A.5), `cleanBytes`, `rawDeletedAt` (the name becomes the kind's label then), `attempts`. `strict: 'throw'`. Indexes: `{ orgId: 1, locationId: 1, uploadedAt: -1 }`, `{ orgId: 1, importId: 1, uploadedAt: 1 }`, `{ orgId: 1, locationId: 1, fingerprint: 1 }`, `{ status: 1, 'upload.expiresAt': 1 }` (the sweeper, later).
+
+### 6.12 `tw_imports`
+
+A batch of files dropped for one location (11A). `orgId`, `locationId`, `createdBy`, `createdAt`, `lastDropAt`, `status` (`'open' | 'queued' | 'reading' | 'waiting' | 'done'`), `activeLocation` (equals `locationId` until done, then unset), `startedAt`, `finishedAt`, `question` (11A.4, while waiting), `appliedVersion` (+1 each time a file's days are written), `drops` (+1 each time a file completes into it), `lease` (`{ owner, until }`), `claimedAt`, `bytesRead`, `msRead` (over its finished files, for the reading speed). Indexes: `{ activeLocation: 1 }` unique with a `$type` partial filter (one active import per location; two first drops race on it and the loser reads the winner), `{ orgId: 1, locationId: 1, createdAt: -1 }`, `{ status: 1, startedAt: 1 }` (the reader's claim).
+
+### 6.15 `tw_welcomes`
+
+| Field | Type | Rule |
+|---|---|---|
+| `_id` | ObjectId | |
+| `orgId` | ObjectId | the organization the welcome was shown in |
+| `userId` | string | the person it was shown to |
+| `seenAt` | Date | when the client started showing it; a later record keeps the first time (`$setOnInsert`) |
+
+Index: `{ orgId: 1, userId: 1 }` unique. A display marker, not an action, so it has no audit event. Deleted with the organization (10.7) and with the person, in every organization. [Build note: numbered 6.15 by the build plan, which reserves 6.11 to 6.14 for stored files.]
+
+### 6.16 `tw_chat_proposals`
+
+What the author did with each note TownwiseAI proposed in their conversation (10.12). One document per proposal they acted on; none means the proposal is still open.
+
+| Field | Type | Rule |
+|---|---|---|
+| `_id` | ObjectId | |
+| `orgId`, `locationId`, `conversationId` | ObjectId | from the caller's seat and their own conversation |
+| `userId` | string | the conversation's author |
+| `proposalId` | string | the `propose_note` call's id, 1 to 128 of `A-Za-z0-9_-` |
+| `status` | `'saving' \| 'saved' \| 'dismissed'` | `saving` between the claim and the note's write; reads as open |
+| `noteId` | ObjectId | set when the document is inserted, a dismissed one too, so every try of a save writes the same note |
+| `edited` | boolean | the saved note differs from the proposal ("Edit first") |
+| `createdAt`, `updatedAt` | Date | |
+
+Indexes: `{ orgId: 1, conversationId: 1, proposalId: 1 }` unique; `{ orgId: 1, locationId: 1 }`. It never holds the note's content. Deleted with the conversation, the location, the organization (10.7) and the author's person deletion (10.7, by `userId`); notes saved from proposals stay with the organization. Rows left by a crash during a conversation's delete, or by a Save racing it, hold only ids and go with the location, the organization or the person (`tuning-chat.md` section 5).
+
+### 6.19 `tw_upload_days`
+
+`{ orgId, day (YYYY-MM-DD, UTC), bytes, updatedAt }`, unique `{ orgId: 1, day: 1 }`. Creating an upload reserves its size with a conditional `$inc` that fails past the daily cap; cancelling an unfinished upload the same day gives it back.
+
+(6.13, 6.14, 6.17 and 6.18 are numbered for the units still in flight.)
 
 ---
 
@@ -492,7 +539,9 @@ api/
                        createTownwiseApi() before ensureIndexes, and mounts its router at /api
     app.ts             createTownwiseApi({ config, logger, connection, authStores, auth, redis, now }): registers the
                        Townwise models on `connection` and returns the /api router. main.ts and the tests both use it
-    email.ts           Exists. Unchanged
+    email.ts           Exists. Unchanged (the kit's magic-link sender, which rejects every send)
+    mail/              templates, layout, the Communication Services transport and the mailer (D14)
+    azure-identity.ts  managed-identity tokens for Azure services, cached per resource (D14; file storage too)
     config.ts          Townwise env schema (TOWNWISE_SUPERADMIN_EMAILS), spread into the one loadEnv call
     towns.ts           the twelve { townId, name, state, kind } (Section 13) and the US state codes
     normalize-email.ts the kit's email rule, repeated and pinned by a parity test (Section 19)
@@ -519,8 +568,8 @@ interface TownwiseRoute {
   readonly method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   readonly path: `/${string}`;                  // under /api
   readonly policy: Policy;
-  readonly bodyLimit: 'none' | '32kb' | '256kb'; // 'none' for GET and DELETE; '256kb' only on the upload route
-  readonly limiter?: 'uploads' | 'requests' | 'view-as';   // 'writes' applies to every non-GET automatically, before resolveAccess
+  readonly bodyLimit: 'none' | '2kb' | '32kb' | '256kb'; // 'none' for GET and DELETE; '2kb' only on the two Places routes; '256kb' only on the upload route
+  readonly limiter?: 'uploads' | 'requests' | 'view-as' | 'chat' | 'places';   // 'writes' applies to every non-GET automatically, before resolveAccess
   readonly handler: (req: Request, res: Response, principal: Principal) => Promise<void>;
 }
 ```
@@ -543,7 +592,7 @@ interface TownwiseRoute {
    - `staff`: passes only for a principal of kind `staff`, which never carries view-as. `staff_setup_required` and `staff_reauth_required` answer 403 with those codes. Everyone else gets 403 `forbidden`, and the staff checks run after the email check, so a non-staff caller never learns anything about staff two-step state.
    - `staff_self`: the signed-in person’s own staff gate (`self`: TOTP enabled, session created after `enabledAt`, under 60 minutes), computed before the view-as substitution. It passes for a `staff` principal and for any principal in view-as, because a grant is live only while its actor passes that gate. Otherwise it answers exactly as `staff` does. Used only by `POST /api/admin/view-as/end`.
 6. **Body parser**, `express.json({ limit })`, when the spec names a body limit. The guard and the policies never read the body, so a refused request is never parsed. The `/api` router mounts no router-wide parser, so the upload route’s 256 KB parser never widens the others (server-core: body parsing is per router, **Exists**).
-7. **Route limiter**, when named (`uploads`, `requests`, `view-as`; Section 10.8), keyed on `acct:<userId>`.
+7. **Route limiter**, when named (`uploads`, `requests`, `view-as`, `places`; Section 10.8; `chat` in `docs/portal/tuning-chat.md`), keyed on `acct:<userId>`.
 8. The handler receives the principal. For member routes, `principal.scope` is the only organization it can use.
 
 Boot throws if two specs share a method and path, if a GET spec names a body limit, or if any route other than `view-as/end` uses `staff_self`. Paths not in the table reach server-core’s `notFound` (**Exists**).
@@ -607,7 +656,7 @@ interface AuditEvent {
   viewAsGrantId: string | null;
   orgId: ObjectId | null;
   action: AuditAction;
-  target: { type: 'org' | 'member' | 'request' | 'location' | 'upload' | 'note' | 'user' | 'grant'; id: string };
+  target: { type: 'org' | 'member' | 'request' | 'location' | 'upload' | 'note' | 'user' | 'grant' | 'conversation' | 'file'; id: string };
   details: Record<string, string | number | boolean | null>;   // allowlist per action, below
 }
 ```
@@ -616,7 +665,7 @@ interface AuditEvent {
 
 | Action | Details |
 |---|---|
-| `access_request.created` | `orgName`, `townId`, `townName` |
+| `access_request.created` | `orgName`, `townId`, `townName`, `hasPlace` (boolean; never the place id or an address) |
 | `access_request.approved` | `orgId` |
 | `access_request.rejected` | `hasMessage` |
 | `access_request.withdrawn` | `reason: 'joined_org'` |
@@ -631,8 +680,11 @@ interface AuditEvent {
 | `member.removed` | `email`, `wasStatus` |
 | `member.left` | `email` |
 | `location.created`, `location.updated`, `location.deleted` | `name`, `townId` |
-| `sales.uploaded` | `locationId`, `dayCount`, `inserted`, `replaced`, `firstDate`, `lastDate` |
+| `sales.uploaded` | `locationId`, `dayCount`, `inserted`, `replaced`, `firstDate`, `lastDate`; from the file reader also `fileId` and `via: 'file'`, with the uploader as actor |
 | `sales.deleted` | `locationId`, `deletedDays` |
+| `file.uploaded` | `locationId`, `kind`, `sizeBytes` |
+| `file.deleted` | `locationId`, `kind`, `reason: 'owner'` |
+| `file.raw_deleted` | `locationId`, `kind` |
 | `note.created`, `note.updated`, `note.deleted` | `locationId`, `kind`, `startDate`, `endDate` |
 | `view_as.started` | `targetUserId`, `targetEmail`, `reason`, `expiresAt` |
 | `view_as.ended` | `endReason` (`ended`, `replaced` or `expired`) |
@@ -640,7 +692,7 @@ interface AuditEvent {
 | `person.deleted` | `userId` (null when the address never signed in); ids only |
 | `staff_action.not_applied` | `eventId` (the staff event it qualifies), `code` |
 
-Never in an audit event: guest or sales figures, note `detail` text, request notes, decision messages, anything from a file, tokens.
+Never in an audit event: guest or sales figures, note `detail` text, request notes, decision messages, a file name or anything from a file, tokens.
 
 An event’s `orgId` is the organization it touches: for `people.signed_out_everywhere`, the target’s active organization at the time, or null; for `view_as.*`, the grant’s `orgId`.
 
@@ -654,6 +706,7 @@ An event’s `orgId` is the organization it touches: for `people.signed_out_ever
   - `view_as.ended` is written after the grant is cleared. A missing end record can only make a view look longer than it was, never hide one.
   
   [CONFIRM: audit after the effect for client actions; before the effect, refused on failure, for staff actions]
+- **Email writes no audit event.** Sending one of the D14 emails is a side effect of an action already audited; its event is unchanged, and nothing records the send.
 - **Readers.** Staff read everything on `/admin/audit`. Org admins read every event on their own organization whose actor role is `superadmin` (view-as, team, name, status, and `staff_action.not_applied`), on Settings as “Townwise staff activity” (D9). Members read none.
 
 ---
@@ -674,7 +727,8 @@ type TownInput = { townId: TownId } | { townId: null; name: string; state: strin
 
 interface AccessRequestView {
   id: string; orgName: string; contactName: string; contactRole: string; town: Town;
-  locationCount: number; note: string | null; status: 'pending' | 'approved' | 'rejected' | 'withdrawn';
+  locationCount: number; note: string | null; placeId: string | null;
+  status: 'pending' | 'approved' | 'rejected' | 'withdrawn';
   createdAt: string; decidedAt: string | null; decisionMessage: string | null;
 }
 
@@ -725,10 +779,29 @@ Emails shown for people (`uploadedByEmail`, `createdByEmail`, `MemberView.email`
 
 | Method and path | Policy | Request | Success | Extra errors |
 |---|---|---|---|---|
-| `GET /api/me` | signed_in | | 200 `MeResponse` | |
+| `GET /api/me` | signed_in | | 200 `MeResponse`, with `welcome` filled for the welcome statement (15.8) | |
 | `POST /api/me/join` | signed_in | `{ inviteId }` | 200 `MeResponse` | 403 `forbidden` (staff); 409 `no_invite`, `already_in_org` |
 | `POST /api/me/decline` | signed_in | `{ inviteId }` | 200 `MeResponse` | 403 `forbidden` (staff); 409 `no_invite` |
-| `POST /api/access-requests` | signed_in, in `no_org`, `rejected` or `removed` | `{ orgName, contactName, contactRole, town: TownInput, locationCount, note? }` | 201 `MeResponse` (state `pending`) | 403 `forbidden` (staff or another state); 409 `request_exists`; 400 `unknown_town`; 429 |
+| `POST /api/me/welcome` | member; `writes` only | no body | 204, idempotent (the first `seenAt` stays) | 403 `no_access`; 403 `view_as_read_only`; 429 |
+| `POST /api/access-requests` | signed_in, in `no_org`, `rejected` or `removed` | `{ orgName, contactName, contactRole, town: TownInput, locationCount, note?, placeId? }`, `placeId` a Google place id or null | 201 `MeResponse` (state `pending`; the request answers `placeId`, null when none) | 403 `forbidden` (staff or another state); 409 `request_exists`; 400 `unknown_town`; 400 `invalid_request` (a malformed `placeId` included); 429 |
+
+Only `GET /api/me` fills `welcome`; every other answer that carries a `MeResponse` (join, decline, a request, view-as start and end, leaving) carries `welcome: null`. `GET /api/me` still writes nothing (7.3): `POST /api/me/welcome` records the marker (6.15). [Build note: the route is `me.welcome`, `bodyLimit: 'none'`, no route limiter and no audit event.]
+
+### 10.2a Places search
+
+Two routes let the request form find the business on Google Places (New). The API calls Google itself, so the browser talks only to the API and the CSP does not change. Both are `signed_in`, take a 2 KB body and use the `places` limiter (10.8).
+
+| Method and path | Request | Success | Extra errors |
+|---|---|---|---|
+| `POST /api/places/autocomplete` | `{ input, sessionToken? }`, `input` 2 to 120 characters after trimming, `sessionToken` a version 4 UUID | 200 `{ suggestions, sessionToken }`, up to 5 `{ placeId, name, detail }` (`detail` empty when Google has none) | 400 `invalid_request`; 413; 429; 503 `places_unavailable` |
+| `POST /api/places/details` | `{ placeId, sessionToken }`, `placeId` as in 6.3, `sessionToken` required | 200 `{ place: { placeId, address, town } }`, `town` a `TownInput` or null | 400 `invalid_request`; 404 `place_not_found` (Google answered 404, or 400 `INVALID_ARGUMENT` for the id); 413; 429; 503 `places_unavailable` |
+
+- Off until `GOOGLE_PLACES_API_KEY` is set: both routes answer 503 `places_unavailable` to every request, and the client shows the manual fields. Google failing, or not answering within 5 seconds, answers the same.
+- Both calls of one search carry the same session token; Google bills the typing and the pick as one session, and the details call ends it. Without a token, autocomplete makes one and returns it. The server checks only its format and keeps no record of it.
+- Autocomplete asks for US results in English, of any business type. `name` is Google’s main text and `detail` its secondary text. Details asks for the place’s id, formatted address and address components only; `address` is for display, and the client keeps the name from the suggestion it picked. `placeId` in the answer is Google’s current id for the place, which can differ from the one sent.
+- `town` is one of the twelve researched towns when the locality, postal town, sublocality or `administrative_area_level_3` matches one by name and state, ignoring case, or when any of them is an alias (Lake Placid, NY is `north-elba-ny`; North Conway, NH is `conway-nh`). Otherwise it is `{ townId: null, name, state }`, named by the first of those components. It is null outside the 50 states and DC, or when no usable town name exists. [CONFIRM: the town matching rules, which are not yet checked against live Google answers]
+- Nothing from these routes is stored. The typed text, place ids, addresses and Google’s answers never reach a log or an audit event; a Google failure logs `townwise.places_failed { routeId, code, status, errType }`.
+- [Build note: details will also answer `place.map`, a static map image as a `data:` URL or null (best effort), for the found card. It is specified here when it ships.]
 
 ### 10.3 Organization and locations
 
@@ -750,6 +823,7 @@ Emails shown for people (`uploadedByEmail`, `createdByEmail`, `MemberView.email`
 |---|---|---|---|---|
 | `GET /api/org/locations/:locationId/sales` | member | | 200 `{ coverage, calibration, months: { month: 'YYYY-MM'; dayCount; guests: number \| null; netSalesCents: number \| null }[], uploads: UploadView[] }` (newest 20 uploads) | 404 |
 | `GET /api/org/locations/:locationId/sales/days?from=&to=` | member | dates `YYYY-MM-DD`, `from <= to`, span at most 366 days | 200 `{ days: SalesDay[] }` | 400; 404 |
+| `GET /api/org/locations/:locationId/sales/history` | member | | 200 `SalesHistory` (10.10): every stored day, oldest first | 400; 404 |
 | `POST /api/org/locations/:locationId/sales/uploads` | member, 256 KB, limiter `uploads` | `{ days: SalesDay[] }` (Section 11.3) | 201 `{ upload: UploadView, coverage, calibration }`; a member’s upload adds new days only (11.4) | 400; 404; 413; 429 |
 | `DELETE /api/org/locations/:locationId/sales` | org_admin | | 200 `{ deletedDays, deletedUploads }` | 404 |
 
@@ -823,7 +897,7 @@ People come only from Townwise records and config: staff from `TOWNWISE_SUPERADM
 - **Delete a person** (`POST /api/admin/people/delete { email }`). The server normalizes the email and looks up the kit user with `users.findByEmail` (there may be none, for an address that was only invited).
   1. Refuse a staff address (400 `invalid_target`) and a person who holds an active seat (409 `person_has_seat`; staff remove the seat first, and the last-admin rule still applies). Answer 404 when there is no kit user and no Townwise record for the email. [Build note: after step 3 the server checks for an active seat again, since a join or an approval can seat the person while the deletion runs. One found then answers 409 `person_has_seat`, recorded as `staff_action.not_applied` (`person_has_seat`), before steps 4 and 5; the records step 3 deleted stay deleted, and a retry after the seat is removed completes the work. An approval that seats the person after this check finds the request gone and takes the seat back (F3 step 8); a join needs an invitation, which step 3 deleted, so only one added later can seat them, which the runbook checks for (Section 19, item 7).]
   2. Audit `person.deleted` with ids only.
-  3. Through `deletePersonRecords(userId, email)` (6.10 rule 8): delete the person’s access requests (by `userId`), their open invitations in every organization (`inviteEmail == email`), and their removed seats (`userId`, `status: 'removed'`). [Build note: also their tuning chat conversations and live turns in every organization (`tw_chat_conversations`, `tw_chat_live_turns`, by `userId`), which postdate this list (`tuning-chat.md`). The 404 in step 1 counts audit events as Townwise records, because the audit log keeps an address until its person is deleted (Section 17).]
+  3. Through `deletePersonRecords(userId, email)` (6.10 rule 8): delete the person’s access requests (by `userId`), their open invitations in every organization (`inviteEmail == email`), and their removed seats (`userId`, `status: 'removed'`). [Build note: also their tuning chat conversations, live turns and TownwiseAI proposal records in every organization (`tw_chat_conversations`, `tw_chat_live_turns`, `tw_chat_proposals`, by `userId`), which postdate this list (`tuning-chat.md`), and their welcome markers in every organization (`tw_welcomes`, by `userId`, 6.15; not counted in the answer). Notes they saved from proposals stay, as every note does. The 404 in step 1 counts audit events as Townwise records, because the audit log keeps an address until its person is deleted (Section 17).]
   4. When a kit user exists: call `revokeAllSessions(userId)` and `authStores.totp.remove(userId)` (both public, **Exists**).
   5. `redact` the email in the audit log (9.3).
   6. Answer the counts and `kitUserId`. The kit’s user record and its revoked session records are then deleted by hand, as a runbook step, because the kit has no user delete (Section 19, item 7). Until then, the person can still continue with Google, and they resolve to `no_org`.
@@ -831,7 +905,7 @@ People come only from Townwise records and config: staff from `TOWNWISE_SUPERADM
   Notes and uploads the person wrote stay with their organization; the author shows as “Deleted person” once the kit user is gone. View-as grants keep only ids and the staff-written reason.
 - **Delete an organization** (`DELETE /api/admin/orgs/:orgId`). The organization must be suspended first (409 `org_not_suspended`), so its members have already seen the paused page.
   1. Audit `org.deleted` with ids only.
-  2. Through `scopeForStaffOrg`: delete its `tw_sales_days`, `tw_uploads`, `tw_notes`, `tw_locations` and `tw_members`, and its access request (`fromRequestId`). [Build note: also its `tw_chat_conversations`, `tw_chat_live_turns` and `tw_chat_usage`, which postdate this list (`tuning-chat.md`). The response keeps the six counts above.]
+  2. Through `scopeForStaffOrg`: delete its `tw_sales_days`, `tw_uploads`, `tw_notes`, `tw_locations` and `tw_members`, and its access request (`fromRequestId`). [Build note: also its `tw_chat_conversations`, `tw_chat_live_turns`, `tw_chat_usage` and `tw_chat_proposals`, which postdate this list (`tuning-chat.md`), and its `tw_welcomes` (6.15). The response keeps the six counts above.]
   3. `redact` its name and its locations’ names in the audit log (9.3).
   4. Delete the `tw_orgs` row last, so a retry still finds the organization. [Build note: the delete matches `status: 'suspended'`, so an organization reactivated during the deletion keeps its row and the answer is 409 `org_not_suspended`, recorded as `staff_action.not_applied`; the records already deleted stay deleted, and suspending it and deleting again finishes. After the row goes, its `tw_sales_days` and `tw_chat_usage` are swept once more, since an upload or a tuning chat turn in flight can upsert after the first sweep; the late days count in `deletedDays`. This narrows the gap without closing it: a chat turn started before the suspension can still add chat usage for up to 150 seconds, an upload still running can write days after the second sweep, and its `tw_uploads` row, if written after the first sweep, is never swept.]
   
@@ -849,6 +923,12 @@ Built with the rate-limit module and keyed on `acct:<userId>`, a key the caller 
 | `townwise:uploads` | the upload route | 30 per hour | allow |
 | `townwise:requests` | `POST /api/access-requests` | 5 per day | deny (503 `unavailable`) |
 | `townwise:view-as` | `POST /api/admin/view-as` | 20 per hour | deny (503 `unavailable`) |
+| `townwise:places` | both Places routes together | 300 per hour | deny (503 `unavailable`) |
+| `townwise:files` | `POST .../files` (10.11) | 120 per hour | allow |
+| `townwise:file-chunks` | `PUT .../files/:fileId/chunks/:index` | 1,500 per hour | allow |
+| `townwise:downloads` | both file downloads together | 300 per hour | allow |
+
+A search is 10 to 15 debounced autocompletes and one details call, so `townwise:places` allows about 20 searches an hour. The Places routes are POSTs, so `townwise:writes` counts them too.
 
 ### 10.9 Error codes
 
@@ -863,6 +943,7 @@ Built with the rate-limit module and keyed on `acct:<userId>`, a key the caller 
 | 403 | `forbidden` | role too low, not staff, not the note’s author | re-read `/api/me`; hide the control |
 | 403 | `staff_setup_required`, `staff_reauth_required` | staff gate | route per 4.3 |
 | 403 | `view_as_read_only` | a non-GET without the `staff` policy during view-as | should not happen: controls are disabled |
+| 404 | `place_not_found` | the details route: Google has no such place (10.2a) | the client keeps the manual fields |
 | 404 | `not_found` | unknown id, or an id in another organization | “This {thing} isn’t available.” with a way back |
 | 409 | `view_as_active` | any route with the `staff` policy, any method, during view-as; a second view-as start racing the first | re-read `/api/me` |
 | 409 | `no_invite`, `already_in_org`, `request_exists`, `request_not_pending`, `requester_has_org`, `last_admin`, `location_name_taken`, `location_limit`, `location_has_data`, `note_limit`, `member_limit`, `person_has_seat`, `org_not_suspended` | as in the tables | inline copy per page |
@@ -870,7 +951,101 @@ Built with the rate-limit module and keyed on `acct:<userId>`, a key the caller 
 | 415 | `unsupported_media_type` | server-core | client bug |
 | 429 | `rate_limited` | Section 10.8, with `retryAfterSeconds` | “Too many attempts. Try again in {minutes} minutes.” |
 | 500 | `internal` | server | “Something went wrong on our side. Try again in a minute.” |
+| 503 | `places_unavailable` | a Places route while the search is off, or Google failed or timed out (10.2a) | the client shows the manual fields |
 | 503 | `unavailable` | a deny-when-down limiter, a store outage, or a staff action whose audit write failed (9.3) | “Townwise isn’t responding. Try again in a minute.” |
+| 400 | `purpose_unavailable` | `POST .../files` with a purpose other than `history` (10.11) | client bug |
+| 403 | `view_as_no_download` | a file download during view-as | controls are hidden |
+| 404 | `no_clean_file` | the cleaned-copy download of a file that produced no days | the button is hidden |
+| 409 | `import_full`, `too_many_uploading`, `storage_full`, `daily_upload_limit`, `file_not_uploading`, `chunks_missing`, `file_duplicate`, `file_busy`, `import_not_open`, `import_empty`, `question_stale` | the stored-files routes (10.11); `storage_full` carries `storedBytesLeft`, `daily_upload_limit` `resetsAt`, `chunks_missing` `missing`, `file_duplicate` `fileId` | words per code in the files module |
+| 410 | `upload_expired`, `raw_expired` | an upload session past 24 hours; an original already deleted | “Drop it again.” / the download is hidden |
+| 413 | `file_too_large` | `POST .../files` over 200 MiB, with `maxBytes` | “This file is over 200 MB. Split it or zip it.” |
+| 503 | `files_unavailable` | every stored-files route while `FILES_BLOB_ACCOUNT_URL` is unset | the browser upload (P13) instead |
+| 503 | `uploads_busy`, `storage_unavailable` | a replica at 12 chunk streams (`Retry-After: 2`); blob storage refused or failed (`Retry-After: 5`) | the upload queue waits and retries |
+
+### 10.10 Calendar and sales history
+
+Two reads for Home, Analytics and TownwiseAI. Both are `member` GETs in `TOWNWISE_ROUTES` with no body and no route limiter (`app:api-ceiling` still applies). Both are allowed during view-as, where the chain logs `townwise.view_as_read` with the grant id and route id only. Neither handler logs or audits anything, and neither imports `stores/cross-tenant.ts`.
+
+| Method and path | Policy | Request | Success | Extra errors |
+|---|---|---|---|---|
+| `GET /api/org/locations/:locationId/sales/history` | member | | 200 `SalesHistory` | 400 (malformed id); 404 |
+| `GET /api/org/locations/:locationId/calendar?from=&to=` | member | `from` and `to` as `YYYY-MM-DD`, exactly those two keys; `from` on or after 2010-01-01; `from <= to`; `to` at most 400 days after the server’s UTC day; a span under 7,320 days | 200 `LocationCalendar` | 400 `invalid_request`, with no field details; 404 |
+
+```ts
+interface SalesHistory {
+  coverage: Coverage;
+  days: {                              // columns of equal length, oldest first, one entry per stored day
+    date: string[];
+    guests: (number | null)[];
+    netSalesCents: (number | null)[];
+    upload: number[];                  // index into `uploads` of the upload that last wrote the day; -1 if it has no record
+  };
+  uploads: {                           // every upload some day references, newest first
+    id: string; uploadedAt: string; uploadedByEmail: string; status: 'applying' | 'applied';
+    firstDate: string; lastDate: string;
+    file: null | { id: string; name: string | null; kind: 'text' | 'xlsx' | 'xls' | 'pdf' | 'docx' | 'doc' | 'zip' | 'other' };
+  }[];
+}
+
+interface LocationCalendar {
+  town: Town;                          // the location's town
+  researched: boolean;                 // the town has at least one researched event (13.1)
+  covers: { from: string; to: string } | null;   // the span of the town's researched events, all years; null when none
+  events: TownEvent[];                 // overlapping [from, to], sorted by start, then id
+}
+
+interface TownEvent {
+  id: string;                          // stable: 'us:thanksgiving:2026', 'hanover-nh:2026-11-17:fall-term-classes-end'
+  title: string;
+  start: string; end: string;          // inclusive; a single day has end === start
+  kind: 'holiday' | 'event' | 'term' | 'season';
+  scope: 'national' | 'town';
+  group: string | null;                // a recurring kind ('us:thanksgiving', 'hanover-nh:classes:fall'); null for a one-off
+  groupLabel: string | null;
+  confidence: 'high' | 'medium' | 'low' | null;  // the research's rating; null for holidays and key dates
+  sources: { label: string; url: string }[];     // at least one
+}
+```
+
+- The history route exists because `sales/days` caps at 366 days, and the heatmap and year over year need every year. It reads the days and the referenced uploads in two queries, and one current email per distinct uploader (10.1, “Deleted person”). Aggregates (weekly shape, months, drivers) are computed in the client from this one response.
+- `file` is always null until stored files link uploads to files; then `name` is null during view-as.
+- The calendar is location-scoped, not `/towns/:townId`, so a town outside the twelve still gets its holidays, and a restaurant’s own calendar can join the same response later as a separate field.
+
+### 10.11 Files and imports
+
+All under `/api/org/locations/:locationId`, all members, all 503 `files_unavailable` while stored files are off; every non-GET also passes `townwise:writes`, and view-as refuses every non-GET (403 `view_as_read_only`) and both downloads (403 `view_as_no_download`). The full table, with each route's errors, is `api/README.md` (Stored files); the shapes are in 11A.
+
+| id | Method and path | Who | Body | Limiter |
+|---|---|---|---|---|
+| `org.files.create` | `POST /files` | member | 2 KB `{ name, sizeBytes, purpose: 'history' }` | `files` |
+| `org.files.chunk` | `PUT /files/:fileId/chunks/:index` | the uploader | raw, exact `Content-Length` (`bodyLimit: 'stream'`, this route only) | `file_chunks` |
+| `org.files.complete` | `POST /files/:fileId/complete` | the uploader | 2 KB `{}` | |
+| `org.files.list` | `GET /files?before=` | member | | |
+| `org.files.get` | `GET /files/:fileId` | member | | |
+| `org.files.raw` | `GET /files/:fileId/raw?part=` | the uploader or an org admin | | `downloads` |
+| `org.files.clean` | `GET /files/:fileId/clean` | member | | `downloads` |
+| `org.files.remove_raw` | `DELETE /files/:fileId/raw` | the uploader or an org admin | | |
+| `org.files.remove` | `DELETE /files/:fileId` | the uploader or an org admin | | |
+| `org.imports.current` | `GET /imports/current` (declared before `:importId`) | member | | |
+| `org.imports.get` | `GET /imports/:importId` | member | | |
+| `org.imports.start` | `POST /imports/:importId/start` | member | 2 KB `{}` | |
+| `org.imports.answer` | `POST /imports/:importId/answer` | member | 2 KB `{ questionId, choice }` | |
+
+`PUT` is allowed only with `bodyLimit: 'stream'`, and `'stream'` only on `org.files.chunk` (boot refuses anything else). The chunk handler reads the body itself after the policy passed, and a chunk it refuses is answered with the connection closed, unread.
+
+### 10.12 TownwiseAI proposals
+
+`POST /api/org/locations/:locationId/chat/:conversationId/proposals/:proposalId` (`org.chat.proposal`, member, body `8kb`, `writes` only). The conversation's author saves a note TownwiseAI proposed, as shown or edited first, or sets it aside. Contract and views: `docs/portal/tuning-chat.md` section 2.
+
+| Request | Success | Errors |
+|---|---|---|
+| `{ action: 'save', note?: NoteInput }` (`note` is the author's edit) or `{ action: 'dismiss' }` | 200 `{ proposal: { id, status: 'saved' \| 'dismissed', noteId, edited }, note: Note \| null }` | 400 `invalid_request` (body, malformed id, or an edit that breaks a Section 12 rule); 404 (the location is not the caller's organization's, the conversation is not the caller's in this location, or no proposal with this id was shown in a stored turn); 409 `note_limit`; 403 `view_as_read_only`; 429 |
+
+- Only the author's press saves a note, and only a proposal they were shown: a `propose_note` call with valid input and a result that is not an error. The note goes through Section 12's rules again and is audited `note.created`, as from the notes route.
+- Only a proposal in a stored turn: a turn is stored when it ends with `done` (not `refusal`), so a proposal streamed during a live turn is 404 until then, and one from a turn that failed, was refused or was stopped stays 404. The client keeps the card's actions disabled until `done`, and after a failure offers the notes route instead (`tuning-chat.md` section 2).
+- No transactions (DocumentDB): the save claims the proposal in `tw_chat_proposals` (6.16), writes the note with the claim's `noteId`, then marks it `saved`. A retry, a crash between the steps or two tabs pressing Save end with one note; only the request that wrote it records `note.created`. Saving a saved proposal again, or setting it aside, answers its saved state.
+- `GET .../chat/:conversationId` shows each proposal's `status` (`open`, `saved` or `dismissed`) and `noteId`. One with no record reads as saved when a note the author wrote at the location says exactly the same, so a proposal added with the notes route is not offered twice; a colleague's note never counts (`tuning-chat.md` section 2, [CONFIRM]).
+- Logged as `townwise.chat_proposal { orgId, locationId, conversationId, status, edited }`, never the note's text.
 
 ---
 
@@ -878,7 +1053,7 @@ Built with the rate-limit module and keyed on `acct:<userId>`, a key the caller 
 
 ### 11.1 What leaves the browser
 
-Only this, for one location:
+This is the browser path (P13). It stays as the fallback while stored files (11A) are off, and as the visible choice to send only daily totals. On this path, only this leaves the browser, for one location:
 
 ```
 { "days": [ { "date": "YYYY-MM-DD", "guests": <integer or null>, "netSalesCents": <integer or null> }, ... ] }
@@ -940,6 +1115,66 @@ Delete all sales for a location removes its `tw_sales_days` and `tw_uploads`; th
 
 ---
 
+## 11A. Stored files and the file reader
+
+The other way in: a person drops their exports as they are, they are stored privately for the organization, and Townwise reads them on the server. Off until `FILES_BLOB_ACCOUNT_URL` is set (10.11), and in production until the stored-files release (`infra/README.md`, step 18). [CONFIRM: every cap and limit in this section]
+
+### 11A.1 Storage
+
+One private Azure storage account for every organization (owner decision, 2026-11-05), with public network access disabled: the only way in is a private endpoint in the endpoints subnet, open to the apps subnet on 443. Two containers: `client-raw` (originals) and `client-clean` (cleaned copies), blob names ids only (6.10 rule 9). Entra ID only, through a custom role on the two containers with four blob data actions and no SAS rights. Every blob read, write and delete is logged, ids only, to the audit account for a year. Soft delete keeps a deleted blob 7 days. Models never live here.
+
+### 11A.2 Uploads
+
+Chunked sessions, because the Container Apps ingress closes a request at 240 seconds and a 200 MiB body needs a sustained 7 Mbps to beat it; an 8 MiB chunk needs 0.3 Mbps, survives a dropped connection (one chunk is retried), and never holds a file in memory.
+
+1. `POST /files` joins the location's active import (creating an `open` one), reserves the size against the organization's day, inserts the row as `uploading`, and answers the caps. Refusals in order: 400 shape, 400 purpose, 404, 413 size, 409 `import_full`, `too_many_uploading`, `storage_full`, `daily_upload_limit`.
+2. Each `PUT` streams its body through a hashing, counting Transform into Azure's Put Block with retries off (a stream cannot be replayed; the browser retries the chunk). Node pauses the request when storage is slower, so TCP pushes back to the browser. A replica takes 12 chunk streams at once. A client abort aborts the storage call and records nothing; a re-sent chunk replaces the staged one.
+3. `complete` checks every chunk arrived, commits the block list (`If-None-Match: *`; a blob already there counts as committed), computes the fingerprint and the kind, removes a second copy of a live file of the location (409 `file_duplicate`), and sets the file `stored`, or `queued` when its import already started. The import's `drops` then moves, so the reader never finishes an import past a file that just joined it; a file whose import finished meanwhile moves into the location's next import. When it is that import's first file, the import starts at once (the person already asked for the file to be read); an open import someone already dropped files into stays open, with this file among its `stored` rows, until they start it.
+
+| Cap | Value |
+|---|---|
+| A file | 200 MiB, in 8 MiB chunks; downloads of originals in 32 MiB parts |
+| An import / a location / uploading at once in a location | 50 / 500 / 10 files |
+| An organization | 5 GiB stored (originals not deleted), 2 GiB uploaded a UTC day |
+| An upload session | 24 hours; after that it counts toward no cap above |
+| Reading | text streamed (the upload cap); workbooks 10 MiB, 2,000 parts, 64 MiB a part, 200 MiB declared, 100 to 1 a part over 1 MiB; 2,000,000 rows, 200 columns, 10 sheets; 192 MiB of heap and 20 minutes a file |
+
+### 11A.3 Kinds
+
+No file is refused for its type; the browser's MIME type is ignored. From the extension and the first bytes: `%PDF-` is `pdf`; a ZIP signature is `xlsx` (.xlsx, .xlsm), `docx`, `other` (.numbers, kept `numbers`) or `zip`; an OLE container is `xls` (kept `old_excel`), `doc` (kept `old_word`) or, for .xlsx, .xlsm and .docx, a password-protected file (kept `encrypted`); images are kept `image`; text extensions with a UTF-16 mark or no NUL byte are `text`; anything else is kept `type_not_read`. In this build `text` and `xlsx` are read; `zip`, `pdf` and `docx` are kept as `type_not_read` until their stages land.
+
+### 11A.4 Reading
+
+The file reader (`api/src/files/worker.ts`) runs in each API replica: every 5 seconds, or at once when nudged, it claims the oldest started import that is queued with no live lease, or reading under a lease that ran out (`claimNextImport`, 6.10 rule 8), holds a 90-second lease renewed every 30 seconds, and reads the import's files one at a time in upload order. It takes a `stored` file of a started import as it takes a `queued` one, because starting an import and queueing its files are two writes and a claim can land between them; so it never finishes an import past a file it has not read. A suspended organization's import is held back an hour. A file is attempted at most three times, then failed with `internal`.
+
+Each file is read in a worker thread with memory and time limits; the main thread feeds it 1 MiB at a time, acknowledged. The time limit covers the reads from storage as well, and aborts a read that stalls, so a stalled download never holds the replica's reader or the import's lease. Text is decoded as UTF-16 by its mark, else strict UTF-8, else windows-1252, and read in two passes with the browser's tokenizer (11.2), rewritten to take pieces (`CsvPushReader`, which yields exactly the whole-text reader's records). The first pass finds the header row (the first of the first 30 records with two or more filled cells that is a header and names a date, else the first header), profiles every column over every row, and collects the location column's values; the mapping is decided; the second pass adds rows up per date with the browser's `DayAggregator`. A workbook's sheets are each a table, read in sheet order; a later sheet's day replaces an earlier one's only for an org admin's file. Raw rows never leave the thread.
+
+The mapping, in order, with the person's answers overriding each step: the date column (a guessed date header, earlier names first, `business date` before `date`; else the one column of dates; a tie is a question); the date order (proven by a part above 12 over the whole column, else a question); guests and net sales (guessed headers; else a question among the number columns, or kept `notes_not_read_yet` when there are none); the location (a guessed location column with one value is ignored, a value equal to the location's name is used, otherwise a question; over 50 values is kept `too_many_locations`); and after the second pass, what one row is (no repeated date is day-level; repeats with check headers and no item headers are checks, added up; item headers are kept `item_level`; otherwise a question). Header guesses extend the browser's: date `business date`, `date`, `day`, `order date`, `opened date`, `closed date`; guests `guests`, `covers`, `guest count`, `total guests`, `number of guests`, `# of guests`; net sales `net sales`, `net amount`, `net revenue`, `sales (net)`, `net`; location `location`, `restaurant`, `store`, `site`; checks `check`, `check #`, `check number`, `order id`, `order #`, `order number`; items `item`, `menu item`, `qty`, `quantity`, `modifier`. [CONFIRM: header guesses]
+
+A question pauses the import (`waiting`) and names the file and sheet. Its options are header names, the location column's values (the D11 exception) or fixed ids, never other cells, and always `not_sure`, which keeps the file as `needs_help`. An answer is stored on the file and the file is read again from the start. The file moves back to the queue (or to `kept`) before the import does, while no reader can claim the import, and that move is the compare-and-set a second answer loses with 409 `question_stale`.
+
+### 11A.5 Products
+
+1. **Days** through the existing store and rules (11.3, 11.4): an org admin's file replaces the days it covers, a member's adds new days only. One `tw_uploads` record per file, created once and kept on the file, so a retry reuses it.
+2. **Cleaned copy** `client-clean/{orgId}/{locationId}/{fileId}.csv`: `date,guests,net_sales`, CRLF, net sales in dollars with two decimals, empty for none. Nothing else.
+3. **Report** on the file: the sheets and what became of each, the header row, the header names mapped, which rule or answer decided each column and the row mode, the location value chosen, the date order, the encoding, rows and days, skipped rows by number (never a value), excluded days with reasons, closed days, missing days, and how many days already had data. No data cell except the location value.
+
+### 11A.6 Status, outcomes and time left
+
+`read` (shown as Used), `kept` (stored, not used, with the reason) or `failed` (only our fault: `internal`, `raw_missing`). Kept outcomes in this build: `old_excel`, `old_word`, `numbers`, `encrypted`, `image`, `type_not_read`, `too_large_to_read`, `not_a_table`, `no_header`, `no_dates`, `notes_not_read_yet`, `too_many_locations`, `item_level`, `decimal_comma`, `repeated_dates`, `too_many_days`, `not_a_workbook`, `too_complex`, `bad_encoding`, `needs_help`.
+
+Time left is measured, never guessed: a reading file's from its own rate in the current phase, only after 3 seconds and 5 percent; a queued file's from the reading file's plus the queued bytes before it at the speed this import's finished files were read, so the first file of an import says "Estimating" until it finishes; null above six hours and while the import waits for a turn (queued 10 seconds, unclaimed). Rounded up to 5 seconds. Progress is written at most every 2 seconds.
+
+### 11A.7 Downloads, deletion and view-as
+
+Downloads stream through the API (no SAS: the account has no public endpoint), as attachments with `nosniff`, `no-store` and `default-src 'none'; sandbox`. The original goes only to its uploader and the organization's admins, in 32 MiB parts when asked; the cleaned copy to every member. Deleting the original keeps the cleaned copy, report and days and replaces the name with the kind's label (a name can itself name a person). It is refused (409 `file_busy`) until the file is read, kept or failed: a file not yet read still needs its original, and reading one whose original the person deleted would fail it as our fault. Deleting the whole file stays open, except while it is being read. Deleting a file removes both blobs and the row, and says how many days stay; an unfinished upload is cancelled (its staged blocks discarded at once) and its bytes given back. Under view-as, names are null, nothing downloads, and every write is refused; each read logs `townwise.view_as_read` as every GET does.
+
+### 11A.8 Later stages
+
+Not in this build: reading ZIP archives (one file, entries listed, ranged reads, bomb guards), PDF and Word tables, and the AI step for header and columns; deleting files with a location's sales data, a location and an organization; the daily sweeper (unfinished uploads after 24 hours, originals after 365 days with a 400-day lifecycle backstop, never-read drops after 30 days) and the staff purge of an organization's originals for a person's deletion request. Stored files stay off in production until they land.
+
+---
+
 ## 12. Notes (the tuning step)
 
 ```ts
@@ -985,6 +1220,20 @@ Stored in `tw_notes`: the `NoteInput` fields, `_id`, `orgId`, `locationId`, `cre
   - A listed town with no drivers or dates (Nantucket today): the curve, then “No drivers or key dates are researched for {town} yet.” Conway, North Elba and Provincetown show their one driver and the same line for dates.
   - A missing county series: “BLS does not publish this series for {county}.” (design system).
   - Key dates print with their year, so dates that have passed read as history, not as a live calendar.
+
+### 13.1 Town calendar
+
+One calendar, in `api/src/town-calendar.ts` (pure, no I/O, stored nowhere), serves the calendar route (10.10), TownwiseAI’s tools and the term state (13.2). `townEvents(townId, range)` merges three sources, each event with at least one source:
+
+- **US federal holidays**, computed for every year the range touches from their legal rules (5 U.S.C. 6103), on the actual day rather than the observed weekday, since restaurants feel the real day. Source: the U.S. Office of Personnel Management’s federal holidays page. New Year’s Day (Jan 1), Birthday of Martin Luther King, Jr. (third Monday of January), Washington’s Birthday (third Monday of February), Memorial Day (last Monday of May), Juneteenth (June 19, from 2021), Independence Day (July 4), Labor Day (first Monday of September), Columbus Day (second Monday of October), Veterans Day (Nov 11), Thanksgiving Day (fourth Thursday of November), Christmas Day (Dec 25). `kind: 'holiday'`, `scope: 'national'`, `group: 'us:{slug}'`. Non-federal days (Valentine’s Day, Mother’s Day) are left out: they have no official source.
+- **Key dates** from the town profile (Section 13): single-day `event`s with the profile’s sources, labelled by hostname, no group and no confidence.
+- **Researched entries** in `api/src/town-calendar-data.ts`, hand-curated, each with its sources and the confidence its research gave it. Hanover is seeded from the committed public file `modeling/dartmouth_calendar_2025_2026.csv` (38 rows from winter 2025 to fall 2026: classes and finals, Commencement, Green Key, Homecoming, Winter Carnival, Family Weekend, orientation and home football), one entry per row, and `api/test/town-calendar.test.ts` compares the two row by row. No other town has entries yet.
+
+Term entries follow one convention, which the term state reads: `kind: 'term'`, `group: '{townId}:classes:{season}'` for the class period or `'{townId}:finals:{season}'` for the exam period, with season `fall`, `winter`, `spring` or `summer`. Between-terms periods are not entries; the term state derives them.
+
+`townCalendarCovers(townId)` is the span of the town’s researched events (key dates and entries) over all years, or null; `researched` is true when it is not null. Hanover covers 2025-01-06 to 2027-01-05, with only key dates after fall 2026 finals. A town outside the twelve, and a listed town with nothing researched (Nantucket), get holidays only.
+
+Headcount inputs (residents, students in college housing, enrollment, whether dorms close between terms) are not part of the calendar. None is researched yet for any town; they stay empty, and say so, until a teammate researches them with a source for each number (13.2).
 
 ---
 
@@ -1034,12 +1283,10 @@ Every signed-in frame ends with a slim footer: a 1px `border` rule, then one `mo
 +--------------------------------------------------------------------------------------+
 | VIEWING AS  {email}, {Role} at {org}. Read-only until {time}.        [End view-as]   |  view-as only (15.5)
 +--------------------------------------------------------------------------------------+
-| Townwise | {Org name}     Locations   Team   Settings                {email} Sign out |  top bar, 64px, ground
+| Townwise | {Org}  Home Analytics TownwiseAI Notes Town Upload   Team Settings  {email} Sign out |  top bar
 +--------------------------------------------------------------------------------------+
-| HANOVER, NH                                                 Location [{name}    v]   |  page header
-| {Location name}                                                                      |
-|                                                                                      |
-| [■ Forecast]   Sales data   Notes   Town   Settings                                  |  tabs (location pages)
+| {LOCATION NAME}, HANOVER, NH          Location [{name} v]  All locations  Location settings |  page header
+| {Page title}                                                                         |
 +--------------------------------------------------------------------------------------+
 | content, 12 columns                                                                  |
 |                                                                                      |
@@ -1052,35 +1299,32 @@ Every signed-in frame ends with a slim footer: a 1px `border` rule, then one `mo
 - **Top bar.** At least `nav-height` (64px), with a 1px `border` rule below. In order:
   - the wordmark “Townwise” (`wordmark`, `white`), which links to `/dashboard`;
   - a 1px `border` vertical rule, 20px tall, then the organization name in `ui`, `text2`;
-  - the nav links in `ui`, `text2`, `space-6` apart, turning `white` on hover and with `aria-current="page"`, as Nav does;
+  - the nav links in `ui`, `text2`, `space-6` apart, turning `white` on hover and with `aria-current="page"`, as Nav does. On the client app they are the location’s sections (15.3), then Team and Settings as a group at the nav’s far end;
   - right (`margin-left: auto`): the signed-in email in `mono`, `text3`, then “Sign out” as a text link.
   
   `<header>` holds `<nav aria-label="Main">`, and the skip link is the first focusable element (Nav, **Exists**).
-- **Below 900px** (`bp-nav-wrap`), the nav links wrap to a second row under a `border` rule. They never hide: the app has no footer that repeats them. At 640px and below the email hides; the organization name stays and truncates with an ellipsis.
+- **Below 900px** (`bp-nav-wrap`; below 1280px when the client app’s bar carries a location’s sections, which need the room), the nav links wrap to a second row under a `border` rule. They never hide: the app has no footer that repeats them. At 640px and below the email hides; the organization name stays and truncates with an ellipsis, and the client app’s second row is one line that scrolls sideways in a focusable region (`role="region"`, `tabindex="0"`, `aria-label="Sections"`), reaching into the side margins and scrolled to keep the current link in view.
 - **Page header.** `space-8` above, `space-6` below.
   - Left, columns 1 to 8: the eyebrow (`tw-eyebrow`, `text3`), then the page title as the page’s one `<h1>`, styled `tw-h2` (40/44, then 32/36 below 1024px, then 28/32 at 640px and below), `text-wrap: balance`.
-  - Right, columns 9 to 12, aligned to the title’s last baseline: the page’s actions (at most one primary) or the location switcher.
+  - Right, columns 9 to 12, aligned to the title’s last baseline: the page’s actions (at most one primary), or on location pages the location switcher, “All locations” and “Location settings”.
+  - On location pages the eyebrow is “{Location name}, {Town}, {ST}” and the title is the page’s own: Home “Week of {Mon d, yyyy}” (the Monday of the current week, on the device’s calendar), Analytics “Analytics”, Sales data “Sales data”, Upload “Upload”, Notes “Notes”, Town “Town”, TownwiseAI “TownwiseAI”, Location settings “Location settings”. “All locations” (a text link to `/dashboard`) shows only with more than one location; “Location settings” (a text link) only for org admins, and not on that page itself. On phones TownwiseAI’s header is compact (the eyebrow, and the title on one line, with no side links) and scrolls away with the conversation.
   - Below 1024px the two stack.
   - Gate pages use the same header with the lead paragraph (`sub`, `text2`) under the title, in columns 1 to 7, and an optional side column 9 to 12, as on the SignIn artboard.
-- **Location switcher.** Shown only when the organization has more than one location. It is a labeled select (“Location”) styled like a FormField input, and changing it navigates to the same tab of the other location.
-- **Tabs** (location pages). A row of links in `ui`, at least 44px tall, `space-1` apart, with a 1px `border` rule under the row.
-  - Unselected: `text2`, with a `raised` fill on hover.
-  - Selected (`aria-current="page"`): the design system’s selected-row idiom, which is a `raised` fill, a 1px `border` outline, the 6px `mint` square before the label, and a `mint` label.
-  - Tabs: Forecast, Sales data, Notes, Town, and Settings for org admins.
-  - On phones the row scrolls sideways in a focusable region (`role="region"`, `tabindex="0"`, `aria-label="Location sections"`).
+- **Location switcher.** Shown only when the organization has more than one location. It is a labeled select (“Location”) styled like a FormField input, and changing it navigates to the same page of the other location.
+- **No location tabs.** The location’s sections are in the top bar (15.3); Sales data is reached from Analytics and from Upload’s result, and Location settings from the page header.
 - **Content.** Sections are separated by a 1px `border` rule with `space-8` between them. Panels have a `panel` fill, a 1px `border`, square corners, and `space-5` padding (`space-4` at 640px and below). Never put a `raised` fill inside a `raised` surface; outline the inner element with `line` instead. Reading width for forms and prose is columns 1 to 7; the side column 9 to 12 holds help text and summaries.
 
 ### 15.3 Navigation per role
 
-| Who | Top bar nav | Location tabs | Notes |
+| Who | Top bar nav | Page header links | Notes |
 |---|---|---|---|
-| Member | Locations, Settings | Forecast, Sales data, Notes, Town | No Team. Upload and notes are allowed (D16). |
-| Org admin | Locations, Team, Settings | Forecast, Sales data, Notes, Town, Settings | |
+| Member | Home, Analytics, TownwiseAI, Notes, Town, Upload; then Settings | All locations (more than one location) | No Team. Upload and notes are allowed (D16). |
+| Org admin | Home, Analytics, TownwiseAI, Notes, Town, Upload; then Team, Settings | All locations (more than one), Location settings | |
 | Staff | Requests, Organizations, People, Audit log | none | Staff console frame (15.4). |
-| Staff in view-as | the target’s items | the target’s tabs | Client app frame under the banner; no console items. |
+| Staff in view-as | the target’s items | the target’s links | Client app frame under the banner; no console items. |
 | Signed in, no organization | none | none | Gate frame. |
 
-“Locations” goes to `/dashboard`, which redirects to the only location’s Forecast tab when there is one. Settings is the account page, `/settings`. Two-step sign-in (`/settings/security`, **Exists**) is reached from Settings.
+The sections are Home (`/locations/[id]`), Analytics (`/locations/[id]/analytics`), TownwiseAI (`/locations/[id]/agent`), Notes, Town and Upload (`/locations/[id]/sales/upload`). They open the location in the path; on a page outside a location (Locations, Team, Settings), the last location opened in this sign-in, held in memory only and never in storage, else the organization’s first. With no location the bar has only Team and Settings. `aria-current="page"` marks the section of the current page; Analytics is also marked (`aria-current="true"`) on Sales data, which lives under it, and on Location settings no section is marked. The wordmark goes to `/dashboard` (Locations), which redirects to the only location’s Home when there is one. Settings is the account page, `/settings`. Two-step sign-in (`/settings/security`, **Exists**) is reached from Settings.
 
 ### 15.4 How the staff console differs
 
@@ -1129,7 +1373,7 @@ Every signed-in frame ends with a slim footer: a 1px `border` rule, then one `mo
 - **The primary button is white** (`cta`): `white` fill, `ground` label, `text2` fill on hover. It is square, at least 44px tall, with a 15px `button` label and 18px side padding. **One primary per page**, for its main action; everything else is an outline button (`tw-ob`) or a text link (`tw-tl`). [CONFIRM: extends the Button rules to app screens, where labels vary by page]
 - **StatusTag only for build status and kinds.** In progress (6px mint square) and Planned (6px outlined square) describe Townwise features, as on the homepage; College town, Seasonal town and Event town describe towns. A client’s own data state (“Not calibrated yet”, “Active”, “Invited”) is plain words, never a tag.
 - **Charts** follow the design system: every chart has a text summary and “Show the numbers”, prints its scale and year, and keeps its SVG `aria-hidden`. Client sales series are `mint`, solid, 2px (`stroke-series`), with “Scale fitted to this location.” Town charts keep the Northeast dashed and the county solid.
-- **Motion.** State changes only, 150 to 200ms with `--ease-out`. No spinners, shimmer, pulsing or counters. One reduced-motion switch zeroes everything.
+- **Motion.** State changes only, 150 to 200ms with `--ease-out`. No spinners, shimmer, pulsing or counters. One reduced-motion switch zeroes everything. The one exception is the two statement moments of 15.8, whose words fade in over 200ms each, 80ms apart, and which end within 5 seconds; reduced motion shows them whole and still.
 - **Voice.** Second person to the operator, first person plural for the team, short declarative sentences, no exclamation marks. Say what exists, and only that. U+2019 apostrophes and curly quotes in every visible string, no em dashes, ranges as “80 to 115”, a true minus (U+2212) for negatives.
 
 ### 15.7 Shared patterns
@@ -1146,6 +1390,24 @@ Every signed-in frame ends with a slim footer: a 1px `border` rule, then one `mo
 - **Numbers and dates.** Every numeral is `mono`, tabular. Guests print as whole numbers with thousands commas (“{n} guests”). Money prints in whole dollars with a `$` and thousands commas, rounded half up [CONFIRM: whole dollars in v1]. Dates always print their year (“Mar 2, 2026”), and times as “3:42 PM” in the viewer’s time zone. Day counts print as “{n} days”. No sample values ever appear in mockups: use `{slots}` (Placeholder data slot) for every number that comes from data.
 - **Hit targets** are at least 44px. Every control shows the focus ring.
 - **Phone (640px and below).** One column, 16px side margins, the top bar and banner as above, tables stacked, dialogs full width with 16px margins. There is no horizontal page scroll.
+
+### 15.8 Statement moments
+
+Two full-screen statements reveal word by word, hold, then dissolve into the page underneath. [Build note: the pieces are built (`client/src/portal/moments/`) and the server side is live; the player is not mounted in `PortalGate` yet, so nothing plays until the client wiring lands.]
+
+| Moment | When | Lead (`white`) | Follow (`text2`) |
+|---|---|---|---|
+| Request received | right after a request is sent: the access goes from `no_org`, `rejected` or `removed` to `pending` in this session | We’ve received your request for {orgName}. | We’ll let you in soon. |
+| Welcome | the first visit after approval, while `GET /api/me` carries `welcome` | Welcome to Townwise, {firstName}. (Welcome to Townwise. when `firstName` is null) | {restaurant}, ready to set up. |
+
+- **Who gets the welcome.** Only the person whose approved request created the organization, while the organization has no sales day, never under view-as. Invited teammates and admins of organizations staff created have the Joining notice instead. `firstName` is the first word of the request’s contact name, or null for an honorific (`Mr`, `Mrs`, `Ms`, `Mx`, `Dr`, `Prof`), an initial or a word over 40 characters. The client calls `POST /api/me/welcome` once when the moment starts, so it plays once across devices. [CONFIRM: welcome for the requester only]
+- **Copy.** No doubled full stop when a name already ends a sentence. The follow line of the request moment repeats the held page’s own sentence, so it stays true whether or not the approval email has shipped.
+- **Layout.** A `ground` layer over the portal frame, the top bar included, with no shadow, gradient or blur. The wordmark sits exactly where the top bar draws it. The statement is flush left in the content column, at most 760px wide, vertically centered, both lines at the h2 scale for the breakpoint, 12px apart. Every word is laid out at full size from the first frame and only its opacity changes, so nothing shifts. No horizontal scroll at any width.
+- **Timing.** The first word starts at 120ms. Each word fades in over 200ms (`--ease-out`), 80ms after the one before, closer together when a line would take longer than 640ms. A clause or a sentence inside a line holds 140ms more (at most twice a line). The follow starts 360ms after the lead lands, holds 1.4s once it lands, and the layer fades out over 200ms. Request received for a two-word name is gone at about 3.3s, and every moment ends within 5 seconds.
+- **Reduced motion.** Both lines whole at once, still for 2.4s, then gone at once.
+- **Any input ends it.** A press, touch or wheel is absorbed (it never reaches the page under the opaque layer) and fades the layer out; once that press is over, presses reach the page. On web a press is over when its click has landed on the layer, or 350ms after it lifts if no click comes, because a touch's click is aimed when the finger lifts; under reduced motion the layer goes at that point too. A key removes it at once and still does its job on the page (Tab moves focus). Repeats and lone modifier keys are ignored, and so is any input in the first 300ms, so the press that sent a request can’t end its moment. Android back dismisses it and is consumed. A moment that would start in a hidden tab keeps its ground up and waits until the tab is visible.
+- **Screen readers.** The visual words are hidden from assistive tech, and the statement is said once, as plain text: on web through a polite status region that exists before any moment, on native through an announcement. On native with a screen reader running there are no visuals at all. The layer never takes focus.
+- **One player.** `MomentProvider` in `PortalGate` plays one moment at a time; a page may call `useMoment().play(statement)` for its own statements and hold its own entrance while `useMoment().playing`.
 
 ---
 
@@ -1178,6 +1440,8 @@ Every signed-in frame ends with a slim footer: a 1px `border` rule, then one `mo
 | P21 | `/admin/orgs/[orgId]` | Organization detail: team, locations, suspend, view as, delete | staff | Staff console |
 | P22 | `/admin/people` | People: everyone across organizations, sign out everywhere, delete | staff | Staff console |
 | P23 | `/admin/audit` | Audit log | staff | Staff console |
+| P24 | `/locations/[id]/analytics` | Analytics: your days, your town’s calendar and your notes (**In progress**: until it is built, the page says so and links to Sales data) | members | Client app |
+| P25 | `/locations/[id]/agent` | TownwiseAI, the tuning chat (`/locations/[id]/chat` redirects here) | members | Client app |
 
 Components that are not routes: C1 View-as dialog, C2 View-as banner (15.5), C3 Approve dialog, C4 Reject dialog, C5 New organization dialog, C6 Note form, C7 Confirm dialogs (deletion dialogs ask for the typed name or email, 15.7).
 
@@ -1281,7 +1545,7 @@ Primary: “Sign in again” (kit `POST /auth/logout`, then `/sign-in`).
 
 **P11. Forecast (`/locations/[id]`, the default tab)**
 
-- Page header: eyebrow “{town}, {state}”, title {location name}, the location switcher when there are several locations, then the tabs.
+- Page header: as on every location page (15.2): the eyebrow “{location name}, {town}, {state}”, the page’s title, then the switcher and links at the side.
 - **Status panel.** Kicker `tw-eyebrow` “Calibration”, heading `tw-h3` “Not calibrated yet”, then the body for the state (14.1). Under it, the data checks as a two-column definition list in `mono`: Days with data, First day, Last day, Missing days in between, Days with guests, Days with net sales, Last upload (“{date} by {email}”).
 - **Getting started**, numbered 01 to 04 like the homepage’s How it works. Each row has a two-digit counter in `mono` `text3`, a `tw-h3` title, a `small` body, and the client’s progress in plain `mono` words at the right:
   1. “Your town”. “Public data on what moves demand in {town}, {state}.” Progress, derived from the bundled town data (Section 13): “{n} drivers and {m} key dates, from public sources” (singular forms for one, “no key dates” for none); “Employment pattern only. Drivers aren’t researched yet.” for a listed town with no drivers (Nantucket today); “Not researched yet” for another town. Link: “See your town” (Town tab).
@@ -1430,7 +1694,7 @@ Primary: “Sign in again” (kit `POST /auth/logout`, then `/sign-in`).
 **P20. Organizations (`/admin/orgs`)**
 
 - Title “Organizations”. Primary: “New organization” (C5).
-- **C5.** Fields: Name, and First admin email. Text: “They join as admin the next time they continue with Google with this address. We don’t send email yet. {org}’s admins will see that Townwise staff created it.”
+- **C5.** Fields: Name, and First admin email. Text: “They join as admin the next time they continue with Google with this address. Townwise doesn’t email invitations. {org}’s admins will see that Townwise staff created it.”
 - **Table**: Name, Status (Active or Suspended), Admins, Members, Invited, Locations, Days of sales, Last upload, Created. A row with no admin shows “No admin yet” under Admins.
 - A client-side filter box (name), and a status filter.
 
@@ -1479,7 +1743,9 @@ Primary: “Sign in again” (kit `POST /auth/logout`, then `/sign-in`).
 ## 17. Logging and privacy
 
 - Townwise server code logs ids and counts only: `userId`, `orgId`, `locationId`, `memberId`, `requestId`, `grantId`, `uploadId`, `routeId`. It never logs emails, names, organization or location names, note text, request notes, view-as reasons, figures, file content or request bodies. This matches the privacy page’s promise for sign-in logs (“its own log lines carry your account ID, never your email address”).
-- Product log lines: `townwise.view_as_read`, `townwise.upload_applied`, `townwise.audit_write_failed` (error level), `townwise.access_denied { policy, code }`.
+- Product log lines: `townwise.view_as_read`, `townwise.upload_applied`, `townwise.audit_write_failed` (error level), `townwise.access_denied { policy, code }`, `townwise.email_sent { kind, requestId, orgId? }` (info), `townwise.email_failed { kind, requestId, orgId?, code, status, upstreamCode, errType }` (warn; D14), and the stored-files lines in `api/README.md` (Audit and logs), which carry ids, kinds, sizes, counts and codes. An email’s log line never holds its address, subject or body. A stored-files line never holds a file name, header, sheet name, location value, cell, figure or the storage SDK's message; the SDK's own logger stays off.
+- The welcome’s first name and organization name travel only in the `GET /api/me` body, never in a URL, log line or audit event. The welcome marker (6.15) is deleted with the organization and with the person.
+- A stored file is read only by the file reader and returned only to its organization; TownwiseAI and every model read `tw_sales_days`, notes and the town calendar, never files (6.10 rule 9).
 - The audit log (a database record) holds emails, organization names and view-as reasons. It never holds figures, note text, request notes or decision messages.
 - The client never logs (expo-shell rule 12, **Exists**) and never persists the file or the parsed rows.
 - **The privacy page must change before the portal ships.** The sentences on `feature/townwise-web` that become false are listed in 22.4. The new content needs to cover:
@@ -1496,7 +1762,8 @@ Primary: “Sign in again” (kit `POST /auth/logout`, then `/sign-in`).
     - Townwise staff, who see sales figures and note text only through View as, which is audited and shown to org admins;
     - Townwise staff in the console, who see team email addresses, location names and towns, date coverage, counts and recent audit events without View as; those reads are not recorded;
     - the people with access to the production database (members of the MongoDB Atlas project that `infra/README.md` on `feature/infra` sets up), named on the page; anyone with that access can read every collection, and their reads are not recorded by Townwise [CONFIRM: who holds Atlas project access];
-  - how long each is kept, and how to ask for deletion (the staff path in 10.7).
+  - how long each is kept, and how to ask for deletion (the staff path in 10.7);
+  - the emails Townwise sends (D14): the recipient’s address and the email’s content go to Azure Communication Services, which delivers them and keeps its own delivery records.
   
   [DECISION NEEDED: retention and deletion terms for sales data, requests and audit events]
 - **The Security page’s Hosting section** (`security.tsx` on `feature/townwise-web`, which today says hosting “has not been chosen” and that the section will say “who has access”) gains the same who-has-access facts: who holds production database access, and that their reads are not recorded.
@@ -1513,7 +1780,13 @@ Primary: “Sign in again” (kit `POST /auth/logout`, then `/sign-in`).
 | View-as length | constant | 30 minutes | [CONFIRM] |
 | Upload | constants | 3,660 days, 256 KB, 50 MB file in the browser | [CONFIRM] |
 | Caps | constants | 25 locations per organization; 1,000 notes per location; 20 emails per add; 200 people per organization | [CONFIRM] |
+| Stored files | constants | 11A.2's table | `api/src/files/limits.ts` [CONFIRM] |
+| `FILES_BLOB_ACCOUNT_URL`, `FILES_AZURITE_CONNECTION_STRING` | env, not secret | the client files account URL; Azurite's connection string in development only (production refuses it) | `api/src/config.ts` |
 | Clock | dependency | the one `now` function `main.ts` passes to both `createAuth` and `createTownwiseApi` | 7.1 |
+| `EMAIL_ENDPOINT` | env, not secret | the Communication Services endpoint, a bare `https://*.communication.azure.com` origin | Absent turns email off (D14). Set together with `EMAIL_SENDER`; email also needs the managed identity (`IDENTITY_ENDPOINT`, `IDENTITY_HEADER`, `AZURE_CLIENT_ID`), or boot fails |
+| `EMAIL_SENDER` | env, not secret | `no-reply@townwise.tech` | D14 |
+| `TOWNWISE_EMAIL_REPLY_TO` | env, not secret | a team member’s address in production | Absent: no Reply-To, and the footer does not offer replies (D14) |
+| `TOWNWISE_WEB_URL` | env, not secret | `https://townwise.tech` in production, `http://localhost:8081` by default | A bare origin, for the links in emails; production email requires `https:` (D14) |
 
 ---
 
@@ -1600,7 +1873,10 @@ Named tests:
 - **Audit:** every mutation writes its event with only the allowlisted keys.
 - **Email:** normalization matches the kit for case and spaces.
 - **Towns:** `api/test/towns.test.ts` matches `api/src/towns.ts` against the literal list of twelve ids (Section 13).
+- **Calendar:** `api/test/town-calendar.test.ts`: holidays on their legal days (Thanksgiving 2024 to 2026, Memorial Day, MLK Day, the actual day for July 4, Juneteenth from 2021 only); every event has a labelled https source and `start <= end`; ids unique and stable; overlapping multi-day events kept; the term convention; Hanover’s entries equal `modeling/dartmouth_calendar_2025_2026.csv` row by row. `api/test/calendar.int.test.ts`: Hanover’s events with sources, holidays only and `researched: false` elsewhere, every range rule 400, 404 across organizations.
+- **Sales history:** `api/test/sales-history.int.test.ts`: oldest-first columns with exact figures, each day’s upload index and email, -1 for a day whose upload has no record, “Deleted person”, empty columns and `NO_COVERAGE` for a location with no days, exactly the contract’s keys, 404 across organizations, 200 during view-as with `townwise.view_as_read` holding ids only, and no figure or email in any log line.
 - **Indexes:** `documentDbIndexProblems(connection)` is empty with the Townwise models registered (mongo MODULE.md, DocumentDB).
+- **Welcome:** `api/test/welcome.int.test.ts`: only the approved requester of an organization with no sales day gets it, with their first name and the organization’s name; `POST /api/me/welcome` is 204 twice and then `welcome` is null; teammates, staff-created organizations, view-as (GET null, POST 403 `view_as_read_only`), `pending` and `no_org` (POST 403 `no_access`) get none; join, decline and request answers carry null; deleting the organization or the person deletes the markers; no log line holds the name. `api/test/welcome.test.ts` pins `firstNameOf`.
 
 Client tests:
 
@@ -1609,7 +1885,8 @@ Client tests:
 - the CSV parser’s RFC 4180 cases, delimiters, date orders, number formats, row modes and per-day sums;
 - the mapper never renders a cell: a file whose cells contain a sentinel name must never show it, except a mapped location value;
 - the view-as banner renders, and writes are disabled;
-- the twelve town ids in the client’s `towns.ts` match the same literal list as the api test.
+- the twelve town ids in the client’s `towns.ts` match the same literal list as the api test;
+- statement moments (`test/portal/moments/`): the copy and the timeline (`timing.test.ts`, `moments.test.ts`), and the player on native and web (`provider.test.native.tsx`, `provider.test.web.tsx`): one moment at a time, said once, hidden from assistive tech, dismissed by a key at once and by a press after the grace period, reduced motion, a native screen reader, Android back and a hidden tab.
 
 ---
 
@@ -1617,7 +1894,7 @@ Client tests:
 
 | Item | Why it waits | What it needs |
 |---|---|---|
-| Email (invitations, approval, rejection) | Lead default: none in v1 | Azure Communication Services and an email sender with click tracking off; the Team and Waiting copy drops “We don’t send email yet” |
+| Email for invitations and rejections | D14 sends only request received and you’re in | An owner decision for each; a rejection email would also decide whether it quotes the staff message |
 | Calibration, forecasts, model storage | Models exist only in research notebooks | The reserved states and shape (14.3), and `tw_calibrations` |
 | AI chat for tuning | The privacy decision about sending client data to an AI provider | That decision, a provider agreement, a redaction step |
 | Per-action TOTP for staff | Kit gap 1 | A kit export |
@@ -1649,7 +1926,6 @@ Each is marked inline with “lead default”:
 - browser-side parsing that sends only date, guests and net sales per location per day (D10);
 - no fake output (D12);
 - tuning as structured notes, AI chat later (D13);
-- no email in v1 (D14);
 - organizations with one or more locations (D15).
 
 ### 22.2 Judgment calls to confirm
@@ -1707,6 +1983,7 @@ Each is marked inline with “lead default”:
 - Retention and deletion terms for the privacy page (17, 10.7).
 - Whether staff may copy a client’s uploaded days into research notebooks, for that client’s calibration only, and how the copy is recorded, shown to org admins and deleted (14.1).
 - What happens to a raw export a client sent directly once that client uploads through the portal (17). Recommended: delete it once its days are in the portal.
+- Retention periods for stored files (11A.8). Defaults [CONFIRM]: originals 365 days (lifecycle backstop 400), cleaned copies and reports until the file, its location's sales data or the organization is deleted, never-read drops 30 days, unfinished uploads 24 hours, deleted blobs 7 days in soft delete, storage access logs 365 days.
 
 ### 22.4 Conflicts in existing copy
 
@@ -1725,6 +2002,14 @@ Each is marked inline with “lead default”:
 ---
 
 ## 23. Changelog
+
+**2026-11-05, calendar and sales history.** Two member reads, `GET .../sales/history` and `GET .../calendar` (10.4, 10.10), for Home, Analytics and TownwiseAI. The town calendar (13.1) merges computed federal holidays, the profile’s key dates and researched entries; Hanover’s entries come from the committed public `modeling/dartmouth_calendar_2025_2026.csv`, each with its source and confidence. Headcount inputs stay empty until researched. Tests in Section 20.
+
+**2026-11-05, stored files (stages 1 to 4).** The private client files account (11A.1), chunked uploads, the file list, downloads and deletion (10.11), and the file reader for text and Excel files (11A.4 to 11A.6), with three collections (6.11, 6.12, 6.19), three audit actions and the reader's sales uploads (9.2), three limiters (10.8) and the error codes (10.9). The browser upload stays as the fallback and the daily-totals choice (11.1). Off in production until the later stages and the privacy page ship together (11A.8).
+
+**2026-11-05, statement moments.** Two statements reveal word by word over the portal (15.6, 15.8): request received and the welcome. `GET /api/me` carries `welcome` for the approved requester’s first visit (4.1, 10.2), recorded by `POST /api/me/welcome` in `tw_welcomes` (6.15), which is deleted with the organization and the person (10.7, 17).
+
+**2026-11-05, Google place id.** An access request and a location carry an optional Google place id (F2, F3, 6.3, 6.4, 10.1, 10.2). Approval copies it to the first location. `access_request.created` records only `hasPlace` (9.2). The two Places routes, the `places` limiter and their error codes are in 7.2, 10.2a, 10.8 and 10.9.
 
 **2026-11-04, critic review.** Twenty-three findings applied. Where one conflicted with a lead default, the default stayed and the conflict went into its [CONFIRM] note.
 

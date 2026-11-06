@@ -5,6 +5,7 @@ Everything runs in the Azure Sponsorship subscription `2d2c15bf-1b72-4e0c-a4cb-5
 - **API:** Azure Container Apps, a workload-profiles environment with the Consumption profile only, in the virtual network `vnet-townwise`. 1 to 2 replicas, health probes on `/healthz`. Valkey runs as a TLS-only sidecar on `127.0.0.1`: an init container generates a per-replica CA, and the API trusts it through `NODE_EXTRA_CA_CERTS`, so the kit's `rediss:` rule holds. The image comes from a private Azure Container Registry, pulled with the app's managed identity. Secrets are Key Vault references. Custom domain `api.townwise.tech` with a managed certificate.
 - **Database:** Azure DocumentDB (vCore; formerly Cosmos DB for MongoDB vCore), free tier, `docdb-townwise-2d2c15bf`. Public network access is disabled and there are no firewall rules: the only way in is a private endpoint in `snet-endpoints`, whose NSG admits port 10260 from the apps subnet only. The API connects as `townwise-app`, not as the administrator.
 - **Backups:** a nightly Container Apps job dumps the database with `mongodump` as the read-only user `townwise-backup` and uploads the archive to Blob Storage, where it is write-once for 30 days and deleted on day 31. An alert emails when a day passes without a successful upload. A manual job restores a named dump.
+- **Client files:** the exports restaurants drop into Townwise, in `sttwfiles2d2c15bf` (containers `client-raw` and `client-clean`, blob names `{orgId}/{locationId}/{fileId}`, ids only). Public network access is disabled: the only way in is a private endpoint in `snet-endpoints`, whose NSG admits 443 from the apps subnet only. The API reads and writes with its managed identity through a custom role on the two containers that cannot mint a SAS. Every blob read, write and delete is logged to the audit account for a year. Off in the API until step 18.
 - **Web:** Static Web Apps (Free) serving the Expo web export. `infra/web/staticwebapp.config.json` sets the headers from `client/MODULE.md` and the `/index.html` fallback. Domains `townwise.tech` and `www`.
 - **DNS:** Azure DNS for `townwise.tech`.
 - **Email:** Azure Communication Services, from `no-reply@townwise.tech`, sent with the app's managed identity. Access keys are disabled. DMARC is `p=reject`.
@@ -13,7 +14,7 @@ Everything runs in the Azure Sponsorship subscription `2d2c15bf-1b72-4e0c-a4cb-5
 | Stack | Applied by | Holds |
 |---|---|---|
 | `terraform/bootstrap` | you (subscription Owner) | both resource groups, Terraform state account, the $60 budget, the GitHub deploy identity, Entra groups and their RBAC |
-| `terraform/production` | `townwise-admins` | network, Container Apps and jobs, DocumentDB and its private endpoint, backup storage, registry, Key Vault, Log Analytics and alerts, Static Web App, DNS, Communication Services, deploy-identity roles |
+| `terraform/production` | `townwise-admins` | network, Container Apps and jobs, DocumentDB and its private endpoint, backup storage, client file storage and its private endpoint, registry, Key Vault, Log Analytics and alerts, Static Web App, DNS, Communication Services, deploy-identity roles |
 
 State lives in `sttwtfstate2d2c15bf` with Entra ID auth only (shared keys off) and blob-lease locking. Bootstrap state, which names the groups and the applier, sits in container `tfstate-admin`; production state sits in `tfstate`, so a future read-only plan identity can be given `tfstate` alone. Terraform never holds a secret value: the one secret it writes (the database admin password) goes through write-only arguments, and no connection string is read into state.
 
@@ -183,6 +184,14 @@ When all four states show `Verified`, add `acs_domain_verified = true` to `terra
 
 DMARC is `v=DMARC1; p=reject; sp=reject; adkim=s;` from the start. Only Communication Services sends as `townwise.tech`, and it DKIM-signs with the two selector keys. **Before adding any other sender** (a newsletter tool, a help desk), make it DKIM-sign as `townwise.tech` with an aligned key, or its mail is rejected. Inbound mail is out of scope.
 
+**Turning on the API's emails.** The API sends two emails (`api/README.md`, Email): request received, and you're in. It sends them with its managed identity, which already holds the `Townwise email sender` role on this resource, so no Terraform change is needed. Email stays off while `EMAIL_ENDPOINT` is unset in `api/production.env`. Turn it on only in the release whose waiting, request and approval screens stop saying "We don't send email yet", together with the privacy page's Email section.
+
+1. **Set it.** In `api/production.env`, uncomment `EMAIL_ENDPOINT` and `EMAIL_SENDER` together. Set the endpoint to `terraform output -raw communication_service_endpoint` from `infra/terraform/production`; take it from the output, never guess it. Merge to `main`; the deploy starts a new revision.
+2. **Smoke send.** From a Google account the team owns (a Gmail address), send an access request, then approve it from the console. Each email should arrive within a minute. In Gmail's "Show original", check SPF pass, DKIM pass with `d=townwise.tech`, DMARC pass, the Reply-To header, and that no link was rewritten. Look at both emails in Gmail on the web (light and dark), Gmail on iOS, Apple Mail (dark) and Outlook on the web.
+3. **Logs.** `ContainerAppConsoleLogs | where Log has "townwise.email_"` shows one `townwise.email_sent` per email, with ids only and no address. A `townwise.email_failed` with code `upstream_status` and status 401 or 403 points at the token resource (`https://communication.azure.com`, `api/src/mail/acs.ts`) or the role assignment; code `token` means the identity endpoint refused.
+
+**Turn it off** by commenting out the two lines again and deploying. A failed send is never retried, so an email lost while it was failing is not sent later.
+
 ### 10. Real-cluster smoke test
 
 Run it after step 8, and **again after the kit's duplicate-key fix for DocumentDB lands** (it is being made on its own branch; deploy it first, because the test runs the deployed API image). Locally, five auth integration tests fail on `documentdb-local` until that fix: DocumentDB's duplicate-key errors carry no `keyPattern` or `keyValue`, so the kit cannot name the field, and the Google email conflict and concurrent first sign-in paths answer 500.
@@ -338,7 +347,7 @@ List revisions with `az containerapp revision list -n ca-townwise-api -g rg-town
 
 ### 15. Sponsorship balance
 
-Check the remaining credit at https://www.microsoftazuresponsorships.com/Balance. The subscription's spending limit is off, so usage bills the card on file once the credits run out. The $60 budget covers the three Townwise resource groups and alerts at 80% of actual spend and at 100% of forecast. Expected spend is about $50.50, so the 80% alert fires late in most months.
+Check the remaining credit at https://www.microsoftazuresponsorships.com/Balance. The subscription's spending limit is off, so usage bills the card on file once the credits run out. The $60 budget covers the three Townwise resource groups and alerts at 80% of actual spend and at 100% of forecast. Expected spend is about $50.50, so the 80% alert fires late in most months. Once file storage is applied (step 18) it is about $58.40, so the 80% alert fires every month and the forecast alert near the end of most; raise the budget in `terraform/bootstrap` before step 18 if that noise is unwanted.
 
 ### 16. Enable the tuning chat
 
@@ -357,6 +366,59 @@ The tuning chat (`docs/portal/tuning-chat.md`) is off until the API has `ANTHROP
 
 **Rotate** by seeding a new version with the same command and running `az containerapp revision restart`, then revoke the old key in the Console. **Turn it off** with `enable_chat = false` and apply, which removes the reference, the env var and the role assignment; the secret stays in Key Vault until you delete it.
 
+### 17. Enable the Places search
+
+The Places search on the access request (`api/README.md`, Places search) is off until the API has `GOOGLE_PLACES_API_KEY`. Off, `POST /api/places/autocomplete` and `POST /api/places/details` answer 503 `places_unavailable`, and the client shows the manual fields. Turning it on sends the text typed into the search, and the place picked, from the API to Google. Nothing Google answers is stored.
+
+The same step turns on the map at the top of the confirm card. The API signs a Maps Static API URL for the picked place with `GOOGLE_MAPS_SIGNING_SECRET` and answers it; the browser (or the app) loads the image straight from `maps.googleapis.com`, so Google sees the viewer's IP address, and the web CSP's `img-src` allows that origin (`client/MODULE.md`, Security). The API never fetches or keeps the image. The URL carries `GOOGLE_MAPS_STATIC_KEY`, so that key is public by design: it gets its own key, restricted to the Maps Static API, with unsigned requests refused, so it cannot draw anything without a signature from the secret, which never leaves the API.
+
+1. **Create the Places key.** In Google Cloud console, in the project that holds the OAuth clients (step 11), enable **Places API (New)**. Under APIs & Services, Credentials, create an API key named `townwise-production` and restrict it to Places API (New) only. Set the API's quotas (APIs & Services, Places API (New), Quotas & System Limits) to what you can afford to pay for: they are the hard cap. A billing budget alert only warns. The API's own `townwise:places` limiter (300 calls an hour per account) is per person, not a cap on the account.
+2. **Create the map key.** In the same project (the signing secret belongs to the project, and Google checks that the key and the secret come from the same one), enable **Maps Static API**. Create a second API key named `townwise-maps-static` and restrict it to Maps Static API only. Leave its application restriction at None: the native app sends no referrer, and the signature is what guards it. Set the Maps Static API quota (map loads per day) to what you can afford, as for Places.
+3. **Get the signing secret and refuse unsigned requests.** Google Maps Platform, Credentials, URL signing secret ("Secret Generator"): copy the current secret (generate one if there is none). Then on the Quotas page, pick Maps Static API, open **Unsigned requests** and set "Unsigned requests per day" to **0**, so Google refuses any map request without a valid signature. A signed URL never expires, but it draws only the one place it was made for, and every load counts against the quota.
+4. **Seed all three** without them reaching argv, history or the terminal (paste each at the hidden prompt):
+
+   ```sh
+   cd "$(git rev-parse --show-toplevel)"
+   infra/scripts/set-secret.sh kv-townwise-2d2c15bf google-places-api-key
+   infra/scripts/set-secret.sh kv-townwise-2d2c15bf google-maps-static-key
+   infra/scripts/set-secret.sh kv-townwise-2d2c15bf google-maps-signing-secret
+   ```
+
+   Seed all three **before** the next step: a Key Vault reference to a missing secret fails the new revision.
+5. **Turn it on.** Add `enable_places = true` to `infra/terraform/production/terraform.tfvars`, then `terraform plan` and `terraform apply` from `infra/terraform/production`. The plan adds three role assignments (the app's identity reads `google-places-api-key`, `google-maps-static-key` and `google-maps-signing-secret` only) and changes the Container App (the three Key Vault references and the `GOOGLE_PLACES_API_KEY`, `GOOGLE_MAPS_STATIC_KEY` and `GOOGLE_MAPS_SIGNING_SECRET` env vars), which starts a new revision. A malformed signing secret stops the revision at boot with a `ConfigError` naming `GOOGLE_MAPS_SIGNING_SECRET`: reseed it and restart.
+6. **Check.** Signed in, typing a restaurant's name into the access request's search shows suggestions. A 503 `places_unavailable` with the key set means Google refused or failed: the API logs `townwise.places_failed` with Google's HTTP status. Picking one shows the dark map with a mint pin on the confirm card, with no CSP violation in the browser console. No map there with both map secrets set: open the image's request in the browser's network panel; a 403 from Google usually means the key lacks Maps Static API, or the secret and the key are from different projects.
+
+**Rotate the Places key** by seeding a new version with the same command and running `az containerapp revision restart`, then delete the old key in Google Cloud console. **Rotate the map key** the same way with `google-maps-static-key`. **Rotate the signing secret**: generate a new one in Google, seed it as `google-maps-signing-secret`, and run `az containerapp revision restart` **within 24 hours**, because the old secret stops working 24 hours after the new one is made (until the restart, the API signs with the old one). **Turn it off** with `enable_places = false` and apply, which removes the three references, the three env vars and the three role assignments; the secrets stay in Key Vault until you delete them.
+
+### 18. Enable file storage
+
+Stored files (`api/README.md`, Files; `docs/portal/spec.md` 11A) are off until the API has `FILES_BLOB_ACCOUNT_URL`. Off, every files and imports route answers 503 `files_unavailable`, and the client offers the in-browser upload (P13), which sends only three values a day.
+
+**Wait for all of these before step 3.** Raw exports hold other people's personal data (diner names, phones, card details), so files go on only in one release with:
+
+- every stage of the file storage work through deletion (`docs/portal/spec.md` 11A.8): ZIP, PDF and Word reading, the AI column step, and the stage that deletes stored files;
+- the file storage client pieces and the drop screen (HistoryStep) that mounts them;
+- the privacy page's stored-files wording, because the privacy page's promise changes with it.
+
+Before step 3, check on `develop` that each of these deletion paths removes the `tw_files` and `tw_imports` rows it covers and both blobs of each file (`client-raw` and `client-clean`), that an organization's deletion also removes its `tw_upload_days` rows, and that each path has a passing test:
+
+- deleting a location's sales data;
+- deleting a location;
+- deleting an organization;
+- the daily sweeper (unfinished uploads after 24 hours, originals after 365 days, never-read drops after 30 days);
+- the staff purge of an organization's originals for a person's deletion request.
+
+If any is missing, stop: the 400-day lifecycle rule is the only other thing that would remove those files. `api/README.md` (Files) and spec 11A.8 say what is not in the build yet.
+
+1. **Apply.** `terraform plan` and `terraform apply` from `infra/terraform/production`. The plan adds the account `sttwfiles2d2c15bf`, its two containers, the custom role "Townwise client files", the two container-scoped assignments for the app's identity, the lifecycle rule, the diagnostic setting, the private DNS zone `privatelink.blob.core.windows.net` and its VNet link, the private endpoint `pe-townwise-files`, and the NSG rule `allow-apps-to-blob`. Storage is managed through Resource Manager only (`data_plane_available = false`), so the apply never needs the blob endpoint, which no laptop or runner can reach.
+2. **Wait about 10 minutes** for the role assignments to reach the data plane. Until then the API's blob calls are refused, which it answers as 503 `storage_unavailable`.
+3. **Turn it on.** Uncomment `FILES_BLOB_ACCOUNT_URL=https://sttwfiles2d2c15bf.blob.core.windows.net` in `api/production.env` and merge to `main`. The value is public; the API authenticates with its managed identity (`AZURE_CLIENT_ID`, already set). Until the shared managed identity token source (`api/src/azure-identity.ts`) is in the API, the API refuses to start with this set (`api/src/main.ts`), so this step waits for it.
+4. **Check from outside:** `curl -sI https://sttwfiles2d2c15bf.blob.core.windows.net/client-raw` from a laptop must fail (the name resolves to a public address that refuses, because public network access is disabled).
+5. **Check in the app:** signed in as a test organization's admin, drop a small CSV, read it, download the original and the cleaned copy, delete it. Then drop a file over 64 MiB from a browser throttled to DevTools "Slow 4G" and confirm it completes: each 8 MiB chunk is its own request, so none comes near the 240-second ingress timeout.
+6. **Check the access log:** the audit account's `insights-logs-storagewrite` and `insights-logs-storagedelete` containers hold entries for those calls, made by the app's identity, with blob names that are ids only.
+
+The files account is `prevent_destroy`, and deleting it deletes every client file: export or delete the organizations first. Soft delete keeps a deleted blob for 7 days.
+
 ## Logs
 
 Container Apps and Key Vault `AuditEvent` logs go to `log-townwise`, capped at 0.1 GB a day to stay inside the 5 GB monthly free ingestion. `AuditEvent` also goes to `sttwaudit2d2c15bf`, which has no cap, keeps it for a year, and admits only Azure Monitor, so spending the cap cannot blind the audit trail. When the cap is reached, ingestion stops until the daily reset, and the alert `townwise-log-daily-cap-reached` emails `alert_email`. A flood of rate-limited requests logs one line per `429`, which can spend the cap; excluding 429s from the request log is an upstream suggestion for the kit's `server-core`, not changed here.
@@ -374,6 +436,9 @@ Prices are from the Azure Retail Prices API (eastus), with a 730-hour month (2,6
 | Azure DocumentDB, free tier (32 GiB) | | $0 |
 | Private endpoint for the database | $0.01 an hour, plus $0.01 per GB in and out | $7.30 |
 | Private DNS zone `privatelink.mongocluster.cosmos.azure.com` | $0.50 per zone (queries $0.40 per million) | $0.50 |
+| Private endpoint for client files | $0.01 an hour, plus $0.01 per GB in and out | $7.30 |
+| Private DNS zone `privatelink.blob.core.windows.net` | $0.50 per zone (queries $0.40 per million) | $0.50 |
+| Client file storage, Hot LRS | $0.0208 per GB a month; transactions and access-log writes are cents a month at this scale | under $0.10 at a few GB |
 | Backup job, about 5 minutes a night at 0.5 vCPU and 1 GiB | active rates | about $0.14 |
 | Backup storage, Hot LRS, 30 dumps kept | $0.0208 per GB a month, writes $0.05 per 10,000 | about $0.03 at 50 MB a dump |
 | Container Registry Basic | $0.1666 a day | $5.07 |
@@ -386,9 +451,11 @@ Prices are from the Azure Retail Prices API (eastus), with a 730-hour month (2,6
 | Static Web Apps Free | | $0 |
 | Communication Services email | $0.00025 per message plus $0.00012 per MB | about $0.25 per 1,000 emails |
 | State storage | | under $0.05 |
-| **Total** | | **about $50.50 at low traffic** |
+| **Total** | | **about $58.40 at low traffic** |
 
 The tuning chat, when on (step 16), bills Anthropic directly, not Azure: at most the Console workspace's spend limit, and the API stops new turns once an organization reaches `TOWNWISE_CHAT_MONTHLY_BUDGET_USD` in a month.
+
+The Places search, when on (step 17), bills Google Cloud directly, not Azure: at most what the Places API (New) and Maps Static API quotas allow. Each pick is one Place Details call and one map load, and each time the confirm card is shown again the browser may load the map again.
 
 If the free tier refuses private access (step 3), M10 adds $0.0191 an hour ($13.94) plus 32 GiB at $0.115 per GB ($3.68): about $68 in total. If init-container resources turn out to be billed too, the Container Apps line rises by about half.
 
@@ -405,6 +472,7 @@ If the free tier refuses private access (step 3), M10 adds $0.0191 an hour ($13.
 - **`TRUST_PROXY=uniquelocal,100.64.0.0/10`:** Microsoft does not publish the ingress proxy's source range. The client-IP check in step 13 confirms real addresses.
 - **The API's own init container** (`valkey-tls`) can still obtain the API identity's token: the app is an azurerm resource, which has no `identitySettings`. It runs the pinned Valkey image with a fixed script.
 - **`id-token-guard` is a check, not a gate** (GitHub Free has no required checks). The `job_workflow_ref` subject is the enforced control; it cannot tell jobs inside `deploy.yml` apart.
+- **Client files behind a private endpoint.** With public network access disabled, any provider call that touched the files account's data plane from a laptop or runner would fail. azurerm 5.11 manages the containers and the lifecycle rule through Resource Manager (`data_plane_available = false`), but CI's mocked plan cannot prove it; the first real apply in step 18 does.
 - **Platform-managed group.** `rg-townwise-prod-infra` holds the environment's load balancer and public IPs. Do not edit it; it goes with the environment.
 
 ## Teardown
@@ -414,4 +482,4 @@ If the free tier refuses private access (step 3), M10 adds $0.0191 an hour ($13.
 3. If `lock_backup_retention` is true, stop the backups **30 days before** this step (`az containerapp job delete -n caj-townwise-backup -g rg-townwise-prod`) and wait for the newest dump to age out. Otherwise, remove the unlocked retention policy on the backup container, or the group deletion stops at the storage account: `az storage container immutability-policy delete --account-name sttwbackup2d2c15bf --container-name mongodump --if-match "$(az storage container immutability-policy show --account-name sttwbackup2d2c15bf --container-name mongodump --query etag -o tsv)"`. (A locked policy cannot be removed.)
 4. Delete `rg-townwise-prod` (`az group delete -n rg-townwise-prod`). This deletes the zone, the database (Terraform's `prevent_destroy` does not apply outside Terraform), and the environment, which takes `rg-townwise-prod-infra` with it. The Key Vault keeps purge protection in Azure, so its name stays reserved for 90 days.
 5. Delete `rg-townwise-bootstrap`, which holds the state account and the deploy identity, the budget (`az consumption budget delete --budget-name townwise-monthly`), and the three `townwise-*` Entra groups (`az ad group delete --group <name>`).
-6. Outside Azure: delete the Google OAuth clients and remove the guest users.
+6. Outside Azure: delete the Google OAuth clients, the Places API key and the Maps Static API key (without a key, the project's URL signing secret signs nothing), and remove the guest users.

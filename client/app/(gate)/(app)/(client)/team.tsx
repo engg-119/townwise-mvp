@@ -20,7 +20,7 @@ import { theme } from '../../../../src/theme';
 
 const STEPS = [
   { title: 'Their address shows as Invited.', text: 'It’s on the list below, with the role you picked.' },
-  { title: 'You tell them.', text: 'Townwise doesn’t send email yet. Send them townwise.tech and the address you added.' },
+  { title: 'You tell them.', text: 'Townwise doesn’t email invitations. Send them townwise.tech and the address you added.' },
   {
     title: 'They continue with Google.',
     text: 'The first time they sign in with that address, they join, and Townwise shows them who added them. Their row turns Active.',

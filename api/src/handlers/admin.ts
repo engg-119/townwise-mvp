@@ -153,7 +153,7 @@ export async function approveRequest(ctx: TownwiseContext, req: Request, res: Re
   // approval but never adds a location to an organization in use (spec 3, 6.4), whatever name it sends.
   if (inserted || (await ctx.stores.locations.count(scope) === 0 && await ctx.stores.members.countSeats(scope) === 0)) {
     const location = await ctx.stores.locations.ensureByName(scope, {
-      name: body.locationName, town: request.town, createdAt: now, createdBy: staff.actor.userId,
+      name: body.locationName, town: request.town, placeId: request.placeId, createdAt: now, createdBy: staff.actor.userId,
     });
     if (location.inserted) {
       await recordAfter(ctx, {
@@ -181,6 +181,7 @@ export async function approveRequest(ctx: TownwiseContext, req: Request, res: Re
       target: { type: 'member', id: seat.id },
       details: { email: requester.email, role: 'org_admin' },
     });
+    ctx.mailer.send({ kind: 'request_approved', orgName: org.name, town: request.town }, requester.email, { requestId, orgId });
   }
   res.status(200).json({ org: { id: org.id, name: org.name }, request: await reloaded(ctx, requestId) });
 }

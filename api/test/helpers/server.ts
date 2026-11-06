@@ -19,10 +19,20 @@ import type { TownwiseRoute } from '../../src/access/routes.ts';
 import { createTownwiseApi } from '../../src/app.ts';
 import type { ChatModel } from '../../src/chat/model.ts';
 import { configSchema as townwiseSchema } from '../../src/config.ts';
+import type { FileBlobs } from '../../src/files/blobs.ts';
+import { createFileWorker, type FileWorker, type FileWorkerDeps } from '../../src/files/worker.ts';
+import type { MailTransport } from '../../src/mail/acs.ts';
+import { createMailer, OFF_MAILER, type Mailer } from '../../src/mail/mailer.ts';
+import { createTownwiseStores } from '../../src/stores/index.ts';
+import type { PlacesClient } from '../../src/places/google.ts';
+import type { StaticMapSigner } from '../../src/places/static-map.ts';
 
 export const WEB_ORIGIN = 'https://app.example.test';
 export const STAFF_EMAIL = 'staff@townwise.test';
 export const MINUTE = 60 * 1000;
+/** The Reply-To and web origin a test server's mailer uses. */
+export const MAIL_REPLY_TO = 'team@townwise.test';
+export const MAIL_WEB_URL = 'http://localhost:8081';
 
 export interface TestClock {
   readonly now: () => Date;
@@ -43,6 +53,10 @@ export interface TownwiseTestServer {
   /** The /api router createTownwiseApi returned. */
   readonly apiRouter: Router;
   readonly mail: MagicLinkMessage[];
+  /** Townwise's mailer: over `mailTransport` when one was given, else OFF_MAILER. Await idle() before asserting. */
+  readonly mailer: Mailer;
+  /** The file reader, when the server was started with `reader`. */
+  readonly reader: FileWorker | null;
   close(): Promise<void>;
 }
 
@@ -77,6 +91,16 @@ export async function startTownwiseServer(opts?: {
   chat?: ChatModel;
   /** A tuning chat turn's time limit; absent, the production 150 seconds. */
   chatTurnTimeLimitMs?: number;
+  /** Google Places, over a fake fetch (helpers/places-fetch.ts); absent, the Places proxy is off. */
+  places?: PlacesClient;
+  /** Townwise's emails, through a capturing transport (helpers/mail.ts); absent, email is off. */
+  mailTransport?: MailTransport;
+  /** Signs the confirm card's map URL (src/places/static-map.ts); absent, details answers map: null. */
+  placesMap?: StaticMapSigner;
+  /** Client file storage (memory-blobs.ts, or Azurite); absent, stored files are off. */
+  files?: FileBlobs;
+  /** Runs the file reader on `files`; tests drive it with nudge() and settled(). */
+  reader?: Pick<FileWorkerDeps, 'parse' | 'leaseMs'>;
 }): Promise<TownwiseTestServer> {
   const env: Record<string, string> = {
     NODE_ENV: 'test',
@@ -127,15 +151,24 @@ export async function startTownwiseServer(opts?: {
         return Promise.resolve();
       },
     });
+    const mailer = opts?.mailTransport === undefined
+      ? OFF_MAILER
+      : createMailer({ transport: opts.mailTransport, logger, webUrl: MAIL_WEB_URL, replyTo: MAIL_REPLY_TO });
+    const files = opts?.files;
+    const reader = files === undefined || opts?.reader === undefined ? null : createFileWorker({
+      connection: mongo.connection, stores: createTownwiseStores(mongo.connection), authStores, blobs: files, logger, now: clock.now,
+      replicaId: 'test-reader', pollMs: 60_000, ...opts.reader,
+    });
     const deps = {
       config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now: clock.now, chat: opts?.chat,
-      chatTurnTimeLimitMs: opts?.chatTurnTimeLimitMs,
+      chatTurnTimeLimitMs: opts?.chatTurnTimeLimitMs, places: opts?.places, mailer, placesMap: opts?.placesMap,
+      files, fileWorker: reader ?? undefined,
     };
     const apiRouter = createTownwiseApi(deps);
     const routes: RouteMount[] = [{ path: '/auth', router: auth.router }, { path: '/api', router: apiRouter }];
     if (opts?.probe !== undefined) routes.push({ path: '/probe', router: createTownwiseApi(deps, opts.probe) });
     await ensureIndexes(mongo.connection, { logger, buildAtBoot: () => true });
-    const server = createServer({ config, logger, routes, onShutdown: [redis, mongo], exit: () => undefined });
+    const server = createServer({ config, logger, routes, onShutdown: reader === null ? [redis, mongo] : [reader, redis, mongo], exit: () => undefined });
     const listened = await server.listen();
     return {
       url: `http://127.0.0.1:${String(listened.port)}`,
@@ -148,6 +181,8 @@ export async function startTownwiseServer(opts?: {
       commands,
       apiRouter,
       mail,
+      mailer,
+      reader,
       close: () => server.shutdown('test'),
     };
   } catch (err) {

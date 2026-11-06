@@ -23,7 +23,7 @@ afterEach(() => {
 
 const EMAIL = ['a', 'example.com'].join('@');
 
-// The portal answers GET /api/me and /api/org; the tuning chat's own routes go to its fake.
+// The portal answers GET /api/me and /api/org; TownwiseAI's own routes go to its fake.
 function renderAt(path: string, api: FakeChatApi): void {
   const portal = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: api });
   const auth = fakeAuth({ status: 'signedIn', user: { id: 'u1', email: EMAIL } }, { api: portal });
@@ -43,16 +43,16 @@ function renderAt(path: string, api: FakeChatApi): void {
   );
 }
 
-test('on web, the dashboard links to a location, whose Chat tab streams a reply with a proposal card', async () => {
+test('on web, the dashboard links to a location, whose TownwiseAI page streams a reply with a proposal card', async () => {
   const api = fakeChatApi();
   renderAt('/dashboard', api);
   fireEvent.click(await screen.findByText('Main Street Bar'));
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1'); });
-  fireEvent.click(await screen.findByRole('link', { name: 'Chat' }));
-  await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/chat'); });
-  // The location's page header names the location, once, as the page's only h1; the chat's list comes under it.
-  expect(await screen.findAllByRole('heading', { name: 'Main Street Bar' })).toHaveLength(1);
-  expect(screen.getAllByRole('heading', { level: 1 }).map((heading) => heading.textContent)).toEqual(['Main Street Bar']);
+  fireEvent.click(await screen.findByRole('link', { name: 'TownwiseAI' }));
+  await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/agent'); });
+  // The page header names the location in its eyebrow and TownwiseAI as the page's only h1; the list comes under it.
+  expect(await screen.findByText('Main Street Bar, Hanover, NH')).toBeTruthy();
+  expect(screen.getAllByRole('heading', { level: 1 }).map((heading) => heading.textContent)).toEqual(['TownwiseAI']);
   expect(screen.getByRole('heading', { level: 2, name: 'Conversations' })).toBeTruthy();
 
   fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Closed for the holidays' } });
@@ -71,4 +71,11 @@ test('on web, the dashboard links to a location, whose Chat tab streams a reply 
   fireEvent.click(screen.getByRole('button', { name: 'Add note' }));
   expect(await screen.findByText('Note added.')).toBeTruthy();
   expect(within(document.body).getByRole('button', { name: 'Send' })).toBeTruthy();
+});
+
+test('the old chat address opens TownwiseAI, so links and bookmarks keep working', async () => {
+  renderAt('/locations/l1/chat', fakeChatApi());
+  await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/agent'); });
+  expect(await screen.findByRole('heading', { level: 1, name: 'TownwiseAI' })).toBeTruthy();
+  expect(await screen.findByLabelText('Message')).toBeTruthy();
 });

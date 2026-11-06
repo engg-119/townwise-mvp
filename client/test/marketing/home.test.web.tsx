@@ -254,7 +254,7 @@ test('step 03 and the FAQ say what the portal does today: uploads and notes, no 
   expect(faq.getByText(/^Your daily guest counts/).textContent)
     .toContain('Your browser reads it and sends us only the date, guest count and net sales for each day, for one location. The file itself never reaches our server.');
   expect(faq.getByText(/^No\. Your sales data/).textContent)
-    .toContain('Your sales data is used only to provide Townwise to your restaurant: its own forecasts and, when it is turned on, its tuning chat. It is not shared with or used for other restaurants, and it is not used to train AI models.');
+    .toContain('Your sales data is used only to provide Townwise to your restaurant: its own forecasts and TownwiseAI, its AI assistant. It is not shared with or used for other restaurants, and it is not used to train AI models.');
   expect(faq.getByText(/^Townwise does not charge/).textContent).toBe('Townwise does not charge for early access. Pricing is not set yet.');
   expect(within(section('Tell us about your town.')).getByText(/^Townwise is in early access/).textContent)
     .toBe('Townwise is in early access. Sign in with Google and fill in a short form about your restaurant and your town. Someone on our team reviews each request by hand.');

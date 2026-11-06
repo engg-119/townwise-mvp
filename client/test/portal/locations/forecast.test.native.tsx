@@ -115,7 +115,7 @@ describe('P11 Forecast', () => {
     const { router } = await renderApp('/locations/l1', api);
     await fireEvent.press(await screen.findByRole('link', { name: 'See your town' }));
     expect(router.getPathname()).toBe('/locations/l1/town');
-    await fireEvent.press(within(screen.getByLabelText('Location sections')).getByRole('link', { name: 'Forecast' }));
+    await fireEvent.press(within(screen.getByLabelText('Main')).getByRole('link', { name: 'Home' }));
     await fireEvent.press(await screen.findByRole('link', { name: 'Add a note' }));
     expect(router.getPathname()).toBe('/locations/l1/notes');
   });

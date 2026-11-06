@@ -260,12 +260,13 @@ test.each([
   expect(ids.filter((id, index) => ids.indexOf(id) !== index && /^h-|^pv-/.test(id))).toEqual([]);
 });
 
-test('Privacy names Anthropic as the tuning chat’s provider, says the chat is off until turned on, and links Anthropic’s terms', () => {
+test('Privacy names Anthropic as TownwiseAI’s provider, says nothing is sent unless you use it, and links Anthropic’s terms', () => {
   renderAt('/privacy');
   const items = within(screen.getByRole('region', { name: 'Who else sees it' })).getAllByRole('listitem');
   const anthropic = items.find((item) => item.textContent.startsWith('Anthropic,'));
   if (anthropic === undefined) throw new Error('no Anthropic item');
-  expect(anthropic.textContent).toContain('The tuning chat is off in production until we turn it on, and while it is off nothing is sent to Anthropic.');
+  expect(anthropic.textContent).toContain('which provides the AI model behind TownwiseAI, the assistant on each location’s TownwiseAI page. Nothing is sent to Anthropic unless you use it.');
+  expect(anthropic.textContent).not.toContain('off in production');
   expect(anthropic.textContent).toContain('Anthropic receives the messages you send and the location data the assistant reads to answer them');
   expect(anthropic.textContent).toContain('which say Anthropic may not train models on that content.');
   expect(within(anthropic).getByRole('link', { name: 'Commercial Terms of Service' }).getAttribute('href')).toBe(ANTHROPIC_TERMS);
@@ -276,7 +277,8 @@ test('Privacy makes the three commitments and no longer says the app has no uplo
   renderAt('/privacy');
   const text = screen.getByRole('main').textContent;
   expect(text).toContain('Townwise does not sell personal data.');
-  expect(text).toContain('Your sales data is used only to provide Townwise to your restaurant: its own forecasts and, when it is turned on, its tuning chat. It is not shared with or used for other restaurants, and it is not used to train AI models.');
+  expect(text).toContain('Your sales data is used only to provide Townwise to your restaurant: its own forecasts and TownwiseAI, its AI assistant. It is not shared with or used for other restaurants, and it is not used to train AI models.');
+  expect(text).not.toContain('tuning chat');
   expect(text).toContain('The operator responsible for your data is the Townwise team, a group of students in ENGG 119, AI in the Real World, at Dartmouth’s Thayer School of Engineering in Hanover, NH. Townwise is not an official Dartmouth product.');
   expect(text).toContain('we will delete your account and its data within 30 days');
   expect(text).toContain('sends us only the date, guest count and net sales for each day');

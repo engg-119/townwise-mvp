@@ -9,6 +9,13 @@ export const SALES_DAYS_COLLECTION = 'tw_sales_days';
 
 /** A day with guests or net sales (spec 10.1 Coverage). */
 export const HAS_VALUE = { $or: [{ guests: { $ne: null } }, { netSalesCents: { $ne: null } }] };
+/**
+ * HAS_VALUE for a model's find filters, which are sanitized and would drop its operators: each operator copied and
+ * marked trusted(), so the two cannot drift.
+ */
+const HAS_VALUE_FILTER = {
+  $or: HAS_VALUE.$or.map((clause) => Object.fromEntries(Object.entries(clause).map(([field, op]) => [field, trusted({ ...op })]))),
+};
 
 export interface SalesDayFields {
   orgId: Types.ObjectId;
@@ -44,6 +51,9 @@ export function salesDayModel(connection: Connection): Model<SalesDayFields> {
 
 /** Spec 10.1. */
 export interface SalesDay { date: string; guests: number | null; netSalesCents: number | null }
+
+/** A stored day with the upload that last wrote it (spec 10.10, the history route). */
+export interface SalesDayWithUpload extends SalesDay { uploadId: string }
 
 /** Spec 10.1. */
 export interface Coverage {
@@ -85,6 +95,8 @@ export interface SalesDayStore {
   months(scope: OrgScope, locationId: string): Promise<SalesMonth[]>;
   /** The days from `from` to `to`, inclusive, oldest first. */
   days(scope: OrgScope, locationId: string, range: { from: string; to: string }): Promise<SalesDay[]>;
+  /** Every stored day of the location, oldest first, each with the upload that last wrote it. */
+  history(scope: OrgScope, locationId: string): Promise<SalesDayWithUpload[]>;
   /**
    * Spec 11.4 step 2: one unordered bulkWrite of upserts keyed by { orgId, locationId, date }. `replace` sets each
    * day in full, nulls included; otherwise each day is written only if it does not exist yet. `matched` counts the
@@ -94,6 +106,8 @@ export interface SalesDayStore {
     uploadId: string; days: readonly SalesDay[]; replace: boolean; now: Date;
   }): Promise<{ inserted: number; matched: number }>;
   hasAny(scope: OrgScope, locationId: string): Promise<boolean>;
+  /** Whether any location of the organization has a day with a value (the welcome's “ready to set up”). */
+  hasAnyForOrg(scope: OrgScope): Promise<boolean>;
   /** Resolves the number of days deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
   /** Organization deletion (spec 10.7). Resolves the number deleted. */
@@ -170,6 +184,15 @@ export function createSalesDayStore(connection: Connection): SalesDayStore {
         .lean();
       return docs.map((doc) => ({ date: doc.date, guests: doc.guests ?? null, netSalesCents: doc.netSalesCents ?? null }));
     },
+    async history(scope, locationId) {
+      const docs = await SalesDay
+        .find(ofLocation(scope, locationId), { _id: 0, date: 1, guests: 1, netSalesCents: 1, uploadId: 1 })
+        .sort({ date: 1 })
+        .lean();
+      return docs.map((doc) => ({
+        date: doc.date, guests: doc.guests ?? null, netSalesCents: doc.netSalesCents ?? null, uploadId: doc.uploadId.toHexString(),
+      }));
+    },
     async apply(scope, locationId, input) {
       const key = ofLocation(scope, locationId);
       const uploadId = new Types.ObjectId(input.uploadId);
@@ -187,6 +210,9 @@ export function createSalesDayStore(connection: Connection): SalesDayStore {
     },
     async hasAny(scope, locationId) {
       return (await SalesDay.exists(ofLocation(scope, locationId))) !== null;
+    },
+    async hasAnyForOrg(scope) {
+      return (await SalesDay.exists({ orgId: new Types.ObjectId(scope.orgId), ...HAS_VALUE_FILTER })) !== null;
     },
     async removeForLocation(scope, locationId) {
       return (await SalesDay.deleteMany(ofLocation(scope, locationId))).deletedCount;
