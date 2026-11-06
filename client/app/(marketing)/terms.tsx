@@ -23,7 +23,7 @@ const clauses: { title: string; body: React.ReactNode }[] = [
   },
   {
     title: 'Your data',
-    body: <P>You keep ownership of the sales data and other information you give us. You give us permission to use it to provide Townwise to you, including calibrating your forecasts. Your sales data is used only to provide Townwise to your restaurant: its own forecasts and, when it is turned on, its tuning chat. It is not shared with or used for other restaurants, and it is not used to train AI models. Our <A href="/privacy">Privacy notice</A> explains what we collect and how we handle it.</P>,
+    body: <P>You keep ownership of the sales data and other information you give us. You give us permission to use it to provide Townwise to you, including calibrating your forecasts. Your sales data is used only to provide Townwise to your restaurant: its own forecasts and TownwiseAI, its AI assistant. It is not shared with or used for other restaurants, and it is not used to train AI models. Our <A href="/privacy">Privacy notice</A> explains what we collect and how we handle it.</P>,
   },
   {
     title: 'Fair use',

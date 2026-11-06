@@ -190,7 +190,7 @@ export default function Home(): React.JSX.Element {
             </div>
             <div className="faq-i">
               <h3 className="h3">Is my sales data shared, or used to train forecasts for other restaurants?</h3>
-              <p>No. Your sales data is used only to provide Townwise to your restaurant: its own forecasts and, when it is turned on, its tuning chat. It is not shared with or used for other restaurants, and it is not used to train AI models. In the app, the people on your organization’s team can see it. Townwise staff can see the figures only through a read-only view that is recorded and shown to your organization’s admins. The <a href="/privacy">Privacy notice</a> has the details.</p>
+              <p>No. Your sales data is used only to provide Townwise to your restaurant: its own forecasts and TownwiseAI, its AI assistant. It is not shared with or used for other restaurants, and it is not used to train AI models. In the app, the people on your organization’s team can see it. Townwise staff can see the figures only through a read-only view that is recorded and shown to your organization’s admins. The <a href="/privacy">Privacy notice</a> has the details.</p>
             </div>
             <div className="faq-i">
               <h3 className="h3">Which towns do you cover?</h3>
