@@ -97,6 +97,25 @@ async function stoppedClaim(locationId: string, answer: string, written: boolean
   return noteId;
 }
 
+/**
+ * F3: a stored file of the location, `status` as given, with `result` (what its read added) when it was read. Its
+ * name is a sentinel, so a test can show that no file name reaches the panel.
+ */
+async function storedFile(locationId: string, opts: {
+  id?: Types.ObjectId; status: string; readStartedAt: Date | null; readMs: number | null; result: Record<string, unknown> | null;
+  uploadId: Types.ObjectId | null;
+}): Promise<string> {
+  const _id = opts.id ?? new Types.ObjectId();
+  await server.connection.collection('tw_files').insertOne({
+    _id, orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), importId: new Types.ObjectId(), purpose: 'history',
+    uploadedBy: member.userId, uploaderRole: 'member', uploadedAt: new Date('2026-06-01T08:00:00.000Z'), name: 'Sentinel-file-name.csv',
+    kind: 'text', sizeBytes: 3, fingerprint: null, status: opts.status, outcome: null, upload: null, progress: null,
+    readStartedAt: opts.readStartedAt, readMs: opts.readMs, answers: {}, uploadId: opts.uploadId, result: opts.result, report: null,
+    cleanBytes: null, rawDeletedAt: null, attempts: 1,
+  });
+  return _id.toHexString();
+}
+
 async function eventsAt(locationId: string, action: string): Promise<Record<string, unknown>[]> {
   return (await auditEvents(server)).filter((e) => e.action === action && (e.details as { locationId?: string }).locationId === locationId);
 }
@@ -387,6 +406,54 @@ describe('activity', () => {
     expect((await call(server, `/api/org/locations/${locationId}/notes/${mine}`, { method: 'DELETE', session: member })).status).toBe(204);
     expect((await panel(locationId)).body.activity).toEqual([answered, upload]);
   });
+
+  it('F3: shows a stored file Townwise read once, as the file and not its upload, with no name; files not read show nothing', async () => {
+    const locationId = await askedLocation();
+    const location = new Types.ObjectId(locationId);
+    const t0 = server.clock.now();
+    const at = (minutes: number) => new Date(t0.getTime() + minutes * 60_000);
+    // The read wrote this upload record, as the reader does; a browser upload has no file.
+    const fromFile = new Types.ObjectId();
+    await server.connection.collection('tw_uploads').insertMany([
+      {
+        _id: fromFile, orgId: new Types.ObjectId(orgId), locationId: location, uploadedBy: member.userId, uploadedAt: at(2),
+        status: 'applied', dayCount: 7, inserted: 7, replaced: 0, kept: 0, firstDate: '2026-05-25', lastDate: '2026-05-31',
+        hasGuests: true, hasNetSales: false,
+      },
+      {
+        orgId: new Types.ObjectId(orgId), locationId: location, uploadedBy: member.userId, uploadedAt: at(1), status: 'applied',
+        dayCount: 3, inserted: 3, replaced: 0, kept: 0, firstDate: '2026-05-01', lastDate: '2026-05-03', hasGuests: true, hasNetSales: false,
+      },
+    ]);
+    const result = {
+      dayCount: 7, firstDate: '2026-05-25', lastDate: '2026-05-31', guestsDayCount: 7, netSalesDayCount: 0, inserted: 7, replaced: 0,
+      kept: 0, closedDates: [], missingDays: 0, uploadId: fromFile.toHexString(),
+    };
+    const read = await storedFile(locationId, { status: 'read', readStartedAt: at(2), readMs: 90_000, result, uploadId: fromFile });
+    await storedFile(locationId, { status: 'failed', readStartedAt: at(3), readMs: 1_000, result: null, uploadId: null });
+    await storedFile(locationId, { status: 'queued', readStartedAt: null, readMs: null, result: null, uploadId: null });
+
+    const expected = [
+      { at: new Date(at(2).getTime() + 90_000).toISOString(), kind: 'file_processed', fileId: read, firstDate: '2026-05-25', lastDate: '2026-05-31', dayCount: 7 },
+      { at: at(1).toISOString(), kind: 'upload_applied', firstDate: '2026-05-01', lastDate: '2026-05-03', dayCount: 3 },
+    ];
+    const mine = await panel(locationId);
+    expect(mine.body.activity).toEqual(expected);
+    expect(JSON.stringify(mine.body)).not.toContain('Sentinel-file-name');
+    expect(JSON.stringify(mine.body)).not.toContain(fromFile.toHexString());
+
+    // Staff in view-as read the same items: no file name, as the files list shows them none.
+    const staff = await signInStaff(server);
+    try {
+      await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: member.userId, orgId });
+      const viewed = await panel(locationId, staff);
+      expect(viewed.body.activity).toEqual(expected);
+      expect(JSON.stringify(viewed.body)).not.toContain('Sentinel-file-name');
+    } finally {
+      await removeStaffFactor(server);
+      await server.connection.collection('tw_view_as_grants').deleteMany({});
+    }
+  });
 });
 
 describe('logs', () => {
@@ -439,6 +506,15 @@ describe('the answers the client reads (fixtures/agent-panel.json)', () => {
       _id: noteId, orgId: org, locationId: location, kind: 'closure', startDate: '2026-02-10', endDate: '2026-02-11', weekdays: null,
       effect: 'closed', expectedGuests: null, detail: null, createdBy: member.userId,
       createdAt: new Date('2026-06-01T11:00:00.000Z'), updatedAt: new Date('2026-06-01T11:00:00.000Z'),
+    });
+    // F3: a stored file read from 08:29 for a minute.
+    await storedFile(locationId, {
+      id: new Types.ObjectId('0000000000000000000000f1'), status: 'read', readStartedAt: new Date('2026-06-01T08:29:00.000Z'),
+      readMs: 60_000, uploadId: null,
+      result: {
+        dayCount: 7, firstDate: '2026-01-05', lastDate: '2026-01-11', guestsDayCount: 7, netSalesDayCount: 0, inserted: 7, replaced: 0,
+        kept: 0, closedDates: [], missingDays: 0, uploadId: '0000000000000000000000b1',
+      },
     });
 
     expect(await panel(locationId)).toEqual({ status: 200, body: fixture.panel });

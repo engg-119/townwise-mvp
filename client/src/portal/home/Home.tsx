@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 
+import { loadAgentPanel } from '../../chat/api';
 import { theme } from '../../theme';
 import { fetchCalendar, fetchSalesHistory, type Calendar, type SalesHistory } from '../analytics/api';
 import { dayContext } from '../analytics/days';
@@ -10,6 +11,7 @@ import { homeCalendarRange, lastWeekComparison, lateWeekShare, leadLine, monthFa
 import { useBreakpoint, useLoad } from '../hooks';
 import { fetchNotes, type Note } from '../locations/api';
 import { localToday } from '../locations/dates';
+import { formatCount } from '../format';
 import { LoadFailure, Loading } from '../locations/parts';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { locationHref } from '../routing';
@@ -28,18 +30,19 @@ import { ThisWeek } from './ThisWeek';
 // calendar this week and how the same week went before, the bar order (Planned), last week against the same week
 // last year, this month in town, and the location's history. Until forecasts exist, Home shows only history and
 // the calendar, never a guess: every figure is a sum, an average or a share of the location's own stored days, of a
-// past day. It reads three routes in parallel (sales history, notes, the town calendar) and writes nothing, so
-// view-as shows it unchanged with its upload links disabled. "Today" is the device's date; weeks run Monday to
+// past day. It reads three routes in parallel (sales history, notes, the town calendar), then on their own TownwiseAI's
+// questions (for the lead's count) and the month's people in town (in This month), and writes nothing, so view-as
+// shows it unchanged with its upload links disabled. "Today" is the device's date; weeks run Monday to
 // Sunday. While onboarding's needsHistory is true, 54's HistoryStep takes the place of the cards that need days.
 
 const READ_ONLY_ID = 'home-ro';
 
 export const FORECAST_LINE = 'Forecasts are in development. Until then, Home shows your history and the calendar, never a guess.';
-/**
- * TownwiseAI's questions are on its page (P25's side panel); F5 (build plan section 7) replaces this line with their
- * count, linked.
- */
-export const QUESTIONS_PLANNED = 'TownwiseAI’s questions about days with no sales are on its page; a count here is planned.';
+
+/** "2 questions from TownwiseAI": the lead's link to its page (spec P11). */
+export function questionsLabel(count: number): string {
+  return `${count === 1 ? '1 question' : `${formatCount(count)} questions`} from TownwiseAI`;
+}
 
 interface Data {
   history: SalesHistory;
@@ -54,6 +57,19 @@ function Tagline(props: { kind: 'progress' | 'planned'; text: string }): React.J
       <Small>{props.text}</Small>
     </View>
   );
+}
+
+/**
+ * The count of TownwiseAI's open questions (GET .../agent, its side panel's read), linked to its page. It reads on its
+ * own, so Home never waits for it or fails with it: while it loads, when the read fails and when there are none, the
+ * lead shows nothing here (the page itself says "No questions right now" or the error).
+ */
+function QuestionsLink(props: { locationId: string }): React.JSX.Element | null {
+  const { api } = usePortal();
+  const { locationId } = props;
+  const { state } = useLoad(useCallback(() => loadAgentPanel(api, locationId), [api, locationId]));
+  if (state.status !== 'ready' || state.data.questions.length === 0) return null;
+  return <LinkButton href={locationHref(locationId, 'agent')} label={questionsLabel(state.data.questions.length)} />;
 }
 
 /** Two cards side by side from 1024px (columns `left` to `right`), one column below, ruled from the block above. */
@@ -91,7 +107,7 @@ function HomeView(props: { data: Data; today: string; locationId: string; needs:
         <View style={styles.leadText}>
           <Mono>{leadLine(history.coverage.lastDate, calendar)}</Mono>
           <Tagline kind="progress" text={FORECAST_LINE} />
-          <Tagline kind="planned" text={QUESTIONS_PLANNED} />
+          <QuestionsLink locationId={locationId} />
         </View>
         <Actions><LinkButton variant="outline" href={locationHref(locationId, 'agent')} label="Ask TownwiseAI" /></Actions>
       </View>
@@ -108,7 +124,7 @@ function HomeView(props: { data: Data; today: string; locationId: string; needs:
       )}
       <Row
         split={[8, 4]}
-        left={<ThisMonth today={today} context={context} calendar={calendar} facts={facts} metric={metric} />}
+        left={<ThisMonth today={today} context={context} calendar={calendar} facts={facts} metric={metric} locationId={locationId} />}
         right={needs ? null : (
           <HistoryCard
             coverage={history.coverage}

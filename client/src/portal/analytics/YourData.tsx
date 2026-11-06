@@ -11,7 +11,7 @@ import type { HistoryUpload } from './api';
 // last day, missing days, days with guests and with net sales, the last finished upload and who sent it), what
 // this page reads and that it keeps nothing, and the link to Sales data, which lists the uploads and files.
 
-export const READS_LINE = 'Analytics reads your stored days, your notes and your town’s calendar. It changes nothing and keeps nothing, not even your filters: they reset when you leave the page.';
+export const READS_LINE = 'Analytics reads your stored days, your notes, your town’s calendar and how Townwise estimates. It changes nothing and keeps nothing, not even your filters: they reset when you leave the page.';
 
 /** The newest finished upload among those that wrote a stored day. */
 function lastFinished(uploads: readonly HistoryUpload[]): HistoryUpload | undefined {

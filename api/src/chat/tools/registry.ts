@@ -9,6 +9,7 @@ import type { TownwiseContext } from '../../app.ts';
 import type { OrgScope } from '../../access/policy.ts';
 import type { LocationRecord } from '../../stores/locations.ts';
 import type { NoteContent } from '../../stores/notes.ts';
+import { dayTool } from './day.ts';
 import { forecastTool } from './forecast.ts';
 import { notesTool } from './notes.ts';
 import { overviewTool } from './overview.ts';
@@ -77,6 +78,8 @@ export const TOOL_REGISTRY: readonly ChatTool<unknown>[] = [
   peopleInTownTool,
   // U13B: the published forecast.
   forecastTool,
+  // F2: everything Townwise has for one day.
+  dayTool,
 ];
 
 /** The tool definitions sent to the model, in registry order. */

@@ -257,6 +257,10 @@ const activitySchema = z.discriminatedUnion('kind', [
     noteKind: noteProposalSchema.shape.kind, startDate: dateSchema, endDate: dateSchema,
   }),
   z.object({ at: z.string(), kind: z.literal('question_answered'), questionId: z.string(), answer: z.enum(['open', 'not_sure']) }),
+  /** F3: a stored file Townwise read, and what it added. Never the file's name. */
+  z.object({
+    at: z.string(), kind: z.literal('file_processed'), fileId: z.string(), firstDate: dateSchema, lastDate: dateSchema, dayCount: z.number().int(),
+  }),
 ]);
 export type ActivityItem = z.infer<typeof activitySchema>;
 

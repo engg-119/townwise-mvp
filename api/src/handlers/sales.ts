@@ -7,7 +7,7 @@ import { z } from 'zod';
 
 import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
-import type { Principal } from '../access/policy.ts';
+import type { MemberPrincipal, Principal } from '../access/policy.ts';
 import { calibrationOf } from '../calibration.ts';
 import { daysBetween, EARLIEST_DATE, isoDate, utcDay } from '../dates.ts';
 import { removeStoredFiles } from '../files/remove.ts';
@@ -25,8 +25,8 @@ export interface UploadView {
 }
 
 /**
- * Spec 10.10. The stored file an upload was read from, for the day panel's provenance line. Always null until stored
- * files link uploads to files; `name` is null during view-as.
+ * Spec 10.10. The stored file an upload was read from, for the day panel's provenance line. Null for a browser upload,
+ * a file since deleted, and every upload while stored files are off; `name` is null during view-as.
  */
 export interface HistoryFileLink {
   id: string; name: string | null; kind: 'text' | 'xlsx' | 'xls' | 'pdf' | 'docx' | 'doc' | 'zip' | 'other';
@@ -54,6 +54,8 @@ const MAX_GUESTS = 20_000;
 const MAX_NET_SALES_CENTS = 100_000_000;
 /** Spec 10.4. */
 const RECENT_UPLOADS = 20;
+/** Files read per page while matching uploads to the stored files they came from. */
+const SOURCE_PAGE = 100;
 const MAX_RANGE_DAYS = 366;
 
 const daySchema = z.strictObject({
@@ -121,19 +123,50 @@ export async function getSalesDays(ctx: TownwiseContext, req: Request, res: Resp
 }
 
 /**
+ * storage2.md 16.2: the stored file each upload was read from, by upload id. A stored file names the upload it wrote
+ * (`tw_files.uploadId`; an upload names no file), so this pages through the location's live files, newest first, and
+ * stops once every upload is matched; a location holds at most FILES_PER_LOCATION files. An upload with no entry is a
+ * browser upload or its file was deleted. `name` is null during view-as. While stored files are off nothing is
+ * matched, because nothing could be listed or downloaded then.
+ */
+async function sourcesForUploads(
+  ctx: TownwiseContext, member: MemberPrincipal, locationId: string, uploadIds: readonly string[],
+): Promise<Map<string, HistoryFileLink>> {
+  const found = new Map<string, HistoryFileLink>();
+  if (ctx.files === null || uploadIds.length === 0) return found;
+  const wanted = new Set(uploadIds);
+  const viewAs = member.viewAs !== null;
+  let before: string | null = null;
+  for (;;) {
+    const page = await ctx.stores.files.list(member.scope, locationId, { viewerId: member.userId, before, limit: SOURCE_PAGE });
+    for (const file of page) {
+      if (file.uploadId === null || !wanted.has(file.uploadId) || found.has(file.uploadId)) continue;
+      found.set(file.uploadId, { id: file.id, name: viewAs ? null : file.name, kind: file.kind });
+    }
+    const last = page.at(-1);
+    if (last === undefined || page.length < SOURCE_PAGE || found.size === wanted.size) return found;
+    before = last.id;
+  }
+}
+
+/**
  * GET /api/org/locations/:locationId/sales/history (spec 10.10): every stored day with the upload that wrote it, for
  * the heatmap, the day panel and year over year. A read: it logs nothing and records nothing.
  */
 export async function getSalesHistory(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
-  const { scope } = memberOf(principal);
+  const member = memberOf(principal);
+  const { scope } = member;
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const [coverage, days] = await Promise.all([
     ctx.stores.salesDays.coverage(scope, location.id),
     ctx.stores.salesDays.history(scope, location.id),
   ]);
   const uploads = await ctx.stores.uploads.byIds(scope, location.id, [...new Set(days.map((d) => d.uploadId))]);
-  const emails = new Map(await Promise.all([...new Set(uploads.map((upload) => upload.uploadedBy))]
-    .map(async (userId) => [userId, await currentEmail(ctx, userId)] as const)));
+  const [emails, sources] = await Promise.all([
+    Promise.all([...new Set(uploads.map((upload) => upload.uploadedBy))]
+      .map(async (userId) => [userId, await currentEmail(ctx, userId)] as const)).then((pairs) => new Map(pairs)),
+    sourcesForUploads(ctx, member, location.id, uploads.map((upload) => upload.id)),
+  ]);
   const indexOf = new Map(uploads.map((upload, index) => [upload.id, index]));
   const history: SalesHistory = {
     coverage,
@@ -150,7 +183,7 @@ export async function getSalesHistory(ctx: TownwiseContext, req: Request, res: R
       status: upload.status,
       firstDate: upload.firstDate,
       lastDate: upload.lastDate,
-      file: null,
+      file: sources.get(upload.id) ?? null,
     })),
   };
   res.status(200).json(history);

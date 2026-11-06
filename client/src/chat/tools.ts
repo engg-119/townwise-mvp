@@ -1,5 +1,5 @@
 import type { ToolView } from './api';
-import { formatCount, rangeText } from './format';
+import { dayText, formatCount, rangeText } from './format';
 
 // The client's tool table (spec P25): what each TownwiseAI tool call's card says while it runs, once it has read,
 // and when it couldn't, the detail line from its result view, and its piece of the "Based on" line. The words are
@@ -18,8 +18,13 @@ export interface ToolStep {
   result: ToolView | null;
 }
 
-/** What the copy may name: the location's town ("Hanover"), and whether Townwise has researched its town profile. */
-export interface ToolContext { town: string; hasTownProfile: boolean }
+/**
+ * What the copy may name: the location's town ("Hanover"), whether Townwise has researched its town profile, and
+ * (F10) whether GET .../estimates/about says a forecast is published for the location. `hasForecast` is true only once
+ * that read says so; absent or false, nothing claims a forecast. `hasSales` false (the location has no sales days yet)
+ * leaves the sales out of every line built from the table, so no line claims TownwiseAI answers from them.
+ */
+export interface ToolContext { town: string; hasTownProfile: boolean; hasForecast?: boolean; hasSales?: boolean }
 
 export interface SourceLink { host: string; url: string }
 
@@ -36,6 +41,8 @@ interface ToolRow {
    * when this location has nothing for it to read.
    */
   reads?(ctx: ToolContext): string | null;
+  /** Its `reads` needs the location's sales: left out of what TownwiseAI can use before any are uploaded. */
+  needsSales?: true;
   /** Not a card: propose_note shows the proposal card instead. */
   hidden?: true;
   /** Words for this tool's view fields where the shared VIEW_TERMS would mislabel them. */
@@ -107,6 +114,7 @@ const TOOLS: Readonly<Record<string, ToolRow>> = {
       return first === null || last === null ? 'your sales summary' : `your sales summary (${rangeText(first, last)})`;
     },
     reads: () => 'your sales',
+    needsSales: true,
   },
   get_sales_days: {
     object: (input) => {
@@ -124,6 +132,7 @@ const TOOLS: Readonly<Record<string, ToolRow>> = {
       return range === null ? 'your sales' : `your sales from ${range}`;
     },
     reads: () => 'your sales',
+    needsSales: true,
   },
   list_notes: {
     object: () => 'your notes',
@@ -197,8 +206,8 @@ const TOOLS: Readonly<Record<string, ToolRow>> = {
     // Only the twelve towns have term dates and public counts; another town's window is unavailable.
     reads: (ctx) => (ctx.hasTownProfile ? `who’s likely in ${ctx.town}` : null),
   },
-  // U13B: get_forecast (api/src/chat/tools/forecast.ts). Published runs only. No `reads` line: whether a location has
-  // a published forecast isn't known here, and the page never claims one exists.
+  // U13B: get_forecast (api/src/chat/tools/forecast.ts). Published runs only. Its `reads` line shows only once the
+  // page has read from GET .../estimates/about that a run is published (F10), so the page never claims one that isn't.
   get_forecast: {
     // "Reading Townwise’s forecast for …" while it runs, "Read the forecast for …" once it has (model.md 5.6).
     object: (input, _ctx, result) => {
@@ -220,6 +229,29 @@ const TOOLS: Readonly<Record<string, ToolRow>> = {
       return version === null ? name : `${name} (model ${version})`;
     },
     terms: { available: 'Forecast published', days: 'Days forecast' },
+    reads: (ctx) => (ctx.hasForecast === true ? 'Townwise’s forecast' : null),
+  },
+  // F2: get_day (api/src/chat/tools/day.ts). Everything Townwise has for one day: sales, notes and calendar entries
+  // that the other rows' `reads` already name, so it adds no line of its own.
+  get_day: {
+    object: (input) => {
+      const date = text(input, 'date');
+      return date === null ? 'what Townwise has for a day' : `what Townwise has for ${dayText(date)}`;
+    },
+    detail: (result) => {
+      const notes = count(result, 'noteCount');
+      const events = count(result, 'eventCount');
+      const parts = [
+        result.hasSales === true ? 'Sales recorded' : 'No sales recorded',
+        result.closed === true ? 'Closed' : null,
+        notes === null || notes === 0 ? null : plural(notes, 'note', 'notes'),
+        events === null || events === 0 ? null : plural(events, 'calendar entry', 'calendar entries'),
+        ...sourcesOf(result).map((source) => source.host),
+      ];
+      return parts.filter((part): part is string => part !== null).join(' · ');
+    },
+    sources: sourcesOf,
+    terms: { date: 'Day', hasSales: 'Sales recorded', closed: 'Closed', noteCount: 'Notes', eventCount: 'Calendar entries' },
   },
 };
 
@@ -288,10 +320,15 @@ export function basedOnLine(steps: readonly ToolStep[], ctx: ToolContext): strin
   return pieces.length === 0 ? 'Based on this conversation only.' : `Based on ${list(pieces)}.`;
 }
 
-/** What TownwiseAI reads, from the registered tools: "your sales, your notes and Hanover’s town profile". */
-export function readsLine(ctx: ToolContext): string {
+/**
+ * What TownwiseAI reads, from the registered tools: "your sales, your notes and Hanover’s town profile". With
+ * `sales: false`, or a context whose `hasSales` is false, what it can use before any sales are uploaded.
+ */
+export function readsLine(ctx: ToolContext, opts: { sales?: boolean } = {}): string {
+  const sales = opts.sales ?? ctx.hasSales;
   const reads: string[] = [];
   for (const row of Object.values(TOOLS)) {
+    if (sales === false && row.needsSales === true) continue;
     const read = row.reads?.(ctx);
     if (read !== undefined && read !== null && !reads.includes(read)) reads.push(read);
   }

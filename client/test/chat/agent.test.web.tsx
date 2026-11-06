@@ -9,6 +9,9 @@ import { appRoutes, seededRoot } from '../helpers/app';
 import { fakeChatApi, PROPOSAL, PROPOSAL_ID, SALES_STEP, type FakeChatApi, type LiveTurn } from '../helpers/chat';
 import { fakeAuth } from '../helpers/fakes';
 import { ACCESS, fakePortalApi, meOf, orgOf, viewAsMe } from '../helpers/portal';
+import { aboutDraft } from '../../src/chat/about';
+import { localToday } from '../../src/portal/locations/dates';
+import { serveAbout } from './about-fakes';
 
 // P25 TownwiseAI on web (spec 16.3): the keyboard (Enter sends, Shift+Enter and an input method's Enter don't),
 // the conversations list's Escape, reduced motion, the polite live region, links that open in a new tab, and
@@ -36,6 +39,8 @@ afterEach(() => {
 const EMAIL = ['a', 'example.com'].join('@');
 
 function renderAt(path: string, api: FakeChatApi, me: MeResponse = meOf(ACCESS.member)): void {
+  // F10: GET .../estimates/about, with no forecast unless the test served another answer.
+  if (!('about' in api)) serveAbout(api);
   const portal = fakePortalApi({ me, org: orgOf('member'), fallback: api });
   const auth = fakeAuth({ status: 'signedIn', user: { id: 'u1', email: EMAIL } }, { api: portal });
   window.history.replaceState(null, '', path);
@@ -158,6 +163,38 @@ test('the conversations list closes on Escape and gives focus back to its button
   fireEvent.keyDown(document, { key: 'Escape' });
   expect(screen.queryByRole('region', { name: 'Conversations' })).toBeNull();
   expect(document.activeElement).toBe(button);
+});
+
+test('F7: ?about= fills the composer with the day, sends nothing, and keeps the address', async () => {
+  const api = fakeChatApi();
+  const date = localToday();
+  renderAt(`/locations/l1/agent?about=${date}`, api);
+  const input = await screen.findByLabelText(COMPOSER_LABEL);
+  await waitFor(() => { expect((input as HTMLTextAreaElement).value).toBe(aboutDraft(date, date)); });
+  expect(api.turns).toHaveLength(0);
+  expect(window.location.pathname).toBe('/locations/l1/agent');
+  // The person sends it with Enter, as anything they typed.
+  fireEvent.keyDown(input, { key: 'Enter' });
+  await waitFor(() => { expect(api.turns).toHaveLength(1); });
+  expect(turn(api).body).toEqual({ content: aboutDraft(date, date) });
+});
+
+test('F7: a malformed ?about= leaves the composer empty', async () => {
+  renderAt('/locations/l1/agent?about=2026-13-01', fakeChatApi());
+  const input = await screen.findByLabelText(COMPOSER_LABEL);
+  expect((input as HTMLTextAreaElement).value).toBe('');
+});
+
+test('F10: How Townwise estimates opens the model card as a dialog; Escape closes it', async () => {
+  renderAt('/locations/l1/agent', fakeChatApi());
+  const side = await screen.findByTestId('agent-side');
+  fireEvent.click(within(side).getByRole('button', { name: 'How TownwiseAI works' }));
+  fireEvent.click(within(side).getByRole('button', { name: 'How Townwise estimates' }));
+  const dialog = await screen.findByRole('dialog', { name: 'How Townwise estimates' });
+  expect(await within(dialog).findByText('Townwise has no forecast for Main Street Bar yet. Home and TownwiseAI use your history and Hanover’s calendar until it does.')).toBeTruthy();
+  // react-native-web's Modal closes on Escape's keyup.
+  fireEvent.keyUp(document, { key: 'Escape' });
+  await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'How Townwise estimates' })).toBeNull(); });
 });
 
 describe('a tool card', () => {
