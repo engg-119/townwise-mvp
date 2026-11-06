@@ -2,14 +2,23 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { AccessibilityInfo, Platform, StyleSheet, Text, View } from 'react-native';
 
 import { useReducedMotion } from '../../motion';
-import { spokenStatement, type Statement } from './moments';
+import { useOptionalPortal } from '../PortalProvider';
+import type { MeResponse } from '../schemas';
+import { momentFor, spokenStatement, type MomentKind, type Statement } from './moments';
 import { StatementOverlay } from './StatementOverlay';
 
 // The one player of statement moments (spec 15.8). It plays one at a time, a play while one is up is dropped, and
-// it says the whole statement once: on web through a polite status region that exists before any moment, on
+// it says the whole statement once: on web through a polite live region that exists before any moment, on
 // native through announceForAccessibility. On native with a screen reader running there are no visuals at all: the
 // statement is announced and the moment ends at once, since an opaque layer would catch VoiceOver's activation.
 // On web, a moment that would start in a hidden tab keeps its ground up and waits until the tab is visible.
+//
+// Under the portal (PortalGate mounts it once GET /api/me has answered) it also decides the two named moments from
+// each new access answer (moments.ts momentFor), during render, so the layer and `playing: true` are in the same
+// commit as the answer: the welcome covers the first page before it paints, and request received covers the
+// redirect to Waiting. A decided moment is marked played when it starts, so it plays once in this session; the
+// welcome also posts /api/me/welcome then (once, errors swallowed), after which the server answers welcome null on
+// every device. Nothing is decided under view-as, and nothing is stored on the device.
 //
 // It always renders {children}{overlay}{live region} in that order, so the children never remount. Each play has its
 // own id, the overlay's key, so a moment that follows another in the same commit starts fresh instead of keeping the
@@ -20,6 +29,14 @@ export interface MomentApi {
   playing: boolean;
   /** Plays a statement now unless one is playing (then it is dropped). */
   play: (statement: Statement) => void;
+}
+
+/** The moment up now. `id` keys its overlay; `key` and `kind` are set for a moment decided from GET /api/me. */
+interface Playing {
+  statement: Statement;
+  id: string;
+  key: string | null;
+  kind: MomentKind | null;
 }
 
 const OUTSIDE: MomentApi = { playing: false, play: () => undefined };
@@ -73,14 +90,31 @@ export function MomentProvider(props: { children: React.ReactNode }): React.JSX.
   const reduced = useReducedMotion();
   const screenReader = useScreenReader();
   const hidden = useSyncExternalStore(subscribeVisibility, tabHidden, () => false);
-  const [current, setCurrent] = useState<{ statement: Statement; id: number } | null>(null);
+  const portal = useOptionalPortal();
+  const me = portal?.me ?? null;
+  const portalApi = portal?.api ?? null;
+  const [current, setCurrent] = useState<Playing | null>(null);
   const [announcement, setAnnouncement] = useState('');
+  const [lastMe, setLastMe] = useState<MeResponse | null>(null);
+  const [played, setPlayed] = useState<ReadonlySet<string>>(() => new Set());
   const plays = useRef(0);
+  /** The welcomes posted in this session: one attempt each, whatever re-runs a start. */
+  const posted = useRef(new Set<string>());
+
+  // A new access answer: decide during render (adjusting state when a prop changes). One moment at a time, so a
+  // decision while one is up is dropped.
+  if (me !== lastMe) {
+    setLastMe(me);
+    const decided = me === null ? null : momentFor(lastMe, me, played);
+    if (decided !== null && current === null) {
+      setCurrent({ statement: decided.statement, id: decided.key, key: decided.key, kind: decided.kind });
+    }
+  }
 
   const play = useCallback((statement: Statement) => {
     plays.current += 1;
-    const id = plays.current;
-    setCurrent((playing) => playing ?? { statement, id });
+    const id = `play:${String(plays.current)}`;
+    setCurrent((playing) => playing ?? { statement, id, key: null, kind: null });
   }, []);
 
   const onStart = useCallback(() => {
@@ -88,14 +122,21 @@ export function MomentProvider(props: { children: React.ReactNode }): React.JSX.
     const text = spokenStatement(current.statement);
     if (Platform.OS === 'web') setAnnouncement(text);
     else AccessibilityInfo.announceForAccessibility(text);
-  }, [current]);
+    const { key, kind } = current;
+    if (key === null) return;
+    setPlayed((seen) => (seen.has(key) ? seen : new Set(seen).add(key)));
+    if (kind === 'welcome' && portalApi !== null && !posted.current.has(key)) {
+      posted.current.add(key);
+      portalApi.request('/api/me/welcome', { method: 'POST' }).catch(() => undefined);
+    }
+  }, [current, portalApi]);
 
   const onDone = useCallback(() => {
     setCurrent(null);
     setAnnouncement('');
   }, []);
 
-  const api = useMemo<MomentApi>(() => ({ playing: current !== null, play }), [current, play]);
+  const moment = useMemo<MomentApi>(() => ({ playing: current !== null, play }), [current, play]);
 
   let overlay: React.ReactNode = null;
   if (current !== null) {
@@ -113,11 +154,13 @@ export function MomentProvider(props: { children: React.ReactNode }): React.JSX.
       );
   }
   return (
-    <MomentContext.Provider value={api}>
+    <MomentContext.Provider value={moment}>
       {props.children}
       {overlay}
       {Platform.OS === 'web' ? (
-        <View role="status" aria-live="polite" style={styles.unseen}>
+        // aria-live without role="status": the region sits around every portal page, so it must not compete with a
+        // page's own status notice for that role.
+        <View aria-live="polite" testID="moment-live-region" style={styles.unseen}>
           {announcement === '' ? null : <Text>{announcement}</Text>}
         </View>
       ) : null}

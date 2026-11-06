@@ -1574,7 +1574,7 @@ The sections are Home (`/locations/[id]`), Analytics (`/locations/[id]/analytics
 
 ### 15.8 Statement moments
 
-Two full-screen statements reveal word by word, hold, then dissolve into the page underneath. [Build note: the pieces are built (`client/src/portal/moments/`) and the server side is live; the player is not mounted in `PortalGate` yet, so nothing plays until the client wiring lands.]
+Two full-screen statements reveal word by word, hold, then dissolve into the page underneath. [Build note: `MomentProvider` (`client/src/portal/moments/`) is mounted in `PortalGate` and decides both moments from each access answer with `momentFor` (`moments.ts`).]
 
 | Moment | When | Lead (`white`) | Follow (`text2`) |
 |---|---|---|---|
@@ -1587,8 +1587,9 @@ Two full-screen statements reveal word by word, hold, then dissolve into the pag
 - **Timing.** The first word starts at 120ms. Each word fades in over 200ms (`--ease-out`), 80ms after the one before, closer together when a line would take longer than 640ms. A clause or a sentence inside a line holds 140ms more (at most twice a line). The follow starts 360ms after the lead lands, holds 1.4s once it lands, and the layer fades out over 200ms. Request received for a two-word name is gone at about 3.3s, and every moment ends within 5 seconds.
 - **Reduced motion.** Both lines whole at once, still for 2.4s, then gone at once.
 - **Any input ends it.** A press, touch or wheel is absorbed (it never reaches the page under the opaque layer) and fades the layer out; once that press is over, presses reach the page. On web a press is over when its click has landed on the layer, or 350ms after it lifts if no click comes, because a touch's click is aimed when the finger lifts; under reduced motion the layer goes at that point too. A key removes it at once and still does its job on the page (Tab moves focus). Repeats and lone modifier keys are ignored, and so is any input in the first 300ms, so the press that sent a request can’t end its moment. Android back dismisses it and is consumed. A moment that would start in a hidden tab keeps its ground up and waits until the tab is visible.
-- **Screen readers.** The visual words are hidden from assistive tech, and the statement is said once, as plain text: on web through a polite status region that exists before any moment, on native through an announcement. On native with a screen reader running there are no visuals at all. The layer never takes focus.
+- **Screen readers.** The visual words are hidden from assistive tech, and the statement is said once, as plain text: on web through a polite live region that exists before any moment (`aria-live="polite"` without `role="status"`, so it never competes with a page's own status notice), on native through an announcement. On native with a screen reader running there are no visuals at all. The layer never takes focus.
 - **One player.** `MomentProvider` in `PortalGate` plays one moment at a time; a page may call `useMoment().play(statement)` for its own statements and hold its own entrance while `useMoment().playing`.
+- **When it decides.** On every new access answer (`GET /api/me`, or an answer applied in its place), in the same render, so the layer and `playing` are up before the page paints. Request received needs this session's previous answer in `no_org`, `rejected` or `removed` and the new one `pending`: a fresh load or Check again on Waiting plays nothing, and neither does a decline that returns an invited person to Waiting. Each moment is keyed (the request's id; the person and the organization for the welcome) and plays once in a session, so a later re-read that still carries `welcome` (its `POST` failed) does not replay it. Under view-as, or on the first answer after it, nothing plays and nothing is posted. Nothing is stored on the device.
 
 ---
 
@@ -2126,6 +2127,7 @@ Client tests:
 - the view-as banner renders, and writes are disabled;
 - the twelve town ids in the client’s `towns.ts` match the same literal list as the api test;
 - statement moments (`test/portal/moments/`): the copy and the timeline (`timing.test.ts`, `moments.test.ts`), and the player on native and web (`provider.test.native.tsx`, `provider.test.web.tsx`): one moment at a time, said once, hidden from assistive tech, dismissed by a key at once and by a press after the grace period, reduced motion, a native screen reader, Android back and a hidden tab.
+- which moment plays when (`moments.test.ts` > `momentFor`; `decisions.test.native.tsx` and `decisions.test.web.tsx`, the whole app with `PortalGate`): the send's `pending` answer covers the redirect to Waiting with request received; a fresh load of Waiting plays nothing; the welcome is up, with `playing` true, in the first render of the first page; it posts `/api/me/welcome` once and a re-read does not replay it; under view-as nothing plays or posts; the live region says it once.
 - Analytics (`test/portal/analytics/`): the compute modules (`compute.test.ts`); the heatmap’s grids, one tab stop, keys, hover preview, the Day panel’s sources and the filters’ effect on the marks and the basis line, with no write and no storage, the same under view-as (`heatmap.test.web.tsx`); the native month list, its Day panel and the thin and empty copy (`analytics.test.native.tsx`); the shared checkbox (`test/portal/ui/checkbox.test.*.tsx`).
 
 ---
@@ -2242,6 +2244,8 @@ Each is marked inline with “lead default”:
 ---
 
 ## 23. Changelog
+
+**2026-11-06, statement moments on.** `MomentProvider` is mounted in `PortalGate`, and the two moments play (15.8): request received when this session's access goes to `pending`, and the welcome while `GET /api/me` carries it (`welcome` joins the client's `MeResponse` schema). Never under view-as. The web live region drops `role="status"` so it never competes with a page's notice. Tests in Section 20.
 
 **2026-11-06, forecast runs.** Staff import a model run's outputs for a location (`townwise.forecast-run/1`, 14.4) from P21 as a draft, then publish, withdraw or delete it, each a staff action in the org's staff activity (9.2, 10.7). Owners, view-as and TownwiseAI's `get_forecast` read published runs only, the newest one whose data ends before each day, with ranges, labels made in code, actuals and live accuracy; the model card shows the run (10.13). Two collections (6.20, 6.21), deleted with the location's sales data, the location and the organization. Nothing is published yet (owner decision 2026-11-05: Sawtooth's v3 once it joins and consents).
 
