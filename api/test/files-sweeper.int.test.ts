@@ -111,6 +111,18 @@ describe('the daily file sweep', () => {
     expect((await fileDoc(flagged))?.purgeRaw).toBeUndefined();
   });
 
+  it('replaces a workbook’s sheet names in its report when its original goes, since a sheet name can name a person', async () => {
+    const workbook = await seed('book.xlsx');
+    await server.connection.collection('tw_files').updateOne({ _id: oid(workbook) }, { $set: {
+      kind: 'xlsx', uploadedAt: new Date(server.clock.now().getTime() - 366 * DAY),
+      report: { rows: 1, days: 1, sheets: [{ name: 'Zqxj wedding', used: true, why: 'sales' }, { name: 'Notes', used: false, why: 'empty' }] },
+    } });
+    expect(await sweeper.runOnce()).toMatchObject({ expiredOriginals: 1 });
+    expect((await fileDoc(workbook))?.report).toEqual({
+      rows: 1, days: 1, sheets: [{ name: 'Sheet 1', used: true, why: 'sales' }, { name: 'Sheet 2', used: false, why: 'empty' }],
+    });
+  });
+
   it('deletes the original of a file never read a year after upload, keeping the file unread', async () => {
     const waiting = await seed('waiting.csv');
     await server.connection.collection('tw_files').updateOne(

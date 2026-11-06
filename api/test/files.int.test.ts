@@ -369,6 +369,19 @@ describe('downloads and deletion', () => {
     expect(JSON.stringify(await auditEvents(server))).not.toContain('Zqxj');
   });
 
+  it('replaces a workbook’s sheet names in its report when its owner deletes the original', async () => {
+    const locationId = await newLocation();
+    const fileId = await seedReadFile(server, blobs, {
+      orgId: team.orgId, locationId, uploadedBy: team.member.userId, name: 'book.xlsx', raw: Buffer.from('x'), clean: 'date\r\n',
+    });
+    await server.connection.collection('tw_files').updateOne({ _id: new Types.ObjectId(fileId) }, {
+      $set: { kind: 'xlsx', report: { rows: 1, days: 1, sheets: [{ name: 'Zqxj wedding', used: true, why: 'sales' }] } },
+    });
+    expect((await call(server, filesPath(locationId, `/${fileId}/raw`), { session: team.member, method: 'DELETE' })).status).toBe(200);
+    const detail = await (await call(server, filesPath(locationId, `/${fileId}`), { session: team.member })).json() as { report: Record<string, unknown> };
+    expect(detail.report).toEqual({ rows: 1, days: 1, sheets: [{ name: 'Sheet 1', used: true, why: 'sales' }] });
+  });
+
   it('keeps the original of a file not yet read: 409 file_busy while it is stored or queued', async () => {
     const locationId = await newLocation();
     const stored = await uploadFile(server, locationId, team.member, 'unread.csv', csv(2, 'unread'));

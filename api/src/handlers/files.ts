@@ -22,7 +22,7 @@ import {
   RECENT_IMPORT_MS, STORED_BYTES_PER_ORG, UPLOAD_SESSION_MS, UPLOADING_PER_LOCATION,
 } from '../files/limits.ts';
 import { familyKey } from '../files/parse/families.ts';
-import { deleteOriginals } from '../files/remove.ts';
+import { deleteOriginals, renamedSheets } from '../files/remove.ts';
 import { kindLabel, kindOfName, sanitizeName, sniff } from '../files/sniff.ts';
 import { ChunkLengthError, createStreamGate, fingerprintOf, receiveChunk } from '../files/upload.ts';
 import { currentEmail } from '../people.ts';
@@ -584,7 +584,7 @@ export async function deleteRaw(ctx: TownwiseContext, req: Request, res: Respons
   if (!DONE_STATUSES.includes(file.status)) throw new AppError(409, 'file_busy', 'Townwise is still using this file');
   if (file.rawDeletedAt !== null) throw new AppError(410, 'raw_expired', 'The original was already deleted');
   await blobCall(ctx, 'delete_raw', () => blobs.deleteRaw(scope, refOf(file)), () => undefined);
-  await ctx.stores.files.rawDeleted(scope, file.id, ctx.now(), kindLabel(file.kind));
+  await ctx.stores.files.rawDeleted(scope, file.id, ctx.now(), kindLabel(file.kind), renamedSheets(file));
   await ctx.stores.fileEntries.clearPaths(scope, file.id);
   await recordAfter(ctx, {
     ...actorOf(member), at: ctx.now(), orgId: scope.orgId, action: 'file.raw_deleted',

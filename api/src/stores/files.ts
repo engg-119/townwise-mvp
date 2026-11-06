@@ -273,8 +273,11 @@ export interface FileStore {
   /** Moves a file into another import, as stored (a drop that landed after its import finished). */
   reassign(scope: OrgScope, fileId: string, importId: string): Promise<void>;
   remove(scope: OrgScope, fileId: string): Promise<boolean>;
-  /** The original is gone: the name becomes the kind's label (it can itself name a person). */
-  rawDeleted(scope: OrgScope, fileId: string, at: Date, label: string): Promise<void>;
+  /**
+   * The original is gone: the name becomes the kind's label (it can itself name a person), and so do a workbook's
+   * sheet names in the report when `sheets` is given.
+   */
+  rawDeleted(scope: OrgScope, fileId: string, at: Date, label: string, sheets?: readonly Record<string, unknown>[]): Promise<void>;
   /** Any file row at the location, or in the organization (a location with files has data). */
   hasAny(scope: OrgScope, locationId: string | null): Promise<boolean>;
   /** Files still uploading, at one location or across the organization (to discard their staged chunks). */
@@ -417,8 +420,10 @@ export function createFileStore(connection: Connection): FileStore {
     async remove(scope, fileId) {
       return (await File.deleteOne({ _id: oid(fileId), orgId: org(scope) })).deletedCount === 1;
     },
-    async rawDeleted(scope, fileId, at, label) {
-      await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, { $set: { rawDeletedAt: at, name: label }, $unset: { purgeRaw: '' } });
+    async rawDeleted(scope, fileId, at, label, sheets) {
+      const set: Record<string, unknown> = { rawDeletedAt: at, name: label };
+      if (sheets !== undefined) set['report.sheets'] = sheets;
+      await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, { $set: set, $unset: { purgeRaw: '' } });
     },
     async hasAny(scope, locationId) {
       const filter: Record<string, unknown> = { orgId: org(scope) };

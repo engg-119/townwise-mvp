@@ -123,7 +123,14 @@ export async function purgeEveryOriginal(
   return { deletedOriginals, skippedBusy };
 }
 
-/** One original: the blob (a missing one counts as deleted), then the name and the entry paths. */
+/** A workbook's report sheets, each named by its place ("Sheet 1"): a sheet's own name can name a person. */
+export function renamedSheets(file: FileRecord): Record<string, unknown>[] | undefined {
+  const sheets = file.report?.sheets;
+  if (file.kind !== 'xlsx' || !Array.isArray(sheets)) return undefined;
+  return sheets.map((sheet: unknown, index) => ({ ...(sheet as Record<string, unknown>), name: `Sheet ${String(index + 1)}` }));
+}
+
+/** One original: the blob (a missing one counts as deleted), then the name, a workbook's sheet names and the entry paths. */
 async function deleteOneOriginal(
   stores: Pick<TownwiseStores, 'files' | 'fileEntries'>, blobs: FileBlobs, scope: OrgScope, file: FileRecord, now: Date,
 ): Promise<void> {
@@ -132,6 +139,6 @@ async function deleteOneOriginal(
   } catch (err) {
     if (!(err instanceof BlobMissingError)) throw err;
   }
-  await stores.files.rawDeleted(scope, file.id, now, kindLabel(file.kind));
+  await stores.files.rawDeleted(scope, file.id, now, kindLabel(file.kind), renamedSheets(file));
   await stores.fileEntries.clearPaths(scope, file.id);
 }
