@@ -105,8 +105,10 @@ test('the send’s pending answer covers the redirect with the request-received 
   expect(layer()).toBeNull();
   expect(router.getPathname()).toBe('/waiting');
   expect(announce).toHaveBeenCalledTimes(1);
-  // Nothing is recorded for this moment.
-  expect(writes(api).map((call) => call.path)).toEqual(['/api/access-requests']);
+  // Nothing is recorded for this moment: the request is the only write besides P3's one check whether the Google
+  // Places search is on (onboarding/places.ts).
+  expect(writes(api).map((call) => call.path).filter((path) => path !== '/api/places/autocomplete'))
+    .toEqual(['/api/access-requests']);
 });
 
 test('a fresh load of /waiting plays nothing', async () => {
