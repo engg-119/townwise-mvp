@@ -33,6 +33,11 @@ output "backup_storage_account" {
   value       = azurerm_storage_account.backup.name
 }
 
+output "files_blob_endpoint" {
+  description = "FILES_BLOB_ACCOUNT_URL in api/production.env (infra/README.md, \"Enable file storage\"). Reachable only through the private endpoint."
+  value       = azurerm_storage_account.files.primary_blob_endpoint
+}
+
 output "acr_name" {
   description = "GitHub variable AZURE_ACR_NAME."
   value       = azurerm_container_registry.main.name

@@ -5,6 +5,7 @@ Everything runs in the Azure Sponsorship subscription `2d2c15bf-1b72-4e0c-a4cb-5
 - **API:** Azure Container Apps, a workload-profiles environment with the Consumption profile only, in the virtual network `vnet-townwise`. 1 to 2 replicas, health probes on `/healthz`. Valkey runs as a TLS-only sidecar on `127.0.0.1`: an init container generates a per-replica CA, and the API trusts it through `NODE_EXTRA_CA_CERTS`, so the kit's `rediss:` rule holds. The image comes from a private Azure Container Registry, pulled with the app's managed identity. Secrets are Key Vault references. Custom domain `api.townwise.tech` with a managed certificate.
 - **Database:** Azure DocumentDB (vCore; formerly Cosmos DB for MongoDB vCore), free tier, `docdb-townwise-2d2c15bf`. Public network access is disabled and there are no firewall rules: the only way in is a private endpoint in `snet-endpoints`, whose NSG admits port 10260 from the apps subnet only. The API connects as `townwise-app`, not as the administrator.
 - **Backups:** a nightly Container Apps job dumps the database with `mongodump` as the read-only user `townwise-backup` and uploads the archive to Blob Storage, where it is write-once for 30 days and deleted on day 31. An alert emails when a day passes without a successful upload. A manual job restores a named dump.
+- **Client files:** the exports restaurants drop into Townwise, in `sttwfiles2d2c15bf` (containers `client-raw` and `client-clean`, blob names `{orgId}/{locationId}/{fileId}`, ids only). Public network access is disabled: the only way in is a private endpoint in `snet-endpoints`, whose NSG admits 443 from the apps subnet only. The API reads and writes with its managed identity through a custom role on the two containers that cannot mint a SAS. Every blob read, write and delete is logged to the audit account for a year. Off in the API until step 18.
 - **Web:** Static Web Apps (Free) serving the Expo web export. `infra/web/staticwebapp.config.json` sets the headers from `client/MODULE.md` and the `/index.html` fallback. Domains `townwise.tech` and `www`.
 - **DNS:** Azure DNS for `townwise.tech`.
 - **Email:** Azure Communication Services, from `no-reply@townwise.tech`, sent with the app's managed identity. Access keys are disabled. DMARC is `p=reject`.
@@ -13,7 +14,7 @@ Everything runs in the Azure Sponsorship subscription `2d2c15bf-1b72-4e0c-a4cb-5
 | Stack | Applied by | Holds |
 |---|---|---|
 | `terraform/bootstrap` | you (subscription Owner) | both resource groups, Terraform state account, the $60 budget, the GitHub deploy identity, Entra groups and their RBAC |
-| `terraform/production` | `townwise-admins` | network, Container Apps and jobs, DocumentDB and its private endpoint, backup storage, registry, Key Vault, Log Analytics and alerts, Static Web App, DNS, Communication Services, deploy-identity roles |
+| `terraform/production` | `townwise-admins` | network, Container Apps and jobs, DocumentDB and its private endpoint, backup storage, client file storage and its private endpoint, registry, Key Vault, Log Analytics and alerts, Static Web App, DNS, Communication Services, deploy-identity roles |
 
 State lives in `sttwtfstate2d2c15bf` with Entra ID auth only (shared keys off) and blob-lease locking. Bootstrap state, which names the groups and the applier, sits in container `tfstate-admin`; production state sits in `tfstate`, so a future read-only plan identity can be given `tfstate` alone. Terraform never holds a secret value: the one secret it writes (the database admin password) goes through write-only arguments, and no connection string is read into state.
 
@@ -338,7 +339,7 @@ List revisions with `az containerapp revision list -n ca-townwise-api -g rg-town
 
 ### 15. Sponsorship balance
 
-Check the remaining credit at https://www.microsoftazuresponsorships.com/Balance. The subscription's spending limit is off, so usage bills the card on file once the credits run out. The $60 budget covers the three Townwise resource groups and alerts at 80% of actual spend and at 100% of forecast. Expected spend is about $50.50, so the 80% alert fires late in most months.
+Check the remaining credit at https://www.microsoftazuresponsorships.com/Balance. The subscription's spending limit is off, so usage bills the card on file once the credits run out. The $60 budget covers the three Townwise resource groups and alerts at 80% of actual spend and at 100% of forecast. Expected spend is about $50.50, so the 80% alert fires late in most months. Once file storage is applied (step 18) it is about $58.40, so the 80% alert fires every month and the forecast alert near the end of most; raise the budget in `terraform/bootstrap` before step 18 if that noise is unwanted.
 
 ### 16. Enable the tuning chat
 
@@ -374,6 +375,19 @@ The Places search on the access request (`api/README.md`, Places search) is off 
 
 **Rotate** by seeding a new version with the same command and running `az containerapp revision restart`, then delete the old key in Google Cloud console. **Turn it off** with `enable_places = false` and apply, which removes the reference, the env var and the role assignment; the secret stays in Key Vault until you delete it.
 
+### 18. Enable file storage
+
+Stored files (`api/README.md`, Files; `docs/portal/spec.md` 11A) are off until the API has `FILES_BLOB_ACCOUNT_URL`. Off, every files and imports route answers 503 `files_unavailable`, and the client offers the in-browser upload (P13), which sends only three values a day. Turn it on only in the release that also ships the drop screen and the privacy page's stored-files wording, because the privacy page's promise changes with it.
+
+1. **Apply.** `terraform plan` and `terraform apply` from `infra/terraform/production`. The plan adds the account `sttwfiles2d2c15bf`, its two containers, the custom role "Townwise client files", the two container-scoped assignments for the app's identity, the lifecycle rule, the diagnostic setting, the private DNS zone `privatelink.blob.core.windows.net` and its VNet link, the private endpoint `pe-townwise-files`, and the NSG rule `allow-apps-to-blob`. Storage is managed through Resource Manager only (`data_plane_available = false`), so the apply never needs the blob endpoint, which no laptop or runner can reach.
+2. **Wait about 10 minutes** for the role assignments to reach the data plane. Until then the API's blob calls are refused, which it answers as 503 `storage_unavailable`.
+3. **Turn it on.** Uncomment `FILES_BLOB_ACCOUNT_URL=https://sttwfiles2d2c15bf.blob.core.windows.net` in `api/production.env` and merge to `main`. The value is public; the API authenticates with its managed identity (`AZURE_CLIENT_ID`, already set).
+4. **Check from outside:** `curl -sI https://sttwfiles2d2c15bf.blob.core.windows.net/client-raw` from a laptop must fail (the name resolves to a public address that refuses, because public network access is disabled).
+5. **Check in the app:** signed in as a test organization's admin, drop a small CSV, read it, download the original and the cleaned copy, delete it. Then drop a file over 64 MiB from a browser throttled to DevTools "Slow 4G" and confirm it completes: each 8 MiB chunk is its own request, so none comes near the 240-second ingress timeout.
+6. **Check the access log:** the audit account's `insights-logs-storagewrite` and `insights-logs-storagedelete` containers hold entries for those calls, made by the app's identity, with blob names that are ids only.
+
+The files account is `prevent_destroy`, and deleting it deletes every client file: export or delete the organizations first. Soft delete keeps a deleted blob for 7 days.
+
 ## Logs
 
 Container Apps and Key Vault `AuditEvent` logs go to `log-townwise`, capped at 0.1 GB a day to stay inside the 5 GB monthly free ingestion. `AuditEvent` also goes to `sttwaudit2d2c15bf`, which has no cap, keeps it for a year, and admits only Azure Monitor, so spending the cap cannot blind the audit trail. When the cap is reached, ingestion stops until the daily reset, and the alert `townwise-log-daily-cap-reached` emails `alert_email`. A flood of rate-limited requests logs one line per `429`, which can spend the cap; excluding 429s from the request log is an upstream suggestion for the kit's `server-core`, not changed here.
@@ -391,6 +405,9 @@ Prices are from the Azure Retail Prices API (eastus), with a 730-hour month (2,6
 | Azure DocumentDB, free tier (32 GiB) | | $0 |
 | Private endpoint for the database | $0.01 an hour, plus $0.01 per GB in and out | $7.30 |
 | Private DNS zone `privatelink.mongocluster.cosmos.azure.com` | $0.50 per zone (queries $0.40 per million) | $0.50 |
+| Private endpoint for client files | $0.01 an hour, plus $0.01 per GB in and out | $7.30 |
+| Private DNS zone `privatelink.blob.core.windows.net` | $0.50 per zone (queries $0.40 per million) | $0.50 |
+| Client file storage, Hot LRS | $0.0208 per GB a month; transactions and access-log writes are cents a month at this scale | under $0.10 at a few GB |
 | Backup job, about 5 minutes a night at 0.5 vCPU and 1 GiB | active rates | about $0.14 |
 | Backup storage, Hot LRS, 30 dumps kept | $0.0208 per GB a month, writes $0.05 per 10,000 | about $0.03 at 50 MB a dump |
 | Container Registry Basic | $0.1666 a day | $5.07 |
@@ -403,7 +420,7 @@ Prices are from the Azure Retail Prices API (eastus), with a 730-hour month (2,6
 | Static Web Apps Free | | $0 |
 | Communication Services email | $0.00025 per message plus $0.00012 per MB | about $0.25 per 1,000 emails |
 | State storage | | under $0.05 |
-| **Total** | | **about $50.50 at low traffic** |
+| **Total** | | **about $58.40 at low traffic** |
 
 The tuning chat, when on (step 16), bills Anthropic directly, not Azure: at most the Console workspace's spend limit, and the API stops new turns once an organization reaches `TOWNWISE_CHAT_MONTHLY_BUDGET_USD` in a month.
 
@@ -424,6 +441,7 @@ If the free tier refuses private access (step 3), M10 adds $0.0191 an hour ($13.
 - **`TRUST_PROXY=uniquelocal,100.64.0.0/10`:** Microsoft does not publish the ingress proxy's source range. The client-IP check in step 13 confirms real addresses.
 - **The API's own init container** (`valkey-tls`) can still obtain the API identity's token: the app is an azurerm resource, which has no `identitySettings`. It runs the pinned Valkey image with a fixed script.
 - **`id-token-guard` is a check, not a gate** (GitHub Free has no required checks). The `job_workflow_ref` subject is the enforced control; it cannot tell jobs inside `deploy.yml` apart.
+- **Client files behind a private endpoint.** With public network access disabled, any provider call that touched the files account's data plane from a laptop or runner would fail. azurerm 5.11 manages the containers and the lifecycle rule through Resource Manager (`data_plane_available = false`), but CI's mocked plan cannot prove it; the first real apply in step 18 does.
 - **Platform-managed group.** `rg-townwise-prod-infra` holds the environment's load balancer and public IPs. Do not edit it; it goes with the environment.
 
 ## Teardown
