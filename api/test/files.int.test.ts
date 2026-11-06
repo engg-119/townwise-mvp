@@ -242,6 +242,41 @@ describe('uploading a file', () => {
     const done = await call(server, filesPath(locationId, `/${later.file.id}/complete`), { session: team.member, json: {} });
     expect((await done.json() as { file: FileView }).file.status).toBe('queued');
   });
+
+  describe('a file that completes after its import finished', () => {
+    async function lateFile(locationId: string): Promise<{ fileId: string; importId: string }> {
+      const first = await uploadFile(server, locationId, team.member, 'a.csv', csv(2, 'first'));
+      const importId = (first.body.import as { id: string }).id;
+      const later = await created(locationId, team.member, csv(2, 'late').length, 'late.csv');
+      await call(server, `/api/org/locations/${locationId}/imports/${importId}/start`, { session: team.member, json: {} });
+      // The reader finished the import while this file was still uploading.
+      await server.connection.collection('tw_imports').updateOne({ _id: new Types.ObjectId(importId) }, {
+        $set: { status: 'done', finishedAt: server.clock.now() }, $unset: { activeLocation: '' },
+      });
+      expect((await putChunk(server, filesPath(locationId, `/${later.file.id}/chunks/0`), team.member, csv(2, 'late'))).status).toBe(200);
+      return { fileId: later.file.id, importId };
+    }
+
+    it('starts a new import of its own and is queued in it', async () => {
+      const locationId = await newLocation();
+      const { fileId, importId } = await lateFile(locationId);
+      const done = await call(server, filesPath(locationId, `/${fileId}/complete`), { session: team.member, json: {} });
+      const body = await done.json() as { file: FileView; import: { id: string; status: string } };
+      expect(body.import.id).not.toBe(importId);
+      expect(body).toMatchObject({ file: { status: 'queued', importId: body.import.id }, import: { status: 'queued' } });
+    });
+
+    it('joins another person’s open import as stored, leaving it for them to start', async () => {
+      const locationId = await newLocation();
+      const { fileId, importId } = await lateFile(locationId);
+      const theirs = await uploadFile(server, locationId, team.other, 'theirs.csv', csv(3, 'theirs'));
+      const openId = (theirs.body.import as { id: string }).id;
+      expect(openId).not.toBe(importId);
+      const done = await call(server, filesPath(locationId, `/${fileId}/complete`), { session: team.member, json: {} });
+      expect(await done.json()).toMatchObject({ file: { status: 'stored', importId: openId }, import: { id: openId, status: 'open' } });
+      expect(await fileDoc(theirs.body.file?.id ?? '')).toMatchObject({ status: 'stored' });
+    });
+  });
 });
 
 describe('back-pressure', () => {

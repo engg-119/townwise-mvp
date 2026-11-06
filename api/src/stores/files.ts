@@ -229,8 +229,8 @@ export interface FileStore {
   queueStored(scope: OrgScope, importId: string): Promise<number>;
   /** Compare-and-set one file from `from` to `to`. */
   move(scope: OrgScope, fileId: string, from: readonly FileStatus[], to: FileStatus): Promise<FileRecord | null>;
-  /** Moves a file into another import (a drop that landed after its import finished). */
-  reassign(scope: OrgScope, fileId: string, importId: string, status: 'stored' | 'queued'): Promise<void>;
+  /** Moves a file into another import, as stored (a drop that landed after its import finished). */
+  reassign(scope: OrgScope, fileId: string, importId: string): Promise<void>;
   remove(scope: OrgScope, fileId: string): Promise<boolean>;
   /** The original is gone: the name becomes the kind's label (it can itself name a person). */
   rawDeleted(scope: OrgScope, fileId: string, at: Date, label: string): Promise<void>;
@@ -346,8 +346,8 @@ export function createFileStore(connection: Connection): FileStore {
       ).lean();
       return doc === null ? null : toFile(doc);
     },
-    async reassign(scope, fileId, importId, status) {
-      await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, { $set: { importId: oid(importId), status } });
+    async reassign(scope, fileId, importId) {
+      await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, { $set: { importId: oid(importId), status: 'stored' } });
     },
     async remove(scope, fileId) {
       return (await File.deleteOne({ _id: oid(fileId), orgId: org(scope) })).deletedCount === 1;

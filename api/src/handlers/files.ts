@@ -397,7 +397,9 @@ export async function completeFile(ctx: TownwiseContext, req: Request, res: Resp
 /**
  * The file just stored joins its import for good. `noteDrop` bumps the import after the file's status is set, so the
  * reader can never finish an import past it: a file stored while its import started is queued and bumped again, and
- * a file whose import finished meanwhile moves into the location's next import.
+ * a file whose import finished meanwhile moves into the location's next import. That import starts at once only when
+ * the file is its first (the person asked for the file to be read); an open import someone already dropped files into
+ * waits for them to start it, with this file among its stored rows.
  */
 async function place(ctx: TownwiseContext, member: MemberPrincipal, file: FileRecord): Promise<{ file: FileRecord; import: ImportRecord }> {
   const { scope } = member;
@@ -406,14 +408,12 @@ async function place(ctx: TownwiseContext, member: MemberPrincipal, file: FileRe
     const now = ctx.now();
     const noted = await ctx.stores.imports.noteDrop(scope, current.importId ?? '', now);
     if (noted === null) {
-      // Its import was started and has finished: the person asked for it to be read, so the next import starts too.
       const next = await ctx.stores.imports.joinOrCreate(scope, current.locationId, { userId: member.userId, now });
-      if (next.status === 'open') {
-        await ctx.stores.imports.start(scope, next.id, now);
-        await ctx.stores.files.queueStored(scope, next.id);
-      }
-      await ctx.stores.files.reassign(scope, current.id, next.id, 'queued');
-      current = { ...current, importId: next.id, status: 'queued' };
+      const first = next.status === 'open' && (await ctx.stores.files.inImport(scope, next.id)).length === 0;
+      // Stored first, then started: the reader takes a stored file of a started import, and the loop queues it.
+      await ctx.stores.files.reassign(scope, current.id, next.id);
+      if (first) await ctx.stores.imports.start(scope, next.id, now);
+      current = { ...current, importId: next.id, status: 'stored' };
       continue;
     }
     if (noted.status === 'open') return { file: current, import: noted };
