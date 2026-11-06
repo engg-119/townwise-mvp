@@ -216,9 +216,10 @@ export interface FileStore {
   list(scope: OrgScope, locationId: string, input: { viewerId: string; before: string | null; limit: number }): Promise<FileRecord[]>;
   /** Upload order. */
   inImport(scope: OrgScope, importId: string): Promise<FileRecord[]>;
-  counts(scope: OrgScope, locationId: string, importId: string | null): Promise<{ inImport: number; uploading: number; inLocation: number }>;
-  /** Bytes of originals not yet deleted, across the organization. */
-  storedBytes(scope: OrgScope): Promise<number>;
+  /** Live files only: an upload session past its expiry is abandoned and counts toward no cap. */
+  counts(scope: OrgScope, locationId: string, importId: string | null, now: Date): Promise<{ inImport: number; uploading: number; inLocation: number }>;
+  /** Bytes of originals not yet deleted, across the organization, leaving out expired upload sessions. */
+  storedBytes(scope: OrgScope, now: Date): Promise<number>;
   /** Records a received chunk while the file is uploading; null when it no longer is. */
   recordChunk(scope: OrgScope, fileId: string, index: number, chunk: ChunkRecord, head: string | null): Promise<FileRecord | null>;
   /** Compare-and-set from uploading: the session ends, the kind and fingerprint are set. Null when another call won. */
@@ -300,18 +301,21 @@ export function createFileStore(connection: Connection): FileStore {
         .sort({ uploadedAt: 1, _id: 1 }).lean();
       return docs.map(toFile);
     },
-    async counts(scope, locationId, importId) {
-      const live = (): { orgId: Types.ObjectId; status: { $ne: FileStatus } } => ({ orgId: org(scope), status: trusted({ $ne: 'deleting' as const }) });
+    async counts(scope, locationId, importId, now) {
+      const live = (): Record<string, unknown> => ({
+        orgId: org(scope), status: trusted({ $ne: 'deleting' as const }),
+        $nor: [{ status: 'uploading', 'upload.expiresAt': trusted({ $lte: now }) }],
+      });
       const [inImport, uploading, inLocation] = await Promise.all([
         importId === null ? 0 : File.countDocuments({ ...live(), importId: oid(importId) }),
-        File.countDocuments({ orgId: org(scope), locationId: oid(locationId), status: 'uploading' }),
+        File.countDocuments({ orgId: org(scope), locationId: oid(locationId), status: 'uploading', 'upload.expiresAt': trusted({ $gt: now }) }),
         File.countDocuments({ ...live(), locationId: oid(locationId) }),
       ]);
       return { inImport, uploading, inLocation };
     },
-    async storedBytes(scope) {
+    async storedBytes(scope, now) {
       const rows = await connection.collection(FILES_COLLECTION).aggregate<{ bytes: number }>([
-        { $match: { orgId: org(scope), rawDeletedAt: null } },
+        { $match: { orgId: org(scope), rawDeletedAt: null, $nor: [{ status: 'uploading', 'upload.expiresAt': { $lte: now } }] } },
         { $group: { _id: null, bytes: { $sum: '$sizeBytes' } } },
       ]).toArray();
       return rows[0]?.bytes ?? 0;

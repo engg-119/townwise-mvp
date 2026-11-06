@@ -1037,7 +1037,7 @@ Chunked sessions, because the Container Apps ingress closes a request at 240 sec
 | A file | 200 MiB, in 8 MiB chunks; downloads of originals in 32 MiB parts |
 | An import / a location / uploading at once in a location | 50 / 500 / 10 files |
 | An organization | 5 GiB stored (originals not deleted), 2 GiB uploaded a UTC day |
-| An upload session | 24 hours |
+| An upload session | 24 hours; after that it counts toward no cap above |
 | Reading | text streamed (the upload cap); workbooks 10 MiB, 2,000 parts, 64 MiB a part, 200 MiB declared, 100 to 1 a part over 1 MiB; 2,000,000 rows, 200 columns, 10 sheets; 192 MiB of heap and 20 minutes a file |
 
 ### 11A.3 Kinds

@@ -239,15 +239,15 @@ export async function createFile(ctx: TownwiseContext, req: Request, res: Respon
     return;
   }
   const active = await ctx.stores.imports.active(scope, location.id);
-  const counts = await ctx.stores.files.counts(scope, location.id, active?.id ?? null);
+  const now = ctx.now();
+  const counts = await ctx.stores.files.counts(scope, location.id, active?.id ?? null, now);
   if (counts.inImport >= FILES_PER_IMPORT) throw new AppError(409, 'import_full', 'This import has the most files it can take');
   if (counts.uploading >= UPLOADING_PER_LOCATION) throw new AppError(409, 'too_many_uploading', 'Too many files are uploading at once');
-  const storedBytesLeft = Math.max(0, STORED_BYTES_PER_ORG - await ctx.stores.files.storedBytes(scope));
+  const storedBytesLeft = Math.max(0, STORED_BYTES_PER_ORG - await ctx.stores.files.storedBytes(scope, now));
   if (counts.inLocation >= FILES_PER_LOCATION || body.sizeBytes > storedBytesLeft) {
     refuse(res, 409, 'storage_full', 'Your organization has stored the most it can', { storedBytesLeft });
     return;
   }
-  const now = ctx.now();
   const day = utcDay(now);
   if (!(await ctx.stores.uploadDays.reserve(scope, day, body.sizeBytes, DAILY_UPLOAD_BYTES, now))) {
     refuse(res, 409, 'daily_upload_limit', 'Your organization has uploaded the most it can today', {

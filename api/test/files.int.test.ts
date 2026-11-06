@@ -149,6 +149,23 @@ describe('uploading a file', () => {
       .toEqual({ status: 409, error: 'import_full' });
   });
 
+  it('counts an upload session past its expiry toward no cap: uploading, the import, the location or stored bytes', async () => {
+    const orgId = await createOrg(server, { name: `Abandoned ${randomUUID().slice(0, 6)}` });
+    const email = `abandoned-${randomUUID().slice(0, 8)}@example.test`;
+    const session = await signIn(server, email);
+    await addSeat(server, { orgId, userId: session.userId, email });
+    const locationId = await addLocation(server, { orgId, name: 'Abandoned Room' });
+    for (let index = 0; index < 10; index += 1) await created(locationId, session, 10, `f${String(index)}.csv`);
+    // Ten sessions left a day ago, one of them as large as the organization's whole allowance.
+    await server.connection.collection('tw_files').updateMany({ locationId: new Types.ObjectId(locationId) }, {
+      $set: { 'upload.expiresAt': new Date(server.clock.now().getTime() - 1000) },
+    });
+    await server.connection.collection('tw_files').updateOne({ locationId: new Types.ObjectId(locationId) }, { $set: { sizeBytes: 5 * 1024 ** 3 } });
+    const res = await create(locationId, session, { name: 'g.csv', sizeBytes: 10, purpose: 'history' });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ limits: { filesLeftInImport: 49, storedBytesLeft: 5 * 1024 ** 3 - 10 } });
+  });
+
   it('refuses past the organization’s stored bytes, and past its daily bytes across two people, saying when it resets', async () => {
     const orgId = await createOrg(server, { name: `Caps ${randomUUID().slice(0, 6)}` });
     const aEmail = `a-${randomUUID().slice(0, 8)}@example.test`;
