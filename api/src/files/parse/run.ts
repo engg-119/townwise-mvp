@@ -1,7 +1,8 @@
 // Runs the parse thread (thread.ts) for one file with memory and time limits (spec 11A). The file is fed in pieces of
 // at most 1 MiB, each transferred and acknowledged before the next, so the thread's input is bounded; a text file is
 // fed twice when the thread asks. Out of memory or out of time terminates the thread and the file is kept as
-// too_complex; the API process is untouched.
+// too_complex; the API process is untouched. The time limit covers the file's reads from storage too: a stalled read
+// is aborted, so it never holds the replica's reader or the import's lease.
 import { Worker, type ResourceLimits } from 'node:worker_threads';
 
 import type { FileAnswers } from '../../stores/files.ts';
@@ -45,8 +46,8 @@ export interface ParseInput {
   readonly locationName: string;
   readonly latest: string;
   readonly replace: boolean;
-  /** The file's bytes, from the start; called once per pass. */
-  readonly open: () => Promise<AsyncIterable<Uint8Array>>;
+  /** The file's bytes, from the start; called once per pass. `signal` aborts at the time limit. */
+  readonly open: (signal: AbortSignal) => Promise<AsyncIterable<Uint8Array>>;
   readonly onProgress: (done: number, total: number | null) => void;
   readonly signal?: AbortSignal;
   /** Tests shorten these. */
@@ -91,9 +92,13 @@ function isTooComplex(err: unknown): boolean {
 export async function runParse(input: ParseInput): Promise<FileOutcome> {
   const worker = new Worker(THREAD_URL, { resourceLimits: input.resourceLimits ?? THREAD_LIMITS });
   const messages = inbox(worker);
+  const stop = new AbortController();
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => { reject(new TimeLimit()); }, input.timeMs ?? READ_TIME_MS);
+    timer = setTimeout(() => {
+      reject(new TimeLimit());
+      stop.abort();
+    }, input.timeMs ?? READ_TIME_MS);
   });
   // Raced below; this keeps a rejection while nothing is racing it from going unhandled.
   timeout.catch(() => undefined);
@@ -105,8 +110,8 @@ export async function runParse(input: ParseInput): Promise<FileOutcome> {
       input.onProgress(message.done, message.total);
     }
   };
-  const feed = async (): Promise<void> => {
-    for await (const piece of await input.open()) {
+  const pass = async (): Promise<void> => {
+    for await (const piece of await input.open(stop.signal)) {
       input.signal?.throwIfAborted();
       for (let at = 0; at < piece.length; at += THREAD_CHUNK_BYTES) {
         const data = new Uint8Array(piece.subarray(at, at + THREAD_CHUNK_BYTES)).buffer;
@@ -116,6 +121,12 @@ export async function runParse(input: ParseInput): Promise<FileOutcome> {
       }
     }
     worker.postMessage({ type: 'end' } satisfies ThreadIn);
+  };
+  // A pass waits on storage as well as on the thread, so it races the time limit as a whole.
+  const feed = (): Promise<void> => {
+    const fed = pass();
+    fed.catch(() => undefined);
+    return Promise.race([fed, timeout]);
   };
   try {
     worker.postMessage({
@@ -133,6 +144,7 @@ export async function runParse(input: ParseInput): Promise<FileOutcome> {
     throw err;
   } finally {
     clearTimeout(timer);
+    stop.abort();
     await worker.terminate();
   }
 }

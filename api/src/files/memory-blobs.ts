@@ -1,7 +1,7 @@
 // An in-memory FileBlobs for tests and for local runs without Azurite. Same names and the same semantics as
 // blobs.ts: staged chunks stay apart from the committed blob until commitChunks, and a missing blob is
 // BlobMissingError.
-import { Readable } from 'node:stream';
+import { addAbortSignal, Readable } from 'node:stream';
 
 import type { OrgScope } from '../access/policy.ts';
 import { BlobMissingError, cleanBlobName, rawBlobName, type BlobRef, type FileBlobs } from './blobs.ts';
@@ -65,9 +65,10 @@ export function createMemoryFileBlobs(): MemoryFileBlobs {
       return Promise.resolve();
     },
     // eslint-disable-next-line @typescript-eslint/require-await -- async so a missing blob rejects, as the port does
-    async openRaw(scope, ref, range) {
+    async openRaw(scope, ref, range, signal) {
       const blob = found(raw, rawBlobName(scope, ref));
-      return Readable.from([range === undefined ? blob : blob.subarray(range.offset, range.offset + range.count)]);
+      const body = Readable.from([range === undefined ? blob : blob.subarray(range.offset, range.offset + range.count)]);
+      return signal === undefined ? body : addAbortSignal(signal, body);
     },
     writeClean(scope, ref, csv) {
       clean.set(cleanBlobName(scope, ref), Buffer.from(csv, 'utf8'));

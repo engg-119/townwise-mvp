@@ -46,8 +46,8 @@ export interface FileBlobs {
   commitChunks(scope: OrgScope, ref: BlobRef, chunkCount: number): Promise<void>;
   /** Cancels an unfinished upload: discards its staged chunks at once and deletes the blob. */
   discardUpload(scope: OrgScope, ref: BlobRef): Promise<void>;
-  /** The original, or `count` bytes of it from `offset`. */
-  openRaw(scope: OrgScope, ref: BlobRef, range?: { offset: number; count: number }): Promise<Readable>;
+  /** The original, or `count` bytes of it from `offset`. `signal` aborts the read (the reader's time limit). */
+  openRaw(scope: OrgScope, ref: BlobRef, range?: { offset: number; count: number }, signal?: AbortSignal): Promise<Readable>;
   /** Writes (or rewrites) the cleaned copy. */
   writeClean(scope: OrgScope, ref: BlobRef, csv: string): Promise<void>;
   openClean(scope: OrgScope, ref: BlobRef): Promise<Readable>;
@@ -135,9 +135,9 @@ function blobsOver(service: BlobServiceClient, chunks: BlobServiceClient): FileB
         await blob.deleteIfExists();
       });
     },
-    openRaw(scope, ref, range) {
+    openRaw(scope, ref, range, signal) {
       return guarded(async () => {
-        const response = await raw.getBlobClient(rawBlobName(scope, ref)).download(range?.offset ?? 0, range?.count);
+        const response = await raw.getBlobClient(rawBlobName(scope, ref)).download(range?.offset ?? 0, range?.count, signal === undefined ? {} : { abortSignal: signal });
         return bodyOf(response.readableStreamBody);
       });
     },

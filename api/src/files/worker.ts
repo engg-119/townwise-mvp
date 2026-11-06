@@ -19,7 +19,7 @@ import type { TownwiseStores } from '../stores/index.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import { BlobMissingError, type FileBlobs } from './blobs.ts';
 import { cleanCsv } from './clean.ts';
-import { APPLY_BATCH_DAYS, HEAD_BYTES, MAX_ATTEMPTS, PROGRESS_WRITE_MS, XLSX_READ_BYTES } from './limits.ts';
+import { APPLY_BATCH_DAYS, HEAD_BYTES, MAX_ATTEMPTS, PROGRESS_WRITE_MS, READ_TIME_MS, XLSX_READ_BYTES } from './limits.ts';
 import { runParse, type FileOutcome, type ParseInput } from './parse/run.ts';
 import { sniff } from './sniff.ts';
 
@@ -151,7 +151,9 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
 
   async function headOf(scope: OrgScope, file: FileRecord): Promise<Uint8Array | null> {
     if (file.kind !== 'other') return null;
-    const body = await blobs.openRaw(scope, { locationId: file.locationId, fileId: file.id }, { offset: 0, count: Math.min(HEAD_BYTES, file.sizeBytes) });
+    const body = await blobs.openRaw(
+      scope, { locationId: file.locationId, fileId: file.id }, { offset: 0, count: Math.min(HEAD_BYTES, file.sizeBytes) }, AbortSignal.timeout(READ_TIME_MS),
+    );
     const parts: Buffer[] = [];
     for await (const part of body) parts.push(Buffer.from(part as Uint8Array));
     return Buffer.concat(parts);
@@ -181,7 +183,7 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
         locationName: location.name,
         latest: utcDay(now(), 1),
         replace: file.uploaderRole === 'org_admin',
-        open: () => blobs.openRaw(scope, { locationId: file.locationId, fileId: file.id }),
+        open: (signal) => blobs.openRaw(scope, { locationId: file.locationId, fileId: file.id }, undefined, signal),
         signal: abort.signal,
         onProgress: (done, total) => {
           const at = now().getTime();

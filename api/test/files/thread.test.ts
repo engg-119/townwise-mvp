@@ -23,6 +23,20 @@ describe('parse thread limits', () => {
     expect(outcome).toEqual({ kind: 'kept', outcome: 'too_complex', report: null });
   });
 
+  it('ends a read whose storage stalls at its time limit as too_complex, aborting the read', async () => {
+    let opened: AbortSignal | undefined;
+    const outcome = await runParse({
+      ...base, kind: 'text', sizeBytes: 100, timeMs: 50,
+      open: (signal) => {
+        opened = signal;
+        // A download that never sends another byte.
+        return Promise.resolve(new Readable({ read: () => undefined }));
+      },
+    });
+    expect(outcome).toEqual({ kind: 'kept', outcome: 'too_complex', report: null });
+    expect(opened?.aborted).toBe(true);
+  });
+
   it('ends a read that runs out of memory as too_complex', async () => {
     // An unterminated quote keeps every following byte in one field.
     const piece = Buffer.alloc(1024 * 1024, 0x61);
