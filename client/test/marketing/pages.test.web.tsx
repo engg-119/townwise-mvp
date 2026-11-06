@@ -282,7 +282,10 @@ test('Privacy makes the three commitments and no longer says the app has no uplo
   expect(text).toContain('The operator responsible for your data is the Townwise team, a group of students in ENGG 119, AI in the Real World, at Dartmouth’s Thayer School of Engineering in Hanover, NH. Townwise is not an official Dartmouth product.');
   expect(text).toContain('we will delete your account and its data within 30 days');
   expect(text).toContain('sends us only the date, guest count and net sales for each day');
-  expect(text).toContain('Effective November 5, 2026. Last updated November 5, 2026.');
+  expect(text).toContain('Effective November 5, 2026. Last updated November 6, 2026.');
+  expect(text).toContain('public facts about its town (its calendar, and who is likely in town, with the public sources behind them). TownwiseAI never reads your files');
+  expect(text).toContain('Answers are deleted with the location’s sales data, the location or the organization.');
+  expect(text).toContain('the proposal’s wording stays only in your conversation, and in your notes if you save it.');
   expect(text).not.toMatch(/no place to upload|before any upload exists|email account holders/i);
 });
 
