@@ -252,9 +252,15 @@ export function uploadError(code: string, detail?: Readonly<Record<string, unkno
   return SHARED.server;
 }
 
+/** Lines that promise the queue's own retry, which no file action has: those fall back to the shared copy. */
+const QUEUE_RETRIES: ReadonlySet<string> = new Set(['rate_limited', 'uploads_busy', 'storage_unavailable']);
+
 /** A file action's error (delete, download, answer): the code's line when it has one, else the shared copy. */
 export function actionError(error: unknown): string {
-  if (error instanceof ApiError && error.kind === 'http' && error.code !== null && Object.hasOwn(UPLOAD_ERROR, error.code)) {
+  if (
+    error instanceof ApiError && error.kind === 'http' && error.code !== null && !QUEUE_RETRIES.has(error.code)
+    && Object.hasOwn(UPLOAD_ERROR, error.code)
+  ) {
     return uploadError(error.code, error.detail);
   }
   return errorCopy(error);

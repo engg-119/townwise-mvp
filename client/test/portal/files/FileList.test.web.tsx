@@ -152,6 +152,15 @@ test('Delete original says what stays before it runs, then deletes only the orig
   expect(fake.calls.filter((call) => call.method === 'DELETE').map((call) => call.path)).toEqual(['/files/f1/raw']);
 });
 
+test('a download refused for too many requests says when to try, not that an upload will retry', async () => {
+  const fake = setup(meOf(ACCESS.admin), FILES);
+  fake.downloads['/files/f1/clean'] = () => refusal(429, 'rate_limited', 120);
+  await list();
+  fireEvent.click(screen.getByRole('button', { name: 'Download cleaned CSV: march.csv' }));
+  expect(await screen.findByText('Too many attempts. Try again in 2 minutes.')).toBeTruthy();
+  expect(document.body.textContent).not.toContain('Too many uploads');
+});
+
 test('Delete file keeps the days and says so; a busy file says why it wasn’t deleted', async () => {
   const fake = setup(meOf(ACCESS.admin), FILES);
   fake.answers['DELETE /files/f1'] = () => ({ deleted: true, daysKept: 731 });

@@ -56,6 +56,13 @@ test('every error code the file routes answer has its own words', () => {
   expect(copy.uploadError('network')).toBe('Can’t reach Townwise. Check your connection and try again.');
   expect(copy.uploadError('something_new')).toBe('Something went wrong on our side. Try again in a minute.');
   expect(copy.actionError(new ApiError('http', 'x', { status: 409, code: 'file_busy' }))).toBe(copy.UPLOAD_ERROR.file_busy);
+  // A file action is never retried by the queue, so no line promises a retry, and none says it was an upload.
+  expect(copy.actionError(new ApiError('http', 'x', { status: 429, code: 'rate_limited', retryAfterSeconds: 120 }))).toBe(
+    'Too many attempts. Try again in 2 minutes.',
+  );
+  expect(copy.actionError(new ApiError('http', 'x', { status: 503, code: 'storage_unavailable' }))).toBe(
+    'Townwise isn’t responding. Try again in a minute.',
+  );
 });
 
 test('every kind has a label, used for the name under view-as', () => {
