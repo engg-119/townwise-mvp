@@ -17,7 +17,7 @@ import { PANEL_EMPTY } from '../../../src/portal/analytics/panel';
 import type { MeResponse } from '../../../src/portal/schemas';
 import { ACCESS, fakePortalApi, meOf, orgOf, viewAsMe, type FakePortalApi } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
-import { analyticsFake, calendarBody, day, historyBody, holiday, note, run } from './fakes';
+import { analyticsFake, calendarBody, day, historyBody, holiday, note, run, upload } from './fakes';
 
 // P24 Analytics on native (home.md 4.4, D21): no grid and no SVG; a month list, newest first, whose days open the
 // Day panel under their row, with every section's summary, basis line and numbers. Synthetic days only. The page
@@ -41,10 +41,10 @@ afterEach(async () => {
 const PATH = '/api/org/locations/l1';
 const DAYS = run('2025-09-01', '2026-11-04', (date) => 100 + (new Date(`${date}T00:00:00Z`).getUTCDay() === 6 ? 40 : 0));
 
-function portal(me: MeResponse, days = DAYS): FakePortalApi {
+function portal(me: MeResponse, days = DAYS, uploads = [upload()]): FakePortalApi {
   const from = days[0]?.date.slice(0, 4) ?? '2026';
   const fake = analyticsFake({
-    [`${PATH}/sales/history`]: historyBody(days),
+    [`${PATH}/sales/history`]: historyBody(days, uploads),
     [`${PATH}/notes`]: { notes: [note({ startDate: '2026-10-10', detail: 'A rehearsal dinner.' })] },
     [`${PATH}/calendar?from=${from}-01-01&to=2026-12-31`]: calendarBody({ events: [holiday('2025-11-27', 'Thanksgiving Day', 'us:thanksgiving', 'Thanksgiving')] }),
   });
@@ -142,4 +142,16 @@ test('the month rows say they count the days the filters leave out (T)', async (
   expect(within(months).getByRole('button', { name: /^Dec 2025,/ }).props.accessibilityLabel).toBe('Dec 2025, 31 days with data, 97 guests on average');
   expect(screen.getAllByText('Based on 398 days with a guest count. Leaves out 1 closed day.').length).toBeGreaterThan(0);
   expect(screen.getByText(MONTH_ROWS_LINE)).toBeTruthy();
+});
+
+test('F4 on native: the stored file by name and kind, and Your files, with no download here', async () => {
+  const file = { id: '00000000-0000-0000-0000-00000000f001', name: 'sample-sales.csv', kind: 'text' as const };
+  await renderApp('/locations/l1/analytics', portal(meOf(ACCESS.member), DAYS, [upload({ file })]));
+  const months = await screen.findByLabelText('Months, daily guests');
+  await fireEvent.press(within(months).getByRole('button', { name: /^Oct 2026,/ }));
+  await fireEvent.press(within(screen.getByLabelText('Days in Oct 2026')).getByRole('button', { name: /^Sat, Oct 10, 2026\./ }));
+  expect(screen.getByText('File: sample-sales.csv (CSV or text file).')).toBeTruthy();
+  expect(screen.getByText('Download from a computer at townwise.tech.')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Download cleaned CSV' })).toBeNull();
+  expect(screen.getByRole('link', { name: 'Open Your files' })).toBeTruthy();
 });

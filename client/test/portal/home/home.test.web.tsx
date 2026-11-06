@@ -11,6 +11,7 @@ import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
 import { ACCESS, EMAIL, fakePortalApi, locationOf, meOf, orgOf, viewAsMe, type FakePortalApi } from '../../helpers/portal';
 import { analyticsFake, calendarBody, historyBody, holiday, note, run, townEvent } from '../analytics/fakes';
+import { NOVEMBER } from '../estimates/fakes';
 
 // P11 Home on web (home.md 2, spec 16.3): the last week chart with its key and scale, the history card's heatmap
 // that takes no focus, the upload links, and the honesty rule in the page as rendered. Synthetic days only.
@@ -53,12 +54,18 @@ const SATURDAY = (date: string): boolean => new Date(`${date}T00:00:00Z`).getUTC
 const DAYS = run('2024-09-01', '2026-11-04', (date) => Math.round((SATURDAY(date) ? 140 : 100) * (date >= '2026-10-26' ? 1.1 : 1)));
 const EVENTS = [holiday('2026-11-11', 'Veterans Day', 'us:veterans', 'Veterans Day'), townEvent({ start: '2026-11-07', title: 'Sample game' })];
 const FORECAST_WORDING = /\blikely\b|\branges?\b|forecast:\s*\d|\bpredict/i;
+const QUESTIONS = [
+  { id: 'gap_2026-05-12_2026-05-13', kind: 'gap', from: '2026-05-12', to: '2026-05-13', dayCount: 2 },
+  { id: 'gap_2026-04-02_2026-04-03', kind: 'gap', from: '2026-04-02', to: '2026-04-03', dayCount: 2 },
+];
 
 function portal(me: MeResponse, days: readonly DayRecord[] = DAYS, locations?: LocationSummary[]): FakePortalApi {
   const fake = analyticsFake({
     [`${PATH}/sales/history`]: historyBody(days),
     [`${PATH}/notes`]: { notes: [note({ startDate: '2026-11-06', detail: 'A rehearsal dinner.' })] },
     [CALENDAR]: calendarBody({ events: EVENTS }),
+    [`${PATH}/agent`]: { questions: QUESTIONS, activity: [] },
+    [`${PATH}/people-in-town?from=2026-11-01&to=2026-11-30`]: NOVEMBER,
   });
   return fakePortalApi({ me, org: orgOf(me.access.state === 'member' ? me.access.role : 'member', locations), fallback: fake });
 }
@@ -91,6 +98,13 @@ test('the last week chart prints its key and scale; the history heatmap is one p
   expect(within(history).getByRole('link', { name: 'See it in Analytics' }).getAttribute('href')).toBe('/locations/l1/analytics');
   expect(within(history).getByRole('link', { name: 'Upload sales history' }).getAttribute('href')).toBe('/locations/l1/sales/upload');
   expect(screen.getByRole('link', { name: 'Ask TownwiseAI' }).getAttribute('href')).toBe('/locations/l1/agent');
+  // The count of TownwiseAI's questions links to its page.
+  expect((await screen.findByRole('link', { name: '2 questions from TownwiseAI' })).getAttribute('href')).toBe('/locations/l1/agent');
+  // Who's in town sits in This month, its sources linked.
+  const month = screen.getByRole('heading', { name: 'This month in Hanover' }).parentElement?.parentElement;
+  if (month == null) throw new Error('no month card');
+  expect(await within(month).findByText('Fall term classes until Tue, Nov 17.')).toBeTruthy();
+  expect(within(month).getByRole('link', { name: 'registrar.dartmouth.edu' }).getAttribute('href')).toBe('https://registrar.dartmouth.edu/calendars/test');
   // Source links on the calendar open the source.
   expect(screen.getAllByRole('link', { name: 'Source: U.S. Office of Personnel Management' })[0]?.getAttribute('href'))
     .toBe('https://www.opm.gov/policy-data-oversight/pay-leave/federal-holidays/');
