@@ -357,6 +357,23 @@ The tuning chat (`docs/portal/tuning-chat.md`) is off until the API has `ANTHROP
 
 **Rotate** by seeding a new version with the same command and running `az containerapp revision restart`, then revoke the old key in the Console. **Turn it off** with `enable_chat = false` and apply, which removes the reference, the env var and the role assignment; the secret stays in Key Vault until you delete it.
 
+### 17. Enable the Places search
+
+The Places search on the access request (`api/README.md`, Places search) is off until the API has `GOOGLE_PLACES_API_KEY`. Off, `POST /api/places/autocomplete` and `POST /api/places/details` answer 503 `places_unavailable`, and the client shows the manual fields. Turning it on sends the text typed into the search, and the place picked, from the API to Google. Nothing Google answers is stored.
+
+1. **Create the key.** In Google Cloud console, in the project that holds the OAuth clients (step 11), enable **Places API (New)**. Under APIs & Services, Credentials, create an API key named `townwise-production` and restrict it to Places API (New) only. Set the API's quotas (APIs & Services, Places API (New), Quotas & System Limits) to what you can afford to pay for: they are the hard cap. A billing budget alert only warns. The API's own `townwise:places` limiter (300 calls an hour per account) is per person, not a cap on the account.
+2. **Seed it** without it reaching argv, history or the terminal (paste at the hidden prompt):
+
+   ```sh
+   cd "$(git rev-parse --show-toplevel)"
+   infra/scripts/set-secret.sh kv-townwise-2d2c15bf google-places-api-key
+   ```
+
+3. **Turn it on.** Add `enable_places = true` to `infra/terraform/production/terraform.tfvars`, then `terraform plan` and `terraform apply` from `infra/terraform/production`. The plan adds one role assignment (the app's identity reads `google-places-api-key` only) and changes the Container App (the `google-places-api-key` Key Vault reference and the `GOOGLE_PLACES_API_KEY` env var), which starts a new revision.
+4. **Check.** Signed in, typing a restaurant's name into the access request's search shows suggestions. A 503 `places_unavailable` with the key set means Google refused or failed: the API logs `townwise.places_failed` with Google's HTTP status.
+
+**Rotate** by seeding a new version with the same command and running `az containerapp revision restart`, then delete the old key in Google Cloud console. **Turn it off** with `enable_places = false` and apply, which removes the reference, the env var and the role assignment; the secret stays in Key Vault until you delete it.
+
 ## Logs
 
 Container Apps and Key Vault `AuditEvent` logs go to `log-townwise`, capped at 0.1 GB a day to stay inside the 5 GB monthly free ingestion. `AuditEvent` also goes to `sttwaudit2d2c15bf`, which has no cap, keeps it for a year, and admits only Azure Monitor, so spending the cap cannot blind the audit trail. When the cap is reached, ingestion stops until the daily reset, and the alert `townwise-log-daily-cap-reached` emails `alert_email`. A flood of rate-limited requests logs one line per `429`, which can spend the cap; excluding 429s from the request log is an upstream suggestion for the kit's `server-core`, not changed here.
@@ -390,6 +407,8 @@ Prices are from the Azure Retail Prices API (eastus), with a 730-hour month (2,6
 
 The tuning chat, when on (step 16), bills Anthropic directly, not Azure: at most the Console workspace's spend limit, and the API stops new turns once an organization reaches `TOWNWISE_CHAT_MONTHLY_BUDGET_USD` in a month.
 
+The Places search, when on (step 17), bills Google Cloud directly, not Azure: at most what the Places API (New) quotas allow.
+
 If the free tier refuses private access (step 3), M10 adds $0.0191 an hour ($13.94) plus 32 GiB at $0.115 per GB ($3.68): about $68 in total. If init-container resources turn out to be billed too, the Container Apps line rises by about half.
 
 ## Known risks
@@ -414,4 +433,4 @@ If the free tier refuses private access (step 3), M10 adds $0.0191 an hour ($13.
 3. If `lock_backup_retention` is true, stop the backups **30 days before** this step (`az containerapp job delete -n caj-townwise-backup -g rg-townwise-prod`) and wait for the newest dump to age out. Otherwise, remove the unlocked retention policy on the backup container, or the group deletion stops at the storage account: `az storage container immutability-policy delete --account-name sttwbackup2d2c15bf --container-name mongodump --if-match "$(az storage container immutability-policy show --account-name sttwbackup2d2c15bf --container-name mongodump --query etag -o tsv)"`. (A locked policy cannot be removed.)
 4. Delete `rg-townwise-prod` (`az group delete -n rg-townwise-prod`). This deletes the zone, the database (Terraform's `prevent_destroy` does not apply outside Terraform), and the environment, which takes `rg-townwise-prod-infra` with it. The Key Vault keeps purge protection in Azure, so its name stays reserved for 90 days.
 5. Delete `rg-townwise-bootstrap`, which holds the state account and the deploy identity, the budget (`az consumption budget delete --budget-name townwise-monthly`), and the three `townwise-*` Entra groups (`az ad group delete --group <name>`).
-6. Outside Azure: delete the Google OAuth clients and remove the guest users.
+6. Outside Azure: delete the Google OAuth clients and the Places API key, and remove the guest users.
