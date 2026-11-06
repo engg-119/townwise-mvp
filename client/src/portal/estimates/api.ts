@@ -61,6 +61,29 @@ export const peopleInTownSchema = z.object({
 });
 export type PeopleInTown = z.infer<typeof peopleInTownSchema>;
 
+/** U13B: the newest published forecast run, as the model card shows it (spec 14.4). */
+export const forecastRunSchema = z.object({
+  id: z.string(),
+  metric: z.literal('guests'),
+  model: z.object({ family: z.string(), version: z.string(), label: z.string() }),
+  trainingSource: z.literal('files_from_owner'),
+  trainedFrom: z.string(),
+  dataThrough: z.string(),
+  madeAt: z.string(),
+  frozen: z.boolean(),
+  interval: z.object({ level: z.literal(0.8), widened: z.boolean() }),
+  backtest: z.object({
+    from: z.string(), to: z.string(), weeks: z.number(), weeklyTypicalErrorPct: z.number(), weeksOver20Pct: z.number(),
+  }).nullable(),
+});
+export type ForecastRun = z.infer<typeof forecastRunSchema>;
+
+/** U13B: how the published days compared with what happened; null under 5 scored days. */
+export const liveAccuracySchema = z.object({
+  days: z.number(), inRange: z.number(), typicalErrorPct: z.number().nullable(), from: z.string(), to: z.string(),
+});
+export type LiveAccuracy = z.infer<typeof liveAccuracySchema>;
+
 export const estimatesAboutSchema = z.object({
   version: z.string(),
   card: z.object({
@@ -73,8 +96,8 @@ export const estimatesAboutSchema = z.object({
   }),
   location: z.object({ name: z.string(), town: z.object({ name: z.string(), state: z.string() }) }),
   today: z.object({ date: z.string(), weekday: z.enum(WEEKDAYS), timeZone: z.string(), approximate: z.boolean() }),
-  /** Null until staff publish a forecast for the location; the run state arrives with forecast runs. */
-  forecast: z.object({ run: z.null(), live: z.null() }),
+  /** Null until staff publish a forecast for the location (U13B). */
+  forecast: z.object({ run: forecastRunSchema.nullable(), live: liveAccuracySchema.nullable() }),
   calendar: z.object({ researched: z.boolean(), covers: z.object({ from: z.string(), to: z.string() }).nullable() }),
   people: z.object({
     headcountInputs: z.array(z.string()),

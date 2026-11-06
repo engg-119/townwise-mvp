@@ -81,6 +81,11 @@ export const AUDIT_ACTIONS: readonly { value: string; label: string }[] = [
   { value: 'note.deleted', label: 'Note deleted' },
   { value: 'chat.turn_completed', label: 'Tuning chat used' },
   { value: 'chat.conversation_deleted', label: 'Tuning chat deleted' },
+  // U13B, forecast runs.
+  { value: 'forecast.imported', label: 'Forecast imported' },
+  { value: 'forecast.published', label: 'Forecast published' },
+  { value: 'forecast.withdrawn', label: 'Forecast withdrawn' },
+  { value: 'forecast.deleted', label: 'Forecast deleted' },
   { value: 'view_as.started', label: 'View-as started' },
   { value: 'view_as.ended', label: 'View-as ended' },
   { value: 'people.signed_out_everywhere', label: 'Signed out everywhere' },
@@ -137,6 +142,15 @@ export function auditDetails(event: Pick<AuditEvent, 'action' | 'details'>): str
     }
     case 'view_as.ended':
       return END_REASON[text(d.endReason)] ?? '';
+    // U13B: the model version, the dates and the day count, never a figure.
+    case 'forecast.imported':
+    case 'forecast.published':
+    case 'forecast.withdrawn':
+    case 'forecast.deleted': {
+      const span = text(d.from) === '' || text(d.to) === '' ? '' : `${formatDate(text(d.from))} to ${formatDate(text(d.to))}`;
+      const days = count(d.dayCount) === '' ? '' : `${count(d.dayCount)} days`;
+      return [text(d.modelVersion) === '' ? '' : `Model ${text(d.modelVersion)}`, span, days].filter((part) => part !== '').join(', ');
+    }
     default:
       return '';
   }

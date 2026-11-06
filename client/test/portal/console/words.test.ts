@@ -25,6 +25,7 @@ test('the action filter covers every action the API records (api/src/stores/audi
     'location.created', 'location.updated', 'location.deleted', 'sales.uploaded', 'sales.deleted',
     'file.uploaded', 'file.deleted', 'file.raw_deleted',
     'note.created', 'note.updated', 'note.deleted', 'chat.turn_completed', 'chat.conversation_deleted',
+    'forecast.imported', 'forecast.published', 'forecast.withdrawn', 'forecast.deleted',
     'view_as.started', 'view_as.ended', 'people.signed_out_everywhere', 'person.deleted', 'staff_action.not_applied',
   ]);
 });
@@ -40,6 +41,7 @@ test.each<[string, Record<string, string | number | boolean | null>, string]>([
   ['view_as.ended', { endReason: 'replaced' }, 'Replaced by a new view-as'],
   ['chat.turn_completed', { locationId: 'l1', inputTokens: 1000, outputTokens: 200 }, ''],
   ['org.renamed', { from: 'A', to: 'B' }, ''],
+  ['forecast.published', { locationId: 'l1', modelVersion: 'v9', from: '2026-05-01', to: '2026-05-14', dayCount: 14 }, 'Model v9, May 1, 2026 to May 14, 2026, 14 days'],
 ])('details for %s', (action, details, expected) => {
   expect(auditDetails({ action, details })).toBe(expected);
 });
