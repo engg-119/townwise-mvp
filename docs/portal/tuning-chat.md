@@ -62,6 +62,8 @@ The essentials only. Patterns come from the Coffee Chats chat (streaming over a 
 
 ### Tools (read-only, plus one proposal)
 
+The tools live in `api/src/chat/tools/`, one file each, and `tools/registry.ts` holds their order. The order is frozen and append-only: stored conversations name their tool calls and the prompt cache keys on the tool list, so a tool is never renamed, removed or moved (`api/test/chat-tools.test.ts` pins the names). A new tool is appended in the PR that lands its data and is then sent on every request; while its data is missing it answers `{ "available": false, "reason": "..." }` instead of being left out.
+
 | Name | Input | Returns |
 |---|---|---|
 | `get_location_overview` | none | name, town, sales coverage (first and last date, day counts, missing days), calibration state, monthly totals for the last 24 months (month, days, guests, net sales in dollars) |

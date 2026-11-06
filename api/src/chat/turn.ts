@@ -13,8 +13,8 @@ import type { NoteContent } from '../stores/notes.ts';
 import type { StoredMessage } from '../stores/chat-conversations.ts';
 import type { ChatModel } from './model.ts';
 import { costMicroUsd, messageCostMicroUsd, tokensOf, type TokenCounts } from './pricing.ts';
-import { SYSTEM_PROMPT, TOOLS, type ToolName } from './prompt.ts';
-import { runTool, type ToolContext } from './tools.ts';
+import { SYSTEM_PROMPT } from './prompt.ts';
+import { runTool, toolNamed, TOOLS, type ToolContext } from './tools/registry.ts';
 
 export const CHAT_MODEL = 'claude-opus-5-5';
 export const MAX_TOKENS = 16_000;
@@ -36,7 +36,7 @@ export type FailureCode = 'internal' | 'provider_unavailable' | 'provider_overlo
 /** What the turn streams to the client between `conversation` and `done` or `error`. */
 export type TurnEvent =
   | { type: 'text'; data: { delta: string } }
-  | { type: 'tool'; data: { name: ToolName; state: 'running' | 'done' | 'error' } }
+  | { type: 'tool'; data: { name: string; state: 'running' | 'done' | 'error' } }
   | { type: 'proposal'; data: { proposal: NoteContent } };
 
 export type TurnResult =
@@ -62,8 +62,6 @@ export interface TurnInput {
   /** True when the organization's budget for the month is spent. Asked before every model call after the first. */
   readonly budgetSpent: () => Promise<boolean>;
 }
-
-const TOOL_NAMES: readonly string[] = TOOLS.map((tool) => tool.name);
 
 /** Every request: the frozen prefix (system, tools), then the conversation. */
 export function requestParams(messages: BetaMessageParam[]): BetaMessageStreamParams {
@@ -272,7 +270,8 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
           results.push(tooMany(block));
           continue;
         }
-        const name = TOOL_NAMES.includes(block.name) ? block.name as ToolName : null;
+        // Only a registered tool gets events; an unknown name is answered as an error without any.
+        const name = toolNamed(block.name) === undefined ? null : block.name;
         if (name !== null) input.emit({ type: 'tool', data: { name, state: 'running' } });
         const outcome = await runTool(input.tools, block);
         results.push(outcome.result);
