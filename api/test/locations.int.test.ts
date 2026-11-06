@@ -441,7 +441,10 @@ describe('a location’s Google place, with the Places search on', () => {
     expect(await errorOf(await patchAt(other.admin, locationId, body))).toEqual({ status: 404, error: 'not_found' });
     expect(await errorOf(await patchAt(other.admin, new Types.ObjectId().toHexString(), body))).toEqual({ status: 404, error: 'not_found' });
     expect(fake.calls).toHaveLength(0);
-    expect(await stored(locationId)).toMatchObject({ name: 'Their Room', placeId: null });
+    // The fixture writes no placeId field, so absent and null both mean the other organization set no place.
+    const row = await stored(locationId);
+    expect(row).toMatchObject({ name: 'Their Room' });
+    expect(row?.placeId ?? null).toBeNull();
   });
 
   it('under view-as both writes answer 403 view_as_read_only: nothing is written and Google is not asked', async () => {
