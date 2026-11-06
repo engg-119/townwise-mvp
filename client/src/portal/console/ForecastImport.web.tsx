@@ -11,13 +11,13 @@ import { Stack } from '../ui/layout';
 import { Select } from '../ui/Select';
 import { Heading, Small } from '../ui/text';
 import {
-  DRAFT_NOTE, importForecastRun, issuesOf, issueText, readRunFile, STATUS_LABEL, summaryText, type FileRead, type StaffRun,
+  DRAFT_NOTE, importForecastRun, issuesOf, issueText, readChosenFile, STATUS_LABEL, summaryText, type FileRead, type StaffRun,
 } from './forecasts';
 import { problemOf } from './problems';
 import type { OrgLocation, StaffOrg } from './schemas';
 
 // Import a forecast (spec 16.4 P21 Forecasts), web only: staff choose a location and a run file, the browser reads it
-// (File.text(), then the run file's shape), shows a summary to confirm, and only then sends it. The run lands as a
+// (refused unread over 2 MB, else File.text(), the size it will be sent at and the run file's shape), shows a summary to confirm, and only then sends it. The run lands as a
 // draft. Problems are listed by path and code in words, the browser's at once and the server's after sending; never a
 // value from the file. Native shows one line instead (ForecastImport.tsx).
 
@@ -65,7 +65,7 @@ export function ForecastImport(props: ForecastImportProps): React.JSX.Element {
   async function choose(chosen: File): Promise<void> {
     setDone(null);
     setServerIssues([]);
-    setRead(readRunFile(await chosen.text(), chosen.size));
+    setRead(await readChosenFile(chosen));
   }
 
   if (locations.length === 0) {

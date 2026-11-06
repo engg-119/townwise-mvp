@@ -156,14 +156,29 @@ test('the import shows a summary of the file before sending it, and sends it as 
   expect(await screen.findByRole('region', { name: 'Forecasts for Hanover' })).toBeTruthy();
 });
 
+test('an indented file over 256 KB on disk is read at the size it will be sent, and accepted', async () => {
+  await show([]);
+  // The exporter indents its JSON; the browser sends it compact, which is what the 256 KB limit is on.
+  const indented = `${JSON.stringify(FILE, null, 2)}${' '.repeat(300 * 1024)}`;
+  await choose(jsonFile(indented));
+  expect(screen.getByText('For Hanover: Model v9, guests, 3 days (2 open) from May 1, 2026 to May 4, 2026, trained to Apr 30, 2026, made May 1, 2026.')).toBeTruthy();
+});
+
 test('a file that isn’t a run file is refused in words, by path and code, without its values, and nothing is sent', async () => {
   const api = await show([]);
   await choose(jsonFile('not json'));
   expect(screen.getByText('The file isn’t a JSON file.')).toBeTruthy();
   await choose(jsonFile(JSON.stringify({ ...FILE, guestName: SENTINEL })));
   expect(screen.getByText('The file has a field Townwise doesn’t accept.')).toBeTruthy();
-  await choose(jsonFile(JSON.stringify(FILE), 300 * 1024));
+  // Over 256 KB as it would be sent, checked before the shape.
+  await choose(jsonFile(JSON.stringify({ ...FILE, padding: 'x'.repeat(260 * 1024) })));
   expect(screen.getByText('The file is larger than 256 KB.')).toBeTruthy();
+  // Over 2 MB on disk: refused without being read.
+  const huge = new File([JSON.stringify(FILE)], 'run.json', { type: 'application/json' });
+  Object.defineProperty(huge, 'size', { value: 3 * 1024 * 1024 });
+  Object.defineProperty(huge, 'text', { value: () => { throw new Error('read a file over 2 MB'); } });
+  await choose(huge);
+  expect(screen.getByText('The file is larger than 2 MB.')).toBeTruthy();
   expect(document.body.textContent).not.toContain(SENTINEL);
   expect(screen.queryByRole('button', { name: /^Import for/ })).toBeNull();
   expect(api.calls.filter((call) => call.method === 'POST')).toEqual([]);
@@ -182,10 +197,10 @@ test('the server’s issues read through the same words', async () => {
 
 describe('reading a run file', () => {
   test('summarizes a valid file and words every issue', () => {
-    const read = readRunFile(JSON.stringify(FILE), 1000);
+    const read = readRunFile(JSON.stringify(FILE));
     expect(read.ok).toBe(true);
     if (read.ok) expect(summaryText(read.summary)).toBe('Model v9, guests, 3 days (2 open) from May 1, 2026 to May 4, 2026, trained to Apr 30, 2026, made May 1, 2026.');
-    const bad = readRunFile(JSON.stringify({ ...FILE, days: [{ ...FILE.days[0], status: 'maybe' }] }), 1000);
+    const bad = readRunFile(JSON.stringify({ ...FILE, days: [{ ...FILE.days[0], status: 'maybe' }] }));
     expect(bad).toEqual({ ok: false, issues: [{ path: 'days[0].status', code: 'invalid_value' }] });
     expect(issueText({ path: 'x', code: 'something_new' })).toBe('x isn’t valid.');
   });

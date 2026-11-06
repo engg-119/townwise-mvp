@@ -59,8 +59,10 @@ export async function deleteForecastRun(api: ApiClient, orgId: string, runId: st
 
 // The run file, read in the browser.
 
-/** The import route's body limit. */
+/** The import route's body limit, on what is sent: the parsed file as compact JSON. */
 export const MAX_FILE_BYTES = 256 * 1024;
+/** A file larger than this on disk isn't read at all (the exporter's indented JSON is a few times its compact size). */
+export const MAX_READ_BYTES = 2 * 1024 * 1024;
 
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const guests = (max: number) => z.number().min(0).max(max);
@@ -125,15 +127,24 @@ function pathText(path: readonly PropertyKey[]): string {
   }, '');
 }
 
-/** Reads a run file's text: JSON, then the shape. The summary is what staff confirm before importing. */
-export function readRunFile(text: string, sizeBytes: number): FileRead {
-  if (sizeBytes > MAX_FILE_BYTES) return { ok: false, issues: [{ path: '', code: 'too_large' }] };
+/** Reads a chosen file: refused unread over 2 MB on disk, else its text through readRunFile. */
+export async function readChosenFile(file: Blob): Promise<FileRead> {
+  if (file.size > MAX_READ_BYTES) return { ok: false, issues: [{ path: '', code: 'too_large_to_read' }] };
+  return readRunFile(await file.text());
+}
+
+/**
+ * Reads a run file's text: JSON, its size as it will be sent (compact, so the exporter's indenting doesn't count),
+ * then the shape. The summary is what staff confirm before importing.
+ */
+export function readRunFile(text: string): FileRead {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
   } catch {
     return { ok: false, issues: [{ path: '', code: 'not_json' }] };
   }
+  if (new Blob([JSON.stringify(raw)]).size > MAX_FILE_BYTES) return { ok: false, issues: [{ path: '', code: 'too_large' }] };
   const parsed = runFileSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, issues: parsed.error.issues.slice(0, 50).map((issue) => ({ path: pathText(issue.path), code: issue.code })) };
   const dates = parsed.data.days.map((day) => day.date).sort();
@@ -163,6 +174,7 @@ export const DRAFT_NOTE = 'Saved as a draft; owners and TownwiseAI see it only a
 export const ISSUE_WORDS: Readonly<Record<string, string>> = {
   not_json: 'isn’t a JSON file',
   too_large: 'is larger than 256 KB',
+  too_large_to_read: 'is larger than 2 MB',
   unrecognized_keys: 'has a field Townwise doesn’t accept',
   invalid_type: 'is the wrong type, or missing',
   invalid_value: 'isn’t one of the accepted values',
