@@ -377,7 +377,23 @@ The Places search on the access request (`api/README.md`, Places search) is off 
 
 ### 18. Enable file storage
 
-Stored files (`api/README.md`, Files; `docs/portal/spec.md` 11A) are off until the API has `FILES_BLOB_ACCOUNT_URL`. Off, every files and imports route answers 503 `files_unavailable`, and the client offers the in-browser upload (P13), which sends only three values a day. Turn it on only in the release that also ships the drop screen and the privacy page's stored-files wording, because the privacy page's promise changes with it.
+Stored files (`api/README.md`, Files; `docs/portal/spec.md` 11A) are off until the API has `FILES_BLOB_ACCOUNT_URL`. Off, every files and imports route answers 503 `files_unavailable`, and the client offers the in-browser upload (P13), which sends only three values a day.
+
+**Wait for all of these before step 3.** Raw exports hold other people's personal data (diner names, phones, card details), so files go on only in one release with:
+
+- every stage of the file storage work through deletion (`docs/portal/spec.md` 11A.8): ZIP, PDF and Word reading, the AI column step, and the stage that deletes stored files;
+- the file storage client pieces and the drop screen (HistoryStep) that mounts them;
+- the privacy page's stored-files wording, because the privacy page's promise changes with it.
+
+Before step 3, check on `develop` that each of these deletion paths removes the `tw_files` and `tw_imports` rows it covers and both blobs of each file (`client-raw` and `client-clean`), that an organization's deletion also removes its `tw_upload_days` rows, and that each path has a passing test:
+
+- deleting a location's sales data;
+- deleting a location;
+- deleting an organization;
+- the daily sweeper (unfinished uploads after 24 hours, originals after 365 days, never-read drops after 30 days);
+- the staff purge of an organization's originals for a person's deletion request.
+
+If any is missing, stop: the 400-day lifecycle rule is the only other thing that would remove those files. `api/README.md` (Files) and spec 11A.8 say what is not in the build yet.
 
 1. **Apply.** `terraform plan` and `terraform apply` from `infra/terraform/production`. The plan adds the account `sttwfiles2d2c15bf`, its two containers, the custom role "Townwise client files", the two container-scoped assignments for the app's identity, the lifecycle rule, the diagnostic setting, the private DNS zone `privatelink.blob.core.windows.net` and its VNet link, the private endpoint `pe-townwise-files`, and the NSG rule `allow-apps-to-blob`. Storage is managed through Resource Manager only (`data_plane_available = false`), so the apply never needs the blob endpoint, which no laptop or runner can reach.
 2. **Wait about 10 minutes** for the role assignments to reach the data plane. Until then the API's blob calls are refused, which it answers as 503 `storage_unavailable`.
