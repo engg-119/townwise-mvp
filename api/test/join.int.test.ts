@@ -9,10 +9,13 @@ import { addInvite, addRequest, addSeat, auditEvents, createOrg, memberDoc } fro
 import {
   call, removeStaffFactor, signIn, signInStaff, STAFF_EMAIL, startTownwiseServer, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
+import { createCapturingTransport } from './helpers/mail.ts';
 
 let server: TownwiseTestServer;
+/** Nothing in this file may send an email (spec D14: only a request and its approval do). */
+const mail = createCapturingTransport();
 
-beforeAll(async () => { server = await startTownwiseServer(); });
+beforeAll(async () => { server = await startTownwiseServer({ mailTransport: mail }); });
 afterAll(async () => { await server.close(); });
 beforeEach(async () => { await server.redis.flushdb(); });
 afterEach(async () => { await removeStaffFactor(server); });
@@ -197,5 +200,12 @@ describe('audit', () => {
       const allowed: readonly string[] = AUDIT_DETAIL_KEYS[event.action as AuditAction];
       expect(Object.keys(event.details as object).every((key) => allowed.includes(key))).toBe(true);
     }
+  });
+});
+
+describe('email (spec D14)', () => {
+  it('joining, declining and every flow above send no email', async () => {
+    await server.mailer.idle();
+    expect(mail.sent).toEqual([]);
   });
 });

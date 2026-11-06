@@ -83,7 +83,7 @@ function NewOrgDialog(props: { onClose: () => void }): React.JSX.Element {
         maxLength={320}
         messages={messages.email === null ? [] : [messages.email]}
       />
-      <Small>{`They join as admin the next time they continue with Google with this address. We don’t send email yet. ${who}’s admins will see that Townwise staff created it.`}</Small>
+      <Small>{`They join as admin the next time they continue with Google with this address. Townwise doesn’t email invitations. ${who}’s admins will see that Townwise staff created it.`}</Small>
     </Dialog>
   );
 }

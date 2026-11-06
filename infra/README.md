@@ -183,6 +183,14 @@ When all four states show `Verified`, add `acs_domain_verified = true` to `terra
 
 DMARC is `v=DMARC1; p=reject; sp=reject; adkim=s;` from the start. Only Communication Services sends as `townwise.tech`, and it DKIM-signs with the two selector keys. **Before adding any other sender** (a newsletter tool, a help desk), make it DKIM-sign as `townwise.tech` with an aligned key, or its mail is rejected. Inbound mail is out of scope.
 
+**Turning on the API's emails.** The API sends two emails (`api/README.md`, Email): request received, and you're in. It sends them with its managed identity, which already holds the `Townwise email sender` role on this resource, so no Terraform change is needed. Email stays off while `EMAIL_ENDPOINT` is unset in `api/production.env`. Turn it on only in the release whose waiting, request and approval screens stop saying "We don't send email yet", together with the privacy page's Email section.
+
+1. **Set it.** In `api/production.env`, uncomment `EMAIL_ENDPOINT` and `EMAIL_SENDER` together. Set the endpoint to `terraform output -raw communication_service_endpoint` from `infra/terraform/production`; take it from the output, never guess it. Merge to `main`; the deploy starts a new revision.
+2. **Smoke send.** From a Google account the team owns (a Gmail address), send an access request, then approve it from the console. Each email should arrive within a minute. In Gmail's "Show original", check SPF pass, DKIM pass with `d=townwise.tech`, DMARC pass, the Reply-To header, and that no link was rewritten. Look at both emails in Gmail on the web (light and dark), Gmail on iOS, Apple Mail (dark) and Outlook on the web.
+3. **Logs.** `ContainerAppConsoleLogs | where Log has "townwise.email_"` shows one `townwise.email_sent` per email, with ids only and no address. A `townwise.email_failed` with code `upstream_status` and status 401 or 403 points at the token resource (`https://communication.azure.com`, `api/src/mail/acs.ts`) or the role assignment; code `token` means the identity endpoint refused.
+
+**Turn it off** by commenting out the two lines again and deploying. A failed send is never retried, so an email lost while it was failing is not sent later.
+
 ### 10. Real-cluster smoke test
 
 Run it after step 8, and **again after the kit's duplicate-key fix for DocumentDB lands** (it is being made on its own branch; deploy it first, because the test runs the deployed API image). Locally, five auth integration tests fail on `documentdb-local` until that fix: DocumentDB's duplicate-key errors carry no `keyPattern` or `keyValue`, so the kit cannot name the field, and the Google email conflict and concurrent first sign-in paths answer 500.

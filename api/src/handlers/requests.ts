@@ -53,5 +53,6 @@ export async function createAccessRequest(ctx: TownwiseContext, req: Request, re
     target: { type: 'request', id: requestId },
     details: { orgName: body.orgName, townId: town.townId, townName: town.name, hasPlace: body.placeId != null },
   });
+  ctx.mailer.send({ kind: 'request_received', orgName: body.orgName, town }, principal.email, { requestId });
   res.status(201).json(meResponse(await resolveAccess(ctx, authOf(req))));
 }

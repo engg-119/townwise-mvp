@@ -84,7 +84,7 @@ test('New organization (C5): checks its fields, creates it, then opens it with a
   await screen.findByRole('region', { name: 'Organizations' });
   fireEvent.click(screen.getByRole('button', { name: 'New organization' }));
   const dialog = screen.getByRole('dialog', { name: 'New organization' });
-  expect(within(dialog).getByText('They join as admin the next time they continue with Google with this address. We don’t send email yet. The organization’s admins will see that Townwise staff created it.')).toBeTruthy();
+  expect(within(dialog).getByText('They join as admin the next time they continue with Google with this address. Townwise doesn’t email invitations. The organization’s admins will see that Townwise staff created it.')).toBeTruthy();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Create organization' }));
   expect(within(dialog).getByText('Enter the organization’s name, 2 to 120 characters.')).toBeTruthy();
   expect(within(dialog).getByText('Enter an email address.')).toBeTruthy();

@@ -181,6 +181,7 @@ export async function approveRequest(ctx: TownwiseContext, req: Request, res: Re
       target: { type: 'member', id: seat.id },
       details: { email: requester.email, role: 'org_admin' },
     });
+    ctx.mailer.send({ kind: 'request_approved', orgName: org.name, town: request.town }, requester.email, { requestId, orgId });
   }
   res.status(200).json({ org: { id: org.id, name: org.name }, request: await reloaded(ctx, requestId) });
 }
