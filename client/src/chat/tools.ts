@@ -164,8 +164,8 @@ const TOOLS: Readonly<Record<string, ToolRow>> = {
       return range === null ? name : `${name} for ${range}`;
     },
     detail: (result) => {
-      if (result.available === false) return 'Townwise hasn’t researched this town’s calendar yet';
-      const events = count(result, 'events');
+      if (result.researched === false) return 'Townwise hasn’t researched this town’s calendar yet';
+      const events = count(result, 'eventCount');
       const hosts = sourcesOf(result).map((source) => source.host);
       const parts = [events === null ? null : events === 0 ? 'No events in this range' : plural(events, 'event', 'events'), ...hosts];
       const line = parts.filter((part): part is string => part !== null).join(' · ');
@@ -271,7 +271,7 @@ export function readsLine(ctx: ToolContext): string {
 const VIEW_TERMS: Readonly<Record<string, string>> = {
   from: 'From', to: 'To', firstDate: 'First day', lastDate: 'Last day', dayCount: 'Days', missingDays: 'Days missing',
   monthCount: 'Months', guestsDayCount: 'Days with guests', netSalesDayCount: 'Days with net sales', count: 'Notes',
-  available: 'Researched', town: 'Town', events: 'Events', periods: 'Periods', headcount: 'Headcount',
+  available: 'Researched', researched: 'Researched', town: 'Town', eventCount: 'Events', periods: 'Periods', headcount: 'Headcount',
 };
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;

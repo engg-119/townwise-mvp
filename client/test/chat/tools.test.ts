@@ -61,8 +61,16 @@ test('U13A’s rows: who is in town and the town calendar', () => {
     sources: [{ host: 'census.gov', url: 'https://census.gov/a' }, { host: 'dartmouth.edu', url: 'https://dartmouth.edu/a' }, { host: 'bls.gov', url: 'https://bls.gov/a' }],
   }), CTX).detail).toBe('Headcount range from 3 sources · census.gov · dartmouth.edu · bls.gov');
   expect(toolLine(step('get_town_calendar', 'running', range), CTX).sentence).toBe('Reading Hanover’s town calendar for Nov 1 to Nov 30, 2026');
-  expect(toolLine(step('get_town_calendar', 'done', range, { events: 2, sources: [{ host: 'dartmouth.edu', url: 'https://dartmouth.edu/c' }] }), CTX).detail)
-    .toBe('2 events · dartmouth.edu');
+  // get_town_calendar's result view as U13A's tool sends it: { from, to, town, researched, eventCount, sources }.
+  const calendar = { ...range, town: { name: 'Hanover', state: 'NH' }, researched: true, eventCount: 2, sources: [{ host: 'dartmouth.edu', url: 'https://dartmouth.edu/c' }] };
+  expect(toolLine(step('get_town_calendar', 'done', range, calendar), CTX).detail).toBe('2 events · dartmouth.edu');
+  expect(toolLine(step('get_town_calendar', 'done', range, { ...calendar, eventCount: 0, sources: [] }), CTX).detail).toBe('No events in this range');
+  expect(toolLine(step('get_town_calendar', 'done', range, { ...calendar, researched: false, eventCount: 0, sources: [] }), CTX).detail)
+    .toBe('Townwise hasn’t researched this town’s calendar yet');
+  expect(viewRows(range, calendar)).toEqual([
+    { term: 'From', value: 'Nov 1, 2026' }, { term: 'To', value: 'Nov 30, 2026' },
+    { term: 'Town', value: 'Hanover, NH' }, { term: 'Researched', value: 'Yes' }, { term: 'Events', value: '2' },
+  ]);
 });
 
 test('a tool this table doesn’t know yet still gets a card, in general words', () => {
