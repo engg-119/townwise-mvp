@@ -1161,7 +1161,7 @@ Chunked sessions, because the Container Apps ingress closes a request at 240 sec
 | An organization | 5 GiB stored (originals not deleted), 2 GiB uploaded a UTC day |
 | An upload session | 24 hours; after that it counts toward no cap above |
 | Reading | text streamed (the upload cap); workbooks and Word documents 10 MiB, 2,000 parts, 64 MiB a part, 200 MiB declared, 100 to 1 a part over 1 MiB, `word/document.xml` 50 MiB; PDFs 25 MiB, 1,000 pages, 20,000 text items a page; 2,000,000 rows, 200 columns, 10 sheets; 192 MiB of heap and 20 minutes a file |
-| ZIP archives | 20,000 entries and 2 GiB declared, every depth together; 100 to 1 for the archive and for each entry over 1 MiB; a 16 MiB central directory; a ZIP inside a ZIP opened from memory up to 50 MiB (100 MiB of them at once), one inside that never opened |
+| ZIP archives | 20,000 entries and 2 GiB declared, every depth together; 100 to 1 for the archive and for each entry over 1 MiB; a 16 MiB central directory; a ZIP inside a ZIP opened from memory up to 50 MiB (50 MiB of them at once), one inside that never opened |
 | AI column step | 2 calls a file, 5 a ZIP (at most one a family of its tables), 20 an import; `TOWNWISE_FILES_MONTHLY_BUDGET_USD` per organization per month (default 5; 0 turns it off) |
 
 ### 11A.3 Kinds

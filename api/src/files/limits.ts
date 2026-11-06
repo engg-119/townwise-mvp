@@ -67,8 +67,11 @@ export const ZIP_MAX_RATIO = 100;
 export const ZIP_RATIO_FLOOR_BYTES = MIB;
 /** A ZIP inside a ZIP is opened from memory up to this size; one inside that is never opened. */
 export const NESTED_ZIP_BYTES = 50 * MIB;
-/** Nested ZIPs held in memory at once, together. */
-export const NESTED_ZIP_TOTAL_BYTES = 100 * MIB;
+/**
+ * Nested ZIPs held in memory at once, together, for the whole read. Buffers live outside V8's heap, so the thread's
+ * resource limits do not bound them: this cap does, within the replica's memory.
+ */
+export const NESTED_ZIP_TOTAL_BYTES = 50 * MIB;
 /** Compressed bytes asked of storage at a time while an entry streams. */
 export const ZIP_PIECE_BYTES = MIB;
 /** Small reads (headers, small entries) are served from a window of this size. */

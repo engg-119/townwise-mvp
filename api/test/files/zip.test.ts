@@ -115,6 +115,19 @@ describe('entries', () => {
     ]);
   });
 
+  it('holds at most 50 MiB of ZIPs inside the ZIP in memory at once, keeping the rest unread', async () => {
+    const picture = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(26 * MIB)]);
+    const inner = zipOf([{ name: 'photo.png', data: picture, store: true }]);
+    const outcome = await read(zipOf([
+      { name: 'a.csv', data: `Date,Guests\n${day('2025-01-01', 1)}` }, { name: 'one.zip', data: inner, store: true }, { name: 'two.zip', data: inner, store: true },
+    ]));
+    expect(outcome.kind).toBe('days');
+    if (outcome.kind !== 'days') return;
+    expect(outcome.entries.map((row) => [row.path, row.outcome])).toEqual([
+      ['a.csv', null], ['one.zip', 'nothing_usable'], ['one.zip/photo.png', 'image'], ['two.zip', 'too_large_to_read'],
+    ]);
+  }, 30_000);
+
   it('reads PDF and Word entries as tables, joining the family of a CSV with the same header', async () => {
     const { pdfOf, row } = await import('../helpers/pdf.ts');
     const pdf = pdfOf([{ texts: [...row(700, [[72, 'Date'], [200, 'Guests']]), ...row(685, [[72, '2025-01-02'], [200, '4']])] }]);
