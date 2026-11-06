@@ -87,6 +87,9 @@ const YearGrid = memo(function YearGrid(props: {
     <div style={{ display: 'grid', gap: 6 }}>
       <div aria-hidden="true" style={{ ...mono, color: C.text2, position: 'sticky', left: 0, justifySelf: 'start' }}>{block.year}</div>
       <div aria-hidden="true" style={{ ...row, ...mono, height: 16 }}>
+        {/* Covers the row-header column, as the sticky weekday headers do, so month labels scrolled sideways never
+            draw into it. */}
+        <span style={{ gridColumnStart: 1, gridRowStart: 1, position: 'sticky', left: 0, zIndex: 1, background: C.ground }} />
         {block.months.map((month) => (
           <span key={month.month} style={{ gridColumnStart: month.col + 2, gridRowStart: 1, whiteSpace: 'nowrap' }}>
             {MONTHS_SHORT[month.month - 1]}
