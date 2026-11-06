@@ -560,6 +560,15 @@ run "dns_and_email" {
   }
 
   assert {
+    condition = (
+      azurerm_dns_mx_record.apex.name == "@" &&
+      toset([for record in azurerm_dns_mx_record.apex.record : "${record.preference} ${record.exchange}"]) == toset(["10 mx1.improvmx.com", "20 mx2.improvmx.com"]) &&
+      toset([for record in azurerm_dns_txt_record.apex.record : record.value]) == toset(["ms-domain-verification=mock", "v=spf1 include:spf.protection.outlook.com -all"])
+    )
+    error_message = "Mail to the apex goes to ImprovMX's two MX hosts for forwarding; the apex SPF still names only Communication Services."
+  }
+
+  assert {
     condition     = length(azurerm_communication_service_email_domain_association.main) == 0 && azurerm_email_communication_service_domain_sender_username.no_reply.name == "no-reply"
     error_message = "The sender is no-reply, and the domain is linked only after verification."
   }
