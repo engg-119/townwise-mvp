@@ -24,7 +24,7 @@ import {
 import { kindLabel, kindOfName, sanitizeName, sniff } from '../files/sniff.ts';
 import { ChunkLengthError, createStreamGate, fingerprintOf, receiveChunk } from '../files/upload.ts';
 import { currentEmail } from '../people.ts';
-import type { FileKind, FileRecord, FileResult, FileStatus } from '../stores/files.ts';
+import { BUSY_STATUSES, type FileKind, type FileRecord, type FileResult, type FileStatus } from '../stores/files.ts';
 import type { ImportQuestion, ImportRecord, ImportStatus } from '../stores/imports.ts';
 import { loadLocation, memberOf } from './locations.ts';
 import { actorOf } from './team.ts';
@@ -162,7 +162,7 @@ function fileView(member: MemberPrincipal, file: FileRecord, email: string, eta:
     canDownloadRaw: mayManage && rawAvailable,
     canDownloadClean: !viewAs && file.cleanBytes !== null,
     canDelete: mayManage,
-    canDeleteRaw: mayManage && rawAvailable && !['reading', 'waiting'].includes(file.status),
+    canDeleteRaw: mayManage && rawAvailable && !BUSY_STATUSES.includes(file.status),
   };
 }
 
@@ -552,7 +552,7 @@ export async function deleteRaw(ctx: TownwiseContext, req: Request, res: Respons
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const file = await loadFile(ctx, scope, location.id, req.params.fileId);
   mayManage(member, file);
-  if (['uploading', 'reading', 'waiting'].includes(file.status)) throw new AppError(409, 'file_busy', 'Townwise is still using this file');
+  if (BUSY_STATUSES.includes(file.status)) throw new AppError(409, 'file_busy', 'Townwise is still using this file');
   if (file.rawDeletedAt !== null) throw new AppError(410, 'raw_expired', 'The original was already deleted');
   await blobCall(ctx, 'delete_raw', () => blobs.deleteRaw(scope, refOf(file)), () => undefined);
   await ctx.stores.files.rawDeleted(scope, file.id, ctx.now(), kindLabel(file.kind));

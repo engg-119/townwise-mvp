@@ -369,6 +369,19 @@ describe('downloads and deletion', () => {
     expect(JSON.stringify(await auditEvents(server))).not.toContain('Zqxj');
   });
 
+  it('keeps the original of a file not yet read: 409 file_busy while it is stored or queued', async () => {
+    const locationId = await newLocation();
+    const stored = await uploadFile(server, locationId, team.member, 'unread.csv', csv(2, 'unread'));
+    const fileId = stored.body.file?.id ?? '';
+    expect(stored.body.file).toMatchObject({ status: 'stored', canDeleteRaw: false, canDelete: true });
+    expect(await errorOf(await call(server, filesPath(locationId, `/${fileId}/raw`), { session: team.member, method: 'DELETE' })))
+      .toEqual({ status: 409, error: 'file_busy' });
+    await server.connection.collection('tw_files').updateOne({ _id: new Types.ObjectId(fileId) }, { $set: { status: 'queued' } });
+    expect(await errorOf(await call(server, filesPath(locationId, `/${fileId}/raw`), { session: team.member, method: 'DELETE' })))
+      .toEqual({ status: 409, error: 'file_busy' });
+    expect(await fileDoc(fileId)).toMatchObject({ rawDeletedAt: null });
+  });
+
   it('deletes a file: original, cleaned copy and row, saying how many days stay', async () => {
     const locationId = await newLocation();
     const fileId = await seedReadFile(server, blobs, {

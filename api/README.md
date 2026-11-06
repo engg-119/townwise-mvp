@@ -320,7 +320,7 @@ All under `/api/org/locations/:locationId`, all 503 `files_unavailable` while st
 | `GET /files/:fileId` | member | | 200 `{ file, report }` | 400; 404 |
 | `GET /files/:fileId/raw?part=` | member (the uploader or an org admin); limiter `downloads` | `part` 0-based, 32 MiB each | 200, the original as an attachment | 400; 403 `forbidden`, `view_as_no_download`; 404; 409 `file_busy`; 410 `raw_expired` |
 | `GET /files/:fileId/clean` | member; limiter `downloads` | | 200, `text/csv` attachment | 403 `view_as_no_download`; 404 `not_found`, `no_clean_file` |
-| `DELETE /files/:fileId/raw` | member (the uploader or an org admin) | | 200 `{ deleted: true }` | 403; 404; 409 `file_busy`; 410 `raw_expired` |
+| `DELETE /files/:fileId/raw` | member (the uploader or an org admin) | | 200 `{ deleted: true }` | 403; 404; 409 `file_busy` (uploading, or not read yet: `stored`, `queued`, `reading`, `waiting`); 410 `raw_expired` |
 | `DELETE /files/:fileId` | member (the uploader or an org admin) | | 200 `{ deleted: true, daysKept }`; an unfinished upload is cancelled and its bytes given back | 403; 404; 409 `file_busy` (being read) |
 | `GET /imports/current` | member | | 200 `{ import }`: the active one, or one finished in the last 24 hours, or null | 404 |
 | `GET /imports/:importId` | member | | 200 `{ import }` | 400; 404 |
