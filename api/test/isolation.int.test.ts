@@ -199,6 +199,8 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
       'org.chat.proposal',
       'org.files.create', 'org.files.chunk', 'org.files.complete', 'org.files.list', 'org.files.get', 'org.files.raw', 'org.files.clean',
       'org.files.remove_raw', 'org.files.remove', 'org.imports.current', 'org.imports.get', 'org.imports.start', 'org.imports.answer',
+      // U3 stages 5 to 9.
+      'org.files.entries', 'org.originals.remove',
       'org.agent.get', 'org.agent.answer',
       'org.people.get', 'org.estimates.about',
       // U13B.
