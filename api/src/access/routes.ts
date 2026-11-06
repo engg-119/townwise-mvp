@@ -14,6 +14,7 @@ import { getLocationCalendar } from '../handlers/calendar.ts';
 import { deleteConversation, getChat, getConversation, postTurn } from '../handlers/chat.ts';
 import { actOnProposal } from '../handlers/chat-proposals.ts';
 import { deleteOrg, deletePerson, purgeOriginals } from '../handlers/deletion.ts';
+import { getEstimatesAbout, getPeopleInTown } from '../handlers/estimates.ts';
 import {
   answerImport, completeFile, createFile, currentImport, deleteFile, deleteLocationOriginals, deleteRaw, downloadClean, downloadRaw, getFile, getImport,
   listEntries, listFiles, putChunk, startImport,
@@ -210,6 +211,15 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.agent.answer', method: 'POST', path: '/org/locations/:locationId/agent/questions/:questionId', policy: 'member',
     bodyLimit: '1kb', handler: answerQuestion,
+  },
+  // U13A, estimates (spec 10.13): people in town and "How Townwise estimates". Reads with no limiter.
+  {
+    id: 'org.people.get', method: 'GET', path: '/org/locations/:locationId/people-in-town', policy: 'member',
+    bodyLimit: 'none', handler: getPeopleInTown,
+  },
+  {
+    id: 'org.estimates.about', method: 'GET', path: '/org/locations/:locationId/estimates/about', policy: 'member',
+    bodyLimit: 'none', handler: getEstimatesAbout,
   },
 
   { id: 'org.members.list', method: 'GET', path: '/org/members', policy: 'org_admin', bodyLimit: 'none', handler: listMembers },

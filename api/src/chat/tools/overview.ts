@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { calibrationOf } from '../../calibration.ts';
 import { townProfileOf } from '../../handlers/towns.ts';
+import { weekdayOf } from '../../time-zones.ts';
 import type { ChatTool } from './registry.ts';
 import { dollars, INVALID_INPUT, NO_INPUT, parseNoInput, viewOf } from './shared.ts';
 
@@ -18,7 +19,7 @@ const overviewResult = z.object({
 export const overviewTool: ChatTool<Record<string, never>> = {
   definition: {
     name: 'get_location_overview',
-    description: 'The location: its name, its town, today\'s date (UTC), its sales coverage (first and last date, day counts, days missing), its calibration state, and monthly totals for its 24 latest months with sales (days, guests, net sales in US dollars).',
+    description: 'The location: its name, its town, today\'s date and weekday in the town\'s time zone (and that time zone), its sales coverage (first and last date, day counts, days missing), its calibration state, and monthly totals for its 24 latest months with sales (days, guests, net sales in US dollars).',
     input_schema: NO_INPUT,
     eager_input_streaming: true,
   },
@@ -39,6 +40,9 @@ export const overviewTool: ChatTool<Record<string, never>> = {
       content: JSON.stringify({
         location: { name: location.name, town: { name: location.town.name, state: location.town.state } },
         today: tc.today,
+        // U13A: the town's local date, its weekday and the zone it is read in.
+        todayWeekday: weekdayOf(tc.today),
+        timeZone: tc.timeZone,
         coverage: {
           firstDate: coverage.firstDate, lastDate: coverage.lastDate, dayCount: coverage.dayCount,
           guestsDayCount: coverage.guestsDayCount, netSalesDayCount: coverage.netSalesDayCount, missingDays: coverage.missingDays,

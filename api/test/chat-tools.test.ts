@@ -10,7 +10,11 @@ import { inputViewOf, resultViewOf, TOOL_REGISTRY, TOOLS, toolNamed, type ToolVi
  * because stored conversations name their tool calls and the prompt cache keys on this list. The client's tool table
  * (client/src/chat/tools.ts), once it exists, lists the same names.
  */
-const FROZEN_NAMES = ['get_location_overview', 'get_sales_days', 'list_notes', 'get_town_profile', 'propose_note'];
+const FROZEN_NAMES = [
+  'get_location_overview', 'get_sales_days', 'list_notes', 'get_town_profile', 'propose_note',
+  // U13A.
+  'get_town_calendar', 'get_people_in_town',
+];
 
 describe('the tool registry', () => {
   it('holds the tools in their frozen order, each name once', () => {

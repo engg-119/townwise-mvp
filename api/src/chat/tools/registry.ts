@@ -11,16 +11,20 @@ import type { LocationRecord } from '../../stores/locations.ts';
 import type { NoteContent } from '../../stores/notes.ts';
 import { notesTool } from './notes.ts';
 import { overviewTool } from './overview.ts';
+import { peopleInTownTool } from './people-in-town.ts';
 import { proposeNoteTool } from './propose-note.ts';
 import { salesDaysTool } from './sales-days.ts';
+import { townCalendarTool } from './town-calendar.ts';
 import { townProfileTool } from './town-profile.ts';
 
 export interface ToolContext {
   readonly ctx: TownwiseContext;
   readonly scope: OrgScope;
   readonly location: LocationRecord;
-  /** The UTC date, YYYY-MM-DD. */
+  /** U13A: today in the location's town (time-zones.ts), YYYY-MM-DD. */
   readonly today: string;
+  /** U13A: the town's IANA time zone. */
+  readonly timeZone: string;
 }
 
 export type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue };
@@ -46,7 +50,7 @@ export interface ChatTool<I> {
   /** eager_input_streaming: inputs stream unbuffered and are validated here instead. */
   readonly definition: BetaTool;
   readonly invalidInput: string;
-  /** `today` is the UTC date, YYYY-MM-DD; only date rules read it. */
+  /** `today` is the town's local date, YYYY-MM-DD (U13A); only date rules read it. */
   parse(raw: unknown, today: string): I | null;
   run(tc: ToolContext, input: I): Promise<ToolRun>;
   inputView(input: I): ToolView | null;
@@ -67,6 +71,9 @@ export const TOOL_REGISTRY: readonly ChatTool<unknown>[] = [
   notesTool,
   townProfileTool,
   proposeNoteTool,
+  // U13A: the town calendar and people in town.
+  townCalendarTool,
+  peopleInTownTool,
 ];
 
 /** The tool definitions sent to the model, in registry order. */

@@ -79,8 +79,8 @@ function entry(role: 'user' | 'assistant', at: Date, parts: ChatPart[]): ChatMes
 }
 
 /**
- * `today` (UTC) re-reads each call's input, which was valid when it ran, through the same rules. `stateOf` says what
- * became of each proposal; without it every proposal reads as open.
+ * `today` (the day the caller's tools read dates against) re-reads each call's input, which was valid when it ran,
+ * through the same rules. `stateOf` says what became of each proposal; without it every proposal reads as open.
  */
 export function chatMessageViews(
   stored: readonly StoredMessage[], today: string, stateOf: (proposal: ShownProposal) => ProposalState = () => OPEN,

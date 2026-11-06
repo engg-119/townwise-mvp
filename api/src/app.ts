@@ -10,6 +10,8 @@ import { TURN_TIME_LIMIT_MS } from './chat/turn.ts';
 import { resolveTownwiseConfig, type ResolvedTownwiseConfig, type TownwiseConfig } from './config.ts';
 import type { FileBlobs } from './files/blobs.ts';
 import { OFF_MAILER, type Mailer } from './mail/mailer.ts';
+import { createPeopleInTownReader, type PeopleInTownReader } from './people-in-town/reader.ts';
+import { PEOPLE_DATA, type PeopleData } from './people-in-town/sources.ts';
 import type { PlacesClient } from './places/google.ts';
 import type { StaticMapSigner } from './places/static-map.ts';
 import { createTownwiseStores, type TownwiseStores } from './stores/index.ts';
@@ -40,6 +42,16 @@ export interface TownwiseDeps {
   readonly files?: FileBlobs | undefined;
   /** Wakes the file reader (files/worker.ts) after an import starts or a file is queued. */
   readonly fileWorker?: { nudge(): void } | undefined;
+  /** U13A: the researched headcount inputs; absent, the committed people-in-town/sources.ts. Tests pass synthetic ones. */
+  readonly peopleData?: PeopleData | undefined;
+}
+
+/**
+ * U13A: the readers TownwiseAI's tools and the estimates routes share (spec 13.2). The town calendar is pure public
+ * data, read straight from town-calendar.ts. Forecast runs add their reader here.
+ */
+export interface TownwisePorts {
+  readonly peopleInTown: PeopleInTownReader;
 }
 
 /** What every route handler receives besides the request and the principal. */
@@ -64,6 +76,8 @@ export interface TownwiseContext {
   /** Null while stored files are off. */
   readonly files: FileBlobs | null;
   readonly nudgeFiles: () => void;
+  /** U13A. */
+  readonly ports: TownwisePorts;
 }
 
 /**
@@ -71,6 +85,7 @@ export interface TownwiseContext {
  * `routes` is TOWNWISE_ROUTES in production; tests pass their own table to exercise the chain.
  */
 export function createTownwiseApi(deps: TownwiseDeps, routes: readonly TownwiseRoute[] = TOWNWISE_ROUTES): Router {
+  const stores = createTownwiseStores(deps.connection);
   const ctx: TownwiseContext = {
     config: resolveTownwiseConfig(deps.config),
     logger: deps.logger,
@@ -79,7 +94,7 @@ export function createTownwiseApi(deps: TownwiseDeps, routes: readonly TownwiseR
     auth: deps.auth,
     redis: deps.redis,
     now: deps.now,
-    stores: createTownwiseStores(deps.connection),
+    stores,
     chat: deps.chat ?? null,
     chatTurnTimeLimitMs: deps.chatTurnTimeLimitMs ?? TURN_TIME_LIMIT_MS,
     places: deps.places ?? null,
@@ -87,6 +102,7 @@ export function createTownwiseApi(deps: TownwiseDeps, routes: readonly TownwiseR
     placesMap: deps.placesMap ?? null,
     files: deps.files ?? null,
     nudgeFiles: () => { deps.fileWorker?.nudge(); },
+    ports: { peopleInTown: createPeopleInTownReader({ stores, data: deps.peopleData ?? PEOPLE_DATA }) },
   };
   // No router-wide body parser: each route mounts its own limit after the policy passes (spec 7.2 step 6).
   const router = express.Router();
