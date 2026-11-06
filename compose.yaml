@@ -1,5 +1,7 @@
-# Local development only: Mongo and Valkey (Redis-compatible) on localhost.
-# Image references are the kit's test pins (api/kit/mongo/test/images.ts, api/kit/redis/test/images.ts).
+# Local development only: Mongo, Valkey (Redis-compatible) and Azurite (blob storage, for stored files) on localhost.
+# Mongo and Valkey are the kit's test pins (api/kit/mongo/test/images.ts, api/kit/redis/test/images.ts); Azurite is
+# api/test/helpers/images.ts's pin. The API creates Azurite's two containers when it starts with
+# FILES_AZURITE_CONNECTION_STRING set (api/.env.example).
 services:
   mongo:
     image: mongo:8.0.32@sha256:d0d926f94df099bff534b7ee5b5986458131a22489dfff8664509af0c1e2ca9c
@@ -8,5 +10,11 @@ services:
   valkey:
     image: valkey/valkey:8.1.10-alpine@sha256:081c2f5cb575efc901aa80ff9cdbd1ec6a301682fd35e1ebb4b0990a4a4a8507
     ports: ["127.0.0.1:6379:6379"]
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.37.0@sha256:830430c1da1a2d537e08f3e6764dd1f5ae00cf0346bcaf625b968ec3f0971fd5
+    command: ["azurite-blob", "--blobHost", "0.0.0.0", "--blobPort", "10000", "--skipApiVersionCheck", "--location", "/data"]
+    ports: ["127.0.0.1:10000:10000"]
+    volumes: [azurite-data:/data]
 volumes:
   mongo-data:
+  azurite-data:

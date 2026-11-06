@@ -1,7 +1,7 @@
 import { Schema, trusted, type Connection, type Model, type Types } from 'mongoose';
 
 /** Each action and the only detail keys it may carry (spec 9.2). Never figures, note text, request notes,
- *  decision messages, file content or tokens. */
+ *  decision messages, file names, file content or tokens. */
 export const AUDIT_DETAIL_KEYS = {
   'access_request.created': ['orgName', 'townId', 'townName', 'hasPlace'],
   'access_request.approved': ['orgId'],
@@ -21,8 +21,12 @@ export const AUDIT_DETAIL_KEYS = {
   'location.created': ['name', 'townId'],
   'location.updated': ['name', 'townId'],
   'location.deleted': ['name', 'townId'],
-  'sales.uploaded': ['locationId', 'dayCount', 'inserted', 'replaced', 'firstDate', 'lastDate'],
+  'sales.uploaded': ['locationId', 'dayCount', 'inserted', 'replaced', 'firstDate', 'lastDate', 'fileId', 'via'],
   'sales.deleted': ['locationId', 'deletedDays'],
+  // Stored files (spec 11A): never a file name or anything from a file.
+  'file.uploaded': ['locationId', 'kind', 'sizeBytes'],
+  'file.deleted': ['locationId', 'kind', 'reason'],
+  'file.raw_deleted': ['locationId', 'kind'],
   'note.created': ['locationId', 'kind', 'startDate', 'endDate'],
   'note.updated': ['locationId', 'kind', 'startDate', 'endDate'],
   'note.deleted': ['locationId', 'kind', 'startDate', 'endDate'],
@@ -37,7 +41,7 @@ export const AUDIT_DETAIL_KEYS = {
 
 export type AuditAction = keyof typeof AUDIT_DETAIL_KEYS;
 export type AuditActorRole = 'superadmin' | 'org_admin' | 'member' | 'user';
-export type AuditTargetType = 'org' | 'member' | 'request' | 'location' | 'upload' | 'note' | 'user' | 'grant' | 'conversation';
+export type AuditTargetType = 'org' | 'member' | 'request' | 'location' | 'upload' | 'note' | 'user' | 'grant' | 'conversation' | 'file';
 export type AuditDetails = Record<string, string | number | boolean | null>;
 
 export interface AuditEventFields {

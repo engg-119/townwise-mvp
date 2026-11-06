@@ -11,6 +11,10 @@ import {
 } from '../handlers/admin.ts';
 import { deleteConversation, getChat, getConversation, postTurn } from '../handlers/chat.ts';
 import { deleteOrg, deletePerson } from '../handlers/deletion.ts';
+import {
+  answerImport, completeFile, createFile, currentImport, deleteFile, deleteRaw, downloadClean, downloadRaw, getFile, getImport,
+  listFiles, putChunk, startImport,
+} from '../handlers/files.ts';
 import { createLocation, deleteLocation, getOwnOrg, updateLocation } from '../handlers/locations.ts';
 import { declineInvite, getMe, joinInvite, recordWelcome } from '../handlers/me.ts';
 import { createNote, deleteNote, listNotes, updateNote } from '../handlers/notes.ts';
@@ -26,14 +30,18 @@ import { resolveAccess } from './resolve.ts';
 
 export interface TownwiseRoute {
   readonly id: string;
-  readonly method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  /** PUT only with bodyLimit 'stream'. */
+  readonly method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   /** Under /api. */
   readonly path: `/${string}`;
   readonly policy: Policy;
-  /** 'none' for GET and DELETE; '2kb' on the Places routes; '256kb' only on the upload route. */
-  readonly bodyLimit: 'none' | '2kb' | '32kb' | '256kb';
+  /**
+   * 'none' for GET and DELETE; '2kb' on the Places and files JSON routes; '256kb' only on the upload route; 'stream' only
+   * on the chunk route, whose handler reads the raw body itself after the policy has passed.
+   */
+  readonly bodyLimit: 'none' | '2kb' | '32kb' | '256kb' | 'stream';
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
-  readonly limiter?: 'uploads' | 'requests' | 'view-as' | 'chat' | 'places';
+  readonly limiter?: 'uploads' | 'requests' | 'view-as' | 'chat' | 'places' | 'files' | 'file_chunks' | 'downloads';
   readonly handler: (ctx: TownwiseContext, req: Request, res: Response, principal: Principal) => Promise<void>;
 }
 
@@ -107,6 +115,56 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.notes.remove', method: 'DELETE', path: '/org/locations/:locationId/notes/:noteId', policy: 'member',
     bodyLimit: 'none', handler: deleteNote,
+  },
+  // Stored files and imports (spec 10.11, 11A). imports/current is declared before imports/:importId.
+  {
+    id: 'org.files.create', method: 'POST', path: '/org/locations/:locationId/files', policy: 'member', bodyLimit: '2kb',
+    limiter: 'files', handler: createFile,
+  },
+  {
+    id: 'org.files.chunk', method: 'PUT', path: '/org/locations/:locationId/files/:fileId/chunks/:index', policy: 'member',
+    bodyLimit: 'stream', limiter: 'file_chunks', handler: putChunk,
+  },
+  {
+    id: 'org.files.complete', method: 'POST', path: '/org/locations/:locationId/files/:fileId/complete', policy: 'member',
+    bodyLimit: '2kb', handler: completeFile,
+  },
+  { id: 'org.files.list', method: 'GET', path: '/org/locations/:locationId/files', policy: 'member', bodyLimit: 'none', handler: listFiles },
+  {
+    id: 'org.files.get', method: 'GET', path: '/org/locations/:locationId/files/:fileId', policy: 'member', bodyLimit: 'none',
+    handler: getFile,
+  },
+  {
+    id: 'org.files.raw', method: 'GET', path: '/org/locations/:locationId/files/:fileId/raw', policy: 'member', bodyLimit: 'none',
+    limiter: 'downloads', handler: downloadRaw,
+  },
+  {
+    id: 'org.files.clean', method: 'GET', path: '/org/locations/:locationId/files/:fileId/clean', policy: 'member',
+    bodyLimit: 'none', limiter: 'downloads', handler: downloadClean,
+  },
+  {
+    id: 'org.files.remove_raw', method: 'DELETE', path: '/org/locations/:locationId/files/:fileId/raw', policy: 'member',
+    bodyLimit: 'none', handler: deleteRaw,
+  },
+  {
+    id: 'org.files.remove', method: 'DELETE', path: '/org/locations/:locationId/files/:fileId', policy: 'member',
+    bodyLimit: 'none', handler: deleteFile,
+  },
+  {
+    id: 'org.imports.current', method: 'GET', path: '/org/locations/:locationId/imports/current', policy: 'member',
+    bodyLimit: 'none', handler: currentImport,
+  },
+  {
+    id: 'org.imports.get', method: 'GET', path: '/org/locations/:locationId/imports/:importId', policy: 'member',
+    bodyLimit: 'none', handler: getImport,
+  },
+  {
+    id: 'org.imports.start', method: 'POST', path: '/org/locations/:locationId/imports/:importId/start', policy: 'member',
+    bodyLimit: '2kb', handler: startImport,
+  },
+  {
+    id: 'org.imports.answer', method: 'POST', path: '/org/locations/:locationId/imports/:importId/answer', policy: 'member',
+    bodyLimit: '2kb', handler: answerImport,
   },
   { id: 'org.chat.get', method: 'GET', path: '/org/locations/:locationId/chat', policy: 'member', bodyLimit: 'none', handler: getChat },
   {
@@ -194,9 +252,19 @@ const ROUTE_LIMITS = {
   // Both Places routes share it. A search is 10 to 15 debounced autocompletes and one details call, so this is about
   // 20 searches an hour; every call costs money, so a store outage denies.
   places: { name: 'townwise:places', limit: 300, windowSeconds: 3600, whenStoreDown: 'deny' },
+  // Stored files (spec 10.8). The daily byte cap, not these, bounds the volume; an outage allows.
+  files: { name: 'townwise:files', limit: 120, windowSeconds: 3600, whenStoreDown: 'allow' },
+  file_chunks: { name: 'townwise:file-chunks', limit: 1500, windowSeconds: 3600, whenStoreDown: 'allow' },
+  downloads: { name: 'townwise:downloads', limit: 300, windowSeconds: 3600, whenStoreDown: 'allow' },
 } as const;
 
-/** Boot refuses a duplicate method and path, a GET with a body limit, and staff_self on any other route. */
+/** The only route that may stream its body. */
+const STREAM_ROUTE = 'org.files.chunk';
+
+/**
+ * Boot refuses a duplicate method and path, a GET with a body limit, staff_self on any other route, a PUT without a
+ * streamed body, and a streamed body on any route but the chunk route.
+ */
 export function assertRouteTable(routes: readonly TownwiseRoute[]): void {
   const seen = new Set<string>();
   for (const route of routes) {
@@ -208,6 +276,10 @@ export function assertRouteTable(routes: readonly TownwiseRoute[]): void {
     }
     if (route.policy === 'staff_self' && (route.method !== VIEW_AS_END.method || route.path !== VIEW_AS_END.path)) {
       throw new ConfigError('routes', `${route.id} uses staff_self, which only POST /admin/view-as/end may use`);
+    }
+    if (route.method === 'PUT' && route.bodyLimit !== 'stream') throw new ConfigError('routes', `${route.id} is a PUT without a streamed body`);
+    if (route.bodyLimit === 'stream' && (route.id !== STREAM_ROUTE || route.method !== 'PUT')) {
+      throw new ConfigError('routes', `${route.id} streams its body, which only ${STREAM_ROUTE} may`);
     }
   }
 }
@@ -265,14 +337,15 @@ export function mountTownwiseRoutes(router: Router, routes: readonly TownwiseRou
     const chain: RequestHandler[] = [ctx.auth.requireAuth];
     if (route.method !== 'GET') chain.push(writes);
     chain.push(authorize(ctx, route));
-    if (route.bodyLimit !== 'none') chain.push(express.json({ limit: route.bodyLimit }));
+    if (route.bodyLimit !== 'none' && route.bodyLimit !== 'stream') chain.push(express.json({ limit: route.bodyLimit }));
     if (route.limiter !== undefined) chain.push(routeLimiter(route.limiter));
     chain.push(bound(async (req, res) => {
       const principal = principals.get(req);
       if (principal === undefined) throw new AppError(500, 'internal', 'Internal server error');
       await route.handler(ctx, req, res, principal);
     }));
-    const method = route.method === 'GET' ? 'get' : route.method === 'POST' ? 'post' : route.method === 'PATCH' ? 'patch' : 'delete';
+    const methods = { GET: 'get', POST: 'post', PUT: 'put', PATCH: 'patch', DELETE: 'delete' } as const;
+    const method = methods[route.method];
     router[method](route.path, ...chain);
   }
 }
