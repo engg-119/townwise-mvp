@@ -1,5 +1,6 @@
 import { formatCount, plural } from '../format';
 import { valueOf } from '../locations/sales';
+import type { EventKind } from './api';
 import { usual } from './baseline';
 import { classOf, closedDaysBetween, dayFlags, type DayClass, type DayContext } from './days';
 import { includedFn, type Filters, type Included } from './filters';
@@ -300,9 +301,16 @@ const NOTE_GROUPS: Readonly<Partial<Record<string, { key: string; label: string 
 };
 
 /**
- * Recurring kinds of day (event groups, your private events, openings) ranked by how far they move the metric
- * from usual. Each occurrence day in a checked year with a value, not closed and with a usual counts; a group needs
- * 2 such days, and under 4 it is rough.
+ * Only holiday and event groups are drivers. Term and season periods span months and count as regular days
+ * (days.ts), so their usual comes from the same days and their effect would be about 0%: context, not evidence.
+ */
+const DRIVER_KINDS: ReadonlySet<EventKind> = new Set(['holiday', 'event']);
+
+/**
+ * Recurring kinds of day (holiday and event groups, your private events, openings) ranked by how far they move the
+ * metric from usual. Each occurrence day in a checked year with a value, not closed and with a usual counts, even
+ * when the "Include in the numbers" boxes leave it out (they only take it out of the usual); a group needs 2 such
+ * days, and under 4 it is rough.
  */
 export function drivers(input: AnalyticsInput): Driver[] {
   const { filters, context, byDate } = input;
@@ -313,7 +321,9 @@ export function drivers(input: AnalyticsInput): Driver[] {
     else group.dates.add(date);
   };
   for (const [date, events] of context.eventsByDate) {
-    for (const event of events) if (event.group !== null) add(event.group, event.groupLabel ?? event.title, date);
+    for (const event of events) {
+      if (event.group !== null && DRIVER_KINDS.has(event.kind)) add(event.group, event.groupLabel ?? event.title, date);
+    }
   }
   for (const [date, notes] of context.notesByDate) {
     for (const note of notes) {

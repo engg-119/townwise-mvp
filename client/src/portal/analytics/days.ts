@@ -12,7 +12,7 @@ import { weekdayOf } from './words';
 // - A day is noted when a covering note does not close it (a private event, an opening, other, or a closure note
 //   with another effect).
 // - Holiday and event days are those with a `holiday` or an `event` on the calendar. Term and season periods span
-//   months, so they are context only and never make a day irregular.
+//   months, so they are context only: they never make a day irregular and are never a driver, even with a `group`.
 // - The class takes the first that applies: closed, noted, holiday, event, regular.
 
 export type DayClass = 'closed' | 'noted' | 'holiday' | 'event' | 'regular';

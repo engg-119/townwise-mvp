@@ -367,6 +367,19 @@ describe('biggest drivers', () => {
     expect(fewerYears).toEqual([]);
   });
 
+  test('term and season periods are context only, never drivers, even with a group', () => {
+    const terms = [
+      townEvent({ title: 'Fall term classes', start: '2024-09-11', end: '2024-11-19', kind: 'term', group: 'hanover-nh:classes:fall', groupLabel: 'fall term classes' }),
+      townEvent({ title: 'Fall term classes', start: '2025-09-15', end: '2025-11-18', kind: 'term', group: 'hanover-nh:classes:fall', groupLabel: 'fall term classes' }),
+      townEvent({ title: 'Fall term finals', start: '2025-11-21', end: '2025-11-25', kind: 'term', group: 'hanover-nh:finals:fall', groupLabel: 'fall term finals' }),
+      townEvent({ title: 'Fall term finals', start: '2024-11-21', end: '2024-11-25', kind: 'term', group: 'hanover-nh:finals:fall', groupLabel: 'fall term finals' }),
+      townEvent({ title: 'Summer season', start: '2025-06-01', end: '2025-08-31', kind: 'season', group: 'hanover-nh:summer', groupLabel: 'summer season' }),
+      townEvent({ title: 'Summer season', start: '2024-06-01', end: '2024-08-31', kind: 'season', group: 'hanover-nh:summer', groupLabel: 'summer season' }),
+    ];
+    const found = drivers(analyticsInput(days, dayContext([], [...events, ...terms]), defaultFilters(days)));
+    expect(found.map((each) => each.key)).toEqual(['us:thanksgiving']);
+  });
+
   test('keeps the top 8', () => {
     // Ten kinds of day, each seen twice, moving guests 5% to 50%.
     const many = Array.from({ length: 10 }, (_, index) => ['2024-01-04', '2025-01-04'].map((start) => holiday(
