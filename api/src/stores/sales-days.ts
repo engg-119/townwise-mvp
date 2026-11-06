@@ -9,6 +9,13 @@ export const SALES_DAYS_COLLECTION = 'tw_sales_days';
 
 /** A day with guests or net sales (spec 10.1 Coverage). */
 export const HAS_VALUE = { $or: [{ guests: { $ne: null } }, { netSalesCents: { $ne: null } }] };
+/**
+ * HAS_VALUE for a model's find filters, which are sanitized and would drop its operators: each operator copied and
+ * marked trusted(), so the two cannot drift.
+ */
+const HAS_VALUE_FILTER = {
+  $or: HAS_VALUE.$or.map((clause) => Object.fromEntries(Object.entries(clause).map(([field, op]) => [field, trusted({ ...op })]))),
+};
 
 export interface SalesDayFields {
   orgId: Types.ObjectId;
@@ -191,9 +198,7 @@ export function createSalesDayStore(connection: Connection): SalesDayStore {
       return (await SalesDay.exists(ofLocation(scope, locationId))) !== null;
     },
     async hasAnyForOrg(scope) {
-      // trusted(): the model's filters are sanitized, which would drop HAS_VALUE's operators.
-      const hasValue = { $or: [{ guests: trusted({ $ne: null }) }, { netSalesCents: trusted({ $ne: null }) }] };
-      return (await SalesDay.exists({ orgId: new Types.ObjectId(scope.orgId), ...hasValue })) !== null;
+      return (await SalesDay.exists({ orgId: new Types.ObjectId(scope.orgId), ...HAS_VALUE_FILTER })) !== null;
     },
     async removeForLocation(scope, locationId) {
       return (await SalesDay.deleteMany(ofLocation(scope, locationId))).deletedCount;
