@@ -15,6 +15,7 @@ import { createLocation, deleteLocation, getOwnOrg, updateLocation } from '../ha
 import { declineInvite, getMe, joinInvite } from '../handlers/me.ts';
 import { createNote, deleteNote, listNotes, updateNote } from '../handlers/notes.ts';
 import { getStaffActivity, leaveOrg, renameOrg } from '../handlers/org.ts';
+import { placesAutocomplete, placesDetails } from '../handlers/places.ts';
 import { createAccessRequest } from '../handlers/requests.ts';
 import { deleteSales, getSales, getSalesDays, uploadSales } from '../handlers/sales.ts';
 import { addMembers, changeRole, listMembers, removeMember } from '../handlers/team.ts';
@@ -29,10 +30,10 @@ export interface TownwiseRoute {
   /** Under /api. */
   readonly path: `/${string}`;
   readonly policy: Policy;
-  /** 'none' for GET and DELETE; '256kb' only on the upload route. */
-  readonly bodyLimit: 'none' | '32kb' | '256kb';
+  /** 'none' for GET and DELETE; '2kb' on the Places routes; '256kb' only on the upload route. */
+  readonly bodyLimit: 'none' | '2kb' | '32kb' | '256kb';
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
-  readonly limiter?: 'uploads' | 'requests' | 'view-as' | 'chat';
+  readonly limiter?: 'uploads' | 'requests' | 'view-as' | 'chat' | 'places';
   readonly handler: (ctx: TownwiseContext, req: Request, res: Response, principal: Principal) => Promise<void>;
 }
 
@@ -45,6 +46,14 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     limiter: 'requests', handler: createAccessRequest,
   },
   { id: 'towns.get', method: 'GET', path: '/towns/:townId', policy: 'signed_in', bodyLimit: 'none', handler: getTownProfile },
+  {
+    id: 'places.autocomplete', method: 'POST', path: '/places/autocomplete', policy: 'signed_in', bodyLimit: '2kb',
+    limiter: 'places', handler: placesAutocomplete,
+  },
+  {
+    id: 'places.details', method: 'POST', path: '/places/details', policy: 'signed_in', bodyLimit: '2kb',
+    limiter: 'places', handler: placesDetails,
+  },
 
   { id: 'org.get', method: 'GET', path: '/org', policy: 'member', bodyLimit: 'none', handler: getOwnOrg },
   { id: 'org.update', method: 'PATCH', path: '/org', policy: 'org_admin', bodyLimit: '32kb', handler: renameOrg },
@@ -180,6 +189,9 @@ const ROUTE_LIMITS = {
   'view-as': { name: 'townwise:view-as', limit: 20, windowSeconds: 3600, whenStoreDown: 'deny' },
   // docs/portal/tuning-chat.md section 2: every turn costs money, so a store outage denies.
   chat: { name: 'townwise:chat', limit: 60, windowSeconds: 3600, whenStoreDown: 'deny' },
+  // Both Places routes share it. A search is 10 to 15 debounced autocompletes and one details call, so this is about
+  // 20 searches an hour; every call costs money, so a store outage denies.
+  places: { name: 'townwise:places', limit: 300, windowSeconds: 3600, whenStoreDown: 'deny' },
 } as const;
 
 /** Boot refuses a duplicate method and path, a GET with a body limit, and staff_self on any other route. */

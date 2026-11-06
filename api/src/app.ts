@@ -8,6 +8,7 @@ import { mountTownwiseRoutes, TOWNWISE_ROUTES, type TownwiseRoute } from './acce
 import type { ChatModel } from './chat/model.ts';
 import { TURN_TIME_LIMIT_MS } from './chat/turn.ts';
 import { resolveTownwiseConfig, type ResolvedTownwiseConfig, type TownwiseConfig } from './config.ts';
+import type { PlacesClient } from './places/google.ts';
 import { createTownwiseStores, type TownwiseStores } from './stores/index.ts';
 
 export interface TownwiseDeps {
@@ -23,6 +24,8 @@ export interface TownwiseDeps {
   readonly chat?: ChatModel | undefined;
   /** A tuning chat turn's time limit in milliseconds; tests shorten it. Absent, TURN_TIME_LIMIT_MS (150 seconds). */
   readonly chatTurnTimeLimitMs?: number | undefined;
+  /** Google Places for the Places proxy; absent turns it off (main.ts builds it only when GOOGLE_PLACES_API_KEY is set). */
+  readonly places?: PlacesClient | undefined;
 }
 
 /** What every route handler receives besides the request and the principal. */
@@ -38,6 +41,8 @@ export interface TownwiseContext {
   /** Null while the tuning chat is off. */
   readonly chat: ChatModel | null;
   readonly chatTurnTimeLimitMs: number;
+  /** Null while the Places proxy is off. */
+  readonly places: PlacesClient | null;
 }
 
 /**
@@ -56,6 +61,7 @@ export function createTownwiseApi(deps: TownwiseDeps, routes: readonly TownwiseR
     stores: createTownwiseStores(deps.connection),
     chat: deps.chat ?? null,
     chatTurnTimeLimitMs: deps.chatTurnTimeLimitMs ?? TURN_TIME_LIMIT_MS,
+    places: deps.places ?? null,
   };
   // No router-wide body parser: each route mounts its own limit after the policy passes (spec 7.2 step 6).
   const router = express.Router();
