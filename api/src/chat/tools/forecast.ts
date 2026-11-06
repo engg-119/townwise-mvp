@@ -1,15 +1,16 @@
 // get_forecast (U13B, spec 14.4): Townwise's published forecast of guests for a range of at most 31 days, read through
 // ctx.ports.forecasts, so a draft or withdrawn run never reaches the model. Each day and whole week comes as an 80%
 // range (low rounded down, high up, mid to the nearest guest, so the model never repeats a falsely exact figure),
-// with the reasons the run recorded in code-made words, the model's version, training range and made-at date, its
-// backtest and live accuracy with misses, and how past days compared with what happened. With no published forecast
+// with the reasons the run recorded in code-made words, and for each run the days came from its version, training
+// range, made-at date and its own accuracy (backtest, and live over the days it supplied, misses included), so a
+// newer run is never credited with an older one's days; and how past days compared with what happened. With no published forecast
 // it says so, and what to use instead. The model, its features, its training rows, the run file and staff ids never
 // reach the API, so they cannot reach the model either.
 import { z } from 'zod';
 
 import { daysBetween, EARLIEST_DATE, isoDate, utcDay } from '../../dates.ts';
 import { MODEL_CARD } from '../../estimates/about.ts';
-import { MAX_FORECAST_RANGE_DAYS, type ForecastRunView, type ForecastWindow } from '../../forecasts/reader.ts';
+import { MAX_FORECAST_RANGE_DAYS, type ForecastWindow, type ForecastWindowRun } from '../../forecasts/reader.ts';
 import type { ChatTool } from './registry.ts';
 import { DATE, viewOf } from './shared.ts';
 
@@ -22,7 +23,7 @@ export const NOT_COVERED = 'Townwise has no forecast for these dates.';
 export const USE_INSTEAD = 'the location\'s history and the town calendar';
 export const INTERVAL_MEANING = 'About 8 in 10 days should land inside the range.';
 
-const TRAINED_ON: Readonly<Record<ForecastRunView['trainingSource'], string>> = {
+const TRAINED_ON: Readonly<Record<ForecastWindowRun['trainingSource'], string>> = {
   files_from_owner: 'sales exports the owner sent Townwise',
 };
 
@@ -38,10 +39,12 @@ const low = (value: number) => Math.floor(value);
 const mid = (value: number) => Math.round(value);
 const high = (value: number) => Math.ceil(value);
 
-function modelOf(run: ForecastRunView) {
+/** One run with its own accuracy: the backtest, and live over the passed days it supplied. */
+function modelOf(run: ForecastWindowRun) {
   return {
     label: run.model.label, version: run.model.version, trainedOn: TRAINED_ON[run.trainingSource], trainedFrom: run.trainedFrom,
-    dataThrough: run.dataThrough, madeAt: run.madeAt, frozen: run.frozen,
+    dataThrough: run.dataThrough, madeAt: run.madeAt, frozen: run.frozen, rangesWidened: run.interval.widened,
+    accuracy: { backtest: run.backtest, live: run.live },
   };
 }
 
@@ -61,11 +64,7 @@ export function forecastContent(window: ForecastWindow): Record<string, unknown>
     metric: 'guests',
     model: newest === undefined ? null : modelOf(newest),
     ...(window.runs.length > 1 ? { earlierModels: window.runs.slice(1).map(modelOf) } : {}),
-    interval: { level: 0.8, meaning: INTERVAL_MEANING, widened: newest?.interval.widened ?? false },
-    accuracy: {
-      backtest: newest?.backtest ?? null,
-      live: window.live,
-    },
+    interval: { level: 0.8, meaning: INTERVAL_MEANING },
     days: window.days.map((day) => ({
       date: day.date, weekday: day.weekday, status: day.status,
       low: day.low === null ? null : low(day.low), mid: day.mid === null ? null : mid(day.mid), high: day.high === null ? null : high(day.high),
@@ -94,7 +93,7 @@ const forecastResult = z.object({
 export const forecastTool: ChatTool<ForecastRange> = {
   definition: {
     name: 'get_forecast',
-    description: 'Townwise\'s published forecast of guests per day for a date range of at most 31 days (both ends included, starting at most 92 days before today), with an 80% range for each day and for whole weeks, the reasons the model recorded, the model\'s version, training range and made-at date, its accuracy in backtests and so far, and how past forecast days compared with what happened (actual and inRange). A booked day is a private buyout with no walk-in range. vsBaselinePct is set only when the model recorded its usual level for the day. Says when no forecast exists, and what to use instead.',
+    description: 'Townwise\'s published forecast of guests per day for a date range of at most 31 days (both ends included, starting at most 92 days before today), with an 80% range for each day and for whole weeks, the reasons the model recorded, each model\'s version, training range and made-at date with its own accuracy in backtests and so far (over the days it supplied), and how past forecast days compared with what happened (actual and inRange). A booked day is a private buyout with no walk-in range. vsBaselinePct is set only when the model recorded its usual level for the day. Says when no forecast exists, and what to use instead.',
     input_schema: {
       type: 'object',
       properties: { from: DATE, to: DATE },

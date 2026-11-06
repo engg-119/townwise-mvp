@@ -53,7 +53,7 @@ export function runLines(run: ForecastRun): string[] {
   return lines;
 }
 
-/** U13B: how the published days compared with what happened, misses included; nothing is scored under 5 days. */
+/** U13B: how this run's own days compared with what happened (never an older run's), misses included; none under 5 days. */
 export function liveLine(live: LiveAccuracy | null): string {
   if (live === null) return 'Not scored yet: Townwise scores it once 5 of its days have sales.';
   const miss = live.typicalErrorPct === null ? '' : `; typical miss ${pct(live.typicalErrorPct)}`;

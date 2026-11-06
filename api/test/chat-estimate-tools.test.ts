@@ -239,9 +239,12 @@ describe('get_forecast (U13B)', () => {
     const { parsed, content } = await run('get_forecast', { from: '2026-11-02', to: '2026-11-04' }, tc);
     expect(parsed).toMatchObject({
       available: true, metric: 'guests',
-      model: { label: 'Townwise demand model v9', version: 'v9', trainedOn: 'sales exports the owner sent Townwise', trainedFrom: '2025-01-01', dataThrough: '2026-10-31', madeAt: '2026-11-01', frozen: true },
-      interval: { level: 0.8, meaning: 'About 8 in 10 days should land inside the range.', widened: true },
-      accuracy: { backtest: { weeks: 10, weeklyTypicalErrorPct: 10, weeksOver20Pct: 1 }, live: null },
+      model: {
+        label: 'Townwise demand model v9', version: 'v9', trainedOn: 'sales exports the owner sent Townwise', trainedFrom: '2025-01-01',
+        dataThrough: '2026-10-31', madeAt: '2026-11-01', frozen: true, rangesWidened: true,
+        accuracy: { backtest: { weeks: 10, weeklyTypicalErrorPct: 10, weeksOver20Pct: 1 }, live: null },
+      },
+      interval: { level: 0.8, meaning: 'About 8 in 10 days should land inside the range.' },
       notCovered: [{ from: '2026-11-04', to: '2026-11-04' }],
     });
     const days = parsed.days as Record<string, unknown>[];
@@ -253,6 +256,32 @@ describe('get_forecast (U13B)', () => {
     expect(resultViewOf('get_forecast', ok(content))).toEqual({
       available: true, modelVersion: 'v9', madeAt: '2026-11-01', dataThrough: '2026-10-31', days: 2, notCovered: 1,
     });
+  });
+
+  it('gives each run its own live accuracy, so a newer run is never credited with an older run’s days', async () => {
+    const OLDER = '000000000000000000000011';
+    const NEWER = '000000000000000000000012';
+    const runs = [
+      publishedRun({ id: NEWER, model: { family: 'hybrid_linear_xgboost', version: 'v10', notebookCommit: '0000000' }, dataThrough: '2026-11-01', madeAt: '2026-11-02', backtest: null }),
+      publishedRun({ id: OLDER, dataThrough: '2026-10-25', madeAt: '2026-10-26' }),
+    ];
+    const olderDays = ['2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30', '2026-10-31', '2026-11-01'];
+    const rows = [
+      ...olderDays.map((date) => dayRow(date, { runId: OLDER, low: 80, mid: 100, high: 120 })),
+      ...['2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05'].map((date) => dayRow(date, { runId: NEWER })),
+    ];
+    const forecasts = { published: () => Promise.resolve(runs), rows: () => Promise.resolve(rows) } as unknown as ForecastStore;
+    const salesDays = { days: () => Promise.resolve(olderDays.map((date) => ({ date, guests: date === '2026-10-30' ? 130 : 100, netSalesCents: 1 }))) } as unknown as SalesDayStore;
+    const reader = createForecastReader({ stores: { forecasts, salesDays } });
+    const { parsed } = await run('get_forecast', { from: '2026-10-27', to: '2026-11-05' }, context({ forecasts: reader }));
+    expect(parsed.accuracy).toBeUndefined();
+    expect(parsed.model).toMatchObject({ version: 'v10', madeAt: '2026-11-02', accuracy: { backtest: null, live: null } });
+    expect(parsed.earlierModels).toEqual([expect.objectContaining({
+      version: 'v9', madeAt: '2026-10-26',
+      accuracy: expect.objectContaining({ live: { days: 6, inRange: 5, typicalErrorPct: 4.8, from: '2026-10-27', to: '2026-11-01' } }) as unknown,
+    })]);
+    // The model card's read: the newest run, with none of the older run's days.
+    expect(await reader.latest({ orgId: '000000000000000000000003' } as unknown as OrgScope, location().id, TODAY)).toMatchObject({ run: { id: NEWER }, live: null });
   });
 
   it('gives a busier-or-quieter percentage only where the run recorded a usual level', async () => {

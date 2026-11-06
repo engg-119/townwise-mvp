@@ -196,7 +196,7 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
   let first: string;
 
   it('says no forecast while none is published, and a draft stays invisible', async () => {
-    const none = { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], notCovered: [{ from: '2026-05-01', to: '2026-05-14' }], live: null };
+    const none = { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], notCovered: [{ from: '2026-05-01', to: '2026-05-14' }] };
     expect(await forecast()).toEqual(none);
     first = await staffImport(RUN);
     expect(await forecast()).toEqual(none);
@@ -226,7 +226,8 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
       ['2026-05-01', '2026-05-03', 300, 300, true], ['2026-05-04', '2026-05-10', 600, null, null], ['2026-05-11', '2026-05-14', 300, null, null],
     ]);
     // Six scored days, one missed: |30| over 630 guests.
-    expect(body.live).toEqual({ days: 6, inRange: 5, typicalErrorPct: 4.8, from: '2026-05-01', to: '2026-05-07' });
+    expect(body.runs[0]?.live).toEqual({ days: 6, inRange: 5, typicalErrorPct: 4.8, from: '2026-05-01', to: '2026-05-07' });
+    expect((await about()).forecast.live).toEqual(body.runs[0]?.live);
   });
 
   it('uses the newest published run whose data ends before each day, and weeks only wholly from one run', async () => {
@@ -234,6 +235,9 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
     await staffChange(later, 'publish');
     const body = await forecast();
     expect(body.runs.map((run) => run.id)).toEqual([later, first]);
+    // Each run is scored over its own days: every scored day (May 1 to 7) came from the first run, so the later one
+    // has no live accuracy yet and is never credited with the first one's hits and misses.
+    expect(body.runs.map((run) => run.live?.days ?? null)).toEqual([null, 6]);
     expect(body.days.filter((day) => day.runId === later).map((day) => day.date)).toEqual([
       '2026-05-08', '2026-05-09', '2026-05-10', '2026-05-11', '2026-05-12', '2026-05-13', '2026-05-14',
     ]);
@@ -243,10 +247,10 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
     expect(body.weeks.map((week) => [week.from, week.runId])).toEqual([['2026-05-01', first], ['2026-05-11', later]]);
     const card = await about();
     expect(card.forecast.run).toMatchObject({ id: later, dataThrough: '2026-05-07', madeAt: '2026-05-08', interval: { level: 0.8, widened: true } });
-    expect(card.forecast.live).toMatchObject({ days: 6, inRange: 5 });
+    expect(card.forecast.live).toBeNull();
     await staffChange(later, 'withdraw');
     expect((await forecast()).runs.map((run) => run.id)).toEqual([first]);
-    expect((await about()).forecast.run).toMatchObject({ id: first });
+    expect((await about()).forecast).toMatchObject({ run: { id: first }, live: { days: 6, inRange: 5 } });
   });
 
   it('a range the forecast doesn’t reach says which days it doesn’t cover', async () => {

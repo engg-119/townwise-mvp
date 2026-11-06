@@ -3,8 +3,9 @@
 // reaches an owner, view-as or TownwiseAI. For each date it uses the newest published run whose model saw no sales on
 // or after that date (dataThrough before it), so no forecast is ever shown for a day its model saw. Weeks come only
 // from a run that supplied every day of the week; they are the run's own week rows, never sums of days. Past days
-// carry the stored guests and whether they landed in the range; live accuracy is scored over every published day
-// that has passed. Numbers are raw, as stored; callers round for display. It logs nothing and stores nothing.
+// carry the stored guests and whether they landed in the range. Live accuracy is scored per run, over the passed days
+// that run supplied, so one run is never credited with another's hits and misses. Numbers are raw, as stored; callers
+// round for display. It logs nothing and stores nothing.
 import type { OrgScope } from '../access/policy.ts';
 import { daysBetween, utcDay } from '../dates.ts';
 import type { ForecastRow, ForecastRunRecord, ForecastStore } from '../stores/forecasts.ts';
@@ -30,6 +31,12 @@ export interface ForecastRunView {
   frozen: boolean;
   interval: { level: 0.8; widened: boolean };
   backtest: ForecastRunRecord['backtest'];
+}
+
+/** A run in a forecast read, with its own live accuracy. */
+export interface ForecastWindowRun extends ForecastRunView {
+  /** Over the passed days this run supplied (and no newer run did), misses included; null under 5 scored days. */
+  live: LiveAccuracy | null;
 }
 
 export interface ForecastDayView {
@@ -70,19 +77,17 @@ export interface ForecastWindow {
   /** False when no published run covers any day of the range. */
   available: boolean;
   reason: 'no_published_forecast' | 'not_covered' | null;
-  /** The runs the days came from, newest first. */
-  runs: ForecastRunView[];
+  /** The runs the days came from, newest first, each with its own live accuracy. */
+  runs: ForecastWindowRun[];
   days: ForecastDayView[];
   weeks: ForecastWeekView[];
   notCovered: { from: string; to: string }[];
-  /** Over every published day that has passed, misses included; null under 5 scored days. */
-  live: LiveAccuracy | null;
 }
 
 export interface ForecastReader {
   /** `range`: inclusive YYYY-MM-DD days, at most 31 (callers check). `today`: the first day with no actual yet. */
   window(scope: OrgScope, location: LocationRecord, range: { from: string; to: string }, today: string): Promise<ForecastWindow>;
-  /** The newest published run (by dataThrough) and live accuracy, for the model card; null when none is published. */
+  /** The newest published run (by dataThrough) and its own live accuracy, for the model card; null when none is published. */
   latest(scope: OrgScope, locationId: string, today: string): Promise<{ run: ForecastRunView; live: LiveAccuracy | null } | null>;
 }
 
@@ -133,7 +138,7 @@ function spans(dates: readonly string[]): { from: string; to: string }[] {
 export function createForecastReader(deps: { stores: { forecasts: ForecastStore; salesDays: Pick<SalesDayStore, 'days'> } }): ForecastReader {
   const { forecasts, salesDays } = deps.stores;
 
-  /** Every published run, every chosen day with its actual (before today), and the overall live accuracy. */
+  /** Every published run, every chosen day with its actual (before today), and each run's live accuracy over its own days. */
   async function load(scope: OrgScope, locationId: string, today: string) {
     const runs = await forecasts.published(scope, locationId);
     const rows = await forecasts.rows(scope, locationId, runs.map((run) => run.id));
@@ -149,16 +154,18 @@ export function createForecastReader(deps: { stores: { forecasts: ForecastStore;
     const scored = (date: string, row: ForecastRow): ScoredDay => ({
       date, status: row.status ?? 'open', low: row.low, mid: row.mid, high: row.high, actual: actuals.get(date) ?? null,
     });
-    const live = liveAccuracy([...chosen].map(([date, { row }]) => scored(date, row)));
-    return { runs, rows, chosen, actuals, scored, live };
+    const daysOf = new Map<string, ScoredDay[]>();
+    for (const [date, { run, row }] of chosen) daysOf.set(run.id, [...(daysOf.get(run.id) ?? []), scored(date, row)]);
+    const liveOf = (runId: string): LiveAccuracy | null => liveAccuracy(daysOf.get(runId) ?? []);
+    return { runs, rows, chosen, actuals, scored, liveOf };
   }
 
   return {
     async window(scope, location, range, today) {
-      const { runs, rows, chosen, actuals, scored, live } = await load(scope, location.id, today);
+      const { runs, rows, chosen, actuals, scored, liveOf } = await load(scope, location.id, today);
       const dates = eachDay(range.from, range.to);
       if (runs.length === 0) {
-        return { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], notCovered: spans(dates), live: null };
+        return { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], notCovered: spans(dates) };
       }
       const calendarOn = townCalendarOf(location.town.townId);
       const days: ForecastDayView[] = [];
@@ -192,17 +199,16 @@ export function createForecastReader(deps: { stores: { forecasts: ForecastStore;
       return {
         available: days.length > 0,
         reason: days.length > 0 ? null : 'not_covered',
-        runs: runs.filter((run) => used.has(run.id)).map(runView),
+        runs: runs.filter((run) => used.has(run.id)).map((run) => ({ ...runView(run), live: liveOf(run.id) })),
         days,
         weeks,
         notCovered: spans(dates.filter((date) => !chosen.has(date))),
-        live,
       };
     },
     async latest(scope, locationId, today) {
-      const { runs, live } = await load(scope, locationId, today);
+      const { runs, liveOf } = await load(scope, locationId, today);
       const [newest] = runs;
-      return newest === undefined ? null : { run: runView(newest), live };
+      return newest === undefined ? null : { run: runView(newest), live: liveOf(newest.id) };
     },
   };
 }
