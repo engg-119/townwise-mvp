@@ -115,7 +115,7 @@ Not taken, and why:
 | D11 | The column mapper never renders a cell, except the distinct values of a column the user names as the location column. | Names stay off the screen and out of screenshots. | [CONFIRM: no cell contents in the mapper] |
 | D12 | Calibration states in v1: no sales data, and not calibrated. No day threshold is shown. | No fake output. The homepage says the history needed is still being tested. | [CONFIRM: lead default, honest states] [DECISION NEEDED: minimum days of history before calibration] |
 | D13 | Tuning is structured notes per location: closure, private event, opening, other. An AI chat waits. | Lead default. | [CONFIRM: lead default, notes first, AI chat later] |
-| D14 | No email in v1. | Lead default. Azure Communication Services comes later. | [CONFIRM: lead default, no email in v1] |
+| D14 | Townwise sends two emails, each only to the person it concerns and only after the change it reports is written: request received (F2) and you’re in (F3, from the call that seats the requester). They come from `no-reply@townwise.tech` through Azure Communication Services, sent with the API’s managed identity, with Reply-To from `TOWNWISE_EMAIL_REPLY_TO`, no images and tracking off. Invitations, rejections, view-as and every other flow send none. A failed send is logged as a code, with no address, and never blocks, fails or retries the action. Email is off until `EMAIL_ENDPOINT` is set; production turns it on in the release whose F2, F3, P3, P4 and C3 copy stops saying “We don’t send email yet”. | Owner decision, 2026-11-05. People are held until staff approve, so they need to hear when they’re in. A rejection email waits on an owner question (whether it quotes the staff message). | Decided (owner, 2026-11-05) |
 | D15 | An organization has one or more locations. Sales, uploads and notes belong to a location. | Lead default. | [CONFIRM: lead default, per-location data] |
 | D16 | Members and org admins can upload and write notes. A member’s upload adds new days only; an org admin’s replaces the days it covers. Only org admins manage the team, locations, the organization name and deletion. | The person with POS access is often a manager. Replacing history is as destructive as deleting it, which is admin-only. | [CONFIRM: member permissions; members add new days only] |
 | D17 | No multi-document transactions. Writes are ordered so a retry completes them, and unique indexes catch races. | Local Mongo is standalone (`compose.yaml`), and production DocumentDB sets `retryWrites=false`. | none (a fact) |
@@ -240,7 +240,7 @@ The gate also allows `/request-access` from `rejected` and `removed`, when the p
 ### F1. First sign-in with an invited email
 
 1. An org admin adds `{email}` on Team. A `tw_members` row is created with `status: 'invited'`, `inviteEmail: {email}` and the chosen role (default `member`). Audit `member.invited`.
-2. The admin tells the person. Townwise sends no email, and the Team page says so.
+2. The admin tells the person. Townwise doesn’t email invitations (D14), and the Team page says so.
 3. The person presses “Continue with Google”. The kit creates or finds their user (**Exists**).
 4. `GET /api/me` answers `invited`. With one invitation and no pending request, `/joining` shows “Joining {org}…” and who added them, and calls `POST /api/me/join { inviteId }` at once (lead default). With a pending request, or with two or more invitations, `/joining` lists them and waits for a press: Join on one, or “Not my team” on any (P6).
 5. The server compare-and-sets the invitation to `active`. It matches `_id`, `status: 'invited'`, `inviteEmail` equal to the caller’s current email, and an active organization. It sets `userId`, `activeUserId` and `joinedAt`, and unsets `inviteEmail`. Then it withdraws any pending request of the caller (`withdrawnReason: 'joined_org'`), audits `member.joined`, and answers the new `MeResponse`.
@@ -494,7 +494,9 @@ api/
                        createTownwiseApi() before ensureIndexes, and mounts its router at /api
     app.ts             createTownwiseApi({ config, logger, connection, authStores, auth, redis, now }): registers the
                        Townwise models on `connection` and returns the /api router. main.ts and the tests both use it
-    email.ts           Exists. Unchanged
+    email.ts           Exists. Unchanged (the kit's magic-link sender, which rejects every send)
+    mail/              templates, layout, the Communication Services transport and the mailer (D14)
+    azure-identity.ts  managed-identity tokens for Azure services, cached per resource (D14; file storage too)
     config.ts          Townwise env schema (TOWNWISE_SUPERADMIN_EMAILS), spread into the one loadEnv call
     towns.ts           the twelve { townId, name, state, kind } (Section 13) and the US state codes
     normalize-email.ts the kit's email rule, repeated and pinned by a parity test (Section 19)
@@ -656,6 +658,7 @@ An event’s `orgId` is the organization it touches: for `people.signed_out_ever
   - `view_as.ended` is written after the grant is cleared. A missing end record can only make a view look longer than it was, never hide one.
   
   [CONFIRM: audit after the effect for client actions; before the effect, refused on failure, for staff actions]
+- **Email writes no audit event.** Sending one of the D14 emails is a side effect of an action already audited; its event is unchanged, and nothing records the send.
 - **Readers.** Staff read everything on `/admin/audit`. Org admins read every event on their own organization whose actor role is `superadmin` (view-as, team, name, status, and `staff_action.not_applied`), on Settings as “Townwise staff activity” (D9). Members read none.
 
 ---
@@ -1454,7 +1457,7 @@ Primary: “Sign in again” (kit `POST /auth/logout`, then `/sign-in`).
 **P20. Organizations (`/admin/orgs`)**
 
 - Title “Organizations”. Primary: “New organization” (C5).
-- **C5.** Fields: Name, and First admin email. Text: “They join as admin the next time they continue with Google with this address. We don’t send email yet. {org}’s admins will see that Townwise staff created it.”
+- **C5.** Fields: Name, and First admin email. Text: “They join as admin the next time they continue with Google with this address. Townwise doesn’t email invitations. {org}’s admins will see that Townwise staff created it.”
 - **Table**: Name, Status (Active or Suspended), Admins, Members, Invited, Locations, Days of sales, Last upload, Created. A row with no admin shows “No admin yet” under Admins.
 - A client-side filter box (name), and a status filter.
 
@@ -1503,7 +1506,7 @@ Primary: “Sign in again” (kit `POST /auth/logout`, then `/sign-in`).
 ## 17. Logging and privacy
 
 - Townwise server code logs ids and counts only: `userId`, `orgId`, `locationId`, `memberId`, `requestId`, `grantId`, `uploadId`, `routeId`. It never logs emails, names, organization or location names, note text, request notes, view-as reasons, figures, file content or request bodies. This matches the privacy page’s promise for sign-in logs (“its own log lines carry your account ID, never your email address”).
-- Product log lines: `townwise.view_as_read`, `townwise.upload_applied`, `townwise.audit_write_failed` (error level), `townwise.access_denied { policy, code }`.
+- Product log lines: `townwise.view_as_read`, `townwise.upload_applied`, `townwise.audit_write_failed` (error level), `townwise.access_denied { policy, code }`, `townwise.email_sent { kind, requestId, orgId? }` (info) and `townwise.email_failed { kind, requestId, orgId?, code, status, upstreamCode, errType }` (warn; D14). An email’s log line never holds its address, subject or body.
 - The audit log (a database record) holds emails, organization names and view-as reasons. It never holds figures, note text, request notes or decision messages.
 - The client never logs (expo-shell rule 12, **Exists**) and never persists the file or the parsed rows.
 - **The privacy page must change before the portal ships.** The sentences on `feature/townwise-web` that become false are listed in 22.4. The new content needs to cover:
@@ -1520,7 +1523,8 @@ Primary: “Sign in again” (kit `POST /auth/logout`, then `/sign-in`).
     - Townwise staff, who see sales figures and note text only through View as, which is audited and shown to org admins;
     - Townwise staff in the console, who see team email addresses, location names and towns, date coverage, counts and recent audit events without View as; those reads are not recorded;
     - the people with access to the production database (members of the MongoDB Atlas project that `infra/README.md` on `feature/infra` sets up), named on the page; anyone with that access can read every collection, and their reads are not recorded by Townwise [CONFIRM: who holds Atlas project access];
-  - how long each is kept, and how to ask for deletion (the staff path in 10.7).
+  - how long each is kept, and how to ask for deletion (the staff path in 10.7);
+  - the emails Townwise sends (D14): the recipient’s address and the email’s content go to Azure Communication Services, which delivers them and keeps its own delivery records.
   
   [DECISION NEEDED: retention and deletion terms for sales data, requests and audit events]
 - **The Security page’s Hosting section** (`security.tsx` on `feature/townwise-web`, which today says hosting “has not been chosen” and that the section will say “who has access”) gains the same who-has-access facts: who holds production database access, and that their reads are not recorded.
@@ -1538,6 +1542,10 @@ Primary: “Sign in again” (kit `POST /auth/logout`, then `/sign-in`).
 | Upload | constants | 3,660 days, 256 KB, 50 MB file in the browser | [CONFIRM] |
 | Caps | constants | 25 locations per organization; 1,000 notes per location; 20 emails per add; 200 people per organization | [CONFIRM] |
 | Clock | dependency | the one `now` function `main.ts` passes to both `createAuth` and `createTownwiseApi` | 7.1 |
+| `EMAIL_ENDPOINT` | env, not secret | the Communication Services endpoint, a bare `https://*.communication.azure.com` origin | Absent turns email off (D14). Set together with `EMAIL_SENDER`; email also needs the managed identity (`IDENTITY_ENDPOINT`, `IDENTITY_HEADER`, `AZURE_CLIENT_ID`), or boot fails |
+| `EMAIL_SENDER` | env, not secret | `no-reply@townwise.tech` | D14 |
+| `TOWNWISE_EMAIL_REPLY_TO` | env, not secret | a team member’s address in production | Absent: no Reply-To, and the footer does not offer replies (D14) |
+| `TOWNWISE_WEB_URL` | env, not secret | `https://townwise.tech` in production, `http://localhost:8081` by default | A bare origin, for the links in emails; production email requires `https:` (D14) |
 
 ---
 
@@ -1641,7 +1649,7 @@ Client tests:
 
 | Item | Why it waits | What it needs |
 |---|---|---|
-| Email (invitations, approval, rejection) | Lead default: none in v1 | Azure Communication Services and an email sender with click tracking off; the Team and Waiting copy drops “We don’t send email yet” |
+| Email for invitations and rejections | D14 sends only request received and you’re in | An owner decision for each; a rejection email would also decide whether it quotes the staff message |
 | Calibration, forecasts, model storage | Models exist only in research notebooks | The reserved states and shape (14.3), and `tw_calibrations` |
 | AI chat for tuning | The privacy decision about sending client data to an AI provider | That decision, a provider agreement, a redaction step |
 | Per-action TOTP for staff | Kit gap 1 | A kit export |
@@ -1673,7 +1681,6 @@ Each is marked inline with “lead default”:
 - browser-side parsing that sends only date, guests and net sales per location per day (D10);
 - no fake output (D12);
 - tuning as structured notes, AI chat later (D13);
-- no email in v1 (D14);
 - organizations with one or more locations (D15).
 
 ### 22.2 Judgment calls to confirm

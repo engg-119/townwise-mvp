@@ -96,7 +96,7 @@ A signed-in person whose kit user no longer exists gets 401 `unauthenticated`. T
 
 ### Joining with an email an admin added
 
-1. An org admin adds addresses (`POST /api/org/members`). Each becomes an invitation in that organization. No email is sent, in this flow or any other. [CONFIRM: no email in v1]
+1. An org admin adds addresses (`POST /api/org/members`). Each becomes an invitation in that organization. Townwise sends no email for invitations; its only emails are the two in Email below (spec D14).
 2. When that person continues with Google, `GET /api/me` answers `invited`, listing each invitation with the organization, the role and who added it.
 3. `POST /api/me/join { inviteId }` claims the invitation by compare-and-set. It matches the invitation, the caller’s current email and an active organization, then withdraws any pending request of the caller. A second organization answers 409 `already_in_org`. `POST /api/me/decline { inviteId }` deletes the invitation instead.
 4. The server never joins on a GET. The build spec has the client’s Joining page call join as soon as it loads, when there is one invitation and no pending request. [CONFIRM: auto-join without a click]
@@ -108,6 +108,21 @@ A signed-in person whose kit user no longer exists gets 401 `unauthenticated`. T
 3. Approve (`POST /api/admin/requests/:requestId/approve`) creates the organization, its first location in the requested town (with the request’s `placeId`, or none), and the requester’s org admin seat. A retry completes the work. If the requester is deleted while it runs (their request goes with them), the approval takes back what it made for them and answers 404 (Deletion). [CONFIRM: first location at approval] [CONFIRM: a request keeps the place the requester picked; staff check it by hand]
 4. Reject (`POST /api/admin/requests/:requestId/reject`) stores an optional message of up to 500 characters, which the requester sees. They may send a new request. [CONFIRM: rejected people may request again]
 5. The requester sees the result at their next `GET /api/me`.
+
+### Email
+
+Townwise sends two emails (spec D14), each only to the person it concerns, from `no-reply@townwise.tech` through Azure Communication Services:
+
+| Email | When | To |
+|---|---|---|
+| Request received | `POST /api/access-requests` stored the request and its `access_request.created` (201) | the caller’s current address |
+| You’re in | the approval call that inserts the requester’s admin seat, after `member.joined` | the requester’s current address, read at the start of that call |
+
+- Nothing else sends email: invitations, staff-created organizations, joins, rejections, removals, view-as and deletion send none, and the kit’s magic-link route still answers 503. A 400, 403, 409 or 429 sends nothing, and so do an approval retry that finds the seat already there, a losing concurrent approval and an approval undone by the requester’s deletion.
+- The send is queued after the write and the response does not wait for it. A failure never fails, delays or retries the action: it is logged and the email is lost. So is a send still in flight when the process stops (the shutdown drain waits 2 seconds).
+- The words are in `src/mail/templates.ts` and the layout in `src/mail/layout.ts`: fixed subjects, no greeting by name, no images or tracking (`userEngagementTrackingDisabled` on every message), and links only to `TOWNWISE_WEB_URL`. An email carries the organization’s name, its town and the address the person signs in with, never a figure, a file or a note. Reply-To is `TOWNWISE_EMAIL_REPLY_TO` when it is set.
+- `src/mail/acs.ts` calls Email - Send (`2023-03-31`) over `fetch` with an Entra token for `https://communication.azure.com` from the managed identity (`src/azure-identity.ts`: the user-assigned identity named by `AZURE_CLIENT_ID`, cached until 5 minutes before it expires). Access keys are disabled on the resource. Any refusal drops the cached token.
+- Off while `EMAIL_ENDPOINT` is unset, as it is locally and, until the release that changes the waiting and approval screens, in production (`../infra/README.md`, step 9). Nothing about a send is stored, and it writes no audit event.
 
 ### Places search
 
@@ -221,7 +236,7 @@ Each location’s calibration state is derived from its sales days on every read
 | `people.signed_out_everywhere` | none (the event’s `orgId` is the person’s organization, or null) | before, by staff |
 | `person.deleted` | `userId` (null for an address that never signed in) | before, by staff |
 | `staff_action.not_applied` | `eventId`, `code` | after a staff effect fails or is refused |
-- Townwise log lines carry ids and counts only: `townwise.access_denied { policy, code }`, `townwise.view_as_read { grantId, routeId }`, `townwise.places_failed { routeId, code, status, errType }` (code `upstream_status` with Google's HTTP status, `network` with the error class, `timeout` or `bad_response`), `townwise.upload_applied { orgId, locationId, uploadId, dayCount }`, `townwise.audit_write_failed { action, orgId, targetId }`, and for the tuning chat `townwise.chat_turn`, `townwise.chat_turn_failed`, `townwise.chat_turn_aborted` and `townwise.chat_turn_not_saved` (`{ orgId, locationId, conversationId, calls, costMicroUsd }` with the stop reason, or the code and error class; `timeout` has no error class), and `townwise.chat_live_turn_not_released` (`{ orgId, locationId, errType }`). No route puts an email, a name or a figure in its path or query, because server-core logs the URL. The one exception is the people lookup’s `q`, which server-core redacts.
+- Townwise log lines carry ids and counts only: `townwise.access_denied { policy, code }`, `townwise.view_as_read { grantId, routeId }`, `townwise.places_failed { routeId, code, status, errType }` (code `upstream_status` with Google's HTTP status, `network` with the error class, `timeout` or `bad_response`), `townwise.upload_applied { orgId, locationId, uploadId, dayCount }`, `townwise.audit_write_failed { action, orgId, targetId }`, `townwise.email_sent { kind, requestId, orgId? }` and `townwise.email_failed { kind, requestId, orgId?, code, status, upstreamCode, errType }` (code `invalid_recipient`, `render`, `token`, `timeout`, `network`, `upstream_status` with ACS's HTTP status and `x-ms-error-code`, or `internal`; never the address, subject or body), and for the tuning chat `townwise.chat_turn`, `townwise.chat_turn_failed`, `townwise.chat_turn_aborted` and `townwise.chat_turn_not_saved` (`{ orgId, locationId, conversationId, calls, costMicroUsd }` with the stop reason, or the code and error class; `timeout` has no error class), and `townwise.chat_live_turn_not_released` (`{ orgId, locationId, errType }`). No route puts an email, a name or a figure in its path or query, because server-core logs the URL. The one exception is the people lookup’s `q`, which server-core redacts.
 
 ## Endpoints
 
@@ -415,8 +430,13 @@ Townwise reads the kit’s data only through its store functions (`users.findByI
 | `TOWNWISE_CHAT_MONTHLY_BUDGET_USD` | api (`src/config.ts`) | no | no | `20`: the tuning chat’s monthly spend limit per organization, in dollars, 0 to 10,000 |
 | `ANTHROPIC_API_KEY` | api (`src/main.ts`) | no | yes | empty locally, which turns the tuning chat off; in production a Key Vault reference when `enable_chat` is on (`../infra/README.md`, step 16) |
 | `GOOGLE_PLACES_API_KEY` | api (`src/main.ts`) | no | yes | empty locally, which turns the Places search off; in production a Key Vault reference when `enable_places` is on (`../infra/README.md`, step 17) |
+| `EMAIL_ENDPOINT` | api (`src/config.ts`) | no | no | empty locally, which turns email off; otherwise the Communication Services endpoint, a bare `https://*.communication.azure.com` origin (`terraform output -raw communication_service_endpoint`) |
+| `EMAIL_SENDER` | api (`src/config.ts`) | with `EMAIL_ENDPOINT` | no | empty locally; `no-reply@townwise.tech` in production |
+| `TOWNWISE_EMAIL_REPLY_TO` | api (`src/config.ts`) | no | no | empty locally (no Reply-To); in production the team member who reads replies |
+| `TOWNWISE_WEB_URL` | api (`src/config.ts`) | no | no | `http://localhost:8081`, a bare origin, for the links in emails; production email requires `https:` |
+| `IDENTITY_ENDPOINT`, `IDENTITY_HEADER`, `AZURE_CLIENT_ID` | platform (Container Apps; `AZURE_CLIENT_ID` from `containerapp.tf`), read by `src/main.ts` | when `EMAIL_ENDPOINT` is set | no, but `IDENTITY_HEADER` is never logged | unset locally; boot fails if email is on without them |
 
-`.env.example` lists every variable above except `LOG_LEVEL`, `HTTP_KEEP_ALIVE_TIMEOUT_MS` and `SHUTDOWN_TIMEOUT_MS`, which take their defaults. It holds local values and placeholders only: the two key rings, the Google client ids, the staff list, the Anthropic key and the Places key are empty. Key rotation for the two key rings is in `kit/auth/MODULE.md`.
+`.env.example` lists every variable above except `LOG_LEVEL`, `HTTP_KEEP_ALIVE_TIMEOUT_MS`, `SHUTDOWN_TIMEOUT_MS` and the three platform identity variables. `EMAIL_ENDPOINT` and `EMAIL_SENDER` are empty there, which turns email off. It holds local values and placeholders only: the two key rings, the Google client ids, the staff list, the Anthropic key and the Places key are empty. Key rotation for the two key rings is in `kit/auth/MODULE.md`.
 
 ## Kit modules
 
