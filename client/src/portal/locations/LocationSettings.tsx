@@ -6,6 +6,9 @@ import { LOCATION_COPY } from '../AddLocationForm';
 import type { TownInput } from '../api';
 import { hasCode } from '../errors';
 import { useAction } from '../hooks';
+import { PlaceSearch } from '../onboarding/PlaceSearch';
+import { placeChanged, placesUnavailable, setLocationPlace, townLabel, type UsablePlace } from '../onboarding/places';
+import { usePlaceSearchAvailability } from '../onboarding/usePlaceSearch';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { locationHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
@@ -24,9 +27,21 @@ import { deleteLocation, updateLocation } from './api';
 // “Saved.”; deleting opens Locations with “Deleted {name}.”. A 404 on either write means the location was deleted
 // in the meantime: the organization reloads, and the location layout says “This location isn’t available.” with
 // the link to Locations (spec 10.9). Under view-as every write is disabled in place.
+// While the Google Places search is on (GET /api/org `placeSearch`), “Change this location’s place” finds the
+// location on Google Maps; using a place sets it and its town (PATCH with `placeId`), and a town changed by hand
+// takes the place off (api/README.md, Organization and locations).
 
 const READ_ONLY_ID = 'location-settings-ro';
+const PLACE_READ_ONLY_ID = 'location-place-ro';
 const HAS_DATA = 'Delete this location’s sales data and notes first.';
+
+export const PLACE_SETTINGS_COPY = {
+  linked: 'Linked to a place on Google Maps. Townwise keeps only Google’s id for it.',
+  unlinked: 'Not linked to a place on Google Maps.',
+  byHand: 'Changing the town here takes the Google Maps place off this location.',
+  unavailable: 'Google Maps isn’t answering right now. Nothing changed; try again later.',
+  changed: 'Google Maps answered differently this time. Nothing changed; search for the place again.',
+} as const;
 
 interface Messages { name?: string; town?: TownMessages }
 
@@ -46,6 +61,27 @@ export function LocationSettings(): React.JSX.Element {
   // The server's answer wins over the organization's counts, which can be a moment old.
   const [hasData, setHasData] = useState(location.coverage.dayCount > 0 || location.notesCount > 0);
   const settingsPath = locationHref(location.id, 'settings');
+  const search = usePlaceSearchAvailability(api, { known: org.placeSearch === true, readOnly: false });
+  const [finding, setFinding] = useState(false);
+  const [placeLine, setPlaceLine] = useState<string | null>(null);
+  const linked = location.placeId !== undefined && location.placeId !== null;
+
+  const placeSave = useAction(useCallback(async (place: UsablePlace) => {
+    try {
+      const saved = await setLocationPlace(api, location.id, place);
+      // The Name and town form shows the place's town, so its next save keeps the place.
+      setTown(townValueOf(saved.town));
+    } catch (error) {
+      if (placesUnavailable(error)) { setFinding(false); setPlaceLine(PLACE_SETTINGS_COPY.unavailable); return; }
+      if (placeChanged(error)) { setFinding(false); setPlaceLine(PLACE_SETTINGS_COPY.changed); return; }
+      if (hasCode(error, 404, 'not_found')) { reloadOrg(); return; }
+      throw error;
+    }
+    setFinding(false);
+    setPlaceLine(null);
+    showNotice({ text: 'Saved.' }, settingsPath);
+    reloadOrg();
+  }, [api, location.id, reloadOrg, showNotice, settingsPath]));
 
   const save = useAction(useCallback(async (input: { name: string; town: TownInput }) => {
     try {
@@ -104,6 +140,7 @@ export function LocationSettings(): React.JSX.Element {
                 {...ro}
               />
               <TownFields value={town} onChange={setTown} {...(messages.town === undefined ? {} : { messages: messages.town })} {...ro} />
+              {linked ? <Small>{PLACE_SETTINGS_COPY.byHand}</Small> : null}
               {save.error === null ? null : <ErrorNotice error={save.error} onRetry={submit} />}
               <Actions>
                 <Button
@@ -117,6 +154,47 @@ export function LocationSettings(): React.JSX.Element {
           )}
         />
       </Section>
+      {search === 'on' ? (
+        <Section kicker="Google Maps" title="Change this location’s place">
+          <Columns
+            main={(
+              <Stack gap={20}>
+                {readOnly ? <ReadOnlyLine text={line} nativeID={PLACE_READ_ONLY_ID} /> : null}
+                <Small>{linked ? PLACE_SETTINGS_COPY.linked : PLACE_SETTINGS_COPY.unlinked}</Small>
+                {placeLine === null ? null : <ErrorNotice message={placeLine} />}
+                {finding && !readOnly ? (
+                  <PlaceSearch
+                    api={api}
+                    label="Search Google Maps for this location"
+                    helper="Type its name. Google Maps suggests places in the US."
+                    confirmLabel="Use this place"
+                    pendingLabel="Saving…"
+                    pending={placeSave.pending}
+                    note={(place) => (place.town === null || sameTownLabel(place.town, location.town)
+                      ? null
+                      : `Using this place moves ${location.name} to ${townLabel(place.town)}.`)}
+                    onConfirm={(place) => { placeSave.run(place); }}
+                    manualLabel="Cancel"
+                    onManual={() => { setFinding(false); }}
+                    onUnavailable={() => { setFinding(false); setPlaceLine(PLACE_SETTINGS_COPY.unavailable); }}
+                  />
+                ) : (
+                  <Actions>
+                    <Button
+                      variant="outline"
+                      label={linked ? 'Change this location’s place' : 'Find this location’s place'}
+                      disabled={readOnly}
+                      {...(readOnly ? { describedBy: PLACE_READ_ONLY_ID } : {})}
+                      onPress={() => { setPlaceLine(null); setFinding(true); }}
+                    />
+                  </Actions>
+                )}
+                {placeSave.error === null ? null : <ErrorNotice error={placeSave.error} />}
+              </Stack>
+            )}
+          />
+        </Section>
+      ) : null}
       <Section kicker="Only when it holds no data" title="Delete location">
         <Columns
           main={hasData ? (
@@ -150,4 +228,9 @@ export function LocationSettings(): React.JSX.Element {
       />
     </View>
   );
+}
+
+/** The same town by name and state, as the card shows it. */
+function sameTownLabel(a: { name: string; state: string }, b: { name: string; state: string }): boolean {
+  return a.name.toLowerCase() === b.name.toLowerCase() && a.state === b.state;
 }

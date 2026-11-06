@@ -186,5 +186,7 @@ test('Request access on web: the Town field is a select grouped as the homepage 
   fireEvent.change(screen.getByRole('textbox', { name: 'Number of locations' }), { target: { value: '2' } });
   fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
   await waitFor(() => { expect(window.location.pathname).toBe('/waiting'); });
-  expect(writes(api)[0]?.body).toEqual({ orgName: 'Sample Diner', contactName: 'Pat', contactRole: 'Owner', town: { townId: 'ithaca-ny' }, locationCount: 2 });
+  // The request, after the page's check whether the Google Places search is on (onboarding/places.ts).
+  expect(writes(api).find((call) => call.path === '/api/access-requests')?.body)
+    .toEqual({ orgName: 'Sample Diner', contactName: 'Pat', contactRole: 'Owner', town: { townId: 'ithaca-ny' }, locationCount: 2 });
 });
