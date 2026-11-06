@@ -8,6 +8,7 @@ import { mountTownwiseRoutes, TOWNWISE_ROUTES, type TownwiseRoute } from './acce
 import type { ChatModel } from './chat/model.ts';
 import { TURN_TIME_LIMIT_MS } from './chat/turn.ts';
 import { resolveTownwiseConfig, type ResolvedTownwiseConfig, type TownwiseConfig } from './config.ts';
+import { OFF_MAILER, type Mailer } from './mail/mailer.ts';
 import type { PlacesClient } from './places/google.ts';
 import { createTownwiseStores, type TownwiseStores } from './stores/index.ts';
 
@@ -26,6 +27,8 @@ export interface TownwiseDeps {
   readonly chatTurnTimeLimitMs?: number | undefined;
   /** Google Places for the Places proxy; absent turns it off (main.ts builds it only when GOOGLE_PLACES_API_KEY is set). */
   readonly places?: PlacesClient | undefined;
+  /** Townwise's emails (spec D14); absent turns email off (main.ts builds it only when EMAIL_ENDPOINT is set). */
+  readonly mailer?: Mailer | undefined;
 }
 
 /** What every route handler receives besides the request and the principal. */
@@ -43,6 +46,8 @@ export interface TownwiseContext {
   readonly chatTurnTimeLimitMs: number;
   /** Null while the Places proxy is off. */
   readonly places: PlacesClient | null;
+  /** Always set: OFF_MAILER while email is off, so a handler calls send either way. */
+  readonly mailer: Mailer;
 }
 
 /**
@@ -62,6 +67,7 @@ export function createTownwiseApi(deps: TownwiseDeps, routes: readonly TownwiseR
     chat: deps.chat ?? null,
     chatTurnTimeLimitMs: deps.chatTurnTimeLimitMs ?? TURN_TIME_LIMIT_MS,
     places: deps.places ?? null,
+    mailer: deps.mailer ?? OFF_MAILER,
   };
   // No router-wide body parser: each route mounts its own limit after the policy passes (spec 7.2 step 6).
   const router = express.Router();

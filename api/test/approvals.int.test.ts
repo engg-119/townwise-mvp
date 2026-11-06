@@ -8,17 +8,21 @@ import type { AdminRequestView } from '../src/handlers/admin.ts';
 import type { MeResponse } from '../src/handlers/me.ts';
 import { AUDIT_DETAIL_KEYS, type AuditAction } from '../src/stores/audit-events.ts';
 import { addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
+import { createCapturingTransport } from './helpers/mail.ts';
 import {
-  call, logLines, signIn, signInStaff, STAFF_EMAIL, startTownwiseServer, type TestSession, type TownwiseTestServer,
+  call, logLines, MAIL_REPLY_TO, signIn, signInStaff, STAFF_EMAIL, startTownwiseServer, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
 
 let server: TownwiseTestServer;
 let staff: TestSession;
+const mail = createCapturingTransport();
 
-beforeAll(async () => { server = await startTownwiseServer(); });
+beforeAll(async () => { server = await startTownwiseServer({ mailTransport: mail }); });
 afterAll(async () => { await server.close(); });
 beforeEach(async () => {
   await server.redis.flushdb();
+  await server.mailer.idle();
+  mail.sent.length = 0;
   staff = await signInStaff(server);
 });
 afterEach(async () => { await server.authStores.totp.remove(staff.userId); });
@@ -50,6 +54,14 @@ function approve(requestId: string, body: unknown = { orgName: 'Harbor Kitchen',
 
 function reject(requestId: string, body: unknown = {}, session = staff): Promise<Response> {
   return call(server, `/api/admin/requests/${requestId}/reject`, { session, json: body });
+}
+
+const APPROVED_SUBJECT = 'You’re in: welcome to Townwise';
+
+/** The “You’re in” emails sent so far to `to` (every requester also got “request received”). */
+async function approvedTo(to: string): Promise<{ to: string; text: string }[]> {
+  await server.mailer.idle();
+  return mail.sent.filter((message) => message.subject === APPROVED_SUBJECT && message.to === to);
 }
 
 async function errorOf(res: Response): Promise<{ status: number; error: string }> {
@@ -344,6 +356,7 @@ describe('POST /api/admin/requests/:requestId/approve (F3)', () => {
       'access_request.created', 'access_request.approved', 'org.created', 'location.created', 'staff_action.not_applied',
     ]);
     expect(events.at(-1)?.details).toEqual({ eventId: String(approved?._id), code: 'not_found' });
+    expect(await approvedTo(person.email)).toEqual([]);
   });
 
   it('a requester who joined another organization before the seat step is 409 requester_has_org; the organization has no admin', async () => {
@@ -518,5 +531,83 @@ describe('audit', () => {
     }
     const text = JSON.stringify(events);
     for (const secret of ['Sentinel request note', 'Sentinel decision', 'Pat Sample']) expect(text).not.toContain(secret);
+  });
+});
+
+describe('email (spec D14)', () => {
+  it('an approval sends one “You’re in” to the requester’s current address, with the stored organization name and the town', async () => {
+    const person = await requester('mail-approved');
+    const renamed = uniqueEmail('mail-renamed');
+    expect(await server.authStores.users.updateEmail({ id: person.session.userId, from: person.email, to: renamed })).not.toBeNull();
+    server.logs.length = 0;
+    const res = await approve(person.requestId, { orgName: 'Harbor Kitchen Co', locationName: 'Sentinel Location' });
+    expect(res.status).toBe(200);
+    const orgId = (await res.json() as { org: { id: string } }).org.id;
+    expect(await approvedTo(person.email)).toEqual([]);
+    const sent = await approvedTo(renamed);
+    expect(sent).toHaveLength(1);
+    expect(mail.sent.find((message) => message.to === renamed)).toMatchObject({ replyTo: MAIL_REPLY_TO });
+    expect(sent[0]?.text).toContain('Harbor Kitchen Co in Bar Harbor, ME is set up on Townwise, and you’re its admin.');
+    expect(sent[0]?.text).not.toContain('Sentinel Location');
+    const logged = logLines(server).filter((line) => line.msg === 'townwise.email_sent');
+    expect(logged).toEqual([expect.objectContaining({ kind: 'request_approved', requestId: person.requestId, orgId })]);
+    for (const secret of [renamed, person.email, 'Harbor Kitchen Co', 'Bar Harbor']) expect(server.logs.join('\n')).not.toContain(secret);
+  });
+
+  it('a retry that completes a stopped approval sends one email over both calls, and a replay sends none', async () => {
+    const person = await requester('mail-retry');
+    await server.connection.collection('tw_access_requests').updateOne(
+      { _id: new Types.ObjectId(person.requestId) },
+      { $set: { status: 'approved', orgId: new Types.ObjectId(), decidedAt: server.clock.now(), decidedBy: staff.userId } },
+    );
+    expect((await approve(person.requestId)).status).toBe(200);
+    expect((await approve(person.requestId)).status).toBe(200);
+    expect(await approvedTo(person.email)).toHaveLength(1);
+  });
+
+  it('409 request_not_pending, 409 requester_has_org and 404 send nothing; concurrent approvals send exactly one', async () => {
+    const rejected = await requester('mail-rejected');
+    expect((await reject(rejected.requestId, { message: 'Sentinel decision' })).status).toBe(200);
+    expect((await approve(rejected.requestId)).status).toBe(409);
+    const seated = await requester('mail-seated');
+    await addSeat(server, { orgId: await createOrg(server, { name: 'Mail Elsewhere' }), userId: seated.session.userId, email: seated.email });
+    expect(await errorOf(await approve(seated.requestId))).toEqual({ status: 409, error: 'requester_has_org' });
+    expect((await approve(new Types.ObjectId().toHexString())).status).toBe(404);
+    expect(await approvedTo(rejected.email)).toEqual([]);
+    expect(await approvedTo(seated.email)).toEqual([]);
+
+    const racer = await requester('mail-race');
+    const results = await Promise.all(Array.from({ length: 5 }, () => approve(racer.requestId)));
+    expect(results.some((res) => res.status === 200)).toBe(true);
+    expect(await approvedTo(racer.email)).toHaveLength(1);
+  });
+
+  it('a rejection sends no email (only the two emails exist), and an approve and reject race mails only an approval that won', async () => {
+    const person = await requester('mail-reject');
+    mail.sent.length = 0;
+    expect((await reject(person.requestId, { message: 'Sentinel decision' })).status).toBe(200);
+    await server.mailer.idle();
+    expect(mail.sent).toEqual([]);
+
+    for (let round = 0; round < 3; round += 1) {
+      const racer = await requester(`mail-decide-${String(round)}`);
+      await Promise.all([approve(racer.requestId), reject(racer.requestId)]);
+      const status = (await requestDoc(racer.requestId))?.status;
+      expect(await approvedTo(racer.email)).toHaveLength(status === 'approved' ? 1 : 0);
+    }
+  });
+
+  it('a failed send still answers 200 with the requester seated, and logs email_failed without the address', async () => {
+    const person = await requester('mail-fails');
+    await server.mailer.idle();
+    mail.failNext();
+    server.logs.length = 0;
+    expect((await approve(person.requestId)).status).toBe(200);
+    await server.mailer.idle();
+    expect(await tenantCounts(person.requestId)).toEqual({ orgs: 1, locations: 1, seats: 1 });
+    expect((await me(person.session)).access.state).toBe('member');
+    const failed = logLines(server).filter((line) => line.msg === 'townwise.email_failed');
+    expect(failed).toEqual([expect.objectContaining({ kind: 'request_approved', requestId: person.requestId, code: 'upstream_status' })]);
+    expect(server.logs.join('\n')).not.toContain(person.email);
   });
 });

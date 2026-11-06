@@ -19,11 +19,16 @@ import type { TownwiseRoute } from '../../src/access/routes.ts';
 import { createTownwiseApi } from '../../src/app.ts';
 import type { ChatModel } from '../../src/chat/model.ts';
 import { configSchema as townwiseSchema } from '../../src/config.ts';
+import type { MailTransport } from '../../src/mail/acs.ts';
+import { createMailer, OFF_MAILER, type Mailer } from '../../src/mail/mailer.ts';
 import type { PlacesClient } from '../../src/places/google.ts';
 
 export const WEB_ORIGIN = 'https://app.example.test';
 export const STAFF_EMAIL = 'staff@townwise.test';
 export const MINUTE = 60 * 1000;
+/** The Reply-To and web origin a test server's mailer uses. */
+export const MAIL_REPLY_TO = 'team@townwise.test';
+export const MAIL_WEB_URL = 'http://localhost:8081';
 
 export interface TestClock {
   readonly now: () => Date;
@@ -44,6 +49,8 @@ export interface TownwiseTestServer {
   /** The /api router createTownwiseApi returned. */
   readonly apiRouter: Router;
   readonly mail: MagicLinkMessage[];
+  /** Townwise's mailer: over `mailTransport` when one was given, else OFF_MAILER. Await idle() before asserting. */
+  readonly mailer: Mailer;
   close(): Promise<void>;
 }
 
@@ -80,6 +87,8 @@ export async function startTownwiseServer(opts?: {
   chatTurnTimeLimitMs?: number;
   /** Google Places, over a fake fetch (helpers/places-fetch.ts); absent, the Places proxy is off. */
   places?: PlacesClient;
+  /** Townwise's emails, through a capturing transport (helpers/mail.ts); absent, email is off. */
+  mailTransport?: MailTransport;
 }): Promise<TownwiseTestServer> {
   const env: Record<string, string> = {
     NODE_ENV: 'test',
@@ -130,9 +139,12 @@ export async function startTownwiseServer(opts?: {
         return Promise.resolve();
       },
     });
+    const mailer = opts?.mailTransport === undefined
+      ? OFF_MAILER
+      : createMailer({ transport: opts.mailTransport, logger, webUrl: MAIL_WEB_URL, replyTo: MAIL_REPLY_TO });
     const deps = {
       config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now: clock.now, chat: opts?.chat,
-      chatTurnTimeLimitMs: opts?.chatTurnTimeLimitMs, places: opts?.places,
+      chatTurnTimeLimitMs: opts?.chatTurnTimeLimitMs, places: opts?.places, mailer,
     };
     const apiRouter = createTownwiseApi(deps);
     const routes: RouteMount[] = [{ path: '/auth', router: auth.router }, { path: '/api', router: apiRouter }];
@@ -151,6 +163,7 @@ export async function startTownwiseServer(opts?: {
       commands,
       apiRouter,
       mail,
+      mailer,
       close: () => server.shutdown('test'),
     };
   } catch (err) {
