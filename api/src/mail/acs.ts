@@ -1,6 +1,6 @@
 // Azure Communication Services Email - Send (api-version 2023-03-31) over fetch, as a port: main.ts builds it when
-// EMAIL_ENDPOINT is set, tests use helpers/mail.ts. It authenticates with the managed identity's Entra token
-// (the resource local auth leaves: infra/terraform/production/email.tf disables access keys). Nothing here logs.
+// EMAIL_ENDPOINT is set, tests use helpers/mail.ts. It authenticates with the managed identity's Entra token, the only
+// way in: infra/terraform/production/email.tf disables access keys. Nothing here logs.
 // ACS error bodies can echo the recipient, so a body is never read into an error: a failure is a MailUnavailableError
 // with a code, the HTTP status and ACS's x-ms-error-code when it looks like a code.
 import { randomUUID } from 'node:crypto';
