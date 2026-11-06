@@ -49,6 +49,9 @@ export function activityLine(item: ActivityItem): string {
       if (subject === null) return item.answer === 'open' ? 'You said the data is missing.' : 'You weren’t sure about a question.';
       return item.answer === 'open' ? `You said the data is missing for ${subject}.` : `You weren’t sure about ${subject}.`;
     }
+    // F3: a stored file Townwise read. Never its name: the files list shows that, and this panel is read under view-as.
+    case 'file_processed':
+      return `Read your file for ${rangeText(item.firstDate, item.lastDate)}, ${formatCount(item.dayCount)} ${item.dayCount === 1 ? 'day' : 'days'}.`;
   }
 }
 
