@@ -23,6 +23,15 @@ export interface ToolContext {
   readonly today: string;
 }
 
+export type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue };
+
+/**
+ * What the owner sees of a tool call's input or result, on its card: ids, dates, counts and source links only, never
+ * a figure (guests, dollars) or text. Views reach only the author's browser (and staff in view-as, who can already
+ * read the conversation) and are never logged.
+ */
+export type ToolView = Readonly<Record<string, JsonValue>>;
+
 /** What a tool's run produced: the result the model reads, and a note to show the owner (propose_note only). */
 export interface ToolRun {
   readonly content: string;
@@ -37,8 +46,12 @@ export interface ChatTool<I> {
   /** eager_input_streaming: inputs stream unbuffered and are validated here instead. */
   readonly definition: BetaTool;
   readonly invalidInput: string;
-  parse(raw: unknown, tc: ToolContext): I | null;
+  /** `today` is the UTC date, YYYY-MM-DD; only date rules read it. */
+  parse(raw: unknown, today: string): I | null;
   run(tc: ToolContext, input: I): Promise<ToolRun>;
+  inputView(input: I): ToolView | null;
+  /** Recomputed from the result the model read, so a stored conversation shows the same card. Null when unreadable. */
+  resultView(content: string): ToolView | null;
 }
 
 export interface ToolOutcome {
@@ -70,7 +83,7 @@ export function toolNamed(name: string): ChatTool<unknown> | undefined {
 export async function runTool(tc: ToolContext, block: BetaToolUseBlock): Promise<ToolOutcome> {
   const tool = toolNamed(block.name);
   if (tool === undefined) return { result: failed(block, 'Unknown tool.'), proposal: null };
-  const input = tool.parse(block.input, tc);
+  const input = tool.parse(block.input, tc.today);
   if (input === null) return { result: failed(block, tool.invalidInput), proposal: null };
   const run = await tool.run(tc, input);
   return { result: { type: 'tool_result', tool_use_id: block.id, content: run.content }, proposal: run.proposal ?? null };
@@ -78,4 +91,18 @@ export async function runTool(tc: ToolContext, block: BetaToolUseBlock): Promise
 
 function failed(block: BetaToolUseBlock, content: string): BetaToolResultBlockParam {
   return { type: 'tool_result', tool_use_id: block.id, is_error: true, content };
+}
+
+/** The input view of a call to a registered tool; null for an unknown tool, an invalid input or a tool with none. */
+export function inputViewOf(name: string, raw: unknown, today: string): ToolView | null {
+  const tool = toolNamed(name);
+  const input = tool?.parse(raw, today) ?? null;
+  return tool === undefined || input === null ? null : tool.inputView(input);
+}
+
+/** The result view of a call that did not fail; null for an unknown tool, an error result or an unreadable one. */
+export function resultViewOf(name: string, result: BetaToolResultBlockParam): ToolView | null {
+  const tool = toolNamed(name);
+  if (tool === undefined || result.is_error === true || typeof result.content !== 'string') return null;
+  return tool.resultView(result.content);
 }

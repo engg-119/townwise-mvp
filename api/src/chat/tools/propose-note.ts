@@ -10,7 +10,7 @@ export const PROPOSAL_RESULT = 'Shown to the owner as a proposal. They decide wh
 export const proposeNoteTool: ChatTool<NoteContent> = {
   definition: {
     name: 'propose_note',
-    description: 'Shows the owner a proposed note as a card with Add note and Dismiss. It never adds the note. Rules: dates from 2010-01-01 to two years after today; endDate on or after startDate and at most 366 days later; weekdays null for every day in the range, or unique numbers from 0 (Sunday) to 6; expectedGuests a whole number from 1 to 20000 or null, and null when effect is closed; detail at most 280 characters, required when kind is other.',
+    description: 'Shows the owner a proposed note as a card with Save note, Edit first and Not now. It never saves the note. Rules: dates from 2010-01-01 to two years after today; endDate on or after startDate and at most 366 days later; weekdays null for every day in the range, or unique numbers from 0 (Sunday) to 6; expectedGuests a whole number from 1 to 20000 or null, and null when effect is closed; detail at most 280 characters, required when kind is other.',
     input_schema: {
       type: 'object',
       properties: {
@@ -28,6 +28,8 @@ export const proposeNoteTool: ChatTool<NoteContent> = {
     eager_input_streaming: true,
   },
   invalidInput: 'Not a valid note, so nothing was shown to the owner. Check the rules in the tool description and try again.',
-  parse: (raw, tc) => readNoteContent(raw, tc.today),
+  parse: (raw, today) => readNoteContent(raw, today),
+  inputView: () => null,
+  resultView: () => null,
   run: (_tc, note) => Promise.resolve({ content: PROPOSAL_RESULT, proposal: note }),
 };

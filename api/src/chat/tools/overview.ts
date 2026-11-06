@@ -1,10 +1,19 @@
 // get_location_overview: the location, today's date, its sales coverage and its latest monthly totals.
+import { z } from 'zod';
+
 import { calibrationOf } from '../../calibration.ts';
 import { townProfileOf } from '../../handlers/towns.ts';
 import type { ChatTool } from './registry.ts';
-import { dollars, INVALID_INPUT, NO_INPUT, parseNoInput } from './shared.ts';
+import { dollars, INVALID_INPUT, NO_INPUT, parseNoInput, viewOf } from './shared.ts';
 
 const OVERVIEW_MONTHS = 24;
+
+const overviewResult = z.object({
+  coverage: z.object({
+    firstDate: z.string().nullable(), lastDate: z.string().nullable(), dayCount: z.number(), missingDays: z.number(),
+  }),
+  months: z.array(z.unknown()),
+});
 
 export const overviewTool: ChatTool<Record<string, never>> = {
   definition: {
@@ -15,6 +24,11 @@ export const overviewTool: ChatTool<Record<string, never>> = {
   },
   invalidInput: INVALID_INPUT,
   parse: parseNoInput,
+  inputView: () => null,
+  resultView: (content) => viewOf(content, overviewResult, ({ coverage, months }) => ({
+    firstDate: coverage.firstDate, lastDate: coverage.lastDate, dayCount: coverage.dayCount,
+    missingDays: coverage.missingDays, monthCount: months.length,
+  })),
   async run(tc) {
     const { ctx, scope, location } = tc;
     const [coverage, months] = await Promise.all([

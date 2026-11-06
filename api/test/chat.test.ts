@@ -1,16 +1,19 @@
-// The tuning chat's pricing, provider error codes and the cost of calls that never finished (docs/portal/tuning-chat.md
-// sections 4 and 5), without Docker.
+// TownwiseAI's pricing, provider error codes, the cost of calls that never finished, the system prompt's rules and the
+// history view of a stored conversation (docs/portal/tuning-chat.md sections 2, 4 and 5), without Docker.
 import {
   AnthropicError, APIConnectionError, APIConnectionTimeoutError, APIError, APIUserAbortError, AuthenticationError,
   BadRequestError, InternalServerError, NotFoundError, PermissionDeniedError, RateLimitError,
 } from '@anthropic-ai/sdk';
-import type { BetaContentBlock, BetaRawMessageStreamEvent } from '@anthropic-ai/sdk/resources/beta/messages/messages';
+import type {
+  BetaContentBlock, BetaMessageParam, BetaRawMessageStreamEvent,
+} from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import { describe, expect, it } from 'vitest';
 
 import { costMicroUsd, messageCostMicroUsd } from '../src/chat/pricing.ts';
-import { SYSTEM_PROMPT, TOOLS } from '../src/chat/prompt.ts';
-import type { ToolContext } from '../src/chat/tools.ts';
+import { SYSTEM_PROMPT } from '../src/chat/prompt.ts';
+import { TOOLS, type ToolContext } from '../src/chat/tools/registry.ts';
 import { echoable, failureCode, requestParams, runTurn, type TurnResult } from '../src/chat/turn.ts';
+import { chatMessageViews } from '../src/chat/view.ts';
 import { eventsOf, message, scriptedModel, text, thinking, toolUse, usage, type Step } from './helpers/chat-model.ts';
 
 const tokens = (input: number, output: number, cacheRead = 0, cacheWrite = 0) => ({ input, output, cacheRead, cacheWrite });
@@ -91,6 +94,96 @@ describe('the request', () => {
     expect(JSON.stringify([one.system, one.tools])).toBe(JSON.stringify([two.system, two.tools]));
     expect(SYSTEM_PROMPT).not.toMatch(/\d/);
     expect(TOOLS.map((tool) => tool.eager_input_streaming)).toEqual([true, true, true, true, true]);
+  });
+});
+
+describe('the system prompt', () => {
+  it('names TownwiseAI, asks for a source for every figure, asks when data does not add up, and keeps guest names out', () => {
+    for (const rule of [
+      'You are TownwiseAI, Townwise\'s assistant.',
+      'When you give a figure, say where it came from: their sales, their notes or the town profile.',
+      'If something in the data doesn\'t add up, ask the owner instead of guessing.',
+      'Never ask for, repeat or store guest names or other personal details about guests or staff.',
+      'Townwise has no forecast for this location yet. Never claim or suggest that one exists, and don\'t predict figures.',
+      'The owner sees the proposal as a card and decides whether to save it, so never say a note was saved.',
+    ]) expect(SYSTEM_PROMPT).toContain(rule);
+  });
+});
+
+describe('the history view', () => {
+  const at = new Date('2026-06-01T12:00:00.000Z');
+  const later = new Date('2026-06-01T12:00:05.000Z');
+  const stored = (params: BetaMessageParam[], when: Date[] = []) => params.map((param, i) => ({ at: when[i] ?? at, param: JSON.stringify(param) }));
+  const result = (id: string, content: string, isError = false) => ({
+    type: 'tool_result' as const, tool_use_id: id, content, ...(isError ? { is_error: true } : {}),
+  });
+  const note = {
+    kind: 'closure', startDate: '2026-06-20', endDate: '2026-06-20', weekdays: null, effect: 'closed', expectedGuests: null,
+    detail: null,
+  } as const;
+
+  it('folds a reply’s messages and tool results into one entry whose parts keep their order: text, tool, text, proposal', () => {
+    const views = chatMessageViews(stored([
+      { role: 'user', content: 'Were we closed?' },
+      { role: 'assistant', content: [thinking('s1'), text('Let me '), text('look. '), toolUse('t1', 'list_notes', {})] },
+      { role: 'user', content: [result('t1', JSON.stringify({ notes: [{}, {}] }))] },
+      { role: 'assistant', content: [text('You have two notes.'), toolUse('p1', 'propose_note', note)] },
+      { role: 'user', content: [result('p1', 'Shown to the owner as a proposal. They decide whether to add it.')] },
+      { role: 'assistant', content: [text('I proposed it.')] },
+      { role: 'user', content: 'Thanks' },
+    ], [at, later, later, later, later, later, later]), '2026-06-01');
+    expect(views).toEqual([
+      { role: 'user', at: at.toISOString(), text: 'Were we closed?', proposals: [], parts: [] },
+      {
+        role: 'assistant', at: later.toISOString(), text: 'Let me look. \n\nYou have two notes.\n\nI proposed it.',
+        proposals: [{ ...note, id: 'p1' }],
+        parts: [
+          { type: 'text', text: 'Let me look. ' },
+          { type: 'tool', id: 't1', name: 'list_notes', state: 'done', input: null, result: { count: 2 } },
+          { type: 'text', text: 'You have two notes.' },
+          { type: 'proposal', proposal: { ...note, id: 'p1' } },
+          { type: 'text', text: 'I proposed it.' },
+        ],
+      },
+      { role: 'user', at: later.toISOString(), text: 'Thanks', proposals: [], parts: [] },
+    ]);
+  });
+
+  it('leaves out calls that never ran and unknown tools, shows an error call as an error part, and an invalid proposal as one', () => {
+    const [, reply] = chatMessageViews(stored([
+      { role: 'user', content: 'Check' },
+      { role: 'assistant', content: [
+        toolUse('s1', 'get_sales_days', { from: '2026-05-01', to: '2026-12-31' }), toolUse('u1', 'get_weather', {}),
+        toolUse('p2', 'propose_note', { ...note, endDate: '2026-06-19' }), toolUse('cap', 'list_notes', {}),
+      ] },
+      { role: 'user', content: [
+        result('s1', 'Invalid input', true), result('u1', 'Unknown tool.', true), result('p2', 'Not a valid note', true),
+        result('cap', 'Not run: the reply asked for too many tool calls at once.', true),
+      ] },
+      { role: 'assistant', content: [text('Cut off'), toolUse('m1', 'list_notes', {})] },
+      { role: 'user', content: [result('m1', 'Not run: the reply stopped before this call could run.', true)] },
+    ]), '2026-06-01');
+    expect(reply?.parts).toEqual([
+      { type: 'tool', id: 's1', name: 'get_sales_days', state: 'error', input: null, result: null },
+      { type: 'tool', id: 'p2', name: 'propose_note', state: 'error', input: null, result: null },
+      { type: 'text', text: 'Cut off' },
+    ]);
+    expect(reply?.proposals).toEqual([]);
+  });
+
+  it('shows a reply of thinking only as nothing, and keeps a valid range’s input view', () => {
+    const views = chatMessageViews(stored([
+      { role: 'user', content: 'Hi' },
+      { role: 'assistant', content: [thinking('s1')] },
+      { role: 'user', content: 'May?' },
+      { role: 'assistant', content: [toolUse('s2', 'get_sales_days', { from: '2026-05-01', to: '2026-05-31' })] },
+      { role: 'user', content: [result('s2', JSON.stringify({ from: '2026-05-01', to: '2026-05-31', days: [{ date: '2026-05-01', guests: 3, netSalesUsd: null }] }))] },
+    ]), '2026-06-01');
+    expect(views.map((view) => view.role)).toEqual(['user', 'user', 'assistant']);
+    expect(views[2]?.parts).toEqual([{
+      type: 'tool', id: 's2', name: 'get_sales_days', state: 'done', input: { from: '2026-05-01', to: '2026-05-31' },
+      result: { from: '2026-05-01', to: '2026-05-31', dayCount: 1, guestsDayCount: 1, netSalesDayCount: 0 },
+    }]);
   });
 });
 

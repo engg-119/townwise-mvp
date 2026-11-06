@@ -14,7 +14,7 @@ import type { StoredMessage } from '../stores/chat-conversations.ts';
 import type { ChatModel } from './model.ts';
 import { costMicroUsd, messageCostMicroUsd, tokensOf, type TokenCounts } from './pricing.ts';
 import { SYSTEM_PROMPT } from './prompt.ts';
-import { runTool, toolNamed, TOOLS, type ToolContext } from './tools/registry.ts';
+import { inputViewOf, resultViewOf, runTool, toolNamed, TOOLS, type ToolContext, type ToolView } from './tools/registry.ts';
 
 export const CHAT_MODEL = 'claude-opus-5-5';
 export const MAX_TOKENS = 16_000;
@@ -33,11 +33,20 @@ const MAX_JSON_RETRIES = 2;
 export type DoneReason = 'end_turn' | 'max_tokens' | 'tool_limit' | 'budget';
 export type FailureCode = 'internal' | 'provider_unavailable' | 'provider_overloaded';
 
-/** What the turn streams to the client between `conversation` and `done` or `error`. */
+/**
+ * What the turn streams to the client between `conversation` and `done` or `error`. `id` is the tool_use block's id.
+ * A tool event's `input` is its input view on every state; `result` is its result view, on `done` only.
+ */
 export type TurnEvent =
   | { type: 'text'; data: { delta: string } }
-  | { type: 'tool'; data: { name: string; state: 'running' | 'done' | 'error' } }
-  | { type: 'proposal'; data: { proposal: NoteContent } };
+  | {
+    type: 'tool';
+    data: { id: string; name: string; state: 'running' | 'done' | 'error'; input: ToolView | null; result: ToolView | null };
+  }
+  | { type: 'proposal'; data: { id: string; proposal: NoteContent } };
+
+/** How every answer to a tool call that never ran begins; GET .../chat/:conversationId leaves those calls out. */
+export const NOT_RUN = 'Not run: ';
 
 export type TurnResult =
   | {
@@ -164,7 +173,7 @@ function notRun(blocks: readonly BetaToolUseBlock[]): BetaMessageParam {
   return {
     role: 'user',
     content: blocks.map((block): BetaToolResultBlockParam => ({
-      type: 'tool_result', tool_use_id: block.id, is_error: true, content: 'Not run: the reply stopped before this call could run.',
+      type: 'tool_result', tool_use_id: block.id, is_error: true, content: `${NOT_RUN}the reply stopped before this call could run.`,
     })),
   };
 }
@@ -173,7 +182,7 @@ function notRun(blocks: readonly BetaToolUseBlock[]): BetaMessageParam {
 function tooMany(block: BetaToolUseBlock): BetaToolResultBlockParam {
   return {
     type: 'tool_result', tool_use_id: block.id, is_error: true,
-    content: `Not run: the reply asked for too many tool calls at once. At most ${MAX_TOOLS_PER_MESSAGE} run from one reply; ask for the rest in the next one.`,
+    content: `${NOT_RUN}the reply asked for too many tool calls at once. At most ${MAX_TOOLS_PER_MESSAGE} run from one reply; ask for the rest in the next one.`,
   };
 }
 
@@ -271,12 +280,17 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
           continue;
         }
         // Only a registered tool gets events; an unknown name is answered as an error without any.
-        const name = toolNamed(block.name) === undefined ? null : block.name;
-        if (name !== null) input.emit({ type: 'tool', data: { name, state: 'running' } });
+        const known = toolNamed(block.name) !== undefined;
+        const { id, name } = block;
+        const view = inputViewOf(name, block.input, input.tools.today);
+        if (known) input.emit({ type: 'tool', data: { id, name, state: 'running', input: view, result: null } });
         const outcome = await runTool(input.tools, block);
         results.push(outcome.result);
-        if (outcome.proposal !== null) input.emit({ type: 'proposal', data: { proposal: outcome.proposal } });
-        if (name !== null) input.emit({ type: 'tool', data: { name, state: outcome.result.is_error === true ? 'error' : 'done' } });
+        if (outcome.proposal !== null) input.emit({ type: 'proposal', data: { id, proposal: outcome.proposal } });
+        if (known) {
+          const state = outcome.result.is_error === true ? 'error' : 'done';
+          input.emit({ type: 'tool', data: { id, name, state, input: view, result: resultViewOf(name, outcome.result) } });
+        }
       }
       append({ role: 'user', content: results });
     }

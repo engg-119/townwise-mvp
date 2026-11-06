@@ -156,7 +156,7 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   const body = parseInput(turnBody, req.body);
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const model = ctx.chat;
-  if (model === null) throw new AppError(503, 'chat_unavailable', 'The tuning chat isn’t turned on yet');
+  if (model === null) throw new AppError(503, 'chat_unavailable', 'TownwiseAI isn’t turned on yet');
   const owner = ownerOf(caller, location.id);
   if (body.conversationId !== undefined) {
     const existing = await ctx.stores.chatConversations.find(scope, owner, body.conversationId);
@@ -164,7 +164,7 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
     if (isFull(existing)) throw new AppError(409, 'conversation_full', 'This conversation is full. Start a new one.');
   }
   if ((await budgetOf(ctx, scope)).exhausted) {
-    throw new AppError(409, 'chat_budget_exhausted', 'Your organization’s tuning chat budget for this month is used up');
+    throw new AppError(409, 'chat_budget_exhausted', 'Your organization’s TownwiseAI budget for this month is used up');
   }
   const now = ctx.now();
   const claim: TurnClaim = { turnId: randomUUID(), now, staleBefore: new Date(now.getTime() - STALE_TURN_MS) };
