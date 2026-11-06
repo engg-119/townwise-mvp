@@ -70,7 +70,7 @@ export const KIND_LABEL: Readonly<Record<FileKind, string>> = {
   other: 'File',
 };
 
-/** The accept hint under the drop zone (storage2 15.4), from the create response's limit once there is one. */
+/** The accept hint under the drop zone (storage2 15.4): pass the queue's `limits?.maxFileBytes ?? null`, never a constant. */
 export function acceptHint(maxFileBytes: number | null): string {
   const kinds = 'Any file: CSV, Excel, PDF, Word, ZIP or text';
   return maxFileBytes === null ? `${kinds}.` : `${kinds}, up to ${formatSize(maxFileBytes)} each.`;

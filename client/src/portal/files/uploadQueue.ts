@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ApiError, type ApiClient } from '../../api/client';
 import { usePortal, useReadOnly } from '../PortalProvider';
-import { completeUpload, createUpload, getFile, putChunk, removeFile, type FilePurpose, type FileView } from './api';
+import {
+  completeUpload, createUpload, getFile, putChunk, removeFile, type FilePurpose, type FileView, type UploadLimits,
+} from './api';
 
 // The upload queue (storage2 9.2 and 15.2): every dropped file is its own chunked upload, three at a time with
 // the rest waiting in drop order, one chunk in flight per file. Each file reports its bytes sent, a smoothed
@@ -46,6 +48,8 @@ export interface QueueSnapshot {
   importId: string | null;
   /** 503 files_unavailable: stored files are off, so the screen shows P13's browser upload instead. */
   filesUnavailable: boolean;
+  /** From the latest create (storage2 15.4), for the accept hint and the limits line; null before the first. */
+  limits: UploadLimits | null;
 }
 
 export interface UploadQueue extends QueueSnapshot {
@@ -79,7 +83,7 @@ const COUNTED_OUT: ReadonlySet<UploadState> = new Set(['refused', 'failed', 'can
 const FINISHED: ReadonlySet<UploadState> = new Set(['done', 'refused', 'failed', 'cancelled']);
 
 export const EMPTY_SNAPSHOT: QueueSnapshot = {
-  items: [], overall: { files: 0, bytes: 0, sentBytes: 0, secondsLeft: null }, importId: null, filesUnavailable: false,
+  items: [], overall: { files: 0, bytes: 0, sentBytes: 0, secondsLeft: null }, importId: null, filesUnavailable: false, limits: null,
 };
 
 interface Entry {
@@ -167,6 +171,7 @@ export function createUploadQueue(deps: {
   const entries: Entry[] = [];
   let importId: string | null = null;
   let filesUnavailable = false;
+  let limits: UploadLimits | null = null;
   let counter = 0;
   let sampler: ReturnType<typeof setInterval> | null = null;
   let disposed = false;
@@ -203,7 +208,7 @@ export function createUploadQueue(deps: {
     let secondsLeft: number | null = null;
     if (bytes - sentBytes <= 0) secondsLeft = counted.length === 0 ? null : 0;
     else if (speed > 0 && sending.some((item) => item.secondsLeft !== null)) secondsLeft = ceil5((bytes - sentBytes) / speed);
-    return { items, overall: { files: counted.length, bytes, sentBytes, secondsLeft }, importId, filesUnavailable };
+    return { items, overall: { files: counted.length, bytes, sentBytes, secondsLeft }, importId, filesUnavailable, limits };
   }
 
   function emit(): void {
@@ -322,6 +327,7 @@ export function createUploadQueue(deps: {
     }));
     entry.fileId = created.file.id;
     importId ??= created.import.id;
+    limits = created.limits;
     // Create is never aborted, so a file cancelled meanwhile is deleted once the server has it.
     if (FINISHED.has(entry.state)) {
       if (entry.state === 'cancelled') void removeFile(deps.api, deps.locationId, created.file.id).catch(() => undefined);

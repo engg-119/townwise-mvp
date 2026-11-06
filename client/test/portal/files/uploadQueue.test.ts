@@ -285,6 +285,16 @@ test('the resend after a retry pause is sending again, and its bytes move the sp
   expect(last.items[0]?.sentBytes).toBe(600 * KIB);
 });
 
+test('the snapshot carries the limits from the latest create, for the drop step to show', async () => {
+  start();
+  expect(last.limits).toBeNull();
+  queue.add([sourceOf('a.csv', 4)]);
+  await flush();
+  expect(last.limits).toEqual({
+    maxFileBytes: 209_715_200, chunkSize: 4, dailyBytesLeft: 2 ** 31, storedBytesLeft: 5 * 2 ** 30, filesLeftInImport: 49,
+  });
+});
+
 test('cancel stops a file and deletes what the server has; a waiting file leaves without a request', async () => {
   start();
   queue.add(['a', 'b', 'c', 'd'].map((name) => sourceOf(`${name}.csv`, 8)));
