@@ -1,19 +1,23 @@
 import { basedOnLine, isHiddenTool, isKnownTool, readsLine, toolLine, viewRows, type ToolStep } from '../../src/chat/tools';
 
 // The client's tool table (spec P25). The names are listed here as api/test/chat-tools.test.ts lists the
-// registry's: the client can't import the API, so a PR that appends a tool updates both lists. get_town_calendar and
-// get_people_in_town are U13A's; their rows are ready for when they land.
+// registry's (FROZEN_NAMES), in its order: the client can't import the API, so a PR that appends a tool updates both
+// lists. get_town_calendar and get_people_in_town are U13A's, get_forecast U13B's; their views below are copied from
+// api/test/chat-estimate-tools.test.ts.
 
-const REGISTERED = ['get_location_overview', 'get_sales_days', 'list_notes', 'get_town_profile', 'propose_note'];
-const AHEAD = ['get_town_calendar', 'get_people_in_town'];
+const REGISTERED = [
+  'get_location_overview', 'get_sales_days', 'list_notes', 'get_town_profile', 'propose_note',
+  'get_town_calendar', 'get_people_in_town',
+  'get_forecast',
+];
 const CTX = { town: 'Hanover', hasTownProfile: true };
 
 function step(name: string, state: ToolStep['state'], input: ToolStep['input'] = null, result: ToolStep['result'] = null): ToolStep {
   return { id: `toolu_test_${name}`, name, state, input, result };
 }
 
-test('every registered tool, and the two U13A tools, has words for each state; propose_note shows as its card', () => {
-  for (const name of [...REGISTERED, ...AHEAD]) {
+test('every registered tool has words for each state; propose_note shows as its card', () => {
+  for (const name of REGISTERED) {
     expect(isKnownTool(name)).toBe(true);
     const lines = (['running', 'done', 'error'] as const).map((state) => toolLine(step(name, state), CTX));
     expect(lines.map((line) => line.status)).toEqual(['Reading', 'Read', 'Couldn’t read']);
@@ -60,16 +64,65 @@ test('U13A’s rows: who is in town and the town calendar', () => {
     available: true, headcount: 'range',
     sources: [{ host: 'census.gov', url: 'https://census.gov/a' }, { host: 'dartmouth.edu', url: 'https://dartmouth.edu/a' }, { host: 'bls.gov', url: 'https://bls.gov/a' }],
   }), CTX).detail).toBe('Headcount range from 3 sources · census.gov · dartmouth.edu · bls.gov');
-  expect(toolLine(step('get_town_calendar', 'running', range), CTX).sentence).toBe('Reading Hanover’s town calendar for Nov 1 to Nov 30, 2026');
+  // The people view exactly as api/test/chat-estimate-tools.test.ts asserts it (with a headcount input).
+  const people = {
+    available: true, town: { name: 'Hanover', state: 'NH' }, periods: 1, headcount: 'range',
+    sources: [
+      { host: 'census.example.test', url: 'https://census.example.test/p1' },
+      { host: 'registrar.dartmouth.edu', url: 'https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027-key-dates' },
+      { host: 'bls.gov', url: 'https://www.bls.gov/cew/additional-resources/open-data/' },
+    ],
+  };
+  expect(toolLine(step('get_people_in_town', 'done', range, people), CTX)).toMatchObject({
+    sentence: 'Read who’s in Hanover for Nov 1 to Nov 30, 2026',
+    detail: 'Headcount range from 3 sources · census.example.test · registrar.dartmouth.edu · bls.gov',
+    sources: people.sources,
+  });
+  expect(viewRows(range, people, 'get_people_in_town')).toEqual([
+    { term: 'From', value: 'Nov 1, 2026' }, { term: 'To', value: 'Nov 30, 2026' }, { term: 'Researched', value: 'Yes' },
+    { term: 'Town', value: 'Hanover, NH' }, { term: 'Periods', value: '1' }, { term: 'Headcount', value: 'A range, with sources' },
+  ]);
+  // U13A's labels: "Reading {town}'s calendar for {range}", and an unresearched town reads its holidays only.
+  expect(toolLine(step('get_town_calendar', 'running', range), CTX).sentence).toBe('Reading Hanover’s calendar for Nov 1 to Nov 30, 2026');
   // get_town_calendar's result view as U13A's tool sends it: { from, to, town, researched, eventCount, sources }.
   const calendar = { ...range, town: { name: 'Hanover', state: 'NH' }, researched: true, eventCount: 2, sources: [{ host: 'dartmouth.edu', url: 'https://dartmouth.edu/c' }] };
-  expect(toolLine(step('get_town_calendar', 'done', range, calendar), CTX).detail).toBe('2 events · dartmouth.edu');
+  expect(toolLine(step('get_town_calendar', 'done', range, calendar), CTX)).toMatchObject({
+    sentence: 'Read Hanover’s calendar for Nov 1 to Nov 30, 2026', detail: '2 events · dartmouth.edu',
+  });
   expect(toolLine(step('get_town_calendar', 'done', range, { ...calendar, eventCount: 0, sources: [] }), CTX).detail).toBe('No events in this range');
-  expect(toolLine(step('get_town_calendar', 'done', range, { ...calendar, researched: false, eventCount: 0, sources: [] }), CTX).detail)
-    .toBe('Townwise hasn’t researched this town’s calendar yet');
+  const bend = { ...range, town: { name: 'Bend', state: 'OR' }, researched: false, eventCount: 1, sources: [{ host: 'opm.gov', url: 'https://www.opm.gov/h' }] };
+  expect(toolLine(step('get_town_calendar', 'done', range, bend), CTX)).toMatchObject({
+    sentence: 'Read Bend’s calendar for Nov 1 to Nov 30, 2026', detail: 'Holidays only; Bend isn’t researched yet · opm.gov',
+  });
   expect(viewRows(range, calendar)).toEqual([
     { term: 'From', value: 'Nov 1, 2026' }, { term: 'To', value: 'Nov 30, 2026' },
     { term: 'Town', value: 'Hanover, NH' }, { term: 'Researched', value: 'Yes' }, { term: 'Events', value: '2' },
+  ]);
+});
+
+test('U13B’s row: the forecast, published runs only, never claimed when there is none', () => {
+  const range = { from: '2026-11-02', to: '2026-11-04' };
+  // Both views exactly as api/test/chat-estimate-tools.test.ts asserts them.
+  const published = { available: true, modelVersion: 'v9', madeAt: '2026-11-01', dataThrough: '2026-10-31', days: 2, notCovered: 1 };
+  const none = { available: false, modelVersion: null, madeAt: null, dataThrough: null, days: 0, notCovered: 0 };
+  // model.md 5.6: "Reading Townwise's forecast for {range}", "Read the forecast for {range}".
+  expect(toolLine(step('get_forecast', 'running', range), CTX).sentence).toBe('Reading Townwise’s forecast for Nov 2 to Nov 4, 2026');
+  expect(toolLine(step('get_forecast', 'done', range, published), CTX)).toMatchObject({
+    sentence: 'Read the forecast for Nov 2 to Nov 4, 2026', detail: 'Model v9, made Nov 1, 2026', sources: [],
+  });
+  expect(toolLine(step('get_forecast', 'done', range, none), CTX).detail).toBe('No forecast yet');
+  expect(toolLine(step('get_forecast', 'error', range), CTX).sentence).toBe('Couldn’t read Townwise’s forecast for Nov 2 to Nov 4, 2026');
+  expect(basedOnLine([step('get_forecast', 'done', range, none)], CTX)).toBe('Based on Townwise’s forecast for Nov 2 to Nov 4, 2026 (none yet).');
+  expect(basedOnLine([step('get_forecast', 'done', range, published)], CTX)).toBe('Based on Townwise’s forecast for Nov 2 to Nov 4, 2026 (model v9).');
+  // Its own words for `available`: a forecast is published, not "researched".
+  expect(viewRows(range, published, 'get_forecast')).toEqual([
+    { term: 'From', value: 'Nov 2, 2026' }, { term: 'To', value: 'Nov 4, 2026' }, { term: 'Forecast published', value: 'Yes' },
+    { term: 'Model', value: 'v9' }, { term: 'Made', value: 'Nov 1, 2026' }, { term: 'Sales through', value: 'Oct 31, 2026' },
+    { term: 'Days forecast', value: '2' }, { term: 'Days not covered', value: '1' },
+  ]);
+  expect(viewRows(range, none, 'get_forecast')).toEqual([
+    { term: 'From', value: 'Nov 2, 2026' }, { term: 'To', value: 'Nov 4, 2026' }, { term: 'Forecast published', value: 'No' },
+    { term: 'Days forecast', value: '0' }, { term: 'Days not covered', value: '0' },
   ]);
 });
 
@@ -98,10 +151,11 @@ test('the Based on line comes from the calls that read something, never the mode
   expect(basedOnLine([step('list_notes', 'error')], CTX)).toBe('Based on this conversation only.');
 });
 
-test('what TownwiseAI reads lists only tools the server has, so U13A’s rows add nothing until they land', () => {
-  expect(readsLine(CTX)).toBe('your sales, your notes and Hanover’s town profile');
-  // A town Townwise hasn't researched has no profile to read.
-  expect(readsLine({ town: 'Norwich', hasTownProfile: false })).toBe('your sales and your notes');
+test('what TownwiseAI reads lists the registered tools that have something to read, and never a forecast', () => {
+  expect(readsLine(CTX)).toBe('your sales, your notes, Hanover’s town profile, the town calendar and who’s likely in Hanover');
+  // A town outside the twelve has no profile and no people in town to read; its calendar is the federal holidays.
+  expect(readsLine({ town: 'Bend', hasTownProfile: false })).toBe('your sales, your notes and the town calendar');
+  expect(readsLine(CTX)).not.toMatch(/forecast/);
 });
 
 test('an opened card lists the views in words, and never a field it has no words for', () => {

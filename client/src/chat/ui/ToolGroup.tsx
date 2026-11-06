@@ -48,7 +48,7 @@ function Row(props: { step: ToolStep; ctx: ToolContext }): React.JSX.Element {
   const { step, ctx } = props;
   const [open, setOpen] = useState(false);
   const line = toolLine(step, ctx);
-  const rows = step.state === 'done' ? viewRows(step.input, step.result) : [];
+  const rows = step.state === 'done' ? viewRows(step.input, step.result, step.name) : [];
   const expandable = rows.length > 0 || line.sources.length > 0;
   const tone = step.state === 'running' ? styles.statusRunning : step.state === 'error' ? styles.statusError : styles.statusDone;
   const head = (

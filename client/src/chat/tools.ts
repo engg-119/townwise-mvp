@@ -26,7 +26,7 @@ export interface SourceLink { host: string; url: string }
 interface ToolRow {
   /** The thing read, after the status word: "your notes", "Hanover’s town profile". */
   object(input: ToolView | null, ctx: ToolContext, result: ToolView | null): string;
-  detail?(result: ToolView, input: ToolView | null): string | null;
+  detail?(result: ToolView, input: ToolView | null, ctx: ToolContext): string | null;
   sources?(result: ToolView): SourceLink[];
   /** Its piece of the Based on line; the object when absent. */
   basedOn?(input: ToolView | null, ctx: ToolContext, result: ToolView | null): string;
@@ -38,6 +38,8 @@ interface ToolRow {
   reads?(ctx: ToolContext): string | null;
   /** Not a card: propose_note shows the proposal card instead. */
   hidden?: true;
+  /** Words for this tool's view fields where the shared VIEW_TERMS would mislabel them. */
+  terms?: Readonly<Record<string, string>>;
 }
 
 function text(view: ToolView | null, key: string): string | null {
@@ -156,23 +158,26 @@ const TOOLS: Readonly<Record<string, ToolRow>> = {
     object: () => 'a note for you to check',
     hidden: true,
   },
-  // U13A: get_town_calendar and get_people_in_town, ahead of their landing in the registry. Their `reads` lines
-  // land with the tools themselves.
+  // U13A: get_town_calendar and get_people_in_town (api/src/chat/tools/town-calendar.ts, people-in-town.ts).
   get_town_calendar: {
     object: (input, ctx, result) => {
       const range = rangeOf(input);
-      const name = `${possessive(townOf(result, ctx))} town calendar`;
+      const name = `${possessive(townOf(result, ctx))} calendar`;
       return range === null ? name : `${name} for ${range}`;
     },
-    detail: (result) => {
-      if (result.researched === false) return 'Townwise hasn’t researched this town’s calendar yet';
+    detail: (result, _input, ctx) => {
       const events = count(result, 'eventCount');
+      // An unresearched town's calendar still has the US federal holidays (spec 13.1).
+      const lead = result.researched === false
+        ? `Holidays only; ${townOf(result, ctx)} isn’t researched yet`
+        : events === null ? null : events === 0 ? 'No events in this range' : plural(events, 'event', 'events');
       const hosts = sourcesOf(result).map((source) => source.host);
-      const parts = [events === null ? null : events === 0 ? 'No events in this range' : plural(events, 'event', 'events'), ...hosts];
-      const line = parts.filter((part): part is string => part !== null).join(' · ');
+      const line = [lead, ...hosts].filter((part): part is string => part !== null).join(' · ');
       return line === '' ? null : line;
     },
     sources: sourcesOf,
+    // Every town has one: the federal holidays, with researched events where Townwise has them.
+    reads: () => 'the town calendar',
   },
   get_people_in_town: {
     object: (input, ctx, result) => {
@@ -189,6 +194,32 @@ const TOOLS: Readonly<Record<string, ToolRow>> = {
       return [headcount, ...sources.map((source) => source.host)].join(' · ');
     },
     sources: sourcesOf,
+    // Only the twelve towns have term dates and public counts; another town's window is unavailable.
+    reads: (ctx) => (ctx.hasTownProfile ? `who’s likely in ${ctx.town}` : null),
+  },
+  // U13B: get_forecast (api/src/chat/tools/forecast.ts). Published runs only. No `reads` line: whether a location has
+  // a published forecast isn't known here, and the page never claims one exists.
+  get_forecast: {
+    // "Reading Townwise’s forecast for …" while it runs, "Read the forecast for …" once it has (model.md 5.6).
+    object: (input, _ctx, result) => {
+      const range = rangeOf(input);
+      const name = result === null ? 'Townwise’s forecast' : 'the forecast';
+      return range === null ? name : `${name} for ${range}`;
+    },
+    detail: (result) => {
+      if (result.available === false) return 'No forecast yet';
+      const version = text(result, 'modelVersion');
+      const madeAt = text(result, 'madeAt');
+      return version === null || madeAt === null ? null : `Model ${version}, made ${rangeText(madeAt, madeAt)}`;
+    },
+    basedOn: (input, _ctx, result) => {
+      const range = rangeOf(input);
+      const name = range === null ? 'Townwise’s forecast' : `Townwise’s forecast for ${range}`;
+      if (result?.available === false) return `${name} (none yet)`;
+      const version = text(result, 'modelVersion');
+      return version === null ? name : `${name} (model ${version})`;
+    },
+    terms: { available: 'Forecast published', days: 'Days forecast' },
   },
 };
 
@@ -228,7 +259,7 @@ export function toolLine(step: ToolStep, ctx: ToolContext): ToolLine {
     status,
     object,
     sentence: `${status} ${object}`,
-    detail: done && row.detail !== undefined && step.result !== null ? row.detail(step.result, step.input) : null,
+    detail: done && row.detail !== undefined && step.result !== null ? row.detail(step.result, step.input, ctx) : null,
     sources: done && row.sources !== undefined && step.result !== null ? row.sources(step.result) : [],
   };
 }
@@ -273,6 +304,7 @@ const VIEW_TERMS: Readonly<Record<string, string>> = {
   from: 'From', to: 'To', firstDate: 'First day', lastDate: 'Last day', dayCount: 'Days', missingDays: 'Days missing',
   monthCount: 'Months', guestsDayCount: 'Days with guests', netSalesDayCount: 'Days with net sales', count: 'Notes',
   available: 'Researched', researched: 'Researched', town: 'Town', eventCount: 'Events', periods: 'Periods', headcount: 'Headcount',
+  modelVersion: 'Model', madeAt: 'Made', dataThrough: 'Sales through', notCovered: 'Days not covered',
 };
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -295,13 +327,15 @@ function valueText(key: string, value: unknown): string | null {
 /**
  * An opened card's rows: the input view, then the result view, field by field, in words. Fields this table has no
  * words for are left out, and so are sources (shown as links) and anything that is not a date, a count, yes or no.
+ * `name` lets a tool's own words replace the shared ones (get_forecast's `available` is not "Researched").
  */
-export function viewRows(input: ToolView | null, result: ToolView | null): { term: string; value: string }[] {
+export function viewRows(input: ToolView | null, result: ToolView | null, name?: string): { term: string; value: string }[] {
+  const own = name !== undefined && Object.hasOwn(TOOLS, name) ? TOOLS[name]?.terms : undefined;
   const rows: { term: string; value: string }[] = [];
   for (const view of [input, result]) {
     if (view === null) continue;
     for (const [key, value] of Object.entries(view)) {
-      const term = Object.hasOwn(VIEW_TERMS, key) ? VIEW_TERMS[key] : undefined;
+      const term = own !== undefined && Object.hasOwn(own, key) ? own[key] : Object.hasOwn(VIEW_TERMS, key) ? VIEW_TERMS[key] : undefined;
       const shown = term === undefined ? null : valueText(key, value);
       if (term !== undefined && shown !== null && !rows.some((row) => row.term === term)) rows.push({ term, value: shown });
     }
