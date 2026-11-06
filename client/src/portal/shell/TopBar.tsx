@@ -94,7 +94,7 @@ export function TopBar(props: TopBarProps): React.JSX.Element {
           <Text numberOfLines={1} style={styles.orgName}>{props.orgName}</Text>
         </View>
       )}
-      {consoleBar ? <StatusTag label="Staff console" /> : null}
+      {consoleBar ? <View style={styles.tagSlot}><StatusTag label="Staff console" /></View> : null}
     </View>
   );
   const verified = props.verifiedUntil === undefined || props.verifiedUntil === null ? null : (
@@ -164,6 +164,8 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', minHeight: 64, columnGap: 32 },
   identity: { flexDirection: 'row', alignItems: 'center', columnGap: 16, flexShrink: 1, minWidth: 0 },
   wordmark: { ...theme.type.wordmark, color: c.white, minHeight: 44, lineHeight: 44, textDecorationLine: 'none' },
+  // StatusTag sets alignSelf: 'flex-start' for list rows; here it centers on the 44px wordmark.
+  tagSlot: { alignSelf: 'center' },
   org: { flexDirection: 'row', alignItems: 'center', columnGap: 16, flexShrink: 1, minWidth: 0 },
   rule: { width: 1, height: 20, backgroundColor: c.border },
   orgName: { ...theme.type.ui, color: c.text2, flexShrink: 1 },

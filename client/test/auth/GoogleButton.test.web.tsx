@@ -1,6 +1,7 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 
 import { GoogleButton, resetGoogleButtonState } from '../../src/auth/GoogleButton';
+import { REVEAL_MS } from '../../src/auth/GoogleButton.web';
 
 const GIS = 'https://accounts.google.com/gsi/client';
 const google = { webClientId: '123-abc.apps.googleusercontent.com', iosClientId: null };
@@ -62,4 +63,117 @@ test('after a load failure, the next mount injects a fresh tag', async () => {
   first.unmount();
   render(<GoogleButton google={google} onIdToken={jest.fn()} onError={jest.fn()} />);
   await waitFor(() => { expect(document.querySelector(`script[src="${GIS}"]`)).not.toBeNull(); });
+});
+
+// Google's renderButton as it behaves: a placeholder, then its button in an iframe that is 0 wide until it loads.
+function fakeGis(): { renderButton: jest.Mock; frames: HTMLIFrameElement[] } {
+  const frames: HTMLIFrameElement[] = [];
+  const renderButton = jest.fn((parent: HTMLElement) => {
+    const frame = document.createElement('iframe');
+    frames.push(frame);
+    parent.append(document.createElement('div'), frame);
+  });
+  (window as { google?: unknown }).google = { accounts: { id: { initialize: jest.fn(), renderButton } } };
+  return { renderButton, frames };
+}
+
+class FakeSizes {
+  static all: FakeSizes[] = [];
+  readonly callback: ResizeObserverCallback;
+  readonly targets: Element[] = [];
+  constructor(callback: ResizeObserverCallback) {
+    this.callback = callback;
+    FakeSizes.all.push(this);
+  }
+  observe(target: Element): void { this.targets.push(target); }
+  unobserve(): void { return undefined; }
+  disconnect(): void { this.targets.length = 0; }
+  report(target: Element, width: number): void {
+    this.callback([{ target, contentRect: { width } } as unknown as ResizeObserverEntry], this);
+  }
+}
+
+function withSizes(): () => void {
+  const had = Object.getOwnPropertyDescriptor(window, 'ResizeObserver');
+  FakeSizes.all = [];
+  Object.defineProperty(window, 'ResizeObserver', { configurable: true, writable: true, value: FakeSizes });
+  return () => {
+    if (had === undefined) delete (window as { ResizeObserver?: unknown }).ResizeObserver;
+    else Object.defineProperty(window, 'ResizeObserver', had);
+  };
+}
+
+async function mountButton(): Promise<HTMLElement> {
+  const { container } = render(<GoogleButton google={google} onIdToken={jest.fn()} onError={jest.fn()} />);
+  document.querySelector(`script[src="${GIS}"]`)?.dispatchEvent(new Event('load'));
+  const host = container.firstElementChild as HTMLElement;
+  await waitFor(() => { expect(host.querySelector('iframe')).not.toBeNull(); });
+  return host;
+}
+
+test('the button gets the container’s width, from 200 to 400px, so Google’s placeholder and its button match', async () => {
+  for (const [width, expected] of [[363, 363], [520, 400], [150, 200]] as const) {
+    resetGoogleButtonState();
+    const { renderButton } = fakeGis();
+    const spy = jest.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(width);
+    const view = render(<GoogleButton google={google} onIdToken={jest.fn()} onError={jest.fn()} />);
+    document.querySelector(`script[src="${GIS}"]`)?.dispatchEvent(new Event('load'));
+    await waitFor(() => { expect(renderButton).toHaveBeenCalledWith(expect.any(HTMLElement), { text: 'continue_with', width: expected }); });
+    spy.mockRestore();
+    view.unmount();
+  }
+});
+
+test('the button keeps its 44px and stays hidden until Google’s iframe has its size, then fades in', async () => {
+  const restore = withSizes();
+  try {
+    const { frames } = fakeGis();
+    const host = await mountButton();
+    expect(host.style.height).toBe('44px');
+    expect(host.style.visibility).toBe('hidden');
+    expect(host.style.opacity).toBe('0');
+    const sizes = FakeSizes.all.at(-1);
+    const frame = frames.at(-1);
+    if (sizes === undefined || frame === undefined) throw new Error('nothing observed');
+    expect(sizes.targets).toEqual([frame]);
+    // The iframe starts 0 wide: still hidden.
+    act(() => { sizes.report(frame, 0); });
+    expect(host.style.visibility).toBe('hidden');
+    act(() => { sizes.report(frame, 363); });
+    expect(host.style.visibility).toBe('');
+    expect(host.style.opacity).toBe('1');
+    expect(host.style.transition).toBe('opacity 200ms ease-out');
+    expect(host.style.height).toBe('44px');
+  } finally {
+    restore();
+  }
+});
+
+test('if Google’s iframe never takes a size, the button shows after REVEAL_MS', async () => {
+  const restore = withSizes();
+  jest.useFakeTimers();
+  try {
+    fakeGis();
+    const { container } = render(<GoogleButton google={google} onIdToken={jest.fn()} onError={jest.fn()} />);
+    document.querySelector(`script[src="${GIS}"]`)?.dispatchEvent(new Event('load'));
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const host = container.firstElementChild as HTMLElement;
+    expect(host.querySelector('iframe')).not.toBeNull();
+    act(() => { jest.advanceTimersByTime(REVEAL_MS - 1); });
+    expect(host.style.visibility).toBe('hidden');
+    act(() => { jest.advanceTimersByTime(1); });
+    expect(host.style.visibility).toBe('');
+    expect(host.style.opacity).toBe('1');
+  } finally {
+    jest.useRealTimers();
+    restore();
+  }
+});
+
+test('without ResizeObserver the button shows as soon as Google draws it', async () => {
+  expect(typeof (window as { ResizeObserver?: unknown }).ResizeObserver).toBe('undefined');
+  fakeGis();
+  const host = await mountButton();
+  await waitFor(() => { expect(host.style.opacity).toBe('1'); });
+  expect(host.style.visibility).toBe('');
 });
