@@ -3,6 +3,7 @@
 // after a crash, `closed` saving one closure note through the notes rules, read-only under view-as, and logged with
 // ids and the answer only. Synthetic days only.
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -396,5 +397,51 @@ describe('logs', () => {
     const lines = logLines(server).filter((line) => line.msg === 'townwise.agent_answer');
     expect(lines).toEqual([expect.objectContaining({ orgId, locationId, answer: 'closed' })]);
     expect(Object.keys(lines[0] ?? {})).not.toContain('questionId');
+  });
+});
+
+// The client reads these answers through its own schemas (client/src/chat/api.ts). Both sides test the one fixture,
+// fixtures/agent-panel.json, and its client copy, client/test/chat/agent-panel.json, so a change to either side's shape
+// fails a test until both and the fixture agree.
+describe('the answers the client reads (fixtures/agent-panel.json)', () => {
+  const FIXTURE = new URL('fixtures/agent-panel.json', import.meta.url);
+  const CLIENT_COPY = new URL('../../client/test/chat/agent-panel.json', import.meta.url);
+  const fixture = JSON.parse(readFileSync(FIXTURE, 'utf8')) as {
+    panel: AgentPanel;
+    answer: { questionId: string; body: unknown; response: AnswerResult };
+  };
+
+  it('are the client’s: the fixture and its client copy are identical', () => {
+    expect(readFileSync(CLIENT_COPY, 'utf8')).toBe(readFileSync(FIXTURE, 'utf8'));
+  });
+
+  it('GET answers every question kind and activity kind exactly as the fixture holds them, and POST answers as it does', async () => {
+    const locationId = await askedLocation();
+    const org = new Types.ObjectId(orgId);
+    const location = new Types.ObjectId(locationId);
+    const noteId = new Types.ObjectId('0000000000000000000000a1');
+    // Records dated before the window, so they change no question; their times are fixed so the items are literal.
+    await server.connection.collection('tw_uploads').insertOne({
+      orgId: org, locationId: location, uploadedBy: member.userId, uploadedAt: new Date('2026-06-01T09:00:00.000Z'),
+      status: 'applied', dayCount: 78, inserted: 78, replaced: 0, kept: 0, firstDate: FROM, lastDate: TO, hasGuests: true, hasNetSales: false,
+    });
+    await server.connection.collection('tw_agent_answers').insertMany([
+      {
+        orgId: org, locationId: location, questionId: 'gap_2026-02-03_2026-02-04', answer: 'not_sure', noteId: new Types.ObjectId(),
+        status: 'done', createdAt: new Date('2026-06-01T10:00:00.000Z'), updatedAt: new Date('2026-06-01T10:00:00.000Z'),
+      },
+      {
+        orgId: org, locationId: location, questionId: 'gap_2026-02-10_2026-02-11', answer: 'closed', noteId,
+        status: 'done', createdAt: new Date('2026-06-01T11:00:00.000Z'), updatedAt: new Date('2026-06-01T11:00:00.000Z'),
+      },
+    ]);
+    await server.connection.collection('tw_notes').insertOne({
+      _id: noteId, orgId: org, locationId: location, kind: 'closure', startDate: '2026-02-10', endDate: '2026-02-11', weekdays: null,
+      effect: 'closed', expectedGuests: null, detail: null, createdBy: member.userId,
+      createdAt: new Date('2026-06-01T11:00:00.000Z'), updatedAt: new Date('2026-06-01T11:00:00.000Z'),
+    });
+
+    expect(await panel(locationId)).toEqual({ status: 200, body: fixture.panel });
+    expect(await answer(locationId, fixture.answer.questionId, fixture.answer.body)).toEqual({ status: 200, body: fixture.answer.response });
   });
 });
