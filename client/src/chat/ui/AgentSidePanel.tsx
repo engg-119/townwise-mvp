@@ -172,7 +172,9 @@ export function HowItWorks(props: { ctx: ToolContext }): React.JSX.Element {
           <Text style={styles.body}>{`It reads ${readsLine(props.ctx)}, and shows you each thing it reads.`}</Text>
           <Text style={styles.body}>It can’t see the weather, your staffing, your bookings unless you add them as notes, or guest names.</Text>
           <Text style={styles.body}>It suggests notes; it never saves one without you.</Text>
-          <Text style={styles.body}>Townwise has no forecast for this location yet, so TownwiseAI answers from your history, your notes and the town profile.</Text>
+          <Text style={styles.body}>
+            {`Townwise has no forecast for this location yet, so TownwiseAI answers from ${props.ctx.hasTownProfile ? 'your history, your notes and the town profile' : 'your history and your notes'}.`}
+          </Text>
           <Text style={styles.body}>
             Your messages and the data it reads go to Anthropic, which provides the AI model.{' '}
             <Link href="/privacy" style={styles.link}>Privacy</Link>

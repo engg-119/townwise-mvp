@@ -18,8 +18,8 @@ export interface ToolStep {
   result: ToolView | null;
 }
 
-/** What the copy may name: the location's town ("Hanover"). */
-export interface ToolContext { town: string }
+/** What the copy may name: the location's town ("Hanover"), and whether Townwise has researched its town profile. */
+export interface ToolContext { town: string; hasTownProfile: boolean }
 
 export interface SourceLink { host: string; url: string }
 
@@ -32,9 +32,10 @@ interface ToolRow {
   basedOn?(input: ToolView | null, ctx: ToolContext, result: ToolView | null): string;
   /**
    * What TownwiseAI reads, for the composer's help line and How TownwiseAI works. Only for tools the server has
-   * registered: a row added ahead of its tool leaves it out, so the page never claims a source it can't read.
+   * registered: a row added ahead of its tool leaves it out, so the page never claims a source it can't read. Null
+   * when this location has nothing for it to read.
    */
-  reads?(ctx: ToolContext): string;
+  reads?(ctx: ToolContext): string | null;
   /** Not a card: propose_note shows the proposal card instead. */
   hidden?: true;
 }
@@ -149,7 +150,7 @@ const TOOLS: Readonly<Record<string, ToolRow>> = {
       const name = `${possessive(townOf(result, ctx))} town profile`;
       return hosts === '' ? name : `${name} (${hosts})`;
     },
-    reads: (ctx) => `${possessive(ctx.town)} town profile`,
+    reads: (ctx) => (ctx.hasTownProfile ? `${possessive(ctx.town)} town profile` : null),
   },
   propose_note: {
     object: () => 'a note for you to check',
@@ -261,7 +262,7 @@ export function readsLine(ctx: ToolContext): string {
   const reads: string[] = [];
   for (const row of Object.values(TOOLS)) {
     const read = row.reads?.(ctx);
-    if (read !== undefined && !reads.includes(read)) reads.push(read);
+    if (read !== undefined && read !== null && !reads.includes(read)) reads.push(read);
   }
   if (reads.length <= 1) return reads[0] ?? '';
   return `${reads.slice(0, -1).join(', ')} and ${reads.at(-1) ?? ''}`;

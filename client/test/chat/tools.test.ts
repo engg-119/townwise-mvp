@@ -6,7 +6,7 @@ import { basedOnLine, isHiddenTool, isKnownTool, readsLine, toolLine, viewRows, 
 
 const REGISTERED = ['get_location_overview', 'get_sales_days', 'list_notes', 'get_town_profile', 'propose_note'];
 const AHEAD = ['get_town_calendar', 'get_people_in_town'];
-const CTX = { town: 'Hanover' };
+const CTX = { town: 'Hanover', hasTownProfile: true };
 
 function step(name: string, state: ToolStep['state'], input: ToolStep['input'] = null, result: ToolStep['result'] = null): ToolStep {
   return { id: `toolu_test_${name}`, name, state, input, result };
@@ -100,6 +100,8 @@ test('the Based on line comes from the calls that read something, never the mode
 
 test('what TownwiseAI reads lists only tools the server has, so U13A’s rows add nothing until they land', () => {
   expect(readsLine(CTX)).toBe('your sales, your notes and Hanover’s town profile');
+  // A town Townwise hasn't researched has no profile to read.
+  expect(readsLine({ town: 'Norwich', hasTownProfile: false })).toBe('your sales and your notes');
 });
 
 test('an opened card lists the views in words, and never a field it has no words for', () => {

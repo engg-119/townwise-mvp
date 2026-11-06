@@ -92,6 +92,19 @@ describe('an empty conversation', () => {
     expect(await screen.findByText('You haven’t uploaded sales yet, so TownwiseAI can only use your notes and Hanover’s town profile.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'What should I upload?' })).toBeTruthy();
   });
+
+  test('a town Townwise hasn’t researched is never named as a source', async () => {
+    at(1280);
+    const org = orgOf('member', [locationOf('l1', 'Main Street Bar', { townId: null, name: 'Hanover', state: 'NH' })]);
+    await renderAgent(meOf(ACCESS.member), fakeChatApi(), org);
+    expect(await screen.findByText('You haven’t uploaded sales yet, so TownwiseAI can only use your notes.')).toBeTruthy();
+    expect(screen.getByText('Leave out guest names. TownwiseAI answers from your sales and your notes.')).toBeTruthy();
+    const side = await screen.findByTestId('agent-side');
+    await fireEvent.press(within(side).getByRole('button', { name: 'How TownwiseAI works' }));
+    expect(within(side).getByText('It reads your sales and your notes, and shows you each thing it reads.')).toBeTruthy();
+    expect(within(side).getByText('Townwise has no forecast for this location yet, so TownwiseAI answers from your history and your notes.')).toBeTruthy();
+    expect(screen.queryByText(/town profile/)).toBeNull();
+  });
 });
 
 describe('a reply', () => {

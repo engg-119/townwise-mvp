@@ -29,7 +29,6 @@ export interface AgentChatContext extends ToolContext {
   locationName: string;
   orgName: string;
   hasSales: boolean;
-  hasTownProfile: boolean;
   coverage: { dayCount: number; lastDate: string | null };
 }
 
@@ -175,7 +174,7 @@ export function AgentChat(props: {
               ) : (
                 <View style={styles.noSales}>
                   <Text style={styles.body}>
-                    {`You haven’t uploaded sales yet, so TownwiseAI can only use your notes and ${ctx.town}’s town profile.`}
+                    {`You haven’t uploaded sales yet, so TownwiseAI can only use your notes${ctx.hasTownProfile ? ` and ${ctx.town}’s town profile` : ''}.`}
                   </Text>
                   {Platform.OS === 'web' ? <LinkButton href={locationHref(ctx.locationId, 'upload')} label="Upload sales" /> : null}
                 </View>
