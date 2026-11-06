@@ -12,7 +12,7 @@ import {
 import { deleteConversation, getChat, getConversation, postTurn } from '../handlers/chat.ts';
 import { deleteOrg, deletePerson } from '../handlers/deletion.ts';
 import { createLocation, deleteLocation, getOwnOrg, updateLocation } from '../handlers/locations.ts';
-import { declineInvite, getMe, joinInvite } from '../handlers/me.ts';
+import { declineInvite, getMe, joinInvite, recordWelcome } from '../handlers/me.ts';
 import { createNote, deleteNote, listNotes, updateNote } from '../handlers/notes.ts';
 import { getStaffActivity, leaveOrg, renameOrg } from '../handlers/org.ts';
 import { placesAutocomplete, placesDetails } from '../handlers/places.ts';
@@ -41,6 +41,8 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   { id: 'me.get', method: 'GET', path: '/me', policy: 'signed_in', bodyLimit: 'none', handler: getMe },
   { id: 'me.join', method: 'POST', path: '/me/join', policy: 'signed_in', bodyLimit: '32kb', handler: joinInvite },
   { id: 'me.decline', method: 'POST', path: '/me/decline', policy: 'signed_in', bodyLimit: '32kb', handler: declineInvite },
+  // U11, statement moments: no body, so none is parsed; the writes limiter only.
+  { id: 'me.welcome', method: 'POST', path: '/me/welcome', policy: 'member', bodyLimit: 'none', handler: recordWelcome },
   {
     id: 'requests.create', method: 'POST', path: '/access-requests', policy: 'signed_in', bodyLimit: '32kb',
     limiter: 'requests', handler: createAccessRequest,

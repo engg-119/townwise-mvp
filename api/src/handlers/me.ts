@@ -1,4 +1,4 @@
-// GET /api/me, POST /api/me/join, POST /api/me/decline (spec 4.1, F1, F2b, 10.2).
+// GET /api/me, POST /api/me/join, POST /api/me/decline, POST /api/me/welcome (spec 4.1, F1, F2b, 10.2, 15.8).
 import { authOf } from '@ckeith26/auth';
 import { objectId } from '@ckeith26/mongo';
 import { AppError, parseInput } from '@ckeith26/server-core';
@@ -10,6 +10,8 @@ import type { TownwiseContext } from '../app.ts';
 import { isStaffPrincipal, resolutionOf, scopeForJoinedInvite, type Principal } from '../access/policy.ts';
 import { resolveAccess, type Access, type Resolution, type Role } from '../access/resolve.ts';
 import { claimInvite, declineInvite as deleteInvite } from '../stores/cross-tenant.ts';
+import { memberOf } from './locations.ts';
+import { welcomeFor, type WelcomeView } from '../welcome.ts';
 
 export interface ViewAsView {
   id: string;
@@ -29,6 +31,8 @@ export interface MeResponse {
   viewAs: ViewAsView | null;
   /** Set whenever the signed-in person's own state is 'staff'. */
   staff: { verifiedUntil: string } | null;
+  /** GET /api/me only: the first visit after approval (spec 15.8). Every other answer carries null. */
+  welcome: WelcomeView | null;
 }
 
 export function meResponse(resolution: Resolution): MeResponse {
@@ -52,6 +56,7 @@ export function meResponse(resolution: Resolution): MeResponse {
     access: resolution.effective,
     viewAs,
     staff: staffVerifiedUntil === null ? null : { verifiedUntil: staffVerifiedUntil.toISOString() },
+    welcome: null,
   };
 }
 
@@ -63,9 +68,19 @@ function invitee(principal: Principal): { userId: string; email: string } {
   return { userId: principal.userId, email: principal.email };
 }
 
-export function getMe(_ctx: TownwiseContext, req: Request, res: Response): Promise<void> {
-  res.status(200).json(meResponse(resolutionOf(req)));
-  return Promise.resolve();
+export async function getMe(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  res.status(200).json({ ...meResponse(resolutionOf(req)), welcome: await welcomeFor(ctx, principal) });
+}
+
+/**
+ * POST /api/me/welcome (spec 15.8): the client showed the welcome, so GET /api/me answers welcome null from now on,
+ * on every device. Idempotent; no body, no audit event (a display marker, not an action). The view-as guard refuses
+ * it, so the member is the signed-in person.
+ */
+export async function recordWelcome(ctx: TownwiseContext, _req: Request, res: Response, principal: Principal): Promise<void> {
+  const member = memberOf(principal);
+  await ctx.stores.welcomes.record(member.scope, member.userId, ctx.now());
+  res.status(204).end();
 }
 
 export async function joinInvite(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {

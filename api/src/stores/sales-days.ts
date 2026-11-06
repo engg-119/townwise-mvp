@@ -94,6 +94,8 @@ export interface SalesDayStore {
     uploadId: string; days: readonly SalesDay[]; replace: boolean; now: Date;
   }): Promise<{ inserted: number; matched: number }>;
   hasAny(scope: OrgScope, locationId: string): Promise<boolean>;
+  /** Whether any location of the organization has a day with a value (the welcome's “ready to set up”). */
+  hasAnyForOrg(scope: OrgScope): Promise<boolean>;
   /** Resolves the number of days deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
   /** Organization deletion (spec 10.7). Resolves the number deleted. */
@@ -187,6 +189,11 @@ export function createSalesDayStore(connection: Connection): SalesDayStore {
     },
     async hasAny(scope, locationId) {
       return (await SalesDay.exists(ofLocation(scope, locationId))) !== null;
+    },
+    async hasAnyForOrg(scope) {
+      // trusted(): the model's filters are sanitized, which would drop HAS_VALUE's operators.
+      const hasValue = { $or: [{ guests: trusted({ $ne: null }) }, { netSalesCents: trusted({ $ne: null }) }] };
+      return (await SalesDay.exists({ orgId: new Types.ObjectId(scope.orgId), ...hasValue })) !== null;
     },
     async removeForLocation(scope, locationId) {
       return (await SalesDay.deleteMany(ofLocation(scope, locationId))).deletedCount;

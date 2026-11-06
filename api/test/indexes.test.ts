@@ -23,6 +23,8 @@ describe('indexes', () => {
     expect(collections).toEqual([
       'tw_access_requests', 'tw_audit_events', 'tw_chat_conversations', 'tw_chat_live_turns', 'tw_chat_usage', 'tw_locations',
       'tw_members', 'tw_notes', 'tw_orgs', 'tw_sales_days', 'tw_uploads', 'tw_view_as_grants',
+      // U11, statement moments.
+      'tw_welcomes',
     ]);
   });
 
@@ -58,7 +60,7 @@ describe('indexes', () => {
 
   it('leads every tenant compound index with orgId, except the two seat indexes keyed by the person', () => {
     const connection = registered();
-    for (const model of ['TwMember', 'TwLocation', 'TwSalesDay', 'TwUpload', 'TwNote', 'TwChatConversation', 'TwChatLiveTurn', 'TwChatUsage']) {
+    for (const model of ['TwMember', 'TwLocation', 'TwSalesDay', 'TwUpload', 'TwNote', 'TwChatConversation', 'TwChatLiveTurn', 'TwChatUsage', 'TwWelcome']) {
       for (const [fields] of indexesOf(connection, model)) {
         const keys = Object.keys(fields);
         if (keys.length < 2) continue;
@@ -80,6 +82,13 @@ describe('indexes', () => {
 
   it('keeps one live tuning chat turn per person per organization', () => {
     expect(indexesOf(registered(), 'TwChatLiveTurn')).toContainEqual([
+      { orgId: 1, userId: 1 }, expect.objectContaining({ unique: true }),
+    ]);
+  });
+
+  // U11, statement moments.
+  it('keeps one welcome marker per person per organization', () => {
+    expect(indexesOf(registered(), 'TwWelcome')).toContainEqual([
       { orgId: 1, userId: 1 }, expect.objectContaining({ unique: true }),
     ]);
   });

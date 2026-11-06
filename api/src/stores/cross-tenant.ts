@@ -15,6 +15,7 @@ import { memberModel } from './members.ts';
 import { orgModel } from './orgs.ts';
 import { HAS_VALUE, SALES_DAYS_COLLECTION } from './sales-days.ts';
 import { UPLOADS_COLLECTION } from './uploads.ts';
+import { welcomeModel } from './welcomes.ts';
 
 export interface ActiveSeat { readonly id: string; readonly orgId: string; readonly role: Role }
 
@@ -254,9 +255,9 @@ export interface DeletedPersonRecords {
 
 /**
  * Person deletion (spec 10.7 step 3): their access requests, their open invitations in every organization, their
- * removed seats, and their tuning chat conversations and live turns in every organization. Never an active seat: the
- * handler refuses a person who holds one. An address with no kit user has only invitations. Deletes by filter, so a
- * retry completes the work.
+ * removed seats, their tuning chat conversations and live turns, and their welcome markers, in every organization.
+ * Never an active seat: the handler refuses a person who holds one. An address with no kit user has only invitations.
+ * Deletes by filter, so a retry completes the work.
  */
 export async function deletePersonRecords(
   connection: Connection,
@@ -270,5 +271,7 @@ export async function deletePersonRecords(
   const removed = (await Member.deleteMany({ userId, status: 'removed' })).deletedCount;
   const conversations = (await chatConversationModel(connection).deleteMany({ userId })).deletedCount;
   const liveTurns = (await chatLiveTurnModel(connection).deleteMany({ userId })).deletedCount;
+  // U11: the welcome markers, in every organization. Not counted, so the audit details are unchanged.
+  await welcomeModel(connection).deleteMany({ userId });
   return { requests, seats: invites + removed, conversations, liveTurns };
 }
