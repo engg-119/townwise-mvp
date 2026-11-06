@@ -123,6 +123,8 @@ describe('indexes', () => {
     expect(files).toContainEqual([{ orgId: 1, importId: 1, uploadedAt: 1 }, expect.anything()]);
     expect(files).toContainEqual([{ orgId: 1, locationId: 1, fingerprint: 1 }, expect.anything()]);
     expect(files).toContainEqual([{ status: 1, 'upload.expiresAt': 1 }, expect.anything()]);
+    expect(files).toContainEqual([{ status: 1, uploadedAt: 1 }, expect.anything()]);
+    expect(files).toContainEqual([{ purgeRaw: 1 }, expect.objectContaining({ sparse: true })]);
     expect(connection.models.TwFile?.schema.get('strict')).toBe('throw');
     expect(indexesOf(connection, 'TwImport')).toContainEqual([
       { activeLocation: 1 },

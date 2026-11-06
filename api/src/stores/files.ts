@@ -153,6 +153,9 @@ function fileSchema(): Schema<FileFields> {
   schema.index({ orgId: 1, importId: 1, uploadedAt: 1 });
   schema.index({ orgId: 1, locationId: 1, fingerprint: 1 });
   schema.index({ status: 1, 'upload.expiresAt': 1 });
+  // The daily sweep across organizations (stores/cross-tenant.ts): originals past retention, and flagged purges.
+  schema.index({ status: 1, uploadedAt: 1 });
+  schema.index({ purgeRaw: 1 }, { sparse: true });
   return schema;
 }
 
