@@ -14,6 +14,7 @@ import { chatLiveTurnModel } from './chat-live-turns.ts';
 import { chatProposalModel } from './chat-proposals.ts';
 import { fileModel, type FileStatus } from './files.ts';
 import { fileSweepModel } from './file-sweeps.ts';
+import { forecastRunModel } from './forecasts.ts';
 import { importModel } from './imports.ts';
 import { locationModel } from './locations.ts';
 import { memberModel } from './members.ts';
@@ -262,7 +263,8 @@ export interface DeletedPersonRecords {
 /**
  * Person deletion (spec 10.7 step 3): their access requests, their open invitations in every organization, their
  * removed seats, their tuning chat conversations, live turns and proposal records, and their welcome markers, in every
- * organization (the notes they saved from proposals stay with the organization, as every note does). Never an active
+ * organization (the notes they saved from proposals stay with the organization, as every note does). Their staff id
+ * is cleared from the forecast runs they imported or published (U13B). Never an active
  * seat: the handler refuses a person who holds one. An address with no kit user has only invitations. Deletes by
  * filter, so a retry completes the work. (U9: tw_agent_answers holds no person id, so nothing of it is the person's.)
  */
@@ -281,6 +283,9 @@ export async function deletePersonRecords(
   await chatProposalModel(connection).deleteMany({ userId });
   // U11: the welcome markers, in every organization. Not counted, so the audit details are unchanged.
   await welcomeModel(connection).deleteMany({ userId });
+  // U13B: a staff member's id on the forecast runs they imported or published, in every organization. Not counted.
+  await forecastRunModel(connection).updateMany({ importedBy: userId }, { $set: { importedBy: null } });
+  await forecastRunModel(connection).updateMany({ publishedBy: userId }, { $set: { publishedBy: null } });
   return { requests, seats: invites + removed, conversations, liveTurns };
 }
 

@@ -14,7 +14,8 @@ import { getLocationCalendar } from '../handlers/calendar.ts';
 import { deleteConversation, getChat, getConversation, postTurn } from '../handlers/chat.ts';
 import { actOnProposal } from '../handlers/chat-proposals.ts';
 import { deleteOrg, deletePerson, purgeOriginals } from '../handlers/deletion.ts';
-import { getEstimatesAbout, getPeopleInTown } from '../handlers/estimates.ts';
+import { getEstimatesAbout, getForecast, getPeopleInTown } from '../handlers/estimates.ts';
+import { deleteForecastRun, importForecastRun, listForecastRuns, publishForecastRun, withdrawForecastRun } from '../handlers/forecast-runs.ts';
 import {
   answerImport, completeFile, createFile, currentImport, deleteFile, deleteLocationOriginals, deleteRaw, downloadClean, downloadRaw, getFile, getImport,
   listEntries, listFiles, putChunk, startImport,
@@ -41,8 +42,8 @@ export interface TownwiseRoute {
   readonly policy: Policy;
   /**
    * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer; '2kb' on the Places and files JSON routes; '8kb'
-   * on a TownwiseAI proposal; '256kb' only on the upload route; 'stream' only on the chunk route, whose handler reads the
-   * raw body itself after the policy has passed.
+   * on a TownwiseAI proposal; '256kb' only on the upload route and (U13B) the staff forecast import; 'stream' only on the
+   * chunk route, whose handler reads the raw body itself after the policy has passed.
    */
   readonly bodyLimit: 'none' | '1kb' | '2kb' | '8kb' | '32kb' | '256kb' | 'stream';
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
@@ -221,6 +222,11 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     id: 'org.estimates.about', method: 'GET', path: '/org/locations/:locationId/estimates/about', policy: 'member',
     bodyLimit: 'none', handler: getEstimatesAbout,
   },
+  // U13B, forecast runs (spec 10.13, 14.4): the published forecast, a member read with no limiter.
+  {
+    id: 'org.forecast.get', method: 'GET', path: '/org/locations/:locationId/forecast', policy: 'member', bodyLimit: 'none',
+    handler: getForecast,
+  },
 
   { id: 'org.members.list', method: 'GET', path: '/org/members', policy: 'org_admin', bodyLimit: 'none', handler: listMembers },
   { id: 'org.members.add', method: 'POST', path: '/org/members', policy: 'org_admin', bodyLimit: '32kb', handler: addMembers },
@@ -258,6 +264,27 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'admin.orgs.members.remove', method: 'DELETE', path: '/admin/orgs/:orgId/members/:memberId', policy: 'staff',
     bodyLimit: 'none', handler: removeOrgMember,
+  },
+  // U13B, forecast runs from the staff console (spec 10.13, 14.4): import as a draft, publish, withdraw, delete.
+  {
+    id: 'admin.forecasts.list', method: 'GET', path: '/admin/orgs/:orgId/forecast-runs', policy: 'staff', bodyLimit: 'none',
+    handler: listForecastRuns,
+  },
+  {
+    id: 'admin.forecasts.import', method: 'POST', path: '/admin/orgs/:orgId/locations/:locationId/forecast-runs', policy: 'staff',
+    bodyLimit: '256kb', handler: importForecastRun,
+  },
+  {
+    id: 'admin.forecasts.publish', method: 'POST', path: '/admin/orgs/:orgId/forecast-runs/:runId/publish', policy: 'staff',
+    bodyLimit: '32kb', handler: publishForecastRun,
+  },
+  {
+    id: 'admin.forecasts.withdraw', method: 'POST', path: '/admin/orgs/:orgId/forecast-runs/:runId/withdraw', policy: 'staff',
+    bodyLimit: '32kb', handler: withdrawForecastRun,
+  },
+  {
+    id: 'admin.forecasts.remove', method: 'DELETE', path: '/admin/orgs/:orgId/forecast-runs/:runId', policy: 'staff',
+    bodyLimit: 'none', handler: deleteForecastRun,
   },
   { id: 'admin.people.list', method: 'GET', path: '/admin/people', policy: 'staff', bodyLimit: 'none', handler: listPeople },
   {

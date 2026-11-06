@@ -155,6 +155,8 @@ export async function deleteLocation(ctx: TownwiseContext, req: Request, res: Re
   await ctx.stores.agentAnswers.removeForLocation(scope, location.id);
   // An empty import left open goes too.
   await ctx.stores.imports.removeForLocation(scope, location.id);
+  // U13B: forecasts staff imported for it, even with no sales data left.
+  await ctx.stores.forecasts.removeForLocation(scope, location.id);
   await recordAfter(ctx, {
     ...actorOf(admin), at: ctx.now(), orgId: scope.orgId, action: 'location.deleted',
     target: { type: 'location', id: location.id },

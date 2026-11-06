@@ -29,7 +29,9 @@ describe('indexes', () => {
       'tw_uploads', 'tw_view_as_grants',
       // U11, statement moments.
       'tw_welcomes',
-    ]);
+      // U13B, forecast runs.
+      'tw_forecast_runs', 'tw_forecasts',
+    ].sort());
   });
 
   it('declares only indexes DocumentDB 5.0 builds', () => {
@@ -67,6 +69,8 @@ describe('indexes', () => {
     for (const model of [
       'TwMember', 'TwLocation', 'TwSalesDay', 'TwUpload', 'TwNote', 'TwChatConversation', 'TwChatLiveTurn', 'TwChatUsage',
       'TwChatProposal', 'TwFile', 'TwImport', 'TwUploadDay', 'TwWelcome',
+      // U13B.
+      'TwForecastRun', 'TwForecast',
     ]) {
       for (const [fields] of indexesOf(connection, model)) {
         const keys = Object.keys(fields);

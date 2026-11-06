@@ -551,6 +551,33 @@ One row per entry of a stored ZIP (11A.4): `{ orgId, locationId, fileId, index (
 
 `{ orgId, day (YYYY-MM-DD, UTC), bytes, updatedAt }`, unique `{ orgId: 1, day: 1 }`. Creating an upload reserves its size with a conditional `$inc` that fails past the daily cap; cancelling an unfinished upload the same day gives it back.
 
+### 6.20 `tw_forecast_runs`
+
+One per forecast run file staff imported for a location (14.4). Outputs and metadata only; the model never reaches the API.
+
+| Field | Type | Rule |
+|---|---|---|
+| `_id` | ObjectId | the run id |
+| `orgId`, `locationId` | ObjectId | from the staff route's organization and a location loaded with its scope |
+| `metric` | `'guests'` | |
+| `model` | `{ family, version, notebookCommit }` | family `hybrid_linear_xgboost \| linear_median \| weekday_median`; version `v{n}`; the `modeling/` commit |
+| `trainingSource` | `'files_from_owner'` | `'townwise_uploads'` is reserved until the DECISION NEEDED in 14.1 is answered |
+| `trainedFrom`, `dataThrough`, `madeAt` | `YYYY-MM-DD` | the first and last day of sales the model saw, and when it was made |
+| `frozen` | `{ files: { name, sha256 }[] } \| null` | the frozen CSVs in `modeling/forecasts/` it was exported from |
+| `interval` | `{ level: 0.8, widened }` | |
+| `backtest` | `{ from, to, weeks, weeklyTypicalErrorPct, weeksOver20Pct, weeklyRangePct } \| null` | typed in from the forecasts README |
+| `range`, `dayCount`, `weekCount` | | the first and last day; counts |
+| `fileSha256` | string | over the file's canonical JSON |
+| `status` | `'importing' \| 'draft' \| 'published' \| 'withdrawn'` | |
+| `importedBy`, `publishedBy` | string \| null | staff user ids; set to null on that person's deletion |
+| `importedAt`, `publishedAt`, `withdrawnAt` | Date \| null | |
+
+Indexes: `{ orgId: 1, locationId: 1, fileSha256: 1 }` unique; `{ orgId: 1, locationId: 1, status: 1, dataThrough: -1 }`; `{ orgId: 1, importedAt: -1 }`. Strict (`'throw'`). Deleted with its rows by staff, with the location, with the location's sales data and with the organization (10.7).
+
+### 6.21 `tw_forecasts`
+
+One row per day and per week of a run: `orgId`, `locationId`, `runId`, `span` (`'day' | 'week'`), `from`, `to` (equal for a day), `status` (a day's `open | closed | booked`; null for a week), `low`, `mid`, `high` (null on a closed or booked day), `baseline` (null unless the run recorded one), `openDays` (a week's), `reasons` (`{ kind, ref, effectPct }[]`, kind `weekday | term | event | holiday | level | closure | booking`; `ref` a town calendar id or group, kept only when it names an entry on that day). Labels are never stored. Indexes: `{ orgId: 1, locationId: 1, runId: 1, span: 1, from: 1 }` unique; `{ orgId: 1, locationId: 1, span: 1, from: 1 }`; `{ orgId: 1, runId: 1 }`. Strict (`'throw'`); rows are built field by field and upserted on their key, so a retried import writes only what is missing.
+
 ---
 
 ## 7. Authorization in one place
@@ -716,6 +743,7 @@ interface AuditEvent {
 | `org.originals_deleted` | `count`, `basis` (`data_subject_request`, `org_request` or `other`, an enum, never free text); staff, target the organization, recorded before the effect (9.3), and shown in the organization's staff activity |
 | `note.created`, `note.updated`, `note.deleted` | `locationId`, `kind`, `startDate`, `endDate` |
 | `agent.question_answered` | `locationId`, `questionId` (dates and a weekday number only), `answer` (`closed`, `open` or `not_sure`); a `closed` answer's closure note is also recorded `note.created` (10.12) |
+| `forecast.imported`, `forecast.published`, `forecast.withdrawn`, `forecast.deleted` | `locationId`, `modelVersion`, `from`, `to`, `dayCount` (target `forecast_run`; staff actions, written before the effect; never a figure) |
 | `view_as.started` | `targetUserId`, `targetEmail`, `reason`, `expiresAt` |
 | `view_as.ended` | `endReason` (`ended`, `replaced` or `expired`) |
 | `people.signed_out_everywhere` | none (written before the effect, 9.3; the revoked count is in the response) |
@@ -895,6 +923,11 @@ Every route here has policy `staff`, except `view-as/end`, which has `staff_self
 | `POST /api/admin/orgs/:orgId/members` | as 10.6 | as 10.6 | 404 |
 | `PATCH /api/admin/orgs/:orgId/members/:memberId` | as 10.6 | as 10.6 | 404; 409 `last_admin` |
 | `DELETE /api/admin/orgs/:orgId/members/:memberId` | | 204 | 404; 409 `last_admin` |
+| `GET /api/admin/orgs/:orgId/forecast-runs` | | 200 `{ runs }` (14.4), newest import first, at most 100 | 404 |
+| `POST /api/admin/orgs/:orgId/locations/:locationId/forecast-runs` | a run file (14.4), up to 256 KB | 201 `{ run }` (draft); 200 `{ run }` for a file the location already has | 400 `invalid_forecast_file` `{ issues: { path, code }[] }`; 404 |
+| `POST /api/admin/orgs/:orgId/forecast-runs/:runId/publish` | `{}` | 200 `{ run }` | 404; 409 `forecast_run_not_draft` |
+| `POST /api/admin/orgs/:orgId/forecast-runs/:runId/withdraw` | `{}` | 200 `{ run }` | 404; 409 `forecast_run_importing` |
+| `DELETE /api/admin/orgs/:orgId/forecast-runs/:runId` | | 204 | 404 |
 | `GET /api/admin/people?kind=` | | 200 `{ people: PersonView[], truncated: boolean }` (up to 1,000) | |
 | `GET /api/admin/people/lookup?q=<exact email>` | | 200 `{ person: PersonView \| null }` | |
 | `POST /api/admin/people/:userId/sign-out-everywhere` | `{}` | 200 `{ revoked: number }` | 400 `invalid_target` (staff); 404 |
@@ -929,6 +962,7 @@ People come only from Townwise records and config: staff from `TOWNWISE_SUPERADM
   1. Refuse a staff address (400 `invalid_target`) and a person who holds an active seat (409 `person_has_seat`; staff remove the seat first, and the last-admin rule still applies). Answer 404 when there is no kit user and no Townwise record for the email. [Build note: after step 3 the server checks for an active seat again, since a join or an approval can seat the person while the deletion runs. One found then answers 409 `person_has_seat`, recorded as `staff_action.not_applied` (`person_has_seat`), before steps 4 and 5; the records step 3 deleted stay deleted, and a retry after the seat is removed completes the work. An approval that seats the person after this check finds the request gone and takes the seat back (F3 step 8); a join needs an invitation, which step 3 deleted, so only one added later can seat them, which the runbook checks for (Section 19, item 7).]
   2. Audit `person.deleted` with ids only.
   3. Through `deletePersonRecords(userId, email)` (6.10 rule 8): delete the person’s access requests (by `userId`), their open invitations in every organization (`inviteEmail == email`), and their removed seats (`userId`, `status: 'removed'`). [Build note: also their tuning chat conversations, live turns and TownwiseAI proposal records in every organization (`tw_chat_conversations`, `tw_chat_live_turns`, `tw_chat_proposals`, by `userId`), which postdate this list (`tuning-chat.md`), and their welcome markers in every organization (`tw_welcomes`, by `userId`, 6.15; not counted in the answer). Notes they saved from proposals stay, as every note does. The 404 in step 1 counts audit events as Townwise records, because the audit log keeps an address until its person is deleted (Section 17).]
+     [Build note: and set `importedBy` and `publishedBy` to null on the forecast runs the person imported or published (6.20), in every organization.]
   4. When a kit user exists: call `revokeAllSessions(userId)` and `authStores.totp.remove(userId)` (both public, **Exists**).
   5. `redact` the email in the audit log (9.3).
   6. Answer the counts and `kitUserId`. The kit’s user record and its revoked session records are then deleted by hand, as a runbook step, because the kit has no user delete (Section 19, item 7). Until then, the person can still continue with Google, and they resolve to `no_org`.
@@ -936,11 +970,11 @@ People come only from Townwise records and config: staff from `TOWNWISE_SUPERADM
   Notes and uploads the person wrote stay with their organization; the author shows as “Deleted person” once the kit user is gone. View-as grants keep only ids and the staff-written reason.
 - **Delete an organization** (`DELETE /api/admin/orgs/:orgId`). The organization must be suspended first (409 `org_not_suspended`), so its members have already seen the paused page.
   1. Audit `org.deleted` with ids only.
-  2. Through `scopeForStaffOrg`: delete its `tw_sales_days`, `tw_uploads`, `tw_notes`, `tw_locations` and `tw_members`, and its access request (`fromRequestId`). [Build note: also its `tw_chat_conversations`, `tw_chat_live_turns`, `tw_chat_usage` and `tw_chat_proposals`, which postdate this list (`tuning-chat.md`), and its `tw_welcomes` (6.15) and `tw_agent_answers` (6.17). The response keeps the six counts above.]
+  2. Through `scopeForStaffOrg`: delete its `tw_sales_days`, `tw_uploads`, `tw_notes`, `tw_locations` and `tw_members`, and its access request (`fromRequestId`). [Build note: also its `tw_chat_conversations`, `tw_chat_live_turns`, `tw_chat_usage` and `tw_chat_proposals`, which postdate this list (`tuning-chat.md`), and its `tw_welcomes` (6.15), `tw_agent_answers` (6.17), `tw_forecast_runs` and `tw_forecasts` (6.20, 6.21). The response keeps the six counts above.]
   3. `redact` its name and its locations’ names in the audit log (9.3).
   
   [Build note: stored files (11A) go first, before any other record: its imports, every unfinished upload discarded (its staged chunks dropped at once), every blob under `{orgId}/` in both containers, its `tw_file_entries`, `tw_files`, `tw_upload_days` and `tw_files_usage`. When stored files are off but the organization has file rows, nothing is deleted and the answer is 503 `files_unavailable`, recorded as `staff_action.not_applied` (`files_unavailable`), so blobs are never left behind silently. After the row goes, its stored files are swept once more (a reader mid-file can write a cleaned copy late), and the daily sweep's orphan check catches anything later still. Logged as `townwise.org_files_deleted { orgId, deletedFiles, deletedBlobs }`; the response keeps its six counts.]
-  4. Delete the `tw_orgs` row last, so a retry still finds the organization. [Build note: the delete matches `status: 'suspended'`, so an organization reactivated during the deletion keeps its row and the answer is 409 `org_not_suspended`, recorded as `staff_action.not_applied`; the records already deleted stay deleted, and suspending it and deleting again finishes. After the row goes, its `tw_sales_days` and `tw_chat_usage` are swept once more, since an upload or a tuning chat turn in flight can upsert after the first sweep; the late days count in `deletedDays`. This narrows the gap without closing it: a chat turn started before the suspension can still add chat usage for up to 150 seconds, an upload still running can write days after the second sweep, and its `tw_uploads` row, if written after the first sweep, is never swept.]
+  4. Delete the `tw_orgs` row last, so a retry still finds the organization. [Build note: the delete matches `status: 'suspended'`, so an organization reactivated during the deletion keeps its row and the answer is 409 `org_not_suspended`, recorded as `staff_action.not_applied`; the records already deleted stay deleted, and suspending it and deleting again finishes. After the row goes, its `tw_sales_days` and `tw_chat_usage` are swept once more, since an upload or a tuning chat turn in flight can upsert after the first sweep; the late days count in `deletedDays`. This narrows the gap without closing it: a chat turn started before the suspension can still add chat usage for up to 150 seconds, an upload still running can write days after the second sweep, and its `tw_uploads` row, if written after the first sweep, is never swept. Forecast runs and their rows are swept then too, since a staff import already past its organization check can still write them.]
   
   Former members then resolve to `no_org`. View-as grants keep only ids.
 - **Purge an organization's originals** (`POST /api/admin/orgs/:orgId/originals/delete { basis }`). For a person's deletion request about someone named inside an export (a diner, a server): their details exist only in the original files (and possibly in a file's name, a ZIP's entry paths or a workbook's sheet names, all cleared with the original), never in the cleaned copies, the rest of the reports or the days. Staff delete the originals without reading them. The read-only check counts the originals; the event `org.originals_deleted { count, basis }` is recorded first; then each original is deleted, its name replaced by the kind's label and its entry paths cleared. A file not read yet (stored, queued, or waiting on a question, which is dropped so its import can finish) is first kept unread with the outcome `raw_deleted`, so the reader never reads it. A file still uploading or being read is flagged (`purgeRaw`): the reader never reads a flagged file, and its original goes as soon as the upload or the read ends; the daily sweep finishes any it missed. The event's `count` is every original found; the answer's `skippedBusy` counts the flagged ones. The cleaned copies, reports and days stay.
@@ -1099,12 +1133,13 @@ All under `/api/org/locations/:locationId`, all members, all 503 `files_unavaila
 
 ### 10.13 Estimates
 
-People in town and "How Townwise estimates" (13.2). Both are `member` GETs in `TOWNWISE_ROUTES` with no body and no route limiter (`app:api-ceiling` still applies), allowed during view-as, where the chain logs `townwise.view_as_read`. Neither handler logs or audits anything, and nothing is stored. The build contract, with every field, is `docs/portal/estimates.md`; the forecast and staff routes arrive with forecast runs (14).
+People in town and "How Townwise estimates" (13.2), and the published forecast (14.4). All three are `member` GETs in `TOWNWISE_ROUTES` with no body and no route limiter (`app:api-ceiling` still applies), allowed during view-as, where the chain logs `townwise.view_as_read`. None logs or audits anything. The build contract, with every field, is `docs/portal/estimates.md`; the staff routes that import and publish forecast runs are in 10.7.
 
 | Method and path | Policy | Request | Success | Extra errors |
 |---|---|---|---|---|
 | `GET /api/org/locations/:locationId/people-in-town?from=&to=` | member | `from` and `to` as `YYYY-MM-DD`, exactly those two keys; `from` on or after 2010-01-01; `from <= to`; at most 92 days counting both ends; `to` at most 400 days after the server’s UTC day | 200 `PeopleInTownWindow` | 400 `invalid_request`, with no field details; 404 |
 | `GET /api/org/locations/:locationId/estimates/about` | member | | 200 `EstimatesAbout` | 400 (malformed id); 404 |
+| `GET /api/org/locations/:locationId/forecast?from=&to=` | member | as people in town, but at most 31 days and `from` at most 400 days before the server’s UTC day | 200 `ForecastWindow` (14.4) | 400 `invalid_request`; 404 |
 
 ```ts
 interface PeopleInTownWindow {
@@ -1138,13 +1173,13 @@ interface EstimatesAbout {
   card: { estimates: string; inputs: string[]; cannotSee: string[]; limits: string[]; checked: string; whoCanSee: string };
   location: { name: string; town: { name: string; state: string } };
   today: { date: string; weekday: Weekday; timeZone: string; approximate: boolean };
-  forecast: { run: null; live: null };                       // until forecast runs (14)
+  forecast: { run: ForecastRunView | null; live: LiveAccuracy | null };   // the newest published run (14.4) and its own live accuracy, or both null
   calendar: { researched: boolean; covers: { from: string; to: string } | null };
   people: { headcountInputs: ('residents' | 'studentHousing' | 'enrollment' | 'housingCloses' | 'eventAttendance' | 'visitors')[]; sources: PeopleSource[] };
 }
 ```
 
-TownwiseAI reads the same window through `get_people_in_town` and the calendar through `get_town_calendar` (`tuning-chat.md` section 4), and its "today" is the town's local date (13.2). Home and Analytics keep the device's local date; both are Eastern for the twelve towns.
+TownwiseAI reads the same window through `get_people_in_town`, the calendar through `get_town_calendar` and the published forecast through `get_forecast` (`tuning-chat.md` section 4), and its "today" is the town's local date (13.2). Home and Analytics keep the device's local date; both are Eastern for the twelve towns.
 
 ---
 
@@ -1385,11 +1420,24 @@ Mockups add the chip [DECISION NEEDED: minimum days of history before calibratio
 
 ### 14.2 What the app never shows in v1
 
-No forecast numbers, ranges, reasons or accuracy. No “calibrating” or “calibrated” states, and no progress for a process that does not run. No sample values. The one forward-looking block is the design system’s own pattern (Section 16, P11): a layout headed “Illustrative layout, not real output”, with slots only. [CONFIRM: show the illustrative layout in the app] Home replaced the Forecast page at P11 (owner decision, 2026-11-05), so the app shows no illustrative layout today.
+No forecast numbers, ranges, reasons or accuracy, except from a run staff published (14.4). [Build note: owners see a published run on the model card and through TownwiseAI; Home and Analytics keep showing none until a later change.] No “calibrating” or “calibrated” states, and no progress for a process that does not run. No sample values. The one forward-looking block is the design system’s own pattern (Section 16, P11): a layout headed “Illustrative layout, not real output”, with slots only. [CONFIRM: show the illustrative layout in the app] Home replaced the Forecast page at P11 (owner decision, 2026-11-05), so the app shows no illustrative layout today.
 
 ### 14.3 Reserved for later (not in the v1 API)
 
-`queued`, `calibrating`, `calibrated` (with model version and fitted date), `stale` (sales or notes changed since the last fit) and `failed`. They arrive with model storage, as a `tw_calibrations` collection keyed by location. The forecast shape, also reserved: `{ horizon: 7 | 28; frozenAt; modelVersion; interval: 0.8; days: { date; guests: { low, mid, high }; netSalesCents: { low, mid, high }; reasons: { text, source }[] }[] }`.
+`queued`, `calibrating`, `calibrated` (with model version and fitted date), `stale` (sales or notes changed since the last fit) and `failed`. They arrive with model storage, as a `tw_calibrations` collection keyed by location. The forecast shape, also reserved: `{ horizon: 7 | 28; frozenAt; modelVersion; interval: 0.8; days: { date; guests: { low, mid, high }; netSalesCents: { low, mid, high }; reasons: { text, source }[] }[] }`. [Build note: forecasts now arrive as staff-imported runs in the shape of 14.4 (guests only, reasons labelled in code, never free text); the calibration states and `tw_calibrations` stay reserved.]
+
+### 14.4 Forecast runs
+
+The API never computes a forecast and never holds a model. Staff export a run's outputs on the team's computers (`modeling/export_forecast_run.py`, from the frozen files in `modeling/forecasts/`, written to the gitignored `modeling/outputs/`), import the run file for one location from P21, and publish it. [Build note: owner decision 2026-11-05: staff may import and publish Sawtooth's frozen v3 forecast once Sawtooth is an organization in Townwise and the owner confirms its consent to see it and to its being sent to Anthropic through TownwiseAI. The build ships the machinery only; nothing is published.]
+
+- **The run file** (`townwise.forecast-run/1`, `api/src/forecasts/file.ts`, at most 256 KB as sent: P21 reads the file in the browser, refuses one over 2 MB on disk unread, and checks the 256 KB on the parsed file as compact JSON, so the exporter's indenting doesn't count; strict at every level): `schema`, `metric: 'guests'`, `model { family, version, notebookCommit }`, `trainingSource: 'files_from_owner'`, `trainedFrom`, `dataThrough`, `madeAt`, `frozen`, `interval { level: 0.8, widened }`, `backtest`, `days` (1 to 400: `date`, `status`, `low`, `mid`, `high`, `baseline`, up to 6 `reasons { kind, ref, effectPct }`) and `weeks` (up to 60: `from`, `to`, `openDays`, `low`, `mid`, `high`). No location id, name, note, URL or other free text. Rules: `trainedFrom <= dataThrough <= madeAt <= today`; every day after `dataThrough` and within 400 days of it, each once; an open day has `low <= mid <= high` (0 to 20,000), a closed or booked day no numbers; only term, event and holiday reasons may carry a `ref`; each week lies inside one Monday-to-Sunday week, on days the file has, without overlap, with `openDays` between its open days and its open and booked days. A refusal is 400 `invalid_forecast_file` with at most 50 `{ path, code }` issues, never a value.
+- **Import** (staff, 10.7): the run is upserted on `{ orgId, locationId, fileSha256 }` as `importing`, its rows upserted on their key (a duplicate key from a concurrent import of the same file is a row the other one wrote, not an error), and it becomes `draft` when every row is there. The same file again answers 200 with the run; a run left `importing` finishes on the retry. Publish is a compare-and-set from `draft`; withdraw from `draft` or `published`. Each is a staff action (9.2), written before the effect and listed in the org's Townwise staff activity.
+- **Who sees it.** Owners, view-as and TownwiseAI read published runs only: drafts, unfinished imports and withdrawn runs never show. For each date the reader uses the newest published run whose `dataThrough` is before it, so no forecast is shown for a day its model saw. Week rows come only from a run that supplied every day of the week, and are the run's own, never sums of days.
+- **Labels** are made in code (`api/src/forecasts/reasons.ts`): the weekday; the term from the town calendar's term state on the day; an event or holiday by the calendar entry its `ref` names (by id, or a group with one entry that day), a federal holiday on the day, or plain words ("Town event", "Holiday"); "Your recent level", "Closed", "Private event booked". A partner's text can never reach a label.
+- **Accuracy.** Each past day carries its stored guests and whether they landed in the range. Live accuracy is per run: it counts the open days that have passed which that run supplied (the reader chose it for them), booked days left out, as WAPE with the in-range count, misses included, and is null under 5 of its own scored days. A newer run is never credited with an older run's days, so a run published today reads "not scored yet" even when older runs have been scored. A day is past once it has ended in the town (its local date, `localDay`, 10.13), on the forecast route, the model card and in TownwiseAI alike. Scored weeks are not listed separately: a week row in a read carries its `actual` and `inRange`. A week's actual is summed only when all its open days have passed and none was booked.
+- **Read view** (`ForecastWindow`): `{ available, reason: 'no_published_forecast' | 'not_covered' | null, runs: (ForecastRunView & { live: LiveAccuracy | null })[], days: ForecastDayView[], weeks: ForecastWeekView[], notCovered: { from, to }[] }`, each run with its own live accuracy. `ForecastRunView` is `{ id, metric, model: { family, version, label }, trainingSource, trainedFrom, dataThrough, madeAt, frozen, interval, backtest }`; a day `{ date, weekday, status, low, mid, high, baseline, reasons: { kind, label, effectPct, sources }[], runId, madeAt, madeAfterDay, actual, inRange }`; a week `{ from, to, openDays, low, mid, high, runId, madeAt, actual, inRange }`; `LiveAccuracy` `{ days, inRange, typicalErrorPct, from, to }`. Numbers are raw; clients and TownwiseAI round low down and high up.
+- **TownwiseAI** reads it through `get_forecast { from, to }` (at most 31 days, from at most 92 days back), which answers "Townwise has no forecast for this location yet." when none is published; its prompt gives every forecast as a range, never the middle alone, uses week rows for weeks, names the model when asked, mentions accuracy and misses when the owner is deciding, and never makes up a forecast (`tuning-chat.md` section 4).
+- **Deletion.** Runs and rows go with the location's sales data (they are derived from it), the location, the organization, and by staff delete; a person's deletion clears their staff id (10.7). Fitted models and the partner's exports stay on the team's computers, with a deletion duty in the runbook (`infra/README.md`, Forecasts).
 
 ---
 
@@ -1899,6 +1947,7 @@ The location's chat with TownwiseAI and its side panel (server contract: `docs/p
 - **Team**: P17’s table and add form, with a “View as” text link on each active member. Above the add form: “Addresses you add here show as added by Townwise staff. Don’t add your own addresses.”
 - **Locations**, metadata only: Name, Town, Days, First day, Last day, Notes, Last upload. Under the table: “Sales figures and notes are visible only through View as.”
 - **Recent activity**: the newest 20 audit events for this organization, with a link to `/admin/audit` filtered to it.
+- **Forecasts** (14.4) [Build note: the section's component is `client/src/portal/console/ForecastRuns.tsx`]: kicker "Staff only". One line: "A forecast is a draft until you publish it. {org}’s members and TownwiseAI see only published forecasts, never the model. Each import, publish, withdrawal and deletion is listed in {org}’s Townwise staff activity." Per location a table (Model, Dates with the day count, Trained to, Made, Status, Actions), or "No forecast imported for {location}." Actions: primary "Publish" on a draft only, text "Withdraw" on a draft or published run, outline "Delete" on every run, each through a console dialog whose body ends "Its admins see this in their Townwise staff activity." **Import a forecast** (web only; native says "Import a forecast for {org} from a computer."): a location select and "Choose a run file"; the browser reads the file and shows "For {location}: Model {v}, guests, {n} days ({k} open) from {first} to {last}, trained to {date}, made {date}." and "Saved as a draft; owners and TownwiseAI see it only after you publish it." before "Import". Problems read "{path} {words}." from the issue codes, never a value. No figure from a run shows in the console.
 - **Delete organization**, last on the page. While the organization is active: “Suspend {org} before deleting it.” and no button. While suspended: an outline “Delete organization”. Its dialog: “This deletes {org}: its {n} locations, their sales data and notes, its team and its request. The audit log keeps the events, with the organization’s and locations’ names removed. This can’t be undone. Type {org} to confirm.” On success, `/admin/orgs` with the notice “Deleted {org}.” (The notice uses the name typed into the dialog; the server no longer has it.)
 - States: loading; 404 “This organization doesn’t exist.”; network error; success. 409 `org_not_suspended`: “Suspend {org} before deleting it.”
 
@@ -1930,6 +1979,7 @@ The location's chat with TownwiseAI and its side panel (server contract: `docs/p
 - Townwise server code logs ids and counts only: `userId`, `orgId`, `locationId`, `memberId`, `requestId`, `grantId`, `uploadId`, `routeId`. It never logs emails, names, organization or location names, note text, request notes, view-as reasons, figures, file content or request bodies. This matches the privacy page’s promise for sign-in logs (“its own log lines carry your account ID, never your email address”).
 - Product log lines: `townwise.view_as_read`, `townwise.upload_applied`, `townwise.audit_write_failed` (error level), `townwise.access_denied { policy, code }`, `townwise.email_sent { kind, requestId, orgId? }` (info), `townwise.email_failed { kind, requestId, orgId?, code, status, upstreamCode, errType }` (warn; D14), and the stored-files lines in `api/README.md` (Audit and logs), which carry ids, kinds, sizes, counts and codes. An email’s log line never holds its address, subject or body. A stored-files line never holds a file name, header, sheet name, location value, cell, figure or the storage SDK's message; the SDK's own logger stays off.
 - The welcome’s first name and organization name travel only in the `GET /api/me` body, never in a URL, log line or audit event. The welcome marker (6.15) is deleted with the organization and with the person.
+- Forecast runs (14.4) log `townwise.forecast_imported { orgId, locationId, runId, days, weeks }` and `townwise.forecast_status { orgId, runId, status }`, never a figure or the run file; their audit events carry the model version, dates and day count only. The run file holds no free text, and the model, its features and its training rows never reach the API.
 - A stored file is read only by the file reader and returned only to its organization; TownwiseAI and every model read `tw_sales_days`, notes and the town calendar, never files (6.10 rule 9). The one exception is the AI column step (11A.4), which sends Anthropic a redacted profile of one table (header text and value tokens), never a row, a figure, a file name or an entry path; only `chat/model.ts` and `files/extract/model.ts` construct a model client (test-enforced).
 - The audit log (a database record) holds emails, organization names and view-as reasons. It never holds figures, note text, request notes or decision messages.
 - The client never logs (expo-shell rule 12, **Exists**) and never persists the file or the parsed rows.
@@ -2056,6 +2106,7 @@ Named tests:
 - **Notes:** `detail` is absent from logs and audit.
 - **Deletion:** deleting a person with an active seat is 409 `person_has_seat`; otherwise their requests, invitations and removed seats are gone, and no audit event holds their email.
 - **Deletion:** deleting an active organization is 409 `org_not_suspended`; deleting a suspended one leaves no tenant document with its `orgId`, and no audit event holds its name.
+- **Forecast runs (14.4):** `api/test/forecast-file.test.ts` (strict shape, cross-field rules, issues without values, labels from code), `forecast-score.test.ts`, `forecast-runs.int.test.ts` (import, retry, publish and withdraw, staff only, staff activity, deletion), `estimates.int.test.ts` (drafts invisible, newest eligible run per date, actuals and live accuracy), `chat-estimate-tools.test.ts` (`get_forecast`), and `client/test/portal/console/forecasts.test.web.tsx`.
 - **Audit:** every mutation writes its event with only the allowlisted keys.
 - **Email:** normalization matches the kit for case and spaces.
 - **Towns:** `api/test/towns.test.ts` matches `api/src/towns.ts` against the literal list of twelve ids (Section 13).
@@ -2189,6 +2240,8 @@ Each is marked inline with “lead default”:
 ---
 
 ## 23. Changelog
+
+**2026-11-06, forecast runs.** Staff import a model run's outputs for a location (`townwise.forecast-run/1`, 14.4) from P21 as a draft, then publish, withdraw or delete it, each a staff action in the org's staff activity (9.2, 10.7). Owners, view-as and TownwiseAI's `get_forecast` read published runs only, the newest one whose data ends before each day, with ranges, labels made in code, actuals and live accuracy; the model card shows the run (10.13). Two collections (6.20, 6.21), deleted with the location's sales data, the location and the organization. Nothing is published yet (owner decision 2026-11-05: Sawtooth's v3 once it joins and consents).
 
 **2026-11-05, stored files (stages 5 to 9).** ZIP archives read in place with bomb guards, entries listed in `tw_file_entries` (6.18) and served by `GET .../files/:fileId/entries`, and their tables read as families; PDF tables (`unpdf`) and Word tables (`saxen`); the AI column step on a redacted profile within a monthly budget (`tw_files_usage`, 6.13; `TOWNWISE_FILES_MONTHLY_BUDGET_USD`, 18); stored files deleted with a location's sales data and an organization, the owner's "delete every original" (`DELETE .../originals`), the staff purge for a person's deletion request (10.7), and the daily sweep for retention (11A.7, `tw_file_sweeps`, 6.14); two audit actions (9.2) and `deletedFiles` on `sales.deleted`. Stored files in Azure sign in with the managed identity. Still off in production (11A.8).
 

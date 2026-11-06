@@ -1,6 +1,7 @@
 // Deletion (spec D22, F13, 10.7): staff delete a person's Townwise records, or a suspended organization's. Both follow
 // the staff audit rule (9.3): read-only checks, then the event (ids only), then the effect, which deletes by filter so
-// a retry completes the work, and then redacts the email or names in older events. The tuning chat's records go too.
+// a retry completes the work, and then redacts the email or names in older events. The tuning chat's records go too,
+// and so do forecast runs (U13B); a person's deletion clears their staff id from the runs they imported or published.
 // The kit has no user delete (spec 19, item 7): a deleted person's kit user record is deleted by hand afterwards, as a
 // runbook step (api/README.md).
 import { objectId } from '@ckeith26/mongo';
@@ -59,6 +60,8 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     await stores.chatProposals.removeForOrg(scope);
     // U9, TownwiseAI's questions.
     await stores.agentAnswers.removeForOrg(scope);
+    // U13B: forecast runs and their rows.
+    await stores.forecasts.removeForOrg(scope);
     const deletedLocations = await stores.locations.removeForOrg(scope);
     const deletedSeats = await stores.members.removeForOrg(scope);
     if (org.fromRequestId !== null) await stores.requests.remove(org.fromRequestId);
@@ -76,6 +79,8 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     // carry only the deleted organization's id.
     const lateDays = await stores.salesDays.removeForOrg(scope);
     await stores.chatUsage.removeForOrg(scope);
+    // U13B: a staff forecast import already past its organization check can still write a run and rows.
+    await stores.forecasts.removeForOrg(scope);
     return { deletedDays: firstDays + lateDays, deletedUploads, deletedNotes, deletedLocations, deletedSeats, redactedEvents };
   });
   if (counts === 'files_unavailable') {

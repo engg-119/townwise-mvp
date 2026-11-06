@@ -5,6 +5,7 @@ import { Text, StyleSheet } from 'react-native';
 import { deleteOrg, fetchOrg, updateOrg } from '../../../../../../src/portal/console/api';
 import { AuditTable } from '../../../../../../src/portal/console/AuditTable';
 import { Dialog } from '../../../../../../src/portal/console/Dialog';
+import { ForecastRuns } from '../../../../../../src/portal/console/ForecastRuns';
 import { auditHref, requestHref } from '../../../../../../src/portal/console/links';
 import { OrgTeam } from '../../../../../../src/portal/console/OrgTeam';
 import { CellLink, Facts } from '../../../../../../src/portal/console/parts';
@@ -297,6 +298,9 @@ export default function OrganizationPage(): React.JSX.Element {
           : <LocationTable locations={locations} />}
         <Small>Sales figures and notes are visible only through View as.</Small>
       </Section>
+
+      {/* U13B: forecast runs (spec 16.4 P21 Forecasts, 14.4). */}
+      <ForecastRuns org={org} locations={locations} />
 
       <Section kicker="Newest 20 events" title="Recent activity">
         {recent.length === 0 ? <EmptyState text="Nothing recorded yet." /> : <AuditTable label="Recent activity" events={recent} />}

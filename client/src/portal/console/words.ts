@@ -85,6 +85,11 @@ export const AUDIT_ACTIONS: readonly { value: string; label: string }[] = [
   { value: 'chat.conversation_deleted', label: 'Tuning chat deleted' },
   // U9, TownwiseAI's questions.
   { value: 'agent.question_answered', label: 'TownwiseAI question answered' },
+  // U13B, forecast runs.
+  { value: 'forecast.imported', label: 'Forecast imported' },
+  { value: 'forecast.published', label: 'Forecast published' },
+  { value: 'forecast.withdrawn', label: 'Forecast withdrawn' },
+  { value: 'forecast.deleted', label: 'Forecast deleted' },
   { value: 'view_as.started', label: 'View-as started' },
   { value: 'view_as.ended', label: 'View-as ended' },
   { value: 'people.signed_out_everywhere', label: 'Signed out everywhere' },
@@ -148,6 +153,15 @@ export function auditDetails(event: Pick<AuditEvent, 'action' | 'details'>): str
       return END_REASON[text(d.endReason)] ?? '';
     case 'agent.question_answered':
       return QUESTION_ANSWER[text(d.answer)] ?? '';
+    // U13B: the model version, the dates and the day count, never a figure.
+    case 'forecast.imported':
+    case 'forecast.published':
+    case 'forecast.withdrawn':
+    case 'forecast.deleted': {
+      const span = text(d.from) === '' || text(d.to) === '' ? '' : `${formatDate(text(d.from))} to ${formatDate(text(d.to))}`;
+      const days = count(d.dayCount) === '' ? '' : `${count(d.dayCount)} days`;
+      return [text(d.modelVersion) === '' ? '' : `Model ${text(d.modelVersion)}`, span, days].filter((part) => part !== '').join(', ');
+    }
     default:
       return '';
   }

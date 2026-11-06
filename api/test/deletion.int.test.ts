@@ -34,6 +34,8 @@ const TENANT_COLLECTIONS = [
   'tw_chat_usage', 'tw_chat_proposals',
   // U9, TownwiseAI's questions.
   'tw_agent_answers',
+  // U13B.
+  'tw_forecast_runs', 'tw_forecasts',
 ] as const;
 
 /** A tw_chat_proposals record (spec 6.16): the author dismissed a proposal in one of their conversations. */
@@ -187,10 +189,14 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
     expect(await res?.json()).toEqual({
       deletedDays: 2, deletedUploads: 1, deletedNotes: 1, deletedLocations: 2, deletedSeats: 4, redactedEvents: 4,
     });
-    // The event is written before the effect; the organization row is deleted last, then sales days and chat usage swept again.
+    // The event is written before the effect; the organization row is deleted last, then sales days, chat usage and
+    // (U13B) forecasts swept again.
     expect(writes[0]).toBe('insert tw_audit_events');
-    // Stored files (none here) are swept again after the row too: imports first.
-    expect(writes.slice(-4)).toEqual(['delete tw_orgs', 'delete tw_imports', 'delete tw_sales_days', 'delete tw_chat_usage']);
+    // Stored files (none here) are swept again after the row too: imports first. Then (U13B) forecast rows, then runs.
+    expect(writes.slice(-6)).toEqual([
+      'delete tw_orgs', 'delete tw_imports', 'delete tw_sales_days', 'delete tw_chat_usage',
+      'delete tw_forecasts', 'delete tw_forecast_runs',
+    ]);
 
     const orgId = new Types.ObjectId(doomed.orgId);
     for (const name of TENANT_COLLECTIONS) expect({ name, n: await count(name, { orgId }) }).toEqual({ name, n: 0 });

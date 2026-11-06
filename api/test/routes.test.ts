@@ -76,6 +76,28 @@ describe('route table', () => {
     ]);
   });
 
+  it('U13B: the forecast is a member read; forecast runs are staff routes with their body limits and no limiter', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id === 'org.forecast.get' || r.id.startsWith('admin.forecasts.'))
+      .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));
+    expect(rows).toEqual([
+      { id: 'org.forecast.get', method: 'GET', path: '/org/locations/:locationId/forecast', policy: 'member', bodyLimit: 'none', limiter: undefined },
+      { id: 'admin.forecasts.list', method: 'GET', path: '/admin/orgs/:orgId/forecast-runs', policy: 'staff', bodyLimit: 'none', limiter: undefined },
+      {
+        id: 'admin.forecasts.import', method: 'POST', path: '/admin/orgs/:orgId/locations/:locationId/forecast-runs', policy: 'staff',
+        bodyLimit: '256kb', limiter: undefined,
+      },
+      {
+        id: 'admin.forecasts.publish', method: 'POST', path: '/admin/orgs/:orgId/forecast-runs/:runId/publish', policy: 'staff',
+        bodyLimit: '32kb', limiter: undefined,
+      },
+      {
+        id: 'admin.forecasts.withdraw', method: 'POST', path: '/admin/orgs/:orgId/forecast-runs/:runId/withdraw', policy: 'staff',
+        bodyLimit: '32kb', limiter: undefined,
+      },
+      { id: 'admin.forecasts.remove', method: 'DELETE', path: '/admin/orgs/:orgId/forecast-runs/:runId', policy: 'staff', bodyLimit: 'none', limiter: undefined },
+    ]);
+  });
+
   it('boot refuses a duplicate method and path', () => {
     expect(() => { assertRouteTable([route({ id: 'a' }), route({ id: 'b' })]); }).toThrow(ConfigError);
   });

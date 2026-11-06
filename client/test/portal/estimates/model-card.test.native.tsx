@@ -9,7 +9,9 @@ import { ABOUT, ABOUT_PATH, LOCATION_ID } from './fakes';
 
 // "How Townwise estimates" on native (spec 13.2): with no forecast it says so with an In progress tag and what Home
 // and TownwiseAI use instead, lists what the estimates read and can't see, today in the town's time zone, how far the
-// town's calendar is researched, and that a headcount is Planned while no public count is researched.
+// town's calendar is researched, and that a headcount is Planned while no public count is researched. U13B: with a
+// published run it names the model, its training range and made-at date, its backtest, and how it has done so far,
+// misses included, and drops the In progress tag.
 
 async function show(answer: unknown): Promise<ReturnType<typeof analyticsFake>> {
   const api = analyticsFake({ [ABOUT_PATH]: answer });
@@ -51,6 +53,31 @@ test('a town with no researched calendar says holidays only; researched counts d
   expect(screen.getByText('Thu, Nov 5, 2026, in America/Los_Angeles (the state’s main time zone; yours may differ).')).toBeTruthy();
   expect(screen.getByText('1 of the public counts behind a headcount are researched for Bend, from 1 source.')).toBeTruthy();
   expect(screen.queryByText('Planned')).toBeNull();
+});
+
+const RUN = {
+  id: '000000000000000000000010', metric: 'guests', model: { family: 'hybrid_linear_xgboost', version: 'v9', label: 'Townwise demand model v9' },
+  trainingSource: 'files_from_owner', trainedFrom: '2025-01-01', dataThrough: '2026-10-21', madeAt: '2026-11-01', frozen: true,
+  interval: { level: 0.8, widened: true },
+  backtest: { from: '2026-01-05', to: '2026-03-15', weeks: 10, weeklyTypicalErrorPct: 9.5, weeksOver20Pct: 1 },
+} as const;
+
+test('U13B: a published run names its model, sales, dates and backtest, with no In progress tag', async () => {
+  await show({ ...ABOUT, forecast: { run: RUN, live: { days: 9, inRange: 7, typicalErrorPct: 14.25, from: '2026-11-01', to: '2026-11-04' } } });
+  expect(await screen.findByText('Forecast: Townwise demand model v9, trained on sales exports you sent Townwise from Jan 1, 2025 to Oct 21, 2026, made Nov 1, 2026. It saw no sales after Oct 21, 2026.')).toBeTruthy();
+  expect(screen.getByText('Each day and week is a range that about 8 in 10 days should land inside.')).toBeTruthy();
+  expect(screen.getByText('Its ranges were widened after they ran narrow in backtests.')).toBeTruthy();
+  expect(screen.getByText('In backtests from Jan 5, 2026 to Mar 15, 2026, a typical week was off by 9.5%, and 1 of 10 weeks missed by more than 20%.')).toBeTruthy();
+  expect(screen.getByText('So far: 7 of 9 days inside the range; typical miss 14.3%, from Nov 1, 2026 to Nov 4, 2026.')).toBeTruthy();
+  expect(screen.queryByText('In progress')).toBeNull();
+  expect(screen.queryByText(/no forecast for/)).toBeNull();
+});
+
+test('U13B: a run with too few days passed says it isn’t scored yet, and a run without a backtest leaves it out', async () => {
+  await show({ ...ABOUT, forecast: { run: { ...RUN, backtest: null, interval: { level: 0.8, widened: false } }, live: null } });
+  expect(await screen.findByText('Not scored yet: Townwise scores it once 5 of its days have sales.')).toBeTruthy();
+  expect(screen.queryByText(/In backtests/)).toBeNull();
+  expect(screen.queryByText(/widened/)).toBeNull();
 });
 
 test('a failed read shows the error with Try again, which reads again', async () => {

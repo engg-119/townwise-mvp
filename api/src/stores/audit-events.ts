@@ -37,6 +37,11 @@ export const AUDIT_DETAIL_KEYS = {
   'chat.conversation_deleted': ['locationId', 'conversationId'],
   // U9, TownwiseAI's questions: the question's id holds only dates and a weekday number.
   'agent.question_answered': ['locationId', 'questionId', 'answer'],
+  // U13B, forecast runs (spec 14.4): ids, the model version, the dates and the day count, never a figure.
+  'forecast.imported': ['locationId', 'modelVersion', 'from', 'to', 'dayCount'],
+  'forecast.published': ['locationId', 'modelVersion', 'from', 'to', 'dayCount'],
+  'forecast.withdrawn': ['locationId', 'modelVersion', 'from', 'to', 'dayCount'],
+  'forecast.deleted': ['locationId', 'modelVersion', 'from', 'to', 'dayCount'],
   'view_as.started': ['targetUserId', 'targetEmail', 'reason', 'expiresAt'],
   'view_as.ended': ['endReason'],
   'people.signed_out_everywhere': [],
@@ -46,7 +51,10 @@ export const AUDIT_DETAIL_KEYS = {
 
 export type AuditAction = keyof typeof AUDIT_DETAIL_KEYS;
 export type AuditActorRole = 'superadmin' | 'org_admin' | 'member' | 'user';
-export type AuditTargetType = 'org' | 'member' | 'request' | 'location' | 'upload' | 'note' | 'user' | 'grant' | 'conversation' | 'file';
+export type AuditTargetType =
+  | 'org' | 'member' | 'request' | 'location' | 'upload' | 'note' | 'user' | 'grant' | 'conversation' | 'file'
+  // U13B.
+  | 'forecast_run';
 export type AuditDetails = Record<string, string | number | boolean | null>;
 
 export interface AuditEventFields {

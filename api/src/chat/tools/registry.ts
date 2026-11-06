@@ -9,6 +9,7 @@ import type { TownwiseContext } from '../../app.ts';
 import type { OrgScope } from '../../access/policy.ts';
 import type { LocationRecord } from '../../stores/locations.ts';
 import type { NoteContent } from '../../stores/notes.ts';
+import { forecastTool } from './forecast.ts';
 import { notesTool } from './notes.ts';
 import { overviewTool } from './overview.ts';
 import { peopleInTownTool } from './people-in-town.ts';
@@ -74,6 +75,8 @@ export const TOOL_REGISTRY: readonly ChatTool<unknown>[] = [
   // U13A: the town calendar and people in town.
   townCalendarTool,
   peopleInTownTool,
+  // U13B: the published forecast.
+  forecastTool,
 ];
 
 /** The tool definitions sent to the model, in registry order. */

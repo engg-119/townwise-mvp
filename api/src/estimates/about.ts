@@ -1,10 +1,13 @@
 // "How Townwise estimates" (spec 13.2, the model card): what Townwise's estimates read, what they can't see, their
 // known limits and who can see the model, plus one location's state: today in its town, its calendar coverage, which
-// headcount inputs are researched for its town, and its forecast (none until forecast runs land; spec 14). One source
-// for what the Analytics card says and what TownwiseAI says. Facts only from committed docs; no figure from a model.
+// headcount inputs are researched for its town, and its forecast: the newest run staff published for it and how it
+// has done so far, or none (spec 14.4). One source for what the Analytics card says and what TownwiseAI says. Facts
+// only from committed docs and the published run's own metadata; no figure from a model.
 import { localDay, timeZoneOf, weekdayOf, type Weekday } from '../time-zones.ts';
 import { townCalendarCovers } from '../town-calendar.ts';
 import type { Town } from '../towns.ts';
+import type { ForecastRunView } from '../forecasts/reader.ts';
+import type { LiveAccuracy } from '../forecasts/score.ts';
 import type { PeopleData, PeopleSource } from '../people-in-town/sources.ts';
 
 /** Bumped whenever a sentence below changes, so a reader can tell which card it saw. */
@@ -51,14 +54,19 @@ export interface EstimatesAbout {
   card: ModelCardFacts;
   location: { name: string; town: { name: string; state: string } };
   today: { date: string; weekday: Weekday; timeZone: string; approximate: boolean };
-  /** Null run until staff publish a forecast for this location. */
-  forecast: { run: null; live: null };
+  /** Null run until staff publish a forecast for this location (U13B); live is null under 5 scored days. */
+  forecast: { run: ForecastRunView | null; live: LiveAccuracy | null };
   calendar: { researched: boolean; covers: { from: string; to: string } | null };
   /** Empty while no headcount input is researched for the town. */
   people: { headcountInputs: HeadcountInput[]; sources: PeopleSource[] };
 }
 
-export function estimatesAbout(location: { name: string; town: Town }, data: PeopleData, now: Date): EstimatesAbout {
+export function estimatesAbout(
+  location: { name: string; town: Town },
+  data: PeopleData,
+  now: Date,
+  forecast: { run: ForecastRunView; live: LiveAccuracy | null } | null = null,
+): EstimatesAbout {
   const { town } = location;
   const zone = timeZoneOf(town);
   const date = localDay(now, zone.timeZone);
@@ -79,7 +87,7 @@ export function estimatesAbout(location: { name: string; town: Town }, data: Peo
     card: MODEL_CARD,
     location: { name: location.name, town: { name: town.name, state: town.state } },
     today: { date, weekday: weekdayOf(date), timeZone: zone.timeZone, approximate: zone.approximate },
-    forecast: { run: null, live: null },
+    forecast: forecast === null ? { run: null, live: null } : { run: forecast.run, live: forecast.live },
     calendar: { researched: covers !== null, covers },
     people: {
       headcountInputs: [...new Set(present.map(([input]) => input))],
