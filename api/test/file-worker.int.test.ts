@@ -11,7 +11,7 @@ import type { FileView, ImportView } from '../src/handlers/files.ts';
 import { createMemoryFileBlobs, type MemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import { addLocation, addSalesDay, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { uploadFile } from './helpers/files.ts';
-import { call, signIn, startTownwiseServer, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
+import { call, signIn, startTownwiseServer, writesDuring, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
 
 const FIXTURES = join(import.meta.dirname, 'fixtures', 'sales-files');
 const fixture = (name: string): Buffer => readFileSync(join(FIXTURES, name));
@@ -242,6 +242,29 @@ describe('the reader’s claim', () => {
     expect(done).toMatchObject({ status: 'done', files: [{ status: 'read', result: { uploadId: uploadId.toHexString(), dayCount: 2 } }] });
     expect(await server.connection.collection('tw_uploads').countDocuments({ locationId: new Types.ObjectId(locationId) })).toBe(1);
     expect(await server.connection.collection('tw_uploads').findOne({ _id: uploadId })).toMatchObject({ status: 'applied', inserted: 2 });
+  });
+
+  it('reads a stored file of a started import, so a claim between start and queueing never finishes past it', async () => {
+    const locationId = await newLocation();
+    const { file, importId } = await drop(locationId, member, 'a.csv', Buffer.from('Date,Guests\n2025-01-01,1\n'));
+    // Start's write has landed and queueStored's has not: a reader polls in between.
+    await server.connection.collection('tw_imports').updateOne({ _id: new Types.ObjectId(importId) }, { $set: { status: 'queued', startedAt: server.clock.now() } });
+    server.reader?.nudge();
+    expect(await settledImport(locationId, importId)).toMatchObject({ status: 'done', files: [{ id: file.id, status: 'read' }] });
+  });
+
+  it('moves an answered file back to the queue before the import, so no reader finishes the import past it', async () => {
+    const locationId = await newLocation();
+    const { importId } = await drop(locationId, member, 'either.csv', fixture('slash-either.csv'));
+    await start(locationId, importId);
+    const waiting = await settledImport(locationId, importId);
+    const writes = await writesDuring(server, async () => {
+      const res = await call(server, `${base(locationId)}/imports/${importId}/answer`, { session: member, json: { questionId: waiting.question?.id, choice: 'day_first' } });
+      expect(res.status).toBe(200);
+    });
+    // The nudged reader's own claim may follow; the route's two writes come first, file then import.
+    expect(writes.filter((write) => write.endsWith('tw_files') || write.endsWith('tw_imports')).slice(0, 2)).toEqual(['update tw_files', 'update tw_imports']);
+    expect(await settledImport(locationId, importId)).toMatchObject({ status: 'done', files: [{ status: 'read' }] });
   });
 
   it('fails a file after three attempts with internal', async () => {

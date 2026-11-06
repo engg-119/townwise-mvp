@@ -202,6 +202,9 @@ export interface NewFile {
   readonly expiresAt: Date;
 }
 
+/** What the reader takes in a started import (nextToRead). */
+const READABLE: FileStatus[] = ['queued', 'reading', 'stored'];
+
 /** Statuses the reader is busy with or will be: the original must stay. */
 export const BUSY_STATUSES: readonly FileStatus[] = ['uploading', 'reading', 'waiting'];
 
@@ -232,7 +235,11 @@ export interface FileStore {
   /** The original is gone: the name becomes the kind's label (it can itself name a person). */
   rawDeleted(scope: OrgScope, fileId: string, at: Date, label: string): Promise<void>;
 
-  /** The reader's next file in an import: queued, or reading (a previous attempt that stopped). */
+  /**
+   * The reader's next file in a started import: queued, reading (a previous attempt that stopped), or stored. A stored
+   * file in a started import is one whose move to queued has not landed yet (start and queueStored, or a late drop, are
+   * separate writes), so the reader takes it rather than finish the import past it.
+   */
   nextToRead(scope: OrgScope, importId: string): Promise<FileRecord | null>;
   /** Marks the file reading and counts the attempt. Null when it was deleted or moved meanwhile. */
   startReading(scope: OrgScope, fileId: string, now: Date): Promise<FileRecord | null>;
@@ -247,9 +254,9 @@ export interface FileStore {
     cleanBytes?: number | null;
     readMs?: number | null;
   }): Promise<boolean>;
-  /** "Not sure": the waiting file is kept, unread, with this outcome. */
-  keepWaiting(scope: OrgScope, fileId: string, outcome: string): Promise<void>;
-  /** An answer: merged into the sheet's answers, and the file goes back to the queue. */
+  /** "Not sure": the waiting file is kept, unread, with this outcome. False when it was no longer waiting. */
+  keepWaiting(scope: OrgScope, fileId: string, outcome: string): Promise<boolean>;
+  /** An answer: merged into the sheet's answers, and the file goes back to the queue. False when it was no longer waiting. */
   answer(scope: OrgScope, fileId: string, sheet: number, answers: SheetAnswers): Promise<boolean>;
 }
 
@@ -349,13 +356,13 @@ export function createFileStore(connection: Connection): FileStore {
       await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, { $set: { rawDeletedAt: at, name: label } });
     },
     async nextToRead(scope, importId) {
-      const doc = await File.findOne({ orgId: org(scope), importId: oid(importId), status: trusted({ $in: ['queued', 'reading'] }) })
+      const doc = await File.findOne({ orgId: org(scope), importId: oid(importId), status: trusted({ $in: READABLE }) })
         .sort({ uploadedAt: 1, _id: 1 }).lean();
       return doc === null ? null : toFile(doc);
     },
     async startReading(scope, fileId, now) {
       const doc = await File.findOneAndUpdate(
-        { _id: oid(fileId), orgId: org(scope), status: trusted({ $in: ['queued', 'reading'] }) },
+        { _id: oid(fileId), orgId: org(scope), status: trusted({ $in: READABLE }) },
         { $set: { status: 'reading', readStartedAt: now, progress: null }, $inc: { attempts: 1 } },
         after,
       ).lean();
@@ -377,7 +384,8 @@ export function createFileStore(connection: Connection): FileStore {
       return result.matchedCount === 1;
     },
     async keepWaiting(scope, fileId, outcome) {
-      await File.updateOne({ _id: oid(fileId), orgId: org(scope), status: 'waiting' }, { $set: { status: 'kept', outcome } });
+      const result = await File.updateOne({ _id: oid(fileId), orgId: org(scope), status: 'waiting' }, { $set: { status: 'kept', outcome } });
+      return result.matchedCount === 1;
     },
     async answer(scope, fileId, sheet, answers) {
       const set: Record<string, unknown> = { status: 'queued', attempts: 0 };

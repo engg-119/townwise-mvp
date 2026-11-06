@@ -695,14 +695,14 @@ export async function answerImport(ctx: TownwiseContext, req: Request, res: Resp
   if (record.status !== 'waiting' || question?.id !== body.questionId) throw new AppError(409, 'question_stale', 'That question was already answered');
   const effect = answerOf(question, body.choice);
   if (effect === null) throw new AppError(400, 'invalid_request', 'Invalid request');
-  if (!(await ctx.stores.imports.clearQuestion(scope, record.id, question.id))) {
-    throw new AppError(409, 'question_stale', 'That question was already answered');
-  }
-  if (effect === 'not_sure') {
-    await ctx.stores.files.keepWaiting(scope, question.fileId, 'needs_help');
-  } else {
-    await ctx.stores.files.answer(scope, question.fileId, question.sheet, effect);
-  }
+  // The file moves first, while the import still waits and no reader can claim it: clearing the question first would
+  // let a reader finish the import in between and leave the file waiting inside a done import. The file's move is the
+  // compare-and-set, so a second answer to the same question finds it no longer waiting.
+  const moved = effect === 'not_sure'
+    ? await ctx.stores.files.keepWaiting(scope, question.fileId, 'needs_help')
+    : await ctx.stores.files.answer(scope, question.fileId, question.sheet, effect);
+  if (!moved) throw new AppError(409, 'question_stale', 'That question was already answered');
+  await ctx.stores.imports.clearQuestion(scope, record.id, question.id);
   ctx.nudgeFiles();
   ctx.logger.info({ importId: record.id, fileId: question.fileId, kind: question.kind }, 'townwise.file_answered');
   const updated = await ctx.stores.imports.get(scope, location.id, record.id);
