@@ -52,7 +52,7 @@ describe('P17 Team: the page and its states', () => {
     expect(screen.getByText('One per line or separated by commas, up to 20.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Role' }).props.accessibilityValue).toEqual({ text: 'Member' });
     expect(screen.getByRole('heading', { name: 'After you add someone' })).toBeTruthy();
-    expect(screen.getByText('Townwise doesn’t send email yet. Send them townwise.tech and the address you added.')).toBeTruthy();
+    expect(screen.getByText('Townwise doesn’t email invitations. Send them townwise.tech and the address you added.')).toBeTruthy();
     // The page's one primary.
     expect(screen.getByRole('button', { name: 'Add' })).toBeTruthy();
   });
