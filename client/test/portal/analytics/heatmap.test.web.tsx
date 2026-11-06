@@ -263,6 +263,16 @@ test('one day of history: year over year says what is missing and offers older h
   expect(screen.getByText('Townwise needs each kind of day to happen at least twice before it can say how much it moves your numbers.')).toBeTruthy();
 });
 
+test('Enter on a cell selects it even while the pointer rests on another', async () => {
+  await ready();
+  fireEvent.pointerOver(cell('2025-11-27'));
+  expect(await screen.findByRole('region', { name: 'Thursday, Nov 27, 2025' })).toBeTruthy();
+  cell('2026-10-10').focus();
+  key('Enter');
+  expect(await screen.findByRole('region', { name: 'Saturday, Oct 10, 2026' })).toBeTruthy();
+  expect(screen.queryByRole('region', { name: 'Thursday, Nov 27, 2025' })).toBeNull();
+});
+
 test('unchecking the selected day’s year clears the selection', async () => {
   await ready();
   fireEvent.click(cell('2025-11-27'));

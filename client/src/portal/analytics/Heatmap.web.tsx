@@ -202,12 +202,20 @@ export function Heatmap(props: HeatmapProps): React.JSX.Element {
     );
   }
 
+  /** The keys take over from a pointer resting on a cell, so the panel follows focus and the selection. */
+  function clearPreview(): void {
+    if (previewed.current === null) return;
+    previewed.current = null;
+    onPreview?.(null);
+  }
+
   function onKeyDown(event: React.KeyboardEvent<HTMLDivElement>): void {
     // The focused cell is where the keys start, even if focus got there without a key (a click, the panel).
     const from = dateOf(event.target);
     if (bounds === null || from === null) return;
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
+      clearPreview();
       setActive(from);
       onSelect?.(from);
       return;
@@ -221,11 +229,7 @@ export function Heatmap(props: HeatmapProps): React.JSX.Element {
     const next = moveFocus(from, event.key, event.ctrlKey || event.metaKey, bounds);
     if (next === null) return;
     event.preventDefault();
-    // The keys take over from a pointer resting on a cell, so the panel follows focus.
-    if (previewed.current !== null) {
-      previewed.current = null;
-      onPreview?.(null);
-    }
+    clearPreview();
     focusNext.current = next;
     setActive(next);
     if (selected !== null && next !== selected) onSelect?.(next);
