@@ -32,6 +32,8 @@ afterEach(async () => { await server.authStores.totp.remove(staff.userId); });
 const TENANT_COLLECTIONS = [
   'tw_members', 'tw_locations', 'tw_sales_days', 'tw_uploads', 'tw_notes', 'tw_chat_conversations', 'tw_chat_live_turns',
   'tw_chat_usage', 'tw_chat_proposals',
+  // U9, TownwiseAI's questions.
+  'tw_agent_answers',
 ] as const;
 
 /** A tw_chat_proposals record (spec 6.16): the author dismissed a proposal in one of their conversations. */
@@ -127,6 +129,11 @@ async function populatedOrg(name: string, status: 'active' | 'suspended'): Promi
   await addNote(server, { orgId, locationId, detail: `${name} note detail`, createdBy: member.session.userId });
   await addConversation(server, { orgId, locationId, userId: member.session.userId, text: `${name} chat` });
   await addProposal({ orgId, locationId, userId: member.session.userId });
+  // U9: an answer to a TownwiseAI question.
+  await server.connection.collection('tw_agent_answers').insertOne({
+    orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), questionId: 'gap_2026-05-03_2026-05-04',
+    answer: 'not_sure', noteId: new Types.ObjectId(), status: 'done', createdAt: server.clock.now(), updatedAt: server.clock.now(),
+  });
   await addLiveTurn(server, { orgId, userId: member.session.userId });
   await addChatUsage(server, { orgId, month: '2026-06', costMicroUsd: 1_250_000 });
   await addGrant(server, { actorUserId: staff.userId, sessionId: randomUUID(), targetUserId: member.session.userId, orgId });

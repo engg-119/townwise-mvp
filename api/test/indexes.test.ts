@@ -21,7 +21,10 @@ describe('indexes', () => {
     const connection = registered();
     const collections = Object.values(connection.models).map((model) => model.collection.collectionName).sort();
     expect(collections).toEqual([
-      'tw_access_requests', 'tw_audit_events', 'tw_chat_conversations', 'tw_chat_live_turns', 'tw_chat_proposals', 'tw_chat_usage',
+      'tw_access_requests',
+      // U9, TownwiseAI's questions.
+      'tw_agent_answers',
+      'tw_audit_events', 'tw_chat_conversations', 'tw_chat_live_turns', 'tw_chat_proposals', 'tw_chat_usage',
       'tw_files', 'tw_imports', 'tw_locations', 'tw_members', 'tw_notes', 'tw_orgs', 'tw_sales_days', 'tw_upload_days',
       'tw_uploads', 'tw_view_as_grants',
       // U11, statement moments.
@@ -93,6 +96,13 @@ describe('indexes', () => {
       { orgId: 1, conversationId: 1, proposalId: 1 }, expect.objectContaining({ unique: true }),
     ]);
     expect(indexesOf(connection, 'TwChatProposal')).toContainEqual([{ orgId: 1, locationId: 1 }, expect.anything()]);
+  });
+
+  // U9, TownwiseAI's questions.
+  it('keeps one answer per TownwiseAI question per location', () => {
+    expect(indexesOf(registered(), 'TwAgentAnswer')).toContainEqual([
+      { orgId: 1, locationId: 1, questionId: 1 }, expect.objectContaining({ unique: true }),
+    ]);
   });
 
   it('keeps one live tuning chat turn per person per organization', () => {

@@ -81,6 +81,8 @@ export const AUDIT_ACTIONS: readonly { value: string; label: string }[] = [
   { value: 'note.deleted', label: 'Note deleted' },
   { value: 'chat.turn_completed', label: 'Tuning chat used' },
   { value: 'chat.conversation_deleted', label: 'Tuning chat deleted' },
+  // U9, TownwiseAI's questions.
+  { value: 'agent.question_answered', label: 'TownwiseAI question answered' },
   { value: 'view_as.started', label: 'View-as started' },
   { value: 'view_as.ended', label: 'View-as ended' },
   { value: 'people.signed_out_everywhere', label: 'Signed out everywhere' },
@@ -90,6 +92,11 @@ export const AUDIT_ACTIONS: readonly { value: string; label: string }[] = [
 
 const NOTE_KIND: Readonly<Record<string, string>> = {
   closure: 'Closure', private_event: 'Private event', opening: 'Opening', other: 'Other',
+};
+
+/** U9: the answer to a TownwiseAI question about days with no sales. */
+const QUESTION_ANSWER: Readonly<Record<string, string>> = {
+  closed: 'Closed on those days', open: 'The data is missing', not_sure: 'Not sure',
 };
 
 const END_REASON: Readonly<Record<string, string>> = {
@@ -137,6 +144,8 @@ export function auditDetails(event: Pick<AuditEvent, 'action' | 'details'>): str
     }
     case 'view_as.ended':
       return END_REASON[text(d.endReason)] ?? '';
+    case 'agent.question_answered':
+      return QUESTION_ANSWER[text(d.answer)] ?? '';
     default:
       return '';
   }

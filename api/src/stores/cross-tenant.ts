@@ -260,7 +260,7 @@ export interface DeletedPersonRecords {
  * removed seats, their tuning chat conversations, live turns and proposal records, and their welcome markers, in every
  * organization (the notes they saved from proposals stay with the organization, as every note does). Never an active
  * seat: the handler refuses a person who holds one. An address with no kit user has only invitations. Deletes by
- * filter, so a retry completes the work.
+ * filter, so a retry completes the work. (U9: tw_agent_answers holds no person id, so nothing of it is the person's.)
  */
 export async function deletePersonRecords(
   connection: Connection,

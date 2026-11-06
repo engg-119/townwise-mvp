@@ -50,6 +50,8 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     await stores.chatUsage.removeForOrg(scope);
     await stores.welcomes.removeForOrg(scope);
     await stores.chatProposals.removeForOrg(scope);
+    // U9, TownwiseAI's questions.
+    await stores.agentAnswers.removeForOrg(scope);
     const deletedLocations = await stores.locations.removeForOrg(scope);
     const deletedSeats = await stores.members.removeForOrg(scope);
     if (org.fromRequestId !== null) await stores.requests.remove(org.fromRequestId);

@@ -118,6 +118,17 @@ describe('route table', () => {
     expect(proposal?.limiter).toBeUndefined();
   });
 
+  // U9, TownwiseAI's side panel.
+  it('the side panel is a member GET, and answering a question a member POST with a 1kb body and no route limiter', () => {
+    const base = '/org/locations/:locationId';
+    expect(TOWNWISE_ROUTES.find((entry) => entry.id === 'org.agent.get')).toMatchObject({
+      method: 'GET', path: `${base}/agent`, policy: 'member', bodyLimit: 'none',
+    });
+    const answer = TOWNWISE_ROUTES.find((entry) => entry.id === 'org.agent.answer');
+    expect(answer).toMatchObject({ method: 'POST', path: `${base}/agent/questions/:questionId`, policy: 'member', bodyLimit: '1kb' });
+    expect(answer?.limiter).toBeUndefined();
+  });
+
   it('boot refuses staff_self on any route except POST /admin/view-as/end', () => {
     expect(() => { assertRouteTable([route({ policy: 'staff_self', path: '/admin/view-as' })]); }).toThrow(ConfigError);
     expect(() => { assertRouteTable([route({ policy: 'staff_self', path: '/admin/view-as/end' })]); }).not.toThrow();

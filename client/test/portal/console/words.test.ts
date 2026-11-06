@@ -25,6 +25,7 @@ test('the action filter covers every action the API records (api/src/stores/audi
     'location.created', 'location.updated', 'location.deleted', 'sales.uploaded', 'sales.deleted',
     'file.uploaded', 'file.deleted', 'file.raw_deleted',
     'note.created', 'note.updated', 'note.deleted', 'chat.turn_completed', 'chat.conversation_deleted',
+    'agent.question_answered',
     'view_as.started', 'view_as.ended', 'people.signed_out_everywhere', 'person.deleted', 'staff_action.not_applied',
   ]);
 });
@@ -40,6 +41,8 @@ test.each<[string, Record<string, string | number | boolean | null>, string]>([
   ['view_as.ended', { endReason: 'replaced' }, 'Replaced by a new view-as'],
   ['chat.turn_completed', { locationId: 'l1', inputTokens: 1000, outputTokens: 200 }, ''],
   ['org.renamed', { from: 'A', to: 'B' }, ''],
+  ['agent.question_answered', { locationId: 'l1', questionId: 'gap_2026-12-24_2026-12-26', answer: 'closed' }, 'Closed on those days'],
+  ['agent.question_answered', { locationId: 'l1', questionId: 'weekday_1_2026-01-05_2026-12-28', answer: 'open' }, 'The data is missing'],
 ])('details for %s', (action, details, expected) => {
   expect(auditDetails({ action, details })).toBe(expected);
 });
