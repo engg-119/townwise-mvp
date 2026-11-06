@@ -3,6 +3,8 @@ import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
+import { dayContext } from '../../../src/portal/analytics/days';
+import { Heatmap } from '../../../src/portal/analytics/Heatmap';
 import { READS_LINE } from '../../../src/portal/analytics/YourData';
 import { PANEL_EMPTY } from '../../../src/portal/analytics/panel';
 import type { MeResponse } from '../../../src/portal/schemas';
@@ -293,4 +295,35 @@ test('"Keep at least one year." is read from a polite live region that is there 
   fireEvent.click(screen.getByRole('checkbox', { name: '2025' }));
   fireEvent.click(screen.getByRole('checkbox', { name: '2026' }));
   expect(region?.textContent).toBe('Keep at least one year.');
+});
+
+test('interactive={false} (Home, Reading): one picture named by its label, nothing focusable, no grid, pending days dashed', () => {
+  const days = run('2026-10-01', '2026-10-20', () => 100);
+  render(
+    <Heatmap
+      days={days}
+      metric="guests"
+      marks={{ townEvents: true, holidays: true, notes: true, closures: true }}
+      context={dayContext([], [])}
+      included={() => true}
+      years={[2026]}
+      interactive={false}
+      pending={{ from: '2026-10-21', to: '2026-11-04' }}
+      label="Daily guests, Oct 1, 2026 to Oct 20, 2026."
+      today="2026-11-05"
+    />,
+  );
+  const pictures = screen.getAllByRole('img');
+  expect(pictures).toHaveLength(1);
+  expect(pictures[0]?.getAttribute('aria-label')).toBe('Daily guests, Oct 1, 2026 to Oct 20, 2026.');
+  expect(document.querySelectorAll('[tabindex]')).toHaveLength(0);
+  expect(document.querySelectorAll('[role="grid"], [role="gridcell"], [role="row"], [data-date]')).toHaveLength(0);
+  // 15 pending days (Oct 21 to Nov 4) are drawn dashed: "Not read yet".
+  const dashed = [...document.querySelectorAll<HTMLElement>('div')].filter((each) => each.style.border.includes('dashed'));
+  expect(dashed).toHaveLength(15);
+  // A picture has nothing to scroll to by keyboard, so it fits its width instead of scrolling sideways.
+  for (const each of document.querySelectorAll<HTMLElement>('div')) {
+    expect(each.style.overflowX).not.toBe('auto');
+    expect(each.style.minWidth).not.toBe('720px');
+  }
 });

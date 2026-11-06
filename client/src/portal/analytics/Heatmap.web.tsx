@@ -14,7 +14,8 @@ import { WEEKDAY_NAMES, WEEK_ORDER } from './words';
 // (roving tabIndex). The keys of cells.ts moveFocus move focus; Enter or Space selects; Escape clears the
 // selection. While a day is selected, moving focus moves the selection with it. A mouse or pen over a cell
 // previews it (one delegated handler, touch ignored) and leaving the grid restores the selection. Nothing animates.
-// Not interactive (Home, Reading): one picture named by `label`, with no focusable cell.
+// Not interactive (Home, Reading): one picture named by `label`, with no focusable cell. It fits its width rather
+// than scrolling sideways, because a keyboard could not scroll a picture with nothing in it to focus.
 
 const C = theme.color;
 const MINT = '123, 210, 180';
@@ -193,10 +194,8 @@ export function Heatmap(props: HeatmapProps): React.JSX.Element {
     return (
       <div role="img" aria-label={props.label} className="tw-hm" style={{ display: 'grid', gap: 12 }}>
         <style href="townwise-heatmap" precedence="default">{CSS}</style>
-        <div style={{ overflowX: 'auto' }}>
-          <div style={{ minWidth: 720, display: 'grid', gap: 16 }}>
-            {blocks.map((block) => <YearGrid key={block.year} block={block} interactive={false} active={null} selected={selected} />)}
-          </div>
+        <div style={{ display: 'grid', gap: 16 }}>
+          {blocks.map((block) => <YearGrid key={block.year} block={block} interactive={false} active={null} selected={selected} />)}
         </div>
       </div>
     );
