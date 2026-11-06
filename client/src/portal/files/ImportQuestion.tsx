@@ -15,8 +15,8 @@ import { actionError, COPY, familyLine, optionLabel, questionText } from './copy
 // A question that pauses an import (storage 1.3 and 5.2, storage2 2.2): what Townwise needs to know, why, and
 // what the answer does, as pressed-button choices with the suggested option already picked. "Not sure" keeps the
 // file stored but not used. A ZIP's question names its table by its first header names. Under view-as the choices
-// show and Continue is disabled, described by the read-only line. 54's Reading screen mounts it; give it
-// `key={question.id}` so a new question starts fresh.
+// show and Continue is disabled, described by the read-only line. Onboarding's Reading screen (onboarding/HistoryStep)
+// mounts it; give it `key={question.id}` so a new question starts fresh.
 
 const READ_ONLY_ID = 'import-question-ro';
 
