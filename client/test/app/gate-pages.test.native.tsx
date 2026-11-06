@@ -14,7 +14,7 @@ import { Dimensions, StyleSheet, type TextStyle, type ViewStyle } from 'react-na
 import type { Access } from '../../src/portal/schemas';
 import {
   ACCESS, deferred, EMAIL, fakePortalApi, INVITE, LOCATIONS, meOf, offline, orgOf, REQUEST, refusal, SECOND_INVITE,
-  STAFF_EMAIL, staffMe, viewAsMe, writes,
+  STAFF_EMAIL, staffMe, viewAsMe, writes, type FakePortalApi,
 } from '../helpers/portal';
 import { renderApp } from '../helpers/renderApp';
 import { theme } from '../../src/theme';
@@ -46,6 +46,11 @@ function atWidth(width: number): void {
 }
 
 describe('P3 Request access', () => {
+  /** What the page sent, without its one check whether the Google Places search is on (onboarding/places.ts). */
+  function sent(api: FakePortalApi): ReturnType<typeof writes> {
+    return writes(api).filter((call) => call.path !== '/api/places/autocomplete');
+  }
+
   test('the form, its lead and side column, and a message for each field it can’t send', async () => {
     const api = fakePortalApi({ me: meOf(ACCESS.noOrg) });
     await renderApp('/request-access', api);
@@ -62,7 +67,7 @@ describe('P3 Request access', () => {
     ]) {
       expect(screen.getByText(message)).toBeTruthy();
     }
-    expect(writes(api)).toEqual([]);
+    expect(sent(api)).toEqual([]);
   });
 
   test('Send request posts the answers and opens Waiting', async () => {
@@ -80,7 +85,7 @@ describe('P3 Request access', () => {
     await fireEvent.press(screen.getByRole('button', { name: 'Send request' }));
     // Only Send changes while it sends.
     expect(screen.getByRole('button', { name: 'Sending…' }).props.accessibilityState).toMatchObject({ disabled: true });
-    expect(writes(api)).toEqual([{
+    expect(sent(api)).toEqual([{
       method: 'POST', path: '/api/access-requests',
       body: { orgName: 'Sample Mountain Tavern', contactName: 'Pat', contactRole: 'Owner', town: { townId: 'stowe-vt' }, locationCount: 3, note: 'Two bars and a cafe.' },
     }]);
@@ -105,8 +110,8 @@ describe('P3 Request access', () => {
     expect(screen.getByText('Enter a two-letter state, for example NH.')).toBeTruthy();
     await fireEvent.changeText(screen.getByLabelText('State'), 'vt');
     await fireEvent.press(screen.getByRole('button', { name: 'Send request' }));
-    await waitFor(() => { expect(writes(api)).toHaveLength(1); });
-    expect(writes(api)[0]?.body).toMatchObject({ town: { townId: null, name: 'Norwich', state: 'VT' } });
+    await waitFor(() => { expect(sent(api)).toHaveLength(1); });
+    expect(sent(api)[0]?.body).toMatchObject({ town: { townId: null, name: 'Norwich', state: 'VT' } });
   });
 
   test('409 request_exists reads the access again and opens Waiting', async () => {
@@ -131,7 +136,7 @@ describe('P3 Request access', () => {
     api.answers['/api/access-requests'] = () => offline();
     await fireEvent.press(screen.getByRole('button', { name: 'Try again' }));
     expect(await screen.findByText('Can’t reach Townwise. Check your connection and try again.')).toBeTruthy();
-    expect(writes(api)).toHaveLength(2);
+    expect(sent(api)).toHaveLength(2);
   });
 
   test('removed: the lead adds a line; rejected: the last answers are filled in', async () => {

@@ -4,21 +4,33 @@ import { StyleSheet, Text, View } from 'react-native';
 import { sendAccessRequest, type AccessRequestInput } from '../../../../src/portal/api';
 import { hasCode } from '../../../../src/portal/errors';
 import { NumberedList, personEmail, SideHeading, SignedInLine } from '../../../../src/portal/gate';
-import { useAction } from '../../../../src/portal/hooks';
+import { useAction, useBreakpoint } from '../../../../src/portal/hooks';
+import { PlaceSearch } from '../../../../src/portal/onboarding/PlaceSearch';
+import { sendAccessRequestAt, townInputOf, type UsablePlace } from '../../../../src/portal/onboarding/places';
+import { usePlaceSearchAvailability } from '../../../../src/portal/onboarding/usePlaceSearch';
+import { SCRIPT_FOCUS, useFocusOnMount } from '../../../../src/portal/places/focus';
+import { PlaceSummary } from '../../../../src/portal/places/PlaceCard';
 import { usePortal, useReadOnly } from '../../../../src/portal/PortalProvider';
 import { Page } from '../../../../src/portal/shell/Page';
 import type { Access } from '../../../../src/portal/schemas';
+import { webAria } from '../../../../src/portal/ui/aria';
 import { Actions, Button } from '../../../../src/portal/ui/Button';
-import { ErrorNotice, ReadOnlyLine } from '../../../../src/portal/ui/feedback';
+import { ErrorNotice, LoadingLine, ReadOnlyLine } from '../../../../src/portal/ui/feedback';
 import { FormField } from '../../../../src/portal/ui/FormField';
 import { Columns, Pair, Panel, Stack } from '../../../../src/portal/ui/layout';
-import { Heading } from '../../../../src/portal/ui/text';
+import { Eyebrow, Heading } from '../../../../src/portal/ui/text';
 import { checkTown, EMPTY_TOWN, TOWN_COPY, TownFields, townValueOf, type TownMessages, type TownValue } from '../../../../src/portal/ui/TownFields';
 import { theme } from '../../../../src/theme';
 
 // P3. Request access (spec 16.2, F2; the RequestAccess board). For no_org, and by choice from rejected and
 // removed. The form renders at once (the town list ships with the app); POST /api/access-requests answers the new
-// access (pending), and the portal layout opens Waiting.
+// access (pending), and the portal layout opens Waiting. While the Google Places search is on (the API is asked once,
+// onboarding/places.ts checkPlaceSearch), the form is two steps of the onboarding's three: Step 1 “Find your
+// restaurant” searches Google Maps and confirms the place on its card; Step 2 “About you” is the form, with the place
+// in place of Town and its name in Organization name, and the request carries its `placeId`. “Can’t find it? Enter it
+// yourself” opens the form as it is without the search. With the search off, under view-as, and for a rejected request
+// (its answers are filled in), the form is as it was without it. Focus follows the steps: Looks right moves it to the
+// Step 2 heading, and Change place or Search Google Maps instead to the search field (places/focus.ts).
 
 interface Form {
   orgName: string;
@@ -46,6 +58,10 @@ const REQUEST_COPY = {
 
 const BLANK: Form = { orgName: '', contactName: '', contactRole: '', town: EMPTY_TOWN, locationCount: '', note: '' };
 
+const PLACE_UNAVAILABLE = 'Google Maps isn’t answering right now, so you can enter your restaurant yourself.';
+
+type Mode = { kind: 'search' } | { kind: 'form'; place: UsablePlace | null };
+
 /** For a rejected request, the previous answers are filled in. */
 function initialForm(access: Access): Form {
   if (access.state !== 'rejected') return BLANK;
@@ -60,8 +76,11 @@ function initialForm(access: Access): Form {
   };
 }
 
-/** The request body, or the field messages that stop it (the API's limits: api/src/handlers/requests.ts). */
-function checkRequest(form: Form): { input: AccessRequestInput } | { messages: Messages } {
+/**
+ * The request body, or the field messages that stop it (the API's limits: api/src/handlers/requests.ts). With a
+ * confirmed place the town is the place's.
+ */
+function checkRequest(form: Form, place: UsablePlace | null): { input: AccessRequestInput } | { messages: Messages } {
   const messages: Messages = {};
   const orgName = form.orgName.trim();
   const contactName = form.contactName.trim();
@@ -70,7 +89,7 @@ function checkRequest(form: Form): { input: AccessRequestInput } | { messages: M
   if (orgName.length < 2) messages.orgName = REQUEST_COPY.orgName;
   if (contactName === '') messages.contactName = REQUEST_COPY.contactName;
   if (contactRole === '') messages.contactRole = REQUEST_COPY.contactRole;
-  const town = checkTown(form.town);
+  const town = place === null ? checkTown(form.town) : { input: townInputOf(place.town) };
   if ('messages' in town) messages.town = town.messages;
   const locationCount = Number(count);
   if (!/^\d+$/.test(count) || locationCount < 1 || locationCount > 50) messages.locationCount = REQUEST_COPY.locationCount;
@@ -90,13 +109,17 @@ export default function RequestAccessPage(): React.JSX.Element {
   const { readOnly, line } = useReadOnly();
   const [form, setForm] = useState<Form>(() => initialForm(me.access));
   const [messages, setMessages] = useState<Messages>({});
+  const search = usePlaceSearchAvailability(api, { readOnly });
+  const [chosen, setMode] = useState<Mode | null>(null);
+  const [placeLine, setPlaceLine] = useState<string | null>(null);
+  const mode: Mode = chosen ?? (search === 'on' && me.access.state !== 'rejected' ? { kind: 'search' } : { kind: 'form', place: null });
   const email = personEmail(me);
   const readOnlyId = 'request-ro';
   const ro = readOnly ? { readOnly: true, readOnlyId } : {};
 
-  const send = useAction(useCallback(async (input: AccessRequestInput) => {
+  const send = useAction(useCallback(async (input: AccessRequestInput, place: UsablePlace | null) => {
     try {
-      applyMe(await sendAccessRequest(api, input));
+      applyMe(await (place === null ? sendAccessRequest(api, input) : sendAccessRequestAt(api, input, place.placeId)));
     } catch (error) {
       // Another tab sent one first: read the access again, which opens Waiting.
       if (hasCode(error, 409, 'request_exists')) {
@@ -111,15 +134,17 @@ export default function RequestAccessPage(): React.JSX.Element {
     }
   }, [api, applyMe, refreshMe]));
 
+  const place = mode.kind === 'form' ? mode.place : null;
+
   function submit(): void {
     if (readOnly) return;
-    const checked = checkRequest(form);
+    const checked = checkRequest(form, place);
     if ('messages' in checked) {
       setMessages(checked.messages);
       return;
     }
     setMessages({});
-    send.run(checked.input);
+    send.run(checked.input, place);
   }
 
   function update(patch: Partial<Form>): void {
@@ -150,82 +175,119 @@ export default function RequestAccessPage(): React.JSX.Element {
               <Heading>Joining a team that already uses Townwise?</Heading>
               <Text style={styles.panelBody}>{`You don’t need to request access. Ask an admin on that team to add ${email}, then reload this page.`}</Text>
             </Panel>
-            <Stack gap={20}>
-              <ReadOnlyLine text={line} nativeID={readOnlyId} />
-              <FormField
-                label="Organization name"
-                helper="Your restaurant or group, as you’d like it to appear in Townwise."
-                value={form.orgName}
-                onChangeText={(orgName) => { update({ orgName }); }}
-                autoComplete="organization"
-                autoCapitalize="words"
-                maxLength={120}
-                messages={list(messages.orgName)}
-                {...ro}
-              />
-              <Pair>
+            {search === 'checking' ? <LoadingLine text="Checking for the Google Maps search…" /> : null}
+            {search !== 'checking' && mode.kind === 'search' ? (
+              <Stack gap={20}>
+                <StepHeader step={1} title="Find your restaurant" />
+                <PlaceSearch
+                  api={api}
+                  autoFocus={chosen !== null}
+                  label="Search for your restaurant or bar"
+                  helper="Type its name. Google Maps suggests places in the US."
+                  confirmLabel="Looks right"
+                  onConfirm={(found) => {
+                    if (form.orgName.trim() === '') update({ orgName: found.name.slice(0, 120) });
+                    setPlaceLine(null);
+                    setMode({ kind: 'form', place: found });
+                  }}
+                  manualLabel="Can’t find it? Enter it yourself"
+                  onManual={() => { setMode({ kind: 'form', place: null }); }}
+                  onUnavailable={() => { setPlaceLine(PLACE_UNAVAILABLE); setMode({ kind: 'form', place: null }); }}
+                />
+              </Stack>
+            ) : null}
+            {search !== 'checking' && mode.kind === 'form' ? (
+              <Stack gap={20}>
+                {place === null ? null : <StepHeader step={2} title="About you" focus />}
+                {placeLine === null ? null : <ErrorNotice message={placeLine} />}
+                <ReadOnlyLine text={line} nativeID={readOnlyId} />
                 <FormField
-                  label="Your name"
-                  value={form.contactName}
-                  onChangeText={(contactName) => { update({ contactName }); }}
-                  autoComplete="name"
+                  label="Organization name"
+                  helper="Your restaurant or group, as you’d like it to appear in Townwise."
+                  value={form.orgName}
+                  onChangeText={(orgName) => { update({ orgName }); }}
+                  autoComplete="organization"
                   autoCapitalize="words"
                   maxLength={120}
-                  messages={list(messages.contactName)}
+                  messages={list(messages.orgName)}
                   {...ro}
                 />
+                <Pair>
+                  <FormField
+                    label="Your name"
+                    value={form.contactName}
+                    onChangeText={(contactName) => { update({ contactName }); }}
+                    autoComplete="name"
+                    autoCapitalize="words"
+                    maxLength={120}
+                    messages={list(messages.contactName)}
+                    {...ro}
+                  />
+                  <FormField
+                    label="Your role"
+                    helper="For example, owner or general manager."
+                    value={form.contactRole}
+                    onChangeText={(contactRole) => { update({ contactRole }); }}
+                    autoComplete="organization-title"
+                    autoCapitalize="sentences"
+                    maxLength={80}
+                    messages={list(messages.contactRole)}
+                    {...ro}
+                  />
+                </Pair>
+                {/* Town beside Number of locations where two fields fit, as on the board; Another town's two fields stay under Town. */}
+                <Pair>
+                  {place === null ? (
+                    <TownFields
+                      value={form.town}
+                      onChange={(town) => { update({ town }); }}
+                      {...(messages.town === undefined ? {} : { messages: messages.town })}
+                      {...ro}
+                    />
+                  ) : null}
+                  <FormField
+                    label="Number of locations"
+                    value={form.locationCount}
+                    onChangeText={(locationCount) => { update({ locationCount }); }}
+                    keyboardType="number-pad"
+                    inputMode="numeric"
+                    numeric
+                    maxLength={2}
+                    messages={list(messages.locationCount)}
+                    {...ro}
+                  />
+                </Pair>
+                {place === null ? null : (
+                  <PlaceSummary place={place}>
+                    <Actions>
+                      <Button variant="outline" label="Change place" onPress={() => { setMode({ kind: 'search' }); }} />
+                    </Actions>
+                  </PlaceSummary>
+                )}
                 <FormField
-                  label="Your role"
-                  helper="For example, owner or general manager."
-                  value={form.contactRole}
-                  onChangeText={(contactRole) => { update({ contactRole }); }}
-                  autoComplete="organization-title"
+                  label="Anything we should know? (optional)"
+                  helper="Don’t include guest names or sales figures."
+                  value={form.note}
+                  onChangeText={(note) => { update({ note }); }}
+                  multiline
                   autoCapitalize="sentences"
-                  maxLength={80}
-                  messages={list(messages.contactRole)}
+                  maxLength={1000}
                   {...ro}
                 />
-              </Pair>
-              {/* Town beside Number of locations where two fields fit, as on the board; Another town's two fields stay under Town. */}
-              <Pair>
-                <TownFields
-                  value={form.town}
-                  onChange={(town) => { update({ town }); }}
-                  {...(messages.town === undefined ? {} : { messages: messages.town })}
-                  {...ro}
-                />
-                <FormField
-                  label="Number of locations"
-                  value={form.locationCount}
-                  onChangeText={(locationCount) => { update({ locationCount }); }}
-                  keyboardType="number-pad"
-                  inputMode="numeric"
-                  numeric
-                  maxLength={2}
-                  messages={list(messages.locationCount)}
-                  {...ro}
-                />
-              </Pair>
-              <FormField
-                label="Anything we should know? (optional)"
-                helper="Don’t include guest names or sales figures."
-                value={form.note}
-                onChangeText={(note) => { update({ note }); }}
-                multiline
-                autoCapitalize="sentences"
-                maxLength={1000}
-                {...ro}
-              />
-              {send.error === null ? null : <ErrorNotice error={send.error} onRetry={submit} />}
-              <Actions>
-                <Button
-                  label={send.pending ? 'Sending…' : 'Send request'}
-                  disabled={readOnly || send.pending}
-                  {...(readOnly ? { describedBy: readOnlyId } : {})}
-                  onPress={submit}
-                />
-              </Actions>
-            </Stack>
+                {send.error === null ? null : <ErrorNotice error={send.error} onRetry={submit} />}
+                <Actions>
+                  <Button
+                    label={send.pending ? 'Sending…' : 'Send request'}
+                    disabled={readOnly || send.pending}
+                    {...(readOnly ? { describedBy: readOnlyId } : {})}
+                    onPress={submit}
+                  />
+                  {place === null && search === 'on' && placeLine === null
+                    ? <Button variant="link" label="Search Google Maps instead" onPress={() => { setMode({ kind: 'search' }); }} />
+                    : null}
+                </Actions>
+              </Stack>
+            ) : null}
             <SignedInLine />
           </Stack>
         )}
@@ -234,7 +296,26 @@ export default function RequestAccessPage(): React.JSX.Element {
   );
 }
 
+/**
+ * “Step N of 3” over the step's heading: the onboarding's three steps, the third after approval (Home). The heading is
+ * Heading's (ui/text.tsx) with a ref, so `focus` can move focus to it when it appears (Step 2, after Looks right).
+ */
+function StepHeader(props: { step: 1 | 2; title: string; focus?: boolean }): React.JSX.Element {
+  const { phone } = useBreakpoint();
+  const heading = useFocusOnMount<React.ComponentRef<typeof Text>>(props.focus === true);
+  return (
+    <View style={styles.step}>
+      <Eyebrow>{`Step ${String(props.step)} of 3`}</Eyebrow>
+      <Text ref={heading} role="heading" {...webAria({ 'aria-level': 2 })} {...SCRIPT_FOCUS} style={[phone ? theme.type.h3Phone : theme.type.h3, styles.heading]}>
+        {props.title}
+      </Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  step: { gap: theme.space[2] },
+  heading: { color: theme.color.white },
   // The board's panel body: `small`, `text2`, at every width.
   panelBody: { ...theme.type.small, color: theme.color.text2 },
 });

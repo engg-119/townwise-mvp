@@ -99,6 +99,8 @@ export const locationSummarySchema = z.object({
   id: z.string(),
   name: z.string(),
   town: townSchema,
+  /** Places unit: the Google place id an org admin picked, or null. Optional for an API from before it. */
+  placeId: z.string().nullable().optional(),
   coverage: coverageSchema,
   calibration: calibrationSchema,
   notesCount: z.number(),
@@ -112,6 +114,8 @@ export const orgResponseSchema = z.object({
   role: roleSchema,
   locations: z.array(locationSummarySchema),
   requestedLocationCount: z.number().nullable(),
+  /** Places unit: whether the Google Places search is on (P10, P16 offer it only then); absent reads as off. */
+  placeSearch: z.boolean().optional(),
 });
 export type OrgResponse = z.infer<typeof orgResponseSchema>;
 
