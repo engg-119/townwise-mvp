@@ -518,11 +518,27 @@ What the author did with each note TownwiseAI proposed in their conversation (10
 
 Indexes: `{ orgId: 1, conversationId: 1, proposalId: 1 }` unique; `{ orgId: 1, locationId: 1 }`. It never holds the note's content. Deleted with the conversation, the location, the organization (10.7) and the author's person deletion (10.7, by `userId`); notes saved from proposals stay with the organization. Rows left by a crash during a conversation's delete, or by a Save racing it, hold only ids and go with the location, the organization or the person (`tuning-chat.md` section 5).
 
+### 6.17 `tw_agent_answers`
+
+The answers to TownwiseAI's questions about a location's days with no sales (10.12). One document per question answered; none means it is still asked.
+
+| Field | Type | Rule |
+|---|---|---|
+| `_id` | ObjectId | |
+| `orgId`, `locationId` | ObjectId | from the caller's seat and the location route |
+| `questionId` | string | `weekday_{0-6}_{from}_{to}` or `gap_{from}_{to}`: dates and a weekday number only |
+| `answer` | `'closed' \| 'open' \| 'not_sure'` | a later try of a `saving` answer may change it; a `done` one stands |
+| `noteId` | ObjectId | set when the document is inserted, whatever the answer, so every try of a `closed` answer writes the same closure note |
+| `status` | `'saving' \| 'done'` | `saving` between the claim and the end; the question is still asked until `done` |
+| `createdAt`, `updatedAt` | Date | |
+
+Index: `{ orgId: 1, locationId: 1, questionId: 1 }` unique. No person id (the audit event `agent.question_answered` carries the actor) and no text. Deleted with the location and the organization (10.7); a person's deletion has nothing of it to delete. Closure notes saved from answers stay with the organization, as every note does.
+
 ### 6.19 `tw_upload_days`
 
 `{ orgId, day (YYYY-MM-DD, UTC), bytes, updatedAt }`, unique `{ orgId: 1, day: 1 }`. Creating an upload reserves its size with a conditional `$inc` that fails past the daily cap; cancelling an unfinished upload the same day gives it back.
 
-(6.13, 6.14, 6.17 and 6.18 are numbered for the units still in flight.)
+(6.13, 6.14 and 6.18 are numbered for the units still in flight.)
 
 ---
 
@@ -686,6 +702,7 @@ interface AuditEvent {
 | `file.deleted` | `locationId`, `kind`, `reason: 'owner'` |
 | `file.raw_deleted` | `locationId`, `kind` |
 | `note.created`, `note.updated`, `note.deleted` | `locationId`, `kind`, `startDate`, `endDate` |
+| `agent.question_answered` | `locationId`, `questionId` (dates and a weekday number only), `answer` (`closed`, `open` or `not_sure`); a `closed` answer's closure note is also recorded `note.created` (10.12) |
 | `view_as.started` | `targetUserId`, `targetEmail`, `reason`, `expiresAt` |
 | `view_as.ended` | `endReason` (`ended`, `replaced` or `expired`) |
 | `people.signed_out_everywhere` | none (written before the effect, 9.3; the revoked count is in the response) |
@@ -905,7 +922,7 @@ People come only from Townwise records and config: staff from `TOWNWISE_SUPERADM
   Notes and uploads the person wrote stay with their organization; the author shows as “Deleted person” once the kit user is gone. View-as grants keep only ids and the staff-written reason.
 - **Delete an organization** (`DELETE /api/admin/orgs/:orgId`). The organization must be suspended first (409 `org_not_suspended`), so its members have already seen the paused page.
   1. Audit `org.deleted` with ids only.
-  2. Through `scopeForStaffOrg`: delete its `tw_sales_days`, `tw_uploads`, `tw_notes`, `tw_locations` and `tw_members`, and its access request (`fromRequestId`). [Build note: also its `tw_chat_conversations`, `tw_chat_live_turns`, `tw_chat_usage` and `tw_chat_proposals`, which postdate this list (`tuning-chat.md`), and its `tw_welcomes` (6.15). The response keeps the six counts above.]
+  2. Through `scopeForStaffOrg`: delete its `tw_sales_days`, `tw_uploads`, `tw_notes`, `tw_locations` and `tw_members`, and its access request (`fromRequestId`). [Build note: also its `tw_chat_conversations`, `tw_chat_live_turns`, `tw_chat_usage` and `tw_chat_proposals`, which postdate this list (`tuning-chat.md`), and its `tw_welcomes` (6.15) and `tw_agent_answers` (6.17). The response keeps the six counts above.]
   3. `redact` its name and its locations’ names in the audit log (9.3).
   4. Delete the `tw_orgs` row last, so a retry still finds the organization. [Build note: the delete matches `status: 'suspended'`, so an organization reactivated during the deletion keeps its row and the answer is 409 `org_not_suspended`, recorded as `staff_action.not_applied`; the records already deleted stay deleted, and suspending it and deleting again finishes. After the row goes, its `tw_sales_days` and `tw_chat_usage` are swept once more, since an upload or a tuning chat turn in flight can upsert after the first sweep; the late days count in `deletedDays`. This narrows the gap without closing it: a chat turn started before the suspension can still add chat usage for up to 150 seconds, an upload still running can write days after the second sweep, and its `tw_uploads` row, if written after the first sweep, is never swept.]
   
@@ -1033,7 +1050,7 @@ All under `/api/org/locations/:locationId`, all members, all 503 `files_unavaila
 
 `PUT` is allowed only with `bodyLimit: 'stream'`, and `'stream'` only on `org.files.chunk` (boot refuses anything else). The chunk handler reads the body itself after the policy passed, and a chunk it refuses is answered with the connection closed, unread.
 
-### 10.12 TownwiseAI proposals
+### 10.12 TownwiseAI proposals and side panel
 
 `POST /api/org/locations/:locationId/chat/:conversationId/proposals/:proposalId` (`org.chat.proposal`, member, body `8kb`, `writes` only). The conversation's author saves a note TownwiseAI proposed, as shown or edited first, or sets it aside. Contract and views: `docs/portal/tuning-chat.md` section 2.
 
@@ -1046,6 +1063,18 @@ All under `/api/org/locations/:locationId`, all members, all 503 `files_unavaila
 - No transactions (DocumentDB): the save claims the proposal in `tw_chat_proposals` (6.16), writes the note with the claim's `noteId`, then marks it `saved`. A retry, a crash between the steps or two tabs pressing Save end with one note; only the request that wrote it records `note.created`. Saving a saved proposal again, or setting it aside, answers its saved state.
 - `GET .../chat/:conversationId` shows each proposal's `status` (`open`, `saved` or `dismissed`) and `noteId`. One with no record reads as saved when a note the author wrote at the location says exactly the same, so a proposal added with the notes route is not offered twice; a colleague's note never counts (`tuning-chat.md` section 2, [CONFIRM]).
 - Logged as `townwise.chat_proposal { orgId, locationId, conversationId, status, edited }`, never the note's text.
+
+**Side panel.** `GET /api/org/locations/:locationId/agent` (`org.agent.get`, member, no body, no limiter) and `POST /api/org/locations/:locationId/agent/questions/:questionId` (`org.agent.answer`, member, body `1kb`, `writes` only). Both work whether or not the chat is on. Contract: `docs/portal/tuning-chat.md` section 8.
+
+| Route | Success | Errors |
+|---|---|---|
+| GET | 200 `{ questions: Question[], activity: ActivityItem[] }`, both computed at read time | 400; 404 |
+| POST `{ answer: 'closed' \| 'open' \| 'not_sure' }` | 200 `{ question: { id, answer }, note: Note \| null }` | 400 `invalid_request` (body, or an id that is not `weekday_`/`gap_` with dates); 404 (the location, or a question not asked now); 409 `note_limit`; 403 `view_as_read_only`; 429 |
+
+- **Questions** are rules over the location's own days, never an estimate, over the last 365 days of coverage (from the later of the first day and 364 days before the last day with sales, to that last day). A weekday question (`{ id, kind: 'weekday', weekday, from, to, noSalesCount, weekdayCount }`) asks about a weekday with no sales on at least 60% of its days in the window, with at least 4 of them, that no closure note and no earlier answer explains. A gap question (`{ id, kind: 'gap', from, to, dayCount }`) asks about a run of consecutive days with no sales that no note and no earlier answer explains; a weekday the location is usually closed on (the 60% rule over all its days) bridges a run but never starts or ends one, and a run the window cuts off before its first day with sales is not asked. At most 5, weekdays first, then gaps newest first. An answered question's days are never asked about again. [CONFIRM: 60% of a weekday's days, at least 4 of them]
+- **Answers.** `closed` saves a closure note (`effect: 'closed'`) over the question's days, the weekday only for a weekday question, through Section 12's rules and the note limit, recorded `note.created`; `open` (the data is missing) and `not_sure` save nothing. The answer belongs to the location: answering one already done, by anyone, answers what was saved. No transactions: the answer claims its question in `tw_agent_answers` (6.17), writes the note with the claim's `noteId`, then marks the answer `done` and records `agent.question_answered` once. A retry, a crash between the steps or several tabs end with one note. A question whose claim stopped before `done` is still asked, and its next answer finishes it.
+- **Activity** (`ActivityItem`, newest 20) lists only real, dated records of the location: `{ at, kind: 'upload_applied', firstDate, lastDate, dayCount }` for applied uploads, `{ at, kind: 'note_saved', via: 'chat' | 'question', noteId, noteKind, startDate, endDate }` for notes the caller saved from their own proposals and closure notes saved by answers (left out once the note is deleted), and `{ at, kind: 'question_answered', questionId, answer }` for `open` and `not_sure`. Later sources append their own kinds (stored files' `file_processed`, forecasts' `forecast_made`); a client shows a kind it does not know as nothing. Never a file name, a note's detail or a figure.
+- Logged as `townwise.agent_answer { orgId, locationId, answer }`. Under view-as the GET is logged `townwise.view_as_read`, and the POST is refused by the guard.
 
 ---
 
