@@ -261,7 +261,7 @@ Member routes take the organization from the caller’s own seat, never from the
 | Method and path | Policy | Request | Success | Errors |
 |---|---|---|---|---|
 | `POST /api/places/autocomplete` | signed_in; 2 KB; limiter `places` | `{ input, sessionToken? }`, input 2 to 120 characters after trimming, `sessionToken` a version 4 UUID | 200 `{ suggestions, sessionToken }`, up to 5 `{ placeId, name, detail }` (`detail` empty when Google has none) | 400; 413; 429; 503 `places_unavailable` |
-| `POST /api/places/details` | signed_in; 2 KB; limiter `places` | `{ placeId, sessionToken }`, `placeId` 10 to 300 letters, digits, `_` or `-` | 200 `{ place: { placeId, address, town } }`, `town` a `TownInput` or null | 400; 404 `place_not_found` (Google answered 404, or 400 `INVALID_ARGUMENT` for the id); 413; 429; 503 `places_unavailable` |
+| `POST /api/places/details` | signed_in; 2 KB; limiter `places` | `{ placeId, sessionToken }`, `placeId` 10 to 512 letters, digits, `_` or `-` (`api/src/place-id.ts`) | 200 `{ place: { placeId, address, town } }`, `town` a `TownInput` or null | 400; 404 `place_not_found` (Google answered 404, or 400 `INVALID_ARGUMENT` for the id); 413; 429; 503 `places_unavailable` |
 
 See Places search. `placeId` in the answer is Google's current id for the place, which can differ from the one sent.
 
