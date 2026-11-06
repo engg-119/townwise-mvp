@@ -806,6 +806,7 @@ Two routes let the request form find the business on Google Places (New). The AP
 |---|---|---|---|---|
 | `GET /api/org/locations/:locationId/sales` | member | | 200 `{ coverage, calibration, months: { month: 'YYYY-MM'; dayCount; guests: number \| null; netSalesCents: number \| null }[], uploads: UploadView[] }` (newest 20 uploads) | 404 |
 | `GET /api/org/locations/:locationId/sales/days?from=&to=` | member | dates `YYYY-MM-DD`, `from <= to`, span at most 366 days | 200 `{ days: SalesDay[] }` | 400; 404 |
+| `GET /api/org/locations/:locationId/sales/history` | member | | 200 `SalesHistory` (10.10): every stored day, oldest first | 400; 404 |
 | `POST /api/org/locations/:locationId/sales/uploads` | member, 256 KB, limiter `uploads` | `{ days: SalesDay[] }` (Section 11.3) | 201 `{ upload: UploadView, coverage, calibration }`; a member’s upload adds new days only (11.4) | 400; 404; 413; 429 |
 | `DELETE /api/org/locations/:locationId/sales` | org_admin | | 200 `{ deletedDays, deletedUploads }` | 404 |
 
@@ -965,6 +966,55 @@ All under `/api/org/locations/:locationId`, all members, all 503 `files_unavaila
 | `org.imports.answer` | `POST /imports/:importId/answer` | member | 2 KB `{ questionId, choice }` | |
 
 `PUT` is allowed only with `bodyLimit: 'stream'`, and `'stream'` only on `org.files.chunk` (boot refuses anything else). The chunk handler reads the body itself after the policy passed, and a chunk it refuses is answered with the connection closed, unread.
+
+### 10.10 Calendar and sales history
+
+Two reads for Home, Analytics and TownwiseAI. Both are `member` GETs in `TOWNWISE_ROUTES` with no body and no route limiter (`app:api-ceiling` still applies). Both are allowed during view-as, where the chain logs `townwise.view_as_read` with the grant id and route id only. Neither handler logs or audits anything, and neither imports `stores/cross-tenant.ts`.
+
+| Method and path | Policy | Request | Success | Extra errors |
+|---|---|---|---|---|
+| `GET /api/org/locations/:locationId/sales/history` | member | | 200 `SalesHistory` | 400 (malformed id); 404 |
+| `GET /api/org/locations/:locationId/calendar?from=&to=` | member | `from` and `to` as `YYYY-MM-DD`, exactly those two keys; `from` on or after 2010-01-01; `from <= to`; `to` at most 400 days after the server’s UTC day; a span under 7,320 days | 200 `LocationCalendar` | 400 `invalid_request`, with no field details; 404 |
+
+```ts
+interface SalesHistory {
+  coverage: Coverage;
+  days: {                              // columns of equal length, oldest first, one entry per stored day
+    date: string[];
+    guests: (number | null)[];
+    netSalesCents: (number | null)[];
+    upload: number[];                  // index into `uploads` of the upload that last wrote the day; -1 if it has no record
+  };
+  uploads: {                           // every upload some day references, newest first
+    id: string; uploadedAt: string; uploadedByEmail: string; status: 'applying' | 'applied';
+    firstDate: string; lastDate: string;
+    file: null | { id: string; name: string | null; kind: 'text' | 'xlsx' | 'xls' | 'pdf' | 'docx' | 'doc' | 'zip' | 'other' };
+  }[];
+}
+
+interface LocationCalendar {
+  town: Town;                          // the location's town
+  researched: boolean;                 // the town has at least one researched event (13.1)
+  covers: { from: string; to: string } | null;   // the span of the town's researched events, all years; null when none
+  events: TownEvent[];                 // overlapping [from, to], sorted by start, then id
+}
+
+interface TownEvent {
+  id: string;                          // stable: 'us:thanksgiving:2026', 'hanover-nh:2026-11-17:fall-term-classes-end'
+  title: string;
+  start: string; end: string;          // inclusive; a single day has end === start
+  kind: 'holiday' | 'event' | 'term' | 'season';
+  scope: 'national' | 'town';
+  group: string | null;                // a recurring kind ('us:thanksgiving', 'hanover-nh:classes:fall'); null for a one-off
+  groupLabel: string | null;
+  confidence: 'high' | 'medium' | 'low' | null;  // the research's rating; null for holidays and key dates
+  sources: { label: string; url: string }[];     // at least one
+}
+```
+
+- The history route exists because `sales/days` caps at 366 days, and the heatmap and year over year need every year. It reads the days and the referenced uploads in two queries, and one current email per distinct uploader (10.1, “Deleted person”). Aggregates (weekly shape, months, drivers) are computed in the client from this one response.
+- `file` is always null until stored files link uploads to files; then `name` is null during view-as.
+- The calendar is location-scoped, not `/towns/:townId`, so a town outside the twelve still gets its holidays, and a restaurant’s own calendar can join the same response later as a separate field.
 
 ---
 
@@ -1139,6 +1189,20 @@ Stored in `tw_notes`: the `NoteInput` fields, `_id`, `orgId`, `locationId`, `cre
   - A listed town with no drivers or dates (Nantucket today): the curve, then “No drivers or key dates are researched for {town} yet.” Conway, North Elba and Provincetown show their one driver and the same line for dates.
   - A missing county series: “BLS does not publish this series for {county}.” (design system).
   - Key dates print with their year, so dates that have passed read as history, not as a live calendar.
+
+### 13.1 Town calendar
+
+One calendar, in `api/src/town-calendar.ts` (pure, no I/O, stored nowhere), serves the calendar route (10.10), TownwiseAI’s tools and the term state (13.2). `townEvents(townId, range)` merges three sources, each event with at least one source:
+
+- **US federal holidays**, computed for every year the range touches from their legal rules (5 U.S.C. 6103), on the actual day rather than the observed weekday, since restaurants feel the real day. Source: the U.S. Office of Personnel Management’s federal holidays page. New Year’s Day (Jan 1), Birthday of Martin Luther King, Jr. (third Monday of January), Washington’s Birthday (third Monday of February), Memorial Day (last Monday of May), Juneteenth (June 19, from 2021), Independence Day (July 4), Labor Day (first Monday of September), Columbus Day (second Monday of October), Veterans Day (Nov 11), Thanksgiving Day (fourth Thursday of November), Christmas Day (Dec 25). `kind: 'holiday'`, `scope: 'national'`, `group: 'us:{slug}'`. Non-federal days (Valentine’s Day, Mother’s Day) are left out: they have no official source.
+- **Key dates** from the town profile (Section 13): single-day `event`s with the profile’s sources, labelled by hostname, no group and no confidence.
+- **Researched entries** in `api/src/town-calendar-data.ts`, hand-curated, each with its sources and the confidence its research gave it. Hanover is seeded from the committed public file `modeling/dartmouth_calendar_2025_2026.csv` (38 rows from winter 2025 to fall 2026: classes and finals, Commencement, Green Key, Homecoming, Winter Carnival, Family Weekend, orientation and home football), one entry per row, and `api/test/town-calendar.test.ts` compares the two row by row. No other town has entries yet.
+
+Term entries follow one convention, which the term state reads: `kind: 'term'`, `group: '{townId}:classes:{season}'` for the class period or `'{townId}:finals:{season}'` for the exam period, with season `fall`, `winter`, `spring` or `summer`. Between-terms periods are not entries; the term state derives them.
+
+`townCalendarCovers(townId)` is the span of the town’s researched events (key dates and entries) over all years, or null; `researched` is true when it is not null. Hanover covers 2025-01-06 to 2027-01-05, with only key dates after fall 2026 finals. A town outside the twelve, and a listed town with nothing researched (Nantucket), get holidays only.
+
+Headcount inputs (residents, students in college housing, enrollment, whether dorms close between terms) are not part of the calendar. None is researched yet for any town; they stay empty, and say so, until a teammate researches them with a source for each number (13.2).
 
 ---
 
@@ -1778,6 +1842,8 @@ Named tests:
 - **Audit:** every mutation writes its event with only the allowlisted keys.
 - **Email:** normalization matches the kit for case and spaces.
 - **Towns:** `api/test/towns.test.ts` matches `api/src/towns.ts` against the literal list of twelve ids (Section 13).
+- **Calendar:** `api/test/town-calendar.test.ts`: holidays on their legal days (Thanksgiving 2024 to 2026, Memorial Day, MLK Day, the actual day for July 4, Juneteenth from 2021 only); every event has a labelled https source and `start <= end`; ids unique and stable; overlapping multi-day events kept; the term convention; Hanover’s entries equal `modeling/dartmouth_calendar_2025_2026.csv` row by row. `api/test/calendar.int.test.ts`: Hanover’s events with sources, holidays only and `researched: false` elsewhere, every range rule 400, 404 across organizations.
+- **Sales history:** `api/test/sales-history.int.test.ts`: oldest-first columns with exact figures, each day’s upload index and email, -1 for a day whose upload has no record, “Deleted person”, empty columns and `NO_COVERAGE` for a location with no days, exactly the contract’s keys, 404 across organizations, 200 during view-as with `townwise.view_as_read` holding ids only, and no figure or email in any log line.
 - **Indexes:** `documentDbIndexProblems(connection)` is empty with the Townwise models registered (mongo MODULE.md, DocumentDB).
 - **Welcome:** `api/test/welcome.int.test.ts`: only the approved requester of an organization with no sales day gets it, with their first name and the organization’s name; `POST /api/me/welcome` is 204 twice and then `welcome` is null; teammates, staff-created organizations, view-as (GET null, POST 403 `view_as_read_only`), `pending` and `no_org` (POST 403 `no_access`) get none; join, decline and request answers carry null; deleting the organization or the person deletes the markers; no log line holds the name. `api/test/welcome.test.ts` pins `firstNameOf`.
 
@@ -1906,7 +1972,10 @@ Each is marked inline with “lead default”:
 
 ## 23. Changelog
 
+**2026-11-05, calendar and sales history.** Two member reads, `GET .../sales/history` and `GET .../calendar` (10.4, 10.10), for Home, Analytics and TownwiseAI. The town calendar (13.1) merges computed federal holidays, the profile’s key dates and researched entries; Hanover’s entries come from the committed public `modeling/dartmouth_calendar_2025_2026.csv`, each with its source and confidence. Headcount inputs stay empty until researched. Tests in Section 20.
+
 **2026-11-05, stored files (stages 1 to 4).** The private client files account (11A.1), chunked uploads, the file list, downloads and deletion (10.11), and the file reader for text and Excel files (11A.4 to 11A.6), with three collections (6.11, 6.12, 6.19), three audit actions and the reader's sales uploads (9.2), three limiters (10.8) and the error codes (10.9). The browser upload stays as the fallback and the daily-totals choice (11.1). Off in production until the later stages and the privacy page ship together (11A.8).
+
 **2026-11-05, statement moments.** Two statements reveal word by word over the portal (15.6, 15.8): request received and the welcome. `GET /api/me` carries `welcome` for the approved requester’s first visit (4.1, 10.2), recorded by `POST /api/me/welcome` in `tw_welcomes` (6.15), which is deleted with the organization and the person (10.7, 17).
 
 **2026-11-05, Google place id.** An access request and a location carry an optional Google place id (F2, F3, 6.3, 6.4, 10.1, 10.2). Approval copies it to the first location. `access_request.created` records only `hasPlace` (9.2). The two Places routes, the `places` limiter and their error codes are in 7.2, 10.2a, 10.8 and 10.9.

@@ -321,8 +321,19 @@ Each location is `{ id, name, town, coverage, calibration, notesCount, lastUploa
 |---|---|---|---|---|
 | `GET /api/org/locations/:locationId/sales` | member | | 200 `{ coverage, calibration, months, uploads }` (newest 20 uploads) | 404 |
 | `GET /api/org/locations/:locationId/sales/days?from=&to=` | member | `YYYY-MM-DD` dates, at most 366 days inclusive | 200 `{ days }` | 400; 404 |
+| `GET /api/org/locations/:locationId/sales/history` | member | | 200 `{ coverage, days, uploads }`: every stored day | 400; 404 |
 | `POST /api/org/locations/:locationId/sales/uploads` | member; 256 KB; limiter `uploads` | `{ days }` (see Sales upload) | 201 `{ upload, coverage, calibration }` | 400; 404; 413; 429 |
 | `DELETE /api/org/locations/:locationId/sales` | org_admin | | 200 `{ deletedDays, deletedUploads }` | 404 |
+
+`sales/history` answers every stored day, oldest first, as columns of equal length: `days` is `{ date, guests, netSalesCents, upload }`, where `upload` indexes `uploads` (the upload that last wrote the day, or -1 if it has no record). `uploads` lists every upload a day references, newest first, each `{ id, uploadedAt, uploadedByEmail, status, firstDate, lastDate, file }`; `file` is null until stored files link uploads to files. Neither sales read logs anything.
+
+### Calendar
+
+| Method and path | Policy | Request | Success | Errors |
+|---|---|---|---|---|
+| `GET /api/org/locations/:locationId/calendar?from=&to=` | member | exactly `from` and `to`, `YYYY-MM-DD`, from 2010-01-01, `from <= to`, `to` at most 400 days ahead, under 20 years | 200 `{ town, researched, covers, events }` | 400; 404 |
+
+The public calendar of the location’s town: US federal holidays computed from their legal rules (OPM as the source, on the actual day), the town profile’s key dates and the researched entries in `src/town-calendar-data.ts` (Hanover’s from the committed `../modeling/dartmouth_calendar_2025_2026.csv`). Each event is `{ id, title, start, end, kind, scope, group, groupLabel, confidence, sources }`, with at least one source; term entries use `group` `{townId}:classes:{season}` or `{townId}:finals:{season}`. `researched` is true when the town has any researched event, and `covers` is their span over all years (null when none), so a town outside the twelve gets holidays only. Spec 10.10 and 13.1.
 
 ### Stored files
 
@@ -451,6 +462,8 @@ Every Townwise collection takes the `tw_` prefix. Every tenant document carries 
 | `tw_upload_days` | per organization and UTC day: bytes started uploading, for the daily cap |
 
 Stored files live in Azure Blob Storage (`../infra/terraform/production/files.tf`), in `client-raw` (originals) and `client-clean` (cleaned copies), named by ids only: `{orgId}/{locationId}/{fileId}`. `src/files/blobs.ts` builds every name from the caller's `OrgScope` and is the only file that imports the Azure SDK.
+
+The town calendar (`src/town-calendar.ts`) is public data computed at request time and stored in no collection.
 
 Townwise reads the kit’s data only through its store functions (`users.findById`, `users.findByEmail`, `totp.get`), and changes it only through `totp.remove` and the kit’s `revokeAllSessions`, for sign out everywhere and person deletion. Deleting a kit user is a runbook step (Deletion).
 
