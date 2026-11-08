@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import { Text, StyleSheet } from 'react-native';
 
@@ -11,6 +11,7 @@ import { OrgTeam } from '../../../../../../src/portal/console/OrgTeam';
 import { CellLink, Facts } from '../../../../../../src/portal/console/parts';
 import { problemOf } from '../../../../../../src/portal/console/problems';
 import type { OrgDetail, OrgLocation, StaffOrg } from '../../../../../../src/portal/console/schemas';
+import { SetupPanel } from '../../../../../../src/portal/console/SetupPanel';
 import { useRefreshable } from '../../../../../../src/portal/console/useRefreshable';
 import { ViewAsDialog, type ViewAsTarget } from '../../../../../../src/portal/console/ViewAsDialog';
 import { hasCode } from '../../../../../../src/portal/errors';
@@ -30,8 +31,13 @@ import { theme } from '../../../../../../src/theme';
 // Every change here is a staff action its admins see (D9); after one the page reads the organization again in
 // place. A change that answers 404, or a read after one that does, means another staff member deleted the
 // organization meanwhile: the page shows its 404 state, as on load, with no “Saved.”, and focus moves to that line.
+// While nobody has joined the organization (`org.inSetup`, D23) the setup panel follows Locations (SetupPanel); a
+// setup write that finds it closed meanwhile (409 org_not_in_setup: someone joined, or it was suspended) closes it for
+// good, and the notice says which from the read after it.
 
 const NAME_COPY = 'Enter the organization’s name, 2 to 120 characters.';
+const NO_LOCATIONS = 'No locations yet. The first admin adds one after joining.';
+const NO_LOCATIONS_IN_SETUP = 'No locations yet. Add the first one below.';
 /** A change went through, but reading the organization again didn't: what the page shows may be old. */
 const REFRESH_COPY = 'This page couldn’t load the latest, so it may be out of date.';
 
@@ -195,11 +201,19 @@ export default function OrganizationPage(): React.JSX.Element {
   const params = useLocalSearchParams<{ orgId: string }>();
   const orgId = typeof params.orgId === 'string' ? params.orgId : '';
   // A write's outcome is its own: `refresh` never rejects, and a failed one shows REFRESH_COPY with its own Try again.
-  const { state, reload, refresh, refreshError } = useRefreshable(useCallback(() => fetchOrg(api, orgId), [api, orgId]));
+  /** The organization as the last read found it, or null while a read after a closed setup runs or once it failed. */
+  const lastRead = useRef<OrgDetail | null>(null);
+  const { state, reload, refresh, refreshError } = useRefreshable(useCallback(async () => {
+    const detail = await fetchOrg(api, orgId);
+    lastRead.current = detail;
+    return detail;
+  }, [api, orgId]));
   const [open, setOpen] = useState<Open>(null);
   const [viewing, setViewing] = useState<ViewAsTarget | null>(null);
   /** The organization a write found deleted; by id, so another organization's page starts fresh. */
   const [goneId, setGoneId] = useState<string | null>(null);
+  /** The organization whose setup a write found closed (409 org_not_in_setup); it never reopens (D23). */
+  const [closedId, setClosedId] = useState<string | null>(null);
   const focusMessage = useFocusMessage();
 
   const saved = useCallback(() => { showNotice({ text: 'Saved.' }, pathname); }, [showNotice, pathname]);
@@ -216,6 +230,21 @@ export default function OrganizationPage(): React.JSX.Element {
     onGone();
     return false;
   }, [refresh, onGone]);
+  // Setup closed while staff set the organization up: the panel goes at once, the page reads again, and the notice
+  // (where focus moves) says why from that read: suspended, or else someone joined (also when the read failed).
+  const setupClosed = useCallback(async (name: string) => {
+    setClosedId(orgId);
+    lastRead.current = null;
+    if (!await refreshed()) return;
+    const read = lastRead.current as OrgDetail | null;
+    const named = read?.org.name ?? name;
+    focusMessage();
+    showNotice({
+      text: read?.org.status === 'suspended'
+        ? `${named} was suspended, so setup is closed.`
+        : `Someone joined ${named}, so setup is closed. Use View as to see their page.`,
+    }, pathname);
+  }, [focusMessage, orgId, showNotice, pathname, refreshed]);
   const savedAndClosed = useCallback(async () => {
     if (!await refreshed()) return;
     setOpen(null);
@@ -258,6 +287,7 @@ export default function OrganizationPage(): React.JSX.Element {
   const { org, members, locations, recent } = detail;
   const suspended = org.status === 'suspended';
   const noAdmin = !members.some((member) => member.status === 'active' && member.role === 'org_admin');
+  const inSetup = org.inSetup === true && closedId !== orgId;
   const side = (
     <>
       <Button variant="outline" label="Rename" onPress={() => { setOpen('rename'); }} />
@@ -294,10 +324,12 @@ export default function OrganizationPage(): React.JSX.Element {
 
       <Section kicker="Locations, metadata only" title="Locations">
         {locations.length === 0
-          ? <EmptyState text="No locations yet. The first admin adds one after joining." />
+          ? <EmptyState text={inSetup ? NO_LOCATIONS_IN_SETUP : NO_LOCATIONS} />
           : <LocationTable locations={locations} />}
         <Small>Sales figures and notes are visible only through View as.</Small>
       </Section>
+
+      {inSetup ? <SetupPanel org={org} locations={locations} onChanged={refreshed} onClosed={() => { void setupClosed(org.name); }} /> : null}
 
       {/* U13B: forecast runs (spec 16.4 P21 Forecasts, 14.4). */}
       <ForecastRuns org={org} locations={locations} />

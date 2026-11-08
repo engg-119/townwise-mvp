@@ -2,10 +2,13 @@ import type { z } from 'zod';
 
 import type { ApiClient, RequestOptions } from '../../../src/api/client';
 import {
-  addOrgMembers, approveRequest, changeOrgMemberRole, createOrg, deleteOrg, deletePerson, fetchAudit, fetchOrg, fetchOrgs,
-  fetchPeople, fetchRequests, lookupPerson, rejectRequest, removeOrgMember, signOutEverywhere, startViewAs, updateOrg,
+  addOrgMembers, approveRequest, changeOrgMemberRole, createOrg, createSetupLocation, deleteOrg, deletePerson, deleteSetupLocation,
+  deleteSetupSales, fetchAudit, fetchOrg, fetchOrgs, fetchPeople, fetchRequests, lookupPerson, rejectRequest, removeOrgMember,
+  signOutEverywhere, startViewAs, updateOrg, updateSetupLocation, uploadSetupSales,
 } from '../../../src/portal/console/api';
-import { auditEventSchema, orgDetailSchema, orgLocationSchema } from '../../../src/portal/console/schemas';
+import {
+  auditEventSchema, orgDetailSchema, orgLocationSchema, setupLocationSchema, setupUploadSchema,
+} from '../../../src/portal/console/schemas';
 import { staffMe } from '../../helpers/portal';
 import { adminRequest, auditEvent, emailOf, member, orgDetail, orgRow, person } from './fixtures';
 
@@ -34,6 +37,13 @@ function recorder(answer: unknown): { api: ApiClient; sent: Sent[] } {
 
 const EMAIL = emailOf('cook');
 const REQUEST = adminRequest();
+const TOWN = { townId: 'hanover-nh' };
+const DAYS = [{ date: '2026-03-04', guests: 120, netSalesCents: 100_025 }];
+const SETUP_LOCATION = { location: { id: 'l1', name: 'Hanover' } };
+const SETUP_UPLOAD = {
+  upload: { dayCount: 1, firstDate: '2026-03-04', lastDate: '2026-03-04' },
+  coverage: { dayCount: 1, firstDate: '2026-03-04', lastDate: '2026-03-04' },
+};
 
 test.each<[string, unknown, (api: ApiClient) => Promise<unknown>, Sent]>([
   ['requests by status', { requests: [REQUEST], pendingCount: 1 }, (api) => fetchRequests(api, 'withdrawn'),
@@ -80,6 +90,18 @@ test.each<[string, unknown, (api: ApiClient) => Promise<unknown>, Sent]>([
     { method: 'GET', path: '/api/admin/audit?orgId=o1&action=org.renamed&before=2026-10-09T15%3A00%3A00.000Z', body: undefined }],
   ['start view-as', staffMe(), (api) => startViewAs(api, 'u2', 'Helping.'),
     { method: 'POST', path: '/api/admin/view-as', body: { userId: 'u2', reason: 'Helping.' } }],
+  ['setup: add a location', SETUP_LOCATION, (api) => createSetupLocation(api, 'o1', { name: 'Hanover', town: TOWN }),
+    { method: 'POST', path: '/api/admin/orgs/o1/locations', body: { name: 'Hanover', town: TOWN } }],
+  ['setup: add a location at a place', SETUP_LOCATION, (api) => createSetupLocation(api, 'o1', { name: 'Hanover', town: TOWN, placeId: 'p1' }),
+    { method: 'POST', path: '/api/admin/orgs/o1/locations', body: { name: 'Hanover', town: TOWN, placeId: 'p1' } }],
+  ['setup: rename a location', SETUP_LOCATION, (api) => updateSetupLocation(api, 'o1', 'l1', { name: 'Inn', town: TOWN }),
+    { method: 'PATCH', path: '/api/admin/orgs/o1/locations/l1', body: { name: 'Inn', town: TOWN } }],
+  ['setup: delete a location', null, (api) => deleteSetupLocation(api, 'o1', 'l1'),
+    { method: 'DELETE', path: '/api/admin/orgs/o1/locations/l1', body: undefined }],
+  ['setup: upload daily totals', SETUP_UPLOAD, (api) => uploadSetupSales(api, 'o1', 'l1', { days: DAYS }),
+    { method: 'POST', path: '/api/admin/orgs/o1/locations/l1/sales/uploads', body: { days: DAYS } }],
+  ['setup: delete sales data', { deletedDays: 1, deletedUploads: 1, deletedFiles: 0 }, (api) => deleteSetupSales(api, 'o1', 'l1'),
+    { method: 'DELETE', path: '/api/admin/orgs/o1/locations/l1/sales', body: undefined }],
 ])('%s', async (_name, answer, call, expected) => {
   const { api, sent } = recorder(answer);
   await call(api);
@@ -90,6 +112,22 @@ test('ids are encoded into paths', async () => {
   const { api, sent } = recorder({ org: orgDetail().org });
   await updateOrg(api, 'o/1?x', { name: 'B' });
   expect(sent[0]?.path).toBe('/api/admin/orgs/o%2F1%3Fx');
+  await deleteSetupLocation(api, 'o/1', 'l?1');
+  expect(sent[1]?.path).toBe('/api/admin/orgs/o%2F1/locations/l%3F1');
+});
+
+test('setup answers keep ids, names, day counts and dates only: no calibration, no figure (D7)', () => {
+  const upload = setupUploadSchema.parse({
+    upload: { ...SETUP_UPLOAD.upload, id: 'up1', inserted: 1, replaced: 0, kept: 0, uploadedByEmail: 'Townwise staff', hasGuests: true },
+    coverage: { ...SETUP_UPLOAD.coverage, guestsDayCount: 1, netSalesDayCount: 1, missingDays: 0, netSalesCents: 98765400 },
+    calibration: { state: 'not_calibrated', dayCount: 1, firstDate: '2026-03-04', lastDate: '2026-03-04' },
+  });
+  expect(upload).toEqual(SETUP_UPLOAD);
+  const location = setupLocationSchema.parse({
+    location: { id: 'l1', name: 'Hanover', town: TOWN, coverage: { dayCount: 1, netSalesCents: 98765400 }, calibration: { state: 'no_sales_data' } },
+  });
+  expect(location).toEqual(SETUP_LOCATION);
+  expect(orgDetailSchema.parse(orgDetail({ org: { inSetup: true } })).org.inSetup).toBe(true);
 });
 
 test('the console keeps only what it shows: no figure or note text gets past the schemas (D7)', () => {

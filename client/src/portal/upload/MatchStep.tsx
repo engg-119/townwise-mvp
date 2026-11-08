@@ -53,7 +53,8 @@ export function MatchStep(props: {
   readingLine: string;
   onCheck: () => void;
   onBack: () => void;
-  cancelHref: string;
+  /** P13's Cancel, back to the sales data; the staff setup upload has none, since Back ends it there. */
+  cancelHref?: string;
 }): React.JSX.Element {
   const { columns, mapping, onChange, locationValues } = props;
   const options = columnOptions(columns);
@@ -164,7 +165,7 @@ export function MatchStep(props: {
       <Actions>
         <Button label={COPY.checkTotals} disabled={!ready} {...(reasons === undefined ? {} : { describedBy: reasons })} onPress={props.onCheck} />
         <Button variant="link" label="Back" onPress={props.onBack} />
-        <LinkButton href={props.cancelHref} label="Cancel" />
+        {props.cancelHref === undefined ? null : <LinkButton href={props.cancelHref} label="Cancel" />}
       </Actions>
     </Stack>
   );
