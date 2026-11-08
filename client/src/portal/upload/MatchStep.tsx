@@ -15,7 +15,9 @@ import type { DateOrder } from './values';
 
 // Step 2, Match columns (spec 11.2 step 2, D11). The pickers list header names with the kind of values found,
 // never a cell. The one exception is the location column's distinct values, once the person names that column.
-// Each message prints under its control, and the disabled “Check the totals” is described by all of them.
+// Each message prints under its control, and the disabled “Check the totals” is described by all of them. With
+// `locationColumn={false}` (staff setup, which must never show a cell, D7) there is no location column to name, so
+// no cell value is ever read for the screen.
 
 export type LocationValuesState =
   | { status: 'idle' }
@@ -55,6 +57,8 @@ export function MatchStep(props: {
   onBack: () => void;
   /** P13's Cancel, back to the sales data; the staff setup upload has none, since Back ends it there. */
   cancelHref?: string;
+  /** False: no location column picker, so no column's values are listed (staff setup). True by default (P13). */
+  locationColumn?: boolean;
 }): React.JSX.Element {
   const { columns, mapping, onChange, locationValues } = props;
   const options = columnOptions(columns);
@@ -138,30 +142,32 @@ export function MatchStep(props: {
         <Small>{COPY.valuesHelp}</Small>
         <FieldMessages id={ID.values} items={messages.values} />
       </View>
-      <Pair>
-        <Select
-          label="Location column (optional)"
-          value={mapping.location === null ? NONE : String(mapping.location)}
-          items={optional}
-          onChange={(value) => { onChange({ ...mapping, location: columnOf(value), locationValue: null }); }}
-          helper={COPY.locationHelp}
-        />
-        {mapping.location === null ? <View /> : locationValues.status === 'ready' ? (
-          <View style={styles.field}>
-            <Select
-              label={`Which value is ${props.locationName}?`}
-              value={mapping.locationValue ?? NONE}
-              placeholder="Choose a value"
-              items={locationValues.values.map((value) => ({ value, label: value }))}
-              onChange={(value) => { onChange({ ...mapping, locationValue: value === NONE ? null : value }); }}
-              helper={locationValues.more ? `${COPY.locationValueHelp} ${COPY.moreValues}` : COPY.locationValueHelp}
-            />
-            <FieldMessages id={ID.location} items={messages.locationValue} />
-          </View>
-        ) : (
-          <LoadingLine text={props.readingLine} minHeight={44} />
-        )}
-      </Pair>
+      {props.locationColumn === false ? null : (
+        <Pair>
+          <Select
+            label="Location column (optional)"
+            value={mapping.location === null ? NONE : String(mapping.location)}
+            items={optional}
+            onChange={(value) => { onChange({ ...mapping, location: columnOf(value), locationValue: null }); }}
+            helper={COPY.locationHelp}
+          />
+          {mapping.location === null ? <View /> : locationValues.status === 'ready' ? (
+            <View style={styles.field}>
+              <Select
+                label={`Which value is ${props.locationName}?`}
+                value={mapping.locationValue ?? NONE}
+                placeholder="Choose a value"
+                items={locationValues.values.map((value) => ({ value, label: value }))}
+                onChange={(value) => { onChange({ ...mapping, locationValue: value === NONE ? null : value }); }}
+                helper={locationValues.more ? `${COPY.locationValueHelp} ${COPY.moreValues}` : COPY.locationValueHelp}
+              />
+              <FieldMessages id={ID.location} items={messages.locationValue} />
+            </View>
+          ) : (
+            <LoadingLine text={props.readingLine} minHeight={44} />
+          )}
+        </Pair>
+      )}
       <Actions>
         <Button label={COPY.checkTotals} disabled={!ready} {...(reasons === undefined ? {} : { describedBy: reasons })} onPress={props.onCheck} />
         <Button variant="link" label="Back" onPress={props.onBack} />

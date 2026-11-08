@@ -11,7 +11,8 @@ import { Stack } from '../ui/layout';
 import { Select } from '../ui/Select';
 import { Heading, Small } from '../ui/text';
 import { checkProblemLine, COPY, readingLine, sendErrorOf, sendingLine, sendLabel } from '../upload/copy';
-import { bodyBytes, MAX_BODY_BYTES, uploadBody, type CheckResult } from '../upload/days';
+import { isValueCell, type ColumnProfile } from '../upload/columns';
+import { bodyBytes, MAX_BODY_BYTES, uploadBody, type CheckResult, type Mapping } from '../upload/days';
 import { MatchStep } from '../upload/MatchStep';
 import { useSalesFile } from '../upload/useSalesFile';
 import { uploadSetupSales } from './api';
@@ -21,7 +22,10 @@ import type { OrgLocation, SetupUpload as SetupUploadAnswer } from './schemas';
 // export, and the browser reads it with P13's reader (upload/useSalesFile): choose, match columns, check, send. Only
 // `{ days }` is sent (11.1), and it replaces the days it covers. Before and after sending the panel shows the day count
 // and the first and last dates, never a figure: no totals, no day's values, no reason a day was left out, and nothing
-// from the answer's calibration (D7). Native shows one line instead (SetupUpload.tsx).
+// from the answer's calibration (D7). No cell shows either: Match columns has no location column (whose values P13
+// lists), so staff use an export of one location, and a header name that reads as a value shows as an unnamed column.
+// The location's name and days are read by id from the organization as it is now, so a rename shows at once. Native
+// shows one line instead (SetupUpload.tsx).
 
 export interface SetupUploadProps {
   org: { id: string; name: string };
@@ -34,8 +38,18 @@ export interface SetupUploadProps {
 
 const INTRO = 'Your browser reads the file here, and Townwise receives only each day’s date, guests and net sales. The days it covers replace the ones the location has. This page shows how many days and which dates, never a figure.';
 
-/** The location a file was chosen for, fixed until the upload starts over. */
-interface Target { id: string; name: string; coverage: OrgLocation['coverage'] }
+/** The location a file was chosen for, fixed until the upload starts over; its name as it was then, for once it's gone. */
+interface Target { id: string; name: string }
+
+/** A header name that reads as a date or an amount is a value from a first row that wasn't a header: never shown. */
+function unnamedValues(columns: readonly ColumnProfile[]): ColumnProfile[] {
+  return columns.map((column) => (isValueCell(column.name) ? { ...column, name: '' } : column));
+}
+
+/** The staff mapping never names a location column, so no column's values are ever read for the screen. */
+function withoutLocation(mapping: Mapping): Mapping {
+  return { ...mapping, location: null, locationValue: null };
+}
 
 function savedLines(name: string, answer: SetupUploadAnswer): string[] {
   const { upload, coverage } = answer;
@@ -49,13 +63,15 @@ function savedLines(name: string, answer: SetupUploadAnswer): string[] {
 /** Step 3 for staff: the days as a count and two dates. */
 function CheckDays(props: {
   result: CheckResult;
-  target: Target;
+  name: string;
+  /** The location's days now; undefined once it is gone. */
+  coverage: OrgLocation['coverage'] | undefined;
   sendError: unknown;
   onSend: () => void;
   onBack: () => void;
   onRestart: () => void;
 }): React.JSX.Element {
-  const { result, target } = props;
+  const { result, name, coverage } = props;
   const back = <Button variant="link" label="Back" onPress={props.onBack} />;
   const heading = <Heading level={3}>Check the days</Heading>;
   if (result.kind !== 'days') {
@@ -71,18 +87,17 @@ function CheckDays(props: {
   const last = result.days[result.days.length - 1];
   const failure = props.sendError === null ? null : sendErrorOf(props.sendError);
   const left = result.excluded.length;
-  const { coverage } = target;
   return (
     <Stack gap={12}>
       {heading}
       {first === undefined || last === undefined ? (
         <Messages live="status" items={[COPY.nothingToSend]} />
       ) : (
-        <Small white>{`${plural(result.days.length, 'day', 'days')} for ${target.name}, ${formatDate(first.date)} to ${formatDate(last.date)}.`}</Small>
+        <Small white>{`${plural(result.days.length, 'day', 'days')} for ${name}, ${formatDate(first.date)} to ${formatDate(last.date)}.`}</Small>
       )}
       {left === 0 ? null : <Small>{`${plural(left, 'day', 'days')} in this file can’t be sent, so ${left === 1 ? 'it is' : 'they are'} left out.`}</Small>}
-      {coverage.dayCount > 0 && coverage.firstDate !== null && coverage.lastDate !== null ? (
-        <Small>{`${target.name} already has ${formatDate(coverage.firstDate)} to ${formatDate(coverage.lastDate)}. Days in both are replaced by this file.`}</Small>
+      {coverage !== undefined && coverage.dayCount > 0 && coverage.firstDate !== null && coverage.lastDate !== null ? (
+        <Small>{`${name} already has ${formatDate(coverage.firstDate)} to ${formatDate(coverage.lastDate)}. Days in both are replaced by this file.`}</Small>
       ) : null}
       {failure === null ? null : <Messages live="alert" items={[failure.text]} />}
       <Actions>
@@ -102,7 +117,10 @@ export function SetupUpload(props: SetupUploadProps): React.JSX.Element {
   const helpId = `${useId().replace(/:/g, '')}-help`;
   const [chosenId, setChosenId] = useState('');
   const [target, setTarget] = useState<Target | null>(null);
-  const sales = useSalesFile(target?.name ?? '');
+  /** The chosen location as the organization has it now; undefined once it is gone. */
+  const live = target === null ? undefined : locations.find((location) => location.id === target.id);
+  const name = live?.name ?? target?.name ?? '';
+  const sales = useSalesFile(name);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<unknown>(null);
   const [saved, setSaved] = useState<string[] | null>(null);
@@ -120,7 +138,7 @@ export function SetupUpload(props: SetupUploadProps): React.JSX.Element {
   function choose(chosen: File): void {
     if (current === undefined) return;
     restart();
-    setTarget({ id: current.id, name: current.name, coverage: current.coverage });
+    setTarget({ id: current.id, name: current.name });
     void sales.open(chosen);
   }
 
@@ -137,7 +155,7 @@ export function SetupUpload(props: SetupUploadProps): React.JSX.Element {
       try {
         answer = await uploadSetupSales(api, org.id, target.id, body);
       } catch (error) {
-        if (await settled(error, target)) {
+        if (await settled(error, { name })) {
           restart();
           return;
         }
@@ -149,7 +167,7 @@ export function SetupUpload(props: SetupUploadProps): React.JSX.Element {
       if (!fresh) return;
       // The Send button is gone, so focus moves to the line that says what was saved.
       focusMessage();
-      setSaved(savedLines(target.name, answer));
+      setSaved(savedLines(name, answer));
     } catch (error) {
       setSendError(error);
     } finally {
@@ -175,12 +193,13 @@ export function SetupUpload(props: SetupUploadProps): React.JSX.Element {
   } else if (target !== null && sales.step === 'match' && opened !== null) {
     content = (
       <Stack gap={12}>
-        <Small white>{`For ${target.name}.`}</Small>
+        <Small white>{`For ${name}.`}</Small>
         <MatchStep
-          columns={opened.columns}
+          columns={unnamedValues(opened.columns)}
           mapping={sales.mapping}
-          onChange={sales.changeMapping}
-          locationName={target.name}
+          onChange={(next) => { sales.changeMapping(withoutLocation(next)); }}
+          locationColumn={false}
+          locationName={name}
           locationValues={sales.values}
           readingLine={readingLine(opened.size)}
           onCheck={() => { setSendError(null); void sales.checkTotals(); }}
@@ -192,7 +211,8 @@ export function SetupUpload(props: SetupUploadProps): React.JSX.Element {
     content = (
       <CheckDays
         result={check}
-        target={target}
+        name={name}
+        coverage={live?.coverage}
         sendError={sendError}
         onSend={() => { void send(); }}
         onBack={() => { setSendError(null); sales.backToMatch(); }}
@@ -211,6 +231,7 @@ export function SetupUpload(props: SetupUploadProps): React.JSX.Element {
             items={locations.map((location) => ({ value: location.id, label: location.name }))}
           />
         </View>
+        <Small>{`Use an export that covers only ${current.name}.`}</Small>
         <input
           ref={input}
           type="file"

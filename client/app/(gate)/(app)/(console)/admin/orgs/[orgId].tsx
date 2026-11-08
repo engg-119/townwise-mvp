@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import { Text, StyleSheet } from 'react-native';
 
@@ -31,15 +31,20 @@ import { theme } from '../../../../../../src/theme';
 // Every change here is a staff action its admins see (D9); after one the page reads the organization again in
 // place. A change that answers 404, or a read after one that does, means another staff member deleted the
 // organization meanwhile: the page shows its 404 state, as on load, with no “Saved.”, and focus moves to that line.
-// While nobody has joined the organization (`org.inSetup`, D23) the setup panel follows Locations (SetupPanel); a
-// setup write that finds it closed meanwhile (409 org_not_in_setup: someone joined, or it was suspended) closes it for
-// good, and the notice says which from the read after it.
+// While nobody has joined the organization (`org.inSetup`, D23) the setup panel follows Locations (SetupPanel). When
+// any read finds setup closed that the page showed open (someone joined, or it was suspended), the notice says which.
+// A setup write that answers 409 org_not_in_setup hides the panel at once, until a newer read lets `inSetup` decide.
 
 const NAME_COPY = 'Enter the organization’s name, 2 to 120 characters.';
 const NO_LOCATIONS = 'No locations yet. The first admin adds one after joining.';
 const NO_LOCATIONS_IN_SETUP = 'No locations yet. Add the first one below.';
 /** A change went through, but reading the organization again didn't: what the page shows may be old. */
 const REFRESH_COPY = 'This page couldn’t load the latest, so it may be out of date.';
+
+/** Why staff setup closed (D23): the organization was suspended, or else someone joined it. */
+function setupClosedCopy(name: string, suspended: boolean): string {
+  return suspended ? `${name} was suspended, so setup is closed.` : `Someone joined ${name}, so setup is closed. Use View as to see their page.`;
+}
 
 type Open = 'rename' | 'suspend' | 'delete' | null;
 
@@ -201,19 +206,13 @@ export default function OrganizationPage(): React.JSX.Element {
   const params = useLocalSearchParams<{ orgId: string }>();
   const orgId = typeof params.orgId === 'string' ? params.orgId : '';
   // A write's outcome is its own: `refresh` never rejects, and a failed one shows REFRESH_COPY with its own Try again.
-  /** The organization as the last read found it, or null while a read after a closed setup runs or once it failed. */
-  const lastRead = useRef<OrgDetail | null>(null);
-  const { state, reload, refresh, refreshError } = useRefreshable(useCallback(async () => {
-    const detail = await fetchOrg(api, orgId);
-    lastRead.current = detail;
-    return detail;
-  }, [api, orgId]));
+  const { state, reload, refresh, refreshError } = useRefreshable(useCallback(() => fetchOrg(api, orgId), [api, orgId]));
   const [open, setOpen] = useState<Open>(null);
   const [viewing, setViewing] = useState<ViewAsTarget | null>(null);
   /** The organization a write found deleted; by id, so another organization's page starts fresh. */
   const [goneId, setGoneId] = useState<string | null>(null);
-  /** The organization whose setup a write found closed (409 org_not_in_setup); it never reopens (D23). */
-  const [closedId, setClosedId] = useState<string | null>(null);
+  /** The read on screen when a setup write answered 409 org_not_in_setup: the panel stays hidden until a newer one. */
+  const [closedOn, setClosedOn] = useState<OrgDetail | null>(null);
   const focusMessage = useFocusMessage();
 
   const saved = useCallback(() => { showNotice({ text: 'Saved.' }, pathname); }, [showNotice, pathname]);
@@ -230,21 +229,31 @@ export default function OrganizationPage(): React.JSX.Element {
     onGone();
     return false;
   }, [refresh, onGone]);
-  // Setup closed while staff set the organization up: the panel goes at once, the page reads again, and the notice
-  // (where focus moves) says why from that read: suspended, or else someone joined (also when the read failed).
-  const setupClosed = useCallback(async (name: string) => {
-    setClosedId(orgId);
-    lastRead.current = null;
-    if (!await refreshed()) return;
-    const read = lastRead.current as OrgDetail | null;
-    const named = read?.org.name ?? name;
+  // A setup write found setup closed: the panel goes at once and the page reads again. A read that lands says why
+  // (below); one that fails can't, so the notice gives the likelier reason, someone joined.
+  const setupClosed = useCallback(async (read: OrgDetail) => {
+    setClosedOn(read);
+    const failure = await refresh();
+    if (failure === null) return;
+    if (missing(failure.error)) {
+      onGone();
+      return;
+    }
     focusMessage();
-    showNotice({
-      text: read?.org.status === 'suspended'
-        ? `${named} was suspended, so setup is closed.`
-        : `Someone joined ${named}, so setup is closed. Use View as to see their page.`,
-    }, pathname);
-  }, [focusMessage, orgId, showNotice, pathname, refreshed]);
+    showNotice({ text: setupClosedCopy(read.org.name, false) }, pathname);
+  }, [refresh, onGone, focusMessage, showNotice, pathname]);
+  // Any read that finds setup closed that the page showed open (after a setup write, Suspend, a join meanwhile) says
+  // why, from that read, where focus moves: the panel and what it was saying are gone.
+  const shown = state.status === 'ready' ? state.data : null;
+  const shownBefore = useRef<OrgDetail | null>(null);
+  useEffect(() => {
+    const before = shownBefore.current;
+    shownBefore.current = shown;
+    if (shown === null || before?.org.id !== shown.org.id) return;
+    if (before.org.inSetup !== true || shown.org.inSetup === true) return;
+    focusMessage();
+    showNotice({ text: setupClosedCopy(shown.org.name, shown.org.status === 'suspended') }, pathname);
+  }, [shown, focusMessage, showNotice, pathname]);
   const savedAndClosed = useCallback(async () => {
     if (!await refreshed()) return;
     setOpen(null);
@@ -287,7 +296,7 @@ export default function OrganizationPage(): React.JSX.Element {
   const { org, members, locations, recent } = detail;
   const suspended = org.status === 'suspended';
   const noAdmin = !members.some((member) => member.status === 'active' && member.role === 'org_admin');
-  const inSetup = org.inSetup === true && closedId !== orgId;
+  const inSetup = org.inSetup === true && closedOn !== detail;
   const side = (
     <>
       <Button variant="outline" label="Rename" onPress={() => { setOpen('rename'); }} />
@@ -329,7 +338,7 @@ export default function OrganizationPage(): React.JSX.Element {
         <Small>Sales figures and notes are visible only through View as.</Small>
       </Section>
 
-      {inSetup ? <SetupPanel org={org} locations={locations} onChanged={refreshed} onClosed={() => { void setupClosed(org.name); }} /> : null}
+      {inSetup ? <SetupPanel org={org} locations={locations} onChanged={refreshed} onClosed={() => { void setupClosed(detail); }} /> : null}
 
       {/* U13B: forecast runs (spec 16.4 P21 Forecasts, 14.4). */}
       <ForecastRuns org={org} locations={locations} />

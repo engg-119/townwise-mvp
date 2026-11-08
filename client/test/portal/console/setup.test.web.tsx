@@ -447,3 +447,174 @@ test('Upload daily totals: a refused send shows the shared copy, never a value',
   for (const figure of FIGURES) expect(pageText()).not.toContain(figure);
   expect(screen.getByRole('button', { name: 'Send 3 days' })).toBeTruthy();
 });
+
+/** Chooses `text` as the setup upload's file and goes on to Match columns. */
+async function toMatch(text: string): Promise<void> {
+  await screen.findByRole('heading', { name: 'Upload daily totals' });
+  await settle(() => { fireEvent.change(setupFileInput(), { target: { files: [csvFile(text)] } }); });
+  await screen.findByRole('heading', { name: 'Match columns' });
+}
+
+/** The answer of a setup upload of FILE's three days. */
+function uploaded(): unknown {
+  return {
+    upload: {
+      id: 'up1', uploadedAt: '2026-11-08T15:00:00.000Z', uploadedByEmail: 'Townwise staff', status: 'applied', dayCount: 3,
+      inserted: 3, replaced: 0, kept: 0, firstDate: '2025-03-04', lastDate: '2025-03-07', hasGuests: true, hasNetSales: true,
+    },
+    coverage: { dayCount: 3, guestsDayCount: 3, netSalesDayCount: 3, firstDate: '2025-03-04', lastDate: '2025-03-07', missingDays: 1 },
+    calibration: { state: 'not_calibrated', dayCount: 3, firstDate: '2025-03-04', lastDate: '2025-03-07' },
+  };
+}
+
+// A file with people's names and figures in its cells. In the staff flow no cell may reach the screen: there is no
+// location column (whose values P13 lists), and nothing else quotes a cell.
+const CUSTOMER = 'Zelda Sentinelname';
+const SERVER = 'Quentin Servername';
+const PEOPLE_FILE = [
+  'Business Date,Customer,Guest Count,Net Sales,Server',
+  `2025-03-04,${CUSTOMER},4321,98765.43,${SERVER}`,
+  `2025-03-05,${CUSTOMER} Two,8642,87654.32,${SERVER} Two`,
+  `2025-03-07,${CUSTOMER} Three,7531,76543.21,${SERVER} Three`,
+].join('\n');
+const CELLS = [...FIGURES, CUSTOMER, SERVER, '98765.43', '87654.32', '76543.21'];
+
+test('the staff upload has no location column, so no cell of the file ever shows (D7)', async () => {
+  const api = consoleApi();
+  let detail = inSetup([hanover()]);
+  serve(api, () => detail);
+  api.routes[`POST ${SETUP}/l1/sales/uploads`] = () => {
+    detail = inSetup([hanover({ dayCount: 3, firstDate: '2025-03-04', lastDate: '2025-03-07' })]);
+    return uploaded();
+  };
+  renderAt('/admin/orgs/o1', api);
+  expect(await screen.findByText('Use an export that covers only Hanover.')).toBeTruthy();
+  await toMatch(PEOPLE_FILE);
+  expect(screen.queryByRole('combobox', { name: 'Location column (optional)' })).toBeNull();
+  expect(screen.queryByRole('combobox', { name: /^Which value is/ })).toBeNull();
+  // The pickers name the columns, never their cells.
+  expect([...screen.getByRole<HTMLSelectElement>('combobox', { name: 'Guests' }).options].map((option) => option.text)).toEqual([
+    'Not in this file', 'Business Date: dates', 'Customer: text', 'Guest Count: numbers', 'Net Sales: numbers', 'Server: text',
+  ]);
+  for (const cell of CELLS) expect(pageText()).not.toContain(cell);
+  await click('Check the totals');
+  expect(await screen.findByText('3 days for Hanover, Mar 4, 2025 to Mar 7, 2025.')).toBeTruthy();
+  for (const cell of CELLS) expect(pageText()).not.toContain(cell);
+  await click('Send 3 days');
+  expect(await screen.findByText('Saved 3 days for Hanover, Mar 4, 2025 to Mar 7, 2025.')).toBeTruthy();
+  for (const cell of CELLS) expect(pageText()).not.toContain(cell);
+  const sent = setupWrites(api)[0]?.body as { days: Record<string, unknown>[] };
+  expect(sent.days.map((day) => Object.keys(day))).toEqual([['date', 'guests', 'netSalesCents'], ['date', 'guests', 'netSalesCents'], ['date', 'guests', 'netSalesCents']]);
+  expect(JSON.stringify(sent)).not.toContain(CUSTOMER);
+});
+
+test('a header name that reads as a value shows as an unnamed column, never as the value', async () => {
+  const api = consoleApi();
+  serve(api, () => inSetup([hanover()]));
+  renderAt('/admin/orgs/o1', api);
+  await toMatch(['Business Date,Guest Count,98765.43', '2025-03-04,4321,87654.32'].join('\n'));
+  expect([...screen.getByRole<HTMLSelectElement>('combobox', { name: 'Net sales' }).options].map((option) => option.text)).toEqual([
+    'Not in this file', 'Business Date: dates', 'Guest Count: numbers', 'Unnamed (column 3): numbers',
+  ]);
+  for (const cell of CELLS) expect(pageText()).not.toContain(cell);
+});
+
+test('Upload daily totals: the location’s name is read as it is now, so a rename during the upload shows', async () => {
+  const api = consoleApi();
+  let detail = inSetup([hanover()]);
+  serve(api, () => detail);
+  api.routes[`PATCH ${SETUP}/l1`] = () => {
+    detail = inSetup([{ ...hanover(), name: 'Hanover Inn' }]);
+    return summary('Hanover Inn');
+  };
+  renderAt('/admin/orgs/o1', api);
+  await toMatch(FILE);
+  expect(screen.getByText('For Hanover.')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Rename Hanover' }));
+  const dialog = screen.getByRole('dialog', { name: 'Rename Hanover' });
+  fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name' }), { target: { value: 'Hanover Inn' } });
+  await click('Save changes', dialog);
+  expect(await screen.findByText('For Hanover Inn.')).toBeTruthy();
+  await click('Check the totals');
+  expect(await screen.findByText('3 days for Hanover Inn, Mar 4, 2025 to Mar 7, 2025.')).toBeTruthy();
+});
+
+test('Upload daily totals: 409 org_not_in_setup on the send takes the panel away and says someone joined', async () => {
+  const api = consoleApi();
+  let detail = inSetup([hanover()]);
+  serve(api, () => detail);
+  api.routes[`POST ${SETUP}/l1/sales/uploads`] = () => {
+    detail = orgDetail({ org: { fromRequestId: null, inSetup: false }, locations: [hanover()], recent: [] });
+    return refusal(409, 'org_not_in_setup');
+  };
+  renderAt('/admin/orgs/o1', api);
+  await toMatch(FILE);
+  await click('Check the totals');
+  await click('Send 3 days');
+  expect(await screen.findByText(CLOSED)).toBeTruthy();
+  expect(screen.queryByRole('heading', { name: HEADING })).toBeNull();
+  expect(screen.queryByRole('heading', { name: 'Upload daily totals' })).toBeNull();
+  expect(gets(api)).toBe(2);
+});
+
+test('Upload daily totals: 404 on the send says the location was deleted meanwhile, and the upload starts over', async () => {
+  const api = consoleApi();
+  let detail = inSetup([hanover()]);
+  serve(api, () => detail);
+  api.routes[`POST ${SETUP}/l1/sales/uploads`] = () => {
+    detail = inSetup([]);
+    return refusal(404, 'not_found');
+  };
+  renderAt('/admin/orgs/o1', api);
+  await toMatch(FILE);
+  await click('Check the totals');
+  await click('Send 3 days');
+  expect(await screen.findByText('Hanover was deleted meanwhile.')).toBeTruthy();
+  expect(screen.getByText(`Add a location to ${NAME} first, then upload its daily totals.`)).toBeTruthy();
+  expect(screen.queryByRole('heading', { name: 'Check the days' })).toBeNull();
+  expect(gets(api)).toBe(2);
+});
+
+test('a write whose read after it finds someone joined says so, in place of its own result', async () => {
+  const api = consoleApi();
+  let detail = inSetup([hanover()]);
+  serve(api, () => detail);
+  api.routes[`POST ${SETUP}/l1/sales/uploads`] = () => {
+    // The upload went through, and the invited admin joined before the page read again.
+    detail = orgDetail({ org: { fromRequestId: null, inSetup: false }, locations: [hanover({ dayCount: 3, firstDate: '2025-03-04', lastDate: '2025-03-07' })], recent: [] });
+    return uploaded();
+  };
+  renderAt('/admin/orgs/o1', api);
+  await toMatch(FILE);
+  await click('Check the totals');
+  await click('Send 3 days');
+  expect(await screen.findByText(CLOSED)).toBeTruthy();
+  expect(screen.queryByRole('heading', { name: HEADING })).toBeNull();
+  expect(screen.queryByText(/^Saved 3 days/)).toBeNull();
+});
+
+test('setup closed by a suspension comes back once the organization is reactivated on the same page', async () => {
+  const api = consoleApi();
+  let detail = inSetup([hanover()]);
+  serve(api, () => detail);
+  api.routes[`DELETE ${SETUP}/l1`] = () => {
+    detail = orgDetail({ org: { fromRequestId: null, status: 'suspended', inSetup: false }, members: inSetup([]).members, locations: [hanover()], recent: [] });
+    return refusal(409, 'org_not_in_setup');
+  };
+  api.routes[`PATCH ${PATH}`] = (body) => {
+    expect(body).toEqual({ status: 'active' });
+    detail = inSetup([hanover()]);
+    return { org: detail.org };
+  };
+  renderAt('/admin/orgs/o1', api);
+  fireEvent.click(await screen.findByRole('button', { name: 'Delete Hanover' }));
+  const dialog = screen.getByRole('dialog', { name: 'Delete Hanover?' });
+  fireEvent.change(within(dialog).getByRole('textbox', { name: 'Type Hanover to confirm.' }), { target: { value: 'Hanover' } });
+  await click('Delete location', dialog);
+  expect(await screen.findByText(`${NAME} was suspended, so setup is closed.`)).toBeTruthy();
+  expect(screen.queryByRole('heading', { name: HEADING })).toBeNull();
+  await click('Reactivate');
+  expect(await screen.findByRole('heading', { name: HEADING })).toBeTruthy();
+  expect(screen.getByText('Saved.')).toBeTruthy();
+  expect(gets(api)).toBe(3);
+});
