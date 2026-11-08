@@ -277,6 +277,16 @@ export async function deletePersonRecords(
   const { userId } = person;
   if (userId === null) return { requests: 0, seats: invites, conversations: 0, liveTurns: 0 };
   const requests = (await accessRequestModel(connection).deleteMany({ userId })).deletedCount;
+  // D23: these removed seats can be all that says anyone joined an organization with no `firstJoinedAt` (one from
+  // before the field, or one whose join stopped before marking it). Each such organization is marked first, with the
+  // person's earliest join there, so deleting the seats never reopens staff setup, even if the delete never runs.
+  const joined = await Member.aggregate<{ _id: Types.ObjectId; first: Date }>([
+    { $match: { userId, status: 'removed', joinedAt: { $ne: null } } },
+    { $group: { _id: '$orgId', first: { $min: '$joinedAt' } } },
+  ]);
+  for (const row of joined) {
+    await orgModel(connection).updateOne({ _id: row._id, firstJoinedAt: trusted({ $exists: false }) }, { $set: { firstJoinedAt: row.first } });
+  }
   const removed = (await Member.deleteMany({ userId, status: 'removed' })).deletedCount;
   const conversations = (await chatConversationModel(connection).deleteMany({ userId })).deletedCount;
   const liveTurns = (await chatLiveTurnModel(connection).deleteMany({ userId })).deletedCount;

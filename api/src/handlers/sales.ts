@@ -1,18 +1,19 @@
 // Sales history per location (spec 10.4, 11, 14.1, P12, P13). The browser parses the file and sends only
 // { date, guests, netSalesCents } per day. The body is never logged, and no figure goes into a log line or an
-// audit event: only ids, counts and dates.
+// audit event: only ids, counts and dates. Staff setup (D23, staff-setup.ts) uploads and deletes through the exported
+// functions.
 import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 
 import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
-import type { MemberPrincipal, Principal } from '../access/policy.ts';
-import { calibrationOf } from '../calibration.ts';
+import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
+import { calibrationOf, type Calibration } from '../calibration.ts';
 import { daysBetween, EARLIEST_DATE, isoDate, utcDay } from '../dates.ts';
 import { removeStoredFiles } from '../files/remove.ts';
-import { currentEmail, DELETED_PERSON } from '../people.ts';
-import type { Coverage } from '../stores/sales-days.ts';
+import { currentEmail, DELETED_PERSON, TOWNWISE_STAFF } from '../people.ts';
+import type { Coverage, SalesDay } from '../stores/sales-days.ts';
 import type { UploadRecord } from '../stores/uploads.ts';
 import { loadLocation, memberOf } from './locations.ts';
 import { actorOf, orgAdmin } from './team.ts';
@@ -80,6 +81,11 @@ function uploadSchema(latest: string) {
 const rangeQuery = z.object({ from: isoDate, to: isoDate })
   .refine((range) => range.from <= range.to && daysBetween(range.from, range.to) < MAX_RANGE_DAYS);
 
+/** Whom an upload names (spec 10.1): “Townwise staff” for staff setup's (D23), else the uploader's current email. */
+function uploaderOf(ctx: TownwiseContext, upload: UploadRecord): Promise<string> {
+  return upload.byStaff ? Promise.resolve(TOWNWISE_STAFF) : currentEmail(ctx, upload.uploadedBy);
+}
+
 function uploadView(upload: UploadRecord, uploadedByEmail: string): UploadView {
   return {
     id: upload.id,
@@ -110,7 +116,7 @@ export async function getSales(ctx: TownwiseContext, req: Request, res: Response
     coverage,
     calibration: calibrationOf(coverage),
     months,
-    uploads: await Promise.all(uploads.map(async (upload) => uploadView(upload, await currentEmail(ctx, upload.uploadedBy)))),
+    uploads: await Promise.all(uploads.map(async (upload) => uploadView(upload, await uploaderOf(ctx, upload)))),
   });
 }
 
@@ -163,7 +169,7 @@ export async function getSalesHistory(ctx: TownwiseContext, req: Request, res: R
   ]);
   const uploads = await ctx.stores.uploads.byIds(scope, location.id, [...new Set(days.map((d) => d.uploadId))]);
   const [emails, sources] = await Promise.all([
-    Promise.all([...new Set(uploads.map((upload) => upload.uploadedBy))]
+    Promise.all([...new Set(uploads.flatMap((upload) => (upload.byStaff ? [] : [upload.uploadedBy])))]
       .map(async (userId) => [userId, await currentEmail(ctx, userId)] as const)).then((pairs) => new Map(pairs)),
     sourcesForUploads(ctx, member, location.id, uploads.map((upload) => upload.id)),
   ]);
@@ -179,7 +185,7 @@ export async function getSalesHistory(ctx: TownwiseContext, req: Request, res: R
     uploads: uploads.map((upload) => ({
       id: upload.id,
       uploadedAt: upload.uploadedAt.toISOString(),
-      uploadedByEmail: emails.get(upload.uploadedBy) ?? DELETED_PERSON,
+      uploadedByEmail: upload.byStaff ? TOWNWISE_STAFF : emails.get(upload.uploadedBy) ?? DELETED_PERSON,
       status: upload.status,
       firstDate: upload.firstDate,
       lastDate: upload.lastDate,
@@ -187,6 +193,45 @@ export async function getSalesHistory(ctx: TownwiseContext, req: Request, res: R
     })),
   };
   res.status(200).json(history);
+}
+
+/** An upload body checked by the rules of spec 11.3, with its first and last dates. */
+export interface CheckedUpload { days: SalesDay[]; firstDate: string; lastDate: string }
+
+/** The upload route's body check, shared with staff setup (D23). */
+export function checkedUpload(raw: unknown, now: Date): CheckedUpload {
+  const { days } = parseInput(uploadSchema(utcDay(now, 1)), raw);
+  const dates = days.map((day) => day.date);
+  return { days, firstDate: dates.reduce((a, b) => (b < a ? b : a)), lastDate: dates.reduce((a, b) => (b > a ? b : a)) };
+}
+
+/**
+ * Spec 11.4 steps 1 to 3, shared with staff setup (D23): the record as `applying`, every day, then its counts, and the
+ * `townwise.upload_applied` line. `replace` sets the days it covers, nulls included; otherwise only new days are
+ * written and the rest are `kept`. `id` is the id a staff event already names; `byStaff` marks staff setup's.
+ */
+export async function applyUpload(ctx: TownwiseContext, scope: OrgScope, locationId: string, upload: CheckedUpload & {
+  id?: string; replace: boolean; uploadedBy: string; byStaff?: boolean; now: Date;
+}): Promise<UploadRecord> {
+  const { days, firstDate, lastDate, replace, now } = upload;
+  const started = await ctx.stores.uploads.start(scope, locationId, {
+    ...(upload.id === undefined ? {} : { id: upload.id }), uploadedBy: upload.uploadedBy, uploadedAt: now, dayCount: days.length,
+    firstDate, lastDate, hasGuests: days.some((day) => day.guests !== null), hasNetSales: days.some((day) => day.netSalesCents !== null),
+    ...(upload.byStaff === true ? { byStaff: true } : {}),
+  });
+  const { inserted, matched } = await ctx.stores.salesDays.apply(scope, locationId, { uploadId: started.id, days, replace, now });
+  const counts = { inserted, replaced: replace ? matched : 0, kept: replace ? 0 : matched };
+  await ctx.stores.uploads.finish(scope, started.id, counts);
+  ctx.logger.info({ orgId: scope.orgId, locationId, uploadId: started.id, dayCount: days.length }, 'townwise.upload_applied');
+  return { ...started, ...counts, status: 'applied' };
+}
+
+/** The upload route's answer, shared with staff setup (D23): the upload, and the location's coverage after it. */
+export async function uploadAnswer(
+  ctx: TownwiseContext, scope: OrgScope, locationId: string, upload: UploadRecord, uploadedByEmail: string,
+): Promise<{ upload: UploadView; coverage: Coverage; calibration: Calibration }> {
+  const coverage = await ctx.stores.salesDays.coverage(scope, locationId);
+  return { upload: uploadView(upload, uploadedByEmail), coverage, calibration: calibrationOf(coverage) };
 }
 
 /**
@@ -197,63 +242,71 @@ export async function uploadSales(ctx: TownwiseContext, req: Request, res: Respo
   const member = memberOf(principal);
   const { scope } = member;
   const now = ctx.now();
-  const { days } = parseInput(uploadSchema(utcDay(now, 1)), req.body);
+  const checked = checkedUpload(req.body, now);
   const location = await loadLocation(ctx, scope, req.params.locationId);
-  const replace = member.role === 'org_admin';
-  const dates = days.map((day) => day.date);
-  const firstDate = dates.reduce((a, b) => (b < a ? b : a));
-  const lastDate = dates.reduce((a, b) => (b > a ? b : a));
-
-  const started = await ctx.stores.uploads.start(scope, location.id, {
-    uploadedBy: member.userId, uploadedAt: now, dayCount: days.length, firstDate, lastDate,
-    hasGuests: days.some((day) => day.guests !== null), hasNetSales: days.some((day) => day.netSalesCents !== null),
+  const applied = await applyUpload(ctx, scope, location.id, {
+    ...checked, replace: member.role === 'org_admin', uploadedBy: member.userId, now,
   });
-  const { inserted, matched } = await ctx.stores.salesDays.apply(scope, location.id, { uploadId: started.id, days, replace, now });
-  const counts = { inserted, replaced: replace ? matched : 0, kept: replace ? 0 : matched };
-  await ctx.stores.uploads.finish(scope, started.id, counts);
   await recordAfter(ctx, {
     ...actorOf(member), at: now, orgId: scope.orgId, action: 'sales.uploaded',
-    target: { type: 'upload', id: started.id },
-    details: { locationId: location.id, dayCount: days.length, inserted, replaced: counts.replaced, firstDate, lastDate },
+    target: { type: 'upload', id: applied.id },
+    details: {
+      locationId: location.id, dayCount: applied.dayCount, inserted: applied.inserted, replaced: applied.replaced,
+      firstDate: applied.firstDate, lastDate: applied.lastDate,
+    },
   });
-  ctx.logger.info({ orgId: scope.orgId, locationId: location.id, uploadId: started.id, dayCount: days.length }, 'townwise.upload_applied');
+  res.status(201).json(await uploadAnswer(ctx, scope, location.id, applied, member.email));
+}
 
-  const coverage = await ctx.stores.salesDays.coverage(scope, location.id);
-  res.status(201).json({
-    upload: uploadView({ ...started, ...counts, status: 'applied' }, member.email),
-    coverage,
-    calibration: calibrationOf(coverage),
-  });
+export function filesUnavailable(): AppError {
+  return new AppError(503, 'files_unavailable', 'Stored files are off');
 }
 
 /**
- * DELETE /api/org/locations/:locationId/sales: every day and upload record of the location, its stored files, (U13B) its
- * forecasts and its answers to TownwiseAI's questions. Notes stay.
+ * DELETE's check, shared with staff setup (D23): the location's stored files go with its sales data (spec 11A), but
+ * not while Townwise is reading one of them.
  */
+export async function assertNotReading(ctx: TownwiseContext, scope: OrgScope, locationId: string): Promise<void> {
+  if ((await ctx.stores.imports.active(scope, locationId))?.status === 'reading') {
+    throw new AppError(409, 'import_running', 'Townwise is reading this location’s files; try again when it is done');
+  }
+}
+
+/**
+ * DELETE's effect, shared with staff setup (D23): every day and upload record of the location, its stored files, (U13B)
+ * its forecasts and its answers to TownwiseAI's questions. Notes stay. `files_unavailable`, with nothing deleted, when
+ * the location has stored files while they are off.
+ */
+export async function removeSalesData(
+  ctx: TownwiseContext, scope: OrgScope, locationId: string,
+): Promise<{ deletedDays: number; deletedUploads: number; deletedFiles: number } | 'files_unavailable'> {
+  const removed = await removeStoredFiles(ctx.stores, ctx.files, scope, locationId);
+  if (removed === 'files_unavailable') return removed;
+  const deletedDays = await ctx.stores.salesDays.removeForLocation(scope, locationId);
+  const deletedUploads = await ctx.stores.uploads.removeForLocation(scope, locationId);
+  // U13B: forecasts are made from the sales data, so they go with it.
+  await ctx.stores.forecasts.removeForLocation(scope, locationId);
+  // Answers to TownwiseAI's questions were about these days, so they go too, after the days: with no days left no
+  // question is asked, and the same days uploaded again are asked about again. Closure notes they saved stay.
+  await ctx.stores.agentAnswers.removeForLocation(scope, locationId);
+  if (removed.deletedFiles > 0) {
+    ctx.logger.info({ orgId: scope.orgId, locationId, ...removed }, 'townwise.location_files_deleted');
+  }
+  return { deletedDays, deletedUploads, deletedFiles: removed.deletedFiles };
+}
+
+/** DELETE /api/org/locations/:locationId/sales (removeSalesData). */
 export async function deleteSales(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const admin = orgAdmin(principal);
   const { scope } = admin;
   const location = await loadLocation(ctx, scope, req.params.locationId);
-  // The location's stored files go with its sales data (spec 11A), but not while Townwise is reading one of them.
-  if ((await ctx.stores.imports.active(scope, location.id))?.status === 'reading') {
-    throw new AppError(409, 'import_running', 'Townwise is reading this location’s files; try again when it is done');
-  }
-  const removed = await removeStoredFiles(ctx.stores, ctx.files, scope, location.id);
-  if (removed === 'files_unavailable') throw new AppError(503, 'files_unavailable', 'Stored files are off');
-  const deletedDays = await ctx.stores.salesDays.removeForLocation(scope, location.id);
-  const deletedUploads = await ctx.stores.uploads.removeForLocation(scope, location.id);
-  // U13B: forecasts are made from the sales data, so they go with it.
-  await ctx.stores.forecasts.removeForLocation(scope, location.id);
-  // Answers to TownwiseAI's questions were about these days, so they go too, after the days: with no days left no
-  // question is asked, and the same days uploaded again are asked about again. Closure notes they saved stay.
-  await ctx.stores.agentAnswers.removeForLocation(scope, location.id);
+  await assertNotReading(ctx, scope, location.id);
+  const removed = await removeSalesData(ctx, scope, location.id);
+  if (removed === 'files_unavailable') throw filesUnavailable();
   await recordAfter(ctx, {
     ...actorOf(admin), at: ctx.now(), orgId: scope.orgId, action: 'sales.deleted',
     target: { type: 'location', id: location.id },
-    details: { locationId: location.id, deletedDays, deletedFiles: removed.deletedFiles },
+    details: { locationId: location.id, deletedDays: removed.deletedDays, deletedFiles: removed.deletedFiles },
   });
-  if (removed.deletedFiles > 0) {
-    ctx.logger.info({ orgId: scope.orgId, locationId: location.id, ...removed }, 'townwise.location_files_deleted');
-  }
-  res.status(200).json({ deletedDays, deletedUploads, deletedFiles: removed.deletedFiles });
+  res.status(200).json(removed);
 }
