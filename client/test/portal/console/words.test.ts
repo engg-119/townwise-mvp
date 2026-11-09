@@ -27,7 +27,7 @@ test('the action filter covers every action the API records (api/src/stores/audi
     'note.created', 'note.updated', 'note.deleted', 'chat.turn_completed', 'chat.conversation_deleted',
     'agent.question_answered',
     'forecast.imported', 'forecast.published', 'forecast.withdrawn', 'forecast.deleted',
-    'view_as.started', 'view_as.ended', 'people.signed_out_everywhere', 'person.deleted', 'staff_action.not_applied',
+    'view_as.started', 'view_as.ended', 'open_as_admin.started', 'open_as_admin.ended', 'people.signed_out_everywhere', 'person.deleted', 'staff_action.not_applied',
   ]);
 });
 
@@ -47,6 +47,15 @@ test.each<[string, Record<string, string | number | boolean | null>, string]>([
   ['forecast.published', { locationId: 'l1', modelVersion: 'v9', from: '2026-05-01', to: '2026-05-14', dayCount: 14 }, 'Model v9, May 1, 2026 to May 14, 2026, 14 days'],
 ])('details for %s', (action, details, expected) => {
   expect(auditDetails({ action, details })).toBe(expected);
+});
+
+test('open as admin has its audit labels and end reasons', () => {
+  expect(AUDIT_ACTIONS).toContainEqual({ value: 'open_as_admin.started', label: 'Opened as admin' });
+  expect(AUDIT_ACTIONS).toContainEqual({ value: 'open_as_admin.ended', label: 'Open as admin ended' });
+  expect(auditDetails({ action: 'open_as_admin.ended', details: { endReason: 'expired' } })).toBe('The staff sign-in ended');
+  expect(auditDetails({ action: 'open_as_admin.ended', details: { endReason: 'ended' } })).toBe('Ended by staff');
+  expect(auditDetails({ action: 'open_as_admin.ended', details: { endReason: 'replaced' } })).toBe('Cleared at the next start');
+  expect(auditDetails({ action: 'open_as_admin.started', details: {} })).toBe('');
 });
 
 test('view-as details carry the staff member’s reason and the end time', () => {

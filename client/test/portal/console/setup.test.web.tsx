@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 
 import type { OrgDetail, OrgLocation } from '../../../src/portal/console/schemas';
-import { refusal } from '../../helpers/portal';
+import { ACCESS, refusal, staffMe } from '../../helpers/portal';
 import { installPlaces } from '../onboarding/places-fakes';
 import { consoleApi, emailOf, member, orgDetail, renderAt, type ConsoleApi } from './helpers';
 
@@ -617,4 +617,74 @@ test('setup closed by a suspension comes back once the organization is reactivat
   expect(await screen.findByRole('heading', { name: HEADING })).toBeTruthy();
   expect(screen.getByText('Saved.')).toBeTruthy();
   expect(gets(api)).toBe(3);
+});
+
+const OPEN = `${PATH}/open-as-admin`;
+
+/** The writes the Open as admin button sends. */
+function openWrites(api: ConsoleApi): { method: string; path: string; body: unknown }[] {
+  return api.calls.filter((call) => call.method !== 'GET' && call.path === OPEN);
+}
+
+test('Open as admin shows only in setup, posts the start route with no body, and opens the dashboard', async () => {
+  const api = consoleApi();
+  serve(api, () => inSetup([hanover()]));
+  api.routes[`POST ${OPEN}`] = () => {
+    // The answer is the organization's admin access with the staff member as the user (Task 5 adds the flag).
+    api.me = staffMe(ACCESS.admin);
+    return api.me;
+  };
+  renderAt('/admin/orgs/o1', api);
+  await screen.findByRole('heading', { name: HEADING });
+  await click('Open as admin');
+  expect(openWrites(api)).toEqual([{ method: 'POST', path: OPEN, body: undefined }]);
+  await waitFor(() => { expect(window.location.pathname).toBe('/dashboard'); });
+});
+
+test('Open as admin answering 409 org_not_in_setup closes setup and says someone joined', async () => {
+  const api = consoleApi();
+  let detail = inSetup([hanover()]);
+  serve(api, () => detail);
+  api.routes[`POST ${OPEN}`] = () => {
+    detail = orgDetail({ org: { fromRequestId: null, inSetup: false }, locations: [hanover()], recent: [] });
+    return refusal(409, 'org_not_in_setup');
+  };
+  renderAt('/admin/orgs/o1', api);
+  await screen.findByRole('heading', { name: HEADING });
+  await click('Open as admin');
+  expect(await screen.findByText(CLOSED)).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Open as admin' })).toBeNull();
+  expect(screen.queryByRole('heading', { name: HEADING })).toBeNull();
+  expect(window.location.pathname).toBe('/admin/orgs/o1');
+});
+
+test('Open as admin answering 404 shows the organization as gone', async () => {
+  const api = consoleApi();
+  serve(api, () => inSetup([]));
+  api.routes[`POST ${OPEN}`] = () => refusal(404, 'not_found');
+  renderAt('/admin/orgs/o1', api);
+  await screen.findByRole('heading', { name: HEADING });
+  await click('Open as admin');
+  expect(await screen.findByText('This organization doesn’t exist.')).toBeTruthy();
+});
+
+test('Open as admin answering anything else shows the error under the header facts and keeps the page', async () => {
+  const api = consoleApi();
+  serve(api, () => inSetup([]));
+  api.routes[`POST ${OPEN}`] = () => refusal(503, 'unavailable');
+  renderAt('/admin/orgs/o1', api);
+  await screen.findByRole('heading', { name: HEADING });
+  await click('Open as admin');
+  expect(await screen.findByRole('alert')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Open as admin' })).toBeTruthy();
+  expect(screen.getByRole('heading', { name: HEADING })).toBeTruthy();
+});
+
+test('the Locations line names Open as admin while in setup', async () => {
+  const api = consoleApi();
+  serve(api, () => inSetup([]));
+  renderAt('/admin/orgs/o1', api);
+  await screen.findByRole('heading', { name: HEADING });
+  expect(screen.getByText('Sales figures and notes are visible through Open as admin until someone joins, then only through View as.')).toBeTruthy();
+  expect(screen.queryByText('Sales figures and notes are visible only through View as.')).toBeNull();
 });
