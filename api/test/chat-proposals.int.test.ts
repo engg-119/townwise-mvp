@@ -12,8 +12,9 @@ import type { ConversationView } from '../src/handlers/chat.ts';
 import type { ProposalResult } from '../src/handlers/chat-proposals.ts';
 import { createChatProposalStore } from '../src/stores/chat-proposals.ts';
 import { addGrant, addLocation, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
+import { setupOrg } from './helpers/setup-org.ts';
 import {
-  call, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
+  call, removeStaffFactor, signIn, signInStaff, startTownwiseServer, STAFF_EMAIL, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
 
 let server: TownwiseTestServer;
@@ -334,5 +335,40 @@ describe('deletion and logs', () => {
     expect(lines).toEqual([expect.objectContaining({ orgId, locationId, conversationId: id, status: 'saved', edited: true })]);
     const everything = server.logs.join('\n') + JSON.stringify(await auditEvents(server));
     for (const sentinel of ['Sentinel-proposal-detail', 'Sentinel-edited-detail']) expect(everything).not.toContain(sentinel);
+  });
+});
+
+/** Staff open a new organization nobody has joined as its admin and add a location. */
+async function openAsAdminOrg(): Promise<{ staff: TestSession; orgId: string; locationId: string }> {
+  const staff = await signInStaff(server);
+  const setup = await setupOrg(server, staff);
+  const started = await call(server, `/api/admin/orgs/${setup.orgId}/open-as-admin`, { method: 'POST', session: staff });
+  expect(started.status).toBe(201);
+  const created = await call(server, '/api/org/locations', { session: staff, json: { name: 'Main Street', town: { townId: 'hanover-nh' } } });
+  expect(created.status).toBe(201);
+  return { staff, orgId: setup.orgId, locationId: (await created.json() as { location: { id: string } }).location.id };
+}
+
+describe('open as admin', () => {
+  it('open as admin: saving a proposal makes a note by Townwise staff', async () => {
+    const { staff, orgId: setupId, locationId: staffLocation } = await openAsAdminOrg();
+    try {
+      const id = await conversationWithProposal({ location: staffLocation, userId: staff.userId });
+      // The conversation helper writes into this file's own organization; move it to the one staff opened.
+      await server.connection.collection('tw_chat_conversations').updateOne(
+        { _id: new Types.ObjectId(id) }, { $set: { orgId: new Types.ObjectId(setupId) } },
+      );
+      const { status, body } = await act(id, { action: 'save' }, { session: staff, location: staffLocation });
+      expect(status).toBe(200);
+      const noteId = body.proposal.noteId ?? '';
+      expect(body.note?.createdByEmail).toBe('Townwise staff');
+      const notes = await notesOf(staffLocation);
+      expect(notes).toEqual([expect.objectContaining({ byStaff: true, createdBy: staff.userId })]);
+      const events = await createdEvents(noteId);
+      expect(events).toEqual([expect.objectContaining({ actorRole: 'superadmin', actorEmail: STAFF_EMAIL })]);
+    } finally {
+      await removeStaffFactor(server);
+      await server.connection.collection('tw_view_as_grants').deleteMany({});
+    }
   });
 });

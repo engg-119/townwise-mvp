@@ -10,8 +10,9 @@ import { CHUNK_BYTES, DAILY_UPLOAD_BYTES, MAX_CHUNK_STREAMS, MAX_FILE_BYTES, RAW
 import { createMemoryFileBlobs, type MemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import { addGrant, addLocation, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { filesPath, openPut, putChunk, seedReadFile, uploadFile, type Created } from './helpers/files.ts';
+import { setupOrg } from './helpers/setup-org.ts';
 import {
-  call, logLines, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
+  call, logLines, removeStaffFactor, signIn, signInStaff, startTownwiseServer, STAFF_EMAIL, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
 
 const SENTINEL_NAME = 'Zqxj Party Of Twelve.csv';
@@ -503,5 +504,47 @@ describe('isolation', () => {
       expect(chunk.status).toBe(404);
     }
     expect(blobs.raw.has(`${team.orgId}/${locationId}/${fileId}`)).toBe(true);
+  });
+});
+
+/** Staff open a new organization nobody has joined as its admin and add a location; resolves what the tests below need. */
+async function openAsAdminOrg(): Promise<{ staff: TestSession; orgId: string; locationId: string; grantId: string }> {
+  const staff = await signInStaff(server);
+  const setup = await setupOrg(server, staff);
+  const started = await call(server, `/api/admin/orgs/${setup.orgId}/open-as-admin`, { method: 'POST', session: staff });
+  expect(started.status).toBe(201);
+  const grantId = (await started.json() as { openAsAdmin: { id: string } }).openAsAdmin.id;
+  const created = await call(server, '/api/org/locations', { session: staff, json: { name: 'Main Street', town: { townId: 'hanover-nh' } } });
+  expect(created.status).toBe(201);
+  return { staff, orgId: setup.orgId, locationId: (await created.json() as { location: { id: string } }).location.id, grantId };
+}
+
+describe('open as admin', () => {
+  it('open as admin: a file staff upload is stored byStaff, listed with uploader Townwise staff, and file.uploaded is recorded as superadmin', async () => {
+    const { staff, orgId, locationId, grantId } = await openAsAdminOrg();
+    try {
+      const bytes = csv(3);
+      const { file } = await created(locationId, staff, bytes.length);
+      expect((await putChunk(server, filesPath(locationId, `/${file.id}/chunks/0`), staff, bytes)).status).toBe(200);
+      const done = await call(server, filesPath(locationId, `/${file.id}/complete`), { session: staff, json: {} });
+      expect(done.status).toBe(200);
+      const doneText = await done.text();
+      expect((JSON.parse(doneText) as { file: FileView }).file.uploadedByEmail).toBe('Townwise staff');
+      expect(await fileDoc(file.id)).toMatchObject({ byStaff: true, uploadedBy: staff.userId, uploaderRole: 'org_admin' });
+
+      const list = await call(server, filesPath(locationId), { session: staff });
+      const listText = await list.text();
+      expect((JSON.parse(listText) as { files: FileView[] }).files.map((f) => [f.id, f.uploadedByEmail])).toEqual([[file.id, 'Townwise staff']]);
+      const one = await call(server, filesPath(locationId, `/${file.id}`), { session: staff });
+      const oneText = await one.text();
+      expect((JSON.parse(oneText) as { file: FileView }).file.uploadedByEmail).toBe('Townwise staff');
+      for (const text of [doneText, listText, oneText]) expect(text).not.toContain(STAFF_EMAIL);
+
+      const event = (await auditEvents(server)).find((e) => e.action === 'file.uploaded' && String(e.orgId) === orgId);
+      expect(event).toMatchObject({ actorRole: 'superadmin', actorEmail: STAFF_EMAIL, viewAsGrantId: grantId });
+    } finally {
+      await removeStaffFactor(server);
+      await server.connection.collection('tw_view_as_grants').deleteMany({});
+    }
   });
 });

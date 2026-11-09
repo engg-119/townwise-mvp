@@ -267,7 +267,9 @@ export async function createLocation(ctx: TownwiseContext, req: Request, res: Re
   const { scope } = admin;
   const input = await checkedCreate(ctx, scope, 'org.locations.create', admin.userId, req.body);
   const now = ctx.now();
-  const location = await ctx.stores.locations.create(scope, { ...input, createdAt: now, createdBy: admin.userId });
+  const location = await ctx.stores.locations.create(scope, {
+    ...input, createdAt: now, createdBy: admin.userId, ...(admin.openAsAdmin !== null ? { byStaff: true } : {}),
+  });
   if (location === null) throw nameTaken();
   await recordAfter(ctx, {
     ...actorOf(admin), at: now, orgId: scope.orgId, action: 'location.created',

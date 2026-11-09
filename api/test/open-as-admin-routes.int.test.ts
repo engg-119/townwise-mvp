@@ -340,3 +340,76 @@ describe('the record', () => {
     expect(text).not.toContain(org.name);
   });
 });
+
+describe('attribution', () => {
+  const DAY = { date: '2026-05-01', guests: 20, netSalesCents: 150_000 };
+  const NOTE = {
+    kind: 'closure', startDate: '2026-05-04', endDate: '2026-05-04', weekdays: null, effect: 'closed', expectedGuests: null, detail: null,
+  };
+
+  /** Start, then make one of each kind of change as the staff member; resolves the location's id. */
+  async function changeAsStaff(): Promise<string> {
+    expect((await start(org.orgId)).status).toBe(201);
+    const renamed = await call(server, '/api/org', { method: 'PATCH', session: staff, json: { name: `${org.name} Two` } });
+    expect(renamed.status).toBe(200);
+    const created = await call(server, '/api/org/locations', {
+      session: staff, json: { name: 'Main Street', town: { townId: 'hanover-nh' } },
+    });
+    expect(created.status).toBe(201);
+    const locationId = (await created.json() as { location: { id: string } }).location.id;
+    expect((await call(server, `/api/org/locations/${locationId}/notes`, { session: staff, json: NOTE })).status).toBe(201);
+    expect((await call(server, `/api/org/locations/${locationId}/sales/uploads`, { session: staff, json: { days: [DAY] } })).status).toBe(201);
+    expect((await call(server, `/api/org/locations/${locationId}/sales`, { method: 'DELETE', session: staff })).status).toBe(200);
+    // Uploaded again, so the admin who joins later finds an upload to read.
+    expect((await call(server, `/api/org/locations/${locationId}/sales/uploads`, { session: staff, json: { days: [DAY] } })).status).toBe(201);
+    return locationId;
+  }
+
+  it('every change made inside is recorded as Townwise staff: actor role superadmin, the staff email and the grant id', async () => {
+    await changeAsStaff();
+    const grantId = String((await grants().findOne({ activeSessionId: staff.sessionId }))?._id);
+    const changes = (await eventsIn(org.orgId)).filter((event) => !String(event.action).startsWith('open_as_admin.'));
+    expect(changes.map((event) => event.action).sort()).toEqual([
+      'location.created', 'note.created', 'org.renamed', 'sales.deleted', 'sales.uploaded', 'sales.uploaded',
+    ]);
+    for (const event of changes) {
+      expect(event).toMatchObject({ actorRole: 'superadmin', actorEmail: STAFF_EMAIL, actorUserId: staff.userId, viewAsGrantId: grantId });
+    }
+  });
+
+  it('what staff wrote is stored with byStaff', async () => {
+    const locationId = await changeAsStaff();
+    const orgOid = new Types.ObjectId(org.orgId);
+    expect(await server.connection.collection('tw_locations').findOne({ _id: new Types.ObjectId(locationId) })).toMatchObject({ byStaff: true });
+    expect(await server.connection.collection('tw_notes').find({ orgId: orgOid }).toArray()).toEqual([expect.objectContaining({ byStaff: true })]);
+    expect(await server.connection.collection('tw_uploads').find({ orgId: orgOid }).toArray()).toEqual([expect.objectContaining({ byStaff: true })]);
+  });
+
+  it('the admin who joins sees each change in Townwise staff activity, and every author reads Townwise staff', async () => {
+    const locationId = await changeAsStaff();
+    expect((await end()).status).toBe(200);
+    const admin = await joinAs(server, org.adminEmail);
+
+    const activity = await call(server, '/api/org/staff-activity', { session: admin });
+    expect(activity.status).toBe(200);
+    const summaries = (await activity.json() as { events: { summary: string }[] }).events.map((event) => event.summary);
+    expect(summaries).toEqual(expect.arrayContaining([
+      'Opened the organization as its admin, to set it up', 'Ended setting up as admin',
+      'Added the location Main Street', 'Added a note (closure), 2026-05-04 to 2026-05-04',
+    ]));
+
+    const notes = await call(server, `/api/org/locations/${locationId}/notes`, { session: admin });
+    const notesText = await notes.text();
+    const noteList = (JSON.parse(notesText) as { notes: { createdByEmail: string; canEdit: boolean }[] }).notes;
+    expect(noteList).toHaveLength(1);
+    expect(noteList.map((note) => [note.createdByEmail, note.canEdit])).toEqual([['Townwise staff', true]]);
+
+    const sales = await call(server, `/api/org/locations/${locationId}/sales`, { session: admin });
+    const salesText = await sales.text();
+    const uploads = (JSON.parse(salesText) as { uploads: { uploadedByEmail: string }[] }).uploads;
+    expect(uploads.length).toBeGreaterThan(0);
+    expect(uploads.every((upload) => upload.uploadedByEmail === 'Townwise staff')).toBe(true);
+    // The staff activity names the staff member by design (D9); the authors of notes and uploads never do.
+    for (const text of [notesText, salesText]) expect(text).not.toContain(STAFF_EMAIL);
+  });
+});

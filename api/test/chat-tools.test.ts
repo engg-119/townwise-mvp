@@ -154,7 +154,7 @@ describe('get_day', () => {
   function note(fields: Partial<NoteRecord>): NoteRecord {
     return {
       id: '000000000000000000000002', kind: 'private_event', startDate: '2026-11-21', endDate: '2026-11-21', weekdays: null,
-      effect: 'more_guests', expectedGuests: 60, detail: 'Sentinel-day-detail', createdBy: SENTINEL_USER,
+      effect: 'more_guests', expectedGuests: 60, detail: 'Sentinel-day-detail', createdBy: SENTINEL_USER, byStaff: false,
       createdAt: new Date('2026-11-01T00:00:00Z'), updatedAt: new Date('2026-11-01T00:00:00Z'), ...fields,
     };
   }

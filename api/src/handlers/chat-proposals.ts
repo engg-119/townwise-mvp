@@ -13,6 +13,7 @@ import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, Principal } from '../access/policy.ts';
 import { chatMessageViews, type ShownProposal } from '../chat/view.ts';
 import { utcDay } from '../dates.ts';
+import { TOWNWISE_STAFF } from '../people.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { ProposalKey, ProposalRecord } from '../stores/chat-proposals.ts';
 import { notFound, ownerOf } from './chat.ts';
@@ -37,7 +38,7 @@ async function savedNoteView(
 ): Promise<NoteView | null> {
   const note = await ctx.stores.notes.find(caller.scope, location.id, row.noteId);
   // A note the author deleted since is gone; the proposal stays saved, so it is not offered again.
-  return note === null ? null : noteView(note, caller.email, caller);
+  return note === null ? null : noteView(note, note.byStaff ? TOWNWISE_STAFF : caller.email, caller);
 }
 
 function resultOf(row: ProposalRecord, note: NoteView | null): ProposalResult {
@@ -83,7 +84,7 @@ export async function actOnProposal(ctx: TownwiseContext, req: Request, res: Res
     } else {
       const note = await addNote(ctx, caller, location, content, { id: claimed.noteId });
       await proposals.markSaved(scope, key, ctx.now());
-      result = resultOf({ ...claimed, status: 'saved' }, noteView(note, caller.email, caller));
+      result = resultOf({ ...claimed, status: 'saved' }, noteView(note, note.byStaff ? TOWNWISE_STAFF : caller.email, caller));
     }
   }
   ctx.logger.info({

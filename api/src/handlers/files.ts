@@ -25,7 +25,7 @@ import { familyKey } from '../files/parse/families.ts';
 import { deleteOriginals, renamedSheets } from '../files/remove.ts';
 import { kindLabel, kindOfName, sanitizeName, sniff } from '../files/sniff.ts';
 import { ChunkLengthError, createStreamGate, fingerprintOf, receiveChunk } from '../files/upload.ts';
-import { currentEmail } from '../people.ts';
+import { authorEmail, TOWNWISE_STAFF } from '../people.ts';
 import type { FileKind, FileRecord, FileResult, FileStatus } from '../stores/files.ts';
 import type { ImportQuestion, ImportRecord, ImportStatus } from '../stores/imports.ts';
 import { loadLocation, memberOf } from './locations.ts';
@@ -173,14 +173,15 @@ function fileView(member: MemberPrincipal, file: FileRecord, email: string, eta:
   };
 }
 
+/** The uploaders' emails, but for files staff uploaded in open as admin (those read "Townwise staff"). */
 async function emailsOf(ctx: TownwiseContext, files: readonly FileRecord[]): Promise<Map<string, string>> {
-  const ids = [...new Set(files.map((file) => file.uploadedBy))];
-  return new Map(await Promise.all(ids.map(async (id): Promise<[string, string]> => [id, await currentEmail(ctx, id)])));
+  const ids = [...new Set(files.filter((file) => !file.byStaff).map((file) => file.uploadedBy))];
+  return new Map(await Promise.all(ids.map(async (id): Promise<[string, string]> => [id, await authorEmail(ctx, id, false)])));
 }
 
 async function fileViews(ctx: TownwiseContext, member: MemberPrincipal, files: readonly FileRecord[], eta: ImportEta | null): Promise<FileView[]> {
   const emails = await emailsOf(ctx, files);
-  return files.map((file) => fileView(member, file, emails.get(file.uploadedBy) ?? '', eta));
+  return files.map((file) => fileView(member, file, file.byStaff ? TOWNWISE_STAFF : emails.get(file.uploadedBy) ?? '', eta));
 }
 
 function etaOf(ctx: TownwiseContext, record: ImportRecord, files: readonly FileRecord[]): ImportEta {
@@ -264,7 +265,7 @@ export async function createFile(ctx: TownwiseContext, req: Request, res: Respon
   }
   const record = await ctx.stores.imports.joinOrCreate(scope, location.id, { userId: member.userId, now });
   const file = await ctx.stores.files.create(scope, location.id, {
-    importId: record.id, uploadedBy: member.userId, uploaderRole: member.role, uploadedAt: now, name,
+    importId: record.id, uploadedBy: member.userId, uploaderRole: member.role, ...(member.openAsAdmin !== null ? { byStaff: true } : {}), uploadedAt: now, name,
     kind: kindOfName(name), sizeBytes: body.sizeBytes, chunkSize: CHUNK_BYTES, expiresAt: new Date(now.getTime() + UPLOAD_SESSION_MS),
   });
   const chunkCount = file.upload?.chunkCount ?? 0;
@@ -273,7 +274,7 @@ export async function createFile(ctx: TownwiseContext, req: Request, res: Respon
   }, 'townwise.file_upload_started');
   const dailyUsed = await ctx.stores.uploadDays.used(scope, day);
   res.status(201).json({
-    file: fileView(member, file, member.email, null),
+    file: fileView(member, file, file.byStaff ? TOWNWISE_STAFF : member.email, null),
     import: { id: record.id, status: record.status },
     limits: {
       maxFileBytes: MAX_FILE_BYTES,
@@ -398,7 +399,7 @@ export async function completeFile(ctx: TownwiseContext, req: Request, res: Resp
     details: { locationId: location.id, kind: placed.file.kind, sizeBytes: placed.file.sizeBytes },
   });
   ctx.logger.info({ fileId: placed.file.id, kind: placed.file.kind, sizeBytes: placed.file.sizeBytes, durationMs: ctx.now().getTime() - file.uploadedAt.getTime() }, 'townwise.file_stored');
-  res.status(200).json({ file: fileView(member, placed.file, member.email, null), import: { id: placed.import.id, status: placed.import.status } });
+  res.status(200).json({ file: fileView(member, placed.file, placed.file.byStaff ? TOWNWISE_STAFF : member.email, null), import: { id: placed.import.id, status: placed.import.status } });
 }
 
 /**

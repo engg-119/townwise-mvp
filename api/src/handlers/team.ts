@@ -45,6 +45,10 @@ export function orgAdmin(principal: Principal): MemberPrincipal {
 }
 
 export function actorOf(principal: MemberPrincipal): Pick<AuditEventInput, 'actorUserId' | 'actorEmail' | 'actorRole' | 'viewAsGrantId'> {
+  // Open as admin (D25): the change is Townwise staff's, whatever the organization role the principal borrows.
+  if (principal.openAsAdmin !== null) {
+    return { actorUserId: principal.userId, actorEmail: principal.email, actorRole: 'superadmin', viewAsGrantId: principal.openAsAdmin.grantId };
+  }
   return { actorUserId: principal.userId, actorEmail: principal.email, actorRole: principal.role, viewAsGrantId: null };
 }
 
