@@ -52,8 +52,9 @@ export interface TownwiseRoute {
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
   readonly limiter?: 'uploads' | 'requests' | 'view-as' | 'chat' | 'places' | 'files' | 'file_chunks' | 'downloads';
   /**
-   * D25: runs in open as admin, as the grant organization's org admin. In that mode every other non-staff route answers
-   * 403 open_as_admin_refused; never on a staff or staff_self route (boot refuses it).
+   * Runs while staff have the organization open as its admin (D25), as the grant organization's org admin. Without it
+   * the route is refused then (403 `open_as_admin_refused`; staff routes 409 `open_as_admin_active`), so a new route
+   * stays closed in that mode until someone decides. Never on a staff or staff_self route (boot refuses it).
    */
   readonly openAsAdmin?: true;
   readonly handler: (ctx: TownwiseContext, req: Request, res: Response, principal: Principal) => Promise<void>;
@@ -69,171 +70,183 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     id: 'requests.create', method: 'POST', path: '/access-requests', policy: 'signed_in', bodyLimit: '32kb',
     limiter: 'requests', handler: createAccessRequest,
   },
-  { id: 'towns.get', method: 'GET', path: '/towns/:townId', policy: 'signed_in', bodyLimit: 'none', handler: getTownProfile },
+  {
+    id: 'towns.get', method: 'GET', path: '/towns/:townId', policy: 'signed_in', bodyLimit: 'none', openAsAdmin: true,
+    handler: getTownProfile,
+  },
   {
     id: 'places.autocomplete', method: 'POST', path: '/places/autocomplete', policy: 'signed_in', bodyLimit: '2kb',
-    limiter: 'places', handler: placesAutocomplete,
+    limiter: 'places', openAsAdmin: true, handler: placesAutocomplete,
   },
   {
     id: 'places.details', method: 'POST', path: '/places/details', policy: 'signed_in', bodyLimit: '2kb',
-    limiter: 'places', handler: placesDetails,
+    limiter: 'places', openAsAdmin: true, handler: placesDetails,
   },
 
-  { id: 'org.get', method: 'GET', path: '/org', policy: 'member', bodyLimit: 'none', handler: getOwnOrg },
-  { id: 'org.update', method: 'PATCH', path: '/org', policy: 'org_admin', bodyLimit: '32kb', handler: renameOrg },
+  { id: 'org.get', method: 'GET', path: '/org', policy: 'member', bodyLimit: 'none', openAsAdmin: true, handler: getOwnOrg },
+  { id: 'org.update', method: 'PATCH', path: '/org', policy: 'org_admin', bodyLimit: '32kb', openAsAdmin: true, handler: renameOrg },
   {
     id: 'org.staff_activity', method: 'GET', path: '/org/staff-activity', policy: 'org_admin', bodyLimit: 'none',
-    handler: getStaffActivity,
+    openAsAdmin: true, handler: getStaffActivity,
   },
   { id: 'org.leave', method: 'POST', path: '/org/leave', policy: 'member', bodyLimit: '32kb', handler: leaveOrg },
   {
     id: 'org.locations.create', method: 'POST', path: '/org/locations', policy: 'org_admin', bodyLimit: '32kb',
-    handler: createLocation,
+    openAsAdmin: true, handler: createLocation,
   },
   {
     id: 'org.locations.update', method: 'PATCH', path: '/org/locations/:locationId', policy: 'org_admin', bodyLimit: '32kb',
-    handler: updateLocation,
+    openAsAdmin: true, handler: updateLocation,
   },
   {
     id: 'org.locations.remove', method: 'DELETE', path: '/org/locations/:locationId', policy: 'org_admin', bodyLimit: 'none',
-    handler: deleteLocation,
+    openAsAdmin: true, handler: deleteLocation,
   },
   {
     id: 'org.sales.get', method: 'GET', path: '/org/locations/:locationId/sales', policy: 'member', bodyLimit: 'none',
-    handler: getSales,
+    openAsAdmin: true, handler: getSales,
   },
   {
     id: 'org.sales.days', method: 'GET', path: '/org/locations/:locationId/sales/days', policy: 'member', bodyLimit: 'none',
-    handler: getSalesDays,
+    openAsAdmin: true, handler: getSalesDays,
   },
   // Spec 10.10: sales history and the town calendar.
   {
     id: 'org.sales.history', method: 'GET', path: '/org/locations/:locationId/sales/history', policy: 'member',
-    bodyLimit: 'none', handler: getSalesHistory,
+    bodyLimit: 'none', openAsAdmin: true, handler: getSalesHistory,
   },
   {
     id: 'org.calendar.get', method: 'GET', path: '/org/locations/:locationId/calendar', policy: 'member', bodyLimit: 'none',
-    handler: getLocationCalendar,
+    openAsAdmin: true, handler: getLocationCalendar,
   },
   {
     id: 'org.sales.upload', method: 'POST', path: '/org/locations/:locationId/sales/uploads', policy: 'member',
-    bodyLimit: '256kb', limiter: 'uploads', handler: uploadSales,
+    bodyLimit: '256kb', limiter: 'uploads', openAsAdmin: true, handler: uploadSales,
   },
   {
     id: 'org.sales.remove', method: 'DELETE', path: '/org/locations/:locationId/sales', policy: 'org_admin', bodyLimit: 'none',
-    handler: deleteSales,
+    openAsAdmin: true, handler: deleteSales,
   },
   {
     id: 'org.notes.list', method: 'GET', path: '/org/locations/:locationId/notes', policy: 'member', bodyLimit: 'none',
-    handler: listNotes,
+    openAsAdmin: true, handler: listNotes,
   },
   {
     id: 'org.notes.create', method: 'POST', path: '/org/locations/:locationId/notes', policy: 'member', bodyLimit: '32kb',
-    handler: createNote,
+    openAsAdmin: true, handler: createNote,
   },
   {
     id: 'org.notes.update', method: 'PATCH', path: '/org/locations/:locationId/notes/:noteId', policy: 'member',
-    bodyLimit: '32kb', handler: updateNote,
+    bodyLimit: '32kb', openAsAdmin: true, handler: updateNote,
   },
   {
     id: 'org.notes.remove', method: 'DELETE', path: '/org/locations/:locationId/notes/:noteId', policy: 'member',
-    bodyLimit: 'none', handler: deleteNote,
+    bodyLimit: 'none', openAsAdmin: true, handler: deleteNote,
   },
   // Stored files and imports (spec 10.11, 11A). imports/current is declared before imports/:importId.
   {
     id: 'org.files.create', method: 'POST', path: '/org/locations/:locationId/files', policy: 'member', bodyLimit: '2kb',
-    limiter: 'files', handler: createFile,
+    limiter: 'files', openAsAdmin: true, handler: createFile,
   },
   {
     id: 'org.files.chunk', method: 'PUT', path: '/org/locations/:locationId/files/:fileId/chunks/:index', policy: 'member',
-    bodyLimit: 'stream', limiter: 'file_chunks', handler: putChunk,
+    bodyLimit: 'stream', limiter: 'file_chunks', openAsAdmin: true, handler: putChunk,
   },
   {
     id: 'org.files.complete', method: 'POST', path: '/org/locations/:locationId/files/:fileId/complete', policy: 'member',
-    bodyLimit: '2kb', handler: completeFile,
+    bodyLimit: '2kb', openAsAdmin: true, handler: completeFile,
   },
-  { id: 'org.files.list', method: 'GET', path: '/org/locations/:locationId/files', policy: 'member', bodyLimit: 'none', handler: listFiles },
+  {
+    id: 'org.files.list', method: 'GET', path: '/org/locations/:locationId/files', policy: 'member', bodyLimit: 'none', openAsAdmin: true,
+    handler: listFiles,
+  },
   {
     id: 'org.files.get', method: 'GET', path: '/org/locations/:locationId/files/:fileId', policy: 'member', bodyLimit: 'none',
-    handler: getFile,
+    openAsAdmin: true, handler: getFile,
   },
   {
     id: 'org.files.entries', method: 'GET', path: '/org/locations/:locationId/files/:fileId/entries', policy: 'member',
-    bodyLimit: 'none', handler: listEntries,
+    bodyLimit: 'none', openAsAdmin: true, handler: listEntries,
   },
   {
     id: 'org.files.raw', method: 'GET', path: '/org/locations/:locationId/files/:fileId/raw', policy: 'member', bodyLimit: 'none',
-    limiter: 'downloads', handler: downloadRaw,
+    limiter: 'downloads', openAsAdmin: true, handler: downloadRaw,
   },
   {
     id: 'org.files.clean', method: 'GET', path: '/org/locations/:locationId/files/:fileId/clean', policy: 'member',
-    bodyLimit: 'none', limiter: 'downloads', handler: downloadClean,
+    bodyLimit: 'none', limiter: 'downloads', openAsAdmin: true, handler: downloadClean,
   },
   {
     id: 'org.files.remove_raw', method: 'DELETE', path: '/org/locations/:locationId/files/:fileId/raw', policy: 'member',
-    bodyLimit: 'none', handler: deleteRaw,
+    bodyLimit: 'none', openAsAdmin: true, handler: deleteRaw,
   },
   {
     id: 'org.files.remove', method: 'DELETE', path: '/org/locations/:locationId/files/:fileId', policy: 'member',
-    bodyLimit: 'none', handler: deleteFile,
+    bodyLimit: 'none', openAsAdmin: true, handler: deleteFile,
   },
   {
     id: 'org.originals.remove', method: 'DELETE', path: '/org/locations/:locationId/originals', policy: 'org_admin',
-    bodyLimit: 'none', handler: deleteLocationOriginals,
+    bodyLimit: 'none', openAsAdmin: true, handler: deleteLocationOriginals,
   },
   {
     id: 'org.imports.current', method: 'GET', path: '/org/locations/:locationId/imports/current', policy: 'member',
-    bodyLimit: 'none', handler: currentImport,
+    bodyLimit: 'none', openAsAdmin: true, handler: currentImport,
   },
   {
     id: 'org.imports.get', method: 'GET', path: '/org/locations/:locationId/imports/:importId', policy: 'member',
-    bodyLimit: 'none', handler: getImport,
+    bodyLimit: 'none', openAsAdmin: true, handler: getImport,
   },
   {
     id: 'org.imports.start', method: 'POST', path: '/org/locations/:locationId/imports/:importId/start', policy: 'member',
-    bodyLimit: '2kb', handler: startImport,
+    bodyLimit: '2kb', openAsAdmin: true, handler: startImport,
   },
   {
     id: 'org.imports.answer', method: 'POST', path: '/org/locations/:locationId/imports/:importId/answer', policy: 'member',
-    bodyLimit: '2kb', handler: answerImport,
+    bodyLimit: '2kb', openAsAdmin: true, handler: answerImport,
   },
-  { id: 'org.chat.get', method: 'GET', path: '/org/locations/:locationId/chat', policy: 'member', bodyLimit: 'none', handler: getChat },
+  {
+    id: 'org.chat.get', method: 'GET', path: '/org/locations/:locationId/chat', policy: 'member', bodyLimit: 'none', openAsAdmin: true,
+    handler: getChat,
+  },
   {
     id: 'org.chat.conversation', method: 'GET', path: '/org/locations/:locationId/chat/:conversationId', policy: 'member',
-    bodyLimit: 'none', handler: getConversation,
+    bodyLimit: 'none', openAsAdmin: true, handler: getConversation,
   },
   {
     id: 'org.chat.turn', method: 'POST', path: '/org/locations/:locationId/chat/turns', policy: 'member', bodyLimit: '32kb',
-    limiter: 'chat', handler: postTurn,
+    limiter: 'chat', openAsAdmin: true, handler: postTurn,
   },
   {
     id: 'org.chat.remove', method: 'DELETE', path: '/org/locations/:locationId/chat/:conversationId', policy: 'member',
-    bodyLimit: 'none', handler: deleteConversation,
+    bodyLimit: 'none', openAsAdmin: true, handler: deleteConversation,
   },
   // U9 (TownwiseAI): saving or setting aside a proposed note.
   {
     id: 'org.chat.proposal', method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/proposals/:proposalId',
-    policy: 'member', bodyLimit: '8kb', handler: actOnProposal,
+    policy: 'member', bodyLimit: '8kb', openAsAdmin: true, handler: actOnProposal,
   },
   // U9 (TownwiseAI): the side panel's questions and activity, and answering a question.
-  { id: 'org.agent.get', method: 'GET', path: '/org/locations/:locationId/agent', policy: 'member', bodyLimit: 'none', handler: getAgent },
+  {
+    id: 'org.agent.get', method: 'GET', path: '/org/locations/:locationId/agent', policy: 'member', bodyLimit: 'none', openAsAdmin: true,
+    handler: getAgent,
+  },
   {
     id: 'org.agent.answer', method: 'POST', path: '/org/locations/:locationId/agent/questions/:questionId', policy: 'member',
-    bodyLimit: '1kb', handler: answerQuestion,
+    bodyLimit: '1kb', openAsAdmin: true, handler: answerQuestion,
   },
   // U13A, estimates (spec 10.13): people in town and "How Townwise estimates". Reads with no limiter.
   {
     id: 'org.people.get', method: 'GET', path: '/org/locations/:locationId/people-in-town', policy: 'member',
-    bodyLimit: 'none', handler: getPeopleInTown,
+    bodyLimit: 'none', openAsAdmin: true, handler: getPeopleInTown,
   },
   {
     id: 'org.estimates.about', method: 'GET', path: '/org/locations/:locationId/estimates/about', policy: 'member',
-    bodyLimit: 'none', handler: getEstimatesAbout,
+    bodyLimit: 'none', openAsAdmin: true, handler: getEstimatesAbout,
   },
   // U13B, forecast runs (spec 10.13, 14.4): the published forecast, a member read with no limiter.
   {
     id: 'org.forecast.get', method: 'GET', path: '/org/locations/:locationId/forecast', policy: 'member', bodyLimit: 'none',
-    handler: getForecast,
+    openAsAdmin: true, handler: getForecast,
   },
 
   { id: 'org.members.list', method: 'GET', path: '/org/members', policy: 'org_admin', bodyLimit: 'none', handler: listMembers },

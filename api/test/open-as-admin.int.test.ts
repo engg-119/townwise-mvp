@@ -132,6 +132,85 @@ describe('a live open-as-admin grant', () => {
     const res = await call(server, '/probe/member', { session: staff, json: {} });
     expect(res.status).toBe(200);
   });
+
+  it('inside, generated from the route table: each refused route answers 403 open_as_admin_refused and changes nothing', async () => {
+    const withIds = (path: string): string => path.replace(/:[A-Za-z]+/g, () => new Types.ObjectId().toHexString());
+    const refused = TOWNWISE_ROUTES.filter((route) => route.policy !== 'staff' && route.policy !== 'staff_self' && route.openAsAdmin !== true);
+    expect(refused.length).toBeGreaterThan(0);
+    const answers: { route: string; status: number; error: string }[] = [];
+    const writes = await writesDuring(server, async () => {
+      for (const route of refused) {
+        const res = await call(server, `/api${withIds(route.path)}`, {
+          method: route.method, session: staff, ...(route.method === 'GET' || route.method === 'DELETE' ? {} : { json: {} }),
+        });
+        answers.push({ route: route.id, ...(await errorOf(res)) });
+      }
+    });
+    expect(answers).toEqual(refused.map((route) => ({ route: route.id, status: 403, error: 'open_as_admin_refused' })));
+    expect(writes).toEqual([]);
+  });
+
+  it('staff do what an org admin does: rename, add a location, upload days that replace, read them back, write a note, delete the location’s sales', async () => {
+    const name = `Renamed Kitchen ${randomUUID().slice(0, 6)}`;
+    const renamed = await call(server, '/api/org', { method: 'PATCH', session: staff, json: { name } });
+    expect(renamed.status).toBe(200);
+    expect(await renamed.json()).toEqual({ org: { id: org.orgId, name } });
+
+    const created = await call(server, '/api/org/locations', { session: staff, json: { name: 'Main Street', town: { townId: 'hanover-nh' } } });
+    expect(created.status).toBe(201);
+    const location = `/api/org/locations/${(await created.json() as { location: { id: string } }).location.id}`;
+
+    const upload = (days: { date: string; guests: number | null; netSalesCents: number | null }[]): Promise<Response> =>
+      call(server, `${location}/sales/uploads`, { session: staff, json: { days } });
+    const first = await upload([{ date: '2026-05-01', guests: 101, netSalesCents: 350_050 }, { date: '2026-05-02', guests: 90, netSalesCents: null }]);
+    expect(first.status).toBe(201);
+    // As an org admin's, the second upload replaces the day it covers.
+    const second = await upload([{ date: '2026-05-02', guests: 95, netSalesCents: 300_000 }]);
+    expect(second.status).toBe(201);
+    expect((await second.json() as { upload: Record<string, unknown> }).upload).toMatchObject({ inserted: 0, replaced: 1, kept: 0 });
+    const history = await call(server, `${location}/sales/history`, { session: staff });
+    expect(history.status).toBe(200);
+    expect((await history.json() as { days: Record<string, unknown> }).days).toMatchObject({
+      date: ['2026-05-01', '2026-05-02'], guests: [101, 95], netSalesCents: [350_050, 300_000],
+    });
+
+    const note = {
+      kind: 'closure', startDate: '2026-05-04', endDate: '2026-05-04', weekdays: null, effect: 'closed', expectedGuests: null,
+      detail: 'Closed for the town meeting',
+    };
+    const written = await call(server, `${location}/notes`, { session: staff, json: note });
+    expect(written.status).toBe(201);
+    const noteId = (await written.json() as { note: { id: string } }).note.id;
+    const notes = await call(server, `${location}/notes`, { session: staff });
+    expect(notes.status).toBe(200);
+    expect((await notes.json() as { notes: { id: string }[] }).notes.map((listed) => listed.id)).toEqual([noteId]);
+
+    const removed = await call(server, `${location}/sales`, { method: 'DELETE', session: staff });
+    expect(removed.status).toBe(200);
+    expect(await removed.json()).toMatchObject({ deletedDays: 2, deletedUploads: 2 });
+    // Nobody joined, so the grant is still live, on the renamed organization.
+    expect(await me(staff)).toMatchObject({
+      access: { state: 'member', org: { id: org.orgId, name }, role: 'org_admin' }, openAsAdmin: { id: grantId, org: { id: org.orgId, name } },
+    });
+  });
+
+  it('Team is closed: list, add, change and remove answer 403 open_as_admin_refused, and no member row changes', async () => {
+    const rows = (): Promise<unknown[]> => server.connection.collection('tw_members').find({ orgId: new Types.ObjectId(org.orgId) }).sort({ _id: 1 }).toArray();
+    const before = await rows();
+    // setupOrg's org admin invitation.
+    expect(before).toHaveLength(1);
+    const memberId = String((before[0] as { _id: Types.ObjectId })._id);
+    const answers: { status: number; error: string }[] = [];
+    const writes = await writesDuring(server, async () => {
+      answers.push(await errorOf(await call(server, '/api/org/members', { session: staff })));
+      answers.push(await errorOf(await call(server, '/api/org/members', { session: staff, json: { emails: ['new-cook@example.test'], role: 'member' } })));
+      answers.push(await errorOf(await call(server, `/api/org/members/${memberId}`, { method: 'PATCH', session: staff, json: { role: 'member' } })));
+      answers.push(await errorOf(await call(server, `/api/org/members/${memberId}`, { method: 'DELETE', session: staff })));
+    });
+    expect(answers).toEqual(Array.from({ length: 4 }, () => ({ status: 403, error: 'open_as_admin_refused' })));
+    expect(writes).toEqual([]);
+    expect(await rows()).toEqual(before);
+  });
 });
 
 describe('a grant that is not live is ignored', () => {

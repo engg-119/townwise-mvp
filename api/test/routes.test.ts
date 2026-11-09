@@ -136,6 +136,16 @@ describe('route table', () => {
     });
   });
 
+  // D25's route classification: people, seats and requests stay closed while open as admin; every other non-staff route runs.
+  const REFUSED = ['me.join', 'me.decline', 'me.welcome', 'requests.create', 'org.leave', 'org.members.list', 'org.members.add', 'org.members.update', 'org.members.remove'];
+  it('D25: every route runs while open as admin except staff routes and the people, seat and request routes', () => {
+    for (const r of TOWNWISE_ROUTES) {
+      const staffRoute = r.policy === 'staff' || r.policy === 'staff_self';
+      expect({ id: r.id, open: r.openAsAdmin === true }).toEqual({ id: r.id, open: !staffRoute && !REFUSED.includes(r.id) });
+    }
+    expect(REFUSED.filter((id) => !TOWNWISE_ROUTES.some((r) => r.id === id))).toEqual([]);
+  });
+
   it('boot refuses a duplicate method and path', () => {
     expect(() => { assertRouteTable([route({ id: 'a' }), route({ id: 'b' })]); }).toThrow(ConfigError);
   });

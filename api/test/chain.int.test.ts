@@ -4,10 +4,10 @@ import { randomUUID } from 'node:crypto';
 import { Types } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { TOWNWISE_ROUTES } from '../src/access/routes.ts';
+import { TOWNWISE_ROUTES, type TownwiseRoute } from '../src/access/routes.ts';
 import { createMemoryFileBlobs, type MemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import {
-  addGrant, addInvite, addLocation, addNote, addRequest, addSalesDay, addSeat, addUpload, createOrg,
+  addGrant, addInvite, addLocation, addNote, addOpenAsAdminGrant, addRequest, addSalesDay, addSeat, addUpload, createOrg,
 } from './helpers/fixtures.ts';
 import { seedReadFile } from './helpers/files.ts';
 import { PROBE_ROUTES } from './helpers/probe.ts';
@@ -65,7 +65,7 @@ describe('GET is side-effect free (7.3)', () => {
     return { status: res.status, writes: server.commands.filter((name) => WRITES.has(name)) };
   }
 
-  it('every GET route issues no write, for an org admin, a member, an invited person with a pending request, staff, and staff in view-as', async () => {
+  it('every GET route issues no write, for an org admin, a member, an invited person with a pending request, staff, staff in view-as, and staff open as admin', async () => {
     const adminEmail = uniqueEmail('admin');
     const admin = await signIn(server, adminEmail);
     const memberEmail = uniqueEmail('member');
@@ -79,8 +79,10 @@ describe('GET is side-effect free (7.3)', () => {
     await addRequest(server, { userId: invited.userId, email: invitedEmail, status: 'pending' });
     await addInvite(server, { orgId, email: invitedEmail, invitedBy: admin.userId });
 
-    // Two sessions of the staff member: one viewing as the org admin, one plain.
+    // Three sessions of the staff member: one viewing as the org admin, one with an organization nobody has joined open as
+    // its admin (D25), one plain.
     const viewing = await signIn(server, STAFF_EMAIL);
+    const opened = await signIn(server, STAFF_EMAIL);
     const staff = await signIn(server, STAFF_EMAIL);
     await makeStaff(server, staff.userId, { enabledAt: new Date(server.clock.now().getTime() - MINUTE) });
     await addGrant(server, { actorUserId: viewing.userId, sessionId: viewing.sessionId, targetUserId: admin.userId, orgId });
@@ -107,8 +109,10 @@ describe('GET is side-effect free (7.3)', () => {
       // U13B.
       'org.forecast.get': '?from=2026-05-01&to=2026-05-31',
     };
-    const gets = TOWNWISE_ROUTES.filter((route) => route.method === 'GET')
-      .map((route) => `/api${route.path.replace(/:([A-Za-z]+)/g, (_m, name: string) => ids[name] ?? '')}${query[route.id] ?? ''}`);
+    const getRoutes = TOWNWISE_ROUTES.filter((route) => route.method === 'GET');
+    const pathOf = (route: TownwiseRoute, values: Record<string, string>): string =>
+      `/api${route.path.replace(/:([A-Za-z]+)/g, (_m, name: string) => values[name] ?? '')}${query[route.id] ?? ''}`;
+    const gets = getRoutes.map((route) => pathOf(route, ids));
     const answered = new Set<string>();
     for (const session of [admin, member, invited, staff, viewing]) {
       for (const path of gets) {
@@ -118,6 +122,30 @@ describe('GET is side-effect free (7.3)', () => {
       }
     }
     expect([...answered].sort()).toEqual([...gets].sort());
+
+    // Staff open as admin read their own organization, one nobody has joined, with the same records: every GET that runs
+    // in that mode answers, and none writes.
+    const setupOrgId = await createOrg(server, { name: 'Setup Org' });
+    await addInvite(server, { orgId: setupOrgId, email: uniqueEmail('first-admin'), invitedBy: staff.userId, role: 'org_admin', addedByStaff: true });
+    const setupLocationId = await addLocation(server, { orgId: setupOrgId, name: 'Setup Street' });
+    await addSalesDay(server, { orgId: setupOrgId, locationId: setupLocationId, date: '2026-05-01', guests: 90, netSalesCents: 210_000 });
+    await addUpload(server, { orgId: setupOrgId, locationId: setupLocationId, uploadedAt: server.clock.now(), status: 'applied' });
+    await addNote(server, { orgId: setupOrgId, locationId: setupLocationId, detail: 'Closed for setup', createdBy: staff.userId });
+    const setupFileId = await seedReadFile(server, blobs, {
+      orgId: setupOrgId, locationId: setupLocationId, uploadedBy: staff.userId, name: 'setup.csv', raw: Buffer.from('Date\n'),
+      clean: 'date,guests,net_sales\r\n',
+    });
+    await server.connection.collection('tw_files').updateOne({ _id: new Types.ObjectId(setupFileId) }, { $set: { kind: 'zip' } });
+    const setupImportId = String((await server.connection.collection('tw_files').findOne({ _id: new Types.ObjectId(setupFileId) }))?.importId);
+    await addOpenAsAdminGrant(server, { actorUserId: opened.userId, sessionId: opened.sessionId, orgId: setupOrgId });
+    const setupIds = { ...ids, orgId: setupOrgId, locationId: setupLocationId, fileId: setupFileId, importId: setupImportId };
+    const openedAnswered: string[] = [];
+    for (const route of getRoutes) {
+      const { status, writes } = await writesDuring(opened, pathOf(route, setupIds));
+      expect(writes).toEqual([]);
+      if (status === 200) openedAnswered.push(route.id);
+    }
+    expect(openedAnswered).toEqual(getRoutes.filter((route) => route.openAsAdmin === true).map((route) => route.id));
     for (const session of [member, viewing]) {
       const { status, writes } = await writesDuring(session, '/probe/member');
       expect({ status, writes }).toEqual({ status: 200, writes: [] });

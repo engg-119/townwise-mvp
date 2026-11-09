@@ -5,14 +5,14 @@ import { randomUUID } from 'node:crypto';
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { TOWNWISE_ROUTES } from '../src/access/routes.ts';
+import { TOWNWISE_ROUTES, type TownwiseRoute } from '../src/access/routes.ts';
 import { createMemoryFileBlobs, type MemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import {
-  addConversation, addInvite, addLocation, addNote, addRequest, addSalesDay, addSeat, addUpload, createOrg,
+  addConversation, addInvite, addLocation, addNote, addOpenAsAdminGrant, addRequest, addSalesDay, addSeat, addUpload, createOrg,
 } from './helpers/fixtures.ts';
 import { seedReadFile } from './helpers/files.ts';
 import { PROBE_ROUTES } from './helpers/probe.ts';
-import { call, signIn, startTownwiseServer, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
+import { call, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
 
 let server: TownwiseTestServer;
 let blobs: MemoryFileBlobs;
@@ -39,8 +39,26 @@ interface Tenant {
   importId: string;
 }
 
+/**
+ * D25: an organization nobody has joined, made from fixtures with no seat, which staff have open as its admin. Its
+ * location's note, conversation (with the same proposal as A's and B's), read file and import are the staff member's.
+ */
+interface SetupTenant {
+  orgId: string;
+  /** Its open org admin invitation. */
+  inviteId: string;
+  locationId: string;
+  noteId: string;
+  conversationId: string;
+  fileId: string;
+  importId: string;
+}
+
 let a: Tenant;
 let b: Tenant;
+let c: SetupTenant;
+/** A staff session holding an open-as-admin grant on C. */
+let staffSession: TestSession;
 /** B's invitation addressed to A's member. */
 let bInvitesAMember: string;
 
@@ -72,6 +90,23 @@ async function tenant(name: string): Promise<Tenant> {
     answer: 'open', noteId: new Types.ObjectId(), status: 'done', createdAt: server.clock.now(), updatedAt: server.clock.now(),
   });
   return { orgId, name, admin, member, inviteId, seatIds, locationId, locationName, noteId, conversationId, fileId, importId };
+}
+
+/** C, in setup (D23): active, with only an open invitation, so nobody has ever joined it. */
+async function setupTenant(name: string, staffUserId: string): Promise<SetupTenant> {
+  const orgId = await createOrg(server, { name });
+  const inviteId = await addInvite(server, {
+    orgId, email: `first-admin-${randomUUID().slice(0, 8)}@example.test`, invitedBy: staffUserId, role: 'org_admin', addedByStaff: true,
+  });
+  const locationId = await addLocation(server, { orgId, name: `${name} Front Room` });
+  const noteId = await addNote(server, { orgId, locationId, detail: `${name} setup note`, createdBy: staffUserId });
+  const conversationId = await addConversation(server, { orgId, locationId, userId: staffUserId, text: `${name} setup chat` });
+  await withProposal(conversationId);
+  const fileId = await seedReadFile(server, blobs, {
+    orgId, locationId, uploadedBy: staffUserId, name: `${name} sales.csv`, raw: Buffer.from('Date,Guests\n'), clean: 'date,guests,net_sales\r\n',
+  });
+  const importId = String((await server.connection.collection('tw_files').findOne({ _id: new Types.ObjectId(fileId) }))?.importId);
+  return { orgId, inviteId, locationId, noteId, conversationId, fileId, importId };
 }
 
 /** Appends a turn in which TownwiseAI proposed a note, `toolu_proposal0001`, that the owner was shown. */
@@ -117,6 +152,9 @@ beforeAll(async () => {
   b = await tenant('Beachside Bistro');
   bInvitesAMember = await addInvite(server, { orgId: b.orgId, email: a.member.email, invitedBy: b.admin.session.userId });
   await addRequest(server, { userId: b.member.session.userId, email: b.member.email, status: 'withdrawn' });
+  staffSession = await signInStaff(server);
+  c = await setupTenant('Cedar Cafe', staffSession.userId);
+  await addOpenAsAdminGrant(server, { actorUserId: staffSession.userId, sessionId: staffSession.sessionId, orgId: c.orgId });
 });
 afterAll(async () => { await server.close(); });
 beforeEach(async () => { await server.redis.flushdb(); });
@@ -147,50 +185,95 @@ function pathWithBIds(path: string): string {
  */
 const SELF_WRITES = new Set(['me.welcome']); // U11, statement moments.
 
+/** Calls `route` as `session` with B's ids in its path (and, on a write, its body). Nothing of B shows and B is unchanged. */
+async function presentBIds(route: TownwiseRoute, session: TestSession): Promise<number> {
+  const before = await snapshotOf(b);
+  const res = await call(server, `/api${pathWithBIds(route.path)}`, {
+    method: route.method,
+    session,
+    ...(route.method === 'GET' || route.method === 'DELETE' ? {} : { json: bIds() }),
+  });
+  const text = await res.text();
+  for (const secret of [...bSecrets(), b.inviteId, bInvitesAMember]) expect(text).not.toContain(secret);
+  expect(await snapshotOf(b)).toBe(before);
+  return res.status;
+}
+
 describe('isolation through the route table', () => {
   for (const route of TOWNWISE_ROUTES) {
     it(`${route.method} /api${route.path}: A’s member presenting B’s ids reads nothing of B and changes nothing`, async () => {
-      const before = await snapshotOf(b);
-      const res = await call(server, `/api${pathWithBIds(route.path)}`, {
-        method: route.method,
-        session: a.member.session,
-        ...(route.method === 'GET' || route.method === 'DELETE' ? {} : { json: bIds() }),
-      });
-      const text = await res.text();
-      if (SELF_WRITES.has(route.id)) expect(res.status).toBe(204);
-      else if (route.method !== 'GET') expect(res.status).toBeGreaterThanOrEqual(400);
-      for (const secret of [...bSecrets(), b.inviteId, bInvitesAMember]) expect(text).not.toContain(secret);
-      expect(await snapshotOf(b)).toBe(before);
+      const status = await presentBIds(route, a.member.session);
+      if (SELF_WRITES.has(route.id)) expect(status).toBe(204);
+      else if (route.method !== 'GET') expect(status).toBeGreaterThanOrEqual(400);
     });
   }
 });
 
+const tenantRoutesWithIds = TOWNWISE_ROUTES.filter((route) =>
+  (route.policy === 'member' || route.policy === 'org_admin') && route.path.includes('/:'));
+
+// A valid body and query per route, so a 404 can only come from the foreign id.
+const NOTE = { kind: 'closure', startDate: '2026-05-04', endDate: '2026-05-04', weekdays: null, effect: 'closed', expectedGuests: null, detail: null };
+const BODY: Record<string, unknown> = {
+  'org.members.update': { role: 'member' },
+  'org.locations.update': { name: 'Renamed by A' },
+  'org.sales.upload': { days: [{ date: '2026-05-02', guests: 1, netSalesCents: null }] },
+  'org.notes.create': NOTE,
+  'org.notes.update': NOTE,
+  'org.chat.turn': { content: 'Hello from A' },
+  'org.files.create': { name: 'a.csv', sizeBytes: 10, purpose: 'history' },
+  'org.imports.answer': { questionId: 'q', choice: 'not_sure' },
+  'org.chat.proposal': { action: 'dismiss' },
+  'org.agent.answer': { answer: 'not_sure' },
+};
+const QUERY: Record<string, string> = {
+  'org.sales.days': '?from=2026-01-01&to=2026-05-31', 'org.calendar.get': '?from=2026-01-01&to=2026-05-31',
+  // U13A.
+  'org.people.get': '?from=2026-05-01&to=2026-05-31',
+  // U13B.
+  'org.forecast.get': '?from=2026-05-01&to=2026-05-31',
+};
+
+/**
+ * Calls `route` as `session` once for each of B's ids in each of its path positions, with `own` (ids of the caller's
+ * own organization) everywhere else: each answers 404 not_found, shows nothing of B and leaves B unchanged.
+ */
+async function expectForeignIdsNotFound(route: TownwiseRoute, session: TestSession, own: Record<string, string>): Promise<void> {
+  const bOwn: Record<string, string[]> = {
+    memberId: [b.inviteId, ...b.seatIds], locationId: [b.locationId], noteId: [b.noteId], conversationId: [b.conversationId],
+    fileId: [b.fileId], importId: [b.importId],
+  };
+  const params = [...route.path.matchAll(/:([A-Za-z]+)/g)].map((match) => match[1] ?? '');
+  let cases = 0;
+  for (const foreign of params) {
+    for (const id of bOwn[foreign] ?? []) {
+      cases += 1;
+      const before = await snapshotOf(b);
+      const path = route.path.replace(/:([A-Za-z]+)/g, (_match, name: string) => (name === foreign ? id : own[name] ?? ''));
+      const res = await call(server, `/api${path}${QUERY[route.id] ?? ''}`, {
+        method: route.method,
+        session,
+        ...(route.method === 'GET' || route.method === 'DELETE' ? {} : { json: BODY[route.id] ?? {} }),
+      });
+      const text = await res.text();
+      expect({ case: `${foreign}=${id}`, status: res.status }).toEqual({ case: `${foreign}=${id}`, status: 404 });
+      expect(JSON.parse(text)).toMatchObject({ error: 'not_found' });
+      for (const secret of bSecrets()) expect(text).not.toContain(secret);
+      expect(await snapshotOf(b)).toBe(before);
+    }
+  }
+  expect(cases).toBeGreaterThan(0);
+}
+
+/** The path ids of an organization's own records, and the ids no organization owns. */
+function ownIds(org: Pick<Tenant, 'inviteId' | 'locationId' | 'noteId' | 'conversationId' | 'fileId' | 'importId'>): Record<string, string> {
+  return {
+    memberId: org.inviteId, locationId: org.locationId, noteId: org.noteId, conversationId: org.conversationId, fileId: org.fileId,
+    importId: org.importId, index: '0', proposalId: 'toolu_proposal0001', questionId: 'gap_2026-05-02_2026-05-03',
+  };
+}
+
 describe('isolation of id-bearing tenant routes, generated from the route table', () => {
-  const tenantRoutesWithIds = TOWNWISE_ROUTES.filter((route) =>
-    (route.policy === 'member' || route.policy === 'org_admin') && route.path.includes('/:'));
-
-  // A valid body and query per route, so a 404 can only come from the foreign id.
-  const NOTE = { kind: 'closure', startDate: '2026-05-04', endDate: '2026-05-04', weekdays: null, effect: 'closed', expectedGuests: null, detail: null };
-  const BODY: Record<string, unknown> = {
-    'org.members.update': { role: 'member' },
-    'org.locations.update': { name: 'Renamed by A' },
-    'org.sales.upload': { days: [{ date: '2026-05-02', guests: 1, netSalesCents: null }] },
-    'org.notes.create': NOTE,
-    'org.notes.update': NOTE,
-    'org.chat.turn': { content: 'Hello from A' },
-    'org.files.create': { name: 'a.csv', sizeBytes: 10, purpose: 'history' },
-    'org.imports.answer': { questionId: 'q', choice: 'not_sure' },
-    'org.chat.proposal': { action: 'dismiss' },
-    'org.agent.answer': { answer: 'not_sure' },
-  };
-  const QUERY: Record<string, string> = {
-    'org.sales.days': '?from=2026-01-01&to=2026-05-31', 'org.calendar.get': '?from=2026-01-01&to=2026-05-31',
-    // U13A.
-    'org.people.get': '?from=2026-05-01&to=2026-05-31',
-    // U13B.
-    'org.forecast.get': '?from=2026-05-01&to=2026-05-31',
-  };
-
   it('covers the team, location, sales, note, tuning chat and proposal routes', () => {
     expect(tenantRoutesWithIds.map((route) => route.id)).toEqual(expect.arrayContaining([
       'org.members.update', 'org.members.remove', 'org.locations.update', 'org.locations.remove', 'org.sales.get',
@@ -210,34 +293,30 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
 
   for (const route of tenantRoutesWithIds) {
     it(`${route.method} /api${route.path}: A’s org admin presenting any of B’s ids, with A’s own ids elsewhere, gets 404 not_found, and B is unchanged`, async () => {
-      const bOwn: Record<string, string[]> = {
-        memberId: [b.inviteId, ...b.seatIds], locationId: [b.locationId], noteId: [b.noteId], conversationId: [b.conversationId],
-        fileId: [b.fileId], importId: [b.importId],
-      };
-      const aOwn: Record<string, string> = {
-        memberId: a.inviteId, locationId: a.locationId, noteId: a.noteId, conversationId: a.conversationId, fileId: a.fileId,
-        importId: a.importId, index: '0', proposalId: 'toolu_proposal0001', questionId: 'gap_2026-05-02_2026-05-03',
-      };
-      const params = [...route.path.matchAll(/:([A-Za-z]+)/g)].map((match) => match[1] ?? '');
-      let cases = 0;
-      for (const foreign of params) {
-        for (const id of bOwn[foreign] ?? []) {
-          cases += 1;
-          const before = await snapshotOf(b);
-          const path = route.path.replace(/:([A-Za-z]+)/g, (_match, name: string) => (name === foreign ? id : aOwn[name] ?? ''));
-          const res = await call(server, `/api${path}${QUERY[route.id] ?? ''}`, {
-            method: route.method,
-            session: a.admin.session,
-            ...(route.method === 'GET' || route.method === 'DELETE' ? {} : { json: BODY[route.id] ?? {} }),
-          });
-          const text = await res.text();
-          expect({ case: `${foreign}=${id}`, status: res.status }).toEqual({ case: `${foreign}=${id}`, status: 404 });
-          expect(JSON.parse(text)).toMatchObject({ error: 'not_found' });
-          for (const secret of bSecrets()) expect(text).not.toContain(secret);
-          expect(await snapshotOf(b)).toBe(before);
-        }
-      }
-      expect(cases).toBeGreaterThan(0);
+      await expectForeignIdsNotFound(route, a.admin.session, ownIds(a));
+    });
+  }
+});
+
+describe('isolation while staff have an organization open as admin', () => {
+  it('the staff session is open as admin of C', async () => {
+    const res = await call(server, '/api/me', { session: staffSession });
+    expect(await res.json()).toMatchObject({ access: { state: 'member', org: { id: c.orgId }, role: 'org_admin' }, openAsAdmin: { org: { id: c.orgId } } });
+  });
+
+  // End (admin.view_as.end) would end the grant for every later case; open-as-admin-routes.int.test.ts covers it.
+  for (const route of TOWNWISE_ROUTES.filter((r) => r.id !== 'admin.view_as.end')) {
+    it(`${route.method} /api${route.path}: staff open as admin of C presenting B’s ids read nothing of B and change nothing`, async () => {
+      const status = await presentBIds(route, staffSession);
+      // Only the reads that carry no id answer, and they answer C's (/api/me, the organization, its staff activity).
+      if (route.method === 'GET' && route.openAsAdmin === true && !route.path.includes('/:')) expect(status).toBe(200);
+      else expect(status).toBeGreaterThanOrEqual(400);
+    });
+  }
+
+  for (const route of tenantRoutesWithIds.filter((r) => r.openAsAdmin === true)) {
+    it(`${route.method} /api${route.path}: staff open as admin of C presenting any of B’s ids, with C’s own ids elsewhere, get 404 not_found`, async () => {
+      await expectForeignIdsNotFound(route, staffSession, ownIds(c));
     });
   }
 });
