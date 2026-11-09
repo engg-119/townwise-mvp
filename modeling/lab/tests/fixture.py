@@ -3,7 +3,8 @@
 synthetic_frame(seed) is the frame the lab builds from a LabInput (date, weekday, guests, term, week_of_term, one
 ev_<group> column per town event group, private_event, closed, booked and the holiday flags), plus the notebook's own
 column names for the same facts (is_2026, football_home) and two show flags only the notebook has, so one frame feeds
-both the lab and the notebook's functions in the parity tests.
+both the lab and the notebook's functions in the parity tests. synthetic_input(seed) is the same history as the
+LabInput the API sends, with synthetic_champion as the current published run.
 """
 
 import numpy as np
@@ -112,3 +113,54 @@ def synthetic_frame(seed: int = 0) -> pd.DataFrame:
     lab = ["date", "weekday", "guests", "term", "week_of_term", FESTIVAL, FOOTBALL, "private_event", "closed", "booked",
            "hol_big_night", "hol_halloween", "hol_closed", "federal_holiday"]
     return f[lab + ["is_2026", "football_home", "show_comedy_improv", "show_music"]]
+
+
+CALIBRATION_ID = "0123456789abcdef01234567"
+CHAMPION_RUN_ID = "fedcba9876543210fedcba98"
+CHAMPION_THROUGH = pd.Timestamp("2025-06-30")  # the current published run's data cutoff, a quarter before the lab's
+TODAY = DATA_THROUGH + pd.Timedelta(days=2)
+
+
+def _iso(day: pd.Timestamp) -> str:
+    return day.strftime("%Y-%m-%d")
+
+
+def synthetic_champion(frame: pd.DataFrame, through: pd.Timestamp = CHAMPION_THROUGH) -> dict:
+    """A published run made at `through` for the 182 days after it (the LabInput's champion): each weekday's median
+    guests over the days before it as the forecast, 20% below to 25% above as the daily range and 15% either side as
+    the weekly one; closures, the holidays the place closes on and Mondays from the regime on are closed, buyouts
+    booked. Weeks run Monday to Sunday, clipped to its days."""
+    past = frame[(frame.date <= through) & frame.guests.gt(0) & ~frame.closed & ~frame.booked]
+    median = past.groupby("weekday").guests.median()
+    rows = frame[(frame.date > through) & (frame.date <= through + pd.Timedelta(days=FUTURE_DAYS))]
+    closed = rows.closed | rows.hol_closed.eq(1) | (rows.weekday.eq("Monday") & (rows.date >= REGIME_START))
+    status = np.select([rows.booked, closed], ["booked", "closed"], "open")
+    mid = rows.weekday.map(median).where(status == "open")
+    days = [{"date": _iso(day), "status": str(s), "low": None if s != "open" else round(0.8 * m, 2),
+             "mid": None if s != "open" else round(m, 2), "high": None if s != "open" else round(1.25 * m, 2)}
+            for day, s, m in zip(rows.date, status, mid)]
+    weeks = []
+    for _, week in rows.assign(mid=mid).groupby(rows.date - pd.to_timedelta(rows.date.dt.day_of_week, unit="D")):
+        total = round(float(week.mid.sum()), 2)
+        weeks.append({"from": _iso(week.date.min()), "to": _iso(week.date.max()),
+                      "openDays": int(week.mid.notna().sum()),
+                      "low": round(0.85 * total, 2), "mid": total, "high": round(1.15 * total, 2)})
+    return {"runId": CHAMPION_RUN_ID, "dataThrough": _iso(through), "days": days, "weeks": weeks}
+
+
+def synthetic_input(seed: int = 0) -> dict:
+    """synthetic_frame(seed) as the LabInput the API sends: every date from the first day with guests to the data
+    cutoff plus 182 days, no regime start, and synthetic_champion as the current published run."""
+    f = synthetic_frame(seed)
+    has = f.guests.gt(0)
+    first, through = f.date[has].min(), f.date[has].max()
+    rows = f[(f.date >= first) & (f.date <= through + pd.Timedelta(days=FUTURE_DAYS))]
+    groups = [c for c in rows.columns if c.startswith("ev_")]
+    days = [{"date": _iso(row.date), "guests": None if np.isnan(row.guests) else int(row.guests), "term": row.term,
+             "weekOfTerm": int(row.week_of_term),
+             "events": sorted(c.removeprefix("ev_") for c in groups if row[c] == 1),
+             "closed": bool(row.closed), "privateEvent": bool(row.private_event), "booked": bool(row.booked)}
+            for _, row in rows.iterrows()]
+    return {"schema": "townwise.lab-input/1", "calibrationId": CALIBRATION_ID, "metric": "guests", "today": _iso(TODAY),
+            "dataThrough": _iso(through), "horizonDays": FUTURE_DAYS, "regimeStart": None, "days": days,
+            "champion": synthetic_champion(f)}

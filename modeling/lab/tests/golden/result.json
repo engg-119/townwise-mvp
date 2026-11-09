@@ -1,0 +1,4252 @@
+{
+ "schema": "townwise.lab-result/1",
+ "calibrationId": "0123456789abcdef01234567",
+ "ok": true,
+ "codeVersion": "0000000000000000000000000000000000000000",
+ "params": {
+  "target": "guests",
+  "baseCols": [
+   "weekday",
+   "recent_level",
+   "term"
+  ],
+  "eventCols": [
+   "ev_test-town:festival",
+   "ev_test-town:home-football",
+   "private_event",
+   "week_of_term",
+   "weekday"
+  ],
+  "regimeStart": null,
+  "xgb": {
+   "objective": "reg:absoluteerror",
+   "n_estimators": 400,
+   "learning_rate": 0.03,
+   "max_depth": 3,
+   "min_child_weight": 5,
+   "subsample": 0.8,
+   "colsample_bytree": 0.8,
+   "reg_lambda": 5.0,
+   "random_state": 0,
+   "n_jobs": 1
+  },
+  "holidayLambdas": {
+   "hol_big_night": 0,
+   "hol_halloween": 3
+  },
+  "holidayEffects": {
+   "hol_big_night": 0.44353465024308847,
+   "hol_halloween": 0.09496543899222051
+  },
+  "widenK": 1.4,
+  "weeklyLogRange": {
+   "lo": 0.0,
+   "hi": 0.29535853592879885
+  },
+  "refitEveryMonths": 3,
+  "horizonDays": 28,
+  "minPastWeeks": 8,
+  "floor": 1
+ },
+ "scorecard": {
+  "horizonDays": 28,
+  "history": {
+   "firstDate": "2024-01-02",
+   "lastDate": "2025-10-21",
+   "days": 615,
+   "spanDays": 658
+  },
+  "backtest": {
+   "from": "2025-02-03",
+   "to": "2025-10-19",
+   "origins": [
+    "2024-12-31",
+    "2025-03-31",
+    "2025-06-30",
+    "2025-09-30"
+   ],
+   "weeks": 37,
+   "weeksWithRange": 25,
+   "metrics": {
+    "weeklyWape": 0.16824935626421084,
+    "dailyWape": 0.20141307014934312,
+    "typicalWeek": 0.1556926418095827,
+    "weeksOver20": 13,
+    "worstWeek": 0.4007481782050428,
+    "coverage80": {
+     "inside": 9,
+     "weeks": 25
+    },
+    "dailyCoverage80": 0.6623376623376623,
+    "weekdayBias": {
+     "Mon": -0.08650692077095323,
+     "Tue": -0.05656023890497952,
+     "Wed": -0.048531260219851324,
+     "Thu": -0.20204116421928286,
+     "Fri": -0.16854433910154387,
+     "Sat": -0.23341792044780585,
+     "Sun": -0.1286164216912028
+    },
+    "weekdayBiasMeanAbs": 0.1320311807650885
+   },
+   "metrics7": {
+    "weeklyWape": 0.16300434143026105,
+    "dailyWape": 0.19839805683909015,
+    "typicalWeek": 0.15447972414771574,
+    "weeksOver20": 12,
+    "worstWeek": 0.3690854593006818,
+    "coverage80": {
+     "inside": 12,
+     "weeks": 28
+    },
+    "dailyCoverage80": 0.6753246753246753,
+    "weekdayBias": {
+     "Mon": -0.09025370238461272,
+     "Tue": -0.048272978972328406,
+     "Wed": -0.04423321401003222,
+     "Thu": -0.19660746911163274,
+     "Fri": -0.16128819269277805,
+     "Sat": -0.22925027384397845,
+     "Sun": -0.12390594608934768
+    },
+    "weekdayBiasMeanAbs": 0.1276873967292443
+   },
+   "weekdayMedianWeeklyWape": 0.18103615863141523,
+   "folds": [
+    {
+     "trainThrough": "2024-12-31",
+     "from": "2025-01-01",
+     "to": "2025-06-30",
+     "weeks": 26,
+     "weeklyWape": 0.17524913338670958,
+     "weeksOver20": 9
+    },
+    {
+     "trainThrough": "2025-06-30",
+     "from": "2025-07-01",
+     "to": "2025-10-21",
+     "weeks": 17,
+     "weeklyWape": 0.15353909726194592,
+     "weeksOver20": 4
+    }
+   ],
+   "series": [
+    {
+     "week": "2025-02-03",
+     "actual": 579,
+     "mid": 477.7416678071022,
+     "low": null,
+     "high": null
+    },
+    {
+     "week": "2025-02-10",
+     "actual": 765,
+     "mid": 498.5874646306038,
+     "low": null,
+     "high": null
+    },
+    {
+     "week": "2025-02-17",
+     "actual": 561,
+     "mid": 493.9624642133713,
+     "low": null,
+     "high": null
+    },
+    {
+     "week": "2025-02-24",
+     "actual": 619,
+     "mid": 481.77798676490784,
+     "low": null,
+     "high": null
+    },
+    {
+     "week": "2025-03-03",
+     "actual": 500,
+     "mid": 398.14328169822693,
+     "low": null,
+     "high": null
+    },
+    {
+     "week": "2025-03-10",
+     "actual": 533,
+     "mid": 468.9845873117447,
+     "low": null,
+     "high": null
+    },
+    {
+     "week": "2025-03-17",
+     "actual": 566,
+     "mid": 478.5644761323929,
+     "low": null,
+     "high": null
+    },
+    {
+     "week": "2025-03-24",
+     "actual": 613,
+     "mid": 488.35647398233414,
+     "low": null,
+     "high": null
+    },
+    {
+     "week": "2025-03-31",
+     "actual": 580,
+     "mid": 489.46226012706757,
+     "low": null,
+     "high": null
+    },
+    {
+     "week": "2025-04-07",
+     "actual": 623,
+     "mid": 505.65914696455,
+     "low": null,
+     "high": null
+    },
+    {
+     "week": "2025-04-14",
+     "actual": 581,
+     "mid": 452.8162531852722,
+     "low": null,
+     "high": null
+    },
+    {
+     "week": "2025-04-21",
+     "actual": 645,
+     "mid": 507.7119337320328,
+     "low": null,
+     "high": null
+    },
+    {
+     "week": "2025-04-28",
+     "actual": 559,
+     "mid": 484.0409916639328,
+     "low": 549.9976868132021,
+     "high": 655.9167983322836
+    },
+    {
+     "week": "2025-05-05",
+     "actual": 574,
+     "mid": 534.9766988754272,
+     "low": 607.9159806338795,
+     "high": 712.186668404501
+    },
+    {
+     "week": "2025-05-12",
+     "actual": 602,
+     "mid": 540.0024660825729,
+     "low": 613.6693167814068,
+     "high": 706.2314895232269
+    },
+    {
+     "week": "2025-05-19",
+     "actual": 611,
+     "mid": 521.9312277436256,
+     "low": 593.1737458195694,
+     "high": 670.5898543491459
+    },
+    {
+     "week": "2025-05-26",
+     "actual": 638,
+     "mid": 473.1171694993973,
+     "low": 539.8437542359933,
+     "high": 607.7898573364452
+    },
+    {
+     "week": "2025-06-02",
+     "actual": 573,
+     "mid": 512.4466738700867,
+     "low": 584.264531531622,
+     "high": 658.2251330251752
+    },
+    {
+     "week": "2025-06-09",
+     "actual": 489,
+     "mid": 439.98486137390137,
+     "low": 499.80035981025844,
+     "high": 565.0730033472234
+    },
+    {
+     "week": "2025-06-16",
+     "actual": 431,
+     "mid": 434.4271068572998,
+     "low": 487.91585395256715,
+     "high": 557.8594369461824
+    },
+    {
+     "week": "2025-06-23",
+     "actual": 456,
+     "mid": 354.81488382816315,
+     "low": 399.24240200107295,
+     "high": 455.56540866840305
+    },
+    {
+     "week": "2025-06-30",
+     "actual": 484,
+     "mid": 370.694129049778,
+     "low": 417.88555070576996,
+     "high": 485.5821499833229
+    },
+    {
+     "week": "2025-07-07",
+     "actual": 439,
+     "mid": 385.9735001921654,
+     "low": 431.19316998174884,
+     "high": 503.1571712092381
+    },
+    {
+     "week": "2025-07-14",
+     "actual": 661,
+     "mid": 396.1054542064667,
+     "low": 441.3119077614914,
+     "high": 513.8734427340587
+    },
+    {
+     "week": "2025-07-21",
+     "actual": 504,
+     "mid": 406.25575971603394,
+     "low": 449.9261615714758,
+     "high": 524.4982640466416
+    },
+    {
+     "week": "2025-07-28",
+     "actual": 498,
+     "mid": 461.3070605248213,
+     "low": 512.6975321201775,
+     "high": 592.8613177940808
+    },
+    {
+     "week": "2025-08-04",
+     "actual": 444,
+     "mid": 429.06721056997776,
+     "low": 477.01212066128096,
+     "high": 559.3302615043668
+    },
+    {
+     "week": "2025-08-11",
+     "actual": 430,
+     "mid": 427.0131976753473,
+     "low": 474.8739515885422,
+     "high": 555.7732292491637
+    },
+    {
+     "week": "2025-08-18",
+     "actual": 341,
+     "mid": 359.77418895065784,
+     "low": 400.22113097725304,
+     "high": 480.47995899660873
+    },
+    {
+     "week": "2025-08-25",
+     "actual": 489,
+     "mid": 453.5387541651726,
+     "low": 504.6814906282276,
+     "high": 603.7504203565537
+    },
+    {
+     "week": "2025-09-01",
+     "actual": 424,
+     "mid": 453.5387541651726,
+     "low": 496.786271613956,
+     "high": 601.8042002418416
+    },
+    {
+     "week": "2025-09-08",
+     "actual": 640,
+     "mid": 540.3567092418671,
+     "low": 581.9087707851908,
+     "high": 714.6923415789072
+    },
+    {
+     "week": "2025-09-15",
+     "actual": 611,
+     "mid": 502.05299873650074,
+     "low": 532.8571240771204,
+     "high": 661.890143747725
+    },
+    {
+     "week": "2025-09-22",
+     "actual": 702,
+     "mid": 523.7420632392168,
+     "low": 539.0251149252426,
+     "high": 688.2584811371646
+    },
+    {
+     "week": "2025-09-29",
+     "actual": 656,
+     "mid": 518.9919439703226,
+     "low": 535.5933933175191,
+     "high": 679.8177534106153
+    },
+    {
+     "week": "2025-10-06",
+     "actual": 571,
+     "mid": 535.0029775351286,
+     "low": 538.7451291728232,
+     "high": 698.5312710259589
+    },
+    {
+     "week": "2025-10-13",
+     "actual": 584,
+     "mid": 416.656567171216,
+     "low": 420.71542733316585,
+     "high": 543.1517975093077
+    }
+   ]
+  },
+  "comparison": {
+   "championRunId": "fedcba9876543210fedcba98",
+   "championDataThrough": "2025-06-30",
+   "from": "2025-07-07",
+   "to": "2025-10-12",
+   "weeks": 13,
+   "champion": {
+    "weeklyWape": 0.1669260149950488,
+    "dailyWape": 0.22153062667986986,
+    "typicalWeek": 0.1391509433962264,
+    "weeksOver20": 5,
+    "worstWeek": 0.31196581196581197,
+    "coverage80": {
+     "inside": 7,
+     "weeks": 13
+    },
+    "dailyCoverage80": 0.6538461538461539,
+    "weekdayBias": {
+     "Mon": null,
+     "Tue": 0.1129326047358834,
+     "Wed": 0.11703703703703705,
+     "Thu": -0.13091922005571033,
+     "Fri": -0.055279503105590044,
+     "Sat": -0.2679382379654859,
+     "Sun": -0.11610878661087864
+    },
+    "weekdayBiasMeanAbs": 0.13336923158509756
+   },
+   "challenger": {
+    "weeklyWape": 0.15492023262019405,
+    "dailyWape": 0.20832344394902863,
+    "typicalWeek": 0.12078929341192397,
+    "weeksOver20": 3,
+    "worstWeek": 0.4007481782050428,
+    "coverage80": {
+     "inside": 6,
+     "weeks": 13
+    },
+    "dailyCoverage80": 0.7692307692307693,
+    "weekdayBias": {
+     "Mon": null,
+     "Tue": 0.06384401731803768,
+     "Wed": 0.04712195884298387,
+     "Thu": -0.1795540866800891,
+     "Fri": -0.09574417936505741,
+     "Sat": -0.27892764543371784,
+     "Sun": -0.1476827912250822
+    },
+    "weekdayBiasMeanAbs": 0.13547911314416136
+   },
+   "series": [
+    {
+     "week": "2025-07-07",
+     "actual": 439,
+     "champion": 483.0,
+     "challenger": 385.9735001921654,
+     "challengerLow": 431.19316998174884,
+     "challengerHigh": 503.1571712092381
+    },
+    {
+     "week": "2025-07-14",
+     "actual": 661,
+     "champion": 483.0,
+     "challenger": 396.1054542064667,
+     "challengerLow": 441.3119077614914,
+     "challengerHigh": 513.8734427340587
+    },
+    {
+     "week": "2025-07-21",
+     "actual": 504,
+     "champion": 483.0,
+     "challenger": 406.25575971603394,
+     "challengerLow": 449.9261615714758,
+     "challengerHigh": 524.4982640466416
+    },
+    {
+     "week": "2025-07-28",
+     "actual": 498,
+     "champion": 483.0,
+     "challenger": 461.3070605248213,
+     "challengerLow": 512.6975321201775,
+     "challengerHigh": 592.8613177940808
+    },
+    {
+     "week": "2025-08-04",
+     "actual": 444,
+     "champion": 483.0,
+     "challenger": 429.06721056997776,
+     "challengerLow": 477.01212066128096,
+     "challengerHigh": 559.3302615043668
+    },
+    {
+     "week": "2025-08-11",
+     "actual": 430,
+     "champion": 483.0,
+     "challenger": 427.0131976753473,
+     "challengerLow": 474.8739515885422,
+     "challengerHigh": 555.7732292491637
+    },
+    {
+     "week": "2025-08-25",
+     "actual": 489,
+     "champion": 483.0,
+     "challenger": 453.5387541651726,
+     "challengerLow": 504.6814906282276,
+     "challengerHigh": 603.7504203565537
+    },
+    {
+     "week": "2025-09-01",
+     "actual": 424,
+     "champion": 483.0,
+     "challenger": 453.5387541651726,
+     "challengerLow": 496.786271613956,
+     "challengerHigh": 601.8042002418416
+    },
+    {
+     "week": "2025-09-08",
+     "actual": 640,
+     "champion": 483.0,
+     "challenger": 540.3567092418671,
+     "challengerLow": 581.9087707851908,
+     "challengerHigh": 714.6923415789072
+    },
+    {
+     "week": "2025-09-15",
+     "actual": 611,
+     "champion": 483.0,
+     "challenger": 502.05299873650074,
+     "challengerLow": 532.8571240771204,
+     "challengerHigh": 661.890143747725
+    },
+    {
+     "week": "2025-09-22",
+     "actual": 702,
+     "champion": 483.0,
+     "challenger": 523.7420632392168,
+     "challengerLow": 539.0251149252426,
+     "challengerHigh": 688.2584811371646
+    },
+    {
+     "week": "2025-09-29",
+     "actual": 656,
+     "champion": 483.0,
+     "challenger": 518.9919439703226,
+     "challengerLow": 535.5933933175191,
+     "challengerHigh": 679.8177534106153
+    },
+    {
+     "week": "2025-10-06",
+     "actual": 571,
+     "champion": 483.0,
+     "challenger": 535.0029775351286,
+     "challengerLow": 538.7451291728232,
+     "challengerHigh": 698.5312710259589
+    }
+   ]
+  }
+ },
+ "run": {
+  "schema": "townwise.forecast-run/1",
+  "metric": "guests",
+  "model": {
+   "family": "hybrid_linear_xgboost",
+   "version": "v6",
+   "notebookCommit": "0000000000000000000000000000000000000000"
+  },
+  "trainingSource": "townwise_lab",
+  "trainedFrom": "2024-01-02",
+  "dataThrough": "2025-10-21",
+  "madeAt": "2025-10-23",
+  "frozen": null,
+  "interval": {
+   "level": 0.8,
+   "widened": true
+  },
+  "backtest": {
+   "from": "2025-02-03",
+   "to": "2025-10-19",
+   "weeks": 37,
+   "weeklyTypicalErrorPct": 15.6,
+   "weeksOver20Pct": 13,
+   "weeklyRangePct": {
+    "below": 0.0,
+    "above": 34.4
+   }
+  },
+  "days": [
+   {
+    "date": "2025-10-22",
+    "status": "open",
+    "low": 53.51781333409103,
+    "mid": 68.24768060445786,
+    "high": 95.93452077645847,
+    "baseline": 69.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-10-23",
+    "status": "open",
+    "low": 65.72087229111091,
+    "mid": 85.94872975349426,
+    "high": 119.76742931132064,
+    "baseline": 86.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-10-24",
+    "status": "open",
+    "low": 88.39503068236742,
+    "mid": 128.58237147331238,
+    "high": 190.823209362663,
+    "baseline": 132.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-10-25",
+    "status": "open",
+    "low": 100.05948528395623,
+    "mid": 138.4794545173645,
+    "high": 242.66709700185652,
+    "baseline": 140.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-10-26",
+    "status": "open",
+    "low": 63.61810196628491,
+    "mid": 79.18465662002563,
+    "high": 109.82007471173962,
+    "baseline": 76.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-10-27",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-10-28",
+    "status": "open",
+    "low": 47.70538077171743,
+    "mid": 60.14536666870117,
+    "high": 85.7330727967288,
+    "baseline": 59.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-10-29",
+    "status": "open",
+    "low": 52.774269341642785,
+    "mid": 67.29948878288269,
+    "high": 94.60166481415594,
+    "baseline": 69.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-10-30",
+    "status": "open",
+    "low": 65.37354032664713,
+    "mid": 85.49449443817139,
+    "high": 119.13446363312309,
+    "baseline": 86.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-10-31",
+    "status": "open",
+    "low": 96.78201473390544,
+    "mid": 140.78235930668643,
+    "high": 208.9286526351342,
+    "baseline": 132.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "holiday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-01",
+    "status": "open",
+    "low": 94.84180606966292,
+    "mid": 131.2583363056183,
+    "high": 230.0130336271921,
+    "baseline": 140.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "event",
+      "ref": "test-town:home-football",
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-02",
+    "status": "open",
+    "low": 62.75774800150332,
+    "mid": 78.11378479003906,
+    "high": 108.33489779242618,
+    "baseline": 76.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-03",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-04",
+    "status": "open",
+    "low": 47.44559528351783,
+    "mid": 59.817837715148926,
+    "high": 85.2662028585571,
+    "baseline": 59.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-05",
+    "status": "open",
+    "low": 67.1533705852993,
+    "mid": 85.63619291782379,
+    "high": 120.37723562073916,
+    "baseline": 69.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-06",
+    "status": "open",
+    "low": 65.21290703430445,
+    "mid": 85.28442072868347,
+    "high": 118.84173111428981,
+    "baseline": 86.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-07",
+    "status": "open",
+    "low": 88.01276956314021,
+    "mid": 128.0263216495514,
+    "high": 189.99800128227199,
+    "baseline": 132.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-08",
+    "status": "open",
+    "low": 93.94994703929355,
+    "mid": 130.02402901649475,
+    "high": 227.8500718527992,
+    "baseline": 140.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-09",
+    "status": "open",
+    "low": 62.00219506198358,
+    "mid": 77.17335748672485,
+    "high": 107.03063253297681,
+    "baseline": 76.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-10",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-11",
+    "status": "open",
+    "low": 46.81077545810827,
+    "mid": 59.01747786998749,
+    "high": 84.12534508896748,
+    "baseline": 59.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "holiday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-12",
+    "status": "open",
+    "low": 52.48186802447079,
+    "mid": 66.926608979702,
+    "high": 94.07751447075184,
+    "baseline": 69.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-13",
+    "status": "open",
+    "low": 64.04442545588314,
+    "mid": 83.75629878044128,
+    "high": 116.71233097143624,
+    "baseline": 86.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-14",
+    "status": "open",
+    "low": 87.63124403992022,
+    "mid": 127.47134184837341,
+    "high": 189.17438117339717,
+    "baseline": 132.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-15",
+    "status": "open",
+    "low": 93.01439224651114,
+    "mid": 128.729248046875,
+    "high": 225.58113787811,
+    "baseline": 140.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "event",
+      "ref": "test-town:home-football",
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-16",
+    "status": "open",
+    "low": 60.57461046120268,
+    "mid": 75.39646077156067,
+    "high": 104.56627973606103,
+    "baseline": 76.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-17",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-18",
+    "status": "open",
+    "low": 46.119497141173966,
+    "mid": 58.14593702554703,
+    "high": 82.88302371326922,
+    "baseline": 59.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-19",
+    "status": "open",
+    "low": 54.891207791890366,
+    "mid": 69.99907851219177,
+    "high": 98.39642889522861,
+    "baseline": 69.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-20",
+    "status": "open",
+    "low": 66.8665025666588,
+    "mid": 87.44696712493896,
+    "high": 121.85518603548313,
+    "baseline": 86.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-21",
+    "status": "open",
+    "low": 90.50014419123163,
+    "mid": 131.64454007148743,
+    "high": 195.3676335540819,
+    "baseline": 132.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-22",
+    "status": "open",
+    "low": 97.11590309508392,
+    "mid": 134.4056212902069,
+    "high": 235.5282381267295,
+    "baseline": 140.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-23",
+    "status": "open",
+    "low": 63.32914578481215,
+    "mid": 78.82499647140503,
+    "high": 109.32126716393545,
+    "baseline": 76.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-24",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-25",
+    "status": "open",
+    "low": 35.75052009029858,
+    "mid": 45.5652437210083,
+    "high": 65.46734798369576,
+    "baseline": 44.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-26",
+    "status": "open",
+    "low": 68.65402948977298,
+    "mid": 88.61755769908052,
+    "high": 124.89850498769025,
+    "baseline": 54.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "holiday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-27",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "holiday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-28",
+    "status": "open",
+    "low": 73.08607540804546,
+    "mid": 108.8978002667427,
+    "high": 162.90459644939264,
+    "baseline": 117.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-29",
+    "status": "open",
+    "low": 86.83037075685246,
+    "mid": 122.07568436861038,
+    "high": 219.38664706957712,
+    "baseline": 125.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-11-30",
+    "status": "open",
+    "low": 48.11666325558864,
+    "mid": 60.166201055049896,
+    "high": 83.36386408606516,
+    "baseline": 61.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-01",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-02",
+    "status": "open",
+    "low": 35.75052009029858,
+    "mid": 45.5652437210083,
+    "high": 65.46734798369576,
+    "baseline": 44.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-03",
+    "status": "open",
+    "low": 44.05968431170137,
+    "mid": 56.87155795097351,
+    "high": 80.15536366413629,
+    "baseline": 54.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-04",
+    "status": "open",
+    "low": 51.79619893016391,
+    "mid": 68.74805051088333,
+    "high": 95.81603879577466,
+    "baseline": 71.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-05",
+    "status": "open",
+    "low": 73.08607540804546,
+    "mid": 108.8978002667427,
+    "high": 162.90459644939264,
+    "baseline": 117.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-06",
+    "status": "open",
+    "low": 86.83037075685246,
+    "mid": 122.07568436861038,
+    "high": 219.38664706957712,
+    "baseline": 125.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-07",
+    "status": "open",
+    "low": 48.11666325558864,
+    "mid": 60.166201055049896,
+    "high": 83.36386408606516,
+    "baseline": 61.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-08",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-09",
+    "status": "open",
+    "low": 35.75052009029858,
+    "mid": 45.5652437210083,
+    "high": 65.46734798369576,
+    "baseline": 44.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-10",
+    "status": "open",
+    "low": 44.05968431170137,
+    "mid": 56.87155795097351,
+    "high": 80.15536366413629,
+    "baseline": 54.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-11",
+    "status": "open",
+    "low": 51.79619893016391,
+    "mid": 68.74805051088333,
+    "high": 95.81603879577466,
+    "baseline": 71.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-12",
+    "status": "open",
+    "low": 73.08607540804546,
+    "mid": 108.8978002667427,
+    "high": 162.90459644939264,
+    "baseline": 117.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-13",
+    "status": "booked",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "booking",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-14",
+    "status": "open",
+    "low": 48.11666325558864,
+    "mid": 60.166201055049896,
+    "high": 83.36386408606516,
+    "baseline": 61.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-15",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-16",
+    "status": "open",
+    "low": 35.75052009029858,
+    "mid": 45.5652437210083,
+    "high": 65.46734798369576,
+    "baseline": 44.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-17",
+    "status": "open",
+    "low": 44.05968431170137,
+    "mid": 56.87155795097351,
+    "high": 80.15536366413629,
+    "baseline": 54.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-18",
+    "status": "open",
+    "low": 51.79619893016391,
+    "mid": 68.74805051088333,
+    "high": 95.81603879577466,
+    "baseline": 71.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-19",
+    "status": "open",
+    "low": 73.08607540804546,
+    "mid": 108.8978002667427,
+    "high": 162.90459644939264,
+    "baseline": 117.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-20",
+    "status": "open",
+    "low": 86.83037075685246,
+    "mid": 122.07568436861038,
+    "high": 219.38664706957712,
+    "baseline": 125.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-21",
+    "status": "open",
+    "low": 48.11666325558864,
+    "mid": 60.166201055049896,
+    "high": 83.36386408606516,
+    "baseline": 61.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-22",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-23",
+    "status": "open",
+    "low": 55.7066465385962,
+    "mid": 71.0,
+    "high": 102.01156248176306,
+    "baseline": 44.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "holiday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-24",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "holiday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-25",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "holiday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-26",
+    "status": "open",
+    "low": 73.08607540804546,
+    "mid": 108.8978002667427,
+    "high": 162.90459644939264,
+    "baseline": 117.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-27",
+    "status": "open",
+    "low": 86.83037075685246,
+    "mid": 122.07568436861038,
+    "high": 219.38664706957712,
+    "baseline": 125.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-28",
+    "status": "open",
+    "low": 48.11666325558864,
+    "mid": 60.166201055049896,
+    "high": 83.36386408606516,
+    "baseline": 61.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-29",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-30",
+    "status": "open",
+    "low": 35.75052009029858,
+    "mid": 45.5652437210083,
+    "high": 65.46734798369576,
+    "baseline": 44.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2025-12-31",
+    "status": "open",
+    "low": 68.65402948977298,
+    "mid": 88.61755769908052,
+    "high": 124.89850498769025,
+    "baseline": 54.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "holiday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-01",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "holiday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-02",
+    "status": "open",
+    "low": 73.08607540804546,
+    "mid": 108.8978002667427,
+    "high": 162.90459644939264,
+    "baseline": 117.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-03",
+    "status": "open",
+    "low": 86.83037075685246,
+    "mid": 122.07568436861038,
+    "high": 219.38664706957712,
+    "baseline": 125.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-04",
+    "status": "open",
+    "low": 48.11666325558864,
+    "mid": 60.166201055049896,
+    "high": 83.36386408606516,
+    "baseline": 61.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-05",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-06",
+    "status": "open",
+    "low": 43.2156718653012,
+    "mid": 51.4922651052475,
+    "high": 70.7612854276818,
+    "baseline": 51.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-07",
+    "status": "open",
+    "low": 53.54538436206199,
+    "mid": 65.1924934387207,
+    "high": 88.69004028002642,
+    "baseline": 61.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-08",
+    "status": "open",
+    "low": 62.3853714663309,
+    "mid": 78.82313418388367,
+    "high": 106.95514568100747,
+    "baseline": 78.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-09",
+    "status": "open",
+    "low": 84.56177381894496,
+    "mid": 120.99981808662415,
+    "high": 177.4422371527174,
+    "baseline": 124.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-10",
+    "status": "open",
+    "low": 100.27277146766721,
+    "mid": 136.31960248947144,
+    "high": 238.78526510008442,
+    "baseline": 132.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-11",
+    "status": "open",
+    "low": 58.187010277240155,
+    "mid": 69.3308892250061,
+    "high": 93.19772112867469,
+    "baseline": 68.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-12",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-13",
+    "status": "open",
+    "low": 40.60794268741959,
+    "mid": 48.38510799407959,
+    "high": 66.49139303194802,
+    "baseline": 51.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-14",
+    "status": "open",
+    "low": 48.07509489201364,
+    "mid": 58.53231507539749,
+    "high": 79.62931171822459,
+    "baseline": 61.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-15",
+    "status": "open",
+    "low": 59.96419175360492,
+    "mid": 75.76400399208069,
+    "high": 102.80421056901146,
+    "baseline": 78.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-16",
+    "status": "open",
+    "low": 79.94226032999015,
+    "mid": 114.38973569869995,
+    "high": 167.74876963165588,
+    "baseline": 124.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-17",
+    "status": "open",
+    "low": 95.35635957057559,
+    "mid": 129.63580083847046,
+    "high": 227.07753327014515,
+    "baseline": 132.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-18",
+    "status": "open",
+    "low": 54.922103051530726,
+    "mid": 65.44069242477417,
+    "high": 87.96834241196682,
+    "baseline": 68.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-19",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "holiday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-20",
+    "status": "open",
+    "low": 52.96266513820953,
+    "mid": 63.10598623752594,
+    "high": 86.72099965347735,
+    "baseline": 51.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-21",
+    "status": "open",
+    "low": 48.72136447981193,
+    "mid": 59.3191602230072,
+    "high": 80.69976207461791,
+    "baseline": 61.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-22",
+    "status": "open",
+    "low": 61.46852621702771,
+    "mid": 77.6647117137909,
+    "high": 105.38328171833015,
+    "baseline": 78.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-23",
+    "status": "open",
+    "low": 83.41799169016113,
+    "mid": 119.3631751537323,
+    "high": 175.04215434247212,
+    "baseline": 124.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-24",
+    "status": "open",
+    "low": 98.93300304276362,
+    "mid": 134.49820375442505,
+    "high": 235.59479819834442,
+    "baseline": 132.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-25",
+    "status": "open",
+    "low": 56.829616638273954,
+    "mid": 67.71352982521057,
+    "high": 91.02359337707766,
+    "baseline": 68.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-26",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-27",
+    "status": "open",
+    "low": 42.76534156431311,
+    "mid": 50.955688297748566,
+    "high": 70.02391517310667,
+    "baseline": 51.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-28",
+    "status": "open",
+    "low": 49.7672855012059,
+    "mid": 60.59258836507797,
+    "high": 82.43217614956255,
+    "baseline": 61.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-29",
+    "status": "open",
+    "low": 63.0247654960234,
+    "mid": 79.63100051879883,
+    "high": 108.05133986861817,
+    "baseline": 78.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-30",
+    "status": "open",
+    "low": 87.94337370432409,
+    "mid": 125.83856439590454,
+    "high": 184.5380988135878,
+    "baseline": 124.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-01-31",
+    "status": "open",
+    "low": 101.16936880442647,
+    "mid": 137.53851556777954,
+    "high": 240.92038343392963,
+    "baseline": 132.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-01",
+    "status": "open",
+    "low": 58.5582175923928,
+    "mid": 69.77318954467773,
+    "high": 93.79228124911539,
+    "baseline": 68.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-02",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-03",
+    "status": "open",
+    "low": 44.19928825045122,
+    "mid": 52.66426205635071,
+    "high": 72.3718576293101,
+    "baseline": 51.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-04",
+    "status": "open",
+    "low": 50.3528016684564,
+    "mid": 61.30546510219574,
+    "high": 83.40199741570416,
+    "baseline": 61.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-05",
+    "status": "open",
+    "low": 63.00385785657315,
+    "mid": 79.60458397865295,
+    "high": 108.01549525359566,
+    "baseline": 78.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-06",
+    "status": "open",
+    "low": 89.21165896460388,
+    "mid": 127.65335941314697,
+    "high": 187.1994357719836,
+    "baseline": 124.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-07",
+    "status": "open",
+    "low": 102.66993258966494,
+    "mid": 139.57851362228394,
+    "high": 244.49376149073632,
+    "baseline": 132.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-08",
+    "status": "open",
+    "low": 72.80592352668133,
+    "mid": 86.74959230422974,
+    "high": 116.61273065973884,
+    "baseline": 68.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-09",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-10",
+    "status": "open",
+    "low": 44.46433039592923,
+    "mid": 52.98006463050842,
+    "high": 72.80583729680183,
+    "baseline": 51.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-11",
+    "status": "open",
+    "low": 50.59031457397391,
+    "mid": 61.59464144706726,
+    "high": 83.7954025505882,
+    "baseline": 61.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-12",
+    "status": "open",
+    "low": 63.1295097523752,
+    "mid": 79.76334357261658,
+    "high": 108.23091621695173,
+    "baseline": 78.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "event",
+      "ref": "test-town:festival",
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-13",
+    "status": "open",
+    "low": 86.06685986180993,
+    "mid": 123.15345239639282,
+    "high": 180.60047074328878,
+    "baseline": 124.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "event",
+      "ref": "test-town:festival",
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-14",
+    "status": "open",
+    "low": 102.44320789068428,
+    "mid": 139.2702841758728,
+    "high": 243.95384904433215,
+    "baseline": 132.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "event",
+      "ref": "test-town:festival",
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-15",
+    "status": "open",
+    "low": 59.587233959505724,
+    "mid": 70.99928140640259,
+    "high": 95.440449456454,
+    "baseline": 68.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-16",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "holiday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-17",
+    "status": "open",
+    "low": 43.63345612969351,
+    "mid": 51.99006271362305,
+    "high": 71.44536484387143,
+    "baseline": 51.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-18",
+    "status": "open",
+    "low": 49.555639983064765,
+    "mid": 60.33490604162216,
+    "high": 82.08161653078945,
+    "baseline": 61.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-19",
+    "status": "open",
+    "low": 61.69708991503755,
+    "mid": 77.95349907875061,
+    "high": 105.77513742173373,
+    "baseline": 78.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-20",
+    "status": "open",
+    "low": 84.41479152928973,
+    "mid": 120.78950047492981,
+    "high": 177.13381332099775,
+    "baseline": 124.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-21",
+    "status": "open",
+    "low": 96.04083944595442,
+    "mid": 130.56634283065796,
+    "high": 228.70752420492957,
+    "baseline": 132.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-22",
+    "status": "open",
+    "low": 59.461468542869696,
+    "mid": 70.84942960739136,
+    "high": 95.23901188178863,
+    "baseline": 68.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-23",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-24",
+    "status": "open",
+    "low": 43.39584480537078,
+    "mid": 51.70694446563721,
+    "high": 71.056300367594,
+    "baseline": 51.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-25",
+    "status": "open",
+    "low": 48.867144020583716,
+    "mid": 59.496649503707886,
+    "high": 80.94122440600448,
+    "baseline": 61.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-26",
+    "status": "open",
+    "low": 61.37102346620883,
+    "mid": 77.54151821136475,
+    "high": 105.21612040033176,
+    "baseline": 78.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-27",
+    "status": "booked",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "booking",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-02-28",
+    "status": "open",
+    "low": 91.03271562562546,
+    "mid": 123.75785994529724,
+    "high": 216.78139354565178,
+    "baseline": 132.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-01",
+    "status": "open",
+    "low": 58.65732776168598,
+    "mid": 69.89128112792969,
+    "high": 93.95102530341188,
+    "baseline": 68.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-02",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-03",
+    "status": "open",
+    "low": 42.81521045020618,
+    "mid": 51.01510798931122,
+    "high": 70.10557042261057,
+    "baseline": 51.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-04",
+    "status": "open",
+    "low": 48.77900915523634,
+    "mid": 59.38934367895126,
+    "high": 80.79524198658847,
+    "baseline": 61.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-05",
+    "status": "open",
+    "low": 61.220225000888476,
+    "mid": 77.35098624229431,
+    "high": 104.95758748712284,
+    "baseline": 78.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-06",
+    "status": "open",
+    "low": 84.04974281059796,
+    "mid": 120.26715064048767,
+    "high": 176.3678045396175,
+    "baseline": 124.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-07",
+    "status": "open",
+    "low": 90.17667594381966,
+    "mid": 122.59408450126648,
+    "high": 214.7428574668709,
+    "baseline": 132.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-08",
+    "status": "open",
+    "low": 57.951140592355856,
+    "mid": 69.04984617233276,
+    "high": 92.81993032949431,
+    "baseline": 68.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-09",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-10",
+    "status": "open",
+    "low": 42.18293665577409,
+    "mid": 50.2617421746254,
+    "high": 69.07028612630936,
+    "baseline": 51.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-11",
+    "status": "open",
+    "low": 48.596390536806396,
+    "mid": 59.16700214147568,
+    "high": 80.49276115061356,
+    "baseline": 61.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-12",
+    "status": "open",
+    "low": 60.12328409772164,
+    "mid": 75.96501517295837,
+    "high": 103.07696272936236,
+    "baseline": 78.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-13",
+    "status": "open",
+    "low": 83.68539656559867,
+    "mid": 119.74580597877502,
+    "high": 175.60326981084881,
+    "baseline": 124.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-14",
+    "status": "open",
+    "low": 89.27869543361093,
+    "mid": 121.373291015625,
+    "high": 212.60444530326538,
+    "baseline": 132.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-15",
+    "status": "open",
+    "low": 48.11666325558864,
+    "mid": 60.166201055049896,
+    "high": 83.36386408606516,
+    "baseline": 61.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-16",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-17",
+    "status": "open",
+    "low": 35.75052009029858,
+    "mid": 45.5652437210083,
+    "high": 65.46734798369576,
+    "baseline": 44.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-18",
+    "status": "open",
+    "low": 53.394133065138476,
+    "mid": 68.92031979560852,
+    "high": 97.1370135811623,
+    "baseline": 54.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-19",
+    "status": "open",
+    "low": 51.79619893016391,
+    "mid": 68.74805051088333,
+    "high": 95.81603879577466,
+    "baseline": 71.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-20",
+    "status": "open",
+    "low": 73.08607540804546,
+    "mid": 108.8978002667427,
+    "high": 162.90459644939264,
+    "baseline": 117.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-21",
+    "status": "open",
+    "low": 86.83037075685246,
+    "mid": 122.07568436861038,
+    "high": 219.38664706957712,
+    "baseline": 125.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-22",
+    "status": "open",
+    "low": 48.11666325558864,
+    "mid": 60.166201055049896,
+    "high": 83.36386408606516,
+    "baseline": 61.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-23",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-24",
+    "status": "open",
+    "low": 35.75052009029858,
+    "mid": 45.5652437210083,
+    "high": 65.46734798369576,
+    "baseline": 44.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-25",
+    "status": "open",
+    "low": 44.05968431170137,
+    "mid": 56.87155795097351,
+    "high": 80.15536366413629,
+    "baseline": 54.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-26",
+    "status": "open",
+    "low": 51.79619893016391,
+    "mid": 68.74805051088333,
+    "high": 95.81603879577466,
+    "baseline": 71.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-27",
+    "status": "open",
+    "low": 86.36619498350883,
+    "mid": 127.83045297861099,
+    "high": 178.0761826228894,
+    "baseline": 131.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-28",
+    "status": "open",
+    "low": 102.13522661182664,
+    "mid": 143.54867231845856,
+    "high": 238.90236752584423,
+    "baseline": 139.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-29",
+    "status": "open",
+    "low": 59.90597233284093,
+    "mid": 76.46789252758026,
+    "high": 94.12831968305761,
+    "baseline": 75.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-30",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-03-31",
+    "status": "open",
+    "low": 44.930200365992555,
+    "mid": 58.55983090400696,
+    "high": 71.6647098353008,
+    "baseline": 58.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-04-01",
+    "status": "open",
+    "low": 55.376745636712734,
+    "mid": 72.67359924316406,
+    "high": 89.6483126375166,
+    "baseline": 68.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-04-02",
+    "status": "open",
+    "low": 64.1475765152252,
+    "mid": 85.89700520038605,
+    "high": 107.84289217005634,
+    "baseline": 85.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-04-03",
+    "status": "open",
+    "low": 81.64810801941259,
+    "mid": 120.84722077846527,
+    "high": 168.34808338209842,
+    "baseline": 131.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-04-04",
+    "status": "open",
+    "low": 97.12749783484308,
+    "mid": 136.51042664051056,
+    "high": 227.18889411969482,
+    "baseline": 139.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-04-05",
+    "status": "open",
+    "low": 56.54461313942753,
+    "mid": 72.17723429203033,
+    "high": 88.84672453642898,
+    "baseline": 75.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-04-06",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-04-07",
+    "status": "open",
+    "low": 42.21901274804553,
+    "mid": 55.026201248168945,
+    "high": 67.3403028135975,
+    "baseline": 58.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-04-08",
+    "status": "open",
+    "low": 49.7193611179327,
+    "mid": 65.24913811683655,
+    "high": 80.48968530723882,
+    "baseline": 68.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-04-09",
+    "status": "open",
+    "low": 61.658005527208836,
+    "mid": 82.56333768367767,
+    "high": 103.65750356778194,
+    "baseline": 85.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-04-10",
+    "status": "open",
+    "low": 85.19800626309832,
+    "mid": 126.10141891241074,
+    "high": 175.6675250693924,
+    "baseline": 131.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-04-11",
+    "status": "open",
+    "low": 100.77057347935565,
+    "mid": 141.63068425655365,
+    "high": 235.71033599065274,
+    "baseline": 139.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-04-12",
+    "status": "open",
+    "low": 58.5084785383799,
+    "mid": 74.68404024839401,
+    "high": 91.93248281542023,
+    "baseline": 75.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-04-13",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-04-14",
+    "status": "open",
+    "low": 43.188150401479966,
+    "mid": 56.28932797908783,
+    "high": 68.8860998088945,
+    "baseline": 58.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-04-15",
+    "status": "open",
+    "low": 50.3877344427791,
+    "mid": 66.12627696990967,
+    "high": 81.5717015957634,
+    "baseline": 68.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-04-16",
+    "status": "open",
+    "low": 63.204833057906214,
+    "mid": 84.63462173938751,
+    "high": 106.25798146049047,
+    "baseline": 85.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-04-17",
+    "status": "open",
+    "low": 89.81995312820179,
+    "mid": 132.9423543214798,
+    "high": 185.19739557232026,
+    "baseline": 131.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-04-18",
+    "status": "open",
+    "low": 103.048477246362,
+    "mid": 144.83222472667694,
+    "high": 241.0385329407816,
+    "baseline": 139.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-04-19",
+    "status": "open",
+    "low": 60.288145863416375,
+    "mid": 76.9557237625122,
+    "high": 94.72881660948322,
+    "baseline": 75.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-04-20",
+    "status": "closed",
+    "low": null,
+    "mid": null,
+    "high": null,
+    "baseline": null,
+    "reasons": [
+     {
+      "kind": "closure",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   },
+   {
+    "date": "2026-04-21",
+    "status": "open",
+    "low": 44.4620037655246,
+    "mid": 57.94960629940033,
+    "high": 70.9179254175797,
+    "baseline": 58.0,
+    "reasons": [
+     {
+      "kind": "weekday",
+      "ref": null,
+      "effectPct": null
+     },
+     {
+      "kind": "term",
+      "ref": null,
+      "effectPct": null
+     }
+    ]
+   }
+  ],
+  "weeks": [
+   {
+    "from": "2025-10-22",
+    "to": "2025-10-26",
+    "openDays": 5,
+    "low": 500.44289296865463,
+    "mid": 500.44289296865463,
+    "high": 672.399076578242
+   },
+   {
+    "from": "2025-10-27",
+    "to": "2025-11-02",
+    "openDays": 6,
+    "low": 563.093830292099,
+    "mid": 563.093830292099,
+    "high": 756.5773774292122
+   },
+   {
+    "from": "2025-11-03",
+    "to": "2025-11-09",
+    "openDays": 6,
+    "low": 565.9621595144272,
+    "mid": 565.9621595144272,
+    "high": 760.4312875306724
+   },
+   {
+    "from": "2025-11-10",
+    "to": "2025-11-16",
+    "openDays": 6,
+    "low": 541.2974362969398,
+    "mid": 541.2974362969398,
+    "high": 727.2915679972086
+   },
+   {
+    "from": "2025-11-17",
+    "to": "2025-11-23",
+    "openDays": 6,
+    "low": 560.4671404957771,
+    "mid": 560.4671404957771,
+    "high": 753.0481359946357
+   },
+   {
+    "from": "2025-11-24",
+    "to": "2025-11-30",
+    "openDays": 5,
+    "low": 425.3224871104918,
+    "mid": 425.3224871104918,
+    "high": 571.4666979973852
+   },
+   {
+    "from": "2025-12-01",
+    "to": "2025-12-07",
+    "openDays": 6,
+    "low": 462.3245378732681,
+    "mid": 462.3245378732681,
+    "high": 621.1829495696708
+   },
+   {
+    "from": "2025-12-08",
+    "to": "2025-12-14",
+    "openDays": 5,
+    "low": 340.24885350465775,
+    "mid": 340.24885350465775,
+    "high": 457.1610829483141
+   },
+   {
+    "from": "2025-12-15",
+    "to": "2025-12-21",
+    "openDays": 6,
+    "low": 462.3245378732681,
+    "mid": 462.3245378732681,
+    "high": 621.1829495696708
+   },
+   {
+    "from": "2025-12-22",
+    "to": "2025-12-28",
+    "openDays": 4,
+    "low": 362.139685690403,
+    "mid": 362.139685690403,
+    "high": 486.57378028908005
+   },
+   {
+    "from": "2025-12-29",
+    "to": "2026-01-04",
+    "openDays": 5,
+    "low": 425.3224871104918,
+    "mid": 425.3224871104918,
+    "high": 571.4666979973852
+   },
+   {
+    "from": "2026-01-05",
+    "to": "2026-01-11",
+    "openDays": 6,
+    "low": 522.1582025289536,
+    "mid": 522.1582025289536,
+    "high": 701.5759403145609
+   },
+   {
+    "from": "2026-01-12",
+    "to": "2026-01-18",
+    "openDays": 6,
+    "low": 492.14765602350235,
+    "mid": 492.14765602350235,
+    "high": 661.2535298229851
+   },
+   {
+    "from": "2026-01-19",
+    "to": "2026-01-25",
+    "openDays": 6,
+    "low": 521.664766907692,
+    "mid": 521.664766907692,
+    "high": 700.912956264335
+   },
+   {
+    "from": "2026-01-26",
+    "to": "2026-02-01",
+    "openDays": 6,
+    "low": 524.3295466899872,
+    "mid": 524.3295466899872,
+    "high": 704.4933757089407
+   },
+   {
+    "from": "2026-02-02",
+    "to": "2026-02-08",
+    "openDays": 6,
+    "low": 547.55577647686,
+    "mid": 547.55577647686,
+    "high": 735.7003239552125
+   },
+   {
+    "from": "2026-02-09",
+    "to": "2026-02-15",
+    "openDays": 6,
+    "low": 527.7610676288605,
+    "mid": 527.7610676288605,
+    "high": 709.1039947085831
+   },
+   {
+    "from": "2026-02-16",
+    "to": "2026-02-22",
+    "openDays": 6,
+    "low": 512.483740746975,
+    "mid": 512.483740746975,
+    "high": 688.5772560291166
+   },
+   {
+    "from": "2026-02-23",
+    "to": "2026-03-01",
+    "openDays": 5,
+    "low": 382.39425325393677,
+    "mid": 382.39425325393677,
+    "high": 513.7879793866477
+   },
+   {
+    "from": "2026-03-02",
+    "to": "2026-03-08",
+    "openDays": 6,
+    "low": 499.6665192246437,
+    "mid": 499.6665192246437,
+    "high": 671.3559346016303
+   },
+   {
+    "from": "2026-03-09",
+    "to": "2026-03-15",
+    "openDays": 6,
+    "low": 486.67905753850937,
+    "mid": 486.67905753850937,
+    "high": 653.9058771274422
+   },
+   {
+    "from": "2026-03-16",
+    "to": "2026-03-22",
+    "openDays": 6,
+    "low": 474.37329971790314,
+    "mid": 474.37329971790314,
+    "high": 637.3717624233907
+   },
+   {
+    "from": "2026-03-23",
+    "to": "2026-03-29",
+    "openDays": 6,
+    "low": 519.031870007515,
+    "mid": 519.031870007515,
+    "high": 697.3753749153366
+   },
+   {
+    "from": "2026-03-30",
+    "to": "2026-04-05",
+    "openDays": 6,
+    "low": 546.6653170585632,
+    "mid": 546.6653170585632,
+    "high": 734.5038955534794
+   },
+   {
+    "from": "2026-04-06",
+    "to": "2026-04-12",
+    "openDays": 6,
+    "low": 545.2548204660416,
+    "mid": 545.2548204660416,
+    "high": 732.608741042038
+   },
+   {
+    "from": "2026-04-13",
+    "to": "2026-04-19",
+    "openDays": 6,
+    "low": 561.780529499054,
+    "mid": 561.780529499054,
+    "high": 754.8128159719107
+   },
+   {
+    "from": "2026-04-20",
+    "to": "2026-04-21",
+    "openDays": 1,
+    "low": 57.94960629940033,
+    "mid": 57.94960629940033,
+    "high": 77.86155485722934
+   }
+  ]
+ }
+}
