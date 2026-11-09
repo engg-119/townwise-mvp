@@ -40,6 +40,11 @@ afterEach(async () => { await removeStaffFactor(server); });
 
 const PLACE_ID = 'ChIJTestPlace0001';
 
+const PLACES = [
+  { placeId: 'ChIJTestPlace0001', name: 'Lou’s Restaurant', town: { townId: 'hanover-nh' } },
+  { placeId: 'ChIJTestPlace0002', name: '  Lou’s Bakery ', town: { townId: null, name: 'Norwich', state: 'VT' } },
+];
+
 const VALID = {
   orgName: 'Lou’s Diner Group',
   contactName: 'Lou Sample',
@@ -88,7 +93,7 @@ describe('POST /api/access-requests', () => {
       request: {
         id: expect.any(String) as string, orgName: 'Lou’s Diner Group', contactName: 'Lou Sample', contactRole: 'Owner',
         town: { townId: 'hanover-nh', name: 'Hanover', state: 'NH' }, locationCount: 2, note: 'Two dining rooms and a bar.',
-        status: 'pending', createdAt: server.clock.now().toISOString(), decidedAt: null, decisionMessage: null, placeId: null,
+        status: 'pending', createdAt: server.clock.now().toISOString(), decidedAt: null, decisionMessage: null, places: [],
       },
     });
     const requestId = body.access.state === 'pending' ? body.access.request.id : '';
@@ -97,7 +102,7 @@ describe('POST /api/access-requests', () => {
     expect(stored).toHaveLength(1);
     expect(stored[0]).toMatchObject({
       _id: new Types.ObjectId(requestId), emailAtRequest: email, status: 'pending', decidedAt: null, decidedBy: null,
-      decisionMessage: null, orgId: null, withdrawnReason: null, placeId: null,
+      decisionMessage: null, orgId: null, withdrawnReason: null, places: [],
     });
 
     const events = (await auditEvents(server)).filter((event) => (event.target as { id: string }).id === requestId);
@@ -106,50 +111,106 @@ describe('POST /api/access-requests', () => {
       action: 'access_request.created', actorUserId: session.userId, actorEmail: email, actorRole: 'user',
       viewAsGrantId: null, orgId: null, target: { type: 'request', id: requestId },
     });
-    expect(events[0]?.details).toEqual({ orgName: 'Lou’s Diner Group', townId: 'hanover-nh', townName: 'Hanover', hasPlace: false });
+    expect(events[0]?.details).toEqual({ orgName: 'Lou’s Diner Group', townId: 'hanover-nh', townName: 'Hanover', hasPlace: false, placeCount: 0 });
   });
 
-  it('stores the picked place, answers it in Waiting, and records only hasPlace', async () => {
+  it('stores the checked places in order, answers them in Waiting, and records only hasPlace and placeCount', async () => {
     const { session } = await person('placed');
     server.logs.length = 0;
-    const res = await send(session, { ...VALID, placeId: PLACE_ID });
+    const res = await send(session, { ...VALID, places: PLACES });
     expect(res.status).toBe(201);
     const body = await res.json() as MeResponse;
-    expect(body.access).toMatchObject({ state: 'pending', request: { placeId: PLACE_ID } });
-    expect(await requestsOf(session.userId)).toMatchObject([{ placeId: PLACE_ID }]);
+    const expected = [
+      { placeId: 'ChIJTestPlace0001', name: 'Lou’s Restaurant', town: { townId: 'hanover-nh', name: 'Hanover', state: 'NH' } },
+      { placeId: 'ChIJTestPlace0002', name: 'Lou’s Bakery', town: { townId: null, name: 'Norwich', state: 'VT' } },
+    ];
+    expect(body.access).toMatchObject({ state: 'pending', request: { places: expected } });
+    expect(await requestsOf(session.userId)).toMatchObject([{ places: expected }]);
     const requestId = body.access.state === 'pending' ? body.access.request.id : '';
     const events = (await auditEvents(server)).filter((event) => (event.target as { id: string }).id === requestId);
     expect(events).toHaveLength(1);
-    expect(events[0]?.details).toEqual({ orgName: 'Lou’s Diner Group', townId: 'hanover-nh', townName: 'Hanover', hasPlace: true });
-    expect(JSON.stringify(events)).not.toContain(PLACE_ID);
-    expect(server.logs.join('\n')).not.toContain(PLACE_ID);
+    expect(events[0]?.details).toEqual({ orgName: 'Lou’s Diner Group', townId: 'hanover-nh', townName: 'Hanover', hasPlace: true, placeCount: 2 });
+    for (const secret of ['ChIJTestPlace0001', 'ChIJTestPlace0002', 'Lou’s Bakery']) {
+      expect(JSON.stringify(events)).not.toContain(secret);
+      expect(server.logs.join('\n')).not.toContain(secret);
+    }
   });
 
-  it('an explicit null place is stored as null with hasPlace false', async () => {
-    const { session } = await person('nullplace');
-    const res = await send(session, { ...VALID, placeId: null });
+  it('a stale client’s single placeId is ignored: 201, no places, hasPlace false', async () => {
+    const { session } = await person('stale');
+    const res = await send(session, { ...VALID, placeId: PLACE_ID });
     expect(res.status).toBe(201);
-    expect(await requestsOf(session.userId)).toMatchObject([{ placeId: null }]);
+    expect(await requestsOf(session.userId)).toMatchObject([{ places: [], placeId: null }]);
     const body = await res.json() as MeResponse;
     const requestId = body.access.state === 'pending' ? body.access.request.id : '';
     const events = (await auditEvents(server)).filter((event) => (event.target as { id: string }).id === requestId);
-    expect(events.map((event) => event.details)).toEqual([{ orgName: 'Lou’s Diner Group', townId: 'hanover-nh', townName: 'Hanover', hasPlace: false }]);
+    expect(events.map((event) => event.details)).toEqual([{ orgName: 'Lou’s Diner Group', townId: 'hanover-nh', townName: 'Hanover', hasPlace: false, placeCount: 0 }]);
   });
 
-  it('a malformed place ID is 400 invalid_request and nothing is stored', async () => {
+  it('malformed places are 400 invalid_request and nothing is stored', async () => {
     const { session } = await person('badplace');
-    for (const placeId of ['', 'short', 'x'.repeat(513), 'ChIJ Test Place', '../ChIJTestPlace0001', ' ChIJTestPlace0001', 12345678901]) {
+    const many = Array.from({ length: 26 }, (_, i) => ({ ...PLACES[0], placeId: `ChIJTestPlace${String(i).padStart(4, '0')}` }));
+    const bad: unknown[] = [
+      [], null, 'ChIJTestPlace0001', many, [PLACES[0], { ...PLACES[1], placeId: 'ChIJTestPlace0001' }],
+      [{ ...PLACES[0], name: '' }], [{ ...PLACES[0], name: '   ' }], [{ ...PLACES[0], name: 'x'.repeat(81) }],
+      [{ ...PLACES[0], placeId: 'short' }], [{ ...PLACES[0], placeId: '../ChIJTestPlace0001' }],
+      [{ ...PLACES[0], town: { townId: null, name: 'Somewhere', state: 'ZZ' } }],
+      [{ placeId: PLACES[0]?.placeId, name: PLACES[0]?.name }],
+    ];
+    for (const places of bad) {
       await resetRequestLimit(session);
-      expect(await errorOf(await send(session, { ...VALID, placeId }))).toEqual({ status: 400, error: 'invalid_request' });
+      expect(await errorOf(await send(session, { ...VALID, locationCount: 30, places }))).toEqual({ status: 400, error: 'invalid_request' });
     }
     expect(await requestsOf(session.userId)).toEqual([]);
+  });
+
+  it('the number of locations must be at least the number of places', async () => {
+    const { session } = await person('count');
+    expect(await errorOf(await send(session, { ...VALID, locationCount: 1, places: PLACES }))).toEqual({ status: 400, error: 'invalid_request' });
+    expect(await requestsOf(session.userId)).toEqual([]);
+    await resetRequestLimit(session);
+    expect((await send(session, { ...VALID, locationCount: 2, places: PLACES })).status).toBe(201);
+  });
+
+  it('a place in a town id outside the twelve is 400 unknown_town', async () => {
+    const { session } = await person('placetown');
+    const places = [PLACES[0], { ...PLACES[1], town: { townId: 'springfield-zz' } }];
+    expect(await errorOf(await send(session, { ...VALID, places }))).toEqual({ status: 400, error: 'unknown_town' });
+    expect(await requestsOf(session.userId)).toEqual([]);
+  });
+
+  it('25 places with 512-character ids and 80-character names fit the route’s 32 KB body', async () => {
+    const { session } = await person('biggest');
+    const places = Array.from({ length: 25 }, (_, i) => ({
+      placeId: `ChIJ${String(i).padStart(4, '0')}${'x'.repeat(504)}`, name: '’'.repeat(80), town: { townId: 'hanover-nh' },
+    }));
+    const res = await send(session, { ...VALID, locationCount: 25, note: 'n'.repeat(1000), places });
+    expect(res.status).toBe(201);
+    const stored = await requestsOf(session.userId);
+    expect(stored[0]?.places).toHaveLength(25);
+  });
+
+  it('a request stored before places reads its single placeId as one place named null in the request’s town', async () => {
+    const old = await person('old');
+    await addRequest(server, { userId: old.session.userId, email: old.email, status: 'pending', placeId: PLACE_ID });
+    const res = await call(server, '/api/me', { session: old.session });
+    const body = await res.json() as MeResponse;
+    expect(body.access).toMatchObject({
+      state: 'pending',
+      request: { places: [{ placeId: PLACE_ID, name: null, town: { townId: 'hanover-nh', name: 'Hanover', state: 'NH' } }] },
+    });
+
+    const none = await person('older');
+    await addRequest(server, { userId: none.session.userId, email: none.email, status: 'pending' });
+    const noneBody = await (await call(server, '/api/me', { session: none.session })).json() as MeResponse;
+    expect(noneBody.access).toMatchObject({ state: 'pending', request: { places: [] } });
   });
 
   it('an address in the body is neither stored nor answered', async () => {
     const { session } = await person('address');
     const address = '1 Sentinel Way, Hanover, NH 03755, USA';
     server.logs.length = 0;
-    const res = await send(session, { ...VALID, placeId: PLACE_ID, address, formattedAddress: address, place: { address } });
+    const res = await send(session, { ...VALID, places: [{ ...PLACES[0], address }, PLACES[1]], address, formattedAddress: address, place: { address } });
     expect(res.status).toBe(201);
     expect(JSON.stringify(await res.json())).not.toContain('Sentinel Way');
     const stored = await requestsOf(session.userId);

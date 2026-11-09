@@ -74,7 +74,8 @@ describe('P3 Request access with the search on', () => {
     await waitFor(() => { expect(router.getPathname()).toBe('/waiting'); });
     expect(sentWrites(api)).toEqual([{
       method: 'POST', path: '/api/access-requests',
-      body: { orgName: 'Lou’s Restaurant', contactName: 'Pat', contactRole: 'Owner', town: { townId: 'hanover-nh' }, locationCount: 1, placeId: 'ChIJTestPlace0001' },
+      body: { orgName: 'Lou’s Restaurant', contactName: 'Pat', contactRole: 'Owner', town: { townId: 'hanover-nh' }, locationCount: 1,
+        places: [{ placeId: 'ChIJTestPlace0001', name: 'Lou’s Restaurant', town: { townId: 'hanover-nh' } }] },
     }]);
   });
 

@@ -1,5 +1,5 @@
 import {
-  checkPlaceSearch, createLocationAt, placeChanged, placesUnavailable, sendAccessRequestAt, setLocationPlace, townInputOf, townLabel,
+  checkPlaceSearch, createLocationAt, placeChanged, placeName, placesUnavailable, sendAccessRequestAt, setLocationPlace, townInputOf, townLabel,
   type UsablePlace,
 } from '../../../src/portal/onboarding/places';
 import { searchStatus } from '../../../src/portal/onboarding/usePlaceSearch';
@@ -40,14 +40,19 @@ describe('the writes that carry a place', () => {
     api.answers['/api/org/locations'] = () => ({ location });
     api.answers['/api/org/locations/l9'] = () => ({ location });
     const request = { orgName: 'Lou’s', contactName: 'Pat', contactRole: 'Owner', town: townInputOf(PLACE.town), locationCount: 1 };
-    await sendAccessRequestAt(api, request, PLACE.placeId);
+    await sendAccessRequestAt(api, request, [PLACE]);
     await createLocationAt(api, { name: 'Lou’s', town: townInputOf(PLACE.town) }, PLACE.placeId);
     expect(await setLocationPlace(api, 'l9', PLACE)).toMatchObject({ placeId: 'ChIJTestPlace0001' });
     expect(writes(api)).toEqual([
-      { method: 'POST', path: '/api/access-requests', body: { ...request, placeId: 'ChIJTestPlace0001' } },
+      { method: 'POST', path: '/api/access-requests', body: { ...request, places: [{ placeId: 'ChIJTestPlace0001', name: 'Lou’s Restaurant', town: { townId: 'hanover-nh' } }] } },
       { method: 'POST', path: '/api/org/locations', body: { name: 'Lou’s', town: { townId: 'hanover-nh' }, placeId: 'ChIJTestPlace0001' } },
       { method: 'PATCH', path: '/api/org/locations/l9', body: { town: { townId: 'hanover-nh' }, placeId: 'ChIJTestPlace0001' } },
     ]);
+  });
+
+  test('placeName trims and keeps the first 80 characters', () => {
+    expect(placeName({ name: '  Lou’s  ' })).toBe('Lou’s');
+    expect(placeName({ name: 'x'.repeat(100) })).toHaveLength(80);
   });
 
   test('townInputOf: one of the twelve by id, another town by name and state', () => {

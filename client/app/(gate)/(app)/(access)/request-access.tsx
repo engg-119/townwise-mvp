@@ -119,7 +119,7 @@ export default function RequestAccessPage(): React.JSX.Element {
 
   const send = useAction(useCallback(async (input: AccessRequestInput, place: UsablePlace | null) => {
     try {
-      applyMe(await (place === null ? sendAccessRequest(api, input) : sendAccessRequestAt(api, input, place.placeId)));
+      applyMe(await (place === null ? sendAccessRequest(api, input) : sendAccessRequestAt(api, input, [place])));
     } catch (error) {
       // Another tab sent one first: read the access again, which opens Waiting.
       if (hasCode(error, 409, 'request_exists')) {

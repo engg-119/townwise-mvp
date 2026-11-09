@@ -86,9 +86,17 @@ export function townLabel(town: Town): string {
   return `${town.name}, ${town.state}`;
 }
 
-/** POST /api/access-requests, as sendAccessRequest (../api.ts) with the place's id. 201 answers the new access. */
-export function sendAccessRequestAt(api: ApiClient, input: AccessRequestInput, placeId: string): Promise<MeResponse> {
-  return api.json('/api/access-requests', meResponseSchema, { method: 'POST', body: { ...input, placeId } });
+/** Google's name for a place as a request keeps it: trimmed, and at most the API's 80 characters. */
+export function placeName(place: { name: string }): string {
+  return place.name.trim().slice(0, 80);
+}
+
+/** POST /api/access-requests, as sendAccessRequest (../api.ts) with the checked places. 201 answers the new access. */
+export function sendAccessRequestAt(api: ApiClient, input: AccessRequestInput, places: readonly UsablePlace[]): Promise<MeResponse> {
+  return api.json('/api/access-requests', meResponseSchema, {
+    method: 'POST',
+    body: { ...input, places: places.map((p) => ({ placeId: p.placeId, name: placeName(p), town: townInputOf(p.town) })) },
+  });
 }
 
 /**

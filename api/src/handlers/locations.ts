@@ -30,7 +30,7 @@ export interface LocationSummary {
 }
 
 /** Spec 6.4. [CONFIRM: 25 locations] */
-const MAX_LOCATIONS = 25;
+export const MAX_LOCATIONS = 25;
 
 const nameSchema = z.string().trim().min(1).max(80);
 const createBody = z.object({ name: nameSchema, town: townInputSchema, placeId: placeIdSchema.nullish() });

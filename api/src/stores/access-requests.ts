@@ -4,6 +4,13 @@ import { Schema, type Connection, type Model, type Types } from 'mongoose';
 import type { Town } from '../towns.ts';
 import { townFieldSchema } from './locations.ts';
 
+/** One checked Google place on a request. `name` is null only for a request stored before places. */
+export interface RequestPlace {
+  readonly placeId: string;
+  readonly name: string | null;
+  readonly town: Town;
+}
+
 export type AccessRequestStatus = 'pending' | 'approved' | 'rejected' | 'withdrawn';
 
 export interface AccessRequestFields {
@@ -15,7 +22,9 @@ export interface AccessRequestFields {
   town: Town;
   locationCount: number;
   note: string | null;
-  placeId: string | null;
+  /** Written only by requests stored before places. */
+  placeId?: string | null;
+  places: { placeId: string; name: string; town: Town }[];
   status: AccessRequestStatus;
   createdAt: Date;
   decidedAt: Date | null;
@@ -23,6 +32,14 @@ export interface AccessRequestFields {
   decisionMessage: string | null;
   orgId: Types.ObjectId | null;
   withdrawnReason: 'joined_org' | null;
+}
+
+function requestPlaceSchema(): Schema<{ placeId: string; name: string; town: Town }> {
+  return new Schema({
+    placeId: { type: String, required: true, maxlength: 512 },
+    name: { type: String, required: true, minlength: 1, maxlength: 80 },
+    town: { type: townFieldSchema(), required: true },
+  }, { _id: false, strict: true });
 }
 
 function accessRequestSchema(): Schema<AccessRequestFields> {
@@ -36,6 +53,7 @@ function accessRequestSchema(): Schema<AccessRequestFields> {
     locationCount: { type: Number, required: true, min: 1, max: 50 },
     note: { type: String, default: null, maxlength: 1000 },
     placeId: { type: String, default: null, maxlength: 512 },
+    places: { type: [requestPlaceSchema()], default: [] },
     status: { type: String, required: true, enum: ['pending', 'approved', 'rejected', 'withdrawn'] },
     createdAt: { type: Date, required: true },
     decidedAt: { type: Date, default: null },
@@ -67,7 +85,7 @@ export interface AccessRequestRecord {
   readonly town: Town;
   readonly locationCount: number;
   readonly note: string | null;
-  readonly placeId: string | null;
+  readonly places: readonly RequestPlace[];
   readonly status: AccessRequestStatus;
   readonly createdAt: Date;
   readonly decidedAt: Date | null;
@@ -85,7 +103,7 @@ export interface NewAccessRequest {
   readonly town: Town;
   readonly locationCount: number;
   readonly note: string | null;
-  readonly placeId: string | null;
+  readonly places: readonly { placeId: string; name: string; town: Town }[];
   readonly createdAt: Date;
 }
 
@@ -109,6 +127,17 @@ export interface AccessRequestStore {
   remove(id: string): Promise<number>;
 }
 
+/** A request stored before places has at most a single placeId: it reads as one place with no name, in the request's town. */
+function placesOf(doc: AccessRequestFields): RequestPlace[] {
+  if (doc.places !== undefined && doc.places.length > 0) {
+    return doc.places.map((place) => ({
+      placeId: place.placeId, name: place.name, town: { townId: place.town.townId, name: place.town.name, state: place.town.state },
+    }));
+  }
+  if (doc.placeId === undefined || doc.placeId === null) return [];
+  return [{ placeId: doc.placeId, name: null, town: { townId: doc.town.townId, name: doc.town.name, state: doc.town.state } }];
+}
+
 function toRecord(doc: AccessRequestFields & { _id: Types.ObjectId }): AccessRequestRecord {
   return {
     id: doc._id.toHexString(),
@@ -120,8 +149,7 @@ function toRecord(doc: AccessRequestFields & { _id: Types.ObjectId }): AccessReq
     town: { townId: doc.town.townId, name: doc.town.name, state: doc.town.state },
     locationCount: doc.locationCount,
     note: doc.note,
-    // Requests stored before place ids have no such field.
-    placeId: doc.placeId ?? null,
+    places: placesOf(doc),
     status: doc.status,
     createdAt: doc.createdAt,
     decidedAt: doc.decidedAt,
@@ -161,7 +189,10 @@ export function createAccessRequestStore(connection: Connection): AccessRequestS
           town: { townId: input.town.townId, name: input.town.name, state: input.town.state },
           locationCount: input.locationCount,
           note: input.note,
-          placeId: input.placeId,
+          places: input.places.map((place) => ({
+            placeId: place.placeId, name: place.name,
+            town: { townId: place.town.townId, name: place.town.name, state: place.town.state },
+          })),
           status: 'pending',
           createdAt: input.createdAt,
           decidedAt: null,

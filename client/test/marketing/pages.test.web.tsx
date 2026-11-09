@@ -290,7 +290,8 @@ test('Privacy makes the three commitments and no longer says the app has no uplo
   expect(text).toContain('we delete each original 365 days after it was sent, or sooner when you delete it');
   expect(text).toContain('never its rows, its name or your restaurant’s name');
   expect(text).toContain('A deleted file can be recovered by us for 7 days, then it is gone.');
-  expect(text).toContain('When a found place shows a map, your browser or app loads the map image straight from Google, so Google sees your IP address. We keep only Google’s id for the place.');
+  expect(text).toContain('When a found place shows a map, your browser or app loads the map image straight from Google, so Google sees your IP address. We keep Google’s id for the place, and on an access request its name and town too.');
+  expect(text).toContain('If you find your business on Google Maps, we also keep Google’s id, name and town for each place you check, not its address or the map.');
   expect(text).toContain('When you first open Townwise after approval, we note that we showed you the welcome, and when.');
   expect(text).toContain('the proposal’s wording stays only in your conversation, and in your notes if you save it.');
   expect(text).not.toMatch(/no place to upload|before any upload exists|email account holders/i);

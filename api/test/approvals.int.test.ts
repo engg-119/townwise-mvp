@@ -7,7 +7,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { AdminRequestView } from '../src/handlers/admin.ts';
 import type { MeResponse } from '../src/handlers/me.ts';
 import { AUDIT_DETAIL_KEYS, type AuditAction } from '../src/stores/audit-events.ts';
-import { addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
+import { addRequest, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { createCapturingTransport } from './helpers/mail.ts';
 import {
   call, logLines, MAIL_REPLY_TO, signIn, signInStaff, STAFF_EMAIL, startTownwiseServer, type TestSession, type TownwiseTestServer,
@@ -39,13 +39,21 @@ function uniqueEmail(name: string): string {
 }
 
 /** A person who signed in and sent a request through the API. */
-async function requester(name: string, placeId?: string): Promise<Requester> {
+async function requester(name: string, places?: readonly unknown[]): Promise<Requester> {
   const email = uniqueEmail(name);
   const session = await signIn(server, email);
-  const res = await call(server, '/api/access-requests', { session, json: placeId === undefined ? REQUEST : { ...REQUEST, placeId } });
+  const res = await call(server, '/api/access-requests', { session, json: places === undefined ? REQUEST : { ...REQUEST, places } });
   expect(res.status).toBe(201);
   const body = await res.json() as MeResponse;
   return { email, session, requestId: body.access.state === 'pending' ? body.access.request.id : '' };
+}
+
+/** A pending request stored the old way, with a single placeId and no places. */
+async function storedBeforePlaces(name: string, placeId: string): Promise<Requester> {
+  const email = uniqueEmail(name);
+  const session = await signIn(server, email);
+  const requestId = await addRequest(server, { userId: session.userId, email, status: 'pending', placeId });
+  return { email, session, requestId };
 }
 
 function approve(requestId: string, body: unknown = { orgName: 'Harbor Kitchen', locationName: 'Main Street' }, session = staff): Promise<Response> {
@@ -131,7 +139,7 @@ describe('GET /api/admin/requests', () => {
       town: { townId: 'bar-harbor-me', name: 'Bar Harbor', state: 'ME' }, locationCount: 3, note: REQUEST.note,
       status: 'pending', createdAt: expect.any(String) as string, decidedAt: null, decisionMessage: null,
       requester: { userId: first.session.userId, email: first.email }, emailAtRequest: first.email,
-      requesterHasOrg: false, decidedBy: null, orgId: null, placeId: null,
+      requesterHasOrg: false, decidedBy: null, orgId: null, places: [],
     });
     expect(body.requests[1]?.requesterHasOrg).toBe(true);
 
@@ -192,18 +200,19 @@ describe('POST /api/admin/requests/:requestId/approve (F3)', () => {
     ]);
   });
 
-  it('the first location gets the request’s place ID; a request without one gives null; a retry leaves an existing location alone', async () => {
+  it('a request stored before places gives its single place id to the first location; a request without one gives null; a retry leaves an existing location alone', async () => {
     const placeId = 'ChIJTestPlace0002';
-    const placed = await requester('placed', placeId);
-    expect((await me(placed.session)).access).toMatchObject({ state: 'pending', request: { placeId } });
+    const placed = await storedBeforePlaces('placed', placeId);
+    const oldPlaces = [{ placeId, name: null, town: { townId: 'hanover-nh', name: 'Hanover', state: 'NH' } }];
+    expect((await me(placed.session)).access).toMatchObject({ state: 'pending', request: { places: oldPlaces } });
     const listed = await (await call(server, '/api/admin/requests', { session: staff })).json() as { requests: AdminRequestView[] };
-    expect(listed.requests.find((r) => r.id === placed.requestId)?.placeId).toBe(placeId);
+    expect(listed.requests.find((r) => r.id === placed.requestId)?.places).toEqual(oldPlaces);
 
     server.logs.length = 0;
     const res = await approve(placed.requestId, { orgName: 'Placed Kitchen', locationName: 'Main Street' });
     expect(res.status).toBe(200);
     const body = await res.json() as { org: { id: string }; request: AdminRequestView };
-    expect(body.request.placeId).toBe(placeId);
+    expect(body.request.places).toEqual(oldPlaces);
     const orgId = new Types.ObjectId(body.org.id);
     expect(await server.connection.collection('tw_locations').find({ orgId }).toArray()).toMatchObject([{ placeId }]);
     const events = await eventsAbout(placed.requestId, body.org.id);
@@ -212,7 +221,7 @@ describe('POST /api/admin/requests/:requestId/approve (F3)', () => {
 
     // A retry of a half-finished approval whose location already exists skips step 7, so the location keeps
     // the place it was inserted with.
-    const half = await requester('halfplace', 'ChIJTestPlace0003');
+    const half = await storedBeforePlaces('halfplace', placeId);
     const halfOrg = new Types.ObjectId();
     await server.connection.collection('tw_access_requests').updateOne(
       { _id: new Types.ObjectId(half.requestId) },

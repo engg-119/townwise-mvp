@@ -124,6 +124,7 @@ Not taken, and why:
 | D20 | Upload is web only. | A native file picker is a new dependency. | [CONFIRM: web-only upload] |
 | D21 | The town profile (P4, P15) and the sales chart (P12) render on web only. Native shows each chart’s text summary and “Show the numbers” table, built from View and Text, plus “See the chart at townwise.tech.” | The client has no `react-native-svg`, and adding it is a new dependency. | [CONFIRM: web-only charts] |
 | D22 | Staff can delete a person’s Townwise records, or a suspended organization’s. The audit log keeps the events with the email or names replaced. The kit’s user record is then deleted by hand. | The privacy page and Terms on `feature/townwise-web` already promise deletion on request. | [CONFIRM: staff-only deletion in v1; suspend before deleting an organization] |
+| D24 | A request and Add location take up to 25 checked Google places; each becomes a location. | Owner request, 2026-11-09: a restaurant group checks each of its places in one search, instead of adding them one at a time after approval. | [CONFIRM: a request carries up to 25 checked Google places, and approval creates a location for each, named by staff from Google's name] |
 
 ---
 
@@ -259,8 +260,8 @@ Branches:
 
 ### F2. Request access
 
-1. A person in `no_org` lands on `/request-access`. The form asks for organization name, their name, their role, the town (one of the twelve, or another town and state), number of locations and an optional note. The business can be found on Google Places first (10.2a); the request then also carries its Google place id (`placeId`), optional.
-2. `POST /api/access-requests`. A unique partial index allows one pending request per user. Audit `access_request.created`, with `hasPlace` and never the place id. [CONFIRM: a request keeps the place the requester picked; staff check it by hand]
+1. A person in `no_org` lands on `/request-access`. The form asks for organization name, their name, their role, the town (one of the twelve, or another town and state), number of locations and an optional note. The business can be found on Google Places first (10.2a); the request then also carries the places the person checked, `places` (each `{ placeId, name, town }`), optional (D24).
+2. `POST /api/access-requests`. A unique partial index allows one pending request per user. Audit `access_request.created`, with `hasPlace`, `placeCount` and never a place id or name. [CONFIRM: a request keeps the place the requester picked; staff check it by hand]
 3. `/waiting` shows what was sent, “We don’t send email yet, so check back here.”, and the public profile of the town they named. [CONFIRM: town profile while waiting]
 
 **F2b. Invited while pending.** At the next `GET /api/me` the person is `invited`, with `pendingRequest` set. `/joining` does not join on load. It names the organization and who added them, and offers “Join {org}” and “Not my team”. Join withdraws the request. “Not my team” deletes the invitation, and the request stays with staff, so an invitation the person never chose cannot skip staff review. This is also how staff place a requester into an existing organization: they add the requester’s email on that organization’s page, and the requester presses Join.
@@ -403,7 +404,8 @@ Email changes: the kit updates `users.email` when Google is authoritative for a 
 | `town` | `{ townId: TownId \| null; name: string; state: string }` | Section 13 |
 | `locationCount` | integer | 1 to 50 |
 | `note` | string or null | up to 1,000; shown to staff only as plain text |
-| `placeId` | string or null | optional Google place id, 10 to 512 letters, digits, `_` or `-` (`api/src/place-id.ts`) [CONFIRM: place ID format]; documents from before it read as null; set by the requester, so staff check it by hand [CONFIRM: a request keeps the place the requester picked; staff check it by hand] |
+| `places` | `{ placeId, name, town }[]` | up to 25 checked Google places in check order; ids as `placeId`, unique; `name` Google’s name as checked, 1 to 80; each its own town (Section 13). (D24) |
+| `placeId` | string or null | optional Google place id, 10 to 512 letters, digits, `_` or `-` (`api/src/place-id.ts`) [CONFIRM: place ID format]; documents from before it read as null; set by the requester, so staff check it by hand [CONFIRM: a request keeps the place the requester picked; staff check it by hand] No longer written; a document that has one reads it as `places: [{ placeId, name: null, town }]` with the request’s town. |
 | `status` | `'pending' \| 'approved' \| 'rejected' \| 'withdrawn'` | |
 | `createdAt`, `decidedAt`, `decidedBy` | | |
 | `decisionMessage` | string or null | up to 500; shown to the requester on rejection |
@@ -719,7 +721,7 @@ interface AuditEvent {
 
 | Action | Details |
 |---|---|
-| `access_request.created` | `orgName`, `townId`, `townName`, `hasPlace` (boolean; never the place id or an address) |
+| `access_request.created` | `orgName`, `townId`, `townName`, `hasPlace` (boolean: whether any place was sent), `placeCount` (never a place id, a place name or an address) |
 | `access_request.approved` | `orgId` |
 | `access_request.rejected` | `hasMessage` |
 | `access_request.withdrawn` | `reason: 'joined_org'` |
@@ -785,7 +787,7 @@ type TownInput = { townId: TownId } | { townId: null; name: string; state: strin
 
 interface AccessRequestView {
   id: string; orgName: string; contactName: string; contactRole: string; town: Town;
-  locationCount: number; note: string | null; placeId: string | null;
+  locationCount: number; note: string | null; places: { placeId: string; name: string | null; town: Town }[];
   status: 'pending' | 'approved' | 'rejected' | 'withdrawn';
   createdAt: string; decidedAt: string | null; decisionMessage: string | null;
 }
@@ -841,7 +843,7 @@ Emails shown for people (`uploadedByEmail`, `createdByEmail`, `MemberView.email`
 | `POST /api/me/join` | signed_in | `{ inviteId }` | 200 `MeResponse` | 403 `forbidden` (staff); 409 `no_invite`, `already_in_org` |
 | `POST /api/me/decline` | signed_in | `{ inviteId }` | 200 `MeResponse` | 403 `forbidden` (staff); 409 `no_invite` |
 | `POST /api/me/welcome` | member; `writes` only | no body | 204, idempotent (the first `seenAt` stays) | 403 `no_access`; 403 `view_as_read_only`; 429 |
-| `POST /api/access-requests` | signed_in, in `no_org`, `rejected` or `removed` | `{ orgName, contactName, contactRole, town: TownInput, locationCount, note?, placeId? }`, `placeId` a Google place id or null | 201 `MeResponse` (state `pending`; the request answers `placeId`, null when none) | 403 `forbidden` (staff or another state); 409 `request_exists`; 400 `unknown_town`; 400 `invalid_request` (a malformed `placeId` included); 429 |
+| `POST /api/access-requests` | signed_in, in `no_org`, `rejected` or `removed` | `{ orgName, contactName, contactRole, town: TownInput, locationCount, note?, places? }`, `places` 1 to 25 of `{ placeId, name (1 to 80), town: TownInput }`, ids unique, `locationCount` at least `places.length` | 201 `MeResponse` (state `pending`; the request answers `places`, `[]` when none) | 403 `forbidden` (staff or another state); 409 `request_exists`; 400 `unknown_town` (the request’s town or a place’s); 400 `invalid_request` (malformed places, repeated ids or a count below the places); 429 |
 
 Only `GET /api/me` fills `welcome`; every other answer that carries a `MeResponse` (join, decline, a request, view-as start and end, leaving) carries `welcome: null`. `GET /api/me` still writes nothing (7.3): `POST /api/me/welcome` records the marker (6.15). [Build note: the route is `me.welcome`, `bodyLimit: 'none'`, no route limiter and no audit event.]
 
@@ -2232,6 +2234,7 @@ Each is marked inline with “lead default”:
 43. Web-only charts, with text and tables on native (D21).
 44. Staff-only deletion in v1, with suspension before an organization is deleted (D22).
 45. Who holds Atlas project access, named on the privacy page (17).
+46. Up to 25 checked Google places on a request and on Add location, each a location (D24).
 
 ### 22.3 Decisions needed
 
@@ -2259,6 +2262,8 @@ Each is marked inline with “lead default”:
 ---
 
 ## 23. Changelog
+
+**2026-11-09, several places from one search (D24).** A request carries up to 25 checked Google places, `places: { placeId, name, town }[]`, in place of one `placeId`; a request stored with one `placeId` reads as one place named null (F2, 6.3, 10.1, 10.2). `access_request.created` adds `placeCount` (9.2).
 
 **2026-11-06, places search in the app.** The Google Places search is on P3 (Step 1, “Find your restaurant”), P10 and P16 while it is on (10.2a); P3 learns that by sending autocomplete `{}`, and P10 and P16 from `placeSearch` in `GET /api/org` (10.3). `POST` and `PATCH /api/org/locations` take a `placeId`: the API asks Google for the place, refuses a town that isn’t its own, stores Google’s current id, and spends one call of the `places` budget for it (6.4, 10.3, 10.8, 10.9). `location.created` and `location.updated` add `hasPlace` (9.2). A location keeps the place’s id and town, never the address or the map.
 

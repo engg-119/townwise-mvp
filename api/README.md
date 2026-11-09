@@ -103,7 +103,7 @@ A signed-in person whose kit user no longer exists gets 401 `unauthenticated`. T
 
 ### Requesting access and approval
 
-1. A person in `no_org`, `rejected` or `removed` sends `POST /api/access-requests`: organization name, their name and role, the town, the number of locations, an optional note and an optional Google place id (`placeId`, from the Places search). Each person has at most one pending request. Their state becomes `pending`.
+1. A person in `no_org`, `rejected` or `removed` sends `POST /api/access-requests`: organization name, their name and role, the town, the number of locations, an optional note and an optional list of checked Google places (`places`). Each person has at most one pending request. Their state becomes `pending`.
 2. Staff validate the person by hand, outside Townwise, for example by matching the email domain to the restaurant or by phone. [CONFIRM: what “validated manually” means]
 3. Approve (`POST /api/admin/requests/:requestId/approve`) creates the organization, its first location in the requested town (with the request’s `placeId`, or none), and the requester’s org admin seat. A retry completes the work. If the requester is deleted while it runs (their request goes with them), the approval takes back what it made for them and answers 404 (Deletion). [CONFIRM: first location at approval] [CONFIRM: a request keeps the place the requester picked; staff check it by hand]
 4. Reject (`POST /api/admin/requests/:requestId/reject`) stores an optional message of up to 500 characters, which the requester sees. They may send a new request. [CONFIRM: rejected people may request again]
@@ -247,7 +247,7 @@ Each location’s calibration state is derived from its sales days on every read
 
 | Action | Details | Written |
 |---|---|---|
-| `access_request.created` | `orgName`, `townId`, `townName`, `hasPlace` (whether a place id was sent; never the id, which would outlive the redaction of a deleted organization, and never an address) | after, by the requester |
+| `access_request.created` | `orgName`, `townId`, `townName`, `hasPlace` (whether any place was sent), `placeCount` (never a place id or name, which would outlive the redaction of a deleted organization, and never an address) | after, by the requester |
 | `access_request.approved` | `orgId` | before, by staff |
 | `access_request.rejected` | `hasMessage` | before, by staff |
 | `access_request.withdrawn` | `reason` (`joined_org`) | after, on join |
@@ -310,7 +310,7 @@ Member routes take the organization from the caller’s own seat, never from the
 | `POST /api/me/join` | signed_in | `{ inviteId }` | 200, as `GET /api/me` | 403 `forbidden` (staff); 409 `no_invite`, `already_in_org` |
 | `POST /api/me/decline` | signed_in | `{ inviteId }` | 200, as `GET /api/me` | 403 `forbidden` (staff); 409 `no_invite` |
 | `POST /api/me/welcome` | member; `writes` only | none (no body is parsed) | 204; again 204, keeping the first time | 403 `no_access`; 403 `view_as_read_only`; 429 |
-| `POST /api/access-requests` | signed_in; limiter `requests` | `{ orgName, contactName, contactRole, town, locationCount, note?, placeId? }`, `placeId` 10 to 512 letters, digits, `_` or `-`, or null [CONFIRM: place ID format] | 201, as `GET /api/me` (`pending`); the request view answers `placeId`, null when none | 403 `forbidden` (staff, or any state but `no_org`, `rejected`, `removed`); 409 `request_exists`; 400 `unknown_town`; 400 `invalid_request` (a malformed `placeId` included) |
+| `POST /api/access-requests` | signed_in; limiter `requests` | `{ orgName, contactName, contactRole, town, locationCount, note?, places? }`, `places` 1 to 25 of `{ placeId, name (1 to 80), town }`, ids unique, each `placeId` 10 to 512 letters, digits, `_` or `-` [CONFIRM: place ID format], `locationCount` at least `places.length` | 201, as `GET /api/me` (`pending`); the request view answers `places`, `[]` when none | 403 `forbidden` (staff, or any state but `no_org`, `rejected`, `removed`); 409 `request_exists`; 400 `unknown_town` (the request’s town or a place’s); 400 `invalid_request` (malformed places, repeated ids or a count below the places) |
 | `GET /api/towns/:townId` | signed_in | | 200 `{ profile }` | 404 |
 
 ### Places
@@ -496,7 +496,7 @@ Every Townwise collection takes the `tw_` prefix. Every tenant document carries 
 |---|---|
 | `tw_orgs` | name, status, who created it and from which request |
 | `tw_members` | invitations and seats in one collection: email, role, status, who added it and when |
-| `tw_access_requests` | the request form (with the optional Google place id; documents from before it read as none), its status and the decision message |
+| `tw_access_requests` | the request form (with its checked Google places; a document from before them has at most one place id, read as one place), its status and the decision message |
 | `tw_locations` | name, town and the optional Google place id (set by approval from a request, or by an org admin through the Places search with the town checked against Google; taken off with `placeId: null` or a town changed by hand; older documents read as none) |
 | `tw_sales_days` | date, guests and net sales in cents per location per day, and nothing else |
 | `tw_uploads` | per upload: counts, first and last dates, and who sent it; never a file name |
