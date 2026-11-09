@@ -10,18 +10,21 @@ jest.mock('expo-splash-screen', () => ({
 import { act, cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing-library';
 import { AccessibilityInfo } from 'react-native';
 
+import { LOCATION_COPY, PLACE_COPY } from '../../../src/portal/AddLocationForm';
+import { townLine } from '../../../src/portal/places/PlaceCard';
 import type { LocationSummary, OrgResponse } from '../../../src/portal/schemas';
 import {
-  ACCESS, fakePortalApi, LOCATIONS, locationOf, meOf, orgOf, refusal, viewAsMe, writes, type FakePortalApi,
+  ACCESS, deferred, fakePortalApi, LOCATIONS, locationOf, meOf, offline, orgOf, refusal, viewAsMe, writes, type FakePortalApi,
 } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { locationsFake, salesOf } from '../locations/fakes';
-import { installPlaces, LONG_NAME, sentWrites, type PlacesFake } from './places-fakes';
+import { DETAILS, installPlaces, LONG_NAME, sentWrites, type PlacesFake } from './places-fakes';
 
 // The three screens with the Google Places search on (decision 13): P3 Request access as Steps 1 and 2, P10 Add
-// location, and P16's “Change this location’s place”. Each sends the confirmed place's id with the place's town; 503
-// places_unavailable leaves the manual fields with a line that says why; with the search off, and under view-as, the
-// screens are as they were without it (their own tests: gate-pages, settings, dashboard).
+// location, and P16's “Change this location’s place”. Each sends the place's id with the place's town (P3 and P10 one
+// per checked place, P10 with each row's outcome on the row); 503 places_unavailable while searching leaves the manual
+// fields with a line that says why; with the search off, and under view-as, the screens are as they were without it
+// (their own tests: gate-pages, settings, dashboard).
 
 afterEach(async () => {
   await cleanup();
@@ -48,18 +51,23 @@ function placed(org: OrgResponse): OrgResponse {
   return { ...org, placeSearch: true };
 }
 
+/** The groups (Views with role group) named `name`: a checked place's row is one, named by the place. */
+function groups(name: string): ReturnType<typeof screen.getAllByLabelText> {
+  return screen.queryAllByLabelText(name).filter((node) => node.props.role === 'group');
+}
+
+/** The one group named `name`. */
+function group(name: string): ReturnType<typeof screen.getByLabelText> {
+  const found = groups(name);
+  const [node] = found;
+  if (node === undefined || found.length > 1) throw new Error(`expected one group named ${name}, found ${String(found.length)}`);
+  return node;
+}
+
 describe('P3 Request access with the search on', () => {
   const RESTAURANT = 'Lou’s Restaurant, Hanover, NH, USA';
   const BAKERY = 'Lou’s Bakery, Norwich, VT, USA';
   const LEBANON = 'Lou’s Restaurant, Lebanon, NH, USA';
-
-  /** The one group (a View with role group) named `name`. */
-  function group(name: string): ReturnType<typeof screen.getByLabelText> {
-    const found = screen.queryAllByLabelText(name).filter((node) => node.props.role === 'group');
-    const [node] = found;
-    if (node === undefined || found.length > 1) throw new Error(`expected one group named ${name}, found ${String(found.length)}`);
-    return node;
-  }
 
   async function fillAbout(): Promise<void> {
     await fireEvent.changeText(screen.getByLabelText('Your name'), 'Pat');
@@ -234,58 +242,300 @@ describe('P3 Request access with the search on', () => {
 });
 
 describe('P10 Add location with the search on', () => {
+  const P10_SEARCH = 'Search Google Maps for the location';
+  const RESTAURANT = 'Lou’s Restaurant, Hanover, NH, USA';
+  const BAKERY = 'Lou’s Bakery, Norwich, VT, USA';
+  const LEBANON = 'Lou’s Restaurant, Lebanon, NH, USA';
+  const LEBANON_LINE = townLine({ townId: null, name: 'Lebanon', state: 'NH' });
+
   function setup(): { api: FakePortalApi; places: PlacesFake } {
     const api = fakePortalApi({ me: meOf(ACCESS.admin), org: placed(orgOf('org_admin')) });
     return { api, places: installPlaces(api) };
   }
 
-  test('the confirmed place fills Name and gives the town; Add location sends its id, and asks the API nothing first', async () => {
-    const { api, places } = setup();
-    const added = locationOf('l3', 'Lou’s Restaurant', { townId: 'hanover-nh', name: 'Hanover', state: 'NH' }, { placeId: 'ChIJTestPlace0001' });
-    api.answers['/api/org/locations'] = () => {
-      api.org = placed(orgOf('org_admin', [...LOCATIONS, added]));
-      return { location: added };
+  /**
+   * POST /api/org/locations as the API answers it: `refuse` answers a place's own refusal, a name a location already
+   * uses is 409 location_name_taken, and each new location takes the next id from l3 and joins GET /api/org, which
+   * starts with `base`.
+   */
+  function serveLocations(api: FakePortalApi, refuse: Record<string, Error> = {}, base: readonly LocationSummary[] = LOCATIONS): void {
+    const added: LocationSummary[] = [];
+    api.answers['/api/org/locations'] = (raw) => {
+      const body = raw as { name: string; placeId?: string };
+      const refused = body.placeId === undefined ? undefined : refuse[body.placeId];
+      if (refused !== undefined) return refused;
+      if ([...base, ...added].some((location) => location.name === body.name)) return refusal(409, 'location_name_taken');
+      const town = (body.placeId === undefined ? undefined : DETAILS[body.placeId]?.town) ?? FIRST.town;
+      const location = locationOf(`l${String(added.length + 3)}`, body.name, town, { placeId: body.placeId ?? null });
+      added.push(location);
+      api.org = placed(orgOf('org_admin', [...base, ...added]));
+      return { location };
+    };
+  }
+
+  /** Holds every GET /api/org until `release` lets it through, or `fail` answers it offline, as over a slow network. */
+  function holdOrg(api: FakePortalApi): { release: () => Promise<void>; fail: () => Promise<void> } {
+    const gate = deferred<null>();
+    const json = api.json.bind(api);
+    api.json = (path, schema, opts) => (path === '/api/org' ? gate.promise.then(() => json(path, schema, opts)) : json(path, schema, opts));
+    const settle = async (open: () => void): Promise<void> => {
+      api.json = json;
+      await act(async () => {
+        open();
+        await gate.promise.catch(() => undefined);
+      });
+      // The read's answer reaches the page a few promise turns after the gate opens.
+      await act(async () => { for (let turn = 0; turn < 10; turn += 1) await Promise.resolve(); });
+    };
+    return {
+      release: () => settle(() => { gate.resolve(null); }),
+      fail: () => settle(() => { gate.reject(offline()); }),
+    };
+  }
+
+  async function check(name: string): Promise<void> {
+    await fireEvent.press(await screen.findByRole('checkbox', { name }));
+  }
+
+  /** The Name field of the checked row named `name`, once Google has answered for it. */
+  async function nameOf(name: string): Promise<ReturnType<typeof screen.getByLabelText>> {
+    return waitFor(() => within(group(name)).getByLabelText('Name'));
+  }
+
+  function orgReads(api: FakePortalApi): number {
+    return api.calls.filter((call) => call.method === 'GET' && call.path === '/api/org').length;
+  }
+
+  test('checking two places gives each a Name from Google; Add 2 locations creates them one after another and opens the first', async () => {
+    const { api } = setup();
+    serveLocations(api);
+    const { router } = await renderApp('/locations/new', api);
+    await find(P10_SEARCH, 'Lou');
+    await check(RESTAURANT);
+    await check(BAKERY);
+    expect((await nameOf('Lou’s Restaurant')).props.value).toBe('Lou’s Restaurant');
+    expect((await nameOf('Lou’s Bakery')).props.value).toBe('Lou’s Bakery');
+    await fireEvent.press(screen.getByRole('button', { name: 'Add 2 locations' }));
+    await waitFor(() => { expect(router.getPathname()).toBe('/locations/l3'); });
+    expect(sentWrites(api)).toEqual([
+      { method: 'POST', path: '/api/org/locations', body: { name: 'Lou’s Restaurant', town: { townId: 'hanover-nh' }, placeId: 'ChIJTestPlace0001' } },
+      { method: 'POST', path: '/api/org/locations', body: { name: 'Lou’s Bakery', town: { townId: null, name: 'Norwich', state: 'VT' }, placeId: 'ChIJTestPlace0002' } },
+    ]);
+  });
+
+  test('each row says its outcome: added rows leave, a taken name stays with its line, the limit stops the rest', async () => {
+    const { api } = setup();
+    serveLocations(api, { ChIJTestPlace0002: refusal(409, 'location_name_taken'), ChIJTestPlace0004: refusal(409, 'location_limit') });
+    const { router } = await renderApp('/locations/new', api);
+    await find(P10_SEARCH, 'Lou');
+    await check(RESTAURANT);
+    await check(BAKERY);
+    await find(P10_SEARCH, 'Lou Lebanon');
+    await check(LEBANON);
+    const reads = orgReads(api);
+    await fireEvent.press(await screen.findByRole('button', { name: 'Add 3 locations' }));
+    expect(await screen.findByText(LOCATION_COPY.limit)).toBeTruthy();
+    // The Hanover row left; the Lebanon one, refused by the limit, stays without a line of its own.
+    expect(groups('Lou’s Restaurant')).toHaveLength(1);
+    expect(within(group('Lou’s Restaurant')).getByText(LEBANON_LINE)).toBeTruthy();
+    for (const text of [LOCATION_COPY.taken, LOCATION_COPY.limit, PLACE_COPY.notAdded, PLACE_COPY.changed]) {
+      expect(within(group('Lou’s Restaurant')).queryByText(text)).toBeNull();
+    }
+    expect(within(group('Lou’s Bakery')).getByText(LOCATION_COPY.taken)).toBeTruthy();
+    expect(sentWrites(api)).toHaveLength(3);
+    await waitFor(() => { expect(orgReads(api)).toBeGreaterThan(reads); });
+    expect(router.getPathname()).toBe('/locations/new');
+    expect(screen.getByRole('button', { name: 'Add 2 locations' })).toBeTruthy();
+  });
+
+  test('a 503 says the place wasn’t added on its row and stops the rest; Enter it yourself starts from that row', async () => {
+    const { api } = setup();
+    serveLocations(api, { ChIJTestPlace0001: refusal(503, 'places_unavailable') });
+    await renderApp('/locations/new', api);
+    await find(P10_SEARCH, 'Lou');
+    await check(RESTAURANT);
+    await check(BAKERY);
+    await fireEvent.changeText(await nameOf('Lou’s Restaurant'), 'Lou’s on Main');
+    await fireEvent.press(await screen.findByRole('button', { name: 'Add 2 locations' }));
+    expect(await within(group('Lou’s Restaurant')).findByText(PLACE_COPY.notAdded)).toBeTruthy();
+    expect(within(group('Lou’s Bakery')).queryByText(PLACE_COPY.notAdded)).toBeNull();
+    expect(sentWrites(api)).toHaveLength(1);
+    // “Check the town, then add the location without it”: Name and Town as that row had them.
+    await fireEvent.press(screen.getByRole('button', { name: 'Can’t find it? Enter it yourself' }));
+    expect((await screen.findByLabelText('Name')).props.value).toBe('Lou’s on Main');
+    expect(screen.getByLabelText('Town').props.accessibilityValue).toEqual({ text: 'Hanover, NH' });
+  });
+
+  test('while adding, each Name is read-only and Can’t find it? waits', async () => {
+    const { api } = setup();
+    serveLocations(api);
+    const serve = api.answers['/api/org/locations'];
+    const held = deferred<null>();
+    api.answers['/api/org/locations'] = (body) => held.promise.then(() => serve?.(body));
+    const { router } = await renderApp('/locations/new', api);
+    await find(P10_SEARCH, 'Lou');
+    await check(RESTAURANT);
+    await check(BAKERY);
+    await fireEvent.press(await screen.findByRole('button', { name: 'Add 2 locations' }));
+    expect((await nameOf('Lou’s Bakery')).props.editable).toBe(false);
+    expect(screen.getByRole('button', { name: 'Can’t find it? Enter it yourself' }).props.accessibilityState).toMatchObject({ disabled: true });
+    await fireEvent.press(screen.getByRole('button', { name: 'Can’t find it? Enter it yourself' }));
+    expect(screen.queryByLabelText('Town')).toBeNull();
+    await act(async () => { held.resolve(null); await held.promise; });
+    await waitFor(() => { expect(router.getPathname()).toBe('/locations/l3'); });
+  });
+
+  test('while the organization reads again after a press that leaves a row, and when that read fails, the search keeps the row', async () => {
+    const { api } = setup();
+    serveLocations(api, { ChIJTestPlace0002: refusal(409, 'location_name_taken') });
+    await renderApp('/locations/new', api);
+    await find(P10_SEARCH, 'Lou');
+    await check(RESTAURANT);
+    await check(BAKERY);
+    const held = holdOrg(api);
+    await fireEvent.press(await screen.findByRole('button', { name: 'Add 2 locations' }));
+    expect(await within(group('Lou’s Bakery')).findByText(LOCATION_COPY.taken)).toBeTruthy();
+    expect(screen.getByLabelText(P10_SEARCH)).toBeTruthy();
+    expect(screen.queryByLabelText('Town')).toBeNull();
+    await held.fail();
+    expect(screen.getByLabelText(P10_SEARCH)).toBeTruthy();
+    expect(within(group('Lou’s Bakery')).getByText(LOCATION_COPY.taken)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Add location' })).toBeTruthy();
+  });
+
+  test('P9 with none yet: a press that adds one and leaves one keeps the form and that row, through the reload; a new name adds it', async () => {
+    const api = fakePortalApi({ me: meOf(ACCESS.admin), org: placed(orgOf('org_admin', [])) });
+    installPlaces(api);
+    serveLocations(api, {}, []);
+    const { router } = await renderApp('/dashboard', api);
+    await find(P10_SEARCH, 'Lou');
+    await check(RESTAURANT);
+    await find(P10_SEARCH, 'Lou Lebanon');
+    await check(LEBANON);
+    const held = holdOrg(api);
+    await fireEvent.press(await screen.findByRole('button', { name: 'Add 2 locations' }));
+    // Hanover was added and Lebanon's name is taken: while the organization reads again, the form stays.
+    expect(await within(group('Lou’s Restaurant')).findByText(LOCATION_COPY.taken)).toBeTruthy();
+    expect(screen.queryByText('Loading your locations')).toBeNull();
+    // The read answers with Hanover, which would open its Home: the form and Lebanon's row stay.
+    await held.release();
+    expect(router.getPathname()).toBe('/dashboard');
+    expect(within(group('Lou’s Restaurant')).getByText(LEBANON_LINE)).toBeTruthy();
+    expect(within(group('Lou’s Restaurant')).getByText(LOCATION_COPY.taken)).toBeTruthy();
+    await fireEvent.changeText(within(group('Lou’s Restaurant')).getByLabelText('Name'), 'Lou’s Restaurant Lebanon');
+    await fireEvent.press(screen.getByRole('button', { name: 'Add location' }));
+    await waitFor(() => { expect(router.getPathname()).toBe('/locations/l4'); });
+    expect(sentWrites(api).map((write) => (write.body as { name: string }).name)).toEqual([
+      'Lou’s Restaurant', 'Lou’s Restaurant', 'Lou’s Restaurant Lebanon',
+    ]);
+  });
+
+  test('Google answering differently says so on its row, and the next row is still added', async () => {
+    const { api } = setup();
+    serveLocations(api, { ChIJTestPlace0001: refusal(400, 'place_town_mismatch') });
+    const { router } = await renderApp('/locations/new', api);
+    await find(P10_SEARCH, 'Lou');
+    await check(RESTAURANT);
+    await check(BAKERY);
+    await fireEvent.press(await screen.findByRole('button', { name: 'Add 2 locations' }));
+    expect(await within(group('Lou’s Restaurant')).findByText(PLACE_COPY.changed)).toBeTruthy();
+    await waitFor(() => { expect(screen.queryAllByLabelText('Lou’s Bakery')).toEqual([]); });
+    expect(sentWrites(api)).toHaveLength(2);
+    expect(router.getPathname()).toBe('/locations/new');
+  });
+
+  test('two rows with the same Google name: the second says the name is taken and keeps its Name; a new name adds it', async () => {
+    const { api } = setup();
+    serveLocations(api);
+    const { router } = await renderApp('/locations/new', api);
+    await find(P10_SEARCH, 'Lou');
+    await check(RESTAURANT);
+    await find(P10_SEARCH, 'Lou Lebanon');
+    await check(LEBANON);
+    await fireEvent.press(await screen.findByRole('button', { name: 'Add 2 locations' }));
+    expect(await within(group('Lou’s Restaurant')).findByText(LOCATION_COPY.taken)).toBeTruthy();
+    const name = within(group('Lou’s Restaurant')).getByLabelText('Name');
+    expect(name.props.value).toBe('Lou’s Restaurant');
+    expect(within(group('Lou’s Restaurant')).getByText(LEBANON_LINE)).toBeTruthy();
+    await fireEvent.changeText(name, 'Lou’s Restaurant Lebanon');
+    await fireEvent.press(screen.getByRole('button', { name: 'Add location' }));
+    await waitFor(() => { expect(router.getPathname()).toBe('/locations/l4'); });
+    expect(sentWrites(api).map((write) => write.body)).toEqual([
+      { name: 'Lou’s Restaurant', town: { townId: 'hanover-nh' }, placeId: 'ChIJTestPlace0001' },
+      { name: 'Lou’s Restaurant', town: { townId: null, name: 'Lebanon', state: 'NH' }, placeId: 'ChIJTestPlace0004' },
+      { name: 'Lou’s Restaurant Lebanon', town: { townId: null, name: 'Lebanon', state: 'NH' }, placeId: 'ChIJTestPlace0004' },
+    ]);
+  });
+
+  test('an empty Name says “Enter the location’s name.” on its row and sends nothing', async () => {
+    const { api } = setup();
+    serveLocations(api);
+    await renderApp('/locations/new', api);
+    await find(P10_SEARCH, 'Lou');
+    await check(RESTAURANT);
+    await check(BAKERY);
+    await fireEvent.changeText(await nameOf('Lou’s Bakery'), '   ');
+    await fireEvent.press(screen.getByRole('button', { name: 'Add 2 locations' }));
+    expect(within(group('Lou’s Bakery')).getByText('Enter the location’s name.')).toBeTruthy();
+    expect(within(group('Lou’s Restaurant')).queryByText('Enter the location’s name.')).toBeNull();
+    expect(sentWrites(api)).toEqual([]);
+  });
+
+  test('a Google name over 80 characters starts the Name at 80', async () => {
+    const { api } = setup();
+    await renderApp('/locations/new', api);
+    await find(P10_SEARCH, 'Long');
+    await check(`${LONG_NAME.name}, ${LONG_NAME.detail}`);
+    const name = await nameOf(LONG_NAME.name);
+    expect(name.props.value).toBe(LONG_NAME.name.slice(0, 80));
+    expect(name.props.maxLength).toBe(80);
+  });
+
+  test('another failure stops the batch with Try again, which adds the rows left and opens the first it added', async () => {
+    const { api } = setup();
+    serveLocations(api);
+    const serve = api.answers['/api/org/locations'];
+    let failing = true;
+    api.answers['/api/org/locations'] = (body) => {
+      if (failing && (body as { placeId?: string }).placeId === 'ChIJTestPlace0002') {
+        failing = false;
+        return offline();
+      }
+      return serve?.(body);
     };
     const { router } = await renderApp('/locations/new', api);
-    await find('Search Google Maps for the location', 'Lou');
-    expect(places.checks).toBe(0);
-    await pick('Lou’s Restaurant, Hanover, NH, USA');
-    await fireEvent.press(screen.getByRole('button', { name: 'Looks right' }));
-    expect((await screen.findByLabelText('Name')).props.value).toBe('Lou’s Restaurant');
-    expect(screen.queryByLabelText('Town')).toBeNull();
+    await find(P10_SEARCH, 'Lou');
+    await check(RESTAURANT);
+    await check(BAKERY);
+    await fireEvent.press(await screen.findByRole('button', { name: 'Add 2 locations' }));
+    expect(await screen.findByText('Can’t reach Townwise. Check your connection and try again.')).toBeTruthy();
+    expect(screen.queryAllByLabelText('Lou’s Restaurant')).toEqual([]);
+    expect(router.getPathname()).toBe('/locations/new');
+    await fireEvent.press(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => { expect(router.getPathname()).toBe('/locations/l4'); });
+    expect(sentWrites(api).map((write) => (write.body as { placeId: string }).placeId)).toEqual(['ChIJTestPlace0001', 'ChIJTestPlace0002', 'ChIJTestPlace0002']);
+  });
+
+  test('Can’t find it? Enter it yourself adds one by hand; Search Google Maps instead comes back to the checked rows', async () => {
+    const { api } = setup();
+    serveLocations(api);
+    const { router } = await renderApp('/locations/new', api);
+    await find(P10_SEARCH, 'Lou');
+    await check(RESTAURANT);
+    await nameOf('Lou’s Restaurant');
+    await fireEvent.press(screen.getByRole('button', { name: 'Can’t find it? Enter it yourself' }));
+    expect((await screen.findByLabelText('Name')).props.value).toBe('');
+    expect(screen.getByLabelText('Town')).toBeTruthy();
+    await fireEvent.press(screen.getByRole('button', { name: 'Search Google Maps instead' }));
+    expect((await nameOf('Lou’s Restaurant')).props.value).toBe('Lou’s Restaurant');
+    expect(screen.getByRole('button', { name: 'Add location' })).toBeTruthy();
+    await fireEvent.press(screen.getByRole('button', { name: 'Can’t find it? Enter it yourself' }));
+    await fireEvent.changeText(await screen.findByLabelText('Name'), 'Harbor Room');
+    await fireEvent.press(screen.getByLabelText('Town'));
+    await fireEvent.press(screen.getByRole('radio', { name: 'Stowe, VT' }));
     await fireEvent.press(screen.getByRole('button', { name: 'Add location' }));
     await waitFor(() => { expect(router.getPathname()).toBe('/locations/l3'); });
-    expect(sentWrites(api)).toEqual([{
-      method: 'POST', path: '/api/org/locations', body: { name: 'Lou’s Restaurant', town: { townId: 'hanover-nh' }, placeId: 'ChIJTestPlace0001' },
-    }]);
-  });
-
-  test('503 on Add: the fields as they are, with the place’s town filled in and a line; the next Add sends no place', async () => {
-    const { api } = setup();
-    api.answers['/api/org/locations'] = () => refusal(503, 'places_unavailable');
-    await renderApp('/locations/new', api);
-    await find('Search Google Maps for the location', 'Lou');
-    await pick('Lou’s Bakery, Norwich, VT, USA');
-    await fireEvent.press(screen.getByRole('button', { name: 'Looks right' }));
-    await fireEvent.press(await screen.findByRole('button', { name: 'Add location' }));
-    expect(await screen.findByText('Google Maps isn’t answering right now, so the place wasn’t added. Check the town, then add the location without it.')).toBeTruthy();
-    expect(screen.getByLabelText('Town name').props.value).toBe('Norwich');
-    expect(screen.getByLabelText('State').props.value).toBe('VT');
-    await fireEvent.press(screen.getByRole('button', { name: 'Add location' }));
-    await waitFor(() => { expect(sentWrites(api)).toHaveLength(2); });
-    expect(sentWrites(api)[1]?.body).toEqual({ name: 'Lou’s Bakery', town: { townId: null, name: 'Norwich', state: 'VT' } });
-  });
-
-  test('400 place_town_mismatch: back to the search with a line that says Google answered differently', async () => {
-    const { api } = setup();
-    api.answers['/api/org/locations'] = () => refusal(400, 'place_town_mismatch');
-    await renderApp('/locations/new', api);
-    await find('Search Google Maps for the location', 'Lou');
-    await pick('Lou’s Restaurant, Hanover, NH, USA');
-    await fireEvent.press(screen.getByRole('button', { name: 'Looks right' }));
-    await fireEvent.press(await screen.findByRole('button', { name: 'Add location' }));
-    expect(await screen.findByText('Google Maps answered differently this time. Search for the place again, or enter it yourself.')).toBeTruthy();
-    expect(screen.getByLabelText('Search Google Maps for the location')).toBeTruthy();
+    expect(sentWrites(api)).toEqual([{ method: 'POST', path: '/api/org/locations', body: { name: 'Harbor Room', town: { townId: 'stowe-vt' } } }]);
   });
 
   test('under view-as the form is the fields alone, read-only, and nothing is sent', async () => {
@@ -392,18 +642,6 @@ describe('focus follows the steps', () => {
     await fireEvent.press(await screen.findByRole('button', { name: 'Change places' }));
     await screen.findByText('Step 1 of 3');
     expect(moves()).toEqual(['About you', SEARCH]);
-  });
-
-  test('P10: Looks right moves to the place in the form', async () => {
-    const moves = focusMoves();
-    const api = fakePortalApi({ me: meOf(ACCESS.admin), org: placed(orgOf('org_admin')) });
-    installPlaces(api);
-    await renderApp('/locations/new', api);
-    await find('Search Google Maps for the location', 'Lou');
-    await pick('Lou’s Restaurant, Hanover, NH, USA');
-    await fireEvent.press(screen.getByRole('button', { name: 'Looks right' }));
-    await screen.findByLabelText('Name');
-    expect(moves()).toEqual(['Here’s what we found', 'On Google Maps']);
   });
 
   test('P16: opening moves to the field; Cancel and Use this place move to the line that says whether it is linked', async () => {

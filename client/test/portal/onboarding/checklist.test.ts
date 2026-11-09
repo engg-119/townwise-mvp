@@ -1,4 +1,4 @@
-import { CHECKLIST_COPY, checklistStatus, continueLabel, locationCountFor, MAX_CHECKED_PLACES, outsideUsLine } from '../../../src/portal/onboarding/checklist';
+import { addLabel, CHECKLIST_COPY, checklistStatus, continueLabel, locationCountFor, MAX_CHECKED_PLACES, outsideUsLine } from '../../../src/portal/onboarding/checklist';
 import { SUGGESTIONS } from './places-fakes';
 
 // The checklist's words (onboarding/checklist.ts): the status line counts the answer and asks for each place that's
@@ -35,4 +35,10 @@ test('Continue names how many places it carries on', () => {
   expect(continueLabel(0)).toBe('Continue');
   expect(continueLabel(1)).toBe('Continue with 1 place');
   expect(continueLabel(2)).toBe('Continue with 2 places');
+});
+
+test('Add location names how many locations it adds, past one', () => {
+  expect(addLabel(0)).toBe('Add location');
+  expect(addLabel(1)).toBe('Add location');
+  expect(addLabel(3)).toBe('Add 3 locations');
 });
