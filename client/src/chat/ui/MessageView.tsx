@@ -8,9 +8,10 @@ import { stepsOf, type ChatMessage } from '../useTuningChat';
 import { described } from './described';
 import { ProposalCard, type ProposalActions } from './ProposalCard';
 import { ToolGroup } from './ToolGroup';
+import { VisualView } from '../visuals/Visual';
 
 // One message of the log (spec P25): the person's in a square panel (right-aligned at 80% from tablet up), and
-// TownwiseAI's as its parts in the order they streamed: text, tool calls, more text, proposal cards. Under a
+// TownwiseAI's as its parts in the order they streamed: text, tool calls, more text, visuals, proposal cards. Under a
 // finished reply, the Based on line, built from its tool calls and never written by the model; under a reply that
 // ended early, why; under one that failed or was stopped, Try again.
 
@@ -52,6 +53,7 @@ export function MessageView(props: {
       {message.parts.map((part) => {
         if (part.type === 'text') return <Paragraphs key={part.key} text={part.text} />;
         if (part.type === 'tools') return <ToolGroup key={part.key} steps={part.steps} live={live} ctx={props.ctx} />;
+        if (part.type === 'visual') return <VisualView key={part.key} visual={part.visual} />;
         return <ProposalCard key={part.key} card={part.card} locationId={props.locationId} actions={props.actions} readOnlyId={props.readOnlyId} />;
       })}
       {message.state === 'complete' && message.parts.length > 0 ? (

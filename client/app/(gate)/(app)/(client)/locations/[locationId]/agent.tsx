@@ -61,13 +61,13 @@ function Switch(props: { value: View3; onChange: (value: View3) => void; questio
 
 export default function TownwiseAIScreen(): React.JSX.Element {
   // The portal's client, so the access errors of spec 4.3 re-read GET /api/me and route again.
-  const { api } = usePortal();
+  const { api, me } = usePortal();
   const { location, org } = useLocation();
   const { readOnly, line } = useReadOnly();
   const { desktop } = useBreakpoint();
   // A note saved from a card or an answer changes the location's notes count: the organization is read again on leaving.
   const markOrgStale = useOrgRefreshOnLeave();
-  const chat = useTuningChat(api, location.id, markOrgStale);
+  const chat = useTuningChat(api, location.id, { userId: me.user.id, readOnly, onNoteAdded: markOrgStale });
   const panel = useAgentPanel(api, location.id, markOrgStale);
   const head = useScrollingHead();
   const about = useLoad(useCallback(() => fetchEstimatesAbout(api, location.id), [api, location.id]));
