@@ -78,6 +78,11 @@ export function createMemoryFileBlobs(now: () => Date = () => new Date()): Memor
       const body = Readable.from([range === undefined ? blob : blob.subarray(range.offset, range.offset + range.count)]);
       return signal === undefined ? body : addAbortSignal(signal, body);
     },
+    writeRaw(scope, ref, bytes) {
+      raw.set(rawBlobName(scope, ref), Buffer.from(bytes));
+      modified.set(`raw:${rawBlobName(scope, ref)}`, now());
+      return Promise.resolve();
+    },
     writeClean(scope, ref, csv) {
       clean.set(cleanBlobName(scope, ref), Buffer.from(csv, 'utf8'));
       modified.set(`clean:${cleanBlobName(scope, ref)}`, now());

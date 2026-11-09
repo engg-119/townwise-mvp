@@ -6,6 +6,7 @@
 import type { OrgScope } from '../access/policy.ts';
 import type { FileRecord } from '../stores/files.ts';
 import type { TownwiseStores } from '../stores/index.ts';
+import { utcDay } from '../dates.ts';
 import { BlobMissingError, type FileBlobs } from './blobs.ts';
 import { kindLabel } from './sniff.ts';
 
@@ -141,4 +142,42 @@ async function deleteOneOriginal(
   }
   await stores.files.rawDeleted(scope, file.id, now, kindLabel(file.kind), renamedSheets(file));
   await stores.fileEntries.clearPaths(scope, file.id);
+}
+
+/**
+ * One file removed whole: its claim (`deleting`), the blobs (an unfinished upload is discarded and its bytes given back),
+ * the entry list, the row, and the import's question and emptiness. No audit. `busy` while the reader has it, or when
+ * another call claimed it.
+ */
+export async function removeFile(
+  stores: Pick<TownwiseStores, 'files' | 'fileEntries' | 'imports' | 'uploadDays'>, blobs: FileBlobs, scope: OrgScope, file: FileRecord, now: Date,
+): Promise<'removed' | 'busy'> {
+  if (file.status === 'reading') return 'busy';
+  const claimed = await stores.files.move(scope, file.id, ['uploading', 'stored', 'queued', 'waiting', 'read', 'kept', 'failed'], 'deleting');
+  if (claimed === null) return 'busy';
+  const ref = { locationId: file.locationId, fileId: file.id };
+  const missingOk = async (run: () => Promise<void>): Promise<void> => {
+    try {
+      await run();
+    } catch (err) {
+      if (!(err instanceof BlobMissingError)) throw err;
+    }
+  };
+  if (file.status === 'uploading') {
+    await missingOk(() => blobs.discardUpload(scope, ref));
+    const day = utcDay(file.uploadedAt);
+    if (day === utcDay(now)) await stores.uploadDays.refund(scope, day, file.sizeBytes, now);
+  } else {
+    await missingOk(() => blobs.deleteRaw(scope, ref));
+    await missingOk(() => blobs.deleteClean(scope, ref));
+  }
+  await stores.fileEntries.removeForFile(scope, file.id);
+  await stores.files.remove(scope, file.id);
+  if (file.importId !== null) {
+    const record = await stores.imports.get(scope, file.locationId, file.importId);
+    if (record !== null && record.question?.fileId === file.id) await stores.imports.clearQuestion(scope, record.id, record.question.id);
+    const remaining = await stores.files.inImport(scope, file.importId);
+    await stores.imports.removeIfEmptyOpen(scope, file.importId, remaining.length);
+  }
+  return 'removed';
 }

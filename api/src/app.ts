@@ -9,6 +9,7 @@ import type { ChatModel } from './chat/model.ts';
 import { TURN_TIME_LIMIT_MS } from './chat/turn.ts';
 import { resolveTownwiseConfig, type ResolvedTownwiseConfig, type TownwiseConfig } from './config.ts';
 import type { FileBlobs } from './files/blobs.ts';
+import { createItemReader, type ItemReader } from './files/items.ts';
 import { createForecastReader, type ForecastReader } from './forecasts/reader.ts';
 import { OFF_MAILER, type Mailer } from './mail/mailer.ts';
 import { createPeopleInTownReader, type PeopleInTownReader } from './people-in-town/reader.ts';
@@ -79,6 +80,8 @@ export interface TownwiseContext {
   /** Null while stored files are off. */
   readonly files: FileBlobs | null;
   readonly nudgeFiles: () => void;
+  /** The one door TownwiseAI's tools read a reference item's text through (chat/* imports no file code). */
+  readonly items: ItemReader;
   /** U13A. */
   readonly ports: TownwisePorts;
 }
@@ -105,6 +108,7 @@ export function createTownwiseApi(deps: TownwiseDeps, routes: readonly TownwiseR
     placesMap: deps.placesMap ?? null,
     files: deps.files ?? null,
     nudgeFiles: () => { deps.fileWorker?.nudge(); },
+    items: createItemReader(stores, deps.files ?? null),
     ports: {
       peopleInTown: createPeopleInTownReader({ stores, data: deps.peopleData ?? PEOPLE_DATA }),
       // U13B.

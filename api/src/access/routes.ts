@@ -17,7 +17,7 @@ import { deleteOrg, deletePerson, purgeOriginals } from '../handlers/deletion.ts
 import { getEstimatesAbout, getForecast, getPeopleInTown } from '../handlers/estimates.ts';
 import { deleteForecastRun, importForecastRun, listForecastRuns, publishForecastRun, withdrawForecastRun } from '../handlers/forecast-runs.ts';
 import {
-  answerImport, completeFile, createFile, currentImport, deleteFile, deleteLocationOriginals, deleteRaw, downloadClean, downloadRaw, getFile, getImport,
+  addTextItem, answerImport, completeFile, createFile, currentImport, deleteFile, deleteLocationOriginals, deleteRaw, downloadClean, downloadRaw, getFile, getImport,
   listEntries, listFiles, putChunk, startImport,
 } from '../handlers/files.ts';
 import { createLocation, deleteLocation, getOwnOrg, updateLocation } from '../handlers/locations.ts';
@@ -170,6 +170,10 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.files.remove', method: 'DELETE', path: '/org/locations/:locationId/files/:fileId', policy: 'member',
     bodyLimit: 'none', handler: deleteFile,
+  },
+  {
+    id: 'org.data.text', method: 'POST', path: '/org/locations/:locationId/data/text', policy: 'member', bodyLimit: '32kb',
+    limiter: 'files', handler: addTextItem,
   },
   {
     id: 'org.originals.remove', method: 'DELETE', path: '/org/locations/:locationId/originals', policy: 'org_admin',
