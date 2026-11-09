@@ -278,11 +278,11 @@ curl -sI https://townwise.tech/sign-in | grep -i -E 'content-security|strict-tra
 
 **How deploys work:**
 
-- `build-web` and `build-api` run the repository's code with no id-token. Each uploads one artifact with its SHA-256; `build-api` also outputs the image ID.
+- `build-web`, `build-api` and `build-lab` run the repository's code with no id-token. Each uploads one artifact with its SHA-256; `build-api` and `build-lab` also output the image ID.
 - `deploy` is the only job with an id-token, and it runs no repository or npm code. It:
   1. checks the hashes, and that the web archive holds only plain files and directories, none outside its folder;
-  2. pushes the image to the registry;
-  3. points the Container App at the image digest and waits for the revision;
+  2. pushes the API image, and the lab image `townwise-lab:<sha>`, to the registry (the log prints the lab digest);
+  3. points the Container App at the image digest and waits for the revision, then, only when `LAB_ENABLED` is `true`, points the lab job at its digest;
   4. fetches the Static Web Apps token, signs out of Azure, and uploads the web build with `docker run` of the Static Web Apps client image, pinned by digest. The container gets only the token and the web folder (read-only): no OIDC request variables, no Azure session, no docker socket;
   5. checks `https://api.townwise.tech/healthz`, printing only the status.
 
@@ -428,12 +428,22 @@ The files account is `prevent_destroy`, and deleting it deletes every client fil
 
 ### 19. Forecasts
 
-No infrastructure: a forecast is a run's outputs, which staff export on the team's computers and import through the staff console. The model, the partner's exports and the fitted models stay on those computers (spec 14.4). Owner decision (2026-11-05): Sawtooth's frozen v3 forecast may be imported and published only once Sawtooth is an organization in Townwise and the owner has confirmed its consent to see it and to its being sent to Anthropic through TownwiseAI, and only after the privacy page carries the forecasts paragraph (`docs/portal/estimates.md` section 5).
+No infrastructure of its own: a forecast is a run's outputs, which staff export on the team's computers and import through the staff console, or, with the forecast lab (step 20), from a calibration job. The model, the partner's exports and the fitted models stay on those computers (spec 14.4). Owner decision (2026-11-05): Sawtooth's frozen v3 forecast may be imported and published only once Sawtooth is an organization in Townwise and the owner has confirmed its consent to see it and to its being sent to Anthropic through TownwiseAI, and only after the privacy page carries the forecasts paragraph (`docs/portal/estimates.md` section 5).
 
 1. **Export.** From `modeling/`, run `uv run python export_forecast_run.py` with the frozen daily, weekly and events CSVs and the sha256 of each from `modeling/forecasts/README.md` (the script refuses a file that doesn't match), the model's version, family and notebook commit, its training dates and made-at date, the town id, each full buyout day from the booking rule as `--booked`, `--widened` when its ranges were widened, and the backtest figures from the README. It writes `modeling/outputs/forecast-run-{version}-{first day}.json`, which is gitignored: never commit it, and never paste its numbers anywhere.
 2. **Import as a draft.** Signed in as staff, open the organization (`/admin/orgs/<id>`), Forecasts, Import a forecast: pick the location, choose the file, check the summary (model, day count, dates, trained to, made), then Import. It lands as a draft that no owner and not TownwiseAI can see. Importing the same file again finds the same run, and finishes one a crash left unfinished.
 3. **Check, then publish.** Check the draft's row (model, dates, day count, trained to, made) against the forecasts README, then Publish. No route shows a draft's days to anyone, so the check is of the file before import. The organization's admins see the import and the publish in their Townwise staff activity. Signed in as a member of the organization, the model card names the run, and TownwiseAI's `get_forecast` reads it. Withdraw takes it back at once; Delete removes it.
 4. **Deletion duty.** Deleting the organization, the location or its sales data deletes its runs in Townwise. When an organization is deleted, or a person asks, staff also delete its fitted models, its exports and any forecast run files from the team's computers, and say so in the deletion record's notes.
+
+### 20. Enable the forecast lab
+
+The lab retrains a location's forecast model in Azure, from the sales the API hands the job (`modeling/lab`, `api/src/lab`). It is the one place the API's data leaves for a job, so it is off until you apply it: `enable_lab` is false, and `lab_image` is null. The job `caj-townwise-lab` is Manual, 1 vCPU and 2 GiB, 900 seconds, never retried, with no secrets and its own identity (`id-townwise-job-lab`) that holds AcrPull and nothing else, and `identitySettings` lifecycle `None` so no container can obtain a token for it. It holds no database or storage credential: the API starts it with a per-calibration token (`TOWNWISE_LAB_CALIBRATION_ID`, `TOWNWISE_LAB_TOKEN`), and it reads its input and posts its result over HTTPS. The API's identity gets the custom role "Townwise lab starter" (`Microsoft.App/jobs/read` and `Microsoft.App/jobs/start/action`) at the job's scope only, and the deploy identity gets the "Townwise deployer" role on the job. Agents write and test this stack but never apply it.
+
+1. **Merge with `LAB_ENABLED` unset.** The release builds `modeling/lab/Dockerfile` in a job with no token and pushes `townwise-lab:<sha>`. The deploy log prints the pushed digest on the line `lab image: <registry>/townwise-lab@sha256:...`; copy it. No lab job exists yet, so the deploy does not touch one.
+2. **Apply.** In `infra/terraform/production/terraform.tfvars` set `enable_lab = true` and `lab_image = "<that digest>"`, then `terraform plan` and `terraform apply` from `infra/terraform/production`. The plan adds the identity, its AcrPull assignment, the role "Townwise lab starter", its assignment to the API's identity at the job, the deploy identity's assignment at the job, the job, and changes the Container App (`TOWNWISE_LAB_RUNNER=azure` and `TOWNWISE_LAB_JOB_ID`), which starts a new revision. `terraform output lab_job_id` prints the id. Terraform ignores later changes to the job's image (`ignore_changes` on the container image), so a plan after a release shows no drift; if a future provider stops honoring that for the job body, re-apply with the newest digest instead.
+3. **Turn the deploy on.** Set the repository variable `LAB_ENABLED=true`. From the next release, the deploy runs `az containerapp job update` on `caj-townwise-lab` with the new digest.
+4. **Check on a test organization with synthetic days.** Calibrate in the console (a location with at least the minimum history), and wait for the execution to succeed. Its console log has only `fetched input: N days` and `posted result: ok`, and `ContainerAppConsoleLogs | where ContainerJobName_s == "caj-townwise-lab"` shows no figure, date or name. If the job cannot reach the API's default host name (it uses `https://<fqdn from terraform output container_app_fqdn>`), set its `TOWNWISE_LAB_API_URL` to `https://api.townwise.tech` in `lab.tf` and apply again.
+5. **Switch forecasts on.** Only for an organization whose owner agreed, and only once the privacy page carries the forecasts paragraph (step 19): until then a better draft stays a draft with its scorecard visible to staff.
 
 ## Logs
 
@@ -456,6 +466,7 @@ Prices are from the Azure Retail Prices API (eastus), with a 730-hour month (2,6
 | Private DNS zone `privatelink.blob.core.windows.net` | $0.50 per zone (queries $0.40 per million) | $0.50 |
 | Client file storage, Hot LRS | $0.0208 per GB a month; transactions and access-log writes are cents a month at this scale | under $0.10 at a few GB |
 | Backup job, about 5 minutes a night at 0.5 vCPU and 1 GiB | active rates | about $0.14 |
+| Forecast lab, when on (step 20), a calibration of about 15 minutes at 1 vCPU and 2 GiB | active rates | about $0.03 per calibration |
 | Backup storage, Hot LRS, 30 dumps kept | $0.0208 per GB a month, writes $0.05 per 10,000 | about $0.03 at 50 MB a dump |
 | Container Registry Basic | $0.1666 a day | $5.07 |
 | Azure DNS zone | $0.50 per zone (queries $0.40 per million) | $0.50 |

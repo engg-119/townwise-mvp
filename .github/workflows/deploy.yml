@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # The two build jobs run repository and npm code and get no id-token. Each uploads one tarball and
+  # The three build jobs run repository and npm code and get no id-token. Each uploads one tarball and
   # publishes its SHA-256.
   build-web:
     name: build-web
@@ -92,13 +92,44 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # The forecast lab's image (modeling/lab/Dockerfile). Built on every release so the registry always holds the
+  # current code; the lab job is pointed at it only when LAB_ENABLED is set (infra/README.md, step 20).
+  build-lab:
+    name: build-lab
+    if: github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      sha256: ${{ steps.pack.outputs.sha256 }}
+      image_id: ${{ steps.pack.outputs.image_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: pack
+        name: Build the lab image (modeling/lab/Dockerfile) and save it
+        run: |
+          set -euo pipefail
+          docker build -f modeling/lab/Dockerfile --build-arg CODE_VERSION="$GITHUB_SHA" -t townwise-lab:release modeling/lab
+          echo "image_id=$(docker image inspect townwise-lab:release --format '{{.Id}}')" >> "$GITHUB_OUTPUT"
+          docker save townwise-lab:release | gzip -n > "$RUNNER_TEMP/lab-image.tar.gz"
+          echo "sha256=$(sha256sum "$RUNNER_TEMP/lab-image.tar.gz" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lab
+          path: ${{ runner.temp }}/lab-image.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
   # The only job with an id-token (ci.yml's id-token-guard checks; the deploy identity trusts only this workflow
   # file on main, through job_workflow_ref). No checkout and no repository
-  # or npm code. It verifies both artifacts against the build jobs' outputs, then runs docker and Azure CLI
+  # or npm code. It verifies all three artifacts against the build jobs' outputs, then runs docker and Azure CLI
   # commands and two pinned actions (download-artifact, azure/login).
   deploy:
     name: deploy
-    needs: [build-web, build-api]
+    needs: [build-web, build-api, build-lab]
     if: github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -116,6 +147,9 @@ jobs:
       WEB_SHA256: ${{ needs.build-web.outputs.sha256 }}
       API_SHA256: ${{ needs.build-api.outputs.sha256 }}
       API_IMAGE_ID: ${{ needs.build-api.outputs.image_id }}
+      LAB_SHA256: ${{ needs.build-lab.outputs.sha256 }}
+      LAB_IMAGE_ID: ${{ needs.build-lab.outputs.image_id }}
+      LAB_ENABLED: ${{ vars.LAB_ENABLED }}
     steps:
       - name: Required repository variables are set
         run: |
@@ -132,15 +166,21 @@ jobs:
         with:
           name: api
           path: ${{ runner.temp }}/in
-      - name: Verify both artifacts against the build jobs' SHA-256
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: lab
+          path: ${{ runner.temp }}/in
+      - name: Verify the artifacts against the build jobs' SHA-256
         run: |
           set -euo pipefail
-          for sum in "$WEB_SHA256" "$API_SHA256"; do
+          for sum in "$WEB_SHA256" "$API_SHA256" "$LAB_SHA256"; do
             if ! [[ "$sum" =~ ^[0-9a-f]{64}$ ]]; then echo "::error::missing or malformed SHA-256 output"; exit 1; fi
           done
-          if ! [[ "$API_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]; then echo "::error::missing image id"; exit 1; fi
+          for id in "$API_IMAGE_ID" "$LAB_IMAGE_ID"; do
+            if ! [[ "$id" =~ ^sha256:[0-9a-f]{64}$ ]]; then echo "::error::missing image id"; exit 1; fi
+          done
           cd "$RUNNER_TEMP/in"
-          printf '%s  web.tar.gz\n%s  api-image.tar.gz\n' "$WEB_SHA256" "$API_SHA256" | sha256sum --check --strict -
+          printf '%s  web.tar.gz\n%s  api-image.tar.gz\n%s  lab-image.tar.gz\n' "$WEB_SHA256" "$API_SHA256" "$LAB_SHA256" | sha256sum --check --strict -
           # Only plain files and directories, and no path that leaves the folder: no absolute names, no ".."
           # component, no links, devices or FIFOs. The upload container mounts this folder read-only.
           # grep without -q reads the whole listing, so tar never dies of SIGPIPE under pipefail.
@@ -173,6 +213,24 @@ jobs:
           if [ -z "$ref" ]; then echo "::error::no registry digest after push"; exit 1; fi
           docker logout "$registry" > /dev/null
           echo "image=$ref" >> "$GITHUB_OUTPUT"
+      - id: push-lab
+        name: Load the lab image and push it to the registry
+        run: |
+          set -euo pipefail
+          docker load --input "$RUNNER_TEMP/in/lab-image.tar.gz" > /dev/null
+          loaded="$(docker image inspect townwise-lab:release --format '{{.Id}}')"
+          if [ "$loaded" != "$LAB_IMAGE_ID" ]; then echo "::error::loaded lab image differs from the built one"; exit 1; fi
+          registry="$AZURE_ACR_NAME.azurecr.io"
+          az acr login --name "$AZURE_ACR_NAME" --output none
+          docker tag townwise-lab:release "$registry/townwise-lab:$GITHUB_SHA"
+          docker push --quiet "$registry/townwise-lab:$GITHUB_SHA"
+          ref="$(docker image inspect "$registry/townwise-lab:$GITHUB_SHA" --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+            | grep "^$registry/townwise-lab@sha256:" | head -n 1)"
+          if [ -z "$ref" ]; then echo "::error::no registry digest after push"; exit 1; fi
+          docker logout "$registry" > /dev/null
+          # The digest is not a secret; the runbook (infra/README.md, step 20) reads it here for lab_image.
+          echo "lab image: $ref"
+          echo "image=$ref" >> "$GITHUB_OUTPUT"
       - name: Point the Container App at the image digest and wait for the revision
         env:
           IMAGE: ${{ steps.push.outputs.image }}
@@ -194,6 +252,16 @@ jobs:
           done
           echo "::error::revision $latest did not become ready"
           exit 1
+      # Only once the owner has applied the lab (infra/README.md, step 20) and set LAB_ENABLED: before that the job
+      # does not exist, and the update would fail the release.
+      - name: Point the lab job at the image digest
+        if: env.LAB_ENABLED == 'true'
+        env:
+          IMAGE: ${{ steps.push-lab.outputs.image }}
+        run: |
+          set -euo pipefail
+          az containerapp job update --name caj-townwise-lab --resource-group "$AZURE_RESOURCE_GROUP" \
+            --container-name lab --image "$IMAGE" --output none
       # The upload client runs from its image pinned by digest (not the Static Web Apps action, which builds
       # FROM a moving tag). docker run passes only the variables named with -e: the container gets the token
       # and the read-only web folder, and no ACTIONS_ID_TOKEN_REQUEST_* variables, Azure CLI session or
