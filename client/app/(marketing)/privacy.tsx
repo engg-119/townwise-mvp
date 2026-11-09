@@ -19,6 +19,7 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
         <Li>Two cookies keep you signed in. There are no advertising or analytics cookies.</Li>
         <Li>Our server logs each request: the address it came from, the browser or app that sent it, the page asked for and the result. The request log does not record your email address, your sign-in tokens, your cookies or what you send us.</Li>
         <Li>The Townwise app sends no telemetry: no analytics, no tracking, no crash reports. The sign-in page loads Google’s sign-in script, so Google sees that visit.</Li>
+        <Li>Townwise sends two emails, each only to the person it concerns: one when we receive your access request and one when you’re approved. Open and click tracking is off.</Li>
         <Li>You add sales history one of two ways. Drop your files, and we store them privately for your organization and read the date, guest count and net sales for each day on our server. Or have your browser read a CSV, and it sends us only those three values a day; that file never reaches our server.</Li>
         <Li>Your sales data is used only to provide Townwise to your restaurant: its own forecasts and TownwiseAI, its AI assistant. It is not shared with or used for other restaurants, and it is not used to train AI models.</Li>
         <Li>Townwise does not sell personal data.</Li>
@@ -148,7 +149,8 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
     title: 'Email',
     body: (
       <>
-        <P>Townwise does not send email, for sign-in or anything else. If you write to <Mail />, we keep your message and address to reply to you.</P>
+        <P>Townwise sends two emails, each only to the person it concerns: “request received”, after you send an access request, and “you’re in”, after Townwise staff approve it. They come from no-reply@townwise.tech through Microsoft’s Azure Communication Services, with open and click tracking off. Each holds your organization’s name, its town and the address you sign in with, never sales figures, files or notes. Townwise sends no other email, for sign-in, invitations or anything else.</P>
+        <P>Townwise keeps nothing about a send except one line in our server log: which email it was, the ids of the access request and, for “you’re in”, the organization, and an error code if it failed, never your address. Microsoft keeps its own delivery records. If you reply to one of these emails or write to <Mail />, we keep your message and address to reply to you.</P>
         <P>The sign-in service still includes an email-link route that Townwise does not use. If an email address is submitted to it, the service stores that address with a hashed one-time token, the platform and timestamps, and deletes the record automatically shortly after its 15 minutes are up, counts the attempt per IP address (hashed) for one hour and under a keyed hash of the address for up to 24 hours, and sends nothing.</P>
       </>
     ),
@@ -208,10 +210,10 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
       <>
         <Ul className="bul">
           <Li><Strong>Google</Strong>, when you open the sign-in page (its sign-in script loads there) and when you sign in with your Google account, under Google’s privacy policy. When you search for your business, on the access request or when adding or changing a location, our server sends Google the text you type and the place you pick, and checks the picked place’s town with Google once more when a location is saved. Google sees our server, not your device. When a found place shows a map, your browser or app loads the map image straight from Google, so Google sees your IP address. We keep only Google’s id for the place.</Li>
-          <Li><Strong>Microsoft Azure</Strong>, which runs our servers and stores our database, its backups, our logs and the files you drop.</Li>
+          <Li><Strong>Microsoft Azure</Strong>, which runs our servers and stores our database, its backups, our logs and the files you drop, and delivers our two emails through Azure Communication Services, which receives your address and the email’s content.</Li>
           <Li><Strong>Anthropic</Strong>, which provides the AI model behind TownwiseAI, the assistant on each location’s TownwiseAI page. Nothing is sent to Anthropic unless you use it, or Townwise staff setting up your organization for you before anyone from it joins use it (see Who can see it, under Your restaurant’s sales data). When either does, Anthropic receives the messages you send and the location data the assistant reads to answer them: the location’s name and town, its sales totals and daily figures, its notes, its town profile and public facts about its town (its calendar, and who is likely in town, with the public sources behind them). TownwiseAI never reads your files, and Townwise never sends it your team’s names or email addresses. Separately, when you, or staff setting it up for you, drop a file and Townwise’s own rules can’t find its guest or net sales columns, our server may send Anthropic the file’s column headings and the kinds of values in each column, never its rows, its name or your restaurant’s name, to suggest which is which; otherwise it asks whoever dropped it. Anthropic processes them under its <A href={ANTHROPIC_TERMS_HREF}>Commercial Terms of Service</A>, which say Anthropic may not train models on that content.</Li>
         </Ul>
-        <P>Apart from Google’s sign-in script on the sign-in page, the Townwise app and server send your account and sign-in information to no one else. Townwise does not sell personal data.</P>
+        <P>Apart from Google’s sign-in script on the sign-in page and the two emails Microsoft delivers, the Townwise app and server send your account and sign-in information to no one else. Townwise does not sell personal data.</P>
       </>
     ),
   },
