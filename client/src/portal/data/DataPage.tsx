@@ -6,11 +6,10 @@ import { theme } from '../../theme';
 import { hasCode } from '../errors';
 import { useLoad } from '../hooks';
 import { downloadClean, downloadRaw, listFiles, removeRaw } from '../files/api';
-import { cleanName, COPY as FILE_COPY, deleteAllRawBody, deletedOriginalsLine, deleteRawBody, formatSize } from '../files/copy';
+import { cleanName, COPY as FILE_COPY, deleteRawBody, formatSize } from '../files/copy';
 import { CAN_SAVE_FILES, saveFile } from '../files/download';
-import { removeOriginals } from '../files/api';
 import { ZipEntries } from '../files/ZipEntries';
-import { LoadFailure, UploadAction } from '../locations/parts';
+import { LoadFailure, UploadAction, useOrgRefreshOnLeave } from '../locations/parts';
 import { CAN_DROP } from '../onboarding/HistoryStepDrop';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { useLocation } from '../shell/LocationShell';
@@ -36,7 +35,10 @@ import { PasteText } from './PasteText';
 // every location. Under view-as the API sends no names and no rights: the rows show kinds and dates, and every
 // action is disabled in place under the read-only line. Stored files off (503) hides Add a file, Paste text and
 // the file actions; uploads still list, turn off and delete. A delete takes its opener away, so focus moves to the
-// line that says how it ended (MessageFocus, as Your files did).
+// line that says how it ended (MessageFocus, as Your files did). Turning an item off or on and deleting one change
+// the location's day counts, so the organization (GET /api/org) is read again when the page closes. An item kept
+// for reference is its original, so it has Delete and no Delete original; nothing here deletes every original at
+// once, because DELETE /originals would delete those items too.
 
 const READ_ONLY_ID = 'data-ro';
 const ALL = 'all';
@@ -44,8 +46,12 @@ const ALL = 'all';
 type Confirm =
   | { kind: 'upload'; item: DataItem }
   | { kind: 'file'; item: DataItem }
-  | { kind: 'raw'; item: DataItem }
-  | { kind: 'all' };
+  | { kind: 'raw'; item: DataItem };
+
+/** A stored file kept for reference: the original is the whole item, with no cleaned copy and no days. */
+function isReference(item: Pick<DataItem, 'ref' | 'outcome'>): boolean {
+  return item.ref.startsWith('f_') && item.outcome === 'reference';
+}
 
 export function DataPage(): React.JSX.Element {
   return <MessageFocus><Data /></MessageFocus>;
@@ -55,7 +61,7 @@ function Data(): React.JSX.Element {
   const { api } = usePortal();
   const { location, org } = useLocation();
   const { readOnly, line } = useReadOnly();
-  const admin = org.role === 'org_admin';
+  const markStale = useOrgRefreshOnLeave();
   const readOnlyId = readOnly ? READ_ONLY_ID : null;
   const several = org.locations.length > 1;
   const focusMessage = useFocusMessage();
@@ -128,6 +134,7 @@ function Data(): React.JSX.Element {
     setFailure(null);
     setEnabled(api, item.locationId, item.ref, enable).then(
       (updated) => {
+        markStale();
         setBusy(null);
         setPatched((value) => ({ ...value, [item.ref]: updated }));
         setNotice(enable ? turnedOnLine(itemName(item)) : turnedOffLine(itemName(item), nameOf(item.locationId)));
@@ -142,13 +149,15 @@ function Data(): React.JSX.Element {
     );
   };
 
-  if (state.status === 'failed' && shown === null) return <LoadFailure error={state.error} onRetry={reload} />;
-  const first = state.status === 'ready' && state.data.scope === scope ? state.data.page.items : shown?.scope === scope ? shown.items : null;
-  const firstNext = state.status === 'ready' && state.data.scope === scope ? state.data.page.next : shown?.scope === scope ? shown.next : null;
+  // A failed load (the first, after Show changed, or again after a write) shows in place of the list, with Try
+  // again; the rest of the page stays, so Show can still switch back. Rows from before are not kept: they may be stale.
+  const loadError = state.status === 'failed' ? state.error : null;
+  const kept = loadError === null && shown?.scope === scope ? shown : null;
+  const first = state.status === 'ready' && state.data.scope === scope ? state.data.page.items : kept?.items ?? null;
+  const firstNext = state.status === 'ready' && state.data.scope === scope ? state.data.page.next : kept?.next ?? null;
 
   const items = first === null ? null : [...first, ...older.items].map((item) => patched[item.ref] ?? item);
   const next = older.next === undefined ? firstNext : older.next;
-  const anyOriginal = items?.some((item) => item.file !== null && item.file.rawAvailable && item.state !== 'uploading') === true;
 
   const showOlder = (): void => {
     if (next === null || older.pending) return;
@@ -163,7 +172,7 @@ function Data(): React.JSX.Element {
     if (confirm === null || pending) return;
     setPending(true);
     setFailure(null);
-    const done = (text: string): void => { setPending(false); setConfirm(null); setNotice(text); setEnded((n) => n + 1); fresh(); };
+    const done = (text: string): void => { markStale(); setPending(false); setConfirm(null); setNotice(text); setEnded((n) => n + 1); fresh(); };
     const failed = (error: unknown): void => {
       setPending(false);
       setConfirm(null);
@@ -177,16 +186,14 @@ function Data(): React.JSX.Element {
     } else if (confirm.kind === 'file') {
       const { item } = confirm;
       removeItem(api, item.locationId, item.ref).then(() => { done(deletedFileLine(itemName(item))); }, failed);
-    } else if (confirm.kind === 'raw') {
+    } else {
       const { item } = confirm;
       if (item.file === null) return;
       removeRaw(api, item.locationId, item.file.id).then(() => { done(FILE_COPY.rawDeleted); }, failed);
-    } else {
-      removeOriginals(api, location.id).then((result) => { done(deletedOriginalsLine(result)); }, failed);
     }
   };
 
-  const dialog = confirm === null ? null : dialogOf(confirm, nameOf, location.name);
+  const dialog = confirm === null ? null : dialogOf(confirm, nameOf);
 
   const columns: Column[] = [
     { key: 'item', label: COLUMNS.item, flex: 1.6 },
@@ -214,7 +221,8 @@ function Data(): React.JSX.Element {
     }
     const canRaw = file !== null && file.canDownloadRaw && file.rawAvailable;
     const canClean = file !== null && file.canDownloadClean && file.hasClean;
-    const canDeleteRaw = file !== null && file.canDeleteRaw && file.rawAvailable;
+    // The API allows it on an item kept for reference, but there it would leave a row with nothing in it: Delete does that whole.
+    const canDeleteRaw = file !== null && file.canDeleteRaw && file.rawAvailable && !isReference(item);
     const action = item.enabled ? DATA.turnOff : DATA.turnOn;
     return (
       <View style={styles.actions}>
@@ -276,7 +284,6 @@ function Data(): React.JSX.Element {
     },
   }));
 
-  const stored = filesOn && !all;
   return (
     <Section kicker={DATA.kicker} title={DATA.title}>
       <Stack>
@@ -323,14 +330,7 @@ function Data(): React.JSX.Element {
             ) : null}
           </Stack>
         ) : null}
-        {stored && admin && anyOriginal ? (
-          <Actions>
-            {readOnly
-              ? <Button variant="outline" label={FILE_COPY.deleteAllRaw} disabled describedBy={READ_ONLY_ID} />
-              : <Button variant="outline" label={FILE_COPY.deleteAllRaw} onPress={() => { setConfirm({ kind: 'all' }); }} />}
-          </Actions>
-        ) : null}
-        {items === null ? <LoadingLine text={DATA.loading} /> : items.length === 0 ? (
+        {loadError !== null ? <LoadFailure error={loadError} onRetry={reload} /> : items === null ? <LoadingLine text={DATA.loading} /> : items.length === 0 ? (
           <EmptyState text={empty(all ? DATA.allLocations.toLowerCase() : location.name)} />
         ) : (
           <DataTable label={tableLabel(all ? null : location.name)} columns={columns} rows={rows} />
@@ -354,7 +354,7 @@ function Data(): React.JSX.Element {
   );
 }
 
-function dialogOf(confirm: Confirm, nameOf: (locationId: string) => string, locationName: string): { title: string; body: string; label: string } {
+function dialogOf(confirm: Confirm, nameOf: (locationId: string) => string): { title: string; body: string; label: string } {
   switch (confirm.kind) {
     case 'upload':
       return { title: DATA.deleteUploadTitle, body: deleteUploadBody(confirm.item, nameOf(confirm.item.locationId)), label: DATA.deleteUploadConfirm };
@@ -368,8 +368,6 @@ function dialogOf(confirm: Confirm, nameOf: (locationId: string) => string, loca
         }),
         label: FILE_COPY.deleteRaw,
       };
-    case 'all':
-      return { title: FILE_COPY.deleteAllRaw, body: deleteAllRawBody(locationName), label: FILE_COPY.deleteAllRaw };
   }
 }
 
@@ -380,6 +378,10 @@ function ItemCell(props: { item: DataItem }): React.JSX.Element {
     <View style={styles.cell}>
       <Text style={styles.name}>{itemName(item)}</Text>
       <Text style={styles.note}>{VIA_LINE[item.via]}</Text>
+      {/* Deleted by a person or by retention. An item kept for reference has no cleaned copy or days to keep. */}
+      {item.file === null || item.file.rawAvailable || item.state === 'uploading' || isReference(item) ? null : (
+        <Text style={styles.note}>{FILE_COPY.rawGone}</Text>
+      )}
       {item.file === null || entries === null ? null : (
         <ZipEntries
           locationId={item.locationId}

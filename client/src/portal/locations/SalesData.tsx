@@ -164,7 +164,8 @@ export function SalesData(): React.JSX.Element {
       <ConfirmDialog
         visible={confirming}
         title="Delete all sales data"
-        body={`This deletes ${plural(coverage.dayCount, 'day', 'days')} of sales data for ${location.name}, and every file on its Your data page. Notes stay. This can’t be undone.`}
+        // The count leaves out turned-off days (coverage does, D28), but the delete takes them too, so the words name them.
+        body={`This deletes ${plural(coverage.dayCount, 'day', 'days')} of sales data for ${location.name}, any days turned off on its Your data page, and every file on that page. Notes stay. This can’t be undone.`}
         typedName={location.name}
         confirmLabel="Delete all sales data"
         pendingLabel="Deleting…"

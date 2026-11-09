@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
@@ -7,7 +7,7 @@ import type { DataItem } from '../../../src/portal/data/api';
 import type { MeResponse, OrgResponse } from '../../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
-import { ACCESS, EMAIL, fakePortalApi, LOCATIONS, meOf, orgOf, refusal, viewAsMe } from '../../helpers/portal';
+import { ACCESS, EMAIL, fakePortalApi, LOCATIONS, meOf, orgOf, refusal, viewAsMe, type FakePortalApi } from '../../helpers/portal';
 import { daysOf, locationsFake, salesOf, uploadOf } from '../locations/fakes';
 import { dailyTotalsOf, dataFake, itemOf, type DataFake } from './fakes';
 
@@ -55,6 +55,20 @@ const ITEMS: DataItem[] = [
   dailyTotalsOf('u_1'),
 ];
 
+/** The portal API of the last setup, for its GET /api/org reads. */
+let portal: FakePortalApi | null = null;
+
+function orgReads(): number {
+  return portal?.calls.filter((call) => call.method === 'GET' && call.path === '/api/org').length ?? 0;
+}
+
+async function settle(fire: () => void): Promise<void> {
+  await act(async () => {
+    fire();
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+  });
+}
+
 function setup(
   me: MeResponse, items: DataItem[] = ITEMS, opts: { files?: 'on' | 'off'; org?: OrgResponse } = {},
 ): DataFake {
@@ -62,6 +76,7 @@ function setup(
   const fake = dataFake({ inner, items: items.map((item) => ({ ...item, file: item.file === null ? null : { ...item.file }, days: item.days === null ? null : { ...item.days } })) });
   if (opts.files === 'off') fake.files.lists[''] = refusal(503, 'files_unavailable');
   const api = fakePortalApi({ me, org: opts.org ?? orgOf(me.access.state === 'member' ? me.access.role : 'member'), fallback: fake });
+  portal = api;
   const auth = fakeAuth({ status: 'signedIn', user: { id: 'u1', email: EMAIL } }, { api });
   window.history.replaceState(null, '', '/locations/l1/data');
   render(
@@ -304,7 +319,8 @@ test('downloads follow each item’s flags and save through a blob link', async 
   fake.files.downloads['/files/file-u/clean'] = () => new Blob(['date,guests,net_sales\r\n']);
   fake.files.downloads['/files/file-u/raw'] = () => new Blob(['abcd']);
   const rows = rowsOf(await table());
-  expect(buttons(at(rows, 0))).toEqual(['Turn off', 'Download original', 'Delete original', 'Delete']);
+  // An item kept for reference is its original: Delete removes it whole, so it has no Delete original.
+  expect(buttons(at(rows, 0))).toEqual(['Turn off', 'Download original', 'Delete']);
   expect(buttons(at(rows, 1))).toEqual(['Turn off', 'Download original', 'Download cleaned CSV', 'Delete original', 'Delete']);
   fireEvent.click(screen.getByRole('button', { name: 'Download cleaned CSV: toast.xlsx' }));
   await waitFor(() => { expect(saved).toEqual([{ name: 'toast-townwise.csv', size: 23 }]); });
@@ -325,14 +341,84 @@ test('Delete original says what stays, then deletes only the original', async ()
   expect(fake.files.calls.filter((call) => call.method === 'DELETE').map((call) => call.path)).toEqual(['/files/file-u/raw']);
 });
 
-test('org admins delete every original of the location at once, after a confirm that says what stays', async () => {
+test('nothing deletes every original at once: that would also delete each item kept for reference', async () => {
+  setup(meOf(ACCESS.admin));
+  await table();
+  expect(screen.queryByRole('button', { name: 'Delete all originals for this location' })).toBeNull();
+});
+
+test('a sales file whose original was deleted says so; an item kept for reference claims no cleaned copy', async () => {
+  const gone = { rawAvailable: false, canDownloadRaw: false, canDeleteRaw: false } as const;
+  setup(meOf(ACCESS.admin), ITEMS.map((item) => ({ ...item, file: item.file === null ? null : { ...item.file, ...gone } })));
+  const rows = rowsOf(await table());
+  expect(within(at(rows, 1)).getByText('The original was deleted. The cleaned copy and days stay.')).toBeTruthy();
+  expect(within(at(rows, 0)).queryByText(/The original was deleted/)).toBeNull();
+  expect(within(at(rows, 2)).queryByText(/The original was deleted/)).toBeNull();
+});
+
+test('after Turn off, the organization is read again once the page closes, not before', async () => {
+  setup(meOf(ACCESS.admin));
+  await table();
+  const before = orgReads();
+  fireEvent.click(screen.getByRole('button', { name: 'Turn off: Daily totals' }));
+  await screen.findByText(/^Turned off Daily totals\./);
+  expect(orgReads()).toBe(before);
+  await settle(() => { fireEvent.click(screen.getByRole('link', { name: 'Notes' })); });
+  await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/notes'); });
+  await waitFor(() => { expect(orgReads()).toBe(before + 1); });
+});
+
+test('after an upload is deleted, the organization is read again once the page closes', async () => {
+  setup(meOf(ACCESS.admin));
+  await table();
+  const before = orgReads();
+  fireEvent.click(screen.getByRole('button', { name: 'Delete: Daily totals' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Delete this upload' });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Delete upload' }));
+  await screen.findByText('Deleted the upload and 5 days.');
+  await settle(() => { fireEvent.click(screen.getByRole('link', { name: 'Notes' })); });
+  await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/notes'); });
+  await waitFor(() => { expect(orgReads()).toBe(before + 1); });
+});
+
+test('leaving with nothing changed reads the organization no more', async () => {
+  setup(meOf(ACCESS.admin));
+  await table();
+  const before = orgReads();
+  await settle(() => { fireEvent.click(screen.getByRole('link', { name: 'Notes' })); });
+  await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/notes'); });
+  await settle(() => undefined);
+  expect(orgReads()).toBe(before);
+});
+
+test('a list that fails after Show changes says so with Try again, not Loading', async () => {
+  const fake = setup(meOf(ACCESS.admin), [...ITEMS, dailyTotalsOf('u_2', { locationId: 'l2' })]);
+  await table();
+  fake.answers['GET /api/org/data'] = () => refusal(503, 'unavailable');
+  fireEvent.change(screen.getByLabelText('Show'), { target: { value: 'all' } });
+  expect(await screen.findByText('Townwise isn’t responding. Try again in a minute.')).toBeTruthy();
+  expect(screen.queryByText('Loading your data')).toBeNull();
+  expect(screen.queryByRole('table')).toBeNull();
+  // Show stays, so the person can go back.
+  expect(screen.getByLabelText('Show')).toBeTruthy();
+  fake.answers = {};
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  expect(rowsOf(await table('Your data for all locations'))).toHaveLength(4);
+});
+
+test('a list that fails to load again after a delete says so with Try again, in place of the old rows', async () => {
   const fake = setup(meOf(ACCESS.admin));
-  fake.files.answers['DELETE /originals'] = () => ({ deletedOriginals: 2, skippedBusy: 1 });
-  fireEvent.click(await screen.findByRole('button', { name: 'Delete all originals for this location' }));
-  const dialog = await screen.findByRole('dialog', { name: 'Delete all originals for this location' });
-  expect(within(dialog).getByText(/Cleaned copies and days stay/)).toBeTruthy();
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Delete all originals for this location' }));
-  expect(await screen.findByText('Deleted 2 originals. 1 file was busy and kept.')).toBeTruthy();
+  await table();
+  fake.answers['GET /api/org/data'] = () => refusal(503, 'unavailable');
+  fireEvent.click(screen.getByRole('button', { name: 'Delete: Daily totals' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Delete this upload' });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Delete upload' }));
+  expect(await screen.findByText('Deleted the upload and 5 days.')).toBeTruthy();
+  expect(await screen.findByText('Townwise isn’t responding. Try again in a minute.')).toBeTruthy();
+  expect(screen.queryByRole('table')).toBeNull();
+  fake.answers = {};
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  await waitFor(() => { expect(rowsOf(screen.getByRole('table'))).toHaveLength(2); });
 });
 
 test('a ZIP lists the files inside it, a page at a time', async () => {

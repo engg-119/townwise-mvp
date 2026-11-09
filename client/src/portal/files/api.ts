@@ -219,7 +219,6 @@ const currentSchema = z.object({ import: importViewSchema.nullable() });
 const oneImportSchema = z.object({ import: importViewSchema });
 const removedSchema = z.object({ deleted: z.literal(true), daysKept: z.number() });
 const removedRawSchema = z.object({ deleted: z.literal(true) });
-const removedOriginalsSchema = z.object({ deletedOriginals: z.number(), skippedBusy: z.number() });
 
 export type Created = z.infer<typeof createdSchema>;
 export type Completed = z.infer<typeof completedSchema>;
@@ -263,11 +262,6 @@ export function removeFile(api: ApiClient, locationId: string, fileId: string): 
 /** The original only: the cleaned copy, report, entry list and days stay. */
 export function removeRaw(api: ApiClient, locationId: string, fileId: string): Promise<{ deleted: true }> {
   return api.json(`${filePath(locationId, fileId)}/raw`, removedRawSchema, { method: 'DELETE' });
-}
-
-/** Org admins: every original of the location that isn't uploading or being read. */
-export function removeOriginals(api: ApiClient, locationId: string): Promise<{ deletedOriginals: number; skippedBusy: number }> {
-  return api.json(`${locationPath(locationId)}/originals`, removedOriginalsSchema, { method: 'DELETE' });
 }
 
 /** Newest first, 200 a page; `before` is the last file id of the page before. */

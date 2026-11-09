@@ -151,7 +151,7 @@ test('org admins delete all sales data behind the typed name, then see the notic
   expect(await screen.findByRole('heading', { name: 'Delete sales data' })).toBeTruthy();
   expect(screen.getByText('Admins only')).toBeTruthy();
   await fireEvent.press(screen.getByRole('button', { name: 'Delete all sales data' }));
-  expect(screen.getByText('This deletes 397 days of sales data for Main Street Bar, and every file on its Your data page. Notes stay. This can’t be undone.')).toBeTruthy();
+  expect(screen.getByText('This deletes 397 days of sales data for Main Street Bar, any days turned off on its Your data page, and every file on that page. Notes stay. This can’t be undone.')).toBeTruthy();
   const confirm = (): ReturnType<typeof screen.getByRole> => {
     const button = screen.getAllByRole('button', { name: 'Delete all sales data' }).at(-1);
     if (button === undefined) throw new Error('no dialog');
@@ -177,7 +177,7 @@ test('a failed delete keeps the dialog open with the shared copy', async () => {
   if (confirm === undefined) throw new Error('no dialog');
   await fireEvent.press(confirm);
   expect(await screen.findByText('Can’t reach Townwise. Check your connection and try again.')).toBeTruthy();
-  expect(screen.getByText('This deletes 397 days of sales data for Main Street Bar, and every file on its Your data page. Notes stay. This can’t be undone.')).toBeTruthy();
+  expect(screen.getByText('This deletes 397 days of sales data for Main Street Bar, any days turned off on its Your data page, and every file on that page. Notes stay. This can’t be undone.')).toBeTruthy();
   // Opened again, the dialog starts without the earlier error.
   await fireEvent.press(screen.getByRole('button', { name: 'Cancel' }));
   await fireEvent.press(screen.getByRole('button', { name: 'Delete all sales data' }));

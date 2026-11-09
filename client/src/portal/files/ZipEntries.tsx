@@ -8,10 +8,10 @@ import { ErrorNotice, Messages } from '../ui/feedback';
 import { Button } from '../ui/Button';
 import { Mono, Small } from '../ui/text';
 import { listEntries, type EntryView, type FileView } from './api';
+import { actionError, COPY, entriesLine, entryLine, fileName, formatSize, KIND_LABEL } from './copy';
 
 /** What the entry list needs of a file: its id, and the pieces of its name. */
 export type ZipFile = Pick<FileView, 'id' | 'name' | 'kind' | 'uploadedAt'>;
-import { actionError, COPY, entriesLine, entryLine, fileName, formatSize, KIND_LABEL } from './copy';
 
 // A ZIP's count and “See what’s inside”, its paginated entry list (storage2 2.2): on the drop step and in Your
 // data. Entries load 200 a page, in archive order; the names print only where the API sends them (never under
