@@ -15,30 +15,22 @@ import { Columns, Panel, Stack } from '../ui/layout';
 import { Body, Eyebrow, Heading, Mono, Small } from '../ui/text';
 import { sendUpload, type UploadResponse } from './api';
 import { CheckStep } from './CheckStep';
-import { checkFile, guessColumns, lacksHeader, LocationValues, looksBinary, Profiler, type ColumnProfile } from './columns';
 import { COPY, readingLine, sendingLine, stepLine } from './copy';
-import { detectDelimiter, stripBom } from './csv';
-import { bodyBytes, DayAggregator, latestDate, MAX_BODY_BYTES, uploadBody, type CheckResult, type Mapping } from './days';
-import { MatchStep, type LocationValuesState } from './MatchStep';
+import { bodyBytes, MAX_BODY_BYTES, uploadBody } from './days';
+import { MatchStep } from './MatchStep';
 import { ResultStep } from './ResultStep';
-import { nextTask, scanText, type ScanOptions } from './scan';
+import { useSalesFile } from './useSalesFile';
 
 // P13. Upload sales history on the web (spec 11, 16.3 P13, F11; the Portal-Upload board). The browser reads the
 // file; only { days: [{ date, guests, netSalesCents }] } is sent, in one request (11.1, D10).
 //
-// The page never keeps the file's text. It keeps the File handle, and each read (the columns, the location
-// column's values, the totals) calls File.text() again, parses in slices that give the browser its turn, and lets
-// the text go when it ends. Between reads it holds only the header names and kinds, the location values once
-// that column is named (D11), and the days. A successful send clears all of it, and so does leaving the page.
+// The page never keeps the file's text: useSalesFile reads it, holds only the header names and kinds, the location
+// values once that column is named (D11), and the days. A successful send clears all of it, and so does leaving the page.
 // Under view-as the page stays on step 1 with the file control disabled, so no client file is read into a staff
 // browser (8, 15.5).
 
 const RO_ID = 'upload-ro';
 const HELP_ID = 'upload-file-help';
-
-const EMPTY_MAPPING: Mapping = {
-  rowMode: 'day', date: null, guests: null, netSales: null, location: null, locationValue: null, dateOrder: 'month_first',
-};
 
 const HOW: readonly [string, string][] = [
   ['Choose a file.', 'Your browser reads it here. Nothing is sent yet.'],
@@ -48,8 +40,6 @@ const HOW: readonly [string, string][] = [
 ];
 
 type Step = 'choose' | 'match' | 'check' | 'done';
-
-interface Opened { size: number; columns: ColumnProfile[] }
 
 /** A data slot in an illustration (`.slot`): the shape of a value, never a value. */
 function Slot(props: { text: string; end?: boolean }): React.JSX.Element {
@@ -142,175 +132,39 @@ export function UploadPage(): React.JSX.Element {
   const { location, org } = useLocation();
   const { api, reloadOrg } = usePortal();
   const { readOnly, line } = useReadOnly();
-  const [step, setStep] = useState<Step>('choose');
-  /** The file's size while a read runs (“Reading {size} file…”). */
-  const [reading, setReading] = useState<number | null>(null);
-  const [fileError, setFileError] = useState<string | null>(null);
-  const [opened, setOpened] = useState<Opened | null>(null);
-  const [mapping, setMapping] = useState<Mapping>(EMPTY_MAPPING);
-  const [values, setValues] = useState<LocationValuesState>({ status: 'idle' });
-  const [check, setCheck] = useState<CheckResult | null>(null);
+  const sales = useSalesFile(location.name);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<unknown>(null);
   const [result, setResult] = useState<UploadResponse | null>(null);
-  const file = useRef<File | null>(null);
-  /** Bumped whenever the current file's reads stop mattering: another file, Back to step 1, a send, leaving. */
-  const fileRun = useRef(0);
-  const valuesRun = useRef(0);
   const inflight = useRef(false);
   const mounted = useRef(true);
   /** The organization's copy of this location is out of date: an upload saved, or the location is gone (404). */
   const stale = useRef(false);
   const reload = useRef(reloadOrg);
   const salesHref = locationHref(location.id, 'sales');
+  const { check, opened } = sales;
+  const step: Step = result === null ? sales.step : 'done';
 
   useEffect(() => { reload.current = reloadOrg; }, [reloadOrg]);
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
-      fileRun.current += 1;
-      valuesRun.current += 1;
-      file.current = null;
       // Locations and this page read the location's coverage from the organization, so it is read again once this
       // page closes. Not at once: a failed read shows the layout's error in place of the result.
       if (stale.current) reload.current();
     };
   }, []);
 
-  function scanOptions(run: number, valuesAt?: number): ScanOptions {
-    return {
-      pause: nextTask,
-      cancelled: () => fileRun.current !== run || (valuesAt !== undefined && valuesRun.current !== valuesAt),
-    };
-  }
-
-  /** Drops everything read from the current file. */
-  function forget(): void {
-    fileRun.current += 1;
-    valuesRun.current += 1;
-    file.current = null;
-    setOpened(null);
-    setMapping(EMPTY_MAPPING);
-    setValues({ status: 'idle' });
-    setCheck(null);
-    setSendError(null);
-    setReading(null);
-  }
-
-  function failRead(run: number, message: string): void {
-    if (fileRun.current !== run) return;
-    forget();
-    setStep('choose');
-    setFileError(message);
-  }
-
-  async function readText(chosen: File, run: number): Promise<string | null> {
-    try {
-      return await chosen.text();
-    } catch {
-      failRead(run, COPY.unreadable);
-      return null;
-    }
-  }
-
-  async function openFile(chosen: File): Promise<void> {
+  function openFile(chosen: File): void {
     if (readOnly) return;
-    forget();
-    setStep('choose');
-    setFileError(null);
-    const problem = checkFile(chosen);
-    if (problem !== null) {
-      setFileError(problem === 'too_large' ? COPY.tooLarge : COPY.notCsv);
-      return;
-    }
-    const run = fileRun.current;
-    setReading(chosen.size);
-    const text = await readText(chosen, run);
-    if (text === null || fileRun.current !== run) return;
-    if (looksBinary(text)) {
-      failRead(run, COPY.notCsv);
-      return;
-    }
-    const found: { profiler: Profiler | null } = { profiler: null };
-    const outcome = await scanText(text, {
-      header: (cells) => {
-        if (cells === null || lacksHeader(cells)) return false;
-        found.profiler = new Profiler(cells);
-        return true;
-      },
-      row: (cells) => {
-        found.profiler?.add(cells);
-        return true;
-      },
-    }, scanOptions(run));
-    if (outcome === 'cancelled') return;
-    if (found.profiler === null) {
-      failRead(run, COPY.noHeader);
-      return;
-    }
-    if (outcome.unterminated) {
-      failRead(run, COPY.notCsv);
-      return;
-    }
-    const columns = found.profiler.finish();
-    const guess = guessColumns(columns.map((column) => column.name));
-    file.current = chosen;
-    setOpened({ size: chosen.size, columns });
-    setMapping({ ...EMPTY_MAPPING, ...guess, dateOrder: (guess.date === null ? null : columns[guess.date]?.order) ?? 'month_first' });
-    setReading(null);
-    setStep('match');
-  }
-
-  async function loadLocationValues(column: number): Promise<void> {
-    const chosen = file.current;
-    if (chosen === null) return;
-    valuesRun.current += 1;
-    const run = fileRun.current;
-    const valuesAt = valuesRun.current;
-    setValues({ status: 'loading' });
-    const text = await readText(chosen, run);
-    if (text === null) return;
-    const collector = new LocationValues(column);
-    const outcome = await scanText(text, { header: () => true, row: (cells) => collector.add(cells) }, scanOptions(run, valuesAt));
-    if (outcome === 'cancelled') return;
-    const list = collector.values();
-    setValues({ status: 'ready', values: list, more: collector.more });
-    // Preselect the value that is this location's name, if the file uses it.
-    const name = location.name.trim().toLowerCase();
-    const match = list.find((value) => value.toLowerCase() === name);
-    if (match !== undefined) {
-      setMapping((current) => (current.location === column && current.locationValue === null ? { ...current, locationValue: match } : current));
-    }
-  }
-
-  function changeMapping(next: Mapping): void {
-    if (next.location !== mapping.location) {
-      if (next.location === null) {
-        valuesRun.current += 1;
-        setValues({ status: 'idle' });
-      } else {
-        void loadLocationValues(next.location);
-      }
-    }
-    setMapping(next);
-  }
-
-  async function checkTotals(): Promise<void> {
-    const chosen = file.current;
-    if (chosen === null) return;
-    const run = fileRun.current;
-    const current = mapping;
-    setReading(chosen.size);
-    const text = await readText(chosen, run);
-    if (text === null) return;
-    const days = new DayAggregator(current, latestDate(new Date()), detectDelimiter(stripBom(text)));
-    const outcome = await scanText(text, { header: () => true, row: (cells, row) => { days.add(cells, row); return true; } }, scanOptions(run));
-    if (outcome === 'cancelled') return;
-    setCheck(days.finish());
     setSendError(null);
-    setReading(null);
-    setStep('check');
+    void sales.open(chosen);
+  }
+
+  function checkTotals(): void {
+    setSendError(null);
+    void sales.checkTotals();
   }
 
   async function send(): Promise<void> {
@@ -328,9 +182,8 @@ export function UploadPage(): React.JSX.Element {
         reload.current();
         return;
       }
-      forget();
+      sales.forget();
       setResult(response);
-      setStep('done');
     } catch (error) {
       if (hasCode(error, 404, 'not_found')) {
         stale.current = true;
@@ -348,27 +201,26 @@ export function UploadPage(): React.JSX.Element {
   }
 
   function restart(): void {
-    forget();
-    setFileError(null);
-    setStep('choose');
+    setSendError(null);
+    sales.restart();
   }
 
   const stepNumber = step === 'choose' ? 1 : step === 'match' ? 2 : step === 'check' ? 3 : 4;
   let content: React.ReactNode;
-  if (reading !== null) {
-    content = <LoadingLine text={readingLine(reading)} minHeight={240} />;
+  if (sales.reading !== null) {
+    content = <LoadingLine text={readingLine(sales.reading)} minHeight={240} />;
   } else if (sending && check?.kind === 'days') {
     content = <LoadingLine text={sendingLine(check.days.length)} minHeight={240} />;
   } else if (step === 'match' && opened !== null) {
     content = (
       <MatchStep
         columns={opened.columns}
-        mapping={mapping}
-        onChange={changeMapping}
+        mapping={sales.mapping}
+        onChange={sales.changeMapping}
         locationName={location.name}
-        locationValues={values}
+        locationValues={sales.values}
         readingLine={readingLine(opened.size)}
-        onCheck={() => { void checkTotals(); }}
+        onCheck={checkTotals}
         onBack={restart}
         cancelHref={salesHref}
       />
@@ -382,14 +234,14 @@ export function UploadPage(): React.JSX.Element {
         sendError={sendError}
         onSend={() => { void send(); }}
         onRestart={restart}
-        onBack={() => { setCheck(null); setSendError(null); setStep('match'); }}
+        onBack={() => { setSendError(null); sales.backToMatch(); }}
         cancelHref={salesHref}
       />
     );
   } else if (step === 'done' && result !== null) {
     content = <ResultStep result={result} role={org.role} locationId={location.id} locationName={location.name} />;
   } else {
-    content = <ChooseStep readOnly={readOnly} line={line} error={fileError} onFile={(chosen) => { void openFile(chosen); }} cancelHref={salesHref} />;
+    content = <ChooseStep readOnly={readOnly} line={line} error={sales.error} onFile={openFile} cancelHref={salesHref} />;
   }
 
   return (

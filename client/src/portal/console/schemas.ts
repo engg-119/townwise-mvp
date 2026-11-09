@@ -104,8 +104,11 @@ export const auditEventSchema = z.object({
 export type AuditEvent = z.infer<typeof auditEventSchema>;
 
 export const orgDetailSchema = z.object({
-  /** `fromRequestSentAt`: when the request it came from was sent; null without one, or once it is deleted. */
-  org: staffOrgSchema.extend({ fromRequestSentAt: z.string().nullable() }),
+  /**
+   * `fromRequestSentAt`: when the request it came from was sent; null without one, or once it is deleted. `inSetup`:
+   * whether staff setup is open (D23: active, and nobody has ever joined); absent, from an API before it, reads as not.
+   */
+  org: staffOrgSchema.extend({ fromRequestSentAt: z.string().nullable(), inSetup: z.boolean().optional() }),
   members: z.array(memberSchema),
   locations: z.array(orgLocationSchema),
   recent: z.array(auditEventSchema),
@@ -113,6 +116,21 @@ export const orgDetailSchema = z.object({
 export type OrgDetail = z.infer<typeof orgDetailSchema>;
 
 export const orgUpdatedSchema = z.object({ org: staffOrgSchema });
+
+// Staff setup (D23, spec 10.7). The answers keep only ids, names, day counts and dates: an upload's calibration and the
+// rest of its coverage are stripped here, so nothing from a setup answer can reach a screen but what the panel shows.
+const dayRange = { dayCount: z.number(), firstDate: z.string().nullable(), lastDate: z.string().nullable() };
+/** POST and PATCH /api/admin/orgs/:orgId/locations[/:locationId]. */
+export const setupLocationSchema = z.object({ location: z.object({ id: z.string(), name: z.string() }) });
+/** POST .../sales/uploads: the upload's days and the location's coverage after it. */
+export const setupUploadSchema = z.object({
+  upload: z.object({ dayCount: z.number(), firstDate: z.string(), lastDate: z.string() }),
+  coverage: z.object(dayRange),
+});
+export type SetupUpload = z.infer<typeof setupUploadSchema>;
+/** DELETE .../sales. */
+export const setupSalesDeletedSchema = z.object({ deletedDays: z.number(), deletedUploads: z.number(), deletedFiles: z.number() });
+export type SetupSalesDeleted = z.infer<typeof setupSalesDeletedSchema>;
 /** DELETE /api/admin/orgs/:orgId answers counts; the page reads none of them. */
 export const orgDeletedSchema = z.object({ deletedLocations: z.number() });
 export const addMembersSchema = z.object({ results: z.array(addResultSchema), members: z.array(memberSchema) });

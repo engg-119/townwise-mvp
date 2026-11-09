@@ -3,7 +3,7 @@ import { errorCopy, hasCode, COPY as SHARED } from '../errors';
 import { formatCount, formatDate, plural } from '../format';
 import type { Calibration, Role } from '../schemas';
 import type { ColumnProfile } from './columns';
-import { LIST_LIMIT, type ExclusionReason, type Mapping, type RowTally } from './days';
+import { LIST_LIMIT, type CheckResult, type DaysResult, type ExclusionReason, type Mapping, type RowTally } from './days';
 
 // The upload page's words (spec 11.2, P13 and the Portal-Upload board), and the small formatters they need.
 // Counts read as singular when they are one. No line ever carries a cell value or a file name.
@@ -106,6 +106,14 @@ export function otherLocationLine(count: number): string {
 export function repeatedDatesLine(dates: number, repeats: RowTally): string {
   const verb = dates === 1 ? 'appears' : 'appear';
   return `${plural(dates, 'date', 'dates')} ${verb} more than once (${rowList(repeats)}). Choose “One check or order”, or fix the file.`;
+}
+
+/** Step 3 when the file as a whole can't become days: one line, with counts and row numbers only. */
+export function checkProblemLine(result: Exclude<CheckResult, DaysResult>): string {
+  return result.kind === 'no_dates' ? COPY.noDates
+    : result.kind === 'decimal_comma' ? COPY.decimalComma
+      : result.kind === 'too_many_days' ? COPY.tooManyDays
+        : repeatedDatesLine(result.dates, result.repeats);
 }
 
 export const EXCLUSION: Readonly<Record<ExclusionReason, string>> = {

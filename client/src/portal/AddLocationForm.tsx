@@ -23,6 +23,8 @@ import { checkTown, EMPTY_TOWN, TOWN_COPY, TownFields, townValueOf, type TownMes
 // the confirmed place fills Name and gives the town, and “Can’t find it? Enter it yourself” opens the fields as they
 // are without it. With the search off, and under view-as, the form is the fields alone. Focus follows the steps: Looks
 // right moves it to the place in the form, and Change place or Search Google Maps instead to the search field.
+// P21's staff setup (D23) mounts the same form with a `target` of its own: its route, what follows, and the search's
+// availability.
 
 export const LOCATION_COPY = {
   name: 'Enter the location’s name.',
@@ -40,11 +42,24 @@ interface Messages { name?: string; town?: TownMessages }
 
 type Mode = { kind: 'search' } | { kind: 'form'; place: UsablePlace | null };
 
-export function AddLocationForm(): React.JSX.Element {
+/** Where the form sends a location in place of P10's POST /api/org/locations, and what follows. */
+export interface AddLocationTarget {
+  /** Sends it, with the confirmed place's id or null; null when the target handled a refusal of its own. */
+  create: (input: { name: string; town: TownInput }, placeId: string | null) => Promise<{ id: string; name: string } | null>;
+  /** After it is added; the form stays pending until it settles. */
+  onAdded: (location: { id: string; name: string }) => Promise<void>;
+  /** Whether the Google Places search is on. */
+  placeSearch: boolean;
+  /** 409 location_limit, in the target's words. */
+  limitLine: string;
+}
+
+export function AddLocationForm(props: { target?: AddLocationTarget }): React.JSX.Element {
+  const { target } = props;
   const { api, org, reloadOrg } = usePortal();
   const router = useRouter();
   const { readOnly, line } = useReadOnly();
-  const known = org?.status === 'ready' ? org.data.placeSearch === true : false;
+  const known = target === undefined ? (org?.status === 'ready' ? org.data.placeSearch === true : false) : target.placeSearch;
   const search = usePlaceSearchAvailability(api, { known, readOnly });
   const [chosen, setMode] = useState<Mode | null>(null);
   const mode: Mode = chosen ?? (search === 'on' ? { kind: 'search' } : { kind: 'form', place: null });
@@ -60,6 +75,11 @@ export function AddLocationForm(): React.JSX.Element {
 
   const add = useAction(useCallback(async (input: { name: string; town: TownInput }, place: UsablePlace | null) => {
     try {
+      if (target !== undefined) {
+        const added = await target.create(input, place === null ? null : place.placeId);
+        if (added !== null) await target.onAdded(added);
+        return;
+      }
       const location = place === null ? await createLocation(api, input) : await createLocationAt(api, input, place.placeId);
       reloadOrg();
       router.push(locationHref(location.id));
@@ -78,7 +98,7 @@ export function AddLocationForm(): React.JSX.Element {
       if (place !== null && placeChanged(error)) { setMode({ kind: 'search' }); setPlaceLine(PLACE_COPY.changed); return; }
       throw error;
     }
-  }, [api, reloadOrg, router]));
+  }, [api, reloadOrg, router, target]));
 
   function submit(place: UsablePlace | null): void {
     if (readOnly) return;
@@ -139,7 +159,7 @@ export function AddLocationForm(): React.JSX.Element {
             </Actions>
           </PlaceSummary>
         )}
-      {limit ? <ErrorNotice message={LOCATION_COPY.limit} /> : null}
+      {limit ? <ErrorNotice message={target?.limitLine ?? LOCATION_COPY.limit} /> : null}
       {add.error === null ? null : <ErrorNotice error={add.error} onRetry={() => { submit(place); }} />}
       <Actions>
         <Button
