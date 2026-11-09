@@ -366,6 +366,15 @@ The tuning chat (`docs/portal/tuning-chat.md`) is off until the API has `ANTHROP
 
 **Rotate** by seeding a new version with the same command and running `az containerapp revision restart`, then revoke the old key in the Console. **Turn it off** with `enable_chat = false` and apply, which removes the reference, the env var and the role assignment; the secret stays in Key Vault until you delete it.
 
+**Shared developer key.** To run the chat locally, developers use one shared key that cannot reach production's workspace or budget:
+
+1. **Create it.** In the Anthropic Console, create a workspace used only for development, `townwise-dev` (the Default workspace cannot take a spend limit). Set its monthly spend limit to 50 dollars and create an API key named `townwise-dev` in it. A key stays in the workspace it was made in, so that limit caps everything the key spends.
+2. **Seed it** as above: `infra/scripts/set-secret.sh kv-townwise-2d2c15bf anthropic-dev-key`.
+3. **Grant it.** Apply `infra/terraform/bootstrap`. The plan adds one role assignment: `townwise-developers` gets Key Vault Secrets User on `anthropic-dev-key` only, never on the vault. Seed first, because the assignment is scoped to the secret.
+4. **Use it.** Each developer, signed in with `az login`, reads it with `az keyvault secret show --vault-name kv-townwise-2d2c15bf --name anthropic-dev-key --query value -o tsv` and sets it as `ANTHROPIC_API_KEY` in `api/.env.local` (gitignored). Every read is in the vault's audit log.
+
+**Rotate** by seeding a new version, revoking the old key in the Console and telling developers to read it again. Do the same when someone leaves the team, after removing them from `townwise-developers`.
+
 ### 17. Enable the Places search
 
 The Places search on the access request (`api/README.md`, Places search) is off until the API has `GOOGLE_PLACES_API_KEY`. Off, `POST /api/places/autocomplete` and `POST /api/places/details` answer 503 `places_unavailable`, and the client shows the manual fields. Turning it on sends the text typed into the search, and the place picked, from the API to Google. Nothing Google answers is stored.
