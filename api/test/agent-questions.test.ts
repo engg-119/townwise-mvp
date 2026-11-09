@@ -174,6 +174,18 @@ describe('answered questions', () => {
   });
 });
 
+describe('turned-off days (D28)', () => {
+  it('dates in turnedOff are explained: no gap and no weekday question counts them', () => {
+    const hole = range('2026-03-01', '2026-03-03');
+    const withHole = input(FROM, TO, (day) => hole.includes(day));
+    expect(questionsFor(withHole).some((q) => q.kind === 'gap')).toBe(true);
+    expect(questionsFor({ ...withHole, turnedOff: hole }).some((q) => q.kind === 'gap')).toBe(false);
+    const closedMondays = input(FROM, TO, (day) => weekday(day) === 1);
+    expect(questionsFor(closedMondays).some((q) => q.kind === 'weekday')).toBe(true);
+    expect(questionsFor({ ...closedMondays, turnedOff: mondays }).some((q) => q.kind === 'weekday')).toBe(false);
+  });
+});
+
 describe('the cap and the order', () => {
   it('at most 5: weekday questions first, then gaps newest first', () => {
     const missing = (day: string) => weekday(day) === 3 || weekday(day) === 5

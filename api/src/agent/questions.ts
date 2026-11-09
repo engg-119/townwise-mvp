@@ -14,6 +14,8 @@
 //   asked.
 // - An answered question's days are never asked about again. At most 5 questions: weekdays first, then gaps newest
 //   first.
+// - A day a turned-off upload holds (D28) is explained, as a covering note makes it: turning data off never asks
+//   "Were you closed?" about it.
 import { daysBetween, isCalendarDate } from '../dates.ts';
 import type { NoteContent } from '../stores/notes.ts';
 import type { SalesDay } from '../stores/sales-days.ts';
@@ -51,6 +53,8 @@ export interface QuestionInput {
   readonly notes: readonly NoteContent[];
   /** Ids of questions already answered. */
   readonly answered: readonly string[];
+  /** D28: dates a turned-off upload holds, treated as explained, as a covering note is. */
+  readonly turnedOff?: readonly string[];
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -135,6 +139,7 @@ export function questionsFor(input: QuestionInput): Question[] {
     return asked === null ? [] : [asked];
   });
   const closures = input.notes.filter(isClosure);
+  const turnedOff = new Set(input.turnedOff);
   const all = datesIn(window.from, window.to);
   const firstWithSales = all.findIndex((day) => withSales.has(day));
   const dates = firstWithSales < 0 ? [] : all.slice(firstWithSales);
@@ -154,14 +159,14 @@ export function questionsFor(input: QuestionInput): Question[] {
     if (ofWeekday.length < WEEKDAY_MIN_DAYS) continue;
     const noSales = ofWeekday.filter((day) => !withSales.has(day));
     if (noSales.length >= WEEKDAY_SHARE * ofWeekday.length) closedWeekdays.add(weekday);
-    const unexplained = noSales.filter((day) => !closures.some((note) => noteCovers(note, day)) && !answeredAbout(day));
+    const unexplained = noSales.filter((day) => !closures.some((note) => noteCovers(note, day)) && !answeredAbout(day) && !turnedOff.has(day));
     if (unexplained.length < WEEKDAY_SHARE * ofWeekday.length) continue;
     const asked: AskedQuestion = { kind: 'weekday', weekday, from, to: window.to };
     weekdayQuestions.push({ id: questionId(asked), ...asked, noSalesCount: noSales.length, weekdayCount: ofWeekday.length });
   }
 
   // Gaps: runs of days with no sales.
-  const explained = (day: string): boolean => input.notes.some((note) => noteCovers(note, day)) || answeredAbout(day);
+  const explained = (day: string): boolean => input.notes.some((note) => noteCovers(note, day)) || answeredAbout(day) || turnedOff.has(day);
   const closedDay = (day: string): boolean => closedWeekdays.has(weekdayOf(day));
   const gapQuestions: Question[] = [];
   let run: string[] = [];

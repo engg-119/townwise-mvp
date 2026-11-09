@@ -162,8 +162,9 @@ describe('get_day', () => {
   function context(opts: { days?: SalesDayWithUpload[]; notes?: NoteRecord[]; uploads?: UploadRecord[]; townId?: Town['townId'] } = {}) {
     const byIds: string[][] = [];
     const upload: UploadRecord = {
-      id: UPLOAD_ID, uploadedBy: SENTINEL_USER, uploadedAt: new Date('2026-11-23T03:30:00Z'), status: 'applied', dayCount: 7, inserted: 7,
-      replaced: 0, kept: 0, firstDate: '2026-11-16', lastDate: '2026-11-22', hasGuests: true, hasNetSales: true, byStaff: false,
+      id: UPLOAD_ID, locationId: '000000000000000000000001', uploadedBy: SENTINEL_USER, uploadedAt: new Date('2026-11-23T03:30:00Z'),
+      status: 'applied', dayCount: 7, inserted: 7, replaced: 0, kept: 0, firstDate: '2026-11-16', lastDate: '2026-11-22', hasGuests: true,
+      hasNetSales: true, byStaff: false, disabledAt: null, disabledBy: null,
     };
     const stores = {
       salesDays: { history: () => Promise.resolve(opts.days ?? []) } as unknown as SalesDayStore,

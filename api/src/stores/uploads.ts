@@ -24,6 +24,12 @@ export interface UploadFields {
   hasNetSales: boolean;
   /** True on an upload Townwise staff made during setup (D23), with their user id as `uploadedBy`; absent otherwise. */
   byStaff?: boolean;
+  /**
+   * D28: when the upload was turned off, and by whom. Absent means on; never stored as null, so the partial index holds
+   * only turned-off uploads. Its days stay stored, and every sales read leaves them out (stores/sales-days.ts).
+   */
+  disabledAt?: Date;
+  disabledBy?: string;
 }
 
 function uploadSchema(): Schema<UploadFields> {
@@ -42,8 +48,12 @@ function uploadSchema(): Schema<UploadFields> {
     hasGuests: { type: Boolean, required: true },
     hasNetSales: { type: Boolean, required: true },
     byStaff: { type: Boolean },
+    disabledAt: { type: Date },
+    disabledBy: { type: String },
   }, { strict: true, versionKey: false, read: 'primary' });
   schema.index({ orgId: 1, locationId: 1, uploadedAt: -1 });
+  // D28: the turned-off uploads, which every sales read looks up first.
+  schema.index({ orgId: 1, disabledAt: 1 }, { partialFilterExpression: { disabledAt: { $type: 'date' } } });
   return schema;
 }
 
@@ -55,6 +65,7 @@ export function uploadModel(connection: Connection): Model<UploadFields> {
 
 export interface UploadRecord {
   readonly id: string;
+  readonly locationId: string;
   readonly uploadedBy: string;
   readonly uploadedAt: Date;
   readonly status: 'applying' | 'applied';
@@ -68,6 +79,9 @@ export interface UploadRecord {
   readonly hasNetSales: boolean;
   /** Staff setup's (D23): every view names the uploader "Townwise staff". */
   readonly byStaff: boolean;
+  /** D28: null while the upload is on. */
+  readonly disabledAt: Date | null;
+  readonly disabledBy: string | null;
 }
 
 export interface UploadCounts { readonly inserted: number; readonly replaced: number; readonly kept: number }
@@ -90,6 +104,13 @@ export interface UploadStore {
   recent(scope: OrgScope, locationId: string, limit: number): Promise<UploadRecord[]>;
   /** The location's uploads among `ids`, newest first; an id with no record is left out. */
   byIds(scope: OrgScope, locationId: string, ids: readonly string[]): Promise<UploadRecord[]>;
+  /** The location's upload, or null (another location's or organization's answers null too). */
+  get(scope: OrgScope, locationId: string, uploadId: string): Promise<UploadRecord | null>;
+  /**
+   * D28: turns the location's upload off (sets `disabledAt` and `disabledBy`) or on (unsets both), in one update.
+   * Resolves the record after it, or null when there is no such upload at the location.
+   */
+  setEnabled(scope: OrgScope, locationId: string, uploadId: string, input: { enabled: boolean; by: string; at: Date }): Promise<UploadRecord | null>;
   /** Resolves the number of records deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
   /** Organization deletion (spec 10.7). Resolves the number deleted. */
@@ -99,6 +120,7 @@ export interface UploadStore {
 function toUpload(doc: UploadFields & { _id: Types.ObjectId }): UploadRecord {
   return {
     id: doc._id.toHexString(),
+    locationId: doc.locationId.toHexString(),
     uploadedBy: doc.uploadedBy,
     uploadedAt: doc.uploadedAt,
     status: doc.status,
@@ -111,6 +133,8 @@ function toUpload(doc: UploadFields & { _id: Types.ObjectId }): UploadRecord {
     hasGuests: doc.hasGuests,
     hasNetSales: doc.hasNetSales,
     byStaff: doc.byStaff === true,
+    disabledAt: doc.disabledAt ?? null,
+    disabledBy: doc.disabledBy ?? null,
   };
 }
 
@@ -147,6 +171,18 @@ export function createUploadStore(connection: Connection): UploadStore {
       if (ids.length === 0) return [];
       const docs = await Upload.find({ orgId: scope.orgId, locationId, _id: trusted({ $in: [...ids] }) }).sort({ uploadedAt: -1, _id: -1 }).lean();
       return docs.map(toUpload);
+    },
+    async get(scope, locationId, uploadId) {
+      const doc = await Upload.findOne({ _id: uploadId, orgId: scope.orgId, locationId }).lean();
+      return doc === null ? null : toUpload(doc);
+    },
+    async setEnabled(scope, locationId, uploadId, input) {
+      const doc = await Upload.findOneAndUpdate(
+        { _id: uploadId, orgId: scope.orgId, locationId },
+        input.enabled ? { $unset: { disabledAt: 1, disabledBy: 1 } } : { $set: { disabledAt: input.at, disabledBy: input.by } },
+        { returnDocument: 'after' },
+      ).lean();
+      return doc === null ? null : toUpload(doc);
     },
     async removeForLocation(scope, locationId) {
       return (await Upload.deleteMany({ orgId: scope.orgId, locationId })).deletedCount;
