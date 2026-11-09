@@ -21,15 +21,11 @@ export const COPY = {
   failed: 'Something went wrong reading this file. It’s stored, and we’ll look into it.',
   /** Section 13: the browser path, for owners who send only daily totals. */
   dailyTotalsOnly: 'Prefer to send only daily totals? Read the file in your browser instead.',
-  storedPrivately: 'Townwise stores your files privately for your organization and reads the date, guest count and net sales for each day from them. You can download or delete them at any time.',
-  yourFiles: 'Your files',
   noFiles: 'No files yet. Files you drop on the history step are listed here, with what Townwise did with each.',
   nativeDownload: 'Download from a computer at townwise.tech.',
   downloadRaw: 'Download original',
   downloadClean: 'Download cleaned CSV',
   deleteRaw: 'Delete original',
-  deleteFile: 'Delete file',
-  deleteAllRaw: 'Delete all originals for this location',
   deleting: 'Deleting…',
   downloading: 'Downloading…',
   showEntries: 'See what’s inside',
@@ -41,7 +37,7 @@ export const COPY = {
   answering: 'Saving…',
   /** Deleted by a person, by staff or by retention: the file view doesn't say which, so neither do the words. */
   rawGone: 'The original was deleted. The cleaned copy and days stay.',
-  rawDeleted: 'Original deleted. The cleaned copy and days stay.',
+  rawDeleted: 'Deleted the original. The cleaned copy and its days stay.',
 } as const;
 
 const KIB = 1024;
@@ -109,6 +105,7 @@ export const KEPT_REASON = {
   zip_empty: 'this ZIP is empty.',
   nothing_usable: 'none of the files inside had daily sales Townwise could use.',
   raw_deleted: 'its original was deleted before Townwise read it.',
+  reference: 'Kept for reference.',
   system_file: 'it’s a system file your computer added.',
   nested_zip: 'it’s a ZIP inside a ZIP inside a ZIP, too deep to open.',
   zip_method: 'it’s compressed in a way Townwise can’t unpack. Zip it again with your computer’s built-in tool.',
@@ -351,26 +348,7 @@ export function familyLine(family: string): string {
   return `In the table with ${family}`;
 }
 
-/** What deleting keeps, said before the press (storage2 2.3). */
-export function deleteFileBody(file: FileView): string {
-  const days = file.result?.dayCount ?? 0;
-  const kept = days === 0 ? '' : ` The ${plural(days, 'day', 'days')} it added stay in your sales data.`;
-  return `This deletes the original, the cleaned copy and what Townwise found in ${fileName(file)}.${kept} This can’t be undone.`;
-}
-
-export function deleteRawBody(file: FileView): string {
+/** What deleting the original keeps, said before the press (storage2 2.3). */
+export function deleteRawBody(file: Pick<FileView, 'name' | 'kind' | 'uploadedAt'>): string {
   return `This deletes the original of ${fileName(file)}. The cleaned copy and the days it added stay. This can’t be undone.`;
-}
-
-export function deleteAllRawBody(locationName: string): string {
-  return `This deletes every original file for ${locationName}. Cleaned copies and days stay. Files still uploading or being read are skipped. This can’t be undone.`;
-}
-
-export function deletedFileLine(daysKept: number): string {
-  return daysKept === 0 ? 'File deleted.' : `File deleted. The ${plural(daysKept, 'day', 'days')} it added stay.`;
-}
-
-export function deletedOriginalsLine(result: { deletedOriginals: number; skippedBusy: number }): string {
-  const deleted = `Deleted ${plural(result.deletedOriginals, 'original', 'originals')}.`;
-  return result.skippedBusy === 0 ? deleted : `${deleted} ${plural(result.skippedBusy, 'file was', 'files were')} busy and kept.`;
 }

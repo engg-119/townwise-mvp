@@ -33,7 +33,7 @@ const ID = '[^/]+';
  * Client app pages any member may open (P9, P11 to P15, P18, P24 Analytics, P25 TownwiseAI). `chat` is the tuning
  * chat's old address, which redirects to `agent`.
  */
-const MEMBER_PAGES = new RegExp(`^/(dashboard|settings|locations/${ID}(/(analytics|sales|sales/upload|notes|town|agent|chat))?)$`);
+const MEMBER_PAGES = new RegExp(`^/(dashboard|settings|locations/${ID}(/(analytics|sales|sales/upload|data|notes|town|agent|chat))?)$`);
 /** Client app pages for org admins only (P10, P16, P17). Checked before MEMBER_PAGES: /locations/new is not an id. */
 const ADMIN_PAGES = new RegExp(`^/(team|locations/new|locations/${ID}/settings)$`);
 const CONSOLE_PAGES = /^\/admin(\/.*)?$/;
@@ -81,20 +81,20 @@ function currentFor(path: string, own: string, below: RegExp | null): Current {
   return below?.test(path) === true ? 'true' : null;
 }
 
-export type TabKey = 'home' | 'analytics' | 'sales' | 'upload' | 'notes' | 'town' | 'agent' | 'settings';
+export type TabKey = 'home' | 'analytics' | 'sales' | 'upload' | 'data' | 'notes' | 'town' | 'agent' | 'settings';
 
 const TAB_SUFFIX: Readonly<Record<TabKey, string>> = {
-  home: '', analytics: '/analytics', sales: '/sales', upload: '/sales/upload', notes: '/notes', town: '/town', agent: '/agent',
+  home: '', analytics: '/analytics', sales: '/sales', upload: '/sales/upload', data: '/data', notes: '/notes', town: '/town', agent: '/agent',
   settings: '/settings',
 };
 
 /** The location's sections in the top bar, in order (15.3). Sales data and Location settings are reached from pages. */
 const SECTIONS: readonly (readonly [TabKey, string])[] = [
-  ['home', 'Home'], ['analytics', 'Analytics'], ['agent', 'TownwiseAI'], ['notes', 'Notes'], ['town', 'Town'], ['upload', 'Upload'],
+  ['home', 'Home'], ['analytics', 'Analytics'], ['agent', 'TownwiseAI'], ['notes', 'Notes'], ['town', 'Town'], ['data', 'Your data'],
 ];
 
 /**
- * The client app's top bar (15.3): the sections of `locationId` (Home, Analytics, TownwiseAI, Notes, Town, Upload),
+ * The client app's top bar (15.3): the sections of `locationId` (Home, Analytics, TownwiseAI, Notes, Town, Your data),
  * then Team for org admins and Settings. With no location (none yet, or not known yet) only Team and Settings.
  * Analytics also marks Sales data, which lives under it.
  */
@@ -104,7 +104,10 @@ export function clientNav(role: Role, pathname: string, locationId: string | nul
   if (locationId !== null) {
     for (const [key, label] of SECTIONS) {
       const href = locationHref(locationId, key);
-      const current = currentFor(path, href, null) ?? (key === 'analytics' && path === locationHref(locationId, 'sales') ? 'true' : null);
+      // Analytics also marks Sales data, which lives under it; Your data also marks Upload, which is reached from it.
+      const current = currentFor(path, href, null)
+        ?? (key === 'analytics' && path === locationHref(locationId, 'sales') ? 'true' : null)
+        ?? (key === 'data' && path === locationHref(locationId, 'upload') ? 'true' : null);
       items.push({ label, href, current });
     }
   }
@@ -172,6 +175,7 @@ export function pageTitle(tab: TabKey, today: Date): string {
     case 'analytics': return 'Analytics';
     case 'sales': return 'Sales data';
     case 'upload': return 'Upload';
+    case 'data': return 'Your data';
     case 'notes': return 'Notes';
     case 'town': return 'Town';
     case 'agent': return 'TownwiseAI';
