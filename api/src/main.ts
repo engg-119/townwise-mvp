@@ -6,7 +6,9 @@ import { configSchema as redisSchema, createRedis } from '@ckeith26/redis';
 import { createRateLimiter, ipKey, rateLimit } from '@ckeith26/rate-limit';
 import { configSchema as authSchema, createAuth, createMongoAuthStores } from '@ckeith26/auth';
 import { createTownwiseApi } from './app.ts';
-import { createManagedIdentityTokenSource, resolveManagedIdentity, type AzureTokenSource } from './azure-identity.ts';
+import {
+  createAzureCliTokenSource, createManagedIdentityTokenSource, resolveManagedIdentity, usesAzureCli, type AzureTokenSource,
+} from './azure-identity.ts';
 import { createTownwiseStores } from './stores/index.ts';
 import { createAnthropicChatModel } from './chat/model.ts';
 import { configSchema as townwiseSchema, filesBackendOf, resolveTownwiseConfig, type FilesBackend } from './config.ts';
@@ -54,17 +56,21 @@ const chat = ANTHROPIC_API_KEY === undefined ? undefined : createAnthropicChatMo
 const places = GOOGLE_PLACES_API_KEY === undefined ? undefined : createGooglePlacesClient(GOOGLE_PLACES_API_KEY);
 const placesMap = GOOGLE_MAPS_STATIC_KEY === undefined || GOOGLE_MAPS_SIGNING_SECRET === undefined
   ? undefined : createStaticMapSigner(GOOGLE_MAPS_STATIC_KEY, GOOGLE_MAPS_SIGNING_SECRET);
-// One managed identity token source for every Azure feature that is on (a cache per resource), built on first use.
+// One token source for every Azure feature that is on (a cache per resource), built on first use: the managed identity,
+// or, outside production while IDENTITY_ENDPOINT and IDENTITY_HEADER are both unset, the developer's az login.
 // `feature` names the variable that turned it on, for the boot error when the identity is missing.
 let azureTokens: AzureTokenSource | undefined;
 const azureTokensFor = (feature: string): AzureTokenSource => {
-  azureTokens ??= createManagedIdentityTokenSource({
-    identity: resolveManagedIdentity({ IDENTITY_ENDPOINT, IDENTITY_HEADER, AZURE_CLIENT_ID }, feature),
-    now,
-  });
+  azureTokens ??= usesAzureCli({ IDENTITY_ENDPOINT, IDENTITY_HEADER }, config.NODE_ENV)
+    ? createAzureCliTokenSource({ now })
+    : createManagedIdentityTokenSource({
+      identity: resolveManagedIdentity({ IDENTITY_ENDPOINT, IDENTITY_HEADER, AZURE_CLIENT_ID }, feature),
+      now,
+    });
   return azureTokens;
 };
-// Email (spec D14) is on when EMAIL_ENDPOINT is set; it then needs the managed identity, or boot fails.
+// Email (spec D14) is on when EMAIL_ENDPOINT is set. In production it then needs the managed identity, or boot fails;
+// locally it sends through the developer's az login.
 const { email, emailReplyTo, webUrl, filesMonthlyBudgetUsd } = resolveTownwiseConfig(config);
 const mailer = email === null ? OFF_MAILER : createMailer({
   transport: createAcsTransport({

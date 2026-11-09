@@ -55,7 +55,7 @@ export default function WaitingPage(): React.JSX.Element {
       <NumberedList
         items={[
           'Someone on our team reviews your request.',
-          'We don’t send email yet. Check back here.',
+          'We’ll email you when you’re approved.',
           `Once you’re approved, Townwise sets up ${request.orgName}, with you as its admin and its first location in ${town}. Then you upload your sales history and see your town.`,
         ]}
       />
@@ -67,7 +67,7 @@ export default function WaitingPage(): React.JSX.Element {
       gate
       eyebrow={`Request sent ${formatDate(request.createdAt)}`}
       title="Your request is in"
-      lead="Someone on the Townwise team reviews every new organization by hand. We don’t send email yet, so check back here."
+      lead="Someone on the Townwise team reviews every new organization by hand. We’ll email you when you’re approved."
       leadActions={(
         <View style={styles.leadActions}>
           {actions}
