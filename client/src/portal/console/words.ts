@@ -92,6 +92,9 @@ export const AUDIT_ACTIONS: readonly { value: string; label: string }[] = [
   { value: 'forecast.deleted', label: 'Forecast deleted' },
   { value: 'view_as.started', label: 'View-as started' },
   { value: 'view_as.ended', label: 'View-as ended' },
+  // D25, open as admin.
+  { value: 'open_as_admin.started', label: 'Opened as admin' },
+  { value: 'open_as_admin.ended', label: 'Open as admin ended' },
   { value: 'people.signed_out_everywhere', label: 'Signed out everywhere' },
   { value: 'person.deleted', label: 'Person deleted' },
   { value: 'staff_action.not_applied', label: 'Didn’t take effect' },
@@ -108,6 +111,11 @@ const QUESTION_ANSWER: Readonly<Record<string, string>> = {
 
 const END_REASON: Readonly<Record<string, string>> = {
   ended: 'Ended by staff', expired: 'Ran out', replaced: 'Replaced by a new view-as',
+};
+
+/** D25: why an open-as-admin session ended. */
+const OPEN_AS_END_REASON: Readonly<Record<string, string>> = {
+  ended: 'Ended by staff', expired: 'The staff sign-in ended', replaced: 'Cleared at the next start',
 };
 
 function text(value: AuditEvent['details'][string] | undefined): string {
@@ -151,6 +159,8 @@ export function auditDetails(event: Pick<AuditEvent, 'action' | 'details'>): str
     }
     case 'view_as.ended':
       return END_REASON[text(d.endReason)] ?? '';
+    case 'open_as_admin.ended':
+      return OPEN_AS_END_REASON[text(d.endReason)] ?? '';
     case 'agent.question_answered':
       return QUESTION_ANSWER[text(d.answer)] ?? '';
     // U13B: the model version, the dates and the day count, never a figure.
