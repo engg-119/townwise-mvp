@@ -24,7 +24,7 @@ export const AUDIT_DETAIL_KEYS = {
   'sales.uploaded': ['locationId', 'dayCount', 'inserted', 'replaced', 'firstDate', 'lastDate', 'fileId', 'via'],
   'sales.deleted': ['locationId', 'deletedDays', 'deletedFiles'],
   // Stored files (spec 11A): never a file name or anything from a file.
-  'file.uploaded': ['locationId', 'kind', 'sizeBytes'],
+  'file.uploaded': ['locationId', 'kind', 'sizeBytes', 'purpose', 'via'],
   'file.deleted': ['locationId', 'kind', 'reason'],
   'file.raw_deleted': ['locationId', 'kind'],
   'files.raw_deleted_all': ['locationId', 'count'],

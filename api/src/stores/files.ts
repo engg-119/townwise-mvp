@@ -15,6 +15,10 @@ export type FileKind = (typeof FILE_KINDS)[number];
 export const FILE_STATUSES = ['uploading', 'stored', 'queued', 'reading', 'waiting', 'read', 'kept', 'failed', 'deleting'] as const;
 export type FileStatus = (typeof FILE_STATUSES)[number];
 
+/** `history` is read for days of sales; `reference` is kept as it is (any file, or pasted text). */
+export const FILE_PURPOSES = ['history', 'reference'] as const;
+export type FilePurpose = (typeof FILE_PURPOSES)[number];
+
 /** One received chunk: its byte count and SHA-256 (hex). */
 export interface ChunkRecord { readonly bytes: number; readonly sha256: string }
 
@@ -86,7 +90,7 @@ interface FileFields {
   orgId: Types.ObjectId;
   locationId: Types.ObjectId;
   importId: Types.ObjectId | null;
-  purpose: 'history';
+  purpose: FilePurpose;
   uploadedBy: string;
   uploaderRole: Role;
   uploadedAt: Date;
@@ -115,6 +119,11 @@ interface FileFields {
   aiChoices?: FileColumnChoices;
   /** A staff purge found the file busy: its original goes as soon as the reader is done with it. */
   purgeRaw?: boolean;
+  /** Set while the item is turned off (reference items), by the person who did it. Absent on rows written before. */
+  disabledAt?: Date | null;
+  disabledBy?: string;
+  /** Set when TownwiseAI kept the item for the person. */
+  addedVia?: 'townwise_ai';
 }
 
 function fileSchema(): Schema<FileFields> {
@@ -122,7 +131,7 @@ function fileSchema(): Schema<FileFields> {
     orgId: { type: Schema.Types.ObjectId, required: true },
     locationId: { type: Schema.Types.ObjectId, required: true },
     importId: { type: Schema.Types.ObjectId, default: null },
-    purpose: { type: String, required: true, enum: ['history'] },
+    purpose: { type: String, required: true, enum: FILE_PURPOSES },
     uploadedBy: { type: String, required: true },
     uploaderRole: { type: String, required: true, enum: ['org_admin', 'member'] },
     uploadedAt: { type: Date, required: true },
@@ -148,6 +157,9 @@ function fileSchema(): Schema<FileFields> {
     costMicroUsd: { type: Number, required: true, default: 0 },
     aiChoices: { type: Schema.Types.Mixed, default: () => ({}) },
     purgeRaw: { type: Boolean },
+    disabledAt: { type: Date, default: null },
+    disabledBy: { type: String },
+    addedVia: { type: String, enum: ['townwise_ai'] },
   }, { strict: 'throw', versionKey: false, read: 'primary', minimize: false });
   schema.index({ orgId: 1, locationId: 1, uploadedAt: -1 });
   schema.index({ orgId: 1, importId: 1, uploadedAt: 1 });
@@ -169,7 +181,7 @@ export interface FileRecord {
   readonly id: string;
   readonly locationId: string;
   readonly importId: string | null;
-  readonly purpose: 'history';
+  readonly purpose: FilePurpose;
   readonly uploadedBy: string;
   readonly uploaderRole: Role;
   readonly uploadedAt: Date;
@@ -197,6 +209,9 @@ export interface FileRecord {
   /** Its answers, so a re-read (after a later question, or a retry) asks the model nothing it already answered. */
   readonly aiChoices: FileColumnChoices;
   readonly purgeRaw: boolean;
+  /** When the item was turned off, or null. */
+  readonly disabledAt: Date | null;
+  readonly addedVia: 'townwise_ai' | null;
 }
 
 function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
@@ -230,11 +245,16 @@ function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
     costMicroUsd: doc.costMicroUsd ?? 0,
     aiChoices: doc.aiChoices ?? {},
     purgeRaw: doc.purgeRaw === true,
+    disabledAt: doc.disabledAt ?? null,
+    addedVia: doc.addedVia ?? null,
   };
 }
 
 export interface NewFile {
-  readonly importId: string;
+  /** Null for a reference item: it belongs to no import. */
+  readonly importId: string | null;
+  readonly purpose: FilePurpose;
+  readonly addedVia?: 'townwise_ai';
   readonly uploadedBy: string;
   readonly uploaderRole: Role;
   readonly uploadedAt: Date;
@@ -263,7 +283,17 @@ export interface FileStore {
   /** Records a received chunk while the file is uploading; null when it no longer is. */
   recordChunk(scope: OrgScope, fileId: string, index: number, chunk: ChunkRecord, head: string | null): Promise<FileRecord | null>;
   /** Compare-and-set from uploading: the session ends, the kind and fingerprint are set. Null when another call won. */
-  finishUpload(scope: OrgScope, fileId: string, input: { fingerprint: string; kind: FileKind; status: 'stored' | 'queued' }): Promise<FileRecord | null>;
+  finishUpload(
+    scope: OrgScope, fileId: string, input: { fingerprint: string; kind: FileKind; status: 'stored' | 'queued' | 'kept'; outcome?: string },
+  ): Promise<FileRecord | null>;
+  /**
+   * A text reference item with its bytes already stored: kept, outcome `reference`, with no upload session. `'exists'`
+   * when a row with this id is already there (a retried save).
+   */
+  insertStored(scope: OrgScope, locationId: string, input: {
+    id: string; uploadedBy: string; uploaderRole: Role; uploadedAt: Date; name: string; sizeBytes: number; fingerprint: string;
+    addedVia: 'townwise_ai' | null;
+  }): Promise<FileRecord | 'exists'>;
   /** Another live file of the location with this fingerprint. */
   duplicateOf(scope: OrgScope, locationId: string, fingerprint: string, exceptId: string): Promise<string | null>;
   /** Every stored file of the import becomes queued. Resolves the number changed. */
@@ -333,7 +363,7 @@ export function createFileStore(connection: Connection): FileStore {
   return {
     async create(scope, locationId, input) {
       const doc = await File.create({
-        orgId: org(scope), locationId: oid(locationId), importId: oid(input.importId), purpose: 'history',
+        orgId: org(scope), locationId: oid(locationId), importId: input.importId === null ? null : oid(input.importId), purpose: input.purpose,
         uploadedBy: input.uploadedBy, uploaderRole: input.uploaderRole, uploadedAt: input.uploadedAt, name: input.name,
         kind: input.kind, sizeBytes: input.sizeBytes, fingerprint: null, status: 'uploading',
         upload: {
@@ -344,6 +374,7 @@ export function createFileStore(connection: Connection): FileStore {
           expiresAt: input.expiresAt,
         },
         answers: {}, attempts: 0,
+        ...(input.addedVia === undefined ? {} : { addedVia: input.addedVia }),
       });
       return toFile(doc.toObject());
     },
@@ -393,10 +424,25 @@ export function createFileStore(connection: Connection): FileStore {
     async finishUpload(scope, fileId, input) {
       const doc = await File.findOneAndUpdate(
         { _id: oid(fileId), orgId: org(scope), status: 'uploading' },
-        { $set: { status: input.status, fingerprint: input.fingerprint, kind: input.kind, upload: null } },
+        { $set: { status: input.status, fingerprint: input.fingerprint, kind: input.kind, upload: null, ...(input.outcome === undefined ? {} : { outcome: input.outcome }) } },
         after,
       ).lean();
       return doc === null ? null : toFile(doc);
+    },
+    async insertStored(scope, locationId, input) {
+      try {
+        const doc = await File.create({
+          _id: oid(input.id), orgId: org(scope), locationId: oid(locationId), importId: null, purpose: 'reference',
+          uploadedBy: input.uploadedBy, uploaderRole: input.uploaderRole, uploadedAt: input.uploadedAt, name: input.name,
+          kind: 'text', sizeBytes: input.sizeBytes, fingerprint: input.fingerprint, upload: null, status: 'kept', outcome: 'reference',
+          answers: {}, attempts: 0,
+          ...(input.addedVia === null ? {} : { addedVia: input.addedVia }),
+        });
+        return toFile(doc.toObject());
+      } catch (err) {
+        if (err instanceof Error && 'code' in err && err.code === 11000) return 'exists';
+        throw err;
+      }
     },
     async duplicateOf(scope, locationId, fingerprint, exceptId) {
       const doc = await File.findOne({

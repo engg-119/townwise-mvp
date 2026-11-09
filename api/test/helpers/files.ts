@@ -65,9 +65,9 @@ export interface Created { file: FileView; import: { id: string; status: string 
 
 /** Create, every chunk in order, complete. Resolves the complete response's body (or the first refusal). */
 export async function uploadFile(
-  server: TownwiseTestServer, locationId: string, session: TestSession, name: string, bytes: Buffer,
+  server: TownwiseTestServer, locationId: string, session: TestSession, name: string, bytes: Buffer, opts: { purpose?: 'history' | 'reference' } = {},
 ): Promise<{ status: number; body: Record<string, unknown> & { file?: FileView } }> {
-  const created = await call(server, filesPath(locationId), { session, json: { name, sizeBytes: bytes.length, purpose: 'history' } });
+  const created = await call(server, filesPath(locationId), { session, json: { name, sizeBytes: bytes.length, purpose: opts.purpose ?? 'history' } });
   if (created.status !== 201) return { status: created.status, body: await created.json() as Record<string, unknown> };
   const { file, limits } = await created.json() as Created;
   const chunkSize = limits.chunkSize ?? 0;

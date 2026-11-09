@@ -162,6 +162,7 @@ describe('route table', () => {
     expect(table('org.files.clean')).toEqual({ method: 'GET', path: `${base}/files/:fileId/clean`, policy: 'member', bodyLimit: 'none', limiter: 'downloads' });
     expect(table('org.files.remove_raw')).toEqual({ method: 'DELETE', path: `${base}/files/:fileId/raw`, policy: 'member', bodyLimit: 'none' });
     expect(table('org.files.remove')).toEqual({ method: 'DELETE', path: `${base}/files/:fileId`, policy: 'member', bodyLimit: 'none' });
+    expect(table('org.data.text')).toEqual({ method: 'POST', path: `${base}/data/text`, policy: 'member', bodyLimit: '32kb', limiter: 'files' });
     expect(table('org.imports.current')).toEqual({ method: 'GET', path: `${base}/imports/current`, policy: 'member', bodyLimit: 'none' });
     expect(table('org.imports.get')).toEqual({ method: 'GET', path: `${base}/imports/:importId`, policy: 'member', bodyLimit: 'none' });
     expect(table('org.imports.start')).toEqual({ method: 'POST', path: `${base}/imports/:importId/start`, policy: 'member', bodyLimit: '2kb' });

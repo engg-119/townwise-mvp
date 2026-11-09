@@ -179,6 +179,7 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
     'org.notes.update': NOTE,
     'org.chat.turn': { content: 'Hello from A' },
     'org.files.create': { name: 'a.csv', sizeBytes: 10, purpose: 'history' },
+    'org.data.text': { title: 'a', text: 'a' },
     'org.imports.answer': { questionId: 'q', choice: 'not_sure' },
     'org.chat.proposal': { action: 'dismiss' },
     'org.agent.answer': { answer: 'not_sure' },
@@ -200,7 +201,7 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
       'org.files.create', 'org.files.chunk', 'org.files.complete', 'org.files.list', 'org.files.get', 'org.files.raw', 'org.files.clean',
       'org.files.remove_raw', 'org.files.remove', 'org.imports.current', 'org.imports.get', 'org.imports.start', 'org.imports.answer',
       // U3 stages 5 to 9.
-      'org.files.entries', 'org.originals.remove',
+      'org.files.entries', 'org.originals.remove', 'org.data.text',
       'org.agent.get', 'org.agent.answer',
       'org.people.get', 'org.estimates.about',
       // U13B.
