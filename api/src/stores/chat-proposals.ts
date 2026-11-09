@@ -1,8 +1,10 @@
 // tw_chat_proposals (spec 6.16, docs/portal/tuning-chat.md section 2): what the author did with each note TownwiseAI
-// proposed in their conversation, keyed by the propose_note call's id. No row means the proposal is still open. A
-// save claims the row (`saving`), writes the note with the row's `noteId`, then marks it `saved`, so a retry or a
-// second tab finishes the same note instead of making another (handlers/chat-proposals.ts). Every row gets its
-// `noteId` when it is inserted, a dismissed one too. Holds no note content.
+// proposed in their conversation, keyed by the propose_note call's id, and (D28) with each text it proposed keeping
+// on Your data, keyed by the propose_data_item call's id and marked `kind: 'item'`. No row means the proposal is
+// still open. A save claims the row (`saving`), writes the note or the item with the row's `noteId`, then marks it
+// `saved`, so a retry or a second tab finishes the same note or item instead of making another
+// (handlers/chat-proposals.ts, handlers/chat-item-proposals.ts). Every row gets its `noteId` when it is inserted, a
+// dismissed one too. Holds no note content, title or text.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
@@ -19,6 +21,9 @@ interface ProposalFields {
   userId: string;
   proposalId: string;
   status: ProposalStatus;
+  /** D28: `item` for a proposal to keep text on Your data; absent for a note. */
+  kind?: 'item';
+  /** The id the saved note takes, or for an item the id reserved for the kept file, so every try writes the same one. */
   noteId: Types.ObjectId;
   edited: boolean;
   createdAt: Date;
@@ -33,6 +38,7 @@ function proposalSchema(): Schema<ProposalFields> {
     userId: { type: String, required: true },
     proposalId: { type: String, required: true },
     status: { type: String, required: true, enum: ['saving', 'saved', 'dismissed'] },
+    kind: { type: String, enum: ['item'] },
     noteId: { type: Schema.Types.ObjectId, required: true },
     edited: { type: Boolean, required: true },
     createdAt: { type: Date, required: true },
@@ -68,6 +74,9 @@ export interface ProposalOwner {
   readonly userId: string;
 }
 
+/** A row's first insert: who made the conversation, and (D28) `item` for a proposal to keep text. */
+export type ProposalInsert = ProposalOwner & { readonly kind?: 'item' };
+
 /** Tenant store: every function takes the OrgScope first and filters on its orgId. */
 export interface ChatProposalStore {
   /** Every row of the conversation. */
@@ -77,17 +86,17 @@ export interface ChatProposalStore {
    * Claims the proposal for a save: inserts it as `saving`, or moves a `saving` or `dismissed` row to `saving`,
    * keeping its `noteId`. Null when it is already saved.
    */
-  claimSave(scope: OrgScope, key: ProposalKey, input: ProposalOwner & { edited: boolean; now: Date }): Promise<ProposalRecord | null>;
+  claimSave(scope: OrgScope, key: ProposalKey, input: ProposalInsert & { edited: boolean; now: Date }): Promise<ProposalRecord | null>;
   /**
    * `saving` or `dismissed` to `saved`, once the claimed note is written. A Not now from another tab can land between
    * the claim and this call; the note exists by then, so it is overruled.
    */
   markSaved(scope: OrgScope, key: ProposalKey, now: Date): Promise<void>;
   /** Sets the proposal aside, unless it is saved. Resolves the row either way. */
-  dismiss(scope: OrgScope, key: ProposalKey, input: ProposalOwner & { now: Date }): Promise<ProposalRecord>;
+  dismiss(scope: OrgScope, key: ProposalKey, input: ProposalInsert & { now: Date }): Promise<ProposalRecord>;
   /**
-   * The note ids of the author's saved proposals at the location, most recently saved first (TownwiseAI's activity,
-   * spec 10.12).
+   * The note ids of the author's saved note proposals at the location, most recently saved first (TownwiseAI's
+   * activity, spec 10.12). Kept items are not notes and are left out.
    */
   listSaved(scope: OrgScope, owner: ProposalOwner, limit: number): Promise<string[]>;
   /** Resolves the number deleted. */
@@ -108,8 +117,9 @@ export function createChatProposalStore(connection: Connection): ChatProposalSto
   const keyOf = (scope: OrgScope, key: ProposalKey) => ({
     orgId: new Types.ObjectId(scope.orgId), conversationId: new Types.ObjectId(key.conversationId), proposalId: key.proposalId,
   });
-  const inserted = (owner: ProposalOwner, now: Date) => ({
+  const inserted = (owner: ProposalInsert, now: Date) => ({
     locationId: new Types.ObjectId(owner.locationId), userId: owner.userId, noteId: new Types.ObjectId(), createdAt: now,
+    ...(owner.kind === undefined ? {} : { kind: owner.kind }),
   });
   /**
    * Moves a row that is not saved to `status`, inserting it when there is none. Null when it is saved: the filter then
@@ -117,7 +127,7 @@ export function createChatProposalStore(connection: Connection): ChatProposalSto
    * so a duplicate is tried once more, and then matches the row the other made.
    */
   const moveUnlessSaved = async (
-    scope: OrgScope, key: ProposalKey, update: { status: ProposalStatus; edited?: boolean }, owner: ProposalOwner, now: Date,
+    scope: OrgScope, key: ProposalKey, update: { status: ProposalStatus; edited?: boolean }, owner: ProposalInsert, now: Date,
   ): Promise<ProposalRecord | null> => {
     for (let attempt = 0; ; attempt += 1) {
       try {
@@ -163,6 +173,7 @@ export function createChatProposalStore(connection: Connection): ChatProposalSto
     async listSaved(scope, owner, limit) {
       const docs = await Proposal.find({
         orgId: new Types.ObjectId(scope.orgId), locationId: new Types.ObjectId(owner.locationId), userId: owner.userId, status: 'saved',
+        kind: trusted({ $exists: false }),
       }, { _id: 0, noteId: 1 }).sort({ updatedAt: -1, _id: -1 }).limit(limit).lean();
       return docs.map((doc) => doc.noteId.toHexString());
     },

@@ -189,6 +189,16 @@ describe('route table', () => {
     expect(proposal?.limiter).toBeUndefined();
   });
 
+  it('D28: a proposal to keep text is a member GET and a member POST with a 2kb body, with no route limiter', () => {
+    const path = '/org/locations/:locationId/chat/:conversationId/item-proposals/:proposalId';
+    const rows = TOWNWISE_ROUTES.filter((r) => ['org.chat.item_proposal.get', 'org.chat.item_proposal'].includes(r.id))
+      .map(({ id, method, path: at, policy, bodyLimit, limiter }) => ({ id, method, path: at, policy, bodyLimit, limiter }));
+    expect(rows).toEqual([
+      { id: 'org.chat.item_proposal.get', method: 'GET', path, policy: 'member', bodyLimit: 'none', limiter: undefined },
+      { id: 'org.chat.item_proposal', method: 'POST', path, policy: 'member', bodyLimit: '2kb', limiter: undefined },
+    ]);
+  });
+
   // U9, TownwiseAI's side panel.
   it('the side panel is a member GET, and answering a question a member POST with a 1kb body and no route limiter', () => {
     const base = '/org/locations/:locationId';

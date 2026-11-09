@@ -328,3 +328,10 @@ describe('the system prompt, items the team added', () => {
     expect(SYSTEM_PROMPT).not.toMatch(/\d/);
   });
 });
+
+describe('the system prompt, keeping pasted text', () => {
+  it('sends the model to propose_data_item with the exact text and never lets it say the text was kept', () => {
+    expect(SYSTEM_PROMPT).toContain('- When the owner pastes text and asks Townwise to keep it, call propose_data_item with the text exactly as they gave it and a short title. The owner sees a card and decides; never say it was kept.');
+    expect(SYSTEM_PROMPT).not.toMatch(/\d/);
+  });
+});

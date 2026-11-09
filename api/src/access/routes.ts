@@ -12,6 +12,7 @@ import {
 import { answerQuestion, getAgent } from '../handlers/agent.ts';
 import { getLocationCalendar } from '../handlers/calendar.ts';
 import { deleteConversation, getChat, getConversation, postTurn } from '../handlers/chat.ts';
+import { actOnItemProposal, getItemProposal } from '../handlers/chat-item-proposals.ts';
 import { actOnProposal } from '../handlers/chat-proposals.ts';
 import { listData, removeDataItem, updateDataItem } from '../handlers/data.ts';
 import { deleteOrg, deletePerson, purgeOriginals } from '../handlers/deletion.ts';
@@ -223,6 +224,17 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.chat.proposal', method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/proposals/:proposalId',
     policy: 'member', bodyLimit: '8kb', handler: actOnProposal,
+  },
+  // D28 (TownwiseAI): a card proposing to keep pasted text on Your data, and keeping it or setting it aside.
+  {
+    id: 'org.chat.item_proposal.get', method: 'GET',
+    path: '/org/locations/:locationId/chat/:conversationId/item-proposals/:proposalId', policy: 'member', bodyLimit: 'none',
+    handler: getItemProposal,
+  },
+  {
+    id: 'org.chat.item_proposal', method: 'POST',
+    path: '/org/locations/:locationId/chat/:conversationId/item-proposals/:proposalId', policy: 'member', bodyLimit: '2kb',
+    handler: actOnItemProposal,
   },
   // U9 (TownwiseAI): the side panel's questions and activity, and answering a question.
   { id: 'org.agent.get', method: 'GET', path: '/org/locations/:locationId/agent', policy: 'member', bodyLimit: 'none', handler: getAgent },
