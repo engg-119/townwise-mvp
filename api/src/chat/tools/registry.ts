@@ -11,6 +11,7 @@ import type { LocationRecord } from '../../stores/locations.ts';
 import type { NoteContent } from '../../stores/notes.ts';
 import { dayTool } from './day.ts';
 import { forecastTool } from './forecast.ts';
+import { suggestNextTool } from './next.ts';
 import { notesTool } from './notes.ts';
 import { overviewTool } from './overview.ts';
 import { peopleInTownTool } from './people-in-town.ts';
@@ -18,6 +19,7 @@ import { proposeNoteTool } from './propose-note.ts';
 import { salesDaysTool } from './sales-days.ts';
 import { townCalendarTool } from './town-calendar.ts';
 import { townProfileTool } from './town-profile.ts';
+import { showVisualTool, type Visual } from './visual.ts';
 
 export interface ToolContext {
   readonly ctx: TownwiseContext;
@@ -38,10 +40,15 @@ export type JsonValue = string | number | boolean | null | readonly JsonValue[] 
  */
 export type ToolView = Readonly<Record<string, JsonValue>>;
 
-/** What a tool's run produced: the result the model reads, and a note to show the owner (propose_note only). */
+/**
+ * What a tool's run produced: the result the model reads, and what to show the owner: a note (propose_note), a visual
+ * (show_visual) or the next questions (suggest_next).
+ */
 export interface ToolRun {
   readonly content: string;
   readonly proposal?: NoteContent;
+  readonly visual?: Visual;
+  readonly prompts?: string[];
 }
 
 /**
@@ -64,7 +71,13 @@ export interface ToolOutcome {
   readonly result: BetaToolResultBlockParam;
   /** Set only when propose_note got a valid note. */
   readonly proposal: NoteContent | null;
+  /** Set only when show_visual drew one. */
+  readonly visual: Visual | null;
+  /** Set only when suggest_next got three valid prompts. */
+  readonly prompts: string[] | null;
 }
+
+const NOTHING_SHOWN = { proposal: null, visual: null, prompts: null } as const;
 
 /** In this order on every request. Append only. */
 export const TOOL_REGISTRY: readonly ChatTool<unknown>[] = [
@@ -80,6 +93,9 @@ export const TOOL_REGISTRY: readonly ChatTool<unknown>[] = [
   forecastTool,
   // F2: everything Townwise has for one day.
   dayTool,
+  // Chat redesign A4: visuals drawn from Townwise's data, and the next questions (a reply's last step).
+  showVisualTool,
+  suggestNextTool,
 ];
 
 /** The tool definitions sent to the model, in registry order. */
@@ -95,11 +111,14 @@ export function toolNamed(name: string): ChatTool<unknown> | undefined {
 /** Runs one tool call. Store failures throw: the turn then fails as a whole. */
 export async function runTool(tc: ToolContext, block: BetaToolUseBlock): Promise<ToolOutcome> {
   const tool = toolNamed(block.name);
-  if (tool === undefined) return { result: failed(block, 'Unknown tool.'), proposal: null };
+  if (tool === undefined) return { result: failed(block, 'Unknown tool.'), ...NOTHING_SHOWN };
   const input = tool.parse(block.input, tc.today);
-  if (input === null) return { result: failed(block, tool.invalidInput), proposal: null };
+  if (input === null) return { result: failed(block, tool.invalidInput), ...NOTHING_SHOWN };
   const run = await tool.run(tc, input);
-  return { result: { type: 'tool_result', tool_use_id: block.id, content: run.content }, proposal: run.proposal ?? null };
+  return {
+    result: { type: 'tool_result', tool_use_id: block.id, content: run.content },
+    proposal: run.proposal ?? null, visual: run.visual ?? null, prompts: run.prompts ?? null,
+  };
 }
 
 function failed(block: BetaToolUseBlock, content: string): BetaToolResultBlockParam {

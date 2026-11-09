@@ -176,7 +176,7 @@ describe('a plain answer', () => {
     expect(params).not.toHaveProperty('thinking');
     expect(params?.tools?.map((tool) => ('name' in tool ? tool.name : null))).toEqual([
       'get_location_overview', 'get_sales_days', 'list_notes', 'get_town_profile', 'propose_note',
-      'get_town_calendar', 'get_people_in_town', 'get_forecast', 'get_day',
+      'get_town_calendar', 'get_people_in_town', 'get_forecast', 'get_day', 'show_visual', 'suggest_next',
     ]);
     expect(params?.tools?.every((tool) => 'eager_input_streaming' in tool && tool.eager_input_streaming === true)).toBe(true);
 
@@ -201,10 +201,10 @@ describe('a plain answer', () => {
         { id: replyNodeId, parentId: userNodeId, role: 'assistant' },
       ],
       messages: [
-        { nodeId: userNodeId, role: 'user', text: 'What changed in May?', proposals: [], parts: [], feedback: null, at },
+        { nodeId: userNodeId, role: 'user', text: 'What changed in May?', proposals: [], parts: [], feedback: null, next: null, at },
         {
           nodeId: replyNodeId, role: 'assistant', text: 'May was steady, with two busy Fridays.', proposals: [],
-          parts: [{ type: 'text', text: 'May was steady, with two busy Fridays.' }], feedback: null, at,
+          parts: [{ type: 'text', text: 'May was steady, with two busy Fridays.' }], feedback: null, next: null, at,
         },
       ],
     });
