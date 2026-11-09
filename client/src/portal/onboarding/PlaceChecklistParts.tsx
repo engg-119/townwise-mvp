@@ -63,20 +63,30 @@ export function PlaceChecklistShell(p: { props: PlaceChecklistProps; field: Reac
       {state.full ? <Small>{CHECKLIST_COPY.limit}</Small> : null}
       {empty ? null : (
         <Stack gap={8}>
-          {state.rows.map((row) => (
-            <PlaceRow key={row.key} label={row.suggestion.name} place={row.status === 'checked' ? row.place : null}>
-              {row.status === 'checked' ? props.rowExtra?.(row) : null}
-              <View style={styles.remove}>
-                <Button
-                  variant="link"
-                  label="Remove"
-                  accessibilityLabel={`Remove ${row.suggestion.name}`}
-                  disabled={off}
-                  onPress={() => { state.remove(row.key); p.onRemove?.(); }}
-                />
-              </View>
-            </PlaceRow>
-          ))}
+          {state.rows.map((row) => {
+            // Named as its suggestion's box is, by place and town: several locations of one business often share a name.
+            const { name, detail } = row.suggestion;
+            const named = detail === '' ? name : `${name}, ${detail}`;
+            return (
+              <PlaceRow
+                key={row.key}
+                label={named}
+                loadingText={`Getting ${name} from Google Maps…`}
+                place={row.status === 'checked' ? row.place : null}
+              >
+                {row.status === 'checked' ? props.rowExtra?.(row) : null}
+                <View style={styles.remove}>
+                  <Button
+                    variant="link"
+                    label="Remove"
+                    accessibilityLabel={`Remove ${named}`}
+                    disabled={off}
+                    onPress={() => { state.remove(row.key); p.onRemove?.(); }}
+                  />
+                </View>
+              </PlaceRow>
+            );
+          })}
         </Stack>
       )}
       {empty ? null : <Small>{PLACES_SOURCE}</Small>}

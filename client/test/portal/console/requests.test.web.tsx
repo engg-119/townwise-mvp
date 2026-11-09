@@ -174,6 +174,16 @@ test('Approve (C3) with places: a Location name per place, prefilled from Google
   ]);
 });
 
+test('Enter in a place’s Location name approves, as it does in the dialog without places', async () => {
+  const { api, dialog } = await openApprove(TWO_PLACES);
+  const field = within(within(dialog).getByRole('group', { name: 'Place 2 of 2' })).getByRole('textbox', { name: 'Location name' });
+  fireEvent.keyDown(field, { key: 'Enter' });
+  expect(await screen.findByText('No requests are waiting.')).toBeTruthy();
+  expect(writes(api)).toEqual([
+    { method: 'POST', path: '/api/admin/requests/r1/approve', body: { orgName: 'Sample Mountain Tavern', locationNames: ['Lou’s Restaurant', 'Lou’s Bakery'] } },
+  ]);
+});
+
 test('Each location needs its own name: empty, or the same ignoring case and spaces, stops the approve', async () => {
   const { api, dialog } = await openApprove(adminRequest({
     places: [

@@ -174,6 +174,7 @@ function ApproveDialog(props: {
               label="Location name"
               value={placeNames[index] ?? ''}
               onChangeText={(text) => { setPlaceNames((names) => names.map((name, at) => (at === index ? text : name))); }}
+              onSubmitEditing={submit}
               autoCapitalize="words"
               maxLength={80}
               messages={badNames[index] === true ? [OWN_NAME_COPY] : []}

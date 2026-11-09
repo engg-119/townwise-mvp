@@ -53,7 +53,7 @@ export interface PlaceSearchState {
   error: unknown;
   /** Google's details no longer know the picked place. */
   gone: boolean;
-  /** 503 places_unavailable: the search went off, or Google isn't answering. */
+  /** 503 places_unavailable: the search went off, or Google isn't answering; false again once an autocomplete answers. */
   unavailable: boolean;
   /**
    * A suggestion was picked: the field gave way to the loading line and the card, so when it comes back (Search again,
@@ -120,6 +120,8 @@ export function usePlaceSearch(api: ApiClient): PlaceSearchState {
       (answer) => {
         // The session ended while it ran (a pick): its token must not come back.
         if (!live.current || sentIn !== session.current) return;
+        // Google is answering again: an earlier 503's line and hand-over no longer apply.
+        setUnavailable(false);
         token.current = answer.sessionToken;
         if (input === wanted.current) {
           setSuggestions(answer.suggestions);

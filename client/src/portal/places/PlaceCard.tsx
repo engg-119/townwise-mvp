@@ -25,7 +25,7 @@ export function townLine(town: Town | null): string {
 
 export const GOOGLE_SOURCE = 'From Google Maps. Townwise keeps Google’s id for the place and its town, not the address or the map.';
 
-/** Under the checked places (P3, P10): a request keeps each one's Google name too. P16 keeps none: GOOGLE_SOURCE. */
+/** Under the checked places (P3, P10): a request keeps each one's Google name too. P16 and setup's Rename keep none: GOOGLE_SOURCE. */
 export const PLACES_SOURCE = 'From Google Maps. Townwise keeps Google’s id for each place, its name and its town, not the address or the map.';
 
 type Host = React.ComponentRef<typeof Text>;
@@ -56,10 +56,10 @@ export function PlaceCard(props: { place: FoundPlace; note?: string | null; chil
 
 /**
  * The checked places in a form (P3's Step 2, and the one place of the console's setup Rename): each one's name,
- * address and town line, then where they came from. `focusOnMount` moves focus to it when it appears (the setup
- * Rename, after Looks right).
+ * address and town line, then where they came from (`source`, PLACES_SOURCE unless the caller keeps less, as the setup
+ * Rename does). `focusOnMount` moves focus to it when it appears (the setup Rename, after Looks right).
  */
-export function PlaceSummary(props: { places: readonly FoundPlace[]; focusOnMount?: boolean; children?: React.ReactNode }): React.JSX.Element {
+export function PlaceSummary(props: { places: readonly FoundPlace[]; source?: string; focusOnMount?: boolean; children?: React.ReactNode }): React.JSX.Element {
   const kicker = useFocusOnMount<Host>(props.focusOnMount === true);
   return (
     <View style={[styles.card, styles.summary]} role="group" aria-label="Your places on Google Maps">
@@ -71,7 +71,7 @@ export function PlaceSummary(props: { places: readonly FoundPlace[]; focusOnMoun
           <Text style={styles.fact}>{townLine(place.town)}</Text>
         </View>
       ))}
-      <Small>{PLACES_SOURCE}</Small>
+      <Small>{props.source ?? PLACES_SOURCE}</Small>
       {props.children}
     </View>
   );
@@ -85,14 +85,11 @@ export function PlaceSummary(props: { places: readonly FoundPlace[]; focusOnMoun
  */
 export function PlaceRow(props: { label: string; place: FoundPlace | null; loadingText?: string; children?: React.ReactNode }): React.JSX.Element {
   const { place } = props;
-  const map = place?.map ?? null;
   const { phone } = useBreakpoint();
   return (
     <View role="group" aria-label={props.label} style={[styles.card, styles.row, phone ? styles.rowPhone : null]}>
-      {place === null || map === null ? null : (
-        <View style={phone ? styles.rowMapPhone : styles.rowMap}>
-          <PlaceMap map={map} label={`Map of the area around ${place.name}`} />
-        </View>
+      {place === null ? null : (
+        <PlaceMap map={place.map} label={`Map of the area around ${place.name}`} frame={phone ? styles.rowMapPhone : styles.rowMap} />
       )}
       <View style={styles.rowBody}>
         {place === null ? <LoadingLine text={props.loadingText ?? `Getting ${props.label} from Google Maps…`} minHeight={44} /> : (

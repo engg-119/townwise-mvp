@@ -174,8 +174,8 @@ export async function approveRequest(ctx: TownwiseContext, req: Request, res: Re
   const scope = scopeForNewOrg(staff, org.id);
   // Step 7 runs only while the organization is new or not yet in use, so a retry finishes a stopped approval but never
   // adds a location to an organization in use (spec 3, 6.4), whatever names it sends. Without places, that means no
-  // location and no people, and it makes the one location in the request's town. With places, it means nobody has
-  // ever joined, read as staff setup reads it (D23): the organization's `firstJoinedAt`, then any member row that
+  // location and no people, and it makes the one location in the request's town. With places, it means no row records
+  // a join, read as staff setup reads it (D23): the organization's `firstJoinedAt`, then any member row that
   // joined, removed seats included (a location count can't tell, since a stop partway leaves some places done), and
   // it makes a location for each place that has none yet. That path keys on the place id, not the name: a retry may
   // name a place differently, so a place with a location is skipped, and a name found on another place's location is
@@ -199,7 +199,9 @@ export async function approveRequest(ctx: TownwiseContext, req: Request, res: Re
     const placed = new Set((await ctx.stores.locations.list(scope)).flatMap((l) => (l.placeId === null ? [] : [l.placeId])));
     for (const [i, place] of request.places.entries()) {
       const name = names[i];
-      if (name === undefined || placed.has(place.placeId)) continue;
+      // locationNamesFor gives one name per place, so a mismatch is a bug: refuse it rather than leave a place out.
+      if (name === undefined || names.length !== request.places.length) throw new Error('location names and places differ in length');
+      if (placed.has(place.placeId)) continue;
       const location = await ctx.stores.locations.ensureByName(scope, {
         name, town: place.town, placeId: place.placeId, createdAt: now, createdBy: staff.actor.userId,
       });

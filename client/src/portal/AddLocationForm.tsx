@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'expo-router';
 
 import { createLocation, type TownInput } from './api';
@@ -82,8 +82,9 @@ interface Pending { key: string; place: UsablePlace; input: { name: string; town
 export function AddLocationForm(props: {
   target?: AddLocationTarget;
   /**
-   * After a press that added any (P10's own route only): true while rows are left. P9 keeps the form in place while it
-   * is true, since the organization the press reloads would otherwise move that page on and lose the rows left.
+   * After a press that added any (P10's own route only): true while rows are left, false once none is. P9 keeps the
+   * form in place while it is true, since the organization the press reloads would otherwise move that page on and
+   * lose the rows left.
    */
   onRowsLeft?: (left: boolean) => void;
 }): React.JSX.Element {
@@ -166,10 +167,20 @@ export function AddLocationForm(props: {
         added.push(location);
         remove(row.key);
       }
-    } finally {
-      if (!handled) await after(added, added.length === rows.length);
+    } catch (error) {
+      // What the press added still counts, and the notice reports the batch's own failure, not a later one.
+      await after(added, false).catch(() => undefined);
+      throw error;
     }
+    if (!handled) await after(added, added.length === rows.length);
   }, [send, after, remove]));
+
+  // Rows a press left, then removed by hand: nothing is left for P9 to hold the form for.
+  const empty = checklist.rows.length === 0;
+  const adding = addPlaces.pending;
+  useEffect(() => {
+    if (empty && !adding) onRowsLeft?.(false);
+  }, [empty, adding, onRowsLeft]);
 
   function submitByHand(): void {
     if (readOnly) return;

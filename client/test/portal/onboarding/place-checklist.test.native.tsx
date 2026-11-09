@@ -88,7 +88,7 @@ async function press(name: string): Promise<void> {
   await wait(0);
 }
 
-/** The checked list's rows, in order: each a group named by its place. */
+/** The checked list's rows, in order: each a group named by its place and town, as its box is. */
 function groupNames(): string[] {
   return screen.queryAllByLabelText(/./).filter((node) => node.props.role === 'group').map((node) => String(node.props['aria-label']));
 }
@@ -110,16 +110,16 @@ test('each suggestion is a checkbox named by place and town; checking shows the 
   expect(screen.queryByText(PLACES_SOURCE)).toBeNull();
   places.holdingDetails = true;
   await fireEvent.press(box(RESTAURANT));
-  expect(within(group('Lou’s Restaurant')).getByText('Getting Lou’s Restaurant from Google Maps…')).toBeTruthy();
+  expect(within(group(RESTAURANT)).getByText('Getting Lou’s Restaurant from Google Maps…')).toBeTruthy();
   expect(box(RESTAURANT).props.accessibilityState).toMatchObject({ checked: true, disabled: false });
   places.holdingDetails = false;
   await run(() => { for (const release of places.heldDetails.splice(0)) release(); });
   expect(screen.queryByText('Getting Lou’s Restaurant from Google Maps…')).toBeNull();
-  const row = group('Lou’s Restaurant');
+  const row = group(RESTAURANT);
   expect(within(row).getByText('3 Main St, Hanover, NH 03755, USA')).toBeTruthy();
   expect(within(row).getByText('Hanover, NH, one of the twelve towns Townwise has researched.')).toBeTruthy();
   expect(within(row).getByLabelText('Map of the area around Lou’s Restaurant').props.source).toEqual({ uri: MAP_URL });
-  const remove = within(row).getByRole('button', { name: 'Remove Lou’s Restaurant' });
+  const remove = within(row).getByRole('button', { name: `Remove ${RESTAURANT}` });
   expect(within(remove).getByText('Remove')).toBeTruthy();
   expect(screen.getAllByText(PLACES_SOURCE)).toHaveLength(1);
 });
@@ -152,7 +152,7 @@ test('a check while an autocomplete runs ends its session: the late answer bring
   expect(places.autocompletes.at(-1)).toEqual({ input: 'Lou’s', sessionToken: 'token-1' });
   await press(RESTAURANT);
   expect(places.detailCalls).toEqual([{ placeId: 'ChIJTestPlace0001', sessionToken: 'token-1' }]);
-  expect(within(group('Lou’s Restaurant')).getByText('3 Main St, Hanover, NH 03755, USA')).toBeTruthy();
+  expect(within(group(RESTAURANT)).getByText('3 Main St, Hanover, NH 03755, USA')).toBeTruthy();
   places.holding = false;
   await run(() => { for (const release of places.held.splice(0)) release(); });
   await wait(0);
@@ -167,7 +167,7 @@ test('searching again keeps the checked places, and a checked place shows checke
   await press(RESTAURANT);
   await search('Lou’s');
   expect(screen.getByText('3 places match “Lou’s”. Check each one that’s yours.')).toBeTruthy();
-  expect(groupNames()).toEqual(['Lou’s Restaurant']);
+  expect(groupNames()).toEqual([RESTAURANT]);
   expect(box(RESTAURANT).props.accessibilityState).toMatchObject({ checked: true, disabled: false });
   expect(box(BAKERY).props.accessibilityState).toMatchObject({ checked: false, disabled: false });
 });
@@ -183,7 +183,7 @@ test('pressing a checked box, or Remove, unchecks it without asking Google again
   expect(places.detailCalls).toHaveLength(1);
   await press(BAKERY);
   expect(places.detailCalls).toHaveLength(2);
-  await fireEvent.press(screen.getByRole('button', { name: 'Remove Lou’s Bakery' }));
+  await fireEvent.press(screen.getByRole('button', { name: `Remove ${BAKERY}` }));
   await wait(0);
   expect(groupNames()).toEqual([]);
   expect(box(BAKERY).props.accessibilityState).toMatchObject({ checked: false });
@@ -196,7 +196,7 @@ test('unchecking while its details load drops the late answer; two loading check
   await search('Lou');
   places.holdingDetails = true;
   await fireEvent.press(box(RESTAURANT));
-  expect(groupNames()).toEqual(['Lou’s Restaurant']);
+  expect(groupNames()).toEqual([RESTAURANT]);
   await fireEvent.press(box(RESTAURANT));
   expect(groupNames()).toEqual([]);
   await run(() => { for (const release of places.heldDetails.splice(0)) release(); });
@@ -207,12 +207,12 @@ test('unchecking while its details load drops the late answer; two loading check
   await fireEvent.press(box(BAKERY));
   const [first, second] = places.heldDetails.splice(0);
   await run(() => { second?.(); });
-  expect(groupNames()).toEqual(['Lou’s Restaurant', 'Lou’s Bakery']);
-  expect(within(group('Lou’s Restaurant')).getByText('Getting Lou’s Restaurant from Google Maps…')).toBeTruthy();
-  expect(within(group('Lou’s Bakery')).getByText('5 Elm St, Norwich, VT 05055, USA')).toBeTruthy();
+  expect(groupNames()).toEqual([RESTAURANT, BAKERY]);
+  expect(within(group(RESTAURANT)).getByText('Getting Lou’s Restaurant from Google Maps…')).toBeTruthy();
+  expect(within(group(BAKERY)).getByText('5 Elm St, Norwich, VT 05055, USA')).toBeTruthy();
   await run(() => { first?.(); });
-  expect(groupNames()).toEqual(['Lou’s Restaurant', 'Lou’s Bakery']);
-  expect(within(group('Lou’s Restaurant')).getByText('3 Main St, Hanover, NH 03755, USA')).toBeTruthy();
+  expect(groupNames()).toEqual([RESTAURANT, BAKERY]);
+  expect(within(group(RESTAURANT)).getByText('3 Main St, Hanover, NH 03755, USA')).toBeTruthy();
 
   // Off the list, then checked, unchecked and checked again while the first answer is late: a 503 for the first check
   // says nothing, and only the new check's answer counts.
@@ -222,11 +222,11 @@ test('unchecking while its details load drops the late answer; two loading check
   places.details.ChIJTestPlace0001 = refusal(503, 'places_unavailable');
   await run(() => { stale?.(); });
   expect(screen.queryByText(LINE)).toBeNull();
-  expect(within(group('Lou’s Restaurant')).getByText('Getting Lou’s Restaurant from Google Maps…')).toBeTruthy();
+  expect(within(group(RESTAURANT)).getByText('Getting Lou’s Restaurant from Google Maps…')).toBeTruthy();
   places.details.ChIJTestPlace0001 = HANOVER;
   await run(() => { fresh?.(); });
-  expect(groupNames()).toEqual(['Lou’s Bakery', 'Lou’s Restaurant']);
-  expect(within(group('Lou’s Restaurant')).getByText('3 Main St, Hanover, NH 03755, USA')).toBeTruthy();
+  expect(groupNames()).toEqual([BAKERY, RESTAURANT]);
+  expect(within(group(RESTAURANT)).getByText('3 Main St, Hanover, NH 03755, USA')).toBeTruthy();
 });
 
 test('a place outside a US town is not checked: the line says why, and its box is disabled', async () => {
@@ -258,7 +258,14 @@ test('503 on a check leaves it unchecked with the page’s line; 503 on the sear
   places.results['Lou’s'] = refusal(503, 'places_unavailable');
   await search('Lou’s');
   expect(screen.getByText(LINE)).toBeTruthy();
-  expect(groupNames()).toEqual(['Lou’s Bakery']);
+  expect(groupNames()).toEqual([BAKERY]);
+  expect(onUnavailable).not.toHaveBeenCalled();
+  // An answer after the 503 takes the line away, so removing the last place then keeps the search.
+  await search('Lou');
+  expect(screen.queryByText(LINE)).toBeNull();
+  await fireEvent.press(screen.getByRole('button', { name: `Remove ${BAKERY}` }));
+  await wait(0);
+  expect(groupNames()).toEqual([]);
   expect(onUnavailable).not.toHaveBeenCalled();
 
   await cleanup();
@@ -298,7 +305,7 @@ test('at 25 checked or loading the other boxes are disabled with “You can add 
   await toggleDirectly({ placeId: 'ChIJTestMany0026', name: 'Many Place 26', detail: 'Hanover, NH, USA' });
   expect(places.detailCalls).toHaveLength(25);
   expect(screen.getByText(CHECKLIST_COPY.limit)).toBeTruthy();
-  await fireEvent.press(screen.getByRole('button', { name: 'Remove Many Place 1' }));
+  await fireEvent.press(screen.getByRole('button', { name: 'Remove Many Place 1, Hanover, NH, USA' }));
   await wait(0);
   expect(box(next).props.accessibilityState).toMatchObject({ checked: false, disabled: false });
   expect(screen.queryByText(CHECKLIST_COPY.limit)).toBeNull();
@@ -312,5 +319,5 @@ test('a place Google answers with the id of one already checked is not added twi
   await search('Lou Lebanon');
   await press('Lou’s Restaurant, Lebanon, NH, USA');
   expect(places.detailCalls.map((call) => call.placeId)).toEqual(['ChIJTestPlace0001', 'ChIJTestPlace0004']);
-  expect(groupNames()).toEqual(['Lou’s Restaurant']);
+  expect(groupNames()).toEqual([RESTAURANT]);
 });

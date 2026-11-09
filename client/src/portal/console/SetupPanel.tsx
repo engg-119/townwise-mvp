@@ -9,7 +9,7 @@ import { PlaceSearch } from '../onboarding/PlaceSearch';
 import { placeChanged, placesUnavailable, townInputOf, type UsablePlace } from '../onboarding/places';
 import { usePlaceSearchAvailability } from '../onboarding/usePlaceSearch';
 import { PLACE_SETTINGS_COPY } from '../locations/LocationSettings';
-import { PlaceSummary } from '../places/PlaceCard';
+import { GOOGLE_SOURCE, PlaceSummary } from '../places/PlaceCard';
 import { usePortal } from '../PortalProvider';
 import { Actions, Button } from '../ui/Button';
 import { DataTable } from '../ui/DataTable';
@@ -152,7 +152,7 @@ function RenameDialog(props: DialogProps & { placeSearch: boolean }): React.JSX.
             ) : null}
           </>
         ) : (
-          <PlaceSummary places={[place]} focusOnMount>
+          <PlaceSummary places={[place]} source={GOOGLE_SOURCE} focusOnMount>
             <Actions>
               <Button variant="outline" label="Change place" onPress={() => { setMode({ kind: 'search' }); }} />
             </Actions>

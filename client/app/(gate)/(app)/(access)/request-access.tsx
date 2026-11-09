@@ -122,7 +122,8 @@ export default function RequestAccessPage(): React.JSX.Element {
   const [messages, setMessages] = useState<Messages>({});
   const search = usePlaceSearchAvailability(api, { readOnly });
   const checklist = usePlaceChecklist(api, PLACE_UNAVAILABLE);
-  const [typed, setTyped] = useState('');
+  // A rejected request's count is the floor until the person types another.
+  const [typed, setTyped] = useState(() => initialForm(me.access).locationCount);
   const [chosen, setMode] = useState<Mode | null>(null);
   const [placeLine, setPlaceLine] = useState<string | null>(null);
   const mode: Mode = chosen ?? (search === 'on' && me.access.state !== 'rejected' ? { kind: 'search' } : { kind: 'form', withPlaces: false });

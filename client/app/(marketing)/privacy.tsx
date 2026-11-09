@@ -249,7 +249,7 @@ export default function Privacy(): React.JSX.Element {
           <Div className="g12 hd">
             <Div className="hd-l">
               <H1 className="h1">Privacy</H1>
-              <P className="sub">Effective November 5, 2026. Last updated November 6, 2026.</P>
+              <P className="sub">Effective November 5, 2026. Last updated November 9, 2026.</P>
             </Div>
             <Nav className="hd-r" aria-labelledby="h-toc">
               <P id="h-toc" className="eyebrow">On this page</P>
