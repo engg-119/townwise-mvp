@@ -55,9 +55,9 @@ export function PlaceCard(props: { place: FoundPlace; note?: string | null; chil
 }
 
 /**
- * The checked places in a form (P3's Step 2, and the one place of P10 and the console's setup): each one's name,
- * address and town line, then where they came from. `focusOnMount` moves focus to it when it appears (P10, after
- * Looks right).
+ * The checked places in a form (P3's Step 2, and the one place of the console's setup Rename): each one's name,
+ * address and town line, then where they came from. `focusOnMount` moves focus to it when it appears (the setup
+ * Rename, after Looks right).
  */
 export function PlaceSummary(props: { places: readonly FoundPlace[]; focusOnMount?: boolean; children?: React.ReactNode }): React.JSX.Element {
   const kicker = useFocusOnMount<Host>(props.focusOnMount === true);

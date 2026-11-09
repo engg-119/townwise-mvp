@@ -139,6 +139,70 @@ test('Add a location: the Places search leads while it is on, as on P10', async 
   expect(api.calls.filter((call) => call.path === '/api/places/autocomplete')).toHaveLength(1);
 });
 
+/** Checks the option named by `name` in the add form's search for “Lou”, and waits for Google's answer. */
+async function checkPlace(name: string): Promise<void> {
+  const option = await screen.findByRole('option', { name: new RegExp(`^${name}`) });
+  fireEvent.mouseDown(option);
+  await settle(() => { fireEvent.click(option); });
+  await screen.findByRole('group', { name });
+}
+
+/** POST of the setup route as the API answers it: `refuse` answers a place's own refusal, else the location joins the read. */
+function serveAdds(api: ConsoleApi, read: { detail: OrgDetail }, refuse: Record<string, unknown> = {}): void {
+  const added: OrgLocation[] = [];
+  api.routes[`POST ${SETUP}`] = (raw) => {
+    const body = raw as { name: string; placeId: string };
+    const refused = refuse[body.placeId];
+    if (refused !== undefined) return refused;
+    added.push({ ...hanover(), id: `l${String(added.length + 1)}`, name: body.name });
+    read.detail = inSetup([...added]);
+    return summary(body.name);
+  };
+}
+
+test('Add a location with places: each checked place goes to the setup route, then one read, one line, and the form starts over', async () => {
+  const api = consoleApi();
+  installPlaces(api);
+  const read = { detail: inSetup([]) };
+  serve(api, () => read.detail);
+  serveAdds(api, read);
+  renderAt('/admin/orgs/o1', api);
+  fireEvent.change(await screen.findByRole('combobox', { name: 'Search Google Maps for the location' }), { target: { value: 'Lou' } });
+  await checkPlace('Lou’s Restaurant');
+  await checkPlace('Lou’s Bakery');
+  await click('Add 2 locations');
+  expect(await screen.findByText('Added 2 locations.')).toBeTruthy();
+  expect(setupWrites(api)).toEqual([
+    { method: 'POST', path: SETUP, body: { name: 'Lou’s Restaurant', town: { townId: 'hanover-nh' }, placeId: 'ChIJTestPlace0001' } },
+    { method: 'POST', path: SETUP, body: { name: 'Lou’s Bakery', town: { townId: null, name: 'Norwich', state: 'VT' }, placeId: 'ChIJTestPlace0002' } },
+  ]);
+  expect(gets(api)).toBe(2);
+  const locations = screen.getByRole('region', { name: 'Locations' });
+  expect(within(locations).getByText('Lou’s Bakery')).toBeTruthy();
+  expect(screen.getByRole<HTMLInputElement>('combobox', { name: 'Search Google Maps for the location' }).value).toBe('');
+  expect(screen.queryByRole('group', { name: 'Lou’s Restaurant' })).toBeNull();
+});
+
+test('Add a location with places: the limit stops the rest with the panel’s line, and the rows left stay', async () => {
+  const api = consoleApi();
+  installPlaces(api);
+  const read = { detail: inSetup([]) };
+  serve(api, () => read.detail);
+  serveAdds(api, read, { ChIJTestPlace0002: refusal(409, 'location_limit') });
+  renderAt('/admin/orgs/o1', api);
+  fireEvent.change(await screen.findByRole('combobox', { name: 'Search Google Maps for the location' }), { target: { value: 'Lou' } });
+  await checkPlace('Lou’s Restaurant');
+  await checkPlace('Lou’s Bakery');
+  await click('Add 2 locations');
+  expect(await screen.findByText('Added Lou’s Restaurant.')).toBeTruthy();
+  expect(screen.getByText(`${NAME} has 25 locations, the most an organization can have.`)).toBeTruthy();
+  expect(setupWrites(api)).toHaveLength(2);
+  expect(gets(api)).toBe(2);
+  expect(screen.queryByRole('group', { name: 'Lou’s Restaurant' })).toBeNull();
+  expect(screen.getByRole('group', { name: 'Lou’s Bakery' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Add location' })).toBeTruthy();
+});
+
 test('a location name another location uses is said under the field, as on P10', async () => {
   const api = consoleApi();
   serve(api, () => inSetup([hanover()]));

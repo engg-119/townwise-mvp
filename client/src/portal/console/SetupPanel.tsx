@@ -301,7 +301,7 @@ export function SetupPanel(props: SetupPanelProps): React.JSX.Element {
   const search = usePlaceSearchAvailability(api, { readOnly: false });
   const [acting, setActing] = useState<Acting | null>(null);
   const [done, setDone] = useState<string | null>(null);
-  /** Bumped after each add, so the form starts empty for the next location. */
+  /** Bumped once the form has added all it had, so it starts empty for the next location. */
   const [added, setAdded] = useState(0);
 
   /** A write went through: read the organization again, then say how it ended where focus can find it. */
@@ -339,8 +339,11 @@ export function SetupPanel(props: SetupPanelProps): React.JSX.Element {
         throw error;
       }
     },
-    onAdded: async (location) => {
-      if (await finish(`Added ${location.name}.`)) setAdded((n) => n + 1);
+    onAdded: async (added, finished) => {
+      const [one] = added;
+      const text = added.length === 1 && one !== undefined ? `Added ${one.name}.` : `Added ${plural(added.length, 'location', 'locations')}.`;
+      // The form starts over only once nothing is left in it; rows still to add keep their lines.
+      if (await finish(text) && finished) setAdded((n) => n + 1);
     },
     placeSearch: search === 'on',
     limitLine: `${org.name} has 25 locations, the most an organization can have.`,
