@@ -191,6 +191,16 @@ describe('route table', () => {
     expect(ids.slice(after, after + 2)).toEqual(['org.chat.rename', 'org.chat.active']);
   });
 
+  it('rating a TownwiseAI reply is a member POST with a 1kb body and no route limiter', () => {
+    const feedback = TOWNWISE_ROUTES.find((entry) => entry.id === 'org.chat.feedback');
+    expect(feedback).toMatchObject({
+      method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/feedback/:nodeId', policy: 'member', bodyLimit: '1kb',
+    });
+    expect(feedback?.limiter).toBeUndefined();
+    const ids = TOWNWISE_ROUTES.map((entry) => entry.id);
+    expect(ids.indexOf('org.chat.feedback')).toBe(ids.indexOf('org.chat.proposal') + 1);
+  });
+
   // U9, TownwiseAI's side panel.
   it('the side panel is a member GET, and answering a question a member POST with a 1kb body and no route limiter', () => {
     const base = '/org/locations/:locationId';

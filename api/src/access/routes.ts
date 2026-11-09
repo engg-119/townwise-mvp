@@ -12,6 +12,7 @@ import {
 import { answerQuestion, getAgent } from '../handlers/agent.ts';
 import { getLocationCalendar } from '../handlers/calendar.ts';
 import { deleteConversation, getChat, getConversation, postTurn, renameConversation, showVersion } from '../handlers/chat.ts';
+import { rateReply } from '../handlers/chat-feedback.ts';
 import { actOnProposal } from '../handlers/chat-proposals.ts';
 import { deleteOrg, deletePerson, purgeOriginals } from '../handlers/deletion.ts';
 import { getEstimatesAbout, getForecast, getPeopleInTown } from '../handlers/estimates.ts';
@@ -217,6 +218,11 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.chat.proposal', method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/proposals/:proposalId',
     policy: 'member', bodyLimit: '8kb', handler: actOnProposal,
+  },
+  // Rating a reply: private display state that never calls the model, so writes only.
+  {
+    id: 'org.chat.feedback', method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/feedback/:nodeId',
+    policy: 'member', bodyLimit: '1kb', handler: rateReply,
   },
   // U9 (TownwiseAI): the side panel's questions and activity, and answering a question.
   { id: 'org.agent.get', method: 'GET', path: '/org/locations/:locationId/agent', policy: 'member', bodyLimit: 'none', handler: getAgent },

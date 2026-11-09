@@ -15,7 +15,7 @@ import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import { runTurn, type TurnEvent, type TurnInput } from '../chat/turn.ts';
 import { newestLeafUnder, newNodeId, nodeIdSchema, nodesOf, pathTo, type ChatNode, type TreeNodeView } from '../chat/tree.ts';
-import { chatMessageViews, OPEN, type ChatMessageView, type ProposalState, type ShownProposal } from '../chat/view.ts';
+import { chatMessageViews, OPEN, type ChatMessageView, type FeedbackView, type ProposalState, type ShownProposal } from '../chat/view.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import type { ConversationOwner, ConversationRecord, ConversationSummary } from '../stores/chat-conversations.ts';
 import type { LocationRecord } from '../stores/locations.ts';
@@ -132,12 +132,16 @@ async function conversationView(
     const same = notes.find((note) => note.createdBy === caller.userId && sameNoteContent(note, proposal));
     return same === undefined ? OPEN : { status: 'saved', noteId: same.id };
   };
+  const feedbackOf = (nodeId: string): FeedbackView | null => {
+    const stored = conversation.feedback.get(nodeId);
+    return stored === undefined ? null : { rating: stored.rating, reason: stored.reason };
+  };
   return {
     id: conversation.id, title: conversation.title, updatedAt: conversation.updatedAt.toISOString(),
     activeLeafId: path.at(-1)?.id ?? null,
     tree: nodes.map(({ id, parentId, role }) => ({ id, parentId, role })),
     // U13A: input views re-read their dates against the town's local day, as the tools ran them.
-    messages: chatMessageViews(path, localDay(ctx.now(), timeZoneOf(location.town).timeZone), stateOf),
+    messages: chatMessageViews(path, localDay(ctx.now(), timeZoneOf(location.town).timeZone), stateOf, feedbackOf),
   };
 }
 
