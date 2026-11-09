@@ -1,7 +1,8 @@
-// Calibrations from the staff console (forecast lab design call 8): list an organization's calibrations, and start one
-// for one of its locations. Both have policy `staff`. A start is a staff action its org admins see in their Townwise
-// staff activity (D9): the read-only checks, then calibration.requested (ids and whether a pattern change date was
-// given, never a figure), then the effect (spec 9.3). Nothing here publishes; a calibration's job returns a draft.
+// Calibrations from the staff console (forecast lab design call 8): list an organization's calibrations, start one for
+// one of its locations, and switch the organization's forecasts on or off (G1). Each has policy `staff`. A start and a
+// switch are staff actions its org admins see in their Townwise staff activity (D9): the read-only checks, then the
+// event (ids, whether a pattern change date was given, on or off; never a figure), then the effect (spec 9.3). Nothing
+// here publishes: a calibration's job returns a draft, which the system publishes only while forecasts are on.
 import { objectId } from '@ckeith26/mongo';
 import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
@@ -15,6 +16,7 @@ import { isoDate } from '../dates.ts';
 import { checkStart, expireStale, launch, START_REFUSAL_WORDS, type StartRefusal, type StartRequest } from '../lab/service.ts';
 import { calibrationView } from '../lab/views.ts';
 import type { AuditEventInput } from '../stores/audit-events.ts';
+import type { OrgRecord } from '../stores/orgs.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import { actorOf, notFound, staffOf } from './admin.ts';
 
@@ -22,6 +24,11 @@ import { actorOf, notFound, staffOf } from './admin.ts';
 const LIST_LIMIT = 50;
 
 const startBody = z.strictObject({ regimeStart: isoDate.optional() });
+/** Switching on carries the staff member's word that the organization's owner agreed (G1). */
+const switchBody = z.discriminatedUnion('on', [
+  z.strictObject({ on: z.literal(true), ownerAgreed: z.literal(true) }),
+  z.strictObject({ on: z.literal(false) }),
+]);
 
 /** Each refusal's status and error code; the message is its words. */
 const REFUSALS: Readonly<Record<StartRefusal, { status: number; code: string }>> = {
@@ -44,6 +51,10 @@ async function scopeOf(ctx: TownwiseContext, req: Request, principal: Principal)
   return { staff, ...(await scopeForStaffOrg(ctx.stores.orgs, staff, parseInput(objectId, req.params.orgId))) };
 }
 
+function forecastsView(org: OrgRecord): { on: boolean; at: string | null } {
+  return { on: org.forecasts.on, at: org.forecasts.at?.toISOString() ?? null };
+}
+
 /**
  * GET /api/admin/orgs/:orgId/calibrations: 200 { forecasts: { on, at }, calibrations }, the newest 50, a live one past
  * its 20 minutes failed as timeout first.
@@ -52,10 +63,33 @@ export async function listCalibrations(ctx: TownwiseContext, req: Request, res: 
   const { scope, org } = await scopeOf(ctx, req, principal);
   const records = await ctx.stores.calibrations.list(scope, LIST_LIMIT);
   const current = await Promise.all(records.map((record) => expireStale(ctx, scope, record)));
-  res.status(200).json({
-    forecasts: { on: org.forecasts.on, at: org.forecasts.at?.toISOString() ?? null },
-    calibrations: current.map(calibrationView),
-  });
+  res.status(200).json({ forecasts: forecastsView(org), calibrations: current.map(calibrationView) });
+}
+
+/**
+ * POST /api/admin/orgs/:orgId/forecasts-switch { on: true, ownerAgreed: true } | { on: false } (G1): 200 { forecasts:
+ * { on, at } }; 400 invalid_request for on without ownerAgreed true. The switch already in that position changes and
+ * records nothing. While it is off, nothing is published, by staff or by a calibration; switching it off leaves runs
+ * already published as they are.
+ */
+export async function switchForecasts(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const { staff, scope, org } = await scopeOf(ctx, req, principal);
+  const { on } = parseInput(switchBody, req.body);
+  if (org.forecasts.on !== on) {
+    const now = ctx.now();
+    const event: AuditEventInput = {
+      ...actorOf(staff), at: now, orgId: scope.orgId, action: 'org.forecasts_switched', target: { type: 'org', id: scope.orgId },
+      details: { on },
+    };
+    const eventId = await recordBefore(ctx, event);
+    if (!(await applyRecorded(ctx, event, eventId, () => ctx.stores.orgs.setForecasts(scope, { on, at: now, by: staff.actor.userId })))) {
+      await recordNotApplied(ctx, event, eventId, 'not_found');
+      throw notFound();
+    }
+  }
+  const current = await ctx.stores.orgs.findById(scope.orgId);
+  if (current === null) throw notFound();
+  res.status(200).json({ forecasts: forecastsView(current) });
 }
 
 /**

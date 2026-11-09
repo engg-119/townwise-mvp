@@ -1,6 +1,7 @@
 // The forecast lab from the staff console to the job's callback, with a fake runner that records each job instead of
 // starting one; the test then plays the job (helpers/lab.ts). Starting a calibration (its checks, event, charge and
-// limits), the input the job fetches, the draft run its result makes (nothing is published here), 404 for every
+// limits), the input the job fetches, the draft run its result makes (forecasts are off here, so nothing is published;
+// lab-publish.int.test.ts publishes), 404 for every
 // callback the job should not make, timeouts, deletion while a job runs, duplicated results, and logs and audit events
 // with ids and counts only. Every number is synthetic.
 import { createHash, randomUUID } from 'node:crypto';
@@ -96,8 +97,14 @@ async function eventsFor(calibrationId: string): Promise<Record<string, unknown>
     || (event.details as { calibrationId?: string } | undefined)?.calibrationId === calibrationId);
 }
 
-/** A published run of the location (files_from_owner) whose forecast reaches 2026-07-09, so it is the current one. */
+/**
+ * A published run of the location (files_from_owner) whose forecast reaches 2026-07-09, so it is the current one. Staff
+ * switch forecasts on to publish it and off again (G1), so a calibration's draft then stays a draft.
+ */
 async function publishedChampion(t: Team): Promise<string> {
+  const forecasts = (on: boolean): Promise<Response> => call(server, `/api/admin/orgs/${t.orgId}/forecasts-switch`, {
+    session: staff, json: on ? { on, ownerAgreed: true } : { on },
+  });
   const file = {
     schema: 'townwise.forecast-run/1', metric: 'guests', model: { family: 'hybrid_linear_xgboost', version: 'v5', notebookCommit: 'abcdef0' },
     trainingSource: 'files_from_owner', trainedFrom: '2025-01-01', dataThrough: '2026-04-30', madeAt: '2026-05-01', frozen: null,
@@ -106,7 +113,9 @@ async function publishedChampion(t: Team): Promise<string> {
   const imported = await call(server, `/api/admin/orgs/${t.orgId}/locations/${t.locationId}/forecast-runs`, { session: staff, json: file });
   expect(imported.status).toBe(201);
   const { run } = await imported.json() as { run: { id: string } };
+  expect((await forecasts(true)).status).toBe(200);
   expect((await call(server, `/api/admin/orgs/${t.orgId}/forecast-runs/${run.id}/publish`, { session: staff, json: {} })).status).toBe(200);
+  expect((await forecasts(false)).status).toBe(200);
   return run.id;
 }
 
@@ -275,7 +284,10 @@ describe('the job’s callback', () => {
     expect(res.status).toBe(200);
 
     const view = await viewOf(t, calibration.id);
-    expect(view).toMatchObject({ status: 'succeeded', failure: null, finishedAt: '2026-06-01T12:00:00.000Z', gate: null });
+    // Better than the current forecast, but forecasts are off: the gate keeps it a draft.
+    expect(view).toMatchObject({
+      status: 'succeeded', failure: null, finishedAt: '2026-06-01T12:00:00.000Z', gate: { published: false, reason: 'forecasts_off' },
+    });
     expect(view.summary).toEqual({
       weeks: 12, weeklyWapePct: 15, championWeeklyWapePct: 20, coverage: { inside: 10, weeks: 12 }, weekdayBiasPct: 5, championWeekdayBiasPct: 5,
     });
@@ -295,7 +307,10 @@ describe('the job’s callback', () => {
     expect(events.map((event) => event.action)).toEqual(['calibration.requested', 'calibration.finished']);
     expect(events[1]).toMatchObject({
       actorRole: 'system', actorUserId: 'system',
-      details: { locationId: t.locationId, calibrationId: calibration.id, status: 'succeeded', gate: null, failure: null, runId: view.runId, heldOutWeeks: 12 },
+      details: {
+        locationId: t.locationId, calibrationId: calibration.id, status: 'succeeded', gate: 'forecasts_off', failure: null, runId: view.runId,
+        heldOutWeeks: 12,
+      },
     });
     // Nothing published: the current forecast is still the only published run, and no publish event was written.
     expect(await count('tw_forecast_runs', { locationId: new Types.ObjectId(t.locationId), status: 'published' })).toBe(1);

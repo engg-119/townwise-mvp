@@ -99,11 +99,12 @@ describe('route table', () => {
         bodyLimit: '32kb', limiter: undefined,
       },
       { id: 'admin.forecasts.remove', method: 'DELETE', path: '/admin/orgs/:orgId/forecast-runs/:runId', policy: 'staff', bodyLimit: 'none', limiter: undefined },
+      { id: 'admin.forecasts.switch', method: 'POST', path: '/admin/orgs/:orgId/forecasts-switch', policy: 'staff', bodyLimit: '2kb', limiter: undefined },
     ]);
   });
 
-  it('the forecast lab: calibrations are staff routes, the start with a 2kb body, and no route limiter', () => {
-    const rows = TOWNWISE_ROUTES.filter((r) => r.id.startsWith('admin.calibrations.'))
+  it('the forecast lab: calibrations and the forecasts switch are staff routes with 2kb bodies, and no route limiter', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id.startsWith('admin.calibrations.') || r.id === 'admin.forecasts.switch')
       .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));
     expect(rows).toEqual([
       { id: 'admin.calibrations.list', method: 'GET', path: '/admin/orgs/:orgId/calibrations', policy: 'staff', bodyLimit: 'none', limiter: undefined },
@@ -111,6 +112,7 @@ describe('route table', () => {
         id: 'admin.calibrations.start', method: 'POST', path: '/admin/orgs/:orgId/locations/:locationId/calibrations', policy: 'staff',
         bodyLimit: '2kb', limiter: undefined,
       },
+      { id: 'admin.forecasts.switch', method: 'POST', path: '/admin/orgs/:orgId/forecasts-switch', policy: 'staff', bodyLimit: '2kb', limiter: undefined },
     ]);
   });
 
