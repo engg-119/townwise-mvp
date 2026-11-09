@@ -17,6 +17,7 @@ import { createLocationStore, type LocationStore } from './locations.ts';
 import { createMemberStore, type MemberStore } from './members.ts';
 import { createNoteStore, type NoteStore } from './notes.ts';
 import { createOrgStore, type OrgStore } from './orgs.ts';
+import { createProfileStore, type ProfileStore } from './profiles.ts';
 import { createSalesDayStore, type SalesDayStore } from './sales-days.ts';
 import { createUploadDayStore, type UploadDayStore } from './upload-days.ts';
 import { createUploadStore, type UploadStore } from './uploads.ts';
@@ -42,6 +43,8 @@ export interface TownwiseStores {
   readonly agentAnswers: AgentAnswerStore;
   /** U11, statement moments. */
   readonly welcomes: WelcomeStore;
+  /** The display name for TownwiseAI's greeting (account-level, spec 6.22). */
+  readonly profiles: ProfileStore;
   /** Stored files (spec 11A). */
   readonly files: FileStore;
   readonly imports: ImportStore;
@@ -74,6 +77,7 @@ export function createTownwiseStores(connection: Connection): TownwiseStores {
     agentAnswers: createAgentAnswerStore(connection),
     // U11, statement moments.
     welcomes: createWelcomeStore(connection),
+    profiles: createProfileStore(connection),
     files: createFileStore(connection),
     imports: createImportStore(connection),
     uploadDays: createUploadDayStore(connection),

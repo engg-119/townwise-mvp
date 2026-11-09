@@ -26,6 +26,7 @@ import { declineInvite, getMe, joinInvite, recordWelcome } from '../handlers/me.
 import { createNote, deleteNote, listNotes, updateNote } from '../handlers/notes.ts';
 import { getStaffActivity, leaveOrg, renameOrg } from '../handlers/org.ts';
 import { placesAutocomplete, placesDetails } from '../handlers/places.ts';
+import { getProfile, updateProfile } from '../handlers/profile.ts';
 import { createAccessRequest } from '../handlers/requests.ts';
 import { deleteSales, getSales, getSalesDays, getSalesHistory, uploadSales } from '../handlers/sales.ts';
 import { createSetupLocation, deleteSetupLocation, deleteSetupSales, updateSetupLocation, uploadSetupSales } from '../handlers/staff-setup.ts';
@@ -60,6 +61,9 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   { id: 'me.decline', method: 'POST', path: '/me/decline', policy: 'signed_in', bodyLimit: '32kb', handler: declineInvite },
   // U11, statement moments: no body, so none is parsed; the writes limiter only.
   { id: 'me.welcome', method: 'POST', path: '/me/welcome', policy: 'member', bodyLimit: 'none', handler: recordWelcome },
+  // The display name for TownwiseAI's greeting: own account only; writes limiter only.
+  { id: 'me.profile.get', method: 'GET', path: '/me/profile', policy: 'member', bodyLimit: 'none', handler: getProfile },
+  { id: 'me.profile.update', method: 'PATCH', path: '/me/profile', policy: 'member', bodyLimit: '1kb', handler: updateProfile },
   {
     id: 'requests.create', method: 'POST', path: '/access-requests', policy: 'signed_in', bodyLimit: '32kb',
     limiter: 'requests', handler: createAccessRequest,

@@ -2,7 +2,7 @@
 // on their first visit, while the organization has no sales days (so “ready to set up” is true), never under view-as.
 // Invited teammates and admins of staff-created organizations have the Joining notice instead. Reads only.
 import type { TownwiseContext } from './app.ts';
-import type { Principal } from './access/policy.ts';
+import type { OrgScope, Principal } from './access/policy.ts';
 
 export interface WelcomeView {
   /** Null for an honorific, an initial or a long token: the welcome then has no name. */
@@ -24,6 +24,24 @@ export function firstNameOf(contactName: string): string | null {
   return first;
 }
 
+/** The organization and the approved request that created it, when `userId` made that request. */
+async function requesterOrg(ctx: TownwiseContext, scope: OrgScope, userId: string) {
+  const org = await ctx.stores.orgs.findById(scope.orgId);
+  if (org?.fromRequestId == null) return null;
+  const request = await ctx.stores.requests.findById(org.fromRequestId);
+  if (request?.status !== 'approved' || request.userId !== userId) return null;
+  return { org, request };
+}
+
+/**
+ * The first name on the approved request that created the organization, when `userId` made it; null otherwise (an
+ * invited teammate, a staff-created organization, no usable first name). Reads only.
+ */
+export async function requesterFirstName(ctx: TownwiseContext, scope: OrgScope, userId: string): Promise<string | null> {
+  const found = await requesterOrg(ctx, scope, userId);
+  return found === null ? null : firstNameOf(found.request.contactName);
+}
+
 /**
  * At most four point reads, only in GET /api/me: one once the welcome is recorded (the common path), two for
  * teammates of organizations with data.
@@ -33,9 +51,6 @@ export async function welcomeFor(ctx: TownwiseContext, principal: Principal): Pr
   const { scope, userId } = principal;
   if (await ctx.stores.welcomes.has(scope, userId)) return null;
   if (await ctx.stores.salesDays.hasAnyForOrg(scope)) return null;
-  const org = await ctx.stores.orgs.findById(scope.orgId);
-  if (org?.fromRequestId == null) return null;
-  const request = await ctx.stores.requests.findById(org.fromRequestId);
-  if (request?.status !== 'approved' || request.userId !== userId) return null;
-  return { firstName: firstNameOf(request.contactName), restaurant: org.name };
+  const found = await requesterOrg(ctx, scope, userId);
+  return found === null ? null : { firstName: firstNameOf(found.request.contactName), restaurant: found.org.name };
 }
