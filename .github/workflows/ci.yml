@@ -102,3 +102,26 @@ jobs:
         run: .github/scripts/id-token-guard-test.sh
       - name: Only jobs.deploy in deploy.yml requests id-token
         run: python3 .github/scripts/id-token-guard.py .github/workflows
+
+  lab:
+    # The forecast lab (modeling/lab): its tests on the synthetic fixture, then the job image builds.
+    name: lab
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - name: Lab tests
+        working-directory: modeling/lab
+        run: |
+          set -euo pipefail
+          uv sync --frozen
+          uv run pytest -q
+      - name: Build the job image
+        run: docker build -f modeling/lab/Dockerfile modeling/lab

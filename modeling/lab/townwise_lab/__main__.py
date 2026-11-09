@@ -1,4 +1,5 @@
 """python -m townwise_lab run --input PATH --output PATH --code-version 40HEX
+python -m townwise_lab job   (the Azure entrypoint; see job.py)
 
 Reads a LabInput, writes its LabResult, and prints one line of counts. It never prints a figure, a date, a name or an
 error's message: a failure prints the exception's class, or the result's code, and exits 1.
@@ -6,8 +7,10 @@ error's message: a failure prints the exception's class, or the result's code, a
 
 import argparse
 import json
+import os
 import sys
 
+from townwise_lab import job
 from townwise_lab.pipeline import calibrate
 
 
@@ -38,7 +41,10 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--input", required=True)
     run.add_argument("--output", required=True)
     run.add_argument("--code-version", required=True, help="the 40-character commit of the lab's code")
+    commands.add_parser("job", help="fetch a LabInput from the API, calibrate, post the LabResult (env: TOWNWISE_LAB_*)")
     args = parser.parse_args(argv)
+    if args.command == "job":
+        return job.main(os.environ)
     return _run(args)
 
 
