@@ -38,6 +38,8 @@ export function UserMessage(props: {
   busy: boolean;
   /** After Save and send, so the page can move focus to the composer. */
   onEdited?: () => void;
+  /** The page's polite live region, as ReplyView's `onAnnounce`. */
+  onAnnounce: (words: string) => void;
 }): React.JSX.Element {
   const { message, chat } = props;
   const { phone } = useBreakpoint();
@@ -47,7 +49,7 @@ export function UserMessage(props: {
   const field = useRef<React.ComponentRef<typeof TextInput>>(null);
   const editButton = useRef<ChatButtonHandle>(null);
   const returning = useRef(false);
-  const nav = useVersionNav(chat, message, props.tree);
+  const nav = useVersionNav(chat, message, props.tree, props.onAnnounce);
   const words = messageText(message);
   // An edit is a turn: off while the chat is busy, under view-as, and once the month's budget is used up.
   const canEdit = !props.busy && props.readOnlyId === null && chat.state.budget?.exhausted !== true;
@@ -141,7 +143,6 @@ export function UserMessage(props: {
                   disabled={props.busy}
                   onStep={nav.onStep}
                   focusRef={nav.focusRef}
-                  announcement={nav.announcement}
                 />
               )}
             </View>

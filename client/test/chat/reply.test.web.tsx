@@ -77,12 +77,12 @@ type UserProps = React.ComponentProps<typeof UserMessage>;
 function replyProps(over: Partial<ReplyProps> = {}): ReplyProps {
   return {
     message: SAVED, ctx: CTX, tree: TREE, newest: true, chat: fakeChat(), locationId: 'l1', readOnlyId: null, canAct: true,
-    onRetry: jest.fn(), ...over,
+    onRetry: jest.fn(), onAnnounce: jest.fn(), ...over,
   };
 }
 
 function userProps(over: Partial<UserProps> = {}): UserProps {
-  return { message: ASKED, tree: TREE, chat: fakeChat(), readOnlyId: null, busy: false, ...over };
+  return { message: ASKED, tree: TREE, chat: fakeChat(), readOnlyId: null, busy: false, onAnnounce: jest.fn(), ...over };
 }
 
 function button(name: string): HTMLElement {
@@ -112,6 +112,11 @@ it('shows the caret only while the reply streams, and removes it on done, stop a
     view.rerender(<ReplyView {...replyProps({ message: { ...live, state } })} />);
     expect(screen.queryByText('▍')).toBeNull();
   }
+  // Text followed by a running step: the live line names the step, and the caret is not left mid-reply.
+  const running: ToolStep = { ...step, state: 'running', result: null };
+  view.rerender(<ReplyView {...replyProps({ message: { ...live, parts: [text('a', 'Let me look.'), { type: 'tools', key: 'b', steps: [running] }] } })} />);
+  expect(screen.queryByText('▍')).toBeNull();
+  expect(screen.getByText('Reading your sales for Dec 1 to Dec 31, 2025…')).toBeTruthy();
 });
 
 it('while it streams, the live line names the running step or says it is thinking, in small text2', () => {
@@ -180,6 +185,9 @@ it('Helpful shows alone and pressed once chosen; pressing it again shows both; N
   expect(rate).toHaveBeenLastCalledWith('m2', 'down', undefined);
   expect(screen.queryByRole('button', { name: 'Helpful' })).toBeNull();
   const reasons = screen.getByRole('group', { name: 'What went wrong? Optional.' });
+  // Named by the question it shows, so a screen reader reads it once on entering the group.
+  expect(reasons.getAttribute('aria-label')).toBeNull();
+  expect(reasons.getAttribute('aria-labelledby')).toBe(within(reasons).getByText('What went wrong? Optional.').id);
   expect(within(reasons).getAllByRole('button').map((item) => item.textContent)).toEqual([
     'Got my numbers wrong', 'Made something up', 'Missed something I told it', 'Didn’t answer my question', 'Too long', 'Something else', 'Skip',
   ]);
@@ -237,6 +245,22 @@ it('offers Regenerate on the newest reply only, and Copy on web', async () => {
   expect(screen.queryByText('Copied the reply.')).toBeNull();
   act(() => { jest.advanceTimersByTime(2000); });
   expect(screen.getAllByRole('button', { name: 'Copy' })).toHaveLength(2);
+});
+
+it('a copy that settles after the reply is gone starts no timer', async () => {
+  jest.useFakeTimers();
+  const view = render(<ReplyView {...replyProps()} />);
+  fireEvent.click(button('Copy'));
+  // A version switch draws every message anew, so the reply can go before the clipboard answers.
+  view.unmount();
+  const timeout = jest.spyOn(globalThis, 'setTimeout');
+  await act(async () => {
+    for (let tick = 0; tick < 5; tick += 1) await Promise.resolve();
+  });
+  expect(writeText).toHaveBeenCalledTimes(1);
+  // No "Copied" timer for a button that is gone.
+  expect(timeout.mock.calls.filter(([, ms]) => ms === 2000)).toHaveLength(0);
+  timeout.mockRestore();
 });
 
 it('every action is aria-disabled while another reply streams and under view-as, and does nothing', () => {
@@ -394,9 +418,25 @@ it('the version navigator reads Version 2 of 3, steps both ways and is aria-disa
 /** Three versions of the reply only, so the thread has one navigator. */
 const REPLIES = VERSIONS.filter((node) => node.id !== 'u1b');
 
-/** A thread whose version switch reads the other version as useTuningChat does: every message comes back new. */
+/** The thread's messages, keyed as the page keys them, so a path read again draws every message anew. */
+function Messages(props: { messages: readonly ChatMessage[]; chat: TuningChat; busy: boolean; onAnnounce: (words: string) => void }): React.JSX.Element {
+  const { chat, busy, onAnnounce } = props;
+  return (
+    <>
+      {props.messages.map((message) => (message.role === 'user'
+        ? <UserMessage key={message.key} {...userProps({ chat, message, tree: REPLIES, busy, onAnnounce })} />
+        : <ReplyView key={message.key} {...replyProps({ chat, message, tree: REPLIES, canAct: !busy, onAnnounce })} />))}
+    </>
+  );
+}
+
+/**
+ * A thread whose version switch reads the other version as useTuningChat does: every message comes back new. Like the
+ * page, it has one polite region outside the messages, and a composer field.
+ */
 function SwitchingThread(): React.JSX.Element {
   const [shown, setShown] = useState({ messages: [ASKED, { ...SAVED, nodeId: 'a1b' }], switching: false });
+  const [said, setSaid] = useState('');
   const chat = fakeChat({
     showVersion: (_key, step) => {
       setShown((current) => ({ ...current, switching: true }));
@@ -407,27 +447,63 @@ function SwitchingThread(): React.JSX.Element {
   }, { tree: REPLIES, switching: shown.switching });
   return (
     <>
-      {shown.messages.map((message) => (message.role === 'user'
-        ? <UserMessage key={message.key} {...userProps({ chat, message, tree: REPLIES, busy: shown.switching })} />
-        : <ReplyView key={message.key} {...replyProps({ chat, message, tree: REPLIES, canAct: !shown.switching })} />))}
+      <Messages messages={shown.messages} chat={chat} busy={shown.switching} onAnnounce={setSaid} />
+      <textarea aria-label="Message TownwiseAI" />
+      <div data-testid="page-region" aria-live="polite">{said}</div>
     </>
   );
 }
 
 it('a version switch keeps focus on the pressed arrow and says which version shows', async () => {
   render(<SwitchingThread />);
+  const region = screen.getByTestId('page-region');
   const next = button('Next version');
   act(() => { next.focus(); });
   fireEvent.click(next);
-  expect(await screen.findByText('Showing version 3 of 3.')).toBeTruthy();
+  // The words go to the page's region, there since before the switch, never to one drawn with the new navigator.
+  expect(await screen.findByText('Showing version 3 of 3.')).toBe(region);
   expect(screen.getByText('Version 3 of 3')).toBeTruthy();
   expect(document.activeElement).toBe(button('Next version'));
   expect(document.activeElement).not.toBe(next);
-  expect(screen.getByText('Showing version 3 of 3.').closest('[aria-live="polite"]')).not.toBeNull();
+  expect(screen.getByRole('group', { name: 'Versions' }).querySelector('[aria-live]')).toBeNull();
+});
+
+it('a version switch leaves focus where the person moved it while the version loaded', async () => {
+  render(<SwitchingThread />);
+  const next = button('Next version');
+  act(() => { next.focus(); });
+  fireEvent.click(next);
+  const composer = screen.getByLabelText('Message TownwiseAI');
+  act(() => { composer.focus(); });
+  // Said after the navigator would have taken focus, so focus is checked once the words are in.
+  expect(await screen.findByText('Showing version 3 of 3.')).toBe(screen.getByTestId('page-region'));
+  expect(screen.getByText('Version 3 of 3')).toBeTruthy();
+  expect(document.activeElement).toBe(composer);
+});
+
+it('a switch cut short by opening another conversation leaves nothing to take focus later', async () => {
+  const onAnnounce = jest.fn();
+  const shown = [ASKED, { ...SAVED, nodeId: 'a1b' }];
+  const thread = (conversationId: string, messages: readonly ChatMessage[], switching: boolean): React.JSX.Element => (
+    <Messages messages={messages} chat={fakeChat({}, { conversationId, tree: REPLIES, switching })} busy={switching} onAnnounce={onAnnounce} />
+  );
+  const view = render(thread('c1', shown, false));
+  const next = button('Next version');
+  act(() => { next.focus(); });
+  fireEvent.click(next);
+  view.rerender(thread('c1', shown, true));
+  // Another conversation opens before the version arrives, so the thread empties and that switch's answer is dropped.
+  view.rerender(thread('c2', [], false));
+  await act(async () => { await Promise.resolve(); });
+  // Back in the first conversation later, its navigator neither takes focus nor says anything.
+  view.rerender(thread('c1', [{ ...ASKED, key: 'm9' }, { ...SAVED, key: 'm10', nodeId: 'a1c' }], false));
+  expect(screen.getByText('Version 3 of 3')).toBeTruthy();
+  expect(document.activeElement).toBe(document.body);
+  expect(onAnnounce).not.toHaveBeenCalled();
 });
 
 /** A newest reply that regenerates: the stream replaces it, then the turn is saved as its second version. */
-function RegeneratingThread(): React.JSX.Element {
+function RegeneratingThread(props: { composer?: boolean }): React.JSX.Element {
   const [shown, setShown] = useState<{ reply: ChatMessage; tree: TreeNode[]; turn: TuningChatState['turn'] }>({ reply: SAVED, tree: TREE, turn: null });
   const chat = fakeChat({
     regenerate: () => {
@@ -447,6 +523,7 @@ function RegeneratingThread(): React.JSX.Element {
     <>
       <UserMessage {...userProps({ chat, tree: shown.tree })} />
       <ReplyView {...replyProps({ chat, tree: shown.tree, message: shown.reply, canAct: shown.turn === null })} />
+      {props.composer === true ? <textarea aria-label="Message TownwiseAI" /> : null}
     </>
   );
 }
@@ -459,6 +536,18 @@ it('Regenerate moves focus to the new reply’s version navigator once it is sav
   expect(screen.getByText('TownwiseAI is thinking…')).toBeTruthy();
   expect(await screen.findByText('Version 2 of 2')).toBeTruthy();
   expect(document.activeElement).toBe(button('Previous version'));
+});
+
+it('Regenerate leaves focus in the composer when the person went there while the reply streamed', async () => {
+  render(<RegeneratingThread composer />);
+  const regenerate = button('Regenerate');
+  act(() => { regenerate.focus(); });
+  fireEvent.click(regenerate);
+  // Typing the next question during the stream (Stop and send is a supported flow).
+  const composer = screen.getByLabelText('Message TownwiseAI');
+  act(() => { composer.focus(); });
+  expect(await screen.findByText('Version 2 of 2')).toBeTruthy();
+  expect(document.activeElement).toBe(composer);
 });
 
 it('long words wrap inside the bubble and the reply', () => {
@@ -523,4 +612,17 @@ it('next chips are a named group of three that send on press and are disabled un
   fireEvent.click(button('Show that as a chart'));
   expect(button('Show that as a chart').getAttribute('aria-disabled')).toBe('true');
   expect(onAsk).toHaveBeenCalledTimes(1);
+});
+
+it('next chips draw three chips when the model repeats a prompt', () => {
+  const error = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+  try {
+    const view = render(<NextChips prompts={['How did last week go?', 'How did last week go?', 'What notes do I have?']} disabled={false} readOnlyId={null} onAsk={jest.fn()} />);
+    view.rerender(<NextChips prompts={['What notes do I have?', 'How did last week go?', 'How did last week go?']} disabled={false} readOnlyId={null} onAsk={jest.fn()} />);
+    const chips = within(screen.getByRole('group', { name: 'Suggested next questions' })).getAllByRole('button');
+    expect(chips.map((chip) => chip.textContent)).toEqual(['What notes do I have?', 'How did last week go?', 'How did last week go?']);
+    expect(error).not.toHaveBeenCalled();
+  } finally {
+    error.mockRestore();
+  }
 });

@@ -42,7 +42,7 @@ it('hides Copy on native and keeps the reply text selectable', async () => {
   const chat = fakeChat();
   await render(
     <>
-      <UserMessage message={msg('m1', 'user', 'How was December?', 'u1', null)} tree={TREE} chat={chat} readOnlyId={null} busy={false} />
+      <UserMessage message={msg('m1', 'user', 'How was December?', 'u1', null)} tree={TREE} chat={chat} readOnlyId={null} busy={false} onAnnounce={jest.fn()} />
       <ReplyView
         message={msg('m2', 'assistant', 'December was busy.', 'a1', 'u1')}
         ctx={{ town: 'Hanover', hasTownProfile: true }}
@@ -53,6 +53,7 @@ it('hides Copy on native and keeps the reply text selectable', async () => {
         readOnlyId={null}
         canAct
         onRetry={jest.fn()}
+        onAnnounce={jest.fn()}
       />
     </>,
   );

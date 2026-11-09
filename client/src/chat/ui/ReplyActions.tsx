@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
@@ -40,7 +40,10 @@ export function ReplyActions(props: {
   const [copy, setCopy] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [asking, setAsking] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // A version switch draws every message anew, so the clipboard can answer after this reply has gone.
+  const mounted = useRef(false);
   const notHelpful = useRef<ChatButtonHandle>(null);
+  const questionId = `${useId().replace(/:/g, '')}-question`;
   const off = !props.canAct || props.readOnlyId !== null;
   const rating = message.feedback?.rating ?? null;
   const source = messageText(message);
@@ -48,14 +51,19 @@ export function ReplyActions(props: {
   const canRegenerate = props.newest && message.parentId !== null;
   const canRate = message.nodeId !== null;
 
-  useEffect(() => () => {
-    if (copyTimer.current !== null) clearTimeout(copyTimer.current);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (copyTimer.current !== null) clearTimeout(copyTimer.current);
+    };
   }, []);
 
   if (!canCopy && !canRegenerate && !canRate && (props.children === undefined || props.children === null)) return null;
 
   function onCopy(): void {
     void copyText(source).then((copied) => {
+      if (!mounted.current) return;
       setCopy(copied ? 'copied' : 'failed');
       if (copyTimer.current !== null) clearTimeout(copyTimer.current);
       copyTimer.current = setTimeout(() => { setCopy('idle'); }, COPIED_MS);
@@ -113,8 +121,9 @@ export function ReplyActions(props: {
         {props.children}
       </View>
       {asking && rating === 'down' ? (
-        <View role="group" aria-label="What went wrong? Optional." style={styles.reasons}>
-          <Text style={styles.question}>What went wrong? Optional.</Text>
+        // Named by the question it shows, so it is read once on entering the group.
+        <View role="group" aria-labelledby={questionId} style={styles.reasons}>
+          <Text nativeID={questionId} style={styles.question}>What went wrong? Optional.</Text>
           <View style={styles.row}>
             {REASONS.map((reason) => (
               <ChatButton key={reason.value} variant="outline" label={reason.label} disabled={off} {...describedBy} onPress={() => { onReason(reason.value); }} />

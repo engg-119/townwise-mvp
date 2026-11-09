@@ -19,9 +19,10 @@ export function NextChips(props: {
   const { phone } = useBreakpoint();
   if (props.prompts.length === 0) return null;
   const off = props.disabled || props.readOnlyId !== null;
-  const chips = props.prompts.map((prompt) => (
+  // Keyed by place: the model's three prompts need not differ.
+  const chips = props.prompts.map((prompt, index) => (
     <ChatButton
-      key={prompt}
+      key={index}
       variant="chip"
       label={prompt}
       disabled={off}

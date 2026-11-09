@@ -9,7 +9,7 @@ import { basedOnLine, type ToolContext } from '../tools';
 import type { TreeNode } from '../tree';
 import { stepsOf, type ChatMessage, type TuningChat } from '../useTuningChat';
 import { VisualView } from '../visuals/Visual';
-import { Hidden } from './controls';
+import { focusLost, Hidden } from './controls';
 import { described } from './described';
 import { ProposalCard } from './ProposalCard';
 import { ReplyActions } from './ReplyActions';
@@ -17,7 +17,7 @@ import { ToolGroup } from './ToolGroup';
 import { useVersionNav, VersionNav } from './VersionNav';
 
 // One of TownwiseAI's replies (owner decisions 3 to 5): no label box, only a hidden "TownwiseAI said", then its parts
-// in the order they streamed: Markdown text (with a static caret after the last text part while it streams), tool
+// in the order they streamed: Markdown text (with a static caret at its end while text is what streams), tool
 // calls, visuals Townwise drew, and proposal cards. While it streams, the live line under it names the running step
 // or says it is thinking. Finished, it has its actions, its version navigator when it has siblings, the Based on line
 // built from its tool calls (never written by the model) and why it ended early, if it did. One that failed or was
@@ -35,17 +35,26 @@ export function ReplyView(props: {
   /** False while a reply streams or a version or conversation loads: actions, versions and Try again are off. */
   canAct: boolean;
   onRetry: (key: string) => void;
+  /**
+   * Says `words` ("Showing version 2 of 3." after a version switch) through the page's one polite live region, which
+   * must outlive the messages (a switch draws every message anew), and on iOS with announceForAccessibility, as the
+   * page says its own sentences. Each call is news, even when the words repeat the last ones.
+   */
+  onAnnounce: (words: string) => void;
 }): React.JSX.Element {
   const { message, chat } = props;
   const live = message.state === 'streaming';
   const ended = message.state === 'failed' || message.state === 'stopped';
   const complete = message.state === 'complete';
-  const nav = useVersionNav(chat, message, props.tree);
+  const nav = useVersionNav(chat, message, props.tree, props.onAnnounce);
   const line = liveLine(message, props.ctx);
-  const lastText = message.parts.findLast((part) => part.type === 'text')?.key ?? null;
+  // The caret ends the text while text is what streams; once a step or visual follows, the live line says what's on.
+  const last = message.parts.at(-1);
+  const caretOn = live && last?.type === 'text' ? last.key : null;
 
   // A regenerated reply: once it is saved as the newest version, focus goes to its navigator (the Regenerate
-  // button that was pressed went with the earlier reply).
+  // button that was pressed went with the earlier reply), unless the person has put focus somewhere since, such as
+  // the composer to type the next question.
   const regenerated = useRef(false);
   const regenerating = live && chat.state.turn?.kind === 'regenerate';
   const navCount = nav.versions?.count ?? 0;
@@ -56,7 +65,7 @@ export function ReplyView(props: {
   useEffect(() => {
     if (!regenerated.current || !complete || navCount < 2) return;
     regenerated.current = false;
-    if (Platform.OS === 'web') focusRef.current?.focus(-1);
+    if (Platform.OS === 'web' && focusLost()) focusRef.current?.focus(-1);
   }, [complete, navCount, focusRef]);
 
   const versions = nav.versions === null ? null : (
@@ -66,7 +75,6 @@ export function ReplyView(props: {
       disabled={!props.canAct}
       onStep={nav.onStep}
       focusRef={nav.focusRef}
-      announcement={nav.announcement}
     />
   );
 
@@ -74,7 +82,7 @@ export function ReplyView(props: {
     <View style={styles.reply}>
       <Hidden>TownwiseAI said</Hidden>
       {message.parts.map((part) => {
-        if (part.type === 'text') return <Markdown key={part.key} source={part.text} caret={live && part.key === lastText} />;
+        if (part.type === 'text') return <Markdown key={part.key} source={part.text} caret={part.key === caretOn} />;
         if (part.type === 'tools') return <ToolGroup key={part.key} steps={part.steps} live={live} ctx={props.ctx} />;
         if (part.type === 'visual') return <VisualView key={part.key} visual={part.visual} />;
         return <ProposalCard key={part.key} card={part.card} locationId={props.locationId} actions={chat} readOnlyId={props.readOnlyId} />;

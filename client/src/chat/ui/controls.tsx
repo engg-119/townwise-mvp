@@ -6,9 +6,10 @@ import { theme } from '../../theme';
 
 // The small controls of TownwiseAI's messages (the B6 message views): a button that can take focus from code and
 // show a pressed state, which the portal's Button does neither of; text read by assistive technology and not drawn;
-// and a polite live region. Like Button, a disabled control keeps its place and its focus: aria-disabled on the same
-// element on web (never the disabled attribute), no press handler, a `text3` label. Square, except `chip`, the
-// chat page's pill (spec 15.6's TownwiseAI exception: radius 22 at 44px).
+// a check that focus went with a control taken off the page; and a polite live region. Like Button, a disabled
+// control keeps its place and its focus: aria-disabled on the same element on web (never the disabled attribute), no
+// press handler, a `text3` label. Square, except `chip`, the chat page's pill (spec 15.6's TownwiseAI exception:
+// radius 22 at 44px).
 
 export interface ChatButtonHandle { focus: () => void }
 
@@ -81,6 +82,16 @@ export function ChatButton(props: {
 /** Read by screen readers, not drawn (a speaker label, "Version 2 of 3"). */
 export function Hidden(props: { children: string }): React.JSX.Element {
   return <Text style={styles.hidden}>{props.children}</Text>;
+}
+
+/**
+ * Web only: nothing holds focus, as when the focused control was taken off the page (the browser hands focus to the
+ * body). Code that restores focus after a control went away checks this first, so it never takes focus from wherever
+ * the person has since moved it.
+ */
+export function focusLost(): boolean {
+  const active = document.activeElement;
+  return active === null || active === document.body || !active.isConnected;
 }
 
 /** A polite live region that is there before it speaks; it says `text` when that changes from empty. */
