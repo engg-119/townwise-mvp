@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 
+import { openAsAdminOrgId } from '../api';
 import { useAction } from '../hooks';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { Actions, Button } from '../ui/Button';
@@ -14,18 +15,18 @@ import { SETTINGS_COPY, SETTINGS_READ_ONLY_ID } from './copy';
 // GET /api/me is read again so the top bar and the eyebrow show the new name.
 
 export function OrgNameForm(props: { name: string; onSaved: () => void; onEdit: () => void }): React.JSX.Element {
-  const { api, refreshMe } = usePortal();
+  const { api, me, refreshMe } = usePortal();
   const { readOnly } = useReadOnly();
   const { onSaved, onEdit } = props;
   const [value, setValue] = useState(props.name);
   const [message, setMessage] = useState<string | null>(null);
 
   const save = useAction(useCallback(async (name: string) => {
-    await renameOrg(api, name);
+    await renameOrg(api, name, openAsAdminOrgId(me));
     onSaved();
     // The rename stands even if this read fails; the top bar then catches up on the next read.
     await refreshMe().catch(() => undefined);
-  }, [api, onSaved, refreshMe]));
+  }, [api, me, onSaved, refreshMe]));
 
   function submit(): void {
     if (readOnly) return;

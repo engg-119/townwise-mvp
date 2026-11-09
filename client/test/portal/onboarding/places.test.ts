@@ -41,11 +41,16 @@ describe('the writes that carry a place', () => {
     api.answers['/api/org/locations/l9'] = () => ({ location });
     const request = { orgName: 'Lou’s', contactName: 'Pat', contactRole: 'Owner', town: townInputOf(PLACE.town), locationCount: 1 };
     await sendAccessRequestAt(api, request, PLACE.placeId);
-    await createLocationAt(api, { name: 'Lou’s', town: townInputOf(PLACE.town) }, PLACE.placeId);
+    await createLocationAt(api, { name: 'Lou’s', town: townInputOf(PLACE.town) }, PLACE.placeId, null);
+    // D25: in open as admin it also names the organization the page shows.
+    await createLocationAt(api, { name: 'Lou’s', town: townInputOf(PLACE.town) }, PLACE.placeId, 'o1');
     expect(await setLocationPlace(api, 'l9', PLACE)).toMatchObject({ placeId: 'ChIJTestPlace0001' });
     expect(writes(api)).toEqual([
       { method: 'POST', path: '/api/access-requests', body: { ...request, placeId: 'ChIJTestPlace0001' } },
       { method: 'POST', path: '/api/org/locations', body: { name: 'Lou’s', town: { townId: 'hanover-nh' }, placeId: 'ChIJTestPlace0001' } },
+      {
+        method: 'POST', path: '/api/org/locations', body: { name: 'Lou’s', town: { townId: 'hanover-nh' }, placeId: 'ChIJTestPlace0001', orgId: 'o1' },
+      },
       { method: 'PATCH', path: '/api/org/locations/l9', body: { town: { townId: 'hanover-nh' }, placeId: 'ChIJTestPlace0001' } },
     ]);
   });

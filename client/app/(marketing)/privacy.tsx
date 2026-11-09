@@ -131,7 +131,7 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
         <P>To stop abuse, the server counts requests from each IP address: one limit for the whole service and a tighter one for sign-in, both over one-minute windows. Before a counter is stored, the key it belongs to (an IP address, an account ID or an email address) is replaced with a SHA-256 hash, so the store holds hashes, not addresses. IPv6 addresses are counted by their first half (the /64 network). Each counter is deleted when its window ends, counted from the first request in that window.</P>
         <P>If the email-link route is used (see Email), the request is also counted per IP address (hashed) for one hour, and per email address (hashed) for 15 minutes and for 24 hours.</P>
         <P>If you use authenticator codes, every code attempt is also counted per account, as a hash of your account ID, for 15 minutes and for 24 hours.</P>
-        <P>When you are signed in, some actions are also counted per account, as a hash of your account ID: every change for 10 minutes; uploads, TownwiseAI messages and staff view-as for one hour; and access requests for 24 hours.</P>
+        <P>When you are signed in, some actions are also counted per account, as a hash of your account ID: every change for 10 minutes; uploads, TownwiseAI messages, and staff view-as and open as admin for one hour; and access requests for 24 hours.</P>
         <P>A hash of an IP address is not anonymous: anyone who tries every possible address can match it. We treat these counters as personal data. The longest any IP-address counter is kept is one hour; the longest any account or email counter is kept is 24 hours.</P>
       </>
     ),
@@ -186,7 +186,8 @@ const sections: { id: string; title: string; className?: string; body: React.Rea
         <Ul className="bul">
           <Li>The members and org admins of your organization.</Li>
           <Li>Townwise staff, in the staff console, see your organization’s name, its locations’ names and towns, team email addresses, counts and the dates your data covers. They do not see the sales figures or your location notes there, and these console views are not recorded.</Li>
-          <Li>Townwise staff can see the sales figures and your location notes only through view-as: a read-only view of the app as one of your team sees it. It needs a reason, lasts at most 30 minutes, is recorded, and is shown to your organization’s admins.</Li>
+          <Li>Before anyone from your organization has joined Townwise, staff setting it up for you, with your consent, can open it as its admin: they see and change what an admin can, except your team, until the first person joins. Each time, and every change they make, is recorded and shown to your organization’s admins.</Li>
+          <Li>Once anyone has joined, Townwise staff can see the sales figures and your location notes only through view-as: a read-only view of the app as one of your team sees it. It needs a reason, lasts at most 30 minutes, is recorded, and is shown to your organization’s admins.</Li>
           <Li>Members of our Townwise administrators group, who manage the production systems, can reach the database outside the app. Townwise’s audit record does not include those reads.</Li>
         </Ul>
         <P><Strong>How long we keep it.</Strong> Until an org admin deletes it (in the app, an org admin can delete all sales data for a location), or until we delete your organization’s account on request (see Your choices). Our nightly backups keep copies for 30 days. For files you drop: we delete each original 365 days after it was sent, or sooner when you delete it; cleaned copies stay until you delete them, the location’s sales data or your organization; an upload that never finishes is discarded after 24 hours, and a file dropped but never sent for reading after 30 days. Deleting all sales data for a location deletes its files too.</P>
@@ -249,7 +250,7 @@ export default function Privacy(): React.JSX.Element {
           <Div className="g12 hd">
             <Div className="hd-l">
               <H1 className="h1">Privacy</H1>
-              <P className="sub">Effective November 5, 2026. Last updated November 6, 2026.</P>
+              <P className="sub">Effective November 5, 2026. Last updated November 9, 2026.</P>
             </Div>
             <Nav className="hd-r" aria-labelledby="h-toc">
               <P id="h-toc" className="eyebrow">On this page</P>

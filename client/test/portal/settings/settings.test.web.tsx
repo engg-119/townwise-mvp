@@ -83,3 +83,16 @@ test('open as admin: no Leave section; the rest is the admin’s settings', asyn
   expect(screen.getByRole('button', { name: 'Save name' }).getAttribute('aria-disabled')).not.toBe('true');
   expect(screen.getByRole('button', { name: 'Sign out on every device' }).getAttribute('aria-disabled')).not.toBe('true');
 });
+
+test('D25: the staff activity intro names open as admin, so it never says staff read figures only through View as', async () => {
+  const api = fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin') });
+  withRoutes(api, { gets: { '/api/org/staff-activity': () => ({ events: [ADD_EVENT] }) } });
+  renderAt('/settings', api);
+  expect(await screen.findByText(
+    'Each time Townwise staff use View as to see your sales and notes, it’s recorded here with its reason. Before anyone from '
+    + 'your organization joined, staff setting it up may have opened it as its admin, which shows them what an admin sees; '
+    + 'each time is listed here, with every change they made. Otherwise staff can see your team’s email addresses, your '
+    + 'location names and towns, and which dates your data covers. Any change staff make to your team, name or status is '
+    + 'listed here too.',
+  )).toBeTruthy();
+});

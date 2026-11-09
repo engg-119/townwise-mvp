@@ -386,7 +386,9 @@ async function openAsAdminOrg(): Promise<{ staff: TestSession; orgId: string; lo
   const started = await call(server, `/api/admin/orgs/${setup.orgId}/open-as-admin`, { method: 'POST', session: staff });
   expect(started.status).toBe(201);
   const grantId = (await started.json() as { openAsAdmin: { id: string } }).openAsAdmin.id;
-  const created = await call(server, '/api/org/locations', { session: staff, json: { name: 'Main Street', town: { townId: 'hanover-nh' } } });
+  const created = await call(server, '/api/org/locations', {
+    session: staff, json: { name: 'Main Street', town: { townId: 'hanover-nh' }, orgId: setup.orgId },
+  });
   expect(created.status).toBe(201);
   return { staff, orgId: setup.orgId, locationId: (await created.json() as { location: { id: string } }).location.id, grantId };
 }

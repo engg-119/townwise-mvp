@@ -152,11 +152,13 @@ describe('a live open-as-admin grant', () => {
 
   it('staff do what an org admin does: rename, add a location, upload days that replace, read them back, write a note, delete the location’s sales', async () => {
     const name = `Renamed Kitchen ${randomUUID().slice(0, 6)}`;
-    const renamed = await call(server, '/api/org', { method: 'PATCH', session: staff, json: { name } });
+    const renamed = await call(server, '/api/org', { method: 'PATCH', session: staff, json: { name, orgId: org.orgId } });
     expect(renamed.status).toBe(200);
     expect(await renamed.json()).toEqual({ org: { id: org.orgId, name } });
 
-    const created = await call(server, '/api/org/locations', { session: staff, json: { name: 'Main Street', town: { townId: 'hanover-nh' } } });
+    const created = await call(server, '/api/org/locations', {
+      session: staff, json: { name: 'Main Street', town: { townId: 'hanover-nh' }, orgId: org.orgId },
+    });
     expect(created.status).toBe(201);
     const location = `/api/org/locations/${(await created.json() as { location: { id: string } }).location.id}`;
 

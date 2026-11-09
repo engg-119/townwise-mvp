@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import { useRouter } from 'expo-router';
 
-import { createLocation, type TownInput } from './api';
+import { createLocation, openAsAdminOrgId, type TownInput } from './api';
 import { CONTACT_EMAIL } from './contact';
 import { hasCode } from './errors';
 import { useAction } from './hooks';
@@ -56,7 +56,7 @@ export interface AddLocationTarget {
 
 export function AddLocationForm(props: { target?: AddLocationTarget }): React.JSX.Element {
   const { target } = props;
-  const { api, org, reloadOrg } = usePortal();
+  const { api, me, org, reloadOrg } = usePortal();
   const router = useRouter();
   const { readOnly, line } = useReadOnly();
   const known = target === undefined ? (org?.status === 'ready' ? org.data.placeSearch === true : false) : target.placeSearch;
@@ -80,7 +80,8 @@ export function AddLocationForm(props: { target?: AddLocationTarget }): React.JS
         if (added !== null) await target.onAdded(added);
         return;
       }
-      const location = place === null ? await createLocation(api, input) : await createLocationAt(api, input, place.placeId);
+      const orgId = openAsAdminOrgId(me);
+      const location = place === null ? await createLocation(api, input, orgId) : await createLocationAt(api, input, place.placeId, orgId);
       reloadOrg();
       router.push(locationHref(location.id));
     } catch (error) {
@@ -98,7 +99,7 @@ export function AddLocationForm(props: { target?: AddLocationTarget }): React.JS
       if (place !== null && placeChanged(error)) { setMode({ kind: 'search' }); setPlaceLine(PLACE_COPY.changed); return; }
       throw error;
     }
-  }, [api, reloadOrg, router, target]));
+  }, [api, me, reloadOrg, router, target]));
 
   function submit(place: UsablePlace | null): void {
     if (readOnly) return;

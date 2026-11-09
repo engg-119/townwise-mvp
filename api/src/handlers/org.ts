@@ -11,7 +11,7 @@ import type { Principal } from '../access/policy.ts';
 import { resolveAccess } from '../access/resolve.ts';
 import { memberOf } from './locations.ts';
 import { meResponse } from './me.ts';
-import { actorOf, lastAdmin, orgAdmin, removeActiveSeat } from './team.ts';
+import { actorOf, assertOpenAsAdminTab, lastAdmin, orgAdmin, removeActiveSeat } from './team.ts';
 
 /** Spec 10.3: the newest staff events shown on Settings. */
 const STAFF_ACTIVITY_EVENTS = 50;
@@ -20,9 +20,13 @@ const renameBody = z.object({ name: z.string().trim().min(2).max(120) });
 /** Strict: leaving carries nothing, so an organization id in the body is refused (spec 6.10 rule 3). */
 const leaveBody = z.strictObject({});
 
-/** PATCH /api/org { name } (P18). [CONFIRM: org admins can rename their own organization] */
+/**
+ * PATCH /api/org { name, orgId? } (P18). `orgId`, the organization the page shows, is required in open as admin (D25).
+ * [CONFIRM: org admins can rename their own organization]
+ */
 export async function renameOrg(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const admin = orgAdmin(principal);
+  assertOpenAsAdminTab(admin, req.body);
   const { scope } = admin;
   const { name } = parseInput(renameBody, req.body);
   const before = await ctx.stores.orgs.rename(scope, name);

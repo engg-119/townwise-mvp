@@ -217,7 +217,8 @@ export async function rejectRequest(ctx: TownwiseContext, req: Request, res: Res
 }
 
 // Organizations, people and the audit log (spec 10.7, P20 to P23). Staff reads here are not recorded (D7), and
-// they carry counts, dates, emails and names only: sales figures and note text are visible only through view-as.
+// they carry counts, dates, emails and names only: never a sales figure or note text. Staff read those through view-as
+// (D7), or by opening an organization nobody has joined as its admin (D25).
 
 /** P21: the newest events on the organization's page. */
 const RECENT_EVENTS = 20;

@@ -12,7 +12,7 @@ import type { MeResponse } from '../src/handlers/me.ts';
 import { AUDIT_DETAIL_KEYS, type AuditAction } from '../src/stores/audit-events.ts';
 import { addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import {
-  call, logLines, MINUTE, refresh, signIn, signInStaff, startTownwiseServer, STAFF_EMAIL, writesDuring,
+  call, logLines, makeStaff, MINUTE, refresh, signIn, signInStaff, startTownwiseServer, STAFF_EMAIL, writesDuring,
   type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
 import { joinAs, setupOrg } from './helpers/setup-org.ts';
@@ -47,6 +47,15 @@ function start(orgId: string, session = staff): Promise<Response> {
 
 function end(session = staff): Promise<Response> {
   return call(server, '/api/admin/view-as/end', { session, json: {} });
+}
+
+/** A second session of the staff member, which passes the gate too. */
+async function anotherStaffSession(): Promise<TestSession> {
+  // With codes enabled, a magic link answers a code challenge, so the factor is removed and seeded again.
+  await server.authStores.totp.remove(staff.userId);
+  const session = await signIn(server, STAFF_EMAIL);
+  await makeStaff(server, staff.userId, { enabledAt: new Date(server.clock.now().getTime() - MINUTE) });
+  return session;
 }
 
 function startViewAs(userId: string): Promise<Response> {
@@ -109,6 +118,11 @@ describe('POST /api/admin/orgs/:orgId/open-as-admin', () => {
     expect(await eventsIn(org.orgId)).toEqual([expect.objectContaining({
       action: 'open_as_admin.started', actorRole: 'superadmin', actorEmail: STAFF_EMAIL, viewAsGrantId: id, target: { type: 'grant', id }, details: {},
     })]);
+
+    // The portal's first read after the start, GET /api/org, runs in this mode and answers the organization.
+    const opened = await call(server, '/api/org', { session: staff });
+    expect(opened.status).toBe(200);
+    expect(await opened.json()).toMatchObject({ org: { id: org.orgId, name: org.name }, role: 'org_admin' });
   });
 
   it('refuses an organization someone joined or that is suspended with 409 org_not_in_setup, an unknown one with 404 and a malformed id with 400, writing nothing', async () => {
@@ -311,6 +325,83 @@ describe('End (POST /api/admin/view-as/end)', () => {
   });
 });
 
+describe('a tab still showing an organization this session no longer has open', () => {
+  /** X (`org`) open, then joined, then Y opened from the console: the X tab has not read GET /api/me since. */
+  async function openYAfterXJoined(): Promise<{ y: { orgId: string; name: string }; xGrantId: string; yGrantId: string }> {
+    const y = await setupOrg(server, staff);
+    const xGrantId = (await (await start(org.orgId)).json() as MeResponse).openAsAdmin?.id ?? '';
+    await joinAs(server, org.adminEmail);
+    const started = await start(y.orgId);
+    expect(started.status).toBe(201);
+    return { y, xGrantId, yGrantId: (await started.json() as MeResponse).openAsAdmin?.id ?? '' };
+  }
+
+  it('its rename and new location, naming X or no organization, answer 409 open_as_admin_active and write nothing in Y', async () => {
+    const { y } = await openYAfterXJoined();
+    const answers: { status: number; error: string }[] = [];
+    const writes = await writesDuring(server, async () => {
+      for (const named of [{ orgId: org.orgId }, {}]) {
+        answers.push(await errorOf(await call(server, '/api/org', { method: 'PATCH', session: staff, json: { name: 'Meant for X', ...named } })));
+        answers.push(await errorOf(await call(server, '/api/org/locations', {
+          session: staff, json: { name: 'Meant for X Street', town: { townId: 'hanover-nh' }, ...named },
+        })));
+      }
+    });
+    expect(answers).toEqual(Array.from({ length: 4 }, () => ({ status: 409, error: 'open_as_admin_active' })));
+    expect(writes).toEqual([]);
+    // A tab showing Y names Y, and its rename goes through.
+    const renamed = await call(server, '/api/org', { method: 'PATCH', session: staff, json: { name: `${y.name} Two`, orgId: y.orgId } });
+    expect(renamed.status).toBe(200);
+  });
+
+  it('its End, naming X’s grant, leaves Y’s running and writes nothing; End naming Y’s grant ends it', async () => {
+    const { y, xGrantId, yGrantId } = await openYAfterXJoined();
+    let stale: Response | undefined;
+    const writes = await writesDuring(server, async () => {
+      stale = await call(server, '/api/admin/view-as/end', { session: staff, json: { grantId: xGrantId } });
+    });
+    expect(stale?.status).toBe(200);
+    expect(writes).toEqual([]);
+    expect((await me(staff)).openAsAdmin).toMatchObject({ id: yGrantId, org: { id: y.orgId } });
+
+    const res = await call(server, '/api/admin/view-as/end', { session: staff, json: { grantId: yGrantId } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject(STAFF_ONLY);
+    expect(await grants().findOne({ _id: new Types.ObjectId(yGrantId) })).toMatchObject({ endReason: 'ended' });
+  });
+});
+
+describe('a grant that expired with an earlier staff sign-in', () => {
+  it('is ended as expired by the next sign-in’s End, recorded on its organization with its own summary', async () => {
+    const grantId = (await (await start(org.orgId)).json() as MeResponse).openAsAdmin?.id ?? '';
+    server.clock.advance(61 * MINUTE);
+    const next = await anotherStaffSession();
+    expect((await end(next)).status).toBe(200);
+
+    const grant = await grants().findOne({ _id: new Types.ObjectId(grantId) });
+    expect(grant).toMatchObject({ endedAt: server.clock.now(), endReason: 'expired' });
+    expect(grant).not.toHaveProperty('activeSessionId');
+    const ended = (await eventsOfGrant(grantId)).filter((event) => event.action === 'open_as_admin.ended');
+    expect(ended).toEqual([expect.objectContaining({
+      actorRole: 'superadmin', actorUserId: staff.userId, viewAsGrantId: grantId, details: { endReason: 'expired' },
+    })]);
+    expect(String(ended[0]?.orgId)).toBe(org.orgId);
+    const audit = await (await call(server, `/api/admin/audit?orgId=${org.orgId}`, { session: next })).json() as { events: AuditEventView[] };
+    expect(audit.events.filter((event) => event.action.startsWith('open_as_admin.')).map((event) => event.summary)).toEqual([
+      'Setting up as admin ended with the staff sign-in', 'Opened the organization as its admin, to set it up',
+    ]);
+  });
+
+  it('a start in another session leaves a grant still live there alone', async () => {
+    const grantId = (await (await start(org.orgId)).json() as MeResponse).openAsAdmin?.id ?? '';
+    const next = await anotherStaffSession();
+    const y = await setupOrg(server, next);
+    expect((await start(y.orgId, next)).status).toBe(201);
+    expect(await grants().findOne({ _id: new Types.ObjectId(grantId) })).toMatchObject({ activeSessionId: staff.sessionId, endedAt: null });
+    expect((await me(staff)).openAsAdmin?.id).toBe(grantId);
+  });
+});
+
 describe('the record', () => {
   it('start and end carry only allowlisted details, and no name, email or reason', async () => {
     expect((await start(org.orgId)).status).toBe(201);
@@ -350,10 +441,10 @@ describe('attribution', () => {
   /** Start, then make one of each kind of change as the staff member; resolves the location's id. */
   async function changeAsStaff(): Promise<string> {
     expect((await start(org.orgId)).status).toBe(201);
-    const renamed = await call(server, '/api/org', { method: 'PATCH', session: staff, json: { name: `${org.name} Two` } });
+    const renamed = await call(server, '/api/org', { method: 'PATCH', session: staff, json: { name: `${org.name} Two`, orgId: org.orgId } });
     expect(renamed.status).toBe(200);
     const created = await call(server, '/api/org/locations', {
-      session: staff, json: { name: 'Main Street', town: { townId: 'hanover-nh' } },
+      session: staff, json: { name: 'Main Street', town: { townId: 'hanover-nh' }, orgId: org.orgId },
     });
     expect(created.status).toBe(201);
     const locationId = (await created.json() as { location: { id: string } }).location.id;

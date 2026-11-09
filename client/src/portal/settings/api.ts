@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import type { ApiClient } from '../../api/client';
 import type { Auth } from '../../auth/auth';
+import { withOrgId } from '../api';
 import { meResponseSchema, type MeResponse } from '../schemas';
 
 // Settings (spec 10.3, F7, D9, P18), checked against api/src/handlers/org.ts: an org admin renames the
@@ -27,9 +28,9 @@ export type StaffActivity = z.infer<typeof staffActivitySchema>;
 
 export const staffActivityResponseSchema = z.object({ events: z.array(staffActivitySchema) });
 
-/** PATCH /api/org { name } (2 to 120 characters after trimming): 200 { org }. */
-export async function renameOrg(api: ApiClient, name: string): Promise<{ id: string; name: string }> {
-  const body = await api.json('/api/org', renamedOrgSchema, { method: 'PATCH', body: { name } });
+/** PATCH /api/org { name, orgId? } (2 to 120 characters after trimming; orgId from openAsAdminOrgId): 200 { org }. */
+export async function renameOrg(api: ApiClient, name: string, orgId: string | null): Promise<{ id: string; name: string }> {
+  const body = await api.json('/api/org', renamedOrgSchema, { method: 'PATCH', body: withOrgId({ name }, orgId) });
   return body.org;
 }
 

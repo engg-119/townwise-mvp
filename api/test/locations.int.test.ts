@@ -483,7 +483,7 @@ describe('the Places budget while its store is down', () => {
     } as unknown as TownwiseContext;
     const admin = {
       kind: 'member', userId: '000000000000000000000001', email: 'admin@example.test', role: 'org_admin', memberId: '000000000000000000000002',
-      scope: { orgId: '000000000000000000000003' }, viewAs: null,
+      scope: { orgId: '000000000000000000000003' }, viewAs: null, openAsAdmin: null,
     } as unknown as Principal;
     const res = {} as ExpressResponse;
     const withPlace = { body: { name: 'Outage', town: { townId: 'hanover-nh' }, placeId: 'ChIJTestPlace0001' } } as Request;

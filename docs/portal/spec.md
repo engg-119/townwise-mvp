@@ -102,13 +102,13 @@ Not taken, and why:
 
 | # | Decision | Why | Marker |
 |---|---|---|---|
-| D1 | Three roles: `superadmin` (Townwise staff), `org_admin`, `member`. A staff address never resolves as a member. | Staff manage any organization’s team, name and status from the console, and each of those actions is shown to that organization’s admins (D9). They read sales figures and note text only through audited view-as (D7). | [CONFIRM: lead default, the three roles] |
+| D1 | Three roles: `superadmin` (Townwise staff), `org_admin`, `member`. A staff address never resolves as a member. | Staff manage any organization’s team, name and status from the console, and each of those actions is shown to that organization’s admins (D9). They read sales figures and note text only through audited view-as (D7), or, before anyone has joined an organization, by opening it as its admin (D25). | [CONFIRM: lead default, the three roles] |
 | D2 | Staff are listed in `TOWNWISE_SUPERADMIN_EMAILS`. Every staff request needs TOTP enabled, a session created after TOTP was enabled, and a session at most 60 minutes old. | The kit cannot check a code per action without a kit change (Section 19). Once TOTP is on, every new session passes a code at sign-in. Confirming TOTP revokes the other sessions and keeps the current one, so “created after `enabledAt`” means “passed a code”. 60 minutes is as close to “every action” as the kit allows. | [CONFIRM: lead default, staff by config and TOTP for every staff action, read as a code at sign-in no more than 60 minutes ago] |
 | D3 | An email on an organization’s list joins it automatically, with no click, the first time that person continues with Google. Anyone else lands on Request access. Staff approve, which creates the organization and makes the requester its org admin. One exception: a person who already has a pending request presses Join, and only then is the request withdrawn (F2b). | Lead default. The exception keeps an invitation the person never chose from skipping staff review. | [CONFIRM: lead default, auto-join, request access, approval. Conflict: the critic review recommends a one-click Join screen for every invitation, because auto-join lets an org admin pull a stranger into their organization (F1).] |
 | D4 | Invitations are per organization. Two organizations may invite the same email; the person chooses. | No add result depends on another organization, so an org admin learns nothing about other customers and cannot block a stranger. | [CONFIRM: per-organization invitations] |
 | D5 | One active organization per person. | A restaurant group is one organization with several locations. One unique index replaces an organization picker. | [CONFIRM: one organization per person] |
 | D6 | Approval creates the organization, its first location and the requester’s admin seat. | The owner’s first page already shows their town and the upload step. | [CONFIRM: first location at approval] |
-| D7 | Staff see client sales figures and note text only through view-as. Without it, the console shows team emails, location names and towns, counts, date coverage and recent audit events, and those reads are not recorded. Setup writes (D23) give staff no read access. | One audited exception to “visible only to that client”. | [CONFIRM: staff see values only through view-as] |
+| D7 | Staff see client sales figures and note text only through view-as, except in an organization nobody has joined, which staff can open as its admin (D25). Without either, the console shows team emails, location names and towns, counts, date coverage and recent audit events, and those reads are not recorded. The setup panel’s routes (D23) give staff no read access; D25 does. | One audited exception to “visible only to that client”. | [CONFIRM: staff see values only through view-as] |
 | D8 | View-as is bound to the staff session, lasts 30 minutes, needs a reason, refuses every write and every console route, resolves exactly as the target user, gate pages included, and ends when the target’s organization changes. | “Exactly what the client sees.” | [CONFIRM: lead default, read-only, audited, bannered; 30 minutes; any non-staff user as target] |
 | D9 | Org admins see every Townwise staff action on their organization: each view-as with the staff email and reason, and every team, name and status change staff make. | Trust around private data. Not requested by the user. | [CONFIRM: show staff activity to org admins, with staff emails] |
 | D10 | The browser parses the file and sends only `{ date, guests, netSalesCents }` per day for one location. | Lead default. POS exports can contain customer names. | [CONFIRM: lead default, browser-side parsing, three fields] |
@@ -124,42 +124,43 @@ Not taken, and why:
 | D20 | Upload is web only. | A native file picker is a new dependency. | [CONFIRM: web-only upload] |
 | D21 | The town profile (P4, P15) and the sales chart (P12) render on web only. Native shows each chart’s text summary and “Show the numbers” table, built from View and Text, plus “See the chart at townwise.tech.” | The client has no `react-native-svg`, and adding it is a new dependency. | [CONFIRM: web-only charts] |
 | D22 | Staff can delete a person’s Townwise records, or a suspended organization’s. The audit log keeps the events with the email or names replaced. The kit’s user record is then deleted by hand. | The privacy page and Terms on `feature/townwise-web` already promise deletion on request. | [CONFIRM: staff-only deletion in v1; suspend before deleting an organization] |
-| D23 | Staff setup. While an organization is active and nobody has ever held a seat in it (open invitations don’t count), staff can add, rename, change the town of and delete (when empty) its locations, and upload or delete its daily totals, from its console page (F10b, 10.7). It is write-only: answers carry ids, names, towns, counts and date coverage, never a figure, and staff still read values only through view-as (D7). It ends at the first join and never reopens, even once everyone has left, and it is closed while the organization is suspended (409 `org_not_in_setup`). Each setup write is recorded before it takes effect and shown to the organization’s admins once they join (D9), and the uploads it makes read “Townwise staff”, never the staff email. Staff use it with a real client’s data only with that client’s consent. | A client who sends their history before anyone on their team signs in finds a populated page on their first visit, not an empty one. It never reopens because an organization everyone left belongs to a former client, with no admin to see a staff write in their activity. | [CONFIRM: staff can add locations and upload daily totals for an organization nobody has joined yet; write-only; ends at the first join; used only with the client's consent] |
+| D23 | Staff setup. While an organization is active and nobody has ever held a seat in it (open invitations don’t count), staff can add, rename, change the town of and delete (when empty) its locations, and upload or delete its daily totals, from its console page (F10b, 10.7). It is write-only: answers carry ids, names, towns, counts and date coverage, never a figure, and staff still read values only through view-as (D7). It ends at the first join and never reopens, even once everyone has left, and it is closed while the organization is suspended (409 `org_not_in_setup`). Each setup write is recorded before it takes effect and shown to the organization’s admins once they join (D9), and the uploads it makes read “Townwise staff”, never the staff email. Staff use it with a real client’s data only with that client’s consent. D25 (2026-11-09) supersedes its write-only limit: staff can also open such an organization as its admin, reads included. The setup panel’s own routes stay write-only. | A client who sends their history before anyone on their team signs in finds a populated page on their first visit, not an empty one. It never reopens because an organization everyone left belongs to a former client, with no admin to see a staff write in their activity. | [CONFIRM: staff can add locations and upload daily totals for an organization nobody has joined yet; write-only; ends at the first join; used only with the client's consent] |
+| D25 | Open as admin. While an organization is in setup (D23: active, and nobody has ever joined it), staff can open its portal as its admin from its console page (P21). They see and change everything an org admin can, except people (Team, invitations, roles, leaving, joining), until the first join, a suspension, End, sign-out or the end of their staff sign-in (D2). It asks no reason and has no timer of its own. One at a time per staff session. Every change is recorded with actor role `superadmin` and shown to the organization’s admins once they join (D9), and the records it makes read “Townwise staff”. It supersedes D23’s write-only limit and relaxes D7 for organizations nobody has joined. D23’s consent rule still applies. | Owner decision, 2026-11-09. Setting up a client before anyone signs in needs the real pages; until the first join, the organization holds only what staff put in it. | [CONFIRM: staff can open an organization nobody has joined as its admin, with full read and write except people, until the first join or the end of their sign-in session] |
 
 ---
 
 ## 3. Roles and permissions
 
-| Capability | Staff | Staff in view-as | Org admin | Member | Signed in, no organization |
-|---|---|---|---|---|---|
-| Read own access state (`GET /api/me`) | yes | the target’s | yes | yes | yes |
-| Send an access request | no | no | no | no | yes, in `no_org`, `rejected`, `removed` |
-| Join, or decline, an organization that invited their email | no | no | no | no | yes, in `invited` |
-| Read the organization, locations, town profiles, sales, notes, calibration | team emails, location names and towns, counts and date coverage (D7) | read-only | yes | yes | no |
-| Upload sales | only during setup (D23), new and replaced days | no | yes, new and replaced days | yes, new days only | no |
-| Delete all sales for a location | only during setup (D23) | no | yes | no | no |
-| Add notes; edit or delete own notes | no | no | yes | yes | no |
-| Edit or delete anyone’s notes | no | no | yes | no | no |
-| Add, rename, change the town of, or delete (when empty) a location | only during setup (D23) | no | yes | no | no |
-| Rename the organization | any | no | own | no | no |
-| Read the team | any | read-only, if the target is an org admin | own | no | no |
-| Add emails, change roles, remove people | any | no | own | no | no |
-| Leave the organization | no | no | yes, unless last admin | yes | no |
-| See Townwise staff activity on the organization | audit log | read-only, if the target is an org admin | yes | no | no |
-| Approve or reject requests; create, rename, suspend, reactivate organizations | yes | no | no | no | no |
-| See everyone across organizations; sign a person out everywhere | yes | no | no | no | no |
-| Read the audit log | yes | no | no | no | no |
-| Delete a person’s records, or a suspended organization’s (D22) | yes | no | no | no | no |
-| Start view-as | yes | no | no | no | no |
-| End view-as | yes | yes | no | no | no |
-| Two-step sign-in (`/settings/security`, **Exists**) | required | not applicable | optional, recommended | optional | optional |
+| Capability | Staff | Staff in view-as | Staff open as admin (D25) | Org admin | Member | Signed in, no organization |
+|---|---|---|---|---|---|---|
+| Read own access state (`GET /api/me`) | yes | the target’s | the org admin’s, with `openAsAdmin` | yes | yes | yes |
+| Send an access request | no | no | no | no | no | yes, in `no_org`, `rejected`, `removed` |
+| Join, or decline, an organization that invited their email | no | no | no | no | no | yes, in `invited` |
+| Read the organization, locations, town profiles, sales, notes, calibration | team emails, location names and towns, counts and date coverage (D7) | read-only | yes | yes | yes | no |
+| Upload sales | only during setup (D23), new and replaced days | no | yes, new and replaced days | yes, new and replaced days | yes, new days only | no |
+| Delete all sales for a location | only during setup (D23) | no | yes | yes | no | no |
+| Add notes; edit or delete own notes | no | no | yes | yes | yes | no |
+| Edit or delete anyone’s notes | no | no | yes | yes | no | no |
+| Add, rename, change the town of, or delete (when empty) a location | only during setup (D23) | no | yes | yes | no | no |
+| Rename the organization | any | no | the one open | own | no | no |
+| Read the team | any | read-only, if the target is an org admin | no (the console) | own | no | no |
+| Add emails, change roles, remove people | any | no | no (the console) | own | no | no |
+| Leave the organization | no | no | no | yes, unless last admin | yes | no |
+| See Townwise staff activity on the organization | audit log | read-only, if the target is an org admin | yes | yes | no | no |
+| Approve or reject requests; create, rename, suspend, reactivate organizations | yes | no | no (409 until End) | no | no | no |
+| See everyone across organizations; sign a person out everywhere | yes | no | no (409 until End) | no | no | no |
+| Read the audit log | yes | no | no (409 until End) | no | no | no |
+| Delete a person’s records, or a suspended organization’s (D22) | yes | no | no (409 until End) | no | no | no |
+| Start view-as | yes | no | no (409 until End) | no | no | no |
+| End view-as | yes | yes | yes (End ends open as admin) | no | no | no |
+| Two-step sign-in (`/settings/security`, **Exists**) | required | not applicable | required (the staff member’s own) | optional, recommended | optional | optional |
 
 Rules behind the matrix:
 
 - An organization always keeps at least one active org admin. Demoting, removing or leaving as the last one answers 409 `last_admin`, for org admins and staff alike.
 - A staff email can be invited like any other, but it never resolves as a member, because the staff branch runs first.
 - Only the addresses in `TOWNWISE_SUPERADMIN_EMAILS` are staff. Any other address a staff member adds to an organization, a personal Gmail included, joins as an ordinary member with full member access, no banner and no time limit. That row shows “Added by Townwise staff” on Team (P17), and the add appears in the organization’s staff activity (9.3).
-- Every staff action on an organization (team, name, status, view-as, setup) is recorded before it takes effect and shown to that organization’s admins (9.3).
+- Every staff action on an organization (team, name, status, view-as, setup, opening it as its admin) is recorded before it takes effect and shown to that organization’s admins (9.3). The changes staff make while open as admin (D25) are recorded after they take effect, as an org admin’s are (9.3).
 - Removed people keep their kit user. They may request access for another organization, or join another that invited them.
 
 ---
@@ -209,7 +210,7 @@ Input: the kit’s `AuthContext` (`userId`, `sessionId`, `platform`, `authentica
    1. `totp.get(userId)` is not `enabled`: `staff_setup_required`.
    2. `authenticatedAt <= factor.enabledAt`: `staff_reauth_required`, reason `session_before_codes`.
    3. `now − authenticatedAt > 60 minutes`: `staff_reauth_required`, reason `session_too_old`.
-   4. Otherwise `self` is `staff`, with `verifiedUntil = authenticatedAt + 60 minutes`. If a grant for this `sessionId` is live by time (Section 8), resolve its target with steps 3 to 7 (never step 2). The target’s resolved organization id is the organization of its active seat (step 3, active or suspended), or null. If that id equals `grant.orgId` (null equals null), the target’s access is `effective` and the grant is returned, so `viewAs` is set. Otherwise the grant is ignored exactly as an expired one, and `effective` is `self`.
+   4. Otherwise `self` is `staff`, with `verifiedUntil = authenticatedAt + 60 minutes`. If a grant for this `sessionId` is live by time (Section 8), resolve its target with steps 3 to 7 (never step 2). The target’s resolved organization id is the organization of its active seat (step 3, active or suspended), or null. If that id equals `grant.orgId` (null equals null), the target’s access is `effective` and the grant is returned, so `viewAs` is set. Otherwise the grant is ignored exactly as an expired one, and `effective` is `self`. An open-as-admin grant (`kind: 'open_as_admin'`, D25, Section 8a) is live by time and while its organization exists and is in setup (D23); then `effective` is that organization’s `member` access with role `org_admin`, `openAsAdmin` is set, and steps 3 to 7 do not run. Otherwise it is ignored the same way.
 3. An active seat (`tw_members.activeUserId == userId`): `member` if the organization is `active`, `org_suspended` if it is `suspended`.
 4. Open invitations for the user’s current email (`tw_members.inviteEmail == email`, `status: 'invited'`) in active organizations: `invited`, listing all of them.
 5. A pending request by this user: `pending`.
@@ -222,7 +223,7 @@ An invitation outranks a pending request, so a second employee who requested acc
 
 ### 4.3 Client routing
 
-The client calls `GET /api/me` after restore, after sign-in, after join and after leave. It calls it again whenever an `/api` call answers 403 `no_access`, `forbidden`, `staff_setup_required` or `staff_reauth_required`, or 409 `view_as_active` or `open_as_admin_active`. It clears cached organization data before it re-routes. When a read of `GET /api/me` shows open as admin gone (someone joined, the organization was suspended), the client sends `POST /api/admin/view-as/end` once, because the resolver never writes and a reactivation inside the staff window would otherwise bring the grant back.
+The client calls `GET /api/me` after restore, after sign-in, after join and after leave. It calls it again whenever an `/api` call answers 403 `no_access`, `forbidden`, `staff_setup_required` or `staff_reauth_required`, or 409 `view_as_active` or `open_as_admin_active`. It clears cached organization data before it re-routes. When a read of `GET /api/me` shows open as admin gone (someone joined, the organization was suspended), the client sends `POST /api/admin/view-as/end` once, with the grant id it showed, because the resolver never writes and a reactivation inside the staff window would otherwise bring the grant back.
 
 | State | Route |
 |---|---|
@@ -430,7 +431,7 @@ Indexes: `{ userId: 1 }` unique with `partialFilterExpression: { status: 'pendin
 | `town` | `{ townId: TownId \| null; name: string; state: string }` | |
 | `placeId` | string or null | the Google place id. Approval copies the request’s (F3 step 7). An org admin sets or changes it through the Places search on Add location (P10) or Location settings (P16), and the API stores Google’s current id once the town is checked against Google (10.3). Null otherwise: a location added without the search, a `placeId: null` write, or a town changed by hand. Older documents read as null |
 | `createdAt`, `createdBy` | | |
-| `byStaff` | `true`, or absent | set only on a location staff added during setup (D23), whose `createdBy` is the staff user id |
+| `byStaff` | `true`, or absent | set only on a location staff added during setup (D23) or while open as admin (D25), whose `createdBy` is the staff user id |
 
 Indexes: `{ orgId: 1, nameKey: 1 }` unique; `{ orgId: 1, createdAt: 1 }`. Limit: 25 per organization. [CONFIRM: 25 locations]
 
@@ -449,26 +450,27 @@ Indexes: `{ orgId: 1, locationId: 1, date: 1 }` unique. The schema is `strict: '
 
 ### 6.6 `tw_uploads`
 
-`_id`, `orgId`, `locationId`, `uploadedBy` (userId), `uploadedAt`, `status` (`'applying' | 'applied'`), `dayCount`, `inserted`, `replaced`, `kept` (days a member’s upload left unchanged because they already had data; always 0 for an org admin’s), `firstDate`, `lastDate`, `hasGuests`, `hasNetSales`, and `byStaff: true` only on an upload staff made during setup (D23), whose `uploadedBy` is the staff user id. It holds no file name (file names can contain people’s names), no column names and no row count. Index: `{ orgId: 1, locationId: 1, uploadedAt: -1 }`. A stored file's days (11A) get their own record too, written by the file reader; until this record gains a `fileId` (with the sales history work, 10.10), the link is the file's `uploadId` (6.11).
+`_id`, `orgId`, `locationId`, `uploadedBy` (userId), `uploadedAt`, `status` (`'applying' | 'applied'`), `dayCount`, `inserted`, `replaced`, `kept` (days a member’s upload left unchanged because they already had data; always 0 for an org admin’s), `firstDate`, `lastDate`, `hasGuests`, `hasNetSales`, and `byStaff: true` only on an upload staff made during setup (D23) or while open as admin (D25, including the file reader’s record for a file staff stored), whose `uploadedBy` is the staff user id. It holds no file name (file names can contain people’s names), no column names and no row count. Index: `{ orgId: 1, locationId: 1, uploadedAt: -1 }`. A stored file's days (11A) get their own record too, written by the file reader; until this record gains a `fileId` (with the sales history work, 10.10), the link is the file's `uploadId` (6.11).
 
 ### 6.7 `tw_notes`
 
-Fields are in Section 12. Index: `{ orgId: 1, locationId: 1, startDate: 1 }`. Limit: 1,000 per location. [CONFIRM: 1,000 notes]
+Fields are in Section 12, and `byStaff: true` only on a note staff wrote while open as admin (D25), whose `createdBy` is the staff user id. Index: `{ orgId: 1, locationId: 1, startDate: 1 }`. Limit: 1,000 per location. [CONFIRM: 1,000 notes]
 
 ### 6.8 `tw_view_as_grants`
 
 | Field | Type | Rule |
 |---|---|---|
 | `_id` | ObjectId | |
+| `kind` | `'open_as_admin'`, or absent | absent on a view-as grant (every grant before D25); `'open_as_admin'` on an open-as-admin grant (Section 8a) |
 | `actorUserId`, `actorSessionId` | string | the staff member and their kit session id |
 | `activeSessionId` | string, present only while not ended | |
-| `targetUserId` | string | |
-| `orgId` | ObjectId or null | the target’s resolved organization at start (4.2 step 2.4); the grant is live only while the target’s resolved organization still equals it |
-| `reason` | string | 5 to 200 |
-| `startedAt`, `expiresAt` | Date | `expiresAt = startedAt + 30 minutes` [CONFIRM: 30 minutes] |
+| `targetUserId` | string | view-as only |
+| `orgId` | ObjectId or null | view-as: the target’s resolved organization at start (4.2 step 2.4); the grant is live only while the target’s resolved organization still equals it. Open as admin: the organization opened, never null |
+| `reason` | string | 5 to 200; view-as only |
+| `startedAt`, `expiresAt` | Date | view-as: `expiresAt = startedAt + 30 minutes` [CONFIRM: 30 minutes]; open as admin: the end of the staff window (D2) |
 | `endedAt`, `endReason` | Date or null, `'ended' \| 'replaced' \| 'expired'` or null | `expired` when the grant is cleared after `expiresAt` (Section 8) |
 
-Indexes: `{ activeSessionId: 1 }` unique, `$type` partial (one live grant per session); `{ actorUserId: 1, startedAt: -1 }`. Grants are never deleted.
+Indexes: `{ activeSessionId: 1 }` unique, `$type` partial (one live grant per session, across both kinds); `{ actorUserId: 1, startedAt: -1 }` (also finds a staff member’s grants that expired holding another session, 8a). Grants are never deleted.
 
 ### 6.9 `tw_audit_events`
 
@@ -477,14 +479,15 @@ Fields are in Section 9. Indexes: `{ at: -1 }`, `{ orgId: 1, at: -1 }`, `{ actor
 ### 6.10 Isolation rules
 
 1. Every tenant document (`tw_members`, `tw_locations`, `tw_sales_days`, `tw_uploads`, `tw_notes`, `tw_files`, `tw_imports`, `tw_upload_days`, `tw_file_entries`, `tw_files_usage`) carries `orgId`. Every tenant compound index leads with `orgId`, except the two seat indexes, which are keyed by the person.
-2. Tenant store functions take a branded `OrgScope` as their first argument and add `orgId: scope.orgId` to every filter, update, delete and insert. Only `api/src/access/policy.ts` can mint an `OrgScope`, and only through these six functions:
+2. Tenant store functions take a branded `OrgScope` as their first argument and add `orgId: scope.orgId` to every filter, update, delete and insert. Only `api/src/access/policy.ts` can mint an `OrgScope`, and only through these seven functions:
    - `scopeOf(memberPrincipal)`: member routes (rule 3).
    - `scopeForStaffOrg(staff, orgId)`: `/api/admin/orgs/:orgId/*` (rule 5). It reads the organization first and answers 404 if it is absent.
    - `scopeForNewOrg(staff, orgId)`: approval (F3) and staff creation (F10) only, for the organization those handlers just created.
    - `scopeForJoinedInvite(invite)`: the join handler only, after its compare-and-set succeeds.
    - `scopeForClaimedImport(claim)`: the file reader only (`files/worker.ts`, 11A), for the organization of the import it just claimed.
    - `scopeForSweep(found)`: the daily file sweep only (`files/sweeper.ts`, 11A.7), for the organization of a file, an import or a blob it found.
-3. Handlers on `/api/org/*` take the organization only from the principal. No member route carries an organization id in its path, query or body.
+   - `scopeForOpenAsAdmin(grant)`: the resolver only (`access/resolve.ts`), for the organization of the open-as-admin grant holding the staff session (D25, 8a).
+3. Handlers on `/api/org/*` take the organization only from the principal. No member route takes an organization id from its path, query or body. In open as admin (D25), `PATCH /api/org` and `POST /api/org/locations` carry the `orgId` the page shows, which is only compared with the grant’s and refused when it differs (8a).
 4. Location-scoped routes first load `{ _id: locationId, orgId }`. Another organization’s location answers 404 `not_found`, exactly like a location that does not exist. Children (sales, uploads, notes) copy `orgId` and `locationId` from that read.
 5. Staff routes on `/api/admin/orgs/:orgId/*` mint a scope from the path through one function that requires the `staff` principal and reads the organization first (404 if absent).
 6. Responses never include another organization’s ids or names, except the invitation list shown to its invitee.
@@ -494,7 +497,7 @@ Fields are in Section 9. Indexes: `{ at: -1 }`, `{ orgId: 1, at: -1 }`, `{ actor
 
 ### 6.11 `tw_files`
 
-One row per stored file (11A). `_id` (the file id, used in blob names), `orgId`, `locationId`, `importId`, `purpose` (`'history'`), `uploadedBy` (userId), `uploaderRole` (`'org_admin' | 'member'` at upload; decides replace or add, 11.4), `uploadedAt`, `name` (the original file name: last path part, control characters removed, NFC, at most 255 characters; shown to the organization only, never logged, audited, put in a blob name or a URL, or sent to a model), `kind` (`'text' | 'xlsx' | 'xls' | 'pdf' | 'docx' | 'doc' | 'zip' | 'other'`), `sizeBytes`, `fingerprint` (SHA-256 over the chunk size and each chunk's SHA-256 in order, `townwise-chunks-v1:{chunkSize}:{hashes}`, so the same file uploaded again matches; it is not the file's plain SHA-256), `upload` (while uploading: `{ chunkSize, chunkCount, chunks: ({ bytes, sha256 } | null)[], head (first 8 KiB, base64), expiresAt }`; null after complete), `status` (`'uploading' | 'stored' | 'queued' | 'reading' | 'waiting' | 'read' | 'kept' | 'failed' | 'deleting'`), `outcome` (11A.6), `progress` (while reading: `{ phase, done, total, unit, phaseStartedAt, updatedAt }`), `readStartedAt`, `readMs`, `answers` (per sheet index), `uploadId`, `result` (counts and dates), `report` (11A.5), `cleanBytes`, `rawDeletedAt` (the name becomes the kind's label then, a workbook's sheet names in `report.sheets` become `Sheet 1`, `Sheet 2` and so on, and a ZIP's entry paths are cleared), `attempts`, `entries` (a ZIP's `{ total, used, kept }`, once listed), `modelCalls` and `costMicroUsd` (the AI column step's calls for this file, 11A.4), `aiChoices` (each call's answer, column indexes only, keyed by a SHA-256 of the redacted profile it was asked about, so a re-read of the same table reuses it without a call), `purgeRaw` (set by a staff purge while the file was busy, 10.7). The person's answers are keyed by sheet index, or `family:<signature>` for a family of a ZIP's tables. `strict: 'throw'`. Indexes: `{ orgId: 1, locationId: 1, uploadedAt: -1 }`, `{ orgId: 1, importId: 1, uploadedAt: 1 }`, `{ orgId: 1, locationId: 1, fingerprint: 1 }`, `{ status: 1, 'upload.expiresAt': 1 }`, `{ status: 1, uploadedAt: 1 }` and `{ purgeRaw: 1 }` (sparse) (the sweep).
+One row per stored file (11A). `_id` (the file id, used in blob names), `orgId`, `locationId`, `importId`, `purpose` (`'history'`), `uploadedBy` (userId), `uploaderRole` (`'org_admin' | 'member'` at upload; decides replace or add, 11.4), `byStaff` (`true` only on a file staff stored while open as admin, D25: it reads “Townwise staff”, and the file reader records its upload as staff’s), `uploadedAt`, `name` (the original file name: last path part, control characters removed, NFC, at most 255 characters; shown to the organization only, never logged, audited, put in a blob name or a URL, or sent to a model), `kind` (`'text' | 'xlsx' | 'xls' | 'pdf' | 'docx' | 'doc' | 'zip' | 'other'`), `sizeBytes`, `fingerprint` (SHA-256 over the chunk size and each chunk's SHA-256 in order, `townwise-chunks-v1:{chunkSize}:{hashes}`, so the same file uploaded again matches; it is not the file's plain SHA-256), `upload` (while uploading: `{ chunkSize, chunkCount, chunks: ({ bytes, sha256 } | null)[], head (first 8 KiB, base64), expiresAt }`; null after complete), `status` (`'uploading' | 'stored' | 'queued' | 'reading' | 'waiting' | 'read' | 'kept' | 'failed' | 'deleting'`), `outcome` (11A.6), `progress` (while reading: `{ phase, done, total, unit, phaseStartedAt, updatedAt }`), `readStartedAt`, `readMs`, `answers` (per sheet index), `uploadId`, `result` (counts and dates), `report` (11A.5), `cleanBytes`, `rawDeletedAt` (the name becomes the kind's label then, a workbook's sheet names in `report.sheets` become `Sheet 1`, `Sheet 2` and so on, and a ZIP's entry paths are cleared), `attempts`, `entries` (a ZIP's `{ total, used, kept }`, once listed), `modelCalls` and `costMicroUsd` (the AI column step's calls for this file, 11A.4), `aiChoices` (each call's answer, column indexes only, keyed by a SHA-256 of the redacted profile it was asked about, so a re-read of the same table reuses it without a call), `purgeRaw` (set by a staff purge while the file was busy, 10.7). The person's answers are keyed by sheet index, or `family:<signature>` for a family of a ZIP's tables. `strict: 'throw'`. Indexes: `{ orgId: 1, locationId: 1, uploadedAt: -1 }`, `{ orgId: 1, importId: 1, uploadedAt: 1 }`, `{ orgId: 1, locationId: 1, fingerprint: 1 }`, `{ status: 1, 'upload.expiresAt': 1 }`, `{ status: 1, uploadedAt: 1 }` and `{ purgeRaw: 1 }` (sparse) (the sweep).
 
 ### 6.12 `tw_imports`
 
@@ -648,30 +651,33 @@ interface TownwiseRoute {
    3. The route with policy `staff_self` (`POST /api/admin/view-as/end`) is exempt from both.
    
    Each GET that passes logs `townwise.view_as_read { grantId, routeId }`.
+
+   Then the **open-as-admin guard** (D25, 8a), when the principal is in open as admin: `staff_self` passes; a route with policy `staff`, any method, answers 409 `open_as_admin_active`; a route not marked `openAsAdmin` answers 403 `open_as_admin_refused`, GETs included; a marked route goes on. So a new route stays closed in that mode until someone marks it.
 5. **Policy**, evaluated on `effective` except `staff_self`:
    - `signed_in`: anyone who passed step 1.
    - `member`: `access.state === 'member'`, else 403 `no_access`.
    - `org_admin`: `member` and `role === 'org_admin'`. A member gets 403 `forbidden`; anyone else gets 403 `no_access`.
    - `staff`: passes only for a principal of kind `staff`, which never carries view-as. `staff_setup_required` and `staff_reauth_required` answer 403 with those codes. Everyone else gets 403 `forbidden`, and the staff checks run after the email check, so a non-staff caller never learns anything about staff two-step state.
-   - `staff_self`: the signed-in person’s own staff gate (`self`: TOTP enabled, session created after `enabledAt`, under 60 minutes), computed before the view-as substitution. It passes for a `staff` principal and for any principal in view-as, because a grant is live only while its actor passes that gate. Otherwise it answers exactly as `staff` does. Used only by `POST /api/admin/view-as/end`.
+   - `staff_self`: the signed-in person’s own staff gate (`self`: TOTP enabled, session created after `enabledAt`, under 60 minutes), computed before the view-as substitution. It passes for a `staff` principal and for any principal in view-as or open as admin, because a grant is live only while its actor passes that gate. Otherwise it answers exactly as `staff` does. Used only by `POST /api/admin/view-as/end`.
 6. **Body parser**, `express.json({ limit })`, when the spec names a body limit. The guard and the policies never read the body, so a refused request is never parsed. The `/api` router mounts no router-wide parser, so the upload route’s 256 KB parser never widens the others (server-core: body parsing is per router, **Exists**).
 7. **Route limiter**, when named (`uploads`, `requests`, `view-as`, `places`; Section 10.8; `chat` in `docs/portal/tuning-chat.md`), keyed on `acct:<userId>`.
 8. The handler receives the principal. For member routes, `principal.scope` is the only organization it can use.
 
-Boot throws if two specs share a method and path, if a GET spec names a body limit, or if any route other than `view-as/end` uses `staff_self`. Paths not in the table reach server-core’s `notFound` (**Exists**).
+Boot throws if two specs share a method and path, if a GET spec names a body limit, if any route other than `view-as/end` uses `staff_self`, or if a `staff` or `staff_self` route is marked `openAsAdmin`. Paths not in the table reach server-core’s `notFound` (**Exists**).
 
 ```ts
 interface StaffActor { userId: string; email: string; sessionId: string; verifiedUntil: string }
 interface ViewAsContext { grantId: string; actor: StaffActor }   // the staff member doing the viewing
+interface OpenAsAdminContext { grantId: string; actor: StaffActor }   // D25: the staff member with the organization open
 
 type Principal =
   | { kind: 'staff'; actor: StaffActor }
-  | { kind: 'member'; userId: string; email: string; scope: OrgScope; role: Role; memberId: string;
-      viewAs: ViewAsContext | null }
+  | { kind: 'member'; userId: string; email: string; scope: OrgScope; role: Role; memberId: string | null;   // null only in open as admin
+      viewAs: ViewAsContext | null; openAsAdmin: OpenAsAdminContext | null }
   | { kind: 'other'; userId: string; email: string; access: Access; viewAs: ViewAsContext | null };
 ```
 
-In view-as, `userId` and `email` are the target’s, and `viewAs.actor` is the staff member. `MeResponse.user` and `MeResponse.staff` are built from the actor whenever there is one (`actor`, or `viewAs.actor`). `view-as/end` takes the session id from `viewAs.actor.sessionId`. Audit events use the actor, and view-as writes nothing except its own start and end.
+In view-as, `userId` and `email` are the target’s, and `viewAs.actor` is the staff member. `MeResponse.user` and `MeResponse.staff` are built from the actor whenever there is one (`actor`, or `viewAs.actor`). `view-as/end` takes the session id from `viewAs.actor.sessionId`. Audit events use the actor, and view-as writes nothing except its own start and end. In open as admin (D25), the principal is the grant organization’s org admin, with the staff member’s `userId` and `email`, `memberId` null (they hold no seat), the resolver’s scope, and `openAsAdmin.actor` the staff member; the changes it makes are recorded with actor role `superadmin` and the grant id (9.3).
 
 ### 7.3 GET is side-effect free
 
@@ -700,6 +706,28 @@ interface ViewAsView {
   reason: string;
   startedAt: string;
   endsAt: string;
+}
+```
+
+---
+
+## 8a. Open as admin (D25)
+
+- **Start** (`POST /api/admin/orgs/:orgId/open-as-admin`, policy `staff`, limiter `view-as`): the console’s “Open as admin” on P21, shown only while `org.inSetup`. No body and no reason. The server reads the organization (404), checks that it is in setup (409 `org_not_in_setup` once someone has joined or while it is suspended), and clears the grant still holding this session only when it is no longer live, recording `open_as_admin.ended` (`expired` or `replaced`). A live one is never replaced: the guard has already answered 409, and a grant another tab started since answers the same 409. It also ends this staff member’s grants that expired holding another session (Ends, below). Then it writes `open_as_admin.started` (ids only) and inserts the grant: `kind: 'open_as_admin'`, the organization, `activeSessionId = sessionId`, `expiresAt` the end of the staff window (D2). A duplicate key (two tabs starting at once) writes `staff_action.not_applied` and answers 409 `open_as_admin_active`. It returns the new `MeResponse`.
+- **Live grant:** `activeSessionId == ctx.sessionId`, `endedAt == null`, `expiresAt > now`, the staff gate passes on this request, and the organization exists and is in setup (D23: active, no `firstJoinedAt`, no member row with `joinedAt`), checked on every request. If any of these fails, the session is plain staff for that request.
+- **Effect:** `GET /api/me` answers the organization’s `member` access with role `org_admin`, `openAsAdmin` set and `viewAs` null; `user` and `staff` stay the staff member’s. Requests run as that organization’s org admin, scoped to the grant’s organization, never one from the request. Only routes marked `openAsAdmin` run (7.2): every member and org admin route but those for people, seats and requests (`me.join`, `me.decline`, `me.welcome`, `requests.create`, `org.leave`, `org.members.*`), which answer 403 `open_as_admin_refused`, GETs included; Team stays in the console. Staff routes answer 409 `open_as_admin_active`, except End. A test pins the list, so a new route forces a decision.
+- **One organization at a time per session.** A second start answers 409 while one is live, so a session’s other tabs never move from one organization to another between two requests. A different device or browser (another session) may hold its own.
+- **A tab left on an earlier organization.** Every tab of a session shares its grant, and a tab reads `GET /api/me` only when it loads or an answer tells it to. Renaming the organization and adding a location name nothing of it in their path, so in this mode they carry the `orgId` the page shows; one naming another organization, or none, answers 409 `open_as_admin_active`, and the client reads `/api/me` again. End carries the `grantId` the page shows and then ends that grant only. Every other write names a location, note, file or conversation, which another organization answers with 404. So a tab still showing an organization that was joined or ended never writes into, or ends, the one the session has open now.
+- **Ends** at End (`POST /api/admin/view-as/end`, shared with view-as), sign-out, the end of the staff window (D2), a suspension, or the first join. The resolver never writes (7.3), so a suspension or a join makes the grant not live without ending it: the client sends End once when a `GET /api/me` read shows the mode gone (4.3, 15.5a), so a reactivation inside the staff window cannot bring it back. A grant that runs to the end of the staff window can no longer be ended from its own session, so the next start or End by the same staff member, from any session, ends it as `expired` and records it; until then the organization’s staff activity shows its start without an end.
+- **Record:** `open_as_admin.started` is written before the grant exists, so no open-as session is unrecorded. Changes made inside go through the org routes and are written after the effect, as an org admin’s are, with actor role `superadmin`, the staff email and the grant id in `viewAsGrantId` (9.3). What they create (locations, uploads, notes, stored files) is stored `byStaff` and reads “Townwise staff”, never the staff email (10.1). `open_as_admin.ended` is written after the grant is cleared. No log line is written per request: the organization holds only what staff put in it, and every write is audited.
+- **TownwiseAI:** turns count against the organization’s monthly budget, as any admin’s do, and stop at it (409 `chat_budget_exhausted`). A saved proposal is a note by Townwise staff.
+- **Client:** the banner is 15.5a; the top bar has no Team, and Settings has no Leave section.
+
+```ts
+interface OpenAsAdminView {
+  id: string;                                   // the grant id
+  org: { id: string; name: string };
+  startedAt: string;
 }
 ```
 
@@ -770,13 +798,14 @@ An event’s `orgId` is the organization it touches: for `people.signed_out_ever
 - **Append only, with one redaction path.** The store exposes `insert`, `query`, and `redact`, which only the deletion handlers call (10.7, Deletion). For a deleted person, `redact` replaces their email with “deleted person” in `actorEmail`, `details.email` and `details.targetEmail`. For a deleted organization, it replaces the organization’s name with “deleted organization” and its locations’ names with “deleted location” in `details.name`, `details.from`, `details.to` and `details.orgName`, in events with that `orgId` and in its request’s `access_request.created`. No other code path updates or deletes an event. [Build note: the organization’s fields are chosen by action (`org.created` name, `org.renamed` from and to, `location.*` name, the request’s `orgName`), so names from before a rename go too and `member.role_changed`’s from and to, which are roles, stay. A person’s events are also found by user id: the `actorEmail` of every event they acted in, the `details.email` of their own `member.joined`, `member.left` and `member.declined`, and the `targetEmail` of every view-as of them, whatever address they had then. And `details.email` is redacted, in anyone’s events, for every address the person is known by: the current one, those on their seats (`email`) and requests (`emailAtRequest`), read before they are deleted, and those their own events and the events about their seats hold. So other people’s `member.invited`, `member.role_changed`, `member.removed` and approval-time `member.joined` under an older address go too.]
 - **When it is written.**
   - Events by org members and org admins are written after the effect succeeds. If such a write fails, the action stands, the server logs `townwise.audit_write_failed { action, orgId, targetId }` at error level, and the response is still success.
-  - Every staff action’s event (actor role `superadmin`) is written before the effect, `view_as.started` included. Handlers run their read-only checks first (404, validation), then write the event, then act. If the write fails, the action is refused with 503 `unavailable` and nothing changes. If the effect then fails or is refused (for example 409 `last_admin`, or a duplicate key), the server writes `staff_action.not_applied { eventId, code }`, so the record never claims a change that did not happen. [Build note: a request with several changes (a staff rename and status change together, or several addresses added) writes all its events first, then makes its changes in one write, so a refusal never follows an applied change; an event already written when a later one is refused gets `staff_action.not_applied` with code `unavailable`. The codes are a closed list: the refusal’s error code, `conflict`, `unavailable` or `internal`.]
+  - Every staff action’s event (actor role `superadmin`) is written before the effect, `view_as.started` and `open_as_admin.started` included, except the changes made while open as admin (below). Handlers run their read-only checks first (404, validation), then write the event, then act. If the write fails, the action is refused with 503 `unavailable` and nothing changes. If the effect then fails or is refused (for example 409 `last_admin`, or a duplicate key), the server writes `staff_action.not_applied { eventId, code }`, so the record never claims a change that did not happen. [Build note: a request with several changes (a staff rename and status change together, or several addresses added) writes all its events first, then makes its changes in one write, so a refusal never follows an applied change; an event already written when a later one is refused gets `staff_action.not_applied` with code `unavailable`. The codes are a closed list: the refusal’s error code, `conflict`, `unavailable` or `internal`.]
   - For approval and staff creation, the staff action’s event is `access_request.approved` or `org.created`; the follow-on records (`org.created` at approval, `location.created`, `member.joined`, `member.invited`) are written after their steps, as client events are.
-  - `view_as.ended` is written after the grant is cleared. A missing end record can only make a view look longer than it was, never hide one.
+  - `view_as.ended` and `open_as_admin.ended` are written after the grant is cleared. A missing end record can only make a view look longer than it was, never hide one.
+  - Changes made while open as admin (D25) go through the org routes and are written after the effect, as an org admin’s are, with actor role `superadmin`, the staff email and the grant id in `viewAsGrantId`; `open_as_admin.started` is written before the grant exists, so no open-as session is unrecorded. [CONFIRM: in-portal staff changes recorded after the effect, as an org admin’s]
   
   [CONFIRM: audit after the effect for client actions; before the effect, refused on failure, for staff actions]
 - **Email writes no audit event.** Sending one of the D14 emails is a side effect of an action already audited; its event is unchanged, and nothing records the send.
-- **Readers.** Staff read everything on `/admin/audit`. Org admins read every event on their own organization whose actor role is `superadmin` (view-as, team, name, status, setup writes (D23), and `staff_action.not_applied`), on Settings as “Townwise staff activity” (D9). Members read none.
+- **Readers.** Staff read everything on `/admin/audit`. Org admins read every event on their own organization whose actor role is `superadmin` (view-as, team, name, status, setup writes (D23), open as admin’s starts, ends and every change made in it (D25), and `staff_action.not_applied`), on Settings as “Townwise staff activity” (D9). Members read none.
 
 ---
 
@@ -842,7 +871,7 @@ interface StaffActivityView {
 
 [Build note: `notApplied` is built as `applied: boolean` (false when a `staff_action.not_applied` event qualifies the row) and `notAppliedReason: string | null` (that event’s code in plain words, for example “The organization needs at least one admin”). A `staff_action.not_applied` event is never a row of its own, so a refused staff change shows once, as not applied, and the newest 50 rows are 50 staff actions.]
 
-Emails shown for people (`uploadedByEmail`, `createdByEmail`, `MemberView.email` for a seat) are the current kit email, read at response time. When the kit user no longer exists, they read “Deleted person”. An upload staff made during setup (D23) reads “Townwise staff”, never the staff email.
+Emails shown for people (`uploadedByEmail`, `createdByEmail`, `MemberView.email` for a seat) are the current kit email, read at response time. When the kit user no longer exists, they read “Deleted person”. What staff made during setup (D23) or while open as admin (D25), uploads, notes and stored files, reads “Townwise staff”, never the staff email.
 
 ### 10.2 Access
 
@@ -878,10 +907,10 @@ Two routes let the request form (P3), Add location (P10) and Location settings (
 | Method and path | Policy | Request | Success | Extra errors |
 |---|---|---|---|---|
 | `GET /api/org` | member | | 200 `{ org: { id, name }, role, locations: LocationSummary[], requestedLocationCount: number \| null, placeSearch: boolean }` (`placeSearch`: the Places search is on, 10.2a) | |
-| `PATCH /api/org` | org_admin | `{ name }` | 200 `{ org }` | |
+| `PATCH /api/org` | org_admin | `{ name, orgId? }`; `orgId`, the organization the page shows, is required in open as admin (D25, 8a) | 200 `{ org }` | 409 `open_as_admin_active` (open as admin, another or no `orgId`) |
 | `GET /api/org/staff-activity` | org_admin | | 200 `{ events: StaffActivityView[] }` (newest 50 events on this organization whose actor role is `superadmin`) | |
 | `POST /api/org/leave` | member | `{}` | 200 `MeResponse` | 409 `last_admin` |
-| `POST /api/org/locations` | org_admin | `{ name, town: TownInput, placeId?: string \| null }` | 201 `{ location: LocationSummary }` | 409 `location_name_taken`, `location_limit`; 400 `unknown_town`; with a `placeId`: 400 `unknown_place`, `place_not_supported`, `place_town_mismatch`; 429; 503 `places_unavailable` |
+| `POST /api/org/locations` | org_admin | `{ name, town: TownInput, placeId?: string \| null, orgId? }` (`orgId` as `PATCH /api/org`) | 201 `{ location: LocationSummary }` | 409 `location_name_taken`, `location_limit`, `open_as_admin_active` (as `PATCH /api/org`); 400 `unknown_town`; with a `placeId`: 400 `unknown_place`, `place_not_supported`, `place_town_mismatch`; 429; 503 `places_unavailable` |
 | `PATCH /api/org/locations/:locationId` | org_admin | `{ name?, town?, placeId?: string \| null }`, at least one; a `placeId` needs `town`; null takes the place off | 200 `{ location }` | 404; 409 `location_name_taken`; with a `placeId`: as `POST` |
 | `DELETE /api/org/locations/:locationId` | org_admin | | 204 | 404; 409 `location_has_data` (any sales day or note) |
 
@@ -954,7 +983,7 @@ Every route here has policy `staff`, except `view-as/end`, which has `staff_self
 | `POST /api/admin/people/delete` | `{ email }` (in the body, never the path, because `url` is logged) | 200 `{ deletedRequests, deletedSeats, redactedEvents, kitUserId: string \| null }` | 400 `invalid_target` (staff); 404 (no kit user and no Townwise record); 409 `person_has_seat` |
 | `GET /api/admin/audit?orgId=&actorUserId=&action=&before=&limit=` | `limit` 1 to 200, default 50; `before` an ISO time | 200 `{ events: AuditEventView[], nextBefore: string \| null }` | |
 | `POST /api/admin/view-as` | `{ userId, reason }` | 201 `MeResponse` | 400 `invalid_target`; 404; 429 |
-| `POST /api/admin/view-as/end` | `{}` | 200 `MeResponse`; ends view-as or open as admin, whichever holds the session | |
+| `POST /api/admin/view-as/end` | `{ grantId? }` | 200 `MeResponse`; ends view-as or open as admin, whichever holds the session; with `grantId`, only that grant (8a). Also ends, as `expired`, the caller’s grants that expired holding another session | |
 
 ```ts
 interface PersonView {
@@ -1040,7 +1069,7 @@ A search is 10 to 15 debounced autocompletes and one details call, so `townwise:
 | 400 | `unknown_place`, `place_not_supported`, `place_town_mismatch` | a location write with a `placeId` (10.3): Google has no such place, it has no US town, or the sent town is not its town | “Google Maps answered differently this time.”, then the search again |
 | 404 | `not_found` | unknown id, or an id in another organization | “This {thing} isn’t available.” with a way back |
 | 409 | `view_as_active` | any route with the `staff` policy, any method, during view-as; a second view-as start racing the first | re-read `/api/me` |
-| 409 | `open_as_admin_active` | any route with the `staff` policy, any method, while open as admin (D25); a start racing another start of the same session | re-read `/api/me` |
+| 409 | `open_as_admin_active` | any route with the `staff` policy, any method, while open as admin (D25); a start racing another start of the same session; a rename or new location naming another organization than the one open, or none (8a) | re-read `/api/me` |
 | 409 | `no_invite`, `already_in_org`, `request_exists`, `request_not_pending`, `requester_has_org`, `last_admin`, `location_name_taken`, `location_limit`, `location_has_data`, `note_limit`, `member_limit`, `person_has_seat`, `org_not_suspended`, `org_not_in_setup` | as in the tables | inline copy per page |
 | 413 | `payload_too_large` | server-core | unreachable from the app (Section 11.3) |
 | 415 | `unsupported_media_type` | server-core | client bug |
@@ -1378,7 +1407,7 @@ interface Note extends NoteInput {
 }
 ```
 
-Stored in `tw_notes`: the `NoteInput` fields, `_id`, `orgId`, `locationId`, `createdBy` (userId), `createdAt` and `updatedAt`. No email is stored; `createdByEmail` is read from the kit user at response time (10.1).
+Stored in `tw_notes`: the `NoteInput` fields, `_id`, `orgId`, `locationId`, `createdBy` (userId), `createdAt` and `updatedAt`, and `byStaff: true` only on a note staff wrote while open as admin (D25). No email is stored; `createdByEmail` is read from the kit user at response time (10.1).
 
 - Each kind sets the form’s default effect: closure is `closed`, private event is `more_guests`, opening and other are `unknown`. The owner can change it.
 - `weekdays` covers the homepage’s own example, “closed Mondays in March”, with one field.
@@ -1579,8 +1608,8 @@ The sections are Home (`/locations/[id]`), Analytics (`/locations/[id]/analytics
 - **As 15.5.** Same position, look, never-colour-alone rule and phone layout (two rows: the text, then “End” at full width), shown on every portal page while `openAsAdmin` is set. It is `role="region"` with `aria-label="Townwise staff setup"`, not dismissible, and the document title is “Setting up {org} · Townwise”.
 - **No time.** The mode has no timer of its own (D25), so the line has none.
 - **Every control is enabled**, Sign out included: signing out ends the staff sign-in, and with it the mode. Nothing is read-only and there is no helper line.
-- **End** sends `POST /api/admin/view-as/end` and applies the answer, the staff member’s own access, so the client goes to `/admin`.
-- **When it ends** (End, a join, a suspension, or the staff sign-in), the next `GET /api/me` returns staff access without `openAsAdmin`. The client goes to `/admin` and shows the notice “Setting up {org} as Townwise staff ended at {time}.” once. A read that finds it ended sends End once (4.3).
+- **End** sends `POST /api/admin/view-as/end` with `{ grantId }`, the grant the banner shows (8a), and applies the answer, the staff member’s own access, so the client goes to `/admin`.
+- **When it ends** (End, a join, a suspension, or the staff sign-in), the next `GET /api/me` returns staff access without `openAsAdmin`. The client goes to `/admin` and shows the notice “Setting up {org} as Townwise staff ended at {time}.” once. A read that finds it ended sends End once, naming the grant it showed (4.3).
 
 ### 15.6 Visual language
 
@@ -1900,7 +1929,7 @@ Home replaced the Forecast page here (owner decision, 2026-11-05); its data chec
 - **Account**: Email, Organization, Role, as a definition list.
 - **Two-step sign-in**: “Recommended for admins.” plus the link “Two-step sign-in settings” to `/settings/security` (**Exists**).
 - **Organization name** (org admins): a field and the page’s primary, “Save name”.
-- **Townwise staff activity** (org admins, from `GET /api/org/staff-activity`). Above the table: “Each time Townwise staff use View as to see your sales and notes, it’s recorded here with its reason. Without View as, staff can see your team’s email addresses, your location names and towns, and which dates your data covers. Any change staff make to your team, name or status is listed here too.” Table: When, Staff (“Townwise staff ({email})”), Action (the server’s summary, for example “Viewed as {email}” or “Added {email} as member”), Reason and Until (view-as rows only). A row with `notApplied` adds “Didn’t take effect.” [Build note: the field is `applied: false`, with `notAppliedReason`, the reason in plain words, to show beside it.] Empty: “Townwise staff haven’t viewed or changed your organization.” (D9)
+- **Townwise staff activity** (org admins, from `GET /api/org/staff-activity`). Above the table: “Each time Townwise staff use View as to see your sales and notes, it’s recorded here with its reason. Before anyone from your organization joined, staff setting it up may have opened it as its admin, which shows them what an admin sees; each time is listed here, with every change they made. Otherwise staff can see your team’s email addresses, your location names and towns, and which dates your data covers. Any change staff make to your team, name or status is listed here too.” (D25) Table: When, Staff (“Townwise staff ({email})”), Action (the server’s summary, for example “Viewed as {email}” or “Added {email} as member”), Reason and Until (view-as rows only). A row with `notApplied` adds “Didn’t take effect.” [Build note: the field is `applied: false`, with `notAppliedReason`, the reason in plain words, to show beside it.] Empty: “Townwise staff haven’t viewed or changed your organization.” (D9)
 - **Leave {org}**: an outline button. Confirm: “Leave {org}? You lose access right away. Your notes and uploads stay with {org}.” 409 `last_admin` uses the P17 copy.
 - **Sign out**: “Sign out” and “Sign out on every device” (kit `POST /auth/logout-all`, **Exists**; the shell has no screen for it yet), both text links. [CONFIRM: add sign out on every device]
 - States: loading, and network error with Try again.
@@ -2057,7 +2086,7 @@ The location's chat with TownwiseAI and its side panel (server contract: `docs/p
   - what the audit log stores;
   - who sees each, stated exactly:
     - the organization’s members;
-    - Townwise staff, who see sales figures and note text only through View as, which is audited and shown to org admins;
+    - Townwise staff, who see sales figures and note text only through View as, or, for an organization nobody has joined yet, by opening it as its admin to set it up (D25); both are audited and shown to org admins;
     - Townwise staff in the console, who see team email addresses, location names and towns, date coverage, counts and recent audit events without View as; those reads are not recorded;
     - the people with access to the production database (members of the MongoDB Atlas project that `infra/README.md` on `feature/infra` sets up), named on the page; anyone with that access can read every collection, and their reads are not recorded by Townwise [CONFIRM: who holds Atlas project access];
   - how long each is kept, and how to ask for deletion (the staff path in 10.7);
@@ -2243,7 +2272,7 @@ Each is marked inline with “lead default”:
 7. What “validated manually” means (F3).
 8. Rejected people may request again, with an optional message (F4).
 9. Staff create organizations directly (F10).
-10. Staff see values only through view-as (D7).
+10. Staff see values only through view-as (D7); D25 opens organizations nobody has joined.
 11. The 60-minute staff window, read as the TOTP requirement (D2).
 12. View-as for 30 minutes, any non-staff target, no audit event per read, ending when the target’s organization changes (D8, 8).
 13. Org admins see all staff activity on their organization, with staff emails (D9).
@@ -2280,6 +2309,7 @@ Each is marked inline with “lead default”:
 44. Staff-only deletion in v1, with suspension before an organization is deleted (D22).
 45. Who holds Atlas project access, named on the privacy page (17).
 46. Staff setup for an organization nobody has joined yet: write-only, ending at the first join, used only with the client’s consent (D23, F10b).
+47. Open as admin for an organization nobody has joined yet: full read and write except people, until the first join or the end of the staff sign-in (D25, 8a); the changes made in it recorded after the effect, as an org admin’s (9.3).
 
 ### 22.3 Decisions needed
 
@@ -2307,6 +2337,8 @@ Each is marked inline with “lead default”:
 ---
 
 ## 23. Changelog
+
+**2026-11-09, open as admin (D25).** While an organization is in setup, staff can open its real portal as its admin from its console page (P21, `POST /api/admin/orgs/:orgId/open-as-admin`), with no reason and no timer of its own, and see and change everything an org admin can except people (Team, invitations, roles, leaving, joining). The grant is a second kind in `tw_view_as_grants` (6.8), live only while the organization stays in setup and the staff window lasts, one per session (8a). A route runs in the mode only when the route table marks it (7.2); the rest answer 403 `open_as_admin_refused`, and staff routes 409 `open_as_admin_active`. The start is recorded before the grant exists, the changes after their effect with actor role `superadmin` and the grant id (9.3), and what staff create reads “Townwise staff”. Rename and Add location carry the organization the page shows, and End the grant it shows, so a tab left on an earlier organization never writes into or ends the current one; a grant that expires with the staff window is recorded as ended by the next start or End. D1, D7, D23, Section 3, 4.2, 6.4, 6.6 to 6.11, 10.1, 10.3, 10.7, 10.9, 15.5a, P18’s staff activity line, Section 17, the privacy notice and the homepage FAQ say so.
 
 **2026-11-06, staff setup.** While an organization is active and nobody has ever held a seat in it, staff add, rename and delete its locations and upload or delete their daily totals (D23, F10b), through five staff routes that reuse the org routes’ checks and writes (10.7). Each write is recorded before its effect and shown in the organization’s staff activity once someone joins (9.2, 9.3); answers carry no figure (D7). Setup ends at the first join and never reopens, kept by the organization’s new `firstJoinedAt` (6.1), and is closed while suspended (409 `org_not_in_setup`, 10.9). Locations and uploads made in setup carry `byStaff` (6.4, 6.6), and every view names those uploads “Townwise staff” (10.1). P21’s setup panel is the console side (16.4).
 

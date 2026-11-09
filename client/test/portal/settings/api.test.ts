@@ -1,6 +1,7 @@
 import { fetchStaffActivity, leaveOrg, renameOrg, signOutEverywhere } from '../../../src/portal/settings/api';
 import { createAuthStore } from '../../../src/auth/store';
-import { ACCESS, EMAIL, fakePortalApi, meOf, offline, refusal, writes } from '../../helpers/portal';
+import { openAsAdminOrgId } from '../../../src/portal/api';
+import { ACCESS, EMAIL, fakePortalApi, meOf, offline, openAsAdminMe, refusal, writes } from '../../helpers/portal';
 import { noContent, REFUSED_EVENT, VIEW_AS_EVENT, withRoutes } from '../team/fixtures';
 
 function api() {
@@ -13,8 +14,16 @@ describe('settings calls (spec 10.3, api/src/handlers/org.ts)', () => {
   test('PATCH /api/org sends the name and returns the organization', async () => {
     const { fake } = api();
     fake.answers['/api/org'] = () => ({ org: { id: 'o1', name: 'Harbor Group' } });
-    expect(await renameOrg(fake, 'Harbor Group')).toEqual({ id: 'o1', name: 'Harbor Group' });
+    expect(await renameOrg(fake, 'Harbor Group', null)).toEqual({ id: 'o1', name: 'Harbor Group' });
     expect(writes(fake)).toEqual([{ method: 'PATCH', path: '/api/org', body: { name: 'Harbor Group' } }]);
+  });
+
+  test('D25: in open as admin, PATCH /api/org also names the organization the page shows', async () => {
+    const { fake } = api();
+    fake.answers['/api/org'] = () => ({ org: { id: 'o1', name: 'Harbor Group' } });
+    await renameOrg(fake, 'Harbor Group', openAsAdminOrgId(openAsAdminMe()));
+    expect(writes(fake)).toEqual([{ method: 'PATCH', path: '/api/org', body: { name: 'Harbor Group', orgId: 'o1' } }]);
+    expect(openAsAdminOrgId(meOf(ACCESS.admin))).toBeNull();
   });
 
   test('GET /api/org/staff-activity returns the events, stripping keys the screen doesn’t read', async () => {

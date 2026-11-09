@@ -1,7 +1,7 @@
 // A staff session's grant (tw_view_as_grants): view-as (D8), or open as admin (D25). A grant holds its session while
 // `activeSessionId` is set, and the unique index on it allows one live grant per session across both kinds.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
-import { Schema, type Connection, type Model, type Types } from 'mongoose';
+import { Schema, trusted, type Connection, type Model, type Types } from 'mongoose';
 
 export type GrantEndReason = 'ended' | 'replaced' | 'expired';
 
@@ -91,6 +91,36 @@ export interface ViewAsGrantStore {
   insertOpenAsAdmin(input: { id: string; actorUserId: string; sessionId: string; orgId: string; startedAt: Date; expiresAt: Date }): Promise<boolean>;
   /** Compare-and-set: ends the grant while it still holds this session, and releases the session. */
   end(grantId: string, sessionId: string, input: { endedAt: Date; endReason: GrantEndReason }): Promise<boolean>;
+  /**
+   * This staff member's grants still holding a session other than `sessionId` whose `expiresAt` has passed, each with
+   * the session it holds (the `actorUserId` index). A grant still live in another session is never returned.
+   */
+  findExpiredElsewhere(actorUserId: string, sessionId: string, now: Date): Promise<{ grant: GrantRecord; sessionId: string }[]>;
+}
+
+type GrantDoc = ViewAsGrantFields & { _id: Types.ObjectId };
+
+/**
+ * A stored grant as its record. A grant the schema could not have stored (open as admin with no organization, view-as
+ * with no target or reason) throws rather than resolve to either kind: failing closed beats guessing whose it is.
+ */
+function toGrant(doc: GrantDoc): GrantRecord {
+  const id = doc._id.toHexString();
+  if (doc.kind === 'open_as_admin') {
+    if (doc.orgId === null) throw new Error('an open-as-admin grant without an organization');
+    return { kind: 'open_as_admin', id, orgId: doc.orgId.toHexString(), startedAt: doc.startedAt, expiresAt: doc.expiresAt, endedAt: doc.endedAt };
+  }
+  if (doc.targetUserId === undefined || doc.reason === undefined) throw new Error('a view-as grant without its target or reason');
+  return {
+    kind: 'view_as',
+    id,
+    targetUserId: doc.targetUserId,
+    orgId: doc.orgId === null ? null : doc.orgId.toHexString(),
+    reason: doc.reason,
+    startedAt: doc.startedAt,
+    expiresAt: doc.expiresAt,
+    endedAt: doc.endedAt,
+  };
 }
 
 export function createViewAsGrantStore(connection: Connection): ViewAsGrantStore {
@@ -131,23 +161,13 @@ export function createViewAsGrantStore(connection: Connection): ViewAsGrantStore
     },
     async findBySession(sessionId) {
       const doc = await Grant.findOne({ activeSessionId: sessionId }).lean();
-      if (doc === null) return null;
-      const id = doc._id.toHexString();
-      if (doc.kind === 'open_as_admin') {
-        if (doc.orgId === null) throw new Error('an open-as-admin grant without an organization');
-        return { kind: 'open_as_admin', id, orgId: doc.orgId.toHexString(), startedAt: doc.startedAt, expiresAt: doc.expiresAt, endedAt: doc.endedAt };
-      }
-      if (doc.targetUserId === undefined || doc.reason === undefined) throw new Error('a view-as grant without its target or reason');
-      return {
-        kind: 'view_as',
-        id,
-        targetUserId: doc.targetUserId,
-        orgId: doc.orgId === null ? null : doc.orgId.toHexString(),
-        reason: doc.reason,
-        startedAt: doc.startedAt,
-        expiresAt: doc.expiresAt,
-        endedAt: doc.endedAt,
-      };
+      return doc === null ? null : toGrant(doc);
+    },
+    async findExpiredElsewhere(actorUserId, sessionId, now) {
+      const docs = await Grant.find({
+        actorUserId, activeSessionId: trusted({ $type: 'string', $ne: sessionId }), expiresAt: trusted({ $lte: now }),
+      }).lean();
+      return docs.flatMap((doc) => (doc.activeSessionId === undefined ? [] : [{ grant: toGrant(doc), sessionId: doc.activeSessionId }]));
     },
   };
 }

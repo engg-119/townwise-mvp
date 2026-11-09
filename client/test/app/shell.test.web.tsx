@@ -174,7 +174,8 @@ test('open as admin: the banner is on every page; End opens the console with the
   const shown = screen.getByRole('region', { name: 'Townwise staff setup' });
   fireEvent.click(within(shown).getByRole('button', { name: 'End' }));
   await waitFor(() => { expect(window.location.pathname).toBe('/admin'); });
-  expect(writes(api)).toEqual([{ method: 'POST', path: '/api/admin/view-as/end', body: {} }]);
+  // D25: End names the grant this tab shows, so a tab left on an earlier grant never ends a newer one.
+  expect(writes(api)).toEqual([{ method: 'POST', path: '/api/admin/view-as/end', body: { grantId: 'g2' } }]);
   expect(await screen.findByRole('status')).toBeTruthy();
   expect(screen.getByText(/^Setting up Test Group as Townwise staff ended at \d{1,2}:\d{2} (AM|PM)\.$/)).toBeTruthy();
   expect(screen.queryByRole('region', { name: 'Townwise staff setup' })).toBeNull();
@@ -200,7 +201,7 @@ test('a GET /api/me read that finds open as admin over sends End once, and the c
   renderAt('/dashboard', api);
   await waitFor(() => { expect(window.location.pathname).toBe('/admin'); });
   expect(await screen.findByText(/^Setting up Test Group as Townwise staff ended at \d{1,2}:\d{2} (AM|PM)\.$/)).toBeTruthy();
-  await waitFor(() => { expect(writes(api)).toEqual([{ method: 'POST', path: '/api/admin/view-as/end', body: {} }]); });
+  await waitFor(() => { expect(writes(api)).toEqual([{ method: 'POST', path: '/api/admin/view-as/end', body: { grantId: 'g2' } }]); });
   await new Promise((resolve) => { setTimeout(resolve, 20); });
   expect(writes(api)).toHaveLength(1);
 });

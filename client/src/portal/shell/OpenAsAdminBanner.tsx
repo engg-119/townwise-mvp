@@ -12,8 +12,8 @@ import { ErrorNotice } from '../ui/feedback';
 import { Wrap } from '../ui/layout';
 
 // The open-as-admin banner (spec 15.5a): the view-as banner's place, look and phone layout (ViewAsBanner), with one
-// line and no time. It cannot be dismissed. End (POST /api/admin/view-as/end, which ends whichever grant holds the
-// session) answers the staff member's own access, so the portal layout opens /admin, where “Setting up {org} as
+// line and no time. It cannot be dismissed. End (POST /api/admin/view-as/end with this grant's id, so a tab left on an
+// earlier grant never ends a newer one) answers the staff member's own access, so the portal layout opens /admin, where “Setting up {org} as
 // Townwise staff ended at {time}.” shows once. Every control on the pages below stays enabled, Sign out among them.
 
 export function openAsAdminLine(org: string): string {
@@ -24,7 +24,7 @@ export function OpenAsAdminBanner(props: { openAsAdmin: OpenAsAdmin }): React.JS
   const { openAsAdmin } = props;
   const { api, applyMe } = usePortal();
   const { phone } = useBreakpoint();
-  const end = useAction(useCallback(async () => { applyMe(await endViewAs(api)); }, [api, applyMe]));
+  const end = useAction(useCallback(async () => { applyMe(await endViewAs(api, openAsAdmin.id)); }, [api, applyMe, openAsAdmin.id]));
   const failed = end.error !== null;
   const line = openAsAdminLine(openAsAdmin.org.name);
   return (

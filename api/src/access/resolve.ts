@@ -182,8 +182,9 @@ export async function resolveAccess(ctx: TownwiseContext, auth: AuthContext): Pr
   const staffVerifiedUntil = new Date(auth.authenticatedAt.getTime() + STAFF_WINDOW_MS);
   const staffOnly: Resolution = { user, self, effective: self, seat: null, staffVerifiedUntil, viewAs: null, openAsAdmin: null };
 
-  // Section 8, live grant: holds this session, not ended, not expired, and the target's resolved
-  // organization still equals the grant's (null equals null). Anything else is ignored like an expired grant.
+  // Section 8 and 8a, live grant of either kind: holds this session, not ended, not expired. Then a view-as grant is
+  // live while the target's resolved organization still equals the grant's (null equals null), and an open-as-admin
+  // grant while its organization is in setup (below). Anything else is ignored like an expired grant.
   const grant = await ctx.stores.grants.findBySession(auth.sessionId);
   if (grant === null) return staffOnly;
   if (grant.endedAt !== null || grant.expiresAt.getTime() <= now.getTime()) return staffOnly;

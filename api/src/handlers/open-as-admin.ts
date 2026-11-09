@@ -20,7 +20,7 @@ import type { AuditEventInput } from '../stores/audit-events.ts';
 import type { GrantRecord } from '../stores/view-as-grants.ts';
 import { actorOf, staffOf } from './admin.ts';
 import { meResponse } from './me.ts';
-import { clearGrant } from './view-as.ts';
+import { clearGrant, endExpiredElsewhere } from './view-as.ts';
 
 function openAsAdminActive(): AppError {
   return new AppError(409, 'open_as_admin_active', 'End setting up as Townwise staff first');
@@ -58,6 +58,7 @@ export async function startOpenAsAdmin(ctx: TownwiseContext, req: Request, res: 
   if (!(await isInSetup(ctx, scope, org))) throw notInSetup();
 
   await clearNotLive(ctx, req, staff.actor);
+  await endExpiredElsewhere(ctx, staff.actor);
 
   const now = ctx.now();
   const grantId = new Types.ObjectId().toHexString();
