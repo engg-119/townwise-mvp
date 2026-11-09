@@ -1,9 +1,14 @@
 // tw_sales_days (spec 6.5, 11.4): one row per location per business day, holding only the guest count and net
 // sales. The schema is strict: 'throw', and the write path builds each row field by field, so nothing else can be
 // stored. Nothing here logs.
+//
+// D28, the read rule: coverage, coverageByLocation, months, days and history leave out the days whose upload (the one
+// that last wrote the day) is turned off, with no fallback to an earlier upload's values, which no longer exist.
+// hasAny, hasAnyForOrg, apply and the deletes see every day.
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
+import { uploadModel } from './uploads.ts';
 
 export const SALES_DAYS_COLLECTION = 'tw_sales_days';
 
@@ -97,6 +102,8 @@ export interface SalesDayStore {
   days(scope: OrgScope, locationId: string, range: { from: string; to: string }): Promise<SalesDay[]>;
   /** Every stored day of the location, oldest first, each with the upload that last wrote it. */
   history(scope: OrgScope, locationId: string): Promise<SalesDayWithUpload[]>;
+  /** D28: the dates from `from` to `to`, inclusive, whose day a turned-off upload holds, oldest first. */
+  disabledDates(scope: OrgScope, locationId: string, range: { from: string; to: string }): Promise<string[]>;
   /**
    * Spec 11.4 step 2: one unordered bulkWrite of upserts keyed by { orgId, locationId, date }. `replace` sets each
    * day in full, nulls included; otherwise each day is written only if it does not exist yet. `matched` counts the
@@ -116,10 +123,26 @@ export interface SalesDayStore {
 
 export function createSalesDayStore(connection: Connection): SalesDayStore {
   const SalesDay = salesDayModel(connection);
+  const Upload = uploadModel(connection);
 
-  async function coverageRows(match: Record<string, Types.ObjectId>): Promise<Map<string, Coverage>> {
+  /** The ids of the organization's turned-off uploads, at the location when one is given (D28). */
+  async function offIds(scope: OrgScope, locationId: string | null): Promise<Types.ObjectId[]> {
+    const docs = await Upload.find({
+      orgId: scope.orgId, ...(locationId === null ? {} : { locationId }), disabledAt: trusted({ $type: 'date' }),
+    }, { _id: 1 }).lean();
+    return docs.map((doc) => doc._id);
+  }
+
+  /** The read rule's clause for an aggregate's $match: empty when nothing is turned off. */
+  const onlyOn = (ids: readonly Types.ObjectId[]) => (ids.length === 0 ? {} : { uploadId: { $nin: [...ids] } });
+  /** The same clause for a model's find filter, marked trusted() as HAS_VALUE_FILTER is. */
+  const onlyOnFilter = (ids: readonly Types.ObjectId[]) => (ids.length === 0 ? {} : { uploadId: trusted({ $nin: [...ids] }) });
+
+  async function coverageRows(scope: OrgScope, locationId: string | null): Promise<Map<string, Coverage>> {
+    const match = locationId === null ? { orgId: new Types.ObjectId(scope.orgId) } : ofLocation(scope, locationId);
+    const ids = await offIds(scope, locationId);
     const rows = await connection.collection(SALES_DAYS_COLLECTION).aggregate<CoverageRow>([
-      { $match: { ...match, ...HAS_VALUE } },
+      { $match: { ...match, ...HAS_VALUE, ...onlyOn(ids) } },
       {
         $group: {
           _id: '$locationId',
@@ -150,14 +173,15 @@ export function createSalesDayStore(connection: Connection): SalesDayStore {
 
   return {
     coverageByLocation(scope) {
-      return coverageRows({ orgId: new Types.ObjectId(scope.orgId) });
+      return coverageRows(scope, null);
     },
     async coverage(scope, locationId) {
-      return (await coverageRows(ofLocation(scope, locationId))).get(locationId) ?? NO_COVERAGE;
+      return (await coverageRows(scope, locationId)).get(locationId) ?? NO_COVERAGE;
     },
     async months(scope, locationId) {
+      const ids = await offIds(scope, locationId);
       const rows = await connection.collection(SALES_DAYS_COLLECTION).aggregate<MonthRow>([
-        { $match: { ...ofLocation(scope, locationId), ...HAS_VALUE } },
+        { $match: { ...ofLocation(scope, locationId), ...HAS_VALUE, ...onlyOn(ids) } },
         {
           $group: {
             _id: { $substrBytes: ['$date', 0, 7] },
@@ -178,20 +202,33 @@ export function createSalesDayStore(connection: Connection): SalesDayStore {
       }));
     },
     async days(scope, locationId, range) {
+      const ids = await offIds(scope, locationId);
       const docs = await SalesDay
-        .find({ ...ofLocation(scope, locationId), date: trusted({ $gte: range.from, $lte: range.to }) })
+        .find({ ...ofLocation(scope, locationId), date: trusted({ $gte: range.from, $lte: range.to }), ...onlyOnFilter(ids) })
         .sort({ date: 1 })
         .lean();
       return docs.map((doc) => ({ date: doc.date, guests: doc.guests ?? null, netSalesCents: doc.netSalesCents ?? null }));
     },
     async history(scope, locationId) {
+      const ids = await offIds(scope, locationId);
       const docs = await SalesDay
-        .find(ofLocation(scope, locationId), { _id: 0, date: 1, guests: 1, netSalesCents: 1, uploadId: 1 })
+        .find({ ...ofLocation(scope, locationId), ...onlyOnFilter(ids) }, { _id: 0, date: 1, guests: 1, netSalesCents: 1, uploadId: 1 })
         .sort({ date: 1 })
         .lean();
       return docs.map((doc) => ({
         date: doc.date, guests: doc.guests ?? null, netSalesCents: doc.netSalesCents ?? null, uploadId: doc.uploadId.toHexString(),
       }));
+    },
+    async disabledDates(scope, locationId, range) {
+      const ids = await offIds(scope, locationId);
+      if (ids.length === 0) return [];
+      const docs = await SalesDay
+        .find({
+          ...ofLocation(scope, locationId), date: trusted({ $gte: range.from, $lte: range.to }), uploadId: trusted({ $in: ids }),
+        }, { _id: 0, date: 1 })
+        .sort({ date: 1 })
+        .lean();
+      return docs.map((doc) => doc.date);
     },
     async apply(scope, locationId, input) {
       const key = ofLocation(scope, locationId);
