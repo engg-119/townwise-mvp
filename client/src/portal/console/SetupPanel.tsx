@@ -152,7 +152,7 @@ function RenameDialog(props: DialogProps & { placeSearch: boolean }): React.JSX.
             ) : null}
           </>
         ) : (
-          <PlaceSummary place={place} focusOnMount>
+          <PlaceSummary places={[place]} focusOnMount>
             <Actions>
               <Button variant="outline" label="Change place" onPress={() => { setMode({ kind: 'search' }); }} />
             </Actions>

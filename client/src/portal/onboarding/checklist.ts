@@ -27,3 +27,19 @@ export function checklistStatus(state: Pick<PlaceSearchState, 'searched' | 'sugg
   if (count === 0) return `No places match “${state.searched}”. Check the spelling, or enter it yourself.`;
   return `${String(count)} ${count === 1 ? 'place matches' : 'places match'} “${state.searched}”. Check each one that’s yours.`;
 }
+
+/**
+ * Number of locations on the request form: what the person typed, unless more places are checked than that (or they
+ * typed no whole number), in which case the checked count. With nothing checked the typed text stands.
+ */
+export function locationCountFor(typed: string, checked: number): string {
+  if (checked === 0) return typed;
+  const n = /^\d+$/.test(typed.trim()) ? Number(typed) : 0;
+  return String(Math.max(n, checked));
+}
+
+/** The Continue button's label for `count` checked places; “Continue with 0 places” reads badly, so 0 is just Continue. */
+export function continueLabel(count: number): string {
+  if (count === 0) return 'Continue';
+  return count === 1 ? 'Continue with 1 place' : `Continue with ${String(count)} places`;
+}

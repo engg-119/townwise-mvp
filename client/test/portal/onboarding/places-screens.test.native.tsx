@@ -7,7 +7,7 @@ jest.mock('expo-splash-screen', () => ({
   hideAsync: jest.fn(() => Promise.resolve()),
 }));
 
-import { act, cleanup, fireEvent, screen, waitFor } from 'expo-router/testing-library';
+import { act, cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing-library';
 import { AccessibilityInfo } from 'react-native';
 
 import type { LocationSummary, OrgResponse } from '../../../src/portal/schemas';
@@ -16,7 +16,7 @@ import {
 } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { locationsFake, salesOf } from '../locations/fakes';
-import { installPlaces, sentWrites, type PlacesFake } from './places-fakes';
+import { installPlaces, LONG_NAME, sentWrites, type PlacesFake } from './places-fakes';
 
 // The three screens with the Google Places search on (decision 13): P3 Request access as Steps 1 and 2, P10 Add
 // location, and P16's “Change this location’s place”. Each sends the confirmed place's id with the place's town; 503
@@ -49,59 +49,160 @@ function placed(org: OrgResponse): OrgResponse {
 }
 
 describe('P3 Request access with the search on', () => {
-  test('Step 1 finds the restaurant; Looks right opens Step 2 with its name, and Send carries the place and its town', async () => {
+  const RESTAURANT = 'Lou’s Restaurant, Hanover, NH, USA';
+  const BAKERY = 'Lou’s Bakery, Norwich, VT, USA';
+  const LEBANON = 'Lou’s Restaurant, Lebanon, NH, USA';
+
+  /** The one group (a View with role group) named `name`. */
+  function group(name: string): ReturnType<typeof screen.getByLabelText> {
+    const found = screen.queryAllByLabelText(name).filter((node) => node.props.role === 'group');
+    const [node] = found;
+    if (node === undefined || found.length > 1) throw new Error(`expected one group named ${name}, found ${String(found.length)}`);
+    return node;
+  }
+
+  async function fillAbout(): Promise<void> {
+    await fireEvent.changeText(screen.getByLabelText('Your name'), 'Pat');
+    await fireEvent.changeText(screen.getByLabelText('Your role'), 'Owner');
+  }
+
+  test('Step 1 “Find your restaurants” checks several places; Continue opens Step 2 with them in place of Town, and Send carries each one', async () => {
     const api = fakePortalApi({ me: meOf(ACCESS.noOrg) });
     const places = installPlaces(api);
     api.answers['/api/access-requests'] = () => meOf(ACCESS.pending);
     const { router } = await renderApp('/request-access', api);
     expect(await screen.findByText('Step 1 of 3')).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Find your restaurant' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Find your restaurants' })).toBeTruthy();
     expect(places.checks).toBe(1);
     expect(screen.queryByLabelText('Organization name')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Continue' }).props.accessibilityState).toMatchObject({ disabled: true });
     await find(SEARCH, 'Lou');
-    await pick('Lou’s Restaurant, Hanover, NH, USA');
-    await fireEvent.press(screen.getByRole('button', { name: 'Looks right' }));
+    await fireEvent.press(await screen.findByRole('checkbox', { name: RESTAURANT }));
+    await waitFor(() => { expect(screen.getByRole('button', { name: 'Continue with 1 place' })).toBeTruthy(); });
+    await fireEvent.press(await screen.findByRole('checkbox', { name: BAKERY }));
+    await fireEvent.press(await screen.findByRole('button', { name: 'Continue with 2 places' }));
     expect(await screen.findByText('Step 2 of 3')).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'About you' })).toBeTruthy();
     expect(screen.getByLabelText('Organization name').props.value).toBe('Lou’s Restaurant');
-    // The place gives the town: no Town field, and the place says where it came from.
     expect(screen.queryByLabelText('Town')).toBeNull();
-    expect(screen.getByText('Hanover, NH, one of the twelve towns Townwise has researched.')).toBeTruthy();
-    await fireEvent.changeText(screen.getByLabelText('Your name'), 'Pat');
-    await fireEvent.changeText(screen.getByLabelText('Your role'), 'Owner');
-    await fireEvent.changeText(screen.getByLabelText('Number of locations'), '1');
+    const summary = group('Your places on Google Maps');
+    expect(within(summary).getByText('Lou’s Restaurant')).toBeTruthy();
+    expect(within(summary).getByText('Lou’s Bakery')).toBeTruthy();
+    expect(screen.getByLabelText('Number of locations').props.value).toBe('2');
+    await fillAbout();
     await fireEvent.press(screen.getByRole('button', { name: 'Send request' }));
     await waitFor(() => { expect(router.getPathname()).toBe('/waiting'); });
     expect(sentWrites(api)).toEqual([{
       method: 'POST', path: '/api/access-requests',
-      body: { orgName: 'Lou’s Restaurant', contactName: 'Pat', contactRole: 'Owner', town: { townId: 'hanover-nh' }, locationCount: 1,
-        places: [{ placeId: 'ChIJTestPlace0001', name: 'Lou’s Restaurant', town: { townId: 'hanover-nh' } }] },
+      body: { orgName: 'Lou’s Restaurant', contactName: 'Pat', contactRole: 'Owner', town: { townId: 'hanover-nh' }, locationCount: 2,
+        places: [
+          { placeId: 'ChIJTestPlace0001', name: 'Lou’s Restaurant', town: { townId: 'hanover-nh' } },
+          { placeId: 'ChIJTestPlace0002', name: 'Lou’s Bakery', town: { townId: null, name: 'Norwich', state: 'VT' } },
+        ] },
     }]);
   });
 
-  test('Change place goes back to Step 1; Can’t find it opens the form as it is, with no place sent', async () => {
+  test('Number of locations follows the checked places, never below the number typed', async () => {
+    const api = fakePortalApi({ me: meOf(ACCESS.noOrg) });
+    installPlaces(api);
+    await renderApp('/request-access', api);
+    await find(SEARCH, 'Lou');
+    await fireEvent.press(await screen.findByRole('checkbox', { name: RESTAURANT }));
+    await fireEvent.press(await screen.findByRole('checkbox', { name: BAKERY }));
+    await find(SEARCH, 'Lou Lebanon');
+    await fireEvent.press(await screen.findByRole('checkbox', { name: LEBANON }));
+    await fireEvent.press(await screen.findByRole('button', { name: 'Continue with 3 places' }));
+    expect((await screen.findByLabelText('Number of locations')).props.value).toBe('3');
+    await fireEvent.changeText(screen.getByLabelText('Number of locations'), '5');
+    await fireEvent.press(screen.getByRole('button', { name: 'Change places' }));
+    const [removeFirst] = await screen.findAllByLabelText('Remove Lou’s Restaurant');
+    if (removeFirst === undefined) throw new Error('Remove');
+    await fireEvent.press(removeFirst);
+    await fireEvent.press(await screen.findByRole('button', { name: 'Continue with 2 places' }));
+    expect((await screen.findByLabelText('Number of locations')).props.value).toBe('5');
+    await fireEvent.changeText(screen.getByLabelText('Number of locations'), '1');
+    await fillAbout();
+    await fireEvent.press(screen.getByRole('button', { name: 'Send request' }));
+    expect(await screen.findByText('You checked 2 places, so enter at least 2.')).toBeTruthy();
+    expect(sentWrites(api)).toEqual([]);
+    await fireEvent.press(screen.getByRole('button', { name: 'Change places' }));
+    await fireEvent.press(await screen.findByRole('button', { name: 'Continue with 2 places' }));
+    expect((await screen.findByLabelText('Number of locations')).props.value).toBe('2');
+  });
+
+  test('Change places keeps them checked; Can’t find it sends no places; Search Google Maps instead comes back to them', async () => {
     const api = fakePortalApi({ me: meOf(ACCESS.noOrg) });
     installPlaces(api);
     api.answers['/api/access-requests'] = () => meOf(ACCESS.pending);
     await renderApp('/request-access', api);
     await find(SEARCH, 'Lou');
-    await pick('Lou’s Bakery, Norwich, VT, USA');
-    await fireEvent.press(screen.getByRole('button', { name: 'Looks right' }));
-    await fireEvent.press(await screen.findByRole('button', { name: 'Change place' }));
+    await fireEvent.press(await screen.findByRole('checkbox', { name: RESTAURANT }));
+    await fireEvent.press(await screen.findByRole('checkbox', { name: BAKERY }));
+    await fireEvent.press(await screen.findByRole('button', { name: 'Continue with 2 places' }));
+    await fireEvent.press(await screen.findByRole('button', { name: 'Change places' }));
     expect(await screen.findByText('Step 1 of 3')).toBeTruthy();
+    expect(screen.getByRole('checkbox', { name: RESTAURANT }).props.accessibilityState).toMatchObject({ checked: true });
+    expect(screen.getByRole('checkbox', { name: BAKERY }).props.accessibilityState).toMatchObject({ checked: true });
     await fireEvent.press(screen.getByRole('button', { name: 'Can’t find it? Enter it yourself' }));
     expect(await screen.findByLabelText('Town')).toBeTruthy();
     expect(screen.queryByText('Step 2 of 3')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Search Google Maps instead' })).toBeTruthy();
     await fireEvent.changeText(screen.getByLabelText('Organization name'), 'Sample Diner');
-    await fireEvent.changeText(screen.getByLabelText('Your name'), 'Pat');
-    await fireEvent.changeText(screen.getByLabelText('Your role'), 'Owner');
+    await fillAbout();
     await fireEvent.press(screen.getByLabelText('Town'));
     await fireEvent.press(screen.getByRole('radio', { name: 'Hanover, NH' }));
     await fireEvent.changeText(screen.getByLabelText('Number of locations'), '1');
     await fireEvent.press(screen.getByRole('button', { name: 'Send request' }));
     await waitFor(() => { expect(sentWrites(api)).toHaveLength(1); });
-    expect(sentWrites(api)[0]?.body).not.toHaveProperty('placeId');
+    expect(sentWrites(api)[0]?.body).not.toHaveProperty('places');
+  });
+
+  test('Search Google Maps instead shows the checked places again', async () => {
+    const api = fakePortalApi({ me: meOf(ACCESS.noOrg) });
+    installPlaces(api);
+    await renderApp('/request-access', api);
+    await find(SEARCH, 'Lou');
+    await fireEvent.press(await screen.findByRole('checkbox', { name: RESTAURANT }));
+    await fireEvent.press(await screen.findByRole('checkbox', { name: BAKERY }));
+    await fireEvent.press(await screen.findByRole('button', { name: 'Continue with 2 places' }));
+    await fireEvent.press(await screen.findByRole('button', { name: 'Change places' }));
+    await fireEvent.press(await screen.findByRole('button', { name: 'Can’t find it? Enter it yourself' }));
+    await fireEvent.press(await screen.findByRole('button', { name: 'Search Google Maps instead' }));
+    await screen.findByText('Step 1 of 3');
+    expect(group('Lou’s Restaurant')).toBeTruthy();
+    expect(group('Lou’s Bakery')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Continue with 2 places' })).toBeTruthy();
+  });
+
+  test('Continue waits while a place is loading', async () => {
+    const api = fakePortalApi({ me: meOf(ACCESS.noOrg) });
+    const places = installPlaces(api);
+    await renderApp('/request-access', api);
+    await find(SEARCH, 'Lou');
+    places.holdingDetails = true;
+    await fireEvent.press(await screen.findByRole('checkbox', { name: RESTAURANT }));
+    await waitFor(() => { expect(places.heldDetails).toHaveLength(1); });
+    expect(screen.getByRole('button', { name: /^Continue/ }).props.accessibilityState).toMatchObject({ disabled: true });
+    places.holdingDetails = false;
+    await act(async () => { for (const release of places.heldDetails.splice(0)) release(); await Promise.resolve(); });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Continue with 1 place' }).props.accessibilityState).toMatchObject({ disabled: false });
+    });
+  });
+
+  test('a Google name over 80 characters is cut to 80 in places, and fills Organization name whole', async () => {
+    const api = fakePortalApi({ me: meOf(ACCESS.noOrg) });
+    installPlaces(api);
+    api.answers['/api/access-requests'] = () => meOf(ACCESS.pending);
+    await renderApp('/request-access', api);
+    await find(SEARCH, 'Long');
+    await fireEvent.press(await screen.findByRole('checkbox', { name: new RegExp(`^${LONG_NAME.name}`) }));
+    await fireEvent.press(await screen.findByRole('button', { name: 'Continue with 1 place' }));
+    expect((await screen.findByLabelText('Organization name')).props.value).toHaveLength(100);
+    await fillAbout();
+    await fireEvent.press(screen.getByRole('button', { name: 'Send request' }));
+    await waitFor(() => { expect(sentWrites(api)).toHaveLength(1); });
+    const body = sentWrites(api)[0]?.body as { places: { name: string }[] };
+    expect(body.places[0]?.name).toHaveLength(80);
   });
 
   test('503 places_unavailable while searching: the form as it is, with a line that says why', async () => {
@@ -279,22 +380,18 @@ describe('focus follows the steps', () => {
   }
   afterEach(() => { jest.restoreAllMocks(); });
 
-  test('P3: the card, then Looks right to the Step 2 heading, Change place to the field, and Search again to the field', async () => {
+  test('P3: Continue moves to the Step 2 heading, and Change places to the search field', async () => {
     const moves = focusMoves();
     const api = fakePortalApi({ me: meOf(ACCESS.noOrg) });
     installPlaces(api);
     await renderApp('/request-access', api);
     await find(SEARCH, 'Lou');
-    // The page opening takes no focus.
-    expect(moves()).toEqual([]);
-    await pick('Lou’s Restaurant, Hanover, NH, USA');
-    await fireEvent.press(screen.getByRole('button', { name: 'Looks right' }));
-    await fireEvent.press(await screen.findByRole('button', { name: 'Change place' }));
+    // The page opening and checking take no focus.
+    await fireEvent.press(await screen.findByRole('checkbox', { name: 'Lou’s Restaurant, Hanover, NH, USA' }));
+    await fireEvent.press(await screen.findByRole('button', { name: 'Continue with 1 place' }));
+    await fireEvent.press(await screen.findByRole('button', { name: 'Change places' }));
     await screen.findByText('Step 1 of 3');
-    await find(SEARCH, 'Lou');
-    await pick('Lou’s Bakery, Norwich, VT, USA');
-    await fireEvent.press(screen.getByRole('button', { name: 'Search again' }));
-    expect(moves()).toEqual(['Here’s what we found', 'About you', SEARCH, 'Here’s what we found', SEARCH]);
+    expect(moves()).toEqual(['About you', SEARCH]);
   });
 
   test('P10: Looks right moves to the place in the form', async () => {
