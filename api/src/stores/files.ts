@@ -119,8 +119,8 @@ interface FileFields {
   aiChoices?: FileColumnChoices;
   /** A staff purge found the file busy: its original goes as soon as the reader is done with it. */
   purgeRaw?: boolean;
-  /** Set while the item is turned off (reference items), by the person who did it. Absent on rows written before. */
-  disabledAt?: Date | null;
+  /** Set while the item is turned off (reference items), by the person who did it. Absent means on, never stored as null. */
+  disabledAt?: Date;
   disabledBy?: string;
   /** Set when TownwiseAI kept the item for the person. */
   addedVia?: 'townwise_ai';
@@ -157,7 +157,7 @@ function fileSchema(): Schema<FileFields> {
     costMicroUsd: { type: Number, required: true, default: 0 },
     aiChoices: { type: Schema.Types.Mixed, default: () => ({}) },
     purgeRaw: { type: Boolean },
-    disabledAt: { type: Date, default: null },
+    disabledAt: { type: Date },
     disabledBy: { type: String },
     addedVia: { type: String, enum: ['townwise_ai'] },
   }, { strict: 'throw', versionKey: false, read: 'primary', minimize: false });
@@ -294,8 +294,11 @@ export interface FileStore {
     id: string; uploadedBy: string; uploaderRole: Role; uploadedAt: Date; name: string; sizeBytes: number; fingerprint: string;
     addedVia: 'townwise_ai' | null;
   }): Promise<FileRecord | 'exists'>;
-  /** Another live file of the location with this fingerprint. */
-  duplicateOf(scope: OrgScope, locationId: string, fingerprint: string, exceptId: string): Promise<string | null>;
+  /**
+   * Another live file of the location with this purpose and fingerprint: a copy kept for reference never blocks the same
+   * bytes uploaded as sales history, nor the other way round.
+   */
+  duplicateOf(scope: OrgScope, locationId: string, purpose: FilePurpose, fingerprint: string, exceptId: string): Promise<string | null>;
   /** Every stored file of the import becomes queued. Resolves the number changed. */
   queueStored(scope: OrgScope, importId: string): Promise<number>;
   /** Compare-and-set one file from `from` to `to`. */
@@ -444,9 +447,9 @@ export function createFileStore(connection: Connection): FileStore {
         throw err;
       }
     },
-    async duplicateOf(scope, locationId, fingerprint, exceptId) {
+    async duplicateOf(scope, locationId, purpose, fingerprint, exceptId) {
       const doc = await File.findOne({
-        orgId: org(scope), locationId: oid(locationId), fingerprint, _id: trusted({ $ne: oid(exceptId) }),
+        orgId: org(scope), locationId: oid(locationId), purpose, fingerprint, _id: trusted({ $ne: oid(exceptId) }),
         status: trusted({ $nin: ['uploading', 'deleting'] }),
       }).lean();
       return doc === null ? null : doc._id.toHexString();

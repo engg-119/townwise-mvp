@@ -3,11 +3,14 @@
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { OrgScope } from '../src/access/policy.ts';
+import { BlobUnavailableError } from '../src/files/blobs.ts';
 import { createItemReader, READ_ITEM_BYTES, READ_ITEM_MAX_CHARS, saveTextItem } from '../src/files/items.ts';
+import { DAILY_UPLOAD_BYTES, FILES_PER_LOCATION, STORED_BYTES_PER_ORG } from '../src/files/limits.ts';
 import { createMemoryFileBlobs, type MemoryFileBlobs } from '../src/files/memory-blobs.ts';
+import { fileModel } from '../src/stores/files.ts';
 import { createTownwiseStores } from '../src/stores/index.ts';
 import { addLocation, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { filesPath, putChunk, uploadFile, type Created } from './helpers/files.ts';
@@ -49,19 +52,41 @@ async function lastEvent(action: string): Promise<{ details: Record<string, unkn
   return found as unknown as { details: Record<string, unknown> };
 }
 
-/** A reference text item written straight into a row and the blobs, with the fields a test changes. */
-async function seedItem(locationId: string, bytes: Buffer, over: Record<string, unknown> = {}): Promise<string> {
+/** A kept reference text item's row, with the fields a test changes. On, so no `disabledAt`. */
+function itemRow(org: string, locationId: string, over: Record<string, unknown> = {}): Record<string, unknown> & { _id: Types.ObjectId } {
   const _id = new Types.ObjectId();
-  await server.connection.collection('tw_files').insertOne({
-    _id, orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), importId: null, purpose: 'reference',
+  return {
+    _id, orgId: new Types.ObjectId(org), locationId: new Types.ObjectId(locationId), importId: null, purpose: 'reference',
     uploadedBy: member.userId, uploaderRole: 'member', uploadedAt: server.clock.now(), name: 'notes.txt', kind: 'text',
-    sizeBytes: bytes.length, fingerprint: _id.toHexString().padStart(64, '0'), upload: null, status: 'kept', outcome: 'reference',
+    sizeBytes: 1, fingerprint: _id.toHexString().padStart(64, '0'), upload: null, status: 'kept', outcome: 'reference',
     progress: null, readStartedAt: null, readMs: null, answers: {}, uploadId: null, result: null, report: null, cleanBytes: null,
-    rawDeletedAt: null, attempts: 0, disabledAt: null, ...over,
-  });
-  await blobs.writeRaw(scope(), { locationId, fileId: _id.toHexString() }, bytes, 'text/plain');
-  return _id.toHexString();
+    rawDeletedAt: null, attempts: 0, ...over,
+  };
 }
+
+/** A reference text item written straight into a row and the blobs. */
+async function seedItem(locationId: string, bytes: Buffer, over: Record<string, unknown> = {}): Promise<string> {
+  const row = itemRow(orgId, locationId, { sizeBytes: bytes.length, ...over });
+  await server.connection.collection('tw_files').insertOne(row);
+  await blobs.writeRaw(scope(), { locationId, fileId: row._id.toHexString() }, bytes, 'text/plain');
+  return row._id.toHexString();
+}
+
+interface Place { orgId: string; session: TestSession; locationId: string; scope: OrgScope }
+
+/** An organization of its own, with one member and one location, for a test that fills a cap. */
+async function freshPlace(name: string): Promise<Place> {
+  const id = await createOrg(server, { name });
+  const email = `member-${randomUUID().slice(0, 8)}@example.test`;
+  const session = await signIn(server, email);
+  await addSeat(server, { orgId: id, userId: session.userId, email });
+  const locationId = await addLocation(server, { orgId: id, name: `${name} One` });
+  return { orgId: id, session, locationId, scope: { orgId: id } as unknown as OrgScope };
+}
+
+const today = (): string => server.clock.now().toISOString().slice(0, 10);
+const filesIn = (place: Place): Promise<number> => server.connection.collection('tw_files').countDocuments({ orgId: new Types.ObjectId(place.orgId) });
+const rawBlobsIn = (place: Place): number => [...blobs.raw.keys()].filter((name) => name.startsWith(`${place.orgId}/`)).length;
 
 describe('reference items (D28)', () => {
   it('a file added for reference is stored as it is: kept with outcome reference, in no import, and never read', async () => {
@@ -85,9 +110,92 @@ describe('reference items (D28)', () => {
   it('pasted text becomes a .txt reference item named from its title, sized in UTF-8 bytes', async () => {
     const res = await paste(l1, { title: 'Catering list', text: 'Café ✓' });
     expect(res.status).toBe(201);
-    expect(((await res.json()) as { file: unknown }).file).toMatchObject({
+    const { file } = await res.json() as { file: { id: string } };
+    expect(file).toMatchObject({
       name: 'Catering list.txt', kind: 'text', purpose: 'reference', status: 'kept', sizeBytes: 9, importId: null,
     });
+    // On is the field's absence, never a stored null.
+    expect(await server.connection.collection('tw_files').findOne({ _id: new Types.ObjectId(file.id) })).not.toHaveProperty('disabledAt');
+  });
+
+  it('a slash in a title is kept as a hyphen, so the whole title names the item', async () => {
+    for (const [title, name] of [['Holiday hours 12/24', 'Holiday hours 12-24.txt'], ['Prices A\\B', 'Prices A-B.txt'], ['Notes/', 'Notes-.txt']]) {
+      const res = await paste(l1, { title, text: 'a' });
+      expect(res.status).toBe(201);
+      expect(((await res.json()) as { file: { name: string } }).file.name).toBe(name);
+    }
+  });
+
+  it('pasted text answers storage_full at the location’s file cap or the organization’s stored bytes, and stores nothing', async () => {
+    const full = await freshPlace('Files Full');
+    await server.connection.collection('tw_files').insertMany(Array.from({ length: FILES_PER_LOCATION }, () => itemRow(full.orgId, full.locationId)));
+    const byCount = await call(server, textPath(full.locationId), { session: full.session, json: { title: 'a', text: 'a' } });
+    expect(await errorOf(byCount)).toEqual({ status: 409, error: 'storage_full' });
+    expect(await filesIn(full)).toBe(FILES_PER_LOCATION);
+
+    const heavy = await freshPlace('Bytes Full');
+    await server.connection.collection('tw_files').insertOne(itemRow(heavy.orgId, heavy.locationId, { sizeBytes: STORED_BYTES_PER_ORG }));
+    const byBytes = await call(server, textPath(heavy.locationId), { session: heavy.session, json: { title: 'a', text: 'a' } });
+    expect(byBytes.status).toBe(409);
+    expect(await byBytes.json()).toMatchObject({ error: 'storage_full', storedBytesLeft: 0 });
+    expect(await filesIn(heavy)).toBe(1);
+    expect(rawBlobsIn(heavy)).toBe(0);
+    expect(await createTownwiseStores(server.connection).uploadDays.used(heavy.scope, today())).toBe(0);
+  });
+
+  it('pasted text answers daily_upload_limit once the organization has uploaded its day’s bytes, and stores nothing', async () => {
+    const place = await freshPlace('Day Full');
+    const stores = createTownwiseStores(server.connection);
+    expect(await stores.uploadDays.reserve(place.scope, today(), DAILY_UPLOAD_BYTES, DAILY_UPLOAD_BYTES, server.clock.now())).toBe(true);
+    const res = await call(server, textPath(place.locationId), { session: place.session, json: { title: 'a', text: 'a' } });
+    expect(res.status).toBe(409);
+    const tomorrow = new Date(server.clock.now().getTime() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    expect(await res.json()).toMatchObject({ error: 'daily_upload_limit', resetsAt: `${tomorrow}T00:00:00.000Z` });
+    expect(await filesIn(place)).toBe(0);
+    expect(rawBlobsIn(place)).toBe(0);
+    expect(await stores.uploadDays.used(place.scope, today())).toBe(DAILY_UPLOAD_BYTES);
+  });
+
+  it('a failed blob write answers 503 storage_unavailable, stores no row and gives the day’s bytes back', async () => {
+    const place = await freshPlace('Blob Fails');
+    const spy = vi.spyOn(blobs, 'writeRaw').mockRejectedValueOnce(new BlobUnavailableError('ServerBusy', 503));
+    try {
+      const res = await call(server, textPath(place.locationId), { session: place.session, json: { title: 'a', text: 'abc' } });
+      expect(await errorOf(res)).toEqual({ status: 503, error: 'storage_unavailable' });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(server.logs.some((line) => line.includes('townwise.blob_failed') && line.includes('"op":"write_raw"'))).toBe(true);
+    expect(await filesIn(place)).toBe(0);
+    expect(await createTownwiseStores(server.connection).uploadDays.used(place.scope, today())).toBe(0);
+  });
+
+  it('a failed row insert answers 500, not storage_unavailable, and gives the day’s bytes back', async () => {
+    const place = await freshPlace('Insert Fails');
+    const blobFailures = (): number => server.logs.filter((line) => line.includes('townwise.blob_failed')).length;
+    const before = blobFailures();
+    const spy = vi.spyOn(fileModel(server.connection), 'create').mockRejectedValueOnce(new Error('insert failed'));
+    try {
+      const res = await call(server, textPath(place.locationId), { session: place.session, json: { title: 'a', text: 'abc' } });
+      expect(res.status).toBe(500);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(blobFailures()).toBe(before);
+    expect(await filesIn(place)).toBe(0);
+    expect(await createTownwiseStores(server.connection).uploadDays.used(place.scope, today())).toBe(0);
+  });
+
+  it('a file kept for reference does not block the same bytes uploaded as sales history, and still blocks a second copy', async () => {
+    const place = await freshPlace('Same Bytes');
+    const csv = Buffer.from('Date,Guests\n2026-05-01,10\n', 'utf8');
+    const kept = await uploadFile(server, place.locationId, place.session, 'sales.csv', csv, { purpose: 'reference' });
+    expect(kept.status).toBe(200);
+    const history = await uploadFile(server, place.locationId, place.session, 'sales.csv', csv, { purpose: 'history' });
+    expect(history.status).toBe(200);
+    expect(history.body.file).toMatchObject({ purpose: 'history', status: 'stored' });
+    const again = await uploadFile(server, place.locationId, place.session, 'sales.csv', csv, { purpose: 'reference' });
+    expect(again).toMatchObject({ status: 409, body: { error: 'file_duplicate', fileId: kept.body.file?.id } });
   });
 
   it('pasted text is refused when empty, over 10,000 characters, or with a title over 120 characters', async () => {

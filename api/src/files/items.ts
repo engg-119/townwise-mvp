@@ -34,12 +34,21 @@ export interface TextItemInput {
 }
 
 /**
+ * The item's name: the title with `.txt` after it. `sanitizeName` reads a name as a path and keeps what follows the last
+ * slash, so a title's slashes (a date such as 12/24) become hyphens first.
+ */
+function textItemName(title: string): string {
+  return sanitizeName(`${title.replace(/[\\/]/g, '-')}.txt`);
+}
+
+/**
  * Keeps pasted text as a reference item. A retried save with the same `id` answers the stored item and reserves nothing
  * more. Order: caps, the day's reservation, the blob, then the row; a crash after the blob leaves an orphan the daily
- * sweep removes.
+ * sweep removes. A failed blob write or row insert gives the day's bytes back before the error goes on, as a cancelled
+ * upload does, so a retry reserves them once.
  */
 export async function saveTextItem(
-  stores: TownwiseStores, blobs: FileBlobs, scope: OrgScope, locationId: string, input: TextItemInput,
+  stores: TownwiseStores, blobs: Pick<FileBlobs, 'writeRaw'>, scope: OrgScope, locationId: string, input: TextItemInput,
 ): Promise<{ file: FileRecord; created: boolean } | 'storage_full' | 'daily_upload_limit'> {
   if (input.id !== undefined) {
     const existing = await stores.files.get(scope, locationId, input.id);
@@ -53,13 +62,21 @@ export async function saveTextItem(
   const day = utcDay(input.now);
   if (!(await stores.uploadDays.reserve(scope, day, bytes.length, DAILY_UPLOAD_BYTES, input.now))) return 'daily_upload_limit';
   const id = input.id ?? new Types.ObjectId().toHexString();
-  await blobs.writeRaw(scope, { locationId, fileId: id }, bytes, 'text/plain; charset=utf-8');
-  const inserted = await stores.files.insertStored(scope, locationId, {
-    id, uploadedBy: input.uploadedBy, uploaderRole: input.uploaderRole, uploadedAt: input.now,
-    name: sanitizeName(`${input.title}.txt`), sizeBytes: bytes.length,
-    fingerprint: fingerprintOf(CHUNK_BYTES, [createHash('sha256').update(bytes).digest('hex')]), addedVia: input.addedVia,
-  });
+  let inserted: FileRecord | 'exists';
+  try {
+    await blobs.writeRaw(scope, { locationId, fileId: id }, bytes, 'text/plain; charset=utf-8');
+    inserted = await stores.files.insertStored(scope, locationId, {
+      id, uploadedBy: input.uploadedBy, uploaderRole: input.uploaderRole, uploadedAt: input.now,
+      name: textItemName(input.title), sizeBytes: bytes.length,
+      fingerprint: fingerprintOf(CHUNK_BYTES, [createHash('sha256').update(bytes).digest('hex')]), addedVia: input.addedVia,
+    });
+  } catch (err) {
+    await stores.uploadDays.refund(scope, day, bytes.length, input.now);
+    throw err;
+  }
   if (inserted !== 'exists') return { file: inserted, created: true };
+  // A save with the same id got there first and holds its own reservation.
+  await stores.uploadDays.refund(scope, day, bytes.length, input.now);
   const raced = await stores.files.get(scope, locationId, id);
   if (raced === null) throw new Error('item id is taken by another location');
   return { file: raced, created: false };

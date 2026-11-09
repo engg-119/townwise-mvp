@@ -380,7 +380,7 @@ export async function completeFile(ctx: TownwiseContext, req: Request, res: Resp
   });
   const fingerprint = fingerprintOf(session.chunkSize, session.chunks.map((chunk) => chunk?.sha256 ?? ''));
   const { kind } = sniff(file.name, Buffer.from(session.head ?? '', 'base64'));
-  const duplicate = await ctx.stores.files.duplicateOf(scope, location.id, fingerprint, file.id);
+  const duplicate = await ctx.stores.files.duplicateOf(scope, location.id, file.purpose, fingerprint, file.id);
   if (duplicate !== null) {
     await blobCall(ctx, 'delete_raw', () => blobs.deleteRaw(scope, ref), () => undefined);
     await ctx.stores.files.remove(scope, file.id);
@@ -467,10 +467,14 @@ export async function addTextItem(ctx: TownwiseContext, req: Request, res: Respo
   const body = parseInput(textBody, req.body);
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const now = ctx.now();
-  const saved = await blobCall(ctx, 'write_raw', () => saveTextItem(ctx.stores, blobs, scope, location.id, {
+  // Only the blob write answers 503 storage_unavailable; a store failure takes the ordinary 500 path.
+  const writer: Pick<FileBlobs, 'writeRaw'> = {
+    writeRaw: (...args) => blobCall(ctx, 'write_raw', () => blobs.writeRaw(...args), () => {
+      throw storageUnavailable(ctx, 'write_raw', new BlobUnavailableError('BlobMissing', null));
+    }),
+  };
+  const saved = await saveTextItem(ctx.stores, writer, scope, location.id, {
     title: body.title, text: body.text, uploadedBy: member.userId, uploaderRole: member.role, addedVia: null, now,
-  }), () => {
-    throw storageUnavailable(ctx, 'write_raw', new BlobUnavailableError('BlobMissing', null));
   });
   if (saved === 'storage_full') {
     const storedBytesLeft = Math.max(0, STORED_BYTES_PER_ORG - await ctx.stores.files.storedBytes(scope, now));
