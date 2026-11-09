@@ -201,10 +201,10 @@ describe('a plain answer', () => {
         { id: replyNodeId, parentId: userNodeId, role: 'assistant' },
       ],
       messages: [
-        { nodeId: userNodeId, role: 'user', text: 'What changed in May?', proposals: [], parts: [], at },
+        { nodeId: userNodeId, role: 'user', text: 'What changed in May?', proposals: [], parts: [], feedback: null, at },
         {
           nodeId: replyNodeId, role: 'assistant', text: 'May was steady, with two busy Fridays.', proposals: [],
-          parts: [{ type: 'text', text: 'May was steady, with two busy Fridays.' }], at,
+          parts: [{ type: 'text', text: 'May was steady, with two busy Fridays.' }], feedback: null, at,
         },
       ],
     });

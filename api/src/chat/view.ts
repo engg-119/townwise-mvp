@@ -7,6 +7,7 @@ import type {
 } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 
 import { readNoteContent } from '../handlers/notes.ts';
+import type { FeedbackReason } from '../stores/chat-conversations.ts';
 import type { NoteContent } from '../stores/notes.ts';
 import { inputViewOf, resultViewOf, toolNamed, type ToolView } from './tools/registry.ts';
 import type { ChatNode } from './tree.ts';
@@ -27,6 +28,9 @@ export interface ShownProposal extends NoteContent {
 
 export type ProposalView = ShownProposal & ProposalState;
 
+/** A reply's rating as the author sees it. */
+export interface FeedbackView { rating: 'up' | 'down'; reason: FeedbackReason | null }
+
 export type ChatPart =
   | { type: 'text'; text: string }
   | { type: 'tool'; id: string; name: string; state: 'done' | 'error'; input: ToolView | null; result: ToolView | null }
@@ -44,6 +48,8 @@ export interface ChatMessageView {
   proposals: ProposalView[];
   /** The reply in order; empty for the person's own message. */
   parts: ChatPart[];
+  /** The author's rating of the reply; null when unrated and for the person's own message. */
+  feedback: FeedbackView | null;
 }
 
 function blocksOf(param: BetaMessageParam): readonly BetaContentBlockParam[] {
@@ -71,22 +77,24 @@ function partOf(
   };
 }
 
-function entry(nodeId: string, role: 'user' | 'assistant', at: Date, parts: ChatPart[]): ChatMessageView {
+function entry(nodeId: string, role: 'user' | 'assistant', at: Date, parts: ChatPart[], feedback: FeedbackView | null): ChatMessageView {
   const texts = parts.flatMap((part) => (part.type === 'text' ? [part.text] : []));
   return {
     nodeId, role, at: at.toISOString(), text: texts.join('\n\n'),
     proposals: parts.flatMap((part) => (part.type === 'proposal' ? [part.proposal] : [])),
     parts: role === 'user' ? [] : parts,
+    feedback: role === 'user' ? null : feedback,
   };
 }
 
 /**
  * `path` is the nodes shown, root to leaf. `today` (the day the caller's tools read dates against) re-reads each call's
  * input, which was valid when it ran, through the same rules. `stateOf` says what became of each proposal; without it
- * every proposal reads as open. A node with nothing visible has no entry.
+ * every proposal reads as open. `feedbackOf` says how the author rated a reply (default: unrated). A node with nothing visible has no entry.
  */
 export function chatMessageViews(
   path: readonly ChatNode[], today: string, stateOf: (proposal: ShownProposal) => ProposalState = () => OPEN,
+  feedbackOf: (nodeId: string) => FeedbackView | null = () => null,
 ): ChatMessageView[] {
   const messages = path.map((node) => ({
     node, items: node.messages.map((message) => ({ at: message.at, param: JSON.parse(message.param) as BetaMessageParam })),
@@ -103,7 +111,7 @@ export function chatMessageViews(
     if (first === undefined) continue;
     if (node.role === 'user') {
       const text = blocksOf(first.param).flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('');
-      if (text !== '') views.push(entry(node.id, 'user', first.at, [{ type: 'text', text }]));
+      if (text !== '') views.push(entry(node.id, 'user', first.at, [{ type: 'text', text }], null));
       continue;
     }
     const parts: ChatPart[] = [];
@@ -121,7 +129,7 @@ export function chatMessageViews(
         }
       }
     }
-    if (parts.length > 0) views.push(entry(node.id, 'assistant', first.at, parts));
+    if (parts.length > 0) views.push(entry(node.id, 'assistant', first.at, parts, feedbackOf(node.id)));
   }
   return views;
 }
