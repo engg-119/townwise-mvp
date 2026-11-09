@@ -259,8 +259,8 @@ export interface StaffActivityView {
 }
 
 /**
- * Rows for staff events (actor role superadmin) on one organization, newest first as given. The caller leaves out the
- * staff_action.not_applied events: each marks the row it qualifies instead.
+ * Rows for staff events (actor role superadmin) and the forecast lab's own (system) on one organization, newest first
+ * as given. The caller leaves out the staff_action.not_applied events: each marks the row it qualifies instead.
  */
 export async function staffActivityViews(ctx: TownwiseContext, events: readonly AuditEventRecord[]): Promise<StaffActivityView[]> {
   const qualifiers = await ctx.stores.audit.findNotApplied(events.map((event) => event.id));

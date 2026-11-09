@@ -61,12 +61,15 @@ export async function leaveOrg(ctx: TownwiseContext, req: Request, res: Response
   res.status(200).json(meResponse(await resolveAccess(ctx, authOf(req))));
 }
 
-/** GET /api/org/staff-activity (D9, P18): every staff action on this organization, newest first, each marked applied or not. */
+/**
+ * GET /api/org/staff-activity (D9, P18): every staff action on this organization, and every one the forecast lab took
+ * on its own (the system's publishes and finished calibrations), newest first, each marked applied or not.
+ */
 export async function getStaffActivity(ctx: TownwiseContext, _req: Request, res: Response, principal: Principal): Promise<void> {
   const { scope } = orgAdmin(principal);
   // A staff_action.not_applied event marks the row it qualifies, so it takes no row of its own.
   const page = await ctx.stores.audit.query({
-    orgId: scope.orgId, actorRole: 'superadmin', excludeAction: 'staff_action.not_applied', limit: STAFF_ACTIVITY_EVENTS,
+    orgId: scope.orgId, actorRole: ['superadmin', 'system'], excludeAction: 'staff_action.not_applied', limit: STAFF_ACTIVITY_EVENTS,
   });
   res.status(200).json({ events: await staffActivityViews(ctx, page.events.slice(0, STAFF_ACTIVITY_EVENTS)) });
 }

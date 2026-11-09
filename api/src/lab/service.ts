@@ -1,8 +1,9 @@
 // The forecast lab's calibrations (design calls 3, 4, 5 and 7): starting one, timing out one whose job never called
-// back, and storing what its job posts back as a draft forecast run. No transactions (D17): every step is ordered so a
-// retry completes it, and every change of a calibration is a compare-and-set, so a duplicated or retried result ends
-// with one run and one calibration.finished event. Nothing publishes here. Logs and audit events carry ids, codes and
-// counts only, never a figure, a date with a value, or anything from the input or the result.
+// back, and storing what its job posts back as a draft forecast run, which the system publishes when it passes the gate
+// (G2) and the organization's forecasts are switched on (G1). No transactions (D17): every step is ordered so a retry
+// completes it, and every change of a calibration is a compare-and-set, so a duplicated or retried result ends with one
+// run, at most one publish and one calibration.finished event. Logs and audit events carry ids, codes and counts only,
+// never a figure, a date with a value, or anything from the input or the result.
 import { createHash, randomBytes } from 'node:crypto';
 
 import { createRateLimiter, RateLimiterUnavailableError, type RateLimiter } from '@ckeith26/rate-limit';
@@ -10,16 +11,20 @@ import { Types } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
 import type { TownwiseContext } from '../app.ts';
-import { recordAfter, SYSTEM_ACTOR } from '../audit.ts';
+import { applyRecorded, recordAfter, recordBefore, recordNotApplied, SYSTEM_ACTOR } from '../audit.ts';
 import { daysBetween, utcDay } from '../dates.ts';
 import { runFileSha256, type FileIssue } from '../forecasts/file.ts';
 import { rowsOf } from '../handlers/forecast-runs.ts';
 import { LIVE_STATUSES, type CalibrationFailure, type CalibrationOutcome, type CalibrationRecord } from '../stores/calibrations.ts';
+import type { AuditEventInput } from '../stores/audit-events.ts';
+import type { ForecastRunRecord } from '../stores/forecasts.ts';
 import type { LocationRecord } from '../stores/locations.ts';
-import { currentChampion, GATE } from './gate.ts';
+import { localDay, timeZoneOf } from '../time-zones.ts';
+import { currentChampion, decideGate, GATE } from './gate.ts';
 import { guestSpan } from './input.ts';
 import { checkLabResult, type LabSuccess } from './result.ts';
 import { LabStartError } from './runner.ts';
+import type { Scorecard } from './scorecard.ts';
 
 export { HORIZON_DAYS } from './input.ts';
 
@@ -97,13 +102,16 @@ async function historyOf(ctx: TownwiseContext, scope: OrgScope, locationId: stri
   return guestSpan(await ctx.stores.salesDays.days(scope, locationId, { from: coverage.firstDate, to: coverage.lastDate }));
 }
 
+/** What a finished calibration's event names besides its status: its run, the gate's reason and the weeks it judged. */
+interface FinishFacts { runId: string | null; gate: string | null; heldOutWeeks: number | null }
+
 /**
  * Finishes a live calibration by compare-and-set. Only the call that finishes it records calibration.finished (by the
  * system, after the effect) and logs townwise.calibration_finished, so a retry or a race records it once.
  */
 export async function finishCalibration(
   ctx: TownwiseContext, scope: OrgScope, record: CalibrationRecord, outcome: CalibrationOutcome,
-  facts: { runId: string | null; heldOutWeeks: number | null } = { runId: null, heldOutWeeks: null },
+  facts: FinishFacts = { runId: null, gate: null, heldOutWeeks: null },
 ): Promise<boolean> {
   if (!(await ctx.stores.calibrations.finish(scope, record.id, outcome, ctx.now()))) return false;
   const failure = outcome.status === 'failed' ? outcome.failure : null;
@@ -111,13 +119,13 @@ export async function finishCalibration(
     ...SYSTEM_ACTOR, at: ctx.now(), orgId: scope.orgId, action: 'calibration.finished',
     target: { type: 'calibration', id: record.id },
     details: {
-      locationId: record.locationId, calibrationId: record.id, status: outcome.status, gate: null, failure,
+      locationId: record.locationId, calibrationId: record.id, status: outcome.status, gate: facts.gate, failure,
       runId: facts.runId, heldOutWeeks: facts.heldOutWeeks,
     },
   });
   ctx.logger.info({
     orgId: scope.orgId, locationId: record.locationId, calibrationId: record.id, status: outcome.status, failure,
-    heldOutWeeks: facts.heldOutWeeks,
+    gate: facts.gate, heldOutWeeks: facts.heldOutWeeks,
   }, 'townwise.calibration_finished');
   return true;
 }
@@ -204,10 +212,61 @@ function heldOutWeeksOf(result: LabSuccess): number {
 }
 
 /**
+ * The system publishes the draft (G1): forecast.published before the effect, then draft to published by
+ * compare-and-set. A staff withdrawal or deletion of the draft meanwhile wins, and the event says it did not apply.
+ */
+async function publishDraft(ctx: TownwiseContext, scope: OrgScope, calibration: CalibrationRecord, run: ForecastRunRecord): Promise<void> {
+  const now = ctx.now();
+  const event: AuditEventInput = {
+    ...SYSTEM_ACTOR, at: now, orgId: scope.orgId, action: 'forecast.published',
+    target: { type: 'forecast_run', id: run.id },
+    details: {
+      locationId: run.locationId, modelVersion: run.model.version, from: run.range.from, to: run.range.to, dayCount: run.dayCount,
+      via: 'lab', calibrationId: calibration.id,
+    },
+  };
+  const eventId = await recordBefore(ctx, event);
+  const published = await applyRecorded(ctx, event, eventId, () => ctx.stores.forecasts.setStatus(scope, run.id, {
+    from: ['draft'], to: 'published', at: now, by: null,
+  }));
+  if (!published) {
+    await recordNotApplied(ctx, event, eventId, 'conflict');
+    return;
+  }
+  ctx.logger.info({ orgId: scope.orgId, runId: run.id, status: 'published' }, 'townwise.forecast_status');
+}
+
+/**
+ * The gate (G2) on the draft this calibration made, once: forecasts on means switched on with the organization active
+ * (G1); the current forecast is read again, in the town's today, to compare with the one the calibration was given; and
+ * the decision is set on the calibration by compare-and-set, so only the request that set it publishes. A run that is
+ * no longer a draft, or that another calibration made (the same file again), is never gated or changed (G3).
+ */
+async function gateDraft(
+  ctx: TownwiseContext, scope: OrgScope, calibration: CalibrationRecord, location: LocationRecord, runId: string, scorecard: Scorecard,
+): Promise<void> {
+  const { forecasts, orgs } = ctx.stores;
+  const run = await forecasts.find(scope, runId);
+  if (run?.status !== 'draft' || run.lab?.calibrationId !== calibration.id) return;
+  const org = await orgs.findById(scope.orgId);
+  const today = localDay(ctx.now(), timeZoneOf(location.town).timeZone);
+  const decision = decideGate({
+    forecastsOn: org !== null && org.forecasts.on && org.status === 'active',
+    championAtStart: calibration.championRunId,
+    championNow: currentChampion(await forecasts.published(scope, location.id), today)?.id ?? null,
+    scorecard,
+  });
+  const gate = { published: decision.publish, reason: decision.reason };
+  if (await ctx.stores.calibrations.recordGate(scope, calibration.id, gate) && decision.publish) {
+    await publishDraft(ctx, scope, calibration, run);
+  }
+}
+
+/**
  * The draft run of a checked result, in retry-safe order: the run upserted on its file's hash (the lab never changes a
- * run that already exists), its rows, draft, then the result on the calibration and its finish, each by
- * compare-and-set. A calibration deleted meanwhile (its sales data, its location or its organization) takes the run
- * this calibration made with it, and answers 404.
+ * run that already exists), its rows, draft, then the result on the calibration, its gate (and the publish the gate
+ * decides) and its finish, each by compare-and-set. A calibration deleted meanwhile (its sales data, its location or its
+ * organization) takes the run this calibration made with it, and answers 404.
  */
 async function storeDraft(
   ctx: TownwiseContext, scope: OrgScope, calibration: CalibrationRecord, result: LabSuccess, inputSha256: string, now: Date,
@@ -244,15 +303,21 @@ async function storeDraft(
     if (inserted) await forecasts.remove(scope, run.id);
     return NOT_FOUND;
   }
-  await finishCalibration(ctx, scope, calibration, { status: 'succeeded' }, { runId: run.id, heldOutWeeks: heldOutWeeksOf(result) });
+  await gateDraft(ctx, scope, calibration, location, run.id, result.scorecard);
+  // The gate as recorded, by this request or a concurrent one.
+  const gated = await calibrations.find(scope, calibration.id);
+  await finishCalibration(ctx, scope, calibration, { status: 'succeeded' }, {
+    runId: run.id, gate: gated?.gate?.reason ?? null, heldOutWeeks: heldOutWeeksOf(result),
+  });
   const current = await calibrations.find(scope, calibration.id);
   return { status: 200, body: { status: current?.status ?? 'succeeded' } };
 }
 
 /**
  * POST /lab/calibrations/:id/result, for a calibration the callback found live: 200 { status } once stored (a draft
- * run, or a failure the job reported); 400 invalid_lab_result { issues } (paths and codes) for a result that fails its
- * checks, which fails the calibration invalid_result; 404 when the calibration is gone or no longer live.
+ * run, published when the gate says so, or a failure the job reported); 400 invalid_lab_result { issues } (paths and
+ * codes) for a result that fails its checks, which fails the calibration invalid_result; 404 when the calibration is
+ * gone or no longer live.
  */
 export async function ingestLabResult(ctx: TownwiseContext, scope: OrgScope, calibrationId: string, raw: unknown): Promise<IngestAnswer> {
   const calibration = await ctx.stores.calibrations.find(scope, calibrationId);
