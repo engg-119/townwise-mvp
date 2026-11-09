@@ -3,7 +3,7 @@ import {
   type UsablePlace,
 } from '../../../src/portal/onboarding/places';
 import { searchStatus } from '../../../src/portal/onboarding/usePlaceSearch';
-import { GOOGLE_SOURCE, townLine } from '../../../src/portal/places/PlaceCard';
+import { GOOGLE_SOURCE, PLACES_SOURCE, townLine } from '../../../src/portal/places/PlaceCard';
 import { ACCESS, fakePortalApi, locationOf, meOf, offline, refusal, writes } from '../../helpers/portal';
 import { DETAILS, installPlaces } from './places-fakes';
 
@@ -75,6 +75,11 @@ describe('the words', () => {
     expect(townLine({ townId: null, name: 'Norwich', state: 'VT' }))
       .toBe('Norwich, VT. Townwise hasn’t researched this town yet, so you’ll see your own data without a town profile.');
     expect(townLine(null)).toBe('Townwise works with businesses in a US town, and Google Maps puts this place in none.');
+    expect(GOOGLE_SOURCE).toBe('From Google Maps. Townwise keeps Google’s id for the place and its town, not the address or the map.');
+  });
+
+  test('the checked list’s source line names what a request keeps of each place', () => {
+    expect(PLACES_SOURCE).toBe('From Google Maps. Townwise keeps Google’s id for each place, its name and its town, not the address or the map.');
     expect(GOOGLE_SOURCE).toBe('From Google Maps. Townwise keeps Google’s id for the place and its town, not the address or the map.');
   });
 
