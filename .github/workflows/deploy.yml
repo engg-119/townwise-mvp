@@ -254,14 +254,31 @@ jobs:
           exit 1
       # Only once the owner has applied the lab (infra/README.md, step 20) and set LAB_ENABLED: before that the job
       # does not exist, and the update would fail the release.
-      - name: Point the lab job at the image digest
+      - name: Point the lab job at the image digest and wait for it
         if: env.LAB_ENABLED == 'true'
         env:
           IMAGE: ${{ steps.push-lab.outputs.image }}
         run: |
           set -euo pipefail
-          az containerapp job update --name caj-townwise-lab --resource-group "$AZURE_RESOURCE_GROUP" \
-            --container-name lab --image "$IMAGE" --output none
+          # Send, with az rest, the PATCH that `az containerapp job update --image` sends (the job's containers with
+          # the image swapped), then poll the job itself. The CLI command would wait on a location-level operation
+          # the deploy role cannot read, and its --no-wait sends the PATCH and then fails (azure-cli 2.86).
+          job="/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP/providers/Microsoft.App/jobs/caj-townwise-lab?api-version=2025-07-01"
+          body="$(az rest --method get --url "$job" --query properties.template.containers --output json \
+            | jq -c --arg image "$IMAGE" \
+              'if length == 1 and .[0].name == "lab" then {properties: {template: {containers: [.[0] | .image = $image]}, configuration: {}}}
+               else error("the lab job does not have exactly one container, lab") end')"
+          az rest --method patch --url "$job" --body "$body" --output none
+          for _ in $(seq 1 30); do
+            sleep 10
+            read -r state image < <(az containerapp job show --name caj-townwise-lab --resource-group "$AZURE_RESOURCE_GROUP" \
+              --query '[properties.provisioningState, properties.template.containers[0].image]' --output tsv | tr '\t' ' ')
+            echo "lab job provisioning $state"
+            if [ "$state" = Failed ] || [ "$state" = Canceled ]; then echo "::error::lab job update failed"; exit 1; fi
+            if [ "$state" = Succeeded ] && [ "$image" = "$IMAGE" ]; then exit 0; fi
+          done
+          echo "::error::lab job did not reach the new image"
+          exit 1
       # The upload client runs from its image pinned by digest (not the Static Web Apps action, which builds
       # FROM a moving tag). docker run passes only the variables named with -e: the container gets the token
       # and the read-only web folder, and no ACTIONS_ID_TOKEN_REQUEST_* variables, Azure CLI session or

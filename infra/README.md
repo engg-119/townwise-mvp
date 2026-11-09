@@ -282,7 +282,7 @@ curl -sI https://townwise.tech/sign-in | grep -i -E 'content-security|strict-tra
 - `deploy` is the only job with an id-token, and it runs no repository or npm code. It:
   1. checks the hashes, and that the web archive holds only plain files and directories, none outside its folder;
   2. pushes the API image, and the lab image `townwise-lab:<sha>`, to the registry (the log prints the lab digest);
-  3. points the Container App at the image digest and waits for the revision, then, only when `LAB_ENABLED` is `true`, points the lab job at its digest;
+  3. points the Container App at the image digest and waits for the revision, then, only when `LAB_ENABLED` is `true`, points the lab job at its digest and waits until the job reports it;
   4. fetches the Static Web Apps token, signs out of Azure, and uploads the web build with `docker run` of the Static Web Apps client image, pinned by digest. The container gets only the token and the web folder (read-only): no OIDC request variables, no Azure session, no docker socket;
   5. checks `https://api.townwise.tech/healthz`, printing only the status.
 
@@ -343,7 +343,7 @@ List revisions with `az containerapp revision list -n ca-townwise-api -g rg-town
      az containerapp job start -n caj-townwise-db-users -g rg-townwise-prod      # reports "restore: dropped townwise-restore"
      ```
 
-- **Who can.** Microsoft: "Treat permission to start a job as permission to use the job's secrets and available managed identities", because a start request can replace the job's containers. Only `townwise-admins` (Owner on the group) can start jobs; developers (Reader) and the deploy identity cannot. Because each job has its own identity and secrets, starting the smoke or restore job does not expose the admin password, and starting the backup job does not expose read access to the dumps.
+- **Who can.** Microsoft: "Treat permission to start a job as permission to use the job's secrets and available managed identities", because a start request can replace the job's containers. Only `townwise-admins` (Owner on the group) can start jobs; developers (Reader) and the deploy identity cannot. Because each job has its own identity and secrets, starting the smoke or restore job does not expose the admin password, and starting the backup job does not expose read access to the dumps. With the forecast lab (step 20), the API's identity may also start `caj-townwise-lab`, and the deploy identity may update it (any part of its definition, not only the image); that job's identity holds AcrPull only, so neither grant exposes a secret or a data role.
 
 ### 15. Sponsorship balance
 
@@ -437,13 +437,19 @@ No infrastructure of its own: a forecast is a run's outputs, which staff export 
 
 ### 20. Enable the forecast lab
 
-The lab retrains a location's forecast model in Azure, from the sales the API hands the job (`modeling/lab`, `api/src/lab`). It is the one place the API's data leaves for a job, so it is off until you apply it: `enable_lab` is false, and `lab_image` is null. The job `caj-townwise-lab` is Manual, 1 vCPU and 2 GiB, 900 seconds, never retried, with no secrets and its own identity (`id-townwise-job-lab`) that holds AcrPull and nothing else, and `identitySettings` lifecycle `None` so no container can obtain a token for it. It holds no database or storage credential: the API starts it with a per-calibration token (`TOWNWISE_LAB_CALIBRATION_ID`, `TOWNWISE_LAB_TOKEN`), and it reads its input and posts its result over HTTPS. The API's identity gets the custom role "Townwise lab starter" (`Microsoft.App/jobs/read` and `Microsoft.App/jobs/start/action`) at the job's scope only, and the deploy identity gets the "Townwise deployer" role on the job. Agents write and test this stack but never apply it.
+The lab retrains a location's forecast model in Azure, from the sales the API hands the job (`modeling/lab`, `api/src/lab`). It is the one job the API hands sales to directly (over the callback), so it is off until you apply it: `enable_lab` is false, and `lab_image` is null. The job `caj-townwise-lab` is Manual, 1 vCPU and 2 GiB, 900 seconds, never retried, with no secrets and its own identity (`id-townwise-job-lab`) that holds AcrPull and nothing else, and `identitySettings` lifecycle `None` so no container can obtain a token for it. It holds no database or storage credential: the API starts it with a per-calibration token (`TOWNWISE_LAB_CALIBRATION_ID`, `TOWNWISE_LAB_TOKEN`), and it reads its input and posts its result over HTTPS. The API's identity gets the custom role "Townwise lab starter" (`Microsoft.App/jobs/read` and `Microsoft.App/jobs/start/action`) at the job's scope only, and the deploy identity gets the "Townwise deployer" role on the job. Agents write and test this stack but never apply it.
 
 1. **Merge with `LAB_ENABLED` unset.** The release builds `modeling/lab/Dockerfile` in a job with no token and pushes `townwise-lab:<sha>`. The deploy log prints the pushed digest on the line `lab image: <registry>/townwise-lab@sha256:...`; copy it. No lab job exists yet, so the deploy does not touch one.
 2. **Apply.** In `infra/terraform/production/terraform.tfvars` set `enable_lab = true` and `lab_image = "<that digest>"`, then `terraform plan` and `terraform apply` from `infra/terraform/production`. The plan adds the identity, its AcrPull assignment, the role "Townwise lab starter", its assignment to the API's identity at the job, the deploy identity's assignment at the job, the job, and changes the Container App (`TOWNWISE_LAB_RUNNER=azure` and `TOWNWISE_LAB_JOB_ID`), which starts a new revision. `terraform output lab_job_id` prints the id. Terraform ignores later changes to the job's image (`ignore_changes` on the container image), so a plan after a release shows no drift; if a future provider stops honoring that for the job body, re-apply with the newest digest instead.
-3. **Turn the deploy on.** Set the repository variable `LAB_ENABLED=true`. From the next release, the deploy runs `az containerapp job update` on `caj-townwise-lab` with the new digest.
-4. **Check on a test organization with synthetic days.** Calibrate in the console (a location with at least the minimum history), and wait for the execution to succeed. Its console log has only `fetched input: N days` and `posted result: ok`, and `ContainerAppConsoleLogs | where ContainerJobName_s == "caj-townwise-lab"` shows no figure, date or name. If the job cannot reach the API's default host name (it uses `https://<fqdn from terraform output container_app_fqdn>`), set its `TOWNWISE_LAB_API_URL` to `https://api.townwise.tech` in `lab.tf` and apply again.
+3. **Turn the deploy on.** Set the repository variable `LAB_ENABLED=true`. From the next release, the deploy points `caj-townwise-lab` at the new digest (with `az rest`, the same PATCH as `az containerapp job update --image`, whose wait the deploy role cannot follow) and waits until the job reports `Succeeded` with that image.
+4. **Check on a test organization with synthetic days.** Calibrate in the console (a location with at least the minimum history), and wait for the execution to succeed. Its console log has only `fetched input: N days` and `posted result: ok`, and `ContainerAppConsoleLogs | where ContainerName == "lab" | project TimeGenerated, Log` shows no figure, date or name (`lab` is the job's container name, which no other app or job in the environment uses). If the job cannot reach the API's default host name (it uses `https://<fqdn from terraform output container_app_fqdn>`), set its `TOWNWISE_LAB_API_URL` to `https://api.townwise.tech` in `lab.tf` and apply again.
 5. **Switch forecasts on.** Only for an organization whose owner agreed, and only once the privacy page carries the forecasts paragraph (step 19): until then a better draft stays a draft with its scorecard visible to staff.
+6. **Delete old lab images now and then.** Every release pushes `townwise-lab:<sha>`, about 0.5 GB compressed (on Linux, xgboost brings NVIDIA's NCCL library, a 305 MB wheel), even while the lab is off, and its dependency layer is new each time because the build has no cache. The registry has no retention policy, Basic includes 10 GiB, and storage beyond that costs $0.10 per GB a month, so about twenty releases pass it. Keep the newest three (the job runs the newest once `LAB_ENABLED` is on; before that, also keep the `lab_image` digest) and delete the rest:
+
+   ```sh
+   az acr manifest list-metadata -r crtownwise2d2c15bf -n townwise-lab --orderby time_desc --query '[3:].digest' -o tsv \
+     | while read -r d; do az acr manifest delete -r crtownwise2d2c15bf -n "townwise-lab@$d" --yes; done
+   ```
 
 ## Logs
 
@@ -468,7 +474,7 @@ Prices are from the Azure Retail Prices API (eastus), with a 730-hour month (2,6
 | Backup job, about 5 minutes a night at 0.5 vCPU and 1 GiB | active rates | about $0.14 |
 | Forecast lab, when on (step 20), a calibration of about 15 minutes at 1 vCPU and 2 GiB | active rates | about $0.03 per calibration |
 | Backup storage, Hot LRS, 30 dumps kept | $0.0208 per GB a month, writes $0.05 per 10,000 | about $0.03 at 50 MB a dump |
-| Container Registry Basic | $0.1666 a day | $5.07 |
+| Container Registry Basic, 10 GiB included | $0.1666 a day; storage beyond 10 GiB $0.10 per GB a month | $5.07, while old lab images are deleted (step 20) |
 | Azure DNS zone | $0.50 per zone (queries $0.40 per million) | $0.50 |
 | Key Vault | $0.03 per 10,000 operations | about $0.02 |
 | Log Analytics | first 5 GB a month free; the 0.1 GB daily cap keeps ingestion under it | $0 |

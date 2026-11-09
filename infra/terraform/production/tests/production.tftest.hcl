@@ -341,8 +341,8 @@ override_resource {
   override_during = plan
   values = {
     id           = "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-townwise-job-lab"
-    principal_id = "00000000-0000-0000-0000-0000000000f1"
-    client_id    = "00000000-0000-0000-0000-0000000000f2"
+    principal_id = "00000000-0000-0000-0000-0000000000d1"
+    client_id    = "00000000-0000-0000-0000-0000000001d1"
   }
 }
 
@@ -1088,11 +1088,13 @@ run "lab_enabled" {
       azapi_resource.job_lab[0].name == "caj-townwise-lab" &&
       azapi_resource.job_lab[0].type == "Microsoft.App/jobs@2025-07-01" &&
       azapi_resource.job_lab[0].body.properties.environmentId == azurerm_container_app_environment.main.id &&
+      azapi_resource.job_lab[0].body.properties.workloadProfileName == "Consumption" &&
       azapi_resource.job_lab[0].body.properties.configuration.triggerType == "Manual" &&
+      azapi_resource.job_lab[0].body.properties.configuration.manualTriggerConfig == { parallelism = 1, replicaCompletionCount = 1 } &&
       azapi_resource.job_lab[0].body.properties.configuration.replicaTimeout == 900 &&
       azapi_resource.job_lab[0].body.properties.configuration.replicaRetryLimit == 0
     )
-    error_message = "The lab job is manual, 900 seconds, and never retried."
+    error_message = "The lab job is manual, one replica per execution on the Consumption profile, 900 seconds, and never retried."
   }
 
   assert {
@@ -1144,7 +1146,18 @@ run "lab_enabled" {
     condition = (
       azurerm_role_assignment.lab_acr_pull[0].role_definition_name == "AcrPull" &&
       azurerm_role_assignment.lab_acr_pull[0].scope == azurerm_container_registry.main.id &&
-      azurerm_role_assignment.lab_acr_pull[0].principal_id == azurerm_user_assigned_identity.lab[0].principal_id
+      azurerm_role_assignment.lab_acr_pull[0].principal_id == azurerm_user_assigned_identity.lab[0].principal_id &&
+      # Every other role assignment in the module (the list rbac_scopes checks, plus the lab's own).
+      !contains([
+        for assignment in concat(
+          values(azurerm_role_assignment.api_secret_read), values(azurerm_role_assignment.deployer),
+          values(azurerm_role_assignment.job_secret_read), values(azurerm_role_assignment.job_acr_pull),
+          [azurerm_role_assignment.api_acr_pull, azurerm_role_assignment.api_email, azurerm_role_assignment.deploy_acr_push],
+          [azurerm_role_assignment.backup_blob_create, azurerm_role_assignment.restore_blob_read],
+          [azurerm_role_assignment.api_files_raw, azurerm_role_assignment.api_files_clean],
+          [azurerm_role_assignment.lab_start[0], azurerm_role_assignment.deployer_lab_job[0]],
+        ) : assignment.principal_id
+      ], azurerm_user_assigned_identity.lab[0].principal_id)
     )
     error_message = "The lab identity holds AcrPull on the registry and nothing else."
   }
@@ -1165,5 +1178,18 @@ run "lab_enabled" {
       output.lab_job_id == "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.App/jobs/caj-townwise-lab"
     )
     error_message = "With enable_lab, the API runs calibrations in the Azure job and knows its resource id."
+  }
+
+  # TOWNWISE_LAB_JOB_ID is built from names (lab.tf, to avoid a cycle). It must name the resource the job
+  # itself declares: its parent, its type without the API version, and its name, which is how an ARM id is
+  # formed. The mocked plan has no real azapi id (the override above fills it in that same form), so the
+  # check against output.lab_job_id only pins that the output and the API's variable carry one value.
+  assert {
+    condition = (
+      one([for env in azurerm_container_app.api.template[0].container[0].env : env.value if env.name == "TOWNWISE_LAB_JOB_ID"]) ==
+      "${azapi_resource.job_lab[0].parent_id}/providers/${split("@", azapi_resource.job_lab[0].type)[0]}/${azapi_resource.job_lab[0].name}" &&
+      one([for env in azurerm_container_app.api.template[0].container[0].env : env.value if env.name == "TOWNWISE_LAB_JOB_ID"]) == output.lab_job_id
+    )
+    error_message = "TOWNWISE_LAB_JOB_ID names the lab job Terraform declares (its parent, type and name), the same id lab_job_id outputs."
   }
 }

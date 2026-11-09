@@ -7,7 +7,7 @@
 # per-calibration token and the job reads its input and posts its result over HTTPS (api/src/lab).
 #
 # The API's identity may read the job and start it, at the job's scope only. The image is the one the deploy
-# workflow last set (`az containerapp job update`); Terraform keeps it as lab_image until then.
+# workflow last set (a PATCH of the job's containers, deploy.yml); Terraform keeps it as lab_image until then.
 
 locals {
   lab_job_name = "caj-townwise-lab"
