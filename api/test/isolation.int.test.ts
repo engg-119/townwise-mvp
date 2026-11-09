@@ -28,7 +28,8 @@ interface Tenant {
   seatIds: string[];
   /**
    * A location with a sales day, an upload record, a note and a tuning chat conversation, both the member's. The
-   * conversation also holds a note proposal, `toolu_proposal0001`, shown to the member and not yet acted on.
+   * conversation also holds a note proposal, `toolu_proposal0001`, and a proposal to keep text, `toolu_item0001`
+   * (D28), both shown to the member and not yet acted on.
    */
   locationId: string;
   locationName: string;
@@ -67,7 +68,7 @@ async function tenant(name: string): Promise<Tenant> {
     orgId, locationId, uploadedBy: member.session.userId, name: `${name} sales.csv`, raw: Buffer.from('Date,Guests\n'), clean: 'date,guests,net_sales\r\n',
   });
   const importId = String((await server.connection.collection('tw_files').findOne({ _id: new Types.ObjectId(fileId) }))?.importId);
-  await withProposal(conversationId);
+  await withProposal(conversationId, name);
   // U9: an answer to a TownwiseAI question.
   await server.connection.collection('tw_agent_answers').insertOne({
     orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), questionId: 'gap_2026-05-02_2026-05-03',
@@ -76,14 +77,24 @@ async function tenant(name: string): Promise<Tenant> {
   return { orgId, name, admin, member, inviteId, seatIds, locationId, locationName, noteId, conversationId, fileId, importId, uploadId };
 }
 
-/** Appends a turn in which TownwiseAI proposed a note, `toolu_proposal0001`, that the owner was shown. */
-async function withProposal(conversationId: string): Promise<void> {
+/**
+ * Appends a turn in which TownwiseAI proposed a note, `toolu_proposal0001`, and keeping the tenant's private text,
+ * `toolu_item0001`, both shown to the owner.
+ */
+async function withProposal(conversationId: string, name: string): Promise<void> {
   const at = server.clock.now();
   const note = { kind: 'closure', startDate: '2026-05-04', endDate: '2026-05-04', weekdays: null, effect: 'closed', expectedGuests: null, detail: null };
+  const item = { title: 'Catering list', text: `${name} private item` };
   const params = [
     { role: 'user', content: 'We close on May 4.' },
-    { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_proposal0001', name: 'propose_note', input: note }] },
-    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_proposal0001', content: 'Shown to the owner as a proposal.' }] },
+    { role: 'assistant', content: [
+      { type: 'tool_use', id: 'toolu_proposal0001', name: 'propose_note', input: note },
+      { type: 'tool_use', id: 'toolu_item0001', name: 'propose_data_item', input: item },
+    ] },
+    { role: 'user', content: [
+      { type: 'tool_result', tool_use_id: 'toolu_proposal0001', content: 'Shown to the owner as a proposal.' },
+      { type: 'tool_result', tool_use_id: 'toolu_item0001', content: 'Shown to the owner as a proposal. They decide whether to keep it.' },
+    ] },
     { role: 'assistant', content: [{ type: 'text', text: 'Proposed.' }] },
   ];
   await server.connection.collection('tw_chat_conversations').updateOne(
@@ -136,7 +147,7 @@ function bIds(): Record<string, string> {
 function bSecrets(): string[] {
   return [
     b.orgId, b.name, b.admin.email, b.member.email, b.locationId, b.locationName, b.noteId, b.conversationId, `${b.name} private chat`,
-    b.fileId, b.importId, b.uploadId,
+    b.fileId, b.importId, b.uploadId, `${b.name} private item`,
   ];
 }
 
@@ -185,6 +196,7 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
     'org.data.text': { title: 'a', text: 'a' },
     'org.imports.answer': { questionId: 'q', choice: 'not_sure' },
     'org.chat.proposal': { action: 'dismiss' },
+    'org.chat.item_proposal': { action: 'dismiss' },
     'org.agent.answer': { answer: 'not_sure' },
     // D28.
     'org.data.update': { enabled: false },
@@ -212,7 +224,7 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
       // U13B.
       'org.forecast.get',
       // D28, Your data.
-      'org.data.update', 'org.data.remove',
+      'org.data.update', 'org.data.remove', 'org.chat.item_proposal.get', 'org.chat.item_proposal',
     ]));
   });
 
@@ -224,7 +236,9 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
       };
       const aOwn: Record<string, string> = {
         memberId: a.inviteId, locationId: a.locationId, noteId: a.noteId, conversationId: a.conversationId, fileId: a.fileId,
-        importId: a.importId, index: '0', proposalId: 'toolu_proposal0001', questionId: 'gap_2026-05-02_2026-05-03',
+        importId: a.importId, index: '0', questionId: 'gap_2026-05-02_2026-05-03',
+        // D28: a proposal to keep text is its own call.
+        proposalId: route.id.startsWith('org.chat.item_proposal') ? 'toolu_item0001' : 'toolu_proposal0001',
         ref: `u_${a.uploadId}`,
       };
       const params = [...route.path.matchAll(/:([A-Za-z]+)/g)].map((match) => match[1] ?? '');
@@ -295,6 +309,29 @@ describe('isolation, case by case', () => {
     });
     expect(own.status).toBe(200);
     await proposals.deleteMany({ orgId: new Types.ObjectId(a.orgId) });
+  });
+
+  it('A’s member cannot see, keep or set aside B’s proposals to keep text by any mix of ids, though they can their own', async () => {
+    const before = await snapshotOf(b);
+    const mixes = [
+      [b.locationId, b.conversationId], [a.locationId, b.conversationId], [b.locationId, a.conversationId],
+    ] as const;
+    for (const [location, conversation] of mixes) {
+      const path = `/api/org/locations/${location}/chat/${conversation}/item-proposals/toolu_item0001`;
+      for (const json of [undefined, { action: 'save' }, { action: 'dismiss' }]) {
+        const res = await call(server, path, { session: a.member.session, ...(json === undefined ? {} : { json }) });
+        const text = await res.text();
+        expect({ location, conversation, json, status: res.status }).toEqual({ location, conversation, json, status: 404 });
+        for (const secret of bSecrets()) expect(text).not.toContain(secret);
+      }
+    }
+    expect(await snapshotOf(b)).toBe(before);
+    const own = `/api/org/locations/${a.locationId}/chat/${a.conversationId}/item-proposals/toolu_item0001`;
+    expect(await (await call(server, own, { session: a.member.session })).json()).toMatchObject({
+      proposal: { id: 'toolu_item0001', text: `${a.name} private item`, status: 'open' },
+    });
+    expect((await call(server, own, { session: a.member.session, json: { action: 'dismiss' } })).status).toBe(200);
+    await server.connection.collection('tw_chat_proposals').deleteMany({ orgId: new Types.ObjectId(a.orgId) });
   });
 
   it('declining B’s invitation addressed to someone else is 409 no_invite', async () => {

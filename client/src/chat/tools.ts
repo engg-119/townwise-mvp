@@ -277,6 +277,10 @@ const TOOLS: Readonly<Record<string, ToolRow>> = {
     basedOn: (_input, _ctx, result) => (result?.available === false ? 'an item your team added (couldn’t read it)' : 'an item your team added'),
     terms: { available: 'Read', chars: 'Characters', truncated: 'Cut short' },
   },
+  // Your data: propose_data_item (api/src/chat/tools/propose-data.ts), a card proposing to keep text the owner gave.
+  propose_data_item: {
+    object: () => 'text to keep on Your data',
+  },
 };
 
 const GENERIC = { running: 'Looking something up', done: 'Looked something up', error: 'Couldn’t look something up' } as const;

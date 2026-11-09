@@ -15,6 +15,7 @@ import { listDataTool } from './list-data.ts';
 import { notesTool } from './notes.ts';
 import { overviewTool } from './overview.ts';
 import { peopleInTownTool } from './people-in-town.ts';
+import { proposeDataTool } from './propose-data.ts';
 import { proposeNoteTool } from './propose-note.ts';
 import { readDataTool } from './read-data.ts';
 import { salesDaysTool } from './sales-days.ts';
@@ -85,6 +86,8 @@ export const TOOL_REGISTRY: readonly ChatTool<unknown>[] = [
   // Your data: what the team added, and the text of a reference item.
   listDataTool,
   readDataTool,
+  // Your data: a card proposing to keep text the owner gave.
+  proposeDataTool,
 ];
 
 /** The tool definitions sent to the model, in registry order. */

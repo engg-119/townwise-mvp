@@ -459,13 +459,17 @@ const textBody = z.strictObject({
   text: z.string().min(1).max(TEXT_ITEM_MAX_CHARS),
 });
 
-/** POST /data/text: pasted text kept as a reference item, a `.txt` file named from its title. */
-export async function addTextItem(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
-  const blobs = filesOn(ctx);
-  const member = memberOf(principal);
+/**
+ * Keeps text as a reference item added by `member` (files/items.ts), and records `file.uploaded` for a new one. A save
+ * with an `id` the item already has answers it, unrecorded. Answers 409 storage_full or daily_upload_limit itself and
+ * resolves null; a blob write that fails answers 503 storage_unavailable. Used by POST /data/text and by Keep on a
+ * TownwiseAI proposal (handlers/chat-item-proposals.ts).
+ */
+export async function keepTextItem(
+  ctx: TownwiseContext, res: Response, member: MemberPrincipal, blobs: FileBlobs, locationId: string,
+  input: { id?: string; title: string; text: string; addedVia: 'townwise_ai' | null },
+): Promise<{ file: FileRecord; created: boolean } | null> {
   const { scope } = member;
-  const body = parseInput(textBody, req.body);
-  const location = await loadLocation(ctx, scope, req.params.locationId);
   const now = ctx.now();
   // Only the blob write answers 503 storage_unavailable; a store failure takes the ordinary 500 path.
   const writer: Pick<FileBlobs, 'writeRaw'> = {
@@ -473,22 +477,32 @@ export async function addTextItem(ctx: TownwiseContext, req: Request, res: Respo
       throw storageUnavailable(ctx, 'write_raw', new BlobUnavailableError('BlobMissing', null));
     }),
   };
-  const saved = await saveTextItem(ctx.stores, writer, scope, location.id, {
-    title: body.title, text: body.text, uploadedBy: member.userId, uploaderRole: member.role, addedVia: null, now,
+  const saved = await saveTextItem(ctx.stores, writer, scope, locationId, {
+    ...input, uploadedBy: member.userId, uploaderRole: member.role, now,
   });
   if (saved === 'storage_full') {
     const storedBytesLeft = Math.max(0, STORED_BYTES_PER_ORG - await ctx.stores.files.storedBytes(scope, now));
     refuse(res, 409, 'storage_full', 'Your organization has stored the most it can', { storedBytesLeft });
-    return;
+    return null;
   }
   if (saved === 'daily_upload_limit') {
     refuse(res, 409, 'daily_upload_limit', 'Your organization has uploaded the most it can today', {
       resetsAt: `${utcDay(now, 1)}T00:00:00.000Z`,
     });
-    return;
+    return null;
   }
   if (saved.created) await recordUploaded(ctx, member, saved.file);
-  res.status(201).json({ file: fileView(member, saved.file, member.email, null) });
+  return saved;
+}
+
+/** POST /data/text: pasted text kept as a reference item, a `.txt` file named from its title. */
+export async function addTextItem(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const blobs = filesOn(ctx);
+  const member = memberOf(principal);
+  const body = parseInput(textBody, req.body);
+  const location = await loadLocation(ctx, member.scope, req.params.locationId);
+  const saved = await keepTextItem(ctx, res, member, blobs, location.id, { title: body.title, text: body.text, addedVia: null });
+  if (saved !== null) res.status(201).json({ file: fileView(member, saved.file, member.email, null) });
 }
 
 // ---- Reading the list ---------------------------------------------------------------------------------------------

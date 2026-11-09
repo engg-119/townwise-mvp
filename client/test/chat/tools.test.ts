@@ -10,7 +10,7 @@ const REGISTERED = [
   'get_town_calendar', 'get_people_in_town',
   'get_forecast',
   'get_day',
-  'list_data_items', 'read_data_item',
+  'list_data_items', 'read_data_item', 'propose_data_item',
 ];
 const CTX = { town: 'Hanover', hasTownProfile: true };
 
@@ -161,6 +161,16 @@ test('the data rows’ opened cards and Based on pieces use their own words, and
   expect(basedOnLine([step('list_data_items', 'done', null, { count: 3, turnedOff: 1 })], CTX)).toBe('Based on what your team added.');
   expect(basedOnLine([step('read_data_item', 'done', input, read)], CTX)).toBe('Based on an item your team added.');
   expect(basedOnLine([step('read_data_item', 'done', input, refused)], CTX)).toBe('Based on an item your team added (couldn’t read it).');
+});
+
+test('propose_data_item’s card names text to keep on Your data, with no detail and nothing TownwiseAI reads', () => {
+  // The input view exactly as api/src/chat/tools/propose-data.ts builds it; its result view is null.
+  const input = { chars: 21 };
+  expect(toolLine(step('propose_data_item', 'running', input), CTX).sentence).toBe('Reading text to keep on Your data');
+  expect(toolLine(step('propose_data_item', 'done', input), CTX)).toMatchObject({ sentence: 'Read text to keep on Your data', detail: null, sources: [] });
+  expect(isHiddenTool('propose_data_item')).toBe(false);
+  expect(viewRows(input, null, 'propose_data_item')).toEqual([]);
+  expect(readsLine(CTX)).not.toMatch(/keep/);
 });
 
 test('get_day reads one day: whether it had sales, was closed, its notes and calendar entries, and their sources', () => {
