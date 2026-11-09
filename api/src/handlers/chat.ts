@@ -14,6 +14,7 @@ import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import { runTurn, type TurnEvent } from '../chat/turn.ts';
+import { newestLeafUnder, nodeIdSchema, nodesOf, pathTo, type TreeNodeView } from '../chat/tree.ts';
 import { chatMessageViews, OPEN, type ChatMessageView, type ProposalState, type ShownProposal } from '../chat/view.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import type { ConversationOwner, ConversationRecord, ConversationSummary } from '../stores/chat-conversations.ts';
@@ -25,7 +26,9 @@ import { actorOf } from './team.ts';
 export interface ChatBudget { month: string; usedUsd: number; limitUsd: number; exhausted: boolean }
 export interface ConversationListItem { id: string; title: string; updatedAt: string; turnCount: number }
 export interface ChatSummary { enabled: boolean; budget: ChatBudget; conversations: ConversationListItem[] }
-export interface ConversationView { id: string; title: string; updatedAt: string; messages: ChatMessageView[] }
+export interface ConversationView {
+  id: string; title: string; updatedAt: string; activeLeafId: string | null; tree: TreeNodeView[]; messages: ChatMessageView[];
+}
 
 const MAX_LISTED = 50;
 /** Section 5 caps. */
@@ -96,8 +99,13 @@ export async function getConversation(ctx: TownwiseContext, req: Request, res: R
   const caller = memberOf(principal);
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
   const conversationId = parseInput(objectId, req.params.conversationId);
+  const { node } = parseInput(z.strictObject({ node: nodeIdSchema.optional() }), req.query);
   const conversation = await ctx.stores.chatConversations.find(caller.scope, ownerOf(caller, location.id), conversationId);
   if (conversation === null) throw notFound();
+  const nodes = nodesOf(conversation.messages);
+  // `?node=` shows another version without storing it; otherwise the stored active leaf.
+  if (node !== undefined && !nodes.some((candidate) => candidate.id === node)) throw notFound();
+  const path = pathTo(nodes, node === undefined ? conversation.activeLeafId : newestLeafUnder(nodes, node));
   const [rows, notes] = await Promise.all([
     ctx.stores.chatProposals.list(caller.scope, conversation.id),
     ctx.stores.notes.list(caller.scope, location.id),
@@ -115,8 +123,10 @@ export async function getConversation(ctx: TownwiseContext, req: Request, res: R
   };
   const body: ConversationView = {
     id: conversation.id, title: conversation.title, updatedAt: conversation.updatedAt.toISOString(),
+    activeLeafId: path.at(-1)?.id ?? null,
+    tree: nodes.map(({ id, parentId, role }) => ({ id, parentId, role })),
     // U13A: input views re-read their dates against the town's local day, as the tools ran them.
-    messages: chatMessageViews(conversation.messages, localDay(ctx.now(), timeZoneOf(location.town).timeZone), stateOf),
+    messages: chatMessageViews(path, localDay(ctx.now(), timeZoneOf(location.town).timeZone), stateOf),
   };
   res.status(200).json(body);
 }

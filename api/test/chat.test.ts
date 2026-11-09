@@ -13,6 +13,7 @@ import { costMicroUsd, messageCostMicroUsd } from '../src/chat/pricing.ts';
 import { SYSTEM_PROMPT } from '../src/chat/prompt.ts';
 import { TOOLS, type ToolContext } from '../src/chat/tools/registry.ts';
 import { echoable, failureCode, requestParams, runTurn, type TurnResult } from '../src/chat/turn.ts';
+import { nodesOf } from '../src/chat/tree.ts';
 import { chatMessageViews } from '../src/chat/view.ts';
 import { eventsOf, message, scriptedModel, text, thinking, toolUse, usage, type Step } from './helpers/chat-model.ts';
 
@@ -152,7 +153,7 @@ describe('the history view', () => {
   } as const;
 
   it('folds a reply’s messages and tool results into one entry whose parts keep their order: text, tool, text, proposal', () => {
-    const views = chatMessageViews(stored([
+    const views = chatMessageViews(nodesOf(stored([
       { role: 'user', content: 'Were we closed?' },
       { role: 'assistant', content: [thinking('s1'), text('Let me '), text('look. '), toolUse('t1', 'list_notes', {})] },
       { role: 'user', content: [result('t1', JSON.stringify({ notes: [{}, {}] }))] },
@@ -160,11 +161,11 @@ describe('the history view', () => {
       { role: 'user', content: [result('p1', 'Shown to the owner as a proposal. They decide whether to add it.')] },
       { role: 'assistant', content: [text('I proposed it.')] },
       { role: 'user', content: 'Thanks' },
-    ], [at, later, later, later, later, later, later]), '2026-06-01');
+    ], [at, later, later, later, later, later, later])), '2026-06-01');
     expect(views).toEqual([
-      { role: 'user', at: at.toISOString(), text: 'Were we closed?', proposals: [], parts: [] },
+      { nodeId: 'legacy-0', role: 'user', at: at.toISOString(), text: 'Were we closed?', proposals: [], parts: [] },
       {
-        role: 'assistant', at: later.toISOString(), text: 'Let me look. \n\nYou have two notes.\n\nI proposed it.',
+        nodeId: 'legacy-1', role: 'assistant', at: later.toISOString(), text: 'Let me look. \n\nYou have two notes.\n\nI proposed it.',
         proposals: [{ ...note, id: 'p1', status: 'open', noteId: null }],
         parts: [
           { type: 'text', text: 'Let me look. ' },
@@ -174,12 +175,12 @@ describe('the history view', () => {
           { type: 'text', text: 'I proposed it.' },
         ],
       },
-      { role: 'user', at: later.toISOString(), text: 'Thanks', proposals: [], parts: [] },
+      { nodeId: 'legacy-6', role: 'user', at: later.toISOString(), text: 'Thanks', proposals: [], parts: [] },
     ]);
   });
 
   it('leaves out calls that never ran and unknown tools, shows an error call as an error part, and an invalid proposal as one', () => {
-    const [, reply] = chatMessageViews(stored([
+    const [, reply] = chatMessageViews(nodesOf(stored([
       { role: 'user', content: 'Check' },
       { role: 'assistant', content: [
         toolUse('s1', 'get_sales_days', { from: '2026-05-01', to: '2026-12-31' }), toolUse('u1', 'get_weather', {}),
@@ -191,7 +192,7 @@ describe('the history view', () => {
       ] },
       { role: 'assistant', content: [text('Cut off'), toolUse('m1', 'list_notes', {})] },
       { role: 'user', content: [result('m1', 'Not run: the reply stopped before this call could run.', true)] },
-    ]), '2026-06-01');
+    ])), '2026-06-01');
     expect(reply?.parts).toEqual([
       { type: 'tool', id: 's1', name: 'get_sales_days', state: 'error', input: null, result: null },
       { type: 'tool', id: 'p2', name: 'propose_note', state: 'error', input: null, result: null },
@@ -201,11 +202,11 @@ describe('the history view', () => {
   });
 
   it('says what became of each proposal through stateOf, by its call id', () => {
-    const views = chatMessageViews(stored([
+    const views = chatMessageViews(nodesOf(stored([
       { role: 'user', content: 'Two closures' },
       { role: 'assistant', content: [toolUse('p1', 'propose_note', note), toolUse('p2', 'propose_note', { ...note, startDate: '2026-06-21', endDate: '2026-06-21' })] },
       { role: 'user', content: [result('p1', 'Shown'), result('p2', 'Shown')] },
-    ]), '2026-06-01', (proposal) => (proposal.id === 'p1' ? { status: 'saved', noteId: 'n1' } : { status: 'dismissed', noteId: null }));
+    ])), '2026-06-01', (proposal) => (proposal.id === 'p1' ? { status: 'saved', noteId: 'n1' } : { status: 'dismissed', noteId: null }));
     expect(views[1]?.proposals.map(({ id, status, noteId, startDate }) => ({ id, status, noteId, startDate }))).toEqual([
       { id: 'p1', status: 'saved', noteId: 'n1', startDate: '2026-06-20' },
       { id: 'p2', status: 'dismissed', noteId: null, startDate: '2026-06-21' },
@@ -213,13 +214,13 @@ describe('the history view', () => {
   });
 
   it('shows a reply of thinking only as nothing, and keeps a valid range’s input view', () => {
-    const views = chatMessageViews(stored([
+    const views = chatMessageViews(nodesOf(stored([
       { role: 'user', content: 'Hi' },
       { role: 'assistant', content: [thinking('s1')] },
       { role: 'user', content: 'May?' },
       { role: 'assistant', content: [toolUse('s2', 'get_sales_days', { from: '2026-05-01', to: '2026-05-31' })] },
       { role: 'user', content: [result('s2', JSON.stringify({ from: '2026-05-01', to: '2026-05-31', days: [{ date: '2026-05-01', guests: 3, netSalesUsd: null }] }))] },
-    ]), '2026-06-01');
+    ])), '2026-06-01');
     expect(views.map((view) => view.role)).toEqual(['user', 'user', 'assistant']);
     expect(views[2]?.parts).toEqual([{
       type: 'tool', id: 's2', name: 'get_sales_days', state: 'done', input: { from: '2026-05-01', to: '2026-05-31' },

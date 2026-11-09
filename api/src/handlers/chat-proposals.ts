@@ -11,6 +11,7 @@ import { z } from 'zod';
 
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, Principal } from '../access/policy.ts';
+import { nodesOf } from '../chat/tree.ts';
 import { chatMessageViews, type ShownProposal } from '../chat/view.ts';
 import { utcDay } from '../dates.ts';
 import type { LocationRecord } from '../stores/locations.ts';
@@ -59,7 +60,7 @@ export async function actOnProposal(ctx: TownwiseContext, req: Request, res: Res
   const conversation = await ctx.stores.chatConversations.find(scope, ownerOf(caller, location.id), conversationId);
   if (conversation === null) throw notFound();
   // Only a proposal the owner was shown: a valid propose_note call whose result was not an error.
-  const shown: ShownProposal | undefined = chatMessageViews(conversation.messages, today)
+  const shown: ShownProposal | undefined = chatMessageViews(nodesOf(conversation.messages), today)
     .flatMap((message) => message.proposals)
     .find((proposal) => proposal.id === proposalId);
   if (shown === undefined) throw notFound();
