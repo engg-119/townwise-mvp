@@ -38,7 +38,7 @@ export interface ChecklistFieldProps {
   statusId: string;
 }
 
-export function PlaceChecklistShell(p: { props: PlaceChecklistProps; field: React.ReactNode; statusId: string }): React.JSX.Element {
+export function PlaceChecklistShell(p: { props: PlaceChecklistProps; field: React.ReactNode; statusId: string; onRemove?: () => void }): React.JSX.Element {
   const { props } = p;
   const { state, onUnavailable } = props;
   const { search } = state;
@@ -72,7 +72,7 @@ export function PlaceChecklistShell(p: { props: PlaceChecklistProps; field: Reac
                   label="Remove"
                   accessibilityLabel={`Remove ${row.suggestion.name}`}
                   disabled={off}
-                  onPress={() => { state.remove(row.key); }}
+                  onPress={() => { state.remove(row.key); p.onRemove?.(); }}
                 />
               </View>
             </PlaceRow>
