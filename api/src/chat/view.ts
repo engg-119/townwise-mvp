@@ -1,7 +1,8 @@
 // What GET /api/org/locations/:locationId/chat/:conversationId shows of a stored conversation (section 2): one entry
 // per message the person wrote, and one per run of TownwiseAI's replies to it, with the tool-result messages between
-// them folded in. A reply's `parts` replay it in order: text, tool calls (as the cards the stream showed) and note
-// proposals. Thinking blocks and raw tool results are never returned, and neither are calls that never ran.
+// them folded in. A reply's `parts` replay it in order: text, tool calls (as the cards the stream showed), note
+// proposals and visuals; its `next` is the questions its last valid suggest_next showed. Thinking blocks and raw tool
+// results are never returned, and neither are calls that never ran.
 import type {
   BetaContentBlockParam, BetaMessageParam, BetaToolResultBlockParam, BetaToolUseBlockParam,
 } from '@anthropic-ai/sdk/resources/beta/messages/messages';
@@ -9,7 +10,9 @@ import type {
 import { readNoteContent } from '../handlers/notes.ts';
 import type { FeedbackReason } from '../stores/chat-conversations.ts';
 import type { NoteContent } from '../stores/notes.ts';
+import { nextOf } from './tools/next.ts';
 import { inputViewOf, resultViewOf, toolNamed, type ToolView } from './tools/registry.ts';
+import { visualOf, type Visual } from './tools/visual.ts';
 import type { ChatNode } from './tree.ts';
 import { NOT_RUN } from './turn.ts';
 
@@ -34,7 +37,8 @@ export interface FeedbackView { rating: 'up' | 'down'; reason: FeedbackReason | 
 export type ChatPart =
   | { type: 'text'; text: string }
   | { type: 'tool'; id: string; name: string; state: 'done' | 'error'; input: ToolView | null; result: ToolView | null }
-  | { type: 'proposal'; proposal: ProposalView };
+  | { type: 'proposal'; proposal: ProposalView }
+  | { type: 'visual'; id: string; visual: Visual };
 
 export interface ChatMessageView {
   /** The tree node the entry came from (src/chat/tree.ts). */
@@ -50,6 +54,8 @@ export interface ChatMessageView {
   parts: ChatPart[];
   /** The author's rating of the reply; null when unrated and for the person's own message. */
   feedback: FeedbackView | null;
+  /** The questions the reply's last valid suggest_next showed; null when it has none and for the person's own message. */
+  next: string[] | null;
 }
 
 function blocksOf(param: BetaMessageParam): readonly BetaContentBlockParam[] {
@@ -71,19 +77,29 @@ function partOf(
     const shown = { ...note, id: block.id };
     return { type: 'proposal', proposal: { ...shown, ...stateOf(shown) } };
   }
+  if (block.name === 'show_visual' && !error && typeof result.content === 'string') {
+    // A visual was shown when its call's result holds one; one that showed nothing stays a tool part.
+    const visual = visualOf(result.content);
+    if (visual !== null) return { type: 'visual', id: block.id, visual };
+  }
+  // Shown questions are the reply's `next`, not a part.
+  if (block.name === 'suggest_next' && !error) return null;
   return {
     type: 'tool', id: block.id, name: block.name, state: error ? 'error' : 'done',
     input: inputViewOf(block.name, block.input, today), result: resultViewOf(block.name, result),
   };
 }
 
-function entry(nodeId: string, role: 'user' | 'assistant', at: Date, parts: ChatPart[], feedback: FeedbackView | null): ChatMessageView {
+function entry(
+  nodeId: string, role: 'user' | 'assistant', at: Date, parts: ChatPart[], feedback: FeedbackView | null, next: string[] | null,
+): ChatMessageView {
   const texts = parts.flatMap((part) => (part.type === 'text' ? [part.text] : []));
   return {
     nodeId, role, at: at.toISOString(), text: texts.join('\n\n'),
     proposals: parts.flatMap((part) => (part.type === 'proposal' ? [part.proposal] : [])),
     parts: role === 'user' ? [] : parts,
     feedback: role === 'user' ? null : feedback,
+    next: role === 'user' ? null : next,
   };
 }
 
@@ -111,10 +127,11 @@ export function chatMessageViews(
     if (first === undefined) continue;
     if (node.role === 'user') {
       const text = blocksOf(first.param).flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('');
-      if (text !== '') views.push(entry(node.id, 'user', first.at, [{ type: 'text', text }], null));
+      if (text !== '') views.push(entry(node.id, 'user', first.at, [{ type: 'text', text }], null, null));
       continue;
     }
     const parts: ChatPart[] = [];
+    let next: string[] | null = null;
     for (const { param } of items) {
       if (param.role !== 'assistant') continue;
       for (const block of blocksOf(param)) {
@@ -124,12 +141,14 @@ export function chatMessageViews(
           if (last?.type === 'text') last.text += block.text;
           else parts.push({ type: 'text', text: block.text });
         } else if (block.type === 'tool_use') {
-          const part = partOf(block, results.get(block.id), today, stateOf);
+          const result = results.get(block.id);
+          if (block.name === 'suggest_next' && result !== undefined && result.is_error !== true) next = nextOf(block.input) ?? next;
+          const part = partOf(block, result, today, stateOf);
           if (part !== null) parts.push(part);
         }
       }
     }
-    if (parts.length > 0) views.push(entry(node.id, 'assistant', first.at, parts, feedbackOf(node.id)));
+    if (parts.length > 0) views.push(entry(node.id, 'assistant', first.at, parts, feedbackOf(node.id), next));
   }
   return views;
 }

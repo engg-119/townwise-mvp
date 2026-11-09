@@ -15,6 +15,7 @@ import type { ChatModel } from './model.ts';
 import { costMicroUsd, messageCostMicroUsd, tokensOf, type TokenCounts } from './pricing.ts';
 import { SYSTEM_PROMPT } from './prompt.ts';
 import { inputViewOf, resultViewOf, runTool, toolNamed, TOOLS, type ToolContext, type ToolView } from './tools/registry.ts';
+import type { Visual } from './tools/visual.ts';
 
 export const CHAT_MODEL = 'claude-opus-5-5';
 export const MAX_TOKENS = 16_000;
@@ -43,7 +44,9 @@ export type TurnEvent =
     type: 'tool';
     data: { id: string; name: string; state: 'running' | 'done' | 'error'; input: ToolView | null; result: ToolView | null };
   }
-  | { type: 'proposal'; data: { id: string; proposal: NoteContent } };
+  | { type: 'proposal'; data: { id: string; proposal: NoteContent } }
+  | { type: 'visual'; data: { id: string; visual: Visual } }
+  | { type: 'suggestions'; data: { id: string; prompts: string[] } };
 
 /** How every answer to a tool call that never ran begins; GET .../chat/:conversationId leaves those calls out. */
 export const NOT_RUN = 'Not run: ';
@@ -298,12 +301,17 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
         const outcome = await runTool(input.tools, block);
         results.push(outcome.result);
         if (outcome.proposal !== null) input.emit({ type: 'proposal', data: { id, proposal: outcome.proposal } });
+        if (outcome.visual !== null) input.emit({ type: 'visual', data: { id, visual: outcome.visual } });
+        if (outcome.prompts !== null) input.emit({ type: 'suggestions', data: { id, prompts: outcome.prompts } });
         if (known) {
           const state = outcome.result.is_error === true ? 'error' : 'done';
           input.emit({ type: 'tool', data: { id, name, state, input: view, result: resultViewOf(name, outcome.result) } });
         }
       }
       append({ role: 'user', content: results });
+      // suggest_next is a reply's last step: a message that called only it is answered and ends the turn without
+      // another model call, valid or not (the client then picks its own three). The saved reply ends with its results.
+      if (toolUses.every((block) => block.name === 'suggest_next')) return done('end_turn');
     }
   } catch (err) {
     if (aborted()) return { kind: 'aborted', calls, costMicroUsd: spent };

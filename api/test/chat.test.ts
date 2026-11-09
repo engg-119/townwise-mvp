@@ -110,6 +110,22 @@ describe('the system prompt', () => {
   });
 });
 
+describe('the system prompt, replies (chat redesign A4)', () => {
+  it('formats in Markdown sparingly, draws figures with show_visual, and ends with suggest_next', () => {
+    expect(SYSTEM_PROMPT).toContain('call show_visual');
+    expect(SYSTEM_PROMPT).toContain('never write a table of figures yourself');
+    expect(SYSTEM_PROMPT).toContain('exactly three short questions');
+    expect(SYSTEM_PROMPT).not.toContain('no Markdown');
+    expect(SYSTEM_PROMPT.endsWith([
+      '- Format replies in Markdown, sparingly: short paragraphs, a list for several items or steps, and bold for the one figure that matters most. Use a Markdown table only for words, such as notes side by side. No headings, images or HTML.',
+      '- When a chart, a short table of days or a few totals would answer better than sentences, call show_visual. Townwise draws it under your reply from its own data and returns the figures to you, so describe what it shows in a sentence or two instead of repeating every figure, and never write a table of figures yourself.',
+      '- End every reply by calling suggest_next once, as your last step and alone, with exactly three short questions the owner might ask next, specific to this conversation and this location. Suggest only questions your tools can answer, and a question about the forecast only after get_forecast returned one in this conversation.',
+    ].join('\n'))).toBe(true);
+    // The bullet before them stays.
+    expect(SYSTEM_PROMPT).toContain('- Answer in plain, short sentences, in the owner\'s own words for their events. Say so when you don\'t know.\n- Format replies in Markdown');
+  });
+});
+
 describe('the system prompt, estimates (U13A)', () => {
   it('reads today in the town’s time zone, separates kinds of figures, says what is missing and never estimates on its own', () => {
     for (const rule of [
@@ -163,7 +179,7 @@ describe('the history view', () => {
       { role: 'user', content: 'Thanks' },
     ], [at, later, later, later, later, later, later])), '2026-06-01');
     expect(views).toEqual([
-      { nodeId: 'legacy-0', role: 'user', at: at.toISOString(), text: 'Were we closed?', proposals: [], parts: [], feedback: null },
+      { nodeId: 'legacy-0', role: 'user', at: at.toISOString(), text: 'Were we closed?', proposals: [], parts: [], feedback: null, next: null },
       {
         nodeId: 'legacy-1', role: 'assistant', at: later.toISOString(), text: 'Let me look. \n\nYou have two notes.\n\nI proposed it.',
         proposals: [{ ...note, id: 'p1', status: 'open', noteId: null }],
@@ -174,9 +190,9 @@ describe('the history view', () => {
           { type: 'proposal', proposal: { ...note, id: 'p1', status: 'open', noteId: null } },
           { type: 'text', text: 'I proposed it.' },
         ],
-        feedback: null,
+        feedback: null, next: null,
       },
-      { nodeId: 'legacy-6', role: 'user', at: later.toISOString(), text: 'Thanks', proposals: [], parts: [], feedback: null },
+      { nodeId: 'legacy-6', role: 'user', at: later.toISOString(), text: 'Thanks', proposals: [], parts: [], feedback: null, next: null },
     ]);
   });
 
