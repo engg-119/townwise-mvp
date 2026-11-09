@@ -191,11 +191,15 @@ describe('a plain answer', () => {
     const view = await (await call(server, `/api/org/locations/${locationId}/chat/${id}`, { session: author.session })).json() as ConversationView;
     const at = server.clock.now().toISOString();
     expect(view).toEqual({
-      id, title: 'What changed in May?', updatedAt: at,
+      id, title: 'What changed in May?', updatedAt: at, activeLeafId: 'legacy-1',
+      tree: [
+        { id: 'legacy-0', parentId: null, role: 'user' },
+        { id: 'legacy-1', parentId: 'legacy-0', role: 'assistant' },
+      ],
       messages: [
-        { role: 'user', text: 'What changed in May?', proposals: [], parts: [], at },
+        { nodeId: 'legacy-0', role: 'user', text: 'What changed in May?', proposals: [], parts: [], at },
         {
-          role: 'assistant', text: 'May was steady, with two busy Fridays.', proposals: [],
+          nodeId: 'legacy-1', role: 'assistant', text: 'May was steady, with two busy Fridays.', proposals: [],
           parts: [{ type: 'text', text: 'May was steady, with two busy Fridays.' }], at,
         },
       ],

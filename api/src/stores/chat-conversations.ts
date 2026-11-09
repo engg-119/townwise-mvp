@@ -12,6 +12,10 @@ export const CHAT_CONVERSATIONS_COLLECTION = 'tw_chat_conversations';
 export interface StoredMessage {
   readonly at: Date;
   readonly param: string;
+  /** The tree node the message belongs to (src/chat/tree.ts); absent on messages written before trees. */
+  readonly nodeId?: string;
+  /** The node's parent (null for a first message); read from the node's first message. */
+  readonly parentId?: string | null;
 }
 
 export interface LiveTurn {
@@ -25,6 +29,7 @@ interface ConversationFields {
   userId: string;
   title: string;
   messages: StoredMessage[];
+  activeLeafId: string | null;
   turnCount: number;
   liveTurn: LiveTurn | null;
   createdAt: Date;
@@ -35,6 +40,8 @@ function conversationSchema(): Schema<ConversationFields> {
   const message = new Schema<StoredMessage>({
     at: { type: Date, required: true },
     param: { type: String, required: true },
+    nodeId: { type: String },
+    parentId: { type: String, default: undefined },
   }, { _id: false, strict: true });
   const liveTurn = new Schema<LiveTurn>({
     turnId: { type: String, required: true },
@@ -46,6 +53,7 @@ function conversationSchema(): Schema<ConversationFields> {
     userId: { type: String, required: true },
     title: { type: String, required: true },
     messages: { type: [message], default: [] },
+    activeLeafId: { type: String, default: null },
     turnCount: { type: Number, required: true },
     liveTurn: { type: liveTurn, default: null },
     createdAt: { type: Date, required: true },
@@ -70,6 +78,7 @@ export interface ConversationSummary {
 
 export interface ConversationRecord extends ConversationSummary {
   readonly messages: readonly StoredMessage[];
+  readonly activeLeafId: string | null;
   readonly liveTurn: LiveTurn | null;
 }
 
@@ -113,10 +122,19 @@ function toSummary(doc: Pick<ConversationDoc, '_id' | 'title' | 'updatedAt' | 't
   return { id: doc._id.toHexString(), title: doc.title, updatedAt: doc.updatedAt, turnCount: doc.turnCount };
 }
 
+function toStored(message: StoredMessage): StoredMessage {
+  return {
+    at: message.at, param: message.param,
+    ...(message.nodeId === undefined ? {} : { nodeId: message.nodeId }),
+    ...(message.parentId === undefined ? {} : { parentId: message.parentId }),
+  };
+}
+
 function toRecord(doc: ConversationDoc): ConversationRecord {
   return {
     ...toSummary(doc),
-    messages: doc.messages.map((message) => ({ at: message.at, param: message.param })),
+    messages: doc.messages.map(toStored),
+    activeLeafId: doc.activeLeafId ?? null,
     liveTurn: doc.liveTurn === null ? null : { turnId: doc.liveTurn.turnId, startedAt: doc.liveTurn.startedAt },
   };
 }
@@ -161,7 +179,7 @@ export function createChatConversationStore(connection: Connection): ChatConvers
     },
     async finish(scope, conversationId, turnId, input) {
       const result = await Conversation.updateOne(claimedBy(scope, conversationId, turnId), {
-        $push: { messages: { $each: input.messages.map((message) => ({ at: message.at, param: message.param })) } },
+        $push: { messages: { $each: input.messages.map(toStored) } },
         $inc: { turnCount: 1 },
         $set: { liveTurn: null, updatedAt: input.now },
       });
