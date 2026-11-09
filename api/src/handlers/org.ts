@@ -45,6 +45,8 @@ export async function renameOrg(ctx: TownwiseContext, req: Request, res: Respons
  */
 export async function leaveOrg(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
+  // Open as admin holds no seat to leave (D25); its guard refuses this route first.
+  if (caller.memberId === null) throw new AppError(403, 'forbidden', 'Forbidden');
   const { scope } = caller;
   parseInput(leaveBody, req.body);
   const now = ctx.now();

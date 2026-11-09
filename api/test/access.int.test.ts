@@ -37,7 +37,7 @@ describe('GET /api/me states (4.2)', () => {
   it('no_org for a new person, with the signed-in user and no staff block', async () => {
     const { email, session } = await person('new');
     expect(await me(session)).toEqual({
-      user: { id: session.userId, email }, access: { state: 'no_org' }, viewAs: null, staff: null, welcome: null,
+      user: { id: session.userId, email }, access: { state: 'no_org' }, viewAs: null, openAsAdmin: null, staff: null, welcome: null,
     });
   });
 
@@ -167,8 +167,8 @@ describe('staff branch (4.2 step 2)', () => {
   it('a staff address with no factor is staff_setup_required', async () => {
     const session = await signIn(server, STAFF_EMAIL);
     expect(await me(session)).toEqual({
-      user: { id: session.userId, email: STAFF_EMAIL }, access: { state: 'staff_setup_required' }, viewAs: null, staff: null,
-      welcome: null,
+      user: { id: session.userId, email: STAFF_EMAIL }, access: { state: 'staff_setup_required' }, viewAs: null, openAsAdmin: null,
+      staff: null, welcome: null,
     });
   });
 
@@ -182,7 +182,7 @@ describe('staff branch (4.2 step 2)', () => {
     const start = server.clock.now();
     const session = await signInStaff(server);
     expect(await me(session)).toEqual({
-      user: { id: session.userId, email: STAFF_EMAIL }, access: { state: 'staff' }, viewAs: null,
+      user: { id: session.userId, email: STAFF_EMAIL }, access: { state: 'staff' }, viewAs: null, openAsAdmin: null,
       staff: { verifiedUntil: new Date(start.getTime() + 60 * MINUTE).toISOString() }, welcome: null,
     });
   });

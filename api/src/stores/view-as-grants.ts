@@ -1,29 +1,41 @@
+// A staff session's grant (tw_view_as_grants): view-as (D8), or open as admin (D25). A grant holds its session while
+// `activeSessionId` is set, and the unique index on it allows one live grant per session across both kinds.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, type Connection, type Model, type Types } from 'mongoose';
 
 export type GrantEndReason = 'ended' | 'replaced' | 'expired';
 
 export interface ViewAsGrantFields {
+  /** Set only on an open-as-admin grant (D25). A grant without it is view-as, as every grant before D25. */
+  kind?: 'open_as_admin';
   actorUserId: string;
   actorSessionId: string;
   activeSessionId?: string;
-  targetUserId: string;
+  /** View-as only. */
+  targetUserId?: string;
   orgId: Types.ObjectId | null;
-  reason: string;
+  /** View-as only. */
+  reason?: string;
   startedAt: Date;
   expiresAt: Date;
   endedAt: Date | null;
   endReason: GrantEndReason | null;
 }
 
+/** Required on a view-as grant: on every grant but an open-as-admin one. */
+function isViewAs(this: { kind?: 'open_as_admin' }): boolean {
+  return this.kind !== 'open_as_admin';
+}
+
 function grantSchema(): Schema<ViewAsGrantFields> {
   const schema = new Schema<ViewAsGrantFields>({
+    kind: { type: String, enum: ['open_as_admin'] },
     actorUserId: { type: String, required: true },
     actorSessionId: { type: String, required: true },
     activeSessionId: { type: String },
-    targetUserId: { type: String, required: true },
+    targetUserId: { type: String, required: isViewAs },
     orgId: { type: Schema.Types.ObjectId, default: null },
-    reason: { type: String, required: true, minlength: 5, maxlength: 200 },
+    reason: { type: String, required: isViewAs, minlength: 5, maxlength: 200 },
     startedAt: { type: Date, required: true },
     expiresAt: { type: Date, required: true },
     endedAt: { type: Date, default: null },
@@ -45,6 +57,7 @@ export function viewAsGrantModel(connection: Connection): Model<ViewAsGrantField
 }
 
 export interface ViewAsGrantRecord {
+  readonly kind: 'view_as';
   readonly id: string;
   readonly targetUserId: string;
   readonly orgId: string | null;
@@ -54,14 +67,28 @@ export interface ViewAsGrantRecord {
   readonly endedAt: Date | null;
 }
 
+/** D25: the organization this staff session opened as its admin. */
+export interface OpenAsAdminGrantRecord {
+  readonly kind: 'open_as_admin';
+  readonly id: string;
+  readonly orgId: string;
+  readonly startedAt: Date;
+  readonly expiresAt: Date;
+  readonly endedAt: Date | null;
+}
+
+export type GrantRecord = ViewAsGrantRecord | OpenAsAdminGrantRecord;
+
 export interface ViewAsGrantStore {
-  /** The grant still holding this session (`activeSessionId`), live or expired. */
-  findBySession(sessionId: string): Promise<ViewAsGrantRecord | null>;
-  /** Inserts a grant holding this session; false when the session already holds one (the unique index). */
+  /** The grant still holding this session (`activeSessionId`), live or expired, of either kind. */
+  findBySession(sessionId: string): Promise<GrantRecord | null>;
+  /** Inserts a view-as grant holding this session; false when the session already holds one (the unique index). */
   insert(input: {
     id: string; actorUserId: string; sessionId: string; targetUserId: string; orgId: string | null;
     reason: string; startedAt: Date; expiresAt: Date;
   }): Promise<boolean>;
+  /** Inserts an open-as-admin grant holding this session; false when the session already holds one of either kind. */
+  insertOpenAsAdmin(input: { id: string; actorUserId: string; sessionId: string; orgId: string; startedAt: Date; expiresAt: Date }): Promise<boolean>;
   /** Compare-and-set: ends the grant while it still holds this session, and releases the session. */
   end(grantId: string, sessionId: string, input: { endedAt: Date; endReason: GrantEndReason }): Promise<boolean>;
 }
@@ -82,6 +109,19 @@ export function createViewAsGrantStore(connection: Connection): ViewAsGrantStore
         throw err;
       }
     },
+    async insertOpenAsAdmin(input) {
+      try {
+        await Grant.create({
+          _id: input.id, kind: 'open_as_admin', actorUserId: input.actorUserId, actorSessionId: input.sessionId,
+          activeSessionId: input.sessionId, orgId: input.orgId, startedAt: input.startedAt, expiresAt: input.expiresAt,
+          endedAt: null, endReason: null,
+        });
+        return true;
+      } catch (err) {
+        if (isDuplicateKeyError(err)) return false;
+        throw err;
+      }
+    },
     async end(grantId, sessionId, input) {
       const result = await Grant.updateOne(
         { _id: grantId, activeSessionId: sessionId },
@@ -92,8 +132,15 @@ export function createViewAsGrantStore(connection: Connection): ViewAsGrantStore
     async findBySession(sessionId) {
       const doc = await Grant.findOne({ activeSessionId: sessionId }).lean();
       if (doc === null) return null;
+      const id = doc._id.toHexString();
+      if (doc.kind === 'open_as_admin') {
+        if (doc.orgId === null) throw new Error('an open-as-admin grant without an organization');
+        return { kind: 'open_as_admin', id, orgId: doc.orgId.toHexString(), startedAt: doc.startedAt, expiresAt: doc.expiresAt, endedAt: doc.endedAt };
+      }
+      if (doc.targetUserId === undefined || doc.reason === undefined) throw new Error('a view-as grant without its target or reason');
       return {
-        id: doc._id.toHexString(),
+        kind: 'view_as',
+        id,
         targetUserId: doc.targetUserId,
         orgId: doc.orgId === null ? null : doc.orgId.toHexString(),
         reason: doc.reason,

@@ -14,7 +14,7 @@ import type { TownwiseContext } from '../app.ts';
 import type { Principal, StaffActor } from '../access/policy.ts';
 import { resolveAccess, resolvePerson } from '../access/resolve.ts';
 import type { AuditEventInput } from '../stores/audit-events.ts';
-import type { GrantEndReason, ViewAsGrantRecord } from '../stores/view-as-grants.ts';
+import type { GrantEndReason, GrantRecord } from '../stores/view-as-grants.ts';
 import { meResponse } from './me.ts';
 
 /** D8. [CONFIRM: 30 minutes] */
@@ -31,7 +31,7 @@ function staffActor(actor: StaffActor, grantId: string): Pick<AuditEventInput, '
 async function clearGrant(
   ctx: TownwiseContext,
   actor: StaffActor,
-  reasonFor: (grant: ViewAsGrantRecord, now: Date) => GrantEndReason,
+  reasonFor: (grant: GrantRecord, now: Date) => GrantEndReason,
 ): Promise<void> {
   const grant = await ctx.stores.grants.findBySession(actor.sessionId);
   if (grant === null) return;

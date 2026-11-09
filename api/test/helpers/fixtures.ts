@@ -95,6 +95,21 @@ export async function addGrant(
   return _id.toHexString();
 }
 
+/** An open-as-admin grant (D25) in the shape insertOpenAsAdmin writes: `kind`, the organization, no target and no reason. */
+export async function addOpenAsAdminGrant(
+  server: Server,
+  opts: { actorUserId: string; sessionId: string; orgId: string; startedAt?: Date; minutes?: number },
+): Promise<string> {
+  const _id = new Types.ObjectId();
+  const startedAt = opts.startedAt ?? server.clock.now();
+  await server.connection.collection('tw_view_as_grants').insertOne({
+    _id, kind: 'open_as_admin', actorUserId: opts.actorUserId, actorSessionId: opts.sessionId, activeSessionId: opts.sessionId,
+    orgId: new Types.ObjectId(opts.orgId), startedAt,
+    expiresAt: new Date(startedAt.getTime() + (opts.minutes ?? 60) * 60 * 1000), endedAt: null, endReason: null,
+  });
+  return _id.toHexString();
+}
+
 export async function memberDoc(server: Server, id: string): Promise<Record<string, unknown> | null> {
   return server.connection.collection('tw_members').findOne({ _id: new Types.ObjectId(id) });
 }

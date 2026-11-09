@@ -11,26 +11,23 @@
 // Setup is checked before the event, with no lock. A join landing between the check and the write is accepted: the
 // write is still recorded, and the new admin sees it in their staff activity.
 import { objectId } from '@ckeith26/mongo';
-import { AppError, parseInput } from '@ckeith26/server-core';
+import { parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
 import { Types } from 'mongoose';
 
 import { applyRecorded, recordBefore, recordNotApplied } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import { scopeForStaffOrg, type OrgScope, type Principal, type StaffPrincipal } from '../access/policy.ts';
+import { isInSetup, notInSetup } from '../access/setup.ts';
 import { TOWNWISE_STAFF } from '../people.ts';
 import type { AuditEventInput } from '../stores/audit-events.ts';
 import type { LocationRecord } from '../stores/locations.ts';
-import { actorOf, isInSetup, notFound, staffOf } from './admin.ts';
+import { actorOf, notFound, staffOf } from './admin.ts';
 import {
   assertNoLocationData, checkedCreate, checkedUpdate, loadLocation, locationDetails, nameTaken, removeLocation, summarizer,
   type LocationChange, type LocationInput,
 } from './locations.ts';
 import { applyUpload, assertNotReading, checkedUpload, filesUnavailable, removeSalesData, uploadAnswer } from './sales.ts';
-
-function notInSetup(): AppError {
-  return new AppError(409, 'org_not_in_setup', 'Staff setup ends for good once someone joins the organization, and is closed while it is suspended');
-}
 
 /**
  * The organization in the path (404 when unknown), refused with 409 org_not_in_setup while it is suspended and once

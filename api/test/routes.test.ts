@@ -2,7 +2,9 @@ import type { AuthContext } from '@ckeith26/auth';
 import { ConfigError } from '@ckeith26/server-core';
 import { describe, expect, it } from 'vitest';
 
-import { policyRefusal, principalOf, viewAsRefusal, type Policy, type Principal } from '../src/access/policy.ts';
+import {
+  isStaffPrincipal, openAsAdminRefusal, policyRefusal, principalOf, scopeForOpenAsAdmin, viewAsRefusal, type Policy, type Principal,
+} from '../src/access/policy.ts';
 import type { Access, Resolution } from '../src/access/resolve.ts';
 import { assertRouteTable, TOWNWISE_ROUTES, type TownwiseRoute } from '../src/access/routes.ts';
 
@@ -18,19 +20,22 @@ const user = { id: 'a'.repeat(24), email: 'person@example.test', googleSubject: 
 const target = { id: 'b'.repeat(24), email: 'target@example.test', googleSubject: null, createdAt: new Date(0) };
 const seat = { id: 'c'.repeat(24), orgId: 'd'.repeat(24), orgName: 'Org A', role: 'member' as const };
 const grant = {
-  id: 'e'.repeat(24), targetUserId: target.id, orgId: seat.orgId, reason: 'Support request', startedAt: new Date(0),
-  expiresAt: new Date(1), endedAt: null,
+  kind: 'view_as' as const, id: 'e'.repeat(24), targetUserId: target.id, orgId: seat.orgId, reason: 'Support request',
+  startedAt: new Date(0), expiresAt: new Date(1), endedAt: null,
 };
+const openGrant = { kind: 'open_as_admin' as const, id: 'f'.repeat(24), orgId: 'd'.repeat(24), startedAt: new Date(0), expiresAt: new Date(1), endedAt: null };
 
-function resolution(effective: Access, opts?: { staff?: boolean; viewAs?: boolean }): Resolution {
-  const staff = opts?.staff === true || opts?.viewAs === true;
+function resolution(effective: Access, opts?: { staff?: boolean; viewAs?: boolean; openAsAdmin?: boolean }): Resolution {
+  const openAsAdmin = opts?.openAsAdmin === true;
+  const staff = opts?.staff === true || opts?.viewAs === true || openAsAdmin;
   return {
     user,
     self: staff ? { state: 'staff' } : effective,
     effective,
-    seat: effective.state === 'member' || effective.state === 'org_suspended' ? seat : null,
+    seat: !openAsAdmin && (effective.state === 'member' || effective.state === 'org_suspended') ? seat : null,
     staffVerifiedUntil: staff ? new Date('2026-06-01T13:00:00Z') : null,
     viewAs: opts?.viewAs === true ? { grant, target } : null,
+    openAsAdmin: openAsAdmin ? { grant: openGrant, scope: scopeForOpenAsAdmin(openGrant), orgName: 'Org A' } : null,
   };
 }
 
@@ -45,6 +50,7 @@ const principals: Record<string, Principal> = {
   noOrg: principalOf(resolution({ state: 'no_org' }), auth),
   viewAsMember: principalOf(resolution(memberAccess, { viewAs: true }), auth),
   viewAsPending: principalOf(resolution({ state: 'no_org' }, { viewAs: true }), auth),
+  openAsAdmin: principalOf(resolution(adminAccess, { openAsAdmin: true }), auth),
 };
 
 function codeOf(policy: Policy, name: string): string | null {
@@ -193,6 +199,14 @@ describe('route table', () => {
     expect(() => { assertRouteTable([route({ policy: 'staff_self', path: '/admin/view-as' })]); }).toThrow(ConfigError);
     expect(() => { assertRouteTable([route({ policy: 'staff_self', path: '/admin/view-as/end' })]); }).not.toThrow();
   });
+
+  it('boot refuses openAsAdmin on a staff or staff_self route', () => {
+    expect(() => { assertRouteTable([route({ policy: 'staff', openAsAdmin: true })]); }).toThrow(ConfigError);
+    expect(() => { assertRouteTable([route({ method: 'POST', path: '/admin/view-as/end', policy: 'staff_self', openAsAdmin: true })]); }).toThrow(ConfigError);
+    for (const policy of ['signed_in', 'member', 'org_admin'] as const) {
+      expect(() => { assertRouteTable([route({ policy, openAsAdmin: true })]); }).not.toThrow();
+    }
+  });
 });
 
 describe('principal', () => {
@@ -206,7 +220,21 @@ describe('principal', () => {
     expect(principals.viewAsMember).toMatchObject({
       kind: 'member', userId: target.id, email: target.email,
       viewAs: { grantId: grant.id, actor: { userId: user.id, email: user.email, sessionId: auth.sessionId } },
+      openAsAdmin: null,
     });
+  });
+
+  it('open as admin builds an org admin principal of the grant’s organization, acting as the staff member', () => {
+    expect(principals.openAsAdmin).toMatchObject({
+      kind: 'member', userId: user.id, email: user.email, role: 'org_admin', memberId: null, viewAs: null,
+      openAsAdmin: { grantId: openGrant.id, actor: { userId: user.id, email: user.email, sessionId: auth.sessionId } },
+    });
+    expect(principals.openAsAdmin?.kind === 'member' ? principals.openAsAdmin.scope.orgId : null).toBe(openGrant.orgId);
+  });
+
+  it('a seat member is not in open as admin', () => {
+    expect(principals.member).toMatchObject({ kind: 'member', openAsAdmin: null });
+    expect(principals.admin).toMatchObject({ kind: 'member', openAsAdmin: null });
   });
 });
 
@@ -238,6 +266,19 @@ describe('policies', () => {
     for (const name of ['staff', 'viewAsMember', 'viewAsPending']) expect(codeOf('staff_self', name)).toBeNull();
     expect(codeOf('staff_self', 'staffReauth')).toBe('staff_reauth_required');
     expect(codeOf('staff_self', 'member')).toBe('forbidden');
+    expect(codeOf('staff_self', 'admin')).toBe('forbidden');
+  });
+
+  it('member, org_admin and staff_self pass open as admin, and it counts as a staff principal', () => {
+    for (const policy of ['member', 'org_admin', 'staff_self'] as const) expect(codeOf(policy, 'openAsAdmin')).toBeNull();
+    const staffish = (name: string): boolean => { const p = principals[name]; if (p === undefined) throw new Error(name); return isStaffPrincipal(p); };
+    expect(staffish('openAsAdmin')).toBe(true);
+    expect(staffish('admin')).toBe(false);
+    expect(staffish('viewAsMember')).toBe(false);
+  });
+
+  it('staff answers forbidden in open as admin (the guard answers first in the chain)', () => {
+    expect(codeOf('staff', 'openAsAdmin')).toBe('forbidden');
   });
 });
 
@@ -264,5 +305,46 @@ describe('view-as guard', () => {
 
   it('does nothing outside view-as', () => {
     for (const name of ['staff', 'member', 'noOrg']) expect(refusal('POST', 'signed_in', name)).toBeNull();
+  });
+
+  it('does nothing in open as admin: no write is read-only', () => {
+    for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const) expect(refusal(method, 'member', 'openAsAdmin')).toBeNull();
+  });
+});
+
+describe('open-as-admin guard', () => {
+  const refusal = (target: Pick<TownwiseRoute, 'policy' | 'openAsAdmin'>, name = 'openAsAdmin'): string | null => {
+    const principal = principals[name];
+    if (principal === undefined) throw new Error(name);
+    return openAsAdminRefusal(target, principal)?.code ?? null;
+  };
+
+  it('answers 409 open_as_admin_active on every staff route, any method', () => {
+    for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const) {
+      expect(refusal(route({ method, policy: 'staff' }))).toBe('open_as_admin_active');
+      // Boot refuses the mark on a staff route; the guard would still refuse it.
+      expect(refusal(route({ method, policy: 'staff', openAsAdmin: true }))).toBe('open_as_admin_active');
+    }
+  });
+
+  it('answers 403 open_as_admin_refused on every unmarked route, GETs included, and lets marked routes and staff_self through', () => {
+    for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const) {
+      for (const policy of ['signed_in', 'member', 'org_admin'] as const) {
+        expect(refusal(route({ method, policy }))).toBe('open_as_admin_refused');
+        expect(refusal(route({ method, policy, openAsAdmin: true }))).toBeNull();
+      }
+    }
+    expect(refusal({ policy: 'member' })).toBe('open_as_admin_refused');
+    expect(refusal({ policy: 'signed_in' })).toBe('open_as_admin_refused');
+    expect(refusal({ policy: 'member', openAsAdmin: true })).toBeNull();
+    expect(refusal({ policy: 'staff_self' })).toBeNull();
+  });
+
+  it('does nothing outside open as admin, view-as included', () => {
+    for (const name of ['staff', 'member', 'admin', 'noOrg', 'viewAsMember', 'viewAsPending', 'staffReauth']) {
+      for (const policy of ['signed_in', 'member', 'org_admin', 'staff', 'staff_self'] as const) {
+        expect(refusal({ policy }, name)).toBeNull();
+      }
+    }
   });
 });

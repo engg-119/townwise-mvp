@@ -31,7 +31,7 @@ import { createSetupLocation, deleteSetupLocation, deleteSetupSales, updateSetup
 import { addMembers, changeRole, listMembers, removeMember } from '../handlers/team.ts';
 import { getTownProfile } from '../handlers/towns.ts';
 import { endViewAs, startViewAs } from '../handlers/view-as.ts';
-import { policyRefusal, principalOf, recordResolution, viewAsRefusal, type Policy, type Principal } from './policy.ts';
+import { openAsAdminRefusal, policyRefusal, principalOf, recordResolution, viewAsRefusal, type Policy, type Principal } from './policy.ts';
 import { resolveAccess } from './resolve.ts';
 
 export interface TownwiseRoute {
@@ -50,11 +50,16 @@ export interface TownwiseRoute {
   readonly bodyLimit: 'none' | '1kb' | '2kb' | '8kb' | '32kb' | '256kb' | 'stream';
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
   readonly limiter?: 'uploads' | 'requests' | 'view-as' | 'chat' | 'places' | 'files' | 'file_chunks' | 'downloads';
+  /**
+   * D25: runs in open as admin, as the grant organization's org admin. In that mode every other non-staff route answers
+   * 403 open_as_admin_refused; never on a staff or staff_self route (boot refuses it).
+   */
+  readonly openAsAdmin?: true;
   readonly handler: (ctx: TownwiseContext, req: Request, res: Response, principal: Principal) => Promise<void>;
 }
 
 export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
-  { id: 'me.get', method: 'GET', path: '/me', policy: 'signed_in', bodyLimit: 'none', handler: getMe },
+  { id: 'me.get', method: 'GET', path: '/me', policy: 'signed_in', bodyLimit: 'none', openAsAdmin: true, handler: getMe },
   { id: 'me.join', method: 'POST', path: '/me/join', policy: 'signed_in', bodyLimit: '32kb', handler: joinInvite },
   { id: 'me.decline', method: 'POST', path: '/me/decline', policy: 'signed_in', bodyLimit: '32kb', handler: declineInvite },
   // U11, statement moments: no body, so none is parsed; the writes limiter only.
@@ -360,7 +365,7 @@ const STREAM_ROUTE = 'org.files.chunk';
 
 /**
  * Boot refuses a duplicate method and path, a GET with a body limit, staff_self on any other route, a PUT without a
- * streamed body, and a streamed body on any route but the chunk route.
+ * streamed body, a streamed body on any route but the chunk route, and `openAsAdmin` on a staff or staff_self route.
  */
 export function assertRouteTable(routes: readonly TownwiseRoute[]): void {
   const seen = new Set<string>();
@@ -378,6 +383,9 @@ export function assertRouteTable(routes: readonly TownwiseRoute[]): void {
     if (route.bodyLimit === 'stream' && (route.id !== STREAM_ROUTE || route.method !== 'PUT')) {
       throw new ConfigError('routes', `${route.id} streams its body, which only ${STREAM_ROUTE} may`);
     }
+    if (route.openAsAdmin === true && (route.policy === 'staff' || route.policy === 'staff_self')) {
+      throw new ConfigError('routes', `${route.id} is a staff route marked openAsAdmin`);
+    }
   }
 }
 
@@ -389,13 +397,13 @@ function bound(run: (req: Request, res: Response) => Promise<void>): RequestHand
   };
 }
 
-/** Steps 3 to 5: resolve, the view-as guard, the policy. Never reads the body. */
+/** Steps 3 to 5: resolve, the view-as and open-as-admin guards, the policy. Never reads the body. */
 function authorize(ctx: TownwiseContext, route: TownwiseRoute): RequestHandler {
   return bound(async (req) => {
     const auth = authOf(req);
     const resolution = await resolveAccess(ctx, auth);
     const principal = principalOf(resolution, auth);
-    const refusal = viewAsRefusal(route, principal) ?? policyRefusal(route.policy, principal);
+    const refusal = viewAsRefusal(route, principal) ?? openAsAdminRefusal(route, principal) ?? policyRefusal(route.policy, principal);
     if (refusal !== null) {
       ctx.logger.info({ policy: route.policy, code: refusal.code }, 'townwise.access_denied');
       throw refusal;

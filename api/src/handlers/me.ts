@@ -23,12 +23,20 @@ export interface ViewAsView {
   endsAt: string;
 }
 
+/** D25: the organization this staff session opened as its admin. */
+export interface OpenAsAdminView {
+  id: string;
+  org: { id: string; name: string };
+  startedAt: string;
+}
+
 export interface MeResponse {
-  /** Always the signed-in person; during view-as, the staff actor. */
+  /** Always the signed-in person; during view-as and open as admin, the staff actor. */
   user: { id: string; email: string };
-  /** During view-as: the target's access. */
+  /** During view-as: the target's access. In open as admin: the organization's org admin access. */
   access: Access;
   viewAs: ViewAsView | null;
+  openAsAdmin: OpenAsAdminView | null;
   /** Set whenever the signed-in person's own state is 'staff'. */
   staff: { verifiedUntil: string } | null;
   /** GET /api/me only: the first visit after approval (spec 15.8). Every other answer carries null. */
@@ -51,10 +59,14 @@ export function meResponse(resolution: Resolution): MeResponse {
       endsAt: new Date(Math.min(grant.expiresAt.getTime(), staffVerifiedUntil.getTime())).toISOString(),
     };
   }
+  const open = resolution.openAsAdmin;
   return {
     user: { id: user.id, email: user.email },
     access: resolution.effective,
     viewAs,
+    openAsAdmin: open === null ? null : {
+      id: open.grant.id, org: { id: open.scope.orgId, name: open.orgName }, startedAt: open.grant.startedAt.toISOString(),
+    },
     staff: staffVerifiedUntil === null ? null : { verifiedUntil: staffVerifiedUntil.toISOString() },
     welcome: null,
   };
