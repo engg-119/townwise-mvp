@@ -131,7 +131,7 @@ describe('the composer', () => {
     renderAt('/locations/l1/agent', api);
     const input = await screen.findByLabelText(COMPOSER_LABEL);
     expect(input.getAttribute('aria-describedby')).toBe('composer-help');
-    expect(document.getElementById('composer-help')?.textContent).toBe('Leave out guest names. TownwiseAI answers from your sales, your notes, Hanover’s town profile, the town calendar and who’s likely in Hanover.');
+    expect(document.getElementById('composer-help')?.textContent).toBe('Leave out guest names. TownwiseAI answers from your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data.');
     fireEvent.change(input, { target: { value: 'Closed Monday' } });
     fireEvent.keyDown(input, { key: 'Enter', shiftKey: true });
     fireEvent.keyDown(input, { key: 'Enter', isComposing: true });

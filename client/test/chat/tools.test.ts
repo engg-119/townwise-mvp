@@ -10,6 +10,7 @@ const REGISTERED = [
   'get_town_calendar', 'get_people_in_town',
   'get_forecast',
   'get_day',
+  'list_data_items', 'read_data_item',
 ];
 const CTX = { town: 'Hanover', hasTownProfile: true };
 
@@ -127,6 +128,41 @@ test('U13B’s row: the forecast, published runs only, never claimed when there 
   ]);
 });
 
+test('list_data_items and read_data_item say what the team added and how much was read, never a name', () => {
+  expect(toolLine(step('list_data_items', 'running'), CTX).sentence).toBe('Reading what your team added');
+  expect(toolLine(step('list_data_items', 'done', null, { count: 3, turnedOff: 1 }), CTX).detail).toBe('3 items, 1 turned off');
+  expect(toolLine(step('list_data_items', 'done', null, { count: 0, turnedOff: 0 }), CTX).detail).toBe('Nothing added yet');
+  expect(readsLine(CTX)).toContain('what your team added on Your data');
+  const input = { ref: 'f_0123456789abcdef01234567' };
+  expect(toolLine(step('read_data_item', 'running', input), CTX).sentence).toBe('Reading an item your team added');
+  expect(toolLine(step('read_data_item', 'done', input, { ref: input.ref, available: true, chars: 900, truncated: false }), CTX).detail)
+    .toBe('900 characters');
+  expect(toolLine(step('read_data_item', 'done', input, { ref: input.ref, available: true, chars: 20000, truncated: true }), CTX).detail)
+    .toBe('The start of it, 20,000 characters');
+  expect(toolLine(step('read_data_item', 'done', input, { ref: input.ref, available: false, chars: 0, truncated: false }), CTX).detail)
+    .toBe('Couldn’t read it');
+  // One of a thing is singular.
+  expect(toolLine(step('list_data_items', 'done', null, { count: 1, turnedOff: 0 }), CTX).detail).toBe('1 item, 0 turned off');
+  expect(toolLine(step('read_data_item', 'done', input, { ref: input.ref, available: true, chars: 1, truncated: false }), CTX).detail).toBe('1 character');
+});
+
+test('the data rows’ opened cards and Based on pieces use their own words, and a refused read claims no read', () => {
+  const input = { ref: 'f_0123456789abcdef01234567' };
+  // The result views exactly as api/src/chat/tools/list-data.ts and read-data.ts build them; the ref is never a row.
+  const read = { ref: input.ref, available: true, chars: 900, truncated: false };
+  const refused = { available: false, chars: 0, truncated: false };
+  expect(viewRows(null, { count: 3, turnedOff: 1 }, 'list_data_items')).toEqual([{ term: 'Items', value: '3' }, { term: 'Turned off', value: '1' }]);
+  expect(viewRows(input, read, 'read_data_item')).toEqual([
+    { term: 'Read', value: 'Yes' }, { term: 'Characters', value: '900' }, { term: 'Cut short', value: 'No' },
+  ]);
+  expect(viewRows(input, refused, 'read_data_item')).toEqual([
+    { term: 'Read', value: 'No' }, { term: 'Characters', value: '0' }, { term: 'Cut short', value: 'No' },
+  ]);
+  expect(basedOnLine([step('list_data_items', 'done', null, { count: 3, turnedOff: 1 })], CTX)).toBe('Based on what your team added.');
+  expect(basedOnLine([step('read_data_item', 'done', input, read)], CTX)).toBe('Based on an item your team added.');
+  expect(basedOnLine([step('read_data_item', 'done', input, refused)], CTX)).toBe('Based on an item your team added (couldn’t read it).');
+});
+
 test('get_day reads one day: whether it had sales, was closed, its notes and calendar entries, and their sources', () => {
   const input = { date: '2026-11-21' };
   const sources = [{ host: 'dartmouthsports.com', url: 'https://dartmouthsports.com/football' }];
@@ -171,23 +207,23 @@ test('the Based on line comes from the calls that read something, never the mode
 });
 
 test('what TownwiseAI reads lists the registered tools that have something to read, and a forecast only once one is published', () => {
-  expect(readsLine(CTX)).toBe('your sales, your notes, Hanover’s town profile, the town calendar and who’s likely in Hanover');
+  expect(readsLine(CTX)).toBe('your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data');
   // A town outside the twelve has no profile and no people in town to read; its calendar is the federal holidays.
-  expect(readsLine({ town: 'Bend', hasTownProfile: false })).toBe('your sales, your notes and the town calendar');
+  expect(readsLine({ town: 'Bend', hasTownProfile: false })).toBe('your sales, your notes, the town calendar and what your team added on Your data');
   expect(readsLine(CTX)).not.toMatch(/forecast/);
   expect(readsLine({ ...CTX, hasForecast: false })).not.toMatch(/forecast/);
   // F10: GET .../estimates/about says a run is published.
   expect(readsLine({ ...CTX, hasForecast: true }))
-    .toBe('your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and Townwise’s forecast');
+    .toBe('your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover, Townwise’s forecast and what your team added on Your data');
 });
 
 test('before any sales are uploaded, what TownwiseAI can use leaves out the sales and keeps every other source', () => {
-  expect(readsLine(CTX, { sales: false })).toBe('your notes, Hanover’s town profile, the town calendar and who’s likely in Hanover');
-  expect(readsLine({ town: 'Bend', hasTownProfile: false }, { sales: false })).toBe('your notes and the town calendar');
+  expect(readsLine(CTX, { sales: false })).toBe('your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data');
+  expect(readsLine({ town: 'Bend', hasTownProfile: false }, { sales: false })).toBe('your notes, the town calendar and what your team added on Your data');
   expect(readsLine({ ...CTX, hasForecast: true }, { sales: false }))
-    .toBe('your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and Townwise’s forecast');
+    .toBe('your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover, Townwise’s forecast and what your team added on Your data');
   // A context that says the location has no sales leaves them out of every line built from it.
-  expect(readsLine({ ...CTX, hasSales: false })).toBe('your notes, Hanover’s town profile, the town calendar and who’s likely in Hanover');
+  expect(readsLine({ ...CTX, hasSales: false })).toBe('your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data');
   expect(readsLine({ ...CTX, hasSales: true })).toBe(readsLine(CTX));
 });
 
