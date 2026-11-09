@@ -1,0 +1,513 @@
+// Your data (D28): one list of everything a location received (sales uploads and stored files, newest first), turning
+// an upload or a reference item off and on, and deleting one. Synthetic days and files only; no file name, title or
+// figure reaches an audit event.
+import { randomUUID } from 'node:crypto';
+
+import { Types } from 'mongoose';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+
+import type { OrgScope } from '../src/access/policy.ts';
+import { summaryOf } from '../src/audit.ts';
+import { cleanBlobName, rawBlobName } from '../src/files/blobs.ts';
+import { createMemoryFileBlobs, type MemoryFileBlobs } from '../src/files/memory-blobs.ts';
+import type { DataItemView } from '../src/handlers/data.ts';
+import type { SalesHistory } from '../src/handlers/sales.ts';
+import { addGrant, addLocation, addSeat, addUpload, auditEvents, createOrg } from './helpers/fixtures.ts';
+import { filesPath, seedReadFile, uploadFile } from './helpers/files.ts';
+import {
+  call, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
+} from './helpers/server.ts';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** A JPEG's first bytes: kept as kind `other`. */
+const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]);
+const RAW = Buffer.from('Date,Guests\n', 'utf8');
+
+let server: TownwiseTestServer;
+/** The same database with stored files off (FILES_BLOB_ACCOUNT_URL unset). */
+let off: TownwiseTestServer;
+let blobs: MemoryFileBlobs;
+
+interface Team {
+  orgId: string;
+  admin: TestSession; adminEmail: string;
+  member: TestSession; memberEmail: string;
+  /** A second member. */
+  other: TestSession; otherEmail: string;
+}
+let team: Team;
+
+async function newTeam(name: string): Promise<Team> {
+  const orgId = await createOrg(server, { name: `${name} ${randomUUID().slice(0, 6)}` });
+  const [adminEmail, memberEmail, otherEmail] = ['admin', 'member', 'other'].map((who) => `${who}-${randomUUID().slice(0, 8)}@example.test`) as [string, string, string];
+  const admin = await signIn(server, adminEmail);
+  const member = await signIn(server, memberEmail);
+  const other = await signIn(server, otherEmail);
+  await addSeat(server, { orgId, userId: admin.userId, email: adminEmail, role: 'org_admin' });
+  await addSeat(server, { orgId, userId: member.userId, email: memberEmail });
+  await addSeat(server, { orgId, userId: other.userId, email: otherEmail });
+  return { orgId, admin, adminEmail, member, memberEmail, other, otherEmail };
+}
+
+beforeAll(async () => {
+  blobs = createMemoryFileBlobs();
+  // Each start drops the database, so both start before any fixture; the second builds the same indexes again.
+  off = await startTownwiseServer();
+  server = await startTownwiseServer({ files: blobs });
+  team = await newTeam('Data Kitchen');
+});
+afterAll(async () => {
+  await server.close();
+  await off.close();
+});
+beforeEach(async () => { await server.redis.flushdb(); });
+
+const scopeOf = (orgId: string): OrgScope => ({ orgId }) as unknown as OrgScope;
+
+function newLocation(orgId = team.orgId): Promise<string> {
+  return addLocation(server, { orgId, name: `Room ${randomUUID().slice(0, 6)}` });
+}
+
+/** One second later, so the next item is newer. */
+function tick(): void {
+  server.clock.advance(1000);
+}
+
+function plus(day: string, days: number): string {
+  return new Date(Date.parse(`${day}T00:00:00.000Z`) + days * DAY_MS).toISOString().slice(0, 10);
+}
+
+/** The days from `from` to `to`, inclusive. */
+function range(from: string, to: string): string[] {
+  const out: string[] = [];
+  for (let day = from; day <= to; day = plus(day, 1)) out.push(day);
+  return out;
+}
+
+/** Posts `count` consecutive days from `from` through POST .../sales/uploads; answers the upload's id. */
+async function send(session: TestSession, locationId: string, from: string, count: number, on = server): Promise<string> {
+  const days = Array.from({ length: count }, (_, i) => ({ date: plus(from, i), guests: 40 + i, netSalesCents: null }));
+  const res = await call(on, `/api/org/locations/${locationId}/sales/uploads`, { session, json: { days } });
+  expect(res.status).toBe(201);
+  return (await res.json() as { upload: { id: string } }).upload.id;
+}
+
+/** A stored file that wrote an upload's days, as the reader leaves one: the upload through the route, then its file. */
+async function seedReadFileUpload(
+  locationId: string, from: string, count: number, session: TestSession = team.admin,
+): Promise<{ uploadId: string; fileId: string }> {
+  const uploadId = await send(session, locationId, from, count);
+  const fileId = await seedReadFile(server, blobs, {
+    orgId: team.orgId, locationId, uploadedBy: session.userId, name: 'sales.csv', raw: RAW, clean: 'date,guests,net_sales\r\n',
+    uploaderRole: session === team.admin ? 'org_admin' : 'member',
+  });
+  await server.connection.collection('tw_files').updateOne(
+    { _id: new Types.ObjectId(fileId) }, { $set: { uploadId: new Types.ObjectId(uploadId), 'result.uploadId': uploadId } },
+  );
+  return { uploadId, fileId };
+}
+
+/** A tw_files row written straight in (no blobs): by default the member's kept reference text item. */
+async function seedFile(locationId: string, over: Record<string, unknown> = {}): Promise<string> {
+  const _id = new Types.ObjectId();
+  await server.connection.collection('tw_files').insertOne({
+    _id, orgId: new Types.ObjectId(team.orgId), locationId: new Types.ObjectId(locationId), importId: null, purpose: 'reference',
+    uploadedBy: team.member.userId, uploaderRole: 'member', uploadedAt: server.clock.now(), name: 'notes.txt', kind: 'text',
+    sizeBytes: 5, fingerprint: _id.toHexString().padStart(64, '0'), upload: null, status: 'kept', outcome: 'reference',
+    progress: null, readStartedAt: null, readMs: null, answers: {}, uploadId: null, result: null, report: null, cleanBytes: null,
+    rawDeletedAt: null, attempts: 0, ...over,
+  });
+  return _id.toHexString();
+}
+
+interface Page { items: DataItemView[]; next: string | null }
+
+async function list(session: TestSession, query = '', on = server): Promise<Page> {
+  const res = await call(on, `/api/org/data${query}`, { session });
+  expect(res.status).toBe(200);
+  return await res.json() as Page;
+}
+
+function itemPath(locationId: string, ref: string): string {
+  return `/api/org/locations/${locationId}/data/${ref}`;
+}
+
+function patch(session: TestSession, locationId: string, ref: string, json: unknown, on = server): Promise<Response> {
+  return call(on, itemPath(locationId, ref), { session, method: 'PATCH', json });
+}
+
+async function patched(session: TestSession, locationId: string, ref: string, enabled: boolean, on = server): Promise<DataItemView> {
+  const res = await patch(session, locationId, ref, { enabled }, on);
+  expect(res.status).toBe(200);
+  return (await res.json() as { item: DataItemView }).item;
+}
+
+async function del(session: TestSession, locationId: string, ref: string, on = server): Promise<{ status: number; body: unknown }> {
+  const res = await call(on, itemPath(locationId, ref), { session, method: 'DELETE' });
+  return { status: res.status, body: await res.json() };
+}
+
+async function errorOf(res: Response): Promise<{ status: number; error: string }> {
+  const body = await res.json() as { error: string };
+  return { status: res.status, error: body.error };
+}
+
+async function getJson<T>(session: TestSession, path: string): Promise<T> {
+  const res = await call(server, path, { session });
+  expect(res.status).toBe(200);
+  return await res.json() as T;
+}
+
+function dayCount(locationId: string): Promise<number> {
+  return getJson<{ coverage: { dayCount: number } }>(team.admin, `/api/org/locations/${locationId}/sales`).then((body) => body.coverage.dayCount);
+}
+
+async function dates(locationId: string): Promise<string[]> {
+  return (await getJson<SalesHistory>(team.admin, `/api/org/locations/${locationId}/sales/history`)).days.date;
+}
+
+interface StoredEvent { target: { type: string; id: string }; details: Record<string, string | number | boolean | null> }
+
+async function lastEvent(action: string): Promise<StoredEvent> {
+  const found = (await auditEvents(server)).filter((event) => event.action === action).at(-1);
+  expect(found).toBeDefined();
+  return found as unknown as StoredEvent;
+}
+
+function exists(collection: string, id: string): Promise<boolean> {
+  return server.connection.collection(collection).countDocuments({ _id: new Types.ObjectId(id) }).then((count) => count === 1);
+}
+
+describe('GET /api/org/data', () => {
+  it('lists a location’s uploads and stored files newest first, each once: a file that wrote days as its upload, a kept file on its own', async () => {
+    const l1 = await newLocation();
+    const sentAt = server.clock.now().toISOString();
+    const browser = await send(team.member, l1, '2026-05-01', 3);
+    tick();
+    const read = await seedReadFileUpload(l1, '2026-05-10', 2);   // wrote days
+    tick();
+    const kept = await uploadFile(server, l1, team.member, 'photo.jpg', jpeg, { purpose: 'reference' });
+    expect(kept.status).toBe(200);
+    const keptId = kept.body.file?.id ?? '';
+    const { items, next } = await list(team.admin, `?locationId=${l1}`);
+    expect(items.map((i) => [i.ref.slice(0, 2), i.via, i.kind])).toEqual([['f_', 'file', 'other'], ['u_', 'file', 'text'], ['u_', 'browser', 'daily_totals']]);
+    expect(items.map((i) => i.ref)).toEqual([`f_${keptId}`, `u_${read.uploadId}`, `u_${browser}`]);
+    expect(items[1]?.file?.id).toBe(read.fileId);
+    expect(next).toBeNull();
+
+    expect(items[2]).toEqual({
+      ref: `u_${browser}`, locationId: l1, via: 'browser', kind: 'daily_totals', name: null, addedAt: sentAt, addedByEmail: team.memberEmail,
+      sizeBytes: null, enabled: true, state: 'used', outcome: null, days: { count: 3, inUse: 3, firstDate: '2026-05-01', lastDate: '2026-05-03' },
+      file: null, canTurnOff: true, canDelete: true,
+    });
+    expect(items[1]).toMatchObject({
+      name: 'sales.csv', sizeBytes: RAW.length, enabled: true, state: 'used', addedByEmail: team.adminEmail,
+      days: { count: 2, inUse: 2, firstDate: '2026-05-10', lastDate: '2026-05-11' },
+      file: { id: read.fileId, hasClean: true, rawAvailable: true, entries: null, canDownloadRaw: true, canDownloadClean: true, canDeleteRaw: true },
+      canTurnOff: true, canDelete: true,
+    });
+    expect(items[0]).toMatchObject({
+      name: 'photo.jpg', sizeBytes: jpeg.length, enabled: true, state: 'kept', outcome: 'reference', days: null, addedByEmail: team.memberEmail,
+      file: { id: keptId, hasClean: false, rawAvailable: true, canDownloadClean: false }, canTurnOff: true, canDelete: true,
+    });
+    // A member sees the same rows, with only their own items' actions.
+    const asOther = (await list(team.other, `?locationId=${l1}`)).items;
+    expect(asOther.map((i) => [i.ref, i.canTurnOff, i.canDelete])).toEqual([[`f_${keptId}`, false, false], [`u_${read.uploadId}`, false, false], [`u_${browser}`, false, false]]);
+    const asMember = (await list(team.member, `?locationId=${l1}`)).items;
+    expect(asMember.map((i) => [i.ref, i.canTurnOff, i.canDelete])).toEqual([[`f_${keptId}`, true, true], [`u_${read.uploadId}`, false, false], [`u_${browser}`, true, false]]);
+  });
+
+  it('names who added each: a current email, Townwise staff for a setup upload, Deleted person once gone', async () => {
+    const l1 = await newLocation();
+    await send(team.member, l1, '2026-05-01', 1);
+    tick();
+    await addUpload(server, {
+      orgId: team.orgId, locationId: l1, uploadedAt: server.clock.now(), status: 'applied', uploadedBy: new Types.ObjectId().toHexString(), byStaff: true,
+    });
+    tick();
+    await addUpload(server, { orgId: team.orgId, locationId: l1, uploadedAt: server.clock.now(), status: 'applied', uploadedBy: new Types.ObjectId().toHexString() });
+    const { items } = await list(team.member, `?locationId=${l1}`);
+    expect(items.map((i) => [i.via, i.addedByEmail])).toEqual([['browser', 'Deleted person'], ['staff', 'Townwise staff'], ['browser', team.memberEmail]]);
+  });
+
+  it('without locationId lists every location of the organization; another organization’s location id answers 404', async () => {
+    const t = await newTeam('Two Rooms');
+    const front = await addLocation(server, { orgId: t.orgId, name: 'Front' });
+    const back = await addLocation(server, { orgId: t.orgId, name: 'Back' });
+    const first = await send(t.admin, front, '2026-05-01', 1);
+    tick();
+    const second = await send(t.admin, back, '2026-05-01', 1);
+    expect((await list(t.admin)).items.map((i) => [i.ref, i.locationId])).toEqual([[`u_${second}`, back], [`u_${first}`, front]]);
+    expect(await errorOf(await call(server, `/api/org/data?locationId=${await newLocation()}`, { session: t.admin }))).toEqual({ status: 404, error: 'not_found' });
+    for (const query of ['?locationId=nope', '?after=2026-06-01_abc', `?after=2026-13-01T00:00:00.000Z_${'a'.repeat(24)}`, `?after=2026-06-01T00:00:00Z_${'a'.repeat(24)}`]) {
+      expect({ query, ...(await errorOf(await call(server, `/api/org/data${query}`, { session: t.admin }))) }).toEqual({ query, status: 400, error: 'invalid_request' });
+    }
+  });
+
+  it('pages 100 at a time, and the last page has next null', async () => {
+    const l1 = await newLocation();
+    const base = server.clock.now().getTime();
+    const rows: { at: number; id: string; ref: string }[] = [];
+    // 98 uploads a second apart and three stored files among them, 101 items. The oldest two share a time, so the
+    // cursor's id decides between them.
+    for (let i = 0; i < 98; i += 1) {
+      const at = base - i * 1000;
+      const id = await addUpload(server, { orgId: team.orgId, locationId: l1, uploadedAt: new Date(at), status: 'applied' });
+      rows.push({ at, id, ref: `u_${id}` });
+    }
+    for (const at of [base - 500, base - 50_500, base - 97_000]) {
+      const id = await seedFile(l1, { uploadedAt: new Date(at) });
+      rows.push({ at, id, ref: `f_${id}` });
+    }
+    const expected = rows.sort((a, b) => b.at - a.at || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+    const first = await list(team.admin, `?locationId=${l1}`);
+    expect(first.items).toHaveLength(100);
+    const cursor = expected[99];
+    expect(first.next).toBe(`${new Date(cursor?.at ?? 0).toISOString()}_${cursor?.id ?? ''}`);
+    expect(expected[100]?.at).toBe(cursor?.at);
+    const second = await list(team.admin, `?locationId=${l1}&after=${encodeURIComponent(first.next ?? '')}`);
+    expect(second.items).toHaveLength(1);
+    expect(second.next).toBeNull();
+    expect([...first.items, ...second.items].map((i) => i.ref)).toEqual(expected.map((row) => row.ref));
+  });
+
+  describe('view-as', () => {
+    afterEach(async () => { await removeStaffFactor(server); });
+
+    it('under view-as, names are null and canTurnOff, canDelete and every download flag are false', async () => {
+      const l1 = await newLocation();
+      await seedReadFileUpload(l1, '2026-05-01', 2);
+      tick();
+      expect((await uploadFile(server, l1, team.admin, 'menu.pdf', Buffer.from('%PDF-1.4\nsynthetic\n'), { purpose: 'reference' })).status).toBe(200);
+      const staff = await signInStaff(server);
+      await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: team.admin.userId, orgId: team.orgId });
+      const { items } = await list(staff, `?locationId=${l1}`);
+      expect(items).toHaveLength(2);
+      for (const item of items) {
+        expect(item).toMatchObject({
+          name: null, canTurnOff: false, canDelete: false, file: { canDownloadRaw: false, canDownloadClean: false, canDeleteRaw: false },
+        });
+      }
+      expect(await errorOf(await patch(staff, l1, items[0]?.ref ?? '', { enabled: false }))).toEqual({ status: 403, error: 'view_as_read_only' });
+      expect(await errorOf(await call(server, itemPath(l1, items[1]?.ref ?? ''), { session: staff, method: 'DELETE' }))).toEqual({ status: 403, error: 'view_as_read_only' });
+    });
+  });
+
+  it('with stored files off, lists uploads only, each with file null', async () => {
+    const l1 = await newLocation();
+    const browser = await send(team.admin, l1, '2026-05-01', 2);
+    tick();
+    const read = await seedReadFileUpload(l1, '2026-05-10', 2);
+    tick();
+    await seedFile(l1);
+    const offAdmin = await signIn(off, team.adminEmail);
+    const { items } = await list(offAdmin, `?locationId=${l1}`, off);
+    expect(items.map((i) => [i.ref, i.file, i.name])).toEqual([[`u_${read.uploadId}`, null, null], [`u_${browser}`, null, null]]);
+  });
+
+  it('shows an unfinished upload of a file to the person sending it only', async () => {
+    const l1 = await newLocation();
+    const created = await call(server, filesPath(l1), { session: team.member, json: { name: 'menu.txt', sizeBytes: 10, purpose: 'reference' } });
+    expect(created.status).toBe(201);
+    const fileId = (await created.json() as { file: { id: string } }).file.id;
+    expect((await list(team.member, `?locationId=${l1}`)).items.map((i) => [i.ref, i.state, i.canTurnOff, i.canDelete]))
+      .toEqual([[`f_${fileId}`, 'uploading', false, true]]);
+    expect((await list(team.admin, `?locationId=${l1}`)).items).toEqual([]);
+    expect(await errorOf(await patch(team.admin, l1, `f_${fileId}`, { enabled: false }))).toEqual({ status: 404, error: 'not_found' });
+  });
+
+  it('says how many of an upload’s days are still in use after a later upload replaced some', async () => {
+    const l1 = await newLocation();
+    await send(team.admin, l1, '2026-05-01', 10);
+    tick();
+    await send(team.admin, l1, '2026-05-06', 10);
+    expect((await list(team.admin, `?locationId=${l1}`)).items[1]?.days).toEqual({ count: 10, inUse: 5, firstDate: '2026-05-01', lastDate: '2026-05-10' });
+  });
+});
+
+describe('PATCH /api/org/locations/:locationId/data/:ref', () => {
+  it('the uploader turns their upload off and on; its days leave and return', async () => {
+    const l1 = await newLocation();
+    const ref = `u_${await send(team.member, l1, '2026-05-01', 3)}`;
+    expect(await patched(team.member, l1, ref, false)).toMatchObject({ ref, enabled: false, canTurnOff: true });
+    expect(await dayCount(l1)).toBe(0);
+    expect((await list(team.member, `?locationId=${l1}`)).items[0]).toMatchObject({ ref, enabled: false, days: { count: 3, inUse: 3 } });
+    expect(await patched(team.member, l1, ref, true)).toMatchObject({ ref, enabled: true });
+    expect(await dayCount(l1)).toBe(3);
+  });
+
+  it('an org admin turns off a member’s upload and a Townwise staff upload; a member gets 403 forbidden for either', async () => {
+    const l1 = await newLocation();
+    const theirs = `u_${await send(team.other, l1, '2026-05-01', 2)}`;
+    tick();
+    const setup = `u_${await addUpload(server, {
+      orgId: team.orgId, locationId: l1, uploadedAt: server.clock.now(), status: 'applied', uploadedBy: team.member.userId, byStaff: true,
+    })}`;
+    for (const ref of [theirs, setup]) {
+      expect({ ref, ...(await errorOf(await patch(team.member, l1, ref, { enabled: false }))) }).toEqual({ ref, status: 403, error: 'forbidden' });
+      expect(await patched(team.admin, l1, ref, false)).toMatchObject({ ref, enabled: false, canTurnOff: true });
+    }
+    // Even the staff member's own id as uploader does not let a member manage a staff upload.
+    expect((await list(team.member, `?locationId=${l1}`)).items.map((i) => [i.ref, i.canTurnOff])).toEqual([[setup, false], [theirs, false]]);
+  });
+
+  it('a reference item turns off and on; a stored file that wrote no days and is not for reference answers 400', async () => {
+    const l1 = await newLocation();
+    const item = await seedFile(l1);
+    expect(await patched(team.member, l1, `f_${item}`, false)).toMatchObject({ ref: `f_${item}`, enabled: false, state: 'kept', canTurnOff: true });
+    expect(await server.connection.collection('tw_files').findOne({ _id: new Types.ObjectId(item) }))
+      .toMatchObject({ disabledAt: server.clock.now(), disabledBy: team.member.userId });
+    expect(await patched(team.admin, l1, `f_${item}`, true)).toMatchObject({ enabled: true });
+    const doc = await server.connection.collection('tw_files').findOne({ _id: new Types.ObjectId(item) });
+    expect(Object.keys(doc ?? {})).not.toContain('disabledAt');
+    expect(Object.keys(doc ?? {})).not.toContain('disabledBy');
+
+    const unread = await seedFile(l1, { purpose: 'history', importId: new Types.ObjectId(), outcome: 'needs_help', name: 'sales.csv' });
+    expect(await errorOf(await patch(team.admin, l1, `f_${unread}`, { enabled: false }))).toEqual({ status: 400, error: 'invalid_request' });
+    expect((await list(team.admin, `?locationId=${l1}`)).items.find((i) => i.ref === `f_${unread}`)).toMatchObject({ canTurnOff: false, canDelete: true });
+  });
+
+  it('a file being read answers 409 item_busy', async () => {
+    const l1 = await newLocation();
+    const reading = await seedFile(l1, { purpose: 'history', importId: new Types.ObjectId(), status: 'reading', outcome: null, name: 'sales.csv' });
+    tick();
+    const res = await patch(team.member, l1, `f_${reading}`, { enabled: false });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: 'item_busy', message: 'Townwise is still using this item; try again when it is done' });
+    // An upload whose file Townwise is reading again (after a question) is busy too.
+    const read = await seedReadFileUpload(l1, '2026-05-01', 2);
+    await server.connection.collection('tw_files').updateOne({ _id: new Types.ObjectId(read.fileId) }, { $set: { status: 'reading' } });
+    expect(await errorOf(await patch(team.admin, l1, `u_${read.uploadId}`, { enabled: false }))).toEqual({ status: 409, error: 'item_busy' });
+    const items = (await list(team.admin, `?locationId=${l1}`)).items;
+    expect(items.map((i) => [i.ref, i.state, i.canTurnOff])).toEqual([[`u_${read.uploadId}`, 'reading', false], [`f_${reading}`, 'reading', false]]);
+    expect(await dayCount(l1)).toBe(2);
+  });
+
+  it('records data.turned_off and data.turned_on with only locationId, item and kind', async () => {
+    const l1 = await newLocation();
+    const id = await send(team.admin, l1, '2026-05-01', 2);
+    await patched(team.admin, l1, `u_${id}`, false);
+    const turnedOff = await lastEvent('data.turned_off');
+    expect(turnedOff).toMatchObject({ target: { type: 'upload', id }, details: { locationId: l1, item: 'upload', kind: 'daily_totals' } });
+    expect(Object.keys(turnedOff.details).sort()).toEqual(['item', 'kind', 'locationId']);
+    await patched(team.admin, l1, `u_${id}`, true);
+    const turnedOn = await lastEvent('data.turned_on');
+    expect(turnedOn).toMatchObject({ target: { type: 'upload', id }, details: { locationId: l1, item: 'upload', kind: 'daily_totals' } });
+    expect(Object.keys(turnedOn.details).sort()).toEqual(['item', 'kind', 'locationId']);
+
+    const fileId = await seedFile(l1);
+    await patched(team.member, l1, `f_${fileId}`, false);
+    expect(await lastEvent('data.turned_off')).toMatchObject({ target: { type: 'file', id: fileId }, details: { locationId: l1, item: 'file', kind: 'text' } });
+    // Asking for the state it is already in changes nothing and records nothing.
+    const count = (await auditEvents(server)).length;
+    expect(await patched(team.member, l1, `f_${fileId}`, false)).toMatchObject({ enabled: false });
+    expect((await auditEvents(server)).length).toBe(count);
+
+    expect(summaryOf('data.turned_off', turnedOff.details)).toBe('Turned off an upload');
+    expect(summaryOf('data.turned_on', turnedOn.details)).toBe('Turned on an upload');
+    expect(summaryOf('data.turned_off', { locationId: l1, item: 'file', kind: 'text' })).toBe('Turned off a file');
+    expect(summaryOf('data.turned_on', { locationId: l1, item: 'file', kind: 'text' })).toBe('Turned on a file');
+  });
+
+  it('refuses a malformed ref or body with 400, and an unknown ref, another location’s, or a file listed as its upload with 404', async () => {
+    const l1 = await newLocation();
+    const l2 = await newLocation();
+    const id = await send(team.admin, l1, '2026-05-01', 1);
+    const read = await seedReadFileUpload(l1, '2026-05-10', 1);
+    for (const [ref, body] of [[`u_${id}`, { enabled: 'no' }], [`u_${id}`, { enabled: false, more: 1 }], ['x_1', { enabled: false }], [`u_${'A'.repeat(24)}`, { enabled: false }]] as const) {
+      expect({ ref, ...(await errorOf(await patch(team.admin, l1, ref, body))) }).toEqual({ ref, status: 400, error: 'invalid_request' });
+    }
+    for (const [locationId, ref] of [
+      [l1, `u_${new Types.ObjectId().toHexString()}`], [l1, `f_${new Types.ObjectId().toHexString()}`], [l2, `u_${id}`], [l1, `f_${read.fileId}`],
+    ] as const) {
+      expect({ ref, ...(await errorOf(await patch(team.admin, locationId, ref, { enabled: false }))) }).toEqual({ ref, status: 404, error: 'not_found' });
+    }
+    expect(await dayCount(l1)).toBe(2);
+  });
+});
+
+describe('DELETE /api/org/locations/:locationId/data/:ref', () => {
+  it('an org admin deletes an upload: the days it still holds, its record and its stored file go; days a later upload replaced stay', async () => {
+    const l1 = await newLocation();
+    const a = await seedReadFileUpload(l1, '2026-05-01', 10);          // a stored file that wrote 05-01..05-10
+    tick();
+    await send(team.admin, l1, '2026-05-06', 10);
+    expect(await del(team.admin, l1, `u_${a.uploadId}`)).toEqual({ status: 200, body: { deletedDays: 5, deletedFiles: 1 } });
+    expect(await dates(l1)).toEqual(range('2026-05-06', '2026-05-15'));
+    expect(await exists('tw_files', a.fileId)).toBe(false);
+    expect(await exists('tw_uploads', a.uploadId)).toBe(false);
+    const ref = { locationId: l1, fileId: a.fileId };
+    expect(blobs.raw.has(rawBlobName(scopeOf(team.orgId), ref))).toBe(false);
+    expect(blobs.clean.has(cleanBlobName(scopeOf(team.orgId), ref))).toBe(false);
+  });
+
+  it('a member deleting an upload answers 403 forbidden, even their own', async () => {
+    const l1 = await newLocation();
+    const own = await send(team.member, l1, '2026-05-01', 2);
+    expect(await del(team.member, l1, `u_${own}`)).toMatchObject({ status: 403, body: { error: 'forbidden' } });
+    expect(await exists('tw_uploads', own)).toBe(true);
+    expect(await dayCount(l1)).toBe(2);
+  });
+
+  it('the uploader deletes their own reference item; another member gets 403', async () => {
+    const l1 = await newLocation();
+    const added = await uploadFile(server, l1, team.member, 'notes.txt', Buffer.from('hello'), { purpose: 'reference' });
+    expect(added.status).toBe(200);
+    const fileId = added.body.file?.id ?? '';
+    const ref = { locationId: l1, fileId };
+    expect(blobs.raw.has(rawBlobName(scopeOf(team.orgId), ref))).toBe(true);
+    expect(await del(team.other, l1, `f_${fileId}`)).toMatchObject({ status: 403, body: { error: 'forbidden' } });
+    expect(await del(team.member, l1, `f_${fileId}`)).toEqual({ status: 200, body: { deletedDays: 0, deletedFiles: 1 } });
+    expect(await exists('tw_files', fileId)).toBe(false);
+    expect(blobs.raw.has(rawBlobName(scopeOf(team.orgId), ref))).toBe(false);
+    const event = await lastEvent('file.deleted');
+    expect(event).toMatchObject({ target: { type: 'file', id: fileId }, details: { locationId: l1, kind: 'text', reason: 'owner' } });
+  });
+
+  it('records sales.upload_deleted with locationId, deletedDays and deletedFiles only', async () => {
+    const l1 = await newLocation();
+    const id = await send(team.admin, l1, '2026-05-01', 4);
+    expect((await del(team.admin, l1, `u_${id}`)).status).toBe(200);
+    const event = await lastEvent('sales.upload_deleted');
+    expect(event).toMatchObject({ target: { type: 'upload', id }, details: { locationId: l1, deletedDays: 4, deletedFiles: 0 } });
+    expect(Object.keys(event.details).sort()).toEqual(['deletedDays', 'deletedFiles', 'locationId']);
+    expect(summaryOf('sales.upload_deleted', event.details)).toBe('Deleted an upload and 4 days');
+  });
+
+  it('an upload with a stored file while stored files are off answers 503 files_unavailable and deletes nothing', async () => {
+    const l1 = await newLocation();
+    const a = await seedReadFileUpload(l1, '2026-05-01', 3);
+    const plain = await send(team.admin, l1, '2026-05-10', 2);
+    const offAdmin = await signIn(off, team.adminEmail);
+    expect(await del(offAdmin, l1, `u_${a.uploadId}`, off)).toMatchObject({ status: 503, body: { error: 'files_unavailable' } });
+    expect(await dayCount(l1)).toBe(5);
+    expect(await exists('tw_uploads', a.uploadId)).toBe(true);
+    expect(await exists('tw_files', a.fileId)).toBe(true);
+    // With stored files off, an upload with no file still turns off and on and deletes; a file ref answers 503.
+    expect(await patched(offAdmin, l1, `u_${plain}`, false, off)).toMatchObject({ enabled: false });
+    expect(await patched(offAdmin, l1, `u_${plain}`, true, off)).toMatchObject({ enabled: true });
+    expect(await errorOf(await patch(offAdmin, l1, `f_${a.fileId}`, { enabled: false }, off))).toEqual({ status: 503, error: 'files_unavailable' });
+    expect(await del(offAdmin, l1, `u_${plain}`, off)).toEqual({ status: 200, body: { deletedDays: 2, deletedFiles: 0 } });
+    expect(await dayCount(l1)).toBe(3);
+  });
+
+  it('an upload whose stored file Townwise is reading answers 409 file_busy and deletes nothing', async () => {
+    const l1 = await newLocation();
+    const a = await seedReadFileUpload(l1, '2026-05-01', 3);
+    await server.connection.collection('tw_files').updateOne({ _id: new Types.ObjectId(a.fileId) }, { $set: { status: 'reading' } });
+    expect(await del(team.admin, l1, `u_${a.uploadId}`)).toMatchObject({ status: 409, body: { error: 'file_busy' } });
+    expect(await dayCount(l1)).toBe(3);
+    expect(await exists('tw_uploads', a.uploadId)).toBe(true);
+    expect(await exists('tw_files', a.fileId)).toBe(true);
+  });
+
+  it('deleting twice answers 404 the second time', async () => {
+    const l1 = await newLocation();
+    const id = await send(team.admin, l1, '2026-05-01', 1);
+    expect((await del(team.admin, l1, `u_${id}`)).status).toBe(200);
+    expect(await del(team.admin, l1, `u_${id}`)).toMatchObject({ status: 404, body: { error: 'not_found' } });
+    const fileId = await seedFile(l1);
+    expect((await del(team.member, l1, `f_${fileId}`)).status).toBe(200);
+    expect(await del(team.member, l1, `f_${fileId}`)).toMatchObject({ status: 404, body: { error: 'not_found' } });
+  });
+});

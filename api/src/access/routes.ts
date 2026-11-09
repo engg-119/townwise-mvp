@@ -13,6 +13,7 @@ import { answerQuestion, getAgent } from '../handlers/agent.ts';
 import { getLocationCalendar } from '../handlers/calendar.ts';
 import { deleteConversation, getChat, getConversation, postTurn } from '../handlers/chat.ts';
 import { actOnProposal } from '../handlers/chat-proposals.ts';
+import { listData, removeDataItem, updateDataItem } from '../handlers/data.ts';
 import { deleteOrg, deletePerson, purgeOriginals } from '../handlers/deletion.ts';
 import { getEstimatesAbout, getForecast, getPeopleInTown } from '../handlers/estimates.ts';
 import { deleteForecastRun, importForecastRun, listForecastRuns, publishForecastRun, withdrawForecastRun } from '../handlers/forecast-runs.ts';
@@ -42,10 +43,10 @@ export interface TownwiseRoute {
   readonly path: `/${string}`;
   readonly policy: Policy;
   /**
-   * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer; '2kb' on the Places and files JSON routes; '8kb'
-   * on a TownwiseAI proposal; '256kb' only on the upload routes (the member one and, D23, staff setup's) and (U13B) the
-   * staff forecast import; 'stream' only on the chunk route, whose handler reads the raw body itself after the policy
-   * has passed.
+   * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer; '2kb' on the Places, files and (D28) Your data
+   * JSON routes; '8kb' on a TownwiseAI proposal; '256kb' only on the upload routes (the member one and, D23, staff
+   * setup's) and (U13B) the staff forecast import; 'stream' only on the chunk route, whose handler reads the raw body
+   * itself after the policy has passed.
    */
   readonly bodyLimit: 'none' | '1kb' | '2kb' | '8kb' | '32kb' | '256kb' | 'stream';
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
@@ -174,6 +175,16 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.data.text', method: 'POST', path: '/org/locations/:locationId/data/text', policy: 'member', bodyLimit: '32kb',
     limiter: 'files', handler: addTextItem,
+  },
+  // D28, Your data: the list (a location's, or the organization's), and turning an item off or on, or deleting it.
+  { id: 'org.data.list', method: 'GET', path: '/org/data', policy: 'member', bodyLimit: 'none', handler: listData },
+  {
+    id: 'org.data.update', method: 'PATCH', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: '2kb',
+    handler: updateDataItem,
+  },
+  {
+    id: 'org.data.remove', method: 'DELETE', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: 'none',
+    handler: removeDataItem,
   },
   {
     id: 'org.originals.remove', method: 'DELETE', path: '/org/locations/:locationId/originals', policy: 'org_admin',

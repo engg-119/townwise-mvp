@@ -168,6 +168,8 @@ function fileSchema(): Schema<FileFields> {
   // The daily sweep across organizations (stores/cross-tenant.ts): originals past retention, and flagged purges.
   schema.index({ status: 1, uploadedAt: 1 });
   schema.index({ purgeRaw: 1 }, { sparse: true });
+  // D28: the file each upload on Your data was read from.
+  schema.index({ orgId: 1, uploadId: 1 }, { partialFilterExpression: { uploadId: { $type: 'objectId' } } });
   return schema;
 }
 
@@ -274,6 +276,21 @@ export interface FileStore {
   get(scope: OrgScope, locationId: string, fileId: string): Promise<FileRecord | null>;
   /** Newest first. Other people's unfinished uploads are left out. */
   list(scope: OrgScope, locationId: string, input: { viewerId: string; before: string | null; limit: number }): Promise<FileRecord[]>;
+  /**
+   * D28, Your data: the files that wrote no days (`uploadId` null) at the location (or across the organization, for
+   * null), newest first by (uploadedAt, id), each strictly before `before` in that order. Files being deleted and other
+   * people's unfinished uploads are left out.
+   */
+  page(scope: OrgScope, input: {
+    locationId: string | null; viewerId: string; before: { at: Date; id: string } | null; limit: number;
+  }): Promise<FileRecord[]>;
+  /** D28: the files that wrote days for any of `uploadIds`, newest first. Files being deleted are left out. */
+  byUploadIds(scope: OrgScope, uploadIds: readonly string[]): Promise<FileRecord[]>;
+  /**
+   * D28: turns the location's file off (sets `disabledAt` and `disabledBy`) or on (unsets both), in one update. Resolves
+   * the record after it, or null when there is no such file at the location.
+   */
+  setEnabled(scope: OrgScope, locationId: string, fileId: string, input: { enabled: boolean; by: string; at: Date }): Promise<FileRecord | null>;
   /** Upload order. */
   inImport(scope: OrgScope, importId: string): Promise<FileRecord[]>;
   /** Live files only: an upload session past its expiry is abandoned and counts toward no cap. */
@@ -393,6 +410,36 @@ export function createFileStore(connection: Connection): FileStore {
       if (input.before !== null) filter._id = trusted({ $lt: oid(input.before) });
       const docs = await File.find(filter).sort({ _id: -1 }).limit(input.limit).lean();
       return docs.map(toFile);
+    },
+    async page(scope, input) {
+      const and: Record<string, unknown>[] = [{ $or: [{ status: trusted({ $ne: 'uploading' }) }, { uploadedBy: input.viewerId }] }];
+      if (input.before !== null) {
+        and.push({
+          $or: [
+            { uploadedAt: trusted({ $lt: input.before.at }) },
+            { uploadedAt: input.before.at, _id: trusted({ $lt: oid(input.before.id) }) },
+          ],
+        });
+      }
+      const filter: Record<string, unknown> = { orgId: org(scope), uploadId: null, status: trusted({ $ne: 'deleting' }), $and: and };
+      if (input.locationId !== null) filter.locationId = oid(input.locationId);
+      const docs = await File.find(filter).sort({ uploadedAt: -1, _id: -1 }).limit(input.limit).lean();
+      return docs.map(toFile);
+    },
+    async byUploadIds(scope, uploadIds) {
+      if (uploadIds.length === 0) return [];
+      const docs = await File.find({
+        orgId: org(scope), uploadId: trusted({ $in: uploadIds.map(oid), $type: 'objectId' }), status: trusted({ $ne: 'deleting' }),
+      }).sort({ uploadedAt: -1, _id: -1 }).lean();
+      return docs.map(toFile);
+    },
+    async setEnabled(scope, locationId, fileId, input) {
+      const doc = await File.findOneAndUpdate(
+        { _id: oid(fileId), orgId: org(scope), locationId: oid(locationId), status: trusted({ $ne: 'deleting' }) },
+        input.enabled ? { $unset: { disabledAt: 1, disabledBy: 1 } } : { $set: { disabledAt: input.at, disabledBy: input.by } },
+        after,
+      ).lean();
+      return doc === null ? null : toFile(doc);
     },
     async inImport(scope, importId) {
       const docs = await File.find({ orgId: org(scope), importId: oid(importId), status: trusted({ $ne: 'deleting' }) })

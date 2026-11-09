@@ -37,6 +37,8 @@ interface Tenant {
   /** A read file of the location (original and cleaned copy stored) and its import. */
   fileId: string;
   importId: string;
+  /** D28: the location's upload record, an item on Your data. */
+  uploadId: string;
 }
 
 let a: Tenant;
@@ -58,7 +60,7 @@ async function tenant(name: string): Promise<Tenant> {
   const locationName = `${name} Main Room`;
   const locationId = await addLocation(server, { orgId, name: locationName });
   await addSalesDay(server, { orgId, locationId, date: '2026-05-01', guests: 140, netSalesCents: 512_300 });
-  await addUpload(server, { orgId, locationId, uploadedAt: server.clock.now(), status: 'applied' });
+  const uploadId = await addUpload(server, { orgId, locationId, uploadedAt: server.clock.now(), status: 'applied' });
   const noteId = await addNote(server, { orgId, locationId, detail: `${name} private note`, createdBy: member.session.userId });
   const conversationId = await addConversation(server, { orgId, locationId, userId: member.session.userId, text: `${name} private chat` });
   const fileId = await seedReadFile(server, blobs, {
@@ -71,7 +73,7 @@ async function tenant(name: string): Promise<Tenant> {
     orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), questionId: 'gap_2026-05-02_2026-05-03',
     answer: 'open', noteId: new Types.ObjectId(), status: 'done', createdAt: server.clock.now(), updatedAt: server.clock.now(),
   });
-  return { orgId, name, admin, member, inviteId, seatIds, locationId, locationName, noteId, conversationId, fileId, importId };
+  return { orgId, name, admin, member, inviteId, seatIds, locationId, locationName, noteId, conversationId, fileId, importId, uploadId };
 }
 
 /** Appends a turn in which TownwiseAI proposed a note, `toolu_proposal0001`, that the owner was shown. */
@@ -126,6 +128,7 @@ function bIds(): Record<string, string> {
   return {
     orgId: b.orgId, inviteId: b.inviteId, memberId: b.inviteId, userId: b.member.session.userId,
     locationId: b.locationId, noteId: b.noteId, conversationId: b.conversationId, fileId: b.fileId, importId: b.importId,
+    ref: `u_${b.uploadId}`,
   };
 }
 
@@ -133,7 +136,7 @@ function bIds(): Record<string, string> {
 function bSecrets(): string[] {
   return [
     b.orgId, b.name, b.admin.email, b.member.email, b.locationId, b.locationName, b.noteId, b.conversationId, `${b.name} private chat`,
-    b.fileId, b.importId,
+    b.fileId, b.importId, b.uploadId,
   ];
 }
 
@@ -183,6 +186,8 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
     'org.imports.answer': { questionId: 'q', choice: 'not_sure' },
     'org.chat.proposal': { action: 'dismiss' },
     'org.agent.answer': { answer: 'not_sure' },
+    // D28.
+    'org.data.update': { enabled: false },
   };
   const QUERY: Record<string, string> = {
     'org.sales.days': '?from=2026-01-01&to=2026-05-31', 'org.calendar.get': '?from=2026-01-01&to=2026-05-31',
@@ -206,6 +211,8 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
       'org.people.get', 'org.estimates.about',
       // U13B.
       'org.forecast.get',
+      // D28, Your data.
+      'org.data.update', 'org.data.remove',
     ]));
   });
 
@@ -213,11 +220,12 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
     it(`${route.method} /api${route.path}: A’s org admin presenting any of B’s ids, with A’s own ids elsewhere, gets 404 not_found, and B is unchanged`, async () => {
       const bOwn: Record<string, string[]> = {
         memberId: [b.inviteId, ...b.seatIds], locationId: [b.locationId], noteId: [b.noteId], conversationId: [b.conversationId],
-        fileId: [b.fileId], importId: [b.importId],
+        fileId: [b.fileId], importId: [b.importId], ref: [`u_${b.uploadId}`, `f_${b.fileId}`],
       };
       const aOwn: Record<string, string> = {
         memberId: a.inviteId, locationId: a.locationId, noteId: a.noteId, conversationId: a.conversationId, fileId: a.fileId,
         importId: a.importId, index: '0', proposalId: 'toolu_proposal0001', questionId: 'gap_2026-05-02_2026-05-03',
+        ref: `u_${a.uploadId}`,
       };
       const params = [...route.path.matchAll(/:([A-Za-z]+)/g)].map((match) => match[1] ?? '');
       let cases = 0;
@@ -293,6 +301,23 @@ describe('isolation, case by case', () => {
     const res = await call(server, '/api/me/decline', { session: a.admin.session, json: { inviteId: b.inviteId } });
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ error: 'no_invite' });
+  });
+
+  it('GET /api/org/data with B’s location id answers 404, and without one lists none of B', async () => {
+    const before = await snapshotOf(b);
+    for (const session of [a.member.session, a.admin.session]) {
+      const foreign = await call(server, `/api/org/data?locationId=${b.locationId}`, { session });
+      const text = await foreign.text();
+      expect(foreign.status).toBe(404);
+      expect(JSON.parse(text)).toMatchObject({ error: 'not_found' });
+      for (const secret of bSecrets()) expect(text).not.toContain(secret);
+      const own = await call(server, '/api/org/data', { session });
+      const listed = await own.text();
+      expect(own.status).toBe(200);
+      expect(JSON.parse(listed)).toMatchObject({ items: [expect.objectContaining({ ref: `u_${a.uploadId}`, locationId: a.locationId })] });
+      for (const secret of bSecrets()) expect(listed).not.toContain(secret);
+    }
+    expect(await snapshotOf(b)).toBe(before);
   });
 
   it('a member route takes the organization only from the principal, never from the request', async () => {
