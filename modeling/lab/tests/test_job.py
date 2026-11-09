@@ -3,6 +3,9 @@
 import json
 import re
 import threading
+import urllib.error
+import urllib.request
+import warnings
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -18,7 +21,8 @@ CODE = "0" * 40
 
 
 class FakeApi:
-    def __init__(self, input_status: int = 200, result_status: int = 204, body: bytes | None = None):
+    def __init__(self, input_status: int = 200, result_status: int = 204, body: bytes | None = None,
+                 location: str | None = None):
         self.requests: list[dict] = []
         self.body = GOLDEN_INPUT.read_bytes() if body is None else body
         outer = self
@@ -36,6 +40,8 @@ class FakeApi:
                 self._record(None)
                 self.send_response(input_status)
                 self.send_header("Content-Type", "application/json")
+                if location:
+                    self.send_header("Location", location)
                 payload = outer.body if input_status == 200 else b"{}"
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
@@ -45,6 +51,8 @@ class FakeApi:
                 data = self.rfile.read(int(self.headers.get("Content-Length", "0")))
                 self._record(data)
                 self.send_response(result_status)
+                if location:
+                    self.send_header("Location", location)
                 self.send_header("Content-Length", "0")
                 self.end_headers()
 
@@ -79,7 +87,10 @@ def test_job_fetches_input_and_posts_result():
     assert result["ok"] is True and result["codeVersion"] == CODE
 
 
-def test_job_posts_failure_code_and_exits_1_on_error(monkeypatch):
+OK_RESULT = {"schema": "townwise.lab-result/1", "calibrationId": CALIBRATION_ID, "ok": True}
+
+
+def test_job_posts_failure_code_and_exits_1_on_error(monkeypatch, capsys):
     def boom(inp, code_version):
         raise RuntimeError("secret 12345")
 
@@ -89,6 +100,43 @@ def test_job_posts_failure_code_and_exits_1_on_error(monkeypatch):
     posted = json.loads(api.requests[1]["data"])
     assert posted["ok"] is False and posted["code"] == "internal"
     assert "secret" not in api.requests[1]["data"].decode()
+    printed = capsys.readouterr()
+    for word in ("secret", "12345"):
+        assert word not in printed.out and word not in printed.err
+    assert printed.err == "failed: RuntimeError\n"
+
+
+def test_job_posts_internal_when_the_result_cannot_be_serialized(monkeypatch, capsys):
+    monkeypatch.setattr(job, "calibrate", lambda inp, code_version: {**OK_RESULT, "wape": float("nan")})
+    with FakeApi() as api:
+        assert job.main(api.env()) == 1
+    assert [r["method"] for r in api.requests] == ["GET", "POST"]
+    assert json.loads(api.requests[1]["data"]) == {"schema": "townwise.lab-result/1", "calibrationId": CALIBRATION_ID,
+                                                   "ok": False, "code": "internal"}
+    printed = capsys.readouterr()
+    assert printed.err == "failed: ValueError\n" and printed.out.splitlines()[-1] == "posted result: failed internal"
+
+
+@pytest.mark.parametrize("body", [b"{}", b"[]", b'{"days": "seven"}'])
+def test_job_reports_a_malformed_input_as_invalid_input(body, capsys):
+    with FakeApi(body=body) as api:
+        assert job.main(api.env()) == 1
+    assert json.loads(api.requests[1]["data"])["code"] == "invalid_input"
+    printed = capsys.readouterr()
+    assert printed.out == "posted result: failed invalid_input\n" and printed.err == ""
+
+
+def test_job_keeps_library_warnings_off_stderr(monkeypatch):
+    def noisy(inp, code_version):
+        warnings.warn("value 12345", RuntimeWarning)
+        return OK_RESULT
+
+    monkeypatch.setattr(job, "calibrate", noisy)
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        with FakeApi() as api:
+            assert job.main(api.env()) == 0
+    assert seen == []
 
 
 def test_job_posts_a_calibration_failure_as_is(monkeypatch, capsys):
@@ -148,10 +196,36 @@ def test_job_reports_internal_when_the_input_is_refused(capsys):
     assert re.fullmatch(r"failed: \w+\n", capsys.readouterr().err)
 
 
-def test_job_retries_the_post_once_on_a_connection_error():
-    import urllib.error
-    import urllib.request
+@pytest.mark.parametrize("redirected", ["input", "result"])
+def test_job_follows_no_redirect(redirected, monkeypatch, capsys):
+    monkeypatch.setattr(job, "calibrate", lambda inp, code_version: OK_RESULT)
+    with FakeApi() as elsewhere:
+        statuses = {"input_status": 302} if redirected == "input" else {"result_status": 302}
+        with FakeApi(location=f"{elsewhere.url}/elsewhere", **statuses) as api:
+            assert job.main(api.env()) == 1
+    assert elsewhere.requests == []  # neither the token nor a request went to the Location host
+    assert [(r["method"], r["path"].rsplit("/", 1)[-1]) for r in api.requests] == [("GET", "input"), ("POST", "result")]
+    if redirected == "input":
+        assert json.loads(api.requests[1]["data"])["code"] == "internal"
+    assert re.fullmatch(r"failed: HTTPError\n", capsys.readouterr().err)
 
+
+def test_job_gives_up_after_two_connection_errors(capsys):
+    calls = []
+
+    def opener(request, timeout):
+        calls.append(request.get_method())
+        if request.get_method() == "GET":
+            return urllib.request.urlopen(request, timeout=timeout)
+        raise urllib.error.URLError("reset")
+
+    with FakeApi() as api:
+        assert job.main(api.env(), opener) == 1
+    assert calls == ["GET", "POST", "POST"]
+    assert capsys.readouterr().err == "failed: URLError\n"
+
+
+def test_job_retries_the_post_once_on_a_connection_error():
     calls = []
 
     def opener(request, timeout):
