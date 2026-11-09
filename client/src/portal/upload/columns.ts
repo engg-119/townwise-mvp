@@ -36,7 +36,8 @@ export function looksBinary(text: string): boolean {
   return text.startsWith('PK\u0003\u0004') || text.slice(0, 4096).includes('\u0000');
 }
 
-function isValueCell(cell: string): boolean {
+/** A cell that reads as a date or an amount: a value, never a name. */
+export function isValueCell(cell: string): boolean {
   return readDateCell(cell) !== null || !Number.isNaN(readAmount(cell) ?? NaN);
 }
 

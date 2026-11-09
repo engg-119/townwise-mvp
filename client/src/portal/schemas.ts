@@ -64,6 +64,8 @@ export const viewAsSchema = z.object({
 });
 export type ViewAs = z.infer<typeof viewAsSchema>;
 
+export const welcomeSchema = z.object({ firstName: z.string().nullable(), restaurant: z.string() });
+
 /** GET /api/me, and the answer of join, decline, access requests and view-as start and end. */
 export const meResponseSchema = z.object({
   /** Always the signed-in person: the staff member during view-as. */
@@ -72,6 +74,8 @@ export const meResponseSchema = z.object({
   access: accessSchema,
   viewAs: viewAsSchema.nullable(),
   staff: z.object({ verifiedUntil: z.string() }).nullable(),
+  /** GET /api/me only: the first visit after approval (spec 15.8). Other answers carry null. */
+  welcome: welcomeSchema.nullable().optional(),
 });
 export type MeResponse = z.infer<typeof meResponseSchema>;
 
@@ -95,6 +99,8 @@ export const locationSummarySchema = z.object({
   id: z.string(),
   name: z.string(),
   town: townSchema,
+  /** Places unit: the Google place id an org admin picked, or null. Optional for an API from before it. */
+  placeId: z.string().nullable().optional(),
   coverage: coverageSchema,
   calibration: calibrationSchema,
   notesCount: z.number(),
@@ -108,6 +114,8 @@ export const orgResponseSchema = z.object({
   role: roleSchema,
   locations: z.array(locationSummarySchema),
   requestedLocationCount: z.number().nullable(),
+  /** Places unit: whether the Google Places search is on (P10, P16 offer it only then); absent reads as off. */
+  placeSearch: z.boolean().optional(),
 });
 export type OrgResponse = z.infer<typeof orgResponseSchema>;
 

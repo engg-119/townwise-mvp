@@ -176,12 +176,17 @@ export async function approveRequest(ctx: TownwiseContext, req: Request, res: Re
       if (approval !== null) await recordNotApplied(ctx, approval.event, approval.eventId, 'not_found');
       throw notFound();
     }
+    // D23: once anyone has joined, staff setup never reopens.
+    await ctx.stores.orgs.markJoined(scope, now);
     await recordAfter(ctx, {
       ...actor, at: now, orgId, action: 'member.joined',
       target: { type: 'member', id: seat.id },
       details: { email: requester.email, role: 'org_admin' },
     });
     ctx.mailer.send({ kind: 'request_approved', orgName: org.name, town: request.town }, requester.email, { requestId, orgId });
+  } else {
+    // A retry finds the seat a first try took, and finishes the mark if that try stopped before it.
+    await ctx.stores.orgs.markJoined(scope, now);
   }
   res.status(200).json({ org: { id: org.id, name: org.name }, request: await reloaded(ctx, requestId) });
 }
@@ -242,10 +247,19 @@ function staffOrgView(org: OrgRecord): Record<string, string | null> {
   };
 }
 
+/**
+ * Staff setup (D23): the organization is active and nobody has ever joined it, by its `firstJoinedAt`, which outlives
+ * every seat and person deletion, or, for an organization from before that field, by any member row that joined
+ * (`joinedAt`, active or removed). The setup routes (staff-setup.ts) and `inSetup` below read this one predicate.
+ */
+export async function isInSetup(ctx: TownwiseContext, scope: OrgScope, org: OrgRecord): Promise<boolean> {
+  return org.status === 'active' && org.firstJoinedAt === null && !(await ctx.stores.members.anyJoined(scope));
+}
+
 export async function getOrg(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const staff = staffOf(principal);
   const { scope, org } = await scopeForStaffOrg(ctx.stores.orgs, staff, parseInput(objectId, req.params.orgId));
-  const [members, locations, coverage, notes, uploads, recent, request] = await Promise.all([
+  const [members, locations, coverage, notes, uploads, recent, request, inSetup] = await Promise.all([
     ctx.stores.members.list(scope),
     ctx.stores.locations.list(scope),
     ctx.stores.salesDays.coverageByLocation(scope),
@@ -254,9 +268,10 @@ export async function getOrg(ctx: TownwiseContext, req: Request, res: Response, 
     ctx.stores.audit.query({ orgId: scope.orgId, limit: RECENT_EVENTS }),
     // For “From request {date}”; gone once its requester is deleted (spec 10.7, Deletion).
     org.fromRequestId === null ? null : ctx.stores.requests.findById(org.fromRequestId),
+    isInSetup(ctx, scope, org),
   ]);
   res.status(200).json({
-    org: { ...staffOrgView(org), fromRequestSentAt: request?.createdAt.toISOString() ?? null },
+    org: { ...staffOrgView(org), fromRequestSentAt: request?.createdAt.toISOString() ?? null, inSetup },
     members: await Promise.all(members.map((member) => memberView(ctx, member, staff.actor.userId))),
     locations: locations.map((location) => ({
       id: location.id, name: location.name, town: location.town,

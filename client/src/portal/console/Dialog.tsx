@@ -38,6 +38,8 @@ export interface DialogProps {
   problem: Problem | null;
   /** The name or email to type: the field reads “Type {name} to confirm.” */
   typedName?: string;
+  /** Keeps the action disabled while the dialog's own step comes first (a place search). */
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -73,7 +75,7 @@ function DialogBody(props: DialogProps): React.JSX.Element {
         <Actions>
           <Button
             label={props.pending ? (props.pendingLabel ?? props.confirmLabel) : props.confirmLabel}
-            disabled={!matches || props.pending}
+            disabled={!matches || props.pending || props.confirmDisabled === true}
             onPress={props.onConfirm}
           />
           <Button variant="link" label="Cancel" disabled={props.pending} onPress={props.onCancel} />

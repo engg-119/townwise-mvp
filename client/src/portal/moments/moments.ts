@@ -2,6 +2,8 @@
 // The copy says only what is true now: the follow line of the request moment repeats the held page's own sentence,
 // so it stays true whether or not the approval email has shipped.
 
+import type { AccessState, MeResponse } from '../schemas';
+
 export interface Statement {
   /** White, revealed first. */
   lead: string;
@@ -40,4 +42,40 @@ export function welcomeStatement(welcome: WelcomeView): Statement {
 /** What a screen reader hears, once: the whole statement as plain text. */
 export function spokenStatement(statement: Statement): string {
   return `${statement.lead} ${statement.follow}`;
+}
+
+export type MomentKind = 'request_received' | 'welcome';
+
+/** A moment the provider decided to play: `key` names it, so it plays once in a session. */
+export interface Moment {
+  key: string;
+  kind: MomentKind;
+  statement: Statement;
+}
+
+/** The states that may send an access request (spec 10.2). */
+const MAY_REQUEST: ReadonlySet<AccessState> = new Set<AccessState>(['no_org', 'rejected', 'removed']);
+
+/**
+ * Which moment a new GET /api/me answer (or an answer applied in its place) plays, if any. Never under view-as.
+ * - Request received: this session saw the access go from a state that may request to `pending`, so a fresh load
+ *   of the held page plays nothing. Keyed by the request, so a new request after a rejection plays again.
+ * - Welcome: the person is a member and the server says the welcome is due (it answers null once recorded).
+ */
+export function momentFor(previous: MeResponse | null, next: MeResponse, played: ReadonlySet<string>): Moment | null {
+  if (next.viewAs !== null) return null;
+  const { access } = next;
+  let moment: Moment | null = null;
+  if (access.state === 'pending') {
+    // A fresh load (no previous answer) plays nothing, and neither does an answer that followed a view-as.
+    if (previous === null) return null;
+    if (previous.viewAs !== null || !MAY_REQUEST.has(previous.access.state)) return null;
+    moment = {
+      key: `received:${access.request.id}`, kind: 'request_received', statement: requestReceivedStatement(access.request.orgName),
+    };
+  } else if (access.state === 'member' && next.welcome != null) {
+    moment = { key: `welcome:${next.user.id}:${access.org.id}`, kind: 'welcome', statement: welcomeStatement(next.welcome) };
+  }
+  if (moment === null) return null;
+  return played.has(moment.key) ? null : moment;
 }

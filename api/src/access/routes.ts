@@ -27,6 +27,7 @@ import { getStaffActivity, leaveOrg, renameOrg } from '../handlers/org.ts';
 import { placesAutocomplete, placesDetails } from '../handlers/places.ts';
 import { createAccessRequest } from '../handlers/requests.ts';
 import { deleteSales, getSales, getSalesDays, getSalesHistory, uploadSales } from '../handlers/sales.ts';
+import { createSetupLocation, deleteSetupLocation, deleteSetupSales, updateSetupLocation, uploadSetupSales } from '../handlers/staff-setup.ts';
 import { addMembers, changeRole, listMembers, removeMember } from '../handlers/team.ts';
 import { getTownProfile } from '../handlers/towns.ts';
 import { endViewAs, startViewAs } from '../handlers/view-as.ts';
@@ -42,8 +43,9 @@ export interface TownwiseRoute {
   readonly policy: Policy;
   /**
    * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer; '2kb' on the Places and files JSON routes; '8kb'
-   * on a TownwiseAI proposal; '256kb' only on the upload route and (U13B) the staff forecast import; 'stream' only on the
-   * chunk route, whose handler reads the raw body itself after the policy has passed.
+   * on a TownwiseAI proposal; '256kb' only on the upload routes (the member one and, D23, staff setup's) and (U13B) the
+   * staff forecast import; 'stream' only on the chunk route, whose handler reads the raw body itself after the policy
+   * has passed.
    */
   readonly bodyLimit: 'none' | '1kb' | '2kb' | '8kb' | '32kb' | '256kb' | 'stream';
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
@@ -264,6 +266,28 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'admin.orgs.members.remove', method: 'DELETE', path: '/admin/orgs/:orgId/members/:memberId', policy: 'staff',
     bodyLimit: 'none', handler: removeOrgMember,
+  },
+  // D23, staff setup: an organization's locations and daily totals while nobody has joined it, with the org routes'
+  // bodies and body limits; the writes limiter only, as the other staff writes.
+  {
+    id: 'admin.orgs.locations.create', method: 'POST', path: '/admin/orgs/:orgId/locations', policy: 'staff', bodyLimit: '32kb',
+    handler: createSetupLocation,
+  },
+  {
+    id: 'admin.orgs.locations.update', method: 'PATCH', path: '/admin/orgs/:orgId/locations/:locationId', policy: 'staff',
+    bodyLimit: '32kb', handler: updateSetupLocation,
+  },
+  {
+    id: 'admin.orgs.locations.remove', method: 'DELETE', path: '/admin/orgs/:orgId/locations/:locationId', policy: 'staff',
+    bodyLimit: 'none', handler: deleteSetupLocation,
+  },
+  {
+    id: 'admin.orgs.sales.upload', method: 'POST', path: '/admin/orgs/:orgId/locations/:locationId/sales/uploads', policy: 'staff',
+    bodyLimit: '256kb', handler: uploadSetupSales,
+  },
+  {
+    id: 'admin.orgs.sales.remove', method: 'DELETE', path: '/admin/orgs/:orgId/locations/:locationId/sales', policy: 'staff',
+    bodyLimit: 'none', handler: deleteSetupSales,
   },
   // U13B, forecast runs from the staff console (spec 10.13, 14.4): import as a draft, publish, withdraw, delete.
   {

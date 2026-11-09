@@ -17,8 +17,9 @@ import { Eyebrow, Heading, Small } from '../ui/text';
 
 // Your history (home.md 2.6): how many days Townwise has for this location, the span, the missing days and the last
 // finished upload, then the newest year as a small heatmap that takes no focus (web only; native has the words)
-// and links to Analytics and Upload. The panel's root carries nativeID "home-history" so 54's Reading screen can
-// animate its calendar into it; Home does nothing for that animation.
+// and links to Analytics and Upload. The panel's root carries nativeID "home-history" so onboarding's Reading screen
+// (onboarding/HistoryStep, historyMotion.web.ts) can animate its calendar into it; Home does nothing for that
+// animation.
 
 export const HISTORY_ID = 'home-history';
 const MARKS = { townEvents: true, holidays: true, notes: true, closures: true } as const;

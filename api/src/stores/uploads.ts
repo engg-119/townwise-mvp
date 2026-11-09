@@ -22,6 +22,8 @@ export interface UploadFields {
   lastDate: string;
   hasGuests: boolean;
   hasNetSales: boolean;
+  /** True on an upload Townwise staff made during setup (D23), with their user id as `uploadedBy`; absent otherwise. */
+  byStaff?: boolean;
 }
 
 function uploadSchema(): Schema<UploadFields> {
@@ -39,6 +41,7 @@ function uploadSchema(): Schema<UploadFields> {
     lastDate: { type: String, required: true },
     hasGuests: { type: Boolean, required: true },
     hasNetSales: { type: Boolean, required: true },
+    byStaff: { type: Boolean },
   }, { strict: true, versionKey: false, read: 'primary' });
   schema.index({ orgId: 1, locationId: 1, uploadedAt: -1 });
   return schema;
@@ -63,6 +66,8 @@ export interface UploadRecord {
   readonly lastDate: string;
   readonly hasGuests: boolean;
   readonly hasNetSales: boolean;
+  /** Staff setup's (D23): every view names the uploader "Townwise staff". */
+  readonly byStaff: boolean;
 }
 
 export interface UploadCounts { readonly inserted: number; readonly replaced: number; readonly kept: number }
@@ -71,10 +76,13 @@ export interface UploadCounts { readonly inserted: number; readonly replaced: nu
 export interface UploadStore {
   /** The newest applied upload's time per location id. */
   lastUploadByLocation(scope: OrgScope): Promise<Map<string, Date>>;
-  /** Spec 11.4 step 1: the record, as `applying`, before any day is written. */
+  /**
+   * Spec 11.4 step 1: the record, as `applying`, before any day is written. `id`, when given, is the id a staff event
+   * written before it already names; `byStaff` marks staff setup's (D23).
+   */
   start(scope: OrgScope, locationId: string, input: {
-    uploadedBy: string; uploadedAt: Date; dayCount: number; firstDate: string; lastDate: string;
-    hasGuests: boolean; hasNetSales: boolean;
+    id?: string; uploadedBy: string; uploadedAt: Date; dayCount: number; firstDate: string; lastDate: string;
+    hasGuests: boolean; hasNetSales: boolean; byStaff?: boolean;
   }): Promise<UploadRecord>;
   /** Spec 11.4 step 3. */
   finish(scope: OrgScope, uploadId: string, counts: UploadCounts): Promise<void>;
@@ -102,6 +110,7 @@ function toUpload(doc: UploadFields & { _id: Types.ObjectId }): UploadRecord {
     lastDate: doc.lastDate,
     hasGuests: doc.hasGuests,
     hasNetSales: doc.hasNetSales,
+    byStaff: doc.byStaff === true,
   };
 }
 
@@ -117,9 +126,10 @@ export function createUploadStore(connection: Connection): UploadStore {
     },
     async start(scope, locationId, input) {
       const doc = await Upload.create({
+        ...(input.id === undefined ? {} : { _id: new Types.ObjectId(input.id) }),
         orgId: scope.orgId, locationId, uploadedBy: input.uploadedBy, uploadedAt: input.uploadedAt, status: 'applying',
         dayCount: input.dayCount, inserted: 0, replaced: 0, kept: 0, firstDate: input.firstDate, lastDate: input.lastDate,
-        hasGuests: input.hasGuests, hasNetSales: input.hasNetSales,
+        hasGuests: input.hasGuests, hasNetSales: input.hasNetSales, ...(input.byStaff === true ? { byStaff: true } : {}),
       });
       return toUpload(doc.toObject());
     },

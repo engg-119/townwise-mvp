@@ -10,6 +10,11 @@ export interface OrgFields {
   createdBy: string;
   fromRequestId: Types.ObjectId | null;
   suspendedAt: Date | null;
+  /**
+   * When someone first took a seat (a join or an approval), set once and never cleared, so staff setup (D23) never
+   * reopens, even once every seat is removed and its person deleted. Absent until then, and on older documents.
+   */
+  firstJoinedAt?: Date;
 }
 
 function orgSchema(): Schema<OrgFields> {
@@ -20,6 +25,7 @@ function orgSchema(): Schema<OrgFields> {
     createdBy: { type: String, required: true },
     fromRequestId: { type: Schema.Types.ObjectId, default: null },
     suspendedAt: { type: Date, default: null },
+    firstJoinedAt: { type: Date },
   }, { strict: true, versionKey: false, read: 'primary' });
   schema.index({ createdAt: -1 });
   return schema;
@@ -38,6 +44,7 @@ export interface OrgRecord {
   readonly createdAt: Date;
   readonly fromRequestId: string | null;
   readonly suspendedAt: Date | null;
+  readonly firstJoinedAt: Date | null;
 }
 
 export interface OrgStore {
@@ -65,6 +72,8 @@ export interface OrgStore {
   remove(scope: OrgScope): Promise<boolean>;
   /** Deletes the organization an approval made from this request (fromRequestId), whatever its status. */
   removeFromRequest(scope: OrgScope, requestId: string): Promise<boolean>;
+  /** Sets `firstJoinedAt` to `at` only while it is unset (a compare-and-set), right after a seat is taken. */
+  markJoined(scope: OrgScope, at: Date): Promise<void>;
 }
 
 function toOrg(doc: OrgFields & { _id: Types.ObjectId }): OrgRecord {
@@ -75,6 +84,7 @@ function toOrg(doc: OrgFields & { _id: Types.ObjectId }): OrgRecord {
     createdAt: doc.createdAt,
     fromRequestId: doc.fromRequestId === null ? null : doc.fromRequestId.toHexString(),
     suspendedAt: doc.suspendedAt,
+    firstJoinedAt: doc.firstJoinedAt ?? null,
   };
 }
 
@@ -144,6 +154,9 @@ export function createOrgStore(connection: Connection): OrgStore {
     },
     async removeFromRequest(scope, requestId) {
       return (await Org.deleteOne({ _id: scope.orgId, fromRequestId: requestId })).deletedCount === 1;
+    },
+    async markJoined(scope, at) {
+      await Org.updateOne({ _id: scope.orgId, firstJoinedAt: trusted({ $exists: false }) }, { $set: { firstJoinedAt: at } });
     },
   };
 }

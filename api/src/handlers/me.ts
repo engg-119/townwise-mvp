@@ -91,6 +91,8 @@ export async function joinInvite(ctx: TownwiseContext, req: Request, res: Respon
   if (claimed.kind === 'no_invite') throw new AppError(409, 'no_invite', 'Invitation not available');
   if (claimed.kind === 'already_in_org') throw new AppError(409, 'already_in_org', 'Already in an organization');
   const scope = scopeForJoinedInvite(claimed.seat);
+  // D23: once anyone has joined, staff setup never reopens.
+  await ctx.stores.orgs.markJoined(scope, now);
   const withdrawnRequestId = await ctx.stores.requests.withdrawPendingOnJoin(caller.userId, now);
   const actor = { actorUserId: caller.userId, actorEmail: caller.email, actorRole: claimed.seat.role, viewAsGrantId: null };
   await recordAfter(ctx, {

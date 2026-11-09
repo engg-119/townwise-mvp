@@ -103,3 +103,15 @@ test('Refresh reads at once; current with no import reads once and waits for Ref
   expect(reads('/imports/current')).toBe(2);
   expect(result.current.import?.id).toBe('i1');
 });
+
+test('stored files off (503 files_unavailable): one read, no more polling, and Refresh reads again', async () => {
+  fake.current = refusal(503, 'files_unavailable');
+  const { result } = await mount('current');
+  expect(result.current.error).toMatchObject({ status: 503, code: 'files_unavailable' });
+  await advance(60_000);
+  expect(reads('/imports/current')).toBe(1);
+  fake.current = { import: null };
+  await act(async () => { result.current.refresh(); await jest.advanceTimersByTimeAsync(0); });
+  expect(reads('/imports/current')).toBe(2);
+  expect(result.current.error).toBeNull();
+});

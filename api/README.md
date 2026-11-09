@@ -24,6 +24,8 @@ Townwise staff are the addresses in `TOWNWISE_SUPERADMIN_EMAILS` (comma-separate
 
 Google sign-in needs an OAuth web client (Google Cloud console, APIs & Services, Credentials, OAuth client ID, type Web) with `http://localhost:8081` as an authorized JavaScript origin. Put its client ID in `AUTH_GOOGLE_CLIENT_IDS`. Without it, `/auth/google` answers 404.
 
+Email (see Email, under Flows) is off locally while `EMAIL_ENDPOINT` is empty. Local sending works on macOS and Linux only: the API starts `az` without a shell, and Windows' `az.cmd` needs one. To send from your machine, run `az login` with an account that is Owner of, or holds `Townwise email sender` on, the Communication Services resource, then set `EMAIL_ENDPOINT=https://acs-townwise-2d2c15bf.unitedstates.communication.azure.com` and `EMAIL_SENDER=no-reply@townwise.tech` in `api/.env.local`. With no managed identity outside production, the API takes its token from `az account get-access-token` (`src/azure-identity.ts`). The emails really send, from the production sender to the address you sign in with, and their links go to `TOWNWISE_WEB_URL`. A failed token shows as `townwise.email_failed` with code `token`: run `az login` again.
+
 ## Check
 
 `npm run verify` from the repo root runs `npm ls`, lint, typecheck and every kit module's unit and integration tests (Docker required).
@@ -41,12 +43,12 @@ Three roles: staff (`superadmin`, Townwise’s own people), org admin and member
 | Send an access request | no | no | no | no | in `no_org`, `rejected` or `removed` |
 | Join or decline an invitation to their own email | no | no | no | no | in `invited` |
 | Read the organization, locations, sales, notes and calibration | names, towns, team emails, counts and date coverage only, in the console | read-only, as the target | yes | yes | no |
-| Upload sales | no | no | adds new days and replaces the days it covers | adds new days only | no |
-| Delete all sales for a location | no | no | yes | no | no |
+| Upload sales | only during setup, in the console; adds and replaces | no | adds new days and replaces the days it covers | adds new days only | no |
+| Delete all sales for a location | only during setup, in the console | no | yes | no | no |
 | Add notes; edit or delete their own | no | no | yes | yes | no |
 | Edit or delete anyone’s notes | no | no | yes | no | no |
 | Use the tuning chat (own conversations only) | no | reads the target’s, cannot send or delete | yes | yes | no |
-| Add, rename, change the town of, or delete (when empty) a location | no | no | yes | no | no |
+| Add, rename, change the town of, or delete (when empty) a location | only during setup, in the console | no | yes | no | no |
 | Rename the organization | any organization, in the console | no | own | no | no |
 | Read the team | any organization, in the console | read-only, when the target is an org admin | own | no | no |
 | Add emails, change roles, remove people | any organization, in the console | no | own | no | no |
@@ -66,7 +68,7 @@ Rules behind the matrix:
 - A staff address never resolves as a member, even when an organization invites it, because the staff check runs first.
 - Staff see client sales figures and note text only through view-as. Member routes answer staff with 403 `no_access`. [CONFIRM: staff see values only through view-as]
 - Removing someone does not sign them out. Their next member request answers 403 `no_access`, and `GET /api/me` says `removed`. [CONFIRM: no session revoke on removal] Staff can sign a person out on every device from People, which revokes every kit session and leaves their seat alone.
-- Every staff action on an organization (its name, status, team, and each view-as) is recorded before it takes effect, and that organization’s admins read it as Townwise staff activity. [CONFIRM: show staff activity to org admins, with staff emails]
+- Every staff action on an organization (its name, status, team, setup writes, and each view-as) is recorded before it takes effect, and that organization’s admins read it as Townwise staff activity. [CONFIRM: show staff activity to org admins, with staff emails]
 - One active organization per person, enforced by a unique index. Invitations are per organization, so two organizations may invite the same address, and no add result depends on another organization. [CONFIRM: one organization per person; per-organization invitations]
 
 ### Access states
@@ -121,8 +123,8 @@ Townwise sends two emails (spec D14), each only to the person it concerns, from 
 - Nothing else sends email: invitations, staff-created organizations, joins, rejections, removals, view-as and deletion send none, and the kit’s magic-link route still answers 503. A 400, 403, 409 or 429 sends nothing, and so do an approval retry that finds the seat already there, a losing concurrent approval and an approval undone by the requester’s deletion.
 - The send is queued after the write and the response does not wait for it. A failure never fails, delays or retries the action: it is logged and the email is lost. So is a send still in flight when the process stops (the shutdown drain waits 2 seconds).
 - The words are in `src/mail/templates.ts` and the layout in `src/mail/layout.ts`: fixed subjects, no greeting by name, no images or tracking (`userEngagementTrackingDisabled` on every message), and links only to `TOWNWISE_WEB_URL`. An email carries the organization’s name, its town and the address the person signs in with, never a figure, a file or a note. Reply-To is `TOWNWISE_EMAIL_REPLY_TO` when it is set.
-- `src/mail/acs.ts` calls Email - Send (`2023-03-31`) over `fetch` with an Entra token for `https://communication.azure.com` from the managed identity (`src/azure-identity.ts`: the user-assigned identity named by `AZURE_CLIENT_ID`, cached until 5 minutes before it expires). Access keys are disabled on the resource. Any refusal drops the cached token.
-- Off while `EMAIL_ENDPOINT` is unset, as it is locally and, until the release that changes the waiting and approval screens, in production (`../infra/README.md`, step 9). Nothing about a send is stored, and it writes no audit event.
+- `src/mail/acs.ts` calls Email - Send (`2023-03-31`) over `fetch` with an Entra token for `https://communication.azure.com` from the managed identity (`src/azure-identity.ts`: the user-assigned identity named by `AZURE_CLIENT_ID`, cached until 5 minutes before it expires). Outside production, with `IDENTITY_ENDPOINT` and `IDENTITY_HEADER` unset, the token comes from the developer’s `az login` instead (Run locally), cached the same way; a failure there carries a fixed message, never the CLI’s output. Access keys are disabled on the resource. Any refusal drops the cached token.
+- On in production from the 2026-11-09 release (`../infra/README.md`, step 9). Off while `EMAIL_ENDPOINT` is unset, as it is locally unless you set it. Nothing about a send is stored, and it writes no audit event.
 
 ### Places search
 
@@ -135,6 +137,7 @@ The access request can start by finding the business on Google Places (New). The
 - `town` is a `TownInput` the access request accepts unchanged. It is one of the twelve researched towns when the locality, postal town, sublocality or `administrative_area_level_3` (town or township) matches one by name and state, ignoring case, or when any of them is an alias: Lake Placid, NY is `north-elba-ny` and North Conway, NH is `conway-nh`. Otherwise it is `{ townId: null, name, state }`, named by the first of those components. It is null when the place is outside the 50 states and DC (a territory included: its country component is not `US`, or its state is not in the fixed list), or has no usable town name.
 - Details also answers `map`: a dark Google Maps Static image of the place with a mint pin, as `{ url, width: 640, height: 320 }` (drawn at scale 2, 1280 by 640 pixels; the client sizes it by the 2:1 ratio). `url` is a `https://maps.googleapis.com/maps/api/staticmap` URL for Google's current id of the place, signed by the API with `GOOGLE_MAPS_SIGNING_SECRET` (`src/places/static-map.ts`), and the browser or the native app loads it from Google, which sees the viewer's IP address. The API never fetches, relays or keeps the image. The URL holds `GOOGLE_MAPS_STATIC_KEY`, a key of its own restricted to the Maps Static API with unsigned requests refused (`../infra/README.md`, step 17), so the key alone draws nothing. `map` is null while the map is off (either variable unset); a map URL is never made unsigned. Signing is local, so the map never fails or delays the answer.
 - Nothing from these routes is stored. The typed text, place ids, addresses, Google's answers and the signed map URL never reach a log or an audit event; a Google failure logs `townwise.places_failed` with the route id and a code. [CONFIRM: the town matching rules, which are not yet checked against live Google answers]
+- Places unit: the client offers the search in three places, and only while it is on: the access request (P3, Steps 1 and 2), Add location (P10) and a location's settings (P16, "Change this location's place"). Before P3 shows it, the client sends autocomplete an empty body, which answers 503 `places_unavailable` while the search is off and 400 `invalid_request` while it is on, with no call to Google (pinned by `test/places-off.int.test.ts` and `test/places.int.test.ts`); P10 and P16 read `placeSearch` from `GET /api/org` instead. Under view-as the client sends neither. A location keeps Google's id for the place the org admin confirmed and the town read from its address (see Organization and locations). The place's name only fills in Name (P10) or Organization name (P3) for the person to edit; the address, the suggestions, the typed text and the map are not kept.
 
 ### Team
 
@@ -149,7 +152,18 @@ The access request can start by finding the business on Google Places (New). The
 
 1. `POST /api/admin/orgs { name, adminEmail, id? }` creates an active organization with no location and an `org_admin` invitation for that address, added by staff. That person joins as admin the next time they continue with Google. `id` is an optional 24-hex id the client generates once per new organization and sends again on a retry: a repeat answers 200 with the organization it made and writes no second `org.created`. It counts as a repeat only for an active organization this route made (no request) with the same name, whose team holds the same admin address, or nobody yet; any other organization with that `id` is 409 `conflict`. A repeat adds nothing, except the admin invitation when the organization has nobody yet (a create that stopped before it), and that invitation’s `member.invited` is written before it, as for a staff team edit. Two repeats racing past the check make one organization; the loser’s `org.created` is followed by `staff_action.not_applied` (`conflict`). [CONFIRM: staff can create organizations without a request]
 2. `PATCH /api/admin/orgs/:orgId { name?, status? }` renames, suspends or reactivates. A value that already holds records nothing. Suspension keeps every record: members resolve to `org_suspended`, every member route answers them 403 `no_access`, and invitations into it are hidden. Reactivation restores access with no other step.
-3. Each of these, and each staff team edit, writes its audit event before the change. A request with several changes (a name and a status, or several addresses) writes all its events first and then makes its changes in one write, so a refused event (503) never follows an applied change; an event already written when a later one is refused is followed by `staff_action.not_applied` (`unavailable`). The organization’s admins see all of them, and every view-as of their team, on `GET /api/org/staff-activity`.
+3. Each of these, each staff team edit and each setup write (below) writes its audit event before the change. A request with several changes (a name and a status, or several addresses) writes all its events first and then makes its changes in one write, so a refused event (503) never follows an applied change; an event already written when a later one is refused is followed by `staff_action.not_applied` (`unavailable`). The organization’s admins see all of them, and every view-as of their team, on `GET /api/org/staff-activity`.
+
+### Staff setup
+
+While an organization is active and nobody has ever held a seat in it (open invitations don’t count), staff add, rename and delete its locations and upload or delete their daily totals from the console, so the first admin who joins finds a populated page. Staff use it with a real client’s data only with that client’s consent. [CONFIRM: staff can add locations and upload daily totals for an organization nobody has joined yet; write-only; ends at the first join; used only with the client's consent]
+
+1. The five routes are under `/api/admin/orgs/:orgId/locations` (Staff console). Each has policy `staff`, scopes through `scopeForStaffOrg` (404 for an unknown organization), then answers 409 `org_not_in_setup` while the organization is suspended and once anyone has ever joined it, then runs the org admin route’s own checks (`src/handlers/locations.ts`, `src/handlers/sales.ts`): the same bodies, limits and error codes, the town checked, and a place id checked with Google on the staff member’s own `townwise:places` budget. A location of another organization is 404.
+2. Then the staff event is written (Audit and logs) and the org route’s write runs. A staff upload replaces the days it covers, as an org admin’s does. A name another location already has is 409 `location_name_taken` after the event; so are a location deleted meanwhile (404) and stored files off while the location has some (503 `files_unavailable`); each is followed by `staff_action.not_applied`.
+3. It is write-only. Answers carry ids, names, towns, counts and date coverage, never a figure; staff still read values only through view-as.
+4. Locations and uploads made here hold the staff member’s user id in `createdBy` and `uploadedBy`, with `byStaff: true`. Every view that names an uploader (`GET .../sales`, `GET .../sales/history`, and the upload’s own answer) shows “Townwise staff”, never the staff email.
+5. Setup is checked before the event, with no lock. A join that lands between the check and the write is accepted: the write is recorded, and the new admin sees it in their staff activity.
+6. It never reopens. A join (`POST /api/me/join`) and an approval set the organization’s `firstJoinedAt` right after the seat write, only while it is unset, and nothing clears it, so an organization whose people all left, were removed and were deleted stays closed: it belongs to a former client, with no admin left to see a staff write. Organizations from before that field are closed while any member row has `joinedAt` set, active or removed, and a person deletion first sets `firstJoinedAt` (from the person’s earliest join) on each unmarked organization one of their removed seats joined, then deletes those seats.
 
 ### Deletion
 
@@ -178,7 +192,7 @@ Staff delete on request (the privacy page’s promise). Both actions write their
 ### Sales upload
 
 1. The upload carries only the date, guest count and net sales of each day, for one location: exactly `{ days: [{ date, guests, netSalesCents }] }`. The client parses the file in the browser, so on this path the export itself never reaches the server. Stored files (below) are the other path. [CONFIRM: browser-side parsing, three fields]
-2. The server checks it strictly. Any other key, in the body or in a day, is 400 and nothing is written. It takes 1 to 3,660 days with unique dates, from 2010-01-01 to the server’s UTC date plus one day. Guests are a whole number from 0 to 20,000, or null. Net sales are whole cents from 0 to 100,000,000, or null. Each day needs at least one of the two. This route alone takes bodies up to 256 KB. [CONFIRM: ten years per upload; caps; earliest date]
+2. The server checks it strictly. Any other key, in the body or in a day, is 400 and nothing is written. It takes 1 to 3,660 days with unique dates, from 2010-01-01 to the server’s UTC date plus one day. Guests are a whole number from 0 to 20,000, or null. Net sales are whole cents from 0 to 100,000,000, or null. Each day needs at least one of the two. This route and staff setup’s upload take bodies up to 256 KB. [CONFIRM: ten years per upload; caps; earliest date]
 3. An org admin’s upload replaces the days it covers. A member’s adds new days only and reports the days it left alone as `kept`. [CONFIRM: members add new days only]
 4. Each stored day has exactly eight keys: `_id`, `orgId`, `locationId`, `date`, `guests`, `netSalesCents`, `uploadId` and `updatedAt`. The upload record holds counts and dates, never a file name. A crash leaves the record `applying`; sending the same days again is safe, because every day is an upsert.
 
@@ -240,7 +254,7 @@ Each location’s calibration state is derived from its sales days on every read
 ### Audit and logs
 
 - Every change writes an event to `tw_audit_events`, with details from a fixed allowlist per action (the table below, `AUDIT_DETAIL_KEYS` in `src/stores/audit-events.ts`). Events never hold guest or sales figures, note detail text, request notes, decision messages or file contents.
-- Events for client actions (members, org admins and requesters) are written after the effect; a failed write is logged and the action stands. Staff events are written before the effect; a failed write refuses the action with 503, and an effect that then fails or is refused adds `staff_action.not_applied { eventId, code }`. Its code is the refusal’s error code (`request_not_pending`, `view_as_active`, `last_admin`, `already_invited`, `not_found`, `person_has_seat`, `org_not_suspended`), `conflict` when a concurrent change to the same row won, `unavailable` when a later event of the same request could not be written, or `internal` when the effect threw. The list is closed (`NOT_APPLIED_REASONS` in `src/audit.ts`, which also holds each code’s plain words). [CONFIRM: audit timing; events kept indefinitely]
+- Events for client actions (members, org admins and requesters) are written after the effect; a failed write is logged and the action stands. Staff events are written before the effect; a failed write refuses the action with 503, and an effect that then fails or is refused adds `staff_action.not_applied { eventId, code }`. Its code is the refusal’s error code (`request_not_pending`, `view_as_active`, `last_admin`, `already_invited`, `not_found`, `person_has_seat`, `org_not_suspended`, `files_unavailable`, `location_name_taken`), `conflict` when a concurrent change to the same row won, `unavailable` when a later event of the same request could not be written, or `internal` when the effect threw. The list is closed (`NOT_APPLIED_REASONS` in `src/audit.ts`, which also holds each code’s plain words). [CONFIRM: audit timing; events kept indefinitely]
 - The only update to an event is deletion’s redaction; nothing deletes one.
 - Org admins read their organization’s staff events (actor role `superadmin`), newest 50, as Townwise staff activity: `{ at, staffEmail, summary, viewAs, applied, notAppliedReason }`, where `viewAs` is `{ targetEmail, reason, endsAt }` on `view_as.started` only and `endsAt` is the grant’s scheduled end (an earlier end is its own `view_as.ended` row). A `staff_action.not_applied` event is never a row: the row it qualifies has `applied: false` and `notAppliedReason`, the code in plain words (for example “The organization needs at least one admin”); every other row has `applied: true` and `notAppliedReason: null`.
 
@@ -260,12 +274,12 @@ Each location’s calibration state is derived from its sales days on every read
 | `member.role_changed` | `email`, `from`, `to` | after, by an org admin; before, by staff |
 | `member.removed` | `email`, `wasStatus` | after, by an org admin; before, by staff |
 | `member.left` | `email` | after |
-| `location.created`, `location.updated`, `location.deleted` | `name`, `townId` | after |
-| `sales.uploaded` | `locationId`, `dayCount`, `inserted`, `replaced`, `firstDate`, `lastDate`; from the file reader also `fileId` and `via` (`file`), with the uploader as actor | after |
+| `location.created`, `location.updated`, `location.deleted` | `name`, `townId`; from `POST` and `PATCH /api/org/locations` and their setup routes also `hasPlace` (whether the location has a Google place after the write; never the id or an address; approval's `location.created` leaves it out) | after; before, by staff setup, with the values the write will leave |
+| `sales.uploaded` | `locationId`, `dayCount`, `inserted`, `replaced`, `firstDate`, `lastDate`; from the file reader also `fileId` and `via` (`file`), with the uploader as actor; staff setup’s has no `inserted` or `replaced`, which exist only after the write | after; before, by staff setup |
 | `file.uploaded` | `locationId`, `kind`, `sizeBytes` | after |
 | `file.deleted` | `locationId`, `kind`, `reason` (`owner`) | after |
 | `file.raw_deleted` | `locationId`, `kind` | after |
-| `sales.deleted` | `locationId`, `deletedDays` | after |
+| `sales.deleted` | `locationId`, `deletedDays`, `deletedFiles`; staff setup’s counts `deletedDays` (the days with a value) before the delete and has no `deletedFiles` | after; before, by staff setup |
 | `note.created`, `note.updated`, `note.deleted` | `locationId`, `kind`, `startDate`, `endDate` | after |
 | `chat.turn_completed` | `locationId`, `conversationId`, `model`, `calls`, `inputTokens`, `outputTokens`, `stopReason` | after |
 | `chat.conversation_deleted` | `locationId`, `conversationId` | after |
@@ -287,7 +301,7 @@ Every route is JSON under `/api` and runs one chain, built from the table in `sr
 3. `resolveAccess`.
 4. The view-as guard.
 5. The route’s policy.
-6. The body parser: 32 KB, 2 KB on the two Places routes and the files JSON routes, or 256 KB on the upload route; none on GET and DELETE. It runs after the policy, so a refused request is never parsed. The chunk route has no parser: its handler streams the raw body after the policy passed, and a refused chunk's connection is closed unread.
+6. The body parser: 32 KB, 2 KB on the two Places routes and the files JSON routes, or 256 KB on the upload routes (the member one and staff setup’s); none on GET and DELETE. It runs after the policy, so a refused request is never parsed. The chunk route has no parser: its handler streams the raw body after the policy passed, and a refused chunk's connection is closed unread.
 7. The route’s own limiter, if it has one.
 8. The handler.
 
@@ -327,15 +341,17 @@ See Places search. `placeId` in the answer is Google's current id for the place,
 
 | Method and path | Policy | Request | Success | Errors |
 |---|---|---|---|---|
-| `GET /api/org` | member | | 200 `{ org, role, locations, requestedLocationCount }` | |
+| `GET /api/org` | member | | 200 `{ org, role, locations, requestedLocationCount, placeSearch }`; `placeSearch` is whether the Places search is on | |
 | `PATCH /api/org` | org_admin | `{ name }`, 2 to 120 characters | 200 `{ org }` | 400 |
 | `GET /api/org/staff-activity` | org_admin | | 200 `{ events }`, the newest 50 staff actions on this organization, each marked `applied` (see Audit and logs) | |
 | `POST /api/org/leave` | member | `{}` exactly | 200, as `GET /api/me` (`removed`, `byYou`) | 400; 409 `last_admin` |
-| `POST /api/org/locations` | org_admin | `{ name, town }` | 201 `{ location }` | 409 `location_name_taken`, `location_limit`; 400 `unknown_town` |
-| `PATCH /api/org/locations/:locationId` | org_admin | `{ name?, town? }`, at least one | 200 `{ location }` | 404; 409 `location_name_taken`; 400 `unknown_town` |
+| `POST /api/org/locations` | org_admin | `{ name, town, placeId? }`, `placeId` as on access requests, or null | 201 `{ location }` | 409 `location_name_taken`, `location_limit`; 400 `unknown_town`; with a `placeId`: 400 `unknown_place`, `place_not_supported`, `place_town_mismatch`; 429 `rate_limited`; 503 `places_unavailable` |
+| `PATCH /api/org/locations/:locationId` | org_admin | `{ name?, town?, placeId? }`, at least one; a `placeId` needs `town`; `placeId: null` takes the place off | 200 `{ location }` | 404; 409 `location_name_taken`; 400 `unknown_town`; with a `placeId`: as `POST` |
 | `DELETE /api/org/locations/:locationId` | org_admin | | 204 | 404; 409 `location_has_data` (any sales day or note) |
 
-Each location is `{ id, name, town, coverage, calibration, notesCount, lastUploadAt }`. An organization holds at most 25 locations. [CONFIRM: 25 locations]
+Each location is `{ id, name, town, placeId, coverage, calibration, notesCount, lastUploadAt }`. An organization holds at most 25 locations. [CONFIRM: 25 locations]
+
+A location's Google place (Places unit): an org admin picks it with the Places search, and the client sends its id with the town the confirm card showed. The API never takes that town on the client's word: it asks Google for the place (Place Details, the same field mask as the details route, in a session of its own), takes the town from its address components with the details route's rules (`townOfAddress` in `src/handlers/places.ts`), and refuses the write when the sent town is another (400 `place_town_mismatch`; one of the twelve by id, another town by name ignoring case and by state). Google not knowing the place is 400 `unknown_place`; a place outside the 50 states and DC, or with no usable town, is 400 `place_not_supported`; the search being off, or Google failing or taking over 5 seconds, is 503 `places_unavailable` (logged as `townwise.places_failed` with route id `org.locations.create` or `org.locations.update`). The location stores Google's current id for the place and the place's town; nothing else Google answers. A town changed by hand on `PATCH` (without a `placeId`) takes the place off, since the place no longer describes the location; a rename, or a save of the same town, keeps it. Each write with a place id makes one billed Place Details call, after the policy, the location lookup and the location limit, so a refused or foreign request never reaches Google. That call is spent first from the account's `townwise:places` budget, the one the Places routes share: a used-up budget is 429 `rate_limited`, and a store outage is 503 `places_unavailable` (the routes carry no limiter of their own, so a write without a place id spends nothing and works during an outage, as before). The audit events say only whether the location has a place (`hasPlace`), never the id or the address.
 
 ### Sales
 
@@ -424,13 +440,18 @@ Policy `staff`, except End. During view-as, every route here answers 409 `view_a
 | `POST /api/admin/requests/:requestId/reject` | `{ message? }` | 200 `{ request }` | 404; 409 `request_not_pending`; 503 |
 | `GET /api/admin/orgs` | | 200 `{ orgs }`, each with team, location, sales-day counts and the last upload time | |
 | `POST /api/admin/orgs` | `{ name, adminEmail, id? }`, `id` a client-generated 24-hex id | 201 `{ org: { id, name }, result }`, the admin invitation’s add result; 200, the same shape, for a repeat of that `id` | 400; 409 `conflict` (the `id` names another organization); 503 |
-| `GET /api/admin/orgs/:orgId` | | 200 `{ org, members, locations, recent }`: the team, each location’s coverage and counts, and the newest 20 audit events. `org.fromRequestSentAt` is when the request it was approved from was sent, or null without one or once that request is deleted | 400; 404 |
-| `PATCH /api/admin/orgs/:orgId` | `{ name?, status? }`, at least one; status `active` or `suspended` | 200 `{ org }`, as in the detail without `fromRequestSentAt` | 400; 404; 503 |
+| `GET /api/admin/orgs/:orgId` | | 200 `{ org, members, locations, recent }`: the team, each location’s coverage and counts, and the newest 20 audit events. `org.fromRequestSentAt` is when the request it was approved from was sent, or null without one or once that request is deleted. `org.inSetup` is whether the setup routes are open (Staff setup), from the same check they make | 400; 404 |
+| `PATCH /api/admin/orgs/:orgId` | `{ name?, status? }`, at least one; status `active` or `suspended` | 200 `{ org }`, as in the detail without `fromRequestSentAt` and `inSetup` | 400; 404; 503 |
 | `DELETE /api/admin/orgs/:orgId` | | 200 `{ deletedDays, deletedUploads, deletedNotes, deletedLocations, deletedSeats, redactedEvents }` | 400; 404; 409 `org_not_suspended` (also when reactivated during the deletion); 503, or 503 `files_unavailable` when stored files are off while it has files |
 | `POST /api/admin/orgs/:orgId/originals/delete` | `{ basis: 'data_subject_request' \| 'org_request' \| 'other' }` | 200 `{ deletedOriginals, skippedBusy }` | 400; 404; 503 |
 | `POST /api/admin/orgs/:orgId/members` | `{ emails, role? }`, as on Team | 200 `{ results, members }` | 400; 404; 409 `member_limit`; 503 |
 | `PATCH /api/admin/orgs/:orgId/members/:memberId` | `{ role }` | 200 `{ member }` | 400; 404; 409 `last_admin`; 503 |
 | `DELETE /api/admin/orgs/:orgId/members/:memberId` | | 204 | 400; 404; 409 `last_admin`; 503 |
+| `POST /api/admin/orgs/:orgId/locations` (setup) | `{ name, town, placeId? }`, as `POST /api/org/locations` | 201 `{ location }`, as there | 400; 404; 409 `org_not_in_setup`, then as `POST /api/org/locations`; 503 |
+| `PATCH /api/admin/orgs/:orgId/locations/:locationId` (setup) | `{ name?, town?, placeId? }`, as `PATCH /api/org/locations/:locationId` | 200 `{ location }` | 400; 404 (another organization’s location too); 409 `org_not_in_setup`, then as the org route; 503 |
+| `DELETE /api/admin/orgs/:orgId/locations/:locationId` (setup) | | 204 | 400; 404; 409 `org_not_in_setup`, `location_has_data`; 503 |
+| `POST /api/admin/orgs/:orgId/locations/:locationId/sales/uploads` (setup; body up to 256 KB) | `{ days }` (see Sales upload) | 201 `{ upload, coverage, calibration }`, replacing the days it covers, with `upload.uploadedByEmail` “Townwise staff” | 400; 404; 409 `org_not_in_setup`; 413; 503 |
+| `DELETE /api/admin/orgs/:orgId/locations/:locationId/sales` (setup) | | 200 `{ deletedDays, deletedUploads, deletedFiles }` | 400; 404; 409 `org_not_in_setup`, `import_running`; 503, or 503 `files_unavailable` |
 | `GET /api/admin/orgs/:orgId/forecast-runs` | | 200 `{ runs }`, newest import first, at most 100: each run as in `ForecastWindow` without `live`, with `locationId`, `status` (`importing`, `draft`, `published`, `withdrawn`), `range`, `dayCount`, `weekCount`, `importedAt`, `publishedAt`, `withdrawnAt` and `importedByEmail` (null once that person is deleted); never a day's figure | 400; 404 |
 | `POST /api/admin/orgs/:orgId/locations/:locationId/forecast-runs` (body up to 256 KB) | a `townwise.forecast-run/1` file | 201 `{ run }`, a new draft; 200 `{ run }` for a file this location already has, in its status (a run left `importing` finishes) | 400 `invalid_forecast_file` with `issues: { path, code }[]` (never a value); 404 (another organization's location too); 503 |
 | `POST /api/admin/orgs/:orgId/forecast-runs/:runId/publish` | `{}` | 200 `{ run }`; a published run answers 200 and writes nothing | 400; 404; 409 `forecast_run_not_draft`; 503 |
@@ -444,7 +465,7 @@ Policy `staff`, except End. During view-as, every route here answers 409 `view_a
 | `POST /api/admin/view-as` (limiter `view-as`) | `{ userId, reason }` | 201, as `GET /api/me`, with `viewAs` set | 400 `invalid_target`; 404; 409 `view_as_active`; 429; 503 |
 | `POST /api/admin/view-as/end` (policy `staff_self`) | `{}` | 200, as `GET /api/me` | |
 
-The console never returns sales figures or note text; forecast runs come back as metadata only (model, dates, counts, backtest accuracy), never a day's range. People come only from Townwise records, `TOWNWISE_SUPERADMIN_EMAILS` and the kit’s exact-email lookup; the kit’s collections are never read directly. Organization and team changes, sign out everywhere and deletion are staff actions (see Audit and logs), and deletion is described under Deletion, with its runbook step.
+The setup routes are described under Staff setup. The console never returns sales figures or note text; forecast runs come back as metadata only (model, dates, counts, backtest accuracy), never a day's range. People come only from Townwise records, `TOWNWISE_SUPERADMIN_EMAILS` and the kit’s exact-email lookup; the kit’s collections are never read directly. Organization and team changes, sign out everywhere and deletion are staff actions (see Audit and logs), and deletion is described under Deletion, with its runbook step.
 
 ### Tuning chat
 
@@ -468,11 +489,11 @@ A question is `{ id, kind: 'weekday', weekday, from, to, noSalesCount, weekdayCo
 |---|---|---|---|
 | `app:api-ceiling` | every request, per IP (`src/main.ts`) | 2,000 per minute | allow |
 | `townwise:writes` | every `/api` route but GET, per account | 300 per 10 minutes | allow |
-| `townwise:uploads` | the upload route, per account | 30 per hour | allow |
+| `townwise:uploads` | the member upload route, per account (staff setup’s upload carries only `townwise:writes`, as every staff write does) | 30 per hour | allow |
 | `townwise:requests` | `POST /api/access-requests`, per account | 5 per day | deny (503 `unavailable`) |
 | `townwise:view-as` | `POST /api/admin/view-as`, per account | 20 per hour | deny (503 `unavailable`) |
 | `townwise:chat` | `POST /api/org/locations/:locationId/chat/turns`, per account | 60 per hour | deny (503 `unavailable`) |
-| `townwise:places` | both Places routes together, per account | 300 per hour | deny (503 `unavailable`) |
+| `townwise:places` | both Places routes together, per account; each location write with a `placeId` also spends one (Organization and locations) | 300 per hour | deny (503 `unavailable`; on a location write, 503 `places_unavailable`) |
 | `townwise:files` | `POST .../files` (opening an upload), per account | 120 per hour | allow |
 | `townwise:file-chunks` | `PUT .../files/:fileId/chunks/:index`, per account | 1,500 per hour | allow |
 | `townwise:downloads` | both file downloads together, per account | 300 per hour | allow |
@@ -491,12 +512,12 @@ Every Townwise collection takes the `tw_` prefix. Every tenant document carries 
 
 | Collection | Holds |
 |---|---|
-| `tw_orgs` | name, status, who created it and from which request |
+| `tw_orgs` | name, status, who created it and from which request, and when someone first joined it (`firstJoinedAt`, which ends staff setup for good) |
 | `tw_members` | invitations and seats in one collection: email, role, status, who added it and when |
 | `tw_access_requests` | the request form (with the optional Google place id; documents from before it read as none), its status and the decision message |
-| `tw_locations` | name, town and the optional Google place id (set only by approval from a request, never edited; older documents read as none) |
+| `tw_locations` | name, town and the optional Google place id (set by approval from a request, or by an org admin through the Places search with the town checked against Google; taken off with `placeId: null` or a town changed by hand; older documents read as none); `byStaff: true` on one staff added during setup |
 | `tw_sales_days` | date, guests and net sales in cents per location per day, and nothing else |
-| `tw_uploads` | per upload: counts, first and last dates, and who sent it; never a file name |
+| `tw_uploads` | per upload: counts, first and last dates, and who sent it (`byStaff: true` on one staff made during setup); never a file name |
 | `tw_notes` | the note’s fields and the author’s user id |
 | `tw_view_as_grants` | staff member and session, target, organization, reason, start and end |
 | `tw_audit_events` | who did what, with allowlisted details |
@@ -545,20 +566,20 @@ Townwise reads the kit’s data only through its store functions (`users.findByI
 | `AUTH_GOOGLE_CLIENT_IDS` | auth | no | no | Google OAuth web client ids, comma-separated; empty turns Google sign-in off |
 | `TOWNWISE_SUPERADMIN_EMAILS` | api (`src/config.ts`) | in production | no | staff addresses, comma-separated, at most 20, normalized like the kit; empty locally [CONFIRM: production refuses an empty list] |
 | `TOWNWISE_CHAT_MONTHLY_BUDGET_USD` | api (`src/config.ts`) | no | no | `20`: the tuning chat’s monthly spend limit per organization, in dollars, 0 to 10,000 |
-| `ANTHROPIC_API_KEY` | api (`src/main.ts`) | no | yes | empty locally, which turns the tuning chat off; in production a Key Vault reference when `enable_chat` is on (`../infra/README.md`, step 16) |
+| `ANTHROPIC_API_KEY` | api (`src/main.ts`) | no | yes | empty locally, which turns the tuning chat off, or the shared developer key (`../infra/README.md`, step 16); in production a Key Vault reference when `enable_chat` is on (`../infra/README.md`, step 16) |
 | `GOOGLE_PLACES_API_KEY` | api (`src/main.ts`) | no | yes | empty locally, which turns the Places search off; in production a Key Vault reference when `enable_places` is on (`../infra/README.md`, step 17) |
 | `GOOGLE_MAPS_STATIC_KEY` | api (`src/main.ts`) | no | yes | empty locally, which leaves the confirm card without a map; a key restricted to the Maps Static API, which ends up in the map URL the browser loads; in production a Key Vault reference when `enable_places` is on (step 17) |
 | `GOOGLE_MAPS_SIGNING_SECRET` | api (`src/main.ts`) | no | yes | empty locally, which leaves the confirm card without a map; Google's URL signing secret (URL-safe base64; a malformed value refuses boot), never sent anywhere; in production a Key Vault reference when `enable_places` is on (step 17) |
-| `EMAIL_ENDPOINT` | api (`src/config.ts`) | no | no | empty locally, which turns email off; otherwise the Communication Services endpoint, a bare `https://*.communication.azure.com` origin (`terraform output -raw communication_service_endpoint`) |
-| `EMAIL_SENDER` | api (`src/config.ts`) | with `EMAIL_ENDPOINT` | no | empty locally; `no-reply@townwise.tech` in production |
+| `EMAIL_ENDPOINT` | api (`src/config.ts`) | no | no | empty locally, which turns email off; otherwise the Communication Services endpoint, a bare `https://*.communication.azure.com` origin (`terraform output -raw communication_service_endpoint`): `https://acs-townwise-2d2c15bf.unitedstates.communication.azure.com` in production, and locally to send through your `az login` (Run locally) |
+| `EMAIL_SENDER` | api (`src/config.ts`) | with `EMAIL_ENDPOINT` | no | empty locally; `no-reply@townwise.tech` in production, and locally with `EMAIL_ENDPOINT` |
 | `TOWNWISE_EMAIL_REPLY_TO` | api (`src/config.ts`) | no | no | empty locally (no Reply-To); in production the team member who reads replies |
 | `TOWNWISE_WEB_URL` | api (`src/config.ts`) | no | no | `http://localhost:8081`, a bare origin, for the links in emails; production email requires `https:` |
-| `IDENTITY_ENDPOINT`, `IDENTITY_HEADER`, `AZURE_CLIENT_ID` | platform (Container Apps; `AZURE_CLIENT_ID` from `containerapp.tf`), read by `src/main.ts` | when `EMAIL_ENDPOINT` is set, or `FILES_BLOB_ACCOUNT_URL` without Azurite | no, but `IDENTITY_HEADER` is never logged | unset locally; boot fails if email or stored files in Azure are on without them. One token source serves both, with a token cached per resource |
+| `IDENTITY_ENDPOINT`, `IDENTITY_HEADER`, `AZURE_CLIENT_ID` | platform (Container Apps; `AZURE_CLIENT_ID` from `containerapp.tf`), read by `src/main.ts` | in production, when `EMAIL_ENDPOINT` is set, or `FILES_BLOB_ACCOUNT_URL` without Azurite | no, but `IDENTITY_HEADER` is never logged | unset locally; in production, boot fails if email or stored files in Azure are on without them. Outside production, with `IDENTITY_ENDPOINT` and `IDENTITY_HEADER` both unset, those features take tokens from the developer’s `az login` instead; with only one set, boot fails. One token source serves both, with a token cached per resource |
 | `FILES_BLOB_ACCOUNT_URL` | api (`src/config.ts`) | no | no | empty locally, which turns stored files off (every files route answers 503 `files_unavailable`); `http://127.0.0.1:10000/devstoreaccount1` with Azurite; in production `https://sttwfiles2d2c15bf.blob.core.windows.net` (HTTPS required), commented in `production.env` until `../infra/README.md`, step 18. The API authenticates with its managed identity |
 | `FILES_AZURITE_CONNECTION_STRING` | api (`src/config.ts`) | no | no | development and tests only (production refuses it): `UseDevelopmentStorage=true` with `docker compose up -d`, which also starts Azurite on 10000; the API then creates the two containers itself |
 | `TOWNWISE_FILES_MONTHLY_BUDGET_USD` | api (`src/config.ts`) | no | no | `5`: the file reader's AI column step's monthly spend limit per organization, in dollars, 0 to 1,000; 0 turns it off. It runs only with `ANTHROPIC_API_KEY` [CONFIRM] |
 
-`.env.example` lists every variable above except `LOG_LEVEL`, `HTTP_KEEP_ALIVE_TIMEOUT_MS` and `SHUTDOWN_TIMEOUT_MS`, which take their defaults, and the three platform identity variables. `EMAIL_ENDPOINT` and `EMAIL_SENDER` are empty there, which turns email off. It holds local values and placeholders only: the two key rings, the Google client ids, the staff list, the Anthropic key, the Places key, the Maps static key and its signing secret are empty. Key rotation for the two key rings is in `kit/auth/MODULE.md`.
+`.env.example` lists every variable above except `LOG_LEVEL`, `HTTP_KEEP_ALIVE_TIMEOUT_MS` and `SHUTDOWN_TIMEOUT_MS`, which take their defaults, and the three platform identity variables. `EMAIL_ENDPOINT` and `EMAIL_SENDER` are empty there, which turns email off (Run locally says how to send). It holds local values and placeholders only: the two key rings, the Google client ids, the staff list, the Anthropic key, the Places key, the Maps static key and its signing secret are empty. Key rotation for the two key rings is in `kit/auth/MODULE.md`.
 
 ## Kit modules
 

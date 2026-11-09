@@ -73,7 +73,7 @@ function shownLayer(): HTMLElement {
 }
 
 function region(): HTMLElement {
-  return screen.getByRole('status');
+  return screen.getByTestId('moment-live-region');
 }
 
 function advance(ms: number): void {
@@ -86,7 +86,7 @@ function key(init: KeyboardEventInit): KeyboardEvent {
   return event;
 }
 
-test('the polite status region exists before the moment and receives the full statement once', () => {
+test('the polite live region exists before the moment and receives the full statement once', () => {
   render(<MomentProvider><Page statement={RECEIVED} /></MomentProvider>);
   expect(region().getAttribute('aria-live')).toBe('polite');
   expect(region().textContent).toBe('');
@@ -110,7 +110,8 @@ test('the layer and its words are aria-hidden', () => {
   expect(root?.getAttribute('aria-hidden')).toBe('true');
   for (const word of ['We’ve', 'Hanover', 'Inn.', 'soon.']) expect(root?.contains(screen.getByText(word))).toBe(true);
   expect(root?.querySelector('[tabindex], a, button, input')).toBeNull();
-  // The status region is outside the hidden layer.
+  // The live region is outside the hidden layer, and it leaves the status role to the page's own notices.
+  expect(region().getAttribute('role')).toBeNull();
   expect(root?.contains(region())).toBe(false);
 });
 

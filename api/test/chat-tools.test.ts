@@ -163,7 +163,7 @@ describe('get_day', () => {
     const byIds: string[][] = [];
     const upload: UploadRecord = {
       id: UPLOAD_ID, uploadedBy: SENTINEL_USER, uploadedAt: new Date('2026-11-23T03:30:00Z'), status: 'applied', dayCount: 7, inserted: 7,
-      replaced: 0, kept: 0, firstDate: '2026-11-16', lastDate: '2026-11-22', hasGuests: true, hasNetSales: true,
+      replaced: 0, kept: 0, firstDate: '2026-11-16', lastDate: '2026-11-22', hasGuests: true, hasNetSales: true, byStaff: false,
     };
     const stores = {
       salesDays: { history: () => Promise.resolve(opts.days ?? []) } as unknown as SalesDayStore,

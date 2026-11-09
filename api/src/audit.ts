@@ -47,6 +47,7 @@ export const NOT_APPLIED_REASONS = {
   person_has_seat: 'The person holds a seat in an organization',
   org_not_suspended: 'The organization was reactivated first',
   files_unavailable: 'Stored files were off, so their files could not be deleted',
+  location_name_taken: 'Another location already uses that name',
   unavailable: 'Townwise was briefly unavailable',
   internal: 'Something went wrong on Townwise’s side',
 } as const;

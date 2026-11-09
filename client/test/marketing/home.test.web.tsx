@@ -252,7 +252,7 @@ test('step 03 and the FAQ say what the portal does today: uploads and notes, no 
   expect(third.querySelector('.chip')).toBeNull();
   const faq = within(section('FAQ'));
   expect(faq.getByText(/^Your daily guest counts/).textContent)
-    .toContain('Your browser reads it and sends us only the date, guest count and net sales for each day, for one location. The file itself never reaches our server.');
+    .toContain('Once you have access, you drop your files in the app, and we store them privately for your organization and read the date, guest count and net sales for each day. Or your browser can read a CSV and send us only those three values a day, without the file.');
   expect(faq.getByText(/^No\. Your sales data/).textContent)
     .toContain('Your sales data is used only to provide Townwise to your restaurant: its own forecasts and TownwiseAI, its AI assistant. It is not shared with or used for other restaurants, and it is not used to train AI models.');
   expect(faq.getByText(/^Townwise does not charge/).textContent).toBe('Townwise does not charge for early access. Pricing is not set yet.');

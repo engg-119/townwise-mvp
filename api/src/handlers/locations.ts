@@ -1,7 +1,13 @@
 // The organization and its locations (spec 10.3, P9, P10, P16): members read them, org admins add, change and
 // delete locations. The organization comes only from the principal's scope, and every location route loads
-// { _id, orgId } first (spec 6.10 rule 4).
+// { _id, orgId } first (spec 6.10 rule 4). A location can carry the Google place id the org admin picked: the server
+// asks Google for that place and takes its town the way the Places search does (townOfAddress), so a client never
+// sets a town for a place on its own word. Neither the id nor the address reaches a log or an audit event. Staff setup
+// (D23, staff-setup.ts) runs the same checks and writes through the exported functions.
+import { randomUUID } from 'node:crypto';
+
 import { objectId } from '@ckeith26/mongo';
+import { createRateLimiter, RateLimiterUnavailableError, type RateLimiter } from '@ckeith26/rate-limit';
 import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
@@ -10,14 +16,18 @@ import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import { calibrationOf, type Calibration } from '../calibration.ts';
+import { placeIdSchema } from '../place-id.ts';
+import { PlacesUnavailableError, type PlaceDetails } from '../places/google.ts';
+import type { AuditDetails } from '../stores/audit-events.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import { NO_COVERAGE, type Coverage } from '../stores/sales-days.ts';
 import { resolveTown, townInputSchema, type Town } from '../towns.ts';
+import { townOfAddress } from './places.ts';
 import { actorOf, orgAdmin } from './team.ts';
 
 /** Spec 10.1. */
 export interface LocationSummary {
-  id: string; name: string; town: Town; coverage: Coverage; calibration: Calibration;
+  id: string; name: string; town: Town; placeId: string | null; coverage: Coverage; calibration: Calibration;
   notesCount: number; lastUploadAt: string | null;
 }
 
@@ -25,9 +35,11 @@ export interface LocationSummary {
 const MAX_LOCATIONS = 25;
 
 const nameSchema = z.string().trim().min(1).max(80);
-const createBody = z.object({ name: nameSchema, town: townInputSchema });
-const updateBody = z.object({ name: nameSchema.optional(), town: townInputSchema.optional() })
-  .refine((body) => body.name !== undefined || body.town !== undefined);
+const createBody = z.object({ name: nameSchema, town: townInputSchema, placeId: placeIdSchema.nullish() });
+/** A place id comes with the town the client showed for it, which must be the place's own; null takes the place off. */
+const updateBody = z.object({ name: nameSchema.optional(), town: townInputSchema.optional(), placeId: placeIdSchema.nullable().optional() })
+  .refine((body) => body.name !== undefined || body.town !== undefined || body.placeId !== undefined)
+  .refine((body) => typeof body.placeId !== 'string' || body.town !== undefined);
 
 function notFound(): AppError {
   return new AppError(404, 'not_found', 'Not found');
@@ -35,6 +47,79 @@ function notFound(): AppError {
 
 function unknownTown(): AppError {
   return new AppError(400, 'unknown_town', 'Unknown town');
+}
+
+export function nameTaken(): AppError {
+  return new AppError(409, 'location_name_taken', 'Another location already uses that name');
+}
+
+function placesUnavailable(): AppError {
+  return new AppError(503, 'places_unavailable', 'Place search isn’t available right now');
+}
+
+/**
+ * The Places routes' per-account budget (ROUTE_LIMITS.places in ../access/routes.ts; same name, so the same Redis
+ * count). The location routes carry no route limiter, since a write without a place never calls Google; a write with
+ * one spends a call from this budget before Google is asked.
+ */
+const PLACES_BUDGET = { name: 'townwise:places', limit: 300, windowSeconds: 3600 } as const;
+const placesBudgets = new WeakMap<TownwiseContext['redis'], RateLimiter>();
+
+/**
+ * Spends one call of the caller's Places budget: 429 rate_limited when it is used up, and, since every call costs
+ * money, 503 places_unavailable when the store can't count it (the page keeps its manual fields).
+ */
+async function spendPlacesCall(ctx: TownwiseContext, userId: string): Promise<void> {
+  let limiter = placesBudgets.get(ctx.redis);
+  if (limiter === undefined) {
+    limiter = createRateLimiter({ redis: ctx.redis, ...PLACES_BUDGET });
+    placesBudgets.set(ctx.redis, limiter);
+  }
+  let decision;
+  try {
+    decision = await limiter.consume(`acct:${userId}`);
+  } catch (err) {
+    if (!(err instanceof RateLimiterUnavailableError)) throw err;
+    throw placesUnavailable();
+  }
+  if (!decision.allowed) {
+    throw new AppError(429, 'rate_limited', 'Too many requests. Try again later.', { retryAfterSeconds: decision.retryAfterSeconds });
+  }
+}
+
+/** The same town: one of the twelve by id, another town by name (ignoring case) and state. */
+function sameTown(a: Town, b: Town): boolean {
+  if (a.townId !== null || b.townId !== null) return a.townId === b.townId;
+  return a.name.trim().toLowerCase() === b.name.trim().toLowerCase() && a.state === b.state;
+}
+
+/**
+ * The place an org admin picked, checked with Google: its current id and its own town, which must be the town the
+ * client sent. The call is spent from the admin's Places budget first (spendPlacesCall). 503 places_unavailable while
+ * the search is off or Google fails (logged by route id and code only, as
+ * the Places routes do); 400 unknown_place when Google has no such place; 400 place_not_supported outside the 50
+ * states and DC or without a town; 400 place_town_mismatch when the sent town is another.
+ */
+async function checkedPlace(
+  ctx: TownwiseContext, routeId: string, userId: string, placeId: string, sent: Town,
+): Promise<{ placeId: string; town: Town }> {
+  const places = ctx.places;
+  if (places === null) throw placesUnavailable();
+  await spendPlacesCall(ctx, userId);
+  let place: PlaceDetails | null;
+  try {
+    // A session of its own: the client's search session ended with its details call.
+    place = await places.details(placeId, randomUUID());
+  } catch (err) {
+    if (!(err instanceof PlacesUnavailableError)) throw err;
+    ctx.logger.warn({ routeId, code: err.code, status: err.status, errType: err.errType }, 'townwise.places_failed');
+    throw placesUnavailable();
+  }
+  if (place === null) throw new AppError(400, 'unknown_place', 'Unknown place');
+  const town = townOfAddress(place.addressComponents);
+  if (town === null) throw new AppError(400, 'place_not_supported', 'Townwise works with places in a US town');
+  if (!sameTown(town, sent)) throw new AppError(400, 'place_town_mismatch', 'That town isn’t the place’s town');
+  return { placeId: place.placeId, town };
 }
 
 /** The member policy already passed; this narrows the principal for the handler. */
@@ -51,7 +136,7 @@ export async function loadLocation(ctx: TownwiseContext, scope: OrgScope, rawId:
 }
 
 /** Reads the organization's coverage, note counts and last uploads once; the returned function builds each summary. */
-async function summarizer(ctx: TownwiseContext, scope: OrgScope): Promise<(location: LocationRecord) => LocationSummary> {
+export async function summarizer(ctx: TownwiseContext, scope: OrgScope): Promise<(location: LocationRecord) => LocationSummary> {
   const [coverage, notes, uploads] = await Promise.all([
     ctx.stores.salesDays.coverageByLocation(scope),
     ctx.stores.notes.countByLocation(scope),
@@ -60,13 +145,17 @@ async function summarizer(ctx: TownwiseContext, scope: OrgScope): Promise<(locat
   return (location) => {
     const covered = coverage.get(location.id) ?? NO_COVERAGE;
     return {
-      id: location.id, name: location.name, town: location.town, coverage: covered, calibration: calibrationOf(covered),
-      notesCount: notes.get(location.id) ?? 0, lastUploadAt: uploads.get(location.id)?.toISOString() ?? null,
+      id: location.id, name: location.name, town: location.town, placeId: location.placeId, coverage: covered,
+      calibration: calibrationOf(covered), notesCount: notes.get(location.id) ?? 0,
+      lastUploadAt: uploads.get(location.id)?.toISOString() ?? null,
     };
   };
 }
 
-/** GET /api/org. `requestedLocationCount` is the location count of the request the organization was approved from. */
+/**
+ * GET /api/org. `requestedLocationCount` is the location count of the request the organization was approved from;
+ * `placeSearch` says whether the Google Places search is on, so P10 and P16 offer it only then.
+ */
 export async function getOwnOrg(ctx: TownwiseContext, _req: Request, res: Response, principal: Principal): Promise<void> {
   const member = memberOf(principal);
   const { scope } = member;
@@ -83,51 +172,125 @@ export async function getOwnOrg(ctx: TownwiseContext, _req: Request, res: Respon
     role: member.role,
     locations: locations.map(summarize),
     requestedLocationCount: request?.locationCount ?? null,
+    placeSearch: ctx.places !== null,
   });
 }
 
-/** POST /api/org/locations (P10). */
-export async function createLocation(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
-  const admin = orgAdmin(principal);
-  const { scope } = admin;
-  const body = parseInput(createBody, req.body);
-  const town = resolveTown(body.town);
-  if (town === null) throw unknownTown();
+/** A location as POST writes it, or as PATCH leaves it. */
+export interface LocationInput { name: string; town: Town; placeId: string | null }
+
+/** What PATCH writes: the fields given, `placeId` null taking the place off. */
+export interface LocationChange { name: string | undefined; town: Town | undefined; placeId: string | null | undefined }
+
+/** The details `location.created` and `location.updated` record: never the place id. */
+export function locationDetails(location: LocationInput): AuditDetails {
+  return { name: location.name, townId: location.town.townId, hasPlace: location.placeId !== null };
+}
+
+/**
+ * POST's checks, shared by the org admin route and staff setup (D23): the body, its town, the location limit, then a
+ * place, checked with Google on `userId`'s Places budget (`routeId` names the route in a failure's log line).
+ */
+export async function checkedCreate(
+  ctx: TownwiseContext, scope: OrgScope, routeId: string, userId: string, raw: unknown,
+): Promise<LocationInput> {
+  const body = parseInput(createBody, raw);
+  const sent = resolveTown(body.town);
+  if (sent === null) throw unknownTown();
   if (await ctx.stores.locations.count(scope) >= MAX_LOCATIONS) {
     throw new AppError(409, 'location_limit', 'The organization has reached its location limit');
   }
-  const now = ctx.now();
-  const location = await ctx.stores.locations.create(scope, { name: body.name, town, createdAt: now, createdBy: admin.userId });
-  if (location === null) throw new AppError(409, 'location_name_taken', 'Another location already uses that name');
-  await recordAfter(ctx, {
-    ...actorOf(admin), at: now, orgId: scope.orgId, action: 'location.created',
-    target: { type: 'location', id: location.id },
-    details: { name: location.name, townId: location.town.townId },
-  });
-  const summarize = await summarizer(ctx, scope);
-  res.status(201).json({ location: summarize(location) });
+  const place = body.placeId === undefined || body.placeId === null
+    ? { placeId: null, town: sent }
+    : await checkedPlace(ctx, routeId, userId, body.placeId, sent);
+  return { name: body.name, town: place.town, placeId: place.placeId };
 }
 
-/** PATCH /api/org/locations/:locationId (P16): name, town or both. */
-export async function updateLocation(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
-  const admin = orgAdmin(principal);
-  const { scope } = admin;
-  const body = parseInput(updateBody, req.body);
-  const location = await loadLocation(ctx, scope, req.params.locationId);
+/**
+ * PATCH's checks, shared by the org admin route and staff setup (D23): the body, the location (404), its new town and a
+ * place, as checkedCreate. A place id sets the place and its town (checkedPlace); null takes the place off; a town
+ * changed by hand takes the place off too, since the place no longer describes the location.
+ */
+export async function checkedUpdate(
+  ctx: TownwiseContext, scope: OrgScope, routeId: string, userId: string, rawId: unknown, raw: unknown,
+): Promise<{ location: LocationRecord; change: LocationChange }> {
+  const body = parseInput(updateBody, raw);
+  const location = await loadLocation(ctx, scope, rawId);
   let town: Town | undefined;
   if (body.town !== undefined) {
     const resolved = resolveTown(body.town);
     if (resolved === null) throw unknownTown();
     town = resolved;
   }
-  const outcome = await ctx.stores.locations.update(scope, location.id, { name: body.name, town });
-  if (outcome === 'name_taken') throw new AppError(409, 'location_name_taken', 'Another location already uses that name');
+  let placeId = body.placeId;
+  if (typeof placeId === 'string' && town !== undefined) {
+    ({ placeId, town } = await checkedPlace(ctx, routeId, userId, placeId, town));
+  } else if (placeId === undefined && town !== undefined && location.placeId !== null && !sameTown(town, location.town)) {
+    placeId = null;
+  }
+  return { location, change: { name: body.name, town, placeId } };
+}
+
+/**
+ * DELETE's check, shared by the org admin route and staff setup (D23): only a location with no sales day, note or
+ * stored file. Stored files are data too (spec 11A): deleting the sales data deletes them.
+ */
+export async function assertNoLocationData(ctx: TownwiseContext, scope: OrgScope, locationId: string): Promise<void> {
+  const [hasDays, hasNotes, hasFiles] = await Promise.all([
+    ctx.stores.salesDays.hasAny(scope, locationId),
+    ctx.stores.notes.hasAny(scope, locationId),
+    ctx.stores.files.hasAny(scope, locationId),
+  ]);
+  if (hasDays || hasNotes || hasFiles) throw new AppError(409, 'location_has_data', 'Delete the location’s sales data and notes first');
+}
+
+/** DELETE's effect, shared with staff setup (D23): the location, then what only it reached. False when it was already gone. */
+export async function removeLocation(ctx: TownwiseContext, scope: OrgScope, locationId: string): Promise<boolean> {
+  if (!(await ctx.stores.locations.remove(scope, locationId))) return false;
+  // Records of uploads that never wrote a day (a crash leaves `applying`) go with it, and so do its tuning chats,
+  // which nothing could reach without the location.
+  await ctx.stores.uploads.removeForLocation(scope, locationId);
+  await ctx.stores.chatConversations.removeForLocation(scope, locationId);
+  await ctx.stores.chatProposals.removeForLocation(scope, locationId);
+  // U9: answers to TownwiseAI's questions about the location's days.
+  await ctx.stores.agentAnswers.removeForLocation(scope, locationId);
+  // An empty import left open goes too.
+  await ctx.stores.imports.removeForLocation(scope, locationId);
+  // U13B: forecasts staff imported for it, even with no sales data left.
+  await ctx.stores.forecasts.removeForLocation(scope, locationId);
+  return true;
+}
+
+/** POST /api/org/locations (P10). */
+export async function createLocation(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const admin = orgAdmin(principal);
+  const { scope } = admin;
+  const input = await checkedCreate(ctx, scope, 'org.locations.create', admin.userId, req.body);
+  const now = ctx.now();
+  const location = await ctx.stores.locations.create(scope, { ...input, createdAt: now, createdBy: admin.userId });
+  if (location === null) throw nameTaken();
+  await recordAfter(ctx, {
+    ...actorOf(admin), at: now, orgId: scope.orgId, action: 'location.created',
+    target: { type: 'location', id: location.id },
+    details: locationDetails(location),
+  });
+  const summarize = await summarizer(ctx, scope);
+  res.status(201).json({ location: summarize(location) });
+}
+
+/** PATCH /api/org/locations/:locationId (P16): name, town, place, or any of them (checkedUpdate). */
+export async function updateLocation(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const admin = orgAdmin(principal);
+  const { scope } = admin;
+  const { location, change } = await checkedUpdate(ctx, scope, 'org.locations.update', admin.userId, req.params.locationId, req.body);
+  const outcome = await ctx.stores.locations.update(scope, location.id, change);
+  if (outcome === 'name_taken') throw nameTaken();
   const updated = outcome === 'updated' ? await ctx.stores.locations.find(scope, location.id) : null;
   if (updated === null) throw notFound();
   await recordAfter(ctx, {
     ...actorOf(admin), at: ctx.now(), orgId: scope.orgId, action: 'location.updated',
     target: { type: 'location', id: updated.id },
-    details: { name: updated.name, townId: updated.town.townId },
+    details: locationDetails(updated),
   });
   const summarize = await summarizer(ctx, scope);
   res.status(200).json({ location: summarize(updated) });
@@ -138,25 +301,8 @@ export async function deleteLocation(ctx: TownwiseContext, req: Request, res: Re
   const admin = orgAdmin(principal);
   const { scope } = admin;
   const location = await loadLocation(ctx, scope, req.params.locationId);
-  // Stored files are data too (spec 11A): deleting the sales data deletes them.
-  const [hasDays, hasNotes, hasFiles] = await Promise.all([
-    ctx.stores.salesDays.hasAny(scope, location.id),
-    ctx.stores.notes.hasAny(scope, location.id),
-    ctx.stores.files.hasAny(scope, location.id),
-  ]);
-  if (hasDays || hasNotes || hasFiles) throw new AppError(409, 'location_has_data', 'Delete the location’s sales data and notes first');
-  if (!(await ctx.stores.locations.remove(scope, location.id))) throw notFound();
-  // Records of uploads that never wrote a day (a crash leaves `applying`) go with it, and so do its tuning chats,
-  // which nothing could reach without the location.
-  await ctx.stores.uploads.removeForLocation(scope, location.id);
-  await ctx.stores.chatConversations.removeForLocation(scope, location.id);
-  await ctx.stores.chatProposals.removeForLocation(scope, location.id);
-  // U9: answers to TownwiseAI's questions about the location's days.
-  await ctx.stores.agentAnswers.removeForLocation(scope, location.id);
-  // An empty import left open goes too.
-  await ctx.stores.imports.removeForLocation(scope, location.id);
-  // U13B: forecasts staff imported for it, even with no sales data left.
-  await ctx.stores.forecasts.removeForLocation(scope, location.id);
+  await assertNoLocationData(ctx, scope, location.id);
+  if (!(await removeLocation(ctx, scope, location.id))) throw notFound();
   await recordAfter(ctx, {
     ...actorOf(admin), at: ctx.now(), orgId: scope.orgId, action: 'location.deleted',
     target: { type: 'location', id: location.id },

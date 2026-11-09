@@ -108,14 +108,14 @@ Not taken, and why:
 | D4 | Invitations are per organization. Two organizations may invite the same email; the person chooses. | No add result depends on another organization, so an org admin learns nothing about other customers and cannot block a stranger. | [CONFIRM: per-organization invitations] |
 | D5 | One active organization per person. | A restaurant group is one organization with several locations. One unique index replaces an organization picker. | [CONFIRM: one organization per person] |
 | D6 | Approval creates the organization, its first location and the requester’s admin seat. | The owner’s first page already shows their town and the upload step. | [CONFIRM: first location at approval] |
-| D7 | Staff see client sales figures and note text only through view-as. Without it, the console shows team emails, location names and towns, counts, date coverage and recent audit events, and those reads are not recorded. | One audited exception to “visible only to that client”. | [CONFIRM: staff see values only through view-as] |
+| D7 | Staff see client sales figures and note text only through view-as. Without it, the console shows team emails, location names and towns, counts, date coverage and recent audit events, and those reads are not recorded. Setup writes (D23) give staff no read access. | One audited exception to “visible only to that client”. | [CONFIRM: staff see values only through view-as] |
 | D8 | View-as is bound to the staff session, lasts 30 minutes, needs a reason, refuses every write and every console route, resolves exactly as the target user, gate pages included, and ends when the target’s organization changes. | “Exactly what the client sees.” | [CONFIRM: lead default, read-only, audited, bannered; 30 minutes; any non-staff user as target] |
 | D9 | Org admins see every Townwise staff action on their organization: each view-as with the staff email and reason, and every team, name and status change staff make. | Trust around private data. Not requested by the user. | [CONFIRM: show staff activity to org admins, with staff emails] |
 | D10 | The browser parses the file and sends only `{ date, guests, netSalesCents }` per day for one location. | Lead default. POS exports can contain customer names. | [CONFIRM: lead default, browser-side parsing, three fields] |
 | D11 | The column mapper never renders a cell, except the distinct values of a column the user names as the location column. | Names stay off the screen and out of screenshots. | [CONFIRM: no cell contents in the mapper] |
 | D12 | Calibration states in v1: no sales data, and not calibrated. No day threshold is shown. | No fake output. The homepage says the history needed is still being tested. | [CONFIRM: lead default, honest states] [DECISION NEEDED: minimum days of history before calibration] |
 | D13 | Tuning is structured notes per location: closure, private event, opening, other. An AI chat waits. | Lead default. | [CONFIRM: lead default, notes first, AI chat later] |
-| D14 | Townwise sends two emails, each only to the person it concerns and only after the change it reports is written: request received (F2) and you’re in (F3, from the call that seats the requester). They come from `no-reply@townwise.tech` through Azure Communication Services, sent with the API’s managed identity, with Reply-To from `TOWNWISE_EMAIL_REPLY_TO`, no images and tracking off. Invitations, rejections, view-as and every other flow send none. A failed send is logged as a code, with no address, and never blocks, fails or retries the action. Email is off until `EMAIL_ENDPOINT` is set; production turns it on in the release whose F2, F3, P3, P4 and C3 copy stops saying “We don’t send email yet”. | Owner decision, 2026-11-05. People are held until staff approve, so they need to hear when they’re in. A rejection email waits on an owner question (whether it quotes the staff message). | Decided (owner, 2026-11-05) |
+| D14 | Townwise sends two emails, each only to the person it concerns and only after the change it reports is written: request received (F2) and you’re in (F3, from the call that seats the requester). They come from `no-reply@townwise.tech` through Azure Communication Services, sent with the API’s managed identity, with Reply-To from `TOWNWISE_EMAIL_REPLY_TO`, no images and tracking off. Invitations, rejections, view-as and every other flow send none. A failed send is logged as a code, with no address, and never blocks, fails or retries the action. Email is on when `EMAIL_ENDPOINT` is set: in production from this release (2026-11-09), whose F2, F3, P3, P4 and C3 copy says so; locally, when `EMAIL_ENDPOINT` is set in `api/.env.local`, it sends through the developer’s `az login` instead of the managed identity. | Owner decision, 2026-11-05. People are held until staff approve, so they need to hear when they’re in. A rejection email waits on an owner question (whether it quotes the staff message). | Decided (owner, 2026-11-05) |
 | D15 | An organization has one or more locations. Sales, uploads and notes belong to a location. | Lead default. | [CONFIRM: lead default, per-location data] |
 | D16 | Members and org admins can upload and write notes. A member’s upload adds new days only; an org admin’s replaces the days it covers. Only org admins manage the team, locations, the organization name and deletion. | The person with POS access is often a manager. Replacing history is as destructive as deleting it, which is admin-only. | [CONFIRM: member permissions; members add new days only] |
 | D17 | No multi-document transactions. Writes are ordered so a retry completes them, and unique indexes catch races. | Local Mongo is standalone (`compose.yaml`), and production DocumentDB sets `retryWrites=false`. | none (a fact) |
@@ -124,6 +124,7 @@ Not taken, and why:
 | D20 | Upload is web only. | A native file picker is a new dependency. | [CONFIRM: web-only upload] |
 | D21 | The town profile (P4, P15) and the sales chart (P12) render on web only. Native shows each chart’s text summary and “Show the numbers” table, built from View and Text, plus “See the chart at townwise.tech.” | The client has no `react-native-svg`, and adding it is a new dependency. | [CONFIRM: web-only charts] |
 | D22 | Staff can delete a person’s Townwise records, or a suspended organization’s. The audit log keeps the events with the email or names replaced. The kit’s user record is then deleted by hand. | The privacy page and Terms on `feature/townwise-web` already promise deletion on request. | [CONFIRM: staff-only deletion in v1; suspend before deleting an organization] |
+| D23 | Staff setup. While an organization is active and nobody has ever held a seat in it (open invitations don’t count), staff can add, rename, change the town of and delete (when empty) its locations, and upload or delete its daily totals, from its console page (F10b, 10.7). It is write-only: answers carry ids, names, towns, counts and date coverage, never a figure, and staff still read values only through view-as (D7). It ends at the first join and never reopens, even once everyone has left, and it is closed while the organization is suspended (409 `org_not_in_setup`). Each setup write is recorded before it takes effect and shown to the organization’s admins once they join (D9), and the uploads it makes read “Townwise staff”, never the staff email. Staff use it with a real client’s data only with that client’s consent. | A client who sends their history before anyone on their team signs in finds a populated page on their first visit, not an empty one. It never reopens because an organization everyone left belongs to a former client, with no admin to see a staff write in their activity. | [CONFIRM: staff can add locations and upload daily totals for an organization nobody has joined yet; write-only; ends at the first join; used only with the client's consent] |
 
 ---
 
@@ -135,11 +136,11 @@ Not taken, and why:
 | Send an access request | no | no | no | no | yes, in `no_org`, `rejected`, `removed` |
 | Join, or decline, an organization that invited their email | no | no | no | no | yes, in `invited` |
 | Read the organization, locations, town profiles, sales, notes, calibration | team emails, location names and towns, counts and date coverage (D7) | read-only | yes | yes | no |
-| Upload sales | no | no | yes, new and replaced days | yes, new days only | no |
-| Delete all sales for a location | no | no | yes | no | no |
+| Upload sales | only during setup (D23), new and replaced days | no | yes, new and replaced days | yes, new days only | no |
+| Delete all sales for a location | only during setup (D23) | no | yes | no | no |
 | Add notes; edit or delete own notes | no | no | yes | yes | no |
 | Edit or delete anyone’s notes | no | no | yes | no | no |
-| Add, rename, change the town of, or delete (when empty) a location | no | no | yes | no | no |
+| Add, rename, change the town of, or delete (when empty) a location | only during setup (D23) | no | yes | no | no |
 | Rename the organization | any | no | own | no | no |
 | Read the team | any | read-only, if the target is an org admin | own | no | no |
 | Add emails, change roles, remove people | any | no | own | no | no |
@@ -158,7 +159,7 @@ Rules behind the matrix:
 - An organization always keeps at least one active org admin. Demoting, removing or leaving as the last one answers 409 `last_admin`, for org admins and staff alike.
 - A staff email can be invited like any other, but it never resolves as a member, because the staff branch runs first.
 - Only the addresses in `TOWNWISE_SUPERADMIN_EMAILS` are staff. Any other address a staff member adds to an organization, a personal Gmail included, joins as an ordinary member with full member access, no banner and no time limit. That row shows “Added by Townwise staff” on Team (P17), and the add appears in the organization’s staff activity (9.3).
-- Every staff action on an organization (team, name, status, view-as) is recorded before it takes effect and shown to that organization’s admins (9.3).
+- Every staff action on an organization (team, name, status, view-as, setup) is recorded before it takes effect and shown to that organization’s admins (9.3).
 - Removed people keep their kit user. They may request access for another organization, or join another that invited them.
 
 ---
@@ -261,7 +262,7 @@ Branches:
 
 1. A person in `no_org` lands on `/request-access`. The form asks for organization name, their name, their role, the town (one of the twelve, or another town and state), number of locations and an optional note. The business can be found on Google Places first (10.2a); the request then also carries its Google place id (`placeId`), optional.
 2. `POST /api/access-requests`. A unique partial index allows one pending request per user. Audit `access_request.created`, with `hasPlace` and never the place id. [CONFIRM: a request keeps the place the requester picked; staff check it by hand]
-3. `/waiting` shows what was sent, “We don’t send email yet, so check back here.”, and the public profile of the town they named. [CONFIRM: town profile while waiting]
+3. `/waiting` shows what was sent, “We’ll email you when you’re approved.”, and the public profile of the town they named. [CONFIRM: town profile while waiting]
 
 **F2b. Invited while pending.** At the next `GET /api/me` the person is `invited`, with `pendingRequest` set. `/joining` does not join on load. It names the organization and who added them, and offers “Join {org}” and “Not my team”. Join withdraws the request. “Not my team” deletes the invitation, and the request stays with staff, so an invitation the person never chose cannot skip staff review. This is also how staff place a requester into an existing organization: they add the requester’s email on that organization’s page, and the requester presses Join.
 
@@ -279,7 +280,7 @@ Branches:
    6. Upsert the organization `{ _id: orgId }` with `$setOnInsert`: name, `active`, `createdAt`, `createdBy`, `fromRequestId`. Audit `org.created` on insert.
    7. Upsert the first location keyed by `{ orgId, nameKey }` with `$setOnInsert`: name, the town from the request, and its `placeId` (null when it has none; a retry keeps the first value). Audit `location.created` on insert.
    8. Insert the requester’s seat: `role: 'org_admin'`, `status: 'active'`, `userId`, `activeUserId`, `joinedAt`, `email` (the requester’s current kit email). A duplicate key in this organization counts as success. A duplicate in another organization (the requester joined elsewhere in the gap) answers 409 `requester_has_org`; the organization then exists with no admin, and its detail page shows “No admin yet”. Audit `member.joined`. [Build note: after inserting the seat, the server reads the request again. Gone means the requester was deleted meanwhile (10.7, Deletion): the seat is deleted, and, when nobody else is in it, the organization and first location made for the request, with their names redacted as in an organization deletion; no `member.joined` is written, and the answer is 404, with `staff_action.not_applied` (`not_found`) for the approval event this call wrote.]
-5. The requester sees their organization at their next `GET /api/me`. No email is sent.
+5. The requester sees their organization at their next `GET /api/me`, and gets the you’re in email (D14).
 
 ### F4. Staff reject a request
 
@@ -334,6 +335,10 @@ Runbook line: add a staff email only when that person will sign in and enroll wi
 
 For an organization signed outside the app: on `/admin/orgs`, “New organization” asks for the name and the first admin’s email. `POST /api/admin/orgs` creates the organization and an invitation with `role: 'org_admin'` and `addedByStaff: true`. That person joins as admin the next time they continue with Google (F1). [Build note: the request may carry `id`, a 24-hex id the client generates once per new organization. A repeat with that `id` (a retry) creates nothing new: it answers 200 with that organization and writes no second `org.created`. It is a repeat only for an active organization made this way (no `fromRequestId`) with the same name, whose team holds the same admin address or nobody yet; any other organization with that `id` is 409 `conflict`. The one thing a repeat adds is the admin invitation of a create that stopped before it, with `member.invited` written before the insert. A repeat that races the first past its check loses on the unique `_id`, and its `org.created` is followed by `staff_action.not_applied` (`conflict`).] No location is created yet; the admin’s first page asks for one. The organization’s staff activity lists its creation and the invitation. [CONFIRM: staff can create organizations without a request]
 
+### F10b. Staff set up an organization nobody has joined yet
+
+For a client whose daily totals Townwise already holds, used only with that client’s consent (D23). While the organization is active and nobody has ever held a seat in it (after F10 it has only its admin invitation), staff add, rename and delete its locations and upload or delete their daily totals from its console page (P21), through the setup routes of 10.7. The checks are the org admin routes’ (10.3, 11.3), town and place included, and an upload replaces the days it covers, as an org admin’s does. Each write is recorded before it takes effect (9.3), and staff see the result as counts and date coverage only, never a figure (D7). Once anyone joins (F1) or is seated by approval (F3), every setup route answers 409 `org_not_in_setup` for good, even after everyone has left or been removed and their records are deleted; so does a suspended organization. The admin who joins finds the locations and their days, sees each staff upload as by “Townwise staff”, and finds every setup write in their Townwise staff activity (D9). [Build note: setup is checked before the event, with no lock, so a join that lands between the check and the write is accepted; the write is still recorded and shown in staff activity.]
+
 ### F11. Upload sales history (web)
 
 Rules are in Section 11. The entry points are Home’s history step and upload links (P11), the Sales data tab, and its empty state. An org admin’s upload replaces the days it covers; a member’s adds new days only and leaves existing days unchanged (D16, 11.4).
@@ -362,6 +367,7 @@ All collections take the `tw_` prefix, so they never collide with the kit’s `u
 | `createdAt`, `createdBy` | Date, userId | |
 | `fromRequestId` | ObjectId or null | set when created by approval |
 | `suspendedAt` | Date or null | |
+| `firstJoinedAt` | Date, or absent | when someone first took a seat: set only while unset (a compare-and-set) right after the seat write of a join (F1) or an approval (F3), and by a person deletion, from the person’s earliest `joinedAt` there, before it deletes their removed seats (10.7); never cleared, so staff setup never reopens (D23). Absent on organizations nobody has joined and on documents from before the field |
 
 Indexes: `{ createdAt: -1 }`.
 
@@ -420,8 +426,9 @@ Indexes: `{ userId: 1 }` unique with `partialFilterExpression: { status: 'pendin
 | `name` | string | 1 to 80 |
 | `nameKey` | string | `name` trimmed, lowercased, inner spaces collapsed |
 | `town` | `{ townId: TownId \| null; name: string; state: string }` | |
-| `placeId` | string or null | the request’s Google place id, copied at approval (F3 step 7); null for a location added from P10; never edited; older documents read as null |
+| `placeId` | string or null | the Google place id. Approval copies the request’s (F3 step 7). An org admin sets or changes it through the Places search on Add location (P10) or Location settings (P16), and the API stores Google’s current id once the town is checked against Google (10.3). Null otherwise: a location added without the search, a `placeId: null` write, or a town changed by hand. Older documents read as null |
 | `createdAt`, `createdBy` | | |
+| `byStaff` | `true`, or absent | set only on a location staff added during setup (D23), whose `createdBy` is the staff user id |
 
 Indexes: `{ orgId: 1, nameKey: 1 }` unique; `{ orgId: 1, createdAt: 1 }`. Limit: 25 per organization. [CONFIRM: 25 locations]
 
@@ -440,7 +447,7 @@ Indexes: `{ orgId: 1, locationId: 1, date: 1 }` unique. The schema is `strict: '
 
 ### 6.6 `tw_uploads`
 
-`_id`, `orgId`, `locationId`, `uploadedBy` (userId), `uploadedAt`, `status` (`'applying' | 'applied'`), `dayCount`, `inserted`, `replaced`, `kept` (days a member’s upload left unchanged because they already had data; always 0 for an org admin’s), `firstDate`, `lastDate`, `hasGuests`, `hasNetSales`. It holds no file name (file names can contain people’s names), no column names and no row count. Index: `{ orgId: 1, locationId: 1, uploadedAt: -1 }`. A stored file's days (11A) get their own record too, written by the file reader; until this record gains a `fileId` (with the sales history work, 10.10), the link is the file's `uploadId` (6.11).
+`_id`, `orgId`, `locationId`, `uploadedBy` (userId), `uploadedAt`, `status` (`'applying' | 'applied'`), `dayCount`, `inserted`, `replaced`, `kept` (days a member’s upload left unchanged because they already had data; always 0 for an org admin’s), `firstDate`, `lastDate`, `hasGuests`, `hasNetSales`, and `byStaff: true` only on an upload staff made during setup (D23), whose `uploadedBy` is the staff user id. It holds no file name (file names can contain people’s names), no column names and no row count. Index: `{ orgId: 1, locationId: 1, uploadedAt: -1 }`. A stored file's days (11A) get their own record too, written by the file reader; until this record gains a `fileId` (with the sales history work, 10.10), the link is the file's `uploadId` (6.11).
 
 ### 6.7 `tw_notes`
 
@@ -595,7 +602,7 @@ api/
                        Townwise models on `connection` and returns the /api router. main.ts and the tests both use it
     email.ts           Exists. Unchanged (the kit's magic-link sender, which rejects every send)
     mail/              templates, layout, the Communication Services transport and the mailer (D14)
-    azure-identity.ts  managed-identity tokens for Azure services, cached per resource (D14; file storage too)
+    azure-identity.ts  managed-identity tokens for Azure services (locally, the developer's az login), cached per resource (D14; file storage too)
     config.ts          Townwise env schema (TOWNWISE_SUPERADMIN_EMAILS), spread into the one loadEnv call
     towns.ts           the twelve { townId, name, state, kind } (Section 13) and the US state codes
     normalize-email.ts the kit's email rule, repeated and pinned by a parity test (Section 19)
@@ -733,9 +740,9 @@ interface AuditEvent {
 | `member.role_changed` | `email`, `from`, `to` |
 | `member.removed` | `email`, `wasStatus` |
 | `member.left` | `email` |
-| `location.created`, `location.updated`, `location.deleted` | `name`, `townId` |
-| `sales.uploaded` | `locationId`, `dayCount`, `inserted`, `replaced`, `firstDate`, `lastDate`; from the file reader also `fileId` and `via: 'file'`, with the uploader as actor |
-| `sales.deleted` | `locationId`, `deletedDays`, `deletedFiles` |
+| `location.created`, `location.updated`, `location.deleted` | `name`, `townId`; from `POST` and `PATCH /api/org/locations` also `hasPlace` (boolean: whether the location has a Google place after the write; never the place id or an address; approval’s `location.created` leaves it out); staff setup’s (D23) are written before the effect, with the values the write will leave, `hasPlace` included |
+| `sales.uploaded` | `locationId`, `dayCount`, `inserted`, `replaced`, `firstDate`, `lastDate`; from the file reader also `fileId` and `via: 'file'`, with the uploader as actor; staff setup’s (D23) is written before the days and leaves out `inserted` and `replaced`, which exist only after |
+| `sales.deleted` | `locationId`, `deletedDays`, `deletedFiles`; staff setup’s (D23) is written before the delete, with `deletedDays` the days with a value at that moment and no `deletedFiles` |
 | `file.uploaded` | `locationId`, `kind`, `sizeBytes` |
 | `file.deleted` | `locationId`, `kind`, `reason: 'owner'` |
 | `file.raw_deleted` | `locationId`, `kind` |
@@ -765,7 +772,7 @@ An event’s `orgId` is the organization it touches: for `people.signed_out_ever
   
   [CONFIRM: audit after the effect for client actions; before the effect, refused on failure, for staff actions]
 - **Email writes no audit event.** Sending one of the D14 emails is a side effect of an action already audited; its event is unchanged, and nothing records the send.
-- **Readers.** Staff read everything on `/admin/audit`. Org admins read every event on their own organization whose actor role is `superadmin` (view-as, team, name, status, and `staff_action.not_applied`), on Settings as “Townwise staff activity” (D9). Members read none.
+- **Readers.** Staff read everything on `/admin/audit`. Org admins read every event on their own organization whose actor role is `superadmin` (view-as, team, name, status, setup writes (D23), and `staff_action.not_applied`), on Settings as “Townwise staff activity” (D9). Members read none.
 
 ---
 
@@ -802,7 +809,7 @@ type Calibration =
   | { state: 'not_calibrated'; dayCount: number; firstDate: string; lastDate: string };
 
 interface LocationSummary {
-  id: string; name: string; town: Town; coverage: Coverage; calibration: Calibration;
+  id: string; name: string; town: Town; placeId: string | null; coverage: Coverage; calibration: Calibration;
   notesCount: number; lastUploadAt: string | null;
 }
 
@@ -831,7 +838,7 @@ interface StaffActivityView {
 
 [Build note: `notApplied` is built as `applied: boolean` (false when a `staff_action.not_applied` event qualifies the row) and `notAppliedReason: string | null` (that event’s code in plain words, for example “The organization needs at least one admin”). A `staff_action.not_applied` event is never a row of its own, so a refused staff change shows once, as not applied, and the newest 50 rows are 50 staff actions.]
 
-Emails shown for people (`uploadedByEmail`, `createdByEmail`, `MemberView.email` for a seat) are the current kit email, read at response time. When the kit user no longer exists, they read “Deleted person”.
+Emails shown for people (`uploadedByEmail`, `createdByEmail`, `MemberView.email` for a seat) are the current kit email, read at response time. When the kit user no longer exists, they read “Deleted person”. An upload staff made during setup (D23) reads “Townwise staff”, never the staff email.
 
 ### 10.2 Access
 
@@ -847,33 +854,36 @@ Only `GET /api/me` fills `welcome`; every other answer that carries a `MeRespons
 
 ### 10.2a Places search
 
-Two routes let the request form find the business on Google Places (New). The API calls Google itself, so the browser talks only to the API and the CSP does not change. Both are `signed_in`, take a 2 KB body and use the `places` limiter (10.8).
+Two routes let the request form (P3), Add location (P10) and Location settings (P16) find the business on Google Places (New). The API calls Google itself, so the browser talks only to the API, except for the map image below, which it loads from Google (the CSP's `img-src` allows `https://maps.googleapis.com`). Both are `signed_in`, take a 2 KB body and use the `places` limiter (10.8).
 
 | Method and path | Request | Success | Extra errors |
 |---|---|---|---|
 | `POST /api/places/autocomplete` | `{ input, sessionToken? }`, `input` 2 to 120 characters after trimming, `sessionToken` a version 4 UUID | 200 `{ suggestions, sessionToken }`, up to 5 `{ placeId, name, detail }` (`detail` empty when Google has none) | 400 `invalid_request`; 413; 429; 503 `places_unavailable` |
-| `POST /api/places/details` | `{ placeId, sessionToken }`, `placeId` as in 6.3, `sessionToken` required | 200 `{ place: { placeId, address, town } }`, `town` a `TownInput` or null | 400 `invalid_request`; 404 `place_not_found` (Google answered 404, or 400 `INVALID_ARGUMENT` for the id); 413; 429; 503 `places_unavailable` |
+| `POST /api/places/details` | `{ placeId, sessionToken }`, `placeId` as in 6.3, `sessionToken` required | 200 `{ place: { placeId, address, town, map } }`, `town` a `TownInput` or null, `map` `{ url, width: 640, height: 320 }` or null | 400 `invalid_request`; 404 `place_not_found` (Google answered 404, or 400 `INVALID_ARGUMENT` for the id); 413; 429; 503 `places_unavailable` |
 
 - Off until `GOOGLE_PLACES_API_KEY` is set: both routes answer 503 `places_unavailable` to every request, and the client shows the manual fields. Google failing, or not answering within 5 seconds, answers the same.
 - Both calls of one search carry the same session token; Google bills the typing and the pick as one session, and the details call ends it. Without a token, autocomplete makes one and returns it. The server checks only its format and keeps no record of it.
 - Autocomplete asks for US results in English, of any business type. `name` is Google’s main text and `detail` its secondary text. Details asks for the place’s id, formatted address and address components only; `address` is for display, and the client keeps the name from the suggestion it picked. `placeId` in the answer is Google’s current id for the place, which can differ from the one sent.
 - `town` is one of the twelve researched towns when the locality, postal town, sublocality or `administrative_area_level_3` matches one by name and state, ignoring case, or when any of them is an alias (Lake Placid, NY is `north-elba-ny`; North Conway, NH is `conway-nh`). Otherwise it is `{ townId: null, name, state }`, named by the first of those components. It is null outside the 50 states and DC, or when no usable town name exists. [CONFIRM: the town matching rules, which are not yet checked against live Google answers]
-- Nothing from these routes is stored. The typed text, place ids, addresses and Google’s answers never reach a log or an audit event; a Google failure logs `townwise.places_failed { routeId, code, status, errType }`.
-- [Build note: details will also answer `place.map`, a static map image as a `data:` URL or null (best effort), for the found card. It is specified here when it ships.]
+- Nothing from these routes is stored. The typed text, place ids, addresses, Google’s answers and the signed map URL never reach a log or an audit event; a Google failure logs `townwise.places_failed { routeId, code, status, errType }`.
+- `map` is a Google Maps Static image of the place for the found card: `url` is a `https://maps.googleapis.com/maps/api/staticmap` URL the API signs with `GOOGLE_MAPS_SIGNING_SECRET`, holding `GOOGLE_MAPS_STATIC_KEY`, a key restricted to the Maps Static API with unsigned requests refused. The browser or the native app loads it straight from Google, which sees the viewer’s IP address; the API never fetches, relays or keeps the image. `map` is null while either variable is unset, and a map URL is never unsigned (`api/README.md`, Places search).
+- The request form (P3) uses the search while it is on (Places unit). Step 1 of 3, "Find your restaurant": one field ("Search for your restaurant or bar") whose suggestions come from autocomplete, debounced 250 ms, nothing under 2 characters, one call at a time, one session token per search (the API's, from the first answer). On web it is an ARIA combobox with a listbox (Down, Up, Enter, Escape); on native each suggestion is a button. A status line says how many places match the text searched ("3 places match “Lou”."), so each answer reads differently and is heard once, and "Results from Google Maps." credits Google. Picking one calls details and shows "Here's what we found": the map when there is one, the name from the suggestion, Google's address, the town line (one of the twelve, another town, or "Townwise works with businesses in a US town, and Google Maps puts this place in none.", which has no Looks right), and "From Google Maps. Townwise keeps Google's id for the place and its town, not the address or the map." The card's heading takes focus. "Looks right" opens Step 2 of 3, "About you", and moves focus to its heading: the form with the place in place of Town (and "Change place" back to Step 1, which moves focus to the search field, as "Search again" does), Organization name filled with the place's name when empty (for the requester to edit), and the request sends `placeId` with the place's town. "Can't find it? Enter it yourself" opens the form as it is without the search, which offers "Search Google Maps instead". The client learns whether the search is on by sending autocomplete `{}`: 503 `places_unavailable` is off, 400 `invalid_request` is on, and Google is not called. While off, under view-as (nothing is sent), for a rejected request (its answers are filled in) and after a 503 during the search (with "Google Maps isn't answering right now, so you can enter your restaurant yourself."), the form is as it is without the search. Step 3 is the history upload after approval.
 
 ### 10.3 Organization and locations
 
 | Method and path | Policy | Request | Success | Extra errors |
 |---|---|---|---|---|
-| `GET /api/org` | member | | 200 `{ org: { id, name }, role, locations: LocationSummary[], requestedLocationCount: number \| null }` | |
+| `GET /api/org` | member | | 200 `{ org: { id, name }, role, locations: LocationSummary[], requestedLocationCount: number \| null, placeSearch: boolean }` (`placeSearch`: the Places search is on, 10.2a) | |
 | `PATCH /api/org` | org_admin | `{ name }` | 200 `{ org }` | |
 | `GET /api/org/staff-activity` | org_admin | | 200 `{ events: StaffActivityView[] }` (newest 50 events on this organization whose actor role is `superadmin`) | |
 | `POST /api/org/leave` | member | `{}` | 200 `MeResponse` | 409 `last_admin` |
-| `POST /api/org/locations` | org_admin | `{ name, town: TownInput }` | 201 `{ location: LocationSummary }` | 409 `location_name_taken`, `location_limit`; 400 `unknown_town` |
-| `PATCH /api/org/locations/:locationId` | org_admin | `{ name?, town? }`, at least one | 200 `{ location }` | 404; 409 `location_name_taken` |
+| `POST /api/org/locations` | org_admin | `{ name, town: TownInput, placeId?: string \| null }` | 201 `{ location: LocationSummary }` | 409 `location_name_taken`, `location_limit`; 400 `unknown_town`; with a `placeId`: 400 `unknown_place`, `place_not_supported`, `place_town_mismatch`; 429; 503 `places_unavailable` |
+| `PATCH /api/org/locations/:locationId` | org_admin | `{ name?, town?, placeId?: string \| null }`, at least one; a `placeId` needs `town`; null takes the place off | 200 `{ location }` | 404; 409 `location_name_taken`; with a `placeId`: as `POST` |
 | `DELETE /api/org/locations/:locationId` | org_admin | | 204 | 404; 409 `location_has_data` (any sales day or note) |
 
 [CONFIRM: org admins can rename their own organization]
+
+A location's Google place (Places unit; P10, P16 "Change this location's place"): the API asks Google for the place (Place Details, a session of its own) and takes its town with the 10.2a rules; the town sent must be that town (one of the twelve by id, another by name ignoring case and by state), else 400 `place_town_mismatch`. Google not knowing the place is 400 `unknown_place`; outside the 50 states and DC or with no town, 400 `place_not_supported`; the search off or Google failing, 503 `places_unavailable` (`townwise.places_failed` with the route id). Each write with a place spends one call of the account's `townwise:places` budget (10.8) before Google is asked: used up, 429 `rate_limited`; its store down, 503 `places_unavailable`. A write without a place spends none. The location stores Google's current id and the place's town, nothing else. A town changed by hand takes the place off; a rename or the same town keeps it. `location.created` and `location.updated` add `hasPlace`, never the id. P10 and P16 offer the search only while `placeSearch` is true and never under view-as; P10 starts with it ("Search Google Maps for the location", "Looks right" fills Name and gives the town, "Can't find it? Enter it yourself"), and a 503 on Add leaves the fields with the place's town filled in and "Google Maps isn't answering right now, so the place wasn't added. Check the town, then add the location without it." Focus follows the steps: "Looks right" on P10 moves it to the place in the form, and opening P16's search moves it to the field and closing it (Cancel, Use this place, or a refusal) to the line that says whether the location is linked. P16's section says whether the location is linked, finds a place with "Use this place" (with "Using this place moves {name} to {town}." when the town changes) and answers "Saved."; its Town field says "Changing the town here takes the Google Maps place off this location." while linked.
 
 ### 10.4 Sales
 
@@ -916,13 +926,18 @@ Every route here has policy `staff`, except `view-as/end`, which has `staff_self
 | `POST /api/admin/requests/:requestId/reject` | `{ message?: string (up to 500) }` | 200 `{ request }` | 404; 409 `request_not_pending` |
 | `GET /api/admin/orgs` | | 200 `{ orgs: { id, name, status, createdAt, adminCount, memberCount, inviteCount, locationCount, salesDayCount, lastUploadAt }[] }` | |
 | `POST /api/admin/orgs` | `{ name, adminEmail }` [Build note: and an optional `id`, which makes a retry idempotent (F10)] | 201 `{ org: { id, name }, result: AddResult }` [Build note: 200, the same shape, for a repeat of that `id`] | |
-| `GET /api/admin/orgs/:orgId` | | 200 `{ org: { id, name, status, createdAt, fromRequestId, suspendedAt }, members: MemberView[], locations: { id, name, town, coverage, notesCount, lastUploadAt }[], recent: AuditEventView[] }` (counts only, D7; newest 20 events) [Build note: `org` also carries `fromRequestSentAt`, the request’s `createdAt` for P21’s “From request {date}”, or null without a request or once it is deleted] | 404 |
+| `GET /api/admin/orgs/:orgId` | | 200 `{ org: { id, name, status, createdAt, fromRequestId, suspendedAt }, members: MemberView[], locations: { id, name, town, coverage, notesCount, lastUploadAt }[], recent: AuditEventView[] }` (counts only, D7; newest 20 events) [Build note: `org` also carries `fromRequestSentAt`, the request’s `createdAt` for P21’s “From request {date}”, or null without a request or once it is deleted, and `inSetup: boolean`, whether the setup routes are open (D23), from the same check they make] | 404 |
 | `PATCH /api/admin/orgs/:orgId` | `{ name?, status?: 'active' \| 'suspended' }` | 200 `{ org }` | 404 |
 | `DELETE /api/admin/orgs/:orgId` | | 200 `{ deletedDays, deletedUploads, deletedNotes, deletedLocations, deletedSeats, redactedEvents }` | 404; 409 `org_not_suspended`; 503 `files_unavailable` (stored files are off while it has files) |
 | `POST /api/admin/orgs/:orgId/originals/delete` | `{ basis: 'data_subject_request' \| 'org_request' \| 'other' }` | 200 `{ deletedOriginals, skippedBusy }` | 400; 404; 503 `files_unavailable` |
 | `POST /api/admin/orgs/:orgId/members` | as 10.6 | as 10.6 | 404 |
 | `PATCH /api/admin/orgs/:orgId/members/:memberId` | as 10.6 | as 10.6 | 404; 409 `last_admin` |
 | `DELETE /api/admin/orgs/:orgId/members/:memberId` | | 204 | 404; 409 `last_admin` |
+| `POST /api/admin/orgs/:orgId/locations` (setup, D23) | as `POST /api/org/locations` (10.3) | 201 `{ location: LocationSummary }` | 404; 409 `org_not_in_setup`; then as 10.3 |
+| `PATCH /api/admin/orgs/:orgId/locations/:locationId` (setup) | as `PATCH /api/org/locations/:locationId` | 200 `{ location }` | 404; 409 `org_not_in_setup`; then as 10.3 |
+| `DELETE /api/admin/orgs/:orgId/locations/:locationId` (setup) | | 204 | 404; 409 `org_not_in_setup`, `location_has_data` |
+| `POST /api/admin/orgs/:orgId/locations/:locationId/sales/uploads` (setup) | `{ days: SalesDay[] }` (11.3), up to 256 KB | 201 `{ upload: UploadView, coverage, calibration }`, replacing the days it covers; `uploadedByEmail` is “Townwise staff” | 400; 404; 409 `org_not_in_setup`; 413 |
+| `DELETE /api/admin/orgs/:orgId/locations/:locationId/sales` (setup) | | 200 `{ deletedDays, deletedUploads, deletedFiles }`, as 10.4 | 404; 409 `org_not_in_setup`, `import_running`; 503 `files_unavailable` |
 | `GET /api/admin/orgs/:orgId/forecast-runs` | | 200 `{ runs }` (14.4), newest import first, at most 100 | 404 |
 | `POST /api/admin/orgs/:orgId/locations/:locationId/forecast-runs` | a run file (14.4), up to 256 KB | 201 `{ run }` (draft); 200 `{ run }` for a file the location already has | 400 `invalid_forecast_file` `{ issues: { path, code }[] }`; 404 |
 | `POST /api/admin/orgs/:orgId/forecast-runs/:runId/publish` | `{}` | 200 `{ run }` | 404; 409 `forecast_run_not_draft` |
@@ -954,6 +969,8 @@ interface AuditEventView {
 }
 ```
 
+**Setup (D23, F10b).** The five setup routes run while the organization is in setup: `status: 'active'`, no `firstJoinedAt` (6.1), and no member row that has joined (`joinedAt` set, active or removed; the row check covers organizations from before the field). Open invitations never count, and setup never reopens: `firstJoinedAt` outlives every seat, and a person deletion that takes the removed seats. Each scopes through `scopeForStaffOrg` (404 for an unknown organization), then answers 409 `org_not_in_setup` outside setup, then runs the org admin route’s own checks in its order (the body, the location, 404 for one in another organization, the town and place, the location limit, `location_has_data`, `import_running`). A place id is checked with Google on the staff member’s own `townwise:places` budget. Then the staff event is written (9.3) and the org route’s write runs. A name another location has is 409 `location_name_taken` after the event, which is followed by `staff_action.not_applied`; so are a location gone meanwhile (404) and stored files off while the location has some (503 `files_unavailable`). Locations and uploads made here hold the staff user id in `createdBy` and `uploadedBy`, with `byStaff: true` (6.4, 6.6). Answers carry ids, names, towns, counts and date coverage, never a figure (D7). Setup is checked before the event with no lock: a join landing between the check and the write is accepted, and the write shows in staff activity like any other.
+
 People come only from Townwise records and config: staff from `TOWNWISE_SUPERADMIN_EMAILS` (with `users.findByEmail` and `totp.get` for their two-step state), plus seats, invitations and requests. A person who signed in and has none of these is found only by exact email through `users.findByEmail`, as kind `signed_in`. The kit’s collections are never read directly. “Sign out everywhere” calls the kit’s `revokeAllSessions(userId)` (**Exists**) and audits `people.signed_out_everywhere`. [CONFIRM: sign out everywhere for staff]
 
 **Deletion (D22).** The one v1 deletion path. Both actions follow the staff audit rule (9.3): checks, then the event, then the effect. Each step is a delete by filter, so a retry completes the work.
@@ -963,6 +980,7 @@ People come only from Townwise records and config: staff from `TOWNWISE_SUPERADM
   2. Audit `person.deleted` with ids only.
   3. Through `deletePersonRecords(userId, email)` (6.10 rule 8): delete the person’s access requests (by `userId`), their open invitations in every organization (`inviteEmail == email`), and their removed seats (`userId`, `status: 'removed'`). [Build note: also their tuning chat conversations, live turns and TownwiseAI proposal records in every organization (`tw_chat_conversations`, `tw_chat_live_turns`, `tw_chat_proposals`, by `userId`), which postdate this list (`tuning-chat.md`), and their welcome markers in every organization (`tw_welcomes`, by `userId`, 6.15; not counted in the answer). Notes they saved from proposals stay, as every note does. The 404 in step 1 counts audit events as Townwise records, because the audit log keeps an address until its person is deleted (Section 17).]
      [Build note: and set `importedBy` and `publishedBy` to null on the forecast runs the person imported or published (6.20), in every organization.]
+     [Build note: before the removed seats go, each organization one of them joined that has no `firstJoinedAt` gets it, from the person’s earliest `joinedAt` there (6.1), so the deletion never reopens staff setup (D23).]
   4. When a kit user exists: call `revokeAllSessions(userId)` and `authStores.totp.remove(userId)` (both public, **Exists**).
   5. `redact` the email in the audit log (9.3).
   6. Answer the counts and `kitUserId`. The kit’s user record and its revoked session records are then deleted by hand, as a runbook step, because the kit has no user delete (Section 19, item 7). Until then, the person can still continue with Google, and they resolve to `no_org`.
@@ -989,10 +1007,10 @@ Built with the rate-limit module and keyed on `acct:<userId>`, a key the caller 
 | Name | Applies to | Limit | When Redis is down |
 |---|---|---|---|
 | `townwise:writes` | every non-GET `/api` route, before access is resolved | 300 per 10 minutes | allow |
-| `townwise:uploads` | the upload route | 30 per hour | allow |
+| `townwise:uploads` | the member upload route (staff setup’s carries only `townwise:writes`, as every staff write does) | 30 per hour | allow |
 | `townwise:requests` | `POST /api/access-requests` | 5 per day | deny (503 `unavailable`) |
 | `townwise:view-as` | `POST /api/admin/view-as` | 20 per hour | deny (503 `unavailable`) |
-| `townwise:places` | both Places routes together | 300 per hour | deny (503 `unavailable`) |
+| `townwise:places` | both Places routes together; each location write with a `placeId` also spends one (10.3) | 300 per hour | deny (503 `unavailable`; on a location write, 503 `places_unavailable`) |
 | `townwise:files` | `POST .../files` (10.11) | 120 per hour | allow |
 | `townwise:file-chunks` | `PUT .../files/:fileId/chunks/:index` | 1,500 per hour | allow |
 | `townwise:downloads` | both file downloads together | 300 per hour | allow |
@@ -1013,14 +1031,15 @@ A search is 10 to 15 debounced autocompletes and one details call, so `townwise:
 | 403 | `staff_setup_required`, `staff_reauth_required` | staff gate | route per 4.3 |
 | 403 | `view_as_read_only` | a non-GET without the `staff` policy during view-as | should not happen: controls are disabled |
 | 404 | `place_not_found` | the details route: Google has no such place (10.2a) | the client keeps the manual fields |
+| 400 | `unknown_place`, `place_not_supported`, `place_town_mismatch` | a location write with a `placeId` (10.3): Google has no such place, it has no US town, or the sent town is not its town | “Google Maps answered differently this time.”, then the search again |
 | 404 | `not_found` | unknown id, or an id in another organization | “This {thing} isn’t available.” with a way back |
 | 409 | `view_as_active` | any route with the `staff` policy, any method, during view-as; a second view-as start racing the first | re-read `/api/me` |
-| 409 | `no_invite`, `already_in_org`, `request_exists`, `request_not_pending`, `requester_has_org`, `last_admin`, `location_name_taken`, `location_limit`, `location_has_data`, `note_limit`, `member_limit`, `person_has_seat`, `org_not_suspended` | as in the tables | inline copy per page |
+| 409 | `no_invite`, `already_in_org`, `request_exists`, `request_not_pending`, `requester_has_org`, `last_admin`, `location_name_taken`, `location_limit`, `location_has_data`, `note_limit`, `member_limit`, `person_has_seat`, `org_not_suspended`, `org_not_in_setup` | as in the tables | inline copy per page |
 | 413 | `payload_too_large` | server-core | unreachable from the app (Section 11.3) |
 | 415 | `unsupported_media_type` | server-core | client bug |
 | 429 | `rate_limited` | Section 10.8, with `retryAfterSeconds` | “Too many attempts. Try again in {minutes} minutes.” |
 | 500 | `internal` | server | “Something went wrong on our side. Try again in a minute.” |
-| 503 | `places_unavailable` | a Places route while the search is off, or Google failed or timed out (10.2a) | the client shows the manual fields |
+| 503 | `places_unavailable` | a Places route while the search is off, or Google failed or timed out (10.2a); a location write with a `placeId` for the same reasons, or while the `places` limiter’s store is down (10.3) | the client shows the manual fields |
 | 503 | `unavailable` | a deny-when-down limiter, a store outage, or a staff action whose audit write failed (9.3) | “Townwise isn’t responding. Try again in a minute.” |
 | 400 | `purpose_unavailable` | `POST .../files` with a purpose other than `history` (10.11) | client bug |
 | 403 | `view_as_no_download` | a file download during view-as | controls are hidden |
@@ -1276,6 +1295,8 @@ Chunked sessions, because the Container Apps ingress closes a request at 240 sec
 | Reading | text streamed (the upload cap); workbooks and Word documents 10 MiB, 2,000 parts, 64 MiB a part, 200 MiB declared, 100 to 1 a part over 1 MiB, `word/document.xml` 50 MiB; PDFs 25 MiB, 1,000 pages, 20,000 text items a page; 2,000,000 rows, 200 columns, 10 sheets; 192 MiB of heap and 20 minutes a file |
 | ZIP archives | 20,000 entries and 2 GiB declared, every depth together; 100 to 1 for the archive and for each entry over 1 MiB; a 16 MiB central directory; a ZIP inside a ZIP opened from memory up to 50 MiB (50 MiB of them at once), one inside that never opened |
 | AI column step | 2 calls a file, 5 a ZIP (at most one a family of its tables), 20 an import; `TOWNWISE_FILES_MONTHLY_BUDGET_USD` per organization per month (default 5; 0 turns it off) |
+
+The drop screen (P11 step 3) is the client of these routes, through `client/src/portal/files/` (storage2 15.3): it never hard-codes a cap, sends each file’s name and size only in the create body, and offers the browser path (11.1) while stored files are off.
 
 ### 11A.3 Kinds
 
@@ -1574,7 +1595,7 @@ The sections are Home (`/locations/[id]`), Analytics (`/locations/[id]/analytics
 
 ### 15.8 Statement moments
 
-Two full-screen statements reveal word by word, hold, then dissolve into the page underneath. [Build note: the pieces are built (`client/src/portal/moments/`) and the server side is live; the player is not mounted in `PortalGate` yet, so nothing plays until the client wiring lands.]
+Two full-screen statements reveal word by word, hold, then dissolve into the page underneath. [Build note: `MomentProvider` (`client/src/portal/moments/`) is mounted in `PortalGate` and decides both moments from each access answer with `momentFor` (`moments.ts`).]
 
 | Moment | When | Lead (`white`) | Follow (`text2`) |
 |---|---|---|---|
@@ -1587,8 +1608,9 @@ Two full-screen statements reveal word by word, hold, then dissolve into the pag
 - **Timing.** The first word starts at 120ms. Each word fades in over 200ms (`--ease-out`), 80ms after the one before, closer together when a line would take longer than 640ms. A clause or a sentence inside a line holds 140ms more (at most twice a line). The follow starts 360ms after the lead lands, holds 1.4s once it lands, and the layer fades out over 200ms. Request received for a two-word name is gone at about 3.3s, and every moment ends within 5 seconds.
 - **Reduced motion.** Both lines whole at once, still for 2.4s, then gone at once.
 - **Any input ends it.** A press, touch or wheel is absorbed (it never reaches the page under the opaque layer) and fades the layer out; once that press is over, presses reach the page. On web a press is over when its click has landed on the layer, or 350ms after it lifts if no click comes, because a touch's click is aimed when the finger lifts; under reduced motion the layer goes at that point too. A key removes it at once and still does its job on the page (Tab moves focus). Repeats and lone modifier keys are ignored, and so is any input in the first 300ms, so the press that sent a request can’t end its moment. Android back dismisses it and is consumed. A moment that would start in a hidden tab keeps its ground up and waits until the tab is visible.
-- **Screen readers.** The visual words are hidden from assistive tech, and the statement is said once, as plain text: on web through a polite status region that exists before any moment, on native through an announcement. On native with a screen reader running there are no visuals at all. The layer never takes focus.
+- **Screen readers.** The visual words are hidden from assistive tech, and the statement is said once, as plain text: on web through a polite live region that exists before any moment (`aria-live="polite"` without `role="status"`, so it never competes with a page's own status notice), on native through an announcement. On native with a screen reader running there are no visuals at all. The layer never takes focus.
 - **One player.** `MomentProvider` in `PortalGate` plays one moment at a time; a page may call `useMoment().play(statement)` for its own statements and hold its own entrance while `useMoment().playing`.
+- **When it decides.** On every new access answer (`GET /api/me`, or an answer applied in its place), in the same render, so the layer and `playing` are up before the page paints. Request received needs this session's previous answer in `no_org`, `rejected` or `removed` and the new one `pending`: a fresh load or Check again on Waiting plays nothing, and neither does a decline that returns an invited person to Waiting. Each moment is keyed (the request's id; the person and the organization for the welcome) and plays once in a session, so a later re-read that still carries `welcome` (its `POST` failed) does not replay it. Under view-as, or on the first answer after it, nothing plays and nothing is posted. Nothing is stored on the device.
 
 ---
 
@@ -1647,8 +1669,9 @@ Every page below lists its content top to bottom, its one primary action, and it
   - Town: a select grouped “College towns” (six) and “Seasonal and event towns” (six), then “Another town”, which reveals Town name and State.
   - Number of locations (1 to 50).
   - “Anything we should know? (optional)”, with the helper “Don’t include guest names or sales figures.”
+- While the Google Places search is on, Step 1 “Find your restaurant” comes before these fields, and a confirmed place takes Town’s place (10.2a).
 - Primary: “Send request”.
-- Side column, “What happens next”, numbered 01 to 03: “Someone on our team reviews your request.”, “We don’t send email yet. Check back here.”, “Once you’re approved, you’ll upload your sales history and see your town.”
+- Side column, “What happens next”, numbered 01 to 03: “Someone on our team reviews your request.”, “We’ll email you when you’re approved.”, “Once you’re approved, you’ll upload your sales history and see your town.”
 - Footer line: “Signed in as {email}. Using the wrong Google account? Sign out and continue with another one.”
 - Variants: for `removed`, the lead adds “Setting up a different organization? Tell us about it below.” For `rejected`, the previous answers are prefilled.
 
@@ -1662,7 +1685,7 @@ Every page below lists its content top to bottom, its one primary action, and it
 
 **P4. Waiting for approval (`/waiting`)**
 
-- Eyebrow “Request sent {date}”. Title “Your request is in”. Lead: “Someone on the Townwise team reviews every new organization by hand. We don’t send email yet, so check back here.” [DECISION NEEDED: whether to state a review time]
+- Eyebrow “Request sent {date}”. Title “Your request is in”. Lead: “Someone on the Townwise team reviews every new organization by hand. We’ll email you when you’re approved.” [DECISION NEEDED: whether to state a review time]
 - “What you sent”, a two-column definition list: Organization, Your name, Your role, Town, Locations, Note.
 - “While you wait: {town}, {state}”: the town profile (Section 13; on native, the text summary and numbers table, D21), or the gap copy for another town.
 - Hint: “Expecting to join a teammate’s organization instead? Ask their admin to add {email}. The next time you open Townwise, you can join it with one press.”
@@ -1722,7 +1745,7 @@ Primary: “Sign in again” (kit `POST /auth/logout`, then `/sign-in`).
 | Error | Network copy with Try again |
 | Success | The list, or the redirect. After a join, the notice “You joined {org}. {inviter} added {email}. Not your team? Leave {org}.” (F1) |
 
-**P10. Add location (`/locations/new`, org admins).** Fields: Name, and Town (as P3). Primary: “Add location”. Errors: “Another location already uses that name.” and “You’ve reached 25 locations. Write to hello@townwise.tech for more.” On success it opens the new location’s Home (P11).
+**P10. Add location (`/locations/new`, org admins).** Fields: Name, and Town (as P3); while the Google Places search is on, the form starts with it (10.3). Primary: “Add location”. Errors: “Another location already uses that name.” and “You’ve reached 25 locations. Write to hello@townwise.tech for more.” On success it opens the new location’s Home (P11).
 
 **P11. Home (`/locations/[id]`, the location’s first page)**
 
@@ -1735,7 +1758,14 @@ Home replaced the Forecast page here (owner decision, 2026-11-05); its data chec
 - **Last week, {Oct 26} to {Nov 1}** (panel), “Against the same week last year”: on web, seven pairs of bars (last week solid `mint`, last year outlined `line`, aria-hidden) with the key and the printed scale; on native the text and the table only (D21). “Last week: {1,020} guests, {4%} more than the same week last year ({980}), compared over 7 days.”, or “on the {n} days both weeks have” when partial: the totals and the change are over the days with data in both weeks. States: “Your history ends {date}. Upload the days since to compare last week.” with the upload link (web), when the history ends before last week; “No {guests} stored for last week, so there is nothing to compare yet.” with the same link, when it reaches past a gap; “No data for the same week last year, so there is nothing to compare yet.”; no days in common; no history. “Show the numbers”: Day, Last week, Last year, Change. When forecasts arrive (14.3) this card compares forecast with what happened; until then it never shows a prediction.
 - **This month in {Town}**, eyebrow “{November 2026}”: the month as a grid (aria-hidden, with a key: a white corner for a town event or holiday, a `text2` corner for a note, this week outlined); every event and note on the month in date order with its sources (“Veterans Day. Federal holiday.”, “Your note: Private event, more guests than usual.”); for one of the twelve towns, “Food-service jobs in {Grafton County}, {November} 2024: {97.4} (2024 average = 100).” with “County, not town. Employment is a stand-in for demand.” and the BLS source; “Your {November} in past years” with one line per past year, newest first, at most three (“{118} guests a day over {30} days in 2025, {9%} below your 2025 daily average over {364} days.”, closed days left out; the year’s day count shows how much of that year the history covers); and **Who’s in town**: the month’s people in town (13.2, `GET .../people-in-town` for the month, read on its own; `client/src/portal/estimates/PeopleInTownSummary.tsx`): the term periods in words (“Fall term classes until Tue, Nov 17.”), a headcount range per run of days only where every input has a source (“About {9,500} to {10,500} people in town, from {2} sources.”), otherwise “Townwise can’t put a number on how many people are in {town} yet.” with a Planned tag, “A headcount from public counts is planned.”; “Your Saturdays averaged …” when the location has days both in term and between terms; and the provenance lines naming each source host as a link. A town Townwise hasn’t researched says so. A failed read shows its error and Try again in that place only.
 - **Your history** (panel, root `nativeID` “home-history” for the Reading screen’s animation): “{n} days”, “{first} to {last}. {n} missing days in between. Last upload {date} by {email}.”, the newest year as a heatmap that takes no focus (web; `role="img"` named by its summary), and links “See it in Analytics” and “Upload sales history” (web; native says where to upload).
-- **While onboarding’s `needsHistory(org, locations)` is true** (54’s, agreement 1): its HistoryStep takes the place of Bar order, Last week and Your history; This week (calendar only) and This month still show. [Until 54’s onboarding merges, `home/onboarding.ts` stands in: true when the organization has locations and none has a stored day, with a step that offers P13’s upload.]
+- **While onboarding’s `needsHistory(org, locations)` is true** (agreement 1 with session 54: the organization has locations and none has a stored day) and this location’s own history has no day: step 3, below, takes the place of Bar order, Last week and Your history; This week (calendar only) and This month still show.
+- **Step 3, Your history** (`client/src/portal/onboarding/`, `HistoryStep`; the Home2-Drop and Home2-Reading boards; 11A, 10.11). Mono “Step 3 of 3: Your history”, then “Drop in everything you have” and “Drop your exports as they are, as many as you have. Townwise reads the date, guest count and net sales for each day from them on its server.” Two columns from 1024px: the drop on the left; on the right the location card (“Your restaurant”, the name, the town and its kind) and “What Townwise keeps” (the files, stored privately with no public internet address, each original deleted after 365 days or sooner when deleted; from each file the three values a day and a cleaned copy; download or delete them on Sales data). On the first view of a fresh step the card moves from the left into the rail once (280ms) while the drop fades in; with reduced motion, on narrower screens and on native it is simply in place. Nothing is kept in browser storage.
+  - **Drop** (web): a dashed zone, “Drop files here”, “Many files at once is fine, by dragging them here or choosing them.”, the accept hint (11A’s cap from the create answer, never a constant) and “Choose files” (`multiple`, any type). Files dragged anywhere on the step drop there (“Drop to add {n} files”); one dropped elsewhere on the page is ignored, so the browser never opens it over the app and stops the uploads. Each file is its own row through the upload queue (storage2 15.2): name, size, a progress bar, “{speed} · About {t} left” or “Estimating”, “Waiting to upload”, “Reconnecting…”, the refusal’s words, and Cancel or Remove; above the rows “{n} files, {size} · About {t} left to upload”. Files from an earlier visit still uploading show “Upload interrupted. Drop it again.” with Remove. Primary “Read my history”, disabled with “Add at least one file.” until a file is stored. Then “What to drop in”: daily sales summaries; sales reports as Excel, CSV or PDF (a PDF needs a table, scans can’t be read); ZIPs of exports; check-level exports (item-level don’t work); as many years as you have; closures and events go on the Notes page (notes inside files aren’t read).
+  - **The browser path** (11.1) is always linked under the drop as “Prefer to send only daily totals? Read the file in your browser instead.”, and after a refusal or a failed status read as “Or read a CSV file in your browser and send only the date, guest count and net sales for each day.” While stored files are off (503 `files_unavailable`, from the status read or a create) the drop is replaced by “Read a file in your browser” and P13’s “Upload sales history”.
+  - **Reading** (“Reading your history”, “You can close this page. Townwise keeps reading on its server, and Home shows your history when it’s done.”): “{done} of {n} files read · {About {t} left to read, Estimating, Waiting for a turn or Waiting for your answer}”; each file’s line (11A.6) with its own time left to read or “Estimating”, a bar when the server knows the total, a ZIP’s count and “See what’s inside” (its files inside, each with its status and reason, as on Sales data); the question (ImportQuestion) when the reader needs an answer; every file kept and not used with its reason; “Found so far” from the import’s counts; and the calendar of days read so far (the analytics heatmap, one picture named by its summary, unread days of the drawn years up to yesterday as “Not read yet”), re-read when the import applies more days. New drops join the started import. Native shows the same in words, with no calendar and no drop (“Drop your files from a computer at townwise.tech.”).
+  - **Done**: “Done. {n} days, {first} to {last}.” and “Opening Home.”; after 2.5 seconds, or on “Go to Home now”, Home and the organization load again and the step leaves; on web Home’s history card grows from where the calendar was (280ms; reduced motion: it just appears), and focus moves to it when the step held focus. While this screen still has uploads running it waits (“Some files are still uploading. Going to Home now stops them.”). An import that found no day says “Done. Townwise found no days it could use in these files.”, keeps every file’s reason listed and the drop zone open.
+  - **View-as**: no drop and no upload (no file input, the queue never created), “Choose files”, “Read my history” and the browser path’s link disabled with the read-only line, file names shown as their kind; the status reads run as any GET does.
+  - A screen reader hears one status line when the step changes (reading, a question, done), never a time left or a byte count.
 - No primary button of Home’s own.
 
 | State | Shows |
@@ -1816,6 +1846,7 @@ Home replaced the Forecast page here (owner decision, 2026-11-05); its data chec
 **P16. Location settings (`/locations/[id]/settings`, org admins)**
 
 - Fields: Name, and Town. Primary: “Save changes”.
+- While the Google Places search is on, a section “Change this location’s place” (10.3).
 - A section “Delete location”. When the location has no sales and no notes, it shows an outline “Delete location” with a typed-name confirmation. Otherwise it says “Delete this location’s sales data and notes first.”
 - States: loading; the field error “Another location already uses that name.”; success notice “Saved.”; after a delete, `/dashboard` with “Deleted {name}.”
 
@@ -1916,7 +1947,7 @@ The location's chat with TownwiseAI and its side panel (server contract: `docs/p
   - “Requested as {emailAtRequest}” when the email changed;
   - the warning “This person already belongs to an organization.” when `requesterHasOrg` is true;
   - actions: the primary “Approve” (C3), an outline “Reject” (C4), and a text link “View as” (C1), which shows the Waiting page as they see it.
-- **C3, Approve.** Title “Approve {orgName}”. Fields: Organization name, and First location name (prefilled with the organization name). The town is shown read-only. Text: “This creates the organization and its first location in {town}, and makes {email} its admin. They get access the next time they open Townwise. We don’t send email yet.” Primary: “Approve”.
+- **C3, Approve.** Title “Approve {orgName}”. Fields: Organization name, and First location name (prefilled with the organization name). The town is shown read-only. Text: “This creates the organization and its first location in {town}, and makes {email} its admin. We email them that they’re in, and they get access the next time they open Townwise.” Primary: “Approve”.
 - **C4, Reject.** Title “Reject {orgName}?” Field: “Message to {contactName} (optional)”, with the helper “Shown on their No access page. Up to 500 characters.” Primary: “Reject”.
 
 | State | Shows |
@@ -1948,6 +1979,14 @@ The location's chat with TownwiseAI and its side panel (server contract: `docs/p
 - With no admin: “No admin yet. Add an admin email.”
 - **Team**: P17’s table and add form, with a “View as” text link on each active member. Above the add form: “Addresses you add here show as added by Townwise staff. Don’t add your own addresses.”
 - **Locations**, metadata only: Name, Town, Days, First day, Last day, Notes, Last upload. Under the table: “Sales figures and notes are visible only through View as.”
+- **Setup** (D23, F10b) [Build note: `client/src/portal/console/SetupPanel.tsx`, with `SetupUpload.web.tsx`]: while the organization is in setup (`org.inSetup`: active, and nobody has ever joined it), a section after Locations, kicker “Staff setup”, title “Set up before anyone joins”, through the setup routes of 10.7. Outside setup the page has none of it. Its line: “Nobody has joined {org} yet. You can add its locations and upload their daily totals so its first admin finds a ready page. Use this only with {org}’s consent. Each change is listed in {org}’s Townwise staff activity, and setup closes for good when the first person joins.” In setup the Locations empty state reads “No locations yet. Add the first one below.” The section shows names, towns, day counts and dates, never a figure (D7):
+  - A table of the locations (Name, Town, Days with the first and last day) with row actions: text “Rename”, outline “Delete sales data” while the location has days, and outline “Delete” while it has no day and no note. Each opens a console dialog.
+  - **Rename** (“Rename {location}”, “Change its name, and its town or its place on Google Maps.”): Name and Town as P16, with “Changing the town takes off the location’s Google Maps place, if it has one.”, and “Search Google Maps instead” while the search is on, which finds a place as P10 does (“Looks right”, then the place in the form with “Change place”). “Save changes”, then “Saved.”.
+  - **Delete sales data** (“Delete {location}’s sales data?”, “This deletes its {n} days of daily totals, its uploads and any stored files. This can’t be undone. It’s listed in {org}’s Townwise staff activity.”, with the typed name), then “Deleted {n} days and {k} uploads from {location}.” (“ and {f} stored files” before “from” when there were any). 409 `import_running`: “Townwise is reading files for this location. Try again when it’s done.” 503 `files_unavailable`: “Stored files are off right now, so nothing was deleted. Try again later.”
+  - **Delete** (“Delete {location}?”, “This deletes the location from {org}. This can’t be undone. It’s listed in {org}’s Townwise staff activity.”, with the typed name), then “Deleted {location}.”. 409 `location_has_data`: “Delete {location}’s sales data first.”
+  - **Add a location**: P10’s form, with the Places search first while it is on (the section asks once with autocomplete `{}`, as P3 does), then “Added {location}.” and the form empty again. Its refusals read as on P10, except 409 `location_limit`: “{org} has 25 locations, the most an organization can have.”
+  - **Upload daily totals** (web only; native says “Upload daily totals for {org} from a computer.”, D20): “Your browser reads the file here, and Townwise receives only each day’s date, guests and net sales. The days it covers replace the ones the location has. This page shows how many days and which dates, never a figure.”, an “Upload for” location select, “Use an export that covers only {location}.”, and an outline “Choose a CSV file”. The browser reads the file as P13 does (11.2 steps 1 and 2: the same checks and Match columns, with Back and no Cancel), except that Match columns has no location column, so no column’s values are listed, and a header name that reads as a date or an amount shows as “Unnamed (column {n})”: no cell of the file shows. Then “Check the days”: “{n} days for {location}, {first} to {last}.”, “{k} days in this file can’t be sent, so they are left out.” when any are, and “{location} already has {first} to {last}. Days in both are replaced by this file.” when it has days, with “Send {n} days”, Back and “Choose another file”. Only `{ days }` is sent (11.1). Then “Saved {n} days for {location}, {first} to {last}.” and “{location} now has {n} days, {first} to {last}.”, with “Upload another file”. No total, no day’s values and no reason a day was left out show, and the answer keeps only the day counts and dates (its calibration is dropped). The location’s name and days are read as the organization has them now, so a rename during the upload shows at once. Send errors read as P13’s.
+  - After each write the page reads the organization again, so Locations shows the days, and the section says how the write ended, where focus moves. A location write’s 404: “{location} was deleted meanwhile.” When any read of the page finds setup closed that it showed open (after a setup write, Suspend, or a join meanwhile), the section goes and the notice says why, from that read: “{org} was suspended, so setup is closed.” when it is suspended, otherwise “Someone joined {org}, so setup is closed. Use View as to see their page.” A setup write that answers 409 `org_not_in_setup` hides the section at once and reads again; if that read fails, the notice says someone joined. Once a newer read lands, `org.inSetup` decides, so an organization reactivated on the page gets the section back while nobody has joined.
 - **Recent activity**: the newest 20 audit events for this organization, with a link to `/admin/audit` filtered to it.
 - **Forecasts** (14.4) [Build note: the section's component is `client/src/portal/console/ForecastRuns.tsx`]: kicker "Staff only". One line: "A forecast is a draft until you publish it. {org}’s members and TownwiseAI see only published forecasts, never the model. Each import, publish, withdrawal and deletion is listed in {org}’s Townwise staff activity." Per location a table (Model, Dates with the day count, Trained to, Made, Status, Actions), or "No forecast imported for {location}." Actions: primary "Publish" on a draft only, text "Withdraw" on a draft or published run, outline "Delete" on every run, each through a console dialog whose body ends "Its admins see this in their Townwise staff activity." **Import a forecast** (web only; native says "Import a forecast for {org} from a computer."): a location select and "Choose a run file"; the browser reads the file and shows "For {location}: Model {v}, guests, {n} days ({k} open) from {first} to {last}, trained to {date}, made {date}." and "Saved as a draft; owners and TownwiseAI see it only after you publish it." before "Import". Problems read "{path} {words}." from the issue codes, never a value. No figure from a run shows in the console.
 - **Delete organization**, last on the page. While the organization is active: “Suspend {org} before deleting it.” and no button. While suspended: an outline “Delete organization”. Its dialog: “This deletes {org}: its {n} locations, their sales data and notes, its team and its request. The audit log keeps the events, with the organization’s and locations’ names removed. This can’t be undone. Type {org} to confirm.” On success, `/admin/orgs` with the notice “Deleted {org}.” (The notice uses the name typed into the dialog; the server no longer has it.)
@@ -2021,7 +2060,7 @@ The location's chat with TownwiseAI and its side panel (server contract: `docs/p
 | `FILES_BLOB_ACCOUNT_URL`, `FILES_AZURITE_CONNECTION_STRING` | env, not secret | the client files account URL; Azurite's connection string in development only (production refuses it) | `api/src/config.ts`. In Azure the API signs in with its managed identity (`IDENTITY_ENDPOINT`, `IDENTITY_HEADER`, `AZURE_CLIENT_ID`) through the token source email uses, or boot fails |
 | `TOWNWISE_FILES_MONTHLY_BUDGET_USD` | env, not secret | 5 (0 to 1,000; 0 turns the AI column step off) | the file reader's AI spend per organization per month (11A.4); on only with `ANTHROPIC_API_KEY` [CONFIRM] |
 | Clock | dependency | the one `now` function `main.ts` passes to both `createAuth` and `createTownwiseApi` | 7.1 |
-| `EMAIL_ENDPOINT` | env, not secret | the Communication Services endpoint, a bare `https://*.communication.azure.com` origin | Absent turns email off (D14). Set together with `EMAIL_SENDER`; email also needs the managed identity (`IDENTITY_ENDPOINT`, `IDENTITY_HEADER`, `AZURE_CLIENT_ID`), or boot fails |
+| `EMAIL_ENDPOINT` | env, not secret | the Communication Services endpoint, a bare `https://*.communication.azure.com` origin | Absent turns email off (D14); set in production from 2026-11-09. Set together with `EMAIL_SENDER`; in production email also needs the managed identity (`IDENTITY_ENDPOINT`, `IDENTITY_HEADER`, `AZURE_CLIENT_ID`), or boot fails; outside production, with `IDENTITY_ENDPOINT` and `IDENTITY_HEADER` unset, it sends through the developer’s `az login` |
 | `EMAIL_SENDER` | env, not secret | `no-reply@townwise.tech` | D14 |
 | `TOWNWISE_EMAIL_REPLY_TO` | env, not secret | a team member’s address in production | Absent: no Reply-To, and the footer does not offer replies (D14) |
 | `TOWNWISE_WEB_URL` | env, not secret | `https://townwise.tech` in production, `http://localhost:8081` by default | A bare origin, for the links in emails; production email requires `https:` (D14) |
@@ -2109,6 +2148,7 @@ Named tests:
 - **Deletion:** deleting a person with an active seat is 409 `person_has_seat`; otherwise their requests, invitations and removed seats are gone, and no audit event holds their email.
 - **Deletion:** deleting an active organization is 409 `org_not_suspended`; deleting a suspended one leaves no tenant document with its `orgId`, and no audit event holds its name.
 - **Forecast runs (14.4):** `api/test/forecast-file.test.ts` (strict shape, cross-field rules, issues without values, labels from code), `forecast-score.test.ts`, `forecast-runs.int.test.ts` (import, retry, publish and withdraw, staff only, staff activity, deletion), `estimates.int.test.ts` (drafts invisible, newest eligible run per date, actuals and live accuracy), `chat-estimate-tools.test.ts` (`get_forecast`), and `client/test/portal/console/forecasts.test.web.tsx`.
+- **Staff setup (D23):** `api/test/staff-setup.int.test.ts`: each setup route works in setup and records its event before the effect; 409 `org_not_in_setup` after the invited admin joins, with any active seat, while suspended, and for good after the only person who joined leaves or is removed and is deleted (`firstJoinedAt`, set once at a join or an approval), or with a removed seat on an organization from before that field; open with only open, withdrawn or declined invitations; 403 for a member and an org admin; 404 for an unknown organization and another organization’s location; 503 with nothing changed when the audit write fails; `staff_action.not_applied` after `location_name_taken` and `files_unavailable`; after the join, staff activity lists the setup writes and the admin reads the days, with staff uploads as “Townwise staff”; no figure in an answer, a log line or an event. `api/test/routes.test.ts` pins the five routes.
 - **Audit:** every mutation writes its event with only the allowlisted keys.
 - **Email:** normalization matches the kit for case and spaces.
 - **Towns:** `api/test/towns.test.ts` matches `api/src/towns.ts` against the literal list of twelve ids (Section 13).
@@ -2124,8 +2164,10 @@ Client tests:
 - the CSV parser’s RFC 4180 cases, delimiters, date orders, number formats, row modes and per-day sums;
 - the mapper never renders a cell: a file whose cells contain a sentinel name must never show it, except a mapped location value;
 - the view-as banner renders, and writes are disabled;
+- staff setup on P21 (`test/portal/console/setup.test.web.tsx`): the panel only while `inSetup`; each write goes to its setup route and the page reads again; the deletes confirm with the typed name first; an upload sends only `{ days }`, has no location column, and no figure or other cell from the file or the answer shows; 409 `org_not_in_setup` takes the panel away, even when the read after it fails, and says someone joined, or that the organization was suspended when the read finds it so, and a reactivation brings it back; a read after a write that finds someone joined says so; a 404 on the send; `useRefreshable.test.ts`: an older read never lands over a newer one;
 - the twelve town ids in the client’s `towns.ts` match the same literal list as the api test;
 - statement moments (`test/portal/moments/`): the copy and the timeline (`timing.test.ts`, `moments.test.ts`), and the player on native and web (`provider.test.native.tsx`, `provider.test.web.tsx`): one moment at a time, said once, hidden from assistive tech, dismissed by a key at once and by a press after the grace period, reduced motion, a native screen reader, Android back and a hidden tab.
+- which moment plays when (`moments.test.ts` > `momentFor`; `decisions.test.native.tsx` and `decisions.test.web.tsx`, the whole app with `PortalGate`): the send's `pending` answer covers the redirect to Waiting with request received; a fresh load of Waiting plays nothing; the welcome is up, with `playing` true, in the first render of the first page; it posts `/api/me/welcome` once and a re-read does not replay it; under view-as nothing plays or posts; the live region says it once.
 - Analytics (`test/portal/analytics/`): the compute modules (`compute.test.ts`); the heatmap’s grids, one tab stop, keys, hover preview, the Day panel’s sources and the filters’ effect on the marks and the basis line, with no write and no storage, the same under view-as (`heatmap.test.web.tsx`); the native month list, its Day panel and the thin and empty copy (`analytics.test.native.tsx`); the shared checkbox (`test/portal/ui/checkbox.test.*.tsx`).
 
 ---
@@ -2215,6 +2257,7 @@ Each is marked inline with “lead default”:
 43. Web-only charts, with text and tables on native (D21).
 44. Staff-only deletion in v1, with suspension before an organization is deleted (D22).
 45. Who holds Atlas project access, named on the privacy page (17).
+46. Staff setup for an organization nobody has joined yet: write-only, ending at the first join, used only with the client’s consent (D23, F10b).
 
 ### 22.3 Decisions needed
 
@@ -2242,6 +2285,16 @@ Each is marked inline with “lead default”:
 ---
 
 ## 23. Changelog
+
+**2026-11-09, email on.** Production sends the two D14 emails: `api/production.env` sets `EMAIL_ENDPOINT` and `EMAIL_SENDER`, and the F2, F3, P3, P4 and C3 copy and the privacy page say so. Locally, `EMAIL_ENDPOINT` in `api/.env.local` sends through the developer’s `az login` (`azure-identity.ts`), never in production, where a missing managed identity still refuses boot (18).
+
+**2026-11-06, staff setup.** While an organization is active and nobody has ever held a seat in it, staff add, rename and delete its locations and upload or delete their daily totals (D23, F10b), through five staff routes that reuse the org routes’ checks and writes (10.7). Each write is recorded before its effect and shown in the organization’s staff activity once someone joins (9.2, 9.3); answers carry no figure (D7). Setup ends at the first join and never reopens, kept by the organization’s new `firstJoinedAt` (6.1), and is closed while suspended (409 `org_not_in_setup`, 10.9). Locations and uploads made in setup carry `byStaff` (6.4, 6.6), and every view names those uploads “Townwise staff” (10.1). P21’s setup panel is the console side (16.4).
+
+**2026-11-06, places search in the app.** The Google Places search is on P3 (Step 1, “Find your restaurant”), P10 and P16 while it is on (10.2a); P3 learns that by sending autocomplete `{}`, and P10 and P16 from `placeSearch` in `GET /api/org` (10.3). `POST` and `PATCH /api/org/locations` take a `placeId`: the API asks Google for the place, refuses a town that isn’t its own, stores Google’s current id, and spends one call of the `places` budget for it (6.4, 10.3, 10.8, 10.9). `location.created` and `location.updated` add `hasPlace` (9.2). A location keeps the place’s id and town, never the address or the map.
+
+**2026-11-06, onboarding step 3.** Home shows the drop screen (P11, “Step 3, Your history”) while the organization has locations and none has a stored day: files go to stored files (10.11, 11A) through the upload queue, the import is read on the server with its questions on the screen, and Done hands over to Home. While stored files are off (503 `files_unavailable`) it offers the browser upload (11.1) instead. It replaces `home/onboarding.ts`’s stub.
+
+**2026-11-06, statement moments on.** `MomentProvider` is mounted in `PortalGate`, and the two moments play (15.8): request received when this session's access goes to `pending`, and the welcome while `GET /api/me` carries it (`welcome` joins the client's `MeResponse` schema). Never under view-as. The web live region drops `role="status"` so it never competes with a page's notice. Tests in Section 20.
 
 **2026-11-06, forecast runs.** Staff import a model run's outputs for a location (`townwise.forecast-run/1`, 14.4) from P21 as a draft, then publish, withdraw or delete it, each a staff action in the org's staff activity (9.2, 10.7). Owners, view-as and TownwiseAI's `get_forecast` read published runs only, the newest one whose data ends before each day, with ranges, labels made in code, actuals and live accuracy; the model card shows the run (10.13). Two collections (6.20, 6.21), deleted with the location's sales data, the location and the organization. Nothing is published yet (owner decision 2026-11-05: Sawtooth's v3 once it joins and consents).
 

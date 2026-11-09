@@ -9,7 +9,7 @@ import { FORECAST_LINE } from '../../../src/portal/home/Home';
 import type { LocationSummary, MeResponse } from '../../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
-import { ACCESS, EMAIL, fakePortalApi, locationOf, meOf, orgOf, viewAsMe, type FakePortalApi } from '../../helpers/portal';
+import { ACCESS, EMAIL, fakePortalApi, locationOf, meOf, orgOf, refusal, viewAsMe, type FakePortalApi } from '../../helpers/portal';
 import { analyticsFake, calendarBody, historyBody, holiday, note, run, townEvent } from '../analytics/fakes';
 import { NOVEMBER } from '../estimates/fakes';
 
@@ -66,6 +66,8 @@ function portal(me: MeResponse, days: readonly DayRecord[] = DAYS, locations?: L
     [CALENDAR]: calendarBody({ events: EVENTS }),
     [`${PATH}/agent`]: { questions: QUESTIONS, activity: [] },
     [`${PATH}/people-in-town?from=2026-11-01&to=2026-11-30`]: NOVEMBER,
+    // Stored files are off, as in production today.
+    [`${PATH}/imports/current`]: refusal(503, 'files_unavailable'),
   });
   return fakePortalApi({ me, org: orgOf(me.access.state === 'member' ? me.access.role : 'member', locations), fallback: fake });
 }
@@ -154,11 +156,12 @@ test('view-as: the same page, the upload links disabled with the read-only line,
   expect(api.calls.filter((call) => call.method !== 'GET')).toEqual([]);
 });
 
-test('while needsHistory is true the history step shows its upload, and the history card is not drawn', async () => {
+test('while needsHistory is true the history step shows in place of the cards that need days', async () => {
   const empty = [locationOf('l1', 'Main Street Bar', { townId: 'hanover-nh', name: 'Hanover', state: 'NH' })];
+  // Stored files off: the step offers the browser upload (onboarding's own tests cover the drop).
   await renderAt(portal(meOf(ACCESS.admin), [], empty));
-  const step = screen.getByRole('region', { name: 'Add your sales history' });
-  expect(within(step).getByRole('link', { name: 'Upload sales history' }).getAttribute('href')).toBe('/locations/l1/sales/upload');
+  const step = screen.getByRole('region', { name: 'Drop in everything you have' });
+  expect((await within(step).findByRole('link', { name: 'Upload sales history' })).getAttribute('href')).toBe('/locations/l1/sales/upload');
   expect(document.getElementById('home-history')).toBeNull();
   expect(screen.getByText('Sample game')).toBeTruthy();
 });
