@@ -29,6 +29,8 @@ describe('indexes', () => {
       'tw_uploads', 'tw_view_as_grants',
       // U11, statement moments.
       'tw_welcomes',
+      // The display name for TownwiseAI's greeting (account-level).
+      'tw_profiles',
       // U13B, forecast runs.
       'tw_forecast_runs', 'tw_forecasts',
     ].sort());
@@ -120,6 +122,10 @@ describe('indexes', () => {
     expect(indexesOf(registered(), 'TwWelcome')).toContainEqual([
       { orgId: 1, userId: 1 }, expect.objectContaining({ unique: true }),
     ]);
+  });
+
+  it('keeps one profile per person', () => {
+    expect(indexesOf(registered(), 'TwProfile')).toContainEqual([{ userId: 1 }, expect.objectContaining({ unique: true })]);
   });
 
   it('keeps one sales row per location per day, and stores sales rows with strict: throw', () => {
