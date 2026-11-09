@@ -5,7 +5,7 @@ import { getMockContext } from 'expo-router/testing-library';
 
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
-import { ACCESS, EMAIL, fakePortalApi, meOf, orgOf, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
+import { ACCESS, EMAIL, fakePortalApi, meOf, openAsAdminMe, orgOf, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
 import { ADD_EVENT, withRoutes } from '../team/fixtures';
 
 // Settings on web: the two-step link is a real link, Sign out on every device is described by its help line,
@@ -71,4 +71,15 @@ test('view-as of an org admin: every write aria-disabled, focusable, and describ
   expect(describedText(everywhere)).toEqual([`Sign out on every device ends every Townwise sign-in for gm@example.org right away, this one included.`, line]);
   expect(screen.queryByRole('link', { name: 'Two-step sign-in settings' })).toBeNull();
   expect(writes(api)).toEqual([]);
+});
+
+test('open as admin: no Leave section; the rest is the admin’s settings', async () => {
+  const api = fakePortalApi({ me: openAsAdminMe(), org: orgOf('org_admin') });
+  withRoutes(api, { gets: { '/api/org/staff-activity': () => ({ events: [ADD_EVENT] }) } });
+  renderAt('/settings', api);
+  expect(await screen.findByRole('region', { name: 'Townwise staff activity on Test Group' })).toBeTruthy();
+  expect(screen.getByRole('heading', { level: 2, name: 'Townwise staff activity' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Leave Test Group' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Save name' }).getAttribute('aria-disabled')).not.toBe('true');
+  expect(screen.getByRole('button', { name: 'Sign out on every device' }).getAttribute('aria-disabled')).not.toBe('true');
 });

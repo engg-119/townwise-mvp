@@ -3,7 +3,7 @@ import type { z } from 'zod';
 
 import type { ApiClient, RequestOptions, StreamOptions } from '../api/client';
 import { useAuth } from '../auth/AuthProvider';
-import { fetchMe, fetchOrg } from './api';
+import { endViewAs, fetchMe, fetchOrg } from './api';
 import { needsRecheck } from './errors';
 import { formatTime } from './format';
 import type { LoadState } from './hooks';
@@ -114,6 +114,10 @@ export function PortalProvider(props: { children: React.ReactNode }): React.JSX.
       const at = endsAt.getTime() < now.getTime() ? endsAt : now;
       setNotice({ notice: { text: `View-as ended at ${formatTime(at)}.` }, where: CONSOLE_PATHS, shownAt: null });
     }
+    // D25: the same when open as admin ends (End, a join, a suspension).
+    if (previous?.openAsAdmin != null && next.openAsAdmin == null && next.access.state === 'staff') {
+      setNotice({ notice: { text: `Setting up ${previous.openAsAdmin.org.name} as Townwise staff ended at ${formatTime(new Date())}.` }, where: CONSOLE_PATHS, shownAt: null });
+    }
     setMeState({ status: 'ready', me: next });
   }, []);
 
@@ -124,7 +128,14 @@ export function PortalProvider(props: { children: React.ReactNode }): React.JSX.
       .then((next) => {
         // An answer applied meanwhile (End view-as, a join) is newer than this read: drop the read's answer.
         if (applied.current !== startedAt && current.current !== null) return current.current;
+        const previous = current.current;
         applyMe(next);
+        // A read that finds open as admin over (someone joined, the organization was suspended) ends the grant, once:
+        // the resolver never writes, so without End a reactivation inside the staff window would bring it back. It
+        // goes through the kit client, not the portal's, so a failure never re-reads GET /api/me.
+        if (previous?.openAsAdmin != null && next.openAsAdmin == null && next.access.state === 'staff') {
+          endViewAs(auth.api).catch(() => undefined);
+        }
         return next;
       })
       .finally(() => { if (reading.current === read) reading.current = null; });

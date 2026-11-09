@@ -135,7 +135,7 @@ export function ClientFrame(props: { children: React.ReactNode }): React.JSX.Ele
       kind="client"
       email={me.user.email}
       orgName={access.org.name}
-      nav={clientNav(access.role, pathname, navLocationId(pathname, lastLocationId, locations))}
+      nav={clientNav(access.role, pathname, navLocationId(pathname, lastLocationId, locations), me.openAsAdmin != null)}
       {...signOutState(readOnly)}
       onSignOut={signOut.run}
     />

@@ -222,11 +222,11 @@ An invitation outranks a pending request, so a second employee who requested acc
 
 ### 4.3 Client routing
 
-The client calls `GET /api/me` after restore, after sign-in, after join and after leave. It calls it again whenever an `/api` call answers 403 `no_access`, `forbidden`, `staff_setup_required` or `staff_reauth_required`, or 409 `view_as_active`. It clears cached organization data before it re-routes.
+The client calls `GET /api/me` after restore, after sign-in, after join and after leave. It calls it again whenever an `/api` call answers 403 `no_access`, `forbidden`, `staff_setup_required` or `staff_reauth_required`, or 409 `view_as_active` or `open_as_admin_active`. It clears cached organization data before it re-routes. When a read of `GET /api/me` shows open as admin gone (someone joined, the organization was suspended), the client sends `POST /api/admin/view-as/end` once, because the resolver never writes and a reactivation inside the staff window would otherwise bring the grant back.
 
 | State | Route |
 |---|---|
-| `staff` | `/admin`; with `viewAs` set, the target’s route under the view-as banner |
+| `staff` | `/admin`; with `viewAs` set, the target’s route under the view-as banner; with `openAsAdmin` set, the organization admin’s route under the open-as-admin banner (D25) |
 | `staff_setup_required` | `/settings/security` with the staff notice (**Exists**; notice added) |
 | `staff_reauth_required` | `/staff/sign-in-again` |
 | `member` | `/dashboard` |
@@ -1531,6 +1531,7 @@ Every signed-in frame ends with a slim footer: a 1px `border` rule, then one `mo
 | Org admin | Home, Analytics, TownwiseAI, Notes, Town, Upload; then Team, Settings | All locations (more than one), Location settings | |
 | Staff | Requests, Organizations, People, Audit log | none | Staff console frame (15.4). |
 | Staff in view-as | the target’s items | the target’s links | Client app frame under the banner; no console items. |
+| Staff open as admin (D25) | the org admin’s items without Team: Home, Analytics, TownwiseAI, Notes, Town, Upload; then Settings | the org admin’s links | Client app frame under the open-as-admin banner (15.5a); no console items. `/team` redirects to Home; Settings has no Leave section. |
 | Signed in, no organization | none | none | Gate frame. |
 
 The sections are Home (`/locations/[id]`), Analytics (`/locations/[id]/analytics`), TownwiseAI (`/locations/[id]/agent`), Notes, Town and Upload (`/locations/[id]/sales/upload`). They open the location in the path; on a page outside a location (Locations, Team, Settings), the last location opened in this sign-in, held in memory only and never in storage, else the organization’s first. With no location the bar has only Team and Settings. `aria-current="page"` marks the section of the current page; Analytics is also marked (`aria-current="true"`) on Sales data, which lives under it, and on Location settings no section is marked. The wordmark goes to `/dashboard` (Locations), which redirects to the only location’s Home when there is one. Settings is the account page, `/settings`. Two-step sign-in (`/settings/security`, **Exists**) is reached from Settings.
@@ -1566,6 +1567,20 @@ The sections are Home (`/locations/[id]`), Analytics (`/locations/[id]/analytics
 - **Phone (640px and below).** Two rows: the text, then “End view-as” at full width.
 - **Read-only controls.** Every write control stays in place, so the layout matches the client’s, but renders disabled (15.7). Each form or section with writes shows one helper line: “Read-only while viewing as {email}.” Sign out in the client top bar is disabled too; End view-as is the way out.
 - **On expiry**, or when the target’s organization changes (Section 8), the next `GET /api/me` returns staff access without `viewAs`. The client goes to `/admin` and shows the notice “View-as ended at {time}.”
+
+### 15.5a The open-as-admin banner
+
+```
++--------------------------------------------------------------------------------------+
+| You’re setting up {org} as Townwise staff. This ends when someone joins.        [End] |
++--------------------------------------------------------------------------------------+
+```
+
+- **As 15.5.** Same position, look, never-colour-alone rule and phone layout (two rows: the text, then “End” at full width), shown on every portal page while `openAsAdmin` is set. It is `role="region"` with `aria-label="Townwise staff setup"`, not dismissible, and the document title is “Setting up {org} · Townwise”.
+- **No time.** The mode has no timer of its own (D25), so the line has none.
+- **Every control is enabled**, Sign out included: signing out ends the staff sign-in, and with it the mode. Nothing is read-only and there is no helper line.
+- **End** sends `POST /api/admin/view-as/end` and applies the answer, the staff member’s own access, so the client goes to `/admin`.
+- **When it ends** (End, a join, a suspension, or the staff sign-in), the next `GET /api/me` returns staff access without `openAsAdmin`. The client goes to `/admin` and shows the notice “Setting up {org} as Townwise staff ended at {time}.” once. A read that finds it ended sends End once (4.3).
 
 ### 15.6 Visual language
 

@@ -7,12 +7,13 @@ import { usePortal, usePortalContext } from '../PortalProvider';
 import { ErrorNotice, LoadingLine } from '../ui/feedback';
 import { Content, Wrap } from '../ui/layout';
 import { GateFrame, Shell } from './Frame';
+import { OpenAsAdminBanner } from './OpenAsAdminBanner';
 import { ViewAsBanner } from './ViewAsBanner';
 
 // Access routing (spec 4.3). Until GET /api/me answers, “Checking your access”; if it can't be read, the shared
 // error with Try again. Then each group's layout wraps its pages in AccessGuard: a path the person's access does
 // not allow (routing.ts isAllowed) redirects to that access's own route, so a page never mounts in the wrong
-// state. Staff in view-as are routed as the target, under the banner.
+// state. Staff in view-as are routed as the target, under the banner; staff opening an organization as its admin, as that admin.
 //
 // The guard sits in the group layouts, not here: a <Redirect> in place of this <Slot> would unmount the
 // navigator that owns the target route, the replace would then remount the whole portal one level up, and its
@@ -50,8 +51,11 @@ export function PortalGate(): React.JSX.Element {
     );
   }
   const { me } = meState;
+  const banner = me.viewAs !== null
+    ? <ViewAsBanner viewAs={me.viewAs} />
+    : me.openAsAdmin != null ? <OpenAsAdminBanner openAsAdmin={me.openAsAdmin} /> : null;
   return (
-    <Shell banner={me.viewAs === null ? null : <ViewAsBanner viewAs={me.viewAs} />}>
+    <Shell banner={banner}>
       <MomentProvider>
         <Slot />
       </MomentProvider>

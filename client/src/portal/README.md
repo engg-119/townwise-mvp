@@ -36,8 +36,9 @@ Route files under `app/` never carry a platform suffix (`test/marketing/boundary
 - `app/(gate)/(app)/_layout.tsx` wraps every signed-in screen in `PortalProvider` and `PortalGate`. The provider reads `GET /api/me` once per sign-in. Until it answers, the page says “Checking your access”; if it fails, the shared error with Try again.
 - Each group's layout (`(access)`, `(client)`, `(account)`, `(console)`) wraps its pages in `AccessGuard`, which redirects any path the person may not open to their state's own route (`routing.ts`: `HOME`, `isAllowed`). A page therefore never mounts in the wrong state, so it can assume its state (narrow `me.access` and return an empty view otherwise, as the gate pages do).
 - `isAllowed` also gates by role (`/team`, `/locations/new` and a location's Settings tab are for org admins) and never allows the console or `/settings/security` during view-as. A new path must be added there, or it redirects.
-- `usePortal().api` re-reads `GET /api/me` on 403 `no_access`, `forbidden`, `staff_setup_required`, `staff_reauth_required` and 409 `view_as_active`, and clears the cached organization, so the guard routes again. Use it for every `/api` call. `applyMe(me)` takes any answer that carries the access (join, decline, a request, End view-as).
+- `usePortal().api` re-reads `GET /api/me` on 403 `no_access`, `forbidden`, `staff_setup_required`, `staff_reauth_required` and 409 `view_as_active` and `open_as_admin_active`, and clears the cached organization, so the guard routes again. Use it for every `/api` call. `applyMe(me)` takes any answer that carries the access (join, decline, a request, End view-as).
 - Staff in view-as get the target's access from `/api/me`, so they are routed as the target, under the banner.
+- Staff open as admin (`me.openAsAdmin`) get the organization admin's access, so they are routed as that admin under `OpenAsAdminBanner`, with no Team (`isAllowed`, `clientNav`) and no Leave section. A `GET /api/me` read that finds the mode gone sends End once (`PortalProvider.refreshMe`).
 
 ## Frames and page layout
 

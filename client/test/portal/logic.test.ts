@@ -10,7 +10,7 @@ import {
   dateRange, patternOf, sourceLinks, TOWN_GROUPS, townProfile, townResearchLine,
 } from '../../src/portal/towns';
 import { checkTown } from '../../src/portal/ui/TownFields';
-import { ACCESS, meOf, orgOf, refusal, staffMe, viewAsMe } from '../helpers/portal';
+import { ACCESS, meOf, openAsAdminMe, orgOf, refusal, staffMe, viewAsMe } from '../helpers/portal';
 
 const ALL: [string, Access][] = Object.entries(ACCESS);
 
@@ -69,6 +69,11 @@ describe('access routing (spec 4.3)', () => {
     expect(allowed(ACCESS.noOrg)).toEqual(['/request-access']);
   });
 
+  test('open as admin routes as the organization’s admin without Team, never into the console', () => {
+    expect(EVERY.filter((path) => isAllowed(openAsAdminMe(), path))).toEqual([...MEMBER, '/locations/new', '/locations/l1/settings', '/settings/security']);
+    expect(isAllowed(openAsAdminMe(), homeFor(openAsAdminMe()))).toBe(true);
+  });
+
   test('paths are compared without a trailing slash, query or fragment', () => {
     expect(isAllowed(meOf(ACCESS.member), '/dashboard/')).toBe(true);
     expect(isAllowed(meOf(ACCESS.member), '/dashboard?x=1')).toBe(true);
@@ -92,6 +97,12 @@ describe('navigation per role (spec 15.3)', () => {
   test('org admins add Team, which starts the right-hand group', () => {
     expect(rows(clientNav('org_admin', '/team', 'l1')).slice(-2)).toEqual([['Team', '/team', 'page', true], ['Settings', '/settings', null, false]]);
     expect(clientNav('org_admin', '/settings/security', 'l1').map((item) => item.current).slice(-2)).toEqual([null, 'true']);
+  });
+
+  test('open as admin: the top bar has no Team', () => {
+    expect(clientNav('org_admin', '/dashboard', 'l1', true).map((item) => item.label)).not.toContain('Team');
+    expect(clientNav('org_admin', '/dashboard', 'l1').map((item) => item.label)).toContain('Team');
+    expect(clientNav('org_admin', '/dashboard', null, true).map((item) => [item.label, item.end === true])).toEqual([['Settings', true]]);
   });
 
   test('with no location (none yet, or the organization still loading off a location page) only Team and Settings', () => {
@@ -182,6 +193,10 @@ describe('schemas', () => {
       expect(parsed).toEqual(meOf(access));
     }
     expect(meResponseSchema.parse(viewAsMe(ACCESS.admin)).viewAs?.target.email).toBe('gm@example.org');
+    // An answer without openAsAdmin parses; one with it keeps it.
+    expect(meResponseSchema.parse(meOf(ACCESS.admin)).openAsAdmin).toBeUndefined();
+    expect(meResponseSchema.parse({ ...openAsAdminMe(), extra: 1 })).toEqual(openAsAdminMe());
+    expect(meResponseSchema.parse({ ...meOf(ACCESS.admin), openAsAdmin: null }).openAsAdmin).toBeNull();
   });
 
   test('a response that does not match is refused', () => {
@@ -208,6 +223,8 @@ describe('errors (spec 15.7, 10.9)', () => {
       expect(needsRecheck(refusal(403, code))).toBe(true);
     }
     expect(needsRecheck(refusal(409, 'view_as_active'))).toBe(true);
+    expect(needsRecheck(refusal(409, 'open_as_admin_active'))).toBe(true);
+    expect(needsRecheck(refusal(403, 'open_as_admin_refused'))).toBe(false);
     expect(needsRecheck(refusal(403, 'view_as_read_only'))).toBe(false);
     expect(needsRecheck(refusal(409, 'request_exists'))).toBe(false);
     expect(needsRecheck(new ApiError('network', 'x'))).toBe(false);

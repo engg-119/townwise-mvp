@@ -15,7 +15,7 @@ export const COPY = {
 
 const RECHECK: Readonly<Record<number, readonly string[]>> = {
   403: ['no_access', 'forbidden', 'staff_setup_required', 'staff_reauth_required'],
-  409: ['view_as_active'],
+  409: ['view_as_active', 'open_as_admin_active'],
 };
 
 /** True for the answers after which the client re-reads GET /api/me and routes again. */
