@@ -141,6 +141,26 @@ test('list_data_items and read_data_item say what the team added and how much wa
     .toBe('The start of it, 20,000 characters');
   expect(toolLine(step('read_data_item', 'done', input, { ref: input.ref, available: false, chars: 0, truncated: false }), CTX).detail)
     .toBe('Couldn’t read it');
+  // One of a thing is singular.
+  expect(toolLine(step('list_data_items', 'done', null, { count: 1, turnedOff: 0 }), CTX).detail).toBe('1 item, 0 turned off');
+  expect(toolLine(step('read_data_item', 'done', input, { ref: input.ref, available: true, chars: 1, truncated: false }), CTX).detail).toBe('1 character');
+});
+
+test('the data rows’ opened cards and Based on pieces use their own words, and a refused read claims no read', () => {
+  const input = { ref: 'f_0123456789abcdef01234567' };
+  // The result views exactly as api/src/chat/tools/list-data.ts and read-data.ts build them; the ref is never a row.
+  const read = { ref: input.ref, available: true, chars: 900, truncated: false };
+  const refused = { available: false, chars: 0, truncated: false };
+  expect(viewRows(null, { count: 3, turnedOff: 1 }, 'list_data_items')).toEqual([{ term: 'Items', value: '3' }, { term: 'Turned off', value: '1' }]);
+  expect(viewRows(input, read, 'read_data_item')).toEqual([
+    { term: 'Read', value: 'Yes' }, { term: 'Characters', value: '900' }, { term: 'Cut short', value: 'No' },
+  ]);
+  expect(viewRows(input, refused, 'read_data_item')).toEqual([
+    { term: 'Read', value: 'No' }, { term: 'Characters', value: '0' }, { term: 'Cut short', value: 'No' },
+  ]);
+  expect(basedOnLine([step('list_data_items', 'done', null, { count: 3, turnedOff: 1 })], CTX)).toBe('Based on what your team added.');
+  expect(basedOnLine([step('read_data_item', 'done', input, read)], CTX)).toBe('Based on an item your team added.');
+  expect(basedOnLine([step('read_data_item', 'done', input, refused)], CTX)).toBe('Based on an item your team added (couldn’t read it).');
 });
 
 test('get_day reads one day: whether it had sales, was closed, its notes and calendar entries, and their sources', () => {

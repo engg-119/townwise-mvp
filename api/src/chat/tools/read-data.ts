@@ -53,7 +53,7 @@ export const readDataTool: ChatTool<ReadDataInput> = {
     return ref === null ? null : { ref };
   },
   inputView: ({ ref }) => ({ ref }),
-  // The view carries the ref the call named, which the result does not repeat when it is unavailable.
+  // The input view carries the ref the call named; the result view repeats it only for a read that succeeded.
   resultView: (content) => viewOf(content, readResult, (value) => {
     if ('text' in value) return { ref: value.ref, available: true, chars: value.text.length, truncated: value.truncated };
     return { available: false, chars: 0, truncated: false };

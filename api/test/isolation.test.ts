@@ -56,9 +56,14 @@ describe('isolation (source)', () => {
       .toEqual([]);
   });
 
-  it('chat/* reaches stored files only through ctx.items', () => {
+  it('chat/* never touches ctx.files or stores.files, so item text comes only through ctx.items', () => {
+    // Dotted reads, destructuring (flat or nested) and bracket reads of `files` from ctx or its stores.
+    const reaches = /\bctx\.files\b|\.stores\.files\b|\bfileEntries\b|\{[^}]*\bfiles\b[^}]*\}\s*=\s*[\w.]*\b(?:ctx|stores)\b|\b(?:ctx|stores)\s*:\s*\{[^}]*\bfiles\b|\[\s*['"`]files['"`]\s*\]/;
+    for (const sample of ['tc.ctx.files', 'ctx.stores.files.get(', 'const { files } = ctx.stores;', 'const { now, files } = tc.ctx;', 'const { stores: { files } } = ctx;', 'ctx.stores[\'files\']']) {
+      expect(sample).toMatch(reaches);
+    }
     const touching = sourceFiles()
-      .filter((file) => file.path.startsWith('chat/') && /\bctx\.files\b|\.stores\.files\b|\bfileEntries\b/.test(file.text))
+      .filter((file) => file.path.startsWith('chat/') && reaches.test(file.text))
       .map((file) => file.path);
     expect(touching).toEqual([]);
   });

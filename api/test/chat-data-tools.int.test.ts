@@ -137,6 +137,28 @@ describe('with stored files on', () => {
   });
 });
 
+describe('with more than 50 items', () => {
+  const blobs = createMemoryFileBlobs();
+  let p: Place;
+  let newestFirst: string[];
+
+  beforeAll(async () => {
+    p = await place(blobs, 'Busy Tavern');
+    const start = p.server.clock.now().getTime();
+    const rows = Array.from({ length: 51 }, (_, i) => row(p, p.locationId, { uploadedAt: new Date(start - i * 60_000) }));
+    await p.server.connection.collection('tw_files').insertMany(rows);
+    newestFirst = rows.map((doc) => `f_${doc._id.toHexString()}`);
+  });
+  afterAll(async () => { await p.server.close(); });
+  beforeEach(async () => { await p.server.redis.flushdb(); });
+
+  it('list_data_items gives the newest 50 and says there are more', async () => {
+    const result = JSON.parse(await toolResultOf(p, 'list_data_items', {})) as { items: { ref: string }[]; more: boolean };
+    expect(result.items.map((item) => item.ref)).toEqual(newestFirst.slice(0, 50));
+    expect(result.more).toBe(true);
+  });
+});
+
 describe('with stored files off', () => {
   let p: Place;
   beforeAll(async () => {

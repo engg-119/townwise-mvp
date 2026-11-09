@@ -259,8 +259,9 @@ const TOOLS: Readonly<Record<string, ToolRow>> = {
     detail: (result) => {
       const items = count(result, 'count');
       if (items === null) return null;
-      return items === 0 ? 'Nothing added yet' : `${formatCount(items)} items, ${formatCount(count(result, 'turnedOff') ?? 0)} turned off`;
+      return items === 0 ? 'Nothing added yet' : `${plural(items, 'item', 'items')}, ${formatCount(count(result, 'turnedOff') ?? 0)} turned off`;
     },
+    terms: { count: 'Items', turnedOff: 'Turned off' },
     reads: () => 'what your team added on Your data',
   },
   read_data_item: {
@@ -269,8 +270,12 @@ const TOOLS: Readonly<Record<string, ToolRow>> = {
       if (result.available === false) return 'Couldn’t read it';
       const chars = count(result, 'chars');
       if (chars === null) return null;
-      return result.truncated === true ? `The start of it, ${formatCount(chars)} characters` : `${formatCount(chars)} characters`;
+      const read = plural(chars, 'character', 'characters');
+      return result.truncated === true ? `The start of it, ${read}` : read;
     },
+    // A refused read (turned off, not a text item, not found) read nothing, and the line says so.
+    basedOn: (_input, _ctx, result) => (result?.available === false ? 'an item your team added (couldn’t read it)' : 'an item your team added'),
+    terms: { available: 'Read', chars: 'Characters', truncated: 'Cut short' },
   },
 };
 
