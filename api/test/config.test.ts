@@ -1,7 +1,7 @@
 import { ConfigError, loadEnv } from '@ckeith26/server-core';
 import { describe, expect, it } from 'vitest';
 
-import { configSchema, filesBackendOf, resolveTownwiseConfig } from '../src/config.ts';
+import { configSchema, filesBackendOf, labRunnerOf, resolveTownwiseConfig } from '../src/config.ts';
 
 function parse(value: string | undefined): readonly string[] {
   return loadEnv(configSchema, { TOWNWISE_SUPERADMIN_EMAILS: value }).TOWNWISE_SUPERADMIN_EMAILS;
@@ -160,5 +160,48 @@ describe('config', () => {
       TOWNWISE_WEB_URL: 'http://localhost:8081', TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5, ...azurite,
     })).toThrow(ConfigError);
     expect(() => loadEnv(configSchema, { FILES_BLOB_ACCOUNT_URL: 'not a url' })).toThrow(ConfigError);
+  });
+
+  describe('the forecast lab runner', () => {
+    const JOB_ID = '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-townwise-prod/providers/Microsoft.App/jobs/caj-townwise-lab';
+    const lab = (env: Record<string, string>) => labRunnerOf(loadEnv(configSchema, env));
+
+    function problemsOf(run: () => unknown): string[] {
+      try {
+        run();
+      } catch (err) {
+        expect(err).toBeInstanceOf(ConfigError);
+        expect(String(err)).not.toContain('sentinel');
+        return (err as ConfigError).problems.map((problem) => problem.variable);
+      }
+      return expect.unreachable();
+    }
+
+    it('is off by default, and off ignores the other variables', () => {
+      expect(lab({})).toBeNull();
+      expect(lab({ TOWNWISE_LAB_RUNNER: '' })).toBeNull();
+      expect(lab({ TOWNWISE_LAB_RUNNER: 'off', TOWNWISE_LAB_JOB_ID: JOB_ID, TOWNWISE_LAB_API_URL: 'http://localhost:8080' })).toBeNull();
+    });
+
+    it('local runs uv in ../modeling/lab by default and calls back on the bare origin given', () => {
+      expect(lab({ TOWNWISE_LAB_RUNNER: 'local', TOWNWISE_LAB_API_URL: 'http://localhost:8080/' }))
+        .toEqual({ kind: 'local', apiUrl: 'http://localhost:8080', projectDir: '../modeling/lab' });
+      expect(lab({ TOWNWISE_LAB_RUNNER: 'local', TOWNWISE_LAB_API_URL: 'http://localhost:8080', TOWNWISE_LAB_PROJECT_DIR: '/srv/lab' }))
+        .toMatchObject({ projectDir: '/srv/lab' });
+    });
+
+    it('azure starts the job by its resource id', () => {
+      expect(lab({ TOWNWISE_LAB_RUNNER: 'azure', TOWNWISE_LAB_JOB_ID: JOB_ID })).toEqual({ kind: 'azure', jobId: JOB_ID });
+    });
+
+    it('a missing one for the chosen runner is a ConfigError naming it, and no value is echoed', () => {
+      expect(problemsOf(() => lab({ TOWNWISE_LAB_RUNNER: 'local' }))).toEqual(['TOWNWISE_LAB_API_URL']);
+      expect(problemsOf(() => lab({ TOWNWISE_LAB_RUNNER: 'azure', TOWNWISE_LAB_API_URL: 'http://localhost:8080' }))).toEqual(['TOWNWISE_LAB_JOB_ID']);
+      expect(problemsOf(() => lab({ TOWNWISE_LAB_RUNNER: 'sentinel-runner' }))).toEqual(['TOWNWISE_LAB_RUNNER']);
+      expect(problemsOf(() => lab({ TOWNWISE_LAB_RUNNER: 'azure', TOWNWISE_LAB_JOB_ID: '/subscriptions/sentinel/jobs/x' }))).toEqual(['TOWNWISE_LAB_JOB_ID']);
+      expect(problemsOf(() => lab({ TOWNWISE_LAB_RUNNER: 'local', TOWNWISE_LAB_API_URL: 'http://localhost:8080/sentinel-path' })))
+        .toEqual(['TOWNWISE_LAB_API_URL']);
+      expect(problemsOf(() => lab({ TOWNWISE_LAB_RUNNER: 'local', TOWNWISE_LAB_API_URL: 'ftp://sentinel.example.test' }))).toEqual(['TOWNWISE_LAB_API_URL']);
+    });
   });
 });

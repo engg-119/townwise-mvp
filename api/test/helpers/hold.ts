@@ -1,11 +1,12 @@
-// Deterministic interleavings: holds every call to one TwMember method until the test releases it, so a test can run
-// another request between two steps of a handler (its write and its recount, say) in an exact order. Only for call
-// sites that await the query directly: a held call resolves to a promise, so a chained `.lean()` would not work.
+// Deterministic interleavings: holds every call to one model method (TwMember's unless another model is named) until the
+// test releases it, so a test can run another request between two steps of a handler (its write and its recount, say)
+// in an exact order. Only for call sites that await the query directly: a held call resolves to a promise, so a chained
+// `.lean()` would not work.
 import { vi } from 'vitest';
 
 import type { TownwiseTestServer } from './server.ts';
 
-type HeldMethod = 'countDocuments' | 'findOneAndUpdate';
+type HeldMethod = 'countDocuments' | 'findOneAndUpdate' | 'bulkWrite';
 
 export interface Hold {
   /** Resolves when the nth call (from 1, in arrival order) has arrived and is waiting. */
@@ -26,8 +27,8 @@ function latch(): Latch {
   return { promise, resolve };
 }
 
-export function holdCalls(server: TownwiseTestServer, method: HeldMethod): Hold {
-  const model = server.connection.models.TwMember as unknown as Record<HeldMethod, (...args: unknown[]) => unknown>;
+export function holdCalls(server: TownwiseTestServer, method: HeldMethod, modelName = 'TwMember'): Hold {
+  const model = server.connection.models[modelName] as unknown as Record<HeldMethod, (...args: unknown[]) => unknown>;
   const real = model[method].bind(model);
   const arrivals = new Map<number, Latch>();
   const releases = new Map<number, Latch>();

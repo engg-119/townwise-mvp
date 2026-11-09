@@ -12,14 +12,19 @@ function sourceFiles(): { path: string; text: string }[] {
 }
 
 describe('isolation (source)', () => {
-  it('only access/resolve.ts, the join and decline handlers, the staff handlers, the file reader and the sweeper import stores/cross-tenant.ts', () => {
+  it('only access/resolve.ts, the join and decline handlers, the staff handlers, the file reader, the sweeper and the lab callback import stores/cross-tenant.ts', () => {
     // A type-only import grants no access to the operations, so it is not counted.
     const importers = sourceFiles()
       .filter((file) => /^import (?!type )[^;]*from '[./]+(stores\/)?cross-tenant\.ts';/m.test(file.text))
       .map((file) => file.path)
       .sort();
     // handlers/me.ts holds the join and decline handlers; handlers/admin.ts and handlers/deletion.ts hold the staff handlers.
-    expect(importers).toEqual(['access/resolve.ts', 'files/sweeper.ts', 'files/worker.ts', 'handlers/admin.ts', 'handlers/deletion.ts', 'handlers/me.ts']);
+    // lab/callback.ts holds the forecast lab job's callback, which finds its calibration by id and token before any
+    // organization is known.
+    expect(importers).toEqual([
+      'access/resolve.ts', 'files/sweeper.ts', 'files/worker.ts', 'handlers/admin.ts', 'handlers/deletion.ts', 'handlers/me.ts',
+      'lab/callback.ts',
+    ]);
   });
 
   it('product code answers 401 only through userGone() in access/resolve.ts', () => {
@@ -69,6 +74,11 @@ describe('isolation (source)', () => {
   it('only access/policy.ts mints the reader’s scope, and only files/worker.ts asks for it', () => {
     const callers = sourceFiles().filter((file) => file.text.includes('scopeForClaimedImport(')).map((file) => file.path).sort();
     expect(callers).toEqual(['access/policy.ts', 'files/worker.ts']);
+  });
+
+  it('only access/policy.ts mints the lab callback’s scope, and only lab/callback.ts asks for it', () => {
+    const callers = sourceFiles().filter((file) => file.text.includes('scopeForLabCallback(')).map((file) => file.path).sort();
+    expect(callers).toEqual(['access/policy.ts', 'lab/callback.ts']);
   });
 
   it('only access/policy.ts mints the sweep’s scope, and only files/sweeper.ts asks for it', () => {

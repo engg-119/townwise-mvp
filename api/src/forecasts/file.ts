@@ -122,7 +122,8 @@ function pathText(path: readonly PropertyKey[]): string {
   }, '');
 }
 
-function issueOf(issue: z.core.$ZodIssue): FileIssue {
+/** A zod issue as a path and a code (a custom refinement's own code where it gives one), never the value. */
+export function issueOf(issue: z.core.$ZodIssue): FileIssue {
   const params = (issue as { params?: { code?: unknown } }).params;
   const code = issue.code === 'custom' && typeof params?.code === 'string' ? params.code : issue.code;
   return { path: pathText(issue.path), code };

@@ -5,6 +5,7 @@ import { normalizeEmail } from './normalize-email.ts';
 
 const MAX_STAFF = 20;
 const ACS_HOST = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.communication\.azure\.com$/;
+const LAB_JOB_ID = /^\/subscriptions\/[0-9a-f-]{36}\/resourceGroups\/[\w.()-]{1,90}\/providers\/Microsoft\.App\/jobs\/[a-z0-9-]{2,32}$/i;
 
 /** Spread into the one loadEnv call in main.ts. Messages never include the values. */
 export const configSchema = z.object({
@@ -44,6 +45,17 @@ export const configSchema = z.object({
   TOWNWISE_FILES_MONTHLY_BUDGET_USD: z.coerce.number().min(0).max(1000).default(5),
   /** Development and tests only: Azurite's connection string, used instead of the managed identity. */
   FILES_AZURITE_CONNECTION_STRING: z.preprocess((value) => (value === '' ? undefined : value), z.string().optional()),
+  /**
+   * How the forecast lab runs a calibration's job: `off` (503 lab_unavailable), `local` (uv in TOWNWISE_LAB_PROJECT_DIR)
+   * or `azure` (the Container Apps job TOWNWISE_LAB_JOB_ID).
+   */
+  TOWNWISE_LAB_RUNNER: z.enum(['off', 'local', 'azure']).default('off'),
+  /** `local` only: the origin a local job calls back, this API's (http://localhost:8080). */
+  TOWNWISE_LAB_API_URL: z.url({ protocol: /^https?$/ }).optional(),
+  /** `azure` only: the job's resource id, /subscriptions/<id>/resourceGroups/<name>/providers/Microsoft.App/jobs/<name>. */
+  TOWNWISE_LAB_JOB_ID: z.string().regex(LAB_JOB_ID, { message: 'expected a Microsoft.App/jobs resource id' }).optional(),
+  /** `local` only: the lab's uv project, relative to the API's working directory. */
+  TOWNWISE_LAB_PROJECT_DIR: z.string().default('../modeling/lab'),
 });
 
 export type TownwiseConfig = z.infer<typeof configSchema>;
@@ -87,12 +99,36 @@ export function filesBackendOf(
   return azurite === undefined ? { kind: 'azure', accountUrl } : { kind: 'azurite', connectionString: azurite };
 }
 
+/** How the forecast lab starts a job (main.ts builds the runner from it), or null while the lab is off. */
+export type LabRunnerConfig =
+  | { readonly kind: 'local'; readonly apiUrl: string; readonly projectDir: string }
+  | { readonly kind: 'azure'; readonly jobId: string };
+
+type LabKeys = 'TOWNWISE_LAB_RUNNER' | 'TOWNWISE_LAB_API_URL' | 'TOWNWISE_LAB_JOB_ID' | 'TOWNWISE_LAB_PROJECT_DIR';
+
+/** A runner missing its variable refuses boot, naming it. */
+export function labRunnerOf(config: Pick<TownwiseConfig, LabKeys>): LabRunnerConfig | null {
+  switch (config.TOWNWISE_LAB_RUNNER) {
+    case 'off':
+      return null;
+    case 'local': {
+      if (config.TOWNWISE_LAB_API_URL === undefined) throw new ConfigError('TOWNWISE_LAB_API_URL', 'required with TOWNWISE_LAB_RUNNER=local');
+      const apiUrl = bareOrigin(config.TOWNWISE_LAB_API_URL);
+      if (apiUrl === null) throw new ConfigError('TOWNWISE_LAB_API_URL', 'expected a bare origin, with no path or query');
+      return { kind: 'local', apiUrl, projectDir: config.TOWNWISE_LAB_PROJECT_DIR };
+    }
+    case 'azure':
+      if (config.TOWNWISE_LAB_JOB_ID === undefined) throw new ConfigError('TOWNWISE_LAB_JOB_ID', 'required with TOWNWISE_LAB_RUNNER=azure');
+      return { kind: 'azure', jobId: config.TOWNWISE_LAB_JOB_ID };
+  }
+}
+
 /**
  * Production refuses an empty staff list, email with an http web URL, and Azurite for stored files; email needs both
- * its variables (spec Section 18).
+ * its variables (spec Section 18). The lab's variables are labRunnerOf's.
  */
 export function resolveTownwiseConfig(
-  config: TownwiseConfig & Pick<ServerConfig, 'NODE_ENV'>,
+  config: Omit<TownwiseConfig, LabKeys> & Pick<ServerConfig, 'NODE_ENV'>,
 ): ResolvedTownwiseConfig {
   if (config.NODE_ENV === 'production' && config.TOWNWISE_SUPERADMIN_EMAILS.length === 0) {
     throw new ConfigError('TOWNWISE_SUPERADMIN_EMAILS', 'production requires at least one staff address');
