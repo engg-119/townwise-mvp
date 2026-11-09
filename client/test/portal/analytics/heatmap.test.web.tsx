@@ -304,7 +304,7 @@ test('"Keep at least one year." is read from a polite live region that is there 
   expect(region?.textContent).toBe('Keep at least one year.');
 });
 
-test('F4: Where it came from names the stored file, downloads its cleaned copy and links to Your files', async () => {
+test('F4: Where it came from names the stored file, downloads its cleaned copy and links to Your data', async () => {
   const saved: string[] = [];
   Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: () => 'blob:https://townwise.tech/0000' });
   Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: () => undefined });
@@ -315,7 +315,7 @@ test('F4: Where it came from names the stored file, downloads its cleaned copy a
   fireEvent.click(cell('2026-10-10'));
   const day = await screen.findByRole('region', { name: 'Saturday, Oct 10, 2026' });
   expect(within(day).getByText('File: sample-sales.csv (CSV or text file).')).toBeTruthy();
-  expect(within(day).getByRole('link', { name: 'Open Your files' }).getAttribute('href')).toBe('/locations/l1/sales');
+  expect(within(day).getByRole('link', { name: 'Open Your data' }).getAttribute('href')).toBe('/locations/l1/data');
   fireEvent.click(within(day).getByRole('button', { name: 'Download cleaned CSV' }));
   await waitFor(() => { expect(saved).toEqual(['sample-sales-townwise.csv']); });
   expect(api.calls.filter((call) => call.method !== 'GET')).toEqual([]);
@@ -333,17 +333,17 @@ test('F4: an upload that didn’t finish offers no download, and a browser uploa
   fireEvent.click(cell('2026-10-10'));
   const plain = await screen.findByRole('region', { name: 'Saturday, Oct 10, 2026' });
   expect(within(plain).queryByText(/^File: /)).toBeNull();
-  expect(within(plain).queryByRole('link', { name: 'Open Your files' })).toBeNull();
+  expect(within(plain).queryByRole('link', { name: 'Open Your data' })).toBeNull();
   expect(api.calls.some((call) => call.path.includes('/files/'))).toBe(false);
 });
 
-test('F4 under view-as: the file by kind only, no download, and still the link to Your files', async () => {
+test('F4 under view-as: the file by kind only, no download, and still the link to Your data', async () => {
   const api = await ready(portal(viewAsMe(ACCESS.member), DAYS, [upload({ file: { ...FILE, name: null } })]));
   fireEvent.click(cell('2026-10-10'));
   const day = await screen.findByRole('region', { name: 'Saturday, Oct 10, 2026' });
   expect(within(day).getByText('File: CSV or text file. Its name is hidden in view-as.')).toBeTruthy();
   expect(within(day).queryByRole('button', { name: 'Download cleaned CSV' })).toBeNull();
-  expect(within(day).getByRole('link', { name: 'Open Your files' })).toBeTruthy();
+  expect(within(day).getByRole('link', { name: 'Open Your data' })).toBeTruthy();
   expect(api.calls.some((call) => call.path.includes('/files/'))).toBe(false);
 });
 

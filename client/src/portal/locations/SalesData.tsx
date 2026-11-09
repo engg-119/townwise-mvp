@@ -3,65 +3,39 @@ import { ScrollView, StyleSheet, View } from 'react-native';
 
 import { theme } from '../../theme';
 import { hasCode } from '../errors';
-import { FileList } from '../files/FileList';
-import { formatCount, formatDate, plural } from '../format';
+import { formatDate, plural } from '../format';
 import { useAction, useLoad } from '../hooks';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { locationHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
 import { Actions, Button, LinkButton } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
-import { DataTable } from '../ui/DataTable';
 import { EmptyState, Notice, ReadOnlyLine } from '../ui/feedback';
 import { Columns, Section, Stack } from '../ui/layout';
 import { Lead, Small } from '../ui/text';
-import { deleteSales, fetchSales, fetchSalesDays, type Upload } from './api';
-import { formatRange } from './dates';
+import { deleteSales, fetchSales, fetchSalesDays } from './api';
 import { DaysTable, MonthsTable } from './MonthsTable';
 import { LoadFailure, Loading, ShowNumbers, UploadAction, useOrgRefreshOnLeave } from './parts';
 import { chartRange, chartSummary, SERIES_TITLE, seriesOf } from './sales';
 import { SalesChart } from './SalesChart';
 
 // P12 Sales data (spec 16.3, 10.4): the coverage line, the daily chart (web; the text summary and “Show the
-// numbers” everywhere, D21), By month, Uploads, and, for org admins, Delete all sales data behind a typed-name
+// numbers” everywhere, D21), By month, the link to Your data (D28; uploads and files are listed there), and, for org admins, Delete all sales data behind a typed-name
 // confirmation. A 404 on the delete means the location was deleted in the meantime: the organization reloads, and
 // the location layout says “This location isn’t available.” with the link to Locations (spec 10.9). Under view-as,
-// Upload, Delete and the closure-note link are disabled in place. Your files (files/FileList) follows Uploads
-// when stored files are on.
+// Upload, Delete and the closure-note link are disabled in place.
 
 const READ_ONLY_ID = 'sales-ro';
 
-function UploadsTable(props: { uploads: readonly Upload[] }): React.JSX.Element {
+/** Uploads and files moved to Your data (D28): one line and a link, so nobody looks for them here. */
+function DataLink(props: { locationName: string; locationId: string }): React.JSX.Element {
   return (
-    <Stack>
-      <DataTable
-        label="Uploads"
-        columns={[
-          { key: 'date', label: 'Date' },
-          { key: 'by', label: 'By', flex: 1.6 },
-          { key: 'days', label: 'Days', numeric: true, flex: 0.7 },
-          { key: 'new', label: 'New', numeric: true, flex: 0.7 },
-          { key: 'replaced', label: 'Replaced', numeric: true, flex: 0.8 },
-          { key: 'kept', label: 'Unchanged', numeric: true, flex: 0.9 },
-          { key: 'range', label: 'Range', flex: 1.6 },
-          { key: 'status', label: 'Status', flex: 1.4 },
-        ]}
-        rows={props.uploads.map((upload) => ({
-          key: upload.id,
-          cells: {
-            date: formatDate(upload.uploadedAt),
-            by: upload.uploadedByEmail,
-            days: formatCount(upload.dayCount),
-            new: formatCount(upload.inserted),
-            replaced: formatCount(upload.replaced),
-            kept: formatCount(upload.kept),
-            range: formatRange(upload.firstDate, upload.lastDate),
-            status: upload.status === 'applied' ? 'Finished' : 'This upload didn’t finish. Upload the file again.',
-          },
-        }))}
-      />
-      <Small>Unchanged counts the days a member’s upload left as they were, because the location already had them.</Small>
-    </Stack>
+    <Section title="Uploads and files">
+      <Stack>
+        <Small>{`Every upload and file for ${props.locationName} is on Your data, where your team can download it, turn it off or delete it.`}</Small>
+        <Actions><LinkButton href={locationHref(props.locationId, 'data')} label="Open Your data" /></Actions>
+      </Stack>
+    </Section>
   );
 }
 
@@ -118,10 +92,7 @@ export function SalesData(): React.JSX.Element {
             <UploadAction locationId={location.id} variant="primary" readOnlyId={readOnlyId} />
           </EmptyState>
         </Stack>
-        {sales.uploads.length === 0 ? null : (
-          <Section kicker="Newest first" title="Uploads"><UploadsTable uploads={sales.uploads} /></Section>
-        )}
-        <FileList locationId={location.id} />
+        <DataLink locationName={location.name} locationId={location.id} />
       </View>
     );
   }
@@ -180,10 +151,7 @@ export function SalesData(): React.JSX.Element {
           )}
         />
       </Section>
-      {sales.uploads.length === 0 ? null : (
-        <Section kicker="Newest first" title="Uploads"><UploadsTable uploads={sales.uploads} /></Section>
-      )}
-      <FileList locationId={location.id} />
+      <DataLink locationName={location.name} locationId={location.id} />
       {admin ? (
         <Section kicker="Admins only" title="Delete sales data">
           <Actions>
@@ -196,7 +164,7 @@ export function SalesData(): React.JSX.Element {
       <ConfirmDialog
         visible={confirming}
         title="Delete all sales data"
-        body={`This deletes ${plural(coverage.dayCount, 'day', 'days')} of sales data for ${location.name}. Notes stay. This can’t be undone.`}
+        body={`This deletes ${plural(coverage.dayCount, 'day', 'days')} of sales data for ${location.name}, and every file on its Your data page. Notes stay. This can’t be undone.`}
         typedName={location.name}
         confirmLabel="Delete all sales data"
         pendingLabel="Deleting…"

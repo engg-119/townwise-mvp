@@ -333,7 +333,7 @@ export function createUploadQueue(deps: {
       name: source.name, sizeBytes: source.size, purpose,
     }));
     entry.fileId = created.file.id;
-    importId ??= created.import.id;
+    importId ??= created.import?.id ?? null;
     limits = created.limits;
     // Create is never aborted, so a file cancelled meanwhile is deleted once the server has it.
     if (FINISHED.has(entry.state)) {

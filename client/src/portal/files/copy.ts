@@ -41,7 +41,7 @@ export const COPY = {
   answering: 'Saving…',
   /** Deleted by a person, by staff or by retention: the file view doesn't say which, so neither do the words. */
   rawGone: 'The original was deleted. The cleaned copy and days stay.',
-  rawDeleted: 'Original deleted. The cleaned copy and days stay.',
+  rawDeleted: 'Deleted the original. The cleaned copy and its days stay.',
 } as const;
 
 const KIB = 1024;
@@ -109,6 +109,7 @@ export const KEPT_REASON = {
   zip_empty: 'this ZIP is empty.',
   nothing_usable: 'none of the files inside had daily sales Townwise could use.',
   raw_deleted: 'its original was deleted before Townwise read it.',
+  reference: 'Kept for reference.',
   system_file: 'it’s a system file your computer added.',
   nested_zip: 'it’s a ZIP inside a ZIP inside a ZIP, too deep to open.',
   zip_method: 'it’s compressed in a way Townwise can’t unpack. Zip it again with your computer’s built-in tool.',
@@ -358,7 +359,7 @@ export function deleteFileBody(file: FileView): string {
   return `This deletes the original, the cleaned copy and what Townwise found in ${fileName(file)}.${kept} This can’t be undone.`;
 }
 
-export function deleteRawBody(file: FileView): string {
+export function deleteRawBody(file: Pick<FileView, 'name' | 'kind' | 'uploadedAt'>): string {
   return `This deletes the original of ${fileName(file)}. The cleaned copy and the days it added stay. This can’t be undone.`;
 }
 

@@ -86,7 +86,7 @@ test('the last location opened is kept in memory only: the sections open it from
     await waitFor(() => { expect(window.location.pathname).toBe('/team'); });
     const main = screen.getByRole('navigation', { name: 'Main' });
     expect(within(main).getByRole('link', { name: 'Home' }).getAttribute('href')).toBe('/locations/l2');
-    expect(within(main).getByRole('link', { name: 'Upload' }).getAttribute('href')).toBe('/locations/l2/sales/upload');
+    expect(within(main).getByRole('link', { name: 'Your data' }).getAttribute('href')).toBe('/locations/l2/data');
     expect(setItem).not.toHaveBeenCalled();
     expect(document.cookie).toBe(cookie);
   } finally {
