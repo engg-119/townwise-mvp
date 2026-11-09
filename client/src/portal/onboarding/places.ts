@@ -70,9 +70,14 @@ export function autocompletePlaces(
   });
 }
 
-/** Ends the search's session. */
-export async function placeDetails(api: ApiClient, placeId: string, sessionToken: string): Promise<PlaceDetails> {
-  const body = await api.json('/api/places/details', detailsSchema, { method: 'POST', body: { placeId, sessionToken } });
+/**
+ * Ends the session whose token it carries. Null sends none, and the API makes one of its own: a checked place after
+ * the first in one list, whose search's session the first check ended.
+ */
+export async function placeDetails(api: ApiClient, placeId: string, sessionToken: string | null): Promise<PlaceDetails> {
+  const body = await api.json('/api/places/details', detailsSchema, {
+    method: 'POST', body: { placeId, ...(sessionToken === null ? {} : { sessionToken }) },
+  });
   return body.place;
 }
 

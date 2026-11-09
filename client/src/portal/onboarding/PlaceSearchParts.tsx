@@ -90,9 +90,9 @@ export function PlaceSearchShell(p: { props: PlaceSearchProps; state: PlaceSearc
 
 /**
  * The status under the field, in a polite live region that each answer replaces whole, so a screen reader hears it
- * once. iOS reads no live region, so it is told.
+ * once. iOS reads no live region, so it is told. The checklist (PlaceChecklistParts.tsx) shows it too.
  */
-function StatusLine(props: { id: string; text: string | null }): React.JSX.Element {
+export function StatusLine(props: { id: string; text: string | null }): React.JSX.Element {
   const { text } = props;
   useEffect(() => {
     if (text !== null && Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(text);

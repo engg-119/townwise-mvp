@@ -22,7 +22,7 @@ const autocompleteBody = z.object({
 });
 const detailsBody = z.object({
   placeId: placeIdSchema,
-  sessionToken: sessionTokenSchema,
+  sessionToken: sessionTokenSchema.optional(),
 });
 
 /** Address component types that can name the town, in the order a town outside the twelve takes its name. */
@@ -99,14 +99,16 @@ export async function placesAutocomplete(ctx: TownwiseContext, req: Request, res
 }
 
 /**
- * Request `{ placeId, sessionToken }`, which ends Google's billed session. Answers `{ place: { placeId, address, town,
- * map } }`: `map` is a signed Maps Static URL of Google's current id for the place, which the browser loads from
- * Google, or null while the map is off.
+ * Request `{ placeId, sessionToken? }`, which ends Google's billed session; without a session token (a checked place
+ * after the first in one list) the server makes one. Answers `{ place: { placeId, address, town, map } }`: `map` is a
+ * signed Maps Static URL of Google's current id for the place, which the browser loads from Google, or null while the
+ * map is off.
  */
 export async function placesDetails(ctx: TownwiseContext, req: Request, res: Response): Promise<void> {
   const places = placesOf(ctx);
   const body = parseInput(detailsBody, req.body);
-  const place = await ask(ctx, 'places.details', () => places.details(body.placeId, body.sessionToken));
+  const sessionToken = body.sessionToken ?? randomUUID();
+  const place = await ask(ctx, 'places.details', () => places.details(body.placeId, sessionToken));
   if (place === null) throw new AppError(404, 'place_not_found', 'Place not found');
   res.status(200).json({
     place: {
