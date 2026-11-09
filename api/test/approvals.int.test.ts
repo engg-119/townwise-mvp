@@ -32,6 +32,16 @@ const REQUEST = {
   town: { townId: 'bar-harbor-me' }, locationCount: 3, note: 'Sentinel request note',
 };
 
+const HANOVER = { townId: 'hanover-nh', name: 'Hanover', state: 'NH' };
+
+/** Three checked places, one outside the twelve towns; the Google names are not the location names staff choose. */
+const PLACES3 = [
+  { placeId: 'ChIJTestPlace0001', name: 'Lou’s Restaurant', town: { townId: 'hanover-nh' } },
+  { placeId: 'ChIJTestPlace0002', name: 'Lou’s Bakery', town: { townId: null, name: 'Norwich', state: 'VT' } },
+  { placeId: 'ChIJTestPlace0003', name: 'Lou’s River Cafe', town: { townId: 'hanover-nh' } },
+];
+const NAMES3 = ['Main Street', 'Elm Street', 'River Road'];
+
 interface Requester { email: string; session: TestSession; requestId: string }
 
 function uniqueEmail(name: string): string {
@@ -91,6 +101,11 @@ async function requestDoc(requestId: string): Promise<Record<string, unknown> | 
 async function eventsAbout(requestId: string, orgId: string | null): Promise<Record<string, unknown>[]> {
   return (await auditEvents(server)).filter((event) =>
     (event.target as { id: string }).id === requestId || (orgId !== null && String(event.orgId) === orgId));
+}
+
+/** The organization's locations, oldest first. */
+async function locationsOf(orgId: string): Promise<Record<string, unknown>[]> {
+  return server.connection.collection('tw_locations').find({ orgId: new Types.ObjectId(orgId) }).sort({ createdAt: 1, _id: 1 }).toArray();
 }
 
 async function tenantCounts(requestId: string): Promise<{ orgs: number; locations: number; seats: number }> {
@@ -200,28 +215,30 @@ describe('POST /api/admin/requests/:requestId/approve (F3)', () => {
     ]);
   });
 
-  it('a request stored before places gives its single place id to the first location; a request without one gives null; a retry leaves an existing location alone', async () => {
+  it('a request stored before places approves with one location name and gives the location its place id', async () => {
     const placeId = 'ChIJTestPlace0002';
     const placed = await storedBeforePlaces('placed', placeId);
-    const oldPlaces = [{ placeId, name: null, town: { townId: 'hanover-nh', name: 'Hanover', state: 'NH' } }];
+    const oldPlaces = [{ placeId, name: null, town: HANOVER }];
     expect((await me(placed.session)).access).toMatchObject({ state: 'pending', request: { places: oldPlaces } });
     const listed = await (await call(server, '/api/admin/requests', { session: staff })).json() as { requests: AdminRequestView[] };
     expect(listed.requests.find((r) => r.id === placed.requestId)?.places).toEqual(oldPlaces);
 
     server.logs.length = 0;
-    const res = await approve(placed.requestId, { orgName: 'Placed Kitchen', locationName: 'Main Street' });
+    const res = await approve(placed.requestId, { orgName: 'Placed Kitchen', locationNames: ['Main Street'] });
     expect(res.status).toBe(200);
     const body = await res.json() as { org: { id: string }; request: AdminRequestView };
     expect(body.request.places).toEqual(oldPlaces);
-    const orgId = new Types.ObjectId(body.org.id);
-    expect(await server.connection.collection('tw_locations').find({ orgId }).toArray()).toMatchObject([{ placeId }]);
+    const locations = await locationsOf(body.org.id);
+    expect(locations).toHaveLength(1);
+    expect(locations[0]).toMatchObject({ name: 'Main Street', placeId, town: HANOVER });
     const events = await eventsAbout(placed.requestId, body.org.id);
     expect(JSON.stringify(events)).not.toContain(placeId);
     expect(server.logs.join('\n')).not.toContain(placeId);
 
-    // A retry of a half-finished approval whose location already exists skips step 7, so the location keeps
-    // the place it was inserted with.
-    const half = await storedBeforePlaces('halfplace', placeId);
+    // A retry of a half-finished approval skips a place that already has its location, so that location keeps
+    // the name and place it was inserted with.
+    const halfPlaceId = 'ChIJTestPlace0003';
+    const half = await storedBeforePlaces('halfplace', halfPlaceId);
     const halfOrg = new Types.ObjectId();
     await server.connection.collection('tw_access_requests').updateOne(
       { _id: new Types.ObjectId(half.requestId) },
@@ -233,14 +250,159 @@ describe('POST /api/admin/requests/:requestId/approve (F3)', () => {
     });
     await server.connection.collection('tw_locations').insertOne({
       orgId: halfOrg, name: 'Main Street', nameKey: 'main street', town: { townId: 'bar-harbor-me', name: 'Bar Harbor', state: 'ME' },
-      createdAt: server.clock.now(), createdBy: staff.userId, placeId,
+      createdAt: server.clock.now(), createdBy: staff.userId, placeId: halfPlaceId,
     });
-    expect((await approve(half.requestId, { orgName: 'Half Place', locationName: 'Main Street' })).status).toBe(200);
-    expect(await server.connection.collection('tw_locations').find({ orgId: halfOrg }).toArray()).toMatchObject([{ placeId }]);
+    expect((await approve(half.requestId, { orgName: 'Half Place', locationNames: ['Renamed'] })).status).toBe(200);
+    expect(await locationsOf(halfOrg.toHexString())).toMatchObject([{ name: 'Main Street', placeId: halfPlaceId }]);
 
     const plain = await requester('plain');
     const plainBody = await (await approve(plain.requestId)).json() as { org: { id: string } };
-    expect(await server.connection.collection('tw_locations').find({ orgId: new Types.ObjectId(plainBody.org.id) }).toArray()).toMatchObject([{ placeId: null }]);
+    expect(await locationsOf(plainBody.org.id)).toMatchObject([{ placeId: null }]);
+  });
+
+  it('a request with places becomes one location per place, each with its name, town and place id, and a location.created each', async () => {
+    const person = await requester('places', PLACES3);
+    server.logs.length = 0;
+    const res = await approve(person.requestId, { orgName: 'Harbor Kitchen', locationNames: NAMES3 });
+    expect(res.status).toBe(200);
+    const orgId = (await res.json() as { org: { id: string } }).org.id;
+    expect(await locationsOf(orgId)).toMatchObject([
+      { name: 'Main Street', nameKey: 'main street', placeId: 'ChIJTestPlace0001', town: HANOVER },
+      { name: 'Elm Street', nameKey: 'elm street', placeId: 'ChIJTestPlace0002', town: { townId: null, name: 'Norwich', state: 'VT' } },
+      { name: 'River Road', nameKey: 'river road', placeId: 'ChIJTestPlace0003', town: HANOVER },
+    ]);
+    const events = await eventsAbout(person.requestId, orgId);
+    expect(events.map((e) => e.action)).toEqual([
+      'access_request.created', 'access_request.approved', 'org.created', 'location.created', 'location.created', 'location.created', 'member.joined',
+    ]);
+    expect(events.filter((e) => e.action === 'location.created').map((e) => e.details)).toEqual([
+      { name: 'Main Street', townId: 'hanover-nh' }, { name: 'Elm Street', townId: null }, { name: 'River Road', townId: 'hanover-nh' },
+    ]);
+    for (const secret of PLACES3.flatMap((place) => [place.placeId, place.name])) {
+      expect(JSON.stringify(events)).not.toContain(secret);
+      expect(server.logs.join('\n')).not.toContain(secret);
+    }
+  });
+
+  it('with places the body needs locationNames matching them: 400 invalid_request and nothing written', async () => {
+    const before = (await auditEvents(server)).length;
+    const placed = await requester('names', PLACES3);
+    const plain = await requester('names-plain');
+    for (const body of [
+      { orgName: 'Harbor Kitchen', locationName: 'Main' },   // a console from before places
+      { orgName: 'Harbor Kitchen', locationNames: ['Main Street', 'Elm Street'] },
+      { orgName: 'Harbor Kitchen', locationNames: ['Main Street', ' main street ', 'Elm'] },
+      { orgName: 'Harbor Kitchen', locationNames: ['Main Street', 'Main  Street', 'Elm'] },
+      { orgName: 'Harbor Kitchen', locationNames: ['Main', '', 'Elm'] },
+      { orgName: 'Harbor Kitchen', locationNames: ['Main', 'x'.repeat(81), 'Elm'] },
+      { orgName: 'Harbor Kitchen', locationName: 'Main', locationNames: NAMES3 },
+    ]) {
+      expect(await errorOf(await approve(placed.requestId, body))).toEqual({ status: 400, error: 'invalid_request' });
+    }
+    expect(await errorOf(await approve(plain.requestId, { orgName: 'Harbor Kitchen', locationNames: ['Main'] })))
+      .toEqual({ status: 400, error: 'invalid_request' });
+    for (const { requestId } of [placed, plain]) {
+      expect(await requestDoc(requestId)).toMatchObject({ status: 'pending', orgId: null });
+      expect(await tenantCounts(requestId)).toEqual({ orgs: 0, locations: 0, seats: 0 });
+    }
+    expect((await auditEvents(server)).length).toBe(before + 2);   // only their access_request.created
+  });
+
+  it('a retry after a stop partway through the places creates only the missing ones, whatever names it sends', async () => {
+    const person = await requester('stopped', PLACES3);
+    const model = server.connection.models.TwLocation as unknown as { updateOne: (...args: unknown[]) => Promise<unknown> };
+    const updateOne = model.updateOne.bind(model);
+    let calls = 0;
+    // The first place's location is written; the approval stops at the second.
+    const spy = vi.spyOn(model, 'updateOne').mockImplementation((...args: unknown[]) => {
+      calls += 1;
+      return calls === 2 ? Promise.reject(new Error('stopped')) : updateOne(...args);
+    });
+    let res: Response;
+    try {
+      res = await approve(person.requestId, { orgName: 'Harbor Kitchen', locationNames: NAMES3 });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await errorOf(res)).toEqual({ status: 500, error: 'internal' });
+    expect(await tenantCounts(person.requestId)).toEqual({ orgs: 1, locations: 1, seats: 0 });
+
+    const retry = await approve(person.requestId, { orgName: 'Harbor Kitchen', locationNames: ['Renamed', 'Elm Street', 'River Road'] });
+    expect(retry.status).toBe(200);
+    const orgId = (await retry.json() as { org: { id: string } }).org.id;
+    expect(await locationsOf(orgId)).toMatchObject([
+      { name: 'Main Street', placeId: 'ChIJTestPlace0001' },
+      { name: 'Elm Street', placeId: 'ChIJTestPlace0002' },
+      { name: 'River Road', placeId: 'ChIJTestPlace0003' },
+    ]);
+    const events = await eventsAbout(person.requestId, orgId);
+    expect(events.filter((e) => e.action === 'location.created')).toHaveLength(3);
+    expect(events.filter((e) => e.action === 'member.joined')).toHaveLength(1);
+  });
+
+  it('a retry name on another place’s location is 409 location_name_taken, never a merge', async () => {
+    const person = await requester('taken', PLACES3);
+    const orgId = new Types.ObjectId();
+    await server.connection.collection('tw_access_requests').updateOne(
+      { _id: new Types.ObjectId(person.requestId) },
+      { $set: { status: 'approved', orgId, decidedAt: server.clock.now(), decidedBy: staff.userId } },
+    );
+    await server.connection.collection('tw_orgs').insertOne({
+      _id: orgId, name: 'Taken Kitchen', status: 'active', createdAt: server.clock.now(), createdBy: staff.userId,
+      fromRequestId: new Types.ObjectId(person.requestId), suspendedAt: null,
+    });
+    await server.connection.collection('tw_locations').insertOne({
+      orgId, name: 'Main Street', nameKey: 'main street', town: HANOVER,
+      createdAt: server.clock.now(), createdBy: staff.userId, placeId: 'ChIJTestPlace0001',
+    });
+    server.clock.advance(1000);   // the retry's locations sort after it
+
+    const taken = { orgName: 'Taken Kitchen', locationNames: ['Anything', 'Main Street', 'River Road'] };
+    expect(await errorOf(await approve(person.requestId, taken))).toEqual({ status: 409, error: 'location_name_taken' });
+    expect(await tenantCounts(person.requestId)).toEqual({ orgs: 1, locations: 1, seats: 0 });
+
+    const fixed = { orgName: 'Taken Kitchen', locationNames: ['Anything', 'Elm Street', 'River Road'] };
+    expect((await approve(person.requestId, fixed)).status).toBe(200);
+    expect(await locationsOf(orgId.toHexString())).toMatchObject([
+      { name: 'Main Street', placeId: 'ChIJTestPlace0001' },
+      { name: 'Elm Street', placeId: 'ChIJTestPlace0002' },
+      { name: 'River Road', placeId: 'ChIJTestPlace0003' },
+    ]);
+  });
+
+  it('a retry never adds a location once someone has joined, even after one of its locations is deleted', async () => {
+    const person = await requester('joined', PLACES3.slice(0, 2));
+    const body = { orgName: 'Joined Kitchen', locationNames: ['Main Street', 'Elm Street'] };
+    const res = await approve(person.requestId, body);
+    expect(res.status).toBe(200);
+    const orgId = (await res.json() as { org: { id: string } }).org.id;
+    await server.connection.collection('tw_locations').deleteOne({ orgId: new Types.ObjectId(orgId), placeId: 'ChIJTestPlace0002' });
+    expect((await approve(person.requestId, body)).status).toBe(200);
+    expect(await locationsOf(orgId)).toMatchObject([{ name: 'Main Street', placeId: 'ChIJTestPlace0001' }]);
+
+    // Nor once the person who joined has left: a removed seat still joined.
+    await server.connection.collection('tw_members').updateOne(
+      { orgId: new Types.ObjectId(orgId), userId: person.session.userId },
+      { $set: { status: 'removed', removedAt: server.clock.now(), removedBy: 'f'.repeat(24) }, $unset: { activeUserId: '' } },
+    );
+    expect((await approve(person.requestId, body)).status).toBe(200);
+    expect(await locationsOf(orgId)).toHaveLength(1);
+    expect((await eventsAbout(person.requestId, orgId)).filter((e) => e.action === 'location.created')).toHaveLength(2);
+  });
+
+  it('concurrent approvals of a request with places make one organization with one location per place', async () => {
+    const person = await requester('race-places', PLACES3.slice(0, 2));
+    const body = { orgName: 'Race Kitchen', locationNames: ['Main Street', 'Elm Street'] };
+    const results = await Promise.all(Array.from({ length: 5 }, () => approve(person.requestId, body)));
+    const ok = results.filter((res) => res.status === 200);
+    expect(ok.length).toBeGreaterThanOrEqual(1);
+    for (const res of results.filter((r) => r.status !== 200)) {
+      expect([{ status: 409, error: 'request_not_pending' }, { status: 409, error: 'requester_has_org' }]).toContainEqual(await errorOf(res));
+    }
+    const orgIds = new Set(await Promise.all(ok.map(async (res) => (await res.json() as { org: { id: string } }).org.id)));
+    expect(orgIds.size).toBe(1);
+    expect(await tenantCounts(person.requestId)).toEqual({ orgs: 1, locations: 2, seats: 1 });
+    expect((await eventsAbout(person.requestId, [...orgIds][0] ?? null)).filter((e) => e.action === 'location.created')).toHaveLength(2);
   });
 
   it('answers 409 request_not_pending for a decided request, 404 for an unknown one, 400 for bad input, and writes nothing', async () => {

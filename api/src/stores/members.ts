@@ -87,6 +87,11 @@ export interface MemberStore {
   /** Active plus invited: the 200-person cap. */
   countSeats(scope: OrgScope): Promise<number>;
   countActiveAdmins(scope: OrgScope): Promise<number>;
+  /**
+   * Whether any row, active or removed, has joined (`joinedAt` set); open invitations never have. Approval's step 7
+   * (F3) reads it for a request with places: a retry adds no location once anyone has.
+   */
+  anyJoined(scope: OrgScope): Promise<boolean>;
   /** Which of these addresses this organization already has an open invitation for. */
   openInviteEmails(scope: OrgScope, emails: readonly string[]): Promise<Set<string>>;
   hasActiveSeat(scope: OrgScope, userId: string): Promise<boolean>;
@@ -177,6 +182,9 @@ export function createMemberStore(connection: Connection): MemberStore {
     },
     countActiveAdmins(scope) {
       return Member.countDocuments({ orgId: scope.orgId, status: 'active', role: 'org_admin' });
+    },
+    async anyJoined(scope) {
+      return (await Member.exists({ orgId: scope.orgId, joinedAt: trusted({ $ne: null }) })) !== null;
     },
     async openInviteEmails(scope, emails) {
       if (emails.length === 0) return new Set();
