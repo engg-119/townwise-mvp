@@ -271,7 +271,7 @@ Branches:
 
 1. Staff open `/admin` (Requests, Pending) and read the request: organization, contact name and role, email (and the email at request time if it changed), town, location count, note, the place id when there is one, sent date. A warning shows when the requester already holds a seat.
 2. Staff validate the person by hand, outside Townwise: for example, the email domain matches the restaurant, or a phone call. [CONFIRM: what “validated manually” means in practice]
-3. “Approve” opens a dialog with the organization name and first location name, both prefilled and editable, and the town shown.
+3. “Approve” opens a dialog with the organization name and first location name, both prefilled and editable, and the town shown. For a request with places, the dialog shows a Location name per place instead (prefilled with Google’s name, empty for a request stored before places) with the place’s town, and “Each location needs its own name.” stops an empty or repeated name (C3).
 4. `POST /api/admin/requests/:requestId/approve`, with `{ orgName, locationName }` for a request without places and `{ orgName, locationNames }` for one with them (`locationNames` in the same order and number as the places, each 1 to 80, unique by name key, 6.4; any other body is 400 `invalid_request`, before anything is written):
    1. Load the request (404 if missing). If it is `approved` with an `orgId`, skip to step 6 (a retry completes the work).
    2. If it is not `pending`: 409 `request_not_pending`.
@@ -1949,7 +1949,7 @@ The location's chat with TownwiseAI and its side panel (server contract: `docs/p
   - “Requested as {emailAtRequest}” when the email changed;
   - the warning “This person already belongs to an organization.” when `requesterHasOrg` is true;
   - actions: the primary “Approve” (C3), an outline “Reject” (C4), and a text link “View as” (C1), which shows the Waiting page as they see it.
-- **C3, Approve.** Title “Approve {orgName}”. Fields: Organization name, and First location name (prefilled with the organization name). The town is shown read-only. Text: “This creates the organization and its first location in {town}, and makes {email} its admin. They get access the next time they open Townwise. We don’t send email yet.” Primary: “Approve”.
+- **C3, Approve.** Title “Approve {orgName}”. Fields: Organization name, and First location name (prefilled with the organization name). The town is shown read-only. For a request with places, in place of those two: one group per place, “Place {i} of {n}”, showing the place’s Google name and town (the town alone for a request stored before places) above a Location name field prefilled with Google’s name (empty for a request stored before places). An empty name, or one that matches another ignoring case and spaces, stops the approve with “Each location needs its own name.” on each such field. Text for one place is the text below with that place’s town; for two or more: “This creates the organization and its {n} locations, and makes {email} its admin. We email them that they’re in, and they get access the next time they open Townwise.” Text without places: “This creates the organization and its first location in {town}, and makes {email} its admin. They get access the next time they open Townwise. We don’t send email yet.” Primary: “Approve”.
 - **C4, Reject.** Title “Reject {orgName}?” Field: “Message to {contactName} (optional)”, with the helper “Shown on their No access page. Up to 500 characters.” Primary: “Reject”.
 
 | State | Shows |
@@ -2289,7 +2289,7 @@ Each is marked inline with “lead default”:
 
 ## 23. Changelog
 
-**2026-11-09, several places from one search (D24).** A request carries up to 25 checked Google places, `places: { placeId, name, town }[]`, in place of one `placeId`; a request stored with one `placeId` reads as one place named null (F2, 6.3, 10.1, 10.2). `access_request.created` adds `placeCount` (9.2). Approval takes `locationNames` for a request with places and creates a location for each; a retry fills only the missing ones (F3, 10.7).
+**2026-11-09, several places from one search (D24).** A request carries up to 25 checked Google places, `places: { placeId, name, town }[]`, in place of one `placeId`; a request stored with one `placeId` reads as one place named null (F2, 6.3, 10.1, 10.2). `access_request.created` adds `placeCount` (9.2). Approval takes `locationNames` for a request with places and creates a location for each; a retry fills only the missing ones (F3, 10.7). C3 names each place.
 
 **2026-11-06, staff setup.** While an organization is active and nobody has ever held a seat in it, staff add, rename and delete its locations and upload or delete their daily totals (D23, F10b), through five staff routes that reuse the org routes’ checks and writes (10.7). Each write is recorded before its effect and shown in the organization’s staff activity once someone joins (9.2, 9.3); answers carry no figure (D7). Setup ends at the first join and never reopens, kept by the organization’s new `firstJoinedAt` (6.1), and is closed while suspended (409 `org_not_in_setup`, 10.9). Locations and uploads made in setup carry `byStaff` (6.4, 6.6), and every view names those uploads “Townwise staff” (10.1). P21’s setup panel is the console side (16.4).
 

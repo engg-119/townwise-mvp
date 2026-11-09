@@ -22,8 +22,11 @@ export function fetchRequests(api: ApiClient, status: RequestStatus): Promise<Re
   return api.json(`/api/admin/requests?status=${status}`, requestListSchema);
 }
 
+/** A request without places names its one location; one with places names each, in the places' order. */
+export type ApproveInput = { orgName: string; locationName: string } | { orgName: string; locationNames: string[] };
+
 export function approveRequest(
-  api: ApiClient, requestId: string, input: { orgName: string; locationName: string },
+  api: ApiClient, requestId: string, input: ApproveInput,
 ): Promise<{ org: { id: string; name: string }; request: AdminRequest }> {
   return api.json(`/api/admin/requests/${id(requestId)}/approve`, approvedSchema, { method: 'POST', body: input });
 }
