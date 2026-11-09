@@ -100,7 +100,7 @@ export default function SettingsPage(): React.JSX.Element {
           <StaffActivityTable org={org} events={events} />
         </Section>
       ) : null}
-      <LeaveSection org={org} admin={admin} />
+      {me.openAsAdmin == null ? <LeaveSection org={org} admin={admin} /> : null}
       <SignOutSection email={email} />
     </Page>
   );
