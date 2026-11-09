@@ -6,7 +6,7 @@ The signed-in app of `docs/portal/spec.md`: access routing (4.3), the app shell 
 
 | Page | Route | File (under `client/app/(gate)/(app)/`) | Status |
 |---|---|---|---|
-| P3 Request access | `/request-access` | `(access)/request-access.tsx` | built, with the Google Places search as Step 1 while it is on (`src/portal/onboarding/`, `PlaceSearch`) |
+| P3 Request access | `/request-access` | `(access)/request-access.tsx` | built, with the Google Places checklist as Step 1 while it is on (`src/portal/onboarding/`, `PlaceChecklist`) |
 | P4 Waiting | `/waiting` | `(access)/waiting.tsx` | built |
 | P5 No access | `/no-access` | `(access)/no-access.tsx` | built |
 | P6 Joining | `/joining` | `(access)/joining.tsx` | built |

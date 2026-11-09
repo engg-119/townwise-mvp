@@ -5,8 +5,10 @@ import { sendAccessRequest, type AccessRequestInput } from '../../../../src/port
 import { hasCode } from '../../../../src/portal/errors';
 import { NumberedList, personEmail, SideHeading, SignedInLine } from '../../../../src/portal/gate';
 import { useAction, useBreakpoint } from '../../../../src/portal/hooks';
-import { PlaceSearch } from '../../../../src/portal/onboarding/PlaceSearch';
+import { continueLabel, locationCountFor } from '../../../../src/portal/onboarding/checklist';
+import { PlaceChecklist } from '../../../../src/portal/onboarding/PlaceChecklist';
 import { sendAccessRequestAt, townInputOf, type UsablePlace } from '../../../../src/portal/onboarding/places';
+import { usePlaceChecklist } from '../../../../src/portal/onboarding/usePlaceChecklist';
 import { usePlaceSearchAvailability } from '../../../../src/portal/onboarding/usePlaceSearch';
 import { SCRIPT_FOCUS, useFocusOnMount } from '../../../../src/portal/places/focus';
 import { PlaceSummary } from '../../../../src/portal/places/PlaceCard';
@@ -26,11 +28,14 @@ import { theme } from '../../../../src/theme';
 // removed. The form renders at once (the town list ships with the app); POST /api/access-requests answers the new
 // access (pending), and the portal layout opens Waiting. While the Google Places search is on (the API is asked once,
 // onboarding/places.ts checkPlaceSearch), the form is two steps of the onboarding's three: Step 1 “Find your
-// restaurant” searches Google Maps and confirms the place on its card; Step 2 “About you” is the form, with the place
-// in place of Town and its name in Organization name, and the request carries its `placeId`. “Can’t find it? Enter it
-// yourself” opens the form as it is without the search. With the search off, under view-as, and for a rejected request
-// (its answers are filled in), the form is as it was without it. Focus follows the steps: Looks right moves it to the
-// Step 2 heading, and Change place or Search Google Maps instead to the search field (places/focus.ts).
+// restaurants” is the places checklist (onboarding/usePlaceChecklist.ts), with Continue carrying the checked places on;
+// Step 2 “About you” is the form, with the places in place of Town, the first one's name in Organization name and
+// its town the request's town, and the request carries each place (`places`). Number of locations is the larger of
+// the number the person typed and the places checked, and a typed number below the checked count is refused. “Can’t
+// find it? Enter it yourself” opens the form as it is without the places, which stay checked for Search Google Maps
+// instead. With the search off, under view-as, and for a rejected request (its answers are filled in), the form is as
+// it was without it. Focus follows the steps: Continue moves it to the Step 2 heading, and Change places or Search
+// Google Maps instead to the search field (places/focus.ts).
 
 interface Form {
   orgName: string;
@@ -49,6 +54,10 @@ interface Messages {
   locationCount?: string;
 }
 
+function tooFew(count: number): string {
+  return `You checked ${String(count)} places, so enter at least ${String(count)}.`;
+}
+
 const REQUEST_COPY = {
   orgName: 'Enter your organization’s name.',
   contactName: 'Enter your name.',
@@ -60,7 +69,7 @@ const BLANK: Form = { orgName: '', contactName: '', contactRole: '', town: EMPTY
 
 const PLACE_UNAVAILABLE = 'Google Maps isn’t answering right now, so you can enter your restaurant yourself.';
 
-type Mode = { kind: 'search' } | { kind: 'form'; place: UsablePlace | null };
+type Mode = { kind: 'search' } | { kind: 'form'; withPlaces: boolean };
 
 /** For a rejected request, the previous answers are filled in. */
 function initialForm(access: Access): Form {
@@ -78,9 +87,9 @@ function initialForm(access: Access): Form {
 
 /**
  * The request body, or the field messages that stop it (the API's limits: api/src/handlers/requests.ts). With a
- * confirmed place the town is the place's.
+ * checked places the town is the first one's.
  */
-function checkRequest(form: Form, place: UsablePlace | null): { input: AccessRequestInput } | { messages: Messages } {
+function checkRequest(form: Form, places: readonly UsablePlace[]): { input: AccessRequestInput } | { messages: Messages } {
   const messages: Messages = {};
   const orgName = form.orgName.trim();
   const contactName = form.contactName.trim();
@@ -89,10 +98,12 @@ function checkRequest(form: Form, place: UsablePlace | null): { input: AccessReq
   if (orgName.length < 2) messages.orgName = REQUEST_COPY.orgName;
   if (contactName === '') messages.contactName = REQUEST_COPY.contactName;
   if (contactRole === '') messages.contactRole = REQUEST_COPY.contactRole;
-  const town = place === null ? checkTown(form.town) : { input: townInputOf(place.town) };
+  const [first] = places;
+  const town = first === undefined ? checkTown(form.town) : { input: townInputOf(first.town) };
   if ('messages' in town) messages.town = town.messages;
   const locationCount = Number(count);
   if (!/^\d+$/.test(count) || locationCount < 1 || locationCount > 50) messages.locationCount = REQUEST_COPY.locationCount;
+  else if (locationCount < places.length) messages.locationCount = tooFew(places.length);
   if (Object.keys(messages).length > 0 || !('input' in town)) return { messages };
   const note = form.note.trim();
   return {
@@ -110,16 +121,18 @@ export default function RequestAccessPage(): React.JSX.Element {
   const [form, setForm] = useState<Form>(() => initialForm(me.access));
   const [messages, setMessages] = useState<Messages>({});
   const search = usePlaceSearchAvailability(api, { readOnly });
+  const checklist = usePlaceChecklist(api, PLACE_UNAVAILABLE);
+  const [typed, setTyped] = useState('');
   const [chosen, setMode] = useState<Mode | null>(null);
   const [placeLine, setPlaceLine] = useState<string | null>(null);
-  const mode: Mode = chosen ?? (search === 'on' && me.access.state !== 'rejected' ? { kind: 'search' } : { kind: 'form', place: null });
+  const mode: Mode = chosen ?? (search === 'on' && me.access.state !== 'rejected' ? { kind: 'search' } : { kind: 'form', withPlaces: false });
   const email = personEmail(me);
   const readOnlyId = 'request-ro';
   const ro = readOnly ? { readOnly: true, readOnlyId } : {};
 
-  const send = useAction(useCallback(async (input: AccessRequestInput, place: UsablePlace | null) => {
+  const send = useAction(useCallback(async (input: AccessRequestInput, places: readonly UsablePlace[]) => {
     try {
-      applyMe(await (place === null ? sendAccessRequest(api, input) : sendAccessRequestAt(api, input, [place])));
+      applyMe(await (places.length === 0 ? sendAccessRequest(api, input) : sendAccessRequestAt(api, input, places)));
     } catch (error) {
       // Another tab sent one first: read the access again, which opens Waiting.
       if (hasCode(error, 409, 'request_exists')) {
@@ -134,17 +147,37 @@ export default function RequestAccessPage(): React.JSX.Element {
     }
   }, [api, applyMe, refreshMe]));
 
-  const place = mode.kind === 'form' ? mode.place : null;
+  const places: readonly UsablePlace[] = mode.kind === 'form' && mode.withPlaces ? checklist.places : [];
+
+  const goToForm = useCallback((): void => {
+    setMode({ kind: 'form', withPlaces: false });
+  }, []);
+  const onUnavailable = useCallback((): void => {
+    setPlaceLine(PLACE_UNAVAILABLE);
+    goToForm();
+  }, [goToForm]);
+
+  function carryOn(): void {
+    const [first] = checklist.places;
+    if (first === undefined) return;
+    setForm((current) => ({
+      ...current,
+      ...(current.orgName.trim() === '' ? { orgName: first.name.slice(0, 120) } : {}),
+      locationCount: locationCountFor(typed, checklist.places.length),
+    }));
+    setPlaceLine(null);
+    setMode({ kind: 'form', withPlaces: true });
+  }
 
   function submit(): void {
     if (readOnly) return;
-    const checked = checkRequest(form, place);
+    const checked = checkRequest(form, places);
     if ('messages' in checked) {
       setMessages(checked.messages);
       return;
     }
     setMessages({});
-    send.run(checked.input, place);
+    send.run(checked.input, places);
   }
 
   function update(patch: Partial<Form>): void {
@@ -178,27 +211,31 @@ export default function RequestAccessPage(): React.JSX.Element {
             {search === 'checking' ? <LoadingLine text="Checking for the Google Maps search…" /> : null}
             {search !== 'checking' && mode.kind === 'search' ? (
               <Stack gap={20}>
-                <StepHeader step={1} title="Find your restaurant" />
-                <PlaceSearch
-                  api={api}
+                <StepHeader step={1} title="Find your restaurants" />
+                <PlaceChecklist
+                  state={checklist}
                   autoFocus={chosen !== null}
                   label="Search for your restaurant or bar"
-                  helper="Type its name. Google Maps suggests places in the US."
-                  confirmLabel="Looks right"
-                  onConfirm={(found) => {
-                    if (form.orgName.trim() === '') update({ orgName: found.name.slice(0, 120) });
-                    setPlaceLine(null);
-                    setMode({ kind: 'form', place: found });
-                  }}
-                  manualLabel="Can’t find it? Enter it yourself"
-                  onManual={() => { setMode({ kind: 'form', place: null }); }}
-                  onUnavailable={() => { setPlaceLine(PLACE_UNAVAILABLE); setMode({ kind: 'form', place: null }); }}
+                  helper="Type its name. Google Maps suggests places in the US. Check each one that’s yours."
+                  onUnavailable={onUnavailable}
                 />
+                <Actions>
+                  <Button
+                    label={continueLabel(checklist.places.length)}
+                    disabled={checklist.places.length === 0 || checklist.loading}
+                    onPress={carryOn}
+                  />
+                  <Button
+                    variant="link"
+                    label="Can’t find it? Enter it yourself"
+                    onPress={() => { setPlaceLine(null); goToForm(); }}
+                  />
+                </Actions>
               </Stack>
             ) : null}
             {search !== 'checking' && mode.kind === 'form' ? (
               <Stack gap={20}>
-                {place === null ? null : <StepHeader step={2} title="About you" focus />}
+                {places.length === 0 ? null : <StepHeader step={2} title="About you" focus />}
                 {placeLine === null ? null : <ErrorNotice message={placeLine} />}
                 <ReadOnlyLine text={line} nativeID={readOnlyId} />
                 <FormField
@@ -237,7 +274,7 @@ export default function RequestAccessPage(): React.JSX.Element {
                 </Pair>
                 {/* Town beside Number of locations where two fields fit, as on the board; Another town's two fields stay under Town. */}
                 <Pair>
-                  {place === null ? (
+                  {places.length === 0 ? (
                     <TownFields
                       value={form.town}
                       onChange={(town) => { update({ town }); }}
@@ -248,7 +285,7 @@ export default function RequestAccessPage(): React.JSX.Element {
                   <FormField
                     label="Number of locations"
                     value={form.locationCount}
-                    onChangeText={(locationCount) => { update({ locationCount }); }}
+                    onChangeText={(locationCount) => { setTyped(locationCount); update({ locationCount }); }}
                     keyboardType="number-pad"
                     inputMode="numeric"
                     numeric
@@ -257,10 +294,10 @@ export default function RequestAccessPage(): React.JSX.Element {
                     {...ro}
                   />
                 </Pair>
-                {place === null ? null : (
-                  <PlaceSummary place={place}>
+                {places.length === 0 ? null : (
+                  <PlaceSummary places={places}>
                     <Actions>
-                      <Button variant="outline" label="Change place" onPress={() => { setMode({ kind: 'search' }); }} />
+                      <Button variant="outline" label="Change places" onPress={() => { setMode({ kind: 'search' }); }} />
                     </Actions>
                   </PlaceSummary>
                 )}
@@ -282,7 +319,7 @@ export default function RequestAccessPage(): React.JSX.Element {
                     {...(readOnly ? { describedBy: readOnlyId } : {})}
                     onPress={submit}
                   />
-                  {place === null && search === 'on' && placeLine === null
+                  {places.length === 0 && search === 'on' && placeLine === null
                     ? <Button variant="link" label="Search Google Maps instead" onPress={() => { setMode({ kind: 'search' }); }} />
                     : null}
                 </Actions>
@@ -298,7 +335,7 @@ export default function RequestAccessPage(): React.JSX.Element {
 
 /**
  * “Step N of 3” over the step's heading: the onboarding's three steps, the third after approval (Home). The heading is
- * Heading's (ui/text.tsx) with a ref, so `focus` can move focus to it when it appears (Step 2, after Looks right).
+ * Heading's (ui/text.tsx) with a ref, so `focus` can move focus to it when it appears (Step 2, after Continue).
  */
 function StepHeader(props: { step: 1 | 2; title: string; focus?: boolean }): React.JSX.Element {
   const { phone } = useBreakpoint();

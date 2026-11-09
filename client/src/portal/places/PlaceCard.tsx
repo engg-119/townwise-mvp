@@ -55,19 +55,23 @@ export function PlaceCard(props: { place: FoundPlace; note?: string | null; chil
 }
 
 /**
- * The confirmed place in a form: what it is, where it came from, and a way to change it. `focusOnMount` moves focus
- * to it when it appears (P10, after Looks right).
+ * The checked places in a form (P3's Step 2, and the one place of P10 and the console's setup): each one's name,
+ * address and town line, then where they came from. `focusOnMount` moves focus to it when it appears (P10, after
+ * Looks right).
  */
-export function PlaceSummary(props: { place: FoundPlace; focusOnMount?: boolean; children?: React.ReactNode }): React.JSX.Element {
-  const { place } = props;
+export function PlaceSummary(props: { places: readonly FoundPlace[]; focusOnMount?: boolean; children?: React.ReactNode }): React.JSX.Element {
   const kicker = useFocusOnMount<Host>(props.focusOnMount === true);
   return (
-    <View style={[styles.card, styles.summary]} role="group" aria-label="Your place on Google Maps">
+    <View style={[styles.card, styles.summary]} role="group" aria-label="Your places on Google Maps">
       <Text ref={kicker} {...SCRIPT_FOCUS} style={styles.kicker}>On Google Maps</Text>
-      <Text style={styles.name}>{place.name}</Text>
-      <Text style={styles.fact}>{place.address}</Text>
-      <Text style={styles.fact}>{townLine(place.town)}</Text>
-      <Small>{GOOGLE_SOURCE}</Small>
+      {props.places.map((place) => (
+        <View key={place.placeId} style={styles.facts}>
+          <Text style={styles.name}>{place.name}</Text>
+          <Text style={styles.fact}>{place.address}</Text>
+          <Text style={styles.fact}>{townLine(place.town)}</Text>
+        </View>
+      ))}
+      <Small>{PLACES_SOURCE}</Small>
       {props.children}
     </View>
   );

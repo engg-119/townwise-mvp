@@ -153,7 +153,7 @@ export function AddLocationForm(props: { target?: AddLocationTarget }): React.JS
       {place === null
         ? <TownFields value={town} onChange={setTown} {...(messages.town === undefined ? {} : { messages: messages.town })} {...ro} />
         : (
-          <PlaceSummary place={place} focusOnMount>
+          <PlaceSummary places={[place]} focusOnMount>
             <Actions>
               <Button variant="outline" label="Change place" onPress={() => { setMode({ kind: 'search' }); }} />
             </Actions>
