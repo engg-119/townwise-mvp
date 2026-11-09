@@ -283,7 +283,9 @@ test('Privacy makes the three commitments and no longer says the app has no uplo
   expect(text).toContain('we will delete your account and its data within 30 days');
   expect(text).toContain('sends us only the date, guest count and net sales for each day');
   expect(text).toContain('Effective November 5, 2026. Last updated November 9, 2026.');
-  expect(text).toContain('public facts about its town (its calendar, and who is likely in town, with the public sources behind them). TownwiseAI never reads your files');
+  expect(text).toContain('public facts about its town (its calendar, and who is likely in town, with the public sources behind them). TownwiseAI never reads the sales files you drop. It reads a text item on Your data, text you pasted or a text file you added, only when you ask, and never a file’s name.');
+  expect(text).toContain('Turning an item off leaves it out of your numbers, forecasts and TownwiseAI until someone turns it back on.');
+  expect(text).toContain('Items you add for reference follow the same rules: we delete each one 365 days after it was sent, or sooner when you delete it.');
   expect(text).toContain('Answers are deleted with the location’s sales data, the location or the organization.');
   // Stored files (privacy pass 2), Google Places and Maps (1b) and the welcome marker (1c).
   expect(text).not.toContain('The file itself never reaches our server');

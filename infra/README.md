@@ -406,6 +406,7 @@ Stored files (`api/README.md`, Files; `docs/portal/spec.md` 11A) are off until t
 **Wait for all of these before step 3.** Raw exports hold other people's personal data (diner names, phones, card details), so files go on only in one release with:
 
 - the file storage client pieces and the drop screen (HistoryStep) that mounts them;
+- Your data's reference items (any file, pasted text, text kept from TownwiseAI) and TownwiseAI's reading of text items ship behind this same switch (spec D28), and only after the privacy page's Your data wording above;
 - the privacy page's stored-files wording, because the privacy page's promise changes with it: stored files, ZIP, PDF and Word reading, the AI column step's redacted profile going to Anthropic, the retention periods once confirmed, the owner's "delete originals", and the staff purge for a person's deletion request.
 
 The API side is in the build (spec 11A): ZIP, PDF and Word reading, the AI column step, and every deletion path. Before step 3, check on `develop` that each still has a passing test (`npm test -w @townwise/api`):
