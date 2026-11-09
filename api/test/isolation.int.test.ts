@@ -181,6 +181,8 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
     'org.files.create': { name: 'a.csv', sizeBytes: 10, purpose: 'history' },
     'org.imports.answer': { questionId: 'q', choice: 'not_sure' },
     'org.chat.proposal': { action: 'dismiss' },
+    'org.chat.rename': { title: 'Renamed by A' },
+    'org.chat.active': { nodeId: 'legacy-0' },
     'org.agent.answer': { answer: 'not_sure' },
   };
   const QUERY: Record<string, string> = {

@@ -52,17 +52,25 @@ export type TurnResult =
   | {
     kind: 'done'; stopReason: DoneReason; messages: StoredMessage[]; calls: number; model: string;
     inputTokens: number; outputTokens: number; costMicroUsd: number;
+    /** The reply node when it stored an assistant message, else the user node, else the reply's parent. */
+    leafId: string;
   }
   | { kind: 'refused'; calls: number; model: string; costMicroUsd: number }
   | { kind: 'failed'; code: FailureCode; errType: string; status: number | null; calls: number; costMicroUsd: number }
   | { kind: 'aborted'; calls: number; costMicroUsd: number };
 
+/** A tree node the turn writes (src/chat/tree.ts). */
+export interface TurnNode { readonly id: string; readonly parentId: string | null }
+
 export interface TurnInput {
   readonly model: ChatModel;
   readonly tools: ToolContext;
-  /** The conversation so far, exactly as stored. */
+  /** The path the turn continues, root to the turn's parent, exactly as stored. */
   readonly history: readonly BetaMessageParam[];
-  readonly userMessage: BetaMessageParam;
+  /** Null for a regenerate: the history already ends with the person's message. */
+  readonly userMessage: BetaMessageParam | null;
+  /** The nodes the turn's messages are stored under: `user` is null for a regenerate, and `reply.parentId` is the user node. */
+  readonly nodes: { readonly user: TurnNode | null; readonly reply: { readonly id: string; readonly parentId: string } };
   readonly signal: AbortSignal;
   readonly now: () => Date;
   readonly emit: (event: TurnEvent) => void;
@@ -201,9 +209,10 @@ export function echoable(content: readonly BetaContentBlock[]): BetaContentBlock
 export async function runTurn(input: TurnInput): Promise<TurnResult> {
   const turn: BetaMessageParam[] = [];
   const stored: StoredMessage[] = [];
-  const append = (param: BetaMessageParam): void => {
+  const { user, reply } = input.nodes;
+  const append = (param: BetaMessageParam, node: TurnNode = reply): void => {
     turn.push(param);
-    stored.push({ at: input.now(), param: JSON.stringify(param) });
+    stored.push({ at: input.now(), param: JSON.stringify(param), nodeId: node.id, parentId: node.parentId });
   };
   let calls = 0;
   let spent = 0;
@@ -217,12 +226,14 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
   };
   const done = (stopReason: DoneReason): TurnResult => ({
     kind: 'done', stopReason, messages: stored, calls, model, inputTokens, outputTokens, costMicroUsd: spent,
+    // A reply's messages start with an assistant message, so the last one stored names the deepest node written.
+    leafId: stored.at(-1)?.nodeId ?? reply.parentId,
   });
 
   // A function, not a property read: the signal changes under the loop, which narrowing cannot see.
   const aborted = (): boolean => input.signal.aborted;
 
-  append(input.userMessage);
+  if (input.userMessage !== null && user !== null) append(input.userMessage, user);
   try {
     let jsonRetries = 0;
     for (;;) {

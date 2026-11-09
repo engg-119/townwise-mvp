@@ -157,10 +157,14 @@ describe('a plain answer', () => {
     expect(status).toBe(200);
     expect(shape(events)).toEqual(['conversation', 'text', 'done']);
     const id = conversationIdOf(events);
-    expect(events[0]?.data).toEqual({ id, title: 'What changed in May?' });
+    // A new conversation's first message is a root node, and the reply hangs under it.
+    const { userNodeId, replyNodeId } = events[0]?.data as { userNodeId: string; replyNodeId: string };
+    expect(events[0]?.data).toEqual({
+      id, title: 'What changed in May?', userNodeId: expect.any(String) as unknown, replyNodeId: expect.any(String) as unknown, parentId: null,
+    });
     expect(streamedText(events)).toBe('May was steady, with two busy Fridays.');
     // 1000 x $4 + 500 x $20 + 10,000 x $0.20 + 2000 x $5 per million tokens.
-    expect(events.at(-1)?.data).toEqual({ stopReason: 'end_turn', costUsd: 0.026 });
+    expect(events.at(-1)?.data).toEqual({ stopReason: 'end_turn', costUsd: 0.026, leafId: replyNodeId });
     expect(await usedMicroUsd()).toBe(26_000);
 
     const params = model.calls[0]?.params;
@@ -191,15 +195,15 @@ describe('a plain answer', () => {
     const view = await (await call(server, `/api/org/locations/${locationId}/chat/${id}`, { session: author.session })).json() as ConversationView;
     const at = server.clock.now().toISOString();
     expect(view).toEqual({
-      id, title: 'What changed in May?', updatedAt: at, activeLeafId: 'legacy-1',
+      id, title: 'What changed in May?', updatedAt: at, activeLeafId: replyNodeId,
       tree: [
-        { id: 'legacy-0', parentId: null, role: 'user' },
-        { id: 'legacy-1', parentId: 'legacy-0', role: 'assistant' },
+        { id: userNodeId, parentId: null, role: 'user' },
+        { id: replyNodeId, parentId: userNodeId, role: 'assistant' },
       ],
       messages: [
-        { nodeId: 'legacy-0', role: 'user', text: 'What changed in May?', proposals: [], parts: [], at },
+        { nodeId: userNodeId, role: 'user', text: 'What changed in May?', proposals: [], parts: [], at },
         {
-          nodeId: 'legacy-1', role: 'assistant', text: 'May was steady, with two busy Fridays.', proposals: [],
+          nodeId: replyNodeId, role: 'assistant', text: 'May was steady, with two busy Fridays.', proposals: [],
           parts: [{ type: 'text', text: 'May was steady, with two busy Fridays.' }], at,
         },
       ],
@@ -229,7 +233,8 @@ describe('history', () => {
     model.script({ kind: 'message', message: message([text('Anything else?')]) });
     const two = await turn({ conversationId: id, content: 'Thanks' });
     expect(shape(two.events)).toEqual(['conversation', 'text', 'done']);
-    expect(two.events[0]?.data).toEqual({ id, title: 'What notes do I have?' });
+    // With no parentId the turn continues the stored active leaf: the first turn's reply.
+    expect(two.events[0]?.data).toMatchObject({ id, title: 'What notes do I have?', parentId: (one.events[0]?.data as { replyNodeId: string }).replyNodeId });
 
     const sent = messagesOf(model.calls[2]);
     expect(sent).toHaveLength(5);
@@ -412,7 +417,9 @@ describe('tools', () => {
     }
     const { events } = await turn({ content: 'Keep checking.' });
     expect(model.calls).toHaveLength(8);
-    expect(events.at(-1)).toEqual({ event: 'done', data: { stopReason: 'tool_limit', costUsd: expect.any(Number) as unknown } });
+    expect(events.at(-1)).toEqual({
+      event: 'done', data: { stopReason: 'tool_limit', costUsd: expect.any(Number) as unknown, leafId: expect.any(String) as unknown },
+    });
     expect(eventData(events, 'tool')).toHaveLength(16);
     const id = conversationIdOf(events);
     expect(await storedParams(id)).toHaveLength(17);
@@ -449,7 +456,7 @@ describe('stop reasons', () => {
     const { events } = await turn({ content: 'Refuse me.' });
     expect(shape(events)).toEqual(['conversation', 'text', 'done']);
     // 1000 x $4 + 500 x $20 per million tokens.
-    expect(events.at(-1)?.data).toEqual({ stopReason: 'refusal', costUsd: 0.014 });
+    expect(events.at(-1)?.data).toEqual({ stopReason: 'refusal', costUsd: 0.014, leafId: null });
     expect(await usedMicroUsd()).toBe(14_000);
     expect(await conversationDoc(conversationIdOf(events))).toBeNull();
   });
@@ -731,7 +738,7 @@ describe('caps, budget and limits', () => {
     const { events } = await turn({ content: 'Spend the rest' });
     expect(model.calls).toHaveLength(1);
     expect(shape(events)).toEqual(['conversation', 'text', 'tool', 'tool', 'done']);
-    expect(events.at(-1)?.data).toEqual({ stopReason: 'budget', costUsd: 0.026 });
+    expect(events.at(-1)?.data).toMatchObject({ stopReason: 'budget', costUsd: 0.026 });
     expect(await usedMicroUsd()).toBe(19_990_000 + 26_000);
 
     // Saved, with every tool call answered, so the history is still a valid request.
@@ -750,7 +757,7 @@ describe('caps, budget and limits', () => {
     }) });
     const { events } = await turn({ content: 'Unknown model' });
     // 1000 x $5 + 500 x $25 + 10,000 x $0.50 + 2000 x $6.25 per million tokens.
-    expect(events.at(-1)?.data).toEqual({ stopReason: 'end_turn', costUsd: 0.035 });
+    expect(events.at(-1)?.data).toMatchObject({ stopReason: 'end_turn', costUsd: 0.035 });
     expect(await usedMicroUsd()).toBe(35_000);
   });
 

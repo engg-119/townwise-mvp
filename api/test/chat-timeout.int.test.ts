@@ -38,7 +38,9 @@ describe('the turn time limit', () => {
     const res = await postTurn('Take your time');
     expect(res.status).toBe(200);
     const body = await res.text();
-    expect(body).toMatch(/^event: conversation\ndata: \{"id":"[0-9a-f]{24}","title":"Take your time"\}\n\n/);
+    expect(body).toMatch(
+      /^event: conversation\ndata: \{"id":"[0-9a-f]{24}","title":"Take your time","userNodeId":"[0-9a-f-]{36}","replyNodeId":"[0-9a-f-]{36}","parentId":null\}\n\n/,
+    );
     expect(body.endsWith('event: text\ndata: {"delta":"Still t"}\n\nevent: error\ndata: {"code":"timeout"}\n\n')).toBe(true);
     expect(model.calls[0]?.signal.aborted).toBe(true);
 

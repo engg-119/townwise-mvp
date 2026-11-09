@@ -103,10 +103,16 @@ export interface ChatConversationStore {
   claim(scope: OrgScope, owner: ConversationOwner, conversationId: string, input: { turnId: string; now: Date; staleBefore: Date }):
     Promise<ConversationRecord | null>;
   /**
-   * Appends a finished turn's messages and clears the claim, in one update, only while `turnId` still holds the
-   * claim. False when it does not (the turn was taken over, or the conversation deleted).
+   * Appends a finished turn's messages, makes `leafId` the active leaf and clears the claim, in one update, only while
+   * `turnId` still holds the claim. False when it does not (the turn was taken over, or the conversation deleted).
    */
-  finish(scope: OrgScope, conversationId: string, turnId: string, input: { messages: readonly StoredMessage[]; now: Date }): Promise<boolean>;
+  finish(
+    scope: OrgScope, conversationId: string, turnId: string, input: { messages: readonly StoredMessage[]; now: Date; leafId: string },
+  ): Promise<boolean>;
+  /** Stores the version shown. Display state: `updatedAt` stays. False when the conversation is not the author's. */
+  setActiveLeaf(scope: OrgScope, owner: ConversationOwner, conversationId: string, leafId: string): Promise<boolean>;
+  /** Display state: `updatedAt` stays, so the conversation keeps its place in the list. False as for setActiveLeaf. */
+  rename(scope: OrgScope, owner: ConversationOwner, conversationId: string, title: string): Promise<boolean>;
   /** Drops a failed turn's claim; a conversation that never finished a turn is deleted instead. */
   release(scope: OrgScope, conversationId: string, turnId: string): Promise<void>;
   remove(scope: OrgScope, owner: ConversationOwner, conversationId: string): Promise<boolean>;
@@ -181,8 +187,16 @@ export function createChatConversationStore(connection: Connection): ChatConvers
       const result = await Conversation.updateOne(claimedBy(scope, conversationId, turnId), {
         $push: { messages: { $each: input.messages.map(toStored) } },
         $inc: { turnCount: 1 },
-        $set: { liveTurn: null, updatedAt: input.now },
+        $set: { liveTurn: null, updatedAt: input.now, activeLeafId: input.leafId },
       });
+      return result.matchedCount === 1;
+    },
+    async setActiveLeaf(scope, owner, conversationId, leafId) {
+      const result = await Conversation.updateOne({ _id: new Types.ObjectId(conversationId), ...ownedBy(scope, owner) }, { $set: { activeLeafId: leafId } });
+      return result.matchedCount === 1;
+    },
+    async rename(scope, owner, conversationId, title) {
+      const result = await Conversation.updateOne({ _id: new Types.ObjectId(conversationId), ...ownedBy(scope, owner) }, { $set: { title } });
       return result.matchedCount === 1;
     },
     async release(scope, conversationId, turnId) {
