@@ -3,7 +3,8 @@
 // deletePersonRecords, the forecast lab's findLabCallback, the file reader's claimNextImport, and the daily file sweep's claimFileSweep, finishFileSweep,
 // sweepCandidates, removeOldUploadDays and existingFileIds.
 // Only access/resolve.ts, the join and decline handlers, the staff handlers (admin.ts, deletion.ts), the file reader
-// (files/worker.ts) and the file sweeper (files/sweeper.ts) import this file (test/isolation.test.ts enforces the list).
+// (files/worker.ts), the file sweeper (files/sweeper.ts) and the lab job's callback (lab/callback.ts) import this file
+// (test/isolation.test.ts enforces the list).
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { trusted, Types, type Connection } from 'mongoose';
 

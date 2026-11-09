@@ -10,6 +10,8 @@ import { TURN_TIME_LIMIT_MS } from './chat/turn.ts';
 import { resolveTownwiseConfig, type ResolvedTownwiseConfig, type TownwiseConfig } from './config.ts';
 import type { FileBlobs } from './files/blobs.ts';
 import { createForecastReader, type ForecastReader } from './forecasts/reader.ts';
+import { createLabCallbackRouter } from './lab/callback.ts';
+import type { LabRunner } from './lab/runner.ts';
 import { OFF_MAILER, type Mailer } from './mail/mailer.ts';
 import { createPeopleInTownReader, type PeopleInTownReader } from './people-in-town/reader.ts';
 import { PEOPLE_DATA, type PeopleData } from './people-in-town/sources.ts';
@@ -45,6 +47,8 @@ export interface TownwiseDeps {
   readonly fileWorker?: { nudge(): void } | undefined;
   /** U13A: the researched headcount inputs; absent, the committed people-in-town/sources.ts. Tests pass synthetic ones. */
   readonly peopleData?: PeopleData | undefined;
+  /** Starts the forecast lab's jobs; absent turns calibrations off (main.ts builds it from TOWNWISE_LAB_RUNNER). */
+  readonly labRunner?: LabRunner | undefined;
 }
 
 /**
@@ -81,15 +85,14 @@ export interface TownwiseContext {
   readonly nudgeFiles: () => void;
   /** U13A. */
   readonly ports: TownwisePorts;
+  /** Null while the forecast lab is off (503 lab_unavailable). */
+  readonly labRunner: LabRunner | null;
 }
 
-/**
- * Registers the Townwise models on `connection` (call it before ensureIndexes) and returns the /api router.
- * `routes` is TOWNWISE_ROUTES in production; tests pass their own table to exercise the chain.
- */
-export function createTownwiseApi(deps: TownwiseDeps, routes: readonly TownwiseRoute[] = TOWNWISE_ROUTES): Router {
+/** Registers the Townwise models on `connection` (call it before ensureIndexes) and builds what every handler receives. */
+export function createTownwiseContext(deps: TownwiseDeps): TownwiseContext {
   const stores = createTownwiseStores(deps.connection);
-  const ctx: TownwiseContext = {
+  return {
     config: resolveTownwiseConfig(deps.config),
     logger: deps.logger,
     connection: deps.connection,
@@ -110,9 +113,23 @@ export function createTownwiseApi(deps: TownwiseDeps, routes: readonly TownwiseR
       // U13B.
       forecasts: createForecastReader({ stores }),
     },
+    labRunner: deps.labRunner ?? null,
   };
+}
+
+/**
+ * Registers the Townwise models on `connection` (call it before ensureIndexes) and returns the /api router.
+ * `routes` is TOWNWISE_ROUTES in production; tests pass their own table to exercise the chain.
+ */
+export function createTownwiseApi(deps: TownwiseDeps, routes: readonly TownwiseRoute[] = TOWNWISE_ROUTES): Router {
+  const ctx = createTownwiseContext(deps);
   // No router-wide body parser: each route mounts its own limit after the policy passes (spec 7.2 step 6).
   const router = express.Router();
   mountTownwiseRoutes(router, routes, ctx);
   return router;
+}
+
+/** The forecast lab job's callback router, which main.ts mounts at /lab, outside /api and the kit's auth (lab/callback.ts). */
+export function createTownwiseLab(deps: TownwiseDeps): Router {
+  return createLabCallbackRouter(createTownwiseContext(deps));
 }

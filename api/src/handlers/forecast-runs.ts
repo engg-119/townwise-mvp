@@ -71,8 +71,11 @@ function recordFacts(run: ForecastRunRecord): Parameters<typeof eventOf>[4] {
   return { id: run.id, locationId: run.locationId, version: run.model.version, range: run.range, dayCount: run.dayCount };
 }
 
-/** The rows a run file makes, field by field. A ref is kept only when it names a calendar entry on its day. */
-function rowsOf(file: ForecastRunFile, townId: string | null): ForecastRowInput[] {
+/**
+ * The rows a run file makes, field by field; the forecast lab's draft runs too (lab/service.ts). A ref is kept only when
+ * it names a calendar entry on its day.
+ */
+export function rowsOf(file: Pick<ForecastRunFile, 'days' | 'weeks'>, townId: string | null): ForecastRowInput[] {
   const days = file.days.map((day): ForecastRowInput => {
     const events = townEvents(townId, { from: day.date, to: day.date });
     return {

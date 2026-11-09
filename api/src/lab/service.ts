@@ -1,0 +1,277 @@
+// The forecast lab's calibrations (design calls 3, 4, 5 and 7): starting one, timing out one whose job never called
+// back, and storing what its job posts back as a draft forecast run. No transactions (D17): every step is ordered so a
+// retry completes it, and every change of a calibration is a compare-and-set, so a duplicated or retried result ends
+// with one run and one calibration.finished event. Nothing publishes here. Logs and audit events carry ids, codes and
+// counts only, never a figure, a date with a value, or anything from the input or the result.
+import { createHash, randomBytes } from 'node:crypto';
+
+import { createRateLimiter, RateLimiterUnavailableError, type RateLimiter } from '@ckeith26/rate-limit';
+import { Types } from 'mongoose';
+
+import type { OrgScope } from '../access/policy.ts';
+import type { TownwiseContext } from '../app.ts';
+import { recordAfter, SYSTEM_ACTOR } from '../audit.ts';
+import { daysBetween, utcDay } from '../dates.ts';
+import { runFileSha256, type FileIssue } from '../forecasts/file.ts';
+import { rowsOf } from '../handlers/forecast-runs.ts';
+import { LIVE_STATUSES, type CalibrationFailure, type CalibrationOutcome, type CalibrationRecord } from '../stores/calibrations.ts';
+import type { LocationRecord } from '../stores/locations.ts';
+import { currentChampion, GATE } from './gate.ts';
+import { guestSpan } from './input.ts';
+import { checkLabResult, type LabSuccess } from './result.ts';
+import { LabStartError } from './runner.ts';
+
+export { HORIZON_DAYS } from './input.ts';
+
+/** What one calibration costs the organization's TownwiseAI month (the job's list price is about $0.03). [CONFIRM] */
+export const CALIBRATION_CHARGE_MICRO_USD = 100_000;
+/** Calibrations an organization may start in a day (townwise:calibrations; a store outage denies). [CONFIRM] */
+export const CALIBRATIONS_PER_ORG_PER_DAY = 4;
+/** A calibration still live this long after it was requested has failed (timeout); its token dies at the same time. [CONFIRM] */
+export const CALIBRATION_TIMEOUT_MS = 1_200_000;
+/** A pattern change needs this many days of history after it, so the new pattern has weeks to learn from. [CONFIRM] */
+const REGIME_TAIL_DAYS = 56;
+
+const CALIBRATIONS_LIMIT = { name: 'townwise:calibrations', limit: CALIBRATIONS_PER_ORG_PER_DAY, windowSeconds: 86_400 } as const;
+const limiters = new WeakMap<TownwiseContext['redis'], RateLimiter>();
+
+export type StartRefusal =
+  | 'lab_unavailable' | 'not_enough_history' | 'invalid_regime_start' | 'budget_exhausted' | 'in_progress' | 'rate_limited'
+  | 'start_failed';
+
+export const START_REFUSAL_WORDS: Record<StartRefusal, string> = {
+  lab_unavailable: 'Calibration isn’t available right now.',
+  not_enough_history: 'Calibration needs at least 420 days from the first to the last day of sales history.',
+  invalid_regime_start: 'The pattern change date must fall inside the sales history, at least 8 weeks before its last day.',
+  budget_exhausted: 'This month’s TownwiseAI budget is used up, so a calibration can’t start until it resets.',
+  in_progress: 'A calibration for this location is already running.',
+  rate_limited: 'This organization has started 4 calibrations in the last day. Try again tomorrow.',
+  start_failed: 'The calibration couldn’t start. Try again in a few minutes.',
+};
+
+export const FAILURE_WORDS: Record<CalibrationFailure, string> = {
+  start_failed: 'It couldn’t start.',
+  timeout: 'It didn’t finish within 20 minutes.',
+  job_failed: 'The job stopped with an error.',
+  not_enough_history: 'There wasn’t enough sales history.',
+  invalid_result: 'Its result didn’t pass Townwise’s checks.',
+};
+
+export interface StartRequest {
+  /** The new calibration's id, made by the caller so the event it records before the effect can name it. */
+  readonly id: string;
+  readonly scope: OrgScope;
+  readonly location: LocationRecord;
+  readonly requester: { readonly userId: string; readonly role: 'org_admin' | 'superadmin'; readonly via: 'chat' | 'console' };
+  readonly regimeStart: string | null;
+  /** The town's local date. */
+  readonly today: string;
+}
+
+export interface IngestAnswer { status: number; body: object }
+
+const NOT_FOUND: IngestAnswer = { status: 404, body: { error: 'not_found', message: 'Not found' } };
+
+function isLive(record: CalibrationRecord): boolean {
+  return LIVE_STATUSES.includes(record.status);
+}
+
+function sha256(text: string): string {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+/** The tuning chat's month (UTC), which calibrations are charged to. */
+function monthOf(at: Date): string {
+  return at.toISOString().slice(0, 7);
+}
+
+/** Spent once the month's cost reaches the limit, as the tuning chat counts it. */
+async function budgetSpent(ctx: TownwiseContext, scope: OrgScope): Promise<boolean> {
+  const used = await ctx.stores.chatUsage.costMicroUsd(scope, monthOf(ctx.now()));
+  return used >= Math.round(ctx.config.chatMonthlyBudgetUsd * 1_000_000);
+}
+
+async function historyOf(ctx: TownwiseContext, scope: OrgScope, locationId: string): Promise<{ first: string; last: string } | null> {
+  const coverage = await ctx.stores.salesDays.coverage(scope, locationId);
+  if (coverage.firstDate === null || coverage.lastDate === null) return null;
+  return guestSpan(await ctx.stores.salesDays.days(scope, locationId, { from: coverage.firstDate, to: coverage.lastDate }));
+}
+
+/**
+ * Finishes a live calibration by compare-and-set. Only the call that finishes it records calibration.finished (by the
+ * system, after the effect) and logs townwise.calibration_finished, so a retry or a race records it once.
+ */
+export async function finishCalibration(
+  ctx: TownwiseContext, scope: OrgScope, record: CalibrationRecord, outcome: CalibrationOutcome,
+  facts: { runId: string | null; heldOutWeeks: number | null } = { runId: null, heldOutWeeks: null },
+): Promise<boolean> {
+  if (!(await ctx.stores.calibrations.finish(scope, record.id, outcome, ctx.now()))) return false;
+  const failure = outcome.status === 'failed' ? outcome.failure : null;
+  await recordAfter(ctx, {
+    ...SYSTEM_ACTOR, at: ctx.now(), orgId: scope.orgId, action: 'calibration.finished',
+    target: { type: 'calibration', id: record.id },
+    details: {
+      locationId: record.locationId, calibrationId: record.id, status: outcome.status, gate: null, failure,
+      runId: facts.runId, heldOutWeeks: facts.heldOutWeeks,
+    },
+  });
+  ctx.logger.info({
+    orgId: scope.orgId, locationId: record.locationId, calibrationId: record.id, status: outcome.status, failure,
+    heldOutWeeks: facts.heldOutWeeks,
+  }, 'townwise.calibration_finished');
+  return true;
+}
+
+/**
+ * A live calibration requested 20 minutes ago or more has failed (timeout): its job never called back, or never
+ * finished. There is no background sweep: the next start or read of it does this. Resolves the record as it is now.
+ */
+export async function expireStale(ctx: TownwiseContext, scope: OrgScope, record: CalibrationRecord): Promise<CalibrationRecord> {
+  if (!isLive(record) || ctx.now().getTime() < record.requestedAt.getTime() + CALIBRATION_TIMEOUT_MS) return record;
+  await finishCalibration(ctx, scope, record, { status: 'failed', failure: 'timeout' });
+  return (await ctx.stores.calibrations.find(scope, record.id)) ?? record;
+}
+
+/**
+ * The checks before a start, in order: the lab is on; the history (first to last day with guests) spans at least
+ * GATE.minHistoryDays; a pattern change date falls inside it, at least 8 weeks before its last day; the month's
+ * TownwiseAI budget is not spent; and no calibration of the location is live (a stale one is timed out first).
+ */
+export async function checkStart(ctx: TownwiseContext, req: StartRequest): Promise<StartRefusal | null> {
+  if (ctx.labRunner === null) return 'lab_unavailable';
+  const { scope, location } = req;
+  const history = await historyOf(ctx, scope, location.id);
+  if (history === null || daysBetween(history.first, history.last) < GATE.minHistoryDays) return 'not_enough_history';
+  if (req.regimeStart !== null && (req.regimeStart < history.first || daysBetween(req.regimeStart, history.last) < REGIME_TAIL_DAYS)) {
+    return 'invalid_regime_start';
+  }
+  if (await budgetSpent(ctx, scope)) return 'budget_exhausted';
+  const live = await ctx.stores.calibrations.live(scope, location.id);
+  if (live !== null && isLive(await expireStale(ctx, scope, live))) return 'in_progress';
+  return null;
+}
+
+/**
+ * Starts a calibration after checkStart passed: one of the organization's 4 a day, a queued calibration holding the
+ * location's live slot with a fresh token (its sha256 stored, dead after 20 minutes), the job, then running, then the
+ * charge to the month. A job that can't start fails the calibration start_failed and is not charged.
+ */
+export async function launch(
+  ctx: TownwiseContext, req: StartRequest,
+): Promise<{ ok: true; calibration: CalibrationRecord } | { ok: false; code: StartRefusal }> {
+  const runner = ctx.labRunner;
+  if (runner === null) return { ok: false, code: 'lab_unavailable' };
+  const { scope, location } = req;
+  let limiter = limiters.get(ctx.redis);
+  if (limiter === undefined) {
+    limiter = createRateLimiter({ redis: ctx.redis, ...CALIBRATIONS_LIMIT });
+    limiters.set(ctx.redis, limiter);
+  }
+  try {
+    if (!(await limiter.consume(`org:${scope.orgId}`)).allowed) return { ok: false, code: 'rate_limited' };
+  } catch (err) {
+    // Every calibration costs money, so a store outage denies.
+    if (!(err instanceof RateLimiterUnavailableError)) throw err;
+    return { ok: false, code: 'rate_limited' };
+  }
+  const champion = currentChampion(await ctx.stores.forecasts.published(scope, location.id), req.today);
+  const token = randomBytes(32).toString('base64url');
+  const now = ctx.now();
+  const queued = await ctx.stores.calibrations.insertQueued(scope, {
+    id: req.id, locationId: location.id, regimeStart: req.regimeStart, championRunId: champion?.id ?? null,
+    requestedBy: { userId: req.requester.userId, role: req.requester.role, via: req.requester.via },
+    tokenSha256: sha256(token), tokenExpiresAt: new Date(now.getTime() + CALIBRATION_TIMEOUT_MS), now,
+  });
+  if (queued === null) return { ok: false, code: 'in_progress' };
+  let started;
+  try {
+    started = await runner.start({ calibrationId: queued.id, token });
+  } catch (err) {
+    ctx.logger.warn({ calibrationId: queued.id, code: err instanceof LabStartError ? err.code : 'internal' }, 'townwise.lab_start_failed');
+    await finishCalibration(ctx, scope, queued, { status: 'failed', failure: 'start_failed' });
+    return { ok: false, code: 'start_failed' };
+  }
+  await ctx.stores.calibrations.markRunning(scope, queued.id, { now: ctx.now(), imageDigest: started.imageDigest });
+  await ctx.stores.chatUsage.add(scope, monthOf(now), CALIBRATION_CHARGE_MICRO_USD, ctx.now());
+  await ctx.stores.calibrations.setCharge(scope, queued.id, CALIBRATION_CHARGE_MICRO_USD);
+  ctx.logger.info({ orgId: scope.orgId, locationId: location.id, calibrationId: queued.id, via: req.requester.via }, 'townwise.calibration_started');
+  return { ok: true, calibration: (await ctx.stores.calibrations.find(scope, queued.id)) ?? queued };
+}
+
+/** The held-out weeks the result was judged on: compared with the current forecast, else backtest weeks with a range. */
+function heldOutWeeksOf(result: LabSuccess): number {
+  return result.scorecard.comparison?.weeks ?? result.scorecard.backtest.weeksWithRange;
+}
+
+/**
+ * The draft run of a checked result, in retry-safe order: the run upserted on its file's hash (the lab never changes a
+ * run that already exists), its rows, draft, then the result on the calibration and its finish, each by
+ * compare-and-set. A calibration deleted meanwhile (its sales data, its location or its organization) takes the run
+ * this calibration made with it, and answers 404.
+ */
+async function storeDraft(
+  ctx: TownwiseContext, scope: OrgScope, calibration: CalibrationRecord, result: LabSuccess, inputSha256: string, now: Date,
+): Promise<IngestAnswer> {
+  const { calibrations, forecasts } = ctx.stores;
+  const location = await ctx.stores.locations.find(scope, calibration.locationId);
+  if (location === null) return NOT_FOUND;
+  const file = result.run;
+  const { run, inserted } = await forecasts.upsertRun(scope, location.id, {
+    id: new Types.ObjectId().toHexString(), file, fileSha256: runFileSha256(file), importedBy: null,
+    lab: {
+      calibrationId: calibration.id, codeVersion: result.codeVersion, imageDigest: calibration.imageDigest, inputSha256,
+      paramsJson: JSON.stringify(result.params),
+    },
+    now,
+  });
+  if (run.status === 'importing') {
+    await forecasts.writeRows(scope, location.id, run.id, rowsOf(file, location.town.townId));
+    if (await forecasts.countRows(scope, run.id) !== run.dayCount + run.weekCount) throw new Error('forecast rows incomplete');
+    await forecasts.setStatus(scope, run.id, { from: ['importing'], to: 'draft', at: now, by: null });
+  }
+  // Deleting sales data, a location or an organization removes calibrations before runs, so a calibration that is gone
+  // now means the run may have been written after that deletion.
+  if ((await calibrations.find(scope, calibration.id)) === null) {
+    if (run.lab?.calibrationId === calibration.id) await forecasts.remove(scope, run.id);
+    return NOT_FOUND;
+  }
+  const recorded = await calibrations.recordResult(scope, calibration.id, {
+    runId: run.id, scorecardJson: JSON.stringify(result.scorecard), codeVersion: result.codeVersion,
+  });
+  // A concurrent post of the same result recorded it first: carry on. Anything else (another result, or the calibration
+  // finished first) leaves no run of this post behind.
+  if (!recorded && (await calibrations.find(scope, calibration.id))?.runId !== run.id) {
+    if (inserted) await forecasts.remove(scope, run.id);
+    return NOT_FOUND;
+  }
+  await finishCalibration(ctx, scope, calibration, { status: 'succeeded' }, { runId: run.id, heldOutWeeks: heldOutWeeksOf(result) });
+  const current = await calibrations.find(scope, calibration.id);
+  return { status: 200, body: { status: current?.status ?? 'succeeded' } };
+}
+
+/**
+ * POST /lab/calibrations/:id/result, for a calibration the callback found live: 200 { status } once stored (a draft
+ * run, or a failure the job reported); 400 invalid_lab_result { issues } (paths and codes) for a result that fails its
+ * checks, which fails the calibration invalid_result; 404 when the calibration is gone or no longer live.
+ */
+export async function ingestLabResult(ctx: TownwiseContext, scope: OrgScope, calibrationId: string, raw: unknown): Promise<IngestAnswer> {
+  const calibration = await ctx.stores.calibrations.find(scope, calibrationId);
+  if (calibration === null || !isLive(calibration)) return NOT_FOUND;
+  const invalid = async (issues: FileIssue[]): Promise<IngestAnswer> => {
+    await finishCalibration(ctx, scope, calibration, { status: 'failed', failure: 'invalid_result' });
+    return { status: 400, body: { error: 'invalid_lab_result', message: 'Invalid lab result', issues } };
+  };
+  const now = ctx.now();
+  const check = checkLabResult(raw, calibration, utcDay(now));
+  if (!check.ok) return invalid(check.issues);
+  const { result } = check;
+  if (!result.ok) {
+    const failure: CalibrationFailure = result.code === 'not_enough_history' ? 'not_enough_history' : 'job_failed';
+    await finishCalibration(ctx, scope, calibration, { status: 'failed', failure });
+    return { status: 200, body: { status: 'failed' } };
+  }
+  // recordInput sets the hash with dataThrough, which the result matched, so a draft always names the input it came from.
+  const { inputSha256 } = calibration;
+  if (inputSha256 === null) return invalid([{ path: 'calibrationId', code: 'input_not_fetched' }]);
+  return storeDraft(ctx, scope, calibration, result, inputSha256, now);
+}
