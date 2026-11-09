@@ -1,6 +1,6 @@
 // Operations keyed by a person, or spanning organizations (spec 6.10 rule 8). The list is closed:
 // findActiveSeat, findOpenInvites, claimInvite, declineInvite, latestRemovedSeat, adminOrgStats, peopleRecords,
-// deletePersonRecords, the file reader's claimNextImport, and the daily file sweep's claimFileSweep, finishFileSweep,
+// deletePersonRecords, the forecast lab's findLabCallback, the file reader's claimNextImport, and the daily file sweep's claimFileSweep, finishFileSweep,
 // sweepCandidates, removeOldUploadDays and existingFileIds.
 // Only access/resolve.ts, the join and decline handlers, the staff handlers (admin.ts, deletion.ts), the file reader
 // (files/worker.ts) and the file sweeper (files/sweeper.ts) import this file (test/isolation.test.ts enforces the list).
@@ -9,6 +9,7 @@ import { trusted, Types, type Connection } from 'mongoose';
 
 import type { Role } from '../access/resolve.ts';
 import { accessRequestModel, type AccessRequestStatus } from './access-requests.ts';
+import { calibrationModel, LIVE_STATUSES } from './calibrations.ts';
 import { chatConversationModel } from './chat-conversations.ts';
 import { chatLiveTurnModel } from './chat-live-turns.ts';
 import { chatProposalModel } from './chat-proposals.ts';
@@ -296,7 +297,35 @@ export async function deletePersonRecords(
   // U13B: a staff member's id on the forecast runs they imported or published, in every organization. Not counted.
   await forecastRunModel(connection).updateMany({ importedBy: userId }, { $set: { importedBy: null } });
   await forecastRunModel(connection).updateMany({ publishedBy: userId }, { $set: { publishedBy: null } });
+  // The forecast lab: the person who asked for a calibration, in every organization. Not counted.
+  await calibrationModel(connection).updateMany({ 'requestedBy.userId': userId }, { $set: { 'requestedBy.userId': null } });
   return { requests, seats: invites + removed, conversations, liveTurns };
+}
+
+/** A calibration the forecast lab's job called back about. Only access/policy.ts's scopeForLabCallback turns it into an OrgScope. */
+export interface LabCallbackClaim {
+  readonly calibrationId: string;
+  readonly orgId: string;
+  readonly locationId: string;
+}
+
+/**
+ * The lab job's callback (docs: forecast lab), across organizations: the calibration with this id whose stored token
+ * hash matches, that is still live, and whose token has not expired. Null for anything else, so the route answers 404
+ * alike for an unknown id, a wrong or expired token and a finished calibration.
+ */
+export async function findLabCallback(
+  connection: Connection, calibrationId: string, tokenSha256: string, now: Date,
+): Promise<LabCallbackClaim | null> {
+  if (!Types.ObjectId.isValid(calibrationId) || calibrationId.length !== 24) return null;
+  const doc = await calibrationModel(connection).findOne({
+    _id: new Types.ObjectId(calibrationId),
+    tokenSha256,
+    status: trusted({ $in: [...LIVE_STATUSES] }),
+    tokenExpiresAt: trusted({ $gt: now }),
+  }).lean();
+  if (doc === null) return null;
+  return { calibrationId: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString() };
 }
 
 /** An import the file reader claimed. Only access/policy.ts's scopeForClaimedImport turns it into an OrgScope. */

@@ -140,7 +140,7 @@ export async function importForecastRun(ctx: TownwiseContext, req: Request, res:
   });
   const eventId = await recordBefore(ctx, event);
   const outcome = await applyRecorded(ctx, event, eventId, async () => {
-    const { run } = await forecasts.upsertRun(scope, location.id, { id: runId, file, fileSha256, importedBy: staff.actor.userId, now });
+    const { run } = await forecasts.upsertRun(scope, location.id, { id: runId, file, fileSha256, importedBy: staff.actor.userId, lab: null, now });
     // Another import of the same file made the run first; this one finishes it with the same rows.
     const raced = run.id !== runId;
     if (run.status === 'importing') {

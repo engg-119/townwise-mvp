@@ -1,0 +1,231 @@
+// The forecast lab's data layer (stores/calibrations.ts and its neighbours): one live calibration per location, the
+// job's token that dies with the calibration, compare-and-set transitions, tenant scoping, deletion before runs, lab
+// runs in the forecast store, the forecasts switch and the audit wording. The fixture's numbers are synthetic.
+import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+
+import { Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+
+import { scopeForLabCallback, scopeForNewOrg, type OrgScope } from '../src/access/policy.ts';
+import { summaryOf } from '../src/audit.ts';
+import { checkLabRunFile, runFileSha256, type LabRunFile } from '../src/forecasts/file.ts';
+import { runView } from '../src/forecasts/reader.ts';
+import { createCalibrationStore, type CalibrationStore } from '../src/stores/calibrations.ts';
+import { deletePersonRecords, findLabCallback } from '../src/stores/cross-tenant.ts';
+import { createForecastStore } from '../src/stores/forecasts.ts';
+import { createOrgStore } from '../src/stores/orgs.ts';
+import { addLocation, createOrg } from './helpers/fixtures.ts';
+import { startTownwiseServer, type TownwiseTestServer } from './helpers/server.ts';
+
+const FIXTURE = JSON.parse(readFileSync(new URL('fixtures/forecast-run.json', import.meta.url), 'utf8')) as Record<string, unknown>;
+const STAFF = { kind: 'staff', actor: { userId: 'staff-0000', email: 'staff@example.test', sessionId: 'session-0000', verifiedUntil: '' } } as const;
+const ADMIN = { userId: 'admin-0001', role: 'org_admin', via: 'chat' } as const;
+
+let server: TownwiseTestServer;
+let calibrations: CalibrationStore;
+
+beforeAll(async () => {
+  server = await startTownwiseServer();
+  calibrations = createCalibrationStore(server.connection);
+});
+afterAll(async () => { await server.close(); });
+beforeEach(async () => { await server.connection.collection('tw_calibrations').deleteMany({}); });
+
+const sha = (text: string) => createHash('sha256').update(text).digest('hex');
+
+interface Tenant { orgId: string; locationId: string; scope: OrgScope }
+
+async function tenant(): Promise<Tenant> {
+  const orgId = await createOrg(server, { name: `Lab Cafe ${randomUUID().slice(0, 6)}` });
+  const locationId = await addLocation(server, { orgId, name: 'Main Room' });
+  return { orgId, locationId, scope: scopeForNewOrg(STAFF, orgId) };
+}
+
+async function queue(t: Tenant, token = 'token-a', opts: { locationId?: string; minutes?: number } = {}) {
+  const now = server.clock.now();
+  return calibrations.insertQueued(t.scope, {
+    id: new Types.ObjectId().toHexString(), locationId: opts.locationId ?? t.locationId, requestedBy: ADMIN, regimeStart: null,
+    championRunId: null, tokenSha256: sha(token), tokenExpiresAt: new Date(now.getTime() + (opts.minutes ?? 20) * 60_000), now,
+  });
+}
+
+async function queued(t: Tenant, token = 'token-a') {
+  const record = await queue(t, token);
+  if (record === null) throw new Error('slot was taken');
+  return record;
+}
+
+function count(collection: string, filter: Record<string, unknown>): Promise<number> {
+  return server.connection.collection(collection).countDocuments(filter);
+}
+
+describe('calibrations', () => {
+  it('allows one live calibration per location: a second insertQueued resolves null until the first finishes', async () => {
+    const t = await tenant();
+    const first = await queued(t);
+    expect(await queue(t, 'token-b')).toBeNull();
+    expect((await calibrations.live(t.scope, t.locationId))?.id).toBe(first.id);
+    const other = await addLocation(server, { orgId: t.orgId, name: 'Patio' });
+    expect(await queue(t, 'token-c', { locationId: other })).not.toBeNull();
+    expect(await calibrations.finish(t.scope, first.id, { status: 'failed', failure: 'start_failed' }, server.clock.now())).toBe(true);
+    expect(await calibrations.live(t.scope, t.locationId)).toBeNull();
+    expect(await queue(t, 'token-d')).not.toBeNull();
+  });
+
+  it('finish clears liveLocation and the token hash, so findLabCallback then resolves null', async () => {
+    const t = await tenant();
+    const record = await queued(t);
+    const now = server.clock.now();
+    expect((await findLabCallback(server.connection, record.id, sha('token-a'), now))?.calibrationId).toBe(record.id);
+    expect(await calibrations.markRunning(t.scope, record.id, { now, imageDigest: null })).toBe(true);
+    expect(await calibrations.finish(t.scope, record.id, { status: 'succeeded' }, now)).toBe(true);
+    const raw = await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(record.id) });
+    expect(raw).not.toHaveProperty('liveLocation');
+    expect(raw).not.toHaveProperty('tokenSha256');
+    expect(await findLabCallback(server.connection, record.id, sha('token-a'), now)).toBeNull();
+    // A finished calibration cannot finish again.
+    expect(await calibrations.finish(t.scope, record.id, { status: 'failed', failure: 'timeout' }, now)).toBe(false);
+  });
+
+  it('findLabCallback needs the id, the token hash, a live status and an unexpired token', async () => {
+    const t = await tenant();
+    const record = await queued(t);
+    const other = await tenant();
+    const otherRecord = await queued(other, 'token-z');
+    const now = server.clock.now();
+    const claim = await findLabCallback(server.connection, record.id, sha('token-a'), now);
+    expect(claim).toEqual({ calibrationId: record.id, orgId: t.orgId, locationId: t.locationId });
+    expect(claim === null ? null : scopeForLabCallback(claim).orgId).toBe(t.orgId);
+    expect(await findLabCallback(server.connection, record.id, sha('wrong'), now)).toBeNull();
+    expect(await findLabCallback(server.connection, otherRecord.id, sha('token-a'), now)).toBeNull();
+    expect(await findLabCallback(server.connection, 'not-an-id', sha('token-a'), now)).toBeNull();
+    expect(await findLabCallback(server.connection, new Types.ObjectId().toHexString(), sha('token-a'), now)).toBeNull();
+    expect(await findLabCallback(server.connection, record.id, sha('token-a'), new Date(now.getTime() + 21 * 60_000))).toBeNull();
+  });
+
+  it('recordResult is a compare-and-set on running and keeps a runId once set', async () => {
+    const t = await tenant();
+    const record = await queued(t);
+    const now = server.clock.now();
+    const result = { runId: new Types.ObjectId().toHexString(), scorecardJson: '{"a":1}', codeVersion: 'abc1234' };
+    // Not running yet.
+    expect(await calibrations.recordResult(t.scope, record.id, result)).toBe(false);
+    await calibrations.markRunning(t.scope, record.id, { now, imageDigest: 'sha256:abc' });
+    expect(await calibrations.recordInput(t.scope, record.id, { inputSha256: sha('input'), dataThrough: '2026-04-30' })).toBe(true);
+    expect(await calibrations.recordResult(t.scope, record.id, result)).toBe(true);
+    expect(await calibrations.recordResult(t.scope, record.id, { ...result, runId: new Types.ObjectId().toHexString() })).toBe(false);
+    const kept = await calibrations.find(t.scope, record.id);
+    expect(kept).toMatchObject({ runId: result.runId, scorecardJson: '{"a":1}', codeVersion: 'abc1234', status: 'running', imageDigest: 'sha256:abc' });
+    expect(await calibrations.markRunning(t.scope, record.id, { now, imageDigest: null })).toBe(false);
+  });
+
+  it('recordGate sets the gate once; a second call resolves false', async () => {
+    const t = await tenant();
+    const record = await queued(t);
+    await calibrations.markRunning(t.scope, record.id, { now: server.clock.now(), imageDigest: null });
+    expect(await calibrations.recordGate(t.scope, record.id, { published: false, reason: 'not_better' })).toBe(true);
+    expect(await calibrations.recordGate(t.scope, record.id, { published: true, reason: 'better' })).toBe(false);
+    expect((await calibrations.find(t.scope, record.id))?.gate).toEqual({ published: false, reason: 'not_better' });
+    expect(await calibrations.setCharge(t.scope, record.id, 100_000)).toBe(true);
+    expect((await calibrations.find(t.scope, record.id))?.chargedMicroUsd).toBe(100_000);
+  });
+
+  it('every store function filters on scope.orgId: another org reads null and changes nothing', async () => {
+    const t = await tenant();
+    const other = await tenant();
+    const record = await queued(t);
+    const now = server.clock.now();
+    await calibrations.markRunning(t.scope, record.id, { now, imageDigest: null });
+    const before = JSON.stringify(await server.connection.collection('tw_calibrations').find({}).sort({ _id: 1 }).toArray());
+    expect(await calibrations.find(other.scope, record.id)).toBeNull();
+    expect(await calibrations.live(other.scope, t.locationId)).toBeNull();
+    expect(await calibrations.list(other.scope, 10)).toEqual([]);
+    expect(await calibrations.list(other.scope, 10, t.locationId)).toEqual([]);
+    expect(await calibrations.markRunning(other.scope, record.id, { now, imageDigest: null })).toBe(false);
+    expect(await calibrations.recordInput(other.scope, record.id, { inputSha256: sha('x'), dataThrough: '2026-04-30' })).toBe(false);
+    expect(await calibrations.recordResult(other.scope, record.id, { runId: 'r', scorecardJson: '{}', codeVersion: 'c' })).toBe(false);
+    expect(await calibrations.recordGate(other.scope, record.id, { published: true, reason: 'x' })).toBe(false);
+    expect(await calibrations.setCharge(other.scope, record.id, 5)).toBe(false);
+    expect(await calibrations.finish(other.scope, record.id, { status: 'succeeded' }, now)).toBe(false);
+    expect(await calibrations.removeForLocation(other.scope, t.locationId)).toBe(0);
+    expect(await calibrations.removeForOrg(other.scope)).toBe(0);
+    expect(JSON.stringify(await server.connection.collection('tw_calibrations').find({}).sort({ _id: 1 }).toArray())).toBe(before);
+    expect((await calibrations.list(t.scope, 10)).map((each) => each.id)).toEqual([record.id]);
+  });
+
+  it('removeForLocation and removeForOrg delete calibrations; deleting sales, a location or an org deletes them before their runs', async () => {
+    const t = await tenant();
+    const second = await addLocation(server, { orgId: t.orgId, name: 'Patio' });
+    await queued(t);
+    await queue(t, 'token-b', { locationId: second });
+    expect(await calibrations.removeForLocation(t.scope, t.locationId)).toBe(1);
+    expect(await calibrations.removeForOrg(t.scope)).toBe(1);
+    expect(await count('tw_calibrations', { orgId: new Types.ObjectId(t.orgId) })).toBe(0);
+    // The source calls them first in each deletion path (the org path is pinned in deletion.int.test.ts).
+    for (const [path, order] of [
+      ['../src/handlers/locations.ts', ['calibrations.removeForLocation', 'forecasts.removeForLocation']],
+      ['../src/handlers/sales.ts', ['calibrations.removeForLocation', 'forecasts.removeForLocation']],
+      ['../src/handlers/deletion.ts', ['calibrations.removeForOrg', 'forecasts.removeForOrg']],
+    ] as const) {
+      const text = readFileSync(new URL(path, import.meta.url), 'utf8');
+      expect(text.indexOf(order[0])).toBeGreaterThan(-1);
+      expect(text.indexOf(order[0])).toBeLessThan(text.indexOf(order[1]));
+    }
+  });
+
+  it('person deletion nulls requestedBy.userId', async () => {
+    const t = await tenant();
+    const record = await queued(t);
+    await deletePersonRecords(server.connection, { userId: ADMIN.userId, email: 'gone@example.test' });
+    expect((await calibrations.find(t.scope, record.id))?.requestedBy).toEqual({ userId: null, role: 'org_admin', via: 'chat' });
+  });
+});
+
+describe('lab runs, the forecasts switch and the audit words', () => {
+  const labFile = (): Record<string, unknown> => ({ ...structuredClone(FIXTURE), trainingSource: 'townwise_lab', frozen: null });
+
+  it('upsertRun stores a lab run with its lab block and importedBy null; runView reads trainingSource townwise_lab', async () => {
+    const t = await tenant();
+    const forecasts = createForecastStore(server.connection);
+    const check = checkLabRunFile(labFile(), '2026-06-01');
+    expect(check.ok).toBe(true);
+    const file = (check as { file: LabRunFile }).file;
+    const lab = { calibrationId: new Types.ObjectId().toHexString(), codeVersion: 'abc1234', imageDigest: null, inputSha256: sha('in'), paramsJson: '{"n":1}' };
+    const id = new Types.ObjectId().toHexString();
+    const { run, inserted } = await forecasts.upsertRun(t.scope, t.locationId, {
+      id, file, fileSha256: runFileSha256(file), importedBy: null, lab, now: server.clock.now(),
+    });
+    expect(inserted).toBe(true);
+    expect(run).toMatchObject({ id, trainingSource: 'townwise_lab', importedBy: null, frozen: false, lab });
+    expect(runView(run).trainingSource).toBe('townwise_lab');
+    expect((await forecasts.find(t.scope, id))?.lab).toEqual(lab);
+  });
+
+  it('setForecasts switches on and off; an org document without the field reads { on: false, at: null }', async () => {
+    const t = await tenant();
+    const orgs = createOrgStore(server.connection);
+    expect((await orgs.findById(t.orgId))?.forecasts).toEqual({ on: false, at: null });
+    const on = server.clock.now();
+    expect(await orgs.setForecasts(t.scope, { on: true, at: on, by: 'staff-0000' })).toBe(true);
+    expect((await orgs.findById(t.orgId))?.forecasts).toEqual({ on: true, at: on });
+    const off = new Date(on.getTime() + 1000);
+    expect(await orgs.setForecasts(t.scope, { on: false, at: off, by: 'staff-0000' })).toBe(true);
+    expect((await orgs.findById(t.orgId))?.forecasts).toEqual({ on: false, at: off });
+    expect(await orgs.setForecasts(scopeForNewOrg(STAFF, new Types.ObjectId().toHexString()), { on: true, at: on, by: 's' })).toBe(false);
+  });
+
+  it('summaryOf words the new actions', () => {
+    expect(summaryOf('calibration.requested', { hasRegime: true })).toBe('Started a calibration, with a weekly pattern change');
+    expect(summaryOf('calibration.requested', { hasRegime: false })).toBe('Started a calibration');
+    expect(summaryOf('calibration.finished', { status: 'failed', gate: null })).toBe('A calibration failed');
+    expect(summaryOf('calibration.finished', { status: 'succeeded', gate: 'published' })).toBe('A calibration published a new forecast');
+    expect(summaryOf('calibration.finished', { status: 'succeeded', gate: 'draft' })).toBe('A calibration made a draft forecast');
+    expect(summaryOf('org.forecasts_switched', { on: true })).toBe('Switched forecasts on, with the owner’s agreement');
+    expect(summaryOf('org.forecasts_switched', { on: false })).toBe('Switched forecasts off');
+    expect(summaryOf('forecast.published', { via: 'lab', modelVersion: 'v9', from: '2026-05-01', to: '2026-05-14' }))
+      .toBe('Published a calibrated forecast (model v9) for 2026-05-01 to 2026-05-14');
+    expect(summaryOf('forecast.published', { modelVersion: 'v9', from: '2026-05-01', to: '2026-05-14' }))
+      .toBe('Published a forecast (model v9) for 2026-05-01 to 2026-05-14');
+  });
+});

@@ -23,7 +23,7 @@ export interface ForecastRunView {
   id: string;
   metric: 'guests';
   model: { family: string; version: string; label: string };
-  trainingSource: 'files_from_owner';
+  trainingSource: ForecastRunRecord['trainingSource'];
   trainedFrom: string;
   dataThrough: string;
   madeAt: string;
