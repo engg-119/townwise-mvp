@@ -286,6 +286,15 @@ test('Privacy makes the three commitments and no longer says the app has no uplo
   expect(text).toContain('public facts about its town (its calendar, and who is likely in town, with the public sources behind them). TownwiseAI never reads the sales files you drop. It reads a text item on Your data, text you pasted or a text file you added, only when you ask, and never a file’s name.');
   expect(text).toContain('Turning an item off leaves it out of your numbers, forecasts and TownwiseAI until someone turns it back on.');
   expect(text).toContain('Items you add for reference follow the same rules: we delete each one 365 days after it was sent, or sooner when you delete it.');
+  // Your data as the app gives it: an item's original downloads to the person who added it and org admins only, and
+  // no page deletes every original of a location at once (P26).
+  expect(text).toContain('Everyone on your organization’s team can see them; the person who added one and your org admins can download it.');
+  expect(text).not.toContain('can see and download them');
+  expect(text).toContain('only an org admin can delete an upload, which deletes the days it still holds. For a sales file, they can instead delete just its original and keep its cleaned daily totals.');
+  expect(text).not.toContain('delete all originals for a location at once');
+  expect(text).toContain('we delete your organization’s originals, items you added for reference included, and keep the cleaned totals.');
+  expect(text).toContain('For a file you drop for your sales history, we never read those fields, and only the three values a day leave it.');
+  expect(text).toContain('Notes, uploads and items on Your data that you added stay with your organization, including text you kept from TownwiseAI.');
   expect(text).toContain('Answers are deleted with the location’s sales data, the location or the organization.');
   // Stored files (privacy pass 2), Google Places and Maps (1b) and the welcome marker (1c).
   expect(text).not.toContain('The file itself never reaches our server');
