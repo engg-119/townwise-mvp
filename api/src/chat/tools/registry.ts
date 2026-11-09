@@ -11,10 +11,12 @@ import type { LocationRecord } from '../../stores/locations.ts';
 import type { NoteContent } from '../../stores/notes.ts';
 import { dayTool } from './day.ts';
 import { forecastTool } from './forecast.ts';
+import { listDataTool } from './list-data.ts';
 import { notesTool } from './notes.ts';
 import { overviewTool } from './overview.ts';
 import { peopleInTownTool } from './people-in-town.ts';
 import { proposeNoteTool } from './propose-note.ts';
+import { readDataTool } from './read-data.ts';
 import { salesDaysTool } from './sales-days.ts';
 import { townCalendarTool } from './town-calendar.ts';
 import { townProfileTool } from './town-profile.ts';
@@ -80,6 +82,9 @@ export const TOOL_REGISTRY: readonly ChatTool<unknown>[] = [
   forecastTool,
   // F2: everything Townwise has for one day.
   dayTool,
+  // Your data: what the team added, and the text of a reference item.
+  listDataTool,
+  readDataTool,
 ];
 
 /** The tool definitions sent to the model, in registry order. */

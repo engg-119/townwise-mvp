@@ -253,6 +253,25 @@ const TOOLS: Readonly<Record<string, ToolRow>> = {
     sources: sourcesOf,
     terms: { date: 'Day', hasSales: 'Sales recorded', closed: 'Closed', noteCount: 'Notes', eventCount: 'Calendar entries' },
   },
+  // Your data: list_data_items and read_data_item (api/src/chat/tools/list-data.ts, read-data.ts).
+  list_data_items: {
+    object: () => 'what your team added',
+    detail: (result) => {
+      const items = count(result, 'count');
+      if (items === null) return null;
+      return items === 0 ? 'Nothing added yet' : `${formatCount(items)} items, ${formatCount(count(result, 'turnedOff') ?? 0)} turned off`;
+    },
+    reads: () => 'what your team added on Your data',
+  },
+  read_data_item: {
+    object: () => 'an item your team added',
+    detail: (result) => {
+      if (result.available === false) return 'Couldn’t read it';
+      const chars = count(result, 'chars');
+      if (chars === null) return null;
+      return result.truncated === true ? `The start of it, ${formatCount(chars)} characters` : `${formatCount(chars)} characters`;
+    },
+  },
 };
 
 const GENERIC = { running: 'Looking something up', done: 'Looked something up', error: 'Couldn’t look something up' } as const;

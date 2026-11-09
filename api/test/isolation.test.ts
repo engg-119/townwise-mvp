@@ -56,6 +56,13 @@ describe('isolation (source)', () => {
       .toEqual([]);
   });
 
+  it('chat/* reaches stored files only through ctx.items', () => {
+    const touching = sourceFiles()
+      .filter((file) => file.path.startsWith('chat/') && /\bctx\.files\b|\.stores\.files\b|\bfileEntries\b/.test(file.text))
+      .map((file) => file.path);
+    expect(touching).toEqual([]);
+  });
+
   it('only chat/model.ts and files/extract/model.ts construct a model client', () => {
     const constructs = sourceFiles().filter((file) => /^import Anthropic(?:,| )[^;]*from '@anthropic-ai\/sdk';/m.test(file.text)).map((file) => file.path).sort();
     expect(constructs).toEqual(['chat/model.ts', 'files/extract/model.ts']);

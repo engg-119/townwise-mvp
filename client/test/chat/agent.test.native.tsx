@@ -73,8 +73,8 @@ describe('an empty conversation', () => {
   test('names the location, says what TownwiseAI reads, offers chips, and keeps the privacy line under the composer', async () => {
     await renderAgent(meOf(ACCESS.member));
     expect(await screen.findByRole('heading', { name: 'Ask TownwiseAI about Main Street Bar' })).toBeTruthy();
-    expect(screen.getByText('It reads your sales, your notes, Hanover’s town profile, the town calendar and who’s likely in Hanover, and shows you each thing it reads. It suggests notes; you decide what’s saved.')).toBeTruthy();
-    expect(screen.getByText('Leave out guest names. TownwiseAI answers from your sales, your notes, Hanover’s town profile, the town calendar and who’s likely in Hanover.')).toBeTruthy();
+    expect(screen.getByText('It reads your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data, and shows you each thing it reads. It suggests notes; you decide what’s saved.')).toBeTruthy();
+    expect(screen.getByText('Leave out guest names. TownwiseAI answers from your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Which days last month were unusual?' })).toBeTruthy();
     expect(screen.getByRole('button', { name: /^What’s coming up in \w+ in Hanover\?$/ })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /forecast/i })).toBeNull();
@@ -94,7 +94,7 @@ describe('an empty conversation', () => {
   test('with no sales yet it says what TownwiseAI can use, and asks what to upload', async () => {
     const org = orgOf('member', [locationOf('l1', 'Main Street Bar', { townId: 'hanover-nh', name: 'Hanover', state: 'NH' })]);
     await renderAgent(meOf(ACCESS.member), fakeChatApi(), org);
-    expect(await screen.findByText('You haven’t uploaded sales yet, so TownwiseAI can only use your notes, Hanover’s town profile, the town calendar and who’s likely in Hanover.')).toBeTruthy();
+    expect(await screen.findByText('You haven’t uploaded sales yet, so TownwiseAI can only use your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'What should I upload?' })).toBeTruthy();
   });
 
@@ -102,13 +102,13 @@ describe('an empty conversation', () => {
     at(1280);
     const org = orgOf('member', [locationOf('l1', 'Main Street Bar', { townId: null, name: 'Hanover', state: 'NH' })]);
     await renderAgent(meOf(ACCESS.member), fakeChatApi(), org);
-    expect(await screen.findByText('You haven’t uploaded sales yet, so TownwiseAI can only use your notes and the town calendar.')).toBeTruthy();
+    expect(await screen.findByText('You haven’t uploaded sales yet, so TownwiseAI can only use your notes, the town calendar and what your team added on Your data.')).toBeTruthy();
     // With no sales yet, no line claims TownwiseAI answers from them.
-    expect(screen.getByText('Leave out guest names. TownwiseAI answers from your notes and the town calendar.')).toBeTruthy();
+    expect(screen.getByText('Leave out guest names. TownwiseAI answers from your notes, the town calendar and what your team added on Your data.')).toBeTruthy();
     const side = await screen.findByTestId('agent-side');
     await fireEvent.press(within(side).getByRole('button', { name: 'How TownwiseAI works' }));
-    expect(within(side).getByText('It reads your notes and the town calendar, and shows you each thing it reads.')).toBeTruthy();
-    expect(await within(side).findByText('Townwise has no forecast for this location yet, so TownwiseAI answers from your notes and the town calendar.')).toBeTruthy();
+    expect(within(side).getByText('It reads your notes, the town calendar and what your team added on Your data, and shows you each thing it reads.')).toBeTruthy();
+    expect(await within(side).findByText('Townwise has no forecast for this location yet, so TownwiseAI answers from your notes, the town calendar and what your team added on Your data.')).toBeTruthy();
     expect(screen.queryByText(/town profile/)).toBeNull();
     expect(screen.queryByText(/(answers from|reads) your sales/)).toBeNull();
   });
@@ -313,9 +313,9 @@ describe('the side panel at 1280px', () => {
     await renderAgent(meOf(ACCESS.member));
     const side = await screen.findByTestId('agent-side');
     await fireEvent.press(within(side).getByRole('button', { name: 'How TownwiseAI works' }));
-    expect(await within(side).findByText('Townwise has no forecast for this location yet, so TownwiseAI answers from your sales, your notes, Hanover’s town profile, the town calendar and who’s likely in Hanover.')).toBeTruthy();
+    expect(await within(side).findByText('Townwise has no forecast for this location yet, so TownwiseAI answers from your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data.')).toBeTruthy();
     for (const text of [
-      'It reads your sales, your notes, Hanover’s town profile, the town calendar and who’s likely in Hanover, and shows you each thing it reads.',
+      'It reads your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data, and shows you each thing it reads.',
       'It can’t see the weather, your staffing, your bookings unless you add them as notes, or guest names.',
       'It suggests notes; it never saves one without you.',
     ]) expect(within(side).getByText(text)).toBeTruthy();
@@ -326,7 +326,7 @@ describe('the side panel at 1280px', () => {
     at(1280);
     const chat = serveAbout(fakeChatApi(), PUBLISHED);
     await renderAgent(meOf(ACCESS.member), chat);
-    const reads = 'your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and Townwise’s forecast';
+    const reads = 'your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover, Townwise’s forecast and what your team added on Your data';
     expect(await screen.findByText(`Leave out guest names. TownwiseAI answers from ${reads}.`)).toBeTruthy();
     const side = await screen.findByTestId('agent-side');
     await fireEvent.press(within(side).getByRole('button', { name: 'How TownwiseAI works' }));

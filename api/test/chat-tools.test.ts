@@ -25,6 +25,8 @@ const FROZEN_NAMES = [
   'get_forecast',
   // F2.
   'get_day',
+  // Your data.
+  'list_data_items', 'read_data_item',
 ];
 
 describe('the tool registry', () => {
