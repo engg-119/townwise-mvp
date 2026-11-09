@@ -184,9 +184,9 @@ When all four states show `Verified`, add `acs_domain_verified = true` to `terra
 
 DMARC is `v=DMARC1; p=reject; sp=reject; adkim=s;` from the start. Only Communication Services sends as `townwise.tech`, and it DKIM-signs with the two selector keys. **Before adding any other sender** (a newsletter tool, a help desk), make it DKIM-sign as `townwise.tech` with an aligned key, or its mail is rejected. Inbound mail is out of scope.
 
-**Turning on the API's emails.** The API sends two emails (`api/README.md`, Email): request received, and you're in. It sends them with its managed identity, which already holds the `Townwise email sender` role on this resource, so no Terraform change is needed. Email stays off while `EMAIL_ENDPOINT` is unset in `api/production.env`. Turn it on only in the release whose waiting, request and approval screens stop saying "We don't send email yet", together with the privacy page's Email section.
+**Turning on the API's emails.** The API sends two emails (`api/README.md`, Email): request received, and you're in. It sends them with its managed identity, which already holds the `Townwise email sender` role on this resource, so no Terraform change is needed. Email stays off while `EMAIL_ENDPOINT` is unset in `api/production.env`. Turn it on only in the release whose waiting, request and approval screens say that Townwise emails, together with the privacy page's Email section.
 
-1. **Set it.** In `api/production.env`, uncomment `EMAIL_ENDPOINT` and `EMAIL_SENDER` together. Set the endpoint to `terraform output -raw communication_service_endpoint` from `infra/terraform/production`; take it from the output, never guess it. Merge to `main`; the deploy starts a new revision.
+1. **Set it.** Done in the 2026-11-09 release, with the new screens and privacy page: `api/production.env` sets `EMAIL_ENDPOINT=https://acs-townwise-2d2c15bf.unitedstates.communication.azure.com` (from `terraform output -raw communication_service_endpoint` in `infra/terraform/production`) and `EMAIL_SENDER=no-reply@townwise.tech`. It takes effect when that release merges to `main` and the deploy starts a new revision; then run steps 2 and 3.
 2. **Smoke send.** From a Google account the team owns (a Gmail address), send an access request, then approve it from the console. Each email should arrive within a minute. In Gmail's "Show original", check SPF pass, DKIM pass with `d=townwise.tech`, DMARC pass, the Reply-To header, and that no link was rewritten. Look at both emails in Gmail on the web (light and dark), Gmail on iOS, Apple Mail (dark) and Outlook on the web.
 3. **Logs.** `ContainerAppConsoleLogs | where Log has "townwise.email_"` shows one `townwise.email_sent` per email, with ids only and no address. A `townwise.email_failed` with code `upstream_status` and status 401 or 403 points at the token resource (`https://communication.azure.com`, `api/src/mail/acs.ts`) or the role assignment; code `token` means the identity endpoint refused.
 
@@ -365,6 +365,15 @@ The tuning chat (`docs/portal/tuning-chat.md`) is off until the API has `ANTHROP
 4. **Check.** Signed in as a member, `GET /api/org/locations/<id>/chat` answers `enabled: true`.
 
 **Rotate** by seeding a new version with the same command and running `az containerapp revision restart`, then revoke the old key in the Console. **Turn it off** with `enable_chat = false` and apply, which removes the reference, the env var and the role assignment; the secret stays in Key Vault until you delete it.
+
+**Shared developer key.** To run the chat locally, developers use one shared key that cannot reach production's workspace or budget:
+
+1. **Create it.** In the Anthropic Console, create a workspace used only for development, `townwise-dev` (the Default workspace cannot take a spend limit). Set its monthly spend limit to 50 dollars and create an API key named `townwise-dev` in it. A key stays in the workspace it was made in, so that limit caps everything the key spends.
+2. **Seed it** as above: `infra/scripts/set-secret.sh kv-townwise-2d2c15bf anthropic-dev-key`.
+3. **Grant it.** Apply `infra/terraform/bootstrap`. The plan adds one role assignment: `townwise-developers` gets Key Vault Secrets User on `anthropic-dev-key` only, never on the vault. Seed first, because the assignment is scoped to the secret.
+4. **Use it.** Each developer, signed in with `az login`, reads it with `az keyvault secret show --vault-name kv-townwise-2d2c15bf --name anthropic-dev-key --query value -o tsv` and sets it as `ANTHROPIC_API_KEY` in `api/.env.local` (gitignored). Every read is in the vault's audit log.
+
+**Rotate** by seeding a new version, revoking the old key in the Console and telling developers to read it again. Do the same when someone leaves the team, after removing them from `townwise-developers`.
 
 ### 17. Enable the Places search
 

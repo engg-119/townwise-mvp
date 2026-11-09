@@ -29,6 +29,9 @@ locals {
     # the Container App and no listKeys on Communication Services, and cannot change secrets or identities.
     developers_prod_reader = { group = "developers", scope = azurerm_resource_group.prod.id, role = "Reader" }
     developers_prod_logs   = { group = "developers", scope = azurerm_resource_group.prod.id, role = "Log Analytics Reader" }
+    # One secret: the shared Anthropic key for local development, capped by its own Anthropic workspace
+    # (infra/README.md, step 16). Seed it before applying; the assignment is scoped to the secret.
+    developers_dev_key = { group = "developers", scope = "${azurerm_resource_group.prod.id}/providers/Microsoft.KeyVault/vaults/kv-townwise-${local.suffix}/secrets/anthropic-dev-key", role = "Key Vault Secrets User" }
     # The production group holds one vault, so this is that vault's secrets.
     secrets_admins_reader  = { group = "secrets-admins", scope = azurerm_resource_group.prod.id, role = "Reader" }
     secrets_admins_officer = { group = "secrets-admins", scope = azurerm_resource_group.prod.id, role = "Key Vault Secrets Officer" }

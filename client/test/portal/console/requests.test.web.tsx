@@ -112,7 +112,7 @@ test('Approve (C3): prefilled names, the town, field checks, then the notice and
   expect((orgName as HTMLInputElement).value).toBe('Sample Mountain Tavern');
   expect((locationName as HTMLInputElement).value).toBe('Sample Mountain Tavern');
   expect(within(dialog).getByText('Stowe, VT')).toBeTruthy();
-  expect(within(dialog).getByText(`This creates the organization and its first location in Stowe, VT, and makes ${REQUESTER_EMAIL} its admin. They get access the next time they open Townwise. We don’t send email yet.`)).toBeTruthy();
+  expect(within(dialog).getByText(`This creates the organization and its first location in Stowe, VT, and makes ${REQUESTER_EMAIL} its admin. We email them that they’re in, and they get access the next time they open Townwise.`)).toBeTruthy();
 
   fireEvent.change(orgName, { target: { value: 'M' } });
   fireEvent.change(locationName, { target: { value: '  ' } });

@@ -58,6 +58,7 @@ describe('P3 Request access', () => {
     expect(screen.getByText('Early access')).toBeTruthy();
     expect(screen.getByText('Townwise is in early access. Tell us about your restaurant or group, and someone on our team will review it by hand.')).toBeTruthy();
     expect(screen.getByText(`You don’t need to request access. Ask an admin on that team to add ${EMAIL}, then reload this page.`)).toBeTruthy();
+    expect(screen.getByText('We’ll email you when you’re approved.')).toBeTruthy();
     expect(screen.getByText('Once you’re approved, you’ll upload your sales history and see your town.')).toBeTruthy();
     expect(screen.getByText(`Signed in as ${EMAIL}. Using the wrong Google account?`, { exact: false })).toBeTruthy();
     await fireEvent.press(screen.getByRole('button', { name: 'Send request' }));
@@ -204,6 +205,8 @@ describe('P4 Waiting for approval', () => {
     await renderApp('/waiting', api);
     expect(await screen.findByRole('heading', { name: 'Your request is in' })).toBeTruthy();
     expect(screen.getByText('Request sent Oct 2, 2026')).toBeTruthy();
+    expect(screen.getByText('Someone on the Townwise team reviews every new organization by hand. We’ll email you when you’re approved.')).toBeTruthy();
+    expect(screen.getByText('We’ll email you when you’re approved.')).toBeTruthy();
     for (const text of ['Sample Mountain Tavern', 'Pat', 'Owner', 'Stowe, VT', '3', 'Two bars and a cafe.']) {
       expect(screen.getAllByText(text).length).toBeGreaterThan(0);
     }
