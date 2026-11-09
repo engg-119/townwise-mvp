@@ -4,12 +4,14 @@ import { basedOnLine, isHiddenTool, isKnownTool, readsLine, toolLine, viewRows, 
 // registry's (FROZEN_NAMES), in its order: the client can't import the API, so a PR that appends a tool updates both
 // lists. get_town_calendar and get_people_in_town are U13A's, get_forecast U13B's; their views below are copied from
 // api/test/chat-estimate-tools.test.ts. get_day is F2's; its views are copied from api/test/chat-tools.test.ts.
+// show_visual and suggest_next are the chat redesign's (tuning-chat.md 4): hidden, with null views.
 
 const REGISTERED = [
   'get_location_overview', 'get_sales_days', 'list_notes', 'get_town_profile', 'propose_note',
   'get_town_calendar', 'get_people_in_town',
   'get_forecast',
   'get_day',
+  'show_visual', 'suggest_next',
 ];
 const CTX = { town: 'Hanover', hasTownProfile: true };
 
@@ -17,14 +19,14 @@ function step(name: string, state: ToolStep['state'], input: ToolStep['input'] =
   return { id: `toolu_test_${name}`, name, state, input, result };
 }
 
-test('every registered tool has words for each state; propose_note shows as its card', () => {
+test('every registered tool has words for each state; propose_note, show_visual and suggest_next show as what they make', () => {
   for (const name of REGISTERED) {
     expect(isKnownTool(name)).toBe(true);
     const lines = (['running', 'done', 'error'] as const).map((state) => toolLine(step(name, state), CTX));
     expect(lines.map((line) => line.status)).toEqual(['Reading', 'Read', 'Couldn’t read']);
     for (const line of lines) expect(line.object).not.toBe('');
   }
-  expect(REGISTERED.filter(isHiddenTool)).toEqual(['propose_note']);
+  expect(REGISTERED.filter(isHiddenTool)).toEqual(['propose_note', 'show_visual', 'suggest_next']);
 });
 
 test('the rows read the views: dates, counts and source links only', () => {

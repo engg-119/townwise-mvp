@@ -3,6 +3,7 @@ import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
+import { resetDrafts } from '../../src/chat/drafts';
 import { COMPOSER_LABEL } from '../../src/chat/ui/Composer';
 import type { MeResponse } from '../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../helpers/app';
@@ -31,6 +32,8 @@ Object.defineProperty(document.documentElement, 'clientWidth', { configurable: t
 
 afterEach(() => {
   cleanup();
+  // Drafts outlive the page in memory, as they do between visits in one session.
+  resetDrafts();
   Reflect.deleteProperty(window, 'matchMedia');
   width = 1280;
   act(() => { window.dispatchEvent(new Event('resize')); });

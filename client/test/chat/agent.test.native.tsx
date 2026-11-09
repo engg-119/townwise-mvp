@@ -13,6 +13,7 @@ import { Dimensions, StyleSheet } from 'react-native';
 import { act, cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing-library';
 
 import { aboutDraft } from '../../src/chat/about';
+import { resetDrafts } from '../../src/chat/drafts';
 import { COMPOSER_LABEL } from '../../src/chat/ui/Composer';
 import { localToday } from '../../src/portal/locations/dates';
 import type { MeResponse } from '../../src/portal/schemas';
@@ -28,6 +29,8 @@ import { PUBLISHED, serveAbout } from './about-fakes';
 
 afterEach(async () => {
   await cleanup();
+  // Drafts outlive the page in memory, as they do between visits in one session.
+  resetDrafts();
   jest.restoreAllMocks();
 });
 
