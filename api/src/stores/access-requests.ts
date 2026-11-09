@@ -24,7 +24,8 @@ export interface AccessRequestFields {
   note: string | null;
   /** Written only by requests stored before places. */
   placeId?: string | null;
-  places: { placeId: string; name: string; town: Town }[];
+  /** Absent from requests stored before places. */
+  places?: { placeId: string; name: string; town: Town }[];
   status: AccessRequestStatus;
   createdAt: Date;
   decidedAt: Date | null;
