@@ -92,10 +92,11 @@ export interface ViewAsGrantStore {
   /** Compare-and-set: ends the grant while it still holds this session, and releases the session. */
   end(grantId: string, sessionId: string, input: { endedAt: Date; endReason: GrantEndReason }): Promise<boolean>;
   /**
-   * This staff member's grants still holding a session other than `sessionId` whose `expiresAt` has passed, each with
-   * the session it holds (the `actorUserId` index). A grant still live in another session is never returned.
+   * This staff member's open-as-admin grants still holding a session other than `sessionId` whose `expiresAt` has
+   * passed, each with the session it holds (the `actorUserId` index). A grant still live in another session, and every
+   * view-as grant, is never returned.
    */
-  findExpiredElsewhere(actorUserId: string, sessionId: string, now: Date): Promise<{ grant: GrantRecord; sessionId: string }[]>;
+  findExpiredOpenAsAdminElsewhere(actorUserId: string, sessionId: string, now: Date): Promise<{ grant: OpenAsAdminGrantRecord; sessionId: string }[]>;
 }
 
 type GrantDoc = ViewAsGrantFields & { _id: Types.ObjectId };
@@ -163,11 +164,14 @@ export function createViewAsGrantStore(connection: Connection): ViewAsGrantStore
       const doc = await Grant.findOne({ activeSessionId: sessionId }).lean();
       return doc === null ? null : toGrant(doc);
     },
-    async findExpiredElsewhere(actorUserId, sessionId, now) {
+    async findExpiredOpenAsAdminElsewhere(actorUserId, sessionId, now) {
       const docs = await Grant.find({
-        actorUserId, activeSessionId: trusted({ $type: 'string', $ne: sessionId }), expiresAt: trusted({ $lte: now }),
+        kind: 'open_as_admin', actorUserId, activeSessionId: trusted({ $type: 'string', $ne: sessionId }), expiresAt: trusted({ $lte: now }),
       }).lean();
-      return docs.flatMap((doc) => (doc.activeSessionId === undefined ? [] : [{ grant: toGrant(doc), sessionId: doc.activeSessionId }]));
+      return docs.flatMap((doc) => {
+        const grant = toGrant(doc);
+        return doc.activeSessionId === undefined || grant.kind !== 'open_as_admin' ? [] : [{ grant, sessionId: doc.activeSessionId }];
+      });
     },
   };
 }

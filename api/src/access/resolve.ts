@@ -59,7 +59,8 @@ export interface Resolution {
   readonly viewAs: { readonly grant: ViewAsGrantRecord; readonly target: User } | null;
   /**
    * Set only while an open-as-admin grant is live for this session (D25): held by a staff session that passes the
-   * gate, not ended, not expired, and its organization still in setup. Null on every other path.
+   * gate, not ended, not expired, its organization still in setup and not suspended since it started. Null on every
+   * other path.
    */
   readonly openAsAdmin: { readonly grant: OpenAsAdminGrantRecord; readonly scope: OrgScope; readonly orgName: string } | null;
 }
@@ -193,6 +194,9 @@ export async function resolveAccess(ctx: TownwiseContext, auth: AuthContext): Pr
     // suspension ends it from the next request on. The organization comes from the grant, never from the request.
     const org = await ctx.stores.orgs.findById(grant.orgId);
     if (org === null) return staffOnly;
+    // A suspension ends it for good: a grant started at or before the last one stays dead after a reactivation, whether
+    // or not End was ever sent (fails closed; nothing here writes).
+    if (org.lastSuspendedAt !== null && grant.startedAt.getTime() <= org.lastSuspendedAt.getTime()) return staffOnly;
     const scope = scopeForOpenAsAdmin(grant);
     if (!(await isInSetup(ctx, scope, org))) return staffOnly;
     return {

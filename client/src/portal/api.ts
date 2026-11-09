@@ -61,8 +61,8 @@ export async function createLocation(api: ApiClient, input: { name: string; town
 }
 
 /**
- * Idempotent; answers the session's access after it. `grantId`, the open-as-admin grant the tab shows (D25), ends that
- * grant only, so a tab left on an earlier one never ends a newer one.
+ * Idempotent; answers the session's access after it. `grantId`, the view-as or open-as-admin grant the tab shows (D25),
+ * ends that grant only, so a tab left on an earlier one never ends a newer one.
  */
 export function endViewAs(api: ApiClient, grantId?: string): Promise<MeResponse> {
   return api.json('/api/admin/view-as/end', meResponseSchema, { method: 'POST', body: grantId === undefined ? {} : { grantId } });

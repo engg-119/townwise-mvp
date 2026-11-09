@@ -265,7 +265,8 @@ export async function createFile(ctx: TownwiseContext, req: Request, res: Respon
   }
   const record = await ctx.stores.imports.joinOrCreate(scope, location.id, { userId: member.userId, now });
   const file = await ctx.stores.files.create(scope, location.id, {
-    importId: record.id, uploadedBy: member.userId, uploaderRole: member.role, ...(member.openAsAdmin !== null ? { byStaff: true } : {}), uploadedAt: now, name,
+    importId: record.id, uploadedBy: member.userId, uploaderRole: member.role,
+    ...(member.openAsAdmin !== null ? { byStaff: true, openAsAdminGrantId: member.openAsAdmin.grantId } : {}), uploadedAt: now, name,
     kind: kindOfName(name), sizeBytes: body.sizeBytes, chunkSize: CHUNK_BYTES, expiresAt: new Date(now.getTime() + UPLOAD_SESSION_MS),
   });
   const chunkCount = file.upload?.chunkCount ?? 0;

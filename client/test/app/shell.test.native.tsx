@@ -196,7 +196,7 @@ describe('the view-as banner (spec 15.5)', () => {
     expect(signOutButton.props.accessibilityState).toMatchObject({ disabled: true });
     await fireEvent.press(within(banner).getByRole('button', { name: 'End view-as' }));
     await waitFor(() => { expect(router.getPathname()).toBe('/admin'); });
-    expect(writes(api)).toEqual([{ method: 'POST', path: '/api/admin/view-as/end', body: {} }]);
+    expect(writes(api)).toEqual([{ method: 'POST', path: '/api/admin/view-as/end', body: { grantId: 'g1' } }]);
     expect(screen.queryByLabelText('View-as')).toBeNull();
     expect(await screen.findByText(/^View-as ended at \d{1,2}:\d{2} (AM|PM)\.$/)).toBeTruthy();
     expect(signOut).not.toHaveBeenCalled();

@@ -28,9 +28,21 @@ describe('settings calls (spec 10.3, api/src/handlers/org.ts)', () => {
 
   test('GET /api/org/staff-activity returns the events, stripping keys the screen doesn’t read', async () => {
     const { fake, routes } = api();
-    routes.gets['/api/org/staff-activity'] = () => ({ events: [{ ...VIEW_AS_EVENT, details: { reason: 'x' } }, REFUSED_EVENT] });
-    expect(await fetchStaffActivity(fake)).toEqual([VIEW_AS_EVENT, REFUSED_EVENT]);
+    routes.gets['/api/org/staff-activity'] = () => ({ events: [{ ...VIEW_AS_EVENT, details: { reason: 'x' } }, REFUSED_EVENT], nextBefore: null });
+    expect(await fetchStaffActivity(fake)).toEqual({ events: [VIEW_AS_EVENT, REFUSED_EVENT], nextBefore: null });
     expect(REFUSED_EVENT).toMatchObject({ applied: false, notAppliedReason: 'The organization needs at least one admin' });
+  });
+
+  test('GET /api/org/staff-activity pages: nextBefore comes back, and before reads the older page', async () => {
+    const { fake, routes } = api();
+    const at = '2026-10-19T15:00:00.000Z';
+    routes.gets['/api/org/staff-activity'] = () => ({ events: [VIEW_AS_EVENT], nextBefore: at });
+    routes.gets[`/api/org/staff-activity?before=${encodeURIComponent(at)}`] = () => ({ events: [REFUSED_EVENT], nextBefore: null });
+    expect(await fetchStaffActivity(fake)).toEqual({ events: [VIEW_AS_EVENT], nextBefore: at });
+    expect(await fetchStaffActivity(fake, at)).toEqual({ events: [REFUSED_EVENT], nextBefore: null });
+    // An answer without the field (an older server) has no older page.
+    routes.gets['/api/org/staff-activity'] = () => ({ events: [] });
+    expect(await fetchStaffActivity(fake)).toEqual({ events: [], nextBefore: null });
   });
 
   test('POST /api/org/leave sends exactly {} and returns the new access; 409 last_admin passes through', async () => {

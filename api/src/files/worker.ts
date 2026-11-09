@@ -98,7 +98,7 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
     try {
       await stores.audit.insert({
         at: now(), actorUserId: file.uploadedBy, actorEmail: await emailOf(file.uploadedBy),
-        actorRole: file.byStaff ? 'superadmin' : file.uploaderRole, viewAsGrantId: null, orgId: scope.orgId, action: 'sales.uploaded', target: { type: 'upload', id: String(details.uploadId) },
+        actorRole: file.byStaff ? 'superadmin' : file.uploaderRole, viewAsGrantId: file.openAsAdminGrantId, orgId: scope.orgId, action: 'sales.uploaded', target: { type: 'upload', id: String(details.uploadId) },
         details: {
           locationId: file.locationId, dayCount: details.dayCount ?? 0, inserted: details.inserted ?? 0, replaced: details.replaced ?? 0,
           firstDate: details.firstDate ?? '', lastDate: details.lastDate ?? '', fileId: file.id, via: 'file',

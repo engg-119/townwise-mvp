@@ -394,8 +394,8 @@ async function openAsAdminOrg(): Promise<{ staff: TestSession; orgId: string; lo
 }
 
 describe('open as admin', () => {
-  it('a file stored byStaff is read as Townwise staff: sales.uploaded has actor role superadmin and the upload record byStaff', async () => {
-    const { staff, orgId: setupId, locationId: staffLocation } = await openAsAdminOrg();
+  it('a file stored byStaff is read as Townwise staff: sales.uploaded has actor role superadmin and the grant id, and the upload record byStaff', async () => {
+    const { staff, orgId: setupId, locationId: staffLocation, grantId } = await openAsAdminOrg();
     try {
       const { file, importId } = await drop(staffLocation, staff, 'day-level.csv', fixture('day-level.csv'));
       expect((await start(staffLocation, importId, staff)).status).toBe(202);
@@ -403,7 +403,7 @@ describe('open as admin', () => {
       expect(done).toMatchObject({ status: 'done', files: [{ status: 'read', uploadedByEmail: 'Townwise staff' }] });
       const event = (await auditEvents(server)).find((e) => e.action === 'sales.uploaded' && String(e.orgId) === setupId);
       expect(event).toMatchObject({
-        actorUserId: staff.userId, actorRole: 'superadmin', viewAsGrantId: null, details: { fileId: file.id, via: 'file' },
+        actorUserId: staff.userId, actorRole: 'superadmin', viewAsGrantId: grantId, details: { fileId: file.id, via: 'file' },
       });
       const upload = await server.connection.collection('tw_uploads').findOne({ orgId: new Types.ObjectId(setupId) });
       expect(upload).toMatchObject({ byStaff: true, uploadedBy: staff.userId });

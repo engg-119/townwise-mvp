@@ -131,8 +131,9 @@ export function PortalProvider(props: { children: React.ReactNode }): React.JSX.
         const previous = current.current;
         applyMe(next);
         // A read that finds open as admin over (someone joined, the organization was suspended) ends the grant, once:
-        // the resolver never writes, so without End a reactivation inside the staff window would bring it back. It
-        // goes through the kit client, not the portal's, so a failure never re-reads GET /api/me.
+        // the resolver never writes, so End is what records the end now (a suspension already keeps the grant dead
+        // after a reactivation, by the organization's lastSuspendedAt). It goes through the kit client, not the
+        // portal's, so a failure never re-reads GET /api/me.
         // It names the grant this tab showed, so it never ends a newer one another tab started since.
         if (previous?.openAsAdmin != null && next.openAsAdmin == null && next.access.state === 'staff') {
           endViewAs(auth.api, previous.openAsAdmin.id).catch(() => undefined);

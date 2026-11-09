@@ -84,6 +84,38 @@ test('open as admin: no Leave section; the rest is the admin’s settings', asyn
   expect(screen.getByRole('button', { name: 'Sign out on every device' }).getAttribute('aria-disabled')).not.toBe('true');
 });
 
+test('open as admin: Save name names the organization the page shows, so a stale tab’s rename never lands in another one', async () => {
+  const api = fakePortalApi({ me: openAsAdminMe(), org: orgOf('org_admin') });
+  withRoutes(api, { gets: { '/api/org/staff-activity': () => ({ events: [ADD_EVENT] }) } });
+  api.answers['/api/org'] = () => ({ org: { id: 'o1', name: 'Harbor Group' } });
+  renderAt('/settings', api);
+  const field = await screen.findByRole('textbox', { name: 'Name' });
+  fireEvent.change(field, { target: { value: 'Harbor Group' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
+  expect(await screen.findByText('Saved.')).toBeTruthy();
+  expect(writes(api)).toEqual([{ method: 'PATCH', path: '/api/org', body: { name: 'Harbor Group', orgId: 'o1' } }]);
+});
+
+test('staff activity pages: Show older staff activity adds the next 50 below, and goes once there are no more', async () => {
+  const api = fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin') });
+  const at = ADD_EVENT.at;
+  const older = { ...ADD_EVENT, at: '2026-10-01T15:00:00.000Z', summary: 'Renamed the organization from A to B' };
+  withRoutes(api, {
+    gets: {
+      '/api/org/staff-activity': () => ({ events: [ADD_EVENT], nextBefore: at }),
+      [`/api/org/staff-activity?before=${encodeURIComponent(at)}`]: () => ({ events: [older], nextBefore: null }),
+    },
+  });
+  renderAt('/settings', api);
+  const table = await screen.findByRole('region', { name: 'Townwise staff activity on Test Group' });
+  expect(table.textContent).toContain(ADD_EVENT.summary);
+  expect(table.textContent).not.toContain(older.summary);
+  fireEvent.click(screen.getByRole('button', { name: 'Show older staff activity' }));
+  expect(await screen.findByText(older.summary)).toBeTruthy();
+  expect(screen.getByRole('region', { name: 'Townwise staff activity on Test Group' }).textContent).toContain(ADD_EVENT.summary);
+  expect(screen.queryByRole('button', { name: 'Show older staff activity' })).toBeNull();
+});
+
 test('D25: the staff activity intro names open as admin, so it never says staff read figures only through View as', async () => {
   const api = fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin') });
   withRoutes(api, { gets: { '/api/org/staff-activity': () => ({ events: [ADD_EVENT] }) } });

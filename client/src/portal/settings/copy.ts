@@ -16,6 +16,8 @@ export const SETTINGS_COPY = {
     + 'addresses, your location names and towns, and which dates your data covers. Any change staff make to your team, '
     + 'name or status is listed here too.',
   staffEmpty: 'Townwise staff haven’t viewed or changed your organization.',
+  showOlder: 'Show older staff activity',
+  loadingOlder: 'Loading…',
   notApplied: 'Didn’t take effect.',
 } as const;
 

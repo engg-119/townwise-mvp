@@ -126,7 +126,8 @@ test('view-as: the title names the target; disabled controls stay focusable; End
   fireEvent.click(add);
   fireEvent.click(screen.getByRole('button', { name: 'End view-as' }));
   await waitFor(() => { expect(window.location.pathname).toBe('/admin'); });
-  expect(writes(api)).toEqual([{ method: 'POST', path: '/api/admin/view-as/end', body: {} }]);
+  // End names the grant the banner shows, so a tab left on an ended view-as never ends a newer grant of the session.
+  expect(writes(api)).toEqual([{ method: 'POST', path: '/api/admin/view-as/end', body: { grantId: 'g1' } }]);
   expect(await screen.findByRole('status')).toBeTruthy();
   expect(screen.getByText(/^View-as ended at \d{1,2}:\d{2} (AM|PM)\.$/)).toBeTruthy();
   expect(screen.queryByRole('region', { name: 'View-as' })).toBeNull();
@@ -186,6 +187,28 @@ test('open as admin: Sign out stays enabled, and the top bar has no Team', async
   await screen.findByRole('region', { name: 'Townwise staff setup' });
   expect(screen.getByRole('button', { name: 'Sign out' }).getAttribute('aria-disabled')).not.toBe('true');
   expect(within(screen.getByRole('navigation', { name: 'Main' })).queryByRole('link', { name: 'Team' })).toBeNull();
+});
+
+test('open as admin: Sign out sends End for the grant it shows first, so the end is recorded now; a failed End still signs out', async () => {
+  for (const answer of [() => staffMe(), () => refusal(503, 'unavailable')]) {
+    const api = fakePortalApi({ me: openAsAdminMe(), org: orgOf('org_admin') });
+    api.answers['/api/admin/view-as/end'] = answer;
+    let writesBefore: unknown = null;
+    const signOut = jest.fn(() => { writesBefore = writes(api); return Promise.resolve(); });
+    renderAt('/dashboard', api, { signOut });
+    await screen.findByRole('region', { name: 'Townwise staff setup' });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    await waitFor(() => { expect(signOut).toHaveBeenCalledTimes(1); });
+    expect(writesBefore).toEqual([{ method: 'POST', path: '/api/admin/view-as/end', body: { grantId: 'g2' } }]);
+    cleanup();
+  }
+  // Outside the mode, Sign out sends nothing first.
+  const api = fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin') });
+  const signOut = jest.fn(() => Promise.resolve());
+  renderAt('/dashboard', api, { signOut });
+  fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }));
+  await waitFor(() => { expect(signOut).toHaveBeenCalledTimes(1); });
+  expect(writes(api)).toEqual([]);
 });
 
 test('a GET /api/me read that finds open as admin over sends End once, and the console shows the notice', async () => {

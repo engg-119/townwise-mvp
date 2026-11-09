@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 
 import type { OrgDetail, OrgLocation } from '../../../src/portal/console/schemas';
-import { ACCESS, refusal, staffMe } from '../../helpers/portal';
+import { openAsAdminMe, refusal } from '../../helpers/portal';
 import { installPlaces } from '../onboarding/places-fakes';
 import { consoleApi, emailOf, member, orgDetail, renderAt, type ConsoleApi } from './helpers';
 
@@ -626,12 +626,12 @@ function openWrites(api: ConsoleApi): { method: string; path: string; body: unkn
   return api.calls.filter((call) => call.method !== 'GET' && call.path === OPEN);
 }
 
-test('Open as admin shows only in setup, posts the start route with no body, and opens the dashboard', async () => {
+test('Open as admin shows only in setup, posts the start route with no body, and opens the dashboard under the banner', async () => {
   const api = consoleApi();
   serve(api, () => inSetup([hanover()]));
   api.routes[`POST ${OPEN}`] = () => {
-    // The answer is the organization's admin access with the staff member as the user (Task 5 adds the flag).
-    api.me = staffMe(ACCESS.admin);
+    // The answer is the organization's admin access with openAsAdmin set and the staff member as the user.
+    api.me = openAsAdminMe();
     return api.me;
   };
   renderAt('/admin/orgs/o1', api);
@@ -639,6 +639,8 @@ test('Open as admin shows only in setup, posts the start route with no body, and
   await click('Open as admin');
   expect(openWrites(api)).toEqual([{ method: 'POST', path: OPEN, body: undefined }]);
   await waitFor(() => { expect(window.location.pathname).toBe('/dashboard'); });
+  const banner = await screen.findByRole('region', { name: 'Townwise staff setup' });
+  expect(within(banner).getByText('You’re setting up Test Group as Townwise staff. This ends when someone joins.')).toBeTruthy();
 });
 
 test('Open as admin answering 409 org_not_in_setup closes setup and says someone joined', async () => {

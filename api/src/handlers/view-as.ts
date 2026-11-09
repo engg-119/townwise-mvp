@@ -3,7 +3,8 @@
 // every other write while a grant is live. view_as.started is written before the grant exists (9.3), so no grant
 // is ever unrecorded; view_as.ended is written after the grant is cleared. End also ends open as admin (D25,
 // open-as-admin.ts), whose grant holds the session the same way, and records open_as_admin.ended for it. Each start
-// and End also records the end of this staff member's grants that expired holding another session (endExpiredElsewhere).
+// and End also records the end of this staff member's open-as-admin grants that expired holding another session
+// (endExpiredElsewhere); view-as grants are left to their own session, as before D25.
 import { authOf } from '@ckeith26/auth';
 import { objectId } from '@ckeith26/mongo';
 import { AppError, parseInput } from '@ckeith26/server-core';
@@ -30,10 +31,19 @@ function staffActor(actor: StaffActor, grantId: string): Pick<AuditEventInput, '
   return { actorUserId: actor.userId, actorEmail: actor.email, actorRole: 'superadmin', viewAsGrantId: grantId };
 }
 
+/**
+ * When a grant ended. An open-as-admin grant recorded as expired stopped working at its `expiresAt`, however late its
+ * end is recorded (D25), so its end and its event carry that time and sort before what came after it. Anything else
+ * ended now; view-as keeps the time it was cleared, as before D25.
+ */
+function endedAt(grant: GrantRecord, endReason: GrantEndReason, now: Date): Date {
+  return grant.kind === 'open_as_admin' && endReason === 'expired' && grant.expiresAt.getTime() < now.getTime() ? grant.expiresAt : now;
+}
+
 /** Records a grant's end, after it: open_as_admin.ended for an open-as-admin grant (D25), view_as.ended otherwise. */
-async function recordEnded(ctx: TownwiseContext, actor: StaffActor, grant: GrantRecord, now: Date, endReason: GrantEndReason): Promise<void> {
+async function recordEnded(ctx: TownwiseContext, actor: StaffActor, grant: GrantRecord, at: Date, endReason: GrantEndReason): Promise<void> {
   await recordAfter(ctx, {
-    ...staffActor(actor, grant.id), at: now, orgId: grant.orgId,
+    ...staffActor(actor, grant.id), at, orgId: grant.orgId,
     action: grant.kind === 'open_as_admin' ? 'open_as_admin.ended' : 'view_as.ended',
     target: { type: 'grant', id: grant.id },
     details: { endReason },
@@ -54,21 +64,24 @@ export async function clearGrant(
   if (grant === null || (onlyGrantId !== undefined && grant.id !== onlyGrantId)) return;
   const now = ctx.now();
   const endReason = reasonFor(grant, now);
-  if (!(await ctx.stores.grants.end(grant.id, actor.sessionId, { endedAt: now, endReason }))) return;
-  await recordEnded(ctx, actor, grant, now, endReason);
+  const at = endedAt(grant, endReason, now);
+  if (!(await ctx.stores.grants.end(grant.id, actor.sessionId, { endedAt: at, endReason }))) return;
+  await recordEnded(ctx, actor, grant, at, endReason);
 }
 
 /**
- * Ends and records, as `expired`, this staff member's grants that expired while holding another session. An open-as
- * grant expires with its staff window (D2, D25), after which its own session can no longer start or End anything, so
- * its end is recorded from the next session's start or End. Each ends by compare-and-set, so two sessions doing this
- * at once record it once; a grant still live in another session is never touched.
+ * Ends and records, as `expired` at its `expiresAt`, each of this staff member's open-as-admin grants that expired
+ * while holding another session. An open-as grant expires with its staff window (D2, D25), after which its own session
+ * can no longer start or End anything, so its end is recorded from the next session's start or End. Each ends by
+ * compare-and-set, so two sessions doing this at once record it once; a grant still live in another session, another
+ * staff member's grant and any view-as grant are never touched.
  */
 export async function endExpiredElsewhere(ctx: TownwiseContext, actor: StaffActor): Promise<void> {
   const now = ctx.now();
-  for (const { grant, sessionId } of await ctx.stores.grants.findExpiredElsewhere(actor.userId, actor.sessionId, now)) {
-    if (await ctx.stores.grants.end(grant.id, sessionId, { endedAt: now, endReason: 'expired' })) {
-      await recordEnded(ctx, actor, grant, now, 'expired');
+  for (const { grant, sessionId } of await ctx.stores.grants.findExpiredOpenAsAdminElsewhere(actor.userId, actor.sessionId, now)) {
+    const at = endedAt(grant, 'expired', now);
+    if (await ctx.stores.grants.end(grant.id, sessionId, { endedAt: at, endReason: 'expired' })) {
+      await recordEnded(ctx, actor, grant, at, 'expired');
     }
   }
 }

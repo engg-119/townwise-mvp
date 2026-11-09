@@ -26,7 +26,10 @@ export const staffActivitySchema = z.object({
 });
 export type StaffActivity = z.infer<typeof staffActivitySchema>;
 
-export const staffActivityResponseSchema = z.object({ events: z.array(staffActivitySchema) });
+/** `nextBefore` reads the next older page; null (or, from an older server, absent) when there is none. */
+export const staffActivityResponseSchema = z.object({ events: z.array(staffActivitySchema), nextBefore: z.string().nullable().optional() });
+
+export interface StaffActivityPage { events: StaffActivity[]; nextBefore: string | null }
 
 /** PATCH /api/org { name, orgId? } (2 to 120 characters after trimming; orgId from openAsAdminOrgId): 200 { org }. */
 export async function renameOrg(api: ApiClient, name: string, orgId: string | null): Promise<{ id: string; name: string }> {
@@ -34,10 +37,11 @@ export async function renameOrg(api: ApiClient, name: string, orgId: string | nu
   return body.org;
 }
 
-/** GET /api/org/staff-activity: the newest 50 staff events on the organization. */
-export async function fetchStaffActivity(api: ApiClient): Promise<StaffActivity[]> {
-  const body = await api.json('/api/org/staff-activity', staffActivityResponseSchema);
-  return body.events;
+/** GET /api/org/staff-activity?before=: a page of 50 staff events on the organization, newest first; `before` pages older. */
+export async function fetchStaffActivity(api: ApiClient, before?: string): Promise<StaffActivityPage> {
+  const path = before === undefined ? '/api/org/staff-activity' : `/api/org/staff-activity?before=${encodeURIComponent(before)}` as const;
+  const body = await api.json(path, staffActivityResponseSchema);
+  return { events: body.events, nextBefore: body.nextBefore ?? null };
 }
 
 /** POST /api/org/leave {} (the body must be exactly {}): 200 with the new access, as GET /api/me; 409 last_admin. */

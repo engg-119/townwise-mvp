@@ -265,7 +265,10 @@ test('Privacy names Anthropic as TownwiseAI’s provider, says nothing is sent u
   const items = within(screen.getByRole('region', { name: 'Who else sees it' })).getAllByRole('listitem');
   const anthropic = items.find((item) => item.textContent.startsWith('Anthropic,'));
   if (anthropic === undefined) throw new Error('no Anthropic item');
-  expect(anthropic.textContent).toContain('which provides the AI model behind TownwiseAI, the assistant on each location’s TownwiseAI page. Nothing is sent to Anthropic unless you use it.');
+  expect(anthropic.textContent).toContain('which provides the AI model behind TownwiseAI, the assistant on each location’s TownwiseAI page. Nothing is sent to Anthropic unless you use it, or Townwise staff setting up your organization for you before anyone from it joins use it (see Who can see it, under Your restaurant’s sales data).');
+  // D25: staff in open as admin can run TownwiseAI and drop files, so neither sentence may say only “you”.
+  expect(anthropic.textContent).not.toContain('Nothing is sent to Anthropic unless you use it.');
+  expect(anthropic.textContent).toContain('when you, or staff setting it up for you, drop a file');
   expect(anthropic.textContent).not.toContain('off in production');
   expect(anthropic.textContent).toContain('Anthropic receives the messages you send and the location data the assistant reads to answer them');
   expect(anthropic.textContent).toContain('which say Anthropic may not train models on that content.');

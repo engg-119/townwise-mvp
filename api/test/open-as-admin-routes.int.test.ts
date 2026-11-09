@@ -10,7 +10,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import type { AuditEventView } from '../src/audit.ts';
 import type { MeResponse } from '../src/handlers/me.ts';
 import { AUDIT_DETAIL_KEYS, type AuditAction } from '../src/stores/audit-events.ts';
-import { addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
+import { addGrant, addOpenAsAdminGrant, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import {
   call, logLines, makeStaff, MINUTE, refresh, signIn, signInStaff, startTownwiseServer, STAFF_EMAIL, writesDuring,
   type TestSession, type TownwiseTestServer,
@@ -325,6 +325,33 @@ describe('End (POST /api/admin/view-as/end)', () => {
   });
 });
 
+describe('a suspension', () => {
+  it('ends it for good: with no End ever sent, a reactivation inside the staff window does not bring it back', async () => {
+    const grantId = (await (await start(org.orgId)).json() as MeResponse).openAsAdmin?.id ?? '';
+    // Another staff session suspends and reactivates through the console, as staff B (or A on another device) would.
+    const other = await anotherStaffSession();
+    const setStatus = (status: 'active' | 'suspended'): Promise<Response> =>
+      call(server, `/api/admin/orgs/${org.orgId}`, { method: 'PATCH', session: other, json: { status } });
+    server.clock.advance(MINUTE);
+    expect((await setStatus('suspended')).status).toBe(200);
+    // A fresh tab reads GET /api/me during the suspension, so the client never sends End.
+    expect(await me(staff)).toMatchObject(STAFF_ONLY);
+    server.clock.advance(MINUTE);
+    expect((await setStatus('active')).status).toBe(200);
+
+    expect(await me(staff)).toMatchObject(STAFF_ONLY);
+    expect(await errorOf(await call(server, '/api/org', { session: staff }))).toEqual({ status: 403, error: 'no_access' });
+    // The resolver wrote nothing: the grant still holds the session, and the next start or End clears it.
+    expect(await grants().findOne({ _id: new Types.ObjectId(grantId) })).toMatchObject({ activeSessionId: staff.sessionId, endedAt: null });
+
+    // Opened again after the reactivation, it is a new grant, and live.
+    const reopened = await start(org.orgId);
+    expect(reopened.status).toBe(201);
+    expect((await reopened.json() as MeResponse).openAsAdmin?.id).not.toBe(grantId);
+    expect(await grants().findOne({ _id: new Types.ObjectId(grantId) })).toMatchObject({ endReason: 'replaced' });
+  });
+});
+
 describe('a tab still showing an organization this session no longer has open', () => {
   /** X (`org`) open, then joined, then Y opened from the console: the X tab has not read GET /api/me since. */
   async function openYAfterXJoined(): Promise<{ y: { orgId: string; name: string }; xGrantId: string; yGrantId: string }> {
@@ -369,27 +396,84 @@ describe('a tab still showing an organization this session no longer has open', 
     expect(await res.json()).toMatchObject(STAFF_ONLY);
     expect(await grants().findOne({ _id: new Types.ObjectId(yGrantId) })).toMatchObject({ endReason: 'ended' });
   });
+
+  it('a view-as tab’s End, naming its view-as grant, ends it; once open as admin started since, the same End leaves it running', async () => {
+    const target = await signIn(server, uniqueEmail('viewed-tab'));
+    const viewAsId = (await (await startViewAs(target.userId)).json() as MeResponse).viewAs?.id ?? '';
+    const endViewAs = (): Promise<Response> => call(server, '/api/admin/view-as/end', { session: staff, json: { grantId: viewAsId } });
+    expect((await endViewAs()).status).toBe(200);
+    expect(await grants().findOne({ _id: new Types.ObjectId(viewAsId) })).toMatchObject({ endReason: 'ended' });
+    const openId = (await (await start(org.orgId)).json() as MeResponse).openAsAdmin?.id ?? '';
+    let stale: Response | undefined;
+    const writes = await writesDuring(server, async () => { stale = await endViewAs(); });
+    expect(stale?.status).toBe(200);
+    expect(writes).toEqual([]);
+    expect((await me(staff)).openAsAdmin?.id).toBe(openId);
+  });
 });
 
 describe('a grant that expired with an earlier staff sign-in', () => {
-  it('is ended as expired by the next sign-in’s End, recorded on its organization with its own summary', async () => {
-    const grantId = (await (await start(org.orgId)).json() as MeResponse).openAsAdmin?.id ?? '';
-    server.clock.advance(61 * MINUTE);
-    const next = await anotherStaffSession();
-    expect((await end(next)).status).toBe(200);
-
+  /** Its end, recorded late: the grant and its one open_as_admin.ended event carry the time it expired, not the time of the record. */
+  async function expectEndedAtExpiry(grantId: string): Promise<void> {
+    const expiresAt = new Date(sessionStart.getTime() + 60 * MINUTE);
     const grant = await grants().findOne({ _id: new Types.ObjectId(grantId) });
-    expect(grant).toMatchObject({ endedAt: server.clock.now(), endReason: 'expired' });
+    expect(grant).toMatchObject({ endedAt: expiresAt, endReason: 'expired' });
     expect(grant).not.toHaveProperty('activeSessionId');
     const ended = (await eventsOfGrant(grantId)).filter((event) => event.action === 'open_as_admin.ended');
     expect(ended).toEqual([expect.objectContaining({
-      actorRole: 'superadmin', actorUserId: staff.userId, viewAsGrantId: grantId, details: { endReason: 'expired' },
+      at: expiresAt, actorRole: 'superadmin', actorUserId: staff.userId, viewAsGrantId: grantId, details: { endReason: 'expired' },
     })]);
     expect(String(ended[0]?.orgId)).toBe(org.orgId);
+  }
+
+  it('is ended as expired by the next sign-in’s End, at the time it expired, on its organization with its own summary', async () => {
+    const grantId = (await (await start(org.orgId)).json() as MeResponse).openAsAdmin?.id ?? '';
+    // Recorded hours later, it still carries the time it expired.
+    server.clock.advance(4 * 60 * MINUTE);
+    const next = await anotherStaffSession();
+    expect((await end(next)).status).toBe(200);
+    await expectEndedAtExpiry(grantId);
     const audit = await (await call(server, `/api/admin/audit?orgId=${org.orgId}`, { session: next })).json() as { events: AuditEventView[] };
     expect(audit.events.filter((event) => event.action.startsWith('open_as_admin.')).map((event) => event.summary)).toEqual([
       'Setting up as admin ended with the staff sign-in', 'Opened the organization as its admin, to set it up',
     ]);
+  });
+
+  it('is ended the same way by the next sign-in’s open-as-admin start, and by its view-as start', async () => {
+    const first = (await (await start(org.orgId)).json() as MeResponse).openAsAdmin?.id ?? '';
+    server.clock.advance(61 * MINUTE);
+    const next = await anotherStaffSession();
+    const y = await setupOrg(server, next);
+    expect((await start(y.orgId, next)).status).toBe(201);
+    await expectEndedAtExpiry(first);
+
+    // And a view-as start: a third sign-in, after the second's grant expired too.
+    const second = (await me(next)).openAsAdmin?.id ?? '';
+    server.clock.advance(61 * MINUTE);
+    const third = await anotherStaffSession();
+    const target = await signIn(server, uniqueEmail('viewed-later'));
+    expect((await call(server, '/api/admin/view-as', { session: third, json: { userId: target.userId, reason: REASON } })).status).toBe(201);
+    expect(await grants().findOne({ _id: new Types.ObjectId(second) })).toMatchObject({ endReason: 'expired' });
+    expect((await eventsOfGrant(second)).filter((event) => event.action === 'open_as_admin.ended')).toEqual([
+      expect.objectContaining({ actorUserId: staff.userId, details: { endReason: 'expired' } }),
+    ]);
+  });
+
+  it('leaves a view-as grant that expired in another session, and another staff member’s grant, alone (decision 6)', async () => {
+    const twoHoursAgo = new Date(server.clock.now().getTime() - 120 * MINUTE);
+    const target = await signIn(server, uniqueEmail('viewed-before'));
+    const viewAs = await addGrant(server, {
+      actorUserId: staff.userId, sessionId: 'an-earlier-session', targetUserId: target.userId, orgId: null, startedAt: twoHoursAgo,
+    });
+    const theirs = await addOpenAsAdminGrant(server, {
+      actorUserId: new Types.ObjectId().toHexString(), sessionId: 'another-staff-member', orgId: org.orgId, startedAt: twoHoursAgo,
+    });
+    let res: Response | undefined;
+    const writes = await writesDuring(server, async () => { res = await end(); });
+    expect(res?.status).toBe(200);
+    expect(writes).toEqual([]);
+    expect(await grants().findOne({ _id: new Types.ObjectId(viewAs) })).toMatchObject({ activeSessionId: 'an-earlier-session', endedAt: null });
+    expect(await grants().findOne({ _id: new Types.ObjectId(theirs) })).toMatchObject({ activeSessionId: 'another-staff-member', endedAt: null });
   });
 
   it('a start in another session leaves a grant still live there alone', async () => {
