@@ -13,6 +13,10 @@ from pandas.tseries.holiday import USFederalHolidayCalendar
 FLOOR = 1  # guests; keeps log ratios finite on near-empty days (the notebook's FLOOR["guests"])
 EVENT_PREFIX = "ev_"
 REGIME_SUFFIX = " (regime)"
+# A weekday's regime level is learned from at least this many training days. A level from one day fits that day
+# exactly at every quantile, so days like it get an 80% range of no width. [CONFIRM: 4, as the notebook's v5 rule
+# counts a weekday's bias only with at least 4 days]
+MIN_REGIME_DAYS = 4
 RECENT_DAYS = 364
 
 
@@ -55,6 +59,19 @@ def add_weekday_regime(frame: pd.DataFrame, regime_start: pd.Timestamp | None) -
         out["weekday_regime"] = out.weekday
     else:
         out["weekday_regime"] = out.weekday + np.where(out.date >= regime_start, REGIME_SUFFIX, "")
+    return out
+
+
+def limit_weekday_regime(frame: pd.DataFrame, train_idx: pd.Index) -> pd.DataFrame:
+    """weekday_regime with a regime level only for weekdays that have at least MIN_REGIME_DAYS training days in it;
+    every other row, later days included, falls back to its weekday. Without this, a regime the training rows have not
+    seen is a column constant in training, which the design drops, so its days get the reference weekday's level."""
+    if "weekday_regime" not in frame:
+        return frame
+    counts = frame.loc[train_idx, "weekday_regime"].value_counts()
+    out = frame.copy()
+    out["weekday_regime"] = out.weekday_regime.where(out.weekday_regime.isin(counts.index[counts >= MIN_REGIME_DAYS]),
+                                                     out.weekday)
     return out
 
 

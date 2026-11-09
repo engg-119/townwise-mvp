@@ -3,7 +3,7 @@
 import pandas as pd
 
 from townwise_lab import model
-from townwise_lab.features import add_recent_level
+from townwise_lab.features import add_recent_level, limit_weekday_regime
 from townwise_lab.holidays import HALLOWEEN_LAMBDA, choose_big_night_lambda, holiday_effects, holiday_multiplier
 
 TARGET = "guests"
@@ -60,13 +60,13 @@ def six_month_folds(first_day: pd.Timestamp,
 def rolling_predictions(frame: pd.DataFrame, hist: pd.DataFrame, origins: list[pd.Timestamp], end: pd.Timestamp,
                         base_cols: list[str], event_cols: list[str], holidays: bool) -> pd.DataFrame:
     """At each origin: refit on the rows of `hist` (training rows of `frame`) up to it, then predict its rows after it
-    through `end`. recent_level is recomputed for each origin. With `holidays`, the big-night lambda is chosen by
-    leave-one-out on that origin's training rows and the holiday multiplier scales all three quantiles; without, this
-    is the notebook's backtest. weekday_median is the training rows' median guests by weekday. An origin with no row
-    of `hist` after it is skipped."""
+    through `end`. recent_level and weekday_regime (limit_weekday_regime) are recomputed for each origin. With
+    `holidays`, the big-night lambda is chosen by leave-one-out on that origin's training rows and the holiday
+    multiplier scales all three quantiles; without, this is the notebook's backtest. weekday_median is the training
+    rows' median guests by weekday. An origin with no row of `hist` after it is skipped."""
     pieces = []
     for origin in origins:
-        fr = add_recent_level(frame, origin)
+        fr = limit_weekday_regime(add_recent_level(frame, origin), hist.index[hist.date <= origin])
         h = fr.loc[hist.index]
         train, rows = h[h.date <= origin], h[(h.date > origin) & (h.date <= end)]
         if rows.empty:
@@ -83,6 +83,10 @@ def rolling_predictions(frame: pd.DataFrame, hist: pd.DataFrame, origins: list[p
             "refit": origin, "date": rows.date, "weekday": rows.weekday, "actual": rows[TARGET],
             "lo": q[0.1], "mid": q[0.5], "hi": q[0.9],
             "weekday_median": rows.weekday.map(train.groupby("weekday")[TARGET].median())}, columns=PRED_COLUMNS))
-    if not pieces:
-        return pd.DataFrame(columns=PRED_COLUMNS)
+    if not pieces:  # no row, but the usual column types, so the result can still be picked and scored
+        none = hist.iloc[:0]
+        no_value = pd.Series(dtype=float, index=none.index)
+        return pd.DataFrame({"refit": none.date, "date": none.date, "weekday": none.weekday, "actual": no_value,
+                             "lo": no_value, "mid": no_value, "hi": no_value, "weekday_median": no_value},
+                            columns=PRED_COLUMNS).reset_index(drop=True)
     return pd.concat(pieces, ignore_index=True)

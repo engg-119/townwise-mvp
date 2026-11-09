@@ -151,6 +151,19 @@ def test_weekday_regime_splits_levels_from_regime_start():
     assert "weekday_regime_Monday (regime)" not in X  # no Monday since the regime started: nothing to learn
 
 
+def test_weekday_regime_keeps_a_level_only_with_four_training_days():
+    f = pd.DataFrame({"date": pd.date_range("2025-01-06", "2025-02-16")})  # six weeks, Monday to Sunday
+    f["weekday"] = f.date.dt.day_name()
+    f = features.add_weekday_regime(f, ts("2025-01-13"))
+    train = f.index[(f.date <= ts("2025-02-09")) & (f.date != ts("2025-01-14"))]  # four regime weeks, a Tuesday short
+    out = features.limit_weekday_regime(f, train)
+    plain = (out.date < ts("2025-01-13")) | (out.weekday == "Tuesday")  # later days included, not only training
+    assert (out.loc[plain, "weekday_regime"] == out.loc[plain, "weekday"]).all()
+    assert (out.loc[~plain, "weekday_regime"] == out.loc[~plain, "weekday"] + " (regime)").all()
+    assert f.weekday_regime.str.endswith(" (regime)").sum() == 35  # the input is left as it was
+    assert "weekday_regime" not in features.limit_weekday_regime(f.drop(columns="weekday_regime"), train)
+
+
 def test_weekday_bias_matches_cell_76_rule(frame):
     d = features.training_rows(frame, DATA_THROUGH)
     d = d[d.date >= REGIME_START]  # no Mondays since the regime started
@@ -217,12 +230,26 @@ def test_weekly_totals_sum_monday_to_sunday():
     assert metrics.weekly_totals(days, value="actual").pred.tolist() == [1.0, 5.0, 4.0]
 
 
-def test_rolling_skips_an_origin_with_no_later_history(frame, hist):
+def test_rolling_skips_an_origin_with_no_later_history(frame, hist, preds, window):
     # A closure running up to the cutoff can leave an origin with nothing to forecast
     out = backtest.rolling_predictions(frame, hist, [ts("2025-09-30")], ts("2025-09-30"), NOTEBOOK_BASE,
                                        NOTEBOOK_EVENT_COLS, holidays=False)
     assert out.empty
     assert list(out.columns) == ["refit", "date", "weekday", "actual", "lo", "mid", "hi", "weekday_median"]
+    assert out.dtypes.equals(preds.dtypes)  # the usual column types, so the result can still be picked and scored
+    assert backtest.pick(out, 28, *window).empty
+
+
+@pytest.mark.parametrize("with_holidays", [False, True])
+def test_rolling_weekday_regime_waits_for_training_days(frame, hist, origins, with_holidays):
+    # An origin before the regime has no training day in it: its later days keep their own weekday's level
+    events = features.event_columns(frame, hist.index)
+    regime, plain = (backtest.rolling_predictions(frame, hist, origins, DATA_THROUGH, features.base_columns(start),
+                                                  events, holidays=with_holidays) for start in (REGIME_START, None))
+    before = regime.refit < REGIME_START
+    assert before.any() and (regime.date[before] >= REGIME_START).sum() > 100
+    pd.testing.assert_frame_equal(regime[before], plain[before])
+    assert not np.allclose(regime.mid[~before], plain.mid[~before])  # later origins learn the regime's levels
 
 
 def test_rolling_recomputes_recent_level_per_origin(monkeypatch, frame, hist, origins):
