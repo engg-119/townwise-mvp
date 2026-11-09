@@ -123,16 +123,19 @@ export async function addSalesDay(
   });
 }
 
-/** A tw_uploads record in the shape of spec 6.6. */
+/** A tw_uploads record in the shape of spec 6.6. Resolves its id. */
 export async function addUpload(
   server: Server,
-  opts: { orgId: string; locationId: string; uploadedAt: Date; status: 'applying' | 'applied' },
-): Promise<void> {
+  opts: { orgId: string; locationId: string; uploadedAt: Date; status: 'applying' | 'applied'; uploadedBy?: string; byStaff?: boolean },
+): Promise<string> {
+  const _id = new Types.ObjectId();
   await server.connection.collection('tw_uploads').insertOne({
-    orgId: new Types.ObjectId(opts.orgId), locationId: new Types.ObjectId(opts.locationId), uploadedBy: 'fixture',
+    _id, orgId: new Types.ObjectId(opts.orgId), locationId: new Types.ObjectId(opts.locationId), uploadedBy: opts.uploadedBy ?? 'fixture',
     uploadedAt: opts.uploadedAt, status: opts.status, dayCount: 1, inserted: 1, replaced: 0, kept: 0,
     firstDate: '2026-05-01', lastDate: '2026-05-01', hasGuests: true, hasNetSales: true,
+    ...(opts.byStaff === true ? { byStaff: true } : {}),
   });
+  return _id.toHexString();
 }
 
 /** A tw_notes record in the shape of spec 12. */

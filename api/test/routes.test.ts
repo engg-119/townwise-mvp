@@ -171,6 +171,16 @@ describe('route table', () => {
     expect(ids.indexOf('org.imports.current')).toBeLessThan(ids.indexOf('org.imports.get'));
   });
 
+  it('D28: Your data is a member GET of the organization, and a member PATCH and DELETE of one item, with no route limiter', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => ['org.data.list', 'org.data.update', 'org.data.remove'].includes(r.id))
+      .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));
+    expect(rows).toEqual([
+      { id: 'org.data.list', method: 'GET', path: '/org/data', policy: 'member', bodyLimit: 'none', limiter: undefined },
+      { id: 'org.data.update', method: 'PATCH', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: '2kb', limiter: undefined },
+      { id: 'org.data.remove', method: 'DELETE', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: 'none', limiter: undefined },
+    ]);
+  });
+
   it('saving or setting aside a TownwiseAI proposal is a member POST with an 8kb body and no route limiter', () => {
     const proposal = TOWNWISE_ROUTES.find((entry) => entry.id === 'org.chat.proposal');
     expect(proposal).toMatchObject({

@@ -45,6 +45,8 @@ function salesDaySchema(): Schema<SalesDayFields> {
     updatedAt: { type: Date, required: true },
   }, { strict: 'throw', versionKey: false, read: 'primary' });
   schema.index({ orgId: 1, locationId: 1, date: 1 }, { unique: true });
+  // D28: the days an upload still holds (Your data's "in use" count, and deleting one upload).
+  schema.index({ orgId: 1, uploadId: 1 });
   return schema;
 }
 
@@ -115,6 +117,13 @@ export interface SalesDayStore {
   hasAny(scope: OrgScope, locationId: string): Promise<boolean>;
   /** Whether any location of the organization has a day with a value (the welcome's “ready to set up”). */
   hasAnyForOrg(scope: OrgScope): Promise<boolean>;
+  /**
+   * D28: how many stored days each of `uploadIds` still holds (it last wrote them), turned off or not, by upload id. An
+   * upload that holds none is left out.
+   */
+  ownedDayCounts(scope: OrgScope, uploadIds: readonly string[]): Promise<Map<string, number>>;
+  /** D28: deletes the days the upload still holds at the location. Resolves the number deleted. */
+  removeForUpload(scope: OrgScope, locationId: string, uploadId: string): Promise<number>;
   /** Resolves the number of days deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
   /** Organization deletion (spec 10.7). Resolves the number deleted. */
@@ -250,6 +259,17 @@ export function createSalesDayStore(connection: Connection): SalesDayStore {
     },
     async hasAnyForOrg(scope) {
       return (await SalesDay.exists({ orgId: new Types.ObjectId(scope.orgId), ...HAS_VALUE_FILTER })) !== null;
+    },
+    async ownedDayCounts(scope, uploadIds) {
+      if (uploadIds.length === 0) return new Map();
+      const rows = await connection.collection(SALES_DAYS_COLLECTION).aggregate<{ _id: Types.ObjectId; days: number }>([
+        { $match: { orgId: new Types.ObjectId(scope.orgId), uploadId: { $in: uploadIds.map((id) => new Types.ObjectId(id)) } } },
+        { $group: { _id: '$uploadId', days: { $sum: 1 } } },
+      ]).toArray();
+      return new Map(rows.map((row) => [row._id.toHexString(), row.days]));
+    },
+    async removeForUpload(scope, locationId, uploadId) {
+      return (await SalesDay.deleteMany({ ...ofLocation(scope, locationId), uploadId: new Types.ObjectId(uploadId) })).deletedCount;
     },
     async removeForLocation(scope, locationId) {
       return (await SalesDay.deleteMany(ofLocation(scope, locationId))).deletedCount;

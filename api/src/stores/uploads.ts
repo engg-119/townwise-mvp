@@ -111,6 +111,13 @@ export interface UploadStore {
    * Resolves the record after it, or null when there is no such upload at the location.
    */
   setEnabled(scope: OrgScope, locationId: string, uploadId: string, input: { enabled: boolean; by: string; at: Date }): Promise<UploadRecord | null>;
+  /**
+   * D28, Your data: the uploads at the location (or across the organization, for null), newest first by (uploadedAt, id),
+   * each strictly before `before` in that order.
+   */
+  page(scope: OrgScope, input: { locationId: string | null; before: { at: Date; id: string } | null; limit: number }): Promise<UploadRecord[]>;
+  /** D28: deletes the location's upload record. False when there was none. */
+  remove(scope: OrgScope, locationId: string, uploadId: string): Promise<boolean>;
   /** Resolves the number of records deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
   /** Organization deletion (spec 10.7). Resolves the number deleted. */
@@ -183,6 +190,21 @@ export function createUploadStore(connection: Connection): UploadStore {
         { returnDocument: 'after' },
       ).lean();
       return doc === null ? null : toUpload(doc);
+    },
+    async page(scope, input) {
+      const filter: Record<string, unknown> = { orgId: scope.orgId };
+      if (input.locationId !== null) filter.locationId = input.locationId;
+      if (input.before !== null) {
+        filter.$or = [
+          { uploadedAt: trusted({ $lt: input.before.at }) },
+          { uploadedAt: input.before.at, _id: trusted({ $lt: input.before.id }) },
+        ];
+      }
+      const docs = await Upload.find(filter).sort({ uploadedAt: -1, _id: -1 }).limit(input.limit).lean();
+      return docs.map(toUpload);
+    },
+    async remove(scope, locationId, uploadId) {
+      return (await Upload.deleteOne({ _id: uploadId, orgId: scope.orgId, locationId })).deletedCount === 1;
     },
     async removeForLocation(scope, locationId) {
       return (await Upload.deleteMany({ orgId: scope.orgId, locationId })).deletedCount;

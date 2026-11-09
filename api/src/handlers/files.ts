@@ -653,16 +653,11 @@ export async function deleteRaw(ctx: TownwiseContext, req: Request, res: Respons
 }
 
 /**
- * DELETE /files/:fileId: the original, the cleaned copy and the report; the days it added stay. An unfinished upload
- * is cancelled and its bytes given back. A file waiting on a question takes the question with it.
+ * removeFile for a route, shared with Your data (handlers/data.ts): a blob failure answers 503 storage_unavailable and a
+ * file the reader has 409 file_busy. A cancelled upload is logged, and a file that was waiting on a question nudges the
+ * reader. No audit.
  */
-export async function deleteFile(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
-  const blobs = filesOn(ctx);
-  const member = memberOf(principal);
-  const { scope } = member;
-  const location = await loadLocation(ctx, scope, req.params.locationId);
-  const file = await loadFile(ctx, scope, location.id, req.params.fileId);
-  mayManage(member, file);
+export async function removeWholeFile(ctx: TownwiseContext, blobs: FileBlobs, scope: OrgScope, file: FileRecord): Promise<void> {
   const removed = await removeFile(ctx.stores, blobs, scope, file, ctx.now()).catch((err: unknown) => {
     if (err instanceof BlobUnavailableError) throw storageUnavailable(ctx, 'delete_file', err);
     throw err;
@@ -673,6 +668,20 @@ export async function deleteFile(ctx: TownwiseContext, req: Request, res: Respon
   } else if (file.status === 'waiting') {
     ctx.nudgeFiles();
   }
+}
+
+/**
+ * DELETE /files/:fileId: the original, the cleaned copy and the report; the days it added stay. An unfinished upload
+ * is cancelled and its bytes given back. A file waiting on a question takes the question with it.
+ */
+export async function deleteFile(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const blobs = filesOn(ctx);
+  const member = memberOf(principal);
+  const { scope } = member;
+  const location = await loadLocation(ctx, scope, req.params.locationId);
+  const file = await loadFile(ctx, scope, location.id, req.params.fileId);
+  mayManage(member, file);
+  await removeWholeFile(ctx, blobs, scope, file);
   if (file.status !== 'uploading') {
     await recordAfter(ctx, {
       ...actorOf(member), at: ctx.now(), orgId: scope.orgId, action: 'file.deleted',
