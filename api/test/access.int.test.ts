@@ -94,7 +94,7 @@ describe('GET /api/me states (4.2)', () => {
     expect((await me(session)).access).toEqual({ state: 'no_org' });
   });
 
-  it('pending with the request; one stored before place ids reads placeId as null', async () => {
+  it('pending with the request; one stored before places, with no place id, reads places as none', async () => {
     const { email, session } = await person('pending');
     const requestId = await addRequest(server, { userId: session.userId, email, status: 'pending', orgName: 'Moose Tavern' });
     expect((await me(session)).access).toEqual({
@@ -102,15 +102,18 @@ describe('GET /api/me states (4.2)', () => {
       request: {
         id: requestId, orgName: 'Moose Tavern', contactName: 'Fixture Contact', contactRole: 'Owner',
         town: { townId: 'hanover-nh', name: 'Hanover', state: 'NH' }, locationCount: 1, note: null, status: 'pending',
-        createdAt: server.clock.now().toISOString(), decidedAt: null, decisionMessage: null, placeId: null,
+        createdAt: server.clock.now().toISOString(), decidedAt: null, decisionMessage: null, places: [],
       },
     });
   });
 
-  it('a request stored with a place id answers it', async () => {
+  it('a request stored with a single place id reads it as one place, named null, in the request’s town', async () => {
     const { email, session } = await person('place');
     await addRequest(server, { userId: session.userId, email, status: 'pending', placeId: 'ChIJTestPlace0001' });
-    expect((await me(session)).access).toMatchObject({ state: 'pending', request: { placeId: 'ChIJTestPlace0001' } });
+    expect((await me(session)).access).toMatchObject({
+      state: 'pending',
+      request: { places: [{ placeId: 'ChIJTestPlace0001', name: null, town: { townId: 'hanover-nh', name: 'Hanover', state: 'NH' } }] },
+    });
   });
 
   it('an invitation outranks a pending request and carries it as pendingRequest', async () => {
