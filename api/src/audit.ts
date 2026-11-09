@@ -32,6 +32,11 @@ export async function recordBefore(ctx: TownwiseContext, event: AuditEventInput)
   }
 }
 
+/** The actor of an event nobody did by hand: the forecast lab publishing a calibrated forecast. */
+export const SYSTEM_ACTOR = {
+  actorUserId: 'system', actorEmail: 'Townwise forecast lab', actorRole: 'system', viewAsGrantId: null,
+} as const satisfies Pick<AuditEventInput, 'actorUserId' | 'actorEmail' | 'actorRole' | 'viewAsGrantId'>;
+
 /**
  * The codes a staff_action.not_applied event may carry (spec 9.3), each with the plain words org admins read in their
  * staff activity. A refusal's code is its error code; `conflict` means a concurrent change to the same row won,
@@ -48,6 +53,8 @@ export const NOT_APPLIED_REASONS = {
   org_not_suspended: 'The organization was reactivated first',
   files_unavailable: 'Stored files were off, so their files could not be deleted',
   location_name_taken: 'Another location already uses that name',
+  calibration_in_progress: 'A calibration for that location was already running',
+  calibrations_rate_limited: 'Too many calibrations had started that day',
   unavailable: 'Townwise was briefly unavailable',
   internal: 'Something went wrong on Townwise’s side',
 } as const;
@@ -181,9 +188,17 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
       return `Answered TownwiseAI’s question about days with no sales: ${QUESTION_ANSWER_WORDS[text(d.answer)] ?? text(d.answer)}`;
     // U13B.
     case 'forecast.imported': return `Imported a forecast (model ${text(d.modelVersion)}) for ${text(d.from)} to ${text(d.to)}`;
-    case 'forecast.published': return `Published a forecast (model ${text(d.modelVersion)}) for ${text(d.from)} to ${text(d.to)}`;
+    case 'forecast.published':
+      if (d.via === 'lab') return `Published a calibrated forecast (model ${text(d.modelVersion)}) for ${text(d.from)} to ${text(d.to)}`;
+      return `Published a forecast (model ${text(d.modelVersion)}) for ${text(d.from)} to ${text(d.to)}`;
     case 'forecast.withdrawn': return `Withdrew a forecast (model ${text(d.modelVersion)}) for ${text(d.from)} to ${text(d.to)}`;
     case 'forecast.deleted': return `Deleted a forecast (model ${text(d.modelVersion)}) for ${text(d.from)} to ${text(d.to)}`;
+    case 'calibration.requested':
+      return d.hasRegime === true ? 'Started a calibration, with a weekly pattern change' : 'Started a calibration';
+    case 'calibration.finished':
+      if (d.status === 'failed') return 'A calibration failed';
+      return d.gate === 'published' ? 'A calibration published a new forecast' : 'A calibration made a draft forecast';
+    case 'org.forecasts_switched': return d.on === true ? 'Switched forecasts on, with the owner’s agreement' : 'Switched forecasts off';
     case 'view_as.started': return `Viewed as ${text(d.targetEmail)}`;
     case 'view_as.ended':
       if (d.endReason === 'expired') return 'View-as expired';

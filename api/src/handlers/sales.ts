@@ -284,6 +284,8 @@ export async function removeSalesData(
   if (removed === 'files_unavailable') return removed;
   const deletedDays = await ctx.stores.salesDays.removeForLocation(scope, locationId);
   const deletedUploads = await ctx.stores.uploads.removeForLocation(scope, locationId);
+  // The forecast lab: calibrations go before their runs, so a running job's token dies before its run could be written.
+  await ctx.stores.calibrations.removeForLocation(scope, locationId);
   // U13B: forecasts are made from the sales data, so they go with it.
   await ctx.stores.forecasts.removeForLocation(scope, locationId);
   // Answers to TownwiseAI's questions were about these days, so they go too, after the days: with no days left no
