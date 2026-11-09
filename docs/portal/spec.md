@@ -193,6 +193,8 @@ interface MeResponse {
   user: { id: string; email: string };        // always the signed-in person; during view-as, built from the staff actor (7.2)
   access: Access;                              // during view-as: the target's access
   viewAs: ViewAsView | null;
+  openAsAdmin: { id: string; org: { id: string; name: string }; startedAt: string } | null;   // D25: set while staff have
+                                               // the organization open as its admin; `access` is then its org admin's
   staff: { verifiedUntil: string } | null;    // set whenever the signed-in person's own state is 'staff'
   welcome: { firstName: string | null; restaurant: string } | null;   // GET /api/me only (15.8); null in every other answer
 }
@@ -753,13 +755,15 @@ interface AuditEvent {
 | `forecast.imported`, `forecast.published`, `forecast.withdrawn`, `forecast.deleted` | `locationId`, `modelVersion`, `from`, `to`, `dayCount` (target `forecast_run`; staff actions, written before the effect; never a figure) |
 | `view_as.started` | `targetUserId`, `targetEmail`, `reason`, `expiresAt` |
 | `view_as.ended` | `endReason` (`ended`, `replaced` or `expired`) |
+| `open_as_admin.started` | none (D25; ids only: the grant is the target and the organization the event’s `orgId`; written before the grant exists, 9.3) |
+| `open_as_admin.ended` | `endReason` (`ended`, `replaced` or `expired`); written after the grant is cleared |
 | `people.signed_out_everywhere` | none (written before the effect, 9.3; the revoked count is in the response) |
 | `person.deleted` | `userId` (null when the address never signed in); ids only |
 | `staff_action.not_applied` | `eventId` (the staff event it qualifies), `code` |
 
 Never in an audit event: guest or sales figures, note `detail` text, request notes, decision messages, a file name or anything from a file, tokens.
 
-An event’s `orgId` is the organization it touches: for `people.signed_out_everywhere`, the target’s active organization at the time, or null; for `view_as.*`, the grant’s `orgId`.
+An event’s `orgId` is the organization it touches: for `people.signed_out_everywhere`, the target’s active organization at the time, or null; for `view_as.*` and `open_as_admin.*`, the grant’s `orgId`.
 
 ### 9.3 Rules
 
@@ -917,7 +921,7 @@ Month sums run over the days that have a value. A month whose days have no guest
 
 ### 10.7 Staff console
 
-Every route here has policy `staff`, except `view-as/end`, which has `staff_self` and is the only one that runs during view-as (7.2).
+Every route here has policy `staff`, except `view-as/end`, which has `staff_self` and is the only one that runs during view-as (7.2) or while staff have an organization open as its admin (D25); it ends either. During view-as every other route here answers 409 `view_as_active`, and while open as admin 409 `open_as_admin_active`.
 
 | Method and path | Request | Success | Extra errors |
 |---|---|---|---|
@@ -938,6 +942,7 @@ Every route here has policy `staff`, except `view-as/end`, which has `staff_self
 | `DELETE /api/admin/orgs/:orgId/locations/:locationId` (setup) | | 204 | 404; 409 `org_not_in_setup`, `location_has_data` |
 | `POST /api/admin/orgs/:orgId/locations/:locationId/sales/uploads` (setup) | `{ days: SalesDay[] }` (11.3), up to 256 KB | 201 `{ upload: UploadView, coverage, calibration }`, replacing the days it covers; `uploadedByEmail` is “Townwise staff” | 400; 404; 409 `org_not_in_setup`; 413 |
 | `DELETE /api/admin/orgs/:orgId/locations/:locationId/sales` (setup) | | 200 `{ deletedDays, deletedUploads, deletedFiles }`, as 10.4 | 404; 409 `org_not_in_setup`, `import_running`; 503 `files_unavailable` |
+| `POST /api/admin/orgs/:orgId/open-as-admin` (D25) | none (no body is parsed) | 201 `MeResponse`: the organization’s admin access, with `openAsAdmin` set | 400; 404; 409 `org_not_in_setup`, `open_as_admin_active`, `view_as_active`; 429; 503 |
 | `GET /api/admin/orgs/:orgId/forecast-runs` | | 200 `{ runs }` (14.4), newest import first, at most 100 | 404 |
 | `POST /api/admin/orgs/:orgId/locations/:locationId/forecast-runs` | a run file (14.4), up to 256 KB | 201 `{ run }` (draft); 200 `{ run }` for a file the location already has | 400 `invalid_forecast_file` `{ issues: { path, code }[] }`; 404 |
 | `POST /api/admin/orgs/:orgId/forecast-runs/:runId/publish` | `{}` | 200 `{ run }` | 404; 409 `forecast_run_not_draft` |
@@ -949,7 +954,7 @@ Every route here has policy `staff`, except `view-as/end`, which has `staff_self
 | `POST /api/admin/people/delete` | `{ email }` (in the body, never the path, because `url` is logged) | 200 `{ deletedRequests, deletedSeats, redactedEvents, kitUserId: string \| null }` | 400 `invalid_target` (staff); 404 (no kit user and no Townwise record); 409 `person_has_seat` |
 | `GET /api/admin/audit?orgId=&actorUserId=&action=&before=&limit=` | `limit` 1 to 200, default 50; `before` an ISO time | 200 `{ events: AuditEventView[], nextBefore: string \| null }` | |
 | `POST /api/admin/view-as` | `{ userId, reason }` | 201 `MeResponse` | 400 `invalid_target`; 404; 429 |
-| `POST /api/admin/view-as/end` | `{}` | 200 `MeResponse` | |
+| `POST /api/admin/view-as/end` | `{}` | 200 `MeResponse`; ends view-as or open as admin, whichever holds the session | |
 
 ```ts
 interface PersonView {
@@ -1009,7 +1014,7 @@ Built with the rate-limit module and keyed on `acct:<userId>`, a key the caller 
 | `townwise:writes` | every non-GET `/api` route, before access is resolved | 300 per 10 minutes | allow |
 | `townwise:uploads` | the member upload route (staff setup’s carries only `townwise:writes`, as every staff write does) | 30 per hour | allow |
 | `townwise:requests` | `POST /api/access-requests` | 5 per day | deny (503 `unavailable`) |
-| `townwise:view-as` | `POST /api/admin/view-as` | 20 per hour | deny (503 `unavailable`) |
+| `townwise:view-as` | `POST /api/admin/view-as` and `POST /api/admin/orgs/:orgId/open-as-admin` together | 20 per hour | deny (503 `unavailable`) |
 | `townwise:places` | both Places routes together; each location write with a `placeId` also spends one (10.3) | 300 per hour | deny (503 `unavailable`; on a location write, 503 `places_unavailable`) |
 | `townwise:files` | `POST .../files` (10.11) | 120 per hour | allow |
 | `townwise:file-chunks` | `PUT .../files/:fileId/chunks/:index` | 1,500 per hour | allow |
@@ -1030,10 +1035,12 @@ A search is 10 to 15 debounced autocompletes and one details call, so `townwise:
 | 403 | `forbidden` | role too low, not staff, not the note’s author | re-read `/api/me`; hide the control |
 | 403 | `staff_setup_required`, `staff_reauth_required` | staff gate | route per 4.3 |
 | 403 | `view_as_read_only` | a non-GET without the `staff` policy during view-as | should not happen: controls are disabled |
+| 403 | `open_as_admin_refused` | a route that does not run while staff have an organization open as its admin (D25): people, seats and requests | should not happen: Team and Leave are hidden |
 | 404 | `place_not_found` | the details route: Google has no such place (10.2a) | the client keeps the manual fields |
 | 400 | `unknown_place`, `place_not_supported`, `place_town_mismatch` | a location write with a `placeId` (10.3): Google has no such place, it has no US town, or the sent town is not its town | “Google Maps answered differently this time.”, then the search again |
 | 404 | `not_found` | unknown id, or an id in another organization | “This {thing} isn’t available.” with a way back |
 | 409 | `view_as_active` | any route with the `staff` policy, any method, during view-as; a second view-as start racing the first | re-read `/api/me` |
+| 409 | `open_as_admin_active` | any route with the `staff` policy, any method, while open as admin (D25); a start racing another start of the same session | re-read `/api/me` |
 | 409 | `no_invite`, `already_in_org`, `request_exists`, `request_not_pending`, `requester_has_org`, `last_admin`, `location_name_taken`, `location_limit`, `location_has_data`, `note_limit`, `member_limit`, `person_has_seat`, `org_not_suspended`, `org_not_in_setup` | as in the tables | inline copy per page |
 | 413 | `payload_too_large` | server-core | unreachable from the app (Section 11.3) |
 | 415 | `unsupported_media_type` | server-core | client bug |

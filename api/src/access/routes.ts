@@ -23,6 +23,7 @@ import {
 import { createLocation, deleteLocation, getOwnOrg, updateLocation } from '../handlers/locations.ts';
 import { declineInvite, getMe, joinInvite, recordWelcome } from '../handlers/me.ts';
 import { createNote, deleteNote, listNotes, updateNote } from '../handlers/notes.ts';
+import { startOpenAsAdmin } from '../handlers/open-as-admin.ts';
 import { getStaffActivity, leaveOrg, renameOrg } from '../handlers/org.ts';
 import { placesAutocomplete, placesDetails } from '../handlers/places.ts';
 import { createAccessRequest } from '../handlers/requests.ts';
@@ -293,6 +294,11 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'admin.orgs.sales.remove', method: 'DELETE', path: '/admin/orgs/:orgId/locations/:locationId/sales', policy: 'staff',
     bodyLimit: 'none', handler: deleteSetupSales,
+  },
+  // D25, open as admin: no body, and the view-as limiter, shared with view-as Start. End is view-as End.
+  {
+    id: 'admin.orgs.open_as_admin', method: 'POST', path: '/admin/orgs/:orgId/open-as-admin', policy: 'staff', bodyLimit: 'none',
+    limiter: 'view-as', handler: startOpenAsAdmin,
   },
   // U13B, forecast runs from the staff console (spec 10.13, 14.4): import as a draft, publish, withdraw, delete.
   {

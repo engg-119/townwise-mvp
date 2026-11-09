@@ -1,7 +1,8 @@
 // View-as Start and End (spec F8, Section 8, 10.7). Start has policy `staff`; End has `staff_self`, the only
 // route that runs during view-as (7.2). View-as writes nothing except its own start and end: the guard refuses
 // every other write while a grant is live. view_as.started is written before the grant exists (9.3), so no grant
-// is ever unrecorded; view_as.ended is written after the grant is cleared.
+// is ever unrecorded; view_as.ended is written after the grant is cleared. End also ends open as admin (D25,
+// open-as-admin.ts), whose grant holds the session the same way, and records open_as_admin.ended for it.
 import { authOf } from '@ckeith26/auth';
 import { objectId } from '@ckeith26/mongo';
 import { AppError, parseInput } from '@ckeith26/server-core';
@@ -27,8 +28,11 @@ function staffActor(actor: StaffActor, grantId: string): Pick<AuditEventInput, '
   return { actorUserId: actor.userId, actorEmail: actor.email, actorRole: 'superadmin', viewAsGrantId: grantId };
 }
 
-/** Ends the grant still holding the staff member's session, live or expired, and records its end. */
-async function clearGrant(
+/**
+ * Ends the grant still holding the staff member's session, live or expired, of either kind, and records its end:
+ * open_as_admin.ended for an open-as-admin grant (D25), view_as.ended otherwise.
+ */
+export async function clearGrant(
   ctx: TownwiseContext,
   actor: StaffActor,
   reasonFor: (grant: GrantRecord, now: Date) => GrantEndReason,
@@ -39,7 +43,8 @@ async function clearGrant(
   const endReason = reasonFor(grant, now);
   if (!(await ctx.stores.grants.end(grant.id, actor.sessionId, { endedAt: now, endReason }))) return;
   await recordAfter(ctx, {
-    ...staffActor(actor, grant.id), at: now, orgId: grant.orgId, action: 'view_as.ended',
+    ...staffActor(actor, grant.id), at: now, orgId: grant.orgId,
+    action: grant.kind === 'open_as_admin' ? 'open_as_admin.ended' : 'view_as.ended',
     target: { type: 'grant', id: grant.id },
     details: { endReason },
   });
@@ -57,7 +62,7 @@ export async function startViewAs(ctx: TownwiseContext, req: Request, res: Respo
   const orgId = (await resolvePerson(ctx, target)).seat?.orgId ?? null;
 
   // Under a live grant the guard has already answered 409, so this clears a grant that expired without End,
-  // or one ignored because its target changed organization.
+  // or one ignored because its target changed organization (or, open as admin, its organization left setup).
   await clearGrant(ctx, actor, (grant, now) => (grant.expiresAt.getTime() <= now.getTime() ? 'expired' : 'replaced'));
 
   const now = ctx.now();
@@ -81,10 +86,16 @@ export async function startViewAs(ctx: TownwiseContext, req: Request, res: Respo
   res.status(201).json(meResponse(await resolveAccess(ctx, authOf(req))));
 }
 
-/** POST /api/admin/view-as/end {}: idempotent; 200 with the staff member's own access. */
+/** The staff member behind a principal that passed staff_self: staff, in view-as, or in open as admin (D25). */
+function endActor(principal: Principal): StaffActor | undefined {
+  if (principal.kind === 'staff') return principal.actor;
+  if (principal.kind === 'member' && principal.openAsAdmin !== null) return principal.openAsAdmin.actor;
+  return principal.viewAs?.actor;
+}
+
+/** POST /api/admin/view-as/end {}: ends view-as or open as admin; idempotent; 200 with the staff member's own access. */
 export async function endViewAs(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
-  // staff_self passed: a staff principal, or any principal in view-as, whose actor is the staff member.
-  const actor = principal.kind === 'staff' ? principal.actor : principal.viewAs?.actor;
+  const actor = endActor(principal);
   if (actor === undefined) throw new AppError(403, 'forbidden', 'Forbidden');
   parseInput(endBody, req.body);
   await clearGrant(ctx, actor, (grant, now) => (grant.expiresAt.getTime() <= now.getTime() ? 'expired' : 'ended'));

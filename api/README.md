@@ -252,7 +252,7 @@ Each location’s calibration state is derived from its sales days on every read
 ### Audit and logs
 
 - Every change writes an event to `tw_audit_events`, with details from a fixed allowlist per action (the table below, `AUDIT_DETAIL_KEYS` in `src/stores/audit-events.ts`). Events never hold guest or sales figures, note detail text, request notes, decision messages or file contents.
-- Events for client actions (members, org admins and requesters) are written after the effect; a failed write is logged and the action stands. Staff events are written before the effect; a failed write refuses the action with 503, and an effect that then fails or is refused adds `staff_action.not_applied { eventId, code }`. Its code is the refusal’s error code (`request_not_pending`, `view_as_active`, `last_admin`, `already_invited`, `not_found`, `person_has_seat`, `org_not_suspended`, `files_unavailable`, `location_name_taken`), `conflict` when a concurrent change to the same row won, `unavailable` when a later event of the same request could not be written, or `internal` when the effect threw. The list is closed (`NOT_APPLIED_REASONS` in `src/audit.ts`, which also holds each code’s plain words). [CONFIRM: audit timing; events kept indefinitely]
+- Events for client actions (members, org admins and requesters) are written after the effect; a failed write is logged and the action stands. Staff events are written before the effect; a failed write refuses the action with 503, and an effect that then fails or is refused adds `staff_action.not_applied { eventId, code }`. Its code is the refusal’s error code (`request_not_pending`, `view_as_active`, `open_as_admin_active`, `last_admin`, `already_invited`, `not_found`, `person_has_seat`, `org_not_suspended`, `files_unavailable`, `location_name_taken`), `conflict` when a concurrent change to the same row won, `unavailable` when a later event of the same request could not be written, or `internal` when the effect threw. The list is closed (`NOT_APPLIED_REASONS` in `src/audit.ts`, which also holds each code’s plain words). [CONFIRM: audit timing; events kept indefinitely]
 - The only update to an event is deletion’s redaction; nothing deletes one.
 - Org admins read their organization’s staff events (actor role `superadmin`), newest 50, as Townwise staff activity: `{ at, staffEmail, summary, viewAs, applied, notAppliedReason }`, where `viewAs` is `{ targetEmail, reason, endsAt }` on `view_as.started` only and `endsAt` is the grant’s scheduled end (an earlier end is its own `view_as.ended` row). A `staff_action.not_applied` event is never a row: the row it qualifies has `applied: false` and `notAppliedReason`, the code in plain words (for example “The organization needs at least one admin”); every other row has `applied: true` and `notAppliedReason: null`.
 
@@ -285,6 +285,8 @@ Each location’s calibration state is derived from its sales days on every read
 | `forecast.imported`, `forecast.published`, `forecast.withdrawn`, `forecast.deleted` | `locationId`, `modelVersion`, `from`, `to`, `dayCount` (target `forecast_run`; never a figure) | before, by staff |
 | `view_as.started` | `targetUserId`, `targetEmail`, `reason`, `expiresAt` | before, by staff |
 | `view_as.ended` | `endReason` (`ended`, `replaced` or `expired`) | after the grant is cleared |
+| `open_as_admin.started` | none (ids only: the grant is the target, the organization the event’s `orgId`; no reason is asked) | before, by staff |
+| `open_as_admin.ended` | `endReason` (`ended`, `replaced` or `expired`) | after the grant is cleared |
 | `people.signed_out_everywhere` | none (the event’s `orgId` is the person’s organization, or null) | before, by staff |
 | `person.deleted` | `userId` (null for an address that never signed in) | before, by staff |
 | `staff_action.not_applied` | `eventId`, `code` | after a staff effect fails or is refused |
@@ -309,7 +311,7 @@ Policies:
 - `member`: an active seat in an active organization; anyone else gets 403 `no_access`.
 - `org_admin`: a member whose role is `org_admin`; a member gets 403 `forbidden`, anyone else 403 `no_access`.
 - `staff`: a staff address that passes the two-step gate. A staff address that fails it gets 403 `staff_setup_required` or `staff_reauth_required`; anyone else gets 403 `forbidden`.
-- `staff_self`: the signed-in staff member’s own gate, which also passes during view-as. Only view-as End uses it.
+- `staff_self`: the signed-in staff member’s own gate, which also passes during view-as and while open as admin. Only view-as End uses it.
 
 Member routes take the organization from the caller’s own seat, never from the request. A location, note or member id from another organization answers 404, exactly like an unknown id. A malformed id is 400. Error bodies are the kit’s `{ error, message, retryAfterSeconds? }`, and a failed validation is 400 `invalid_request` with no field details.
 
@@ -317,7 +319,7 @@ Member routes take the organization from the caller’s own seat, never from the
 
 | Method and path | Policy | Request | Success | Errors |
 |---|---|---|---|---|
-| `GET /api/me` | signed_in | | 200 `{ user, access, viewAs, staff, welcome }`; `welcome` is `{ firstName, restaurant }` or null (Requesting access and approval), null under view-as and in every other answer “as `GET /api/me`” | |
+| `GET /api/me` | signed_in | | 200 `{ user, access, viewAs, openAsAdmin, staff, welcome }`; `openAsAdmin` is `{ id, org: { id, name }, startedAt }` while staff have the organization open as its admin, else null; `welcome` is `{ firstName, restaurant }` or null (Requesting access and approval), null under view-as and in every other answer “as `GET /api/me`” | |
 | `POST /api/me/join` | signed_in | `{ inviteId }` | 200, as `GET /api/me` | 403 `forbidden` (staff); 409 `no_invite`, `already_in_org` |
 | `POST /api/me/decline` | signed_in | `{ inviteId }` | 200, as `GET /api/me` | 403 `forbidden` (staff); 409 `no_invite` |
 | `POST /api/me/welcome` | member; `writes` only | none (no body is parsed) | 204; again 204, keeping the first time | 403 `no_access`; 403 `view_as_read_only`; 429 |
@@ -429,7 +431,7 @@ A note is `{ kind, startDate, endDate, weekdays, effect, expectedGuests, detail 
 
 ### Staff console
 
-Policy `staff`, except End. During view-as, every route here answers 409 `view_as_active`, except End.
+Policy `staff`, except End. During view-as, every route here answers 409 `view_as_active`, and while open as admin 409 `open_as_admin_active`, except End.
 
 | Method and path | Request | Success | Errors |
 |---|---|---|---|
@@ -450,6 +452,7 @@ Policy `staff`, except End. During view-as, every route here answers 409 `view_a
 | `DELETE /api/admin/orgs/:orgId/locations/:locationId` (setup) | | 204 | 400; 404; 409 `org_not_in_setup`, `location_has_data`; 503 |
 | `POST /api/admin/orgs/:orgId/locations/:locationId/sales/uploads` (setup; body up to 256 KB) | `{ days }` (see Sales upload) | 201 `{ upload, coverage, calibration }`, replacing the days it covers, with `upload.uploadedByEmail` “Townwise staff” | 400; 404; 409 `org_not_in_setup`; 413; 503 |
 | `DELETE /api/admin/orgs/:orgId/locations/:locationId/sales` (setup) | | 200 `{ deletedDays, deletedUploads, deletedFiles }` | 400; 404; 409 `org_not_in_setup`, `import_running`; 503, or 503 `files_unavailable` |
+| `POST /api/admin/orgs/:orgId/open-as-admin` (limiter `view-as`) | none (no body is parsed) | 201, as `GET /api/me`, with `openAsAdmin` set | 400; 403; 404; 409 `org_not_in_setup`, `open_as_admin_active`, `view_as_active`; 429; 503 |
 | `GET /api/admin/orgs/:orgId/forecast-runs` | | 200 `{ runs }`, newest import first, at most 100: each run as in `ForecastWindow` without `live`, with `locationId`, `status` (`importing`, `draft`, `published`, `withdrawn`), `range`, `dayCount`, `weekCount`, `importedAt`, `publishedAt`, `withdrawnAt` and `importedByEmail` (null once that person is deleted); never a day's figure | 400; 404 |
 | `POST /api/admin/orgs/:orgId/locations/:locationId/forecast-runs` (body up to 256 KB) | a `townwise.forecast-run/1` file | 201 `{ run }`, a new draft; 200 `{ run }` for a file this location already has, in its status (a run left `importing` finishes) | 400 `invalid_forecast_file` with `issues: { path, code }[]` (never a value); 404 (another organization's location too); 503 |
 | `POST /api/admin/orgs/:orgId/forecast-runs/:runId/publish` | `{}` | 200 `{ run }`; a published run answers 200 and writes nothing | 400; 404; 409 `forecast_run_not_draft`; 503 |
@@ -461,7 +464,7 @@ Policy `staff`, except End. During view-as, every route here answers 409 `view_a
 | `POST /api/admin/people/delete` | `{ email }` | 200 `{ deletedRequests, deletedSeats, redactedEvents, kitUserId }` | 400 `invalid_target` (staff); 404; 409 `person_has_seat` (also for a seat taken during the deletion); 503 |
 | `GET /api/admin/audit?orgId=&actorUserId=&action=&before=&limit=` | `limit` 1 to 200, default 50 | 200 `{ events, nextBefore }` | 400 |
 | `POST /api/admin/view-as` (limiter `view-as`) | `{ userId, reason }` | 201, as `GET /api/me`, with `viewAs` set | 400 `invalid_target`; 404; 409 `view_as_active`; 429; 503 |
-| `POST /api/admin/view-as/end` (policy `staff_self`) | `{}` | 200, as `GET /api/me` | |
+| `POST /api/admin/view-as/end` (policy `staff_self`) | `{}` | 200, as `GET /api/me`; ends view-as or open as admin, whichever holds the session | |
 
 The setup routes are described under Staff setup. The console never returns sales figures or note text; forecast runs come back as metadata only (model, dates, counts, backtest accuracy), never a day's range. People come only from Townwise records, `TOWNWISE_SUPERADMIN_EMAILS` and the kit’s exact-email lookup; the kit’s collections are never read directly. Organization and team changes, sign out everywhere and deletion are staff actions (see Audit and logs), and deletion is described under Deletion, with its runbook step.
 
@@ -489,7 +492,7 @@ A question is `{ id, kind: 'weekday', weekday, from, to, noSalesCount, weekdayCo
 | `townwise:writes` | every `/api` route but GET, per account | 300 per 10 minutes | allow |
 | `townwise:uploads` | the member upload route, per account (staff setup’s upload carries only `townwise:writes`, as every staff write does) | 30 per hour | allow |
 | `townwise:requests` | `POST /api/access-requests`, per account | 5 per day | deny (503 `unavailable`) |
-| `townwise:view-as` | `POST /api/admin/view-as`, per account | 20 per hour | deny (503 `unavailable`) |
+| `townwise:view-as` | `POST /api/admin/view-as` and `POST /api/admin/orgs/:orgId/open-as-admin` together, per account | 20 per hour | deny (503 `unavailable`) |
 | `townwise:chat` | `POST /api/org/locations/:locationId/chat/turns`, per account | 60 per hour | deny (503 `unavailable`) |
 | `townwise:places` | both Places routes together, per account; each location write with a `placeId` also spends one (Organization and locations) | 300 per hour | deny (503 `unavailable`; on a location write, 503 `places_unavailable`) |
 | `townwise:files` | `POST .../files` (opening an upload), per account | 120 per hour | allow |

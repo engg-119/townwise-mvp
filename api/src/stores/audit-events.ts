@@ -44,6 +44,9 @@ export const AUDIT_DETAIL_KEYS = {
   'forecast.deleted': ['locationId', 'modelVersion', 'from', 'to', 'dayCount'],
   'view_as.started': ['targetUserId', 'targetEmail', 'reason', 'expiresAt'],
   'view_as.ended': ['endReason'],
+  // D25, open as admin: ids only. The grant is the target and the organization the event's orgId; no name, email or reason.
+  'open_as_admin.started': [],
+  'open_as_admin.ended': ['endReason'],
   'people.signed_out_everywhere': [],
   'person.deleted': ['userId'],
   'staff_action.not_applied': ['eventId', 'code'],
