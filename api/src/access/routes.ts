@@ -11,7 +11,7 @@ import {
 } from '../handlers/admin.ts';
 import { answerQuestion, getAgent } from '../handlers/agent.ts';
 import { getLocationCalendar } from '../handlers/calendar.ts';
-import { deleteConversation, getChat, getConversation, postTurn } from '../handlers/chat.ts';
+import { deleteConversation, getChat, getConversation, postTurn, renameConversation, showVersion } from '../handlers/chat.ts';
 import { actOnProposal } from '../handlers/chat-proposals.ts';
 import { deleteOrg, deletePerson, purgeOriginals } from '../handlers/deletion.ts';
 import { getEstimatesAbout, getForecast, getPeopleInTown } from '../handlers/estimates.ts';
@@ -42,10 +42,10 @@ export interface TownwiseRoute {
   readonly path: `/${string}`;
   readonly policy: Policy;
   /**
-   * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer; '2kb' on the Places and files JSON routes; '8kb'
-   * on a TownwiseAI proposal; '256kb' only on the upload routes (the member one and, D23, staff setup's) and (U13B) the
-   * staff forecast import; 'stream' only on the chunk route, whose handler reads the raw body itself after the policy
-   * has passed.
+   * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer, a conversation's rename and a version switch;
+   * '2kb' on the Places and files JSON routes; '8kb' on a TownwiseAI proposal; '256kb' only on the upload routes (the
+   * member one and, D23, staff setup's) and (U13B) the staff forecast import; 'stream' only on the chunk route, whose
+   * handler reads the raw body itself after the policy has passed.
    */
   readonly bodyLimit: 'none' | '1kb' | '2kb' | '8kb' | '32kb' | '256kb' | 'stream';
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
@@ -203,6 +203,15 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.chat.remove', method: 'DELETE', path: '/org/locations/:locationId/chat/:conversationId', policy: 'member',
     bodyLimit: 'none', handler: deleteConversation,
+  },
+  // TownwiseAI's conversation trees: renaming, and switching the version shown. Neither calls the model: writes only.
+  {
+    id: 'org.chat.rename', method: 'PATCH', path: '/org/locations/:locationId/chat/:conversationId', policy: 'member',
+    bodyLimit: '1kb', handler: renameConversation,
+  },
+  {
+    id: 'org.chat.active', method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/active', policy: 'member',
+    bodyLimit: '1kb', handler: showVersion,
   },
   // U9 (TownwiseAI): saving or setting aside a proposed note.
   {

@@ -272,7 +272,8 @@ describe('a call that never finished', () => {
     let moved = false;
     const costs: number[] = [];
     const result = await runTurn({
-      model, tools: noTools, history: [], userMessage: { role: 'user', content: 'Hello' }, signal: controller.signal,
+      model, tools: noTools, history: [], userMessage: { role: 'user', content: 'Hello' },
+      nodes: { user: { id: 'u1', parentId: null }, reply: { id: 'a1', parentId: 'u1' } }, signal: controller.signal,
       now: () => new Date(clock),
       emit: (event) => {
         if (event.type !== 'text' || moved) return;
