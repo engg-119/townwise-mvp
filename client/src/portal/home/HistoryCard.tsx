@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
 import type { HistoryUpload } from '../analytics/api';
 import { heatmapSummary } from '../analytics/cells';
@@ -12,8 +12,8 @@ import { UploadAction } from '../locations/parts';
 import { locationHref } from '../routing';
 import type { Coverage } from '../schemas';
 import { Actions, LinkButton } from '../ui/Button';
-import { Panel, Stack } from '../ui/layout';
-import { Eyebrow, Heading, Small } from '../ui/text';
+import { Small } from '../ui/text';
+import { Block } from './Block';
 
 // Your history (home.md 2.6): how many days Townwise has for this location, the span, the missing days and the last
 // finished upload, then the newest year as a small heatmap that takes no focus (web only; native has the words)
@@ -56,12 +56,8 @@ export function HistoryCard(props: {
   );
   const empty = coverage.dayCount === 0 || year === null;
   return (
-    <View nativeID={HISTORY_ID}>
-      <Panel label="Your history">
-        <Stack gap={8}>
-          <Eyebrow>Your history</Eyebrow>
-          <Heading level={3}>{empty ? 'No days yet' : plural(coverage.dayCount, 'day', 'days')}</Heading>
-        </Stack>
+    <View nativeID={HISTORY_ID} style={styles.grow}>
+      <Block label="Your history" eyebrow="Your history" title={empty ? 'No days yet' : plural(coverage.dayCount, 'day', 'days')}>
         {empty ? <Small>No sales history yet for this location.</Small> : (
           <>
             <Small>{historyLine(coverage, props.uploads)}</Small>
@@ -81,7 +77,11 @@ export function HistoryCard(props: {
           {empty ? null : <LinkButton href={locationHref(locationId, 'analytics')} label="See it in Analytics" />}
           <UploadAction locationId={locationId} variant="link" readOnlyId={props.readOnlyId} />
         </Actions>
-      </Panel>
+      </Block>
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  grow: { flexGrow: 1 },
+});
