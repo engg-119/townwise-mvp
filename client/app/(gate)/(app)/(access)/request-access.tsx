@@ -159,7 +159,7 @@ export default function RequestAccessPage(): React.JSX.Element {
       <NumberedList
         items={[
           'Someone on our team reviews your request.',
-          'We don’t send email yet. Check back here.',
+          'We’ll email you when you’re approved.',
           'Once you’re approved, you’ll upload your sales history and see your town.',
         ]}
       />

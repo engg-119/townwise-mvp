@@ -140,7 +140,7 @@ function ApproveDialog(props: {
       />
       <DefinitionList items={[{ term: 'Town', value: town }]} />
       <Small>
-        {`This creates the organization and its first location in ${town}, and makes ${email} its admin. They get access the next time they open Townwise. We don’t send email yet.`}
+        {`This creates the organization and its first location in ${town}, and makes ${email} its admin. We email them that they’re in, and they get access the next time they open Townwise.`}
       </Small>
     </Dialog>
   );
