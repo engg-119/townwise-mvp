@@ -222,7 +222,7 @@ test('a legacy place has an empty Location name; the text names the request’s 
   const field = group.getByRole<HTMLInputElement>('textbox', { name: 'Location name' });
   expect(field.value).toBe('');
   expect(group.getByText('Stowe, VT')).toBeTruthy();
-  expect(within(dialog).getByText(`This creates the organization and its first location in Stowe, VT, and makes ${REQUESTER_EMAIL} its admin. They get access the next time they open Townwise. We don’t send email yet.`)).toBeTruthy();
+  expect(within(dialog).getByText(`This creates the organization and its first location in Stowe, VT, and makes ${REQUESTER_EMAIL} its admin. We email them that they’re in, and they get access the next time they open Townwise.`)).toBeTruthy();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Approve' }));
   expect(group.getByText('Each location needs its own name.')).toBeTruthy();
   expect(writes(api)).toEqual([]);
