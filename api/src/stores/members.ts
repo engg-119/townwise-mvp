@@ -88,8 +88,9 @@ export interface MemberStore {
   countSeats(scope: OrgScope): Promise<number>;
   countActiveAdmins(scope: OrgScope): Promise<number>;
   /**
-   * Whether any row, active or removed, has joined (`joinedAt` set); open invitations never have. Approval's step 7
-   * (F3) reads it for a request with places: a retry adds no location once anyone has.
+   * Whether any row, active or removed, has joined (`joinedAt` set); open invitations never have. Staff setup (D23) reads
+   * it beside the organization's `firstJoinedAt`, for organizations from before that field; so does approval's step 7
+   * (F3) for a request with places, where a retry adds no location once anyone has.
    */
   anyJoined(scope: OrgScope): Promise<boolean>;
   /** Which of these addresses this organization already has an open invitation for. */

@@ -9,8 +9,8 @@ import { Messages } from '../ui/feedback';
 import { Columns, Stack } from '../ui/layout';
 import { Eyebrow, Heading, Lead, Small } from '../ui/text';
 import {
-  alreadyHaveLine, badNumberLine, COPY, EXCLUSION, formatDollars, moreDaysLine, noDateLine, otherLocationLine,
-  repeatedDatesLine, rowsBecameDays, sendErrorOf, sendLabel,
+  alreadyHaveLine, badNumberLine, checkProblemLine, COPY, EXCLUSION, formatDollars, moreDaysLine, noDateLine, otherLocationLine,
+  rowsBecameDays, sendErrorOf, sendLabel,
 } from './copy';
 import { LIST_LIMIT, totalsOf, type CheckResult, type DaysResult, type SalesDay } from './days';
 
@@ -122,10 +122,7 @@ export function CheckStep(props: {
   const heading = <Heading level={3}>Check the totals</Heading>;
 
   if (result.kind !== 'days') {
-    const text = result.kind === 'no_dates' ? COPY.noDates
-      : result.kind === 'decimal_comma' ? COPY.decimalComma
-        : result.kind === 'too_many_days' ? COPY.tooManyDays
-          : repeatedDatesLine(result.dates, result.repeats);
+    const text = checkProblemLine(result);
     return (
       <Stack gap={theme.space[6]}>
         {heading}

@@ -206,7 +206,7 @@ describe('GET /api/admin/orgs/:orgId', () => {
     const body = await get<OrgDetail>(`/api/admin/orgs/${orgId}`);
     expect(body.org).toEqual({
       id: orgId, name: 'Cedar Grill', status: 'active', createdAt: createdAt.toISOString(), fromRequestId: null,
-      fromRequestSentAt: null, suspendedAt: null,
+      fromRequestSentAt: null, suspendedAt: null, inSetup: false,
     });
     expect(body.members).toEqual([
       {

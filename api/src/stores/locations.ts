@@ -1,5 +1,5 @@
 import { isDuplicateKeyError } from '@ckeith26/mongo';
-import { Schema, type Connection, type Model, type Types } from 'mongoose';
+import { Schema, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
 import type { Town } from '../towns.ts';
@@ -21,6 +21,8 @@ export interface LocationFields {
   placeId: string | null;
   createdAt: Date;
   createdBy: string;
+  /** True on a location Townwise staff added during setup (D23), with their user id as `createdBy`; absent otherwise. */
+  byStaff?: boolean;
 }
 
 function locationSchema(): Schema<LocationFields> {
@@ -32,6 +34,7 @@ function locationSchema(): Schema<LocationFields> {
     placeId: { type: String, default: null, maxlength: 512 },
     createdAt: { type: Date, required: true },
     createdBy: { type: String, required: true },
+    byStaff: { type: Boolean },
   }, { strict: true, versionKey: false, read: 'primary' });
   schema.index({ orgId: 1, nameKey: 1 }, { unique: true });
   schema.index({ orgId: 1, createdAt: 1 });
@@ -64,9 +67,13 @@ export interface LocationStore {
   /** One location of this organization, else null (another organization's id included). */
   find(scope: OrgScope, locationId: string): Promise<LocationRecord | null>;
   count(scope: OrgScope): Promise<number>;
-  /** Null when this organization already has a location with that name (the unique nameKey index). */
-  create(scope: OrgScope, input: { name: string; town: Town; placeId: string | null; createdAt: Date; createdBy: string }):
-    Promise<LocationRecord | null>;
+  /**
+   * Null when this organization already has a location with that name (the unique nameKey index). `id`, when given, is
+   * the id a staff event written before the insert already names; `byStaff` marks staff setup's (D23).
+   */
+  create(scope: OrgScope, input: {
+    id?: string; name: string; town: Town; placeId: string | null; createdAt: Date; createdBy: string; byStaff?: boolean;
+  }): Promise<LocationRecord | null>;
   /** Sets the fields given (`placeId` null clears it); `name_taken` when another location of this organization has that name. */
   update(scope: OrgScope, locationId: string, input: { name?: string | undefined; town?: Town | undefined; placeId?: string | null | undefined }):
     Promise<'updated' | 'not_found' | 'name_taken'>;
@@ -109,6 +116,7 @@ export function createLocationStore(connection: Connection): LocationStore {
     async create(scope, input) {
       try {
         const doc = await Location.create({
+          ...(input.id === undefined ? {} : { _id: new Types.ObjectId(input.id) }),
           orgId: scope.orgId,
           name: input.name.trim(),
           nameKey: locationNameKey(input.name),
@@ -116,6 +124,7 @@ export function createLocationStore(connection: Connection): LocationStore {
           placeId: input.placeId,
           createdAt: input.createdAt,
           createdBy: input.createdBy,
+          ...(input.byStaff === true ? { byStaff: true } : {}),
         });
         return toLocation(doc.toObject());
       } catch (err) {

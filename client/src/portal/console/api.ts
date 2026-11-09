@@ -1,11 +1,13 @@
 import type { ApiClient } from '../../api/client';
+import type { TownInput } from '../api';
 import { meResponseSchema, type MeResponse, type Role } from '../schemas';
+import type { SalesDay } from '../upload/days';
 import {
   addMembersSchema, approvedSchema, auditPageSchema, createdOrgSchema, lookupSchema, memberUpdatedSchema, orgDeletedSchema,
   orgDetailSchema, orgListSchema, orgUpdatedSchema, peopleSchema, personDeletedSchema, rejectedSchema, requestListSchema,
-  signedOutSchema,
+  setupLocationSchema, setupSalesDeletedSchema, setupUploadSchema, signedOutSchema,
   type AddResult, type AdminRequest, type AuditPage, type Member, type OrgDetail, type OrgRow, type OrgStatus, type People,
-  type Person, type PersonKind, type RequestList, type RequestStatus, type StaffOrg,
+  type Person, type PersonKind, type RequestList, type RequestStatus, type SetupSalesDeleted, type SetupUpload, type StaffOrg,
 } from './schemas';
 
 // One function per staff console call (spec 10.7). Pages pass usePortal().api, which re-reads GET /api/me on
@@ -75,6 +77,42 @@ export async function changeOrgMemberRole(api: ApiClient, orgId: string, memberI
 /** 204: an invitation is deleted, a seat removed. */
 export async function removeOrgMember(api: ApiClient, orgId: string, memberId: string): Promise<void> {
   await api.request(`/api/admin/orgs/${id(orgId)}/members/${id(memberId)}`, { method: 'DELETE' });
+}
+
+// Staff setup (D23, F10b): while nobody has joined the organization. Every call can answer 409 org_not_in_setup once
+// someone has. The bodies are the org routes' (10.3, 11.3).
+
+function setupPath(orgId: string, locationId?: string): `/${string}` {
+  const base = `/api/admin/orgs/${id(orgId)}/locations` as const;
+  return locationId === undefined ? base : `${base}/${id(locationId)}`;
+}
+
+export async function createSetupLocation(
+  api: ApiClient, orgId: string, input: { name: string; town: TownInput; placeId?: string },
+): Promise<{ id: string; name: string }> {
+  return (await api.json(setupPath(orgId), setupLocationSchema, { method: 'POST', body: input })).location;
+}
+
+/** A town changed by hand takes the location's place off; a place id sets the place and its town. */
+export async function updateSetupLocation(
+  api: ApiClient, orgId: string, locationId: string, patch: { name?: string; town?: TownInput; placeId?: string },
+): Promise<{ id: string; name: string }> {
+  return (await api.json(setupPath(orgId, locationId), setupLocationSchema, { method: 'PATCH', body: patch })).location;
+}
+
+/** 204; 409 location_has_data while it has any sales day, note or stored file. */
+export async function deleteSetupLocation(api: ApiClient, orgId: string, locationId: string): Promise<void> {
+  await api.request(setupPath(orgId, locationId), { method: 'DELETE' });
+}
+
+/** `{ days }` and nothing else (spec 11.1); it replaces the days it covers. */
+export function uploadSetupSales(api: ApiClient, orgId: string, locationId: string, body: { days: SalesDay[] }): Promise<SetupUpload> {
+  return api.json(`${setupPath(orgId, locationId)}/sales/uploads`, setupUploadSchema, { method: 'POST', body });
+}
+
+/** Every day, upload and stored file of the location; 409 import_running, 503 files_unavailable. */
+export function deleteSetupSales(api: ApiClient, orgId: string, locationId: string): Promise<SetupSalesDeleted> {
+  return api.json(`${setupPath(orgId, locationId)}/sales`, setupSalesDeletedSchema, { method: 'DELETE' });
 }
 
 export function fetchPeople(api: ApiClient, kind: PersonKind | null): Promise<People> {

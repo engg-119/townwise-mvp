@@ -387,6 +387,11 @@ describe('POST /api/admin/requests/:requestId/approve (F3)', () => {
     );
     expect((await approve(person.requestId, body)).status).toBe(200);
     expect(await locationsOf(orgId)).toHaveLength(1);
+
+    // Nor once no member row records the join: the organization's firstJoinedAt outlives them (D23).
+    await server.connection.collection('tw_members').deleteMany({ orgId: new Types.ObjectId(orgId) });
+    expect((await approve(person.requestId, body)).status).toBe(200);
+    expect(await locationsOf(orgId)).toHaveLength(1);
     expect((await eventsAbout(person.requestId, orgId)).filter((e) => e.action === 'location.created')).toHaveLength(2);
   });
 

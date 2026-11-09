@@ -98,6 +98,32 @@ describe('route table', () => {
     ]);
   });
 
+  it('D23: staff setup routes are staff writes with the org routes’ body limits and no route limiter', () => {
+    const ids = ['admin.orgs.locations.create', 'admin.orgs.locations.update', 'admin.orgs.locations.remove', 'admin.orgs.sales.upload', 'admin.orgs.sales.remove'];
+    const rows = TOWNWISE_ROUTES.filter((r) => ids.includes(r.id))
+      .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));
+    const base = '/admin/orgs/:orgId/locations';
+    expect(rows).toEqual([
+      { id: 'admin.orgs.locations.create', method: 'POST', path: base, policy: 'staff', bodyLimit: '32kb', limiter: undefined },
+      { id: 'admin.orgs.locations.update', method: 'PATCH', path: `${base}/:locationId`, policy: 'staff', bodyLimit: '32kb', limiter: undefined },
+      { id: 'admin.orgs.locations.remove', method: 'DELETE', path: `${base}/:locationId`, policy: 'staff', bodyLimit: 'none', limiter: undefined },
+      {
+        id: 'admin.orgs.sales.upload', method: 'POST', path: `${base}/:locationId/sales/uploads`, policy: 'staff', bodyLimit: '256kb',
+        limiter: undefined,
+      },
+      { id: 'admin.orgs.sales.remove', method: 'DELETE', path: `${base}/:locationId/sales`, policy: 'staff', bodyLimit: 'none', limiter: undefined },
+    ]);
+    // The same bodies as the org routes they mirror.
+    const limitOf = (id: string): TownwiseRoute['bodyLimit'] | undefined => TOWNWISE_ROUTES.find((r) => r.id === id)?.bodyLimit;
+    for (const [setup, org] of [
+      ['admin.orgs.locations.create', 'org.locations.create'], ['admin.orgs.locations.update', 'org.locations.update'],
+      ['admin.orgs.locations.remove', 'org.locations.remove'], ['admin.orgs.sales.upload', 'org.sales.upload'],
+      ['admin.orgs.sales.remove', 'org.sales.remove'],
+    ] as const) {
+      expect(limitOf(setup)).toBe(limitOf(org));
+    }
+  });
+
   it('boot refuses a duplicate method and path', () => {
     expect(() => { assertRouteTable([route({ id: 'a' }), route({ id: 'b' })]); }).toThrow(ConfigError);
   });
