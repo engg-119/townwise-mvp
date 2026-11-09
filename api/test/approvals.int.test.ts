@@ -380,15 +380,19 @@ describe('POST /api/admin/requests/:requestId/approve (F3)', () => {
     expect((await approve(person.requestId, body)).status).toBe(200);
     expect(await locationsOf(orgId)).toMatchObject([{ name: 'Main Street', placeId: 'ChIJTestPlace0001' }]);
 
-    // Nor once the person who joined has left: a removed seat still joined.
+    // Nor once the person who joined has left, on an organization with no firstJoinedAt (as one approved before D23):
+    // only the removed seat's joinedAt holds the retry.
+    const orgFilter = { _id: new Types.ObjectId(orgId) };
     await server.connection.collection('tw_members').updateOne(
       { orgId: new Types.ObjectId(orgId), userId: person.session.userId },
       { $set: { status: 'removed', removedAt: server.clock.now(), removedBy: 'f'.repeat(24) }, $unset: { activeUserId: '' } },
     );
+    await server.connection.collection('tw_orgs').updateOne(orgFilter, { $unset: { firstJoinedAt: '' } });
     expect((await approve(person.requestId, body)).status).toBe(200);
     expect(await locationsOf(orgId)).toHaveLength(1);
 
     // Nor once no member row records the join: the organization's firstJoinedAt outlives them (D23).
+    await server.connection.collection('tw_orgs').updateOne(orgFilter, { $set: { firstJoinedAt: server.clock.now() } });
     await server.connection.collection('tw_members').deleteMany({ orgId: new Types.ObjectId(orgId) });
     expect((await approve(person.requestId, body)).status).toBe(200);
     expect(await locationsOf(orgId)).toHaveLength(1);

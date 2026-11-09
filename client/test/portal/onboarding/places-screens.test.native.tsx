@@ -352,7 +352,8 @@ describe('P10 Add location with the search on', () => {
     for (const text of [LOCATION_COPY.taken, LOCATION_COPY.limit, PLACE_COPY.notAdded, PLACE_COPY.changed]) {
       expect(within(group(LEBANON)).queryByText(text)).toBeNull();
     }
-    expect(within(group(BAKERY)).getByText(LOCATION_COPY.taken)).toBeTruthy();
+    // Announced, as the press's other outcomes are: focus stays on the button.
+    expect(within(group(BAKERY)).getByText(LOCATION_COPY.taken).props.role).toBe('alert');
     expect(sentWrites(api)).toHaveLength(3);
     await waitFor(() => { expect(orgReads(api)).toBeGreaterThan(reads); });
     expect(router.getPathname()).toBe('/locations/new');

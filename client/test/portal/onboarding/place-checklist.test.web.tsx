@@ -10,7 +10,8 @@ import { installPlaces, type PlacesFake } from './places-fakes';
 // shows only by highlight and aria-activedescendant), with a drawn, aria-hidden box. Down and Up move the active
 // option; Enter, and Space while an option is active, toggle it and leave the list open; a mouse press toggles
 // without taking focus from the field; a refused or full option is aria-disabled and does nothing; Remove moves
-// focus back to the field; Escape closes the list, then clears the text, and typing opens it again.
+// focus back to the field; Escape closes the list, then clears the text, and typing opens it again; focus alone never
+// opens or closes it.
 
 afterEach(() => {
   cleanup();
@@ -153,6 +154,29 @@ test('Escape closes the list, then clears the text', async () => {
   expect(box.value).toBe('Lou');
   fireEvent.keyDown(box, { key: 'Escape' });
   expect(box.value).toBe('');
+});
+
+test('focus never opens or closes the list, so a press below it lands where it started', async () => {
+  setup();
+  const box = await search('Lou');
+  const listbox = (): HTMLElement | null => document.getElementById(box.getAttribute('aria-controls') ?? '');
+  fireEvent.click(option(0));
+  await settle();
+  fireEvent.blur(box);
+  expect(listbox()?.hidden).toBe(false);
+  expect(box.getAttribute('aria-expanded')).toBe('true');
+  const remove = screen.getByRole('button', { name: 'Remove Lou’s Restaurant, Hanover, NH, USA' });
+  remove.focus();
+  expect(listbox()?.hidden).toBe(false);
+  fireEvent.click(remove);
+  await settle();
+  expect(document.activeElement).toBe(box);
+  expect(listbox()?.hidden).toBe(false);
+  fireEvent.keyDown(box, { key: 'Escape' });
+  expect(listbox()?.hidden).toBe(true);
+  fireEvent.blur(box);
+  fireEvent.focus(box);
+  expect(listbox()?.hidden).toBe(true);
 });
 
 test('typing after Escape opens the list again, before the next answer', async () => {

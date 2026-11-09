@@ -254,6 +254,7 @@ export function AddLocationForm(props: {
                   autoCapitalize="words"
                   maxLength={80}
                   messages={edit.message === null ? [] : [edit.message]}
+                  alert
                   readOnly={addPlaces.pending}
                 />
                 {edit.line === null ? null : <ErrorNotice message={edit.line} />}
@@ -282,6 +283,7 @@ export function AddLocationForm(props: {
         autoCapitalize="words"
         maxLength={80}
         messages={messages.name === undefined ? [] : [messages.name]}
+        alert
         {...ro}
       />
       <TownFields value={town} onChange={setTown} {...(messages.town === undefined ? {} : { messages: messages.town })} {...ro} />

@@ -12,7 +12,9 @@ import { PlaceChecklistShell, type ChecklistFieldProps, type PlaceChecklistProps
 // active, toggle it and leave the list open (with none active Space types); typing clears the active option and opens
 // the list again. A mouse press toggles without taking focus from the field. A refused or full option is
 // aria-disabled. Each option starts with a drawn 16px box, hidden from assistive technology, in Checkbox.web's colors.
-// Remove gives the field focus back. Escape closes the list, then clears the text. Nothing animates.
+// Remove gives the field focus back. Escape closes the list, then clears the text. Focus never opens or closes the
+// list: it sits in the page's flow, so a list that closed on blur would move the buttons below it between a press and
+// its click, and the click would miss. Nothing animates.
 
 export type { PlaceChecklistProps } from './PlaceChecklistParts';
 
@@ -104,8 +106,8 @@ function WebField({ props, state, statusId, input }: ChecklistFieldProps & { inp
             setCursor({ list: suggestions, active: -1, closed: false });
           }}
           onKeyDown={onKeyDown}
-          onFocus={() => { setFocused(true); setClosed(false); }}
-          onBlur={() => { setFocused(false); setClosed(true); }}
+          onFocus={() => { setFocused(true); }}
+          onBlur={() => { setFocused(false); }}
           style={{
             boxSizing: 'border-box', width: '100%', minHeight: 44, margin: 0, padding: '0 12px', background: c.ground, color: c.white,
             border: `1px solid ${focused ? c.mint : c.line}`, borderRadius: 0, fontFamily: theme.font.sans, fontSize: 16, lineHeight: '24px',
