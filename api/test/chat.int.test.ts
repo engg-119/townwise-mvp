@@ -23,8 +23,9 @@ import {
 import {
   eventsOf, message, messagesOf, scriptedModel, text, thinking, toolUse, type ScriptedModel,
 } from './helpers/chat-model.ts';
+import { setupOrg } from './helpers/setup-org.ts';
 import {
-  call, limiterKey, MINUTE, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
+  call, limiterKey, MINUTE, removeStaffFactor, signIn, signInStaff, startTownwiseServer, STAFF_EMAIL, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
 
 let server: TownwiseTestServer;
@@ -157,22 +158,29 @@ describe('a plain answer', () => {
     expect(status).toBe(200);
     expect(shape(events)).toEqual(['conversation', 'text', 'done']);
     const id = conversationIdOf(events);
-    expect(events[0]?.data).toEqual({ id, title: 'What changed in May?' });
+    // A new conversation's first message is a root node, and the reply hangs under it.
+    const { userNodeId, replyNodeId } = events[0]?.data as { userNodeId: string; replyNodeId: string };
+    expect(events[0]?.data).toEqual({
+      id, title: 'What changed in May?', userNodeId: expect.any(String) as unknown, replyNodeId: expect.any(String) as unknown, parentId: null,
+    });
     expect(streamedText(events)).toBe('May was steady, with two busy Fridays.');
     // 1000 x $4 + 500 x $20 + 10,000 x $0.20 + 2000 x $5 per million tokens.
-    expect(events.at(-1)?.data).toEqual({ stopReason: 'end_turn', costUsd: 0.026 });
+    expect(events.at(-1)?.data).toEqual({ stopReason: 'end_turn', costUsd: 0.026, leafId: replyNodeId });
     expect(await usedMicroUsd()).toBe(26_000);
 
     const params = model.calls[0]?.params;
     expect(params).toMatchObject({
       model: 'claude-opus-5-5', max_tokens: 16_000, output_config: { effort: 'low' },
-      betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default', cache_control: { type: 'ephemeral' },
-      system: SYSTEM_PROMPT, messages: [{ role: 'user', content: 'What changed in May?' }],
+      betas: ['server-side-fallback-2026-07-01', 'thinking-binding-controls-2026-08-01'], fallbacks: 'default',
+      cache_control: { type: 'ephemeral' }, system: SYSTEM_PROMPT, messages: [{ role: 'user', content: 'What changed in May?' }],
     });
-    expect(params).not.toHaveProperty('thinking');
+    expect(params).toMatchObject({
+      thinking: { type: 'adaptive', display: 'summarized', block_binding: { prefix_mismatch_behavior: 'drop_block' } },
+    });
     expect(params?.tools?.map((tool) => ('name' in tool ? tool.name : null))).toEqual([
       'get_location_overview', 'get_sales_days', 'list_notes', 'get_town_profile', 'propose_note',
-      'get_town_calendar', 'get_people_in_town', 'get_forecast', 'get_day',
+      'get_town_calendar', 'get_people_in_town', 'get_forecast', 'get_day', 'show_visual', 'suggest_next',
+      'list_data_items', 'read_data_item', 'propose_data_item', 'start_calibration', 'get_calibration', 'compare_forecast_models',
     ]);
     expect(params?.tools?.every((tool) => 'eager_input_streaming' in tool && tool.eager_input_streaming === true)).toBe(true);
 
@@ -191,12 +199,16 @@ describe('a plain answer', () => {
     const view = await (await call(server, `/api/org/locations/${locationId}/chat/${id}`, { session: author.session })).json() as ConversationView;
     const at = server.clock.now().toISOString();
     expect(view).toEqual({
-      id, title: 'What changed in May?', updatedAt: at,
+      id, title: 'What changed in May?', updatedAt: at, activeLeafId: replyNodeId,
+      tree: [
+        { id: userNodeId, parentId: null, role: 'user' },
+        { id: replyNodeId, parentId: userNodeId, role: 'assistant' },
+      ],
       messages: [
-        { role: 'user', text: 'What changed in May?', proposals: [], parts: [], at },
+        { nodeId: userNodeId, role: 'user', text: 'What changed in May?', proposals: [], parts: [], feedback: null, next: null, at, endedAt: at },
         {
-          role: 'assistant', text: 'May was steady, with two busy Fridays.', proposals: [],
-          parts: [{ type: 'text', text: 'May was steady, with two busy Fridays.' }], at,
+          nodeId: replyNodeId, role: 'assistant', text: 'May was steady, with two busy Fridays.', proposals: [],
+          parts: [{ type: 'text', text: 'May was steady, with two busy Fridays.' }], feedback: null, next: null, at, endedAt: at,
         },
       ],
     });
@@ -225,7 +237,8 @@ describe('history', () => {
     model.script({ kind: 'message', message: message([text('Anything else?')]) });
     const two = await turn({ conversationId: id, content: 'Thanks' });
     expect(shape(two.events)).toEqual(['conversation', 'text', 'done']);
-    expect(two.events[0]?.data).toEqual({ id, title: 'What notes do I have?' });
+    // With no parentId the turn continues the stored active leaf: the first turn's reply.
+    expect(two.events[0]?.data).toMatchObject({ id, title: 'What notes do I have?', parentId: (one.events[0]?.data as { replyNodeId: string }).replyNodeId });
 
     const sent = messagesOf(model.calls[2]);
     expect(sent).toHaveLength(5);
@@ -408,7 +421,9 @@ describe('tools', () => {
     }
     const { events } = await turn({ content: 'Keep checking.' });
     expect(model.calls).toHaveLength(8);
-    expect(events.at(-1)).toEqual({ event: 'done', data: { stopReason: 'tool_limit', costUsd: expect.any(Number) as unknown } });
+    expect(events.at(-1)).toEqual({
+      event: 'done', data: { stopReason: 'tool_limit', costUsd: expect.any(Number) as unknown, leafId: expect.any(String) as unknown },
+    });
     expect(eventData(events, 'tool')).toHaveLength(16);
     const id = conversationIdOf(events);
     expect(await storedParams(id)).toHaveLength(17);
@@ -445,7 +460,7 @@ describe('stop reasons', () => {
     const { events } = await turn({ content: 'Refuse me.' });
     expect(shape(events)).toEqual(['conversation', 'text', 'done']);
     // 1000 x $4 + 500 x $20 per million tokens.
-    expect(events.at(-1)?.data).toEqual({ stopReason: 'refusal', costUsd: 0.014 });
+    expect(events.at(-1)?.data).toEqual({ stopReason: 'refusal', costUsd: 0.014, leafId: null });
     expect(await usedMicroUsd()).toBe(14_000);
     expect(await conversationDoc(conversationIdOf(events))).toBeNull();
   });
@@ -727,7 +742,7 @@ describe('caps, budget and limits', () => {
     const { events } = await turn({ content: 'Spend the rest' });
     expect(model.calls).toHaveLength(1);
     expect(shape(events)).toEqual(['conversation', 'text', 'tool', 'tool', 'done']);
-    expect(events.at(-1)?.data).toEqual({ stopReason: 'budget', costUsd: 0.026 });
+    expect(events.at(-1)?.data).toMatchObject({ stopReason: 'budget', costUsd: 0.026 });
     expect(await usedMicroUsd()).toBe(19_990_000 + 26_000);
 
     // Saved, with every tool call answered, so the history is still a valid request.
@@ -746,7 +761,7 @@ describe('caps, budget and limits', () => {
     }) });
     const { events } = await turn({ content: 'Unknown model' });
     // 1000 x $5 + 500 x $25 + 10,000 x $0.50 + 2000 x $6.25 per million tokens.
-    expect(events.at(-1)?.data).toEqual({ stopReason: 'end_turn', costUsd: 0.035 });
+    expect(events.at(-1)?.data).toMatchObject({ stopReason: 'end_turn', costUsd: 0.035 });
     expect(await usedMicroUsd()).toBe(35_000);
   });
 
@@ -827,6 +842,23 @@ describe('who sees what', () => {
 });
 
 describe('audit events and logs', () => {
+  it('streams a thinking summary as thinking events, shows it in the stored view, and never logs or audits it', async () => {
+    server.logs.length = 0;
+    model.script({ kind: 'message', message: message([thinking('sig-sum', 'Sentinel-thinking summary of the weekend.'), text('Answer.')]) });
+    const { events } = await turn({ content: 'Hello' });
+    expect([...new Set(shape(events))]).toEqual(['conversation', 'thinking', 'text', 'done']);
+    expect(events.filter((e) => e.event === 'thinking').map((e) => (e.data as { delta: string }).delta).join(''))
+      .toBe('Sentinel-thinking summary of the weekend.');
+    expect(JSON.stringify(eventData(events, 'thinking'))).not.toContain('sig-sum');
+    const id = conversationIdOf(events);
+    const view = await (await call(server, `/api/org/locations/${locationId}/chat/${id}`, { session: author.session })).json() as ConversationView;
+    expect(view.messages[1]?.parts).toEqual([
+      { type: 'thinking', text: 'Sentinel-thinking summary of the weekend.' }, { type: 'text', text: 'Answer.' },
+    ]);
+    expect(view.messages[1]?.text).toBe('Answer.');
+    expect(JSON.stringify(await auditEvents(server)) + server.logs.join('\n')).not.toContain('Sentinel-thinking');
+  });
+
   it('a saved turn records chat.turn_completed with allowlisted details only; no message, tool input or result text reaches an event or a log', async () => {
     server.logs.length = 0;
     model.script(
@@ -849,5 +881,53 @@ describe('audit events and logs', () => {
       expect(everything).not.toContain(sentinel);
     }
     expect(server.logs.some((line) => line.includes('townwise.chat_turn'))).toBe(true);
+  });
+});
+
+/** Staff open a new organization nobody has joined as its admin and add a location. */
+async function openAsAdminOrg(): Promise<{ staff: TestSession; orgId: string; locationId: string }> {
+  const staff = await signInStaff(server);
+  const setup = await setupOrg(server, staff);
+  const started = await call(server, `/api/admin/orgs/${setup.orgId}/open-as-admin`, { method: 'POST', session: staff });
+  expect(started.status).toBe(201);
+  const created = await call(server, '/api/org/locations', {
+    session: staff, json: { name: 'Main Street', town: { townId: 'hanover-nh' }, orgId: setup.orgId },
+  });
+  expect(created.status).toBe(201);
+  return { staff, orgId: setup.orgId, locationId: (await created.json() as { location: { id: string } }).location.id };
+}
+
+describe('open as admin', () => {
+  const orgUsage = (id: string): Promise<Record<string, unknown> | null> =>
+    server.connection.collection('tw_chat_usage').findOne({ orgId: new Types.ObjectId(id), month: '2026-06' });
+
+  it('open as admin: a turn is charged to the organization’s budget and recorded as Townwise staff', async () => {
+    const { staff, orgId: setupId, locationId: staffLocation } = await openAsAdminOrg();
+    try {
+      expect(await orgUsage(setupId)).toBeNull();
+      model.script({ kind: 'message', message: message([text('Hello from the model.')], { usage: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0 } }) });
+      const res = await turn({ content: 'Set this up' }, { session: staff, email: STAFF_EMAIL }, staffLocation);
+      expect(res.status).toBe(200);
+      expect(Number((await orgUsage(setupId))?.costMicroUsd)).toBeGreaterThan(0);
+      const event = (await auditEvents(server)).find((e) => e.action === 'chat.turn_completed' && String(e.orgId) === setupId);
+      expect(event).toMatchObject({ actorRole: 'superadmin', actorEmail: STAFF_EMAIL, actorUserId: staff.userId });
+    } finally {
+      await removeStaffFactor(server);
+      await server.connection.collection('tw_view_as_grants').deleteMany({});
+    }
+  });
+
+  it('open as admin: a used-up organization budget answers 409 chat_budget_exhausted', async () => {
+    const { staff, orgId: setupId, locationId: staffLocation } = await openAsAdminOrg();
+    try {
+      await server.connection.collection('tw_chat_usage').insertOne({
+        orgId: new Types.ObjectId(setupId), month: '2026-06', costMicroUsd: 20_000_000, updatedAt: server.clock.now(),
+      });
+      const refused = await turn({ content: 'Over budget' }, { session: staff, email: STAFF_EMAIL }, staffLocation);
+      expect(refused).toMatchObject({ status: 409, error: 'chat_budget_exhausted' });
+    } finally {
+      await removeStaffFactor(server);
+      await server.connection.collection('tw_view_as_grants').deleteMany({});
+    }
   });
 });

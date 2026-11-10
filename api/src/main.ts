@@ -1,22 +1,25 @@
 // Composition root, from api/kit/server-core/MODULE.md "Wire it in". The only file that reads process.env.
+import { resolve } from 'node:path';
+
 import { z } from 'zod';
 import { configSchema as serverSchema, createLogger, createServer, loadEnv } from '@ckeith26/server-core';
 import { configSchema as mongoSchema, connectMongo, ensureIndexes } from '@ckeith26/mongo';
 import { configSchema as redisSchema, createRedis } from '@ckeith26/redis';
 import { createRateLimiter, ipKey, rateLimit } from '@ckeith26/rate-limit';
 import { configSchema as authSchema, createAuth, createMongoAuthStores } from '@ckeith26/auth';
-import { createTownwiseApi } from './app.ts';
+import { createTownwiseApi, createTownwiseLab } from './app.ts';
 import {
   createAzureCliTokenSource, createManagedIdentityTokenSource, resolveManagedIdentity, usesAzureCli, type AzureTokenSource,
 } from './azure-identity.ts';
 import { createTownwiseStores } from './stores/index.ts';
 import { createAnthropicChatModel } from './chat/model.ts';
-import { configSchema as townwiseSchema, filesBackendOf, resolveTownwiseConfig, type FilesBackend } from './config.ts';
+import { configSchema as townwiseSchema, filesBackendOf, labRunnerOf, resolveTownwiseConfig, type FilesBackend } from './config.ts';
 import { createSendMagicLink } from './email.ts';
 import { createAzureFileBlobs, createAzuriteFileBlobs, storageCredential, type FileBlobs } from './files/blobs.ts';
 import { createAnthropicExtractModel } from './files/extract/model.ts';
 import { createFileSweeper } from './files/sweeper.ts';
 import { createFileWorker } from './files/worker.ts';
+import { createAzureLabRunner, createLocalLabRunner, type LabRunner } from './lab/runner.ts';
 import { createAcsTransport } from './mail/acs.ts';
 import { createMailer, OFF_MAILER } from './mail/mailer.ts';
 import { createGooglePlacesClient } from './places/google.ts';
@@ -24,12 +27,12 @@ import { createStaticMapSigner, signingSecretSchema } from './places/static-map.
 
 // ANTHROPIC_API_KEY and GOOGLE_PLACES_API_KEY are optional: absent, the tuning chat and the file reader's AI column
 // step, or the Places proxy, are off. Each goes no further than the clients built here. IDENTITY_ENDPOINT and IDENTITY_HEADER are set by Container Apps for the
-// managed identity, and AZURE_CLIENT_ID by containerapp.tf; they are read only when email or stored files are on. The confirm card's
+// managed identity, and AZURE_CLIENT_ID by containerapp.tf; they are read only when email, stored files or the lab's Azure runner are on. The confirm card's
 // map needs both GOOGLE_MAPS_STATIC_KEY and GOOGLE_MAPS_SIGNING_SECRET: without either there is no map, never an
-// unsigned one. A malformed secret refuses boot.
+// unsigned one. A malformed secret refuses boot. PATH and HOME go only to a local lab job (TOWNWISE_LAB_RUNNER=local).
 const {
   ANTHROPIC_API_KEY, GOOGLE_PLACES_API_KEY, GOOGLE_MAPS_STATIC_KEY, GOOGLE_MAPS_SIGNING_SECRET,
-  IDENTITY_ENDPOINT, IDENTITY_HEADER, AZURE_CLIENT_ID, ...config
+  IDENTITY_ENDPOINT, IDENTITY_HEADER, AZURE_CLIENT_ID, PATH, HOME, ...config
 } = loadEnv(z.object({
   ...serverSchema.shape, ...mongoSchema.shape, ...redisSchema.shape, ...authSchema.shape, ...townwiseSchema.shape,
   ANTHROPIC_API_KEY: z.string().optional(),
@@ -39,6 +42,8 @@ const {
   IDENTITY_ENDPOINT: z.string().optional(),
   IDENTITY_HEADER: z.string().optional(),
   AZURE_CLIENT_ID: z.string().optional(),
+  PATH: z.string().optional(),
+  HOME: z.string().optional(),
 }), process.env);
 const logger = createLogger(config);
 const mongo = await connectMongo({ config, logger });
@@ -100,10 +105,20 @@ const fileWorker = files === undefined ? undefined : createFileWorker({
 const fileSweeper = files === undefined ? undefined : createFileSweeper({
   connection: mongo.connection, stores: createTownwiseStores(mongo.connection), blobs: files, logger, now,
 });
-const api = createTownwiseApi({
+// The forecast lab (calibrations) is off unless TOWNWISE_LAB_RUNNER is set: in Azure the API's identity starts the
+// Container Apps job; locally the API runs the job with uv. Either way the job calls back on /lab.
+function labRunnerFor(): LabRunner | undefined {
+  const lab = labRunnerOf(config);
+  if (lab === null) return undefined;
+  if (lab.kind === 'azure') return createAzureLabRunner({ tokens: azureTokensFor('TOWNWISE_LAB_RUNNER'), jobId: lab.jobId });
+  return createLocalLabRunner({ projectDir: resolve(lab.projectDir), apiUrl: lab.apiUrl, path: PATH ?? '', home: HOME ?? '' });
+}
+const deps = {
   config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now, chat, places, placesMap, mailer,
-  files, fileWorker,
-});
+  files, fileWorker, labRunner: labRunnerFor(),
+};
+const api = createTownwiseApi(deps);
+const labRouter = createTownwiseLab(deps);
 await ensureIndexes(mongo.connection, { logger });   // after every store has registered its models
 fileWorker?.start();
 fileSweeper?.start();
@@ -111,7 +126,8 @@ await redis.ready(3000);                             // bounded; logs and contin
 const ceiling = createRateLimiter({ redis: redis.client, name: 'app:api-ceiling', limit: 2000, windowSeconds: 60 });
 const server = createServer({
   config, logger,
-  routes: [{ path: '/auth', router: auth.router }, { path: '/api', router: api }],
+  // /lab holds the lab job's two callback routes, the only routes outside /auth and /api (test/routes.test.ts).
+  routes: [{ path: '/auth', router: auth.router }, { path: '/api', router: api }, { path: '/lab', router: labRouter }],
   middleware: [rateLimit({ limiter: ceiling, key: ipKey, whenStoreDown: 'allow', logger })],
   // The mail drain first, after the HTTP drain: a send still in flight when its 2 seconds end is lost. The reader and
   // the sweeper stop next, while the database is still open.

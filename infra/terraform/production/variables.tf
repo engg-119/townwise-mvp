@@ -98,3 +98,20 @@ variable "enable_places" {
   type        = bool
   default     = false
 }
+
+variable "enable_lab" {
+  description = "Turn on the forecast lab: the lab job, its identity, the API identity's right to start it, and the API's TOWNWISE_LAB_RUNNER and TOWNWISE_LAB_JOB_ID (infra/README.md, step 20). False leaves calibrations off."
+  type        = bool
+  default     = false
+}
+
+variable "lab_image" {
+  description = "Lab image for the first apply with enable_lab, pinned by digest (<registry>/townwise-lab@sha256:...), from the deploy log. Afterwards the deploy workflow owns the image, and Terraform ignores it."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.lab_image == null || can(regex("^[a-z0-9.-]+/townwise-lab@sha256:[0-9a-f]{64}$", var.lab_image))
+    error_message = "lab_image must be <registry>/townwise-lab@sha256:<64 hex>."
+  }
+}

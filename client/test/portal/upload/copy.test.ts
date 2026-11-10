@@ -38,7 +38,7 @@ describe('the result by role (11.2 step 4, D16)', () => {
 
   test('the calibration line (14.1)', () => {
     expect(calibrationLine({ state: 'not_calibrated', dayCount: 400, firstDate: '2025-01-01', lastDate: '2026-02-04' })).toBe(
-      'Your sales history is in: 400 days, Jan 1, 2025 to Feb 4, 2026. Calibration isn’t built yet, so there is no forecast.',
+      'Your sales history is in: 400 days, Jan 1, 2025 to Feb 4, 2026.',
     );
     expect(calibrationLine({ state: 'no_sales_data' })).toMatch(/^Upload your sales history to start\./);
   });

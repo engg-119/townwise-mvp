@@ -32,6 +32,8 @@ export const KEPT_CODES = [
   'bad_encoding', 'zip_too_big', 'zip_bomb', 'zip_damaged', 'zip_empty', 'nothing_usable',
   // U3: a staff purge or the retention sweep deleted the original of a file not read yet (spec 11A.6).
   'raw_deleted',
+  // D28: a file kept for reference, never read for sales.
+  'reference',
 ] as const;
 /** Our faults: the file is stored and we look into it. */
 export const FAILED_CODES = ['internal', 'raw_missing'] as const;
@@ -55,7 +57,7 @@ export type QuestionKind = (typeof QUESTION_KINDS)[number];
 export const fileViewSchema = z.object({
   id: z.string(),
   importId: z.string().nullable(),
-  purpose: z.literal('history'),
+  purpose: z.enum(['history', 'reference']),
   /** Null under view-as. */
   name: z.string().nullable(),
   kind: z.enum(FILE_KINDS),
@@ -207,9 +209,9 @@ export const reportSchema = z.object({
 export type Report = z.infer<typeof reportSchema>;
 
 const importRefSchema = z.object({ id: z.string(), status: z.enum(IMPORT_STATUSES) });
-const createdSchema = z.object({ file: fileViewSchema, import: importRefSchema, limits: uploadLimitsSchema });
+const createdSchema = z.object({ file: fileViewSchema, import: importRefSchema.nullable(), limits: uploadLimitsSchema });
 const chunkSchema = z.object({ index: z.number(), receivedBytes: z.number(), chunksReceived: z.number() });
-const completedSchema = z.object({ file: fileViewSchema, import: importRefSchema });
+const completedSchema = z.object({ file: fileViewSchema, import: importRefSchema.nullable() });
 const filesSchema = z.object({ files: z.array(fileViewSchema) });
 const fileSchema = z.object({ file: fileViewSchema, report: reportSchema.nullable() });
 const entriesSchema = z.object({ entries: z.array(entryViewSchema), next: z.number().nullable() });
@@ -223,8 +225,8 @@ export type Created = z.infer<typeof createdSchema>;
 export type Completed = z.infer<typeof completedSchema>;
 export type ChunkReceipt = z.infer<typeof chunkSchema>;
 
-/** Only `history` this build; any other purpose answers 400 purpose_unavailable until its processor exists. */
-export type FilePurpose = 'history';
+/** `history` is read for sales; `reference` (D28) is kept as it is for the team and has no import. */
+export type FilePurpose = 'history' | 'reference';
 
 export function createUpload(
   api: ApiClient, locationId: string, input: { name: string; sizeBytes: number; purpose: FilePurpose },
@@ -263,7 +265,7 @@ export function removeRaw(api: ApiClient, locationId: string, fileId: string): P
   return api.json(`${filePath(locationId, fileId)}/raw`, removedRawSchema, { method: 'DELETE' });
 }
 
-/** Org admins: every original of the location that isn't uploading or being read. */
+/** Org admins: the original of every sales file at the location that isn't uploading or being read. Items kept for reference stay (D28). */
 export function removeOriginals(api: ApiClient, locationId: string): Promise<{ deletedOriginals: number; skippedBusy: number }> {
   return api.json(`${locationPath(locationId)}/originals`, removedOriginalsSchema, { method: 'DELETE' });
 }
@@ -332,7 +334,7 @@ async function withRetries<T>(run: () => Promise<T>, attempts: number): Promise<
 }
 
 /** The original, in 32 MiB parts when it is larger, each part retried up to 3 times. Web only (download.web.ts). */
-export async function downloadRaw(api: ApiClient, locationId: string, file: FileView, opts: { signal?: AbortSignal } = {}): Promise<Blob> {
+export async function downloadRaw(api: ApiClient, locationId: string, file: Pick<FileView, 'id' | 'sizeBytes'>, opts: { signal?: AbortSignal } = {}): Promise<Blob> {
   const path = `${filePath(locationId, file.id)}/raw` as const;
   if (file.sizeBytes <= RAW_PART_BYTES) return withRetries(() => download(api, path, opts), PART_ATTEMPTS);
   const parts: Blob[] = [];

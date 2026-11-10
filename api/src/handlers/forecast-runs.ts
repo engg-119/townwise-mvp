@@ -1,5 +1,6 @@
 // Forecast runs from the staff console (spec 10.13, 14.4, 16.4 P21 Forecasts): list an organization's runs, import a
-// run file for one of its locations as a draft, publish it so owners and TownwiseAI see it, withdraw it, or delete it.
+// run file for one of its locations as a draft, publish it so owners and TownwiseAI see it (only while the
+// organization's forecasts are switched on, G1), withdraw it, or delete it.
 // Every route here has policy `staff`. Each change is a staff action its org admins see in their Townwise staff
 // activity (D9): read-only checks, then the event (ids, the model version, dates and the day count, never a figure),
 // then the effect (spec 9.3). The model itself never reaches the API: a run file holds outputs only. Log lines carry
@@ -71,8 +72,11 @@ function recordFacts(run: ForecastRunRecord): Parameters<typeof eventOf>[4] {
   return { id: run.id, locationId: run.locationId, version: run.model.version, range: run.range, dayCount: run.dayCount };
 }
 
-/** The rows a run file makes, field by field. A ref is kept only when it names a calendar entry on its day. */
-function rowsOf(file: ForecastRunFile, townId: string | null): ForecastRowInput[] {
+/**
+ * The rows a run file makes, field by field; the forecast lab's draft runs too (lab/service.ts). A ref is kept only when
+ * it names a calendar entry on its day.
+ */
+export function rowsOf(file: Pick<ForecastRunFile, 'days' | 'weeks'>, townId: string | null): ForecastRowInput[] {
   const days = file.days.map((day): ForecastRowInput => {
     const events = townEvents(townId, { from: day.date, to: day.date });
     return {
@@ -90,8 +94,7 @@ function rowsOf(file: ForecastRunFile, townId: string | null): ForecastRowInput[
 
 async function scopeOf(ctx: TownwiseContext, req: Request, principal: Principal) {
   const staff = staffOf(principal);
-  const { scope } = await scopeForStaffOrg(ctx.stores.orgs, staff, parseInput(objectId, req.params.orgId));
-  return { staff, scope };
+  return { staff, ...(await scopeForStaffOrg(ctx.stores.orgs, staff, parseInput(objectId, req.params.orgId))) };
 }
 
 async function runOf(ctx: TownwiseContext, scope: OrgScope, rawId: unknown): Promise<ForecastRunRecord> {
@@ -140,7 +143,7 @@ export async function importForecastRun(ctx: TownwiseContext, req: Request, res:
   });
   const eventId = await recordBefore(ctx, event);
   const outcome = await applyRecorded(ctx, event, eventId, async () => {
-    const { run } = await forecasts.upsertRun(scope, location.id, { id: runId, file, fileSha256, importedBy: staff.actor.userId, now });
+    const { run } = await forecasts.upsertRun(scope, location.id, { id: runId, file, fileSha256, importedBy: staff.actor.userId, lab: null, now });
     // Another import of the same file made the run first; this one finishes it with the same rows.
     const raced = run.id !== runId;
     if (run.status === 'importing') {
@@ -159,13 +162,14 @@ export async function importForecastRun(ctx: TownwiseContext, req: Request, res:
 }
 
 /**
- * One status change: `from` the statuses it applies to, `done` the status that already answers 200 with nothing
- * written, and any other status a 409 with `refused`.
+ * One status change: `from` the statuses it applies to, `to` the status that already answers 200 with nothing
+ * written, any other status a 409 with `refused`, and with `needsForecastsOn`, 409 forecasts_off while the
+ * organization's forecasts are switched off. Every refusal comes before the event.
  */
 async function changeStatus(ctx: TownwiseContext, req: Request, res: Response, principal: Principal, change: {
-  action: AuditAction; from: readonly RunStatus[]; to: RunStatus; refused: (status: RunStatus) => AppError;
+  action: AuditAction; from: readonly RunStatus[]; to: RunStatus; refused: (status: RunStatus) => AppError; needsForecastsOn?: boolean;
 }): Promise<void> {
-  const { staff, scope } = await scopeOf(ctx, req, principal);
+  const { staff, scope, org } = await scopeOf(ctx, req, principal);
   parseInput(emptyBody, req.body);
   const run = await runOf(ctx, scope, req.params.runId);
   if (run.status === change.to) {
@@ -173,6 +177,7 @@ async function changeStatus(ctx: TownwiseContext, req: Request, res: Response, p
     return;
   }
   if (!change.from.includes(run.status)) throw change.refused(run.status);
+  if (change.needsForecastsOn === true && !org.forecasts.on) throw forecastsOff();
   const now = ctx.now();
   const event = eventOf(staff, now, scope, change.action, recordFacts(run));
   const eventId = await recordBefore(ctx, event);
@@ -192,9 +197,19 @@ function notDraft(): AppError {
   return new AppError(409, 'forecast_run_not_draft', 'Only a draft forecast can be published');
 }
 
-/** POST .../forecast-runs/:runId/publish {}: a draft becomes published (200); published already, 200; otherwise 409. */
+/** G1: no forecast is published while the organization's forecasts are switched off. */
+function forecastsOff(): AppError {
+  return new AppError(409, 'forecasts_off', 'Forecasts are off for this organization. Switch them on first.');
+}
+
+/**
+ * POST .../forecast-runs/:runId/publish {}: a draft becomes published (200); published already, 200; otherwise 409
+ * forecast_run_not_draft, or 409 forecasts_off for a draft while the organization's forecasts are switched off.
+ */
 export function publishForecastRun(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
-  return changeStatus(ctx, req, res, principal, { action: 'forecast.published', from: ['draft'], to: 'published', refused: notDraft });
+  return changeStatus(ctx, req, res, principal, {
+    action: 'forecast.published', from: ['draft'], to: 'published', refused: notDraft, needsForecastsOn: true,
+  });
 }
 
 /** POST .../forecast-runs/:runId/withdraw {}: a draft or published run becomes withdrawn (200); one still importing is 409. */

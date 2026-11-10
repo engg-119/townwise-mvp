@@ -44,6 +44,8 @@ export function NoteForm(props: {
   save: (input: NoteInput) => Promise<Note | null>;
   onSaved: (note: Note) => void;
   onCancel: () => void;
+  /** Save note's look: the page's primary (Notes), or an outline where the page has another primary (TownwiseAI). */
+  submitVariant?: 'primary' | 'outline';
 }): React.JSX.Element {
   const { save, onSaved } = props;
   const [draft, setDraft] = useState<NoteDraft>(props.initial);
@@ -134,7 +136,7 @@ export function NoteForm(props: {
           <ErrorNotice message={failure} {...(failure === NOTE_COPY.limit ? {} : { onRetry: submit })} />
         )}
         <Actions>
-          <Button label={action.pending ? 'Saving…' : 'Save note'} disabled={action.pending} onPress={submit} />
+          <Button variant={props.submitVariant ?? 'primary'} label={action.pending ? 'Saving…' : 'Save note'} disabled={action.pending} onPress={submit} />
           <Button variant="link" label="Cancel" onPress={props.onCancel} />
         </Actions>
       </Stack>

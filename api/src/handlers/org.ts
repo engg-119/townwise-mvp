@@ -11,18 +11,25 @@ import type { Principal } from '../access/policy.ts';
 import { resolveAccess } from '../access/resolve.ts';
 import { memberOf } from './locations.ts';
 import { meResponse } from './me.ts';
-import { actorOf, lastAdmin, orgAdmin, removeActiveSeat } from './team.ts';
+import { actorOf, assertOpenAsAdminTab, lastAdmin, orgAdmin, removeActiveSeat } from './team.ts';
 
-/** Spec 10.3: the newest staff events shown on Settings. */
+/** Spec 10.3: the staff events in one page of Settings' staff activity. */
 const STAFF_ACTIVITY_EVENTS = 50;
+
+/** `before`, the `nextBefore` of the page before, pages to older events. */
+const staffActivityQuery = z.object({ before: z.iso.datetime().optional() });
 
 const renameBody = z.object({ name: z.string().trim().min(2).max(120) });
 /** Strict: leaving carries nothing, so an organization id in the body is refused (spec 6.10 rule 3). */
 const leaveBody = z.strictObject({});
 
-/** PATCH /api/org { name } (P18). [CONFIRM: org admins can rename their own organization] */
+/**
+ * PATCH /api/org { name, orgId? } (P18). `orgId`, the organization the page shows, is required in open as admin (D25).
+ * [CONFIRM: org admins can rename their own organization]
+ */
 export async function renameOrg(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const admin = orgAdmin(principal);
+  assertOpenAsAdminTab(admin, req.body);
   const { scope } = admin;
   const { name } = parseInput(renameBody, req.body);
   const before = await ctx.stores.orgs.rename(scope, name);
@@ -45,6 +52,8 @@ export async function renameOrg(ctx: TownwiseContext, req: Request, res: Respons
  */
 export async function leaveOrg(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
+  // Open as admin holds no seat to leave (D25); its guard refuses this route first.
+  if (caller.memberId === null) throw new AppError(403, 'forbidden', 'Forbidden');
   const { scope } = caller;
   parseInput(leaveBody, req.body);
   const now = ctx.now();
@@ -61,12 +70,19 @@ export async function leaveOrg(ctx: TownwiseContext, req: Request, res: Response
   res.status(200).json(meResponse(await resolveAccess(ctx, authOf(req))));
 }
 
-/** GET /api/org/staff-activity (D9, P18): every staff action on this organization, newest first, each marked applied or not. */
-export async function getStaffActivity(ctx: TownwiseContext, _req: Request, res: Response, principal: Principal): Promise<void> {
+/**
+ * GET /api/org/staff-activity?before= (D9, P18): every staff action on this organization, and every one the forecast
+ * lab took on its own (the system's publishes and finished calibrations), newest first, each marked applied or not, a
+ * page of 50 at a time. `nextBefore` reads the next older page; null when there is none. A page also carries every
+ * event sharing its last event's time, so paging skips none.
+ */
+export async function getStaffActivity(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const { scope } = orgAdmin(principal);
+  const { before } = parseInput(staffActivityQuery, req.query);
   // A staff_action.not_applied event marks the row it qualifies, so it takes no row of its own.
   const page = await ctx.stores.audit.query({
-    orgId: scope.orgId, actorRole: 'superadmin', excludeAction: 'staff_action.not_applied', limit: STAFF_ACTIVITY_EVENTS,
+    orgId: scope.orgId, actorRole: ['superadmin', 'system'], excludeAction: 'staff_action.not_applied', limit: STAFF_ACTIVITY_EVENTS,
+    ...(before === undefined ? {} : { before: new Date(before) }),
   });
-  res.status(200).json({ events: await staffActivityViews(ctx, page.events.slice(0, STAFF_ACTIVITY_EVENTS)) });
+  res.status(200).json({ events: await staffActivityViews(ctx, page.events), nextBefore: page.nextBefore?.toISOString() ?? null });
 }

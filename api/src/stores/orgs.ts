@@ -15,6 +15,17 @@ export interface OrgFields {
    * reopens, even once every seat is removed and its person deleted. Absent until then, and on older documents.
    */
   firstJoinedAt?: Date;
+  /**
+   * When the organization was last suspended: set at each suspension and never cleared, reactivation included, so an
+   * open-as-admin grant started before it never comes back to life (D25). Absent until the first suspension, and on
+   * older documents.
+   */
+  lastSuspendedAt?: Date;
+  /**
+   * Staff switched forecasts on for the organization with its owner's agreement (G1). Absent until first switched.
+   * `by` is the staff user id, null once that person is deleted.
+   */
+  forecasts?: { on: boolean; at: Date; by: string | null };
 }
 
 function orgSchema(): Schema<OrgFields> {
@@ -26,6 +37,8 @@ function orgSchema(): Schema<OrgFields> {
     fromRequestId: { type: Schema.Types.ObjectId, default: null },
     suspendedAt: { type: Date, default: null },
     firstJoinedAt: { type: Date },
+    lastSuspendedAt: { type: Date },
+    forecasts: { type: new Schema({ on: { type: Boolean, required: true }, at: { type: Date, required: true }, by: { type: String, default: null } }, { _id: false, strict: true }) },
   }, { strict: true, versionKey: false, read: 'primary' });
   schema.index({ createdAt: -1 });
   return schema;
@@ -45,6 +58,9 @@ export interface OrgRecord {
   readonly fromRequestId: string | null;
   readonly suspendedAt: Date | null;
   readonly firstJoinedAt: Date | null;
+  readonly lastSuspendedAt: Date | null;
+  /** Whether forecasts are switched on, and when it last changed; `{ on: false, at: null }` before the first switch. */
+  readonly forecasts: { readonly on: boolean; readonly at: Date | null };
 }
 
 export interface OrgStore {
@@ -61,8 +77,8 @@ export interface OrgStore {
   /** Sets the name. Resolves the organization as it was before, or null when it is gone. */
   rename(scope: OrgScope, name: string): Promise<OrgRecord | null>;
   /**
-   * The staff console's changes in one write: the name, and the status, which suspends (setting suspendedAt) or
-   * reactivates (clearing it). False when the organization is gone.
+   * The staff console's changes in one write: the name, and the status, which suspends (setting suspendedAt and
+   * lastSuspendedAt) or reactivates (clearing suspendedAt only). False when the organization is gone.
    */
   update(scope: OrgScope, changes: { name?: string; status?: 'active' | 'suspended' }, now: Date): Promise<boolean>;
   /**
@@ -74,6 +90,8 @@ export interface OrgStore {
   removeFromRequest(scope: OrgScope, requestId: string): Promise<boolean>;
   /** Sets `firstJoinedAt` to `at` only while it is unset (a compare-and-set), right after a seat is taken. */
   markJoined(scope: OrgScope, at: Date): Promise<void>;
+  /** Switches forecasts on or off, recording when and by which staff member. False when the organization is gone. */
+  setForecasts(scope: OrgScope, change: { on: boolean; at: Date; by: string }): Promise<boolean>;
 }
 
 function toOrg(doc: OrgFields & { _id: Types.ObjectId }): OrgRecord {
@@ -85,6 +103,8 @@ function toOrg(doc: OrgFields & { _id: Types.ObjectId }): OrgRecord {
     fromRequestId: doc.fromRequestId === null ? null : doc.fromRequestId.toHexString(),
     suspendedAt: doc.suspendedAt,
     firstJoinedAt: doc.firstJoinedAt ?? null,
+    lastSuspendedAt: doc.lastSuspendedAt ?? null,
+    forecasts: doc.forecasts === undefined ? { on: false, at: null } : { on: doc.forecasts.on, at: doc.forecasts.at },
   };
 }
 
@@ -140,11 +160,12 @@ export function createOrgStore(connection: Connection): OrgStore {
       return doc === null ? null : toOrg(doc);
     },
     async update(scope, changes, now) {
-      const set: Partial<Pick<OrgFields, 'name' | 'status' | 'suspendedAt'>> = {};
+      const set: Partial<Pick<OrgFields, 'name' | 'status' | 'suspendedAt' | 'lastSuspendedAt'>> = {};
       if (changes.name !== undefined) set.name = changes.name;
       if (changes.status !== undefined) {
         set.status = changes.status;
         set.suspendedAt = changes.status === 'suspended' ? now : null;
+        if (changes.status === 'suspended') set.lastSuspendedAt = now;
       }
       const result = await Org.updateOne({ _id: scope.orgId }, { $set: set });
       return result.matchedCount === 1;
@@ -157,6 +178,10 @@ export function createOrgStore(connection: Connection): OrgStore {
     },
     async markJoined(scope, at) {
       await Org.updateOne({ _id: scope.orgId, firstJoinedAt: trusted({ $exists: false }) }, { $set: { firstJoinedAt: at } });
+    },
+    async setForecasts(scope, change) {
+      const result = await Org.updateOne({ _id: scope.orgId }, { $set: { forecasts: { on: change.on, at: change.at, by: change.by } } });
+      return result.matchedCount === 1;
     },
   };
 }

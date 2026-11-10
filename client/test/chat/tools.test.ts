@@ -4,12 +4,17 @@ import { basedOnLine, isHiddenTool, isKnownTool, readsLine, toolLine, viewRows, 
 // registry's (FROZEN_NAMES), in its order: the client can't import the API, so a PR that appends a tool updates both
 // lists. get_town_calendar and get_people_in_town are U13A's, get_forecast U13B's; their views below are copied from
 // api/test/chat-estimate-tools.test.ts. get_day is F2's; its views are copied from api/test/chat-tools.test.ts.
+// show_visual and suggest_next are the chat redesign's (tuning-chat.md 4): hidden, with null views.
 
 const REGISTERED = [
   'get_location_overview', 'get_sales_days', 'list_notes', 'get_town_profile', 'propose_note',
   'get_town_calendar', 'get_people_in_town',
   'get_forecast',
   'get_day',
+  'show_visual', 'suggest_next',
+  'list_data_items', 'read_data_item', 'propose_data_item',
+  // The forecast lab.
+  'start_calibration', 'get_calibration', 'compare_forecast_models',
 ];
 const CTX = { town: 'Hanover', hasTownProfile: true };
 
@@ -17,14 +22,16 @@ function step(name: string, state: ToolStep['state'], input: ToolStep['input'] =
   return { id: `toolu_test_${name}`, name, state, input, result };
 }
 
-test('every registered tool has words for each state; propose_note shows as its card', () => {
+test('every registered tool has words for each state; propose_note, propose_data_item, show_visual and suggest_next show as what they make', () => {
   for (const name of REGISTERED) {
     expect(isKnownTool(name)).toBe(true);
     const lines = (['running', 'done', 'error'] as const).map((state) => toolLine(step(name, state), CTX));
-    expect(lines.map((line) => line.status)).toEqual(['Reading', 'Read', 'Couldn’t read']);
+    // start_calibration starts a job rather than reading.
+    expect(lines.map((line) => line.status))
+      .toEqual(name === 'start_calibration' ? ['Starting', 'Asked to start', 'Couldn’t start'] : ['Reading', 'Read', 'Couldn’t read']);
     for (const line of lines) expect(line.object).not.toBe('');
   }
-  expect(REGISTERED.filter(isHiddenTool)).toEqual(['propose_note']);
+  expect(REGISTERED.filter(isHiddenTool)).toEqual(['propose_note', 'show_visual', 'suggest_next', 'propose_data_item']);
 });
 
 test('the rows read the views: dates, counts and source links only', () => {
@@ -127,6 +134,50 @@ test('U13B’s row: the forecast, published runs only, never claimed when there 
   ]);
 });
 
+test('list_data_items and read_data_item say what the team added and how much was read, never a name', () => {
+  expect(toolLine(step('list_data_items', 'running'), CTX).sentence).toBe('Reading what your team added');
+  expect(toolLine(step('list_data_items', 'done', null, { count: 3, turnedOff: 1 }), CTX).detail).toBe('3 items, 1 turned off');
+  expect(toolLine(step('list_data_items', 'done', null, { count: 0, turnedOff: 0 }), CTX).detail).toBe('Nothing added yet');
+  expect(readsLine(CTX)).toContain('what your team added on Your data');
+  const input = { ref: 'f_0123456789abcdef01234567' };
+  expect(toolLine(step('read_data_item', 'running', input), CTX).sentence).toBe('Reading an item your team added');
+  expect(toolLine(step('read_data_item', 'done', input, { ref: input.ref, available: true, chars: 900, truncated: false }), CTX).detail)
+    .toBe('900 characters');
+  expect(toolLine(step('read_data_item', 'done', input, { ref: input.ref, available: true, chars: 20000, truncated: true }), CTX).detail)
+    .toBe('The start of it, 20,000 characters');
+  expect(toolLine(step('read_data_item', 'done', input, { ref: input.ref, available: false, chars: 0, truncated: false }), CTX).detail)
+    .toBe('Couldn’t read it');
+  // One of a thing is singular.
+  expect(toolLine(step('list_data_items', 'done', null, { count: 1, turnedOff: 0 }), CTX).detail).toBe('1 item, 0 turned off');
+  expect(toolLine(step('read_data_item', 'done', input, { ref: input.ref, available: true, chars: 1, truncated: false }), CTX).detail).toBe('1 character');
+});
+
+test('the data rows’ opened cards and Based on pieces use their own words, and a refused read claims no read', () => {
+  const input = { ref: 'f_0123456789abcdef01234567' };
+  // The result views exactly as api/src/chat/tools/list-data.ts and read-data.ts build them; the ref is never a row.
+  const read = { ref: input.ref, available: true, chars: 900, truncated: false };
+  const refused = { available: false, chars: 0, truncated: false };
+  expect(viewRows(null, { count: 3, turnedOff: 1 }, 'list_data_items')).toEqual([{ term: 'Items', value: '3' }, { term: 'Turned off', value: '1' }]);
+  expect(viewRows(input, read, 'read_data_item')).toEqual([
+    { term: 'Read', value: 'Yes' }, { term: 'Characters', value: '900' }, { term: 'Cut short', value: 'No' },
+  ]);
+  expect(viewRows(input, refused, 'read_data_item')).toEqual([
+    { term: 'Read', value: 'No' }, { term: 'Characters', value: '0' }, { term: 'Cut short', value: 'No' },
+  ]);
+  expect(basedOnLine([step('list_data_items', 'done', null, { count: 3, turnedOff: 1 })], CTX)).toBe('Based on what your team added.');
+  expect(basedOnLine([step('read_data_item', 'done', input, read)], CTX)).toBe('Based on an item your team added.');
+  expect(basedOnLine([step('read_data_item', 'done', input, refused)], CTX)).toBe('Based on an item your team added (couldn’t read it).');
+});
+
+test('propose_data_item shows as its item card, not a row: it is not in the Based on line or in what TownwiseAI reads', () => {
+  // The views exactly as api/src/chat/tools/propose-data.ts builds them.
+  const input = { chars: 21 };
+  expect(isHiddenTool('propose_data_item')).toBe(true);
+  expect(basedOnLine([step('propose_data_item', 'done', input, { shown: true })], CTX)).toBe('Based on this conversation only.');
+  expect(viewRows(input, { shown: true }, 'propose_data_item')).toEqual([]);
+  expect(readsLine(CTX)).not.toMatch(/keep/);
+});
+
 test('get_day reads one day: whether it had sales, was closed, its notes and calendar entries, and their sources', () => {
   const input = { date: '2026-11-21' };
   const sources = [{ host: 'dartmouthsports.com', url: 'https://dartmouthsports.com/football' }];
@@ -143,6 +194,47 @@ test('get_day reads one day: whether it had sales, was closed, its notes and cal
     { term: 'Day', value: 'Nov 21, 2026' }, { term: 'Sales recorded', value: 'Yes' }, { term: 'Closed', value: 'No' },
     { term: 'Notes', value: '1' }, { term: 'Calendar entries', value: '2' },
   ]);
+});
+
+test('the lab tools read counts and codes: whether a calibration started, its status, the weeks it was judged on', () => {
+  const started = { started: true, status: 'running', code: null };
+  expect(toolLine(step('start_calibration', 'running', { hasRegimeStart: false }), CTX).sentence).toBe('Starting a forecast calibration');
+  expect(toolLine(step('start_calibration', 'done', { hasRegimeStart: false }, started), CTX))
+    .toMatchObject({ sentence: 'Started a forecast calibration', detail: 'Running on Townwise’s servers' });
+  const refused = { started: false, status: null, code: 'in_progress' };
+  expect(toolLine(step('start_calibration', 'done', null, refused), CTX))
+    .toMatchObject({ sentence: 'Didn’t start a forecast calibration', detail: 'One is already running for this location' });
+  expect(toolLine(step('start_calibration', 'done', null, { started: false, status: null, code: 'a_new_code' }), CTX).detail).toBeNull();
+  expect(toolLine(step('start_calibration', 'error'), CTX).sentence).toBe('Couldn’t start a forecast calibration');
+  // Its codes show as words, never as the code.
+  expect(viewRows({ hasRegimeStart: true }, refused, 'start_calibration')).toEqual([
+    { term: 'Pattern change date given', value: 'Yes' }, { term: 'Started', value: 'No' }, { term: 'Reason', value: 'One is already running for this location' },
+  ]);
+  expect(viewRows(null, started, 'start_calibration')).toEqual([{ term: 'Started', value: 'Yes' }, { term: 'Status', value: 'Running' }]);
+
+  const read = { available: true, status: 'succeeded', weeks: 12, published: true };
+  expect(toolLine(step('get_calibration', 'done', null, read), CTX)).toMatchObject({
+    sentence: 'Read your latest forecast calibration', detail: '12 held-out weeks · Published',
+  });
+  expect(toolLine(step('get_calibration', 'done', null, { available: true, status: 'running', weeks: null, published: null }), CTX).detail).toBe('Still running');
+  expect(toolLine(step('get_calibration', 'done', null, { available: true, status: 'queued', weeks: null, published: null }), CTX).detail).toBe('Waiting to start');
+  // get_calibration's failed view (api/src/chat/tools/calibration.ts) says so, as the opened card does.
+  const failed = { available: true, status: 'failed', weeks: null, published: null };
+  expect(toolLine(step('get_calibration', 'done', null, failed), CTX).detail).toBe('Didn’t finish');
+  expect(viewRows(null, failed, 'get_calibration')).toEqual([{ term: 'Available', value: 'Yes' }, { term: 'Status', value: 'Didn’t finish' }]);
+  expect(toolLine(step('compare_forecast_models', 'done', null, { available: false, status: null, weeks: null, published: null }), CTX).detail)
+    .toBe('Nothing to show yet');
+  expect(toolLine(step('compare_forecast_models', 'done', null, { ...read, published: false }), CTX).detail).toBe('12 held-out weeks · Not published');
+  expect(toolLine(step('compare_forecast_models', 'running'), CTX).sentence).toBe('Reading how the calibration compares with the current forecast');
+  // A calibration's id is left out of the opened card.
+  expect(viewRows({ calibrationId: 'a'.repeat(24) }, read, 'get_calibration')).toEqual([
+    { term: 'Available', value: 'Yes' }, { term: 'Status', value: 'Finished' }, { term: 'Held-out weeks', value: '12' }, { term: 'Published', value: 'Yes' },
+  ]);
+
+  // Starting one reads nothing, so it is no part of the Based on line.
+  const start = step('start_calibration', 'done', null, started);
+  expect(basedOnLine([start], CTX)).toBe('Based on this conversation only.');
+  expect(basedOnLine([start, step('get_calibration', 'done', null, read)], CTX)).toBe('Based on your latest forecast calibration.');
 });
 
 test('a tool this table doesn’t know yet still gets a card, in general words', () => {
@@ -171,23 +263,23 @@ test('the Based on line comes from the calls that read something, never the mode
 });
 
 test('what TownwiseAI reads lists the registered tools that have something to read, and a forecast only once one is published', () => {
-  expect(readsLine(CTX)).toBe('your sales, your notes, Hanover’s town profile, the town calendar and who’s likely in Hanover');
+  expect(readsLine(CTX)).toBe('your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data');
   // A town outside the twelve has no profile and no people in town to read; its calendar is the federal holidays.
-  expect(readsLine({ town: 'Bend', hasTownProfile: false })).toBe('your sales, your notes and the town calendar');
+  expect(readsLine({ town: 'Bend', hasTownProfile: false })).toBe('your sales, your notes, the town calendar and what your team added on Your data');
   expect(readsLine(CTX)).not.toMatch(/forecast/);
   expect(readsLine({ ...CTX, hasForecast: false })).not.toMatch(/forecast/);
   // F10: GET .../estimates/about says a run is published.
   expect(readsLine({ ...CTX, hasForecast: true }))
-    .toBe('your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and Townwise’s forecast');
+    .toBe('your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover, Townwise’s forecast and what your team added on Your data');
 });
 
 test('before any sales are uploaded, what TownwiseAI can use leaves out the sales and keeps every other source', () => {
-  expect(readsLine(CTX, { sales: false })).toBe('your notes, Hanover’s town profile, the town calendar and who’s likely in Hanover');
-  expect(readsLine({ town: 'Bend', hasTownProfile: false }, { sales: false })).toBe('your notes and the town calendar');
+  expect(readsLine(CTX, { sales: false })).toBe('your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data');
+  expect(readsLine({ town: 'Bend', hasTownProfile: false }, { sales: false })).toBe('your notes, the town calendar and what your team added on Your data');
   expect(readsLine({ ...CTX, hasForecast: true }, { sales: false }))
-    .toBe('your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and Townwise’s forecast');
+    .toBe('your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover, Townwise’s forecast and what your team added on Your data');
   // A context that says the location has no sales leaves them out of every line built from it.
-  expect(readsLine({ ...CTX, hasSales: false })).toBe('your notes, Hanover’s town profile, the town calendar and who’s likely in Hanover');
+  expect(readsLine({ ...CTX, hasSales: false })).toBe('your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data');
   expect(readsLine({ ...CTX, hasSales: true })).toBe(readsLine(CTX));
 });
 

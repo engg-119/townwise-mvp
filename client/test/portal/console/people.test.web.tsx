@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-libra
 
 import { ACCESS, deferred, offline, refusal, STAFF_EMAIL, viewAsMe, writes } from '../../helpers/portal';
 import { CHEF_EMAIL, consoleApi, emailOf, MANAGER_EMAIL, OWNER_EMAIL, person, renderAt, setWidth, type ConsoleApi } from './helpers';
+import { choicesOf, choose } from '../../helpers/select';
 
 // P22 People: everyone across organizations, the lookup, View as (C1), sign out everywhere, and Delete person
 // (C7, the typed email). docs/portal/spec.md 16.4, F7, F13.
@@ -87,10 +88,10 @@ test('the kind filter asks the server; the search runs in the browser; a truncat
   expect(screen.getByText('No one matches.')).toBeTruthy();
   fireEvent.change(screen.getByRole('textbox', { name: 'Search email or organization' }), { target: { value: '' } });
   const kinds = screen.getByRole('combobox', { name: 'Kind' });
-  expect([...kinds.querySelectorAll('option')].map((option) => option.textContent)).toEqual([
+  expect(choicesOf(kinds)).toEqual([
     'All kinds', 'Townwise staff', 'Admin', 'Member', 'Invited', 'Requested', 'Rejected', 'Removed', 'Signed in only',
   ]);
-  fireEvent.change(kinds, { target: { value: 'rejected' } });
+  choose(kinds, 'Rejected');
   expect(await screen.findByText('Loading people')).toBeTruthy();
   await waitFor(() => { expect(names()).toEqual([BARTENDER_EMAIL]); });
   expect(api.calls.some((call) => call.path === '/api/admin/people?kind=rejected')).toBe(true);

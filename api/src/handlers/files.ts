@@ -22,18 +22,19 @@ import {
   RECENT_IMPORT_MS, STORED_BYTES_PER_ORG, UPLOAD_SESSION_MS, UPLOADING_PER_LOCATION,
 } from '../files/limits.ts';
 import { familyKey } from '../files/parse/families.ts';
-import { deleteOriginals, renamedSheets } from '../files/remove.ts';
+import { saveTextItem, TEXT_ITEM_MAX_CHARS, TEXT_ITEM_TITLE_MAX } from '../files/items.ts';
+import { deleteOriginals, removeFile, renamedSheets } from '../files/remove.ts';
 import { kindLabel, kindOfName, sanitizeName, sniff } from '../files/sniff.ts';
 import { ChunkLengthError, createStreamGate, fingerprintOf, receiveChunk } from '../files/upload.ts';
-import { currentEmail } from '../people.ts';
-import type { FileKind, FileRecord, FileResult, FileStatus } from '../stores/files.ts';
+import { authorEmail, TOWNWISE_STAFF } from '../people.ts';
+import type { FileKind, FilePurpose, FileRecord, FileResult, FileStatus } from '../stores/files.ts';
 import type { ImportQuestion, ImportRecord, ImportStatus } from '../stores/imports.ts';
 import { loadLocation, memberOf } from './locations.ts';
 import { actorOf, orgAdmin } from './team.ts';
 
 /** Spec 10.11: what the client sees of a file. `deleting` is never shown. */
 export interface FileView {
-  id: string; importId: string | null; purpose: 'history';
+  id: string; importId: string | null; purpose: FilePurpose;
   name: string | null;
   kind: FileKind; sizeBytes: number; uploadedAt: string; uploadedByEmail: string;
   status: Exclude<FileStatus, 'deleting'>;
@@ -122,7 +123,7 @@ function refOf(file: FileRecord): BlobRef {
   return { locationId: file.locationId, fileId: file.id };
 }
 
-function isUploaderOrAdmin(member: MemberPrincipal, file: FileRecord): boolean {
+export function isUploaderOrAdmin(member: MemberPrincipal, file: FileRecord): boolean {
   return member.role === 'org_admin' || member.userId === file.uploadedBy;
 }
 
@@ -132,7 +133,7 @@ async function loadFile(ctx: TownwiseContext, scope: OrgScope, locationId: strin
   return file;
 }
 
-function fileView(member: MemberPrincipal, file: FileRecord, email: string, eta: ImportEta | null): FileView {
+export function fileView(member: MemberPrincipal, file: FileRecord, email: string, eta: ImportEta | null): FileView {
   const viewAs = member.viewAs !== null;
   const mayManage = !viewAs && isUploaderOrAdmin(member, file);
   const rawAvailable = file.rawDeletedAt === null && file.status !== 'uploading';
@@ -173,14 +174,15 @@ function fileView(member: MemberPrincipal, file: FileRecord, email: string, eta:
   };
 }
 
+/** The uploaders' emails, but for files staff uploaded in open as admin (those read "Townwise staff"). */
 async function emailsOf(ctx: TownwiseContext, files: readonly FileRecord[]): Promise<Map<string, string>> {
-  const ids = [...new Set(files.map((file) => file.uploadedBy))];
-  return new Map(await Promise.all(ids.map(async (id): Promise<[string, string]> => [id, await currentEmail(ctx, id)])));
+  const ids = [...new Set(files.filter((file) => !file.byStaff).map((file) => file.uploadedBy))];
+  return new Map(await Promise.all(ids.map(async (id): Promise<[string, string]> => [id, await authorEmail(ctx, id, false)])));
 }
 
 async function fileViews(ctx: TownwiseContext, member: MemberPrincipal, files: readonly FileRecord[], eta: ImportEta | null): Promise<FileView[]> {
   const emails = await emailsOf(ctx, files);
-  return files.map((file) => fileView(member, file, emails.get(file.uploadedBy) ?? '', eta));
+  return files.map((file) => fileView(member, file, file.byStaff ? TOWNWISE_STAFF : emails.get(file.uploadedBy) ?? '', eta));
 }
 
 function etaOf(ctx: TownwiseContext, record: ImportRecord, files: readonly FileRecord[]): ImportEta {
@@ -239,13 +241,15 @@ export async function createFile(ctx: TownwiseContext, req: Request, res: Respon
   const body = parseInput(createBody, req.body);
   const name = sanitizeName(body.name);
   if (name === '') throw new AppError(400, 'invalid_request', 'Invalid request');
-  if (body.purpose !== 'history') throw new AppError(400, 'purpose_unavailable', 'That kind of upload is not available');
+  if (body.purpose !== 'history' && body.purpose !== 'reference') throw new AppError(400, 'purpose_unavailable', 'That kind of upload is not available');
+  const purpose: FilePurpose = body.purpose;
   const location = await loadLocation(ctx, scope, req.params.locationId);
   if (body.sizeBytes > MAX_FILE_BYTES) {
     refuse(res, 413, 'file_too_large', 'The file is over the size limit', { maxBytes: MAX_FILE_BYTES });
     return;
   }
-  const active = await ctx.stores.imports.active(scope, location.id);
+  // A reference item belongs to no import.
+  const active = purpose === 'history' ? await ctx.stores.imports.active(scope, location.id) : null;
   const now = ctx.now();
   const counts = await ctx.stores.files.counts(scope, location.id, active?.id ?? null, now);
   if (counts.inImport >= FILES_PER_IMPORT) throw new AppError(409, 'import_full', 'This import has the most files it can take');
@@ -262,19 +266,20 @@ export async function createFile(ctx: TownwiseContext, req: Request, res: Respon
     });
     return;
   }
-  const record = await ctx.stores.imports.joinOrCreate(scope, location.id, { userId: member.userId, now });
+  const record = purpose === 'history' ? await ctx.stores.imports.joinOrCreate(scope, location.id, { userId: member.userId, now }) : null;
   const file = await ctx.stores.files.create(scope, location.id, {
-    importId: record.id, uploadedBy: member.userId, uploaderRole: member.role, uploadedAt: now, name,
+    importId: record?.id ?? null, purpose, uploadedBy: member.userId, uploaderRole: member.role,
+    ...(member.openAsAdmin !== null ? { byStaff: true, openAsAdminGrantId: member.openAsAdmin.grantId } : {}), uploadedAt: now, name,
     kind: kindOfName(name), sizeBytes: body.sizeBytes, chunkSize: CHUNK_BYTES, expiresAt: new Date(now.getTime() + UPLOAD_SESSION_MS),
   });
   const chunkCount = file.upload?.chunkCount ?? 0;
   ctx.logger.info({
-    orgId: scope.orgId, locationId: location.id, fileId: file.id, importId: record.id, sizeBytes: file.sizeBytes, chunkCount,
+    orgId: scope.orgId, locationId: location.id, fileId: file.id, importId: record?.id ?? null, sizeBytes: file.sizeBytes, chunkCount,
   }, 'townwise.file_upload_started');
   const dailyUsed = await ctx.stores.uploadDays.used(scope, day);
   res.status(201).json({
-    file: fileView(member, file, member.email, null),
-    import: { id: record.id, status: record.status },
+    file: fileView(member, file, file.byStaff ? TOWNWISE_STAFF : member.email, null),
+    import: record === null ? null : { id: record.id, status: record.status },
     limits: {
       maxFileBytes: MAX_FILE_BYTES,
       chunkSize: CHUNK_BYTES,
@@ -362,7 +367,7 @@ export async function completeFile(ctx: TownwiseContext, req: Request, res: Resp
   const file = await loadFile(ctx, scope, location.id, req.params.fileId);
   if (file.uploadedBy !== member.userId) throw new AppError(403, 'forbidden', 'Only the person uploading this file can finish it');
   const session = file.upload;
-  if (file.status !== 'uploading' || session === null || file.importId === null) {
+  if (file.status !== 'uploading' || session === null || (file.purpose === 'history' && file.importId === null)) {
     throw new AppError(409, 'file_not_uploading', 'This file is not uploading');
   }
   const missing = session.chunks.flatMap((chunk, index) => (chunk === null ? [index] : []));
@@ -377,28 +382,46 @@ export async function completeFile(ctx: TownwiseContext, req: Request, res: Resp
   });
   const fingerprint = fingerprintOf(session.chunkSize, session.chunks.map((chunk) => chunk?.sha256 ?? ''));
   const { kind } = sniff(file.name, Buffer.from(session.head ?? '', 'base64'));
-  const duplicate = await ctx.stores.files.duplicateOf(scope, location.id, fingerprint, file.id);
+  const duplicate = await ctx.stores.files.duplicateOf(scope, location.id, file.purpose, fingerprint, file.id);
   if (duplicate !== null) {
     await blobCall(ctx, 'delete_raw', () => blobs.deleteRaw(scope, ref), () => undefined);
     await ctx.stores.files.remove(scope, file.id);
-    const remaining = await ctx.stores.files.inImport(scope, file.importId);
-    await ctx.stores.imports.removeIfEmptyOpen(scope, file.importId, remaining.length);
+    if (file.importId !== null) {
+      const remaining = await ctx.stores.files.inImport(scope, file.importId);
+      await ctx.stores.imports.removeIfEmptyOpen(scope, file.importId, remaining.length);
+    }
     refuse(res, 409, 'file_duplicate', 'You already added this file', { fileId: duplicate });
     return;
   }
-  const before = await ctx.stores.imports.get(scope, location.id, file.importId);
+  if (file.purpose === 'reference') {
+    // Kept as it is: read by no one, in no import.
+    const kept = await ctx.stores.files.finishUpload(scope, file.id, { fingerprint, kind, status: 'kept', outcome: 'reference' });
+    if (kept === null) throw new AppError(409, 'file_not_uploading', 'This file is not uploading');
+    await recordUploaded(ctx, member, kept);
+    res.status(200).json({ file: fileView(member, kept, kept.byStaff ? TOWNWISE_STAFF : member.email, null), import: null });
+    return;
+  }
+  const before = await ctx.stores.imports.get(scope, location.id, file.importId ?? '');
   const stored = await ctx.stores.files.finishUpload(scope, file.id, {
     fingerprint, kind, status: before === null || before.status === 'open' ? 'stored' : 'queued',
   });
   if (stored === null) throw new AppError(409, 'file_not_uploading', 'This file is not uploading');
   const placed = await place(ctx, member, stored);
+  await recordUploaded(ctx, member, placed.file);
+  res.status(200).json({ file: fileView(member, placed.file, placed.file.byStaff ? TOWNWISE_STAFF : member.email, null), import: { id: placed.import.id, status: placed.import.status } });
+}
+
+/** The `file.uploaded` audit event and the `townwise.file_stored` log line: kind, size, purpose and route, never a name. */
+async function recordUploaded(ctx: TownwiseContext, member: MemberPrincipal, file: FileRecord): Promise<void> {
   await recordAfter(ctx, {
-    ...actorOf(member), at: ctx.now(), orgId: scope.orgId, action: 'file.uploaded',
-    target: { type: 'file', id: placed.file.id },
-    details: { locationId: location.id, kind: placed.file.kind, sizeBytes: placed.file.sizeBytes },
+    ...actorOf(member), at: ctx.now(), orgId: member.scope.orgId, action: 'file.uploaded',
+    target: { type: 'file', id: file.id },
+    details: {
+      locationId: file.locationId, kind: file.kind, sizeBytes: file.sizeBytes, purpose: file.purpose,
+      ...(file.addedVia === null ? {} : { via: file.addedVia }),
+    },
   });
-  ctx.logger.info({ fileId: placed.file.id, kind: placed.file.kind, sizeBytes: placed.file.sizeBytes, durationMs: ctx.now().getTime() - file.uploadedAt.getTime() }, 'townwise.file_stored');
-  res.status(200).json({ file: fileView(member, placed.file, member.email, null), import: { id: placed.import.id, status: placed.import.status } });
+  ctx.logger.info({ fileId: file.id, kind: file.kind, sizeBytes: file.sizeBytes, purpose: file.purpose, durationMs: ctx.now().getTime() - file.uploadedAt.getTime() }, 'townwise.file_stored');
 }
 
 /**
@@ -431,6 +454,58 @@ async function place(ctx: TownwiseContext, member: MemberPrincipal, file: FileRe
     ctx.nudgeFiles();
     return { file: current, import: noted };
   }
+}
+
+const textBody = z.strictObject({
+  title: z.string().trim().min(1).max(TEXT_ITEM_TITLE_MAX),
+  text: z.string().min(1).max(TEXT_ITEM_MAX_CHARS),
+});
+
+/**
+ * Keeps text as a reference item added by `member` (files/items.ts), and records `file.uploaded` for a new one. A save
+ * with an `id` the item already has answers it, unrecorded. Answers 409 storage_full or daily_upload_limit itself and
+ * resolves null; a blob write that fails answers 503 storage_unavailable. Used by POST /data/text and by Keep on a
+ * TownwiseAI proposal (handlers/chat-item-proposals.ts).
+ */
+export async function keepTextItem(
+  ctx: TownwiseContext, res: Response, member: MemberPrincipal, blobs: FileBlobs, locationId: string,
+  input: { id?: string; title: string; text: string; addedVia: 'townwise_ai' | null },
+): Promise<{ file: FileRecord; created: boolean } | null> {
+  const { scope } = member;
+  const now = ctx.now();
+  // Only the blob write answers 503 storage_unavailable; a store failure takes the ordinary 500 path.
+  const writer: Pick<FileBlobs, 'writeRaw'> = {
+    writeRaw: (...args) => blobCall(ctx, 'write_raw', () => blobs.writeRaw(...args), () => {
+      throw storageUnavailable(ctx, 'write_raw', new BlobUnavailableError('BlobMissing', null));
+    }),
+  };
+  const saved = await saveTextItem(ctx.stores, writer, scope, locationId, {
+    ...input, uploadedBy: member.userId, uploaderRole: member.role, now,
+    ...(member.openAsAdmin === null ? {} : { openAsAdminGrantId: member.openAsAdmin.grantId }),
+  });
+  if (saved === 'storage_full') {
+    const storedBytesLeft = Math.max(0, STORED_BYTES_PER_ORG - await ctx.stores.files.storedBytes(scope, now));
+    refuse(res, 409, 'storage_full', 'Your organization has stored the most it can', { storedBytesLeft });
+    return null;
+  }
+  if (saved === 'daily_upload_limit') {
+    refuse(res, 409, 'daily_upload_limit', 'Your organization has uploaded the most it can today', {
+      resetsAt: `${utcDay(now, 1)}T00:00:00.000Z`,
+    });
+    return null;
+  }
+  if (saved.created) await recordUploaded(ctx, member, saved.file);
+  return saved;
+}
+
+/** POST /data/text: pasted text kept as a reference item, a `.txt` file named from its title. */
+export async function addTextItem(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const blobs = filesOn(ctx);
+  const member = memberOf(principal);
+  const body = parseInput(textBody, req.body);
+  const location = await loadLocation(ctx, member.scope, req.params.locationId);
+  const saved = await keepTextItem(ctx, res, member, blobs, location.id, { title: body.title, text: body.text, addedVia: null });
+  if (saved !== null) res.status(201).json({ file: fileView(member, saved.file, saved.file.byStaff ? TOWNWISE_STAFF : member.email, null) });
 }
 
 // ---- Reading the list ---------------------------------------------------------------------------------------------
@@ -595,6 +670,24 @@ export async function deleteRaw(ctx: TownwiseContext, req: Request, res: Respons
 }
 
 /**
+ * removeFile for a route, shared with Your data (handlers/data.ts): a blob failure answers 503 storage_unavailable and a
+ * file the reader has 409 file_busy. A cancelled upload is logged, and a file that was waiting on a question nudges the
+ * reader. No audit.
+ */
+export async function removeWholeFile(ctx: TownwiseContext, blobs: FileBlobs, scope: OrgScope, file: FileRecord): Promise<void> {
+  const removed = await removeFile(ctx.stores, blobs, scope, file, ctx.now()).catch((err: unknown) => {
+    if (err instanceof BlobUnavailableError) throw storageUnavailable(ctx, 'delete_file', err);
+    throw err;
+  });
+  if (removed === 'busy') throw new AppError(409, 'file_busy', 'Townwise is reading this file');
+  if (file.status === 'uploading') {
+    ctx.logger.info({ fileId: file.id, receivedBytes: (file.upload?.chunks ?? []).reduce((sum, chunk) => sum + (chunk?.bytes ?? 0), 0) }, 'townwise.file_upload_cancelled');
+  } else if (file.status === 'waiting') {
+    ctx.nudgeFiles();
+  }
+}
+
+/**
  * DELETE /files/:fileId: the original, the cleaned copy and the report; the days it added stay. An unfinished upload
  * is cancelled and its bytes given back. A file waiting on a question takes the question with it.
  */
@@ -605,30 +698,7 @@ export async function deleteFile(ctx: TownwiseContext, req: Request, res: Respon
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const file = await loadFile(ctx, scope, location.id, req.params.fileId);
   mayManage(member, file);
-  if (file.status === 'reading') throw new AppError(409, 'file_busy', 'Townwise is reading this file');
-  const claimed = await ctx.stores.files.move(scope, file.id, ['uploading', 'stored', 'queued', 'waiting', 'read', 'kept', 'failed'], 'deleting');
-  if (claimed === null) throw new AppError(409, 'file_busy', 'Townwise is reading this file');
-  const ref = refOf(file);
-  if (file.status === 'uploading') {
-    await blobCall(ctx, 'discard', () => blobs.discardUpload(scope, ref), () => undefined);
-    const day = utcDay(file.uploadedAt);
-    if (day === utcDay(ctx.now())) await ctx.stores.uploadDays.refund(scope, day, file.sizeBytes, ctx.now());
-    ctx.logger.info({ fileId: file.id, receivedBytes: (file.upload?.chunks ?? []).reduce((sum, chunk) => sum + (chunk?.bytes ?? 0), 0) }, 'townwise.file_upload_cancelled');
-  } else {
-    await blobCall(ctx, 'delete_raw', () => blobs.deleteRaw(scope, ref), () => undefined);
-    await blobCall(ctx, 'delete_clean', () => blobs.deleteClean(scope, ref), () => undefined);
-  }
-  await ctx.stores.fileEntries.removeForFile(scope, file.id);
-  await ctx.stores.files.remove(scope, file.id);
-  if (file.importId !== null) {
-    const record = await ctx.stores.imports.get(scope, location.id, file.importId);
-    if (record !== null && record.question?.fileId === file.id) {
-      await ctx.stores.imports.clearQuestion(scope, record.id, record.question.id);
-      ctx.nudgeFiles();
-    }
-    const remaining = await ctx.stores.files.inImport(scope, file.importId);
-    await ctx.stores.imports.removeIfEmptyOpen(scope, file.importId, remaining.length);
-  }
+  await removeWholeFile(ctx, blobs, scope, file);
   if (file.status !== 'uploading') {
     await recordAfter(ctx, {
       ...actorOf(member), at: ctx.now(), orgId: scope.orgId, action: 'file.deleted',
@@ -640,15 +710,16 @@ export async function deleteFile(ctx: TownwiseContext, req: Request, res: Respon
 }
 
 /**
- * DELETE /originals (org admins): the "delete my files" control. Every original of the location that Townwise is done
- * with is deleted; the cleaned copies, reports and days stay. A file not yet read is skipped and counted.
+ * DELETE /originals (org admins): the owner's "delete every original" on Your data. Every sales file's original at the
+ * location that Townwise is done with is deleted; the cleaned copies, reports and days stay. A file not yet read is
+ * skipped and counted. Items kept for reference are left alone (D28): their original is the whole item.
  */
 export async function deleteLocationOriginals(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const blobs = filesOn(ctx);
   const admin = orgAdmin(principal);
   const { scope } = admin;
   const location = await loadLocation(ctx, scope, req.params.locationId);
-  const originals = await ctx.stores.files.originals(scope, location.id);
+  const originals = await ctx.stores.files.originals(scope, location.id, 'history');
   const result = await deleteOriginals(ctx.stores, blobs, scope, originals, ctx.now());
   await recordAfter(ctx, {
     ...actorOf(admin), at: ctx.now(), orgId: scope.orgId, action: 'files.raw_deleted_all',

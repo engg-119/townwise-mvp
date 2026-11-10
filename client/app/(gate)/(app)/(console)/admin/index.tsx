@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useLocalSearchParams } from 'expo-router';
 import { StyleSheet, View } from 'react-native';
 
-import { approveRequest, fetchRequests, rejectRequest } from '../../../../../src/portal/console/api';
+import { approveRequest, fetchRequests, rejectRequest, type ApproveInput } from '../../../../../src/portal/console/api';
 import { Dialog } from '../../../../../src/portal/console/Dialog';
 import { orgHref, requestHref } from '../../../../../src/portal/console/links';
 import { CellLink, FilterTabs, RowName, Split } from '../../../../../src/portal/console/parts';
@@ -45,6 +45,12 @@ const GONE = 'That request is no longer listed.';
 const HAS_ORG = 'This person already belongs to an organization.';
 const ORG_NAME_COPY = 'Enter the organization’s name, 2 to 120 characters.';
 const LOCATION_NAME_COPY = 'Enter the first location’s name, up to 80 characters.';
+const OWN_NAME_COPY = 'Each location needs its own name.';
+
+/** The API's `locationNameKey`: trimmed, lowercase, inner spaces collapsed. Two names with one key are one location. */
+function nameKey(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, ' ');
+}
 
 function statusOf(value: string | string[] | undefined): RequestStatus {
   return REQUEST_STATUSES.find((status) => status === value) ?? 'pending';
@@ -67,7 +73,10 @@ function lateDecision(error: unknown): string | null {
   return null;
 }
 
-/** C3. The town is the request's; the server takes it from there. */
+/**
+ * C3. Without places, the town is the request's; the server takes it from there. With places (a request from
+ * the Google search), each has a Location name, prefilled from Google's name and empty for one stored without it.
+ */
 function ApproveDialog(props: {
   request: AdminRequest;
   onApproved: () => void;
@@ -80,9 +89,12 @@ function ApproveDialog(props: {
   const { api, showNotice, refreshPending } = usePortal();
   const [orgName, setOrgName] = useState(request.orgName);
   const [locationName, setLocationName] = useState(request.orgName);
+  const places = request.places ?? [];
+  const [placeNames, setPlaceNames] = useState<string[]>(() => places.map((place) => place.name ?? ''));
+  const [badNames, setBadNames] = useState<boolean[]>([]);
   const [messages, setMessages] = useState<{ orgName: string | null; locationName: string | null }>({ orgName: null, locationName: null });
   const email = request.requester.email;
-  const approve = useAction(useCallback(async (input: { orgName: string; locationName: string }) => {
+  const approve = useAction(useCallback(async (input: ApproveInput) => {
     try {
       const { org } = await approveRequest(api, request.id, input);
       showNotice(
@@ -108,16 +120,28 @@ function ApproveDialog(props: {
   }, [api, showNotice, refreshPending, request.id, email, onApproved, onStale, onRefresh]));
 
   function submit(): void {
-    const input = { orgName: orgName.trim(), locationName: locationName.trim() };
+    const trimmedOrg = orgName.trim();
+    const orgMessage = trimmedOrg.length < 2 || trimmedOrg.length > 120 ? ORG_NAME_COPY : null;
+    if (places.length > 0) {
+      const names = placeNames.map((name) => name.trim());
+      const counts = new Map<string, number>();
+      for (const name of names) counts.set(nameKey(name), (counts.get(nameKey(name)) ?? 0) + 1);
+      const bad = names.map((name) => name.length < 1 || name.length > 80 || (counts.get(nameKey(name)) ?? 0) > 1);
+      setMessages({ orgName: orgMessage, locationName: null });
+      setBadNames(bad);
+      if (orgMessage === null && !bad.includes(true)) approve.run({ orgName: trimmedOrg, locationNames: names });
+      return;
+    }
+    const input = { orgName: trimmedOrg, locationName: locationName.trim() };
     const next = {
-      orgName: input.orgName.length < 2 || input.orgName.length > 120 ? ORG_NAME_COPY : null,
+      orgName: orgMessage,
       locationName: input.locationName.length < 1 || input.locationName.length > 80 ? LOCATION_NAME_COPY : null,
     };
     setMessages(next);
     if (next.orgName === null && next.locationName === null) approve.run(input);
   }
 
-  const town = townLabel(request.town);
+  const town = townLabel(places[0]?.town ?? request.town);
   return (
     <Dialog
       title={`Approve ${request.orgName}`}
@@ -129,18 +153,39 @@ function ApproveDialog(props: {
       onCancel={props.onClose}
     >
       <FormField label="Organization name" value={orgName} onChangeText={setOrgName} autoCapitalize="words" maxLength={120} messages={messageOf(messages.orgName)} />
-      <FormField
-        label="First location name"
-        value={locationName}
-        onChangeText={setLocationName}
-        onSubmitEditing={submit}
-        autoCapitalize="words"
-        maxLength={80}
-        messages={messageOf(messages.locationName)}
-      />
-      <DefinitionList items={[{ term: 'Town', value: town }]} />
+      {places.length === 0 ? (
+        <>
+          <FormField
+            label="First location name"
+            value={locationName}
+            onChangeText={setLocationName}
+            onSubmitEditing={submit}
+            autoCapitalize="words"
+            maxLength={80}
+            messages={messageOf(messages.locationName)}
+          />
+          <DefinitionList items={[{ term: 'Town', value: town }]} />
+        </>
+      ) : (
+        places.map((place, index) => (
+          <View key={place.placeId} role="group" aria-label={`Place ${index + 1} of ${places.length}`} style={styles.place}>
+            <Small>{place.name === null ? townLabel(place.town) : `${place.name}, ${townLabel(place.town)}`}</Small>
+            <FormField
+              label="Location name"
+              value={placeNames[index] ?? ''}
+              onChangeText={(text) => { setPlaceNames((names) => names.map((name, at) => (at === index ? text : name))); }}
+              onSubmitEditing={submit}
+              autoCapitalize="words"
+              maxLength={80}
+              messages={badNames[index] === true ? [OWN_NAME_COPY] : []}
+            />
+          </View>
+        ))
+      )}
       <Small>
-        {`This creates the organization and its first location in ${town}, and makes ${email} its admin. We email them that they’re in, and they get access the next time they open Townwise.`}
+        {places.length > 1
+          ? `This creates the organization and its ${places.length} locations, and makes ${email} its admin. We email them that they’re in, and they get access the next time they open Townwise.`
+          : `This creates the organization and its first location in ${town}, and makes ${email} its admin. We email them that they’re in, and they get access the next time they open Townwise.`}
       </Small>
     </Dialog>
   );
@@ -336,4 +381,5 @@ export default function RequestsPage(): React.JSX.Element {
 
 const styles = StyleSheet.create({
   head: { gap: 8 },
+  place: { gap: 8 },
 });

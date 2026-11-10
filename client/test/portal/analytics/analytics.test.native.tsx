@@ -144,7 +144,7 @@ test('the month rows say they count the days the filters leave out (T)', async (
   expect(screen.getByText(MONTH_ROWS_LINE)).toBeTruthy();
 });
 
-test('F4 on native: the stored file by name and kind, and Your files, with no download here', async () => {
+test('F4 on native: the stored file by name and kind, and Your data, with no download here', async () => {
   const file = { id: '00000000-0000-0000-0000-00000000f001', name: 'sample-sales.csv', kind: 'text' as const };
   await renderApp('/locations/l1/analytics', portal(meOf(ACCESS.member), DAYS, [upload({ file })]));
   const months = await screen.findByLabelText('Months, daily guests');
@@ -153,5 +153,5 @@ test('F4 on native: the stored file by name and kind, and Your files, with no do
   expect(screen.getByText('File: sample-sales.csv (CSV or text file).')).toBeTruthy();
   expect(screen.getByText('Download from a computer at townwise.tech.')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Download cleaned CSV' })).toBeNull();
-  expect(screen.getByRole('link', { name: 'Open Your files' })).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Open Your data' })).toBeTruthy();
 });

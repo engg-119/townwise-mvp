@@ -67,6 +67,14 @@ export function viewAsMe(access: Access, endsAt = '2026-11-04T19:00:00.000Z'): M
   return meOf(access, { user: { id: 's1', email: STAFF_EMAIL }, viewAs, staff: { verifiedUntil: VERIFIED_UNTIL } });
 }
 
+/** Staff open as the admin of an organization nobody has joined (D25). */
+export function openAsAdminMe(): MeResponse {
+  return meOf(ACCESS.admin, {
+    user: { id: 's1', email: STAFF_EMAIL }, staff: { verifiedUntil: VERIFIED_UNTIL },
+    openAsAdmin: { id: 'g2', org: ORG_REF, startedAt: '2026-11-04T18:30:00.000Z' },
+  });
+}
+
 const NO_COVERAGE = { dayCount: 0, guestsDayCount: 0, netSalesDayCount: 0, firstDate: null, lastDate: null, missingDays: 0 };
 
 export function locationOf(id: string, name: string, town: LocationSummary['town'], extra?: Partial<LocationSummary>): LocationSummary {

@@ -11,8 +11,10 @@ import { z } from 'zod';
 
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, Principal } from '../access/policy.ts';
+import { nodesOf } from '../chat/tree.ts';
 import { chatMessageViews, type ShownProposal } from '../chat/view.ts';
 import { utcDay } from '../dates.ts';
+import { TOWNWISE_STAFF } from '../people.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { ProposalKey, ProposalRecord } from '../stores/chat-proposals.ts';
 import { notFound, ownerOf } from './chat.ts';
@@ -37,7 +39,7 @@ async function savedNoteView(
 ): Promise<NoteView | null> {
   const note = await ctx.stores.notes.find(caller.scope, location.id, row.noteId);
   // A note the author deleted since is gone; the proposal stays saved, so it is not offered again.
-  return note === null ? null : noteView(note, caller.email, caller);
+  return note === null ? null : noteView(note, note.byStaff ? TOWNWISE_STAFF : caller.email, caller);
 }
 
 function resultOf(row: ProposalRecord, note: NoteView | null): ProposalResult {
@@ -59,7 +61,7 @@ export async function actOnProposal(ctx: TownwiseContext, req: Request, res: Res
   const conversation = await ctx.stores.chatConversations.find(scope, ownerOf(caller, location.id), conversationId);
   if (conversation === null) throw notFound();
   // Only a proposal the owner was shown: a valid propose_note call whose result was not an error.
-  const shown: ShownProposal | undefined = chatMessageViews(conversation.messages, today)
+  const shown: ShownProposal | undefined = chatMessageViews(nodesOf(conversation.messages), today)
     .flatMap((message) => message.proposals)
     .find((proposal) => proposal.id === proposalId);
   if (shown === undefined) throw notFound();
@@ -83,7 +85,7 @@ export async function actOnProposal(ctx: TownwiseContext, req: Request, res: Res
     } else {
       const note = await addNote(ctx, caller, location, content, { id: claimed.noteId });
       await proposals.markSaved(scope, key, ctx.now());
-      result = resultOf({ ...claimed, status: 'saved' }, noteView(note, caller.email, caller));
+      result = resultOf({ ...claimed, status: 'saved' }, noteView(note, note.byStaff ? TOWNWISE_STAFF : caller.email, caller));
     }
   }
   ctx.logger.info({

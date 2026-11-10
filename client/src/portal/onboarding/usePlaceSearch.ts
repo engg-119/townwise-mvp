@@ -6,11 +6,11 @@ import {
   autocompletePlaces, checkPlaceSearch, MIN_SEARCH_LENGTH, placeDetails, placesUnavailable, type FoundPlace, type PlaceSuggestion,
 } from './places';
 
-// The Google Places search's state, for PlaceSearch (.web) to draw. One search is one session token: the API issues it
-// on the first autocomplete and the details call for the pick ends it, so "Search again" starts a new one. Typing is
-// debounced, nothing under 2 characters is sent, and one autocomplete runs at a time: text typed while one runs is sent
-// when it settles, and only the newest text's answer is shown (api/README.md, Rate limits: about 10 to 15 calls a
-// search).
+// The Google Places search's state, for PlaceSearch (.web) and the checklist (usePlaceChecklist.ts) to draw. One search
+// is one session token: the API issues it on the first autocomplete and the details call for the pick, or for the
+// first check, ends it (endSession), so "Search again" or the next text starts a new one. Typing is debounced, nothing
+// under 2 characters is sent, and one autocomplete runs at a time: text typed while one runs is sent when it settles,
+// and only the newest text's answer is shown (api/README.md, Rate limits: about 10 to 15 calls a search).
 
 export const SEARCH_DEBOUNCE_MS = 250;
 
@@ -53,7 +53,7 @@ export interface PlaceSearchState {
   error: unknown;
   /** Google's details no longer know the picked place. */
   gone: boolean;
-  /** 503 places_unavailable: the search went off, or Google isn't answering. */
+  /** 503 places_unavailable: the search went off, or Google isn't answering; false again once an autocomplete answers. */
   unavailable: boolean;
   /**
    * A suggestion was picked: the field gave way to the loading line and the card, so when it comes back (Search again,
@@ -61,6 +61,12 @@ export interface PlaceSearchState {
    */
   picked: boolean;
   pick: (suggestion: PlaceSuggestion) => void;
+  /**
+   * Takes the session's token for a details call and ends the session: the token is cleared, and an autocomplete still
+   * running under it is dropped, as after a pick. Null, changing nothing, when no answer has carried a token since the
+   * last end.
+   */
+  endSession: () => string | null;
   /** Back to the search with the same text, in a new session. */
   again: () => void;
 }
@@ -114,6 +120,8 @@ export function usePlaceSearch(api: ApiClient): PlaceSearchState {
       (answer) => {
         // The session ended while it ran (a pick): its token must not come back.
         if (!live.current || sentIn !== session.current) return;
+        // Google is answering again: an earlier 503's line and hand-over no longer apply.
+        setUnavailable(false);
         token.current = answer.sessionToken;
         if (input === wanted.current) {
           setSuggestions(answer.suggestions);
@@ -160,13 +168,19 @@ export function usePlaceSearch(api: ApiClient): PlaceSearchState {
     schedule(text);
   }, [schedule]);
 
-  const pick = useCallback((suggestion: PlaceSuggestion): void => {
+  const endSession = useCallback((): string | null => {
     const sessionToken = token.current;
-    // A suggestion only shows after an answer, which carried the token.
-    if (sessionToken === null) return;
+    if (sessionToken === null) return null;
     // The details call ends the session, whatever it answers.
     token.current = null;
     session.current += 1;
+    return sessionToken;
+  }, []);
+
+  const pick = useCallback((suggestion: PlaceSuggestion): void => {
+    // A suggestion only shows after an answer, which carried the token.
+    const sessionToken = endSession();
+    if (sessionToken === null) return;
     if (timer.current !== null) clearTimeout(timer.current);
     timer.current = null;
     queued.current = null;
@@ -188,7 +202,7 @@ export function usePlaceSearch(api: ApiClient): PlaceSearchState {
         else setError(caught);
       },
     );
-  }, [api]);
+  }, [api, endSession]);
 
   const again = useCallback((): void => {
     token.current = null;
@@ -199,7 +213,7 @@ export function usePlaceSearch(api: ApiClient): PlaceSearchState {
     schedule(query);
   }, [query, schedule]);
 
-  return { query, setQuery, suggestions, searched, searching, picking, found, error, gone, unavailable, picked, pick, again };
+  return { query, setQuery, suggestions, searched, searching, picking, found, error, gone, unavailable, picked, pick, endSession, again };
 }
 
 /**

@@ -11,6 +11,10 @@ export type Role = z.infer<typeof roleSchema>;
 export const townSchema = z.object({ townId: z.string().nullable(), name: z.string(), state: z.string() });
 export type Town = z.infer<typeof townSchema>;
 
+/** One checked Google place on a request; `name` is null for a request stored before places. */
+export const requestPlaceSchema = z.object({ placeId: z.string(), name: z.string().nullable(), town: townSchema });
+export type RequestPlace = z.infer<typeof requestPlaceSchema>;
+
 export const accessRequestSchema = z.object({
   id: z.string(),
   orgName: z.string(),
@@ -23,6 +27,8 @@ export const accessRequestSchema = z.object({
   createdAt: z.string(),
   decidedAt: z.string().nullable(),
   decisionMessage: z.string().nullable(),
+  /** Absent reads as none, for an API from before it. */
+  places: z.array(requestPlaceSchema).optional(),
 });
 export type AccessRequest = z.infer<typeof accessRequestSchema>;
 
@@ -64,6 +70,10 @@ export const viewAsSchema = z.object({
 });
 export type ViewAs = z.infer<typeof viewAsSchema>;
 
+/** Staff set up an organization nobody has joined as its admin (D25). The access is then that organization's admin. */
+export const openAsAdminSchema = z.object({ id: z.string(), org: orgRef, startedAt: z.string() });
+export type OpenAsAdmin = z.infer<typeof openAsAdminSchema>;
+
 export const welcomeSchema = z.object({ firstName: z.string().nullable(), restaurant: z.string() });
 
 /** GET /api/me, and the answer of join, decline, access requests and view-as start and end. */
@@ -73,6 +83,8 @@ export const meResponseSchema = z.object({
   /** During view-as, the target's access. */
   access: accessSchema,
   viewAs: viewAsSchema.nullable(),
+  /** Set while staff set up an organization as its admin; the access is then that organization's admin. */
+  openAsAdmin: openAsAdminSchema.nullable().optional(),
   staff: z.object({ verifiedUntil: z.string() }).nullable(),
   /** GET /api/me only: the first visit after approval (spec 15.8). Other answers carry null. */
   welcome: welcomeSchema.nullable().optional(),

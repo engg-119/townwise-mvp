@@ -10,13 +10,13 @@ import {
   dateRange, patternOf, sourceLinks, TOWN_GROUPS, townProfile, townResearchLine,
 } from '../../src/portal/towns';
 import { checkTown } from '../../src/portal/ui/TownFields';
-import { ACCESS, meOf, orgOf, refusal, staffMe, viewAsMe } from '../helpers/portal';
+import { ACCESS, meOf, openAsAdminMe, orgOf, refusal, staffMe, viewAsMe } from '../helpers/portal';
 
 const ALL: [string, Access][] = Object.entries(ACCESS);
 
 const GATE = ['/request-access', '/waiting', '/no-access', '/joining', '/staff/sign-in-again'];
 const MEMBER = [
-  '/dashboard', '/settings', '/locations/l1', '/locations/l1/analytics', '/locations/l1/sales', '/locations/l1/sales/upload',
+  '/dashboard', '/settings', '/locations/l1', '/locations/l1/analytics', '/locations/l1/sales', '/locations/l1/sales/upload', '/locations/l1/data',
   '/locations/l1/notes', '/locations/l1/town', '/locations/l1/agent', '/locations/l1/chat',
 ];
 const ADMIN_ONLY = ['/team', '/locations/new', '/locations/l1/settings'];
@@ -69,6 +69,11 @@ describe('access routing (spec 4.3)', () => {
     expect(allowed(ACCESS.noOrg)).toEqual(['/request-access']);
   });
 
+  test('open as admin routes as the organization’s admin without Team, never into the console', () => {
+    expect(EVERY.filter((path) => isAllowed(openAsAdminMe(), path))).toEqual([...MEMBER, '/locations/new', '/locations/l1/settings', '/settings/security']);
+    expect(isAllowed(openAsAdminMe(), homeFor(openAsAdminMe()))).toBe(true);
+  });
+
   test('paths are compared without a trailing slash, query or fragment', () => {
     expect(isAllowed(meOf(ACCESS.member), '/dashboard/')).toBe(true);
     expect(isAllowed(meOf(ACCESS.member), '/dashboard?x=1')).toBe(true);
@@ -84,7 +89,7 @@ describe('navigation per role (spec 15.3)', () => {
     expect(rows(clientNav('member', '/locations/l1', 'l1'))).toEqual([
       ['Home', '/locations/l1', 'page', false], ['Analytics', '/locations/l1/analytics', null, false],
       ['TownwiseAI', '/locations/l1/agent', null, false], ['Notes', '/locations/l1/notes', null, false],
-      ['Town', '/locations/l1/town', null, false], ['Upload', '/locations/l1/sales/upload', null, false],
+      ['Town', '/locations/l1/town', null, false], ['Your data', '/locations/l1/data', null, false],
       ['Settings', '/settings', null, true],
     ]);
   });
@@ -94,17 +99,24 @@ describe('navigation per role (spec 15.3)', () => {
     expect(clientNav('org_admin', '/settings/security', 'l1').map((item) => item.current).slice(-2)).toEqual([null, 'true']);
   });
 
+  test('open as admin: the top bar has no Team', () => {
+    expect(clientNav('org_admin', '/dashboard', 'l1', true).map((item) => item.label)).not.toContain('Team');
+    expect(clientNav('org_admin', '/dashboard', 'l1').map((item) => item.label)).toContain('Team');
+    expect(clientNav('org_admin', '/dashboard', null, true).map((item) => [item.label, item.end === true])).toEqual([['Settings', true]]);
+  });
+
   test('with no location (none yet, or the organization still loading off a location page) only Team and Settings', () => {
     expect(rows(clientNav('member', '/dashboard', null))).toEqual([['Settings', '/settings', null, true]]);
     expect(clientNav('org_admin', '/dashboard', null).map((item) => item.label)).toEqual(['Team', 'Settings']);
   });
 
-  test('current: each section on its own page; Analytics also on Sales data, which lives under it; Upload alone on upload', () => {
+  test('current: each section on its own page; Analytics also on Sales data, which lives under it; Your data on Upload', () => {
     const current = (path: string): [string, string | null][] =>
       clientNav('org_admin', path, 'l1').filter((item) => item.current !== null).map((item) => [item.label, item.current]);
     expect(current('/locations/l1/analytics')).toEqual([['Analytics', 'page']]);
     expect(current('/locations/l1/sales')).toEqual([['Analytics', 'true']]);
-    expect(current('/locations/l1/sales/upload')).toEqual([['Upload', 'page']]);
+    expect(current('/locations/l1/sales/upload')).toEqual([['Your data', 'true']]);
+    expect(current('/locations/l1/data')).toEqual([['Your data', 'page']]);
     expect(current('/locations/l1/agent')).toEqual([['TownwiseAI', 'page']]);
     expect(current('/locations/l1/notes/')).toEqual([['Notes', 'page']]);
     expect(current('/locations/l1/town')).toEqual([['Town', 'page']]);
@@ -145,6 +157,7 @@ describe('navigation per role (spec 15.3)', () => {
       ['/locations/l1/analytics', 'analytics', 'Analytics'],
       ['/locations/l1/sales', 'sales', 'Sales data'],
       ['/locations/l1/sales/upload', 'upload', 'Upload'],
+      ['/locations/l1/data', 'data', 'Your data'],
       ['/locations/l1/notes', 'notes', 'Notes'],
       ['/locations/l1/town', 'town', 'Town'],
       ['/locations/l1/agent', 'agent', 'TownwiseAI'],
@@ -182,6 +195,10 @@ describe('schemas', () => {
       expect(parsed).toEqual(meOf(access));
     }
     expect(meResponseSchema.parse(viewAsMe(ACCESS.admin)).viewAs?.target.email).toBe('gm@example.org');
+    // An answer without openAsAdmin parses; one with it keeps it.
+    expect(meResponseSchema.parse(meOf(ACCESS.admin)).openAsAdmin).toBeUndefined();
+    expect(meResponseSchema.parse({ ...openAsAdminMe(), extra: 1 })).toEqual(openAsAdminMe());
+    expect(meResponseSchema.parse({ ...meOf(ACCESS.admin), openAsAdmin: null }).openAsAdmin).toBeNull();
   });
 
   test('a response that does not match is refused', () => {
@@ -208,6 +225,8 @@ describe('errors (spec 15.7, 10.9)', () => {
       expect(needsRecheck(refusal(403, code))).toBe(true);
     }
     expect(needsRecheck(refusal(409, 'view_as_active'))).toBe(true);
+    expect(needsRecheck(refusal(409, 'open_as_admin_active'))).toBe(true);
+    expect(needsRecheck(refusal(403, 'open_as_admin_refused'))).toBe(false);
     expect(needsRecheck(refusal(403, 'view_as_read_only'))).toBe(false);
     expect(needsRecheck(refusal(409, 'request_exists'))).toBe(false);
     expect(needsRecheck(new ApiError('network', 'x'))).toBe(false);
@@ -263,7 +282,7 @@ describe('towns (spec 13)', () => {
     expect(checkTown({ choice: 'stowe-vt', name: '', state: '' })).toEqual({ input: { townId: 'stowe-vt' } });
     expect(checkTown({ choice: 'another', name: ' Norwich ', state: 'vt' })).toEqual({ input: { townId: null, name: 'Norwich', state: 'VT' } });
     expect(checkTown({ choice: 'another', name: '', state: 'XX' })).toEqual({
-      messages: { name: 'Enter the town’s name.', state: 'Enter a two-letter state, for example NH.' },
+      messages: { name: 'Enter the town’s name.', state: 'Choose a state.' },
     });
   });
 });

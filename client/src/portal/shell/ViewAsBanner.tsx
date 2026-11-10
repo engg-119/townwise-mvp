@@ -15,7 +15,7 @@ import { Eyebrow } from '../ui/text';
 
 // The view-as banner (spec 15.5, shell.md 5.6): first in the page above the top bar, at least 52px, a `raised`
 // fill with a 1px `line` rule below, and no mint, warning or error colour: the words carry the meaning. It cannot
-// be dismissed. End view-as (POST /api/admin/view-as/end) is the way out; the answer is the staff member's own
+// be dismissed. End view-as (POST /api/admin/view-as/end with this grant's id) is the way out; the answer is the staff member's own
 // access, so the portal layout opens /admin, where “View-as ended at {time}.” shows once. On phones it is two rows
 // (spec 15.5): the words as one paragraph, then End view-as at full width.
 
@@ -32,7 +32,8 @@ export function ViewAsBanner(props: { viewAs: ViewAs }): React.JSX.Element {
   const { viewAs } = props;
   const { api, applyMe } = usePortal();
   const { phone } = useBreakpoint();
-  const end = useAction(useCallback(async () => { applyMe(await endViewAs(api)); }, [api, applyMe]));
+  // Names the grant this tab shows, so a tab left on an ended view-as never ends a grant the session started since.
+  const end = useAction(useCallback(async () => { applyMe(await endViewAs(api, viewAs.id)); }, [api, applyMe, viewAs.id]));
   const failed = end.error !== null;
   const until = <Text nativeID={VIEW_AS_LINE_ID} style={styles.until}>{`Read-only until ${formatTime(viewAs.endsAt)}.`}</Text>;
   // Phones run the three parts together as one wrapping paragraph instead of stacking them with gaps between.

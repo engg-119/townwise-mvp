@@ -15,6 +15,10 @@ export type FileKind = (typeof FILE_KINDS)[number];
 export const FILE_STATUSES = ['uploading', 'stored', 'queued', 'reading', 'waiting', 'read', 'kept', 'failed', 'deleting'] as const;
 export type FileStatus = (typeof FILE_STATUSES)[number];
 
+/** `history` is read for days of sales; `reference` is kept as it is (any file, or pasted text). */
+export const FILE_PURPOSES = ['history', 'reference'] as const;
+export type FilePurpose = (typeof FILE_PURPOSES)[number];
+
 /** One received chunk: its byte count and SHA-256 (hex). */
 export interface ChunkRecord { readonly bytes: number; readonly sha256: string }
 
@@ -86,9 +90,12 @@ interface FileFields {
   orgId: Types.ObjectId;
   locationId: Types.ObjectId;
   importId: Types.ObjectId | null;
-  purpose: 'history';
+  purpose: FilePurpose;
   uploadedBy: string;
   uploaderRole: Role;
+  byStaff?: boolean;
+  /** The open-as-admin grant it was stored under (D25), so the reader's sales.uploaded carries it too. */
+  openAsAdminGrantId?: string;
   uploadedAt: Date;
   name: string;
   kind: FileKind;
@@ -115,6 +122,11 @@ interface FileFields {
   aiChoices?: FileColumnChoices;
   /** A staff purge found the file busy: its original goes as soon as the reader is done with it. */
   purgeRaw?: boolean;
+  /** Set while the item is turned off (reference items), by the person who did it. Absent means on, never stored as null. */
+  disabledAt?: Date;
+  disabledBy?: string;
+  /** Set when TownwiseAI kept the item for the person. */
+  addedVia?: 'townwise_ai';
 }
 
 function fileSchema(): Schema<FileFields> {
@@ -122,9 +134,11 @@ function fileSchema(): Schema<FileFields> {
     orgId: { type: Schema.Types.ObjectId, required: true },
     locationId: { type: Schema.Types.ObjectId, required: true },
     importId: { type: Schema.Types.ObjectId, default: null },
-    purpose: { type: String, required: true, enum: ['history'] },
+    purpose: { type: String, required: true, enum: FILE_PURPOSES },
     uploadedBy: { type: String, required: true },
     uploaderRole: { type: String, required: true, enum: ['org_admin', 'member'] },
+    byStaff: { type: Boolean },
+    openAsAdminGrantId: { type: String },
     uploadedAt: { type: Date, required: true },
     name: { type: String, required: true },
     kind: { type: String, required: true, enum: FILE_KINDS },
@@ -148,6 +162,9 @@ function fileSchema(): Schema<FileFields> {
     costMicroUsd: { type: Number, required: true, default: 0 },
     aiChoices: { type: Schema.Types.Mixed, default: () => ({}) },
     purgeRaw: { type: Boolean },
+    disabledAt: { type: Date },
+    disabledBy: { type: String },
+    addedVia: { type: String, enum: ['townwise_ai'] },
   }, { strict: 'throw', versionKey: false, read: 'primary', minimize: false });
   schema.index({ orgId: 1, locationId: 1, uploadedAt: -1 });
   schema.index({ orgId: 1, importId: 1, uploadedAt: 1 });
@@ -156,6 +173,8 @@ function fileSchema(): Schema<FileFields> {
   // The daily sweep across organizations (stores/cross-tenant.ts): originals past retention, and flagged purges.
   schema.index({ status: 1, uploadedAt: 1 });
   schema.index({ purgeRaw: 1 }, { sparse: true });
+  // D28: the file each upload on Your data was read from.
+  schema.index({ orgId: 1, uploadId: 1 }, { partialFilterExpression: { uploadId: { $type: 'objectId' } } });
   return schema;
 }
 
@@ -169,9 +188,13 @@ export interface FileRecord {
   readonly id: string;
   readonly locationId: string;
   readonly importId: string | null;
-  readonly purpose: 'history';
+  readonly purpose: FilePurpose;
   readonly uploadedBy: string;
   readonly uploaderRole: Role;
+  /** Uploaded by Townwise staff in open as admin (D25); shown as "Townwise staff", never the staff email. */
+  readonly byStaff: boolean;
+  /** The open-as-admin grant it was stored under (D25); null otherwise, and on files from before the field. */
+  readonly openAsAdminGrantId: string | null;
   readonly uploadedAt: Date;
   readonly name: string;
   readonly kind: FileKind;
@@ -197,6 +220,9 @@ export interface FileRecord {
   /** Its answers, so a re-read (after a later question, or a retry) asks the model nothing it already answered. */
   readonly aiChoices: FileColumnChoices;
   readonly purgeRaw: boolean;
+  /** When the item was turned off, or null. */
+  readonly disabledAt: Date | null;
+  readonly addedVia: 'townwise_ai' | null;
 }
 
 function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
@@ -207,6 +233,8 @@ function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
     purpose: doc.purpose,
     uploadedBy: doc.uploadedBy,
     uploaderRole: doc.uploaderRole,
+    byStaff: doc.byStaff === true,
+    openAsAdminGrantId: doc.openAsAdminGrantId ?? null,
     uploadedAt: doc.uploadedAt,
     name: doc.name,
     kind: doc.kind,
@@ -230,13 +258,20 @@ function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
     costMicroUsd: doc.costMicroUsd ?? 0,
     aiChoices: doc.aiChoices ?? {},
     purgeRaw: doc.purgeRaw === true,
+    disabledAt: doc.disabledAt ?? null,
+    addedVia: doc.addedVia ?? null,
   };
 }
 
 export interface NewFile {
-  readonly importId: string;
+  /** Null for a reference item: it belongs to no import. */
+  readonly importId: string | null;
+  readonly purpose: FilePurpose;
+  readonly addedVia?: 'townwise_ai';
   readonly uploadedBy: string;
   readonly uploaderRole: Role;
+  readonly byStaff?: boolean;
+  readonly openAsAdminGrantId?: string;
   readonly uploadedAt: Date;
   readonly name: string;
   readonly kind: FileKind;
@@ -254,6 +289,21 @@ export interface FileStore {
   get(scope: OrgScope, locationId: string, fileId: string): Promise<FileRecord | null>;
   /** Newest first. Other people's unfinished uploads are left out. */
   list(scope: OrgScope, locationId: string, input: { viewerId: string; before: string | null; limit: number }): Promise<FileRecord[]>;
+  /**
+   * D28, Your data: the files that wrote no days (`uploadId` null) at the location (or across the organization, for
+   * null), newest first by (uploadedAt, id), each strictly before `before` in that order. Files being deleted and other
+   * people's unfinished uploads are left out.
+   */
+  page(scope: OrgScope, input: {
+    locationId: string | null; viewerId: string; before: { at: Date; id: string } | null; limit: number;
+  }): Promise<FileRecord[]>;
+  /** D28: the files that wrote days for any of `uploadIds`, newest first. Files being deleted are left out. */
+  byUploadIds(scope: OrgScope, uploadIds: readonly string[]): Promise<FileRecord[]>;
+  /**
+   * D28: turns the location's file off (sets `disabledAt` and `disabledBy`) or on (unsets both), in one update. Resolves
+   * the record after it, or null when there is no such file at the location.
+   */
+  setEnabled(scope: OrgScope, locationId: string, fileId: string, input: { enabled: boolean; by: string; at: Date }): Promise<FileRecord | null>;
   /** Upload order. */
   inImport(scope: OrgScope, importId: string): Promise<FileRecord[]>;
   /** Live files only: an upload session past its expiry is abandoned and counts toward no cap. */
@@ -263,9 +313,24 @@ export interface FileStore {
   /** Records a received chunk while the file is uploading; null when it no longer is. */
   recordChunk(scope: OrgScope, fileId: string, index: number, chunk: ChunkRecord, head: string | null): Promise<FileRecord | null>;
   /** Compare-and-set from uploading: the session ends, the kind and fingerprint are set. Null when another call won. */
-  finishUpload(scope: OrgScope, fileId: string, input: { fingerprint: string; kind: FileKind; status: 'stored' | 'queued' }): Promise<FileRecord | null>;
-  /** Another live file of the location with this fingerprint. */
-  duplicateOf(scope: OrgScope, locationId: string, fingerprint: string, exceptId: string): Promise<string | null>;
+  finishUpload(
+    scope: OrgScope, fileId: string, input: { fingerprint: string; kind: FileKind; status: 'stored' | 'queued' | 'kept'; outcome?: string },
+  ): Promise<FileRecord | null>;
+  /**
+   * A text reference item with its bytes already stored: kept, outcome `reference`, with no upload session. `'exists'`
+   * when a row with this id is already there (a retried save).
+   */
+  insertStored(scope: OrgScope, locationId: string, input: {
+    id: string; uploadedBy: string; uploaderRole: Role; uploadedAt: Date; name: string; sizeBytes: number; fingerprint: string;
+    addedVia: 'townwise_ai' | null;
+    /** D25: kept by staff open as admin under this grant; the row is then `byStaff` too. */
+    openAsAdminGrantId?: string;
+  }): Promise<FileRecord | 'exists'>;
+  /**
+   * Another live file of the location with this purpose and fingerprint: a copy kept for reference never blocks the same
+   * bytes uploaded as sales history, nor the other way round.
+   */
+  duplicateOf(scope: OrgScope, locationId: string, purpose: FilePurpose, fingerprint: string, exceptId: string): Promise<string | null>;
   /** Every stored file of the import becomes queued. Resolves the number changed. */
   queueStored(scope: OrgScope, importId: string): Promise<number>;
   /** Compare-and-set one file from `from` to `to`. */
@@ -282,8 +347,11 @@ export interface FileStore {
   hasAny(scope: OrgScope, locationId: string | null): Promise<boolean>;
   /** Files still uploading, at one location or across the organization (to discard their staged chunks). */
   uploading(scope: OrgScope, locationId: string | null): Promise<FileRecord[]>;
-  /** Files whose original is still stored, at one location or across the organization. */
-  originals(scope: OrgScope, locationId: string | null): Promise<FileRecord[]>;
+  /**
+   * Files whose original is still stored, at one location or across the organization; only those with `purpose` when
+   * it is given (the owner's "delete every original" keeps reference items, D28; the staff purge takes every purpose).
+   */
+  originals(scope: OrgScope, locationId: string | null, purpose?: FilePurpose): Promise<FileRecord[]>;
   /** A staff purge found the file uploading or being read: its original goes once that ends. */
   flagPurge(scope: OrgScope, fileId: string): Promise<void>;
   /**
@@ -333,8 +401,10 @@ export function createFileStore(connection: Connection): FileStore {
   return {
     async create(scope, locationId, input) {
       const doc = await File.create({
-        orgId: org(scope), locationId: oid(locationId), importId: oid(input.importId), purpose: 'history',
-        uploadedBy: input.uploadedBy, uploaderRole: input.uploaderRole, uploadedAt: input.uploadedAt, name: input.name,
+        orgId: org(scope), locationId: oid(locationId), importId: input.importId === null ? null : oid(input.importId), purpose: input.purpose,
+        uploadedBy: input.uploadedBy, uploaderRole: input.uploaderRole, ...(input.byStaff === true ? { byStaff: true } : {}),
+        ...(input.openAsAdminGrantId === undefined ? {} : { openAsAdminGrantId: input.openAsAdminGrantId }),
+        uploadedAt: input.uploadedAt, name: input.name,
         kind: input.kind, sizeBytes: input.sizeBytes, fingerprint: null, status: 'uploading',
         upload: {
           chunkSize: input.chunkSize,
@@ -344,6 +414,7 @@ export function createFileStore(connection: Connection): FileStore {
           expiresAt: input.expiresAt,
         },
         answers: {}, attempts: 0,
+        ...(input.addedVia === undefined ? {} : { addedVia: input.addedVia }),
       });
       return toFile(doc.toObject());
     },
@@ -359,6 +430,36 @@ export function createFileStore(connection: Connection): FileStore {
       if (input.before !== null) filter._id = trusted({ $lt: oid(input.before) });
       const docs = await File.find(filter).sort({ _id: -1 }).limit(input.limit).lean();
       return docs.map(toFile);
+    },
+    async page(scope, input) {
+      const and: Record<string, unknown>[] = [{ $or: [{ status: trusted({ $ne: 'uploading' }) }, { uploadedBy: input.viewerId }] }];
+      if (input.before !== null) {
+        and.push({
+          $or: [
+            { uploadedAt: trusted({ $lt: input.before.at }) },
+            { uploadedAt: input.before.at, _id: trusted({ $lt: oid(input.before.id) }) },
+          ],
+        });
+      }
+      const filter: Record<string, unknown> = { orgId: org(scope), uploadId: null, status: trusted({ $ne: 'deleting' }), $and: and };
+      if (input.locationId !== null) filter.locationId = oid(input.locationId);
+      const docs = await File.find(filter).sort({ uploadedAt: -1, _id: -1 }).limit(input.limit).lean();
+      return docs.map(toFile);
+    },
+    async byUploadIds(scope, uploadIds) {
+      if (uploadIds.length === 0) return [];
+      const docs = await File.find({
+        orgId: org(scope), uploadId: trusted({ $in: uploadIds.map(oid), $type: 'objectId' }), status: trusted({ $ne: 'deleting' }),
+      }).sort({ uploadedAt: -1, _id: -1 }).lean();
+      return docs.map(toFile);
+    },
+    async setEnabled(scope, locationId, fileId, input) {
+      const doc = await File.findOneAndUpdate(
+        { _id: oid(fileId), orgId: org(scope), locationId: oid(locationId), status: trusted({ $ne: 'deleting' }) },
+        input.enabled ? { $unset: { disabledAt: 1, disabledBy: 1 } } : { $set: { disabledAt: input.at, disabledBy: input.by } },
+        after,
+      ).lean();
+      return doc === null ? null : toFile(doc);
     },
     async inImport(scope, importId) {
       const docs = await File.find({ orgId: org(scope), importId: oid(importId), status: trusted({ $ne: 'deleting' }) })
@@ -393,14 +494,30 @@ export function createFileStore(connection: Connection): FileStore {
     async finishUpload(scope, fileId, input) {
       const doc = await File.findOneAndUpdate(
         { _id: oid(fileId), orgId: org(scope), status: 'uploading' },
-        { $set: { status: input.status, fingerprint: input.fingerprint, kind: input.kind, upload: null } },
+        { $set: { status: input.status, fingerprint: input.fingerprint, kind: input.kind, upload: null, ...(input.outcome === undefined ? {} : { outcome: input.outcome }) } },
         after,
       ).lean();
       return doc === null ? null : toFile(doc);
     },
-    async duplicateOf(scope, locationId, fingerprint, exceptId) {
+    async insertStored(scope, locationId, input) {
+      try {
+        const doc = await File.create({
+          _id: oid(input.id), orgId: org(scope), locationId: oid(locationId), importId: null, purpose: 'reference',
+          uploadedBy: input.uploadedBy, uploaderRole: input.uploaderRole, uploadedAt: input.uploadedAt, name: input.name,
+          ...(input.openAsAdminGrantId === undefined ? {} : { byStaff: true, openAsAdminGrantId: input.openAsAdminGrantId }),
+          kind: 'text', sizeBytes: input.sizeBytes, fingerprint: input.fingerprint, upload: null, status: 'kept', outcome: 'reference',
+          answers: {}, attempts: 0,
+          ...(input.addedVia === null ? {} : { addedVia: input.addedVia }),
+        });
+        return toFile(doc.toObject());
+      } catch (err) {
+        if (err instanceof Error && 'code' in err && err.code === 11000) return 'exists';
+        throw err;
+      }
+    },
+    async duplicateOf(scope, locationId, purpose, fingerprint, exceptId) {
       const doc = await File.findOne({
-        orgId: org(scope), locationId: oid(locationId), fingerprint, _id: trusted({ $ne: oid(exceptId) }),
+        orgId: org(scope), locationId: oid(locationId), purpose, fingerprint, _id: trusted({ $ne: oid(exceptId) }),
         status: trusted({ $nin: ['uploading', 'deleting'] }),
       }).lean();
       return doc === null ? null : doc._id.toHexString();
@@ -435,9 +552,10 @@ export function createFileStore(connection: Connection): FileStore {
       if (locationId !== null) filter.locationId = oid(locationId);
       return (await File.find(filter).lean()).map(toFile);
     },
-    async originals(scope, locationId) {
+    async originals(scope, locationId, purpose) {
       const filter: Record<string, unknown> = { orgId: org(scope), rawDeletedAt: null, status: trusted({ $nin: ['uploading', 'deleting'] }) };
       if (locationId !== null) filter.locationId = oid(locationId);
+      if (purpose !== undefined) filter.purpose = purpose;
       return (await File.find(filter).sort({ uploadedAt: 1 }).lean()).map(toFile);
     },
     async flagPurge(scope, fileId) {

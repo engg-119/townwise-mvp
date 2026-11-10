@@ -3,7 +3,7 @@ import { Schema, trusted, type Connection, type Model, type Types } from 'mongoo
 /** Each action and the only detail keys it may carry (spec 9.2). Never figures, note text, request notes,
  *  decision messages, file names, file content or tokens. */
 export const AUDIT_DETAIL_KEYS = {
-  'access_request.created': ['orgName', 'townId', 'townName', 'hasPlace'],
+  'access_request.created': ['orgName', 'townId', 'townName', 'hasPlace', 'placeCount'],
   'access_request.approved': ['orgId'],
   'access_request.rejected': ['hasMessage'],
   'access_request.withdrawn': ['reason'],
@@ -23,8 +23,12 @@ export const AUDIT_DETAIL_KEYS = {
   'location.deleted': ['name', 'townId'],
   'sales.uploaded': ['locationId', 'dayCount', 'inserted', 'replaced', 'firstDate', 'lastDate', 'fileId', 'via'],
   'sales.deleted': ['locationId', 'deletedDays', 'deletedFiles'],
+  // D28, Your data: `item` is 'upload' or 'file' and `kind` an item kind; never a file name or title.
+  'sales.upload_deleted': ['locationId', 'deletedDays', 'deletedFiles'],
+  'data.turned_off': ['locationId', 'item', 'kind'],
+  'data.turned_on': ['locationId', 'item', 'kind'],
   // Stored files (spec 11A): never a file name or anything from a file.
-  'file.uploaded': ['locationId', 'kind', 'sizeBytes'],
+  'file.uploaded': ['locationId', 'kind', 'sizeBytes', 'purpose', 'via'],
   'file.deleted': ['locationId', 'kind', 'reason'],
   'file.raw_deleted': ['locationId', 'kind'],
   'files.raw_deleted_all': ['locationId', 'count'],
@@ -39,22 +43,31 @@ export const AUDIT_DETAIL_KEYS = {
   'agent.question_answered': ['locationId', 'questionId', 'answer'],
   // U13B, forecast runs (spec 14.4): ids, the model version, the dates and the day count, never a figure.
   'forecast.imported': ['locationId', 'modelVersion', 'from', 'to', 'dayCount'],
-  'forecast.published': ['locationId', 'modelVersion', 'from', 'to', 'dayCount'],
+  'forecast.published': ['locationId', 'modelVersion', 'from', 'to', 'dayCount', 'via', 'calibrationId'],
   'forecast.withdrawn': ['locationId', 'modelVersion', 'from', 'to', 'dayCount'],
   'forecast.deleted': ['locationId', 'modelVersion', 'from', 'to', 'dayCount'],
+  // The forecast lab: ids, codes and counts, never a figure.
+  'calibration.requested': ['locationId', 'calibrationId', 'via', 'hasRegime'],
+  'calibration.finished': ['locationId', 'calibrationId', 'status', 'gate', 'failure', 'runId', 'heldOutWeeks'],
+  'org.forecasts_switched': ['on'],
   'view_as.started': ['targetUserId', 'targetEmail', 'reason', 'expiresAt'],
   'view_as.ended': ['endReason'],
+  // D25, open as admin: ids only. The grant is the target and the organization the event's orgId; no name, email or reason.
+  'open_as_admin.started': [],
+  'open_as_admin.ended': ['endReason'],
   'people.signed_out_everywhere': [],
   'person.deleted': ['userId'],
   'staff_action.not_applied': ['eventId', 'code'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type AuditAction = keyof typeof AUDIT_DETAIL_KEYS;
-export type AuditActorRole = 'superadmin' | 'org_admin' | 'member' | 'user';
+export type AuditActorRole = 'superadmin' | 'org_admin' | 'member' | 'user' | 'system';
 export type AuditTargetType =
   | 'org' | 'member' | 'request' | 'location' | 'upload' | 'note' | 'user' | 'grant' | 'conversation' | 'file'
   // U13B.
-  | 'forecast_run';
+  | 'forecast_run'
+  // The forecast lab.
+  | 'calibration';
 export type AuditDetails = Record<string, string | number | boolean | null>;
 
 export interface AuditEventFields {
@@ -78,7 +91,7 @@ function auditSchema(): Schema<AuditEventFields> {
     at: { type: Date, required: true },
     actorUserId: { type: String, required: true },
     actorEmail: { type: String, required: true },
-    actorRole: { type: String, required: true, enum: ['superadmin', 'org_admin', 'member', 'user'] },
+    actorRole: { type: String, required: true, enum: ['superadmin', 'org_admin', 'member', 'user', 'system'] },
     viewAsGrantId: { type: String, default: null },
     orgId: { type: Schema.Types.ObjectId, default: null },
     action: { type: String, required: true, enum: Object.keys(AUDIT_DETAIL_KEYS) },
@@ -117,7 +130,8 @@ export interface AuditEventRecord extends AuditEventInput {
 export interface AuditQuery {
   readonly orgId?: string;
   readonly actorUserId?: string;
-  readonly actorRole?: AuditActorRole;
+  /** One role, or any of several. */
+  readonly actorRole?: AuditActorRole | readonly AuditActorRole[];
   readonly action?: AuditAction;
   /** Every action but this one; ignored when `action` is set. */
   readonly excludeAction?: AuditAction;
@@ -233,7 +247,9 @@ export function createAuditEventStore(connection: Connection): AuditEventStore {
         const filter: Record<string, unknown> = {};
         if (query.orgId !== undefined) filter.orgId = query.orgId;
         if (query.actorUserId !== undefined) filter.actorUserId = query.actorUserId;
-        if (query.actorRole !== undefined) filter.actorRole = query.actorRole;
+        if (query.actorRole !== undefined) {
+          filter.actorRole = typeof query.actorRole === 'string' ? query.actorRole : trusted({ $in: [...query.actorRole] });
+        }
         if (query.action !== undefined) filter.action = query.action;
         else if (query.excludeAction !== undefined) filter.action = trusted({ $ne: query.excludeAction });
         return filter;

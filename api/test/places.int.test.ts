@@ -89,6 +89,15 @@ describe('details', () => {
     expect(fake.calls[0]?.url).toBe(`https://places.googleapis.com/v1/places/${PLACE_ID}?sessionToken=${sessionToken}`);
   });
 
+  it('details without a session token uses a version 4 UUID of its own', async () => {
+    fake.script({ kind: 'json', body: placeDetails(PLACE_ID, ADDRESS, usAddress({ locality: 'Hanover', state: 'NH' })) });
+    const res = await details({ placeId: PLACE_ID });
+    expect(res.status).toBe(200);
+    const url = fake.calls[0]?.url ?? '';
+    expect(url).toMatch(new RegExp(`/places/${PLACE_ID}\\?sessionToken=[0-9a-f-]{36}$`));
+    expect(url.split('sessionToken=')[1]).toMatch(UUID_V4);
+  });
+
   it('another US town has townId null; no usable town is town: null', async () => {
     fake.script(
       { kind: 'json', body: placeDetails(PLACE_ID, 'Norwich, VT, USA', usAddress({ locality: 'Norwich', state: 'VT' })) },
@@ -133,12 +142,12 @@ describe('validation: 400 invalid_request, and Google is not called', () => {
     expect(fake.calls).toHaveLength(2);
   });
 
-  it('details: a place id of 10 to 512 letters, digits, _ or -, and a required version 4 UUID', async () => {
+  it('details: a place id of 10 to 512 letters, digits, _ or -, and an optional version 4 UUID', async () => {
     const sessionToken = randomUUID();
     const bad: unknown[] = [
-      {}, { placeId: PLACE_ID }, { sessionToken }, { placeId: 'ChIJshort', sessionToken }, { placeId: 'x'.repeat(513), sessionToken },
+      {}, { sessionToken }, { placeId: 'ChIJshort', sessionToken }, { placeId: 'x'.repeat(513), sessionToken },
       { placeId: '../../places/ChIJabc', sessionToken }, { placeId: 'ChIJ abcdefgh', sessionToken }, { placeId: 'ChIJabcdefgh?x=1', sessionToken },
-      { placeId: PLACE_ID, sessionToken: 'not-a-uuid' },
+      { placeId: PLACE_ID, sessionToken: 'not-a-uuid' }, { placeId: PLACE_ID, sessionToken: null },
     ];
     for (const json of bad) expect({ json, ...(await errorOf(await details(json))) }).toEqual({ json, status: 400, error: 'invalid_request' });
     expect(fake.calls).toHaveLength(0);

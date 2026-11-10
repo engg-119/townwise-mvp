@@ -60,6 +60,8 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     await stores.chatProposals.removeForOrg(scope);
     // U9, TownwiseAI's questions.
     await stores.agentAnswers.removeForOrg(scope);
+    // The forecast lab: calibrations, before the runs.
+    await stores.calibrations.removeForOrg(scope);
     // U13B: forecast runs and their rows.
     await stores.forecasts.removeForOrg(scope);
     const deletedLocations = await stores.locations.removeForOrg(scope);
@@ -79,6 +81,7 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     // carry only the deleted organization's id.
     const lateDays = await stores.salesDays.removeForOrg(scope);
     await stores.chatUsage.removeForOrg(scope);
+    await stores.calibrations.removeForOrg(scope);
     // U13B: a staff forecast import already past its organization check can still write a run and rows.
     await stores.forecasts.removeForOrg(scope);
     return { deletedDays: firstDays + lateDays, deletedUploads, deletedNotes, deletedLocations, deletedSeats, redactedEvents };

@@ -10,13 +10,15 @@ const TOWN = { townId: 'hanover-nh', name: 'Hanover', state: 'NH' };
 
 export async function createOrg(
   server: Server,
-  opts: { name: string; status?: 'active' | 'suspended'; fromRequestId?: string },
+  opts: { name: string; status?: 'active' | 'suspended'; fromRequestId?: string; forecastsOn?: boolean },
 ): Promise<string> {
   const _id = new Types.ObjectId();
   await server.connection.collection('tw_orgs').insertOne({
     _id, name: opts.name, status: opts.status ?? 'active', createdAt: server.clock.now(), createdBy: 'fixture',
     fromRequestId: opts.fromRequestId === undefined ? null : new Types.ObjectId(opts.fromRequestId),
     suspendedAt: opts.status === 'suspended' ? server.clock.now() : null,
+    // G1: forecasts switched on, as staff do with the owner's agreement.
+    ...(opts.forecastsOn === true ? { forecasts: { on: true, at: server.clock.now(), by: 'fixture' } } : {}),
   });
   return _id.toHexString();
 }
@@ -95,6 +97,21 @@ export async function addGrant(
   return _id.toHexString();
 }
 
+/** An open-as-admin grant (D25) in the shape insertOpenAsAdmin writes: `kind`, the organization, no target and no reason. */
+export async function addOpenAsAdminGrant(
+  server: Server,
+  opts: { actorUserId: string; sessionId: string; orgId: string; startedAt?: Date; minutes?: number },
+): Promise<string> {
+  const _id = new Types.ObjectId();
+  const startedAt = opts.startedAt ?? server.clock.now();
+  await server.connection.collection('tw_view_as_grants').insertOne({
+    _id, kind: 'open_as_admin', actorUserId: opts.actorUserId, actorSessionId: opts.sessionId, activeSessionId: opts.sessionId,
+    orgId: new Types.ObjectId(opts.orgId), startedAt,
+    expiresAt: new Date(startedAt.getTime() + (opts.minutes ?? 60) * 60 * 1000), endedAt: null, endReason: null,
+  });
+  return _id.toHexString();
+}
+
 export async function memberDoc(server: Server, id: string): Promise<Record<string, unknown> | null> {
   return server.connection.collection('tw_members').findOne({ _id: new Types.ObjectId(id) });
 }
@@ -123,16 +140,19 @@ export async function addSalesDay(
   });
 }
 
-/** A tw_uploads record in the shape of spec 6.6. */
+/** A tw_uploads record in the shape of spec 6.6. Resolves its id. */
 export async function addUpload(
   server: Server,
-  opts: { orgId: string; locationId: string; uploadedAt: Date; status: 'applying' | 'applied' },
-): Promise<void> {
+  opts: { orgId: string; locationId: string; uploadedAt: Date; status: 'applying' | 'applied'; uploadedBy?: string; byStaff?: boolean },
+): Promise<string> {
+  const _id = new Types.ObjectId();
   await server.connection.collection('tw_uploads').insertOne({
-    orgId: new Types.ObjectId(opts.orgId), locationId: new Types.ObjectId(opts.locationId), uploadedBy: 'fixture',
+    _id, orgId: new Types.ObjectId(opts.orgId), locationId: new Types.ObjectId(opts.locationId), uploadedBy: opts.uploadedBy ?? 'fixture',
     uploadedAt: opts.uploadedAt, status: opts.status, dayCount: 1, inserted: 1, replaced: 0, kept: 0,
     firstDate: '2026-05-01', lastDate: '2026-05-01', hasGuests: true, hasNetSales: true,
+    ...(opts.byStaff === true ? { byStaff: true } : {}),
   });
+  return _id.toHexString();
 }
 
 /** A tw_notes record in the shape of spec 12. */

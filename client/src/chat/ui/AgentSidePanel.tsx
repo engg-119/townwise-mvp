@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { EstimatesAbout, ForecastRun } from '../../portal/estimates/api';
+import { trainedOnWords, type EstimatesAbout } from '../../portal/estimates/api';
 import { formatDate } from '../../portal/format';
 import type { LoadState } from '../../portal/hooks';
 import { Button } from '../../portal/ui/Button';
@@ -18,9 +18,9 @@ import { QuestionCard } from './QuestionCard';
 
 // The side panel (spec P25): Questions for you, What it's been doing, this month's budget, and How TownwiseAI
 // works. Every activity item is a real, dated event the server read from the location's own records; a kind this
-// client doesn't know shows as nothing. On desktop the four sit in the side column; below 1024px the page shows
-// Questions and Activity under its switch, each section on its own. How TownwiseAI works says whether Townwise has
-// a forecast for the location from GET .../estimates/about (F10), and opens the model card in a sheet.
+// client doesn't know shows as nothing. The page shows the four as Questions and activity: a column from 1024px, a
+// sheet below. How TownwiseAI works says whether Townwise has a forecast for the location from
+// GET .../estimates/about (F10), and opens the model card in a sheet.
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -61,7 +61,7 @@ export function activityLine(item: ActivityItem): string {
   }
 }
 
-export function QuestionsSection(props: {
+function QuestionsSection(props: {
   panel: AgentPanelState;
   locationName: string;
   readOnlyId: string | null;
@@ -103,7 +103,7 @@ export function QuestionsSection(props: {
   );
 }
 
-export function ActivitySection(props: { panel: AgentPanelState }): React.JSX.Element {
+function ActivitySection(props: { panel: AgentPanelState }): React.JSX.Element {
   const { state } = props.panel;
   let body: React.ReactNode;
   if (state.status === 'loading') body = <LoadingLine text="Loading activity" minHeight={80} />;
@@ -150,7 +150,7 @@ export function budgetLines(budget: Budget): { line: string; warning: string | n
   };
 }
 
-export function BudgetSection(props: { budget: Budget | null }): React.JSX.Element | null {
+function BudgetSection(props: { budget: Budget | null }): React.JSX.Element | null {
   if (props.budget === null) return null;
   const { line, warning } = budgetLines(props.budget);
   return (
@@ -162,10 +162,6 @@ export function BudgetSection(props: { budget: Budget | null }): React.JSX.Eleme
   );
 }
 
-const TRAINED_ON: Readonly<Record<ForecastRun['trainingSource'], string>> = {
-  files_from_owner: 'sales exports you sent Townwise',
-};
-
 /**
  * F10: How TownwiseAI works' forecast line, from GET .../estimates/about, so it says so by itself once staff publish a
  * forecast for the location. Null while that read is loading.
@@ -175,10 +171,10 @@ export function forecastLine(about: LoadState<EstimatesAbout>, ctx: ToolContext)
   if (about.status === 'failed') return 'Couldn’t check whether Townwise has a forecast for this location.';
   const { run } = about.data.forecast;
   if (run === null) return `Townwise has no forecast for this location yet, so TownwiseAI answers from ${readsLine({ ...ctx, hasForecast: false })}.`;
-  return `TownwiseAI also reads the forecast Townwise published: ${run.model.label}, trained on ${TRAINED_ON[run.trainingSource]} from ${formatDate(run.trainedFrom)} to ${formatDate(run.dataThrough)}, made ${formatDate(run.madeAt)}.`;
+  return `TownwiseAI also reads the forecast Townwise published: ${run.model.label}, trained on ${trainedOnWords(run.trainingSource)} from ${formatDate(run.trainedFrom)} to ${formatDate(run.dataThrough)}, made ${formatDate(run.madeAt)}.`;
 }
 
-export function HowItWorks(props: {
+function HowItWorks(props: {
   ctx: ToolContext;
   locationId: string;
   about: LoadState<EstimatesAbout>;

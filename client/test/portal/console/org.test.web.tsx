@@ -5,6 +5,7 @@ import { ACCESS, offline, refusal, viewAsMe, writes } from '../../helpers/portal
 import {
   auditEvent, CHEF_EMAIL, consoleApi, emailOf, MANAGER_EMAIL, member, orgDetail, OWNER_EMAIL, renderAt, type ConsoleApi,
 } from './helpers';
+import { choose } from '../../helpers/select';
 
 // P21 Organization detail: team edits, locations, suspend and reactivate, View as (C1) and delete with the typed
 // name (C7). docs/portal/spec.md 16.4, F5, F6, F8, F13.
@@ -20,6 +21,7 @@ function serve(api: ConsoleApi, detail: unknown): void {
   api.routes[`GET ${PATH}`] = () => detail;
   // U13B: the Forecasts section reads the organization's forecast runs.
   api.routes[`GET ${PATH}/forecast-runs`] = () => ({ runs: [] });
+  api.routes[`GET ${PATH}/calibrations`] = () => ({ forecasts: { on: false, at: null }, calibrations: [] });
 }
 
 function gets(api: ConsoleApi): number {
@@ -70,6 +72,7 @@ test('the header, the team, the locations as metadata only, recent activity, and
     'Hanover', 'Hanover, NH', '400', 'Jan 1, 2025', 'Feb 4, 2026', '2', 'Feb 5, 2026',
   ]);
   expect(screen.getByText('Sales figures and notes are visible only through View as.')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Open as admin' })).toBeNull();
 
   const activity = screen.getByRole('region', { name: 'Recent activity' });
   expect(within(activity).getByText(`Added ${CHEF_EMAIL} as member`)).toBeTruthy();
@@ -250,7 +253,7 @@ test('Add people: one per line or comma separated, the role, one result per addr
   expect(writes(api)).toEqual([]);
 
   fireEvent.change(field, { target: { value: `${added}\n${CHEF_EMAIL}, ${MANAGER_EMAIL}\nhost@example` } });
-  fireEvent.change(within(panel).getByRole('combobox', { name: 'Role' }), { target: { value: 'org_admin' } });
+  choose(within(panel).getByRole('combobox', { name: 'Role' }), 'Admin');
   fireEvent.click(within(panel).getByRole('button', { name: 'Add' }));
   expect(await within(panel).findByText(`${added}: Added. They can join the next time they continue with Google.`)).toBeTruthy();
   expect(within(panel).getByText(`${CHEF_EMAIL}: Already invited.`)).toBeTruthy();
@@ -327,6 +330,7 @@ describe('a change that saved, then the page couldn’t read the organization ag
     api.routes[`GET ${PATH}`] = () => (failing ? offline() : next);
     // U13B: the Forecasts section's read, which this failure leaves alone.
     api.routes[`GET ${PATH}/forecast-runs`] = () => ({ runs: [] });
+    api.routes[`GET ${PATH}/calibrations`] = () => ({ forecasts: { on: false, at: null }, calibrations: [] });
     return { fail: () => { failing = true; }, heal: (detail) => { failing = false; next = detail; } };
   }
 
@@ -533,7 +537,7 @@ test('U13B: the Forecasts section sits after the locations, says drafts stay hid
   serve(api, orgDetail());
   renderAt('/admin/orgs/o1', api);
   expect(await screen.findByRole('heading', { name: 'Forecasts' })).toBeTruthy();
-  expect(screen.getByText(`A forecast is a draft until you publish it. ${NAME}’s members and TownwiseAI see only published forecasts, never the model. Each import, publish, withdrawal and deletion is listed in ${NAME}’s Townwise staff activity.`)).toBeTruthy();
+  expect(screen.getByText(`A forecast is a draft until you publish it. While forecasts are on, a calibration that passes every check publishes itself. ${NAME}’s members and TownwiseAI see only published forecasts, never the model. Each import, publish, withdrawal and deletion is listed in ${NAME}’s Townwise staff activity.`)).toBeTruthy();
   expect(await screen.findByText('No forecast imported for Hanover.')).toBeTruthy();
   expect(screen.getByRole('heading', { name: 'Import a forecast' })).toBeTruthy();
   const headings = screen.getAllByRole('heading').map((heading) => heading.textContent);
