@@ -111,7 +111,10 @@ test('with history: the lead, this week with the calendar and past years, bar or
   expect(screen.getByText('Same week last year, Mon, Nov 3 to Sun, Nov 9, 2025. From all 7 days.')).toBeTruthy();
   expect(screen.getByText('Busiest last year: Sat, Nov 8, 2025.')).toBeTruthy();
   expect(screen.getByText('On the calendar this week: Sample game (Saturday).')).toBeTruthy();
-  expect(screen.getByText('Sample game')).toBeTruthy();
+  // On Saturday's row, and as the next event at a glance.
+  expect(screen.getAllByText('Sample game')).toHaveLength(2);
+  expect(screen.getByText('Sat, Nov 7, 2026, in 2 days')).toBeTruthy();
+  expect(screen.getByText('+10% against the same week last year (740), over all 7 days.')).toBeTruthy();
   expect(screen.getByText('Your note: Private event, more guests than usual')).toBeTruthy();
   expect(screen.getByText('A rehearsal dinner.')).toBeTruthy();
   expect(screen.getByText('Sat, Nov 8, 2025: 140 guests')).toBeTruthy();
@@ -163,6 +166,19 @@ test('with history: the lead, this week with the calendar and past years, bar or
   expect(reads.sort()).toEqual([AGENT, CALENDAR, PEOPLE, `${PATH}/notes`, `${PATH}/sales/history`].sort());
   expect(api.calls.filter((call) => call.method !== 'GET')).toEqual([]);
   for (const name of NO_STORE) expect(jest.mocked(SecureStore[name])).not.toHaveBeenCalled();
+});
+
+test('the month calendar opens a day when it is pressed', async () => {
+  await renderApp('/locations/l1', portal());
+  expect(await screen.findByRole('heading', { name: 'Today, Thu, Nov 5, 2026' })).toBeTruthy();
+  const veterans = screen.getByLabelText('Wed, Nov 11, 2026. Veterans Day.');
+  await fireEvent.press(veterans);
+  expect(screen.getByRole('heading', { name: 'Wed, Nov 11, 2026' })).toBeTruthy();
+  expect(screen.getAllByText('Veterans Day. Federal holiday.')).toHaveLength(2);
+  expect(screen.getByText('Wed, Nov 12, 2025: 100 guests')).toBeTruthy();
+  // A day after today has no figure of its own.
+  expect(screen.queryByText('This day')).toBeNull();
+  expect(screen.getByLabelText('Wed, Nov 11, 2026. Veterans Day.').props.accessibilityState).toMatchObject({ selected: true });
 });
 
 test('a term period shows once with its span and source; the one-day event takes the headline', async () => {

@@ -7,7 +7,7 @@ import { fetchCalendar, fetchSalesHistory, type Calendar, type SalesHistory } fr
 import { dayContext } from '../analytics/days';
 import { metricsWithData } from '../analytics/filters';
 import { byDate, decodeHistory } from '../analytics/history';
-import { homeCalendarRange, lastWeekComparison, lateWeekShare, leadLine, monthFacts, thisWeek, type HomeInput } from '../analytics/week';
+import { homeCalendarRange, lastWeekComparison, lateWeekShare, leadLine, monthFacts, nextEvent, thisWeek, type HomeInput } from '../analytics/week';
 import { useBreakpoint, useLoad } from '../hooks';
 import { fetchNotes, type Note } from '../locations/api';
 import { localToday } from '../locations/dates';
@@ -20,21 +20,24 @@ import { Actions, LinkButton } from '../ui/Button';
 import { ReadOnlyLine, StatusTag } from '../ui/feedback';
 import { Mono, Small } from '../ui/text';
 import { BarOrder } from './BarOrder';
+import { BlockRow, GUTTER } from './Block';
+import { Glance } from './Glance';
 import { HistoryCard } from './HistoryCard';
 import { LastWeek } from './LastWeek';
 import { HistoryStep, needsHistory } from './onboarding';
-import { ThisMonth } from './ThisMonth';
+import { MonthList, PastYears, ThisMonth, WhoIsInTown } from './ThisMonth';
 import { ThisWeek } from './ThisWeek';
 
-// P11 Home (/locations/[id], members; home.md 2, spec 16.3), built around the Monday decisions: what is on the
-// calendar this week and how the same week went before, the bar order (Planned), last week against the same week
-// last year, this month in town, and the location's history. Until forecasts exist, Home shows only history and
-// the calendar, never a guess: every figure is a sum, an average or a share of the location's own stored days, of a
-// past day. It reads three routes in parallel (sales history, notes, the town calendar), then on their own TownwiseAI's
-// questions (for the lead's count) and the month's people in town (in This month), and writes nothing, so view-as
-// shows it unchanged with its upload links disabled. "Today" is the device's date; weeks run Monday to
-// Sunday. While onboarding's needsHistory is true, its HistoryStep takes the place of the cards that need days, and
-// when it has read the history Home loads again.
+// P11 Home (/locations/[id], members; spec 16.3), a dashboard built around the Monday decisions. Under the lead, a
+// grid of blocks (Block.tsx), most practical first: At a glance (this week last year, last week, the next event);
+// This week in {Town}, day by day; This month, a calendar you can open a day of, beside Last week; the month's
+// events beside Who's in town; this month in past years beside the bar order (Planned); and the location's history. Until forecasts exist, Home
+// shows only history and the calendar, never a guess: every figure is a sum, an average or a share of the
+// location's own stored days, of a past day. It reads three routes in parallel (sales history, notes, the town
+// calendar), then on their own TownwiseAI's questions (for the lead's count) and the month's people in town (in Who's
+// in town), and writes nothing, so view-as shows it unchanged with its upload links disabled. "Today" is the
+// device's date; weeks run Monday to Sunday. While onboarding's needsHistory is true, its HistoryStep takes the
+// place of the blocks that need days, and when it has read the history Home loads again.
 
 const READ_ONLY_ID = 'home-ro';
 
@@ -73,17 +76,6 @@ function QuestionsLink(props: { locationId: string }): React.JSX.Element | null 
   return <LinkButton href={locationHref(locationId, 'agent')} label={questionsLabel(state.data.questions.length)} />;
 }
 
-/** Two cards side by side from 1024px (columns `left` to `right`), one column below, ruled from the block above. */
-function Row(props: { left: React.ReactNode; right: React.ReactNode; split: [number, number] }): React.JSX.Element {
-  const { desktop } = useBreakpoint();
-  return (
-    <View style={[styles.ruled, desktop ? styles.row : styles.stacked]}>
-      <View style={desktop ? { flex: props.split[0], minWidth: 0 } : null}>{props.left}</View>
-      {props.right === null ? null : <View style={desktop ? { flex: props.split[1], minWidth: 0 } : null}>{props.right}</View>}
-    </View>
-  );
-}
-
 function HomeView(props: {
   data: Data; today: string; locationId: string; needs: boolean; readOnlyId: string | null; readOnlyText: string; onHistory: () => void;
 }): React.JSX.Element {
@@ -100,12 +92,13 @@ function HomeView(props: {
   const lastWeek = useMemo(() => lastWeekComparison(input), [input]);
   const share = useMemo(() => lateWeekShare(input), [input]);
   const facts = useMemo(() => monthFacts(input), [input]);
+  const next = useMemo(() => nextEvent(today, context), [today, context]);
   const hasDays = days.length > 0;
   const { desktop } = useBreakpoint();
 
   return (
-    <View>
-      {readOnlyId === null ? null : <View style={styles.readOnly}><ReadOnlyLine text={props.readOnlyText} nativeID={readOnlyId} /></View>}
+    <View style={styles.page}>
+      {readOnlyId === null ? null : <ReadOnlyLine text={props.readOnlyText} nativeID={readOnlyId} />}
       <View style={[styles.lead, desktop ? styles.leadWide : null]}>
         <View style={styles.leadText}>
           <Mono>{leadLine(history.coverage.lastDate, calendar)}</Mono>
@@ -114,32 +107,49 @@ function HomeView(props: {
         </View>
         <Actions><LinkButton variant="outline" href={locationHref(locationId, 'agent')} label="Ask TownwiseAI" /></Actions>
       </View>
-      {needs ? <View style={styles.step}><HistoryStep onDone={props.onHistory} /></View> : null}
-      <View style={styles.block}>
-        <ThisWeek week={week} calendar={calendar} metric={metric} history={hasDays} />
-      </View>
-      {needs ? null : (
-        <Row
-          split={[7, 5]}
-          left={<BarOrder share={share} metric={metric} />}
-          right={<LastWeek comparison={lastWeek} metric={metric} locationId={locationId} readOnlyId={readOnlyId} />}
+      {needs ? <HistoryStep onDone={props.onHistory} /> : null}
+      {needs || !hasDays ? null : (
+        <Glance
+          week={week}
+          lastWeek={lastWeek}
+          next={next}
+          calendar={calendar}
+          until={homeCalendarRange(today).to}
+          metric={metric}
+          locationId={locationId}
+          readOnlyId={readOnlyId}
         />
       )}
-      <Row
-        split={[8, 4]}
-        left={<ThisMonth today={today} context={context} calendar={calendar} facts={facts} metric={metric} locationId={locationId} />}
-        right={needs ? null : (
-          <HistoryCard
-            coverage={history.coverage}
-            uploads={history.uploads}
-            days={days}
-            context={context}
-            metric={metric}
-            locationId={locationId}
-            readOnlyId={readOnlyId}
-          />
-        )}
+      <ThisWeek week={week} calendar={calendar} metric={metric} history={hasDays} />
+      <BlockRow
+        items={[
+          { key: 'month', span: 8, node: <ThisMonth input={input} calendar={calendar} history={hasDays} /> },
+          { key: 'last', span: 4, node: needs ? null : <LastWeek comparison={lastWeek} metric={metric} locationId={locationId} readOnlyId={readOnlyId} /> },
+        ]}
       />
+      <BlockRow
+        items={[
+          { key: 'list', span: 6, node: <MonthList today={today} context={context} /> },
+          { key: 'people', span: 6, node: <WhoIsInTown today={today} calendar={calendar} locationId={locationId} /> },
+        ]}
+      />
+      <BlockRow
+        items={[
+          { key: 'years', span: 6, node: facts.length === 0 ? null : <PastYears today={today} facts={facts} metric={metric} /> },
+          { key: 'bar', span: 6, node: needs ? null : <BarOrder share={share} metric={metric} /> },
+        ]}
+      />
+      {needs ? null : (
+        <HistoryCard
+          coverage={history.coverage}
+          uploads={history.uploads}
+          days={days}
+          context={context}
+          metric={metric}
+          locationId={locationId}
+          readOnlyId={readOnlyId}
+        />
+      )}
     </View>
   );
 }
@@ -176,17 +186,10 @@ export function Home(): React.JSX.Element {
   );
 }
 
-const c = theme.color;
-
 const styles = StyleSheet.create({
-  readOnly: { marginBottom: theme.space[4] },
-  lead: { gap: theme.space[4] },
+  page: { gap: GUTTER },
+  lead: { gap: theme.space[4], marginBottom: theme.space[4] },
   leadWide: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', columnGap: theme.space.gutter },
   leadText: { gap: theme.space[2], flexShrink: 1, minWidth: 0 },
   tagline: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 12, rowGap: 8 },
-  step: { marginTop: theme.space[8] },
-  block: { marginTop: theme.space[8] },
-  ruled: { marginTop: theme.space[8], paddingTop: theme.space[8], borderTopWidth: 1, borderTopColor: c.border },
-  row: { flexDirection: 'row', alignItems: 'flex-start', columnGap: theme.space.gutter },
-  stacked: { gap: theme.space[8] },
 });
