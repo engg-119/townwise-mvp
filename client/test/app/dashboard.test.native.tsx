@@ -126,7 +126,8 @@ test('Add location says when the name is taken or the limit is reached', async (
   await fireEvent.press(screen.getByLabelText('Town'));
   await fireEvent.press(screen.getByRole('radio', { name: 'Another town' }));
   await fireEvent.changeText(screen.getByLabelText('Town name'), 'Norwich');
-  await fireEvent.changeText(screen.getByLabelText('State'), 'vt');
+  await fireEvent.press(screen.getByLabelText('State'));
+  await fireEvent.press(screen.getByRole('radio', { name: 'Vermont' }));
   await fireEvent.press(screen.getByRole('button', { name: 'Add location' }));
   expect(await screen.findByText('Another location already uses that name.')).toBeTruthy();
   expect(writes(api)[0]?.body).toEqual({ name: 'Main Street Bar', town: { townId: null, name: 'Norwich', state: 'VT' } });

@@ -5,6 +5,7 @@ import { ACCESS, offline, refusal, viewAsMe, writes } from '../../helpers/portal
 import {
   auditEvent, CHEF_EMAIL, consoleApi, emailOf, MANAGER_EMAIL, member, orgDetail, OWNER_EMAIL, renderAt, type ConsoleApi,
 } from './helpers';
+import { choose } from '../../helpers/select';
 
 // P21 Organization detail: team edits, locations, suspend and reactivate, View as (C1) and delete with the typed
 // name (C7). docs/portal/spec.md 16.4, F5, F6, F8, F13.
@@ -252,7 +253,7 @@ test('Add people: one per line or comma separated, the role, one result per addr
   expect(writes(api)).toEqual([]);
 
   fireEvent.change(field, { target: { value: `${added}\n${CHEF_EMAIL}, ${MANAGER_EMAIL}\nhost@example` } });
-  fireEvent.change(within(panel).getByRole('combobox', { name: 'Role' }), { target: { value: 'org_admin' } });
+  choose(within(panel).getByRole('combobox', { name: 'Role' }), 'Admin');
   fireEvent.click(within(panel).getByRole('button', { name: 'Add' }));
   expect(await within(panel).findByText(`${added}: Added. They can join the next time they continue with Google.`)).toBeTruthy();
   expect(within(panel).getByText(`${CHEF_EMAIL}: Already invited.`)).toBeTruthy();

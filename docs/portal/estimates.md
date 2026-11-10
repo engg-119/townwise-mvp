@@ -5,7 +5,7 @@ People in town, the town-local "today" TownwiseAI reads, the town calendar and p
 ## 1. What exists, and what it honestly supports
 
 - **No forecast is published.** No model runs in the product, and none ever will in the API: staff import a run's outputs and publish it (section 8). Until a run is published for a location, the model card says so with an **In progress** tag, and `get_forecast` says "Townwise has no forecast for this location yet." Owner decision (2026-11-05): Sawtooth's frozen v3 forecast may be imported and published once Sawtooth is an organization in Townwise and the owner confirms its consent; nothing is published by this build.
-- **Hanover's calendar** is seeded from the committed public `modeling/dartmouth_calendar_2025_2026.csv` (13.1), so its term state is known from winter 2025 to fall 2026 finals. Other towns have key dates and holidays only.
+- **Hanover's calendar** is seeded from the committed public `modeling/dartmouth_calendar_2025_2026.csv` (13.1) and extended from the registrar's 2026-27 and 2027-28 key dates and Dartmouth's five-year calendar, so its term state is known from winter 2025 to fall 2027 finals. Other towns have key dates and holidays only.
 - **No headcount input** (residents, students in college housing, enrollment, whether housing closes between terms, event attendance, visitors) is researched for any town (owner decision, 2026-11-05). `api/src/people-in-town/sources.ts` is committed empty; every headcount is null with its reason, and every surface says Townwise can't put a number on it yet.
 
 Rules: a headcount only when every input has a stored source; every estimate a range; no free text from a model or a partner file; labels come from code and the public calendar.
@@ -90,7 +90,7 @@ U13B, `get_forecast`: the location's published forecast ranges, code-made reason
 
 ## 7. Known gaps
 
-- Hanover's calendar has no winter 2027 classes entry, so from Nov 26, 2026 its term state is `unknown` (the break is not derived). Adding the entry, with its registrar source, is a calendar data change (13.1).
+- Hanover's calendar ends with fall 2027 finals, so from Nov 25, 2027 its term state is `unknown`. Dartmouth's five-year calendar lists Green Key, Family Weekend and orientation for 2027 without dates, so they are not entered yet. Adding either is a calendar data change (13.1).
 - Days between a term's last class and its first exam read `unknown`.
 - U13B: Home and Analytics show no forecast yet, even with a published run (spec 14.2 build note); the model card and TownwiseAI do. A `Provenance` kind for forecasts is not built; the model card states the run's facts in its own lines.
 - U13B: `weeksScored` (`model.md` 2.6, a separate list of scored weeks) is not built. A week row in a forecast read carries its own `actual` and `inRange` once every open day has passed and none was booked, which is all the model card and TownwiseAI use; a list across all of a run's weeks waits for a page that needs it.

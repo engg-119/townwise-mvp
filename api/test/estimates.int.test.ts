@@ -140,7 +140,7 @@ describe('GET /api/org/locations/:locationId/estimates/about', () => {
       location: { name: 'Hanover Room', town: { name: 'Hanover', state: 'NH' } },
       today: { date: '2026-06-01', weekday: 'Mon', timeZone: 'America/New_York', approximate: false },
       forecast: { run: null, live: null },
-      calendar: { researched: true, covers: { from: '2025-01-06', to: '2027-06-13' } },
+      calendar: { researched: true, covers: { from: '2025-01-06', to: '2027-11-24' } },
       people: { headcountInputs: [], sources: [] },
     });
   });

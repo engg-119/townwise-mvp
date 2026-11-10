@@ -7,8 +7,7 @@ import { isGroup, labelOf, type SelectOption, type SelectProps } from './selectT
 import { Button } from './Button';
 
 // The select on iOS and Android: a FormField-styled control that opens the options in a sheet, grouped as the
-// web <select>'s optgroups are (Select.web.tsx). Nothing animates. Under view-as it shows its value and does
-// not open.
+// web list's groups are (Select.web.tsx). Nothing animates. Under view-as it shows its value and does not open.
 
 export function Select(props: SelectProps): React.JSX.Element {
   const fieldIds = useFieldIds();

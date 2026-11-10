@@ -6,7 +6,7 @@ export type { SelectGroup, SelectOption };
 export interface SelectProps extends FieldChrome {
   value: string;
   onChange: (value: string) => void;
-  /** Options, or groups of options (`<optgroup>`), in order. */
+  /** Options, or labelled groups of options, in order. */
   items: readonly (SelectOption | SelectGroup)[];
   /** A first, empty choice ("Choose a town"), with the value ''. */
   placeholder?: string;

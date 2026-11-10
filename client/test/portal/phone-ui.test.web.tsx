@@ -238,10 +238,13 @@ test('a select ends a long choice with an ellipsis instead of cutting it off (th
       onChange={() => undefined}
     />,
   );
-  const select = screen.getByRole('combobox', { name: 'Location' });
-  expect(select.style.textOverflow).toBe('ellipsis');
-  expect(select.style.whiteSpace).toBe('nowrap');
-  expect(select.style.overflow).toBe('hidden');
+  // The shown choice is the combobox's first child; it carries the ellipsis.
+  const shown = screen.getByRole('combobox', { name: 'Location' }).firstElementChild;
+  if (!(shown instanceof HTMLElement)) throw new Error('the select shows no choice');
+  expect(shown.textContent).toContain('The Old Mill Tavern');
+  expect(shown.style.textOverflow).toBe('ellipsis');
+  expect(shown.style.whiteSpace).toBe('nowrap');
+  expect(shown.style.overflow).toBe('hidden');
 });
 
 test('the portal’s stylesheet sets grayscale antialiasing on its root, as the boards do, and adds no script', () => {

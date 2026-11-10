@@ -12,6 +12,7 @@ import {
   ACCESS, deferred, EMAIL, fakePortalApi, meOf, openAsAdminMe, orgOf, refusal, STAFF_EMAIL, staffMe, VERIFIED_UNTIL, viewAsMe, writes,
   type FakePortalApi,
 } from '../helpers/portal';
+import { choicesOf, choose, groupsOf } from '../helpers/select';
 
 class ResizeObserverPolyfill {
   observe(): void { return undefined; }
@@ -70,7 +71,7 @@ test('the client app marks where you are in the top bar; the header names the lo
   expect(screen.getByRole('link', { name: 'Location settings' }).getAttribute('href')).toBe('/locations/l1/settings');
   // The location switcher is a real select, labelled “Location”; the sections then open the other location.
   const switcher = screen.getByRole('combobox', { name: 'Location' });
-  fireEvent.change(switcher, { target: { value: 'l2' } });
+  choose(switcher, 'River Grill');
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l2/notes'); });
   expect(await screen.findByText('River Grill, Norwich, VT')).toBeTruthy();
   expect(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Home' }).getAttribute('href')).toBe('/locations/l2');
@@ -247,8 +248,8 @@ test('Request access on web: the Town field is a select grouped as the homepage 
   api.answers['/api/access-requests'] = () => meOf(ACCESS.pending);
   renderAt('/request-access', api);
   const town = await screen.findByRole('combobox', { name: 'Town' });
-  expect([...town.querySelectorAll('optgroup')].map((group) => group.getAttribute('label'))).toEqual(['College towns', 'Seasonal and event towns']);
-  expect([...town.querySelectorAll('option')].map((option) => option.textContent).at(-1)).toBe('Another town');
+  expect(groupsOf(town)).toEqual(['College towns', 'Seasonal and event towns']);
+  expect(choicesOf(town).at(-1)).toBe('Another town');
   fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
   const orgName = screen.getByRole('textbox', { name: 'Organization name' });
   expect(orgName.getAttribute('aria-invalid')).toBe('true');
@@ -257,7 +258,7 @@ test('Request access on web: the Town field is a select grouped as the homepage 
   fireEvent.change(orgName, { target: { value: 'Sample Diner' } });
   fireEvent.change(screen.getByRole('textbox', { name: 'Your name' }), { target: { value: 'Pat' } });
   fireEvent.change(screen.getByRole('textbox', { name: 'Your role' }), { target: { value: 'Owner' } });
-  fireEvent.change(town, { target: { value: 'ithaca-ny' } });
+  choose(town, 'Ithaca, NY');
   fireEvent.change(screen.getByRole('textbox', { name: 'Number of locations' }), { target: { value: '2' } });
   fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
   await waitFor(() => { expect(window.location.pathname).toBe('/waiting'); });

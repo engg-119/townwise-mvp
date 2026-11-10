@@ -7,6 +7,7 @@ import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
 import { ACCESS, EMAIL, fakePortalApi, meOf, orgOf, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
 import { TEAM, withRoutes } from './fixtures';
+import { choose } from '../../helpers/select';
 
 // Team on web: the labels, helpers and read-only line are tied by id, and disabled controls stay focusable
 // (aria-disabled, never the disabled attribute), as spec 15.7 asks.
@@ -53,7 +54,7 @@ test('the add form: labelled fields with their helpers, a real select, and the r
   expect(describedText(role)).toEqual(['Everyone you add at once gets this role. You can change it on any row below.']);
   expect(screen.getByRole('region', { name: 'Team members and invited addresses' })).toBeTruthy();
   fireEvent.change(emails, { target: { value: 'cook@example.com' } });
-  fireEvent.change(role, { target: { value: 'org_admin' } });
+  choose(role, 'Admin');
   fireEvent.click(screen.getByRole('button', { name: 'Add' }));
   const results = await screen.findByRole('status', { name: 'Results of adding addresses' });
   expect(within(results).getByText('Added. They can join the next time they continue with Google.')).toBeTruthy();

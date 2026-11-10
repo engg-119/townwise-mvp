@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-libra
 import type { OrgDetail, OrgLocation } from '../../../src/portal/console/schemas';
 import { GOOGLE_SOURCE, PLACES_SOURCE } from '../../../src/portal/places/PlaceCard';
 import { openAsAdminMe, refusal } from '../../helpers/portal';
+import { choicesOf, choose } from '../../helpers/select';
 import { installPlaces } from '../onboarding/places-fakes';
 import { consoleApi, emailOf, member, orgDetail, renderAt, type ConsoleApi } from './helpers';
 
@@ -117,7 +118,7 @@ test('Add a location sends the setup route, reads the organization again, and st
   };
   renderAt('/admin/orgs/o1', api);
   fireEvent.change(await screen.findByRole('textbox', { name: 'Name' }), { target: { value: ' Hanover ' } });
-  fireEvent.change(screen.getByRole('combobox', { name: 'Town' }), { target: { value: 'hanover-nh' } });
+  choose(screen.getByRole('combobox', { name: 'Town' }), 'Hanover, NH');
   await click('Add location');
   expect(await screen.findByText('Added Hanover.')).toBeTruthy();
   expect(setupWrites(api)).toEqual([{ method: 'POST', path: SETUP, body: { name: 'Hanover', town: { townId: 'hanover-nh' } } }]);
@@ -216,7 +217,7 @@ test('a location name another location uses is said under the field, as on P10',
   api.routes[`POST ${SETUP}`] = () => refusal(409, 'location_name_taken');
   renderAt('/admin/orgs/o1', api);
   fireEvent.change(await screen.findByRole('textbox', { name: 'Name' }), { target: { value: 'Hanover' } });
-  fireEvent.change(screen.getByRole('combobox', { name: 'Town' }), { target: { value: 'hanover-nh' } });
+  choose(screen.getByRole('combobox', { name: 'Town' }), 'Hanover, NH');
   await click('Add location');
   expect(await screen.findByText('Another location already uses that name.')).toBeTruthy();
   expect(gets(api)).toBe(1);
@@ -356,7 +357,7 @@ test('409 org_not_in_setup: the page reads again without the panel and says some
   };
   renderAt('/admin/orgs/o1', api);
   fireEvent.change(await screen.findByRole('textbox', { name: 'Name' }), { target: { value: 'Lebanon' } });
-  fireEvent.change(screen.getByRole('combobox', { name: 'Town' }), { target: { value: 'hanover-nh' } });
+  choose(screen.getByRole('combobox', { name: 'Town' }), 'Hanover, NH');
   await click('Add location');
   expect(await screen.findByText(CLOSED)).toBeTruthy();
   expect(screen.queryByRole('heading', { name: HEADING })).toBeNull();
@@ -567,7 +568,7 @@ test('the staff upload has no location column, so no cell of the file ever shows
   expect(screen.queryByRole('combobox', { name: 'Location column (optional)' })).toBeNull();
   expect(screen.queryByRole('combobox', { name: /^Which value is/ })).toBeNull();
   // The pickers name the columns, never their cells.
-  expect([...screen.getByRole<HTMLSelectElement>('combobox', { name: 'Guests' }).options].map((option) => option.text)).toEqual([
+  expect(choicesOf(screen.getByRole('combobox', { name: 'Guests' }))).toEqual([
     'Not in this file', 'Business Date: dates', 'Customer: text', 'Guest Count: numbers', 'Net Sales: numbers', 'Server: text',
   ]);
   for (const cell of CELLS) expect(pageText()).not.toContain(cell);
@@ -587,7 +588,7 @@ test('a header name that reads as a value shows as an unnamed column, never as t
   serve(api, () => inSetup([hanover()]));
   renderAt('/admin/orgs/o1', api);
   await toMatch(['Business Date,Guest Count,98765.43', '2025-03-04,4321,87654.32'].join('\n'));
-  expect([...screen.getByRole<HTMLSelectElement>('combobox', { name: 'Net sales' }).options].map((option) => option.text)).toEqual([
+  expect(choicesOf(screen.getByRole('combobox', { name: 'Net sales' }))).toEqual([
     'Not in this file', 'Business Date: dates', 'Guest Count: numbers', 'Unnamed (column 3): numbers',
   ]);
   for (const cell of CELLS) expect(pageText()).not.toContain(cell);
