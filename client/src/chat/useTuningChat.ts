@@ -43,6 +43,8 @@ export interface ProposalCard {
 }
 
 export type MessagePart =
+  /** The reply's thinking summary, as it streamed (or as it was stored): shown in the timeline and under "Worked for". */
+  | { type: 'thinking'; key: string; text: string }
   | { type: 'text'; key: string; text: string }
   | { type: 'tools'; key: string; steps: ToolStep[] }
   | { type: 'proposal'; key: string; card: ProposalCard }
@@ -72,6 +74,13 @@ export interface ChatMessage {
   next: string[] | null;
   /** The turn a reply streamed from: what Try again sends again. Null for a message read from the server. */
   request: TurnRequest | null;
+  /**
+   * A reply's time worked, in ms since the epoch: from the person sending the message to the reply's end. A streaming
+   * reply has only `startedAt`; a stored one has both (from the stored times); null when not known, such as a
+   * regenerated reply read back from the server, whose start was not stored.
+   */
+  startedAt: number | null;
+  endedAt: number | null;
 }
 
 /** The path a conversation shows: its messages, every node, and the path's leaf. */
@@ -239,8 +248,8 @@ function settleCards(message: ChatMessage, stored: 'kept' | 'lost'): ChatMessage
   };
 }
 
-function endLive(state: TuningChatState, end: Pick<ChatMessage, 'state' | 'note'>): ChatMessage[] {
-  return withLive(state, (message) => settleCards({ ...message, ...end }, 'lost'));
+function endLive(state: TuningChatState, end: Pick<ChatMessage, 'state' | 'note'>, now: number): ChatMessage[] {
+  return withLive(state, (message) => settleCards({ ...message, ...end, endedAt: now }, 'lost'));
 }
 
 /** A regenerate that saved nothing: the earlier reply and its leaf come back in the new one's place. */
@@ -277,28 +286,36 @@ function withTool(message: ChatMessage, event: Extract<ChatEvent, { type: 'tool'
   return { ...message, parts: [...message.parts, { type: 'tools', key, steps: [step] }] };
 }
 
+function withThinking(message: ChatMessage, delta: string, key: string): ChatMessage {
+  const last = message.parts.at(-1);
+  if (last?.type === 'thinking') return { ...message, parts: [...message.parts.slice(0, -1), { ...last, text: last.text + delta }] };
+  return { ...message, parts: [...message.parts, { type: 'thinking', key, text: delta }] };
+}
+
 function withText(message: ChatMessage, delta: string, key: string): ChatMessage {
   const last = message.parts.at(-1);
   if (last?.type === 'text') return { ...message, parts: [...message.parts.slice(0, -1), { ...last, text: last.text + delta }] };
   return { ...message, parts: [...message.parts, { type: 'text', key, text: delta }] };
 }
 
+/** Whether anything but its thinking summary arrived: a reply with only that is nothing the person would keep. */
 function hasContent(message: ChatMessage): boolean {
-  return message.parts.length > 0;
+  return message.parts.some((part) => part.type !== 'thinking');
 }
 
 function blankMessage(key: string, role: ChatMessage['role']): ChatMessage {
   return {
     key, role, parts: [], state: 'complete', note: null, nodeId: null, parentId: null, feedback: null, ratingError: null, next: null, request: null,
+    startedAt: null, endedAt: null,
   };
 }
 
 /** A turn's new pair: the person's message under the node the request names, and the reply that streams. */
-function turnPair(action: { content: string; userKey: string; replyKey: string; request: TurnRequest }): ChatMessage[] {
+function turnPair(action: { content: string; userKey: string; replyKey: string; request: TurnRequest }, now: number): ChatMessage[] {
   const parentId = 'parentId' in action.request ? action.request.parentId ?? null : null;
   return [
     { ...blankMessage(action.userKey, 'user'), parentId, parts: [{ type: 'text', key: `${action.userKey}t`, text: action.content }] },
-    { ...blankMessage(action.replyKey, 'assistant'), state: 'streaming', request: action.request },
+    { ...blankMessage(action.replyKey, 'assistant'), state: 'streaming', request: action.request, startedAt: now },
   ];
 }
 
@@ -306,7 +323,8 @@ function shownState(state: TuningChatState, shown: ShownPath): TuningChatState {
   return { ...state, messages: shown.messages, tree: shown.tree, leafId: shown.leafId };
 }
 
-export function chatReducer(state: TuningChatState, action: ChatAction): TuningChatState {
+/** `now` (ms since the epoch) stamps when a reply starts and ends. */
+export function chatReducer(state: TuningChatState, action: ChatAction, now: number): TuningChatState {
   switch (action.type) {
     case 'load':
       return { ...initialChatState(), draft: state.draft };
@@ -342,7 +360,7 @@ export function chatReducer(state: TuningChatState, action: ChatAction): TuningC
         ...state, error: null, streaming: true,
         draft: state.draft.trim() === action.content ? '' : state.draft,
         turn: { kind: 'send', nodes: null, earlier: null },
-        messages: [...state.messages, ...turnPair(action)],
+        messages: [...state.messages, ...turnPair(action, now)],
       };
     case 'edit': {
       // The edited message and everything after it go; the edit hangs under the edited message's parent.
@@ -352,7 +370,7 @@ export function chatReducer(state: TuningChatState, action: ChatAction): TuningC
         ...state, error: null, streaming: true,
         leafId: 'parentId' in action.request ? action.request.parentId ?? null : null,
         turn: { kind: 'edit', nodes: null, earlier: null },
-        messages: [...state.messages.slice(0, at), ...turnPair(action)],
+        messages: [...state.messages.slice(0, at), ...turnPair(action, now)],
       };
     }
     case 'regenerate': {
@@ -363,24 +381,24 @@ export function chatReducer(state: TuningChatState, action: ChatAction): TuningC
         turn: { kind: 'regenerate', nodes: null, earlier: { message: earlier, leafId: state.leafId } },
         messages: [
           ...state.messages.slice(0, -1),
-          { ...blankMessage(action.newKey, 'assistant'), state: 'streaming', parentId: earlier.parentId, request: action.request },
+          { ...blankMessage(action.newKey, 'assistant'), state: 'streaming', parentId: earlier.parentId, request: action.request, startedAt: now },
         ],
       };
     }
     case 'event':
-      return applyEvent(state, action.event, action.key, action.at);
+      return applyEvent(state, action.event, action.key, action.at, now);
     case 'ended': {
       const cut = state.messages.some((message) => message.state === 'streaming');
       if (cut && state.turn?.earlier) return { ...putBack(state, state.turn.earlier, REGENERATE_FAILED), streaming: false };
       return {
         ...state, streaming: false, turn: null,
         error: cut ? CUT_OFF : state.error,
-        messages: endLive(state, { state: 'failed', note: NOT_SAVED }),
+        messages: endLive(state, { state: 'failed', note: NOT_SAVED }, now),
       };
     }
     case 'stopped':
       if (state.turn?.earlier) return { ...putBack(state, state.turn.earlier, REGENERATE_FAILED), streaming: false };
-      return { ...state, streaming: false, turn: null, messages: endLive(state, { state: 'stopped', note: STOPPED }) };
+      return { ...state, streaming: false, turn: null, messages: endLive(state, { state: 'stopped', note: STOPPED }, now) };
     case 'failed': {
       const at = state.messages.findIndex((message) => message.state === 'streaming');
       const live = state.messages[at];
@@ -400,7 +418,7 @@ export function chatReducer(state: TuningChatState, action: ChatAction): TuningC
           messages: state.messages.filter((_, index) => index !== at && index !== at - 1),
         };
       }
-      return { ...base, messages: endLive(state, { state: 'failed', note: NOT_SAVED }) };
+      return { ...base, messages: endLive(state, { state: 'failed', note: NOT_SAVED }, now) };
     }
     case 'discard':
       // The server kept no conversation for this id: the next send starts a new one instead of getting a 404.
@@ -478,7 +496,7 @@ function savedTurn(state: TuningChatState, event: Extract<ChatEvent, { type: 'do
   };
 }
 
-function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: string): TuningChatState {
+function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: string, now: number): TuningChatState {
   switch (event.type) {
     case 'conversation': {
       const known = state.conversations.some((conversation) => conversation.id === event.id);
@@ -491,6 +509,8 @@ function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: s
     }
     case 'text':
       return { ...state, messages: withLive(state, (message) => withText(message, event.delta, key)) };
+    case 'thinking':
+      return { ...state, messages: withLive(state, (message) => withThinking(message, event.delta, key)) };
     case 'tool':
       // propose_note, show_visual and suggest_next show as their card, visual and next questions.
       if (isHiddenTool(event.name)) return state;
@@ -508,13 +528,13 @@ function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: s
       const budget = event.stopReason === 'budget' && state.budget !== null ? { ...state.budget, exhausted: true } : state.budget;
       const saved = SAVED_STOP_REASONS.includes(event.stopReason);
       if (!saved && state.turn?.earlier) return putBack({ ...state, budget }, state.turn.earlier, REGENERATE_FAILED);
-      const complete = (message: ChatMessage): ChatMessage => settleCards({ ...message, state: 'complete', note: doneNote(event.stopReason) }, saved ? 'kept' : 'lost');
+      const complete = (message: ChatMessage): ChatMessage => settleCards({ ...message, state: 'complete', note: doneNote(event.stopReason), endedAt: now }, saved ? 'kept' : 'lost');
       if (saved) return savedTurn({ ...state, budget }, event, complete);
       return { ...state, budget, turn: null, messages: withLive(state, complete) };
     }
     case 'error':
       if (state.turn?.earlier) return putBack(state, state.turn.earlier, REGENERATE_FAILED);
-      return { ...state, error: streamErrorText(event.code), turn: null, messages: endLive(state, { state: 'failed', note: NOT_SAVED }) };
+      return { ...state, error: streamErrorText(event.code), turn: null, messages: endLive(state, { state: 'failed', note: NOT_SAVED }, now) };
   }
 }
 
@@ -620,12 +640,12 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
   const acting = useRef(new Set<string>());
   const ratings = useRef(new Map<string, number>());
   const keys = useRef(0);
-  // The text that arrived since the last draw, and the timer that draws it.
-  const buffer = useRef<{ text: string; timer: ReturnType<typeof setTimeout> | null }>({ text: '', timer: null });
+  // The text (or thinking summary) that arrived since the last draw, and the timer that draws it.
+  const buffer = useRef<{ text: string; kind: 'text' | 'thinking'; timer: ReturnType<typeof setTimeout> | null }>({ text: '', kind: 'text', timer: null });
 
   const dispatch = useCallback((action: ChatAction): void => {
     const before = latest.current;
-    const after = chatReducer(before, action);
+    const after = chatReducer(before, action, Date.now());
     latest.current = after;
     setState(after);
     // The composer's text is kept under the open conversation's key (drafts.ts). Opening, starting a new one or
@@ -655,7 +675,7 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     if (pending.text === '') return;
     const delta = pending.text;
     pending.text = '';
-    dispatch({ type: 'event', event: { type: 'text', delta }, key: nextKey(), at: '' });
+    dispatch({ type: 'event', event: { type: pending.kind, delta }, key: nextKey(), at: '' });
   }
 
   useEffect(() => {
@@ -701,7 +721,10 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     let saved = false;
     const onEvent = (event: ChatEvent): void => {
       if (controller.signal.aborted) return;
-      if (event.type === 'text') {
+      if (event.type === 'text' || event.type === 'thinking') {
+        // Text and thinking keep their order: a change from one to the other draws what the first had gathered.
+        if (buffer.current.kind !== event.type) flush();
+        buffer.current.kind = event.type;
         buffer.current.text += event.delta;
         buffer.current.timer ??= setTimeout(flush, FLUSH_MS);
         return;
@@ -767,19 +790,32 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
   }
 
   function shownOf(load: ConversationLoad): ShownPath {
-    return { messages: load.messages.map((stored) => toMessage(stored, load.tree)), tree: load.tree, leafId: load.activeLeafId };
+    return {
+      messages: load.messages.map((stored, index) => toMessage(stored, load.tree, load.messages[index - 1])),
+      tree: load.tree, leafId: load.activeLeafId,
+    };
   }
 
-  function toMessage(stored: StoredMessage, tree: readonly TreeNode[]): ChatMessage {
+  function toMessage(stored: StoredMessage, tree: readonly TreeNode[], asked: StoredMessage | undefined): ChatMessage {
     const parentId = stored.nodeId === null ? null : tree.find((node) => node.id === stored.nodeId)?.parentId ?? null;
     const message: ChatMessage = { ...blankMessage(nextKey(), stored.role), nodeId: stored.nodeId, parentId, feedback: stored.feedback, next: stored.next };
+    if (stored.role === 'assistant') {
+      // Time worked runs from the person's message to the reply's end. Only a message's first reply can say so: a
+      // later version (a regenerate) started after the message was sent, at a time that was not stored.
+      const firstReply = parentId !== null && tree.find((node) => node.parentId === parentId && node.role === 'assistant')?.id === stored.nodeId;
+      if (asked?.role === 'user' && asked.at !== null && stored.endedAt !== null && firstReply) {
+        message.startedAt = asked.at;
+        message.endedAt = stored.endedAt;
+      }
+    }
     if (stored.role === 'user' || stored.parts.length === 0) {
       message.parts = stored.text === '' ? [] : [{ type: 'text', key: nextKey(), text: stored.text }];
       return message;
     }
     for (const part of stored.parts) {
       const last = message.parts.at(-1);
-      if (part.type === 'text') message.parts.push({ type: 'text', key: nextKey(), text: part.text });
+      if (part.type === 'thinking') message.parts.push({ type: 'thinking', key: nextKey(), text: part.text });
+      else if (part.type === 'text') message.parts.push({ type: 'text', key: nextKey(), text: part.text });
       else if (part.type === 'visual') message.parts.push({ type: 'visual', key: nextKey(), id: part.id, visual: part.visual });
       else if (part.type === 'tool') {
         // As while it streamed: a hidden tool's call shows nothing (a propose_note call that got an error, say).

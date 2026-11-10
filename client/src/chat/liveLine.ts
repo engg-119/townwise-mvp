@@ -1,15 +1,15 @@
-import { toolLine, type ToolContext } from './tools';
 import { stepsOf, type ChatMessage } from './useTuningChat';
 
-// The line under a reply while it streams (owner decision 4): the running step's sentence from the tool table
-// ("Reading your sales for Oct 1 to Oct 31, 2026…"), "TownwiseAI is thinking…" before anything arrives and between
-// steps, and nothing while text is being written (the caret shows that) or once the reply has ended.
+// The line in a streaming reply's timeline while nothing else shows that it is working: "Thinking…" before the first
+// thinking text arrives and between steps. A running step is its own row ("Reading your sales for Oct 1 to Oct 31,
+// 2026" in the timeline, "Read" once it has), thinking text and writing text show that they are streaming, and a
+// reply that has ended has no live line.
 
-export const THINKING = 'TownwiseAI is thinking…';
+export const THINKING = 'Thinking…';
 
-export function liveLine(message: ChatMessage, ctx: ToolContext): string | null {
+export function liveLine(message: ChatMessage): string | null {
   if (message.role !== 'assistant' || message.state !== 'streaming') return null;
-  if (message.parts.at(-1)?.type === 'text') return null;
-  const running = stepsOf(message).filter((step) => step.state === 'running').at(-1);
-  return running === undefined ? THINKING : `${toolLine(running, ctx).sentence}…`;
+  const last = message.parts.at(-1);
+  if (last?.type === 'text' || last?.type === 'thinking') return null;
+  return stepsOf(message).some((step) => step.state === 'running') ? null : THINKING;
 }

@@ -1,8 +1,9 @@
 // What GET /api/org/locations/:locationId/chat/:conversationId shows of a stored conversation (section 2): one entry
 // per message the person wrote, and one per run of TownwiseAI's replies to it, with the tool-result messages between
-// them folded in. A reply's `parts` replay it in order: text, tool calls (as the cards the stream showed), note
-// proposals and visuals; its `next` is the questions its last valid suggest_next showed. Thinking blocks and raw tool
-// results are never returned, and neither are calls that never ran.
+// them folded in. A reply's `parts` replay it in order: thinking summaries, text, tool calls (as the cards the stream showed), note
+// proposals and visuals; its `next` is the questions its last valid suggest_next showed. A thinking block is returned as
+// its summary text only (never its signature), and one with no text (stored before summaries were asked for) is left
+// out. Raw tool results are never returned, and neither are calls that never ran.
 import type {
   BetaContentBlockParam, BetaMessageParam, BetaToolResultBlockParam, BetaToolUseBlockParam,
 } from '@anthropic-ai/sdk/resources/beta/messages/messages';
@@ -35,6 +36,7 @@ export type ProposalView = ShownProposal & ProposalState;
 export interface FeedbackView { rating: 'up' | 'down'; reason: FeedbackReason | null }
 
 export type ChatPart =
+  | { type: 'thinking'; text: string }
   | { type: 'text'; text: string }
   | { type: 'tool'; id: string; name: string; state: 'done' | 'error'; input: ToolView | null; result: ToolView | null }
   | { type: 'proposal'; proposal: ProposalView }
@@ -46,6 +48,11 @@ export interface ChatMessageView {
   role: 'user' | 'assistant';
   /** When the entry's first stored message was produced. */
   at: string;
+  /**
+   * When the entry's last stored message was produced: the end of a reply, so its time worked is `endedAt` less the
+   * person's message's `at`. Equal to `at` for the person's own message.
+   */
+  endedAt: string;
   /** Every text part, joined by a blank line (for clients that read only text). */
   text: string;
   /** Every proposal part's proposal, in order (for clients that read only proposals). */
@@ -91,11 +98,11 @@ function partOf(
 }
 
 function entry(
-  nodeId: string, role: 'user' | 'assistant', at: Date, parts: ChatPart[], feedback: FeedbackView | null, next: string[] | null,
+  nodeId: string, role: 'user' | 'assistant', at: Date, endedAt: Date, parts: ChatPart[], feedback: FeedbackView | null, next: string[] | null,
 ): ChatMessageView {
   const texts = parts.flatMap((part) => (part.type === 'text' ? [part.text] : []));
   return {
-    nodeId, role, at: at.toISOString(), text: texts.join('\n\n'),
+    nodeId, role, at: at.toISOString(), endedAt: endedAt.toISOString(), text: texts.join('\n\n'),
     proposals: parts.flatMap((part) => (part.type === 'proposal' ? [part.proposal] : [])),
     parts: role === 'user' ? [] : parts,
     feedback: role === 'user' ? null : feedback,
@@ -127,7 +134,7 @@ export function chatMessageViews(
     if (first === undefined) continue;
     if (node.role === 'user') {
       const text = blocksOf(first.param).flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('');
-      if (text !== '') views.push(entry(node.id, 'user', first.at, [{ type: 'text', text }], null, null));
+      if (text !== '') views.push(entry(node.id, 'user', first.at, first.at, [{ type: 'text', text }], null, null));
       continue;
     }
     const parts: ChatPart[] = [];
@@ -136,7 +143,9 @@ export function chatMessageViews(
       if (param.role !== 'assistant') continue;
       for (const block of blocksOf(param)) {
         const last = parts.at(-1);
-        if (block.type === 'text') {
+        if (block.type === 'thinking') {
+          if (block.thinking !== '') parts.push({ type: 'thinking', text: block.thinking });
+        } else if (block.type === 'text') {
           if (block.text === '') continue;
           if (last?.type === 'text') last.text += block.text;
           else parts.push({ type: 'text', text: block.text });
@@ -148,7 +157,7 @@ export function chatMessageViews(
         }
       }
     }
-    if (parts.length > 0) views.push(entry(node.id, 'assistant', first.at, parts, feedbackOf(node.id), next));
+    if (parts.length > 0) views.push(entry(node.id, 'assistant', first.at, items.at(-1)?.at ?? first.at, parts, feedbackOf(node.id), next));
   }
   return views;
 }

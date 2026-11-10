@@ -173,7 +173,7 @@ describe('a plain answer', () => {
       betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default', cache_control: { type: 'ephemeral' },
       system: SYSTEM_PROMPT, messages: [{ role: 'user', content: 'What changed in May?' }],
     });
-    expect(params).not.toHaveProperty('thinking');
+    expect(params).toMatchObject({ thinking: { type: 'adaptive', display: 'summarized' } });
     expect(params?.tools?.map((tool) => ('name' in tool ? tool.name : null))).toEqual([
       'get_location_overview', 'get_sales_days', 'list_notes', 'get_town_profile', 'propose_note',
       'get_town_calendar', 'get_people_in_town', 'get_forecast', 'get_day', 'show_visual', 'suggest_next',
@@ -201,10 +201,10 @@ describe('a plain answer', () => {
         { id: replyNodeId, parentId: userNodeId, role: 'assistant' },
       ],
       messages: [
-        { nodeId: userNodeId, role: 'user', text: 'What changed in May?', proposals: [], parts: [], feedback: null, next: null, at },
+        { nodeId: userNodeId, role: 'user', text: 'What changed in May?', proposals: [], parts: [], feedback: null, next: null, at, endedAt: at },
         {
           nodeId: replyNodeId, role: 'assistant', text: 'May was steady, with two busy Fridays.', proposals: [],
-          parts: [{ type: 'text', text: 'May was steady, with two busy Fridays.' }], feedback: null, next: null, at,
+          parts: [{ type: 'text', text: 'May was steady, with two busy Fridays.' }], feedback: null, next: null, at, endedAt: at,
         },
       ],
     });
@@ -838,6 +838,23 @@ describe('who sees what', () => {
 });
 
 describe('audit events and logs', () => {
+  it('streams a thinking summary as thinking events, shows it in the stored view, and never logs or audits it', async () => {
+    server.logs.length = 0;
+    model.script({ kind: 'message', message: message([thinking('sig-sum', 'Sentinel-thinking summary of the weekend.'), text('Answer.')]) });
+    const { events } = await turn({ content: 'Hello' });
+    expect([...new Set(shape(events))]).toEqual(['conversation', 'thinking', 'text', 'done']);
+    expect(events.filter((e) => e.event === 'thinking').map((e) => (e.data as { delta: string }).delta).join(''))
+      .toBe('Sentinel-thinking summary of the weekend.');
+    expect(JSON.stringify(eventData(events, 'thinking'))).not.toContain('sig-sum');
+    const id = conversationIdOf(events);
+    const view = await (await call(server, `/api/org/locations/${locationId}/chat/${id}`, { session: author.session })).json() as ConversationView;
+    expect(view.messages[1]?.parts).toEqual([
+      { type: 'thinking', text: 'Sentinel-thinking summary of the weekend.' }, { type: 'text', text: 'Answer.' },
+    ]);
+    expect(view.messages[1]?.text).toBe('Answer.');
+    expect(JSON.stringify(await auditEvents(server)) + server.logs.join('\n')).not.toContain('Sentinel-thinking');
+  });
+
   it('a saved turn records chat.turn_completed with allowlisted details only; no message, tool input or result text reaches an event or a log', async () => {
     server.logs.length = 0;
     model.script(

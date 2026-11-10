@@ -98,6 +98,32 @@ describe('the request', () => {
   });
 });
 
+describe('thinking summaries', () => {
+  it('asks for adaptive thinking with a summarized display, and keeps the effort', () => {
+    const params = requestParams([{ role: 'user', content: 'One' }]);
+    expect(params.thinking).toEqual({ type: 'adaptive', display: 'summarized' });
+    expect(params.output_config).toEqual({ effort: 'low' });
+  });
+
+  it('forwards each thinking_delta as a thinking event with its text only, never the signature', async () => {
+    const noTools = {} as unknown as ToolContext;
+    const model = scriptedModel();
+    model.script({ kind: 'message', message: message([thinking('sig-opaque', 'Checking the weekend.'), text('Done.')]) });
+    const events: { type: string; data: unknown }[] = [];
+    const result = await runTurn({
+      model, tools: noTools, history: [], userMessage: { role: 'user', content: 'Hello' },
+      nodes: { user: { id: 'u1', parentId: null }, reply: { id: 'a1', parentId: 'u1' } }, signal: new AbortController().signal,
+      now: () => new Date('2026-06-01T12:00:00.000Z'), emit: (event) => { events.push(event); },
+      charge: () => Promise.resolve(), budgetSpent: () => Promise.resolve(false),
+    });
+    expect(result.kind).toBe('done');
+    const thinkingEvents = events.filter((event) => event.type === 'thinking');
+    expect(thinkingEvents.map((event) => (event.data as { delta: string }).delta).join('')).toBe('Checking the weekend.');
+    expect(JSON.stringify(thinkingEvents)).not.toContain('sig-opaque');
+    expect(thinkingEvents.every((event) => Object.keys(event.data as object).join() === 'delta')).toBe(true);
+  });
+});
+
 describe('the system prompt', () => {
   it('names TownwiseAI, asks for a source for every figure, asks when data does not add up, and keeps guest names out', () => {
     for (const rule of [
@@ -179,9 +205,9 @@ describe('the history view', () => {
       { role: 'user', content: 'Thanks' },
     ], [at, later, later, later, later, later, later])), '2026-06-01');
     expect(views).toEqual([
-      { nodeId: 'legacy-0', role: 'user', at: at.toISOString(), text: 'Were we closed?', proposals: [], parts: [], feedback: null, next: null },
+      { nodeId: 'legacy-0', role: 'user', at: at.toISOString(), endedAt: at.toISOString(), text: 'Were we closed?', proposals: [], parts: [], feedback: null, next: null },
       {
-        nodeId: 'legacy-1', role: 'assistant', at: later.toISOString(), text: 'Let me look. \n\nYou have two notes.\n\nI proposed it.',
+        nodeId: 'legacy-1', role: 'assistant', at: later.toISOString(), endedAt: later.toISOString(), text: 'Let me look. \n\nYou have two notes.\n\nI proposed it.',
         proposals: [{ ...note, id: 'p1', status: 'open', noteId: null }],
         parts: [
           { type: 'text', text: 'Let me look. ' },
@@ -192,7 +218,7 @@ describe('the history view', () => {
         ],
         feedback: null, next: null,
       },
-      { nodeId: 'legacy-6', role: 'user', at: later.toISOString(), text: 'Thanks', proposals: [], parts: [], feedback: null, next: null },
+      { nodeId: 'legacy-6', role: 'user', at: later.toISOString(), endedAt: later.toISOString(), text: 'Thanks', proposals: [], parts: [], feedback: null, next: null },
     ]);
   });
 
@@ -228,6 +254,19 @@ describe('the history view', () => {
       { id: 'p1', status: 'saved', noteId: 'n1', startDate: '2026-06-20' },
       { id: 'p2', status: 'dismissed', noteId: null, startDate: '2026-06-21' },
     ]);
+  });
+
+  it('returns each thinking summary as a part before what follows it, and a reply’s end time', () => {
+    const views = chatMessageViews(nodesOf(stored([
+      { role: 'user', content: 'Hi' },
+      { role: 'assistant', content: [thinking('s1', 'Weighing the weekend.'), text('Busy.'), toolUse('t1', 'list_notes', {})] },
+      { role: 'user', content: [result('t1', JSON.stringify({ notes: [] }))] },
+      { role: 'assistant', content: [thinking('s2'), text(' Done.')] },
+    ], [at, at, later, later])), '2026-06-01');
+    expect(views[1]?.parts[0]).toEqual({ type: 'thinking', text: 'Weighing the weekend.' });
+    expect(JSON.stringify(views)).not.toContain('s1');
+    expect(views[0]).toMatchObject({ at: at.toISOString(), endedAt: at.toISOString() });
+    expect(views[1]).toMatchObject({ at: at.toISOString(), endedAt: later.toISOString() });
   });
 
   it('shows a reply of thinking only as nothing, and keeps a valid range’s input view', () => {

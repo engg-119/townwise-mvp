@@ -63,7 +63,7 @@ function text(key: string, value: string): MessagePart {
 function msg(key: string, role: ChatMessage['role'], parts: MessagePart[], over: Partial<ChatMessage> = {}): ChatMessage {
   return {
     key, role, parts, state: 'complete', note: null, nodeId: null, parentId: null, feedback: null, ratingError: null, next: null,
-    request: null, ...over,
+    request: null, startedAt: null, endedAt: null, ...over,
   };
 }
 
@@ -107,28 +107,76 @@ it('shows the caret only while the reply streams, and removes it on done, stop a
   expect(screen.getAllByText('▍')).toHaveLength(1);
   expect(first(screen.getAllByText('▍')).getAttribute('aria-hidden')).toBe('true');
   expect(screen.getByText('So far').parentElement?.textContent).toBe('So far▍');
-  expect(screen.queryByText('TownwiseAI is thinking…')).toBeNull();
+  expect(screen.queryByText('Thinking…')).toBeNull();
   for (const state of ['complete', 'stopped', 'failed'] as const) {
     view.rerender(<ReplyView {...replyProps({ message: { ...live, state } })} />);
     expect(screen.queryByText('▍')).toBeNull();
   }
-  // Text followed by a running step: the live line names the step, and the caret is not left mid-reply.
+  // Text followed by a running step: the step is a row in the timeline, and the caret is not left mid-reply.
   const running: ToolStep = { ...step, state: 'running', result: null };
   view.rerender(<ReplyView {...replyProps({ message: { ...live, parts: [text('a', 'Let me look.'), { type: 'tools', key: 'b', steps: [running] }] } })} />);
   expect(screen.queryByText('▍')).toBeNull();
-  expect(screen.getByText('Reading your sales for Dec 1 to Dec 31, 2025…')).toBeTruthy();
+  expect(screen.getByText('your sales for Dec 1 to Dec 31, 2025')).toBeTruthy();
 });
 
-it('while it streams, the live line names the running step or says it is thinking, in small text2', () => {
+it('while it streams, Thinking… shows in small text2 until the thinking summary or a step arrives', () => {
   const running: ToolStep = { id: SALES_STEP.id, name: SALES_STEP.name, state: 'running', input: { ...SALES_STEP.input }, result: null };
   const view = render(<ReplyView {...replyProps({ message: msg('m2', 'assistant', [], { state: 'streaming' }) })} />);
-  expect(window.getComputedStyle(screen.getByText('TownwiseAI is thinking…')).color).toBe('rgb(181, 187, 194)');
+  expect(window.getComputedStyle(screen.getByText('Thinking…')).color).toBe('rgb(181, 187, 194)');
+  expect(screen.queryByText('TownwiseAI is thinking…')).toBeNull();
+  view.rerender(<ReplyView {...replyProps({ message: msg('m2', 'assistant', [{ type: 'thinking', key: 't', text: 'Weighing the weekend.' }], { state: 'streaming' }) })} />);
+  expect(screen.queryByText('Thinking…')).toBeNull();
+  expect(window.getComputedStyle(screen.getByText('Weighing the weekend.')).color).toBe('rgb(181, 187, 194)');
   view.rerender(<ReplyView {...replyProps({ message: msg('m2', 'assistant', [{ type: 'tools', key: 'b', steps: [running] }], { state: 'streaming' }) })} />);
-  expect(screen.getByText('Reading your sales for Dec 1 to Dec 31, 2025…')).toBeTruthy();
+  expect(screen.queryByText('Thinking…')).toBeNull();
+  expect(screen.getByText('your sales for Dec 1 to Dec 31, 2025')).toBeTruthy();
   // No actions, versions or Based on line while it streams.
   expect(screen.queryByRole('button', { name: 'Copy' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Helpful' })).toBeNull();
   expect(screen.queryByText(/^Based on/)).toBeNull();
+});
+
+it('counts Working for {n}s once a second while it streams, and drops it when the reply ends', () => {
+  jest.useFakeTimers();
+  jest.setSystemTime(new Date('2026-11-09T12:00:00.000Z'));
+  const streaming = msg('m2', 'assistant', [], { state: 'streaming', startedAt: Date.now() });
+  const view = render(<ReplyView {...replyProps({ message: streaming })} />);
+  expect(screen.getByText('Working for 0s')).toBeTruthy();
+  act(() => { jest.advanceTimersByTime(3000); });
+  expect(screen.getByText('Working for 3s')).toBeTruthy();
+  view.rerender(<ReplyView {...replyProps({ message: { ...streaming, state: 'complete', endedAt: Date.now() }, })} />);
+  expect(screen.queryByText(/^Working for/)).toBeNull();
+  expect(screen.getByText('Worked for 3s')).toBeTruthy();
+});
+
+it('a settled reply’s Worked for {n}s is a collapsed button that opens to the thinking summary and the steps', () => {
+  const step: ToolStep = { id: SALES_STEP.id, name: SALES_STEP.name, state: 'done', input: { ...SALES_STEP.input }, result: { ...SALES_STEP.result } };
+  const settled = msg('m2', 'assistant', [
+    { type: 'thinking', key: 't', text: 'Weighing the weekend.' }, { type: 'tools', key: 'b', steps: [step] }, text('m2t', 'December was busy.'),
+  ], { nodeId: 'a1', parentId: 'u1', startedAt: 1000, endedAt: 13_900 });
+  render(<ReplyView {...replyProps({ message: settled })} />);
+  const worked = button('Worked for 12s');
+  expect(worked.getAttribute('aria-expanded')).toBe('false');
+  expect(screen.queryByText('Weighing the weekend.')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Show' })).toBeNull();
+  expect(screen.queryByText('Read 1 thing')).toBeNull();
+  // It sits above the reply's text.
+  expect(before(worked, screen.getByText('December was busy.'))).toBe(true);
+  fireEvent.click(worked);
+  expect(worked.getAttribute('aria-expanded')).toBe('true');
+  expect(document.getElementById(worked.getAttribute('aria-controls') ?? '')?.contains(screen.getByText('Weighing the weekend.'))).toBe(true);
+  expect(screen.getByRole('button', { name: 'Read your sales for Dec 1 to Dec 31, 2025. 31 days: guests on 31, net sales on 30' })).toBeTruthy();
+  fireEvent.click(worked);
+  expect(worked.getAttribute('aria-expanded')).toBe('false');
+});
+
+it('a settled reply with no steps or summary shows Worked for {n}s as plain text, and none when its time is unknown', () => {
+  const plain = msg('m2', 'assistant', [text('m2t', 'Hi.')], { nodeId: 'a1', parentId: 'u1', startedAt: 0, endedAt: 4000 });
+  const view = render(<ReplyView {...replyProps({ message: plain })} />);
+  expect(screen.getByText('Worked for 4s')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: /^Worked/ })).toBeNull();
+  view.rerender(<ReplyView {...replyProps({ message: { ...plain, startedAt: null, endedAt: null } })} />);
+  expect(screen.queryByText(/^Worked/)).toBeNull();
 });
 
 it('renders replies as Markdown and visuals in their streamed order', () => {
@@ -533,7 +581,7 @@ it('Regenerate moves focus to the new reply’s version navigator once it is sav
   const regenerate = button('Regenerate');
   act(() => { regenerate.focus(); });
   fireEvent.click(regenerate);
-  expect(screen.getByText('TownwiseAI is thinking…')).toBeTruthy();
+  expect(screen.getByText('Thinking…')).toBeTruthy();
   expect(await screen.findByText('Version 2 of 2')).toBeTruthy();
   expect(document.activeElement).toBe(button('Previous version'));
 });
