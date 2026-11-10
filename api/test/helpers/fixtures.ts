@@ -10,13 +10,15 @@ const TOWN = { townId: 'hanover-nh', name: 'Hanover', state: 'NH' };
 
 export async function createOrg(
   server: Server,
-  opts: { name: string; status?: 'active' | 'suspended'; fromRequestId?: string },
+  opts: { name: string; status?: 'active' | 'suspended'; fromRequestId?: string; forecastsOn?: boolean },
 ): Promise<string> {
   const _id = new Types.ObjectId();
   await server.connection.collection('tw_orgs').insertOne({
     _id, name: opts.name, status: opts.status ?? 'active', createdAt: server.clock.now(), createdBy: 'fixture',
     fromRequestId: opts.fromRequestId === undefined ? null : new Types.ObjectId(opts.fromRequestId),
     suspendedAt: opts.status === 'suspended' ? server.clock.now() : null,
+    // G1: forecasts switched on, as staff do with the owner's agreement.
+    ...(opts.forecastsOn === true ? { forecasts: { on: true, at: server.clock.now(), by: 'fixture' } } : {}),
   });
   return _id.toHexString();
 }

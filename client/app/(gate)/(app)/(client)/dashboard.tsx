@@ -39,7 +39,6 @@ function NextStep(props: { location: LocationSummary; readOnly: boolean }): Reac
   return (
     <View>
       <Text style={styles.cell}>None for now</Text>
-      <Text style={styles.note}>Calibration isn’t built yet.</Text>
     </View>
   );
 }

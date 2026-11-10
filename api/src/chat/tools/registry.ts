@@ -9,6 +9,9 @@ import type { TownwiseContext } from '../../app.ts';
 import type { OrgScope } from '../../access/policy.ts';
 import type { LocationRecord } from '../../stores/locations.ts';
 import type { NoteContent } from '../../stores/notes.ts';
+import type { Role } from '../../access/resolve.ts';
+import type { AuditEventInput } from '../../stores/audit-events.ts';
+import { compareForecastModelsTool, getCalibrationTool, startCalibrationTool } from './calibration.ts';
 import { dayTool } from './day.ts';
 import { forecastTool } from './forecast.ts';
 import { listDataTool } from './list-data.ts';
@@ -32,6 +35,10 @@ export interface ToolContext {
   readonly today: string;
   /** U13A: the town's IANA time zone. */
   readonly timeZone: string;
+  /** The caller's role in the organization: the lab tools are for org admins. */
+  readonly role: Role;
+  /** The caller as chat.turn_completed records them, for the events a tool records. */
+  readonly actor: Pick<AuditEventInput, 'actorUserId' | 'actorEmail' | 'actorRole' | 'viewAsGrantId'>;
 }
 
 export type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue };
@@ -109,6 +116,10 @@ export const TOOL_REGISTRY: readonly ChatTool<unknown>[] = [
   readDataTool,
   // Your data: a card proposing to keep text the owner gave.
   proposeDataTool,
+  // The forecast lab: org admins calibrate a location's forecast and read how it went.
+  startCalibrationTool,
+  getCalibrationTool,
+  compareForecastModelsTool,
 ];
 
 /** The tool definitions sent to the model, in registry order. */

@@ -3,6 +3,7 @@ import type { Connection } from 'mongoose';
 import { createAccessRequestStore, type AccessRequestStore } from './access-requests.ts';
 import { createAgentAnswerStore, type AgentAnswerStore } from './agent-answers.ts';
 import { createAuditEventStore, type AuditEventStore } from './audit-events.ts';
+import { createCalibrationStore, type CalibrationStore } from './calibrations.ts';
 import { createChatConversationStore, type ChatConversationStore } from './chat-conversations.ts';
 import { createChatLiveTurnStore, type ChatLiveTurnStore } from './chat-live-turns.ts';
 import { createChatProposalStore, type ChatProposalStore } from './chat-proposals.ts';
@@ -53,6 +54,8 @@ export interface TownwiseStores {
   readonly filesUsage: FilesUsageStore;
   /** U13B, forecast runs (spec 14.4). */
   readonly forecasts: ForecastStore;
+  /** The forecast lab's calibrations. */
+  readonly calibrations: CalibrationStore;
 }
 
 /** Registers every Townwise model on `connection`; call it before ensureIndexes. */
@@ -85,5 +88,7 @@ export function createTownwiseStores(connection: Connection): TownwiseStores {
     filesUsage: createFilesUsageStore(connection),
     // U13B, forecast runs.
     forecasts: createForecastStore(connection),
+    // The forecast lab.
+    calibrations: createCalibrationStore(connection),
   };
 }

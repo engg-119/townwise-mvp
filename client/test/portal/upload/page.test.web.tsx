@@ -184,7 +184,7 @@ test('an org admin’s upload: match, check, send one body of days, and the repl
 
   await click('Send 3 days');
   expect(await screen.findByText('Saved 3 days for Main Street Bar: 2 new, 1 replaced.')).toBeTruthy();
-  expect(screen.getByText('Your sales history is in: 402 days, Jan 1, 2025 to Feb 4, 2026. Calibration isn’t built yet, so there is no forecast.')).toBeTruthy();
+  expect(screen.getByText('Your sales history is in: 402 days, Jan 1, 2025 to Feb 4, 2026.')).toBeTruthy();
   expect(screen.getByText('Step 4 of 4: Choose a file, Match columns, Check the totals, Send.')).toBeTruthy();
   expect(screen.getByRole('link', { name: 'See your sales data' }).getAttribute('href')).toBe('/locations/l1/sales');
   expect(screen.getByRole('link', { name: 'Add notes for unusual days' }).getAttribute('href')).toBe('/locations/l1/notes');

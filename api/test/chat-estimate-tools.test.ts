@@ -45,7 +45,7 @@ function publishedRun(fields: Partial<ForecastRunRecord> = {}): ForecastRunRecor
     trainedFrom: '2025-01-01', dataThrough: '2026-10-31', madeAt: '2026-11-01', frozen: true, interval: { level: 0.8, widened: true },
     backtest: { from: '2026-01-05', to: '2026-03-15', weeks: 10, weeklyTypicalErrorPct: 10, weeksOver20Pct: 1, weeklyRangePct: null },
     range: { from: '2026-11-01', to: '2026-11-30' }, dayCount: 30, weekCount: 0, status: 'published', importedBy: SENTINEL_USER,
-    importedAt: new Date('2026-11-01T00:00:00Z'), publishedAt: new Date('2026-11-01T00:00:00Z'), withdrawnAt: null, ...fields,
+    importedAt: new Date('2026-11-01T00:00:00Z'), publishedAt: new Date('2026-11-01T00:00:00Z'), withdrawnAt: null, lab: null, ...fields,
   };
 }
 
@@ -79,7 +79,8 @@ function context(opts: { data?: PeopleData; town?: Town; forecasts?: ForecastRea
   const reader = createPeopleInTownReader({ stores, data: opts.data ?? { sources: [], towns: [] } });
   const ctx = { ports: { peopleInTown: reader, forecasts: opts.forecasts ?? createForecastReader({ stores: forecastStores([]) }) } } as unknown as TownwiseContext;
   const scope = { orgId: '000000000000000000000003' } as unknown as OrgScope;
-  return { ctx, scope, location: location(opts.town), today: TODAY, timeZone: 'America/New_York' };
+  return { ctx, scope, location: location(opts.town), today: TODAY, timeZone: 'America/New_York', role: 'member',
+    actor: { actorUserId: SENTINEL_USER, actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null } };
 }
 
 async function run(name: string, input: unknown, tc: ToolContext = context()): Promise<{ content: string; parsed: Record<string, unknown> }> {

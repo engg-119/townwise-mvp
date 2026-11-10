@@ -30,6 +30,8 @@ const FROZEN_NAMES = [
   'show_visual', 'suggest_next',
   // Your data.
   'list_data_items', 'read_data_item', 'propose_data_item',
+  // The forecast lab.
+  'start_calibration', 'get_calibration', 'compare_forecast_models',
 ];
 
 describe('the tool registry', () => {
@@ -190,6 +192,8 @@ describe('get_day', () => {
       },
       today: TODAY,
       timeZone: 'America/New_York',
+      role: 'member',
+      actor: { actorUserId: SENTINEL_USER, actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null },
     };
     return { tc, byIds };
   }

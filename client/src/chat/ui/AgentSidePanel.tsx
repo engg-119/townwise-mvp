@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { EstimatesAbout, ForecastRun } from '../../portal/estimates/api';
+import { trainedOnWords, type EstimatesAbout } from '../../portal/estimates/api';
 import { formatDate } from '../../portal/format';
 import type { LoadState } from '../../portal/hooks';
 import { Button } from '../../portal/ui/Button';
@@ -162,10 +162,6 @@ function BudgetSection(props: { budget: Budget | null }): React.JSX.Element | nu
   );
 }
 
-const TRAINED_ON: Readonly<Record<ForecastRun['trainingSource'], string>> = {
-  files_from_owner: 'sales exports you sent Townwise',
-};
-
 /**
  * F10: How TownwiseAI works' forecast line, from GET .../estimates/about, so it says so by itself once staff publish a
  * forecast for the location. Null while that read is loading.
@@ -175,7 +171,7 @@ export function forecastLine(about: LoadState<EstimatesAbout>, ctx: ToolContext)
   if (about.status === 'failed') return 'Couldn’t check whether Townwise has a forecast for this location.';
   const { run } = about.data.forecast;
   if (run === null) return `Townwise has no forecast for this location yet, so TownwiseAI answers from ${readsLine({ ...ctx, hasForecast: false })}.`;
-  return `TownwiseAI also reads the forecast Townwise published: ${run.model.label}, trained on ${TRAINED_ON[run.trainingSource]} from ${formatDate(run.trainedFrom)} to ${formatDate(run.dataThrough)}, made ${formatDate(run.madeAt)}.`;
+  return `TownwiseAI also reads the forecast Townwise published: ${run.model.label}, trained on ${trainedOnWords(run.trainingSource)} from ${formatDate(run.trainedFrom)} to ${formatDate(run.dataThrough)}, made ${formatDate(run.madeAt)}.`;
 }
 
 function HowItWorks(props: {

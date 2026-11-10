@@ -33,6 +33,8 @@ describe('indexes', () => {
       'tw_profiles',
       // U13B, forecast runs.
       'tw_forecast_runs', 'tw_forecasts',
+      // The forecast lab.
+      'tw_calibrations',
     ].sort());
   });
 
@@ -72,7 +74,7 @@ describe('indexes', () => {
       'TwMember', 'TwLocation', 'TwSalesDay', 'TwUpload', 'TwNote', 'TwChatConversation', 'TwChatLiveTurn', 'TwChatUsage',
       'TwChatProposal', 'TwFile', 'TwImport', 'TwUploadDay', 'TwWelcome',
       // U13B.
-      'TwForecastRun', 'TwForecast',
+      'TwForecastRun', 'TwForecast', 'TwCalibration',
     ]) {
       for (const [fields] of indexesOf(connection, model)) {
         const keys = Object.keys(fields);
@@ -81,6 +83,8 @@ describe('indexes', () => {
         // The sweeper's index spans organizations (stores/cross-tenant.ts); the reader's claim index is single-key.
         if (model === 'TwFile' && keys[0] === 'status') continue;
         if (model === 'TwImport' && keys[0] === 'status') continue;
+        // The lab callback finds a calibration by its id and token hash, before any organization is known.
+        if (model === 'TwCalibration' && keys[0] === '_id') continue;
         expect(keys[0]).toBe('orgId');
       }
     }

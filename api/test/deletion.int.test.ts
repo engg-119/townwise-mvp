@@ -36,6 +36,8 @@ const TENANT_COLLECTIONS = [
   'tw_agent_answers',
   // U13B.
   'tw_forecast_runs', 'tw_forecasts',
+  // The forecast lab.
+  'tw_calibrations',
 ] as const;
 
 /** A tw_chat_proposals record (spec 6.16): the author dismissed a proposal in one of their conversations. */
@@ -193,8 +195,8 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
     // (U13B) forecasts swept again.
     expect(writes[0]).toBe('insert tw_audit_events');
     // Stored files (none here) are swept again after the row too: imports first. Then (U13B) forecast rows, then runs.
-    expect(writes.slice(-6)).toEqual([
-      'delete tw_orgs', 'delete tw_imports', 'delete tw_sales_days', 'delete tw_chat_usage',
+    expect(writes.slice(-7)).toEqual([
+      'delete tw_orgs', 'delete tw_imports', 'delete tw_sales_days', 'delete tw_chat_usage', 'delete tw_calibrations',
       'delete tw_forecasts', 'delete tw_forecast_runs',
     ]);
 

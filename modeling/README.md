@@ -21,6 +21,7 @@ The notebooks read Kieran's exports from `../data/sawtooth/` and ChatGPT's earli
 | `forecasts/` | Frozen forecasts saved before their outcomes existed, for honest scoring later (see its README). Sections 8-10 of the notebook add the rolling backtest, write the frozen forecast, and score it |
 | `outputs/` | Presentation tables regenerated on every run, such as the Oct-Dec 2026 forecast with closures and the booking rule applied (see its README) |
 | `dartmouth_calendar_2025_2026.csv` | Public Dartmouth dates (terms, finals, Commencement, Green Key, Homecoming, Winter Carnival, Family Weekend, orientation, home football), each with a source URL and confidence level |
+| `lab/` | Townwise's forecast lab: the notebook's guest model as a tested package (`townwise_lab`, its own uv project with the same pins) and a CLI, `python -m townwise_lab run`, that turns a location's history (a `townwise.lab-input/1` file) into a draft forecast run, a backtest scorecard and a comparison with the published run (`townwise.lab-result/1`). Parity tests run the notebook's own functions; every test uses a synthetic restaurant, never `data/`. From `lab/`: `uv sync`, `uv run pytest` |
 | `export_forecast_run.py` | Exports a frozen guest forecast from `forecasts/` (sha256 checked against its README) as a Townwise forecast run file in `outputs/`, for staff to import in the staff console (`../docs/portal/estimates.md` section 8). Standard library only; never writes to `forecasts/` and prints no figure |
 
 To re-run from the command line:

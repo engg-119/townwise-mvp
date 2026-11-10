@@ -11,6 +11,7 @@ import {
 } from '../handlers/admin.ts';
 import { answerQuestion, getAgent } from '../handlers/agent.ts';
 import { getLocationCalendar } from '../handlers/calendar.ts';
+import { listCalibrations, startCalibration, switchForecasts } from '../handlers/calibrations.ts';
 import { deleteConversation, getChat, getConversation, postTurn, renameConversation, showVersion } from '../handlers/chat.ts';
 import { rateReply } from '../handlers/chat-feedback.ts';
 import { actOnItemProposal, getItemProposal } from '../handlers/chat-item-proposals.ts';
@@ -48,9 +49,10 @@ export interface TownwiseRoute {
   readonly policy: Policy;
   /**
    * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer, a conversation's rename and a version switch;
-   * '2kb' on the Places, files and (D28) Your data JSON routes; '8kb' on a TownwiseAI proposal; '256kb' only on the
-   * upload routes (the member one and, D23, staff setup's) and (U13B) the staff forecast import; 'stream' only on the
-   * chunk route, whose handler reads the raw body itself after the policy has passed.
+   * '2kb' on the Places, files and (D28) Your data JSON routes, the start of a calibration and the forecasts switch;
+   * '8kb' on a TownwiseAI proposal; '256kb' only on the upload routes (the member one and, D23, staff setup's) and
+   * (U13B) the staff forecast import; 'stream' only on the chunk route, whose handler reads the raw body itself after
+   * the policy has passed.
    */
   readonly bodyLimit: 'none' | '1kb' | '2kb' | '8kb' | '32kb' | '256kb' | 'stream';
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
@@ -389,6 +391,21 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'admin.forecasts.remove', method: 'DELETE', path: '/admin/orgs/:orgId/forecast-runs/:runId', policy: 'staff',
     bodyLimit: 'none', handler: deleteForecastRun,
+  },
+  // The forecast lab: an organization's calibrations, starting one for a location (its job returns a draft run, which
+  // the system publishes when it passes the gate), and the organization's forecasts switch (G1). The writes limiter only
+  // here; the service counts the organization's 4 a day itself.
+  {
+    id: 'admin.calibrations.list', method: 'GET', path: '/admin/orgs/:orgId/calibrations', policy: 'staff', bodyLimit: 'none',
+    handler: listCalibrations,
+  },
+  {
+    id: 'admin.calibrations.start', method: 'POST', path: '/admin/orgs/:orgId/locations/:locationId/calibrations', policy: 'staff',
+    bodyLimit: '2kb', handler: startCalibration,
+  },
+  {
+    id: 'admin.forecasts.switch', method: 'POST', path: '/admin/orgs/:orgId/forecasts-switch', policy: 'staff', bodyLimit: '2kb',
+    handler: switchForecasts,
   },
   { id: 'admin.people.list', method: 'GET', path: '/admin/people', policy: 'staff', bodyLimit: 'none', handler: listPeople },
   {

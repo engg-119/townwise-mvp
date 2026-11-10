@@ -16,11 +16,12 @@ import { inject } from 'vitest';
 import { z } from 'zod';
 
 import type { TownwiseRoute } from '../../src/access/routes.ts';
-import { createTownwiseApi } from '../../src/app.ts';
+import { createTownwiseApi, createTownwiseLab } from '../../src/app.ts';
 import type { ChatModel } from '../../src/chat/model.ts';
 import { configSchema as townwiseSchema } from '../../src/config.ts';
 import type { FileBlobs } from '../../src/files/blobs.ts';
 import { createFileWorker, type FileWorker, type FileWorkerDeps } from '../../src/files/worker.ts';
+import type { LabRunner } from '../../src/lab/runner.ts';
 import type { MailTransport } from '../../src/mail/acs.ts';
 import { createMailer, OFF_MAILER, type Mailer } from '../../src/mail/mailer.ts';
 import type { PeopleData } from '../../src/people-in-town/sources.ts';
@@ -104,6 +105,8 @@ export async function startTownwiseServer(opts?: {
   reader?: Partial<Pick<FileWorkerDeps, 'parse' | 'leaseMs' | 'extract' | 'filesMonthlyBudgetUsd'>>;
   /** U13A: synthetic headcount inputs for people in town; absent, the committed (empty) sources. */
   peopleData?: PeopleData;
+  /** The forecast lab's runner (helpers/lab.ts has a fake); absent, calibrations are off. /lab is mounted either way. */
+  labRunner?: LabRunner;
 }): Promise<TownwiseTestServer> {
   const env: Record<string, string> = {
     NODE_ENV: 'test',
@@ -165,10 +168,13 @@ export async function startTownwiseServer(opts?: {
     const deps = {
       config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now: clock.now, chat: opts?.chat,
       chatTurnTimeLimitMs: opts?.chatTurnTimeLimitMs, places: opts?.places, mailer, placesMap: opts?.placesMap,
-      files, fileWorker: reader ?? undefined, peopleData: opts?.peopleData,
+      files, fileWorker: reader ?? undefined, peopleData: opts?.peopleData, labRunner: opts?.labRunner,
     };
     const apiRouter = createTownwiseApi(deps);
-    const routes: RouteMount[] = [{ path: '/auth', router: auth.router }, { path: '/api', router: apiRouter }];
+    // As main.ts mounts them.
+    const routes: RouteMount[] = [
+      { path: '/auth', router: auth.router }, { path: '/api', router: apiRouter }, { path: '/lab', router: createTownwiseLab(deps) },
+    ];
     if (opts?.probe !== undefined) routes.push({ path: '/probe', router: createTownwiseApi(deps, opts.probe) });
     await ensureIndexes(mongo.connection, { logger, buildAtBoot: () => true });
     const server = createServer({ config, logger, routes, onShutdown: reader === null ? [redis, mongo] : [reader, redis, mongo], exit: () => undefined });

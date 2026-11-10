@@ -19,6 +19,8 @@ export const staffRunSchema = z.object({
   id: z.string(),
   metric: z.literal('guests'),
   model: z.object({ family: z.string(), version: z.string(), label: z.string() }),
+  // Any string, like the model card’s: only 'townwise_lab' reads as a calibration.
+  trainingSource: z.string(),
   trainedFrom: z.string(),
   dataThrough: z.string(),
   madeAt: z.string(),

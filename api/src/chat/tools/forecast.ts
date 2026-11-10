@@ -25,6 +25,7 @@ export const INTERVAL_MEANING = 'About 8 in 10 days should land inside the range
 
 const TRAINED_ON: Readonly<Record<ForecastWindowRun['trainingSource'], string>> = {
   files_from_owner: 'sales exports the owner sent Townwise',
+  townwise_lab: 'the sales history and notes the owner uploaded to Townwise',
 };
 
 export interface ForecastRange { from: string; to: string }

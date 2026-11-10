@@ -112,11 +112,13 @@ function asksAbout(asked: AskedQuestion, day: string): boolean {
   return day >= asked.from && day <= asked.to && (asked.kind === 'gap' || weekdayOf(day) === asked.weekday);
 }
 
-function noteCovers(note: NoteContent, day: string): boolean {
+/** Whether `note` covers `day`: inside its dates and, when it names weekdays, on one of them. */
+export function noteCovers(note: NoteContent, day: string): boolean {
   return day >= note.startDate && day <= note.endDate && (note.weekdays === null || note.weekdays.includes(weekdayOf(day)));
 }
 
-function isClosure(note: NoteContent): boolean {
+/** A closure note, or any note whose effect is closed. */
+export function isClosure(note: NoteContent): boolean {
   return note.kind === 'closure' || note.effect === 'closed';
 }
 

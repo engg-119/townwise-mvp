@@ -71,16 +71,17 @@ export async function leaveOrg(ctx: TownwiseContext, req: Request, res: Response
 }
 
 /**
- * GET /api/org/staff-activity?before= (D9, P18): every staff action on this organization, newest first, each marked
- * applied or not, a page of 50 at a time. `nextBefore` reads the next older page; null when there is none. A page also
- * carries every event sharing its last event's time, so paging skips none.
+ * GET /api/org/staff-activity?before= (D9, P18): every staff action on this organization, and every one the forecast
+ * lab took on its own (the system's publishes and finished calibrations), newest first, each marked applied or not, a
+ * page of 50 at a time. `nextBefore` reads the next older page; null when there is none. A page also carries every
+ * event sharing its last event's time, so paging skips none.
  */
 export async function getStaffActivity(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const { scope } = orgAdmin(principal);
   const { before } = parseInput(staffActivityQuery, req.query);
   // A staff_action.not_applied event marks the row it qualifies, so it takes no row of its own.
   const page = await ctx.stores.audit.query({
-    orgId: scope.orgId, actorRole: 'superadmin', excludeAction: 'staff_action.not_applied', limit: STAFF_ACTIVITY_EVENTS,
+    orgId: scope.orgId, actorRole: ['superadmin', 'system'], excludeAction: 'staff_action.not_applied', limit: STAFF_ACTIVITY_EVENTS,
     ...(before === undefined ? {} : { before: new Date(before) }),
   });
   res.status(200).json({ events: await staffActivityViews(ctx, page.events), nextBefore: page.nextBefore?.toISOString() ?? null });

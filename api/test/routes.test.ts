@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import type { AuthContext } from '@ckeith26/auth';
 import { ConfigError } from '@ckeith26/server-core';
 import { describe, expect, it } from 'vitest';
@@ -7,6 +9,8 @@ import {
 } from '../src/access/policy.ts';
 import type { Access, Resolution } from '../src/access/resolve.ts';
 import { assertRouteTable, TOWNWISE_ROUTES, type TownwiseRoute } from '../src/access/routes.ts';
+import type { TownwiseContext } from '../src/app.ts';
+import { createLabCallbackRouter } from '../src/lab/callback.ts';
 
 const handler: TownwiseRoute['handler'] = () => Promise.resolve();
 const route = (overrides: Partial<TownwiseRoute>): TownwiseRoute => ({
@@ -101,7 +105,35 @@ describe('route table', () => {
         bodyLimit: '32kb', limiter: undefined,
       },
       { id: 'admin.forecasts.remove', method: 'DELETE', path: '/admin/orgs/:orgId/forecast-runs/:runId', policy: 'staff', bodyLimit: 'none', limiter: undefined },
+      { id: 'admin.forecasts.switch', method: 'POST', path: '/admin/orgs/:orgId/forecasts-switch', policy: 'staff', bodyLimit: '2kb', limiter: undefined },
     ]);
+  });
+
+  it('the forecast lab: calibrations and the forecasts switch are staff routes with 2kb bodies, and no route limiter', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id.startsWith('admin.calibrations.') || r.id === 'admin.forecasts.switch')
+      .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));
+    expect(rows).toEqual([
+      { id: 'admin.calibrations.list', method: 'GET', path: '/admin/orgs/:orgId/calibrations', policy: 'staff', bodyLimit: 'none', limiter: undefined },
+      {
+        id: 'admin.calibrations.start', method: 'POST', path: '/admin/orgs/:orgId/locations/:locationId/calibrations', policy: 'staff',
+        bodyLimit: '2kb', limiter: undefined,
+      },
+      { id: 'admin.forecasts.switch', method: 'POST', path: '/admin/orgs/:orgId/forecasts-switch', policy: 'staff', bodyLimit: '2kb', limiter: undefined },
+    ]);
+  });
+
+  it('/lab holds the only routes outside /auth and /api', () => {
+    // main.ts mounts exactly three routers.
+    const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
+    const mounts = [...main.matchAll(/\{ path: '(\/[^']*)', router: /g)].map((match) => match[1]);
+    expect(mounts).toEqual(['/auth', '/api', '/lab']);
+    // The lab router holds the job's two callback routes and nothing else; building it touches no context.
+    const lab = createLabCallbackRouter({} as TownwiseContext);
+    const routes = lab.stack.flatMap((layer) => {
+      const route = layer.route as { path: string; methods: Record<string, boolean> } | undefined;
+      return route === undefined ? [] : Object.keys(route.methods).map((method) => `${method.toUpperCase()} ${route.path}`);
+    });
+    expect(routes).toEqual(['GET /calibrations/:id/input', 'POST /calibrations/:id/result']);
   });
 
   it('D23: staff setup routes are staff writes with the org routes’ body limits and no route limiter', () => {
