@@ -8,28 +8,55 @@ jest.mock('expo-splash-screen', () => ({
 }));
 
 import { useEffect } from 'react';
-import { act, cleanup, fireEvent, renderRouter, screen, within } from 'expo-router/testing-library';
+import { act, cleanup, fireEvent, renderRouter, screen, waitFor, within } from 'expo-router/testing-library';
 import { Dimensions, Pressable, ScrollView, Text, View } from 'react-native';
+import type { z } from 'zod';
 
+import { ApiError } from '../../src/api/client';
+import { resetProfiles } from '../../src/portal/profile/useProfile';
 import { usePortal } from '../../src/portal/PortalProvider';
-import { useLocation } from '../../src/portal/shell/LocationShell';
+import { useLocation, useScrollingHead } from '../../src/portal/shell/LocationShell';
 import { appRoutes, seededRoot } from '../helpers/app';
 import { fakeAuth } from '../helpers/fakes';
 import {
   ACCESS, deferred, EMAIL, fakePortalApi, LOCATIONS, meOf, offline, orgOf, type FakePortalApi,
 } from '../helpers/portal';
 
-// The location layout (spec 15.2) around a stand-in page: the first load, a reload of the organization
+// The location layout (spec 15.2) around stand-in pages: the first load, a reload of the organization
 // (reloadOrg, after a write), a reload whose answer lacks the location, a failed reload, and a new GET /api/me,
 // after which cached organization data is cleared (4.3). When the layout puts its loading line or error in place
 // of the page, expo-router moves the address to the location's first page, so those tests open the page again
-// from the top bar's sections.
+// from the top bar's sections. TownwiseAI's title greets the person by the name they gave Townwise (P25, D26).
 
 afterEach(async () => {
   await cleanup();
+  resetProfiles();
+  jest.restoreAllMocks();
 });
 
 const TAB = '(gate)/(app)/(client)/locations/[locationId]/town';
+const AGENT = '(gate)/(app)/(client)/locations/[locationId]/agent';
+
+/** TownwiseAI's stand-in: on phones it draws the compact header the layout hands it, as the real page does. */
+function AgentProbe(): React.JSX.Element {
+  const head = useScrollingHead();
+  return <View>{head}<Text>Agent probe</Text></View>;
+}
+
+/** Answers GET /api/me/profile with `answer` (a body, an ApiError to throw, or a promise of either), and counts reads. */
+function serveProfile(api: FakePortalApi, answer: () => unknown): { reads: number } {
+  const served = { reads: 0 };
+  const json = api.json.bind(api);
+  api.json = <T,>(path: `/${string}`, schema: z.ZodType<T>, opts?: Parameters<FakePortalApi['json']>[2]): Promise<T> => {
+    if (path !== '/api/me/profile') return json(path, schema, opts);
+    served.reads += 1;
+    return Promise.resolve(answer()).then((value: unknown) => {
+      if (value instanceof ApiError) throw value;
+      return schema.parse(value);
+    });
+  };
+  return served;
+}
 
 let mounts = 0;
 
@@ -64,7 +91,7 @@ function holdOrg(api: FakePortalApi): { release: () => Promise<void> } {
 async function renderTab(api: FakePortalApi, path = '/locations/l1/town') {
   mounts = 0;
   const auth = fakeAuth({ status: 'signedIn', user: { id: 'u1', email: EMAIL } }, { api });
-  return renderRouter(appRoutes(seededRoot(auth), { [TAB]: Probe }), { initialUrl: path });
+  return renderRouter(appRoutes(seededRoot(auth), { [TAB]: Probe, [AGENT]: AgentProbe }), { initialUrl: path });
 }
 
 function adminApi(): FakePortalApi {
@@ -173,4 +200,50 @@ test('after a new GET /api/me the answer before it is cleared, so the page never
   expect(screen.queryByRole('link', { name: 'Location settings' })).toBeNull();
   await fireEvent.press(within(screen.getByLabelText('Main')).getByRole('link', { name: 'Town' }));
   expect(await screen.findByText('Probe: Main Street Bar, member')).toBeTruthy();
+});
+
+describe('TownwiseAI’s title', () => {
+  it('greets by name as the page’s h1, top left, and the eyebrow still names the location', async () => {
+    const api = adminApi();
+    const held = deferred<unknown>();
+    serveProfile(api, () => held.promise);
+    await renderTab(api, '/locations/l1/agent');
+    await screen.findByText('Agent probe');
+    // While the name loads, the greeting has none.
+    expect(screen.getByRole('heading', { name: 'Welcome back.' })).toBeTruthy();
+    await act(async () => { held.resolve({ displayName: 'Cam', askName: false }); await held.promise; });
+    const title = await screen.findByRole('heading', { name: 'Welcome back, Cam.' });
+    expect(screen.queryByRole('heading', { name: 'TownwiseAI' })).toBeNull();
+    // Top left: the eyebrow over the title, in the header's left column, before the location's links.
+    const eyebrow = screen.getByText('Main Street Bar, Hanover, NH');
+    expect(title.parent).toBe(eyebrow.parent);
+    expect(within(screen.getByLabelText('Main')).getByRole('link', { name: 'TownwiseAI' }).props.accessibilityState).toMatchObject({ selected: true });
+    // Every other tab keeps its own title.
+    await fireEvent.press(within(screen.getByLabelText('Main')).getByRole('link', { name: 'Town' }));
+    expect(await screen.findByRole('heading', { name: 'Town' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: /^Welcome back/ })).toBeNull();
+  });
+
+  it('on a phone the compact header greets the same way, on one line, with no doubled full stop', async () => {
+    jest.spyOn(Dimensions, 'get').mockReturnValue({ ...Dimensions.get('window'), width: 320 });
+    const api = adminApi();
+    serveProfile(api, () => ({ displayName: 'St.', askName: false }));
+    await renderTab(api, '/locations/l1/agent');
+    const title = await screen.findByRole('heading', { name: 'Welcome back, St.' });
+    expect(title.props.numberOfLines).toBe(1);
+    expect(screen.getByText('Main Street Bar, Hanover, NH')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Location settings' })).toBeNull();
+  });
+
+  it('a name that can’t be read greets without one, and no other tab reads it', async () => {
+    const api = adminApi();
+    const profile = serveProfile(api, () => offline());
+    await renderTab(api);
+    await screen.findByText('Probe: Main Street Bar, org_admin');
+    expect(profile.reads).toBe(0);
+    await fireEvent.press(within(screen.getByLabelText('Main')).getByRole('link', { name: 'TownwiseAI' }));
+    await screen.findByText('Agent probe');
+    await waitFor(() => { expect(profile.reads).toBe(1); });
+    expect(screen.getByRole('heading', { name: 'Welcome back.' })).toBeTruthy();
+  });
 });

@@ -63,6 +63,8 @@ export function ProposalCard(props: {
         }}
         onSaved={() => undefined}
         onCancel={() => { actions.cancelEdit(card.id); }}
+        // The composer's button is the chat page's one primary (spec 15.6, D26).
+        submitVariant="outline"
       />
     );
   }
@@ -105,7 +107,8 @@ export function ProposalCard(props: {
     const off = readOnly || waiting || saving;
     footer = (
       <Actions>
-        <Button label={saving ? 'Saving…' : 'Save note'} disabled={off} {...described(props.readOnlyId)} onPress={() => { actions.save(card.id); }} />
+        {/* An outline: the composer's button is the chat page's one primary (spec 15.6, D26). */}
+        <Button variant="outline" label={saving ? 'Saving…' : 'Save note'} disabled={off} {...described(props.readOnlyId)} onPress={() => { actions.save(card.id); }} />
         <Button variant="link" label="Edit first" disabled={off} {...described(props.readOnlyId)} onPress={() => { actions.edit(card.id); }} />
         <Button variant="link" label="Not now" disabled={off} {...described(props.readOnlyId)} onPress={() => { actions.dismiss(card.id); }} />
       </Actions>

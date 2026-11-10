@@ -3,7 +3,7 @@ import type { z } from 'zod';
 import { ApiError, type ApiClient, type RequestOptions, type StreamOptions } from '../../src/api/client';
 
 // A fake ApiClient for TownwiseAI: GETs answer from mutable fixtures, each turn is a stream the test drives event by
-// event, and writes (proposal saves, notes, question answers, deletes, renames, version switches, ratings) are
+// event, and writes (proposal saves, notes, question answers, deletes, renames, version switches, ratings, the name) are
 // recorded and answered by `respond`, which a test can replace path by path. Aborting a turn's signal rejects it as
 // the real client does. Fixtures are synthetic: low-entropy ids, example.com addresses, no real figures.
 
@@ -95,6 +95,8 @@ export interface FakeChatApi extends ApiClient {
   /** Every GET .../chat/:conversationId path read, with its query. */
   conversationReads: string[];
   panel: unknown;
+  /** GET /api/me/profile, the name TownwiseAI greets by; a PATCH stores the name sent and stops asking. */
+  profile: unknown;
   /** Thrown by GET .../chat when set. */
   chatError: ApiError | null;
   /** Thrown by GET .../agent when set. */
@@ -116,7 +118,12 @@ const BASE = '/api/org/locations/l1';
 function defaultAnswer(api: FakeChatApi, method: string, path: string, body: unknown): unknown {
   const input = (body ?? {}) as {
     action?: string; note?: Record<string, unknown>; answer?: string; nodeId?: string; title?: string; rating?: string | null; reason?: string | null;
+    displayName?: string | null;
   };
+  if (method === 'PATCH' && path === '/api/me/profile') {
+    api.profile = { displayName: input.displayName ?? null, askName: false };
+    return api.profile;
+  }
   const active = new RegExp(`^${BASE}/chat/[^/]+/active$`).exec(path);
   if (active !== null) return (input.nodeId === undefined ? undefined : api.versions[input.nodeId]) ?? api.conversation;
   const feedback = new RegExp(`^${BASE}/chat/[^/]+/feedback/([^/]+)$`).exec(path);
@@ -157,6 +164,7 @@ export function fakeChatApi(): FakeChatApi {
     versions: {},
     conversationReads: [],
     panel: PANEL,
+    profile: { displayName: null, askName: false },
     chatError: null,
     panelError: null,
     refuse: null,
@@ -178,6 +186,7 @@ export function fakeChatApi(): FakeChatApi {
         if (api.chatError !== null) return Promise.reject(api.chatError);
         return settle(api.summary, schema);
       }
+      if (path === '/api/me/profile') return settle(api.profile, schema);
       if (path === `${BASE}/agent`) {
         api.panelLoads += 1;
         if (api.panelError !== null) return Promise.reject(api.panelError);

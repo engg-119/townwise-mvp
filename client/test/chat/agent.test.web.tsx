@@ -3,20 +3,28 @@ import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
+import { ApiError } from '../../src/api/client';
+import { aboutDraft } from '../../src/chat/about';
 import { resetDrafts } from '../../src/chat/drafts';
 import { COMPOSER_LABEL } from '../../src/chat/ui/Composer';
+import { resetVersionFocus } from '../../src/chat/ui/VersionNav';
+import { localToday } from '../../src/portal/locations/dates';
+import { resetProfiles } from '../../src/portal/profile/useProfile';
 import type { MeResponse } from '../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../helpers/app';
-import { fakeChatApi, PROPOSAL, PROPOSAL_ID, SALES_STEP, type FakeChatApi, type LiveTurn } from '../helpers/chat';
+import {
+  CONVERSATION, fakeChatApi, PROPOSAL, PROPOSAL_ID, refusal as chatRefusal, SALES_STEP, SUMMARY, type FakeChatApi, type LiveTurn,
+} from '../helpers/chat';
 import { fakeAuth } from '../helpers/fakes';
 import { ACCESS, fakePortalApi, meOf, orgOf, viewAsMe } from '../helpers/portal';
-import { aboutDraft } from '../../src/chat/about';
-import { localToday } from '../../src/portal/locations/dates';
 import { serveAbout } from './about-fakes';
+import { daily } from './visuals-fixtures';
 
-// P25 TownwiseAI on web (spec 16.3): the keyboard (Enter sends, Shift+Enter and an input method's Enter don't),
-// the conversations list's Escape, reduced motion, the polite live region, links that open in a new tab, and
-// view-as's aria-disabled controls with the one read-only line.
+// P25 TownwiseAI on web (spec 16.3, D26): the greeting, the centered landing and the composer that docks under the
+// thread, the keyboard (Enter sends, Shift+Enter and an input method's Enter don't), History's Escape, the panel as a
+// column or a sheet, the next questions, the budget line, the live line and caret, reduced motion, the polite live
+// region, the one primary, phone width, links that open in a new tab, and view-as's aria-disabled controls with the
+// one read-only line.
 
 class ResizeObserverPolyfill {
   observe(): void { return undefined; }
@@ -30,16 +38,39 @@ if (typeof globalThis.ResizeObserver !== 'function') {
 let width = 1280;
 Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, get: () => width });
 
+function setWidth(next: number): void {
+  width = next;
+  act(() => { window.dispatchEvent(new Event('resize')); });
+}
+
 afterEach(() => {
   cleanup();
-  // Drafts outlive the page in memory, as they do between visits in one session.
+  // Drafts and the name outlive the page in memory, as they do between visits in one session.
   resetDrafts();
+  resetProfiles();
+  resetVersionFocus();
   Reflect.deleteProperty(window, 'matchMedia');
-  width = 1280;
-  act(() => { window.dispatchEvent(new Event('resize')); });
+  setWidth(1280);
 });
 
 const EMAIL = ['a', 'example.com'].join('@');
+/** The `white` (`cta`) fill of the page's one primary. */
+const WHITE = 'rgb(239, 242, 246)';
+const BUDGET_LINE = 'Most of November’s budget is used. TownwiseAI pauses when it runs out.';
+
+/** CONVERSATION with a second version of its reply: GET shows the first, and the second is read by its node. */
+const TWO_REPLIES = { ...CONVERSATION, tree: [...CONVERSATION.tree, { id: 'a2', parentId: 'u1', role: 'assistant' }] };
+const SECOND_REPLY = {
+  ...TWO_REPLIES,
+  activeLeafId: 'a2',
+  messages: [
+    CONVERSATION.messages[0],
+    {
+      nodeId: 'a2', role: 'assistant', text: 'A second answer.', proposals: [], parts: [{ type: 'text', text: 'A second answer.' }],
+      at: '2026-11-02T15:01:00.000Z',
+    },
+  ],
+};
 
 function renderAt(path: string, api: FakeChatApi, me: MeResponse = meOf(ACCESS.member)): void {
   // F10: GET .../estimates/about, with no forecast unless the test served another answer.
@@ -89,20 +120,71 @@ function reduceMotion(reduce: boolean): void {
   });
 }
 
-test('the dashboard links to a location, whose TownwiseAI page streams a reply with a card, and saves its note', async () => {
+function style(element: Element): CSSStyleDeclaration {
+  return window.getComputedStyle(element);
+}
+
+function before(a: Element, b: Element): boolean {
+  return (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+}
+
+function first<T>(items: readonly T[]): T {
+  const item = items[0];
+  if (item === undefined) throw new Error('none found');
+  return item;
+}
+
+/** The page's own polite region (a copied reply has its own, beside its Copy button). */
+function liveRegion(): HTMLElement {
+  return screen.getByTestId('chat-live');
+}
+
+async function send(api: FakeChatApi, text: string): Promise<void> {
+  fireEvent.change(await screen.findByLabelText(COMPOSER_LABEL), { target: { value: text } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+  await waitFor(() => { expect(api.turns.length).toBeGreaterThan(0); });
+}
+
+async function openEarlierChat(): Promise<void> {
+  fireEvent.click(await screen.findByRole('button', { name: 'History' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Earlier chat, Nov 2, 2026' }));
+  await screen.findByText('We close for the holidays.');
+}
+
+async function openPanel(): Promise<HTMLElement> {
+  fireEvent.click(await screen.findByRole('button', { name: 'Questions and activity (2)' }));
+  return screen.findByTestId('agent-side');
+}
+
+/** A whole Escape press where focus is: react-native-web's Modal closes the top-most modal on its keyup. */
+function pressEscape(): void {
+  const target = document.activeElement ?? document.body;
+  act(() => {
+    fireEvent.keyDown(target, { key: 'Escape' });
+    fireEvent.keyUp(target, { key: 'Escape' });
+  });
+}
+
+function expectReadOnly(control: HTMLElement): void {
+  expect(control.getAttribute('aria-disabled')).toBe('true');
+  expect(control.getAttribute('aria-describedby')?.split(' ')).toContain('chat-ro');
+}
+
+test('the dashboard links to a location, whose TownwiseAI page greets the person, streams a reply with a card, and saves its note', async () => {
   const api = fakeChatApi();
+  api.profile = { displayName: 'Cam', askName: false };
   renderAt('/dashboard', api);
   fireEvent.click(await screen.findByText('Main Street Bar'));
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1'); });
   fireEvent.click(await screen.findByRole('link', { name: 'TownwiseAI' }));
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/agent'); });
   expect(await screen.findByText('Main Street Bar, Hanover, NH')).toBeTruthy();
-  expect(screen.getAllByRole('heading', { level: 1 }).map((heading) => heading.textContent)).toEqual(['TownwiseAI']);
-  expect(screen.getByRole('log', { name: 'Conversation with TownwiseAI' })).toBeTruthy();
+  await waitFor(() => {
+    expect(screen.getAllByRole('heading', { level: 1 }).map((heading) => heading.textContent)).toEqual(['Welcome back, Cam.']);
+  });
 
-  fireEvent.change(await screen.findByLabelText(COMPOSER_LABEL), { target: { value: 'Closed for the holidays' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-  await waitFor(() => { expect(api.turns).toHaveLength(1); });
+  await send(api, 'Closed for the holidays');
+  expect(screen.getByRole('log', { name: 'Conversation with TownwiseAI' })).toBeTruthy();
   await stream(() => {
     turn(api).emit('conversation', { id: 'c2', title: 'Closed for the holidays' });
     turn(api).emit('text', { delta: 'Here is a note.' });
@@ -124,8 +206,92 @@ test('the dashboard links to a location, whose TownwiseAI page streams a reply w
 test('the old chat address opens TownwiseAI, so links and bookmarks keep working', async () => {
   renderAt('/locations/l1/chat', fakeChatApi());
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/agent'); });
-  expect(await screen.findByRole('heading', { level: 1, name: 'TownwiseAI' })).toBeTruthy();
+  expect(await screen.findByRole('heading', { level: 1, name: 'Welcome back.' })).toBeTruthy();
   expect(await screen.findByLabelText(COMPOSER_LABEL)).toBeTruthy();
+});
+
+test('asks for a name once, above the chat, and the greeting takes it', async () => {
+  const api = fakeChatApi();
+  api.profile = { displayName: null, askName: true };
+  renderAt('/locations/l1/agent', api);
+  const ask = await screen.findByRole('heading', { level: 2, name: 'What should TownwiseAI call you?' });
+  expect(before(ask, screen.getByRole('button', { name: 'History' }))).toBe(true);
+  expect(screen.getByRole('heading', { level: 1, name: 'Welcome back.' })).toBeTruthy();
+  fireEvent.change(screen.getByRole('textbox', { name: 'First name' }), { target: { value: 'Cam' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
+  expect(await screen.findByRole('heading', { level: 1, name: 'Welcome back, Cam.' })).toBeTruthy();
+  expect(screen.queryByText('What should TownwiseAI call you?')).toBeNull();
+  expect(api.writes).toEqual([{ method: 'PATCH', path: '/api/me/profile', body: { displayName: 'Cam' } }]);
+});
+
+test('an empty conversation is the centered landing: heading, reads line, composer, then chips', async () => {
+  renderAt('/locations/l1/agent', fakeChatApi());
+  const heading = await screen.findByRole('heading', { level: 2, name: 'Ask TownwiseAI about Main Street Bar' });
+  const reads = screen.getByText('It reads your sales, your notes, Hanover’s town profile, the town calendar and who’s likely in Hanover, and shows you each thing it reads. It suggests notes; you decide what’s saved.');
+  const input = screen.getByLabelText(COMPOSER_LABEL);
+  const chips = screen.getByRole('group', { name: 'Suggestions' });
+  expect(before(heading, reads)).toBe(true);
+  expect(before(reads, input)).toBe(true);
+  expect(before(input, chips)).toBe(true);
+  // No log until the first message; one column, at most 760px wide, centered top to bottom.
+  expect(screen.queryByRole('log')).toBeNull();
+  const column = screen.getByTestId('chat-landing-column');
+  expect(style(column).maxWidth).toBe('760px');
+  expect(style(column).justifyContent).toBe('center');
+  // The chips are pills (D26), and the landing's placeholder doesn't repeat them.
+  expect(style(within(chips).getByRole('button', { name: 'Which days last month were unusual?' })).borderTopLeftRadius).toBe('22px');
+  expect(input.getAttribute('placeholder')).toBe('Ask about a closure, an event or an unusual day');
+  expect(screen.queryByText(BUDGET_LINE)).toBeNull();
+});
+
+test('the first send docks the composer under the thread', async () => {
+  const api = fakeChatApi();
+  renderAt('/locations/l1/agent', api);
+  await send(api, 'How was December?');
+  const log = screen.getByRole('log', { name: 'Conversation with TownwiseAI' });
+  expect(within(log).getByText('How was December?')).toBeTruthy();
+  expect(screen.queryByRole('heading', { name: 'Ask TownwiseAI about Main Street Bar' })).toBeNull();
+  expect(screen.queryByRole('group', { name: 'Suggestions' })).toBeNull();
+  const input = screen.getByLabelText(COMPOSER_LABEL);
+  expect(log.contains(input)).toBe(false);
+  expect(before(log, input)).toBe(true);
+  // Focus went with it, and the docked composer offers the Ask chips as rotating examples.
+  await waitFor(() => { expect(document.activeElement).toBe(input); });
+  expect(input.getAttribute('placeholder')).toBe('Which days last month were unusual?');
+  // The messages sit in one centered column, at most 760px wide.
+  expect(style(screen.getByTestId('chat-column')).maxWidth).toBe('760px');
+});
+
+test('a first turn taken back brings the landing back, with the text and focus in its composer', async () => {
+  const api = fakeChatApi();
+  renderAt('/locations/l1/agent', api);
+  // The server refuses the turn, then the connection fails before anything arrives.
+  const failures: ((next: () => void) => Promise<void>)[] = [
+    async (next) => {
+      api.refuse = chatRefusal(503, null);
+      next();
+      await waitFor(() => { expect(screen.queryByRole('log')).toBeNull(); });
+      api.refuse = null;
+    },
+    async (next) => {
+      next();
+      await waitFor(() => { expect(api.turns).toHaveLength(1); });
+      const docked = screen.getByLabelText(COMPOSER_LABEL);
+      await waitFor(() => { expect(document.activeElement).toBe(docked); });
+      await stream(() => { turn(api).fail(new ApiError('network', 'The network request failed.')); });
+    },
+  ];
+  for (const fail of failures) {
+    const input = await screen.findByLabelText(COMPOSER_LABEL);
+    act(() => { input.focus(); });
+    fireEvent.change(input, { target: { value: 'How was December?' } });
+    await fail(() => { fireEvent.click(screen.getByRole('button', { name: 'Send' })); });
+    expect(await screen.findByRole('heading', { level: 2, name: 'Ask TownwiseAI about Main Street Bar' })).toBeTruthy();
+    const back = screen.getByLabelText(COMPOSER_LABEL);
+    expect((back as HTMLTextAreaElement).value).toBe('How was December?');
+    await waitFor(() => { expect(document.activeElement).toBe(back); });
+    fireEvent.change(back, { target: { value: '' } });
+  }
 });
 
 describe('the composer', () => {
@@ -154,18 +320,126 @@ describe('the composer', () => {
     fireEvent.change(input, { target: { value: 'x'.repeat(3712) } });
     expect(screen.getByText('3,712 of 4,000')).toBeTruthy();
   });
+
+  test('Stop and send stops the reply and sends what was typed, after the last saved message', async () => {
+    const api = fakeChatApi();
+    renderAt('/locations/l1/agent', api);
+    await send(api, 'How was December?');
+    await stream(() => { turn(api).emit('text', { delta: 'December was' }); });
+    const input = screen.getByLabelText(COMPOSER_LABEL);
+    fireEvent.change(input, { target: { value: 'And January?' } });
+    // Enter does nothing while a reply streams.
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(api.turns).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Stop and send' }));
+    await waitFor(() => { expect(api.turns).toHaveLength(2); });
+    expect(turn(api).body).toEqual({ content: 'And January?' });
+    expect(screen.getByText('Stopped. Your message and this reply weren’t saved.')).toBeTruthy();
+  });
 });
 
-test('the conversations list closes on Escape and gives focus back to its button', async () => {
+test('History closes on Escape and gives focus back to its button', async () => {
   renderAt('/locations/l1/agent', fakeChatApi());
-  const button = await screen.findByRole('button', { name: 'Conversations' });
+  const button = await screen.findByRole('button', { name: 'History' });
   fireEvent.click(button);
   expect(button.getAttribute('aria-expanded')).toBe('true');
-  const list = screen.getByRole('region', { name: 'Conversations' });
+  const list = screen.getByRole('region', { name: 'History' });
   expect(within(list).getByRole('button', { name: 'Earlier chat, Nov 2, 2026' })).toBeTruthy();
   fireEvent.keyDown(document, { key: 'Escape' });
-  expect(screen.queryByRole('region', { name: 'Conversations' })).toBeNull();
+  expect(screen.queryByRole('region', { name: 'History' })).toBeNull();
   expect(document.activeElement).toBe(button);
+});
+
+test('the side panel is closed by default and opens as a column from 1024px and as a sheet below', async () => {
+  renderAt('/locations/l1/agent', fakeChatApi());
+  const toggle = await screen.findByRole('button', { name: 'Questions and activity (2)' });
+  expect(toggle.getAttribute('aria-expanded')).toBe('false');
+  expect(screen.queryByTestId('agent-side')).toBeNull();
+  fireEvent.click(toggle);
+  // A column beside the chat: the same button (the chat isn't drawn again), and no dialog.
+  const side = await screen.findByTestId('agent-side');
+  expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  expect(toggle.isConnected).toBe(true);
+  expect(within(side).getByRole('heading', { name: 'Questions for you' })).toBeTruthy();
+  expect(within(side).getByRole('heading', { name: 'What it’s been doing' })).toBeTruthy();
+  expect(within(side).getByRole('heading', { name: 'This month’s budget' })).toBeTruthy();
+  expect(within(side).getByRole('button', { name: 'How TownwiseAI works' })).toBeTruthy();
+  expect(screen.queryByRole('dialog', { name: 'Questions and activity' })).toBeNull();
+  fireEvent.click(toggle);
+  expect(screen.queryByTestId('agent-side')).toBeNull();
+  // Below 1024px, a full-screen sheet: Escape shuts it and focus goes back to the button.
+  setWidth(800);
+  const narrow = screen.getByRole('button', { name: 'Questions and activity (2)' });
+  fireEvent.click(narrow);
+  const sheet = await screen.findByRole('dialog', { name: 'Questions and activity' });
+  expect(within(sheet).getByRole('heading', { name: 'Questions for you' })).toBeTruthy();
+  pressEscape();
+  await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Questions and activity' })).toBeNull(); });
+  expect(document.activeElement).toBe(narrow);
+});
+
+test('below 1024px, Escape in the model card closes only the card, and focus goes back to How Townwise estimates', async () => {
+  setWidth(800);
+  renderAt('/locations/l1/agent', fakeChatApi());
+  fireEvent.click(await screen.findByRole('button', { name: 'Questions and activity (2)' }));
+  const sheet = await screen.findByRole('dialog', { name: 'Questions and activity' });
+  fireEvent.click(within(sheet).getByRole('button', { name: 'How TownwiseAI works' }));
+  const estimates = within(sheet).getByRole('button', { name: 'How Townwise estimates' });
+  act(() => { estimates.focus(); });
+  fireEvent.click(estimates);
+  expect(await screen.findByRole('dialog', { name: 'How Townwise estimates' })).toBeTruthy();
+  pressEscape();
+  await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'How Townwise estimates' })).toBeNull(); });
+  expect(screen.getByRole('dialog', { name: 'Questions and activity' })).toBe(sheet);
+  expect(document.activeElement).toBe(estimates);
+});
+
+test('shows the 80% budget line above the composer', async () => {
+  const api = fakeChatApi();
+  api.summary = { ...SUMMARY, budget: { ...SUMMARY.budget, usedUsd: 16 } };
+  renderAt('/locations/l1/agent', api);
+  const line = await screen.findByText(BUDGET_LINE);
+  expect(before(line, screen.getByLabelText(COMPOSER_LABEL))).toBe(true);
+  await send(api, 'How was December?');
+  expect(before(screen.getByText(BUDGET_LINE), screen.getByLabelText(COMPOSER_LABEL))).toBe(true);
+  expect(screen.getAllByText(BUDGET_LINE)).toHaveLength(1);
+});
+
+test('shows exactly three next questions under the newest settled reply only, the model’s when given', async () => {
+  const api = fakeChatApi();
+  renderAt('/locations/l1/agent', api);
+  await send(api, 'How was December?');
+  const model = ['Show December as a chart', 'Compare December with November', 'Which December days were slow?'];
+  await stream(() => {
+    turn(api).emit('conversation', { id: 'c2', title: 'How was December?' });
+    turn(api).emit('text', { delta: 'December was steady.' });
+    turn(api).emit('suggestions', { id: 'toolu_test_0009', prompts: model });
+  });
+  // Not while it streams.
+  expect(screen.queryByRole('group', { name: 'Suggested next questions' })).toBeNull();
+  await stream(() => {
+    turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0 });
+    turn(api).end();
+  });
+  const group = screen.getByRole('group', { name: 'Suggested next questions' });
+  expect(within(group).getAllByRole('button').map((chip) => chip.textContent)).toEqual(model);
+  // One press sends it; none show under the reply that streams, and the earlier reply's go.
+  fireEvent.click(within(group).getByRole('button', { name: 'Compare December with November' }));
+  await waitFor(() => { expect(api.turns).toHaveLength(2); });
+  expect(turn(api).body).toMatchObject({ content: 'Compare December with November' });
+  expect(screen.queryByRole('group', { name: 'Suggested next questions' })).toBeNull();
+  // A reply that came with none gets three by the fixed rules, never the message just sent.
+  await stream(() => {
+    turn(api).emit('tool', { id: SALES_STEP.id, name: SALES_STEP.name, state: 'done', input: SALES_STEP.input, result: SALES_STEP.result });
+    turn(api).emit('text', { delta: 'November was quieter.' });
+    turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0 });
+    turn(api).end();
+  });
+  const groups = screen.getAllByRole('group', { name: 'Suggested next questions' });
+  expect(groups).toHaveLength(1);
+  expect(within(first(groups)).getAllByRole('button').map((chip) => chip.textContent)).toEqual([
+    'Show that as a chart', 'Compare that with the same days last year', 'Is anything on the town calendar then?',
+  ]);
 });
 
 test('F7: ?about= fills the composer with the day, sends nothing, and keeps the address', async () => {
@@ -190,7 +464,7 @@ test('F7: a malformed ?about= leaves the composer empty', async () => {
 
 test('F10: How Townwise estimates opens the model card as a dialog; Escape closes it', async () => {
   renderAt('/locations/l1/agent', fakeChatApi());
-  const side = await screen.findByTestId('agent-side');
+  const side = await openPanel();
   fireEvent.click(within(side).getByRole('button', { name: 'How TownwiseAI works' }));
   fireEvent.click(within(side).getByRole('button', { name: 'How Townwise estimates' }));
   const dialog = await screen.findByRole('dialog', { name: 'How Townwise estimates' });
@@ -203,9 +477,7 @@ test('F10: How Townwise estimates opens the model card as a dialog; Escape close
 describe('a tool card', () => {
   async function running(api: FakeChatApi): Promise<HTMLElement> {
     renderAt('/locations/l1/agent', api);
-    fireEvent.change(await screen.findByLabelText(COMPOSER_LABEL), { target: { value: 'How was December?' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-    await waitFor(() => { expect(api.turns).toHaveLength(1); });
+    await send(api, 'How was December?');
     await stream(() => { turn(api).emit('tool', { id: SALES_STEP.id, name: SALES_STEP.name, state: 'running', input: SALES_STEP.input, result: null }); });
     return screen.getByText('your sales for Dec 1 to Dec 31, 2025');
   }
@@ -227,31 +499,65 @@ describe('a tool card', () => {
     expect(faded(await running(fakeChatApi()))).toBe(false);
   });
 
-  test('the live region says each thing TownwiseAI starts reading, then that it replied, never the streamed text', async () => {
+  test('a running tool shows its live line instead of thinking, and the caret goes on done', async () => {
     const api = fakeChatApi();
-    await running(api);
-    const live = document.querySelector('[aria-live="polite"]');
-    expect(live?.textContent).toBe('Reading your sales for Dec 1 to Dec 31, 2025');
+    renderAt('/locations/l1/agent', api);
+    await send(api, 'How was December?');
+    expect(screen.getByText('TownwiseAI is thinking…')).toBeTruthy();
+    await stream(() => { turn(api).emit('tool', { id: SALES_STEP.id, name: SALES_STEP.name, state: 'running', input: SALES_STEP.input, result: null }); });
+    expect(screen.queryByText('TownwiseAI is thinking…')).toBeNull();
+    expect(screen.getByText('Reading your sales for Dec 1 to Dec 31, 2025…')).toBeTruthy();
     await stream(() => {
       turn(api).emit('tool', { id: SALES_STEP.id, name: SALES_STEP.name, state: 'done', input: SALES_STEP.input, result: SALES_STEP.result });
       turn(api).emit('text', { delta: 'December was steady.' });
     });
-    expect(live?.textContent).toBe('TownwiseAI is replying');
+    // Text is what streams: the static caret ends it, and the live line has gone.
+    expect(screen.getAllByText('▍')).toHaveLength(1);
+    expect(screen.queryByText(/^Reading your sales/)).toBeNull();
     await stream(() => {
       turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0 });
       turn(api).end();
     });
-    expect(live?.textContent).toBe('TownwiseAI replied');
+    expect(screen.queryByText('▍')).toBeNull();
+    expect(screen.queryByText('TownwiseAI is thinking…')).toBeNull();
+  });
+
+  test('the live region says what it starts reading and never the streamed text or a figure', async () => {
+    const api = fakeChatApi();
+    await running(api);
+    const live = liveRegion();
+    const said: string[] = [];
+    const listen = new MutationObserver(() => { said.push(live.textContent); });
+    listen.observe(live, { subtree: true, childList: true, characterData: true });
+    expect(live.getAttribute('aria-live')).toBe('polite');
+    expect(live.textContent).toBe('Reading your sales for Dec 1 to Dec 31, 2025');
+    await stream(() => {
+      turn(api).emit('tool', { id: SALES_STEP.id, name: SALES_STEP.name, state: 'done', input: SALES_STEP.input, result: SALES_STEP.result });
+      turn(api).emit('text', { delta: 'December had 1,234 guests.' });
+    });
+    expect(live.textContent).toBe('TownwiseAI is replying');
+    // The log is not live (a log is polite by default), so the streamed text is never read out: the nearest live
+    // setting above it is the log's "off", and the page's region is the only polite one with anything to say.
+    const log = screen.getByRole('log', { name: 'Conversation with TownwiseAI' });
+    expect(log.getAttribute('aria-live')).toBe('off');
+    expect(screen.getByText(/December had 1,234 guests/).closest('[aria-live]')).toBe(log);
+    expect(Array.from(document.querySelectorAll('[aria-live="polite"]')).filter((region) => region.textContent !== '')).toEqual([live]);
+    await stream(() => {
+      turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0 });
+      turn(api).end();
+    });
+    expect(live.textContent).toBe('TownwiseAI replied');
+    listen.disconnect();
+    for (const words of said) expect(words).not.toMatch(/1,234|guests|December had/);
   });
 
   test('opening an earlier conversation announces nothing: only a reply to this visit’s message is news', async () => {
     const api = fakeChatApi();
     renderAt('/locations/l1/agent', api);
-    fireEvent.click(await screen.findByRole('button', { name: 'Conversations' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Earlier chat, Nov 2, 2026' }));
-    await screen.findByText('Last December you were open every day.');
-    const live = document.querySelector('[aria-live="polite"]');
-    expect(live?.textContent).toBe('');
+    await openEarlierChat();
+    expect(screen.getByText('Last December you were open every day.')).toBeTruthy();
+    const live = liveRegion();
+    expect(live.textContent).toBe('');
     fireEvent.change(screen.getByLabelText(COMPOSER_LABEL), { target: { value: 'And January?' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => { expect(api.turns).toHaveLength(1); });
@@ -260,20 +566,90 @@ describe('a tool card', () => {
       turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0 });
       turn(api).end();
     });
-    expect(live?.textContent).toBe('TownwiseAI replied');
+    expect(live.textContent).toBe('TownwiseAI replied');
     // Opening it again replays the reply, which is not news.
-    fireEvent.click(screen.getByRole('button', { name: 'Conversations' }));
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
     fireEvent.click(screen.getByRole('button', { name: 'Earlier chat, Nov 2, 2026' }));
-    await waitFor(() => { expect(live?.textContent).toBe(''); });
+    await waitFor(() => { expect(live.textContent).toBe(''); });
   });
+
+  test('a version switch says which version shows, through the page’s region, and nothing about a reply', async () => {
+    const api = fakeChatApi();
+    api.conversation = TWO_REPLIES;
+    api.versions = { a2: SECOND_REPLY };
+    renderAt('/locations/l1/agent', api);
+    await openEarlierChat();
+    const live = liveRegion();
+    fireEvent.change(screen.getByLabelText(COMPOSER_LABEL), { target: { value: 'And January?' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => { expect(api.turns).toHaveLength(1); });
+    await stream(() => {
+      turn(api).emit('text', { delta: 'January was quiet.' });
+      turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0 });
+      turn(api).end();
+    });
+    expect(live.textContent).toBe('TownwiseAI replied');
+    // A switch draws every message anew; none of it is a reply to say.
+    fireEvent.click(screen.getByRole('button', { name: 'Next version' }));
+    expect(live.textContent).toBe('');
+    expect(await screen.findByText('A second answer.')).toBeTruthy();
+    await waitFor(() => { expect(live.textContent).toBe('Showing version 2 of 2.'); });
+    expect(api.writes).toEqual([{ method: 'POST', path: '/api/org/locations/l1/chat/c1/active', body: { nodeId: 'a2' } }]);
+  });
+});
+
+test('one primary: only the composer’s button has the white fill', async () => {
+  const api = fakeChatApi();
+  renderAt('/locations/l1/agent', api);
+  // A reply with a proposal card, the side panel's answers, and text in the composer, so Send is on.
+  await openEarlierChat();
+  expect(screen.getByText('Proposed note')).toBeTruthy();
+  const side = await openPanel();
+  await within(side).findByRole('button', { name: 'Yes, closed Mondays' });
+  fireEvent.change(screen.getByLabelText(COMPOSER_LABEL), { target: { value: 'And January?' } });
+  const send = screen.getByRole('button', { name: 'Send' });
+  expect(screen.getAllByRole('button').filter((button) => style(button).backgroundColor === WHITE)).toEqual([send]);
+  expect(style(send).borderTopLeftRadius).toBe('22px');
+  // Edit first's note form saves with an outline, so it stays the one.
+  fireEvent.click(screen.getByRole('button', { name: 'Edit first' }));
+  expect(await screen.findByRole('heading', { name: 'Add a note' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Save note' })).toBeTruthy();
+  expect(screen.getAllByRole('button').filter((button) => style(button).backgroundColor === WHITE)).toEqual([send]);
+});
+
+test('no horizontal page scroll at 360px with a wide table and a chart', async () => {
+  setWidth(360);
+  const api = fakeChatApi();
+  renderAt('/locations/l1/agent', api);
+  await send(api, 'Show me October');
+  const columns = Array.from({ length: 12 }, (_, index) => `Column ${String(index + 1)}`);
+  const table = [`| ${columns.join(' | ')} |`, `|${' --- |'.repeat(12)}`, `| ${columns.map(() => 'a long value').join(' | ')} |`].join('\n');
+  await stream(() => {
+    turn(api).emit('text', { delta: `October, day by day:\n\n${table}\n` });
+    turn(api).emit('visual', { id: 'toolu_test_0010', visual: daily });
+    turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0 });
+    turn(api).end();
+  });
+  const log = screen.getByRole('log', { name: 'Conversation with TownwiseAI' });
+  // The thread never scrolls sideways; its column is the screen's width at most.
+  expect(style(log).overflowX).toBe('hidden');
+  const column = screen.getByTestId('chat-column');
+  expect(style(column).width).toBe('100%');
+  expect(style(column).minWidth).toBe('0px');
+  // The table scrolls inside its own region, and the chart is as wide as the column.
+  const region = within(log).getByRole('region', { name: 'Table' });
+  expect(style(region).overflowX).toBe('auto');
+  expect(within(region).getByText('Column 12')).toBeTruthy();
+  expect((log.querySelector('svg') as SVGElement | null)?.style.width).toBe('100%');
+  // The next questions scroll sideways inside their own row on phones.
+  const next = screen.getByRole('group', { name: 'Suggested next questions' });
+  expect(style(first(Array.from(next.children))).overflowX).toBe('auto');
 });
 
 test('a town profile card’s sources open in a new tab', async () => {
   const api = fakeChatApi();
   renderAt('/locations/l1/agent', api);
-  fireEvent.change(await screen.findByLabelText(COMPOSER_LABEL), { target: { value: 'What drives Hanover?' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-  await waitFor(() => { expect(api.turns).toHaveLength(1); });
+  await send(api, 'What drives Hanover?');
   const result = { available: true, town: { name: 'Hanover', state: 'NH' }, sources: [{ host: 'dartmouth.edu', url: 'https://dartmouth.edu/calendar' }] };
   await stream(() => {
     turn(api).emit('tool', { id: 'toolu_test_0003', name: 'get_town_profile', state: 'done', input: null, result });
@@ -289,19 +665,44 @@ test('a town profile card’s sources open in a new tab', async () => {
   expect(link.getAttribute('rel')).toContain('noopener');
 });
 
-test('view-as: every write control is aria-disabled and described by the one read-only line', async () => {
+test('under view-as every write is disabled in place, the name prompt never shows, and versions still switch by reading', async () => {
   const api = fakeChatApi();
+  // The server never asks under view-as; the page wouldn't either.
+  api.profile = { displayName: 'Pat', askName: true };
+  api.conversation = TWO_REPLIES;
+  api.versions = { a2: SECOND_REPLY };
   renderAt('/locations/l1/agent', api, viewAsMe(ACCESS.member));
   await waitFor(() => { expect(document.getElementById('chat-ro')).toBeTruthy(); });
+  // It greets with the target's name, as the target sees it.
+  expect(await screen.findByRole('heading', { level: 1, name: 'Welcome back, Pat.' })).toBeTruthy();
+  expect(screen.queryByText('What should TownwiseAI call you?')).toBeNull();
   const input = await screen.findByLabelText(COMPOSER_LABEL);
   expect(input.getAttribute('aria-readonly')).toBe('true');
   expect(input.getAttribute('aria-describedby')).toBe('chat-ro composer-help');
-  const answer = await screen.findByRole('button', { name: 'Yes, closed Mondays' });
-  for (const control of [screen.getByRole('button', { name: 'Send' }), screen.getByRole('button', { name: 'New chat' }), answer]) {
-    expect(control.getAttribute('aria-disabled')).toBe('true');
-    expect(control.getAttribute('aria-describedby')?.split(' ')).toContain('chat-ro');
+  for (const name of ['Send', 'New chat', 'Which days last month were unusual?']) expectReadOnly(screen.getByRole('button', { name }));
+  const side = await openPanel();
+  expectReadOnly(await within(side).findByRole('button', { name: 'Yes, closed Mondays' }));
+  fireEvent.click(within(side).getByRole('button', { name: 'Yes, closed Mondays' }));
+  // Reading is allowed: the target's conversation opens, with every action in place and disabled.
+  await openEarlierChat();
+  // The docked composer shows no example to accept, so Tab can't fill it.
+  const docked = screen.getByLabelText(COMPOSER_LABEL);
+  expect(docked.getAttribute('placeholder')).toBe('Ask about a closure, an event or an unusual day');
+  fireEvent.keyDown(docked, { key: 'Tab' });
+  expect((docked as HTMLTextAreaElement).value).toBe('');
+  const next = screen.getByRole('group', { name: 'Suggested next questions' });
+  for (const control of [
+    screen.getByRole('button', { name: 'Edit' }), screen.getByRole('button', { name: 'Regenerate' }),
+    screen.getByRole('button', { name: 'Helpful' }), screen.getByRole('button', { name: 'Not helpful' }),
+    screen.getByRole('button', { name: 'Save note' }), first(within(next).getAllByRole('button')),
+  ]) {
+    expectReadOnly(control);
     fireEvent.click(control);
   }
+  // A version switch reads the other version by its node and stores nothing.
+  fireEvent.click(screen.getByRole('button', { name: 'Next version' }));
+  expect(await screen.findByText('A second answer.')).toBeTruthy();
+  expect(api.conversationReads.at(-1)).toBe('/api/org/locations/l1/chat/c1?node=a2');
   expect(api.turns).toHaveLength(0);
   expect(api.writes).toHaveLength(0);
   expect(screen.getAllByText(/^Read-only while viewing as/)).toHaveLength(1);
@@ -312,18 +713,19 @@ test('nothing goes to browser storage', async () => {
   try {
     const api = fakeChatApi();
     renderAt('/locations/l1/agent', api);
-    fireEvent.change(await screen.findByLabelText(COMPOSER_LABEL), { target: { value: 'Hello' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-    await waitFor(() => { expect(api.turns).toHaveLength(1); });
+    await send(api, 'Hello');
+    // A draft typed while the reply streams is kept in memory only.
+    fireEvent.change(screen.getByLabelText(COMPOSER_LABEL), { target: { value: 'Half typed' } });
     await stream(() => {
       turn(api).emit('text', { delta: 'Hi.' });
       turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0 });
       turn(api).end();
     });
-    const [notSure] = await screen.findAllByRole('button', { name: 'Not sure' });
+    const side = await openPanel();
+    const [notSure] = await within(side).findAllByRole('button', { name: 'Not sure' });
     if (notSure === undefined) throw new Error('no answer');
     fireEvent.click(notSure);
-    await screen.findByText('Got it. TownwiseAI won’t ask about these days again.');
+    await within(side).findByText('Got it. TownwiseAI won’t ask about these days again.');
     expect(setItem).not.toHaveBeenCalled();
   } finally {
     setItem.mockRestore();

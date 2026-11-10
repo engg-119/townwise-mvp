@@ -6,6 +6,8 @@ import { theme } from '../../theme';
 import { townLabel } from '../format';
 import { useBreakpoint } from '../hooks';
 import { useOrg, usePortal } from '../PortalProvider';
+import { greeting } from '../profile/greeting';
+import { useProfile } from '../profile/useProfile';
 import { isFillRoute, locationHref, locationIdOf, pageTitle, tabOf } from '../routing';
 import type { LocationSummary, MeResponse, OrgResponse } from '../schemas';
 import { LinkButton } from '../ui/Button';
@@ -17,9 +19,9 @@ import { PageHeader, PageNotice } from './Page';
 
 // The location pages' layout (spec 15.2, P11 to P16, P24, P25): the page header, then the page. The header's
 // eyebrow names the location (“{name}, {town}, {state}”), the page's one h1 is the page's own title (pageTitle),
-// and its side holds the location switcher and “All locations” when the organization has more than one location,
-// and “Location settings” for org admins. The location's sections are in the top bar (Frame), so the pages render
-// only their content.
+// except TownwiseAI's, which greets the person by the name they gave Townwise (D26), and its side holds the location
+// switcher and “All locations” when the organization has more than one location, and “Location settings” for org
+// admins. The location's sections are in the top bar (Frame), so the pages render only their content.
 
 /** The organization the layout is showing (see LocationShell), for its pages. */
 const ShownOrgContext = createContext<OrgResponse | null>(null);
@@ -42,6 +44,15 @@ const ScrollingHeadContext = createContext<React.ReactNode>(null);
 
 export function useScrollingHead(): React.ReactNode {
   return useContext(ScrollingHeadContext);
+}
+
+/**
+ * TownwiseAI's title: “Welcome back, {name}.”, or “Welcome back.” while the name loads, if it can't be read, or with
+ * none (P25). Under view-as it is the target's name. Only this page reads the profile.
+ */
+function Greeting(props: { children: (title: string) => React.ReactNode }): React.JSX.Element {
+  const { profile } = useProfile();
+  return <>{props.children(greeting(profile?.displayName ?? null))}</>;
 }
 
 export function LocationShell(props: { children: React.ReactNode }): React.JSX.Element {
@@ -87,7 +98,9 @@ export function LocationShell(props: { children: React.ReactNode }): React.JSX.E
   }
   const tab = tabOf(pathname);
   const eyebrow = `${location.name}, ${townLabel(location.town)}`;
-  const title = pageTitle(tab, new Date());
+  const titled = (draw: (title: string) => React.ReactNode): React.ReactNode => (
+    tab === 'agent' ? <Greeting>{draw}</Greeting> : draw(pageTitle(tab, new Date()))
+  );
   const several = locations.length > 1;
   const side = several || (role === 'org_admin' && tab !== 'settings') ? (
     <>
@@ -106,19 +119,19 @@ export function LocationShell(props: { children: React.ReactNode }): React.JSX.E
   ) : undefined;
   const page = <ShownOrgContext.Provider value={shown}>{props.children}</ShownOrgContext.Provider>;
   if (isFillRoute(pathname) && phone) {
-    const compact = (
+    const compact = titled((title) => (
       <View style={styles.compact}>
         <Eyebrow>{eyebrow}</Eyebrow>
         <Title lines={1}>{title}</Title>
       </View>
-    );
+    ));
     return (
       <ScrollingHeadContext.Provider value={compact}>
         <View style={styles.fill}>{page}</View>
       </ScrollingHeadContext.Provider>
     );
   }
-  const head = <PageHeader eyebrow={eyebrow} title={title} {...(side === undefined ? {} : { side })} />;
+  const head = titled((title) => <PageHeader eyebrow={eyebrow} title={title} {...(side === undefined ? {} : { side })} />);
   if (isFillRoute(pathname)) {
     return (
       <View style={styles.fill}>

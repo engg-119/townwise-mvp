@@ -1,7 +1,7 @@
 import { cleanup, render, screen, userEvent } from '@testing-library/react-native';
 import { Dimensions } from 'react-native';
 
-import { Composer, COMPOSER_LABEL, type ComposerProps } from '../../src/chat/ui/ChatComposer';
+import { Composer, COMPOSER_LABEL, type ComposerProps } from '../../src/chat/ui/Composer';
 
 afterEach(async () => {
   await cleanup();
