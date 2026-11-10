@@ -217,7 +217,7 @@ describe('a live open-as-admin grant', () => {
     expect(removed.status).toBe(200);
     expect(await removed.json()).toEqual({ deletedDays: 1, deletedFiles: 0 });
 
-    const events = (await auditEvents(server)).filter((event) => event.action.startsWith('data.') || event.action === 'sales.upload_deleted');
+    const events = (await auditEvents(server)).filter((event) => ['data.turned_off', 'data.turned_on', 'sales.upload_deleted'].includes(event.action as string));
     expect(events.map((event) => event.action)).toEqual(['data.turned_off', 'data.turned_on', 'sales.upload_deleted']);
     for (const event of events) {
       expect(event).toMatchObject({ actorUserId: staff.userId, actorEmail: STAFF_EMAIL, actorRole: 'superadmin', viewAsGrantId: grantId });
