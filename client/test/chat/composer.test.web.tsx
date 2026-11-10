@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 
-import { Composer, COMPOSER_LABEL, type ComposerProps } from '../../src/chat/ui/ChatComposer';
+import { Composer, COMPOSER_LABEL, type ComposerProps } from '../../src/chat/ui/Composer';
 
 // The rounded composer on web: the button's three readings, rotating examples, the radii, the leading slot, growth
 // and the counter.

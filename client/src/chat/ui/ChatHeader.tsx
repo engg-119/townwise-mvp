@@ -17,6 +17,33 @@ type Host = React.ComponentRef<typeof View>;
 
 export const NEW_CONVERSATION = 'New conversation';
 
+/**
+ * "Questions and activity", with " ({n})" while n questions are open: it opens and closes the panel (a column from
+ * 1024px, a sheet below) and is never off. The page also shows it alone while TownwiseAI is off or can't load, since
+ * the panel works either way (spec 10.12).
+ */
+export function PanelButton(props: {
+  open: boolean;
+  openQuestions: number | null;
+  onPress: () => void;
+  /** Where the panel sheet returns focus to (web). */
+  buttonRef?: React.RefObject<Host | null>;
+}): React.JSX.Element {
+  const count = props.openQuestions !== null && props.openQuestions > 0 ? ` (${String(props.openQuestions)})` : '';
+  return (
+    <Pressable
+      ref={props.buttonRef ?? null}
+      role="button"
+      aria-expanded={props.open}
+      accessibilityState={{ expanded: props.open }}
+      onPress={props.onPress}
+      style={styles.link}
+    >
+      <Text style={styles.linkText}>{`Questions and activity${count}`}</Text>
+    </Pressable>
+  );
+}
+
 export function ChatHeader(props: {
   title: string;
   conversations: readonly ConversationSummary[];
@@ -39,7 +66,6 @@ export function ChatHeader(props: {
   const open = opened && !props.streaming;
   const button = useRef<Host>(null);
   const menuId = 'chat-history-menu';
-  const count = props.openQuestions !== null && props.openQuestions > 0 ? ` (${String(props.openQuestions)})` : '';
 
   function close(): void {
     setOpened(false);
@@ -82,16 +108,12 @@ export function ChatHeader(props: {
               props.onNew();
             }}
           />
-          <Pressable
-            ref={props.panelButtonRef ?? null}
-            role="button"
-            aria-expanded={props.panelOpen}
-            accessibilityState={{ expanded: props.panelOpen }}
+          <PanelButton
+            open={props.panelOpen}
+            openQuestions={props.openQuestions}
             onPress={props.onTogglePanel}
-            style={styles.link}
-          >
-            <Text style={styles.linkText}>{`Questions and activity${count}`}</Text>
-          </Pressable>
+            {...(props.panelButtonRef === undefined ? {} : { buttonRef: props.panelButtonRef })}
+          />
         </View>
       </View>
       {open ? (
