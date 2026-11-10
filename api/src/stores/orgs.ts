@@ -15,8 +15,11 @@ export interface OrgFields {
    * reopens, even once every seat is removed and its person deleted. Absent until then, and on older documents.
    */
   firstJoinedAt?: Date;
-  /** Staff switched forecasts on for the organization with its owner's agreement (G1). Absent until first switched. */
-  forecasts?: { on: boolean; at: Date; by: string };
+  /**
+   * Staff switched forecasts on for the organization with its owner's agreement (G1). Absent until first switched.
+   * `by` is the staff user id, null once that person is deleted.
+   */
+  forecasts?: { on: boolean; at: Date; by: string | null };
 }
 
 function orgSchema(): Schema<OrgFields> {
@@ -28,7 +31,7 @@ function orgSchema(): Schema<OrgFields> {
     fromRequestId: { type: Schema.Types.ObjectId, default: null },
     suspendedAt: { type: Date, default: null },
     firstJoinedAt: { type: Date },
-    forecasts: { type: new Schema({ on: { type: Boolean, required: true }, at: { type: Date, required: true }, by: { type: String, required: true } }, { _id: false, strict: true }) },
+    forecasts: { type: new Schema({ on: { type: Boolean, required: true }, at: { type: Date, required: true }, by: { type: String, default: null } }, { _id: false, strict: true }) },
   }, { strict: true, versionKey: false, read: 'primary' });
   schema.index({ createdAt: -1 });
   return schema;

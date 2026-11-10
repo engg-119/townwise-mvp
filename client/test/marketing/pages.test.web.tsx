@@ -268,16 +268,23 @@ test('Privacy names Anthropic as TownwiseAI’s provider, says nothing is sent u
   expect(anthropic.textContent).toContain('which provides the AI model behind TownwiseAI, the assistant on each location’s TownwiseAI page. Nothing is sent to Anthropic unless you use it.');
   expect(anthropic.textContent).not.toContain('off in production');
   expect(anthropic.textContent).toContain('Anthropic receives the messages you send and the location data the assistant reads to answer them');
+  expect(anthropic.textContent).toContain('its notes, its forecast’s ranges and accuracy and its calibration results, its town profile');
   expect(anthropic.textContent).toContain('which say Anthropic may not train models on that content.');
   expect(within(anthropic).getByRole('link', { name: 'Commercial Terms of Service' }).getAttribute('href')).toBe(ANTHROPIC_TERMS);
   expect(anthropic.querySelectorAll('.chip')).toHaveLength(0);
+});
+
+test('Privacy describes how forecasts are built and what Townwise keeps', () => {
+  renderAt('/privacy');
+  const text = screen.getByRole('main').textContent;
+  expect(text).toContain('Forecasts. Townwise builds your forecasts from your sales history and notes on Townwise’s own servers, in a job that sees only that location’s days. The model it fits learns only from your restaurant and is used only for your restaurant; Townwise keeps the results (a range of guests per day, the dates the model learned from, and how accurate it has been) and not the model. When Townwise staff import a forecast instead, it was built on the team’s own computers from sales exports you sent us; that model and those exports stay with Townwise staff, are used only for your restaurant, and are deleted when your organization is deleted or when you ask. You and TownwiseAI see the results. Deleting your sales data or your organization deletes them.');
 });
 
 test('Privacy makes the three commitments and no longer says the app has no upload', () => {
   renderAt('/privacy');
   const text = screen.getByRole('main').textContent;
   expect(text).toContain('Townwise does not sell personal data.');
-  expect(text).toContain('Your sales data is used only to provide Townwise to your restaurant: its own forecasts and TownwiseAI, its AI assistant. It is not shared with or used for other restaurants, and it is not used to train AI models.');
+  expect(text).toContain('Your sales data is used only to provide Townwise to your restaurant: its own forecasts and TownwiseAI, its AI assistant. It is not shared with or used for other restaurants. It trains only your own location’s forecast model, and it is never used to train AI models such as TownwiseAI’s.');
   expect(text).not.toContain('tuning chat');
   expect(text).toContain('The operator responsible for your data is the Townwise team, a group of students in ENGG 119, AI in the Real World, at Dartmouth’s Thayer School of Engineering in Hanover, NH. Townwise is not an official Dartmouth product.');
   expect(text).toContain('we will delete your account and its data within 30 days');
@@ -355,7 +362,7 @@ test('marketing text keeps its set size when a phone turns sideways', () => {
 
 test('Terms and Security carry the new date, and Security says where Townwise is hosted', () => {
   renderAt('/terms');
-  expect(screen.getByText('Effective November 5, 2026.')).toBeTruthy();
+  expect(screen.getByText('Effective November 9, 2026.')).toBeTruthy();
   expect(screen.getByRole('main').textContent).toContain('you must be 18 or older and acting for your business');
   cleanup();
   renderAt('/security');
