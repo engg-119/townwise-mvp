@@ -9,6 +9,7 @@ import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
 import { ACCESS, EMAIL, fakePortalApi, LOCATIONS, meOf, orgOf, refusal, viewAsMe, type FakePortalApi } from '../../helpers/portal';
 import { daysOf, locationsFake, salesOf, uploadOf } from '../locations/fakes';
+import { choicesOf, choose, shownChoice } from '../../helpers/select';
 import { dailyTotalsOf, dataFake, itemOf, type DataFake } from './fakes';
 
 // Your data (P26, D28) on web: the table of everything a location received, Turn off and on at once, the deletes
@@ -240,7 +241,11 @@ test('All locations lists every location’s items with a Location column', asyn
   const fake = setup(meOf(ACCESS.admin), [...ITEMS, dailyTotalsOf('u_2', { locationId: 'l2' })]);
   await table();
   expect(rowsOf(screen.getByRole('table'))).toHaveLength(3);
-  fireEvent.change(screen.getByLabelText('Show'), { target: { value: 'all' } });
+  // The portal's select on web (Select.web.tsx): the choices are read and picked by opening it.
+  const show = screen.getByRole('combobox', { name: 'Show' });
+  expect(choicesOf(show)).toEqual(['Main Street Bar', 'All locations']);
+  choose(show, 'All locations');
+  expect(shownChoice(show)).toBe('All locations');
   const all = await table('Your data for all locations');
   expect(fake.lists.at(-1)).toEqual({ locationId: null, after: null });
   const rows = rowsOf(all);
@@ -371,7 +376,7 @@ test('Delete all originals needs a sales file’s original at the one location s
   setup(meOf(ACCESS.admin));
   await table();
   expect(screen.getByRole('button', { name: 'Delete all originals for this location' })).toBeTruthy();
-  fireEvent.change(screen.getByLabelText('Show'), { target: { value: 'all' } });
+  choose(screen.getByRole('combobox', { name: 'Show' }), 'All locations');
   await table('Your data for all locations');
   expect(screen.queryByRole('button', { name: 'Delete all originals for this location' })).toBeNull();
 });
@@ -445,7 +450,7 @@ test('a list that fails after Show changes says so with Try again, not Loading',
   const fake = setup(meOf(ACCESS.admin), [...ITEMS, dailyTotalsOf('u_2', { locationId: 'l2' })]);
   await table();
   fake.answers['GET /api/org/data'] = () => refusal(503, 'unavailable');
-  fireEvent.change(screen.getByLabelText('Show'), { target: { value: 'all' } });
+  choose(screen.getByRole('combobox', { name: 'Show' }), 'All locations');
   expect(await screen.findByText('Townwise isn’t responding. Try again in a minute.')).toBeTruthy();
   expect(screen.queryByText('Loading your data')).toBeNull();
   expect(screen.queryByRole('table')).toBeNull();
