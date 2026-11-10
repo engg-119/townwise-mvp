@@ -106,10 +106,10 @@ describe('P3 Request access', () => {
     await fireEvent.changeText(screen.getByLabelText('Your role'), 'Owner');
     await fireEvent.changeText(screen.getByLabelText('Number of locations'), '1');
     await fireEvent.changeText(screen.getByLabelText('Town name'), 'Norwich');
-    await fireEvent.changeText(screen.getByLabelText('State'), 'zz');
     await fireEvent.press(screen.getByRole('button', { name: 'Send request' }));
-    expect(screen.getByText('Enter a two-letter state, for example NH.')).toBeTruthy();
-    await fireEvent.changeText(screen.getByLabelText('State'), 'vt');
+    expect(screen.getByText('Choose a state.')).toBeTruthy();
+    await fireEvent.press(screen.getByLabelText('State'));
+    await fireEvent.press(screen.getByRole('radio', { name: 'Vermont' }));
     await fireEvent.press(screen.getByRole('button', { name: 'Send request' }));
     await waitFor(() => { expect(sent(api)).toHaveLength(1); });
     expect(sent(api)[0]?.body).toMatchObject({ town: { townId: null, name: 'Norwich', state: 'VT' } });

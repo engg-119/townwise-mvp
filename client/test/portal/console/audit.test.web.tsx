@@ -3,6 +3,7 @@ import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/re
 import { formatTime } from '../../../src/portal/format';
 import { deferred, offline, refusal } from '../../helpers/portal';
 import { auditEvent, CHEF_EMAIL, consoleApi, emailOf, MANAGER_EMAIL, orgRow, renderAt, type ConsoleApi } from './helpers';
+import { choicesOf, choose, shownChoice } from '../../helpers/select';
 
 // P23 Audit log: filters, Load more, and what each row shows. docs/portal/spec.md 16.4, Section 9.
 
@@ -95,12 +96,12 @@ test('filters: organization and action go to the server; an actor email is looke
   renderAt('/admin/audit', api);
   await screen.findByRole('region', { name: 'Events' });
   const org = screen.getByRole('combobox', { name: 'Organization' });
-  await waitFor(() => { expect([...org.querySelectorAll('option')].map((option) => option.textContent)).toEqual(['All organizations', 'Sample Restaurant Group', 'Sample Harbor Kitchen']); });
-  fireEvent.change(org, { target: { value: 'o1' } });
+  await waitFor(() => { expect(choicesOf(org)).toEqual(['All organizations', 'Sample Restaurant Group', 'Sample Harbor Kitchen']); });
+  choose(org, 'Sample Restaurant Group');
   fireEvent.change(screen.getByRole('textbox', { name: 'Actor email' }), { target: { value: ` ${MANAGER_EMAIL} ` } });
   const action = screen.getByRole('combobox', { name: 'Action' });
-  expect([...action.querySelectorAll('option')].slice(0, 3).map((option) => option.textContent)).toEqual(['All actions', 'Request sent', 'Request approved']);
-  fireEvent.change(action, { target: { value: 'note.created' } });
+  expect(choicesOf(action).slice(0, 3)).toEqual(['All actions', 'Request sent', 'Request approved']);
+  choose(action, 'Note added');
   fireEvent.click(screen.getByRole('button', { name: 'Apply filters' }));
   await waitFor(() => { expect(within(screen.getByRole('region', { name: 'Events' })).getAllByRole('row')).toHaveLength(2); });
   // Filtered to one organization, the Organization column goes.
@@ -132,7 +133,7 @@ test('opened from an organization’s page, filtered to it; empty says nothing r
   api.routes['GET /api/admin/audit'] = () => ({ events: EVENTS, nextBefore: null });
   renderAt('/admin/audit?orgId=o2', api);
   expect(await screen.findByText('Nothing recorded yet.')).toBeTruthy();
-  expect(screen.getByRole<HTMLSelectElement>('combobox', { name: 'Organization' }).value).toBe('o2');
+  expect(shownChoice(screen.getByRole('combobox', { name: 'Organization' }))).toBe('Sample Harbor Kitchen');
   const clear = screen.getAllByRole('button', { name: 'Clear filters' });
   expect(clear).toHaveLength(2);
   const inEmpty = clear[1];
@@ -191,8 +192,7 @@ test('when the organizations to filter by don’t load, the filters say so, with
   expect(await within(filters).findByText('The organizations to filter by didn’t load. Can’t reach Townwise. Check your connection and try again.')).toBeTruthy();
   fail = false;
   fireEvent.click(within(filters).getByRole('button', { name: 'Try again' }));
-  const options = (): (string | null)[] => [...within(filters).getByRole('combobox', { name: 'Organization' }).querySelectorAll('option')]
-    .map((option) => option.textContent);
+  const options = (): string[] => choicesOf(within(filters).getByRole('combobox', { name: 'Organization' }));
   await waitFor(() => { expect(options()).toEqual(['All organizations', 'Sample Restaurant Group']); });
   expect(within(filters).queryByRole('button', { name: 'Try again' })).toBeNull();
   // The log itself loaded once; only the filter's list was read again.

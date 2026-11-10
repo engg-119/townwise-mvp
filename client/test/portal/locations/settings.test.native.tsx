@@ -55,7 +55,8 @@ describe('P16 Location settings', () => {
     await fireEvent.press(screen.getByLabelText('Town'));
     await fireEvent.press(screen.getByRole('radio', { name: 'Another town' }));
     await fireEvent.changeText(screen.getByLabelText('Town name'), 'Norwich');
-    await fireEvent.changeText(screen.getByLabelText('State'), 'vt');
+    await fireEvent.press(screen.getByLabelText('State'));
+    await fireEvent.press(screen.getByRole('radio', { name: 'Vermont' }));
     await fireEvent.press(screen.getByRole('button', { name: 'Save changes' }));
     expect(await screen.findByText('Saved.')).toBeTruthy();
     expect(writes(api)).toEqual([{

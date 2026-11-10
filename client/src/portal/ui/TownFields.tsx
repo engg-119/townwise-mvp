@@ -1,12 +1,13 @@
 import type { TownInput } from '../api';
 import type { Town } from '../schemas';
-import { ANOTHER_TOWN, TOWN_GROUPS, US_STATE_CODES } from '../towns';
+import { ANOTHER_TOWN, TOWN_GROUPS, US_STATE_CODES, US_STATE_OPTIONS } from '../towns';
 import { FormField } from './FormField';
 import { Pair, Stack } from './layout';
 import { Select } from './Select';
 
 // The Town field (spec P3, P10, P16): the twelve towns grouped "College towns" and "Seasonal and event towns",
-// then "Another town", which reveals Town name and State. The list ships with the app, so it never loads.
+// then "Another town", which reveals Town name and State (a select of the 50 states and DC, by name). The lists ship
+// with the app, so they never load.
 
 export interface TownValue {
   /** '' (none yet), a town id, or ANOTHER_TOWN. */
@@ -22,7 +23,7 @@ export interface TownMessages { choice?: string; name?: string; state?: string }
 export const TOWN_COPY = {
   choice: 'Pick a town, or choose Another town.',
   name: 'Enter the town’s name.',
-  state: 'Enter a two-letter state, for example NH.',
+  state: 'Choose a state.',
 } as const;
 
 const ITEMS = [...TOWN_GROUPS, { value: ANOTHER_TOWN, label: 'Another town' }];
@@ -84,12 +85,12 @@ export function TownFields(props: {
             messages={list(messages.name)}
             {...ro}
           />
-          <FormField
+          <Select
             label="State"
+            placeholder="Choose a state"
+            items={US_STATE_OPTIONS}
             value={value.state}
-            onChangeText={(state) => { onChange({ ...value, state: state.toUpperCase() }); }}
-            autoCapitalize="characters"
-            maxLength={2}
+            onChange={(state) => { onChange({ ...value, state }); }}
             messages={list(messages.state)}
             {...ro}
           />

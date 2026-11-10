@@ -263,7 +263,7 @@ describe('towns (spec 13)', () => {
     expect(checkTown({ choice: 'stowe-vt', name: '', state: '' })).toEqual({ input: { townId: 'stowe-vt' } });
     expect(checkTown({ choice: 'another', name: ' Norwich ', state: 'vt' })).toEqual({ input: { townId: null, name: 'Norwich', state: 'VT' } });
     expect(checkTown({ choice: 'another', name: '', state: 'XX' })).toEqual({
-      messages: { name: 'Enter the town’s name.', state: 'Enter a two-letter state, for example NH.' },
+      messages: { name: 'Enter the town’s name.', state: 'Choose a state.' },
     });
   });
 });

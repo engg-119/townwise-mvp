@@ -7,7 +7,7 @@ jest.mock('expo-splash-screen', () => ({
   hideAsync: jest.fn(() => Promise.resolve()),
 }));
 
-import { act, cleanup, fireEvent, screen, waitFor } from 'expo-router/testing-library';
+import { act, cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing-library';
 import { AccessibilityInfo } from 'react-native';
 
 import type { LocationSummary, OrgResponse } from '../../../src/portal/schemas';
@@ -168,7 +168,7 @@ describe('P10 Add location with the search on', () => {
     await fireEvent.press(await screen.findByRole('button', { name: 'Add location' }));
     expect(await screen.findByText('Google Maps isn’t answering right now, so the place wasn’t added. Check the town, then add the location without it.')).toBeTruthy();
     expect(screen.getByLabelText('Town name').props.value).toBe('Norwich');
-    expect(screen.getByLabelText('State').props.value).toBe('VT');
+    expect(within(screen.getByLabelText('State')).getByText('Vermont')).toBeTruthy();
     await fireEvent.press(screen.getByRole('button', { name: 'Add location' }));
     await waitFor(() => { expect(sentWrites(api)).toHaveLength(2); });
     expect(sentWrites(api)[1]?.body).toEqual({ name: 'Lou’s Bakery', town: { townId: null, name: 'Norwich', state: 'VT' } });

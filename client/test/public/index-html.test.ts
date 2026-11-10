@@ -24,6 +24,13 @@ test('the @font-face families are the first families theme.ts names', () => {
   expect(faces).toEqual([first(theme.font.sans), first(theme.font.mono)]);
 });
 
+test('scrollbars are thin and quiet on every page: a theme border thumb on no track, for Safari too', () => {
+  expect(html).toMatch(new RegExp(`\\*\\s*\\{\\s*scrollbar-width:\\s*thin;\\s*scrollbar-color:\\s*${theme.color.border}\\s+transparent;\\s*\\}`));
+  expect(html).toMatch(new RegExp(`::-webkit-scrollbar-thumb\\s*\\{\\s*background:\\s*${theme.color.border};`));
+  expect(html).toMatch(new RegExp(`::-webkit-scrollbar-thumb:hover\\s*\\{\\s*background:\\s*${theme.color.line};`));
+  expect(html).toMatch(/::-webkit-scrollbar-track\s*\{\s*background:\s*transparent;\s*\}/);
+});
+
 test('the page is the ground color before the app paints', () => {
   expect(html).toMatch(new RegExp(`html,\\s*body\\s*\\{\\s*background:\\s*${theme.color.ground};\\s*\\}`));
 });

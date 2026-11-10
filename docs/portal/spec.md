@@ -1580,7 +1580,7 @@ The sections are Home (`/locations/[id]`), Analytics (`/locations/[id]/analytics
 
 ### 15.7 Shared patterns
 
-- **Forms (FormField).** The label is `ui`, `white`. The input has a `ground` fill, a 1px `line` border, square corners, at least 44px height, and 16px typed text. The helper is `small`, `text2`, tied by `aria-describedby`. Focus is a 2px `mint` outline offset 2px, plus a `mint` border. Selects, number inputs, date inputs and textareas use the same anatomy. Field messages print in white in the numbered, ruled list (`tw-msgs`), with `aria-invalid` on the field. [CONFIRM: error and notice colours stay unadopted, as the design system proposes]
+- **Forms (FormField).** The label is `ui`, `white`. The input has a `ground` fill, a 1px `line` border, square corners, at least 44px height, and 16px typed text. The helper is `small`, `text2`, tied by `aria-describedby`. Focus is a 2px `mint` outline offset 2px, plus a `mint` border. Selects, number inputs, date inputs and textareas use the same anatomy. A select's open list is drawn in the app's style on every platform, never the operating system's: on web a `panel` list under the control (over it when the room below is short) with a 1px `line` border, square corners, 44px choices, group labels in `label` type, the highlighted choice `raised` with a 3px `mint` bar, and the current choice `mint` with a drawn check; on native the sheet. On web it is an ARIA select-only combobox (Down, Up, Home, End, Page Up and Page Down move; Enter or Space picks; Escape closes; typing jumps to a choice). Field messages print in white in the numbered, ruled list (`tw-msgs`), with `aria-invalid` on the field. [CONFIRM: error and notice colours stay unadopted, as the design system proposes]
 - **Page notices** (“Saved.”, “You joined {org}.”, “View-as ended at {time}.”) use the same ruled message style in `white` with `role="status"`, at the top of the content. No colour, no toast, no auto-dismiss.
 - **Disabled controls** are not defined in the design system. Here they get `aria-disabled="true"` (not the `disabled` attribute), so they stay focusable and screen readers reach them and their helper line. They use a `text3` label with a 1px `border` outline and do nothing when pressed. A disabled primary has a `raised` fill, a `text3` label (6.43:1) and a 1px `border` outline, with no hover change. [CONFIRM: disabled style]
 - **Destructive actions** have no red. Each is an outline button that opens a confirm dialog. Deleting data asks the person to type the location name, and the dialog’s action stays disabled until it matches.
@@ -1666,7 +1666,7 @@ Every page below lists its content top to bottom, its one primary action, and it
   - Organization name, with the helper “Your restaurant or group, as you’d like it to appear in Townwise.”
   - Your name.
   - Your role, with the helper “For example, owner or general manager.”
-  - Town: a select grouped “College towns” (six) and “Seasonal and event towns” (six), then “Another town”, which reveals Town name and State.
+  - Town: a select grouped “College towns” (six) and “Seasonal and event towns” (six), then “Another town”, which reveals Town name and State (a select of the 50 states and DC by name, “Choose a state” until one is picked).
   - Number of locations (1 to 50).
   - “Anything we should know? (optional)”, with the helper “Don’t include guest names or sales figures.”
 - While the Google Places search is on, Step 1 “Find your restaurant” comes before these fields, and a confirmed place takes Town’s place (10.2a).
@@ -1679,7 +1679,7 @@ Every page below lists its content top to bottom, its one primary action, and it
 |---|---|
 | Loading | Never blank: the form renders at once (the town list is bundled); only Send shows “Sending…” and is disabled while it sends |
 | Empty | The empty form |
-| Error | Field messages: “Enter your organization’s name.”, “Enter your name.”, “Enter a whole number from 1 to 50.”, “Pick a town, or choose Another town.”, “Enter a two-letter state, for example NH.” 409 `request_exists` re-reads `/api/me`. 429 and network errors use the shared copy. |
+| Error | Field messages: “Enter your organization’s name.”, “Enter your name.”, “Enter a whole number from 1 to 50.”, “Pick a town, or choose Another town.”, “Choose a state.” 409 `request_exists` re-reads `/api/me`. 429 and network errors use the shared copy. |
 | Success | Route to `/waiting` |
 | View-as | Form disabled |
 
