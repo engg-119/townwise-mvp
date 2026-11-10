@@ -179,7 +179,7 @@ export function Home(): React.JSX.Element {
       today={today}
       locationId={location.id}
       // The step also leaves once Home's own fresh history has days, whichever of the two reloads answers first.
-      needs={needsHistory(org, org.locations) && state.data.history.coverage.dayCount === 0}
+      needs={needsHistory(org, org.locations) && state.data.history.coverage.dayCount === 0 && state.data.history.uploadsOff !== true}
       onHistory={reload}
       readOnlyId={readOnlyId}
       readOnlyText={line}

@@ -322,6 +322,14 @@ test('every upload turned off: Home says so and points to Your data, not "no his
   expect(screen.queryByText('No sales history yet, so there is nothing to compare.')).toBeNull();
 });
 
+test('one location whose every upload is off: no history step, the turned-off copy shows', async () => {
+  const only = [locationOf('l1', 'Main Street Bar', { townId: 'hanover-nh', name: 'Hanover', state: 'NH' }, { offDayCount: 10 })];
+  await renderApp('/locations/l1', portal({ locations: only, history: { ...historyBody([]), uploadsOff: true } }));
+  expect(await screen.findByText('Every sales upload for this location is turned off. Turn one back on in Your data to see its days.')).toBeTruthy();
+  expect(screen.getByText('Every sales upload is turned off, so there is nothing to compare.')).toBeTruthy();
+  expect(screen.queryByRole('heading', { name: 'Drop in everything you have' })).toBeNull();
+});
+
 test('view-as shows the same page and writes nothing', async () => {
   const api = portal({ me: viewAsMe(ACCESS.member) });
   await renderApp('/locations/l1', api);

@@ -6,6 +6,7 @@ import { AddLocationForm } from '../../../../src/portal/AddLocationForm';
 import { formatCount, formatDate, plural, townLabel } from '../../../../src/portal/format';
 import { useBreakpoint } from '../../../../src/portal/hooks';
 import { useOrg, usePortal, useReadOnly } from '../../../../src/portal/PortalProvider';
+import { allUploadsOff } from '../../../../src/portal/locations/sales';
 import { locationHref } from '../../../../src/portal/routing';
 import type { LocationSummary } from '../../../../src/portal/schemas';
 import { Page } from '../../../../src/portal/shell/Page';
@@ -30,6 +31,7 @@ const READ_ONLY_ID = 'locations-ro';
 function NextStep(props: { location: LocationSummary; readOnly: boolean }): React.JSX.Element {
   const { location, readOnly } = props;
   const ro = readOnly ? { disabled: true, describedBy: READ_ONLY_ID } : {};
+  if (allUploadsOff(location)) return <LinkButton href={locationHref(location.id, 'data')} label="Open Your data" {...ro} />;
   if (location.coverage.dayCount === 0) {
     // Upload is web only (D20).
     if (Platform.OS !== 'web') return <Text style={styles.cell}>Upload from a computer at townwise.tech</Text>;
@@ -45,6 +47,7 @@ function NextStep(props: { location: LocationSummary; readOnly: boolean }): Reac
 
 function SalesHistory(props: { location: LocationSummary }): React.JSX.Element {
   const { coverage } = props.location;
+  if (allUploadsOff(props.location)) return <Text style={styles.cell}>Uploads turned off</Text>;
   if (coverage.dayCount === 0 || coverage.firstDate === null || coverage.lastDate === null) {
     return <Text style={styles.cell}>No sales history yet</Text>;
   }
