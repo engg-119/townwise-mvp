@@ -109,3 +109,11 @@ export const GATE_WORDS: Readonly<Record<GateReason, string>> = {
     'There isn’t enough history to check a first forecast on 12 held-out weeks, so it stays a draft.',
   baseline_not_beaten: 'It didn’t beat a simple weekday average on held-out weeks, so it stays a draft.',
 };
+
+/** What a first forecast, with no published model to beat, beat: the weekday average on its own backtest weeks. */
+const FIRST_PUBLISH_WORDS = 'Better than the weekday average on its backtest weeks, so Townwise published it.';
+
+/** The words for a reason; a published first forecast (no comparison with a current forecast) says what it actually beat. */
+export function gateWords(reason: GateReason, firstForecast: boolean): string {
+  return reason === 'published' && firstForecast ? FIRST_PUBLISH_WORDS : GATE_WORDS[reason];
+}

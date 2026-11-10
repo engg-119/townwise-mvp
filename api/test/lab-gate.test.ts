@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { comparisonWith, metricsWith, scorecardWith } from './helpers/lab-scorecard.ts';
-import { currentChampion, decideGate, GATE, GATE_REASONS, GATE_WORDS, type GateInput } from '../src/lab/gate.ts';
+import { currentChampion, decideGate, GATE, GATE_REASONS, GATE_WORDS, gateWords, type GateInput } from '../src/lab/gate.ts';
 import { labResultSchema } from '../src/lab/result.ts';
 import type { Scorecard } from '../src/lab/scorecard.ts';
 import { START_REFUSAL_WORDS } from '../src/lab/service.ts';
@@ -166,6 +166,14 @@ describe('GATE_WORDS', () => {
       expect(GATE_WORDS[reason]).toBeTruthy();
       expect(GATE_WORDS[reason]).not.toMatch(/[—']/);
     }
+  });
+
+  it('says what a published draft beat: the weekday average for a first forecast, the current forecast otherwise', () => {
+    expect(gateWords('published', true)).toBe('Better than the weekday average on its backtest weeks, so Townwise published it.');
+    expect(gateWords('published', false)).toBe(GATE_WORDS.published);
+    expect(GATE_WORDS.published).toContain('current forecast');
+    expect(gateWords('not_better', true)).toBe(GATE_WORDS.not_better);
+    expect(gateWords('forecasts_off', false)).toBe(GATE_WORDS.forecasts_off);
   });
 
   it('states the gate’s own values, so a changed value changes its words too', () => {

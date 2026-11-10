@@ -1,7 +1,7 @@
 // What staff (and, from Task 8, TownwiseAI) read of a calibration: its state, the gate's words and a summary of its
 // scorecard as percentages and counts only (spec D7: no guest figure outside view-as). Pure.
 import type { CalibrationFailure, CalibrationRecord, CalibrationStatus } from '../stores/calibrations.ts';
-import { GATE_REASONS, GATE_WORDS, type GateReason } from './gate.ts';
+import { GATE_REASONS, gateWords, type GateReason } from './gate.ts';
 import { scorecardSchema, type Metrics } from './scorecard.ts';
 import { FAILURE_WORDS } from './service.ts';
 
@@ -72,6 +72,7 @@ function summaryOf(scorecardJson: string | null): CalibrationSummary | null {
 }
 
 export function calibrationView(record: CalibrationRecord): CalibrationView {
+  const summary = summaryOf(record.scorecardJson);
   return {
     id: record.id,
     locationId: record.locationId,
@@ -89,8 +90,8 @@ export function calibrationView(record: CalibrationRecord): CalibrationView {
     gate: record.gate === null ? null : {
       published: record.gate.published,
       reason: record.gate.reason,
-      words: isGateReason(record.gate.reason) ? GATE_WORDS[record.gate.reason] : null,
+      words: isGateReason(record.gate.reason) ? gateWords(record.gate.reason, summary?.championWeeklyWapePct === null) : null,
     },
-    summary: summaryOf(record.scorecardJson),
+    summary,
   };
 }
