@@ -3,6 +3,7 @@ import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
+import { ApiError } from '../../src/api/client';
 import { aboutDraft } from '../../src/chat/about';
 import { resetDrafts } from '../../src/chat/drafts';
 import { COMPOSER_LABEL } from '../../src/chat/ui/Composer';
@@ -11,7 +12,9 @@ import { localToday } from '../../src/portal/locations/dates';
 import { resetProfiles } from '../../src/portal/profile/useProfile';
 import type { MeResponse } from '../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../helpers/app';
-import { CONVERSATION, fakeChatApi, PROPOSAL, PROPOSAL_ID, SALES_STEP, SUMMARY, type FakeChatApi, type LiveTurn } from '../helpers/chat';
+import {
+  CONVERSATION, fakeChatApi, PROPOSAL, PROPOSAL_ID, refusal as chatRefusal, SALES_STEP, SUMMARY, type FakeChatApi, type LiveTurn,
+} from '../helpers/chat';
 import { fakeAuth } from '../helpers/fakes';
 import { ACCESS, fakePortalApi, meOf, orgOf, viewAsMe } from '../helpers/portal';
 import { serveAbout } from './about-fakes';
@@ -153,6 +156,15 @@ async function openPanel(): Promise<HTMLElement> {
   return screen.findByTestId('agent-side');
 }
 
+/** A whole Escape press where focus is: react-native-web's Modal closes the top-most modal on its keyup. */
+function pressEscape(): void {
+  const target = document.activeElement ?? document.body;
+  act(() => {
+    fireEvent.keyDown(target, { key: 'Escape' });
+    fireEvent.keyUp(target, { key: 'Escape' });
+  });
+}
+
 function expectReadOnly(control: HTMLElement): void {
   expect(control.getAttribute('aria-disabled')).toBe('true');
   expect(control.getAttribute('aria-describedby')?.split(' ')).toContain('chat-ro');
@@ -250,6 +262,38 @@ test('the first send docks the composer under the thread', async () => {
   expect(style(screen.getByTestId('chat-column')).maxWidth).toBe('760px');
 });
 
+test('a first turn taken back brings the landing back, with the text and focus in its composer', async () => {
+  const api = fakeChatApi();
+  renderAt('/locations/l1/agent', api);
+  // The server refuses the turn, then the connection fails before anything arrives.
+  const failures: ((next: () => void) => Promise<void>)[] = [
+    async (next) => {
+      api.refuse = chatRefusal(503, null);
+      next();
+      await waitFor(() => { expect(screen.queryByRole('log')).toBeNull(); });
+      api.refuse = null;
+    },
+    async (next) => {
+      next();
+      await waitFor(() => { expect(api.turns).toHaveLength(1); });
+      const docked = screen.getByLabelText(COMPOSER_LABEL);
+      await waitFor(() => { expect(document.activeElement).toBe(docked); });
+      await stream(() => { turn(api).fail(new ApiError('network', 'The network request failed.')); });
+    },
+  ];
+  for (const fail of failures) {
+    const input = await screen.findByLabelText(COMPOSER_LABEL);
+    act(() => { input.focus(); });
+    fireEvent.change(input, { target: { value: 'How was December?' } });
+    await fail(() => { fireEvent.click(screen.getByRole('button', { name: 'Send' })); });
+    expect(await screen.findByRole('heading', { level: 2, name: 'Ask TownwiseAI about Main Street Bar' })).toBeTruthy();
+    const back = screen.getByLabelText(COMPOSER_LABEL);
+    expect((back as HTMLTextAreaElement).value).toBe('How was December?');
+    await waitFor(() => { expect(document.activeElement).toBe(back); });
+    fireEvent.change(back, { target: { value: '' } });
+  }
+});
+
 describe('the composer', () => {
   test('Enter sends; Shift+Enter is a new line; Enter while an input method composes does nothing', async () => {
     const api = fakeChatApi();
@@ -329,9 +373,25 @@ test('the side panel is closed by default and opens as a column from 1024px and 
   fireEvent.click(narrow);
   const sheet = await screen.findByRole('dialog', { name: 'Questions and activity' });
   expect(within(sheet).getByRole('heading', { name: 'Questions for you' })).toBeTruthy();
-  fireEvent.keyDown(document, { key: 'Escape' });
+  pressEscape();
   await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Questions and activity' })).toBeNull(); });
   expect(document.activeElement).toBe(narrow);
+});
+
+test('below 1024px, Escape in the model card closes only the card, and focus goes back to How Townwise estimates', async () => {
+  setWidth(800);
+  renderAt('/locations/l1/agent', fakeChatApi());
+  fireEvent.click(await screen.findByRole('button', { name: 'Questions and activity (2)' }));
+  const sheet = await screen.findByRole('dialog', { name: 'Questions and activity' });
+  fireEvent.click(within(sheet).getByRole('button', { name: 'How TownwiseAI works' }));
+  const estimates = within(sheet).getByRole('button', { name: 'How Townwise estimates' });
+  act(() => { estimates.focus(); });
+  fireEvent.click(estimates);
+  expect(await screen.findByRole('dialog', { name: 'How Townwise estimates' })).toBeTruthy();
+  pressEscape();
+  await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'How Townwise estimates' })).toBeNull(); });
+  expect(screen.getByRole('dialog', { name: 'Questions and activity' })).toBe(sheet);
+  expect(document.activeElement).toBe(estimates);
 });
 
 test('shows the 80% budget line above the composer', async () => {
@@ -476,6 +536,12 @@ describe('a tool card', () => {
       turn(api).emit('text', { delta: 'December had 1,234 guests.' });
     });
     expect(live.textContent).toBe('TownwiseAI is replying');
+    // The log is not live (a log is polite by default), so the streamed text is never read out: the nearest live
+    // setting above it is the log's "off", and the page's region is the only polite one with anything to say.
+    const log = screen.getByRole('log', { name: 'Conversation with TownwiseAI' });
+    expect(log.getAttribute('aria-live')).toBe('off');
+    expect(screen.getByText(/December had 1,234 guests/).closest('[aria-live]')).toBe(log);
+    expect(Array.from(document.querySelectorAll('[aria-live="polite"]')).filter((region) => region.textContent !== '')).toEqual([live]);
     await stream(() => {
       turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0 });
       turn(api).end();
@@ -544,6 +610,11 @@ test('one primary: only the composer’s button has the white fill', async () =>
   const send = screen.getByRole('button', { name: 'Send' });
   expect(screen.getAllByRole('button').filter((button) => style(button).backgroundColor === WHITE)).toEqual([send]);
   expect(style(send).borderTopLeftRadius).toBe('22px');
+  // Edit first's note form saves with an outline, so it stays the one.
+  fireEvent.click(screen.getByRole('button', { name: 'Edit first' }));
+  expect(await screen.findByRole('heading', { name: 'Add a note' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Save note' })).toBeTruthy();
+  expect(screen.getAllByRole('button').filter((button) => style(button).backgroundColor === WHITE)).toEqual([send]);
 });
 
 test('no horizontal page scroll at 360px with a wide table and a chart', async () => {
@@ -614,6 +685,11 @@ test('under view-as every write is disabled in place, the name prompt never show
   fireEvent.click(within(side).getByRole('button', { name: 'Yes, closed Mondays' }));
   // Reading is allowed: the target's conversation opens, with every action in place and disabled.
   await openEarlierChat();
+  // The docked composer shows no example to accept, so Tab can't fill it.
+  const docked = screen.getByLabelText(COMPOSER_LABEL);
+  expect(docked.getAttribute('placeholder')).toBe('Ask about a closure, an event or an unusual day');
+  fireEvent.keyDown(docked, { key: 'Tab' });
+  expect((docked as HTMLTextAreaElement).value).toBe('');
   const next = screen.getByRole('group', { name: 'Suggested next questions' });
   for (const control of [
     screen.getByRole('button', { name: 'Edit' }), screen.getByRole('button', { name: 'Regenerate' }),

@@ -8,8 +8,9 @@ import { theme } from '../../theme';
 
 // The "Questions and activity" panel below 1024px (spec P25, chat redesign): a full-screen `ground` layer with the
 // heading, which takes focus on open, and Close. Focus stays inside (the Modal traps it); Escape, Android's back
-// button and Close shut it and focus goes back to the button that opened it. From 1024px the panel is a column
-// beside the chat, so this renders nothing there. Nothing animates.
+// button and Close shut it and focus goes back to the button that opened it. Escape is the Modal's own, which shuts
+// only the top-most modal, so a dialog opened inside the sheet (the model card) closes alone. From 1024px the panel
+// is a column beside the chat, so this renders nothing there. Nothing animates.
 
 export const PANEL_TITLE = 'Questions and activity';
 
@@ -47,15 +48,6 @@ export function PanelSheet(props: {
     }
     return undefined;
   }, [shown, openerRef]);
-
-  useEffect(() => {
-    if (!shown || Platform.OS !== 'web') return undefined;
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('keydown', onKey); };
-  }, [shown, onClose]);
 
   if (!shown) return null;
   return (

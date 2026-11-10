@@ -317,6 +317,14 @@ describe('states', () => {
     expect(screen.getByLabelText(COMPOSER_LABEL)).toBeTruthy();
   });
 
+  test('not found: a chat that answers 404 says the location wasn’t found, with no composer', async () => {
+    const chat = fakeChatApi();
+    chat.chatError = chatRefusal(404, 'not_found');
+    await renderAgent(meOf(ACCESS.member), chat);
+    expect(await screen.findByText('This location wasn’t found.')).toBeTruthy();
+    expect(screen.queryByLabelText(COMPOSER_LABEL)).toBeNull();
+  });
+
   test('a chat that can’t load says so with Try again', async () => {
     const chat = fakeChatApi();
     chat.chatError = chatRefusal(503, 'unavailable');

@@ -63,6 +63,8 @@ export function ProposalCard(props: {
         }}
         onSaved={() => undefined}
         onCancel={() => { actions.cancelEdit(card.id); }}
+        // The composer's button is the chat page's one primary (spec 15.6, D26).
+        submitVariant="outline"
       />
     );
   }

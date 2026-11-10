@@ -96,6 +96,9 @@ export function AgentChat(props: {
   const saidCount = useRef(0);
   // A send from the landing, and what sent it: the composer moves under the thread, and focus follows it.
   const docking = useRef<'composer' | 'other' | null>(null);
+  // What docked the composer, until another conversation shows: if the first turn is taken back (refused, or the
+  // connection failed before anything arrived), the landing returns, and focus goes back to its composer.
+  const docked = useRef<'composer' | 'other' | null>(null);
   const landing = state.status === 'ready' && state.enabled && state.messages.length === 0 && !state.conversationLoading;
   const spoken = said ?? { words: announcementOf(chat, ctx, before), n: 0 };
 
@@ -104,12 +107,14 @@ export function AgentChat(props: {
   }, [spoken.words, spoken.n]);
 
   useEffect(() => {
-    const from = docking.current;
-    if (landing || from === null) return;
+    const from = landing ? docked.current : docking.current;
     docking.current = null;
-    // The composer or chip the person used went with the landing. On web the docked composer takes focus only if
-    // focus went with them (not if the person has since put it elsewhere); on native only after a send from the
-    // composer, so a chip doesn't open the keyboard.
+    docked.current = landing ? null : from;
+    if (from === null) return;
+    // The composer or chip the person used went with the landing (or the docked composer with the thread, when the
+    // first turn was taken back). On web the composer now shown takes focus only if focus went with them (not if the
+    // person has since put it elsewhere); on native only after a send from the composer, so a chip doesn't open the
+    // keyboard.
     if (Platform.OS === 'web' ? focusLost() : from === 'composer') composer.current?.focus();
   }, [landing]);
 
@@ -131,6 +136,7 @@ export function AgentChat(props: {
 
   function opened(run: () => void): void {
     docking.current = null;
+    docked.current = null;
     setBefore(null);
     setSaid(null);
     run();
@@ -230,7 +236,11 @@ export function AgentChat(props: {
       openQuestions={props.openQuestions}
       onOpen={(id) => { opened(() => { chat.openConversation(id); }); }}
       onNew={() => { opened(chat.newConversation); }}
-      onDelete={chat.deleteConversation}
+      onDelete={(id) => {
+        // Deleting the open conversation shows the landing, which is not a turn taken back.
+        if (id === state.conversationId) docked.current = null;
+        return chat.deleteConversation(id);
+      }}
       onRename={chat.rename}
       onTogglePanel={props.onTogglePanel}
       {...(props.panelButtonRef === undefined ? {} : { panelButtonRef: props.panelButtonRef })}
@@ -276,8 +286,8 @@ export function AgentChat(props: {
         onStop={chat.stop}
         onStopAndSend={() => { send(chat.stopAndSend, 'composer'); }}
         help={`Leave out guest names. TownwiseAI answers from ${readsLine(ctx)}.`}
-        // On the landing the chips under it already show what to ask.
-        examples={placement === 'dock' ? examples : []}
+        // On the landing the chips under it already show what to ask; under view-as nothing fills the composer.
+        examples={placement === 'dock' && props.readOnlyId === null ? examples : []}
         readOnlyId={props.readOnlyId}
         placement={placement}
       />
@@ -325,6 +335,8 @@ export function AgentChat(props: {
           ref={scroll}
           testID="chat-thread"
           role="log"
+          // A log is polite by default; this one is not live, so streamed text and what scrolls with it go unread.
+          aria-live="off"
           aria-label="Conversation with TownwiseAI"
           style={styles.fill}
           contentContainerStyle={[styles.thread, props.top === null ? styles.threadUnderHeader : null]}
