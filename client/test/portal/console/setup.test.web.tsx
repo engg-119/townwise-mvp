@@ -53,6 +53,7 @@ function summary(name: string): unknown {
 function serve(api: ConsoleApi, read: () => unknown): void {
   api.routes[`GET ${PATH}`] = read;
   api.routes[`GET ${PATH}/forecast-runs`] = () => ({ runs: [] });
+  api.routes[`GET ${PATH}/calibrations`] = () => ({ forecasts: { on: false, at: null }, calibrations: [] });
 }
 
 function gets(api: ConsoleApi): number {

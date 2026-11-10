@@ -9,8 +9,11 @@ import { DataTable } from '../ui/DataTable';
 import { ErrorNotice, LoadingLine, Messages } from '../ui/feedback';
 import { Section, Stack } from '../ui/layout';
 import { Heading, Small } from '../ui/text';
+import { Calibrations } from './CalibrationsPanel';
+import { fetchCalibrations } from './calibrations';
 import { Dialog } from './Dialog';
 import { ForecastImport } from './ForecastImport';
+import { ForecastsSwitch } from './ForecastsSwitch';
 import { changeForecastRun, deleteForecastRun, fetchForecastRuns, STATUS_LABEL, type StaffRun } from './forecasts';
 import { CellLines, RowActions } from './parts';
 import { problemOf } from './problems';
@@ -30,6 +33,7 @@ const ACTIVITY = 'Its admins see this in their Townwise staff activity.';
 function refusal(error: unknown): string | null {
   if (hasCode(error, 409, 'forecast_run_not_draft')) return 'Only a draft can be published, and this one isn’t a draft anymore.';
   if (hasCode(error, 409, 'forecast_run_importing')) return 'Its import hasn’t finished. Import the same file again first.';
+  if (hasCode(error, 409, 'forecasts_off')) return 'Forecasts are off for this organization. Switch them on first.';
   if (hasCode(error, 404, 'not_found')) return 'This forecast was already deleted.';
   return null;
 }
@@ -103,6 +107,7 @@ function RunTable(props: { location: OrgLocation; runs: readonly StaffRun[]; onA
         { key: 'trained', label: 'Trained to' },
         { key: 'made', label: 'Made' },
         { key: 'status', label: 'Status' },
+        { key: 'source', label: 'Source' },
         { key: 'actions', label: 'Actions', hiddenLabel: true, flex: 1.6 },
       ]}
       rows={runs.map((run) => ({
@@ -113,6 +118,7 @@ function RunTable(props: { location: OrgLocation; runs: readonly StaffRun[]; onA
           trained: formatDate(run.dataThrough),
           made: formatDate(run.madeAt),
           status: <CellLines main={STATUS_LABEL[run.status]} note={statusNote(run)} white={run.status === 'published'} />,
+          source: run.trainingSource === 'townwise_lab' ? 'Calibration' : 'Imported',
           actions: (
             <RowActions>
               {run.status === 'draft' ? (
@@ -134,6 +140,7 @@ export function ForecastRuns(props: { org: StaffOrg; locations: readonly OrgLoca
   const { org, locations } = props;
   const { api } = usePortal();
   const { state, reload, refresh, refreshError } = useRefreshable(useCallback(() => fetchForecastRuns(api, org.id), [api, org.id]));
+  const calibrations = useRefreshable(useCallback(() => fetchCalibrations(api, org.id), [api, org.id]));
   const [acting, setActing] = useState<{ verb: Verb; run: StaffRun } | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
@@ -144,11 +151,12 @@ export function ForecastRuns(props: { org: StaffOrg; locations: readonly OrgLoca
     await refresh();
   }, [acting, refresh]);
 
+  const calibrationsRefreshed = useCallback(async () => { await calibrations.refresh(); await refresh(); }, [calibrations, refresh]);
   const nameOf = (locationId: string): string => locations.find((location) => location.id === locationId)?.name ?? 'this location';
   return (
     <Section kicker="Staff only" title="Forecasts">
       <Stack gap={20}>
-        <Small>{`A forecast is a draft until you publish it. ${org.name}’s members and TownwiseAI see only published forecasts, never the model. Each import, publish, withdrawal and deletion is listed in ${org.name}’s Townwise staff activity.`}</Small>
+        <Small>{`A forecast is a draft until you publish it. While forecasts are on, a calibration that passes every check publishes itself. ${org.name}’s members and TownwiseAI see only published forecasts, never the model. Each import, publish, withdrawal and deletion is listed in ${org.name}’s Townwise staff activity.`}</Small>
         {state.status === 'loading' ? <LoadingLine text="Loading forecasts…" /> : null}
         {state.status === 'failed' ? <ErrorNotice error={state.error} onRetry={reload} /> : null}
         {refreshError === null ? null : <ErrorNotice message="The forecasts couldn’t load again, so this list may be out of date." onRetry={() => { void refresh(); }} />}
@@ -164,6 +172,15 @@ export function ForecastRuns(props: { org: StaffOrg; locations: readonly OrgLoca
             </Stack>
           );
         }) : null}
+        {calibrations.state.status === 'loading' ? <LoadingLine text="Loading calibrations…" /> : null}
+        {calibrations.state.status === 'failed' ? <ErrorNotice error={calibrations.state.error} onRetry={calibrations.reload} /> : null}
+        {calibrations.refreshError === null ? null : <ErrorNotice message="The calibrations couldn’t load again, so this list may be out of date." onRetry={() => { void calibrations.refresh(); }} />}
+        {calibrations.state.status === 'ready' ? (
+          <>
+            <ForecastsSwitch org={org} forecasts={calibrations.state.data.forecasts} onChanged={calibrationsRefreshed} />
+            <Calibrations org={org} locations={locations} calibrations={calibrations.state.data.calibrations} onStarted={calibrationsRefreshed} />
+          </>
+        ) : null}
         <ForecastImport org={org} locations={locations} onImported={refreshed} />
       </Stack>
       {acting === null ? null : (
