@@ -76,7 +76,7 @@ export default function Terms(): React.JSX.Element {
           <Div className="wrap">
             <P className="eyebrow">Legal</P>
             <Div className="h1w"><H1 id="h-terms" className="h1">Terms of use</H1></Div>
-            <P className="eff">Effective November 5, 2026.</P>
+            <P className="eff">Effective November 9, 2026.</P>
           </Div>
         </Section>
         <Div className="wrap g12 doc">

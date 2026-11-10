@@ -266,7 +266,8 @@ export interface DeletedPersonRecords {
  * Person deletion (spec 10.7 step 3): their access requests, their open invitations in every organization, their
  * removed seats, their tuning chat conversations, live turns and proposal records, and their welcome markers, in every
  * organization (the notes they saved from proposals stay with the organization, as every note does). Their staff id
- * is cleared from the forecast runs they imported or published (U13B). Never an active
+ * is cleared from the forecast runs they imported or published (U13B), and their id from the calibrations they started
+ * and from the forecasts switch they last set (the forecast lab). Never an active
  * seat: the handler refuses a person who holds one. An address with no kit user has only invitations. Deletes by
  * filter, so a retry completes the work. (U9: tw_agent_answers holds no person id, so nothing of it is the person's.)
  */
@@ -300,6 +301,8 @@ export async function deletePersonRecords(
   await forecastRunModel(connection).updateMany({ publishedBy: userId }, { $set: { publishedBy: null } });
   // The forecast lab: the person who asked for a calibration, in every organization. Not counted.
   await calibrationModel(connection).updateMany({ 'requestedBy.userId': userId }, { $set: { 'requestedBy.userId': null } });
+  // And the staff member who last switched an organization's forecasts, in every organization; the switch stays as it is.
+  await orgModel(connection).updateMany({ 'forecasts.by': userId }, { $set: { 'forecasts.by': null } });
   return { requests, seats: invites + removed, conversations, liveTurns };
 }
 

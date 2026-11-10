@@ -215,6 +215,17 @@ describe('lab runs, the forecasts switch and the audit words', () => {
     expect(await orgs.setForecasts(scopeForNewOrg(STAFF, new Types.ObjectId().toHexString()), { on: true, at: on, by: 's' })).toBe(false);
   });
 
+  it('person deletion nulls the staff id on the forecasts switch and leaves it on', async () => {
+    const t = await tenant();
+    const orgs = createOrgStore(server.connection);
+    const at = server.clock.now();
+    expect(await orgs.setForecasts(t.scope, { on: true, at, by: 'staff-gone' })).toBe(true);
+    await deletePersonRecords(server.connection, { userId: 'staff-gone', email: 'gone@example.test' });
+    const doc = await server.connection.collection('tw_orgs').findOne({ _id: new Types.ObjectId(t.orgId) });
+    expect(doc?.forecasts).toEqual({ on: true, at, by: null });
+    expect((await orgs.findById(t.orgId))?.forecasts).toEqual({ on: true, at });
+  });
+
   it('summaryOf words the new actions', () => {
     expect(summaryOf('calibration.requested', { hasRegime: true })).toBe('Started a calibration, with a weekly pattern change');
     expect(summaryOf('calibration.requested', { hasRegime: false })).toBe('Started a calibration');
