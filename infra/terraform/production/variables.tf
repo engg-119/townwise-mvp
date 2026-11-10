@@ -100,7 +100,7 @@ variable "enable_places" {
 }
 
 variable "enable_lab" {
-  description = "Turn on the forecast lab: the lab job, its identity, the API identity's right to start it, and the API's TOWNWISE_LAB_RUNNER and TOWNWISE_LAB_JOB_ID (infra/README.md, step 20). False leaves calibrations off."
+  description = "Turn on the forecast lab: the lab job, its identity, the API identity's right to start it, and the API's TOWNWISE_LAB_ variables (infra/README.md, step 20). Needs lab_image and lab_callback_client_id. False leaves calibrations off."
   type        = bool
   default     = false
 }
@@ -113,5 +113,16 @@ variable "lab_image" {
   validation {
     condition     = var.lab_image == null || can(regex("^[a-z0-9.-]+/townwise-lab@sha256:[0-9a-f]{64}$", var.lab_image))
     error_message = "lab_image must be <registry>/townwise-lab@sha256:<64 hex>."
+  }
+}
+
+variable "lab_callback_client_id" {
+  description = "Client id of the lab callback app, the audience the lab job's token is for: `terraform output lab_callback_client_id` in bootstrap (infra/README.md, step 20). Required with enable_lab."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.lab_callback_client_id == null || can(regex("^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$", var.lab_callback_client_id))
+    error_message = "lab_callback_client_id must be the app's client id, a GUID (not its api:// identifier URI)."
   }
 }

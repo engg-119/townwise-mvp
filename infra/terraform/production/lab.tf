@@ -1,10 +1,16 @@
 # The forecast lab (infra/README.md, step 20): one Container Apps job that retrains a location's forecast model
 # from the sales the API hands it (modeling/lab), and the identities and roles around it. Off unless enable_lab.
 #
-# Same rule as jobs.tf: permission to start a job is permission to use its identity. The lab job therefore has
-# its own identity that holds AcrPull and nothing else, no secrets, and identitySettings lifecycle "None", so no
-# container can obtain a token for it. It holds no database or storage credential: the API starts it with a
-# per-calibration token and the job reads its input and posts its result over HTTPS (api/src/lab).
+# The job signs in to the API with its own managed identity: identitySettings lifecycle "Main" lets its one
+# container ask for a token, which it does only for the lab callback app (bootstrap/lab.tf, lab_callback_client_id),
+# and the API accepts that token only from this identity's object id (api/src/lab/caller.ts). So the job holds no
+# secret, no database or storage credential, and nothing token-shaped in its environment or execution history: the
+# API starts it with a calibration id, and the job reads its input and posts its result over HTTPS (api/src/lab).
+#
+# Same rule as jobs.tf: permission to start a job is permission to use its identity. The lab identity holds
+# AcrPull and nothing else. Those who can start or update the job, and so obtain its token for the callback app,
+# are the API identity (start, "Townwise lab starter"), the deploy identity (update, "Townwise deployer") and the
+# admins; none gains anything by it (infra/README.md, "Who can").
 #
 # The API's identity may read the job and start it, at the job's scope only. The image is the one the deploy
 # workflow last set (a PATCH of the job's containers, deploy.yml); Terraform keeps it as lab_image until then.
@@ -84,16 +90,21 @@ resource "azapi_resource" "job_lab" {
         replicaRetryLimit   = 0
         registries          = [{ server = azurerm_container_registry.main.login_server, identity = azurerm_user_assigned_identity.lab[0].id }]
         secrets             = []
-        identitySettings    = [{ identity = azurerm_user_assigned_identity.lab[0].id, lifecycle = "None" }]
+        identitySettings    = [{ identity = azurerm_user_assigned_identity.lab[0].id, lifecycle = "Main" }]
       }
       template = {
         containers = [{
           name      = "lab"
           image     = coalesce(var.lab_image, "unset")
           resources = { cpu = 1, memory = "2Gi" }
-          # The default host works from inside the environment; if the job cannot reach it, point this at
-          # https://api.townwise.tech (infra/README.md, step 20).
-          env = [{ name = "TOWNWISE_LAB_API_URL", value = "https://${azurerm_container_app.api.ingress[0].fqdn}" }]
+          env = [
+            # The default host works from inside the environment; if the job cannot reach it, point this at
+            # https://api.townwise.tech (infra/README.md, step 20).
+            { name = "TOWNWISE_LAB_API_URL", value = "https://${azurerm_container_app.api.ingress[0].fqdn}" },
+            # Which identity the job asks a token as, and for which resource (modeling/lab/townwise_lab/job.py).
+            { name = "AZURE_CLIENT_ID", value = azurerm_user_assigned_identity.lab[0].client_id },
+            { name = "TOWNWISE_LAB_TOKEN_RESOURCE", value = "api://${coalesce(var.lab_callback_client_id, "unset")}" },
+          ]
         }]
       }
     }
@@ -106,6 +117,11 @@ resource "azapi_resource" "job_lab" {
     precondition {
       condition     = var.lab_image != null
       error_message = "Set lab_image to the townwise-lab digest the deploy pushed (infra/README.md, step 20)."
+    }
+
+    precondition {
+      condition     = var.lab_callback_client_id != null
+      error_message = "Set lab_callback_client_id to bootstrap's lab_callback_client_id output (infra/README.md, step 20)."
     }
   }
 
