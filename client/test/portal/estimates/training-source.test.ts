@@ -20,3 +20,7 @@ test('the two known sources read in their own words', () => {
 test('an unknown training source reads as sales history', () => {
   expect(runLines(runWith('something_new'))[0]).toContain('trained on sales history from');
 });
+
+test.each(['constructor', 'toString', '__proto__'])('a source named like an Object key (%s) reads as sales history', (source) => {
+  expect(runLines(runWith(source))[0]).toContain('trained on sales history from');
+});

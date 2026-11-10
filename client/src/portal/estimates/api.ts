@@ -79,14 +79,15 @@ export const forecastRunSchema = z.object({
 });
 export type ForecastRun = z.infer<typeof forecastRunSchema>;
 
-const TRAINED_ON: Readonly<Record<string, string>> = {
-  files_from_owner: 'sales exports you sent Townwise',
-  townwise_lab: 'sales history and notes you uploaded to Townwise',
-};
+// A Map, so a source named like an Object.prototype key ("constructor") still reads as sales history.
+const TRAINED_ON: ReadonlyMap<string, string> = new Map([
+  ['files_from_owner', 'sales exports you sent Townwise'],
+  ['townwise_lab', 'sales history and notes you uploaded to Townwise'],
+]);
 
 /** What a run was trained on, in words; a source this client doesn’t know reads as sales history. */
 export function trainedOnWords(trainingSource: string): string {
-  return TRAINED_ON[trainingSource] ?? 'sales history';
+  return TRAINED_ON.get(trainingSource) ?? 'sales history';
 }
 
 /** U13B: how the published days compared with what happened; null under 5 scored days. */

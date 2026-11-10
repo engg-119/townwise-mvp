@@ -1,6 +1,10 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 
 import { ApiError } from '../../../src/api/client';
+import { REFUSALS } from '../../../src/portal/console/CalibrationsPanel';
 import { ForecastRuns } from '../../../src/portal/console/ForecastRuns';
 import type { StaffRun } from '../../../src/portal/console/forecasts';
 import { portalWrapper } from '../files/harness';
@@ -43,6 +47,8 @@ function run(fields: Partial<StaffRun> = {}): StaffRun {
 }
 
 const DETAIL = orgDetail();
+/** A synthetic guest figure on the payload that must never render. */
+const SENTINEL = 98_765;
 
 async function show(options: { on?: boolean; calibrations?: unknown[]; runs?: StaffRun[] } = {}): Promise<ConsoleApi> {
   const api = consoleApi();
@@ -117,8 +123,46 @@ test('Calibrate without a date posts none', async () => {
   expect(api.calls.find((call) => call.method === 'POST')?.body).toEqual({});
 });
 
+test('a malformed pattern-change date says the form and keeps Calibrate disabled', async () => {
+  const api = await show();
+  await settle(() => { fireEvent.click(screen.getByRole('button', { name: 'Calibrate Hanover' })); });
+  const dialog = screen.getByRole('dialog', { name: 'Calibrate Hanover?' });
+  await settle(() => { fireEvent.change(within(dialog).getByLabelText('Weekly pattern changed on (optional)'), { target: { value: '9/1/2026' } }); });
+  expect(within(dialog).getByText('Use the form YYYY-MM-DD.')).toBeTruthy();
+  const confirm = within(dialog).getByRole('button', { name: 'Calibrate' });
+  expect(confirm.hasAttribute('disabled') || confirm.getAttribute('aria-disabled') === 'true').toBe(true);
+  await settle(() => { fireEvent.click(confirm); });
+  expect(api.calls.filter((call) => call.method === 'POST')).toEqual([]);
+});
+
+test('each location’s Calibrate sits beside its name', async () => {
+  const two = orgDetail({
+    locations: [
+      ...orgDetail().locations,
+      { id: 'l2', name: 'Norwich', town: { townId: null, name: 'Norwich', state: 'VT' }, coverage: { dayCount: 0, firstDate: null, lastDate: null }, notesCount: 0, lastUploadAt: null },
+    ],
+  });
+  const api = consoleApi();
+  api.routes[RUNS] = () => ({ runs: [] });
+  api.routes[CALS] = () => ({ forecasts: { on: false, at: null }, calibrations: [] });
+  const Wrapper = portalWrapper(api, staffMe());
+  render(<Wrapper><ForecastRuns org={two.org} locations={two.locations} /></Wrapper>);
+  await screen.findByRole('heading', { name: 'Calibrations' });
+  for (const name of ['Hanover', 'Norwich']) {
+    const button = screen.getByRole('button', { name: `Calibrate ${name}` });
+    expect(button.parentElement?.textContent).toContain(name);
+  }
+});
+
+test('the start refusals are the server’s own words (START_REFUSAL_WORDS)', () => {
+  const server = readFileSync(join(__dirname, '..', '..', '..', '..', 'api', 'src', 'lab', 'service.ts'), 'utf8');
+  for (const [, , words] of REFUSALS) expect(server).toContain(`'${words}'`);
+});
+
 test('a calibration row shows status, the server’s gate words and percentages only, never a guest count', async () => {
-  await show({ calibrations: [calibration(), calibration({ id: 'c2', status: 'failed', failure: 'timeout', failureWords: 'It took too long and was stopped.', gate: null, summary: null, via: 'chat', requestedByRole: 'org_admin' })] });
+  const guests = { guests: SENTINEL, mid: SENTINEL };
+  const summary = { ...(calibration().summary as Record<string, unknown>), ...guests };
+  await show({ calibrations: [calibration({ ...guests, summary }), calibration({ id: 'c2', status: 'failed', failure: 'timeout', failureWords: 'It took too long and was stopped.', gate: null, summary: null, via: 'chat', requestedByRole: 'org_admin' })] });
   expect(screen.getByText('Done')).toBeTruthy();
   expect(screen.getByText('Started by Townwise staff')).toBeTruthy();
   expect(screen.getByText('Weekly error 8.4% vs 10.1% for the current forecast, on 12 held-out weeks.')).toBeTruthy();
@@ -128,6 +172,7 @@ test('a calibration row shows status, the server’s gate words and percentages 
   expect(screen.getByText('Failed')).toBeTruthy();
   expect(screen.getByText('It took too long and was stopped.')).toBeTruthy();
   expect(screen.getByText('Started by an org admin in TownwiseAI')).toBeTruthy();
+  expect(document.body.textContent).not.toMatch(/98,?765/);
 });
 
 test('a summary with nothing to compare reads without the current forecast', async () => {

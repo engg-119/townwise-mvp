@@ -535,7 +535,7 @@ test('U13B: the Forecasts section sits after the locations, says drafts stay hid
   serve(api, orgDetail());
   renderAt('/admin/orgs/o1', api);
   expect(await screen.findByRole('heading', { name: 'Forecasts' })).toBeTruthy();
-  expect(screen.getByText(`A forecast is a draft until you publish it. ${NAME}’s members and TownwiseAI see only published forecasts, never the model. Each import, publish, withdrawal and deletion is listed in ${NAME}’s Townwise staff activity.`)).toBeTruthy();
+  expect(screen.getByText(`A forecast is a draft until you publish it. While forecasts are on, a calibration that passes every check publishes itself. ${NAME}’s members and TownwiseAI see only published forecasts, never the model. Each import, publish, withdrawal and deletion is listed in ${NAME}’s Townwise staff activity.`)).toBeTruthy();
   expect(await screen.findByText('No forecast imported for Hanover.')).toBeTruthy();
   expect(screen.getByRole('heading', { name: 'Import a forecast' })).toBeTruthy();
   const headings = screen.getAllByRole('heading').map((heading) => heading.textContent);

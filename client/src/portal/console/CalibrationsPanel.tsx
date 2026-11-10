@@ -11,6 +11,7 @@ import { Stack } from '../ui/layout';
 import { Heading, Small } from '../ui/text';
 import { startCalibration, type Calibration } from './calibrations';
 import { Dialog } from './Dialog';
+import { RowActions } from './parts';
 import { problemOf } from './problems';
 import type { OrgLocation, StaffOrg } from './schemas';
 
@@ -26,8 +27,9 @@ const STATUS_WORDS: Readonly<Record<Calibration['status'], string>> = {
   queued: 'Waiting to start', running: 'Running', succeeded: 'Done', failed: 'Failed',
 };
 
-// The server’s own words for each refusal of a start, by its code (the client’s errors carry the code, not the text).
-const REFUSALS: readonly (readonly [number, string, string])[] = [
+// The server’s own words for each refusal of a start (START_REFUSAL_WORDS in api/src/lab/service.ts), by its code: the
+// client’s errors carry the code, not the text. calibrations.test.web.tsx pins each line to the server’s file.
+export const REFUSALS: readonly (readonly [number, string, string])[] = [
   [503, 'lab_unavailable', 'Calibration isn’t available right now.'],
   [409, 'not_enough_history', 'Calibration needs at least 420 days from the first to the last day of sales history.'],
   [400, 'invalid_regime_start', 'The pattern change date must fall inside the sales history, at least 8 weeks before its last day.'],
@@ -125,13 +127,15 @@ export function Calibrations(props: {
       <Heading level={3}>Calibrations</Heading>
       {done === null ? null : <Messages live="status" items={[done]} />}
       {locations.map((location) => (
-        <Button
-          key={location.id}
-          variant="outline"
-          label="Calibrate"
-          accessibilityLabel={`Calibrate ${location.name}`}
-          onPress={() => { setDone(null); setCalibrating(location); }}
-        />
+        <RowActions key={location.id}>
+          <Small white>{location.name}</Small>
+          <Button
+            variant="outline"
+            label="Calibrate"
+            accessibilityLabel={`Calibrate ${location.name}`}
+            onPress={() => { setDone(null); setCalibrating(location); }}
+          />
+        </RowActions>
       ))}
       {calibrations.length === 0
         ? <Small>No calibrations yet.</Small>

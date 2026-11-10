@@ -33,6 +33,7 @@ const ACTIVITY = 'Its admins see this in their Townwise staff activity.';
 function refusal(error: unknown): string | null {
   if (hasCode(error, 409, 'forecast_run_not_draft')) return 'Only a draft can be published, and this one isn’t a draft anymore.';
   if (hasCode(error, 409, 'forecast_run_importing')) return 'Its import hasn’t finished. Import the same file again first.';
+  if (hasCode(error, 409, 'forecasts_off')) return 'Forecasts are off for this organization. Switch them on first.';
   if (hasCode(error, 404, 'not_found')) return 'This forecast was already deleted.';
   return null;
 }
@@ -155,7 +156,7 @@ export function ForecastRuns(props: { org: StaffOrg; locations: readonly OrgLoca
   return (
     <Section kicker="Staff only" title="Forecasts">
       <Stack gap={20}>
-        <Small>{`A forecast is a draft until you publish it. ${org.name}’s members and TownwiseAI see only published forecasts, never the model. Each import, publish, withdrawal and deletion is listed in ${org.name}’s Townwise staff activity.`}</Small>
+        <Small>{`A forecast is a draft until you publish it. While forecasts are on, a calibration that passes every check publishes itself. ${org.name}’s members and TownwiseAI see only published forecasts, never the model. Each import, publish, withdrawal and deletion is listed in ${org.name}’s Townwise staff activity.`}</Small>
         {state.status === 'loading' ? <LoadingLine text="Loading forecasts…" /> : null}
         {state.status === 'failed' ? <ErrorNotice error={state.error} onRetry={reload} /> : null}
         {refreshError === null ? null : <ErrorNotice message="The forecasts couldn’t load again, so this list may be out of date." onRetry={() => { void refresh(); }} />}
