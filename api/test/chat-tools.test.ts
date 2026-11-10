@@ -25,6 +25,8 @@ const FROZEN_NAMES = [
   'get_forecast',
   // F2.
   'get_day',
+  // The forecast lab.
+  'start_calibration', 'get_calibration', 'compare_forecast_models',
 ];
 
 describe('the tool registry', () => {
@@ -184,6 +186,8 @@ describe('get_day', () => {
       },
       today: TODAY,
       timeZone: 'America/New_York',
+      role: 'member',
+      actor: { actorUserId: SENTINEL_USER, actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null },
     };
     return { tc, byIds };
   }

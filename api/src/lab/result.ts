@@ -1,7 +1,7 @@
 // The forecast lab's result (schema townwise.lab-result/1), as the job posts it to the callback: the draft run file,
 // its scorecard and the parameters that reproduce it, or a failure code. checkLabResult also holds it to the
-// calibration it answers (the same id, the same last day of data, the same current forecast compared). Issues carry a
-// path and a code only, never a value. Pure.
+// calibration it answers (the same id, the same last day of data, the same current forecast compared, no scorecard week
+// after that last day). Issues carry a path and a code only, never a value. Pure.
 import { z } from 'zod';
 
 import { isoDate } from '../dates.ts';
@@ -64,7 +64,9 @@ export type LabResultCheck = { ok: true; result: LabResult } | { ok: false; issu
 
 /**
  * The result for `calibration`, checked against today (UTC): its shape, the run file's own rules (checkLabRunFile),
- * the calibration's id, the last day of the input it was given, and the current forecast it was compared with.
+ * the calibration's id, the last day of the input it was given, the current forecast it was compared with, and that
+ * every scorecard week starts on or before that last day: those weeks reach TownwiseAI (lab/components.ts), and a later
+ * one would be a forecast week, not the owner's history.
  */
 export function checkLabResult(
   raw: unknown,
@@ -83,6 +85,14 @@ export function checkLabResult(
     const compared = result.scorecard.comparison;
     if (compared !== null && compared.championRunId !== calibration.championRunId) {
       issues.push({ path: 'scorecard.comparison.championRunId', code: 'champion_mismatch' });
+    }
+    const through = calibration.dataThrough;
+    if (through !== null) {
+      const later = (path: string, weeks: readonly { week: string }[]): FileIssue[] => weeks.flatMap((row, i) => (
+        row.week > through ? [{ path: `${path}[${String(i)}].week`, code: 'after_data_through' }] : []
+      ));
+      issues.push(...later('scorecard.backtest.series', result.scorecard.backtest.series));
+      if (compared !== null) issues.push(...later('scorecard.comparison.series', compared.series));
     }
   }
   return issues.length > 0 ? { ok: false, issues: issues.slice(0, MAX_ISSUES) } : { ok: true, result };

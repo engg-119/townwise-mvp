@@ -11,7 +11,7 @@ import { fakeAuth } from '../helpers/fakes';
 import { ACCESS, fakePortalApi, meOf, orgOf, viewAsMe } from '../helpers/portal';
 import { aboutDraft } from '../../src/chat/about';
 import { localToday } from '../../src/portal/locations/dates';
-import { serveAbout } from './about-fakes';
+import { PUBLISHED, RUN, serveAbout } from './about-fakes';
 
 // P25 TownwiseAI on web (spec 16.3): the keyboard (Enter sends, Shift+Enter and an input method's Enter don't),
 // the conversations list's Escape, reduced motion, the polite live region, links that open in a new tab, and
@@ -195,6 +195,22 @@ test('F10: How Townwise estimates opens the model card as a dialog; Escape close
   // react-native-web's Modal closes on Escape's keyup.
   fireEvent.keyUp(document, { key: 'Escape' });
   await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'How Townwise estimates' })).toBeNull(); });
+});
+
+test('the forecast line says a lab run was trained on the sales history and notes uploaded to Townwise', async () => {
+  const chat = serveAbout(fakeChatApi(), { ...PUBLISHED, forecast: { run: { ...RUN, trainingSource: 'townwise_lab' }, live: null } });
+  renderAt('/locations/l1/agent', chat);
+  const side = await screen.findByTestId('agent-side');
+  fireEvent.click(within(side).getByRole('button', { name: 'How TownwiseAI works' }));
+  expect(await within(side).findByText('TownwiseAI also reads the forecast Townwise published: Townwise demand model v9, trained on sales history and notes you uploaded to Townwise from Jan 1, 2025 to Oct 21, 2026, made Nov 1, 2026.')).toBeTruthy();
+});
+
+test('the forecast line reads a training source this client doesn’t know as sales history', async () => {
+  const chat = serveAbout(fakeChatApi(), { ...PUBLISHED, forecast: { run: { ...RUN, trainingSource: 'a_future_source' }, live: null } });
+  renderAt('/locations/l1/agent', chat);
+  const side = await screen.findByTestId('agent-side');
+  fireEvent.click(within(side).getByRole('button', { name: 'How TownwiseAI works' }));
+  expect(await within(side).findByText('TownwiseAI also reads the forecast Townwise published: Townwise demand model v9, trained on sales history from Jan 1, 2025 to Oct 21, 2026, made Nov 1, 2026.')).toBeTruthy();
 });
 
 describe('a tool card', () => {

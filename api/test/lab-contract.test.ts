@@ -50,6 +50,33 @@ describe('lab contract', () => {
     expect(early.ok ? [] : early.issues).toEqual([{ path: 'run.madeAt', code: 'made_in_future' }]);
   });
 
+  it('checkLabResult refuses a scorecard week after the calibration’s last day of data', () => {
+    const input = labInputSchema.parse(golden('input.json'));
+    const calibration = { id: input.calibrationId, dataThrough: input.dataThrough, championRunId: input.champion?.runId ?? null };
+    const result = labResultSchema.parse(golden('result.json'));
+    if (!result.ok || result.scorecard.comparison === null) return expect.unreachable('the golden result compares with a champion');
+    const { backtest, comparison } = result.scorecard;
+    // Every golden week starts on or before the last day (the last backtest week may be a partial one).
+    expect([...backtest.series, ...comparison.series].every((row) => row.week <= input.dataThrough)).toBe(true);
+    const last = (rows: readonly unknown[]): number => rows.length - 1;
+    /** The golden result with its last backtest and comparison weeks starting on `week`. */
+    const lastWeeksOn = (week: string): unknown => ({
+      ...result,
+      scorecard: {
+        ...result.scorecard,
+        backtest: { ...backtest, series: backtest.series.map((row, i) => (i === last(backtest.series) ? { ...row, week } : row)) },
+        comparison: { ...comparison, series: comparison.series.map((row, i) => (i === last(comparison.series) ? { ...row, week } : row)) },
+      },
+    });
+    const next = new Date(Date.parse(`${input.dataThrough}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+    const check = checkLabResult(lastWeeksOn(next), calibration, input.today);
+    expect(check.ok ? [] : check.issues).toEqual([
+      { path: `scorecard.backtest.series[${String(last(backtest.series))}].week`, code: 'after_data_through' },
+      { path: `scorecard.comparison.series[${String(last(comparison.series))}].week`, code: 'after_data_through' },
+    ]);
+    expect(checkLabResult(lastWeeksOn(input.dataThrough), calibration, input.today)).toMatchObject({ ok: true });
+  });
+
   it('a failure result parses with its code and refuses an unknown one', () => {
     const failed = { schema: 'townwise.lab-result/1', calibrationId: null, ok: false, code: 'invalid_input' };
     expect(labResultSchema.safeParse(failed).success).toBe(true);

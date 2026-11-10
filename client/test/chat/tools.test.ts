@@ -10,6 +10,8 @@ const REGISTERED = [
   'get_town_calendar', 'get_people_in_town',
   'get_forecast',
   'get_day',
+  // The forecast lab.
+  'start_calibration', 'get_calibration', 'compare_forecast_models',
 ];
 const CTX = { town: 'Hanover', hasTownProfile: true };
 
@@ -21,7 +23,9 @@ test('every registered tool has words for each state; propose_note shows as its 
   for (const name of REGISTERED) {
     expect(isKnownTool(name)).toBe(true);
     const lines = (['running', 'done', 'error'] as const).map((state) => toolLine(step(name, state), CTX));
-    expect(lines.map((line) => line.status)).toEqual(['Reading', 'Read', 'Couldn’t read']);
+    // start_calibration starts a job rather than reading.
+    expect(lines.map((line) => line.status))
+      .toEqual(name === 'start_calibration' ? ['Starting', 'Asked to start', 'Couldn’t start'] : ['Reading', 'Read', 'Couldn’t read']);
     for (const line of lines) expect(line.object).not.toBe('');
   }
   expect(REGISTERED.filter(isHiddenTool)).toEqual(['propose_note']);
@@ -143,6 +147,47 @@ test('get_day reads one day: whether it had sales, was closed, its notes and cal
     { term: 'Day', value: 'Nov 21, 2026' }, { term: 'Sales recorded', value: 'Yes' }, { term: 'Closed', value: 'No' },
     { term: 'Notes', value: '1' }, { term: 'Calendar entries', value: '2' },
   ]);
+});
+
+test('the lab tools read counts and codes: whether a calibration started, its status, the weeks it was judged on', () => {
+  const started = { started: true, status: 'running', code: null };
+  expect(toolLine(step('start_calibration', 'running', { hasRegimeStart: false }), CTX).sentence).toBe('Starting a forecast calibration');
+  expect(toolLine(step('start_calibration', 'done', { hasRegimeStart: false }, started), CTX))
+    .toMatchObject({ sentence: 'Started a forecast calibration', detail: 'Running on Townwise’s servers' });
+  const refused = { started: false, status: null, code: 'in_progress' };
+  expect(toolLine(step('start_calibration', 'done', null, refused), CTX))
+    .toMatchObject({ sentence: 'Didn’t start a forecast calibration', detail: 'One is already running for this location' });
+  expect(toolLine(step('start_calibration', 'done', null, { started: false, status: null, code: 'a_new_code' }), CTX).detail).toBeNull();
+  expect(toolLine(step('start_calibration', 'error'), CTX).sentence).toBe('Couldn’t start a forecast calibration');
+  // Its codes show as words, never as the code.
+  expect(viewRows({ hasRegimeStart: true }, refused, 'start_calibration')).toEqual([
+    { term: 'Pattern change date given', value: 'Yes' }, { term: 'Started', value: 'No' }, { term: 'Reason', value: 'One is already running for this location' },
+  ]);
+  expect(viewRows(null, started, 'start_calibration')).toEqual([{ term: 'Started', value: 'Yes' }, { term: 'Status', value: 'Running' }]);
+
+  const read = { available: true, status: 'succeeded', weeks: 12, published: true };
+  expect(toolLine(step('get_calibration', 'done', null, read), CTX)).toMatchObject({
+    sentence: 'Read your latest forecast calibration', detail: '12 held-out weeks · Published',
+  });
+  expect(toolLine(step('get_calibration', 'done', null, { available: true, status: 'running', weeks: null, published: null }), CTX).detail).toBe('Still running');
+  expect(toolLine(step('get_calibration', 'done', null, { available: true, status: 'queued', weeks: null, published: null }), CTX).detail).toBe('Waiting to start');
+  // get_calibration's failed view (api/src/chat/tools/calibration.ts) says so, as the opened card does.
+  const failed = { available: true, status: 'failed', weeks: null, published: null };
+  expect(toolLine(step('get_calibration', 'done', null, failed), CTX).detail).toBe('Didn’t finish');
+  expect(viewRows(null, failed, 'get_calibration')).toEqual([{ term: 'Available', value: 'Yes' }, { term: 'Status', value: 'Didn’t finish' }]);
+  expect(toolLine(step('compare_forecast_models', 'done', null, { available: false, status: null, weeks: null, published: null }), CTX).detail)
+    .toBe('Nothing to show yet');
+  expect(toolLine(step('compare_forecast_models', 'done', null, { ...read, published: false }), CTX).detail).toBe('12 held-out weeks · Not published');
+  expect(toolLine(step('compare_forecast_models', 'running'), CTX).sentence).toBe('Reading how the calibration compares with the current forecast');
+  // A calibration's id is left out of the opened card.
+  expect(viewRows({ calibrationId: 'a'.repeat(24) }, read, 'get_calibration')).toEqual([
+    { term: 'Available', value: 'Yes' }, { term: 'Status', value: 'Finished' }, { term: 'Held-out weeks', value: '12' }, { term: 'Published', value: 'Yes' },
+  ]);
+
+  // Starting one reads nothing, so it is no part of the Based on line.
+  const start = step('start_calibration', 'done', null, started);
+  expect(basedOnLine([start], CTX)).toBe('Based on this conversation only.');
+  expect(basedOnLine([start, step('get_calibration', 'done', null, read)], CTX)).toBe('Based on your latest forecast calibration.');
 });
 
 test('a tool this table doesn’t know yet still gets a card, in general words', () => {

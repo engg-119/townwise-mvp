@@ -31,10 +31,12 @@ export interface SourceLink { host: string; url: string }
 interface ToolRow {
   /** The thing read, after the status word: "your notes", "Hanover’s town profile". */
   object(input: ToolView | null, ctx: ToolContext, result: ToolView | null): string;
+  /** The status word for a tool that does something rather than read: "Starting", not "Reading". */
+  status?(state: ToolStep['state'], result: ToolView | null): string;
   detail?(result: ToolView, input: ToolView | null, ctx: ToolContext): string | null;
   sources?(result: ToolView): SourceLink[];
-  /** Its piece of the Based on line; the object when absent. */
-  basedOn?(input: ToolView | null, ctx: ToolContext, result: ToolView | null): string;
+  /** Its piece of the Based on line; the object when absent, and null for a call that read nothing. */
+  basedOn?(input: ToolView | null, ctx: ToolContext, result: ToolView | null): string | null;
   /**
    * What TownwiseAI reads, for the composer's help line and How TownwiseAI works. Only for tools the server has
    * registered: a row added ahead of its tool leaves it out, so the page never claims a source it can't read. Null
@@ -47,6 +49,8 @@ interface ToolRow {
   hidden?: true;
   /** Words for this tool's view fields where the shared VIEW_TERMS would mislabel them. */
   terms?: Readonly<Record<string, string>>;
+  /** Words for the codes a view field carries; a code with no words here is left out of the opened card. */
+  values?: Readonly<Record<string, Readonly<Record<string, string>>>>;
 }
 
 function text(view: ToolView | null, key: string): string | null {
@@ -94,6 +98,43 @@ function townOf(result: ToolView | null, ctx: ToolContext): string {
 
 function possessive(name: string): string {
   return `${name}’s`;
+}
+
+/** A calibration's status (api/src/stores/calibrations.ts), in words. */
+const CALIBRATION_STATUS: Readonly<Record<string, string>> = {
+  queued: 'Waiting to start', running: 'Running', succeeded: 'Finished', failed: 'Didn’t finish',
+};
+
+/** Why start_calibration didn't start one (api/src/lab/service.ts START_REFUSAL_WORDS, shortened), in words. */
+const START_REFUSAL: Readonly<Record<string, string>> = {
+  org_admin_only: 'Only an org admin can calibrate',
+  lab_unavailable: 'Calibration isn’t available right now',
+  not_enough_history: 'Not enough sales history yet',
+  invalid_regime_start: 'The pattern change date doesn’t fit the sales history',
+  budget_exhausted: 'This month’s TownwiseAI budget is used up',
+  in_progress: 'One is already running for this location',
+  rate_limited: 'Today’s calibrations are used up',
+  start_failed: 'It couldn’t start',
+};
+
+function wordsFor(words: Readonly<Record<string, string>>, code: string | null): string | null {
+  return code !== null && Object.hasOwn(words, code) ? words[code] ?? null : null;
+}
+
+/**
+ * A lab read's card line: nothing to show, a calibration that is waiting, running or didn't finish, or the weeks it
+ * was judged on and whether Townwise published it.
+ */
+function labDetail(result: ToolView): string | null {
+  if (result.available !== true) return 'Nothing to show yet';
+  const status = text(result, 'status');
+  if (status === 'running') return 'Still running';
+  if (status !== null && status !== 'succeeded') return wordsFor(CALIBRATION_STATUS, status);
+  const weeks = count(result, 'weeks');
+  const judged = weeks === null ? null : plural(weeks, 'held-out week', 'held-out weeks');
+  const published = result.published === true ? 'Published' : result.published === false ? 'Not published' : null;
+  const line = [judged, published].filter((part): part is string => part !== null).join(' · ');
+  return line === '' ? null : line;
 }
 
 const TOOLS: Readonly<Record<string, ToolRow>> = {
@@ -253,6 +294,33 @@ const TOOLS: Readonly<Record<string, ToolRow>> = {
     sources: sourcesOf,
     terms: { date: 'Day', hasSales: 'Sales recorded', closed: 'Closed', noteCount: 'Notes', eventCount: 'Calendar entries' },
   },
+  // The forecast lab (api/src/chat/tools/calibration.ts), org admins only. Views carry counts and codes, never a figure;
+  // the codes show as words, and a calibration's id is left out.
+  start_calibration: {
+    // It starts a job rather than reading: "Starting a forecast calibration", and no piece of the Based on line.
+    object: () => 'a forecast calibration',
+    status: (state, result) => {
+      if (state === 'running') return 'Starting';
+      if (state === 'error') return 'Couldn’t start';
+      return result?.started === true ? 'Started' : result?.started === false ? 'Didn’t start' : 'Asked to start';
+    },
+    detail: (result) => (result.started === true ? 'Running on Townwise’s servers' : wordsFor(START_REFUSAL, text(result, 'code'))),
+    basedOn: () => null,
+    terms: { hasRegimeStart: 'Pattern change date given', started: 'Started', status: 'Status', code: 'Reason' },
+    values: { status: CALIBRATION_STATUS, code: START_REFUSAL },
+  },
+  get_calibration: {
+    object: () => 'your latest forecast calibration',
+    detail: (result) => labDetail(result),
+    terms: { available: 'Available', status: 'Status', weeks: 'Held-out weeks', published: 'Published' },
+    values: { status: CALIBRATION_STATUS },
+  },
+  compare_forecast_models: {
+    object: () => 'how the calibration compares with the current forecast',
+    detail: (result) => labDetail(result),
+    terms: { available: 'Available', status: 'Status', weeks: 'Held-out weeks', published: 'Published' },
+    values: { status: CALIBRATION_STATUS },
+  },
 };
 
 const GENERIC = { running: 'Looking something up', done: 'Looked something up', error: 'Couldn’t look something up' } as const;
@@ -267,7 +335,7 @@ export function isHiddenTool(name: string): boolean {
 }
 
 export interface ToolLine {
-  /** "Reading", "Read" or "Couldn’t read"; empty for a tool this table doesn't know. */
+  /** "Reading", "Read" or "Couldn’t read", or a tool's own word ("Starting"); empty for a tool this table doesn't know. */
   status: string;
   /** The rest of the sentence: "your sales for Oct 1 to Oct 31, 2026". */
   object: string;
@@ -284,7 +352,8 @@ export function toolLine(step: ToolStep, ctx: ToolContext): ToolLine {
     const sentence = GENERIC[step.state];
     return { status: '', object: sentence, sentence, detail: null, sources: [] };
   }
-  const status = step.state === 'running' ? 'Reading' : step.state === 'done' ? 'Read' : 'Couldn’t read';
+  const status = row.status?.(step.state, step.result)
+    ?? (step.state === 'running' ? 'Reading' : step.state === 'done' ? 'Read' : 'Couldn’t read');
   const object = row.object(step.input, ctx, step.result);
   const done = step.state === 'done' && step.result !== null;
   return {
@@ -305,7 +374,8 @@ function list(items: readonly string[]): string {
 /**
  * The line under a finished reply, built only from the calls that read something: "Based on your sales from Oct 1
  * to Oct 31, 2026, your 12 notes, and Hanover’s town profile (bls.gov, dartmouth.edu)." A call that failed read
- * nothing and is left out; a reply with no reads is "Based on this conversation only."
+ * nothing and is left out, as is one that reads nothing (start_calibration); a reply with no reads is "Based on this
+ * conversation only."
  */
 export function basedOnLine(steps: readonly ToolStep[], ctx: ToolContext): string {
   const pieces: string[] = [];
@@ -315,7 +385,7 @@ export function basedOnLine(steps: readonly ToolStep[], ctx: ToolContext): strin
     const piece = row === undefined
       ? 'something else TownwiseAI looked up'
       : (row.basedOn ?? row.object)(step.input, ctx, step.result);
-    if (!pieces.includes(piece)) pieces.push(piece);
+    if (piece !== null && !pieces.includes(piece)) pieces.push(piece);
   }
   return pieces.length === 0 ? 'Based on this conversation only.' : `Based on ${list(pieces)}.`;
 }
@@ -364,16 +434,20 @@ function valueText(key: string, value: unknown): string | null {
 /**
  * An opened card's rows: the input view, then the result view, field by field, in words. Fields this table has no
  * words for are left out, and so are sources (shown as links) and anything that is not a date, a count, yes or no.
- * `name` lets a tool's own words replace the shared ones (get_forecast's `available` is not "Researched").
+ * `name` lets a tool's own words replace the shared ones (get_forecast's `available` is not "Researched"), and its
+ * code fields show only as its words for them (a calibration's status), never as the code.
  */
 export function viewRows(input: ToolView | null, result: ToolView | null, name?: string): { term: string; value: string }[] {
-  const own = name !== undefined && Object.hasOwn(TOOLS, name) ? TOOLS[name]?.terms : undefined;
+  const tool = name !== undefined && Object.hasOwn(TOOLS, name) ? TOOLS[name] : undefined;
+  const own = tool?.terms;
+  const codes = tool?.values;
   const rows: { term: string; value: string }[] = [];
   for (const view of [input, result]) {
     if (view === null) continue;
     for (const [key, value] of Object.entries(view)) {
       const term = own !== undefined && Object.hasOwn(own, key) ? own[key] : Object.hasOwn(VIEW_TERMS, key) ? VIEW_TERMS[key] : undefined;
-      const shown = term === undefined ? null : valueText(key, value);
+      const words = codes !== undefined && Object.hasOwn(codes, key) ? codes[key] : undefined;
+      const shown = term === undefined ? null : words === undefined ? valueText(key, value) : wordsFor(words, typeof value === 'string' ? value : null);
       if (term !== undefined && shown !== null && !rows.some((row) => row.term === term)) rows.push({ term, value: shown });
     }
   }
