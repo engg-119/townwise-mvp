@@ -464,7 +464,7 @@ Under `/api/org`. A location or item from another organization answers 404 like 
 | `DELETE /locations/:locationId/data/:ref` | member; an upload: org admin; a file: the person who added it or an org admin | | 200 `{ deletedDays, deletedFiles }` | 403 `forbidden`; 404; 409 `file_busy`; 503 `files_unavailable` |
 | `POST /locations/:locationId/data/text` | member; 32 KB; limiter `files` | `{ title, text }`, title 1 to 120 characters, text 1 to 10,000 | 201 `{ file }` | 400 `invalid_request`; 404; 409 `storage_full`, `daily_upload_limit`; 503 `files_unavailable`, `storage_unavailable` |
 | `GET /locations/:locationId/chat/:conversationId/item-proposals/:proposalId` | member (author) | | 200 `{ proposal: { id, title, text, status, item } }` | 400; 404 |
-| `POST /locations/:locationId/chat/:conversationId/item-proposals/:proposalId` | member (author); 2 KB | `{ action: 'save' }` or `{ action: 'dismiss' }` | 200 `{ proposal }` | 400; 404; 409 `storage_full`, `daily_upload_limit`; 503 `files_unavailable`, `storage_unavailable` |
+| `POST /locations/:locationId/chat/:conversationId/item-proposals/:proposalId` | member (author); 2 KB | `{ action: 'save' }` or `{ action: 'dismiss' }` | 200 `{ proposal }` | 400; 404; 409 `storage_full`, `daily_upload_limit`; 429 `rate_limited` (the `files` limiter, as Paste text); 503 `files_unavailable`, `storage_unavailable` |
 
 An item is `{ ref, locationId, via, kind, name, addedAt, addedByEmail, sizeBytes, enabled, state, outcome, days, file, canTurnOff, canDelete }`. `via` is `browser`, `file`, `staff` or `townwise_ai`; `kind` is `daily_totals` or a file kind; `name` is null for daily totals and under view-as; `addedByEmail` is the person’s current email, “Townwise staff” or “Deleted person”; `days` is `{ count, inUse, firstDate, lastDate }` or null; `file` is `{ id, hasClean, rawAvailable, rawExpiresAt, entries, canDownloadRaw, canDownloadClean, canDeleteRaw }` or null (and null while stored files are off). Downloads use the stored-file routes above. Names travel only in JSON bodies, never in a path, a log line or an audit event.
 
@@ -570,7 +570,7 @@ Not under `/api`: mounted at `/lab`, with no session; the bearer token is the cr
 | `townwise:chat` | `POST /api/org/locations/:locationId/chat/turns`, per account | 60 per hour | deny (503 `unavailable`) |
 | `townwise:places` | both Places routes together, per account; each location write with a `placeId` also spends one (Organization and locations) | 300 per hour | deny (503 `unavailable`; on a location write, 503 `places_unavailable`) |
 | `townwise:calibrations` | starting a calibration (TownwiseAI or the console), per organization | 4 per day | deny (429 `calibrations_rate_limited`, as when the 4 are used; `start_calibration` answers `rate_limited`) |
-| `townwise:files` | `POST .../files` (opening an upload) and `POST .../data/text` (pasting text), together, per account | 120 per hour | allow |
+| `townwise:files` | `POST .../files` (opening an upload), `POST .../data/text` (pasting text) and `POST .../chat/:conversationId/item-proposals/:proposalId` (keeping text TownwiseAI proposed, or setting the card aside), together, per account | 120 per hour | allow |
 | `townwise:file-chunks` | `PUT .../files/:fileId/chunks/:index`, per account | 1,500 per hour | allow |
 | `townwise:downloads` | both file downloads together, per account | 300 per hour | allow |
 

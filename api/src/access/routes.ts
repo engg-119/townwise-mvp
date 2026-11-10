@@ -281,7 +281,7 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.chat.item_proposal', method: 'POST',
     path: '/org/locations/:locationId/chat/:conversationId/item-proposals/:proposalId', policy: 'member', bodyLimit: '2kb',
-    openAsAdmin: true, handler: actOnItemProposal,
+    limiter: 'files', openAsAdmin: true, handler: actOnItemProposal,
   },
   // U9 (TownwiseAI): the side panel's questions and activity, and answering a question.
   {
