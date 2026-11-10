@@ -14,7 +14,7 @@ import { GATE_WORDS } from '../src/lab/gate.ts';
 import { labInputSchema, type LabInput } from '../src/lab/input.ts';
 import { LabStartError } from '../src/lab/runner.ts';
 import { FAILURE_WORDS, START_REFUSAL_WORDS } from '../src/lab/service.ts';
-import { addLocation, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
+import { addInvite, addLocation, addOpenAsAdminGrant, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { message, scriptedModel, text, toolUse, type ScriptedModel, type Step, type UsageInput } from './helpers/chat-model.ts';
 import { CODE_VERSION, fakeLabRunner, jobCall, labFailure, labResultFor, runDays, seedHistory, type FakeLabRunner } from './helpers/lab.ts';
 import { comparisonWith, scorecardWith } from './helpers/lab-scorecard.ts';
@@ -190,6 +190,25 @@ describe('start_calibration', () => {
     });
     expect(await count('tw_calibrations', { orgId: new Types.ObjectId(t.orgId), requestedBy: { userId: t.admin.userId, role: 'org_admin', via: 'chat' } })).toBe(1);
     expect(reply.views).toEqual([{ input: { hasRegimeStart: false }, result: { started: true, status: 'running', code: null } }]);
+  });
+
+  it('started by staff who have the organization open as admin (D25), it is recorded as staff’s, under the grant', async () => {
+    const orgId = await createOrg(server, { name: `Lab Setup ${randomUUID().slice(0, 6)}` });
+    await addInvite(server, {
+      orgId, email: `first-admin-${randomUUID().slice(0, 8)}@example.test`, invitedBy: staff.userId, role: 'org_admin', addedByStaff: true,
+    });
+    const locationId = await addLocation(server, { orgId, name: 'Hanover Room' });
+    await seedHistory(server, { orgId, locationId, from: '2024-10-01', to: '2026-05-31' });
+    const grantId = await addOpenAsAdminGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, orgId });
+    try {
+      const reply = await ask({ orgId, locationId, admin: staff, member: staff }, 'admin', 'start_calibration');
+      expect(reply.result).toMatchObject({ started: true });
+      expect(await count('tw_calibrations', { orgId: new Types.ObjectId(orgId), requestedBy: { userId: staff.userId, role: 'superadmin', via: 'chat' } })).toBe(1);
+      const event = (await auditEvents(server)).find((e) => e.action === 'calibration.requested' && String(e.orgId) === orgId);
+      expect(event).toMatchObject({ actorRole: 'superadmin', actorUserId: staff.userId, viewAsGrantId: grantId });
+    } finally {
+      await server.connection.collection('tw_view_as_grants').deleteMany({});
+    }
   });
 
   it('passes regimeStart and returns START_REFUSAL_WORDS for each refusal', async () => {

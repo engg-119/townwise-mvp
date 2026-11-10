@@ -104,7 +104,9 @@ export const startCalibrationTool: ChatTool<StartInput> = {
     const { ctx, scope, location } = tc;
     const request: StartRequest = {
       id: new Types.ObjectId().toHexString(), scope, location,
-      requester: { userId: tc.actor.actorUserId, role: 'org_admin', via: 'chat' }, regimeStart: input.regimeStart, today: tc.today,
+      // Staff who have the organization open as admin (D25) act with the org admin role but stay staff.
+      requester: { userId: tc.actor.actorUserId, role: tc.actor.actorRole === 'superadmin' ? 'superadmin' : 'org_admin', via: 'chat' },
+      regimeStart: input.regimeStart, today: tc.today,
     };
     const refusal = await checkStart(ctx, request);
     if (refusal !== null) return json({ started: false, code: refusal, message: START_REFUSAL_WORDS[refusal] });

@@ -175,6 +175,12 @@ test('a calibration row shows status, the server’s gate words and percentages 
   expect(document.body.textContent).not.toMatch(/98,?765/);
 });
 
+test('a calibration staff started in TownwiseAI while open as admin reads as staff’s (D25)', async () => {
+  await show({ calibrations: [calibration({ via: 'chat', requestedByRole: 'superadmin' })] });
+  expect(screen.getByText('Started by Townwise staff in TownwiseAI')).toBeTruthy();
+  expect(screen.queryByText('Started by an org admin in TownwiseAI')).toBeNull();
+});
+
 test('a summary with nothing to compare reads without the current forecast', async () => {
   await show({ calibrations: [calibration({ summary: { weeks: 12, weeklyWapePct: 8.4, championWeeklyWapePct: null, coverage: { inside: 10, weeks: 12 }, weekdayBiasPct: 3.2, championWeekdayBiasPct: null } })] });
   expect(screen.getByText('Weekly error 8.4% on 12 held-out weeks.')).toBeTruthy();

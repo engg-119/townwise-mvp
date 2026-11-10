@@ -97,7 +97,10 @@ function CalibrateDialog(props: {
 
 function Row(props: { calibration: Calibration; location: string }): React.JSX.Element {
   const { calibration, location } = props;
-  const by = calibration.via === 'console' ? 'Started by Townwise staff' : 'Started by an org admin in TownwiseAI';
+  // Staff can start one from TownwiseAI while they have the organization open as admin (D25).
+  const by = calibration.via === 'console'
+    ? 'Started by Townwise staff'
+    : calibration.requestedByRole === 'superadmin' ? 'Started by Townwise staff in TownwiseAI' : 'Started by an org admin in TownwiseAI';
   return (
     <Stack gap={4}>
       <Small white>{`${location}, ${formatDate(calibration.requestedAt)}`}</Small>
