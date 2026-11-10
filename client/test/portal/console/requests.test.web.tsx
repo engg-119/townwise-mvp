@@ -134,6 +134,106 @@ test('Approve (C3): prefilled names, the town, field checks, then the notice and
   expect(within(screen.getByRole('navigation', { name: 'Requests by status' })).getAllByRole('link')[0]?.textContent).toBe('Pending 0');
 });
 
+const STOWE = { townId: 'stowe-vt', name: 'Stowe', state: 'VT' };
+const HANOVER = { townId: 'hanover-nh', name: 'Hanover', state: 'NH' };
+const NORWICH = { townId: null, name: 'Norwich', state: 'VT' };
+const TWO_PLACES = adminRequest({
+  places: [
+    { placeId: 'ChIJTestPlace0001', name: 'Lou’s Restaurant', town: HANOVER },
+    { placeId: 'ChIJTestPlace0002', name: 'Lou’s Bakery', town: NORWICH },
+  ],
+});
+
+async function openApprove(request: unknown): Promise<{ api: ConsoleApi; dialog: HTMLElement }> {
+  const api = consoleApi();
+  let pending: unknown[] = [request];
+  api.routes['GET /api/admin/requests?status=pending'] = () => ({ requests: pending, pendingCount: pending.length });
+  api.routes['POST /api/admin/requests/r1/approve'] = () => (pending = [], { org: { id: 'o9', name: 'Sample Mountain Tavern' }, request: { ...TAVERN, status: 'approved', orgId: 'o9' } });
+  renderAt('/admin', api);
+  fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+  return { api, dialog: screen.getByRole('dialog', { name: 'Approve Sample Mountain Tavern' }) };
+}
+
+test('Approve (C3) with places: a Location name per place, prefilled from Google, each with its town; the body carries locationNames in order', async () => {
+  const { api, dialog } = await openApprove(TWO_PLACES);
+  const first = within(within(dialog).getByRole('group', { name: 'Place 1 of 2' }));
+  const second = within(within(dialog).getByRole('group', { name: 'Place 2 of 2' }));
+  expect(first.getByText('Lou’s Restaurant, Hanover, NH')).toBeTruthy();
+  expect(second.getByText('Lou’s Bakery, Norwich, VT')).toBeTruthy();
+  expect(first.getByRole<HTMLInputElement>('textbox', { name: 'Location name' }).value).toBe('Lou’s Restaurant');
+  const other = second.getByRole<HTMLInputElement>('textbox', { name: 'Location name' });
+  expect(other.value).toBe('Lou’s Bakery');
+  expect(within(dialog).queryByRole('textbox', { name: 'First location name' })).toBeNull();
+  expect(within(dialog).getByText(`This creates the organization and its 2 locations, and makes ${REQUESTER_EMAIL} its admin. We email them that they’re in, and they get access the next time they open Townwise.`)).toBeTruthy();
+
+  fireEvent.change(other, { target: { value: 'Elm Street' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Approve' }));
+  expect(await screen.findByText('No requests are waiting.')).toBeTruthy();
+  expect(writes(api)).toEqual([
+    { method: 'POST', path: '/api/admin/requests/r1/approve', body: { orgName: 'Sample Mountain Tavern', locationNames: ['Lou’s Restaurant', 'Elm Street'] } },
+  ]);
+});
+
+test('Enter in a place’s Location name approves, as it does in the dialog without places', async () => {
+  const { api, dialog } = await openApprove(TWO_PLACES);
+  const field = within(within(dialog).getByRole('group', { name: 'Place 2 of 2' })).getByRole('textbox', { name: 'Location name' });
+  fireEvent.keyDown(field, { key: 'Enter' });
+  expect(await screen.findByText('No requests are waiting.')).toBeTruthy();
+  expect(writes(api)).toEqual([
+    { method: 'POST', path: '/api/admin/requests/r1/approve', body: { orgName: 'Sample Mountain Tavern', locationNames: ['Lou’s Restaurant', 'Lou’s Bakery'] } },
+  ]);
+});
+
+test('Each location needs its own name: empty, or the same ignoring case and spaces, stops the approve', async () => {
+  const { api, dialog } = await openApprove(adminRequest({
+    places: [
+      { placeId: 'ChIJTestPlace0001', name: 'Lou’s Restaurant', town: HANOVER },
+      { placeId: 'ChIJTestPlace0003', name: 'Lou’s Restaurant', town: NORWICH },
+    ],
+  }));
+  const approve = (): void => { fireEvent.click(within(dialog).getByRole('button', { name: 'Approve' })); };
+  const second = (): HTMLElement => within(within(dialog).getByRole('group', { name: 'Place 2 of 2' })).getByRole('textbox', { name: 'Location name' });
+  const groups = (): HTMLElement[] => [1, 2].map((n) => within(dialog).getByRole('group', { name: `Place ${n} of 2` }));
+  approve();
+  for (const group of groups()) expect(within(group).getByText('Each location needs its own name.')).toBeTruthy();
+  expect(writes(api)).toEqual([]);
+
+  fireEvent.change(second(), { target: { value: ' lou’s  restaurant ' } });
+  approve();
+  for (const group of groups()) expect(within(group).getByText('Each location needs its own name.')).toBeTruthy();
+  expect(writes(api)).toEqual([]);
+
+  fireEvent.change(second(), { target: { value: '' } });
+  approve();
+  expect(within(within(dialog).getByRole('group', { name: 'Place 2 of 2' })).getByText('Each location needs its own name.')).toBeTruthy();
+  expect(writes(api)).toEqual([]);
+
+  fireEvent.change(second(), { target: { value: 'Lebanon' } });
+  approve();
+  expect(await screen.findByText('No requests are waiting.')).toBeTruthy();
+  expect(writes(api)).toEqual([
+    { method: 'POST', path: '/api/admin/requests/r1/approve', body: { orgName: 'Sample Mountain Tavern', locationNames: ['Lou’s Restaurant', 'Lebanon'] } },
+  ]);
+});
+
+test('a legacy place has an empty Location name; the text names the request’s town', async () => {
+  const { api, dialog } = await openApprove(adminRequest({ places: [{ placeId: 'ChIJTestPlace0009', name: null, town: STOWE }] }));
+  const group = within(within(dialog).getByRole('group', { name: 'Place 1 of 1' }));
+  const field = group.getByRole<HTMLInputElement>('textbox', { name: 'Location name' });
+  expect(field.value).toBe('');
+  expect(group.getByText('Stowe, VT')).toBeTruthy();
+  expect(within(dialog).getByText(`This creates the organization and its first location in Stowe, VT, and makes ${REQUESTER_EMAIL} its admin. We email them that they’re in, and they get access the next time they open Townwise.`)).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Approve' }));
+  expect(group.getByText('Each location needs its own name.')).toBeTruthy();
+  expect(writes(api)).toEqual([]);
+  fireEvent.change(field, { target: { value: 'Main Street' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Approve' }));
+  expect(await screen.findByText('No requests are waiting.')).toBeTruthy();
+  expect(writes(api)).toEqual([
+    { method: 'POST', path: '/api/admin/requests/r1/approve', body: { orgName: 'Sample Mountain Tavern', locationNames: ['Main Street'] } },
+  ]);
+});
+
 test('Approve refusals: someone else decided it (the list reloads); the requester joined an organization meanwhile', async () => {
   const api = consoleApi();
   list(api, 'pending', [TAVERN]);

@@ -23,8 +23,10 @@ import {
   adminOrgStats, findActiveSeat, NO_ORG_STATS, peopleRecords,
   type PeopleRecords, type PersonInvite, type PersonRequest, type PersonSeat,
 } from '../stores/cross-tenant.ts';
+import { locationNameKey } from '../stores/locations.ts';
 import type { OrgRecord } from '../stores/orgs.ts';
 import { NO_COVERAGE } from '../stores/sales-days.ts';
+import { MAX_LOCATIONS } from './locations.ts';
 import {
   addBody, addOutcomes, assertRoomFor, changeActiveRole, emailOf, lastAdmin, memberView, removeActiveSeat, roleBody, teamView,
   type AddResult, type SeatRemoval,
@@ -39,10 +41,14 @@ export type AdminRequestView = AccessRequestView & {
 };
 
 const listQuery = z.object({ status: z.enum(['pending', 'approved', 'rejected', 'withdrawn']).default('pending') });
+const nameSchema = z.string().trim().min(1).max(80);
+/** `locationName` for a request with no places, `locationNames` for one with places (locationNamesFor). */
 const approveBody = z.object({
   orgName: z.string().trim().min(2).max(120),
-  locationName: z.string().trim().min(1).max(80),
+  locationName: nameSchema.optional(),
+  locationNames: z.array(nameSchema).min(1).max(MAX_LOCATIONS).optional(),
 });
+type ApproveBody = z.infer<typeof approveBody>;
 const rejectBody = z.object({ message: z.string().trim().max(500).nullish() });
 
 export function notFound(): AppError {
@@ -86,7 +92,7 @@ export async function listRequests(ctx: TownwiseContext, req: Request, res: Resp
 
 /**
  * Takes back the seat an approval gave a person whose request was deleted meanwhile (person deletion), and, when
- * nobody else is in it, the organization and first location made only for that request, with their names in the
+ * nobody else is in it, the organization and the locations made only for that request, with their names in the
  * audit log, as organization deletion does.
  */
 async function undoApproval(ctx: TownwiseContext, scope: OrgScope, requestId: string, seatId: string): Promise<void> {
@@ -96,6 +102,22 @@ async function undoApproval(ctx: TownwiseContext, scope: OrgScope, requestId: st
   await stores.locations.removeForOrg(scope);
   await stores.audit.redact({ kind: 'org', orgId: scope.orgId, requestId });
   await stores.orgs.removeFromRequest(scope, requestId);
+}
+
+/**
+ * The location names step 7 uses. A request with places takes `locationNames`, one per place in the same order and
+ * unique by name key, since two names with one key would be one location (`ensureByName`); a request without takes
+ * `locationName`. Any other body is 400, before anything is written.
+ */
+function locationNamesFor(request: AccessRequestRecord, body: ApproveBody): string[] {
+  const { locationName, locationNames } = body;
+  if (request.places.length === 0) {
+    if (locationName !== undefined && locationNames === undefined) return [locationName];
+  } else if (locationNames !== undefined && locationName === undefined && locationNames.length === request.places.length
+    && new Set(locationNames.map(locationNameKey)).size === locationNames.length) {
+    return locationNames;
+  }
+  throw new AppError(400, 'invalid_request', 'Invalid request');
 }
 
 /**
@@ -110,6 +132,7 @@ export async function approveRequest(ctx: TownwiseContext, req: Request, res: Re
   const body = parseInput(approveBody, req.body);
   const request = await ctx.stores.requests.findById(requestId);
   if (request === null) throw notFound();
+  const names = locationNamesFor(request, body);
   const requester = await ctx.authStores.users.findById(request.userId);
   if (requester === null) throw notFound();
   const actor = actorOf(staff);
@@ -149,18 +172,49 @@ export async function approveRequest(ctx: TownwiseContext, req: Request, res: Re
     });
   }
   const scope = scopeForNewOrg(staff, org.id);
-  // Step 7 runs only while the organization has no location and no people, so a retry finishes a stopped
-  // approval but never adds a location to an organization in use (spec 3, 6.4), whatever name it sends.
-  if (inserted || (await ctx.stores.locations.count(scope) === 0 && await ctx.stores.members.countSeats(scope) === 0)) {
-    const location = await ctx.stores.locations.ensureByName(scope, {
-      name: body.locationName, town: request.town, placeId: request.placeId, createdAt: now, createdBy: staff.actor.userId,
-    });
-    if (location.inserted) {
-      await recordAfter(ctx, {
-        ...actor, at: now, orgId, action: 'location.created',
-        target: { type: 'location', id: location.id },
-        details: { name: body.locationName, townId: request.town.townId },
+  // Step 7 runs only while the organization is new or not yet in use, so a retry finishes a stopped approval but never
+  // adds a location to an organization in use (spec 3, 6.4), whatever names it sends. Without places, that means no
+  // location and no people, and it makes the one location in the request's town. With places, it means no row records
+  // a join, read as staff setup reads it (D23): the organization's `firstJoinedAt`, then any member row that
+  // joined, removed seats included (a location count can't tell, since a stop partway leaves some places done), and
+  // it makes a location for each place that has none yet. That path keys on the place id, not the name: a retry may
+  // name a place differently, so a place with a location is skipped, and a name found on another place's location is
+  // refused, never merged.
+  if (request.places.length === 0) {
+    if (inserted || (await ctx.stores.locations.count(scope) === 0 && await ctx.stores.members.countSeats(scope) === 0)) {
+      for (const name of names) {
+        const location = await ctx.stores.locations.ensureByName(scope, {
+          name, town: request.town, placeId: null, createdAt: now, createdBy: staff.actor.userId,
+        });
+        if (location.inserted) {
+          await recordAfter(ctx, {
+            ...actor, at: now, orgId, action: 'location.created',
+            target: { type: 'location', id: location.id },
+            details: { name, townId: request.town.townId },
+          });
+        }
+      }
+    }
+  } else if (inserted || (org.firstJoinedAt === null && !(await ctx.stores.members.anyJoined(scope)))) {
+    const placed = new Set((await ctx.stores.locations.list(scope)).flatMap((l) => (l.placeId === null ? [] : [l.placeId])));
+    for (const [i, place] of request.places.entries()) {
+      const name = names[i];
+      // locationNamesFor gives one name per place, so a mismatch is a bug: refuse it rather than leave a place out.
+      if (name === undefined || names.length !== request.places.length) throw new Error('location names and places differ in length');
+      if (placed.has(place.placeId)) continue;
+      const location = await ctx.stores.locations.ensureByName(scope, {
+        name, town: place.town, placeId: place.placeId, createdAt: now, createdBy: staff.actor.userId,
       });
+      if (!location.inserted && location.placeId !== place.placeId) {
+        throw new AppError(409, 'location_name_taken', 'Another location already uses that name');
+      }
+      if (location.inserted) {
+        await recordAfter(ctx, {
+          ...actor, at: now, orgId, action: 'location.created',
+          target: { type: 'location', id: location.id },
+          details: { name, townId: place.town.townId },
+        });
+      }
     }
   }
   const seat = await ctx.stores.members.insertAdminSeat(scope, {

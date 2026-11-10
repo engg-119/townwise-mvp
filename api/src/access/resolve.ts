@@ -14,7 +14,8 @@ export type Role = 'org_admin' | 'member';
 
 export interface AccessRequestView {
   id: string; orgName: string; contactName: string; contactRole: string; town: Town;
-  locationCount: number; note: string | null; placeId: string | null; status: 'pending' | 'approved' | 'rejected' | 'withdrawn';
+  locationCount: number; note: string | null;
+  places: { placeId: string; name: string | null; town: Town }[]; status: 'pending' | 'approved' | 'rejected' | 'withdrawn';
   createdAt: string; decidedAt: string | null; decisionMessage: string | null;
 }
 
@@ -71,7 +72,10 @@ export function requestView(record: AccessRequestRecord): AccessRequestView {
     town: { townId: record.town.townId, name: record.town.name, state: record.town.state },
     locationCount: record.locationCount,
     note: record.note,
-    placeId: record.placeId,
+    places: record.places.map((place) => ({
+      placeId: place.placeId, name: place.name,
+      town: { townId: place.town.townId, name: place.town.name, state: place.town.state },
+    })),
     status: record.status,
     createdAt: record.createdAt.toISOString(),
     decidedAt: record.decidedAt?.toISOString() ?? null,

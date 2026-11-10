@@ -78,9 +78,12 @@ export interface LocationStore {
   update(scope: OrgScope, locationId: string, input: { name?: string | undefined; town?: Town | undefined; placeId?: string | null | undefined }):
     Promise<'updated' | 'not_found' | 'name_taken'>;
   remove(scope: OrgScope, locationId: string): Promise<boolean>;
-  /** F3 step 7: the location with this name in the organization, inserted once (`$setOnInsert`), so a retry finds it. */
+  /**
+   * F3 step 7: the location with this name in the organization, inserted once (`$setOnInsert`), so a retry finds it.
+   * `placeId` is the stored location's, so a caller can tell when the name already belongs to a location for another place.
+   */
   ensureByName(scope: OrgScope, input: { name: string; town: Town; placeId: string | null; createdAt: Date; createdBy: string }):
-    Promise<{ id: string; inserted: boolean }>;
+    Promise<{ id: string; inserted: boolean; placeId: string | null }>;
   /** Organization deletion (spec 10.7). Resolves the number deleted. */
   removeForOrg(scope: OrgScope): Promise<number>;
 }
@@ -169,7 +172,8 @@ export function createLocationStore(connection: Connection): LocationStore {
       }
       const doc = await Location.findOne(filter).lean();
       if (doc === null) throw new Error('location missing after its upsert');
-      return { id: doc._id.toHexString(), inserted };
+      // Locations stored before place ids have no such field.
+      return { id: doc._id.toHexString(), inserted, placeId: doc.placeId ?? null };
     },
     async removeForOrg(scope) {
       return (await Location.deleteMany({ orgId: scope.orgId })).deletedCount;

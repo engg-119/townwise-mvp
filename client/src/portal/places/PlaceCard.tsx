@@ -5,6 +5,7 @@ import { useBreakpoint } from '../hooks';
 import type { Town } from '../schemas';
 import { townLabel, type FoundPlace } from '../onboarding/places';
 import { webAria } from '../ui/aria';
+import { LoadingLine } from '../ui/feedback';
 import { Small } from '../ui/text';
 import { SCRIPT_FOCUS, useFocusOnMount } from './focus';
 import { PlaceMap } from './PlaceMap';
@@ -12,7 +13,8 @@ import { PlaceMap } from './PlaceMap';
 // "Here's what we found" (the onboarding proposal's Step 1, the Home2-Confirm board): Google's map of the place, then
 // the name from the pick, Google's address and the town Townwise matched, with where it came from. It takes focus when
 // it appears, since the search it replaces had it. PlaceSummary is the same facts in one block, for the form a
-// confirmed place fills in; it takes focus when the page asks, since the card it replaces had it. Nothing animates.
+// confirmed place fills in; it takes focus when the page asks, since the card it replaces had it. PlaceRow is one
+// checked place in the places checklist, under the field that keeps focus. Nothing animates.
 
 /** What the card says about the town: one of the twelve, another town, or none Townwise can use. */
 export function townLine(town: Town | null): string {
@@ -22,6 +24,9 @@ export function townLine(town: Town | null): string {
 }
 
 export const GOOGLE_SOURCE = 'From Google Maps. Townwise keeps Google’s id for the place and its town, not the address or the map.';
+
+/** Under the checked places (P3, P10): a request keeps each one's Google name too. P16 and setup's Rename keep none: GOOGLE_SOURCE. */
+export const PLACES_SOURCE = 'From Google Maps. Townwise keeps Google’s id for each place, its name and its town, not the address or the map.';
 
 type Host = React.ComponentRef<typeof Text>;
 
@@ -50,20 +55,52 @@ export function PlaceCard(props: { place: FoundPlace; note?: string | null; chil
 }
 
 /**
- * The confirmed place in a form: what it is, where it came from, and a way to change it. `focusOnMount` moves focus
- * to it when it appears (P10, after Looks right).
+ * The checked places in a form (P3's Step 2, and the one place of the console's setup Rename): each one's name,
+ * address and town line, then where they came from (`source`, PLACES_SOURCE unless the caller keeps less, as the setup
+ * Rename does). `focusOnMount` moves focus to it when it appears (the setup Rename, after Looks right).
  */
-export function PlaceSummary(props: { place: FoundPlace; focusOnMount?: boolean; children?: React.ReactNode }): React.JSX.Element {
-  const { place } = props;
+export function PlaceSummary(props: { places: readonly FoundPlace[]; source?: string; focusOnMount?: boolean; children?: React.ReactNode }): React.JSX.Element {
   const kicker = useFocusOnMount<Host>(props.focusOnMount === true);
   return (
-    <View style={[styles.card, styles.summary]} role="group" aria-label="Your place on Google Maps">
+    <View style={[styles.card, styles.summary]} role="group" aria-label="Your places on Google Maps">
       <Text ref={kicker} {...SCRIPT_FOCUS} style={styles.kicker}>On Google Maps</Text>
-      <Text style={styles.name}>{place.name}</Text>
-      <Text style={styles.fact}>{place.address}</Text>
-      <Text style={styles.fact}>{townLine(place.town)}</Text>
-      <Small>{GOOGLE_SOURCE}</Small>
+      {props.places.map((place) => (
+        <View key={place.placeId} style={styles.facts}>
+          <Text style={styles.name}>{place.name}</Text>
+          <Text style={styles.fact}>{place.address}</Text>
+          <Text style={styles.fact}>{townLine(place.town)}</Text>
+        </View>
+      ))}
+      <Small>{props.source ?? PLACES_SOURCE}</Small>
       {props.children}
+    </View>
+  );
+}
+
+/**
+ * One row of the places checklist, a group named by `label`: while `place` is null, a line saying it is loading
+ * (“Getting {label} from Google Maps…” unless `loadingText` says otherwise); then Google's map, 160 wide beside the
+ * facts or above them on a phone, the name, the address and the town line. `children` follow (the row's Remove, and
+ * what the page adds). It takes no focus: the search field keeps it.
+ */
+export function PlaceRow(props: { label: string; place: FoundPlace | null; loadingText?: string; children?: React.ReactNode }): React.JSX.Element {
+  const { place } = props;
+  const { phone } = useBreakpoint();
+  return (
+    <View role="group" aria-label={props.label} style={[styles.card, styles.row, phone ? styles.rowPhone : null]}>
+      {place === null ? null : (
+        <PlaceMap map={place.map} label={`Map of the area around ${place.name}`} frame={phone ? styles.rowMapPhone : styles.rowMap} />
+      )}
+      <View style={styles.rowBody}>
+        {place === null ? <LoadingLine text={props.loadingText ?? `Getting ${props.label} from Google Maps…`} minHeight={44} /> : (
+          <>
+            <Text style={styles.name}>{place.name}</Text>
+            <Text style={styles.fact}>{place.address}</Text>
+            <Text style={styles.fact}>{townLine(place.town)}</Text>
+          </>
+        )}
+        {props.children}
+      </View>
     </View>
   );
 }
@@ -79,4 +116,9 @@ const styles = StyleSheet.create({
   name: { ...theme.type.sub, fontWeight: 600, color: c.white },
   facts: { gap: theme.space[1] },
   fact: { ...theme.type.sub, color: c.text2 },
+  row: { flexDirection: 'row', padding: theme.space[4], gap: theme.space[4] },
+  rowPhone: { flexDirection: 'column' },
+  rowMap: { width: 160 },
+  rowMapPhone: { width: '100%' },
+  rowBody: { flexGrow: 1, flexShrink: 1, gap: theme.space[1] },
 });

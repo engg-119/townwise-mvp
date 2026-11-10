@@ -50,6 +50,8 @@ test.each<[string, unknown, (api: ApiClient) => Promise<unknown>, Sent]>([
     { method: 'GET', path: '/api/admin/requests?status=withdrawn', body: undefined }],
   ['approve', { org: { id: 'o9', name: 'Tavern' }, request: REQUEST }, (api) => approveRequest(api, 'r1', { orgName: 'Tavern', locationName: 'Main' }),
     { method: 'POST', path: '/api/admin/requests/r1/approve', body: { orgName: 'Tavern', locationName: 'Main' } }],
+  ['approve with places', { org: { id: 'o9', name: 'Tavern' }, request: REQUEST }, (api) => approveRequest(api, 'r1', { orgName: 'Tavern', locationNames: ['Main', 'Elm'] }),
+    { method: 'POST', path: '/api/admin/requests/r1/approve', body: { orgName: 'Tavern', locationNames: ['Main', 'Elm'] } }],
   ['reject with a message', { request: REQUEST }, (api) => rejectRequest(api, 'r1', 'Not yet.'),
     { method: 'POST', path: '/api/admin/requests/r1/reject', body: { message: 'Not yet.' } }],
   ['reject without one', { request: REQUEST }, (api) => rejectRequest(api, 'r1', ''),
