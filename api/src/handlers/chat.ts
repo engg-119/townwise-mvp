@@ -236,7 +236,7 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
     const result = await runTurn({
       model,
       // U13A: today is the town's local date, so an evening turn is not already tomorrow.
-      tools: { ctx, scope, location, today: localDay(ctx.now(), timeZone), timeZone },
+      tools: { ctx, scope, location, today: localDay(ctx.now(), timeZone), timeZone, role: caller.role, actor: actorOf(caller) },
       history,
       userMessage: { role: 'user', content: body.content },
       signal,

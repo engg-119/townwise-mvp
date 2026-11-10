@@ -96,6 +96,15 @@ function possessive(name: string): string {
   return `${name}’s`;
 }
 
+/** A lab read's card line: nothing to show, or the weeks it was judged on and whether Townwise published it. */
+function labDetail(result: ToolView): string {
+  if (result.available !== true) return 'Nothing to show yet';
+  const weeks = count(result, 'weeks');
+  const judged = weeks === null ? null : plural(weeks, 'held-out week', 'held-out weeks');
+  const published = result.published === true ? 'Published' : result.published === false ? 'Not published' : null;
+  return [judged, published].filter((part): part is string => part !== null).join(' · ') || 'Still running';
+}
+
 const TOOLS: Readonly<Record<string, ToolRow>> = {
   get_location_overview: {
     object: () => 'your sales summary',
@@ -252,6 +261,22 @@ const TOOLS: Readonly<Record<string, ToolRow>> = {
     },
     sources: sourcesOf,
     terms: { date: 'Day', hasSales: 'Sales recorded', closed: 'Closed', noteCount: 'Notes', eventCount: 'Calendar entries' },
+  },
+  // The forecast lab (api/src/chat/tools/calibration.ts), org admins only. Views carry counts and codes, never a figure.
+  start_calibration: {
+    object: () => 'how to start a forecast calibration',
+    detail: (result) => (result.started === true ? 'Started, running on Townwise’s servers' : 'Not started'),
+    terms: { hasRegimeStart: 'Pattern change date given', started: 'Started', status: 'Status', code: 'Reason' },
+  },
+  get_calibration: {
+    object: () => 'your latest forecast calibration',
+    detail: (result) => labDetail(result),
+    terms: { calibrationId: 'Calibration', available: 'Available', status: 'Status', weeks: 'Held-out weeks', published: 'Published' },
+  },
+  compare_forecast_models: {
+    object: () => 'how the calibration compares with the current forecast',
+    detail: (result) => labDetail(result),
+    terms: { calibrationId: 'Calibration', available: 'Available', status: 'Status', weeks: 'Held-out weeks', published: 'Published' },
   },
 };
 

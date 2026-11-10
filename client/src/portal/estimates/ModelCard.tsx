@@ -37,6 +37,7 @@ function pct(value: number): string {
 
 const TRAINED_ON: Readonly<Record<ForecastRun['trainingSource'], string>> = {
   files_from_owner: 'sales exports you sent Townwise',
+  townwise_lab: 'sales history and notes you uploaded to Townwise',
 };
 
 /** U13B: "Forecast: Townwise demand model v3, trained on sales exports you sent Townwise from ... made Nov 1, 2026." */

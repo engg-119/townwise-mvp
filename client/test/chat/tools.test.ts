@@ -10,6 +10,8 @@ const REGISTERED = [
   'get_town_calendar', 'get_people_in_town',
   'get_forecast',
   'get_day',
+  // The forecast lab.
+  'start_calibration', 'get_calibration', 'compare_forecast_models',
 ];
 const CTX = { town: 'Hanover', hasTownProfile: true };
 
@@ -142,6 +144,26 @@ test('get_day reads one day: whether it had sales, was closed, its notes and cal
   expect(viewRows(input, read, 'get_day')).toEqual([
     { term: 'Day', value: 'Nov 21, 2026' }, { term: 'Sales recorded', value: 'Yes' }, { term: 'Closed', value: 'No' },
     { term: 'Notes', value: '1' }, { term: 'Calendar entries', value: '2' },
+  ]);
+});
+
+test('the lab tools read counts and codes: whether a calibration started, its status, the weeks it was judged on', () => {
+  const started = { started: true, status: 'running', code: null };
+  expect(toolLine(step('start_calibration', 'running', { hasRegimeStart: false }), CTX).sentence).toBe('Reading how to start a forecast calibration');
+  expect(toolLine(step('start_calibration', 'done', { hasRegimeStart: false }, started), CTX).detail).toBe('Started, running on Townwise’s servers');
+  expect(toolLine(step('start_calibration', 'done', null, { started: false, status: null, code: 'in_progress' }), CTX).detail).toBe('Not started');
+  expect(toolLine(step('start_calibration', 'error'), CTX).sentence).toBe('Couldn’t read how to start a forecast calibration');
+  const read = { available: true, status: 'succeeded', weeks: 12, published: true };
+  expect(toolLine(step('get_calibration', 'done', null, read), CTX)).toMatchObject({
+    sentence: 'Read your latest forecast calibration', detail: '12 held-out weeks · Published',
+  });
+  expect(toolLine(step('get_calibration', 'done', null, { available: true, status: 'running', weeks: null, published: null }), CTX).detail).toBe('Still running');
+  expect(toolLine(step('compare_forecast_models', 'done', null, { available: false, status: null, weeks: null, published: null }), CTX).detail)
+    .toBe('Nothing to show yet');
+  expect(toolLine(step('compare_forecast_models', 'done', null, { ...read, published: false }), CTX).detail).toBe('12 held-out weeks · Not published');
+  expect(toolLine(step('compare_forecast_models', 'running'), CTX).sentence).toBe('Reading how the calibration compares with the current forecast');
+  expect(viewRows(null, read, 'get_calibration')).toEqual([
+    { term: 'Available', value: 'Yes' }, { term: 'Status', value: 'succeeded' }, { term: 'Held-out weeks', value: '12' }, { term: 'Published', value: 'Yes' },
   ]);
 });
 

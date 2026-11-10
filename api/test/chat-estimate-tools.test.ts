@@ -79,7 +79,8 @@ function context(opts: { data?: PeopleData; town?: Town; forecasts?: ForecastRea
   const reader = createPeopleInTownReader({ stores, data: opts.data ?? { sources: [], towns: [] } });
   const ctx = { ports: { peopleInTown: reader, forecasts: opts.forecasts ?? createForecastReader({ stores: forecastStores([]) }) } } as unknown as TownwiseContext;
   const scope = { orgId: '000000000000000000000003' } as unknown as OrgScope;
-  return { ctx, scope, location: location(opts.town), today: TODAY, timeZone: 'America/New_York' };
+  return { ctx, scope, location: location(opts.town), today: TODAY, timeZone: 'America/New_York', role: 'member',
+    actor: { actorUserId: SENTINEL_USER, actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null } };
 }
 
 async function run(name: string, input: unknown, tc: ToolContext = context()): Promise<{ content: string; parsed: Record<string, unknown> }> {

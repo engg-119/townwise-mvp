@@ -139,6 +139,18 @@ describe('the system prompt, forecasts (U13B)', () => {
   });
 });
 
+describe('the system prompt, calibrations', () => {
+  it('names the three tools and their rules', () => {
+    for (const rule of [
+      '- Call start_calibration only when an org admin asks to retrain or calibrate the forecast, and say it uses part of the monthly budget. If the owner describes a lasting change in their weekly pattern with a start date, pass that date as regimeStart.',
+      '- After starting one, say it runs on Townwise’s servers and usually takes a few minutes; call get_calibration when they ask how it went. Never say a calibration is better or published unless get_calibration or compare_forecast_models says so, and give the reason it gives.',
+      '- Calibration results come with charts and cards the app draws; describe what they show in a sentence or two instead of reading out every number.',
+    ]) expect(SYSTEM_PROMPT).toContain(rule);
+    expect(SYSTEM_PROMPT).toContain('compare_forecast_models');
+    expect(SYSTEM_PROMPT).not.toMatch(/\d/);
+  });
+});
+
 describe('the history view', () => {
   const at = new Date('2026-06-01T12:00:00.000Z');
   const later = new Date('2026-06-01T12:00:05.000Z');

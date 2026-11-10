@@ -66,7 +66,7 @@ export const forecastRunSchema = z.object({
   id: z.string(),
   metric: z.literal('guests'),
   model: z.object({ family: z.string(), version: z.string(), label: z.string() }),
-  trainingSource: z.literal('files_from_owner'),
+  trainingSource: z.enum(['files_from_owner', 'townwise_lab']),
   trainedFrom: z.string(),
   dataThrough: z.string(),
   madeAt: z.string(),
