@@ -115,6 +115,7 @@ test.each([
   api.routes['GET /api/admin/orgs/o1'] = () => orgDetail({ members: [member('m1', LONG_EMAIL, { role: 'org_admin' })] });
   // U13B: the Forecasts section's read.
   api.routes['GET /api/admin/orgs/o1/forecast-runs'] = () => ({ runs: [] });
+  api.routes['GET /api/admin/orgs/o1/calibrations'] = () => ({ forecasts: { on: false, at: null }, calibrations: [] });
   renderAt(path, api);
   const region = await screen.findByRole('region', { name: label });
   expect(within(region).getByText(LONG_EMAIL)).toBeTruthy();

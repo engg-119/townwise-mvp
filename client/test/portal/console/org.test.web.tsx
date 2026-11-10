@@ -20,6 +20,7 @@ function serve(api: ConsoleApi, detail: unknown): void {
   api.routes[`GET ${PATH}`] = () => detail;
   // U13B: the Forecasts section reads the organization's forecast runs.
   api.routes[`GET ${PATH}/forecast-runs`] = () => ({ runs: [] });
+  api.routes[`GET ${PATH}/calibrations`] = () => ({ forecasts: { on: false, at: null }, calibrations: [] });
 }
 
 function gets(api: ConsoleApi): number {
@@ -327,6 +328,7 @@ describe('a change that saved, then the page couldn’t read the organization ag
     api.routes[`GET ${PATH}`] = () => (failing ? offline() : next);
     // U13B: the Forecasts section's read, which this failure leaves alone.
     api.routes[`GET ${PATH}/forecast-runs`] = () => ({ runs: [] });
+    api.routes[`GET ${PATH}/calibrations`] = () => ({ forecasts: { on: false, at: null }, calibrations: [] });
     return { fail: () => { failing = true; }, heal: (detail) => { failing = false; next = detail; } };
   }
 

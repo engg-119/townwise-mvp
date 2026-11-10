@@ -22,7 +22,7 @@ const SENTINEL = 'Sentinel Guest Name';
 function run(fields: Partial<StaffRun> = {}): StaffRun {
   return {
     id: 'run1', metric: 'guests', model: { family: 'hybrid_linear_xgboost', version: 'v9', label: 'Townwise demand model v9' },
-    trainedFrom: '2025-01-01', dataThrough: '2026-04-30', madeAt: '2026-05-01', locationId: 'l1', status: 'draft',
+    trainingSource: 'files_from_owner', trainedFrom: '2025-01-01', dataThrough: '2026-04-30', madeAt: '2026-05-01', locationId: 'l1', status: 'draft',
     range: { from: '2026-05-01', to: '2026-05-14' }, dayCount: 14, weekCount: 3, importedAt: '2026-05-02T15:00:00.000Z',
     publishedAt: null, withdrawnAt: null, importedByEmail: 'staff@example.com', ...fields,
   };
@@ -51,6 +51,7 @@ const DETAIL = orgDetail({
 async function show(runs: StaffRun[]): Promise<ConsoleApi> {
   const api = consoleApi();
   api.routes[LIST] = () => ({ runs });
+  api.routes['GET /api/admin/orgs/o1/calibrations'] = () => ({ forecasts: { on: false, at: null }, calibrations: [] });
   const Wrapper = portalWrapper(api, staffMe());
   render(<Wrapper><ForecastRuns org={DETAIL.org} locations={DETAIL.locations} /></Wrapper>);
   await screen.findByRole('heading', { name: 'Hanover' });
@@ -82,7 +83,7 @@ test('lists each location’s runs with model, dates, status and the right actio
   await show([run(), run({ id: 'run2', status: 'published', publishedAt: '2026-05-03T15:00:00.000Z' }), run({ id: 'run3', status: 'withdrawn', withdrawnAt: '2026-05-04T15:00:00.000Z' }), run({ id: 'run4', status: 'importing' })]);
   expect(screen.getByText('A forecast is a draft until you publish it. Sample Restaurant Group’s members and TownwiseAI see only published forecasts, never the model. Each import, publish, withdrawal and deletion is listed in Sample Restaurant Group’s Townwise staff activity.')).toBeTruthy();
   const table = screen.getByRole('region', { name: 'Forecasts for Hanover' });
-  expect(within(table).getAllByRole('columnheader').map((head) => head.textContent)).toEqual(['Model', 'Dates', 'Trained to', 'Made', 'Status', 'Actions']);
+  expect(within(table).getAllByRole('columnheader').map((head) => head.textContent)).toEqual(['Model', 'Dates', 'Trained to', 'Made', 'Status', 'Source', 'Actions']);
   const rows = within(table).getAllByRole('row').slice(1);
   expect(rows.map((row) => within(row).getAllByRole('cell')[4]?.textContent)).toEqual([
     'Draft', 'PublishedMay 3, 2026', 'WithdrawnMay 4, 2026', 'Import unfinishedImport the same file again to finish.',
