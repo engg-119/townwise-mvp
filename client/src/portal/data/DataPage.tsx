@@ -5,8 +5,8 @@ import { ApiError } from '../../api/client';
 import { theme } from '../../theme';
 import { hasCode } from '../errors';
 import { useLoad } from '../hooks';
-import { downloadClean, downloadRaw, listFiles, removeRaw } from '../files/api';
-import { cleanName, COPY as FILE_COPY, deleteRawBody, formatSize } from '../files/copy';
+import { downloadClean, downloadRaw, listFiles, removeOriginals, removeRaw } from '../files/api';
+import { cleanName, COPY as FILE_COPY, deleteAllRawBody, deletedOriginalsLine, deleteRawBody, formatSize } from '../files/copy';
 import { CAN_SAVE_FILES, saveFile } from '../files/download';
 import { ZipEntries } from '../files/ZipEntries';
 import { LoadFailure, UploadAction, useOrgRefreshOnLeave } from '../locations/parts';
@@ -25,7 +25,7 @@ import { AddFile } from './AddFile';
 import { listData, removeItem, setEnabled, type DataItem } from './api';
 import {
   addedLine, COLUMNS, DATA, dataError, daysLine, deletedFileLine, deletedUploadLine, deleteFileBody, deleteUploadBody, empty, itemName,
-  kindLabel, lead, stateLine, tableLabel, turnedOffLine, turnedOnLine, VIA_LINE,
+  kindLabel, lead, shownName, stateLine, tableLabel, turnedOffLine, turnedOnLine, VIA_LINE,
 } from './copy';
 import { PasteText } from './PasteText';
 
@@ -37,8 +37,10 @@ import { PasteText } from './PasteText';
 // the file actions; uploads still list, turn off and delete. A delete takes its opener away, so focus moves to the
 // line that says how it ended (MessageFocus, as Your files did). Turning an item off or on and deleting one change
 // the location's day counts, so the organization (GET /api/org) is read again when the page closes. An item kept
-// for reference is its original, so it has Delete and no Delete original; nothing here deletes every original at
-// once, because DELETE /originals would delete those items too.
+// for reference is its original, so it has Delete and no Delete original. Org admins also get "Delete all originals
+// for this location" (one location shown, a sales file's original stored), which leaves reference items whole. A
+// download keeps its state in its row, as Your files' rows did: only that row's downloads wait, and its error shows
+// there.
 
 const READ_ONLY_ID = 'data-ro';
 const ALL = 'all';
@@ -46,7 +48,8 @@ const ALL = 'all';
 type Confirm =
   | { kind: 'upload'; item: DataItem }
   | { kind: 'file'; item: DataItem }
-  | { kind: 'raw'; item: DataItem };
+  | { kind: 'raw'; item: DataItem }
+  | { kind: 'all'; locationId: string };
 
 /** A stored file kept for reference: the original is the whole item, with no cleaned copy and no days. */
 function isReference(item: Pick<DataItem, 'ref' | 'outcome'>): boolean {
@@ -63,6 +66,7 @@ function Data(): React.JSX.Element {
   const { readOnly, line } = useReadOnly();
   const markStale = useOrgRefreshOnLeave();
   const readOnlyId = readOnly ? READ_ONLY_ID : null;
+  const admin = org.role === 'org_admin';
   const several = org.locations.length > 1;
   const focusMessage = useFocusMessage();
   // Asked one update after a dialog closes: in that update its focus trap still holds focus.
@@ -92,6 +96,7 @@ function Data(): React.JSX.Element {
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [failure, setFailure] = useState<unknown>(null);
+  // The ref of the item a Turn off or on is running for.
   const [busy, setBusy] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
 
@@ -112,20 +117,6 @@ function Data(): React.JSX.Element {
     setPatched({});
     reload();
   }, [reload]);
-
-  const saveDownload = (item: DataItem, which: 'raw' | 'clean'): void => {
-    const file = item.file;
-    if (file === null || busy !== null) return;
-    setBusy(`${item.ref}:${which}`);
-    setFailure(null);
-    const blob = which === 'raw'
-      ? downloadRaw(api, item.locationId, { id: file.id, sizeBytes: item.sizeBytes ?? 0 })
-      : downloadClean(api, item.locationId, file.id);
-    blob.then(
-      (data) => { saveFile(data, which === 'raw' ? (item.name ?? 'file') : cleanName({ name: item.name })); setBusy(null); },
-      (error: unknown) => { setFailure(error); setBusy(null); },
-    );
-  };
 
   const toggle = (item: DataItem): void => {
     if (busy !== null) return;
@@ -173,7 +164,9 @@ function Data(): React.JSX.Element {
     setPending(true);
     setFailure(null);
     const done = (text: string): void => { markStale(); setPending(false); setConfirm(null); setNotice(text); setEnded((n) => n + 1); fresh(); };
+    // The delete may have taken effect even so (a lost answer), so the organization is read again too.
     const failed = (error: unknown): void => {
+      markStale();
       setPending(false);
       setConfirm(null);
       setFailure(error);
@@ -186,10 +179,12 @@ function Data(): React.JSX.Element {
     } else if (confirm.kind === 'file') {
       const { item } = confirm;
       removeItem(api, item.locationId, item.ref).then(() => { done(deletedFileLine(itemName(item))); }, failed);
-    } else {
+    } else if (confirm.kind === 'raw') {
       const { item } = confirm;
       if (item.file === null) return;
       removeRaw(api, item.locationId, item.file.id).then(() => { done(FILE_COPY.rawDeleted); }, failed);
+    } else {
+      removeOriginals(api, confirm.locationId).then((result) => { done(deletedOriginalsLine(result)); }, failed);
     }
   };
 
@@ -206,70 +201,6 @@ function Data(): React.JSX.Element {
     { key: 'actions', label: COLUMNS.actions, flex: 1.6, hiddenLabel: true },
   ];
 
-  const rowActions = (item: DataItem): React.JSX.Element => {
-    const file = item.file;
-    const name = itemName(item);
-    const named = (action: string): string => `${action}: ${name}`;
-    if (readOnly) {
-      const action = item.enabled ? DATA.turnOff : DATA.turnOn;
-      return (
-        <Actions>
-          <Button variant="link" label={action} accessibilityLabel={named(action)} disabled describedBy={READ_ONLY_ID} />
-          <Button variant="link" label={DATA.delete} accessibilityLabel={named(DATA.delete)} disabled describedBy={READ_ONLY_ID} />
-        </Actions>
-      );
-    }
-    const canRaw = file !== null && file.canDownloadRaw && file.rawAvailable;
-    const canClean = file !== null && file.canDownloadClean && file.hasClean;
-    // The API allows it on an item kept for reference, but there it would leave a row with nothing in it: Delete does that whole.
-    const canDeleteRaw = file !== null && file.canDeleteRaw && file.rawAvailable && !isReference(item);
-    const action = item.enabled ? DATA.turnOff : DATA.turnOn;
-    return (
-      <View style={styles.actions}>
-        {(canRaw || canClean) && !CAN_SAVE_FILES ? <Small>{DATA.nativeDownload}</Small> : null}
-        <Actions>
-          {item.canTurnOff ? (
-            <Button variant="link" label={action} accessibilityLabel={named(action)} disabled={busy !== null} onPress={() => { toggle(item); }} />
-          ) : null}
-          {canRaw && CAN_SAVE_FILES ? (
-            <Button
-              variant="link"
-              label={busy === `${item.ref}:raw` ? FILE_COPY.downloading : DATA.downloadRaw}
-              accessibilityLabel={named(DATA.downloadRaw)}
-              disabled={busy !== null}
-              onPress={() => { saveDownload(item, 'raw'); }}
-            />
-          ) : null}
-          {canClean && CAN_SAVE_FILES ? (
-            <Button
-              variant="link"
-              label={busy === `${item.ref}:clean` ? FILE_COPY.downloading : DATA.downloadClean}
-              accessibilityLabel={named(DATA.downloadClean)}
-              disabled={busy !== null}
-              onPress={() => { saveDownload(item, 'clean'); }}
-            />
-          ) : null}
-          {canDeleteRaw ? (
-            <Button
-              variant="link"
-              label={DATA.deleteOriginal}
-              accessibilityLabel={named(DATA.deleteOriginal)}
-              onPress={() => { setConfirm({ kind: 'raw', item }); }}
-            />
-          ) : null}
-          {item.canDelete ? (
-            <Button
-              variant="link"
-              label={DATA.delete}
-              accessibilityLabel={named(DATA.delete)}
-              onPress={() => { setConfirm({ kind: item.ref.startsWith('u_') ? 'upload' : 'file', item }); }}
-            />
-          ) : null}
-        </Actions>
-      </View>
-    );
-  };
-
   const rows = (items ?? []).map((item) => ({
     key: item.ref,
     cells: {
@@ -280,9 +211,13 @@ function Data(): React.JSX.Element {
       size: item.sizeBytes === null ? DATA.noFileKept : formatSize(item.sizeBytes),
       status: <StatusCell item={item} />,
       days: daysLine(item.days),
-      actions: rowActions(item),
+      actions: (
+        <RowActions item={item} readOnly={readOnly} toggling={busy !== null} onToggle={toggle} onConfirm={setConfirm} />
+      ),
     },
   }));
+  // A sales file's original the reader is done with, at the one location shown: what "Delete all originals" deletes.
+  const anyRaw = !all && (items ?? []).some((item) => item.file !== null && item.file.rawAvailable && item.state !== 'uploading' && !isReference(item));
 
   return (
     <Section kicker={DATA.kicker} title={DATA.title}>
@@ -330,6 +265,17 @@ function Data(): React.JSX.Element {
             ) : null}
           </Stack>
         ) : null}
+        {admin && anyRaw ? (
+          <Actions>
+            <Button
+              variant="outline"
+              label={FILE_COPY.deleteAllRaw}
+              disabled={readOnly}
+              {...(readOnlyId === null ? {} : { describedBy: readOnlyId })}
+              onPress={() => { setConfirm({ kind: 'all', locationId: location.id }); }}
+            />
+          </Actions>
+        ) : null}
         {loadError !== null ? <LoadFailure error={loadError} onRetry={reload} /> : items === null ? <LoadingLine text={DATA.loading} /> : items.length === 0 ? (
           <EmptyState text={empty(all ? DATA.allLocations.toLowerCase() : location.name)} />
         ) : (
@@ -368,7 +314,102 @@ function dialogOf(confirm: Confirm, nameOf: (locationId: string) => string): { t
         }),
         label: FILE_COPY.deleteRaw,
       };
+    case 'all':
+      return { title: FILE_COPY.deleteAllRaw, body: deleteAllRawBody(nameOf(confirm.locationId)), label: FILE_COPY.deleteAllRaw };
   }
+}
+
+/**
+ * One row's actions. Turn off and on act at once; a delete asks first. A download keeps its own state, so only this
+ * row's download buttons wait for it, and a failed one says why here, beside the button the person pressed.
+ */
+function RowActions(props: {
+  item: DataItem;
+  readOnly: boolean;
+  /** A Turn off or on is running, on this row or another. */
+  toggling: boolean;
+  onToggle: (item: DataItem) => void;
+  onConfirm: (confirm: Confirm) => void;
+}): React.JSX.Element {
+  const { item } = props;
+  const { api } = usePortal();
+  const [saving, setSaving] = useState<'raw' | 'clean' | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const file = item.file;
+  const name = itemName(item);
+  const named = (action: string): string => `${action}: ${name}`;
+  const action = item.enabled ? DATA.turnOff : DATA.turnOn;
+  if (props.readOnly) {
+    return (
+      <Actions>
+        <Button variant="link" label={action} accessibilityLabel={named(action)} disabled describedBy={READ_ONLY_ID} />
+        <Button variant="link" label={DATA.delete} accessibilityLabel={named(DATA.delete)} disabled describedBy={READ_ONLY_ID} />
+      </Actions>
+    );
+  }
+
+  const save = (which: 'raw' | 'clean'): void => {
+    if (file === null || saving !== null) return;
+    setSaving(which);
+    setError(null);
+    const blob = which === 'raw'
+      ? downloadRaw(api, item.locationId, { id: file.id, sizeBytes: item.sizeBytes ?? 0 })
+      : downloadClean(api, item.locationId, file.id);
+    blob.then(
+      (data) => { saveFile(data, which === 'raw' ? (item.name ?? 'file') : cleanName({ name: item.name })); setSaving(null); },
+      (caught: unknown) => { setError(caught); setSaving(null); },
+    );
+  };
+
+  const canRaw = file !== null && file.canDownloadRaw && file.rawAvailable;
+  const canClean = file !== null && file.canDownloadClean && file.hasClean;
+  // The API allows it on an item kept for reference, but there it would leave a row with nothing in it: Delete does that whole.
+  const canDeleteRaw = file !== null && file.canDeleteRaw && file.rawAvailable && !isReference(item);
+  return (
+    <View style={styles.actions}>
+      {(canRaw || canClean) && !CAN_SAVE_FILES ? <Small>{DATA.nativeDownload}</Small> : null}
+      <Actions>
+        {item.canTurnOff ? (
+          <Button variant="link" label={action} accessibilityLabel={named(action)} disabled={props.toggling} onPress={() => { props.onToggle(item); }} />
+        ) : null}
+        {canRaw && CAN_SAVE_FILES ? (
+          <Button
+            variant="link"
+            label={saving === 'raw' ? FILE_COPY.downloading : DATA.downloadRaw}
+            accessibilityLabel={named(DATA.downloadRaw)}
+            disabled={saving !== null}
+            onPress={() => { save('raw'); }}
+          />
+        ) : null}
+        {canClean && CAN_SAVE_FILES ? (
+          <Button
+            variant="link"
+            label={saving === 'clean' ? FILE_COPY.downloading : DATA.downloadClean}
+            accessibilityLabel={named(DATA.downloadClean)}
+            disabled={saving !== null}
+            onPress={() => { save('clean'); }}
+          />
+        ) : null}
+        {canDeleteRaw ? (
+          <Button
+            variant="link"
+            label={DATA.deleteOriginal}
+            accessibilityLabel={named(DATA.deleteOriginal)}
+            onPress={() => { props.onConfirm({ kind: 'raw', item }); }}
+          />
+        ) : null}
+        {item.canDelete ? (
+          <Button
+            variant="link"
+            label={DATA.delete}
+            accessibilityLabel={named(DATA.delete)}
+            onPress={() => { props.onConfirm({ kind: item.ref.startsWith('u_') ? 'upload' : 'file', item }); }}
+          />
+        ) : null}
+      </Actions>
+      {error === null ? null : <Messages live="alert" items={[dataError(error)]} />}
+    </View>
+  );
 }
 
 function ItemCell(props: { item: DataItem }): React.JSX.Element {
@@ -376,7 +417,7 @@ function ItemCell(props: { item: DataItem }): React.JSX.Element {
   const entries = item.file?.entries ?? null;
   return (
     <View style={styles.cell}>
-      <Text style={styles.name}>{itemName(item)}</Text>
+      <Text style={styles.name}>{shownName(item)}</Text>
       <Text style={styles.note}>{VIA_LINE[item.via]}</Text>
       {/* Deleted by a person or by retention. An item kept for reference has no cleaned copy or days to keep. */}
       {item.file === null || item.file.rawAvailable || item.state === 'uploading' || isReference(item) ? null : (

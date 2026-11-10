@@ -707,15 +707,16 @@ export async function deleteFile(ctx: TownwiseContext, req: Request, res: Respon
 }
 
 /**
- * DELETE /originals (org admins): the "delete my files" control. Every original of the location that Townwise is done
- * with is deleted; the cleaned copies, reports and days stay. A file not yet read is skipped and counted.
+ * DELETE /originals (org admins): the owner's "delete every original" on Your data. Every sales file's original at the
+ * location that Townwise is done with is deleted; the cleaned copies, reports and days stay. A file not yet read is
+ * skipped and counted. Items kept for reference are left alone (D28): their original is the whole item.
  */
 export async function deleteLocationOriginals(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const blobs = filesOn(ctx);
   const admin = orgAdmin(principal);
   const { scope } = admin;
   const location = await loadLocation(ctx, scope, req.params.locationId);
-  const originals = await ctx.stores.files.originals(scope, location.id);
+  const originals = await ctx.stores.files.originals(scope, location.id, 'history');
   const result = await deleteOriginals(ctx.stores, blobs, scope, originals, ctx.now());
   await recordAfter(ctx, {
     ...actorOf(admin), at: ctx.now(), orgId: scope.orgId, action: 'files.raw_deleted_all',

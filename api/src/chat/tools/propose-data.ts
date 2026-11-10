@@ -1,12 +1,16 @@
 // propose_data_item (Your data, D28, design call 19): shows the owner a card proposing to keep text from the
 // conversation on their Your data page. It never writes: Keep (handlers/chat-item-proposals.ts) saves the text read back
-// from this stored call, never from the request. Its card shows the text's length only, never the title or the text.
+// from this stored call, never from the request. Its tool views are the text's length and whether the card was shown,
+// never the title or the text; the client's card (client/src/chat/ui/ItemProposalCard.tsx) reads those from its GET.
 // chat/* imports no file code, so the caps are written here; api/test/chat-tools.test.ts pins them to files/items.ts.
 import { z } from 'zod';
 
 import type { ChatTool } from './registry.ts';
 
-/** What the model reads when the card was shown. */
+/**
+ * What the model reads when the card was shown. A stored contract: Keep and the card's GET (handlers/chat-item-proposals.ts)
+ * and the result view treat a call as shown only when its stored result is exactly this, so never reword it.
+ */
 export const ITEM_PROPOSAL_RESULT = 'Shown to the owner as a proposal. They decide whether to keep it.';
 
 const ITEMS_OFF = 'Townwise can’t keep items yet, so nothing was shown to the owner.';
@@ -45,7 +49,8 @@ export const proposeDataTool: ChatTool<ProposeDataInput> = {
     return parsed.success ? parsed.data : null;
   },
   inputView: ({ text }) => ({ chars: text.length }),
-  resultView: () => null,
+  // Whether the owner was shown a card: false when stored files are off and nothing was.
+  resultView: (content) => ({ shown: content === ITEM_PROPOSAL_RESULT }),
   run: (tc) => Promise.resolve({
     content: tc.ctx.items.on ? ITEM_PROPOSAL_RESULT : JSON.stringify({ available: false, reason: ITEMS_OFF }),
   }),

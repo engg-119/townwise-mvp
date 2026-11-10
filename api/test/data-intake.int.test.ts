@@ -118,8 +118,11 @@ describe('reference items (D28)', () => {
     expect(await server.connection.collection('tw_files').findOne({ _id: new Types.ObjectId(file.id) })).not.toHaveProperty('disabledAt');
   });
 
-  it('a slash in a title is kept as a hyphen, so the whole title names the item', async () => {
-    for (const [title, name] of [['Holiday hours 12/24', 'Holiday hours 12-24.txt'], ['Prices A\\B', 'Prices A-B.txt'], ['Notes/', 'Notes-.txt']]) {
+  it('a slash in a title is kept as a hyphen and a tab or line break as a space, so the whole title names the item', async () => {
+    for (const [title, name] of [
+      ['Holiday hours 12/24', 'Holiday hours 12-24.txt'], ['Prices A\\B', 'Prices A-B.txt'], ['Notes/', 'Notes-.txt'],
+      ['Lunch\tmenu', 'Lunch menu.txt'], ['Line1\nLine2', 'Line1 Line2.txt'], ['\u0001', 'Pasted text.txt'],
+    ]) {
       const res = await paste(l1, { title, text: 'a' });
       expect(res.status).toBe(201);
       expect(((await res.json()) as { file: { name: string } }).file.name).toBe(name);

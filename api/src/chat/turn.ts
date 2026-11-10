@@ -1,8 +1,8 @@
 // One tuning chat turn (docs/portal/tuning-chat.md sections 3 and 4): a manual streaming loop. Stream a model call,
 // take its finalMessage(), run its tool calls, append, repeat, for at most 8 calls. Every assistant message is kept
 // exactly as received, thinking blocks included, except what a mid-reply fallback requires dropping (echoable). The
-// turn's messages are returned for one save; a failed, aborted or refused turn returns nothing to save, only its cost,
-// which is charged after every call either way.
+// turn's messages are returned for one save (savedTurn: an item's text is kept only as a stub); a failed, aborted or
+// refused turn returns nothing to save, only its cost, which is charged after every call either way.
 import { AnthropicError, APIConnectionError, APIError, InternalServerError, RateLimitError } from '@anthropic-ai/sdk';
 import type {
   BetaContentBlock, BetaMessage, BetaMessageParam, BetaMessageStreamParams, BetaRawContentBlockDelta, BetaRawMessageStreamEvent,
@@ -14,7 +14,7 @@ import type { StoredMessage } from '../stores/chat-conversations.ts';
 import type { ChatModel } from './model.ts';
 import { costMicroUsd, messageCostMicroUsd, tokensOf, type TokenCounts } from './pricing.ts';
 import { SYSTEM_PROMPT } from './prompt.ts';
-import { inputViewOf, resultViewOf, runTool, toolNamed, TOOLS, type ToolContext, type ToolView } from './tools/registry.ts';
+import { inputViewOf, resultViewOf, runTool, savedResultOf, toolNamed, TOOLS, type ToolContext, type ToolView } from './tools/registry.ts';
 
 export const CHAT_MODEL = 'claude-opus-5-5';
 export const MAX_TOKENS = 16_000;
@@ -198,12 +198,46 @@ export function echoable(content: readonly BetaContentBlock[]): BetaContentBlock
   return content.filter((block, index) => index > boundary || block.type === 'text');
 }
 
+/**
+ * What one finished turn saves (section 3): its messages as the model read them, except a result its tool keeps only a
+ * stub of (read_data_item, D28), so a later turn never resends an item's text after it is turned off, deleted or
+ * purged. A thinking block's signature binds everything before it (preserved thinking), so every thinking block after
+ * the first stubbed result is dropped too; blocks before it stay valid, and an assistant message left with nothing is
+ * dropped. The turn's own later calls already read the whole result. The saved history is append-only from then on.
+ */
+export function savedTurn(turn: readonly { at: Date; param: BetaMessageParam }[]): StoredMessage[] {
+  const names = new Map<string, string>();
+  let stubbed = false;
+  const saved: StoredMessage[] = [];
+  for (const { at, param } of turn) {
+    let kept = param;
+    if (typeof param.content !== 'string' && param.role === 'assistant') {
+      for (const block of param.content) if (block.type === 'tool_use') names.set(block.id, block.name);
+      if (stubbed) {
+        const content = param.content.filter((block) => block.type !== 'thinking' && block.type !== 'redacted_thinking');
+        if (content.length === 0) continue;
+        kept = { ...param, content };
+      }
+    } else if (typeof param.content !== 'string' && param.role === 'user') {
+      const content: typeof param.content = [];
+      for (const block of param.content) {
+        const result = block.type === 'tool_result' ? savedResultOf(names.get(block.tool_use_id) ?? '', block) : block;
+        if (result !== block) stubbed = true;
+        content.push(result);
+      }
+      kept = { ...param, content };
+    }
+    saved.push({ at, param: JSON.stringify(kept) });
+  }
+  return saved;
+}
+
 export async function runTurn(input: TurnInput): Promise<TurnResult> {
   const turn: BetaMessageParam[] = [];
-  const stored: StoredMessage[] = [];
+  const timed: { at: Date; param: BetaMessageParam }[] = [];
   const append = (param: BetaMessageParam): void => {
     turn.push(param);
-    stored.push({ at: input.now(), param: JSON.stringify(param) });
+    timed.push({ at: input.now(), param });
   };
   let calls = 0;
   let spent = 0;
@@ -216,7 +250,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     await input.charge(cost);
   };
   const done = (stopReason: DoneReason): TurnResult => ({
-    kind: 'done', stopReason, messages: stored, calls, model, inputTokens, outputTokens, costMicroUsd: spent,
+    kind: 'done', stopReason, messages: savedTurn(timed), calls, model, inputTokens, outputTokens, costMicroUsd: spent,
   });
 
   // A function, not a property read: the signal changes under the loop, which narrowing cannot see.

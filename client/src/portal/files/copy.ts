@@ -26,6 +26,7 @@ export const COPY = {
   downloadRaw: 'Download original',
   downloadClean: 'Download cleaned CSV',
   deleteRaw: 'Delete original',
+  deleteAllRaw: 'Delete all originals for this location',
   deleting: 'Deleting…',
   downloading: 'Downloading…',
   showEntries: 'See what’s inside',
@@ -351,4 +352,14 @@ export function familyLine(family: string): string {
 /** What deleting the original keeps, said before the press (storage2 2.3). */
 export function deleteRawBody(file: Pick<FileView, 'name' | 'kind' | 'uploadedAt'>): string {
   return `This deletes the original of ${fileName(file)}. The cleaned copy and the days it added stay. This can’t be undone.`;
+}
+
+/** Org admins, on Your data: every sales file's original at once. Items kept for reference are not originals of anything else, so they stay (D28). */
+export function deleteAllRawBody(locationName: string): string {
+  return `This deletes the original of every sales file for ${locationName}. Cleaned copies and days stay, and so do items kept for reference. Files still uploading or being read are skipped. This can’t be undone.`;
+}
+
+export function deletedOriginalsLine(result: { deletedOriginals: number; skippedBusy: number }): string {
+  const deleted = `Deleted ${plural(result.deletedOriginals, 'original', 'originals')}.`;
+  return result.skippedBusy === 0 ? deleted : `${deleted} ${plural(result.skippedBusy, 'file was', 'files were')} busy and kept.`;
 }

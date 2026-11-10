@@ -155,11 +155,12 @@ export function questionsFor(input: QuestionInput): Question[] {
   const weekdayQuestions: Question[] = [];
   const closedWeekdays = new Set<number>();
   for (let weekday = 0; weekday < 7; weekday += 1) {
-    const ofWeekday = dates.filter((day) => weekdayOf(day) === weekday && weekHasSales(day));
+    // A turned-off day counts as no data, like a week with no sales: it never makes a weekday look usually closed.
+    const ofWeekday = dates.filter((day) => weekdayOf(day) === weekday && weekHasSales(day) && !turnedOff.has(day));
     if (ofWeekday.length < WEEKDAY_MIN_DAYS) continue;
     const noSales = ofWeekday.filter((day) => !withSales.has(day));
     if (noSales.length >= WEEKDAY_SHARE * ofWeekday.length) closedWeekdays.add(weekday);
-    const unexplained = noSales.filter((day) => !closures.some((note) => noteCovers(note, day)) && !answeredAbout(day) && !turnedOff.has(day));
+    const unexplained = noSales.filter((day) => !closures.some((note) => noteCovers(note, day)) && !answeredAbout(day));
     if (unexplained.length < WEEKDAY_SHARE * ofWeekday.length) continue;
     const asked: AskedQuestion = { kind: 'weekday', weekday, from, to: window.to };
     weekdayQuestions.push({ id: questionId(asked), ...asked, noSalesCount: noSales.length, weekdayCount: ofWeekday.length });

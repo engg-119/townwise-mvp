@@ -43,7 +43,7 @@ interface ToolRow {
   reads?(ctx: ToolContext): string | null;
   /** Its `reads` needs the location's sales: left out of what TownwiseAI can use before any are uploaded. */
   needsSales?: true;
-  /** Not a card: propose_note shows the proposal card instead. */
+  /** Not a card: propose_note shows the proposal card instead, and propose_data_item its item card. */
   hidden?: true;
   /** Words for this tool's view fields where the shared VIEW_TERMS would mislabel them. */
   terms?: Readonly<Record<string, string>>;
@@ -277,9 +277,11 @@ const TOOLS: Readonly<Record<string, ToolRow>> = {
     basedOn: (_input, _ctx, result) => (result?.available === false ? 'an item your team added (couldn’t read it)' : 'an item your team added'),
     terms: { available: 'Read', chars: 'Characters', truncated: 'Cut short' },
   },
-  // Your data: propose_data_item (api/src/chat/tools/propose-data.ts), a card proposing to keep text the owner gave.
+  // Your data: propose_data_item (api/src/chat/tools/propose-data.ts) shows as its item card (ui/ItemProposalCard.tsx),
+  // not a row: a proposal is not something TownwiseAI read, so it is not in the Based on line either.
   propose_data_item: {
     object: () => 'text to keep on Your data',
+    hidden: true,
   },
 };
 
@@ -289,7 +291,7 @@ export function isKnownTool(name: string): boolean {
   return Object.hasOwn(TOOLS, name);
 }
 
-/** propose_note's calls show as the proposal card, not a tool card. */
+/** propose_note's and propose_data_item's calls show as their cards, not a tool card. */
 export function isHiddenTool(name: string): boolean {
   return TOOLS[name]?.hidden === true;
 }

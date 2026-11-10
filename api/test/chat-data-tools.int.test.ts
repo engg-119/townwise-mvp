@@ -135,6 +135,43 @@ describe('with stored files on', () => {
     const blocks = last === undefined || typeof last.content === 'string' ? [] : last.content ?? [];
     expect(blocks).toMatchObject([{ type: 'tool_result', is_error: true }]);
   });
+  it('a later turn never resends an item’s text: the saved turn keeps a stub, so after Turn off the model reads it as off', async () => {
+    const itemId = await seed(p, blobs, p.locationId, Buffer.from('Spring catering menu'), { name: 'Spring.txt' });
+    const ref = `f_${itemId}`;
+    p.model.calls.length = 0;
+    p.model.script(
+      { kind: 'message', message: message([toolUse('t1', 'read_data_item', { ref })]) },
+      { kind: 'message', message: message([text('It lists the spring menu.')]) },
+    );
+    const first = await call(p.server, `/api/org/locations/${p.locationId}/chat/turns`, { session: p.session, json: { content: 'What is on it?' } });
+    const body = await first.text();
+    const conversationId = (JSON.parse(body.split('\n').find((line) => line.startsWith('data: {"id":'))?.slice(6) ?? '{}') as { id: string }).id;
+    // The turn that read it sent the text to the model.
+    expect(JSON.stringify(messagesOf(p.model.calls[1]))).toContain('Spring catering menu');
+    const off = await call(p.server, `/api/org/locations/${p.locationId}/data/${ref}`, { session: p.session, method: 'PATCH', json: { enabled: false } });
+    expect(off.status).toBe(200);
+
+    p.model.calls.length = 0;
+    p.model.script(
+      { kind: 'message', message: message([toolUse('t2', 'read_data_item', { ref })]) },
+      { kind: 'message', message: message([text('It is turned off now.')]) },
+    );
+    const second = await call(p.server, `/api/org/locations/${p.locationId}/chat/turns`, {
+      session: p.session, json: { conversationId, content: 'And again?' },
+    });
+    expect(second.status).toBe(200);
+    await second.text();
+    for (const sent of p.model.calls) expect(JSON.stringify(messagesOf(sent))).not.toContain('Spring catering menu');
+    expect(JSON.stringify(messagesOf(p.model.calls[0]))).toContain('Read in an earlier turn');
+    expect(JSON.stringify(messagesOf(p.model.calls[1]))).toContain('That item is turned off.');
+    const stored = await p.server.connection.collection('tw_chat_conversations').findOne({ _id: new Types.ObjectId(conversationId) });
+    expect(JSON.stringify(stored)).not.toContain('Spring catering menu');
+    // The saved conversation still shows the first read, with its length.
+    const view = await (await call(p.server, `/api/org/locations/${p.locationId}/chat/${conversationId}`, { session: p.session })).json() as {
+      messages: { parts: Record<string, unknown>[] }[];
+    };
+    expect(view.messages[1]?.parts[0]).toMatchObject({ name: 'read_data_item', result: { ref, available: true, chars: 20, truncated: false } });
+  });
 });
 
 describe('with more than 50 items', () => {

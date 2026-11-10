@@ -1,5 +1,7 @@
 // read_data_item: the text of one item kept for reference, through ctx.items (chat/* imports no file code). The item's
-// text is the owner's data, never instructions. Never a sales file, a title or a file name.
+// text is the owner's data, never instructions. Never a sales file, a title or a file name. The text reaches the model
+// only in the turn that read it: the saved conversation keeps a stub (`saved`), so a later turn reads again through
+// ctx.items, which refuses an item turned off, deleted or purged since.
 import { AppError } from '@ckeith26/server-core';
 import { z } from 'zod';
 
@@ -18,8 +20,14 @@ const REASONS = {
   not_found: 'No item with that ref at this location.',
 } as const;
 
+/** What a later turn reads in place of the text (docs/portal/tuning-chat.md section 3). */
+const ELIDED = 'Read in an earlier turn; call read_data_item again for its current text.';
+
+const readText = z.object({ ref: z.string(), text: z.string(), truncated: z.boolean() });
 const readResult = z.union([
-  z.object({ ref: z.string(), text: z.string(), truncated: z.boolean() }),
+  readText,
+  // The saved stub of a read that succeeded.
+  z.object({ ref: z.string(), chars: z.number().int().nonnegative(), truncated: z.boolean(), elided: z.literal(true) }),
   z.object({ available: z.literal(false), reason: z.string() }),
 ]);
 
@@ -56,8 +64,22 @@ export const readDataTool: ChatTool<ReadDataInput> = {
   // The input view carries the ref the call named; the result view repeats it only for a read that succeeded.
   resultView: (content) => viewOf(content, readResult, (value) => {
     if ('text' in value) return { ref: value.ref, available: true, chars: value.text.length, truncated: value.truncated };
+    if ('elided' in value) return { ref: value.ref, available: true, chars: value.chars, truncated: value.truncated };
     return { available: false, chars: 0, truncated: false };
   }),
+  // A read that succeeded keeps its ref and length only; a refusal holds no text and is kept as it is.
+  saved(content) {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(content);
+    } catch {
+      return content;
+    }
+    const read = readText.safeParse(raw);
+    if (!read.success) return content;
+    const { ref, text, truncated } = read.data;
+    return JSON.stringify({ ref, chars: text.length, truncated, elided: true, reason: ELIDED });
+  },
   async run(tc, { ref }) {
     const parsed = parseRef(ref);
     // A sales upload is never read.

@@ -18,14 +18,14 @@ function step(name: string, state: ToolStep['state'], input: ToolStep['input'] =
   return { id: `toolu_test_${name}`, name, state, input, result };
 }
 
-test('every registered tool has words for each state; propose_note shows as its card', () => {
+test('every registered tool has words for each state; propose_note and propose_data_item show as their cards', () => {
   for (const name of REGISTERED) {
     expect(isKnownTool(name)).toBe(true);
     const lines = (['running', 'done', 'error'] as const).map((state) => toolLine(step(name, state), CTX));
     expect(lines.map((line) => line.status)).toEqual(['Reading', 'Read', 'Couldn’t read']);
     for (const line of lines) expect(line.object).not.toBe('');
   }
-  expect(REGISTERED.filter(isHiddenTool)).toEqual(['propose_note']);
+  expect(REGISTERED.filter(isHiddenTool)).toEqual(['propose_note', 'propose_data_item']);
 });
 
 test('the rows read the views: dates, counts and source links only', () => {
@@ -163,13 +163,12 @@ test('the data rows’ opened cards and Based on pieces use their own words, and
   expect(basedOnLine([step('read_data_item', 'done', input, refused)], CTX)).toBe('Based on an item your team added (couldn’t read it).');
 });
 
-test('propose_data_item’s card names text to keep on Your data, with no detail and nothing TownwiseAI reads', () => {
-  // The input view exactly as api/src/chat/tools/propose-data.ts builds it; its result view is null.
+test('propose_data_item shows as its item card, not a row: it is not in the Based on line or in what TownwiseAI reads', () => {
+  // The views exactly as api/src/chat/tools/propose-data.ts builds them.
   const input = { chars: 21 };
-  expect(toolLine(step('propose_data_item', 'running', input), CTX).sentence).toBe('Reading text to keep on Your data');
-  expect(toolLine(step('propose_data_item', 'done', input), CTX)).toMatchObject({ sentence: 'Read text to keep on Your data', detail: null, sources: [] });
-  expect(isHiddenTool('propose_data_item')).toBe(false);
-  expect(viewRows(input, null, 'propose_data_item')).toEqual([]);
+  expect(isHiddenTool('propose_data_item')).toBe(true);
+  expect(basedOnLine([step('propose_data_item', 'done', input, { shown: true })], CTX)).toBe('Based on this conversation only.');
+  expect(viewRows(input, { shown: true }, 'propose_data_item')).toEqual([]);
   expect(readsLine(CTX)).not.toMatch(/keep/);
 });
 

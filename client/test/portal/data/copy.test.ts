@@ -27,10 +27,14 @@ test('every way an item arrived has its line', () => {
   ]);
 });
 
-test('the item reads as its name, else Daily totals, else its kind', () => {
+test('the item reads as its name, else its kind with its days or when it was added; the row prints the kind', () => {
   expect(copy.itemName(itemOf('f_1', { name: 'menu.pdf', kind: 'pdf' }))).toBe('menu.pdf');
-  expect(copy.itemName(dailyTotalsOf('u_1'))).toBe('Daily totals');
-  expect(copy.itemName(itemOf('f_1', { name: null, kind: 'pdf' }))).toBe('PDF');
+  // No name (a browser upload, or any item under view-as): the kind with its days, else with when it was added.
+  expect(copy.itemName(dailyTotalsOf('u_1'))).toBe('Daily totals, May 1, 2026 to May 10, 2026');
+  expect(copy.itemName(itemOf('f_1', { name: null, kind: 'pdf' }))).toBe('PDF, added Nov 5, 2026');
+  // The row itself still prints the kind.
+  expect(copy.shownName(dailyTotalsOf('u_1'))).toBe('Daily totals');
+  expect(copy.shownName(itemOf('f_1', { name: null, kind: 'pdf' }))).toBe('PDF');
   expect(copy.daysLine(null)).toBe('None');
 });
 

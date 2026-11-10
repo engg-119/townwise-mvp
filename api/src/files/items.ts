@@ -35,10 +35,14 @@ export interface TextItemInput {
 
 /**
  * The item's name: the title with `.txt` after it. `sanitizeName` reads a name as a path and keeps what follows the last
- * slash, so a title's slashes (a date such as 12/24) become hyphens first.
+ * slash, so a title's slashes (a date such as 12/24) become hyphens first, and it deletes control characters, so a
+ * pasted tab or line break becomes a space first ("Lunch menu", not "Lunchmenu"). A title of nothing else is named
+ * "Pasted text".
  */
 function textItemName(title: string): string {
-  return sanitizeName(`${title.replace(/[\\/]/g, '-')}.txt`);
+  // eslint-disable-next-line no-control-regex -- a control character inside a title separates words
+  const words = title.replace(/[\\/]/g, '-').replace(/[\u0000-\u001f\u007f-\u009f\s]+/g, ' ').trim();
+  return sanitizeName(`${words === '' ? 'Pasted text' : words}.txt`);
 }
 
 /**

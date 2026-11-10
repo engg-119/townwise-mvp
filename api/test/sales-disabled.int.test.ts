@@ -153,7 +153,9 @@ describe('turned-off uploads leave every read (D28)', () => {
       .toEqual({ status: 409, error: 'location_has_data' });
   });
 
-  it('turning off an upload in another organization changes nothing here', async () => {
+  // A smoke test, not the isolation pin: B's upload ids never hold A's days, so this would pass even if the turned-off
+  // lookup lost its orgId. The pin is the store's own scoping of setEnabled and get (another organization answers null).
+  it('turning off an upload in another organization changes nothing here (smoke)', async () => {
     await send(admin, l1, '2026-05-01', 10);
     const other = await newTeam(`Other Kitchen ${randomUUID().slice(0, 6)}`);
     const theirs = await addLocation(server, { orgId: other.orgId, name: 'Main Room' });

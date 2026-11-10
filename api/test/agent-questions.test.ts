@@ -184,6 +184,13 @@ describe('turned-off days (D28)', () => {
     expect(questionsFor(closedMondays).some((q) => q.kind === 'weekday')).toBe(true);
     expect(questionsFor({ ...closedMondays, turnedOff: mondays }).some((q) => q.kind === 'weekday')).toBe(false);
   });
+
+  it('turned-off Mondays in weeks with sales do not make Monday usually closed, so a gap never bridges one', () => {
+    // A Sunday and a Tuesday with no sales around a turned-off Monday: two gaps, never one over the Monday.
+    const missing = (day: string): boolean => weekday(day) === 1 || day === '2026-02-15' || day === '2026-02-17';
+    const ids = questionsFor(input(FROM, TO, missing, { turnedOff: mondays })).map((q) => q.id);
+    expect(ids).toEqual(['gap_2026-02-17_2026-02-17', 'gap_2026-02-15_2026-02-15']);
+  });
 });
 
 describe('the cap and the order', () => {

@@ -3,7 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { ApiError } from '../../src/api/client';
 import {
   BUDGET_SPENT, canSend, chatReducer, CUT_OFF, FLUSH_MS, initialChatState, messageText, NOT_SAVED, STOPPED, stepsOf, TIMED_OUT,
-  useTuningChat, type ChatMessage, type ProposalCard, type TuningChat, type TuningChatState,
+  useTuningChat, type ChatMessage, type ItemCard, type ProposalCard, type TuningChat, type TuningChatState,
 } from '../../src/chat/useTuningChat';
 import { CONVERSATION, fakeChatApi, PROPOSAL, PROPOSAL_ID, refusal, SALES_STEP, SUMMARY, type FakeChatApi, type LiveTurn } from '../helpers/chat';
 
@@ -455,6 +455,79 @@ describe('proposal cards', () => {
     await act(() => { chat.current.save(PROPOSAL_ID); });
     await waitFor(() => { expect(card(chat, PROPOSAL_ID).status).toBe('saved'); });
     expect(api.writes).toEqual([{ method: 'POST', path: '/api/org/locations/l1/notes', body: PROPOSAL }]);
+  });
+});
+
+describe('item cards (D28)', () => {
+  const ITEM_ID = 'toolu_item_0001';
+  const shownCall = (id: string, shown: boolean, state: 'running' | 'done'): Record<string, unknown> => ({
+    id, name: 'propose_data_item', state, input: { chars: 21 }, result: state === 'done' ? { shown } : null,
+  });
+
+  function items(message: ChatMessage): ItemCard[] {
+    return message.parts.flatMap((part) => (part.type === 'item' ? [part.card] : []));
+  }
+
+  test('a shown propose_data_item call is an item card that waits for its turn; one that showed nothing is no card and no row', async () => {
+    const api = fakeChatApi();
+    const chat = await ready(api);
+    await send(chat, 'Keep this list');
+    await act(() => {
+      turn(api).emit('conversation', { id: 'c2', title: 'Keep this list' });
+      turn(api).emit('tool', shownCall(ITEM_ID, true, 'running'));
+      turn(api).emit('tool', shownCall(ITEM_ID, true, 'done'));
+      turn(api).emit('tool', shownCall('toolu_item_0002', false, 'done'));
+    });
+    expect(items(reply(chat))).toEqual([{ id: ITEM_ID, conversationId: 'c2', stored: 'pending' }]);
+    // Neither call is a tool row, so neither is in the Based on line.
+    expect(stepsOf(reply(chat))).toEqual([]);
+    await act(() => {
+      turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0 });
+      turn(api).end();
+    });
+    await waitFor(() => { expect(chat.current.state.streaming).toBe(false); });
+    expect(items(reply(chat))).toEqual([{ id: ITEM_ID, conversationId: 'c2', stored: 'kept' }]);
+  });
+
+  test('a reply the server never kept leaves its item card with nothing to keep', async () => {
+    const api = fakeChatApi();
+    const chat = await ready(api);
+    await send(chat, 'Keep this list');
+    await act(() => {
+      turn(api).emit('conversation', { id: 'c2', title: 'Keep this list' });
+      turn(api).emit('tool', shownCall(ITEM_ID, true, 'done'));
+    });
+    await act(() => { chat.current.stop(); });
+    await waitFor(() => { expect(chat.current.state.streaming).toBe(false); });
+    expect(items(reply(chat))).toEqual([{ id: ITEM_ID, conversationId: 'c2', stored: 'lost' }]);
+  });
+
+  test('opening a conversation replays a shown call as its item card, and the card reads and keeps through its own route', async () => {
+    const api = fakeChatApi();
+    const path = `/api/org/locations/l1/chat/c1/item-proposals/${ITEM_ID}`;
+    const view = { id: ITEM_ID, title: 'Catering list', text: 'Party of 40 on Dec 12', status: 'open', item: null };
+    api.reads[path] = () => ({ proposal: view });
+    api.respond[path] = () => ({ proposal: { ...view, status: 'dismissed' } });
+    api.conversation = {
+      ...CONVERSATION,
+      messages: [
+        { role: 'user', text: 'Keep this list.', proposals: [], parts: [], at: '2026-11-02T14:59:00.000Z' },
+        {
+          role: 'assistant', text: 'I showed it to you.', proposals: [], at: '2026-11-02T15:00:00.000Z',
+          parts: [{ type: 'tool', ...shownCall(ITEM_ID, true, 'done') }, { type: 'tool', ...shownCall('toolu_item_0002', false, 'done') }, { type: 'text', text: 'I showed it to you.' }],
+        },
+      ],
+    };
+    const chat = await ready(api);
+    await act(() => { chat.current.openConversation('c1'); });
+    await waitFor(() => { expect(chat.current.state.conversationLoading).toBe(false); });
+    const [itemCard] = items(reply(chat));
+    expect(items(reply(chat))).toEqual([{ id: ITEM_ID, conversationId: 'c1', stored: 'kept' }]);
+    if (itemCard === undefined) throw new Error('no item card');
+    expect(stepsOf(reply(chat))).toEqual([]);
+    expect(await chat.current.loadItem(itemCard)).toEqual(view);
+    expect(await chat.current.setItemAside(itemCard)).toMatchObject({ status: 'dismissed' });
+    expect(api.writes).toEqual([{ method: 'POST', path, body: { action: 'dismiss' } }]);
   });
 });
 

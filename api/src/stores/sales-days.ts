@@ -95,14 +95,21 @@ interface MonthRow { _id: string; days: number; guestsDays: number; guests: numb
 
 /** Tenant store: every function takes the OrgScope first and filters on its orgId. */
 export interface SalesDayStore {
-  /** Coverage per location id, for the locations that have any day with a value. */
+  /**
+   * Coverage per location id, for the locations that have any day with a value, except the days a turned-off upload
+   * holds (D28).
+   */
   coverageByLocation(scope: OrgScope): Promise<Map<string, Coverage>>;
+  /** The location's coverage, except the days a turned-off upload holds (D28). */
   coverage(scope: OrgScope, locationId: string): Promise<Coverage>;
-  /** Oldest month first. */
+  /** Oldest month first, except the days a turned-off upload holds (D28). */
   months(scope: OrgScope, locationId: string): Promise<SalesMonth[]>;
-  /** The days from `from` to `to`, inclusive, oldest first. */
+  /** The days from `from` to `to`, inclusive, oldest first, except the days a turned-off upload holds (D28). */
   days(scope: OrgScope, locationId: string, range: { from: string; to: string }): Promise<SalesDay[]>;
-  /** Every stored day of the location, oldest first, each with the upload that last wrote it. */
+  /**
+   * Every stored day of the location, oldest first, each with the upload that last wrote it, except the days a
+   * turned-off upload holds (D28).
+   */
   history(scope: OrgScope, locationId: string): Promise<SalesDayWithUpload[]>;
   /** D28: the dates from `from` to `to`, inclusive, whose day a turned-off upload holds, oldest first. */
   disabledDates(scope: OrgScope, locationId: string, range: { from: string; to: string }): Promise<string[]>;

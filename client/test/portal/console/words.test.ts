@@ -23,6 +23,7 @@ test('the action filter covers every action the API records (api/src/stores/audi
     'org.created', 'org.renamed', 'org.suspended', 'org.reactivated', 'org.deleted',
     'member.invited', 'member.declined', 'member.joined', 'member.role_changed', 'member.removed', 'member.left',
     'location.created', 'location.updated', 'location.deleted', 'sales.uploaded', 'sales.deleted',
+    'sales.upload_deleted', 'data.turned_off', 'data.turned_on',
     'file.uploaded', 'file.deleted', 'file.raw_deleted', 'files.raw_deleted_all', 'org.originals_deleted',
     'note.created', 'note.updated', 'note.deleted', 'chat.turn_completed', 'chat.conversation_deleted',
     'agent.question_answered',

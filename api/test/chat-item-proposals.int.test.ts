@@ -133,13 +133,14 @@ describe('the card', () => {
   it('GET shows a proposal from a stored turn with its exact title and text, open', async () => {
     const convId = await proposed();
     expect(await getProposal(member, convId, callId)).toEqual({ proposal: { id: callId, title: 'Catering list', text: 'Party of 40 on Dec 12', status: 'open', item: null } });
-    // The model read the proposal result, and the conversation shows an ordinary tool part with the text's length only.
+    // The model read the proposal result, and the conversation shows an ordinary tool part with the text's length and
+    // that the card was shown, never the title or the text.
     const last = messagesOf(model.calls[1]).at(-1);
     const blocks = last === undefined || typeof last.content === 'string' ? [] : last.content ?? [];
     expect(blocks).toEqual([{ type: 'tool_result', tool_use_id: callId, content: 'Shown to the owner as a proposal. They decide whether to keep it.' }]);
     const view = await (await call(server, `/api/org/locations/${l1}/chat/${convId}`, { session: member })).json() as ConversationView;
     const parts = view.messages.flatMap((entry) => entry.parts);
-    expect(parts).toContainEqual({ type: 'tool', id: callId, name: 'propose_data_item', state: 'done', input: { chars: 21 }, result: null });
+    expect(parts).toContainEqual({ type: 'tool', id: callId, name: 'propose_data_item', state: 'done', input: { chars: 21 }, result: { shown: true } });
     expect(view.messages.flatMap((entry) => entry.proposals)).toEqual([]);
   });
 });
@@ -329,6 +330,9 @@ describe('with stored files off', () => {
     // Nothing was shown, so there is no card to read or set aside.
     expect((await call(off, path, { session: owner })).status).toBe(404);
     expect((await call(off, path, { session: owner, json: { action: 'dismiss' } })).status).toBe(404);
+    // The conversation says so too, so the client shows no card for it.
+    const view = await (await call(off, `/api/org/locations/${offLocation}/chat/${convId}`, { session: owner })).json() as ConversationView;
+    expect(view.messages.flatMap((entry) => entry.parts)).toContainEqual(expect.objectContaining({ id: callId, result: { shown: false } }));
     expect(await off.connection.collection('tw_files').countDocuments({})).toBe(0);
     expect(await off.connection.collection('tw_chat_proposals').countDocuments({})).toBe(0);
   });

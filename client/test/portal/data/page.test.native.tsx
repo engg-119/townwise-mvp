@@ -42,11 +42,11 @@ test('native lists the same rows, offers Turn off and Delete, and says Download 
   expect(within(list).getByText('No file kept')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Turn off: menu-notes.txt' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Delete: menu-notes.txt' })).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Delete: Daily totals' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Delete: Daily totals, May 1, 2026 to May 10, 2026' })).toBeTruthy();
   expect(screen.queryByRole('button', { name: /^Download/ })).toBeNull();
   expect(screen.getByText('Download from a computer at townwise.tech.')).toBeTruthy();
-  await fireEvent.press(screen.getByRole('button', { name: 'Turn off: Daily totals' }));
-  expect(await screen.findByText(/^Turned off Daily totals\./)).toBeTruthy();
+  await fireEvent.press(screen.getByRole('button', { name: 'Turn off: Daily totals, May 1, 2026 to May 10, 2026' }));
+  expect(await screen.findByText(/^Turned off Daily totals, May 1, 2026 to May 10, 2026\./)).toBeTruthy();
   expect(fake.patches).toEqual([{ ref: 'u_1', body: { enabled: false } }]);
 });
 

@@ -203,8 +203,10 @@ export async function removeDataItem(ctx: TownwiseContext, req: Request, res: Re
       ctx.logger.info({ fileId: file.id }, 'townwise.file_deleted');
     }
   }
-  const deletedDays = await ctx.stores.salesDays.removeForUpload(scope, location.id, item.ref.id);
+  const removed = await ctx.stores.salesDays.removeForUpload(scope, location.id, item.ref.id);
   await ctx.stores.uploads.remove(scope, location.id, item.ref.id);
+  // An upload that never finished may still have had a write in flight: days it landed meanwhile go too.
+  const deletedDays = removed + await ctx.stores.salesDays.removeForUpload(scope, location.id, item.ref.id);
   await recordAfter(ctx, {
     ...actorOf(member), at: ctx.now(), orgId: scope.orgId, action: 'sales.upload_deleted',
     target: { type: 'upload', id: item.ref.id }, details: { locationId: location.id, deletedDays, deletedFiles: files.length },

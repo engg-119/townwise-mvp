@@ -65,8 +65,9 @@ function fileState(file: FileRecord): DataState {
 function uploadItem(upload: UploadRecord, file: FileRecord | null, inUse: number): DataItemRecord {
   const busy = file === null ? null : fileState(file);
   let state: DataState = 'used';
-  if (upload.status === 'applying') state = 'not_finished';
-  else if (busy === 'reading' || busy === 'waiting') state = busy;
+  // A stored file's first write: its upload is still applying while the reader writes days, so it reads as reading.
+  if (busy === 'reading' || busy === 'waiting') state = busy;
+  else if (upload.status === 'applying') state = 'not_finished';
   return {
     ref: { type: 'upload', id: upload.id },
     locationId: upload.locationId,

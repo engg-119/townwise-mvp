@@ -61,6 +61,11 @@ export interface ChatTool<I> {
   inputView(input: I): ToolView | null;
   /** Recomputed from the result the model read, so a stored conversation shows the same card. Null when unreadable. */
   resultView(content: string): ToolView | null;
+  /**
+   * What the saved conversation keeps of a result that did not fail, when not the result itself: read_data_item keeps a
+   * stub, so later turns never resend an item's text (turn.ts, savedTurn). `resultView` reads the stub too.
+   */
+  saved?(content: string): string;
 }
 
 export interface ToolOutcome {
@@ -119,6 +124,14 @@ export function inputViewOf(name: string, raw: unknown, today: string): ToolView
   const tool = toolNamed(name);
   const input = tool?.parse(raw, today) ?? null;
   return tool === undefined || input === null ? null : tool.inputView(input);
+}
+
+/** What the saved conversation keeps of one result: the tool's stub of a result that did not fail, else the same block. */
+export function savedResultOf(name: string, result: BetaToolResultBlockParam): BetaToolResultBlockParam {
+  const tool = toolNamed(name);
+  if (tool?.saved === undefined || result.is_error === true || typeof result.content !== 'string') return result;
+  const content = tool.saved(result.content);
+  return content === result.content ? result : { ...result, content };
 }
 
 /** The result view of a call that did not fail; null for an unknown tool, an error result or an unreadable one. */

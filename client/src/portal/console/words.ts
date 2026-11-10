@@ -73,6 +73,10 @@ export const AUDIT_ACTIONS: readonly { value: string; label: string }[] = [
   { value: 'location.deleted', label: 'Location deleted' },
   { value: 'sales.uploaded', label: 'Sales uploaded' },
   { value: 'sales.deleted', label: 'Sales deleted' },
+  // D28, Your data.
+  { value: 'sales.upload_deleted', label: 'Upload deleted' },
+  { value: 'data.turned_off', label: 'Item turned off' },
+  { value: 'data.turned_on', label: 'Item turned on' },
   { value: 'file.uploaded', label: 'File uploaded' },
   { value: 'file.deleted', label: 'File deleted' },
   { value: 'file.raw_deleted', label: 'Original deleted' },

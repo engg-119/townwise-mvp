@@ -80,9 +80,21 @@ export function kindLabel(kind: DataItem['kind']): string {
   return kind === 'daily_totals' ? DATA.dailyTotals : KIND_LABEL[kind];
 }
 
-/** The name, else “Daily totals”, else the kind's label (under view-as, where the API sends no name). */
-export function itemName(item: Pick<DataItem, 'name' | 'kind'>): string {
+/** The name as the row shows it: else “Daily totals”, else the kind's label (under view-as, where the API sends no name). */
+export function shownName(item: Pick<DataItem, 'name' | 'kind'>): string {
   return item.name ?? kindLabel(item.kind);
+}
+
+/**
+ * The item in accessible names and notices. Without a name (every browser upload, and every item under view-as), the
+ * kind with its days, “Daily totals, May 1, 2026 to May 10, 2026”, else with when it was added, “PDF, added Nov 5,
+ * 2026”, so rows with no name still read apart.
+ */
+export function itemName(item: Pick<DataItem, 'name' | 'kind' | 'days' | 'addedAt'>): string {
+  if (item.name !== null) return item.name;
+  const kind = kindLabel(item.kind);
+  if (item.days === null) return `${kind}, added ${formatDate(item.addedAt)}`;
+  return `${kind}, ${formatDate(item.days.firstDate)} to ${formatDate(item.days.lastDate)}`;
 }
 
 export function addedLine(item: Pick<DataItem, 'addedAt' | 'addedByEmail'>): string {

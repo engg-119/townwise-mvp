@@ -407,11 +407,11 @@ Stored files (`api/README.md`, Files; `docs/portal/spec.md` 11A) are off until t
 
 - the file storage client pieces and the drop screen (HistoryStep) that mounts them;
 - Your data's reference items (any file, pasted text, text kept from TownwiseAI) and TownwiseAI's reading of text items (spec D28), with the privacy page's Your data wording;
-- the privacy page's stored-files wording, because the privacy page's promise changes with it: stored files, ZIP, PDF and Word reading, the AI column step's redacted profile going to Anthropic, the retention periods once confirmed, deleting one sales file's original, and the staff purge for a person's deletion request.
+- the privacy page's stored-files wording, because the privacy page's promise changes with it: stored files, ZIP, PDF and Word reading, the AI column step's redacted profile going to Anthropic, the retention periods once confirmed, the owner's "delete originals", and the staff purge for a person's deletion request.
 
 The API side is in the build (spec 11A): ZIP, PDF and Word reading, the AI column step, and every deletion path. Before step 3, check on `develop` that each still has a passing test (`npm test -w @townwise/api`):
 
-- deleting a location's sales data, a location, an organization, and `DELETE /originals`, which no page offers (`api/test/files-deletion.int.test.ts`);
+- deleting a location's sales data, a location, an organization, and an org admin's "delete originals", which leaves reference items whole (`api/test/files-deletion.int.test.ts`);
 - an organization's deletion refused while stored files are off but it has files (`api/test/deletion.int.test.ts`);
 - the daily sweep: unfinished uploads after 24 hours, originals after 365 days, never-read drops after 30 days, staff purges finished, orphan blobs (`api/test/files-sweeper.int.test.ts`);
 - the staff purge of an organization's originals for a person's deletion request (`api/test/files-deletion.int.test.ts`).

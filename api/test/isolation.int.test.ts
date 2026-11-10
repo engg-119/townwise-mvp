@@ -5,8 +5,11 @@ import { randomUUID } from 'node:crypto';
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import type { OrgScope } from '../src/access/policy.ts';
 import { TOWNWISE_ROUTES } from '../src/access/routes.ts';
+import { createItemReader } from '../src/files/items.ts';
 import { createMemoryFileBlobs, type MemoryFileBlobs } from '../src/files/memory-blobs.ts';
+import { createTownwiseStores } from '../src/stores/index.ts';
 import {
   addConversation, addInvite, addLocation, addNote, addRequest, addSalesDay, addSeat, addUpload, createOrg,
 } from './helpers/fixtures.ts';
@@ -40,6 +43,8 @@ interface Tenant {
   importId: string;
   /** D28: the location's upload record, an item on Your data. */
   uploadId: string;
+  /** D28: an item kept for reference at the location (a text file with no import and no upload), the member's. */
+  refFileId: string;
 }
 
 let a: Tenant;
@@ -68,13 +73,31 @@ async function tenant(name: string): Promise<Tenant> {
     orgId, locationId, uploadedBy: member.session.userId, name: `${name} sales.csv`, raw: Buffer.from('Date,Guests\n'), clean: 'date,guests,net_sales\r\n',
   });
   const importId = String((await server.connection.collection('tw_files').findOne({ _id: new Types.ObjectId(fileId) }))?.importId);
+  const refFileId = await addReferenceItem(orgId, locationId, member.session.userId, name);
   await withProposal(conversationId, name);
   // U9: an answer to a TownwiseAI question.
   await server.connection.collection('tw_agent_answers').insertOne({
     orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), questionId: 'gap_2026-05-02_2026-05-03',
     answer: 'open', noteId: new Types.ObjectId(), status: 'done', createdAt: server.clock.now(), updatedAt: server.clock.now(),
   });
-  return { orgId, name, admin, member, inviteId, seatIds, locationId, locationName, noteId, conversationId, fileId, importId, uploadId };
+  return {
+    orgId, name, admin, member, inviteId, seatIds, locationId, locationName, noteId, conversationId, fileId, importId, uploadId, refFileId,
+  };
+}
+
+/** D28: a `.txt` item kept for reference, as Your data's Paste text leaves one, and its original in the memory blobs. */
+async function addReferenceItem(orgId: string, locationId: string, uploadedBy: string, name: string): Promise<string> {
+  const _id = new Types.ObjectId();
+  const raw = Buffer.from(`${name} reference text`);
+  await server.connection.collection('tw_files').insertOne({
+    _id, orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), importId: null, purpose: 'reference',
+    uploadedBy, uploaderRole: 'member', uploadedAt: server.clock.now(), name: `${name} private item.txt`, kind: 'text',
+    sizeBytes: raw.length, fingerprint: _id.toHexString().padStart(64, '0'), upload: null, status: 'kept', outcome: 'reference',
+    progress: null, readStartedAt: null, readMs: null, answers: {}, uploadId: null, result: null, report: null, cleanBytes: null,
+    rawDeletedAt: null, attempts: 0,
+  });
+  await blobs.writeRaw({ orgId } as unknown as OrgScope, { locationId, fileId: _id.toHexString() }, raw, 'text/plain');
+  return _id.toHexString();
 }
 
 /**
@@ -147,7 +170,7 @@ function bIds(): Record<string, string> {
 function bSecrets(): string[] {
   return [
     b.orgId, b.name, b.admin.email, b.member.email, b.locationId, b.locationName, b.noteId, b.conversationId, `${b.name} private chat`,
-    b.fileId, b.importId, b.uploadId, `${b.name} private item`,
+    b.fileId, b.importId, b.uploadId, `${b.name} private item`, b.refFileId, `${b.name} private item.txt`, `${b.name} reference text`,
   ];
 }
 
@@ -232,7 +255,7 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
     it(`${route.method} /api${route.path}: A’s org admin presenting any of B’s ids, with A’s own ids elsewhere, gets 404 not_found, and B is unchanged`, async () => {
       const bOwn: Record<string, string[]> = {
         memberId: [b.inviteId, ...b.seatIds], locationId: [b.locationId], noteId: [b.noteId], conversationId: [b.conversationId],
-        fileId: [b.fileId], importId: [b.importId], ref: [`u_${b.uploadId}`, `f_${b.fileId}`],
+        fileId: [b.fileId], importId: [b.importId], ref: [`u_${b.uploadId}`, `f_${b.refFileId}`],
       };
       const aOwn: Record<string, string> = {
         memberId: a.inviteId, locationId: a.locationId, noteId: a.noteId, conversationId: a.conversationId, fileId: a.fileId,
@@ -351,10 +374,21 @@ describe('isolation, case by case', () => {
       const own = await call(server, '/api/org/data', { session });
       const listed = await own.text();
       expect(own.status).toBe(200);
-      expect(JSON.parse(listed)).toMatchObject({ items: [expect.objectContaining({ ref: `u_${a.uploadId}`, locationId: a.locationId })] });
+      // Exactly A's upload and A's item kept for reference: the org-wide list's files half has only orgId to scope it.
+      const { items } = JSON.parse(listed) as { items: { ref: string; locationId: string }[] };
+      expect(items.map((item) => item.ref).sort()).toEqual([`f_${a.refFileId}`, `u_${a.uploadId}`]);
+      expect(items.every((item) => item.locationId === a.locationId)).toBe(true);
       for (const secret of bSecrets()) expect(listed).not.toContain(secret);
     }
     expect(await snapshotOf(b)).toBe(before);
+  });
+
+  it('TownwiseAI’s item reader, in A’s scope, finds none of B’s items by any mix of location ids', async () => {
+    const reader = createItemReader(createTownwiseStores(server.connection), blobs);
+    const scope = { orgId: a.orgId } as unknown as OrgScope;
+    expect(await reader.readText(scope, a.locationId, b.refFileId)).toEqual({ status: 'not_found' });
+    expect(await reader.readText(scope, b.locationId, b.refFileId)).toEqual({ status: 'not_found' });
+    expect(await reader.readText(scope, a.locationId, a.refFileId)).toEqual({ status: 'ok', text: `${a.name} reference text`, truncated: false });
   });
 
   it('a member route takes the organization only from the principal, never from the request', async () => {

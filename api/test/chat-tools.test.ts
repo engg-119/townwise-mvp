@@ -280,9 +280,11 @@ describe('propose_data_item', () => {
   const tool = toolNamed('propose_data_item');
   const tcWith = (on: boolean): ToolContext => ({ ctx: { items: { on } } } as unknown as ToolContext);
 
-  it('shows only the text’s length on its card, and refuses a title over 120 characters, an empty text or another key', () => {
+  it('shows only the text’s length and whether a card was shown, and refuses a title over 120 characters, an empty text or another key', () => {
     expect(inputViewOf('propose_data_item', { title: 'a', text: 'abc' }, TODAY)).toEqual({ chars: 3 });
-    expect(resultViewOf('propose_data_item', { type: 'tool_result', tool_use_id: 't1', content: 'Shown to the owner as a proposal. They decide whether to keep it.' })).toBeNull();
+    expect(resultViewOf('propose_data_item', { type: 'tool_result', tool_use_id: 't1', content: 'Shown to the owner as a proposal. They decide whether to keep it.' })).toEqual({ shown: true });
+    const off = JSON.stringify({ available: false, reason: 'Townwise can’t keep items yet, so nothing was shown to the owner.' });
+    expect(resultViewOf('propose_data_item', { type: 'tool_result', tool_use_id: 't1', content: off })).toEqual({ shown: false });
     for (const bad of [
       { title: 'a'.repeat(121), text: 'abc' }, { title: 'a', text: 'abc', extra: 1 }, { title: 'a', text: '' }, { title: '  ', text: 'abc' },
       { title: 'a', text: 'b'.repeat(10_001) }, { text: 'abc' }, { title: 'a' },

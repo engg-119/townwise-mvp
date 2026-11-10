@@ -332,8 +332,11 @@ export interface FileStore {
   hasAny(scope: OrgScope, locationId: string | null): Promise<boolean>;
   /** Files still uploading, at one location or across the organization (to discard their staged chunks). */
   uploading(scope: OrgScope, locationId: string | null): Promise<FileRecord[]>;
-  /** Files whose original is still stored, at one location or across the organization. */
-  originals(scope: OrgScope, locationId: string | null): Promise<FileRecord[]>;
+  /**
+   * Files whose original is still stored, at one location or across the organization; only those with `purpose` when
+   * it is given (the owner's "delete every original" keeps reference items, D28; the staff purge takes every purpose).
+   */
+  originals(scope: OrgScope, locationId: string | null, purpose?: FilePurpose): Promise<FileRecord[]>;
   /** A staff purge found the file uploading or being read: its original goes once that ends. */
   flagPurge(scope: OrgScope, fileId: string): Promise<void>;
   /**
@@ -531,9 +534,10 @@ export function createFileStore(connection: Connection): FileStore {
       if (locationId !== null) filter.locationId = oid(locationId);
       return (await File.find(filter).lean()).map(toFile);
     },
-    async originals(scope, locationId) {
+    async originals(scope, locationId, purpose) {
       const filter: Record<string, unknown> = { orgId: org(scope), rawDeletedAt: null, status: trusted({ $nin: ['uploading', 'deleting'] }) };
       if (locationId !== null) filter.locationId = oid(locationId);
+      if (purpose !== undefined) filter.purpose = purpose;
       return (await File.find(filter).sort({ uploadedAt: 1 }).lean()).map(toFile);
     },
     async flagPurge(scope, fileId) {

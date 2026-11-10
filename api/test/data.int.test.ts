@@ -380,6 +380,10 @@ describe('PATCH /api/org/locations/:locationId/data/:ref', () => {
     expect(await errorOf(await patch(team.admin, l1, `u_${read.uploadId}`, { enabled: false }))).toEqual({ status: 409, error: 'item_busy' });
     const items = (await list(team.admin, `?locationId=${l1}`)).items;
     expect(items.map((i) => [i.ref, i.state, i.canTurnOff])).toEqual([[`u_${read.uploadId}`, 'reading', false], [`f_${reading}`, 'reading', false]]);
+    // A stored file's first write: its upload is still applying, and the row reads as reading, not as not finished.
+    await server.connection.collection('tw_uploads').updateOne({ _id: new Types.ObjectId(read.uploadId) }, { $set: { status: 'applying' } });
+    expect(await errorOf(await patch(team.admin, l1, `u_${read.uploadId}`, { enabled: false }))).toEqual({ status: 409, error: 'item_busy' });
+    expect((await list(team.admin, `?locationId=${l1}`)).items.find((i) => i.ref === `u_${read.uploadId}`)).toMatchObject({ state: 'reading', canTurnOff: false });
     expect(await dayCount(l1)).toBe(2);
   });
 

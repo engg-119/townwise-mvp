@@ -94,6 +94,8 @@ export interface FakeChatApi extends ApiClient {
   refuse: ApiError | null;
   /** The answer to a write, by path: a body, an ApiError to throw, or a promise of either. Unlisted paths get the defaults. */
   respond: Record<string, (body: unknown) => unknown>;
+  /** The answer to a GET, by path, ahead of the defaults (an item card's own GET, D28). */
+  reads: Record<string, () => unknown>;
   turns: LiveTurn[];
   writes: Write[];
   summaryLoads: number;
@@ -140,6 +142,7 @@ export function fakeChatApi(): FakeChatApi {
     panelError: null,
     refuse: null,
     respond: {},
+    reads: {},
     turns: [],
     writes: [],
     summaryLoads: 0,
@@ -151,6 +154,8 @@ export function fakeChatApi(): FakeChatApi {
         const answer = api.respond[path];
         return settle(answer === undefined ? defaultAnswer(path, opts?.body) : answer(opts?.body), schema);
       }
+      const read = api.reads[path];
+      if (read !== undefined) return settle(read(), schema);
       if (path === `${BASE}/chat`) {
         api.summaryLoads += 1;
         if (api.chatError !== null) return Promise.reject(api.chatError);
