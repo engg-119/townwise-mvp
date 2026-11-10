@@ -17,6 +17,7 @@ import {
 } from '../helpers/chat';
 import { fakeAuth } from '../helpers/fakes';
 import { ACCESS, fakePortalApi, meOf, orgOf, viewAsMe } from '../helpers/portal';
+import { itemOf } from '../portal/data/fakes';
 import { serveAbout } from './about-fakes';
 import { daily } from './visuals-fixtures';
 
@@ -228,7 +229,7 @@ test('asks for a name once, above the chat, and the greeting takes it', async ()
 test('an empty conversation is the centered landing: heading, reads line, composer, then chips', async () => {
   renderAt('/locations/l1/agent', fakeChatApi());
   const heading = await screen.findByRole('heading', { level: 2, name: 'Ask TownwiseAI about Main Street Bar' });
-  const reads = screen.getByText('It reads your sales, your notes, Hanover’s town profile, the town calendar and who’s likely in Hanover, and shows you each thing it reads. It suggests notes; you decide what’s saved.');
+  const reads = screen.getByText('It reads your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data, and shows you each thing it reads. It suggests notes; you decide what’s saved.');
   const input = screen.getByLabelText(COMPOSER_LABEL);
   const chips = screen.getByRole('group', { name: 'Suggestions' });
   expect(before(heading, reads)).toBe(true);
@@ -301,7 +302,7 @@ describe('the composer', () => {
     renderAt('/locations/l1/agent', api);
     const input = await screen.findByLabelText(COMPOSER_LABEL);
     expect(input.getAttribute('aria-describedby')).toBe('composer-help');
-    expect(document.getElementById('composer-help')?.textContent).toBe('Leave out guest names. TownwiseAI answers from your sales, your notes, Hanover’s town profile, the town calendar and who’s likely in Hanover.');
+    expect(document.getElementById('composer-help')?.textContent).toBe('Leave out guest names. TownwiseAI answers from your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data.');
     fireEvent.change(input, { target: { value: 'Closed Monday' } });
     fireEvent.keyDown(input, { key: 'Enter', shiftKey: true });
     fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
@@ -790,6 +791,116 @@ test('under view-as every write is disabled in place, the name prompt never show
   expect(api.turns).toHaveLength(0);
   expect(api.writes).toHaveLength(0);
   expect(screen.getAllByText(/^Read-only while viewing as/)).toHaveLength(1);
+});
+
+describe('a proposal to keep text (D28)', () => {
+  const ITEM_ID = 'toolu_item_0001';
+  const PATH = `/api/org/locations/l1/chat/c2/item-proposals/${ITEM_ID}`;
+  const VIEW = { id: ITEM_ID, title: 'Catering list', text: 'Party of 40 on Dec 12', status: 'open', item: null };
+
+  async function proposedItem(api: FakeChatApi): Promise<HTMLElement> {
+    renderAt('/locations/l1/agent', api);
+    fireEvent.change(await screen.findByLabelText(COMPOSER_LABEL), { target: { value: 'Keep this: Party of 40 on Dec 12' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => { expect(api.turns).toHaveLength(1); });
+    await stream(() => {
+      turn(api).emit('conversation', { id: 'c2', title: 'Keep this' });
+      turn(api).emit('tool', { id: ITEM_ID, name: 'propose_data_item', state: 'running', input: { chars: 21 }, result: null });
+      turn(api).emit('tool', { id: ITEM_ID, name: 'propose_data_item', state: 'done', input: { chars: 21 }, result: { shown: true } });
+    });
+    return screen.getByRole('group', { name: 'Proposed for Your data' });
+  }
+
+  test('the item card loads its text, keeps it, and announces Kept on Your data.', async () => {
+    const api = fakeChatApi();
+    api.reads[PATH] = () => ({ proposal: VIEW });
+    api.respond[PATH] = () => ({
+      proposal: { ...VIEW, status: 'saved', item: itemOf('f_kept', { name: 'Catering list.txt', via: 'townwise_ai', state: 'kept', outcome: 'reference' }) },
+    });
+    const card = await proposedItem(api);
+    // Until the turn is stored, the card waits: the text is never streamed, only read from the card's own route.
+    expect(within(card).getByText('The text shows here when this reply finishes.')).toBeTruthy();
+    expect(within(card).queryByRole('button', { name: 'Keep on Your data' })).toBeNull();
+    expect(screen.queryByText(/text to keep on Your data/)).toBeNull();
+    await stream(() => {
+      turn(api).emit('text', { delta: 'I showed it to you as a card.' });
+      turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0 });
+      turn(api).end();
+    });
+    expect(await within(card).findByText('Party of 40 on Dec 12')).toBeTruthy();
+    expect(within(card).getByText('Catering list')).toBeTruthy();
+    expect(within(card).getByRole('region', { name: 'Text of Catering list' }).getAttribute('tabindex')).toBe('0');
+    // A proposal is not something TownwiseAI read.
+    expect(screen.getByText('Based on this conversation only.')).toBeTruthy();
+    // Keep is an outline, so the composer's button stays the page's one primary (D26).
+    expect(style(within(card).getByRole('button', { name: 'Keep on Your data' })).backgroundColor).not.toBe(WHITE);
+    fireEvent.click(within(card).getByRole('button', { name: 'Keep on Your data' }));
+    const kept = await within(card).findByText('Kept on Your data.');
+    await waitFor(() => { expect(document.activeElement?.contains(kept)).toBe(true); });
+    expect(api.writes.filter((write) => write.path === PATH)).toEqual([{ method: 'POST', path: PATH, body: { action: 'save' } }]);
+    expect(within(card).getByRole('link', { name: 'Open Your data' }).getAttribute('href')).toBe('/locations/l1/data');
+  });
+
+  test('Not now folds the card, which can be shown again; a refused Keep says why on the card', async () => {
+    const api = fakeChatApi();
+    api.reads[PATH] = () => ({ proposal: VIEW });
+    let answer: unknown = { proposal: { ...VIEW, status: 'dismissed' } };
+    api.respond[PATH] = () => answer;
+    const card = await proposedItem(api);
+    await stream(() => {
+      turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0 });
+      turn(api).end();
+    });
+    fireEvent.click(await within(card).findByRole('button', { name: 'Not now' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Show the text' }));
+    answer = chatRefusal(409, 'storage_full');
+    const again = screen.getByRole('group', { name: 'Proposed for Your data' });
+    fireEvent.click(within(again).getByRole('button', { name: 'Keep on Your data' }));
+    expect(await within(again).findByText('Your organization’s file storage is full. Delete some originals to make room.')).toBeTruthy();
+    expect(within(again).getByRole('button', { name: 'Keep on Your data' }).getAttribute('aria-disabled')).not.toBe('true');
+  });
+
+  test('a reply that wasn’t saved has nothing to keep, and a call that showed nothing has no card', async () => {
+    const api = fakeChatApi();
+    const card = await proposedItem(api);
+    await stream(() => {
+      turn(api).emit('tool', { id: 'toolu_item_0002', name: 'propose_data_item', state: 'done', input: { chars: 3 }, result: { shown: false } });
+      turn(api).fail(chatRefusal(500, 'internal'));
+    });
+    expect(within(card).getByText('This reply wasn’t saved, so there’s nothing to keep from it. Paste the text on Your data to keep it.')).toBeTruthy();
+    expect(screen.getAllByRole('group', { name: 'Proposed for Your data' })).toHaveLength(1);
+    expect(api.writes.filter((write) => write.path.includes('item-proposals'))).toEqual([]);
+  });
+
+  test('view-as: the card reads, and Keep and Not now are disabled in place, described by the read-only line', async () => {
+    const api = fakeChatApi();
+    api.reads['/api/org/locations/l1/chat/c1/item-proposals/toolu_item_0001'] = () => ({ proposal: { ...VIEW } });
+    // A stored conversation as the redesign reads it (a tree, its path's messages under their nodes).
+    api.conversation = {
+      ...CONVERSATION,
+      messages: [
+        { nodeId: 'u1', role: 'user', text: 'Keep this.', proposals: [], parts: [], at: '2026-11-02T14:59:00.000Z' },
+        {
+          nodeId: 'a1', role: 'assistant', text: '', proposals: [], at: '2026-11-02T15:00:00.000Z',
+          parts: [{ type: 'tool', id: ITEM_ID, name: 'propose_data_item', state: 'done', input: { chars: 21 }, result: { shown: true } }],
+        },
+      ],
+    };
+    renderAt('/locations/l1/agent', api, viewAsMe(ACCESS.member));
+    fireEvent.click(await screen.findByRole('button', { name: 'History' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Earlier chat, Nov 2, 2026' }));
+    const card = await screen.findByRole('group', { name: 'Proposed for Your data' });
+    expect(await within(card).findByText('Party of 40 on Dec 12')).toBeTruthy();
+    // The call is the card, never a step: nothing in the timeline or the Based on line names it.
+    expect(screen.queryByText(/text to keep on Your data/)).toBeNull();
+    expect(screen.getByText('Based on this conversation only.')).toBeTruthy();
+    for (const name of ['Keep on Your data', 'Not now']) {
+      const control = within(card).getByRole('button', { name });
+      expectReadOnly(control);
+      fireEvent.click(control);
+    }
+    expect(api.writes).toHaveLength(0);
+  });
 });
 
 test('nothing goes to browser storage', async () => {

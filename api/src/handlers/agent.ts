@@ -53,10 +53,14 @@ async function currentQuestions(ctx: TownwiseContext, caller: MemberPrincipal, l
     ctx.stores.agentAnswers.list(scope, location.id),
   ]);
   const window = questionWindow(coverage);
-  const days = window === null ? [] : await ctx.stores.salesDays.days(scope, location.id, window);
+  // D28: a turned-off upload's days are left out of `days` and explained by `turnedOff`, so they are never asked about.
+  const [days, turnedOff] = window === null ? [[], []] : await Promise.all([
+    ctx.stores.salesDays.days(scope, location.id, window),
+    ctx.stores.salesDays.disabledDates(scope, location.id, window),
+  ]);
   // A save still in progress is not answered yet: the question stays until its answer is done.
   const answered = answers.filter((row) => row.status === 'done').map((row) => row.questionId);
-  return { questions: questionsFor({ coverage, days, notes, answered }), notes, answers };
+  return { questions: questionsFor({ coverage, days, notes, answered, turnedOff }), notes, answers };
 }
 
 /** GET /api/org/locations/:locationId/agent. */

@@ -43,7 +43,7 @@ interface ToolRow {
   reads?(ctx: ToolContext): string | null;
   /** Its `reads` needs the location's sales: left out of what TownwiseAI can use before any are uploaded. */
   needsSales?: true;
-  /** Not a card: propose_note shows the proposal card, show_visual its visual and suggest_next its next questions instead. */
+  /** Not a card: propose_note shows the proposal card, propose_data_item its item card, show_visual its visual and suggest_next its next questions instead. */
   hidden?: true;
   /** Words for this tool's view fields where the shared VIEW_TERMS would mislabel them. */
   terms?: Readonly<Record<string, string>>;
@@ -263,6 +263,36 @@ const TOOLS: Readonly<Record<string, ToolRow>> = {
     object: () => 'questions to ask next',
     hidden: true,
   },
+  // Your data: list_data_items and read_data_item (api/src/chat/tools/list-data.ts, read-data.ts).
+  list_data_items: {
+    object: () => 'what your team added',
+    detail: (result) => {
+      const items = count(result, 'count');
+      if (items === null) return null;
+      return items === 0 ? 'Nothing added yet' : `${plural(items, 'item', 'items')}, ${formatCount(count(result, 'turnedOff') ?? 0)} turned off`;
+    },
+    terms: { count: 'Items', turnedOff: 'Turned off' },
+    reads: () => 'what your team added on Your data',
+  },
+  read_data_item: {
+    object: () => 'an item your team added',
+    detail: (result) => {
+      if (result.available === false) return 'Couldn’t read it';
+      const chars = count(result, 'chars');
+      if (chars === null) return null;
+      const read = plural(chars, 'character', 'characters');
+      return result.truncated === true ? `The start of it, ${read}` : read;
+    },
+    // A refused read (turned off, not a text item, not found) read nothing, and the line says so.
+    basedOn: (_input, _ctx, result) => (result?.available === false ? 'an item your team added (couldn’t read it)' : 'an item your team added'),
+    terms: { available: 'Read', chars: 'Characters', truncated: 'Cut short' },
+  },
+  // Your data: propose_data_item (api/src/chat/tools/propose-data.ts) shows as its item card (ui/ItemProposalCard.tsx),
+  // not a row: a proposal is not something TownwiseAI read, so it is not in the Based on line either.
+  propose_data_item: {
+    object: () => 'text to keep on Your data',
+    hidden: true,
+  },
 };
 
 const GENERIC = { running: 'Looking something up', done: 'Looked something up', error: 'Couldn’t look something up' } as const;
@@ -271,7 +301,7 @@ export function isKnownTool(name: string): boolean {
   return Object.hasOwn(TOOLS, name);
 }
 
-/** propose_note, show_visual and suggest_next show as what they make (a proposal card, a visual, next questions), not a tool card. */
+/** propose_note, propose_data_item, show_visual and suggest_next show as what they make (a proposal card, an item card, a visual, next questions), not a tool card. */
 export function isHiddenTool(name: string): boolean {
   return TOOLS[name]?.hidden === true;
 }

@@ -3,10 +3,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, type ApiClient } from '../api/client';
 import { describeError } from '../ui';
 import {
-  addNote as postNote, deleteConversation as removeConversation, dismissProposal, loadChat, loadConversation, rateReply, renameConversation,
-  saveProposal, sendTurn, setActiveVersion,
+  actOnItemProposal, addNote as postNote, deleteConversation as removeConversation, dismissProposal, loadChat, loadConversation,
+  loadItemProposal, rateReply, renameConversation, saveProposal, sendTurn, setActiveVersion,
   type Budget, type ChatEvent, type ChatSummary, type ConversationLoad, type ConversationSummary, type Feedback, type FeedbackReason,
-  type NoteProposal, type ProposalResult, type StoredMessage, type TurnRequest,
+  type ItemProposal, type NoteProposal, type ProposalResult, type StoredMessage, type TurnRequest,
 } from './api';
 import { draftKey, readDraft, writeDraft } from './drafts';
 import { isHiddenTool, type ToolStep } from './tools';
@@ -19,7 +19,9 @@ import type { Visual } from './visuals/schema';
 //
 // A proposal's actions go to the proposal route, which finds it only once its turn is stored (`done`, not a
 // refusal). Until then a live card's actions wait; a card from a turn the server never kept offers the notes
-// route instead (tuning-chat.md section 2).
+// route instead (tuning-chat.md section 2). A proposal to keep text (propose_data_item, D28) is an item card: its
+// title and text are never streamed, so the card reads them from its own route once the turn is stored, and a turn
+// the server never kept has nothing to keep.
 //
 // A conversation is a tree (tuning-chat.md 2): the page shows one path of it, and `leafId` is that path's last saved
 // node, where the next message goes. An edit sends the edited message again under its parent; a regenerate asks
@@ -42,6 +44,19 @@ export interface ProposalCard {
   error: string | null;
 }
 
+/** A propose_data_item call the owner was shown (its result view says `shown`). */
+export interface ItemCard {
+  /** The propose_data_item call's id. */
+  id: string;
+  /** The conversation it is in; null only if the stream never named one (nothing is kept then). */
+  conversationId: string | null;
+  /** As a note card's: `pending` until its turn ends, then `kept` (its route has it) or `lost`. */
+  stored: 'pending' | 'kept' | 'lost';
+}
+
+/** The tool whose calls show as item cards. */
+export const ITEM_TOOL = 'propose_data_item';
+
 export type MessagePart =
   /** The reply's thinking summary, as it streamed (or as it was stored): shown in the timeline and under "Worked for". */
   | { type: 'thinking'; key: string; text: string }
@@ -49,7 +64,8 @@ export type MessagePart =
   | { type: 'tools'; key: string; steps: ToolStep[] }
   | { type: 'proposal'; key: string; card: ProposalCard }
   /** A chart, table or totals Townwise drew from its own data (show_visual); `id` is the call's id. */
-  | { type: 'visual'; key: string; id: string; visual: Visual };
+  | { type: 'visual'; key: string; id: string; visual: Visual }
+  | { type: 'item'; key: string; card: ItemCard };
 
 export interface ChatMessage {
   key: string;
@@ -244,8 +260,18 @@ function withLive(state: TuningChatState, update: (message: ChatMessage) => Chat
 function settleCards(message: ChatMessage, stored: 'kept' | 'lost'): ChatMessage {
   return {
     ...message,
-    parts: message.parts.map((part) => (part.type === 'proposal' && part.card.stored === 'pending' ? { ...part, card: { ...part.card, stored } } : part)),
+    parts: message.parts.map((part) => {
+      if (part.type === 'proposal' && part.card.stored === 'pending') return { ...part, card: { ...part.card, stored } };
+      if (part.type === 'item' && part.card.stored === 'pending') return { ...part, card: { ...part.card, stored } };
+      return part;
+    }),
   };
+}
+
+/** A shown propose_data_item call: its item card, once. */
+function withItem(message: ChatMessage, card: ItemCard, key: string): ChatMessage {
+  if (message.parts.some((part) => part.type === 'item' && part.card.id === card.id)) return message;
+  return { ...message, parts: [...message.parts, { type: 'item', key, card }] };
 }
 
 function endLive(state: TuningChatState, end: Pick<ChatMessage, 'state' | 'note'>, now: number): ChatMessage[] {
@@ -512,6 +538,12 @@ function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: s
     case 'thinking':
       return { ...state, messages: withLive(state, (message) => withThinking(message, event.delta, key)) };
     case 'tool':
+      // propose_data_item's calls show as their item card once done, if the owner was shown one.
+      if (event.name === ITEM_TOOL) {
+        return event.state === 'done' && event.result?.shown === true
+          ? { ...state, messages: withLive(state, (message) => withItem(message, { id: event.id, conversationId: state.conversationId, stored: 'pending' }, key)) }
+          : state;
+      }
       // propose_note, show_visual and suggest_next show as their card, visual and next questions.
       if (isHiddenTool(event.name)) return state;
       return { ...state, messages: withLive(state, (message) => withTool(message, event, key)) };
@@ -578,6 +610,12 @@ export interface TuningChat {
   rate: (replyKey: string, rating: 'up' | 'down' | null, reason?: FeedbackReason | null) => void;
   /** Try again under a failed or stopped reply: sends its message again as a new turn. */
   retry: (replyKey: string) => void;
+  /** An item card's own GET; rejects with the API's error. Stable across renders. */
+  loadItem: (card: ItemCard) => Promise<ItemProposal>;
+  /** Keep on Your data; rejects with the API's error. */
+  keepItem: (card: ItemCard) => Promise<ItemProposal>;
+  /** Not now; rejects with the API's error. */
+  setItemAside: (card: ItemCard) => Promise<ItemProposal>;
   /** Reads the page again after it failed to load. */
   reload: () => void;
 }
@@ -597,6 +635,12 @@ export function canSend(state: TuningChatState): boolean {
 
 function canStart(state: TuningChatState): boolean {
   return state.status === 'ready' && state.enabled && state.budget?.exhausted !== true && !state.streaming && !state.conversationLoading && !state.switching;
+}
+
+/** An item card's route ids; rejects for a card no conversation holds (nothing was kept for it). */
+function itemIds(card: ItemCard): { conversationId: string; proposalId: string } {
+  if (card.conversationId === null) throw new Error('This card is in no saved conversation');
+  return { conversationId: card.conversationId, proposalId: card.id };
 }
 
 function cardOf(state: TuningChatState, cardId: string): ProposalCard | undefined {
@@ -781,7 +825,7 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     dispatch({ type: 'open', id, draft: draftFor(id) });
     void loadConversation(api, locationId, id).then(
       (load) => {
-        if (token === opening.current) dispatch({ type: 'opened', id, shown: shownOf(load) });
+        if (token === opening.current) dispatch({ type: 'opened', id, shown: shownOf(load, id) });
       },
       (error: unknown) => {
         if (token === opening.current) dispatch({ type: 'openFailed', id, error: describeError(error) });
@@ -789,14 +833,14 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     );
   }
 
-  function shownOf(load: ConversationLoad): ShownPath {
+  function shownOf(load: ConversationLoad, conversationId: string): ShownPath {
     return {
-      messages: load.messages.map((stored, index) => toMessage(stored, load.tree, load.messages[index - 1])),
+      messages: load.messages.map((stored, index) => toMessage(stored, load.tree, load.messages[index - 1], conversationId)),
       tree: load.tree, leafId: load.activeLeafId,
     };
   }
 
-  function toMessage(stored: StoredMessage, tree: readonly TreeNode[], asked: StoredMessage | undefined): ChatMessage {
+  function toMessage(stored: StoredMessage, tree: readonly TreeNode[], asked: StoredMessage | undefined, conversationId: string): ChatMessage {
     const parentId = stored.nodeId === null ? null : tree.find((node) => node.id === stored.nodeId)?.parentId ?? null;
     const message: ChatMessage = { ...blankMessage(nextKey(), stored.role), nodeId: stored.nodeId, parentId, feedback: stored.feedback, next: stored.next };
     if (stored.role === 'assistant') {
@@ -818,6 +862,13 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
       else if (part.type === 'text') message.parts.push({ type: 'text', key: nextKey(), text: part.text });
       else if (part.type === 'visual') message.parts.push({ type: 'visual', key: nextKey(), id: part.id, visual: part.visual });
       else if (part.type === 'tool') {
+        // As while it streamed: a propose_data_item call the owner was shown is its item card.
+        if (part.name === ITEM_TOOL) {
+          if (part.state === 'done' && part.result?.shown === true) {
+            message.parts.push({ type: 'item', key: nextKey(), card: { id: part.id, conversationId, stored: 'kept' } });
+          }
+          continue;
+        }
         // As while it streamed: a hidden tool's call shows nothing (a propose_note call that got an error, say).
         if (isHiddenTool(part.name)) continue;
         const step: ToolStep = { id: part.id, name: part.name, state: part.state, input: part.input, result: part.result };
@@ -864,6 +915,11 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
       acting.current.delete(cardId);
     }
   }
+
+  // An item card's calls, in the conversation the card is in.
+  const loadItem = useCallback((card: ItemCard) => loadItemProposal(api, locationId, itemIds(card)), [api, locationId]);
+  const keepItem = useCallback((card: ItemCard) => actOnItemProposal(api, locationId, itemIds(card), 'save'), [api, locationId]);
+  const setItemAside = useCallback((card: ItemCard) => actOnItemProposal(api, locationId, itemIds(card), 'dismiss'), [api, locationId]);
 
   function dismiss(cardId: string): void {
     const card = cardOf(latest.current, cardId);
@@ -912,7 +968,7 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     // Under view-as the version is only read (`?node=`); otherwise it is stored as the one shown.
     const read = readOnly ? loadConversation(api, locationId, conversationId, sibling) : setActiveVersion(api, locationId, conversationId, sibling);
     void read.then(
-      (load) => { if (token === opening.current) dispatch({ type: 'switched', id: conversationId, shown: shownOf(load) }); },
+      (load) => { if (token === opening.current) dispatch({ type: 'switched', id: conversationId, shown: shownOf(load, conversationId) }); },
       () => { if (token === opening.current) dispatch({ type: 'switchFailed', id: conversationId }); },
     );
   }
@@ -1005,5 +1061,8 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
       dispatch({ type: 'load' });
       setGeneration((value) => value + 1);
     },
+    loadItem,
+    keepItem,
+    setItemAside,
   };
 }

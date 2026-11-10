@@ -178,6 +178,7 @@ describe('a plain answer', () => {
     expect(params?.tools?.map((tool) => ('name' in tool ? tool.name : null))).toEqual([
       'get_location_overview', 'get_sales_days', 'list_notes', 'get_town_profile', 'propose_note',
       'get_town_calendar', 'get_people_in_town', 'get_forecast', 'get_day', 'show_visual', 'suggest_next',
+      'list_data_items', 'read_data_item', 'propose_data_item',
     ]);
     expect(params?.tools?.every((tool) => 'eager_input_streaming' in tool && tool.eager_input_streaming === true)).toBe(true);
 

@@ -7,7 +7,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { TOWNWISE_ROUTES, type TownwiseRoute } from '../src/access/routes.ts';
 import { createMemoryFileBlobs, type MemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import {
-  addGrant, addInvite, addLocation, addNote, addOpenAsAdminGrant, addRequest, addSalesDay, addSeat, addUpload, createOrg,
+  addConversation, addGrant, addInvite, addLocation, addNote, addOpenAsAdminGrant, addRequest, addSalesDay, addSeat, addUpload, createOrg,
 } from './helpers/fixtures.ts';
 import { seedReadFile } from './helpers/files.ts';
 import { PROBE_ROUTES } from './helpers/probe.ts';
@@ -99,7 +99,18 @@ describe('GET is side-effect free (7.3)', () => {
     // A ZIP's, so its entries route answers too (with no entries).
     await server.connection.collection('tw_files').updateOne({ _id: new Types.ObjectId(fileId) }, { $set: { kind: 'zip' } });
     const importId = String((await server.connection.collection('tw_files').findOne({}, { sort: { _id: -1 } }))?.importId);
-    const ids: Record<string, string> = { orgId, locationId, townId: 'hanover-nh', fileId, importId };
+    // The org admin's conversation, in which TownwiseAI proposed keeping text (D28), so its card's GET answers too.
+    const conversationId = await addConversation(server, { orgId, locationId, userId: admin.userId, text: 'Keep our catering list' });
+    const proposalId = 'toolu_item0001';
+    const proposed = [
+      { role: 'assistant', content: [{ type: 'tool_use', id: proposalId, name: 'propose_data_item', input: { title: 'Catering list', text: 'Party of 40' } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: proposalId, content: 'Shown to the owner as a proposal. They decide whether to keep it.' }] },
+    ];
+    await server.connection.collection('tw_chat_conversations').updateOne(
+      { _id: new Types.ObjectId(conversationId) },
+      { $push: { messages: { $each: proposed.map((param) => ({ at: server.clock.now(), param: JSON.stringify(param) })) } } } as Record<string, unknown>,
+    );
+    const ids: Record<string, string> = { orgId, locationId, townId: 'hanover-nh', fileId, importId, conversationId, proposalId };
     const query: Record<string, string> = {
       'admin.people.lookup': `?q=${encodeURIComponent(memberEmail)}`,
       'org.sales.days': '?from=2026-01-01&to=2026-05-31',

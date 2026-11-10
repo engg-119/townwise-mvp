@@ -11,6 +11,7 @@ import { stepsOf, type ChatMessage, type TuningChat } from '../useTuningChat';
 import { VisualView } from '../visuals/Visual';
 import { focusLost, Hidden } from './controls';
 import { described } from './described';
+import { ItemProposalCard } from './ItemProposalCard';
 import { ProposalCard } from './ProposalCard';
 import { ReplyActions } from './ReplyActions';
 import { useVersionNav, VersionNav } from './VersionNav';
@@ -18,7 +19,7 @@ import { isProcessPart, wholeSeconds, Worked, Working } from './Worked';
 
 // One of TownwiseAI's replies (owner decisions 3 to 5): no label box, only a hidden "TownwiseAI said", then its parts
 // in the order they streamed: Markdown text (with a static caret at its end while text is what streams), visuals
-// Townwise drew, and proposal cards. Its thinking summary and tool calls are the timeline at its top: "Working for
+// Townwise drew, and proposal cards (a note's, or one to keep text on Your data, D28). Its thinking summary and tool calls are the timeline at its top: "Working for
 // {n}s" with the timeline under it while it streams ("Thinking…" before anything arrives), then a collapsed "Worked
 // for {n}s" that opens to the same timeline (Worked.tsx). Finished, it has its actions, its version navigator when it has siblings, the Based on line
 // built from its tool calls (never written by the model) and why it ended early, if it did. One that failed or was
@@ -92,6 +93,9 @@ export function ReplyView(props: {
         if (part.type === 'text') return <Markdown key={part.key} source={part.text} caret={part.key === caretOn} />;
         if (part.type === 'thinking' || part.type === 'tools') return null;
         if (part.type === 'visual') return <VisualView key={part.key} visual={part.visual} />;
+        if (part.type === 'item') {
+          return <ItemProposalCard key={part.key} card={part.card} locationId={props.locationId} actions={chat} readOnlyId={props.readOnlyId} />;
+        }
         return <ProposalCard key={part.key} card={part.card} locationId={props.locationId} actions={chat} readOnlyId={props.readOnlyId} />;
       })}
       {complete && message.parts.length > 0 ? (

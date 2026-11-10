@@ -11,11 +11,14 @@ import type { LocationRecord } from '../../stores/locations.ts';
 import type { NoteContent } from '../../stores/notes.ts';
 import { dayTool } from './day.ts';
 import { forecastTool } from './forecast.ts';
+import { listDataTool } from './list-data.ts';
 import { suggestNextTool } from './next.ts';
 import { notesTool } from './notes.ts';
 import { overviewTool } from './overview.ts';
 import { peopleInTownTool } from './people-in-town.ts';
+import { proposeDataTool } from './propose-data.ts';
 import { proposeNoteTool } from './propose-note.ts';
+import { readDataTool } from './read-data.ts';
 import { salesDaysTool } from './sales-days.ts';
 import { townCalendarTool } from './town-calendar.ts';
 import { townProfileTool } from './town-profile.ts';
@@ -65,6 +68,11 @@ export interface ChatTool<I> {
   inputView(input: I): ToolView | null;
   /** Recomputed from the result the model read, so a stored conversation shows the same card. Null when unreadable. */
   resultView(content: string): ToolView | null;
+  /**
+   * What the saved conversation keeps of a result that did not fail, when not the result itself: read_data_item keeps a
+   * stub, so later turns never resend an item's text (turn.ts, savedTurn). `resultView` reads the stub too.
+   */
+  saved?(content: string): string;
 }
 
 export interface ToolOutcome {
@@ -96,6 +104,11 @@ export const TOOL_REGISTRY: readonly ChatTool<unknown>[] = [
   // Chat redesign A4: visuals drawn from Townwise's data, and the next questions (a reply's last step).
   showVisualTool,
   suggestNextTool,
+  // Your data: what the team added, and the text of a reference item.
+  listDataTool,
+  readDataTool,
+  // Your data: a card proposing to keep text the owner gave.
+  proposeDataTool,
 ];
 
 /** The tool definitions sent to the model, in registry order. */
@@ -130,6 +143,14 @@ export function inputViewOf(name: string, raw: unknown, today: string): ToolView
   const tool = toolNamed(name);
   const input = tool?.parse(raw, today) ?? null;
   return tool === undefined || input === null ? null : tool.inputView(input);
+}
+
+/** What the saved conversation keeps of one result: the tool's stub of a result that did not fail, else the same block. */
+export function savedResultOf(name: string, result: BetaToolResultBlockParam): BetaToolResultBlockParam {
+  const tool = toolNamed(name);
+  if (tool?.saved === undefined || result.is_error === true || typeof result.content !== 'string') return result;
+  const content = tool.saved(result.content);
+  return content === result.content ? result : { ...result, content };
 }
 
 /** The result view of a call that did not fail; null for an unknown tool, an error result or an unreadable one. */

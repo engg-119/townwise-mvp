@@ -13,12 +13,14 @@ import { answerQuestion, getAgent } from '../handlers/agent.ts';
 import { getLocationCalendar } from '../handlers/calendar.ts';
 import { deleteConversation, getChat, getConversation, postTurn, renameConversation, showVersion } from '../handlers/chat.ts';
 import { rateReply } from '../handlers/chat-feedback.ts';
+import { actOnItemProposal, getItemProposal } from '../handlers/chat-item-proposals.ts';
 import { actOnProposal } from '../handlers/chat-proposals.ts';
+import { listData, removeDataItem, updateDataItem } from '../handlers/data.ts';
 import { deleteOrg, deletePerson, purgeOriginals } from '../handlers/deletion.ts';
 import { getEstimatesAbout, getForecast, getPeopleInTown } from '../handlers/estimates.ts';
 import { deleteForecastRun, importForecastRun, listForecastRuns, publishForecastRun, withdrawForecastRun } from '../handlers/forecast-runs.ts';
 import {
-  answerImport, completeFile, createFile, currentImport, deleteFile, deleteLocationOriginals, deleteRaw, downloadClean, downloadRaw, getFile, getImport,
+  addTextItem, answerImport, completeFile, createFile, currentImport, deleteFile, deleteLocationOriginals, deleteRaw, downloadClean, downloadRaw, getFile, getImport,
   listEntries, listFiles, putChunk, startImport,
 } from '../handlers/files.ts';
 import { createLocation, deleteLocation, getOwnOrg, updateLocation } from '../handlers/locations.ts';
@@ -46,9 +48,9 @@ export interface TownwiseRoute {
   readonly policy: Policy;
   /**
    * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer, a conversation's rename and a version switch;
-   * '2kb' on the Places and files JSON routes; '8kb' on a TownwiseAI proposal; '256kb' only on the upload routes (the
-   * member one and, D23, staff setup's) and (U13B) the staff forecast import; 'stream' only on the chunk route, whose
-   * handler reads the raw body itself after the policy has passed.
+   * '2kb' on the Places, files and (D28) Your data JSON routes; '8kb' on a TownwiseAI proposal; '256kb' only on the
+   * upload routes (the member one and, D23, staff setup's) and (U13B) the staff forecast import; 'stream' only on the
+   * chunk route, whose handler reads the raw body itself after the policy has passed.
    */
   readonly bodyLimit: 'none' | '1kb' | '2kb' | '8kb' | '32kb' | '256kb' | 'stream';
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
@@ -197,6 +199,20 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     bodyLimit: 'none', openAsAdmin: true, handler: deleteFile,
   },
   {
+    id: 'org.data.text', method: 'POST', path: '/org/locations/:locationId/data/text', policy: 'member', bodyLimit: '32kb',
+    limiter: 'files', handler: addTextItem,
+  },
+  // D28, Your data: the list (a location's, or the organization's), and turning an item off or on, or deleting it.
+  { id: 'org.data.list', method: 'GET', path: '/org/data', policy: 'member', bodyLimit: 'none', handler: listData },
+  {
+    id: 'org.data.update', method: 'PATCH', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: '2kb',
+    handler: updateDataItem,
+  },
+  {
+    id: 'org.data.remove', method: 'DELETE', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: 'none',
+    handler: removeDataItem,
+  },
+  {
     id: 'org.originals.remove', method: 'DELETE', path: '/org/locations/:locationId/originals', policy: 'org_admin',
     bodyLimit: 'none', openAsAdmin: true, handler: deleteLocationOriginals,
   },
@@ -250,6 +266,17 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.chat.feedback', method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/feedback/:nodeId',
     policy: 'member', bodyLimit: '1kb', openAsAdmin: true, handler: rateReply,
+  },
+  // D28 (TownwiseAI): a card proposing to keep pasted text on Your data, and keeping it or setting it aside.
+  {
+    id: 'org.chat.item_proposal.get', method: 'GET',
+    path: '/org/locations/:locationId/chat/:conversationId/item-proposals/:proposalId', policy: 'member', bodyLimit: 'none',
+    handler: getItemProposal,
+  },
+  {
+    id: 'org.chat.item_proposal', method: 'POST',
+    path: '/org/locations/:locationId/chat/:conversationId/item-proposals/:proposalId', policy: 'member', bodyLimit: '2kb',
+    handler: actOnItemProposal,
   },
   // U9 (TownwiseAI): the side panel's questions and activity, and answering a question.
   {

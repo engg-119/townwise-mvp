@@ -166,6 +166,22 @@ describe('deleting originals', () => {
     const event = (await auditEvents(server)).find((e) => e.action === 'files.raw_deleted_all' && String(e.orgId) === orgId);
     expect(event?.details).toEqual({ locationId, count: 1 });
   });
+
+  it('leaves every item kept for reference whole (D28): its original is the item', async () => {
+    const { orgId, admin, member } = await team('Reference Grill');
+    const locationId = await addLocation(server, { orgId, name: 'Main' });
+    const sales = await seedReadFile(server, blobs, { orgId, locationId, uploadedBy: member.userId, name: 'sales.csv', raw: Buffer.from('r'), clean: 'date\r\n' });
+    const item = await seedReadFile(server, blobs, { orgId, locationId, uploadedBy: member.userId, name: 'Catering.txt', raw: Buffer.from('kept'), clean: '' });
+    await server.connection.collection('tw_files').updateOne({ _id: oid(item) }, {
+      $set: { purpose: 'reference', importId: null, uploadId: null, status: 'kept', outcome: 'reference', result: null, report: null, cleanBytes: null },
+    });
+    const res = await call(server, `${base(locationId)}/originals`, { session: admin, method: 'DELETE' });
+    expect(await res.json()).toEqual({ deletedOriginals: 1, skippedBusy: 0 });
+    const scope = { orgId } as unknown as OrgScope;
+    expect(blobs.raw.has(rawBlobName(scope, { locationId, fileId: sales }))).toBe(false);
+    expect(blobs.raw.has(rawBlobName(scope, { locationId, fileId: item }))).toBe(true);
+    expect(await server.connection.collection('tw_files').findOne({ _id: oid(item) })).toMatchObject({ name: 'Catering.txt', rawDeletedAt: null });
+  });
 });
 
 describe('the staff purge of originals', () => {

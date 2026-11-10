@@ -184,12 +184,23 @@ describe('route table', () => {
     expect(table('org.files.clean')).toEqual({ method: 'GET', path: `${base}/files/:fileId/clean`, policy: 'member', bodyLimit: 'none', limiter: 'downloads' });
     expect(table('org.files.remove_raw')).toEqual({ method: 'DELETE', path: `${base}/files/:fileId/raw`, policy: 'member', bodyLimit: 'none' });
     expect(table('org.files.remove')).toEqual({ method: 'DELETE', path: `${base}/files/:fileId`, policy: 'member', bodyLimit: 'none' });
+    expect(table('org.data.text')).toEqual({ method: 'POST', path: `${base}/data/text`, policy: 'member', bodyLimit: '32kb', limiter: 'files' });
     expect(table('org.imports.current')).toEqual({ method: 'GET', path: `${base}/imports/current`, policy: 'member', bodyLimit: 'none' });
     expect(table('org.imports.get')).toEqual({ method: 'GET', path: `${base}/imports/:importId`, policy: 'member', bodyLimit: 'none' });
     expect(table('org.imports.start')).toEqual({ method: 'POST', path: `${base}/imports/:importId/start`, policy: 'member', bodyLimit: '2kb' });
     expect(table('org.imports.answer')).toEqual({ method: 'POST', path: `${base}/imports/:importId/answer`, policy: 'member', bodyLimit: '2kb' });
     const ids = TOWNWISE_ROUTES.map((candidate) => candidate.id);
     expect(ids.indexOf('org.imports.current')).toBeLessThan(ids.indexOf('org.imports.get'));
+  });
+
+  it('D28: Your data is a member GET of the organization, and a member PATCH and DELETE of one item, with no route limiter', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => ['org.data.list', 'org.data.update', 'org.data.remove'].includes(r.id))
+      .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));
+    expect(rows).toEqual([
+      { id: 'org.data.list', method: 'GET', path: '/org/data', policy: 'member', bodyLimit: 'none', limiter: undefined },
+      { id: 'org.data.update', method: 'PATCH', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: '2kb', limiter: undefined },
+      { id: 'org.data.remove', method: 'DELETE', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: 'none', limiter: undefined },
+    ]);
   });
 
   it('saving or setting aside a TownwiseAI proposal is a member POST with an 8kb body and no route limiter', () => {
@@ -230,6 +241,16 @@ describe('route table', () => {
     expect(feedback?.limiter).toBeUndefined();
     const ids = TOWNWISE_ROUTES.map((entry) => entry.id);
     expect(ids.indexOf('org.chat.feedback')).toBe(ids.indexOf('org.chat.proposal') + 1);
+  });
+
+  it('D28: a proposal to keep text is a member GET and a member POST with a 2kb body, with no route limiter', () => {
+    const path = '/org/locations/:locationId/chat/:conversationId/item-proposals/:proposalId';
+    const rows = TOWNWISE_ROUTES.filter((r) => ['org.chat.item_proposal.get', 'org.chat.item_proposal'].includes(r.id))
+      .map(({ id, method, path: at, policy, bodyLimit, limiter }) => ({ id, method, path: at, policy, bodyLimit, limiter }));
+    expect(rows).toEqual([
+      { id: 'org.chat.item_proposal.get', method: 'GET', path, policy: 'member', bodyLimit: 'none', limiter: undefined },
+      { id: 'org.chat.item_proposal', method: 'POST', path, policy: 'member', bodyLimit: '2kb', limiter: undefined },
+    ]);
   });
 
   // U9, TownwiseAI's side panel.

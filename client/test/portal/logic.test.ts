@@ -16,7 +16,7 @@ const ALL: [string, Access][] = Object.entries(ACCESS);
 
 const GATE = ['/request-access', '/waiting', '/no-access', '/joining', '/staff/sign-in-again'];
 const MEMBER = [
-  '/dashboard', '/settings', '/locations/l1', '/locations/l1/analytics', '/locations/l1/sales', '/locations/l1/sales/upload',
+  '/dashboard', '/settings', '/locations/l1', '/locations/l1/analytics', '/locations/l1/sales', '/locations/l1/sales/upload', '/locations/l1/data',
   '/locations/l1/notes', '/locations/l1/town', '/locations/l1/agent', '/locations/l1/chat',
 ];
 const ADMIN_ONLY = ['/team', '/locations/new', '/locations/l1/settings'];
@@ -89,7 +89,7 @@ describe('navigation per role (spec 15.3)', () => {
     expect(rows(clientNav('member', '/locations/l1', 'l1'))).toEqual([
       ['Home', '/locations/l1', 'page', false], ['Analytics', '/locations/l1/analytics', null, false],
       ['TownwiseAI', '/locations/l1/agent', null, false], ['Notes', '/locations/l1/notes', null, false],
-      ['Town', '/locations/l1/town', null, false], ['Upload', '/locations/l1/sales/upload', null, false],
+      ['Town', '/locations/l1/town', null, false], ['Your data', '/locations/l1/data', null, false],
       ['Settings', '/settings', null, true],
     ]);
   });
@@ -110,12 +110,13 @@ describe('navigation per role (spec 15.3)', () => {
     expect(clientNav('org_admin', '/dashboard', null).map((item) => item.label)).toEqual(['Team', 'Settings']);
   });
 
-  test('current: each section on its own page; Analytics also on Sales data, which lives under it; Upload alone on upload', () => {
+  test('current: each section on its own page; Analytics also on Sales data, which lives under it; Your data on Upload', () => {
     const current = (path: string): [string, string | null][] =>
       clientNav('org_admin', path, 'l1').filter((item) => item.current !== null).map((item) => [item.label, item.current]);
     expect(current('/locations/l1/analytics')).toEqual([['Analytics', 'page']]);
     expect(current('/locations/l1/sales')).toEqual([['Analytics', 'true']]);
-    expect(current('/locations/l1/sales/upload')).toEqual([['Upload', 'page']]);
+    expect(current('/locations/l1/sales/upload')).toEqual([['Your data', 'true']]);
+    expect(current('/locations/l1/data')).toEqual([['Your data', 'page']]);
     expect(current('/locations/l1/agent')).toEqual([['TownwiseAI', 'page']]);
     expect(current('/locations/l1/notes/')).toEqual([['Notes', 'page']]);
     expect(current('/locations/l1/town')).toEqual([['Town', 'page']]);
@@ -156,6 +157,7 @@ describe('navigation per role (spec 15.3)', () => {
       ['/locations/l1/analytics', 'analytics', 'Analytics'],
       ['/locations/l1/sales', 'sales', 'Sales data'],
       ['/locations/l1/sales/upload', 'upload', 'Upload'],
+      ['/locations/l1/data', 'data', 'Your data'],
       ['/locations/l1/notes', 'notes', 'Notes'],
       ['/locations/l1/town', 'town', 'Town'],
       ['/locations/l1/agent', 'agent', 'TownwiseAI'],

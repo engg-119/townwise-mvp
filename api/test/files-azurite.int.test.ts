@@ -75,6 +75,15 @@ describe('Azure blob storage (Azurite)', () => {
     await expect(blobs.openRaw(scope, ref)).rejects.toBeInstanceOf(BlobMissingError);
   });
 
+  it('writes an original in one put, with its content type, and deletes it', async () => {
+    const whole = { locationId: ref.locationId, fileId: '000000000000000000000150' };
+    await blobs.writeRaw(scope, whole, Buffer.from('Café ✓'), 'text/plain; charset=utf-8');
+    expect((await bytesOf(await blobs.openRaw(scope, whole))).toString('utf8')).toBe('Café ✓');
+    expect((await bytesOf(await blobs.openRaw(scope, whole, { offset: 0, count: 3 }))).toString()).toBe('Caf');
+    await blobs.deleteRaw(scope, whole);
+    await expect(blobs.openRaw(scope, whole)).rejects.toBeInstanceOf(BlobMissingError);
+  });
+
   it('discards an unfinished upload: its staged chunks are gone and nothing is left behind', async () => {
     const other = { locationId: ref.locationId, fileId: '000000000000000000000200' };
     const signal = new AbortController().signal;

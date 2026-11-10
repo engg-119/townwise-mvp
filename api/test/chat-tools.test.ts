@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { TownwiseContext } from '../src/app.ts';
 import type { OrgScope } from '../src/access/policy.ts';
 import { SYSTEM_PROMPT } from '../src/chat/prompt.ts';
+import { TEXT_ITEM_MAX_CHARS, TEXT_ITEM_TITLE_MAX } from '../src/files/items.ts';
 import { townProfileOf } from '../src/handlers/towns.ts';
 import { inputViewOf, resultViewOf, TOOL_REGISTRY, TOOLS, toolNamed, type ToolContext, type ToolView } from '../src/chat/tools/registry.ts';
 import type { NoteRecord, NoteStore } from '../src/stores/notes.ts';
@@ -27,6 +28,8 @@ const FROZEN_NAMES = [
   'get_day',
   // Chat redesign A4: visuals and next questions.
   'show_visual', 'suggest_next',
+  // Your data.
+  'list_data_items', 'read_data_item', 'propose_data_item',
 ];
 
 describe('the tool registry', () => {
@@ -164,8 +167,9 @@ describe('get_day', () => {
   function context(opts: { days?: SalesDayWithUpload[]; notes?: NoteRecord[]; uploads?: UploadRecord[]; townId?: Town['townId'] } = {}) {
     const byIds: string[][] = [];
     const upload: UploadRecord = {
-      id: UPLOAD_ID, uploadedBy: SENTINEL_USER, uploadedAt: new Date('2026-11-23T03:30:00Z'), status: 'applied', dayCount: 7, inserted: 7,
-      replaced: 0, kept: 0, firstDate: '2026-11-16', lastDate: '2026-11-22', hasGuests: true, hasNetSales: true, byStaff: false,
+      id: UPLOAD_ID, locationId: '000000000000000000000001', uploadedBy: SENTINEL_USER, uploadedAt: new Date('2026-11-23T03:30:00Z'),
+      status: 'applied', dayCount: 7, inserted: 7, replaced: 0, kept: 0, firstDate: '2026-11-16', lastDate: '2026-11-22', hasGuests: true,
+      hasNetSales: true, byStaff: false, disabledAt: null, disabledBy: null,
     };
     const stores = {
       salesDays: { history: () => Promise.resolve(opts.days ?? []) } as unknown as SalesDayStore,
@@ -269,5 +273,51 @@ describe('get_day', () => {
 
   it('is named in the system prompt, with which kind each of its figures is', () => {
     expect(SYSTEM_PROMPT).toContain('When the owner asks about one day, call get_day: it gives that day\'s sales, whether it was closed, the notes and town calendar entries that cover it, and when its data was uploaded. Its sales are the owner\'s own history; its calendar entries are public town data.');
+  });
+});
+
+// Your data: propose_data_item shows the owner a card proposing to keep text; it never writes.
+describe('propose_data_item', () => {
+  const TODAY = '2026-11-05';
+  const tool = toolNamed('propose_data_item');
+  const tcWith = (on: boolean): ToolContext => ({ ctx: { items: { on } } } as unknown as ToolContext);
+
+  it('shows only the text’s length and whether a card was shown, and refuses a title over 120 characters, an empty text or another key', () => {
+    expect(inputViewOf('propose_data_item', { title: 'a', text: 'abc' }, TODAY)).toEqual({ chars: 3 });
+    expect(resultViewOf('propose_data_item', { type: 'tool_result', tool_use_id: 't1', content: 'Shown to the owner as a proposal. They decide whether to keep it.' })).toEqual({ shown: true });
+    const off = JSON.stringify({ available: false, reason: 'Townwise can’t keep items yet, so nothing was shown to the owner.' });
+    expect(resultViewOf('propose_data_item', { type: 'tool_result', tool_use_id: 't1', content: off })).toEqual({ shown: false });
+    for (const bad of [
+      { title: 'a'.repeat(121), text: 'abc' }, { title: 'a', text: 'abc', extra: 1 }, { title: 'a', text: '' }, { title: '  ', text: 'abc' },
+      { title: 'a', text: 'b'.repeat(10_001) }, { text: 'abc' }, { title: 'a' },
+    ]) expect(inputViewOf('propose_data_item', bad, TODAY)).toBeNull();
+    expect(tool?.parse({ title: 'a'.repeat(120), text: 'b'.repeat(10_000) }, TODAY)).not.toBeNull();
+    // The text is kept exactly as given; the title is trimmed, as a pasted item's is.
+    expect(tool?.parse({ title: ' Catering list ', text: '  Party of 40\n' }, TODAY)).toEqual({ title: 'Catering list', text: '  Party of 40\n' });
+  });
+
+  it('asks the model for the caps a pasted item has', () => {
+    expect(tool?.definition.input_schema).toEqual({
+      type: 'object',
+      properties: {
+        title: { type: 'string', minLength: 1, maxLength: TEXT_ITEM_TITLE_MAX },
+        text: { type: 'string', minLength: 1, maxLength: TEXT_ITEM_MAX_CHARS },
+      },
+      required: ['title', 'text'],
+      additionalProperties: false,
+    });
+    expect(tool?.definition.description).toBe('Shows the owner a card proposing to keep text on their Your data page, with Keep and Not now. It never saves anything. Use it only for text the owner gave you in this conversation and asked to keep, copied exactly, with a short title of your own that names no person.');
+  });
+
+  it('answers that the card was shown, or available false while stored files are off', async () => {
+    const input = { title: 'Catering list', text: 'Party of 40 on Dec 12' };
+    expect(await tool?.run(tcWith(true), input)).toEqual({ content: 'Shown to the owner as a proposal. They decide whether to keep it.' });
+    const off = await tool?.run(tcWith(false), input);
+    expect(JSON.parse(off?.content ?? '')).toEqual({ available: false, reason: 'Townwise can’t keep items yet, so nothing was shown to the owner.' });
+    expect(off?.proposal).toBeUndefined();
+  });
+
+  it('is named in the system prompt, which says the owner decides', () => {
+    expect(SYSTEM_PROMPT).toContain('call propose_data_item with the text exactly as they gave it and a short title. The owner sees a card and decides; never say it was kept.');
   });
 });

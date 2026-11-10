@@ -138,7 +138,8 @@ export async function uploadSetupSales(ctx: TownwiseContext, req: Request, res: 
 /**
  * DELETE /api/admin/orgs/:orgId/locations/:locationId/sales, as the org route: 200 { deletedDays, deletedUploads,
  * deletedFiles }. The event is written before the delete, so its `deletedDays` counts the days with a value then, and
- * it carries no `deletedFiles`.
+ * it carries no `deletedFiles`. It is the ruled coverage (D28), so it leaves out days a turned-off upload holds, which
+ * the delete still removes; the answer's `deletedDays` counts every one.
  */
 export async function deleteSetupSales(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const { staff, scope } = await setupScope(ctx, req, principal);

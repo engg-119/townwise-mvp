@@ -16,6 +16,7 @@ The signed-in app of `docs/portal/spec.md`: access routing (4.3), the app shell 
 | P10 Add location | `/locations/new` | `(client)/locations/new.tsx` | built (`src/portal/locations/`, `AddLocationForm`), with the places checklist while the Places search is on |
 | P11 Home | `/locations/[locationId]` | `(client)/locations/[locationId]/index.tsx` | built (`src/portal/home/`); onboarding step 3 (`src/portal/onboarding/`, `HistoryStep`) takes the place of the cards that need days while `needsHistory` holds and the location has no stored day |
 | P12 Sales data | `/locations/[locationId]/sales` | `(client)/locations/[locationId]/sales/index.tsx` | built (`src/portal/locations/`) |
+| P26 Your data | `/locations/[locationId]/data` | `(client)/locations/[locationId]/data.tsx` | built (`src/portal/data/`); owns the list of every upload, file and text item, Turn off and Delete, Add a file and Paste text (web). It replaced P12's Uploads table and Your files, and the top bar's Upload section (P13 stays and marks it current) |
 | P13 Upload | `/locations/[locationId]/sales/upload` | `(client)/locations/[locationId]/sales/upload.tsx` | built, web only (`src/portal/upload/`) |
 | P14 Notes | `/locations/[locationId]/notes` | `(client)/locations/[locationId]/notes.tsx` | built (`src/portal/locations/`) |
 | P15 Town | `/locations/[locationId]/town` | `(client)/locations/[locationId]/town.tsx` | built (`TownProfile`) |

@@ -23,8 +23,12 @@ export const AUDIT_DETAIL_KEYS = {
   'location.deleted': ['name', 'townId'],
   'sales.uploaded': ['locationId', 'dayCount', 'inserted', 'replaced', 'firstDate', 'lastDate', 'fileId', 'via'],
   'sales.deleted': ['locationId', 'deletedDays', 'deletedFiles'],
+  // D28, Your data: `item` is 'upload' or 'file' and `kind` an item kind; never a file name or title.
+  'sales.upload_deleted': ['locationId', 'deletedDays', 'deletedFiles'],
+  'data.turned_off': ['locationId', 'item', 'kind'],
+  'data.turned_on': ['locationId', 'item', 'kind'],
   // Stored files (spec 11A): never a file name or anything from a file.
-  'file.uploaded': ['locationId', 'kind', 'sizeBytes'],
+  'file.uploaded': ['locationId', 'kind', 'sizeBytes', 'purpose', 'via'],
   'file.deleted': ['locationId', 'kind', 'reason'],
   'file.raw_deleted': ['locationId', 'kind'],
   'files.raw_deleted_all': ['locationId', 'count'],

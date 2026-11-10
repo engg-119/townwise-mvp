@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { ApiClient } from '../api/client';
+import { dataItemSchema, type DataItem } from '../portal/data/api';
 import { createNote, noteSchema, type Note } from '../portal/locations/api';
 import type { SseEvent } from '../api/sse';
 import type { TreeNode } from './tree';
@@ -361,6 +362,38 @@ export function dismissProposal(api: ApiClient, locationId: string, ids: { conve
   return api.json(`${conversationPath(locationId, ids.conversationId)}/proposals/${encodeURIComponent(ids.proposalId)}`, proposalResultSchema, {
     method: 'POST', body: { action: 'dismiss' },
   });
+}
+
+// A proposal to keep text on Your data (D28): a propose_data_item call, read and acted on through its own route once
+// its turn is stored. The title and the text come only from the stored call.
+const itemProposalSchema = z.object({
+  proposal: z.object({
+    id: z.string(),
+    title: z.string(),
+    text: z.string(),
+    status: proposalStatusSchema,
+    /** The kept item; null when it is not kept, or was deleted since. */
+    item: dataItemSchema.nullable(),
+  }),
+});
+
+export interface ItemProposal { id: string; title: string; text: string; status: 'open' | 'saved' | 'dismissed'; item: DataItem | null }
+
+function itemProposalPath(locationId: string, ids: { conversationId: string; proposalId: string }): `/${string}` {
+  return `${conversationPath(locationId, ids.conversationId)}/item-proposals/${encodeURIComponent(ids.proposalId)}`;
+}
+
+export async function loadItemProposal(api: ApiClient, locationId: string, ids: { conversationId: string; proposalId: string }): Promise<ItemProposal> {
+  const body = await api.json(itemProposalPath(locationId, ids), itemProposalSchema);
+  return body.proposal;
+}
+
+/** Keep (`save`) writes exactly the stored call's text as an item on Your data; Not now (`dismiss`) sets it aside. */
+export async function actOnItemProposal(
+  api: ApiClient, locationId: string, ids: { conversationId: string; proposalId: string }, action: 'save' | 'dismiss',
+): Promise<ItemProposal> {
+  const body = await api.json(itemProposalPath(locationId, ids), itemProposalSchema, { method: 'POST', body: { action } });
+  return body.proposal;
 }
 
 /** A proposal from a turn the server never kept: the notes route, as the person. */

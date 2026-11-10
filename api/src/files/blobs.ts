@@ -49,6 +49,8 @@ export interface FileBlobs {
   discardUpload(scope: OrgScope, ref: BlobRef): Promise<void>;
   /** The original, or `count` bytes of it from `offset`. `signal` aborts the read (the reader's time limit). */
   openRaw(scope: OrgScope, ref: BlobRef, range?: { offset: number; count: number }, signal?: AbortSignal): Promise<Readable>;
+  /** Writes the original in one Put Blob (pasted text kept as an item), with no upload session. */
+  writeRaw(scope: OrgScope, ref: BlobRef, bytes: Buffer, contentType: string): Promise<void>;
   /** Writes (or rewrites) the cleaned copy. */
   writeClean(scope: OrgScope, ref: BlobRef, csv: string): Promise<void>;
   openClean(scope: OrgScope, ref: BlobRef): Promise<Readable>;
@@ -183,6 +185,11 @@ function blobsOver(service: BlobServiceClient, chunks: BlobServiceClient): FileB
       return guarded(async () => {
         const response = await raw.getBlobClient(rawBlobName(scope, ref)).download(range?.offset ?? 0, range?.count, signal === undefined ? {} : { abortSignal: signal });
         return bodyOf(response.readableStreamBody);
+      });
+    },
+    writeRaw(scope, ref, bytes, contentType) {
+      return guarded(async () => {
+        await raw.getBlockBlobClient(rawBlobName(scope, ref)).upload(bytes, bytes.length, { blobHTTPHeaders: { blobContentType: contentType } });
       });
     },
     writeClean(scope, ref, csv) {
