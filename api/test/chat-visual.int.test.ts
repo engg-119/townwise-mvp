@@ -30,7 +30,8 @@ let author: TestSession;
 beforeAll(async () => {
   model = scriptedModel();
   server = await startTownwiseServer({ chat: model });
-  orgId = await createOrg(server, { name: 'Visual Tavern' });
+  // G1 (#59): staff publish only for an organization whose forecasts are switched on.
+  orgId = await createOrg(server, { name: 'Visual Tavern', forecastsOn: true });
   locationId = await addLocation(server, { orgId, name: 'Taproom' });
   const email = `author-${randomUUID().slice(0, 8)}@example.test`;
   author = await signIn(server, email);

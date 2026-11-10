@@ -201,6 +201,9 @@ describe('show_visual’s run', () => {
       },
       today: TODAY,
       timeZone: 'America/New_York',
+      // The forecast lab's fields (#59); show_visual reads neither.
+      role: 'member',
+      actor: { actorUserId: '000000000000000000000002', actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null },
     };
     return { tc, dayReads, windowReads };
   }
