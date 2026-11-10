@@ -28,6 +28,11 @@ output "db_jobs" {
   }
 }
 
+output "lab_job_id" {
+  description = "Resource id of the forecast lab job (the API's TOWNWISE_LAB_JOB_ID); null while enable_lab is false."
+  value       = var.enable_lab ? azapi_resource.job_lab[0].id : null
+}
+
 output "backup_storage_account" {
   description = "Holds the mongodump archives (container mongodump, write-once for 30 days)."
   value       = azurerm_storage_account.backup.name
