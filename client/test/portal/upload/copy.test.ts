@@ -37,8 +37,8 @@ describe('the result by role (11.2 step 4, D16)', () => {
   });
 
   test('days held by a turned-off upload: an admin’s file replaces them and they show again, a member’s leaves them hidden', () => {
-    expect(turnedOffLine('org_admin', 12)).toBe('12 days are held by an upload that is turned off. Any of them this file covers will be replaced, and will show again.');
-    expect(turnedOffLine('member', 1)).toBe('1 day is held by an upload that is turned off. Any of them this file covers stay as they are, and stay hidden.');
+    expect(turnedOffLine('org_admin', 12)).toBe('12 days are held by turned-off uploads. Any of them this file covers will be replaced, and will show again.');
+    expect(turnedOffLine('member', 1)).toBe('1 day is held by turned-off uploads. Any of them this file covers stay as they are, and stay hidden.');
   });
 
   test('the calibration line (14.1)', () => {

@@ -143,7 +143,7 @@ export function alreadyHaveLine(role: Role, first: string, last: string): string
  * admin's file replaces one it covers (it then shows again); a member's leaves it as it is, still hidden.
  */
 export function turnedOffLine(role: Role, count: number): string {
-  const held = `${plural(count, 'day', 'days')} ${count === 1 ? 'is' : 'are'} held by an upload that is turned off.`;
+  const held = `${plural(count, 'day', 'days')} ${count === 1 ? 'is' : 'are'} held by turned-off uploads.`;
   return role === 'org_admin'
     ? `${held} Any of them this file covers will be replaced, and will show again.`
     : `${held} Any of them this file covers stay as they are, and stay hidden.`;

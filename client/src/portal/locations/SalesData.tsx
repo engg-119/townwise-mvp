@@ -89,11 +89,11 @@ export function SalesData(): React.JSX.Element {
           {sales.uploadsOff === true ? (
             <EmptyState text={UPLOADS_OFF_LINE} />
           ) : (
-          <EmptyState
-            text={`No sales history yet for ${location.name}. Upload a CSV export from your point-of-sale system. The upload sends Townwise only the date, guest count and net sales for each day.`}
-          >
-            <UploadAction locationId={location.id} variant="primary" readOnlyId={readOnlyId} />
-          </EmptyState>
+            <EmptyState
+              text={`No sales history yet for ${location.name}. Upload a CSV export from your point-of-sale system. The upload sends Townwise only the date, guest count and net sales for each day.`}
+            >
+              <UploadAction locationId={location.id} variant="primary" readOnlyId={readOnlyId} />
+            </EmptyState>
           )}
         </Stack>
         <DataLink locationName={location.name} locationId={location.id} />

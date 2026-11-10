@@ -201,13 +201,13 @@ test('days held by a turned-off upload are named in the check, for an admin and 
   const held = [locationOf('l1', 'Main Street Bar', { townId: 'hanover-nh', name: 'Hanover', state: 'NH' }, { offDayCount: 12 })];
   renderAt(fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin', held) }));
   await toCheck(csvFile(FILE));
-  expect(screen.getByText('12 days are held by an upload that is turned off. Any of them this file covers will be replaced, and will show again.')).toBeTruthy();
+  expect(screen.getByText('12 days are held by turned-off uploads. Any of them this file covers will be replaced, and will show again.')).toBeTruthy();
   expect(screen.queryByText(/^You already have/)).toBeNull();
   cleanup();
 
   renderAt(fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member', held) }));
   await toCheck(csvFile(FILE));
-  expect(screen.getByText('12 days are held by an upload that is turned off. Any of them this file covers stay as they are, and stay hidden.')).toBeTruthy();
+  expect(screen.getByText('12 days are held by turned-off uploads. Any of them this file covers stay as they are, and stay hidden.')).toBeTruthy();
 });
 
 test('a member’s upload adds new days only, with the member copy before and after', async () => {
