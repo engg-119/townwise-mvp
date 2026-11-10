@@ -1,7 +1,7 @@
 import { ApiError } from '../../../src/api/client';
 import type { ColumnProfile } from '../../../src/portal/upload/columns';
 import {
-  alreadyHaveLine, badNumberLine, calibrationLine, canCheck, columnOptions, COPY, formatDollars, formatSize, matchMessages,
+  alreadyHaveLine, badNumberLine, turnedOffLine, calibrationLine, canCheck, columnOptions, COPY, formatDollars, formatSize, matchMessages,
   moreDaysLine, noDateLine, otherLocationLine, readingLine, repeatedDatesLine, resultLines, rowList, rowsBecameDays,
   sendErrorOf, sendingLine, sendLabel, stepLine,
 } from '../../../src/portal/upload/copy';
@@ -34,6 +34,11 @@ describe('the result by role (11.2 step 4, D16)', () => {
     expect(alreadyHaveLine('member', '2025-01-01', '2026-02-04')).toBe(
       'You already have Jan 1, 2025 to Feb 4, 2026. Days you already have stay as they are. Only an admin can replace them.',
     );
+  });
+
+  test('days held by a turned-off upload: an admin’s file replaces them and they show again, a member’s leaves them hidden', () => {
+    expect(turnedOffLine('org_admin', 12)).toBe('12 days are held by an upload that is turned off. Any of them this file covers will be replaced, and will show again.');
+    expect(turnedOffLine('member', 1)).toBe('1 day is held by an upload that is turned off. Any of them this file covers stay as they are, and stay hidden.');
   });
 
   test('the calibration line (14.1)', () => {

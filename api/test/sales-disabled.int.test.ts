@@ -126,7 +126,10 @@ describe('turned-off uploads leave every read (D28)', () => {
     expect((await getJson<SalesHistory>(admin, `/api/org/locations/${l1}/sales/history`)).days.date).toHaveLength(5);
     expect((await getJson<{ days: SalesDay[] }>(admin, `/api/org/locations/${l1}/sales/days?from=2026-05-01&to=2026-05-31`)).days).toEqual([]);
     expect((await getJson<{ locations: LocationSummary[] }>(admin, '/api/org')).locations[0]?.coverage.dayCount).toBe(5);
+    // The days the turned-off upload holds are counted apart (D28), so the upload check can warn about them.
+    expect((await getJson<{ locations: LocationSummary[] }>(admin, '/api/org')).locations[0]?.offDayCount).toBe(10);
     await turnOn(a);
+    expect((await getJson<{ locations: LocationSummary[] }>(admin, '/api/org')).locations[0]?.offDayCount).toBe(0);
     expect((await getJson<SalesView>(admin, `/api/org/locations/${l1}/sales`)).coverage.dayCount).toBe(15);
     expect((await getJson<SalesView>(admin, `/api/org/locations/${l1}/sales`)).months.map((m) => m.month)).toEqual(['2026-05', '2026-06']);
   });

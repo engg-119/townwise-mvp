@@ -10,7 +10,7 @@ import { Columns, Stack } from '../ui/layout';
 import { Eyebrow, Heading, Lead, Small } from '../ui/text';
 import {
   alreadyHaveLine, badNumberLine, checkProblemLine, COPY, EXCLUSION, formatDollars, moreDaysLine, noDateLine, otherLocationLine,
-  rowsBecameDays, sendErrorOf, sendLabel,
+  rowsBecameDays, sendErrorOf, sendLabel, turnedOffLine,
 } from './copy';
 import { LIST_LIMIT, totalsOf, type CheckResult, type DaysResult, type SalesDay } from './days';
 
@@ -57,8 +57,8 @@ function Block(props: { title: string; children: React.ReactNode }): React.JSX.E
   );
 }
 
-function Summary(props: { result: DaysResult; role: Role; coverage: Coverage }): React.JSX.Element {
-  const { result, role, coverage } = props;
+function Summary(props: { result: DaysResult; role: Role; coverage: Coverage; offDayCount: number }): React.JSX.Element {
+  const { result, role, coverage, offDayCount } = props;
   const { days } = result;
   const totals = totalsOf(days);
   const skipped = [
@@ -88,9 +88,12 @@ function Summary(props: { result: DaysResult; role: Role; coverage: Coverage }):
           {more === null ? null : <Small>{more}</Small>}
         </Block>
       )}
-      {coverage.dayCount > 0 && coverage.firstDate !== null && coverage.lastDate !== null ? (
+      {coverage.dayCount > 0 || offDayCount > 0 ? (
         <Block title="Days you already have">
-          <Small>{alreadyHaveLine(role, coverage.firstDate, coverage.lastDate)}</Small>
+          {coverage.dayCount > 0 && coverage.firstDate !== null && coverage.lastDate !== null
+            ? <Small>{alreadyHaveLine(role, coverage.firstDate, coverage.lastDate)}</Small>
+            : null}
+          {offDayCount > 0 ? <Small>{turnedOffLine(role, offDayCount)}</Small> : null}
         </Block>
       ) : null}
     </Stack>
@@ -110,6 +113,7 @@ export function CheckStep(props: {
   result: CheckResult;
   role: Role;
   coverage: Coverage;
+  offDayCount: number;
   sendError: unknown;
   onSend: () => void;
   onRestart: () => void;
@@ -160,7 +164,7 @@ export function CheckStep(props: {
         <Lead>{rowsBecameDays(result.rows, count, first.date, last.date)}</Lead>
       )}
       {result.addedUp ? <Small>{COPY.addedUp}</Small> : null}
-      <Summary result={result} role={props.role} coverage={props.coverage} />
+      <Summary result={result} role={props.role} coverage={props.coverage} offDayCount={props.offDayCount} />
       {failure === null ? null : <Messages live="alert" items={[failure.text]} />}
       {actions}
     </Stack>

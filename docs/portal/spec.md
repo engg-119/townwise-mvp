@@ -890,6 +890,7 @@ type Calibration =
 interface LocationSummary {
   id: string; name: string; town: Town; placeId: string | null; coverage: Coverage; calibration: Calibration;
   notesCount: number; lastUploadAt: string | null;
+  offDayCount: number;               // D28: days that turned-off uploads hold, which `coverage` leaves out; a count only
 }
 
 interface SalesDay { date: string; guests: number | null; netSalesCents: number | null }
@@ -1370,7 +1371,7 @@ Nothing else leaves the browser: no file name, column names, row count, other co
    - Skipped rows by reason, with up to 10 row numbers each and never a value: “{n} rows had no readable date (rows {list}).”, “{n} rows had a number Townwise couldn’t read (rows {list}).”, “{n} rows were for other locations.”
    - Excluded days, listed by date with the reason (up to 10, then “and {n} more”): a date after tomorrow, a date before 2010-01-01, a negative daily total, a total above the caps in 11.3, or a day with neither value.
    - Totals for the file (guests, net sales), with “Check these against your point-of-sale system.”, and a table of the first 7 and last 7 days.
-   - If the location already has data, for an org admin: “You already have {first} to {last}. Days in both will be replaced by this file.” For a member: “You already have {first} to {last}. Days you already have stay as they are. Only an admin can replace them.”
+   - If the location already has data, for an org admin: “You already have {first} to {last}. Days in both will be replaced by this file.” For a member: “You already have {first} to {last}. Days you already have stay as they are. Only an admin can replace them.” The range counts only days that are on; a day held by a turned-off upload (D28) is still an existing day to the write (11.4), so when `offDayCount` is above zero a second line says so, and shows even with no days on. For an org admin: “{n} days are held by an upload that is turned off. Any of them this file covers will be replaced, and will show again.” For a member: “{n} days are held by an upload that is turned off. Any of them this file covers stay as they are, and stay hidden.” (“1 day is held …” for one.)
    - More than 3,660 days: “This file covers more than 10 years. Upload up to 10 years at a time.”
 4. **Send.** One request. On success, all file state is cleared, and the result reads, for an org admin: “Saved {days} days for {location}: {inserted} new, {replaced} replaced.” For a member: “Saved {inserted} new days for {location}.”, then, when `kept` is above zero, “{kept} days already had data. Ask an admin to replace them.” It is followed by the calibration line and the links “Add notes for unusual days” and “See your sales data”.
 

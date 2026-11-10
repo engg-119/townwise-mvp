@@ -117,6 +117,8 @@ export const locationSummarySchema = z.object({
   calibration: calibrationSchema,
   notesCount: z.number(),
   lastUploadAt: z.string().nullable(),
+  /** D28: days that turned-off uploads hold, which `coverage` leaves out. Optional for an API from before it. */
+  offDayCount: z.number().optional(),
 });
 export type LocationSummary = z.infer<typeof locationSummarySchema>;
 

@@ -231,6 +231,7 @@ export function UploadPage(): React.JSX.Element {
         result={check}
         role={org.role}
         coverage={location.coverage}
+        offDayCount={location.offDayCount ?? 0}
         sendError={sendError}
         onSend={() => { void send(); }}
         onRestart={restart}
