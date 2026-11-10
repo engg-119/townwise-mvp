@@ -62,11 +62,14 @@ export function Worked(props: { seconds: number | null; parts: readonly ProcessP
   const [open, setOpen] = useState(false);
   const id = `worked-${useId().replace(/:/g, '')}`;
   const label = props.seconds === null ? 'Worked' : `Worked for ${String(props.seconds)}s`;
+  // Its name says the unit in full: some screen readers read "12s" as "12 s".
+  const name = props.seconds === null ? label : `Worked for ${String(props.seconds)} ${props.seconds === 1 ? 'second' : 'seconds'}`;
   if (props.parts.length === 0) return props.seconds === null ? null : <Text style={styles.counter}>{label}</Text>;
   return (
     <View style={styles.block}>
       <Pressable
         role="button"
+        accessibilityLabel={name}
         aria-expanded={open}
         aria-controls={id}
         accessibilityState={{ expanded: open }}

@@ -39,11 +39,10 @@ it('the sheet focuses its heading, traps focus, and Escape returns focus to the 
   close.focus();
   fireEvent.keyDown(close, { key: 'Tab' });
   expect(document.activeElement).not.toBe(opener);
-  // A whole press: react-native-web's Modal closes the top-most modal on Escape's keyup.
-  act(() => {
-    fireEvent.keyDown(close, { key: 'Escape' });
-    fireEvent.keyUp(close, { key: 'Escape' });
-  });
+  // A whole press: react-native-web's Modal closes the top-most modal on Escape's keyup. The sheet renders between
+  // the two, as in a browser.
+  act(() => { fireEvent.keyDown(close, { key: 'Escape' }); });
+  act(() => { fireEvent.keyUp(document.activeElement ?? document.body, { key: 'Escape' }); });
   expect(screen.queryByRole('heading', { name: 'Questions and activity' })).toBeNull();
   expect(document.activeElement).toBe(opener);
 });

@@ -154,8 +154,10 @@ it('a settled reply’s Worked for {n}s is a collapsed button that opens to the 
   const settled = msg('m2', 'assistant', [
     { type: 'thinking', key: 't', text: 'Weighing the weekend.' }, { type: 'tools', key: 'b', steps: [step] }, text('m2t', 'December was busy.'),
   ], { nodeId: 'a1', parentId: 'u1', startedAt: 1000, endedAt: 13_900 });
-  render(<ReplyView {...replyProps({ message: settled })} />);
-  const worked = button('Worked for 12s');
+  const view = render(<ReplyView {...replyProps({ message: settled })} />);
+  // Its name says seconds in full (a screen reader reads "12s" as "12 s"); it shows "12s".
+  const worked = button('Worked for 12 seconds');
+  expect(worked.textContent).toBe('Worked for 12s');
   expect(worked.getAttribute('aria-expanded')).toBe('false');
   expect(screen.queryByText('Weighing the weekend.')).toBeNull();
   expect(screen.queryByRole('button', { name: 'Show' })).toBeNull();
@@ -168,6 +170,8 @@ it('a settled reply’s Worked for {n}s is a collapsed button that opens to the 
   expect(screen.getByRole('button', { name: 'Read your sales for Dec 1 to Dec 31, 2025. 31 days: guests on 31, net sales on 30' })).toBeTruthy();
   fireEvent.click(worked);
   expect(worked.getAttribute('aria-expanded')).toBe('false');
+  view.rerender(<ReplyView {...replyProps({ message: { ...settled, endedAt: 2000 } })} />);
+  expect(button('Worked for 1 second').textContent).toBe('Worked for 1s');
 });
 
 it('a settled reply with no steps or summary shows Worked for {n}s as plain text, and none when its time is unknown', () => {

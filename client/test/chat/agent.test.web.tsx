@@ -156,13 +156,14 @@ async function openPanel(): Promise<HTMLElement> {
   return screen.findByTestId('agent-side');
 }
 
-/** A whole Escape press where focus is: react-native-web's Modal closes the top-most modal on its keyup. */
+/**
+ * A whole Escape press where focus is: react-native-web's Modal closes the top-most modal on its keyup. The page
+ * renders between keydown and keyup, as in a browser, so a keydown that closed one modal can't hide a keyup that
+ * then closes the next.
+ */
 function pressEscape(): void {
-  const target = document.activeElement ?? document.body;
-  act(() => {
-    fireEvent.keyDown(target, { key: 'Escape' });
-    fireEvent.keyUp(target, { key: 'Escape' });
-  });
+  act(() => { fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' }); });
+  act(() => { fireEvent.keyUp(document.activeElement ?? document.body, { key: 'Escape' }); });
 }
 
 function expectReadOnly(control: HTMLElement): void {
@@ -350,6 +351,57 @@ test('History closes on Escape and gives focus back to its button', async () => 
   expect(document.activeElement).toBe(button);
 });
 
+test('deleting the open conversation shows the landing and gives focus to History, as any delete does', async () => {
+  renderAt('/locations/l1/agent', fakeChatApi());
+  await openEarlierChat();
+  const history = screen.getByRole('button', { name: 'History' });
+  fireEvent.click(history);
+  const remove = screen.getByRole('button', { name: 'Delete Earlier chat' });
+  act(() => { remove.focus(); });
+  fireEvent.click(remove);
+  fireEvent.click(within(await screen.findByRole('dialog', { name: 'Delete this conversation?' })).getByRole('button', { name: 'Delete' }));
+  expect(await screen.findByRole('heading', { level: 2, name: 'Ask TownwiseAI about Main Street Bar' })).toBeTruthy();
+  await waitFor(() => { expect(document.activeElement).toBe(history); });
+});
+
+describe('on phones, where the header scrolls with the landing or the thread and is drawn anew when one replaces the other', () => {
+  test('opening a conversation from the landing, or New chat from the thread, leaves focus in the composer', async () => {
+    setWidth(360);
+    renderAt('/locations/l1/agent', fakeChatApi());
+    fireEvent.click(await screen.findByRole('button', { name: 'History' }));
+    const row = screen.getByRole('button', { name: 'Earlier chat, Nov 2, 2026' });
+    act(() => { row.focus(); });
+    fireEvent.click(row);
+    await screen.findByText('We close for the holidays.');
+    await waitFor(() => { expect(document.activeElement).toBe(screen.getByLabelText(COMPOSER_LABEL)); });
+    const fresh = screen.getByRole('button', { name: 'New chat' });
+    act(() => { fresh.focus(); });
+    fireEvent.click(fresh);
+    expect(await screen.findByRole('heading', { level: 2, name: 'Ask TownwiseAI about Main Street Bar' })).toBeTruthy();
+    await waitFor(() => { expect(document.activeElement).toBe(screen.getByLabelText(COMPOSER_LABEL)); });
+  });
+
+  test('deleting the open conversation leaves focus in the landing’s composer', async () => {
+    setWidth(360);
+    renderAt('/locations/l1/agent', fakeChatApi());
+    await openEarlierChat();
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    const remove = screen.getByRole('button', { name: 'Delete Earlier chat' });
+    act(() => { remove.focus(); });
+    fireEvent.click(remove);
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Delete this conversation?' })).getByRole('button', { name: 'Delete' }));
+    expect(await screen.findByRole('heading', { level: 2, name: 'Ask TownwiseAI about Main Street Bar' })).toBeTruthy();
+    await waitFor(() => { expect(document.activeElement).toBe(screen.getByLabelText(COMPOSER_LABEL)); });
+  });
+
+  test('opening the page puts focus nowhere new', async () => {
+    setWidth(360);
+    renderAt('/locations/l1/agent', fakeChatApi());
+    const input = await screen.findByLabelText(COMPOSER_LABEL);
+    expect(document.activeElement).not.toBe(input);
+  });
+});
+
 test('the side panel is closed by default and opens as a column from 1024px and as a sheet below', async () => {
   renderAt('/locations/l1/agent', fakeChatApi());
   const toggle = await screen.findByRole('button', { name: 'Questions and activity (2)' });
@@ -442,6 +494,24 @@ test('shows exactly three next questions under the newest settled reply only, th
   ]);
 });
 
+test('a pressed next question goes with its group, and focus goes to the composer, where Stop is, not to the page', async () => {
+  const api = fakeChatApi();
+  renderAt('/locations/l1/agent', api);
+  await send(api, 'How was December?');
+  await stream(() => {
+    turn(api).emit('text', { delta: 'December was steady.' });
+    turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0 });
+    turn(api).end();
+  });
+  const chip = first(within(screen.getByRole('group', { name: 'Suggested next questions' })).getAllByRole('button'));
+  act(() => { chip.focus(); });
+  fireEvent.click(chip);
+  await waitFor(() => { expect(api.turns).toHaveLength(2); });
+  expect(screen.queryByRole('group', { name: 'Suggested next questions' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy();
+  expect(document.activeElement).toBe(screen.getByLabelText(COMPOSER_LABEL));
+});
+
 test('F7: ?about= fills the composer with the day, sends nothing, and keeps the address', async () => {
   const api = fakeChatApi();
   const date = localToday();
@@ -525,7 +595,7 @@ describe('a tool card', () => {
     expect(screen.queryByText(/^Working for/)).toBeNull();
     // The timeline folds under a collapsed Worked for, which opens to the summary and the step.
     expect(screen.queryByText('Weighing the weekend.')).toBeNull();
-    const worked = screen.getByRole('button', { name: /^Worked for \d+s$/ });
+    const worked = screen.getByRole('button', { name: /^Worked for \d+ seconds?$/ });
     expect(worked.getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(worked);
     expect(worked.getAttribute('aria-expanded')).toBe('true');

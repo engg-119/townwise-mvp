@@ -87,9 +87,10 @@ export function Hidden(props: { children: string }): React.JSX.Element {
 /**
  * Web only: nothing holds focus, as when the focused control was taken off the page (the browser hands focus to the
  * body). Code that restores focus after a control went away checks this first, so it never takes focus from wherever
- * the person has since moved it.
+ * the person has since moved it. Always false on native, which has no document.
  */
 export function focusLost(): boolean {
+  if (!web || typeof document === 'undefined') return false;
   const active = document.activeElement;
   return active === null || active === document.body || !active.isConnected;
 }

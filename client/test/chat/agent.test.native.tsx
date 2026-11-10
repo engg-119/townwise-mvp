@@ -163,7 +163,7 @@ describe('a reply', () => {
     // Folded under Worked for: the summary and the row show on pressing it, and the row opens to what it read.
     expect(screen.queryByText('Weighing the weekend.')).toBeNull();
     expect(screen.queryByText('31 days: guests on 31, net sales on 30')).toBeNull();
-    const worked = screen.getByRole('button', { name: /^Worked for \d+s$/ });
+    const worked = screen.getByRole('button', { name: /^Worked for \d+ seconds?$/ });
     expect(worked.props.accessibilityState).toMatchObject({ expanded: false });
     await fireEvent.press(worked);
     expect(screen.getByText('Weighing the weekend.')).toBeTruthy();
@@ -272,7 +272,7 @@ describe('conversations', () => {
     await openEarlierChat();
     expect(screen.getByText('Last December you were open every day.')).toBeTruthy();
     // Stored times: 12 seconds from the person's message to the reply's end.
-    await fireEvent.press(screen.getByRole('button', { name: 'Worked for 12s' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Worked for 12 seconds' }));
     expect(screen.getByText('Checked December against the notes.')).toBeTruthy();
     expect(screen.getByText('Based on your sales from Dec 1 to Dec 31, 2025.')).toBeTruthy();
     expect(screen.getByText('Proposed note')).toBeTruthy();

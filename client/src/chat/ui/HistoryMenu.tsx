@@ -3,18 +3,20 @@ import { Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions,
 
 import { useAction } from '../../portal/hooks';
 import { webAria } from '../../portal/ui/aria';
-import { Button } from '../../portal/ui/Button';
 import { ConfirmDialog } from '../../portal/ui/ConfirmDialog';
 import { FormField } from '../../portal/ui/FormField';
 import { theme } from '../../theme';
 import type { ConversationSummary } from '../api';
 import { formatDay } from '../format';
+import { ChatButton, focusLost, type ChatButtonHandle } from './controls';
 import { described } from './described';
 
 // The History dropdown: a square `panel` under the header's History button, at most 60% of the window tall and
 // scrolling inside. Each row opens its conversation and has Rename and Delete. Rename turns the title into a field
 // (Enter saves, Escape cancels); Delete asks first. The open conversation carries a mint 6px square and
 // aria-current. Escape closes the list (the header returns focus to History) unless a field or the dialog has it.
+// On web, focus never falls to the page: a closed field gives it back to its row's Rename, and after a delete (its
+// row, Delete and all, is gone) the header gives it to History.
 
 const DELETE_BODY = 'TownwiseAI’s replies and your messages in it are deleted. Notes you saved from it stay.';
 const NAME_MESSAGE = 'Use 1 to 60 characters.';
@@ -29,6 +31,8 @@ export function HistoryMenu(props: {
   onOpen: (id: string) => void;
   onClose: () => void;
   onDelete: (id: string) => Promise<void>;
+  /** A delete went through and its dialog has gone (web: where focus goes now). */
+  onDeleted: () => void;
   onRename: (id: string, title: string) => Promise<void>;
 }): React.JSX.Element {
   const { height } = useWindowDimensions();
@@ -36,11 +40,23 @@ export function HistoryMenu(props: {
   const [renaming, setRenaming] = useState<string | null>(null);
   const busy = deleting !== null || renaming !== null;
   const { onClose } = props;
+  // Each row's Rename, by conversation id, for focus when its field closes.
+  const renameButtons = useRef(new Map<string, ChatButtonHandle>());
+  const wasRenaming = useRef<string | null>(null);
+  // The dialog is closing after a delete that went through, not a Cancel (which returns focus to Delete itself).
+  const deleted = useRef(false);
   const remove = useAction(async (id: string) => {
     await props.onDelete(id);
+    deleted.current = true;
     setDeleting(null);
   });
   const locked = props.readOnlyId !== null || props.streaming;
+
+  useEffect(() => {
+    const closed = wasRenaming.current;
+    wasRenaming.current = renaming;
+    if (renaming === null && closed !== null && focusLost()) renameButtons.current.get(closed)?.focus();
+  }, [renaming]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return undefined;
@@ -81,15 +97,19 @@ export function HistoryMenu(props: {
                     </View>
                     <Text style={styles.rowDate}>{day}</Text>
                   </Pressable>
-                  <Button
+                  <ChatButton
                     variant="link"
                     label="Rename"
                     accessibilityLabel={`Rename ${conversation.title}`}
                     disabled={locked}
                     {...described(props.readOnlyId)}
                     onPress={() => { setRenaming(conversation.id); }}
+                    focusRef={(handle: ChatButtonHandle | null) => {
+                      if (handle === null) renameButtons.current.delete(conversation.id);
+                      else renameButtons.current.set(conversation.id, handle);
+                    }}
                   />
-                  <Button
+                  <ChatButton
                     variant="link"
                     label="Delete"
                     accessibilityLabel={`Delete ${conversation.title}`}
@@ -113,6 +133,11 @@ export function HistoryMenu(props: {
         error={remove.error}
         onConfirm={() => { if (deleting !== null) remove.run(deleting.id); }}
         onCancel={() => { setDeleting(null); }}
+        onDismiss={() => {
+          if (!deleted.current) return;
+          deleted.current = false;
+          props.onDeleted();
+        }}
       />
     </View>
   );

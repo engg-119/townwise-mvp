@@ -11,7 +11,7 @@ import { HistoryMenu } from './HistoryMenu';
 // The chat's header: the open conversation's title on the left; History, New chat and Questions and activity on the
 // right (they wrap under the title on phones). History and New chat are off while a reply streams, so the open
 // conversation can't change under it; the panel button is never off. History is a disclosure over HistoryMenu:
-// Escape closes it and focus goes back to the button.
+// Escape or opening a conversation closes it and focus goes back to the button, as it does after a delete.
 
 type Host = React.ComponentRef<typeof View>;
 
@@ -124,10 +124,12 @@ export function ChatHeader(props: {
           streaming={props.streaming}
           readOnlyId={props.readOnlyId}
           onOpen={(id) => {
-            setOpened(false);
+            // The row goes with the list: focus goes back to History.
+            close();
             props.onOpen(id);
           }}
           onClose={close}
+          onDeleted={() => { if (Platform.OS === 'web') button.current?.focus(); }}
           onDelete={props.onDelete}
           onRename={props.onRename}
         />

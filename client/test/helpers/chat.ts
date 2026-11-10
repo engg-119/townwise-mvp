@@ -49,7 +49,8 @@ export const CONVERSATION = {
         { type: 'text', text: 'Here is a note for that.' },
         { type: 'proposal', proposal: { ...PROPOSAL, id: PROPOSAL_ID, status: 'open', noteId: null } },
       ],
-      at: '2026-11-02T15:00:00.000Z',
+      // Its first stored message's time, at or after the person's and at or before its end, as the server stores them.
+      at: '2026-11-02T14:59:01.000Z',
       // 12 seconds after the person's message.
       endedAt: '2026-11-02T14:59:12.000Z',
     },

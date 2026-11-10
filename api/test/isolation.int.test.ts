@@ -183,6 +183,7 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
     'org.chat.proposal': { action: 'dismiss' },
     'org.chat.rename': { title: 'Renamed by A' },
     'org.chat.active': { nodeId: 'legacy-0' },
+    'org.chat.feedback': { rating: 'up' },
     'org.agent.answer': { answer: 'not_sure' },
   };
   const QUERY: Record<string, string> = {
@@ -198,7 +199,7 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
       'org.members.update', 'org.members.remove', 'org.locations.update', 'org.locations.remove', 'org.sales.get',
       'org.sales.days', 'org.sales.upload', 'org.sales.remove', 'org.notes.list', 'org.notes.create', 'org.notes.update',
       'org.notes.remove', 'org.sales.history', 'org.calendar.get', 'org.chat.get', 'org.chat.conversation', 'org.chat.turn', 'org.chat.remove',
-      'org.chat.proposal',
+      'org.chat.proposal', 'org.chat.rename', 'org.chat.active', 'org.chat.feedback',
       'org.files.create', 'org.files.chunk', 'org.files.complete', 'org.files.list', 'org.files.get', 'org.files.raw', 'org.files.clean',
       'org.files.remove_raw', 'org.files.remove', 'org.imports.current', 'org.imports.get', 'org.imports.start', 'org.imports.answer',
       // U3 stages 5 to 9.
@@ -219,8 +220,13 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
       const aOwn: Record<string, string> = {
         memberId: a.inviteId, locationId: a.locationId, noteId: a.noteId, conversationId: a.conversationId, fileId: a.fileId,
         importId: a.importId, index: '0', proposalId: 'toolu_proposal0001', questionId: 'gap_2026-05-02_2026-05-03',
+        // The reply of A's conversation (its stored messages have no tree, so their nodes are legacy-{index}).
+        nodeId: 'legacy-1',
       };
       const params = [...route.path.matchAll(/:([A-Za-z]+)/g)].map((match) => match[1] ?? '');
+      // Every other segment is A's own, so the request reaches the route: an empty one would match no route, and its
+      // 404 would come from the app, not from the foreign id.
+      expect(params.filter((name) => aOwn[name] === undefined)).toEqual([]);
       let cases = 0;
       for (const foreign of params) {
         for (const id of bOwn[foreign] ?? []) {

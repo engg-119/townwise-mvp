@@ -99,6 +99,9 @@ export function AgentChat(props: {
   // What docked the composer, until another conversation shows: if the first turn is taken back (refused, or the
   // connection failed before anything arrived), the landing returns, and focus goes back to its composer.
   const docked = useRef<'composer' | 'other' | null>(null);
+  // A conversation opened, started or deleted by the person: if that swaps the landing and the thread, what is drawn
+  // in both (the notices, and on phones the header) is drawn anew, and the control they used goes with it.
+  const switched = useRef(false);
   const landing = state.status === 'ready' && state.enabled && state.messages.length === 0 && !state.conversationLoading;
   const spoken = said ?? { words: announcementOf(chat, ctx, before), n: 0 };
 
@@ -108,9 +111,15 @@ export function AgentChat(props: {
 
   useEffect(() => {
     const from = landing ? docked.current : docking.current;
+    const moved = switched.current;
     docking.current = null;
     docked.current = landing ? null : from;
-    if (from === null) return;
+    switched.current = false;
+    if (from === null) {
+      // On web, if focus went with that control, the composer now shown takes it; never on opening the page.
+      if (moved && Platform.OS === 'web' && focusLost()) composer.current?.focus();
+      return;
+    }
     // The composer or chip the person used went with the landing (or the docked composer with the thread, when the
     // first turn was taken back). On web the composer now shown takes focus only if focus went with them (not if the
     // person has since put it elsewhere); on native only after a send from the composer, so a chip doesn't open the
@@ -137,6 +146,7 @@ export function AgentChat(props: {
   function opened(run: () => void): void {
     docking.current = null;
     docked.current = null;
+    switched.current = true;
     setBefore(null);
     setSaid(null);
     run();
@@ -238,7 +248,10 @@ export function AgentChat(props: {
       onNew={() => { opened(chat.newConversation); }}
       onDelete={(id) => {
         // Deleting the open conversation shows the landing, which is not a turn taken back.
-        if (id === state.conversationId) docked.current = null;
+        if (id === state.conversationId) {
+          docked.current = null;
+          switched.current = true;
+        }
         return chat.deleteConversation(id);
       }}
       onRename={chat.rename}
@@ -386,7 +399,11 @@ export function AgentChat(props: {
                       prompts={nextOf(message, state.messages[index - 1])}
                       disabled={!canAct || exhausted}
                       readOnlyId={props.readOnlyId}
-                      onAsk={(text) => { send(() => { chat.ask(text); }); }}
+                      onAsk={(text) => {
+                        send(() => { chat.ask(text); });
+                        // The chips go with the reply above them, now not the newest: on web focus goes where Stop is.
+                        if (Platform.OS === 'web') composer.current?.focus();
+                      }}
                     />
                   ) : null}
                 </Fragment>
