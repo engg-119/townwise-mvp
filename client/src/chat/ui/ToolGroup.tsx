@@ -7,8 +7,8 @@ import { DefinitionList } from '../../portal/ui/DataTable';
 import { theme } from '../../theme';
 import { toolLine, viewRows, type SourceLink, type ToolContext, type ToolStep } from '../tools';
 
-// The tool calls of a reply (spec P25): while the reply streams, one row per call, each fading in as it
-// starts; once it is done, the group folds to one line ("Read 3 things") with Show and Hide. A done row opens to
+// The tool calls of a reply (spec P25): one row per call, each fading in as it starts while the reply streams; the
+// "Worked for" disclosure (Worked.tsx) holds them once it is done. A done row opens to
 // what it read, as dates, counts and source links (never rows of figures or raw data). No icons: the mono status
 // word ("Reading", "Read", "Couldn’t read") carries the state, in `text2`, `text3` or the error colour.
 
@@ -84,34 +84,13 @@ function Row(props: { step: ToolStep; ctx: ToolContext }): React.JSX.Element {
   );
 }
 
-function summaryOf(steps: readonly ToolStep[]): string {
-  const read = steps.filter((step) => step.state === 'done').length;
-  const failed = steps.filter((step) => step.state === 'error').length;
-  const things = (count: number): string => `${String(count)} ${count === 1 ? 'thing' : 'things'}`;
-  if (read === 0) return `Couldn’t read ${things(failed)}`;
-  return failed === 0 ? `Read ${things(read)}` : `Read ${things(read)}, couldn’t read ${things(failed)}`;
-}
-
+/** One row per call, each fading in as it starts while the reply streams. */
 export function ToolGroup(props: { steps: readonly ToolStep[]; live: boolean; ctx: ToolContext }): React.JSX.Element | null {
   const { steps, live, ctx } = props;
-  const [shown, setShown] = useState(false);
   if (steps.length === 0) return null;
-  if (live) {
-    return (
-      <View style={styles.group} testID="tool-group">
-        {steps.map((step) => <FadeIn key={step.id}><Row step={step} ctx={ctx} /></FadeIn>)}
-      </View>
-    );
-  }
   return (
     <View style={styles.group} testID="tool-group">
-      <View style={styles.summary}>
-        <Text style={styles.summaryText}>{summaryOf(steps)}</Text>
-        <Pressable role="button" aria-expanded={shown} onPress={() => { setShown((value) => !value); }} style={styles.toggle}>
-          <Text style={styles.toggleText}>{shown ? 'Hide' : 'Show'}</Text>
-        </Pressable>
-      </View>
-      {shown ? steps.map((step) => <Row key={step.id} step={step} ctx={ctx} />) : null}
+      {steps.map((step) => (live ? <FadeIn key={step.id}><Row step={step} ctx={ctx} /></FadeIn> : <Row key={step.id} step={step} ctx={ctx} />))}
     </View>
   );
 }
@@ -134,8 +113,4 @@ const styles = StyleSheet.create({
   expanded: { gap: theme.space[2], paddingBottom: theme.space[2] },
   sources: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space[4] },
   source: { ...theme.type.small, color: c.white, textDecorationLine: 'underline', textDecorationColor: c.line, paddingVertical: 12 },
-  summary: { flexDirection: 'row', alignItems: 'center', columnGap: theme.space[3], flexWrap: 'wrap' },
-  summaryText: { ...theme.type.small, color: c.text3 },
-  toggle: { minHeight: 44, minWidth: 44, justifyContent: 'center' },
-  toggleText: { ...theme.type.ui, color: c.white, textDecorationLine: 'underline', textDecorationColor: c.line },
 });

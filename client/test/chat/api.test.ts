@@ -25,6 +25,8 @@ it('reads the new event fields with old-server defaults, and drops a visual that
 
   expect(chatEventOf(sse('visual', { id: 'toolu_v1', visual: daily }))).toEqual({ type: 'visual', id: 'toolu_v1', visual: daily });
   expect(chatEventOf(sse('visual', { id: 'toolu_v1' }))).toBeNull();
+  expect(chatEventOf(sse('thinking', { delta: 'Weighing it.' }))).toEqual({ type: 'thinking', delta: 'Weighing it.' });
+  expect(chatEventOf(sse('thinking', { text: 'wrong field' }))).toBeNull();
   expect(chatEventOf(sse('suggestions', { id: 'toolu_n1', prompts: ['How did Monday go?', 'Any events next week?', 'Show last month'] })))
     .toEqual({ type: 'suggestions', id: 'toolu_n1', prompts: ['How did Monday go?', 'Any events next week?', 'Show last month'] });
   expect(chatEventOf(sse('suggestions', { id: 'toolu_n1', prompts: 'not a list' }))).toBeNull();

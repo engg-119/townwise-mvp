@@ -40,6 +40,8 @@ export type FailureCode = 'internal' | 'provider_unavailable' | 'provider_overlo
  */
 export type TurnEvent =
   | { type: 'text'; data: { delta: string } }
+  /** A piece of the reply's thinking summary: text only, never the signature. Same class as message text, never logged. */
+  | { type: 'thinking'; data: { delta: string } }
   | {
     type: 'tool';
     data: { id: string; name: string; state: 'running' | 'done' | 'error'; input: ToolView | null; result: ToolView | null };
@@ -89,7 +91,9 @@ export function requestParams(messages: BetaMessageParam[]): BetaMessageStreamPa
     model: CHAT_MODEL,
     max_tokens: MAX_TOKENS,
     output_config: { effort: 'low' },
-    // Adaptive thinking is Opus 5.5's only mode, so `thinking` is omitted.
+    // Adaptive is Opus 5.5's only thinking mode (`disabled` and `budget_tokens` both 400). `display` changes what the
+    // stream shows, not what is billed: Opus 5.5 omits the thinking text by default, so ask for its summary.
+    thinking: { type: 'adaptive', display: 'summarized' },
     betas: ['server-side-fallback-2026-07-01'],
     fallbacks: 'default',
     cache_control: { type: 'ephemeral' },
@@ -140,7 +144,7 @@ function streamedCharacters(delta: BetaRawContentBlockDelta): number {
  *   min(max_tokens, max(ceil(streamed characters / 3), ceil(seconds since message_start x 150)))
  *
  * at the price of the model that was answering. Streamed characters are those of text, thinking and tool input
- * deltas; the time term covers thinking that is billed but not streamed (Opus 5.5 omits its text by default).
+ * deltas; the time term covers thinking that is billed but not streamed (a summary is shorter than the thinking behind it).
  */
 function usageTracker(now: () => Date): { observe(event: BetaRawMessageStreamEvent): void; costMicroUsd(): number } {
   let model: string | null = null;
@@ -254,6 +258,8 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
           usage.observe(event);
           if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
             input.emit({ type: 'text', data: { delta: event.delta.text } });
+          } else if (event.type === 'content_block_delta' && event.delta.type === 'thinking_delta') {
+            input.emit({ type: 'thinking', data: { delta: event.delta.thinking } });
           }
         }
         message = await stream.finalMessage();

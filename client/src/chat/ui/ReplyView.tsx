@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 
 import { Button } from '../../portal/ui/Button';
@@ -13,13 +13,14 @@ import { focusLost, Hidden } from './controls';
 import { described } from './described';
 import { ProposalCard } from './ProposalCard';
 import { ReplyActions } from './ReplyActions';
-import { ToolGroup } from './ToolGroup';
 import { useVersionNav, VersionNav } from './VersionNav';
+import { isProcessPart, wholeSeconds, Worked, Working } from './Worked';
 
 // One of TownwiseAI's replies (owner decisions 3 to 5): no label box, only a hidden "TownwiseAI said", then its parts
-// in the order they streamed: Markdown text (with a static caret at its end while text is what streams), tool
-// calls, visuals Townwise drew, and proposal cards. While it streams, the live line under it names the running step
-// or says it is thinking. Finished, it has its actions, its version navigator when it has siblings, the Based on line
+// in the order they streamed: Markdown text (with a static caret at its end while text is what streams), visuals
+// Townwise drew, and proposal cards. Its thinking summary and tool calls are the timeline at its top: "Working for
+// {n}s" with the timeline under it while it streams ("Thinking…" before anything arrives), then a collapsed "Worked
+// for {n}s" that opens to the same timeline (Worked.tsx). Finished, it has its actions, its version navigator when it has siblings, the Based on line
 // built from its tool calls (never written by the model) and why it ended early, if it did. One that failed or was
 // stopped keeps its note and Try again.
 
@@ -47,7 +48,11 @@ export function ReplyView(props: {
   const ended = message.state === 'failed' || message.state === 'stopped';
   const complete = message.state === 'complete';
   const nav = useVersionNav(chat, message, props.tree, props.onAnnounce);
-  const line = liveLine(message, props.ctx);
+  // A streaming reply always has its start (the reducer stamps it); this keeps the timeline up if one ever lacks it.
+  const [mounted] = useState(() => Date.now());
+  const line = liveLine(message);
+  const process = message.parts.filter(isProcessPart);
+  const endedFor = message.startedAt !== null && message.endedAt !== null ? wholeSeconds(message.startedAt, message.endedAt) : null;
   // The caret ends the text while text is what streams; once a step or visual follows, the live line says what's on.
   const last = message.parts.at(-1);
   const caretOn = live && last?.type === 'text' ? last.key : null;
@@ -81,13 +86,14 @@ export function ReplyView(props: {
   return (
     <View style={styles.reply}>
       <Hidden>TownwiseAI said</Hidden>
+      {live ? <Working startedAt={message.startedAt ?? mounted} parts={process} line={line} ctx={props.ctx} /> : null}
+      {!live ? <Worked seconds={endedFor} parts={process} ctx={props.ctx} /> : null}
       {message.parts.map((part) => {
         if (part.type === 'text') return <Markdown key={part.key} source={part.text} caret={part.key === caretOn} />;
-        if (part.type === 'tools') return <ToolGroup key={part.key} steps={part.steps} live={live} ctx={props.ctx} />;
+        if (part.type === 'thinking' || part.type === 'tools') return null;
         if (part.type === 'visual') return <VisualView key={part.key} visual={part.visual} />;
         return <ProposalCard key={part.key} card={part.card} locationId={props.locationId} actions={chat} readOnlyId={props.readOnlyId} />;
       })}
-      {line === null ? null : <Text style={styles.live}>{line}</Text>}
       {complete && message.parts.length > 0 ? (
         <>
           <ReplyActions message={message} newest={props.newest} chat={chat} canAct={props.canAct} readOnlyId={props.readOnlyId}>
@@ -114,7 +120,6 @@ const c = theme.color;
 
 const styles = StyleSheet.create({
   reply: { gap: theme.space[3], minWidth: 0 },
-  live: { ...theme.type.small, color: c.text2 },
   basedOn: { ...theme.type.small, color: c.text2 },
   note: { ...theme.type.small, color: c.text3 },
 });

@@ -52,6 +52,7 @@ const proposalStatusSchema = z.enum(['open', 'saved', 'dismissed']);
 const proposalViewSchema = noteProposalSchema.extend({ id: z.string(), status: proposalStatusSchema, noteId: z.string().nullable() });
 
 const partSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('thinking'), text: z.string() }),
   z.object({ type: z.literal('text'), text: z.string() }),
   z.object({
     type: z.literal('tool'), id: z.string(), name: z.string(), state: z.enum(['done', 'error']), input: viewSchema, result: viewSchema,
@@ -90,6 +91,8 @@ const conversationSchema = z.object({
     proposals: z.array(proposalViewSchema),
     parts: z.array(partSchema).default([]),
     at: z.string(),
+    // Absent from a server that predates it: the entry's own `at`.
+    endedAt: z.string().optional(),
     feedback: feedbackSchema.nullable().default(null),
     next: z.array(z.string()).nullable().default(null),
   })),
@@ -107,6 +110,7 @@ export interface ProposalView extends NoteProposal {
 }
 
 export type StoredPart =
+  | { type: 'thinking'; text: string }
   | { type: 'text'; text: string }
   | { type: 'tool'; id: string; name: string; state: 'done' | 'error'; input: ToolView | null; result: ToolView | null }
   | { type: 'proposal'; proposal: ProposalView }
@@ -116,6 +120,9 @@ export interface StoredMessage {
   role: 'user' | 'assistant';
   text: string;
   parts: StoredPart[];
+  /** When its first message was stored, and its last (a reply's end), in ms since the epoch; null when unreadable. */
+  at: number | null;
+  endedAt: number | null;
   /** Its node in the tree; null from a server without trees. */
   nodeId: string | null;
   /** The author's rating of a reply; null for none and for the person's messages. */
@@ -134,6 +141,8 @@ export type ChatEvent =
    */
   | { type: 'conversation'; id: string; title: string; userNodeId: string | null; replyNodeId: string | null; parentId: string | null }
   | { type: 'text'; delta: string }
+  /** A piece of the reply's thinking summary. */
+  | { type: 'thinking'; delta: string }
   | { type: 'tool'; id: string; name: string; state: 'running' | 'done' | 'error'; input: ToolView | null; result: ToolView | null }
   | { type: 'proposal'; id: string; proposal: NoteProposal }
   | { type: 'visual'; id: string; visual: Visual }
@@ -150,6 +159,7 @@ const nodeIdOrNull = z.string().nullable().default(null);
 const eventSchemas = {
   conversation: z.object({ id: z.string(), title: z.string(), userNodeId: nodeIdOrNull, replyNodeId: nodeIdOrNull, parentId: nodeIdOrNull }),
   text: z.object({ delta: z.string() }),
+  thinking: z.object({ delta: z.string() }),
   tool: z.object({
     id: z.string(), name: z.string(), state: z.enum(['running', 'done', 'error']), input: viewSchema.default(null), result: viewSchema.default(null),
   }),
@@ -176,6 +186,10 @@ export function chatEventOf(sse: SseEvent): ChatEvent | null {
     case 'text': {
       const parsed = eventSchemas.text.safeParse(data);
       return parsed.success ? { type: 'text', ...parsed.data } : null;
+    }
+    case 'thinking': {
+      const parsed = eventSchemas.thinking.safeParse(data);
+      return parsed.success ? { type: 'thinking', ...parsed.data } : null;
     }
     case 'tool': {
       const parsed = eventSchemas.tool.safeParse(data);
@@ -229,6 +243,11 @@ function partOf(part: z.infer<typeof partSchema>): StoredPart[] {
   return visual.success ? [{ type: 'visual', id: part.id, visual: visual.data }] : [];
 }
 
+function millis(value: string): number | null {
+  const time = Date.parse(value);
+  return Number.isNaN(time) ? null : time;
+}
+
 function conversationOf(conversation: z.infer<typeof conversationSchema>): ConversationLoad {
   return {
     activeLeafId: conversation.activeLeafId,
@@ -237,6 +256,8 @@ function conversationOf(conversation: z.infer<typeof conversationSchema>): Conve
       role: message.role,
       text: message.text,
       parts: message.parts.flatMap(partOf),
+      at: millis(message.at),
+      endedAt: millis(message.endedAt ?? message.at),
       nodeId: message.nodeId,
       feedback: message.feedback,
       next: message.next,

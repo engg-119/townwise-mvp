@@ -161,6 +161,28 @@ test('text deltas are drawn at most every 32ms, and any other event draws them f
   }
 });
 
+test('thinking deltas join one thinking part before the text, stamp the reply’s start and end, and are not message text', async () => {
+  const api = fakeChatApi();
+  const chat = await ready(api);
+  await send(chat, 'Hello');
+  const live = turn(api);
+  await act(() => {
+    live.emit('thinking', { delta: 'Weighing ' });
+    live.emit('thinking', { delta: 'the weekend.' });
+    live.emit('text', { delta: 'Busy.' });
+  });
+  await waitFor(() => { expect(reply(chat).parts.map((part) => part.type)).toEqual(['thinking', 'text']); });
+  expect(reply(chat).parts[0]).toMatchObject({ type: 'thinking', text: 'Weighing the weekend.' });
+  expect(messageText(reply(chat))).toBe('Busy.');
+  expect(reply(chat).startedAt).not.toBeNull();
+  expect(reply(chat).endedAt).toBeNull();
+  await act(() => {
+    live.emit('done', { stopReason: 'end_turn', costUsd: 0 });
+    live.end();
+  });
+  expect(reply(chat).endedAt).not.toBeNull();
+});
+
 test('a reply that ends early says why', () => {
   const rows: [string, string | null][] = [
     ['end_turn', null],
@@ -171,9 +193,9 @@ test('a reply that ends early says why', () => {
   ];
   for (const [stopReason, note] of rows) {
     let state: TuningChatState = { ...initialChatState(), status: 'ready', enabled: true };
-    state = chatReducer(state, { type: 'send', content: 'x', userKey: 'u', replyKey: 'r', request: { conversationId: null, content: 'x' } });
-    state = chatReducer(state, { type: 'event', event: { type: 'proposal', id: 'p1', proposal: PROPOSAL }, key: 'k', at: '' });
-    state = chatReducer(state, { type: 'event', event: { type: 'done', stopReason, leafId: null }, key: 'k', at: '' });
+    state = chatReducer(state, { type: 'send', content: 'x', userKey: 'u', replyKey: 'r', request: { conversationId: null, content: 'x' } }, 0);
+    state = chatReducer(state, { type: 'event', event: { type: 'proposal', id: 'p1', proposal: PROPOSAL }, key: 'k', at: '' }, 0);
+    state = chatReducer(state, { type: 'event', event: { type: 'done', stopReason, leafId: null }, key: 'k', at: '' }, 0);
     expect(state.messages.at(-1)).toMatchObject({ state: 'complete', note });
     // A refused turn was never stored, so its proposal is not either.
     const last = state.messages.at(-1);
@@ -199,9 +221,9 @@ test('an error event marks the reply failed and unsaved, and says why', async ()
 
 test('a turn past the server’s time limit is marked unsaved and asks for something shorter', () => {
   let state: TuningChatState = { ...initialChatState(), status: 'ready', enabled: true };
-  state = chatReducer(state, { type: 'send', content: 'x', userKey: 'u', replyKey: 'r', request: { conversationId: null, content: 'x' } });
-  state = chatReducer(state, { type: 'event', event: { type: 'text', delta: 'Partly' }, key: 'k1', at: '' });
-  state = chatReducer(state, { type: 'event', event: { type: 'error', code: 'timeout' }, key: 'k2', at: '' });
+  state = chatReducer(state, { type: 'send', content: 'x', userKey: 'u', replyKey: 'r', request: { conversationId: null, content: 'x' } }, 0);
+  state = chatReducer(state, { type: 'event', event: { type: 'text', delta: 'Partly' }, key: 'k1', at: '' }, 0);
+  state = chatReducer(state, { type: 'event', event: { type: 'error', code: 'timeout' }, key: 'k2', at: '' }, 0);
   expect(state.messages.at(-1)).toMatchObject({ state: 'failed', note: NOT_SAVED });
   expect(state.error).toBe(TIMED_OUT);
 });
@@ -489,7 +511,7 @@ test('opening a conversation replays its parts and what became of each proposal;
   await waitFor(() => { expect(chat.current.state.conversationLoading).toBe(false); });
   const [asked, answered] = chat.current.state.messages;
   expect(asked === undefined ? null : messageText(asked)).toBe(CONVERSATION.messages[0]?.text);
-  expect(answered?.parts.map((part) => part.type)).toEqual(['text', 'tools', 'text', 'proposal']);
+  expect(answered?.parts.map((part) => part.type)).toEqual(['thinking', 'text', 'tools', 'text', 'proposal']);
   expect(answered === undefined ? [] : stepsOf(answered)).toEqual([{ ...SALES_STEP, state: 'done' }]);
   expect(answered === undefined ? [] : cards(answered)).toEqual([expect.objectContaining({ id: PROPOSAL_ID, status: 'open', stored: 'kept', proposal: PROPOSAL })]);
 

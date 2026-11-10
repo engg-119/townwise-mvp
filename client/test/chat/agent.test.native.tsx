@@ -137,17 +137,20 @@ describe('an empty conversation', () => {
 });
 
 describe('a reply', () => {
-  test('shows thinking, then a running card, then text; folds its cards when done, with a Based on line from them', async () => {
+  test('shows Working for and Thinking…, then a running card, then text; folds them under Worked for when done, with a Based on line from them', async () => {
     const { chat } = await renderAgent(meOf(ACCESS.member));
     await send('How was December?');
     expect(screen.getByText('How was December?')).toBeTruthy();
-    expect(screen.getByText('TownwiseAI is thinking…')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy();
-    await act(() => { turn(chat).emit('tool', { id: SALES_STEP.id, name: SALES_STEP.name, state: 'running', input: SALES_STEP.input, result: null }); });
+    expect(screen.getByText('Working for 0s')).toBeTruthy();
+    expect(screen.getByText('Thinking…')).toBeTruthy();
     expect(screen.queryByText('TownwiseAI is thinking…')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy();
+    await act(() => { turn(chat).emit('thinking', { delta: 'Weighing the weekend.' }); });
+    expect(await screen.findByText('Weighing the weekend.')).toBeTruthy();
+    expect(screen.queryByText('Thinking…')).toBeNull();
+    await act(() => { turn(chat).emit('tool', { id: SALES_STEP.id, name: SALES_STEP.name, state: 'running', input: SALES_STEP.input, result: null }); });
     expect(screen.getByText('Reading')).toBeTruthy();
     expect(screen.getByText('your sales for Dec 1 to Dec 31, 2025')).toBeTruthy();
-    expect(screen.getByText('Reading your sales for Dec 1 to Dec 31, 2025…')).toBeTruthy();
     await act(() => {
       turn(chat).emit('tool', { id: SALES_STEP.id, name: SALES_STEP.name, state: 'done', input: SALES_STEP.input, result: SALES_STEP.result });
       turn(chat).emit('text', { delta: 'December was steady.' });
@@ -155,11 +158,15 @@ describe('a reply', () => {
       turn(chat).end();
     });
     expect(await screen.findByText('December was steady.')).toBeTruthy();
-    expect(screen.getByText('Read 1 thing')).toBeTruthy();
+    expect(screen.queryByText(/^Working for/)).toBeNull();
     expect(screen.getByText('Based on your sales from Dec 1 to Dec 31, 2025.')).toBeTruthy();
-    // Folded: the row shows again on Show, and opens to what it read.
+    // Folded under Worked for: the summary and the row show on pressing it, and the row opens to what it read.
+    expect(screen.queryByText('Weighing the weekend.')).toBeNull();
     expect(screen.queryByText('31 days: guests on 31, net sales on 30')).toBeNull();
-    await fireEvent.press(screen.getByRole('button', { name: 'Show' }));
+    const worked = screen.getByRole('button', { name: /^Worked for \d+s$/ });
+    expect(worked.props.accessibilityState).toMatchObject({ expanded: false });
+    await fireEvent.press(worked);
+    expect(screen.getByText('Weighing the weekend.')).toBeTruthy();
     await fireEvent.press(screen.getByRole('button', { name: 'Read your sales for Dec 1 to Dec 31, 2025. 31 days: guests on 31, net sales on 30' }));
     expect(screen.getByText('Days with net sales')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Send' })).toBeTruthy();
@@ -264,7 +271,9 @@ describe('conversations', () => {
     const { chat } = await renderAgent(meOf(ACCESS.member));
     await openEarlierChat();
     expect(screen.getByText('Last December you were open every day.')).toBeTruthy();
-    expect(screen.getByText('Read 1 thing')).toBeTruthy();
+    // Stored times: 12 seconds from the person's message to the reply's end.
+    await fireEvent.press(screen.getByRole('button', { name: 'Worked for 12s' }));
+    expect(screen.getByText('Checked December against the notes.')).toBeTruthy();
     expect(screen.getByText('Based on your sales from Dec 1 to Dec 31, 2025.')).toBeTruthy();
     expect(screen.getByText('Proposed note')).toBeTruthy();
     expect(screen.getAllByText('Earlier chat').length).toBeGreaterThan(0);

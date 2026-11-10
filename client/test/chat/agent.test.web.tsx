@@ -499,27 +499,38 @@ describe('a tool card', () => {
     expect(faded(await running(fakeChatApi()))).toBe(false);
   });
 
-  test('a running tool shows its live line instead of thinking, and the caret goes on done', async () => {
+  test('a running tool shows as its row in the timeline instead of Thinking…, and the caret goes on done', async () => {
     const api = fakeChatApi();
     renderAt('/locations/l1/agent', api);
     await send(api, 'How was December?');
-    expect(screen.getByText('TownwiseAI is thinking…')).toBeTruthy();
-    await stream(() => { turn(api).emit('tool', { id: SALES_STEP.id, name: SALES_STEP.name, state: 'running', input: SALES_STEP.input, result: null }); });
+    expect(screen.getByText('Working for 0s')).toBeTruthy();
+    expect(screen.getByText('Thinking…')).toBeTruthy();
     expect(screen.queryByText('TownwiseAI is thinking…')).toBeNull();
-    expect(screen.getByText('Reading your sales for Dec 1 to Dec 31, 2025…')).toBeTruthy();
+    await stream(() => { turn(api).emit('thinking', { delta: 'Weighing the weekend.' }); });
+    expect(screen.getByText('Weighing the weekend.')).toBeTruthy();
+    expect(screen.queryByText('Thinking…')).toBeNull();
+    await stream(() => { turn(api).emit('tool', { id: SALES_STEP.id, name: SALES_STEP.name, state: 'running', input: SALES_STEP.input, result: null }); });
+    expect(screen.getByText('your sales for Dec 1 to Dec 31, 2025')).toBeTruthy();
     await stream(() => {
       turn(api).emit('tool', { id: SALES_STEP.id, name: SALES_STEP.name, state: 'done', input: SALES_STEP.input, result: SALES_STEP.result });
       turn(api).emit('text', { delta: 'December was steady.' });
     });
     // Text is what streams: the static caret ends it, and the live line has gone.
     expect(screen.getAllByText('▍')).toHaveLength(1);
-    expect(screen.queryByText(/^Reading your sales/)).toBeNull();
     await stream(() => {
       turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0 });
       turn(api).end();
     });
     expect(screen.queryByText('▍')).toBeNull();
-    expect(screen.queryByText('TownwiseAI is thinking…')).toBeNull();
+    expect(screen.queryByText(/^Working for/)).toBeNull();
+    // The timeline folds under a collapsed Worked for, which opens to the summary and the step.
+    expect(screen.queryByText('Weighing the weekend.')).toBeNull();
+    const worked = screen.getByRole('button', { name: /^Worked for \d+s$/ });
+    expect(worked.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(worked);
+    expect(worked.getAttribute('aria-expanded')).toBe('true');
+    expect(document.getElementById(worked.getAttribute('aria-controls') ?? '')).not.toBeNull();
+    expect(screen.getByText('Weighing the weekend.')).toBeTruthy();
   });
 
   test('the live region says what it starts reading and never the streamed text or a figure', async () => {
@@ -532,6 +543,7 @@ describe('a tool card', () => {
     expect(live.getAttribute('aria-live')).toBe('polite');
     expect(live.textContent).toBe('Reading your sales for Dec 1 to Dec 31, 2025');
     await stream(() => {
+      turn(api).emit('thinking', { delta: 'Sentinel thinking words.' });
       turn(api).emit('tool', { id: SALES_STEP.id, name: SALES_STEP.name, state: 'done', input: SALES_STEP.input, result: SALES_STEP.result });
       turn(api).emit('text', { delta: 'December had 1,234 guests.' });
     });
@@ -547,8 +559,10 @@ describe('a tool card', () => {
       turn(api).end();
     });
     expect(live.textContent).toBe('TownwiseAI replied');
+    // Neither the counter nor the thinking text was ever said.
+    expect(said.join('|')).not.toContain('Working for');
     listen.disconnect();
-    for (const words of said) expect(words).not.toMatch(/1,234|guests|December had/);
+    for (const words of said) expect(words).not.toMatch(/1,234|guests|December had|Sentinel/);
   });
 
   test('opening an earlier conversation announces nothing: only a reply to this visit’s message is news', async () => {
@@ -657,7 +671,7 @@ test('a town profile card’s sources open in a new tab', async () => {
     turn(api).end();
   });
   expect(screen.getByText('Based on Hanover’s town profile (dartmouth.edu).')).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: 'Show' }));
+  fireEvent.click(screen.getByRole('button', { name: /^Worked for/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Read Hanover’s town profile. dartmouth.edu' }));
   const link = screen.getByRole('link', { name: 'dartmouth.edu' });
   expect(link.getAttribute('href')).toBe('https://dartmouth.edu/calendar');

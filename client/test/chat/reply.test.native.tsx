@@ -24,7 +24,7 @@ const TREE: TreeNode[] = [{ id: 'u1', parentId: null, role: 'user' }, { id: 'a1'
 function msg(key: string, role: ChatMessage['role'], words: string, nodeId: string, parentId: string | null): ChatMessage {
   return {
     key, role, parts: [{ type: 'text', key: `${key}t`, text: words }], state: 'complete', note: null, nodeId, parentId, feedback: null,
-    ratingError: null, next: null, request: null,
+    ratingError: null, next: null, request: null, startedAt: null, endedAt: null,
   };
 }
 
