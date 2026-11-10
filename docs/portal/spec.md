@@ -125,6 +125,7 @@ Not taken, and why:
 | D21 | The town profile (P4, P15) and the sales chart (P12) render on web only. Native shows each chart’s text summary and “Show the numbers” table, built from View and Text, plus “See the chart at townwise.tech.” | The client has no `react-native-svg`, and adding it is a new dependency. | [CONFIRM: web-only charts] |
 | D22 | Staff can delete a person’s Townwise records, or a suspended organization’s. The audit log keeps the events with the email or names replaced. The kit’s user record is then deleted by hand. | The privacy page and Terms on `feature/townwise-web` already promise deletion on request. | [CONFIRM: staff-only deletion in v1; suspend before deleting an organization] |
 | D23 | Staff setup. While an organization is active and nobody has ever held a seat in it (open invitations don’t count), staff can add, rename, change the town of and delete (when empty) its locations, and upload or delete its daily totals, from its console page (F10b, 10.7). It is write-only: answers carry ids, names, towns, counts and date coverage, never a figure, and staff still read values only through view-as (D7). It ends at the first join and never reopens, even once everyone has left, and it is closed while the organization is suspended (409 `org_not_in_setup`). Each setup write is recorded before it takes effect and shown to the organization’s admins once they join (D9), and the uploads it makes read “Townwise staff”, never the staff email. Staff use it with a real client’s data only with that client’s consent. | A client who sends their history before anyone on their team signs in finds a populated page on their first visit, not an empty one. It never reopens because an organization everyone left belongs to a former client, with no admin to see a staff write in their activity. | [CONFIRM: staff can add locations and upload daily totals for an organization nobody has joined yet; write-only; ends at the first join; used only with the client's consent] |
+| D27 | Forecast lab. Org admins (through TownwiseAI) and staff (from the console) start calibrations: a job on Townwise’s Azure servers refits a location’s model on its own uploaded days and notes with the notebook’s method (modeling/lab/) and returns a draft run and a scorecard. It publishes itself only when staff have switched the organization’s forecasts on (G1) and it passes api/src/lab/gate.ts (G2); staff can withdraw it. Each costs $0.10 of the organization’s TownwiseAI budget, at most 4 a day per organization and one at a time per location. | Owner decision, 2026-11-09 (decisions 1 to 5; controller guardrails G1 to G4). | Decided (owner, 2026-11-09) [CONFIRM: gate values: 12 held-out weeks, half a point of weekly WAPE, 80% ranges holding 65% to 95% of weeks, 2 points of weekday bias, 420 days of history for a first forecast] [CONFIRM: $0.10 a calibration, 4 a day] |
 
 ---
 
@@ -367,6 +368,7 @@ All collections take the `tw_` prefix, so they never collide with the kit’s `u
 | `createdAt`, `createdBy` | Date, userId | |
 | `fromRequestId` | ObjectId or null | set when created by approval |
 | `suspendedAt` | Date or null | |
+| `forecasts` | `{ on, at, by }`, or absent | whether staff have switched the organization’s forecasts on (D27, G1), when, and by which staff user id; absent until first switched, which reads as off. Nothing is published, by staff or by a calibration, while it is off |
 | `firstJoinedAt` | Date, or absent | when someone first took a seat: set only while unset (a compare-and-set) right after the seat write of a join (F1) or an approval (F3), and by a person deletion, from the person’s earliest `joinedAt` there, before it deletes their removed seats (10.7); never cleared, so staff setup never reopens (D23). Absent on organizations nobody has joined and on documents from before the field |
 
 Indexes: `{ createdAt: -1 }`.
@@ -568,15 +570,16 @@ One per forecast run file staff imported for a location (14.4). Outputs and meta
 | `orgId`, `locationId` | ObjectId | from the staff route's organization and a location loaded with its scope |
 | `metric` | `'guests'` | |
 | `model` | `{ family, version, notebookCommit }` | family `hybrid_linear_xgboost \| linear_median \| weekday_median`; version `v{n}`; the `modeling/` commit |
-| `trainingSource` | `'files_from_owner'` | `'townwise_uploads'` is reserved until the DECISION NEEDED in 14.1 is answered |
+| `trainingSource` | `'files_from_owner' \| 'townwise_lab'` | staff import accepts only `files_from_owner`; `'townwise_lab'` is set only by the lab's result callback (10.14) for a run it trained on the location's own uploaded days (D27); `'townwise_uploads'` stays reserved until the DECISION NEEDED in 14.1 is answered |
 | `trainedFrom`, `dataThrough`, `madeAt` | `YYYY-MM-DD` | the first and last day of sales the model saw, and when it was made |
 | `frozen` | `{ files: { name, sha256 }[] } \| null` | the frozen CSVs in `modeling/forecasts/` it was exported from |
 | `interval` | `{ level: 0.8, widened }` | |
 | `backtest` | `{ from, to, weeks, weeklyTypicalErrorPct, weeksOver20Pct, weeklyRangePct } \| null` | typed in from the forecasts README |
 | `range`, `dayCount`, `weekCount` | | the first and last day; counts |
 | `fileSha256` | string | over the file's canonical JSON |
+| `lab` | `{ calibrationId, codeVersion, imageDigest, inputSha256, paramsJson } \| null` | set on a `townwise_lab` run (G3): the calibration that made it, the lab's code version, the job image digest, the hash of the input it was given and the parameters as JSON. The code version, parameters and input hash reproduce the model, which is stored nowhere. Null on an imported run |
 | `status` | `'importing' \| 'draft' \| 'published' \| 'withdrawn'` | |
-| `importedBy`, `publishedBy` | string \| null | staff user ids; set to null on that person's deletion |
+| `importedBy`, `publishedBy` | string \| null | staff user ids; set to null on that person's deletion; null from the start on a lab run, and on a run the lab published |
 | `importedAt`, `publishedAt`, `withdrawnAt` | Date \| null | |
 
 Indexes: `{ orgId: 1, locationId: 1, fileSha256: 1 }` unique; `{ orgId: 1, locationId: 1, status: 1, dataThrough: -1 }`; `{ orgId: 1, importedAt: -1 }`. Strict (`'throw'`). Deleted with its rows by staff, with the location, with the location's sales data and with the organization (10.7).
@@ -584,6 +587,29 @@ Indexes: `{ orgId: 1, locationId: 1, fileSha256: 1 }` unique; `{ orgId: 1, locat
 ### 6.21 `tw_forecasts`
 
 One row per day and per week of a run: `orgId`, `locationId`, `runId`, `span` (`'day' | 'week'`), `from`, `to` (equal for a day), `status` (a day's `open | closed | booked`; null for a week), `low`, `mid`, `high` (null on a closed or booked day), `baseline` (null unless the run recorded one), `openDays` (a week's), `reasons` (`{ kind, ref, effectPct }[]`, kind `weekday | term | event | holiday | level | closure | booking`; `ref` a town calendar id or group, kept only when it names an entry on that day). Labels are never stored. Indexes: `{ orgId: 1, locationId: 1, runId: 1, span: 1, from: 1 }` unique; `{ orgId: 1, locationId: 1, span: 1, from: 1 }`; `{ orgId: 1, runId: 1 }`. Strict (`'throw'`); rows are built field by field and upserted on their key, so a retried import writes only what is missing.
+
+### 6.22 `tw_calibrations`
+
+One per calibration (D27), not per location: a retrain of one location's forecast model by the lab job. Metadata and the scorecard only; the model is stored nowhere.
+
+| Field | Type | Rule |
+|---|---|---|
+| `_id` | ObjectId | the calibration id |
+| `orgId`, `locationId` | ObjectId | from the caller's seat or the staff route's organization, and a location loaded with its scope |
+| `requestedBy` | `{ userId, role, via }` | role `org_admin \| superadmin`; via `chat \| console`; `userId` null once that person is deleted |
+| `regimeStart` | `YYYY-MM-DD` \| null | the first day of a lasting change in the weekly pattern the owner described |
+| `status` | `'queued' \| 'running' \| 'succeeded' \| 'failed'` | `queued` until the job fetches its input, `running` until it posts its result; each change is a compare-and-set |
+| `failure` | `start_failed \| timeout \| job_failed \| not_enough_history \| invalid_result` \| null | |
+| `championRunId`, `runId` | string \| null | the published run it was compared with when it started, and the draft run it made |
+| `dataThrough`, `inputSha256`, `imageDigest`, `codeVersion` | string \| null | the last day of sales the job was given, the hash of its input, the job image digest and the lab's code version (G3) |
+| `scorecardJson` | string \| null | the scorecard as JSON (backtest weeks, metrics, the comparison with the published model); read through `lab/views.ts`, which gives staff percentages and counts only |
+| `gate` | `{ published, reason } \| null` | the gate's decision (G2), set once by compare-and-set; `reason` a closed list of codes (`published`, `forecasts_off`, `champion_changed`, `too_few_weeks`, `not_better`, `coverage_out_of_band`, `weekday_bias_worse`, `not_enough_history`, `baseline_not_beaten`) |
+| `chargedMicroUsd` | number | 100,000 (\$0.10) once the job has started, charged to the organization's `tw_chat_usage` month |
+| `requestedAt`, `startedAt`, `finishedAt` | Date \| null | |
+| `liveLocation` | ObjectId, or absent | equals `locationId` while queued or running, then removed; a unique partial index allows one live calibration per location (the `tw_imports.activeLocation` pattern) |
+| `tokenSha256`, `tokenExpiresAt` | string, Date | the sha256 of the job's 32-byte bearer token (the token itself is never stored) and 20 minutes after the request; `tokenSha256` is removed when the calibration finishes |
+
+Indexes: `{ liveLocation: 1 }` unique, partial; `{ orgId: 1, requestedAt: -1 }`; `{ orgId: 1, locationId: 1, requestedAt: -1 }`; `{ _id: 1, tokenSha256: 1 }`. Strict (`'throw'`). A live calibration older than 20 minutes is failed `timeout` by compare-and-set on the next start or read (no background loop). Deleted with the location's sales data, the location and the organization, before their runs (10.7).
 
 ---
 
@@ -750,7 +776,10 @@ interface AuditEvent {
 | `org.originals_deleted` | `count`, `basis` (`data_subject_request`, `org_request` or `other`, an enum, never free text); staff, target the organization, recorded before the effect (9.3), and shown in the organization's staff activity |
 | `note.created`, `note.updated`, `note.deleted` | `locationId`, `kind`, `startDate`, `endDate` |
 | `agent.question_answered` | `locationId`, `questionId` (dates and a weekday number only), `answer` (`closed`, `open` or `not_sure`); a `closed` answer's closure note is also recorded `note.created` (10.12) |
-| `forecast.imported`, `forecast.published`, `forecast.withdrawn`, `forecast.deleted` | `locationId`, `modelVersion`, `from`, `to`, `dayCount` (target `forecast_run`; staff actions, written before the effect; never a figure) |
+| `forecast.imported`, `forecast.published`, `forecast.withdrawn`, `forecast.deleted` | `locationId`, `modelVersion`, `from`, `to`, `dayCount` (target `forecast_run`; staff actions, written before the effect; never a figure). A publish by the lab also has `via: 'lab'` and `calibrationId`, and its actor is `system` (9.3) |
+| `calibration.requested` | `locationId`, `calibrationId`, `via` (`chat` or `console`), `hasRegime` (boolean; never the date) (target `calibration`; by an org admin through TownwiseAI after the effect, by staff before it) |
+| `calibration.finished` | `locationId`, `calibrationId`, `status` (`succeeded` or `failed`), `gate` (the gate's reason code), `failure` (the failure code), `runId`, `heldOutWeeks` (a count) (target `calibration`; actor `system`, written after the finish; never a figure or a date) |
+| `org.forecasts_switched` | `on` (boolean) (target the organization; a staff action, written before the effect; only when the switch changes) |
 | `view_as.started` | `targetUserId`, `targetEmail`, `reason`, `expiresAt` |
 | `view_as.ended` | `endReason` (`ended`, `replaced` or `expired`) |
 | `people.signed_out_everywhere` | none (written before the effect, 9.3; the revoked count is in the response) |
@@ -768,11 +797,12 @@ An event’s `orgId` is the organization it touches: for `people.signed_out_ever
   - Events by org members and org admins are written after the effect succeeds. If such a write fails, the action stands, the server logs `townwise.audit_write_failed { action, orgId, targetId }` at error level, and the response is still success.
   - Every staff action’s event (actor role `superadmin`) is written before the effect, `view_as.started` included. Handlers run their read-only checks first (404, validation), then write the event, then act. If the write fails, the action is refused with 503 `unavailable` and nothing changes. If the effect then fails or is refused (for example 409 `last_admin`, or a duplicate key), the server writes `staff_action.not_applied { eventId, code }`, so the record never claims a change that did not happen. [Build note: a request with several changes (a staff rename and status change together, or several addresses added) writes all its events first, then makes its changes in one write, so a refusal never follows an applied change; an event already written when a later one is refused gets `staff_action.not_applied` with code `unavailable`. The codes are a closed list: the refusal’s error code, `conflict`, `unavailable` or `internal`.]
   - For approval and staff creation, the staff action’s event is `access_request.approved` or `org.created`; the follow-on records (`org.created` at approval, `location.created`, `member.joined`, `member.invited`) are written after their steps, as client events are.
+  - The forecast lab's own events (actor role `system`, actor id `system`, shown as “Townwise forecast lab”) have no person to refuse: `forecast.published` with `via: 'lab'` is written before the publish takes effect, `calibration.finished` after the calibration is finished, each once, by compare-and-set. A refused or lost publish adds `staff_action.not_applied` with code `conflict`.
   - `view_as.ended` is written after the grant is cleared. A missing end record can only make a view look longer than it was, never hide one.
   
   [CONFIRM: audit after the effect for client actions; before the effect, refused on failure, for staff actions]
 - **Email writes no audit event.** Sending one of the D14 emails is a side effect of an action already audited; its event is unchanged, and nothing records the send.
-- **Readers.** Staff read everything on `/admin/audit`. Org admins read every event on their own organization whose actor role is `superadmin` (view-as, team, name, status, setup writes (D23), and `staff_action.not_applied`), on Settings as “Townwise staff activity” (D9). Members read none.
+- **Readers.** Staff read everything on `/admin/audit`. Org admins read every event on their own organization whose actor role is `superadmin` or `system` (view-as, team, name, status, setup writes (D23), forecast switches, calibrations the lab finished and forecasts it published, and `staff_action.not_applied`), on Settings as “Townwise staff activity” (D9). Members read none.
 
 ---
 
@@ -940,7 +970,10 @@ Every route here has policy `staff`, except `view-as/end`, which has `staff_self
 | `DELETE /api/admin/orgs/:orgId/locations/:locationId/sales` (setup) | | 200 `{ deletedDays, deletedUploads, deletedFiles }`, as 10.4 | 404; 409 `org_not_in_setup`, `import_running`; 503 `files_unavailable` |
 | `GET /api/admin/orgs/:orgId/forecast-runs` | | 200 `{ runs }` (14.4), newest import first, at most 100 | 404 |
 | `POST /api/admin/orgs/:orgId/locations/:locationId/forecast-runs` | a run file (14.4), up to 256 KB | 201 `{ run }` (draft); 200 `{ run }` for a file the location already has | 400 `invalid_forecast_file` `{ issues: { path, code }[] }`; 404 |
-| `POST /api/admin/orgs/:orgId/forecast-runs/:runId/publish` | `{}` | 200 `{ run }` | 404; 409 `forecast_run_not_draft` |
+| `POST /api/admin/orgs/:orgId/forecast-runs/:runId/publish` | `{}` | 200 `{ run }` | 404; 409 `forecast_run_not_draft`, `forecasts_off` (the organization's forecasts switch is off, D27) |
+| `GET /api/admin/orgs/:orgId/calibrations` | | 200 `{ forecasts: { on, at }, calibrations }`, the newest 50 (a live one past 20 minutes failed `timeout` first), each `{ id, locationId, status, failure, failureWords, via, requestedByRole, regimeStart, requestedAt, startedAt, finishedAt, runId, chargedUsd, gate: { published, reason, words } \| null, summary }`, `summary` the scorecard as percentages and counts only (weeks, weekly WAPE, the current model's, the 80% range's weeks inside, weekday bias), never a guest figure (D7) | 404 |
+| `POST /api/admin/orgs/:orgId/locations/:locationId/calibrations` | `{ regimeStart?: date }` | 201 `{ calibration }`, running | 400 `invalid_regime_start`; 404; 409 `calibration_in_progress`, `not_enough_history`, `chat_budget_exhausted`; 429 `calibrations_rate_limited`; 503 `lab_unavailable`, `lab_start_failed` |
+| `POST /api/admin/orgs/:orgId/forecasts-switch` | `{ on: true, ownerAgreed: true }` or `{ on: false }` | 200 `{ forecasts: { on, at } }`; the switch already in that position changes and records nothing; switching off leaves published runs as they are | 400; 404 |
 | `POST /api/admin/orgs/:orgId/forecast-runs/:runId/withdraw` | `{}` | 200 `{ run }` | 404; 409 `forecast_run_importing` |
 | `DELETE /api/admin/orgs/:orgId/forecast-runs/:runId` | | 204 | 404 |
 | `GET /api/admin/people?kind=` | | 200 `{ people: PersonView[], truncated: boolean }` (up to 1,000) | |
@@ -1011,6 +1044,7 @@ Built with the rate-limit module and keyed on `acct:<userId>`, a key the caller 
 | `townwise:requests` | `POST /api/access-requests` | 5 per day | deny (503 `unavailable`) |
 | `townwise:view-as` | `POST /api/admin/view-as` | 20 per hour | deny (503 `unavailable`) |
 | `townwise:places` | both Places routes together; each location write with a `placeId` also spends one (10.3) | 300 per hour | deny (503 `unavailable`; on a location write, 503 `places_unavailable`) |
+| `townwise:calibrations` | starting a calibration, from TownwiseAI or the console, per organization | 4 per day [CONFIRM] | deny (503 `unavailable`) |
 | `townwise:files` | `POST .../files` (10.11) | 120 per hour | allow |
 | `townwise:file-chunks` | `PUT .../files/:fileId/chunks/:index` | 1,500 per hour | allow |
 | `townwise:downloads` | both file downloads together | 300 per hour | allow |
@@ -1035,6 +1069,10 @@ A search is 10 to 15 debounced autocompletes and one details call, so `townwise:
 | 404 | `not_found` | unknown id, or an id in another organization | “This {thing} isn’t available.” with a way back |
 | 409 | `view_as_active` | any route with the `staff` policy, any method, during view-as; a second view-as start racing the first | re-read `/api/me` |
 | 409 | `no_invite`, `already_in_org`, `request_exists`, `request_not_pending`, `requester_has_org`, `last_admin`, `location_name_taken`, `location_limit`, `location_has_data`, `note_limit`, `member_limit`, `person_has_seat`, `org_not_suspended`, `org_not_in_setup` | as in the tables | inline copy per page |
+| 409 | `forecasts_off`, `calibration_in_progress`, `not_enough_history`, `chat_budget_exhausted` | publishing while the organization's forecasts are off; a calibration already live for the location; fewer than 420 days of history; the month's TownwiseAI budget spent (10.7) | the console says why |
+| 400 | `invalid_regime_start`, `invalid_lab_result` | a pattern-change date outside the history or less than 8 weeks before its last day; a lab result that fails its checks, with `issues: { path, code }[]` (10.14) | the console says why; the job logs the code |
+| 429 | `calibrations_rate_limited` | the organization's 4 calibrations a day (10.8) | “Try again tomorrow.” |
+| 503 | `lab_unavailable`, `lab_start_failed` | `TOWNWISE_LAB_RUNNER` is `off`; the job could not start (10.7) | “Calibration isn’t available right now.” |
 | 413 | `payload_too_large` | server-core | unreachable from the app (Section 11.3) |
 | 415 | `unsupported_media_type` | server-core | client bug |
 | 429 | `rate_limited` | Section 10.8, with `retryAfterSeconds` | “Too many attempts. Try again in {minutes} minutes.” |
@@ -1201,6 +1239,17 @@ interface EstimatesAbout {
 ```
 
 TownwiseAI reads the same window through `get_people_in_town`, the calendar through `get_town_calendar` and the published forecast through `get_forecast` (`tuning-chat.md` section 4), and its "today" is the town's local date (13.2). Home and Analytics keep the device's local date; both are Eastern for the twelve towns.
+
+### 10.14 The lab callback (`/lab`)
+
+The forecast lab's job (D27, `modeling/lab`) calls back to the API on two routes mounted at `/lab`, outside `/api` and outside the kit's auth: the job holds no session, only its calibration's id and a 32-byte bearer token, which the API generated when it started the job and stores only as a sha256 (6.22). They are the only routes outside `/auth` and `/api` (`api/test/routes.test.ts`), and sit outside `TOWNWISE_ROUTES`. The token is checked first, by its hash against the live calibration, and `access/policy.ts` mints the `OrgScope` from the calibration, so the job reads and writes one location of one organization. The body is parsed only after the token passes. Every refusal is 404 `not_found`: an unknown id, a missing, wrong or expired token, another organization's id and a finished calibration look alike (never 401).
+
+| Method and path | Request | Success | Errors |
+|---|---|---|---|
+| `GET /lab/calibrations/:id/input` | `Authorization: Bearer {token}` | 200 `townwise.lab-input/1`: `calibrationId`, `metric`, `today`, `dataThrough`, `horizonDays` (182), `regimeStart`, `days` (guests per day with term, week of term, event groups and three flags from the notes; never a note's text, a calendar title or a name), `champion` (the published model's forecast to compare with, or null). A queued calibration becomes running here | 404 |
+| `POST /lab/calibrations/:id/result` (up to 256 KB) | a lab result: a success (a run file with `trainingSource: 'townwise_lab'`, the scorecard, the code version and parameters) or a failure code | 200 `{ status }` once stored | 400 `invalid_lab_result` `{ issues: { path, code }[] }`, which fails the calibration `invalid_result`; 404 |
+
+Ingesting a result follows D17, in an order a retry completes: the draft run upserted on its file hash (the lab never changes a run that exists), its rows, `draft`, the result on the calibration, the gate (set once, by compare-and-set), the publish the gate decides, and the finish. The gate (`api/src/lab/gate.ts`, G2) publishes only when forecasts are on for the organization and it is active (G1), the published forecast did not change meanwhile, and the draft beats the current forecast on at least 12 held-out weeks by at least half a point of weekly WAPE, with 80% ranges holding 65% to 95% of weeks and weekday bias no more than 2 points worse; with no current forecast it needs 420 days of history and 12 backtest weeks with coverage in band and weekly WAPE at least half a point under a weekday-median baseline. Ties do not publish. A duplicate or retried POST ends with one run, at most one publish and one `calibration.finished`. The job's log lines carry counts and codes only (`fetched input: {n} days`, `posted result: ok`).
 
 ---
 
@@ -1433,7 +1482,7 @@ Who is likely in a location's town each day, from public sources, in `api/src/pe
 | State | Condition | Heading | Body |
 |---|---|---|---|
 | `no_sales_data` | no day with guests or net sales | “Not calibrated yet” | “Upload your sales history to start. The upload sends Townwise only the date, guest count and net sales for each day.” |
-| `not_calibrated` | one or more days | “Not calibrated yet” | “Your sales history is in: {n} days, {first} to {last}. Calibration isn’t built yet, so there is no forecast.” |
+| `not_calibrated` | one or more days | “Not calibrated yet” | “Your sales history is in: {n} days, {first} to {last}.” |
 
 Mockups add the chip [DECISION NEEDED: minimum days of history before calibration] under the `not_calibrated` body. When the user decides, a `needs_more_history` state with the copy “Calibration needs {min} days of history. You have {n}.” joins the table. Until then, no page states a threshold.
 
@@ -1443,18 +1492,19 @@ Mockups add the chip [DECISION NEEDED: minimum days of history before calibratio
 
 ### 14.2 What the app never shows in v1
 
-No forecast numbers, ranges, reasons or accuracy, except from a run staff published (14.4). [Build note: owners see a published run on the model card and through TownwiseAI; Home and Analytics keep showing none until a later change.] No “calibrating” or “calibrated” states, and no progress for a process that does not run. No sample values. The one forward-looking block is the design system’s own pattern (Section 16, P11): a layout headed “Illustrative layout, not real output”, with slots only. [CONFIRM: show the illustrative layout in the app] Home replaced the Forecast page at P11 (owner decision, 2026-11-05), so the app shows no illustrative layout today.
+No forecast numbers, ranges, reasons or accuracy, except from a run staff published (14.4). [Build note: owners see a published run on the model card and through TownwiseAI; Home and Analytics keep showing none until a later change.] No “calibrating” or “calibrated” states on the calibration state itself. [Build note: since D27 a calibration's status (running, finished, failed, and whether it was published and why) shows in TownwiseAI's replies and in the staff console's Forecasts section (14.4); the derived state in 14.1 is unchanged, and no page shows progress for a process that is not running.] No sample values. The one forward-looking block is the design system’s own pattern (Section 16, P11): a layout headed “Illustrative layout, not real output”, with slots only. [CONFIRM: show the illustrative layout in the app] Home replaced the Forecast page at P11 (owner decision, 2026-11-05), so the app shows no illustrative layout today.
 
 ### 14.3 Reserved for later (not in the v1 API)
 
-`queued`, `calibrating`, `calibrated` (with model version and fitted date), `stale` (sales or notes changed since the last fit) and `failed`. They arrive with model storage, as a `tw_calibrations` collection keyed by location. The forecast shape, also reserved: `{ horizon: 7 | 28; frozenAt; modelVersion; interval: 0.8; days: { date; guests: { low, mid, high }; netSalesCents: { low, mid, high }; reasons: { text, source }[] }[] }`. [Build note: forecasts now arrive as staff-imported runs in the shape of 14.4 (guests only, reasons labelled in code, never free text); the calibration states and `tw_calibrations` stay reserved.]
+`queued`, `calibrating`, `calibrated` (with model version and fitted date), `stale` (sales or notes changed since the last fit) and `failed`. They arrive with model storage, as a `tw_calibrations` collection keyed by location. [Build note: `tw_calibrations` is built as of D27, but per calibration, not per location (6.22): it records each lab run's status, gate and scorecard, and the states above stay reserved because the model itself is stored nowhere.] The forecast shape, also reserved: `{ horizon: 7 | 28; frozenAt; modelVersion; interval: 0.8; days: { date; guests: { low, mid, high }; netSalesCents: { low, mid, high }; reasons: { text, source }[] }[] }`. [Build note: forecasts now arrive as staff-imported runs in the shape of 14.4 (guests only, reasons labelled in code, never free text); the calibration states and `tw_calibrations` stay reserved.]
 
 ### 14.4 Forecast runs
 
-The API never computes a forecast and never holds a model. Staff export a run's outputs on the team's computers (`modeling/export_forecast_run.py`, from the frozen files in `modeling/forecasts/`, written to the gitignored `modeling/outputs/`), import the run file for one location from P21, and publish it. [Build note: owner decision 2026-11-05: staff may import and publish Sawtooth's frozen v3 forecast once Sawtooth is an organization in Townwise and the owner confirms its consent to see it and to its being sent to Anthropic through TownwiseAI. The build ships the machinery only; nothing is published.]
+The API never computes a forecast and never holds a model. [Build note: since D27 the forecast lab computes forecasts too. A job on Townwise's Azure servers (`modeling/lab`, not the API) refits a location's model from that location's own uploaded days and notes, returns its outputs to the API's callback (10.14) and keeps no model; the API still computes nothing and holds nothing but outputs and the code version, parameters and input hash that reproduce them.] Staff export a run's outputs on the team's computers (`modeling/export_forecast_run.py`, from the frozen files in `modeling/forecasts/`, written to the gitignored `modeling/outputs/`), import the run file for one location from P21, and publish it. [Build note: owner decision 2026-11-05: staff may import and publish Sawtooth's frozen v3 forecast once Sawtooth is an organization in Townwise and the owner confirms its consent to see it and to its being sent to Anthropic through TownwiseAI. The build ships the machinery only; nothing is published.]
 
 - **The run file** (`townwise.forecast-run/1`, `api/src/forecasts/file.ts`, at most 256 KB as sent: P21 reads the file in the browser, refuses one over 2 MB on disk unread, and checks the 256 KB on the parsed file as compact JSON, so the exporter's indenting doesn't count; strict at every level): `schema`, `metric: 'guests'`, `model { family, version, notebookCommit }`, `trainingSource: 'files_from_owner'`, `trainedFrom`, `dataThrough`, `madeAt`, `frozen`, `interval { level: 0.8, widened }`, `backtest`, `days` (1 to 400: `date`, `status`, `low`, `mid`, `high`, `baseline`, up to 6 `reasons { kind, ref, effectPct }`) and `weeks` (up to 60: `from`, `to`, `openDays`, `low`, `mid`, `high`). No location id, name, note, URL or other free text. Rules: `trainedFrom <= dataThrough <= madeAt <= today`; every day after `dataThrough` and within 400 days of it, each once; an open day has `low <= mid <= high` (0 to 20,000), a closed or booked day no numbers; only term, event and holiday reasons may carry a `ref`; each week lies inside one Monday-to-Sunday week, on days the file has, without overlap, with `openDays` between its open days and its open and booked days. A refusal is 400 `invalid_forecast_file` with at most 50 `{ path, code }` issues, never a value.
 - **Import** (staff, 10.7): the run is upserted on `{ orgId, locationId, fileSha256 }` as `importing`, its rows upserted on their key (a duplicate key from a concurrent import of the same file is a row the other one wrote, not an error), and it becomes `draft` when every row is there. The same file again answers 200 with the run; a run left `importing` finishes on the retry. Publish is a compare-and-set from `draft`; withdraw from `draft` or `published`. Each is a staff action (9.2), written before the effect and listed in the org's Townwise staff activity.
+- **Lab runs** (D27). Org admins (through TownwiseAI's `start_calibration`) and staff (the console's Calibrate button) start a calibration for a location. Its job returns a draft run with `trainingSource: 'townwise_lab'` and a `lab` block (6.20), plus a scorecard on held-out weeks (WAPE, typical-week error, weeks over 20% off, the worst week, 80% range coverage, weekday bias). It publishes itself only when staff have switched the organization's forecasts on (`POST .../forecasts-switch`, which needs the staff member's word that the owner agreed) and the gate passes (10.14); otherwise the draft and its scorecard stay for staff, who see percentages and counts only (D7). Staff publish a draft with the existing Publish, which also answers 409 `forecasts_off` while the switch is off, and withdraw any run, lab or imported, with Withdraw. A lab run is frozen with its training cutoff, input hash, code version and parameters, scored prospectively like any published run, and never overwritten. Each calibration costs the organization's TownwiseAI month $0.10 and is limited to 4 a day per organization and one live per location. Privacy: the job sees only the one location's days, and nothing about a calibration reaches a log or an audit event except ids, codes and counts. TownwiseAI's three lab tools (`tuning-chat.md` section 4) give org admins the scorecard as chart data and cards, never a draft forecast day.
 - **Who sees it.** Owners, view-as and TownwiseAI read published runs only: drafts, unfinished imports and withdrawn runs never show. For each date the reader uses the newest published run whose `dataThrough` is before it, so no forecast is shown for a day its model saw. Week rows come only from a run that supplied every day of the week, and are the run's own, never sums of days.
 - **Labels** are made in code (`api/src/forecasts/reasons.ts`): the weekday; the term from the town calendar's term state on the day; an event or holiday by the calendar entry its `ref` names (by id, or a group with one entry that day), a federal holiday on the day, or plain words ("Town event", "Holiday"); "Your recent level", "Closed", "Private event booked". A partner's text can never reach a label.
 - **Accuracy.** Each past day carries its stored guests and whether they landed in the range. Live accuracy is per run: it counts the open days that have passed which that run supplied (the reader chose it for them), booked days left out, as WAPE with the in-range count, misses included, and is null under 5 of its own scored days. A newer run is never credited with an older run's days, so a run published today reads "not scored yet" even when older runs have been scored. A day is past once it has ended in the town (its local date, `localDay`, 10.13), on the forecast route, the model card and in TownwiseAI alike. Scored weeks are not listed separately: a week row in a read carries its `actual` and `inRange`. A week's actual is summed only when all its open days have passed and none was booked.
@@ -2064,6 +2114,8 @@ The location's chat with TownwiseAI and its side panel (server contract: `docs/p
 | `EMAIL_SENDER` | env, not secret | `no-reply@townwise.tech` | D14 |
 | `TOWNWISE_EMAIL_REPLY_TO` | env, not secret | a team member’s address in production | Absent: no Reply-To, and the footer does not offer replies (D14) |
 | `TOWNWISE_WEB_URL` | env, not secret | `https://townwise.tech` in production, `http://localhost:8081` by default | A bare origin, for the links in emails; production email requires `https:` (D14) |
+| `TOWNWISE_LAB_RUNNER`, `TOWNWISE_LAB_API_URL`, `TOWNWISE_LAB_JOB_ID`, `TOWNWISE_LAB_PROJECT_DIR` | env, not secret | `off` (default), `local` or `azure`; the API's bare origin the job calls back to (`local`); the `Microsoft.App/jobs` resource id (`azure`); the lab's uv project, `../modeling/lab` by default (`local`) | `api/src/config.ts` (`labRunnerOf`). `off` answers 503 `lab_unavailable`. `azure` starts the job with the API's managed identity; `local` spawns `uv run` (development only). A runner missing its setting refuses boot (D27) |
+| Forecast lab | constants | 20-minute timeout, $0.10 a calibration, 4 a day per organization, 420 days of history, gate values in 10.14 | `api/src/lab/service.ts`, `gate.ts` [CONFIRM] |
 
 ---
 
@@ -2258,6 +2310,7 @@ Each is marked inline with “lead default”:
 44. Staff-only deletion in v1, with suspension before an organization is deleted (D22).
 45. Who holds Atlas project access, named on the privacy page (17).
 46. Staff setup for an organization nobody has joined yet: write-only, ending at the first join, used only with the client’s consent (D23, F10b).
+47. The forecast lab's gate values, price and daily limit, and the forecasts switch (D27, 10.14): 12 held-out weeks, half a point of weekly WAPE, 80% ranges holding 65% to 95% of weeks, 2 points of weekday bias, 420 days of history for a first forecast, $0.10 a calibration, 4 a day, a 20-minute timeout.
 
 ### 22.3 Decisions needed
 
@@ -2285,6 +2338,8 @@ Each is marked inline with “lead default”:
 ---
 
 ## 23. Changelog
+
+**2026-11-09, forecast lab.** Org admins (TownwiseAI's `start_calibration`, `get_calibration`, `compare_forecast_models`) and staff (the console's Calibrate button) retrain a location's forecast model in an Azure job on the location's own days and notes (D27). The job returns a draft run (`trainingSource: 'townwise_lab'`, 6.20) and a scorecard through two callback routes at `/lab` (10.14), stored in `tw_calibrations` (6.22). The system publishes a draft that passes the gate only for an organization whose forecasts staff have switched on; staff can withdraw it. New: the forecasts switch, the calibration list and start routes, 409 `forecasts_off` on publish (10.7), the `townwise:calibrations` limiter (10.8), actor role `system` and four audit changes (9.2, 9.3), `TOWNWISE_LAB_*` configuration (18) and the privacy page's Forecasts paragraph. Calibration status now shows in TownwiseAI and the console (14.2), and the dashboard no longer says calibration isn’t built.
 
 **2026-11-09, email on.** Production sends the two D14 emails: `api/production.env` sets `EMAIL_ENDPOINT` and `EMAIL_SENDER`, and the F2, F3, P3, P4 and C3 copy and the privacy page say so. Locally, `EMAIL_ENDPOINT` in `api/.env.local` sends through the developer’s `az login` (`azure-identity.ts`), never in production, where a missing managed identity still refuses boot (18).
 
