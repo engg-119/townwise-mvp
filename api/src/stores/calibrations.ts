@@ -144,13 +144,11 @@ export interface CalibrationStore {
   /** Compare-and-set on running with no image recorded yet: the image the job runs, when it was running first. */
   recordImageDigest(scope: OrgScope, id: string, imageDigest: string): Promise<boolean>;
   /**
-   * The job's one input fetch, by compare-and-set on running, the token it called with and no input recorded yet: the
-   * hash of the input it is given and the last day it holds, and the token swapped for the result token (its sha256),
-   * so the token the job was started with is dead from here on. False for any second fetch.
+   * The job's one input fetch, by compare-and-set on running with no input recorded yet: the hash of the input it is
+   * given, the last day it holds, and the sha256 of the result token the API hands only to that fetch, the one the
+   * result is posted with. False for any second fetch.
    */
-  recordInput(scope: OrgScope, id: string, input: {
-    tokenSha256: string; inputSha256: string; dataThrough: string; resultTokenSha256: string;
-  }): Promise<boolean>;
+  recordInput(scope: OrgScope, id: string, input: { inputSha256: string; dataThrough: string; resultTokenSha256: string }): Promise<boolean>;
   /** Compare-and-set on running with no run recorded yet: a run id, once set, is kept. */
   recordResult(scope: OrgScope, id: string, result: { runId: string; scorecardJson: string; codeVersion: string }): Promise<boolean>;
   /** Compare-and-set on running with no gate yet: the gate is set once. */
@@ -242,7 +240,7 @@ export function createCalibrationStore(connection: Connection): CalibrationStore
     },
     async recordInput(scope, id, input) {
       const result = await Calibration.updateOne(
-        { ...ofId(scope, id), status: 'running', tokenSha256: input.tokenSha256, inputSha256: null },
+        { ...ofId(scope, id), status: 'running', inputSha256: null },
         { $set: { inputSha256: input.inputSha256, dataThrough: input.dataThrough, tokenSha256: input.resultTokenSha256 } },
       );
       return result.modifiedCount === 1;

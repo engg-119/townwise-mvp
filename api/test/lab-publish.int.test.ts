@@ -34,7 +34,7 @@ afterAll(async () => { await server.close(); });
 beforeEach(async () => { await server.redis.flushdb(); });
 
 interface Team { orgId: string; locationId: string; admin: TestSession }
-interface Job { calibrationId: string; token: string }
+interface Job { calibrationId: string }
 
 const ON = { on: true, ownerAgreed: true } as const;
 

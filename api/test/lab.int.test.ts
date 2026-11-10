@@ -1,9 +1,9 @@
 // The forecast lab from the staff console to the job's callback, with a fake runner that records each job instead of
-// starting one; the test then plays the job (helpers/lab.ts). Starting a calibration (its checks, event, charge and
-// limits), the input the job fetches, the draft run its result makes (forecasts are off here, so nothing is published;
-// lab-publish.int.test.ts publishes), 404 for every
-// callback the job should not make, timeouts, deletion while a job runs, duplicated results, and logs and audit events
-// with ids and counts only. Every number is synthetic.
+// starting one; the test then plays the job, signed in as the lab identity (helpers/lab.ts). Starting a calibration
+// (its checks, event, charge and limits), the input the job fetches, the draft run its result makes (forecasts are off
+// here, so nothing is published; lab-publish.int.test.ts publishes), 404 for every callback the job should not make,
+// 503 while Entra's keys are unreachable, timeouts, deletion while a job runs, duplicated results, and logs and audit
+// events with ids and counts only. Every number is synthetic.
 import { createHash, randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
@@ -18,7 +18,8 @@ import type { CalibrationView } from '../src/lab/views.ts';
 import { addChatUsage, addLocation, addNote, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { holdCalls } from './helpers/hold.ts';
 import {
-  CODE_VERSION, fakeLabRunner, IMAGE_DIGEST, jobCall, labFailure, labResultFor, resultTokenOf, runDays, seedHistory, type FakeLabRunner,
+  CODE_VERSION, failJob, fakeLabRunner, IMAGE_DIGEST, jobCall, LAB_IDENTITY, labFailure, labIdentityToken, labKeys, labResultFor,
+  resultTokenOf, runDays, seedHistory, testLabCaller, type FakeLabRunner,
 } from './helpers/lab.ts';
 import { comparisonWith, metricsWith, scorecardWith } from './helpers/lab-scorecard.ts';
 import {
@@ -28,17 +29,28 @@ import {
 let server: TownwiseTestServer;
 let staff: TestSession;
 let runner: FakeLabRunner;
+/** While true, the lab caller cannot fetch Entra's keys (an outage). */
+let keysDown = false;
 
 beforeAll(async () => {
   runner = fakeLabRunner();
-  server = await startTownwiseServer({ labRunner: runner });
+  server = await startTownwiseServer({
+    labRunner: runner,
+    labCaller: testLabCaller(
+      () => server.clock.now(),
+      (header, token) => (keysDown ? Promise.reject(new TypeError('fetch failed')) : labKeys(header, token)),
+    ),
+  });
   staff = await signInStaff(server);
 });
 afterAll(async () => { await server.close(); });
 beforeEach(async () => {
   await server.redis.flushdb();
   runner.onStart = null;
+  keysDown = false;
 });
+
+interface Job { calibrationId: string }
 
 interface Team { orgId: string; locationId: string; admin: TestSession }
 
@@ -57,7 +69,7 @@ function start(t: Pick<Team, 'orgId' | 'locationId'>, body: unknown = {}): Promi
   return call(server, `/api/admin/orgs/${t.orgId}/locations/${t.locationId}/calibrations`, { session: staff, json: body });
 }
 
-async function started(t: Team, body: unknown = {}): Promise<{ calibration: CalibrationView; job: { calibrationId: string; token: string } }> {
+async function started(t: Team, body: unknown = {}): Promise<{ calibration: CalibrationView; job: Job }> {
   const res = await start(t, body);
   expect(res.status).toBe(201);
   const { calibration } = await res.json() as { calibration: CalibrationView };
@@ -78,7 +90,7 @@ async function viewOf(t: Pick<Team, 'orgId'>, id: string): Promise<CalibrationVi
   return found;
 }
 
-async function inputFor(job: { calibrationId: string; token: string }): Promise<LabInput> {
+async function inputFor(job: Job): Promise<LabInput> {
   const res = await jobCall(server, job, 'input');
   expect(res.status).toBe(200);
   return labInputSchema.parse(await res.json());
@@ -128,19 +140,20 @@ describe('starting a calibration', () => {
       seen.push({ status: doc?.status, requested: (await eventsFor(job.calibrationId)).length, tokenSha256: doc?.tokenSha256 });
     };
     server.logs.length = 0;
-    const { calibration, job } = await started(t);
+    const { calibration } = await started(t);
     expect(calibration).toMatchObject({
       locationId: t.locationId, status: 'running', failure: null, failureWords: null, via: 'console', requestedByRole: 'superadmin',
       regimeStart: null, requestedAt: '2026-06-01T12:00:00.000Z', startedAt: '2026-06-01T12:00:00.000Z', finishedAt: null, runId: null,
       chargedUsd: 0.1, gate: null, summary: null,
     });
     // While the job started, the calibration was queued, its event already written, and only the token's hash stored.
-    const tokenSha256 = createHash('sha256').update(job.token).digest('hex');
+    const startToken = runner.jobs.at(-1)?.token ?? '';
+    const tokenSha256 = createHash('sha256').update(startToken).digest('hex');
     expect(seen).toEqual([{ status: 'queued', requested: 1, tokenSha256 }]);
-    expect(job.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(startToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
     const doc = await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(calibration.id) });
     expect(doc).toMatchObject({ status: 'running', imageDigest: IMAGE_DIGEST, chargedMicroUsd: CALIBRATION_CHARGE_MICRO_USD, championRunId: null });
-    expect(JSON.stringify(doc)).not.toContain(job.token);
+    expect(JSON.stringify(doc)).not.toContain(startToken);
     const usage = await server.connection.collection('tw_chat_usage').find({ orgId: new Types.ObjectId(t.orgId) }).toArray();
     expect(usage.map((row) => ({ month: row.month as unknown, costMicroUsd: row.costMicroUsd as unknown })))
       .toEqual([{ month: '2026-06', costMicroUsd: 100_000 }]);
@@ -165,10 +178,10 @@ describe('starting a calibration', () => {
     expect(await errorOf(await start(t))).toEqual({ status: 409, error: 'calibration_in_progress' });
     // Refused by the read-only checks: nothing recorded, nothing charged.
     expect((await auditEvents(server)).length).toBe(before);
-    expect((await jobCall(server, first.job, 'result', labFailure(first.job, 'internal'))).status).toBe(200);
+    expect((await failJob(server, first.job)).status).toBe(200);
     for (let n = 2; n <= 4; n += 1) {
       const { job } = await started(t);
-      expect((await jobCall(server, job, 'result', labFailure(job, 'internal'))).status).toBe(200);
+      expect((await failJob(server, job)).status).toBe(200);
     }
     const jobs = runner.jobs.length;
     const fifth = await start(t);
@@ -222,7 +235,7 @@ describe('starting a calibration', () => {
     const { calibration } = await started(t, { regimeStart: '2026-04-05' });
     expect(calibration.regimeStart).toBe('2026-04-05');
     expect((await eventsFor(calibration.id))[0]).toMatchObject({ details: { hasRegime: true } });
-    expect((await inputFor(runner.jobs.at(-1) ?? { calibrationId: '', token: '' })).regimeStart).toBe('2026-04-05');
+    expect((await inputFor(runner.jobs.at(-1) ?? { calibrationId: '' })).regimeStart).toBe('2026-04-05');
   });
 
   it('a spent month’s budget is 409 chat_budget_exhausted', async () => {
@@ -291,7 +304,7 @@ describe('starting a calibration', () => {
 });
 
 describe('the job’s callback', () => {
-  it('the job fetches its input with the token and a result makes a draft run with the lab block; nothing is published', async () => {
+  it('the job fetches its input as the lab identity and a result makes a draft run with the lab block; nothing is published', async () => {
     const t = await team();
     await addNote(server, { orgId: t.orgId, locationId: t.locationId, detail: 'Closed for a private reason', startDate: '2026-02-03' });
     const championId = await publishedChampion(t);
@@ -344,34 +357,48 @@ describe('the job’s callback', () => {
     expect(await count('tw_forecast_runs', { locationId: new Types.ObjectId(t.locationId), status: 'published' })).toBe(1);
     expect((await auditEvents(server)).filter((event) => event.action === 'forecast.published' && (event.target as { id: string }).id !== championId))
       .toEqual([]);
-    // The finished calibration's token is dead.
+    // A finished calibration takes no more calls.
     expect((await jobCall(server, job, 'input')).status).toBe(404);
   });
 
-  it('the start token fetches the input once; the result goes only with the result token that fetch handed out', async () => {
+  it('the lab identity fetches the input once; a result needs the identity token and the result token that fetch handed out', async () => {
     const t = await team();
     const { calibration, job } = await started(t);
+    // Another running calibration, whose input was fetched, for its result token.
+    const other = (await started(await team())).job;
+    await inputFor(other);
     server.logs.length = 0;
     const res = await jobCall(server, job, 'input');
     expect(res.status).toBe(200);
     const resultToken = res.headers.get('x-townwise-result-token') ?? '';
     expect(resultToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(resultToken).not.toBe(job.token);
     const input = labInputSchema.parse(await res.json());
     const sha = (token: string): string => createHash('sha256').update(token).digest('hex');
     const stored = () => server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(calibration.id) });
     expect(await stored()).toMatchObject({ tokenSha256: sha(resultToken), inputSha256: canonicalSha256(input), dataThrough: '2026-05-31' });
-    // A second fetch, with either token (someone who read the start token from the job's execution history, say), is 404
-    // and changes nothing recorded.
+    const before = JSON.stringify(await stored());
+    // A second fetch, by the lab identity or anyone holding its token, is 404 and changes nothing recorded.
     expect((await jobCall(server, job, 'input')).status).toBe(404);
-    expect((await jobCall(server, { ...job, token: resultToken }, 'input')).status).toBe(404);
-    // The start token can no longer post anything.
-    const start = { authorization: `Bearer ${job.token}` };
-    expect((await jobCall(server, job, 'result', labResultFor(input), start)).status).toBe(404);
-    expect((await jobCall(server, job, 'result', labFailure(job, 'internal'), start)).status).toBe(404);
-    expect(await stored()).toMatchObject({ status: 'running', tokenSha256: sha(resultToken), inputSha256: canonicalSha256(input) });
+    const result = labResultFor(input);
+    const refusedPosts = [
+      // The identity token alone.
+      { resultToken: null },
+      // The result token alone, or with a token that is not the lab identity's.
+      { authorization: null, resultToken },
+      { authorization: 'Bearer not.a.token', resultToken },
+      { authorization: `Bearer ${await labIdentityToken(server, { oid: '44444444-4444-4444-8444-444444444444' })}`, resultToken },
+      // Another calibration's result token, a garbled one, or the right one cut short.
+      { resultToken: resultTokenOf(other.calibrationId) ?? '' },
+      { resultToken: `${resultToken.slice(0, 42)}!` },
+      { resultToken: resultToken.slice(0, 42) },
+    ];
+    for (const opts of refusedPosts) {
+      expect((await jobCall(server, job, 'result', result, opts)).status).toBe(404);
+      expect((await jobCall(server, job, 'result', labFailure(job, 'internal'), opts)).status).toBe(404);
+    }
+    expect(JSON.stringify(await stored())).toBe(before);
     expect(resultTokenOf(calibration.id)).toBe(resultToken);
-    expect((await jobCall(server, job, 'result', labResultFor(input))).status).toBe(200);
+    expect((await jobCall(server, job, 'result', result)).status).toBe(200);
     expect((await viewOf(t, calibration.id)).status).toBe('succeeded');
     expect(JSON.stringify(await stored())).not.toContain(resultToken);
     const logs = server.logs.join('\n');
@@ -389,47 +416,97 @@ describe('the job’s callback', () => {
     expect(doc).toMatchObject({ status: 'running', imageDigest: IMAGE_DIGEST, chargedMicroUsd: CALIBRATION_CHARGE_MICRO_USD });
   });
 
-  it('before the input was fetched, the start token can only fail the calibration', async () => {
+  it('before the input was fetched, no result is taken, and the calibration stays live', async () => {
     const t = await team();
     const { calibration, job } = await started(t);
-    const res = await jobCall(server, job, 'result', labResultFor(labInputSchema.parse({
+    const other = (await started(await team())).job;
+    await inputFor(other);
+    const result = labResultFor(labInputSchema.parse({
       schema: 'townwise.lab-input/1', calibrationId: calibration.id, metric: 'guests', today: '2026-06-01', dataThrough: '2026-05-31',
       horizonDays: 182, regimeStart: null, days: [{ date: '2026-05-31', guests: 1, term: 'interim', weekOfTerm: -1, events: [], closed: false, privateEvent: false, booked: false }],
       champion: null,
-    })));
-    expect(res.status).toBe(400);
-    expect(await viewOf(t, calibration.id)).toMatchObject({ status: 'failed', failure: 'invalid_result', runId: null });
+    }));
+    for (const resultToken of [null, 'A'.repeat(43), resultTokenOf(other.calibrationId) ?? '']) {
+      expect((await jobCall(server, job, 'result', result, { resultToken })).status).toBe(404);
+      expect((await jobCall(server, job, 'result', labFailure(job, 'internal'), { resultToken })).status).toBe(404);
+    }
+    expect(await viewOf(t, calibration.id)).toMatchObject({ status: 'running', failure: null, runId: null });
     expect(await count('tw_forecast_runs', { locationId: new Types.ObjectId(t.locationId) })).toBe(0);
+    // The job's own fetch still works.
+    await inputFor(job);
   });
 
-  it('input and result answer 404 for an unknown id, a wrong token, another org’s id and a finished calibration, never 401', async () => {
+  it('input and result answer 404 for an unknown, malformed or finished id and any token but the lab identity’s, never 401', async () => {
     const a = await team();
-    const b = await team();
     const jobA = (await started(a)).job;
-    const jobB = (await started(b)).job;
+    const finished = (await started(await team())).job;
+    expect((await failJob(server, finished)).status).toBe(200);
+    server.logs.length = 0;
     const statuses: number[] = [];
-    const both = async (job: { calibrationId: string; token: string }, opts?: { authorization?: string | null }): Promise<void> => {
+    const both = async (job: Job, opts?: { authorization?: string | null }): Promise<void> => {
       statuses.push((await jobCall(server, job, 'input', undefined, opts)).status);
-      statuses.push((await jobCall(server, job, 'result', labFailure(job, 'internal'), opts)).status);
+      statuses.push((await jobCall(server, job, 'result', labFailure(job, 'internal'), { ...opts, resultToken: 'A'.repeat(43) })).status);
     };
-    await both({ calibrationId: new Types.ObjectId().toHexString(), token: jobA.token });
-    await both({ calibrationId: jobA.calibrationId, token: jobB.token });
-    await both({ calibrationId: jobB.calibrationId, token: jobA.token });
-    await both({ calibrationId: 'not-an-id', token: jobA.token });
-    await both(jobA, { authorization: null });
-    await both(jobA, { authorization: `Basic ${jobA.token}` });
-    await both(jobA, { authorization: `Bearer ${jobA.token}x` });
+    // Not a live calibration, with a good identity token: nothing to log.
+    await both({ calibrationId: new Types.ObjectId().toHexString() });
+    await both({ calibrationId: 'not-an-id' });
+    await both(finished);
+    expect(logLines(server).filter((line) => String(line.msg).startsWith('townwise.lab_callback'))).toEqual([]);
+    // A live calibration, with anything but the lab identity's token for the callback app.
+    const now = Math.floor(server.clock.now().getTime() / 1000);
+    const refusals: { reason: string; authorization: string | null }[] = [
+      { reason: 'missing', authorization: null },
+      { reason: 'malformed', authorization: `Basic ${await labIdentityToken(server)}` },
+      { reason: 'audience', authorization: `Bearer ${await labIdentityToken(server, { aud: 'https://management.azure.com/' })}` },
+      { reason: 'audience', authorization: `Bearer ${await labIdentityToken(server, { aud: `api://${LAB_IDENTITY.audience}` })}` },
+      { reason: 'issuer', authorization: `Bearer ${await labIdentityToken(server, { iss: `https://sts.windows.net/${LAB_IDENTITY.tenantId}/` })}` },
+      { reason: 'tenant', authorization: `Bearer ${await labIdentityToken(server, { tid: '55555555-5555-4555-8555-555555555555' })}` },
+      { reason: 'caller', authorization: `Bearer ${await labIdentityToken(server, { oid: '44444444-4444-4444-8444-444444444444' })}` },
+      { reason: 'expired', authorization: `Bearer ${await labIdentityToken(server, { nbf: now - 7200, exp: now - 60 })}` },
+    ];
+    for (const { authorization } of refusals) await both(jobA, { authorization });
     expect(statuses.every((status) => status === 404)).toBe(true);
-    expect(statuses).toHaveLength(14);
-    // None of those touched either calibration.
-    expect((await viewOf(a, jobA.calibrationId)).status).toBe('running');
-    expect((await viewOf(b, jobB.calibrationId)).status).toBe('running');
-    expect((await jobCall(server, jobA, 'result', labFailure(jobA, 'internal'))).status).toBe(200);
+    expect(statuses).toHaveLength(6 + refusals.length * 2);
+    // Each token refusal logs its route and reason, and nothing else.
+    const refused = logLines(server).filter((line) => line.msg === 'townwise.lab_callback_refused');
+    expect(refused.map(({ route, reason }) => ({ route, reason }))).toEqual(refusals.flatMap(({ reason }) => [
+      { route: 'input', reason }, { route: 'result', reason },
+    ]));
+    for (const line of refused) {
+      expect(Object.keys(line).filter((key) => !['hostname', 'level', 'msg', 'pid', 'time'].includes(key)).sort()).toEqual(['reason', 'route']);
+    }
+    const logs = server.logs.join('\n');
+    for (const { authorization } of refusals) {
+      for (const part of (authorization ?? '').replace(/^\w+ /, '').split('.').filter((each) => each !== '')) expect(logs).not.toContain(part);
+    }
+    // None of those touched the live calibration: its job fetches its input and fails it as usual.
+    expect(await viewOf(a, jobA.calibrationId)).toMatchObject({ status: 'running', failure: null });
+    expect(await count('tw_calibrations', { _id: new Types.ObjectId(jobA.calibrationId), inputSha256: null })).toBe(1);
+    expect((await failJob(server, jobA)).status).toBe(200);
     expect((await viewOf(a, jobA.calibrationId)).failure).toBe('job_failed');
-    statuses.length = 0;
-    await both(jobA);
-    expect(statuses).toEqual([404, 404]);
-    expect((await jobCall(server, jobB, 'input')).status).toBe(200);
+  });
+
+  it('while Entra’s keys cannot be fetched, input and result answer 503 and change nothing', async () => {
+    const t = await team();
+    const { calibration, job } = await started(t);
+    const fetched = (await started(await team())).job;
+    const input = await inputFor(fetched);
+    const ids = [calibration.id, fetched.calibrationId].map((id) => new Types.ObjectId(id));
+    const stored = () => server.connection.collection('tw_calibrations').find({ _id: { $in: ids } }).toArray();
+    const before = JSON.stringify(await stored());
+    keysDown = true;
+    server.logs.length = 0;
+    expect(await errorOf(await jobCall(server, job, 'input'))).toEqual({ status: 503, error: 'lab_auth_unavailable' });
+    expect(await errorOf(await jobCall(server, fetched, 'result', labResultFor(input)))).toEqual({ status: 503, error: 'lab_auth_unavailable' });
+    expect(JSON.stringify(await stored())).toBe(before);
+    const unavailable = logLines(server).filter((line) => line.msg === 'townwise.lab_callback_unavailable');
+    expect(unavailable.map(({ level, route, reason }) => ({ level, route, reason }))).toEqual([
+      { level: 40, route: 'input', reason: 'keys_unavailable' }, { level: 40, route: 'result', reason: 'keys_unavailable' },
+    ]);
+    // Once the keys are back, the job's retry goes through.
+    keysDown = false;
+    expect((await jobCall(server, fetched, 'result', labResultFor(input))).status).toBe(200);
+    await inputFor(job);
   });
 
   it('a result with a different dataThrough, an invalid run or scorecard, or another champion fails invalid_result', async () => {
@@ -553,23 +630,31 @@ describe('the job’s callback', () => {
     }
   });
 
-  it('logs and audit events carry ids and counts only', async () => {
+  it('logs, audit events and the database carry ids and counts only, and neither token', async () => {
     const t = await team({ guests: () => 98765 });
     server.logs.length = 0;
     const { calibration, job } = await started(t);
-    const input = await inputFor(job);
+    const identity = await labIdentityToken(server);
+    const signedIn = { authorization: `Bearer ${identity}` };
+    const fetched = await jobCall(server, job, 'input', undefined, signedIn);
+    expect(fetched.status).toBe(200);
+    const input = labInputSchema.parse(await fetched.json());
     expect(input.days[0]?.guests).toBe(98765);
     const scorecard = scorecardWith({ backtest: { metrics: metricsWith({ weeklyWape: 0.123456 }) }, comparison: null });
-    expect((await jobCall(server, job, 'result', labResultFor(input, { scorecard }))).status).toBe(200);
+    expect((await jobCall(server, job, 'result', labResultFor(input, { scorecard }), signedIn)).status).toBe(200);
     expect((await viewOf(t, calibration.id)).summary?.weeklyWapePct).toBe(12.3);
     const logs = server.logs.join('\n');
     const events = JSON.stringify(await eventsFor(calibration.id));
+    const stored = JSON.stringify(await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(calibration.id) }));
     const resultToken = resultTokenOf(calibration.id);
     expect(resultToken).toBeDefined();
     for (const text of [logs, events]) {
       expect(text).not.toContain('98765');
       expect(text).not.toContain('0.123456');
-      expect(text).not.toContain(job.token);
+    }
+    // The calibration keeps its scorecard, but neither token: only the result token's hash, gone once it finished.
+    for (const text of [logs, events, stored]) {
+      for (const part of identity.split('.')) expect(text).not.toContain(part);
       expect(text).not.toContain(resultToken);
     }
     const own = logLines(server).filter((line) => String(line.msg).startsWith('townwise.calibration') || String(line.msg).startsWith('townwise.lab'));
@@ -587,7 +672,7 @@ describe('timeouts', () => {
     expect((await viewOf(t, calibration.id)).status).toBe('running');
     expect(await errorOf(await start(t))).toEqual({ status: 409, error: 'calibration_in_progress' });
     server.clock.advance(1000);
-    // Its token died with the 20 minutes, before anything read the calibration.
+    // Its callback window closed with the 20 minutes, before anything read the calibration.
     expect((await jobCall(server, job, 'input')).status).toBe(404);
     expect(await viewOf(t, calibration.id)).toMatchObject({
       status: 'failed', failure: 'timeout', failureWords: 'It didn’t finish within 20 minutes.',

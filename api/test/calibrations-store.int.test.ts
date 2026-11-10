@@ -74,35 +74,48 @@ describe('calibrations', () => {
     expect(await queue(t, 'token-d')).not.toBeNull();
   });
 
-  it('finish clears liveLocation and the token hash, so findLabCallback then resolves null', async () => {
+  it('finish clears liveLocation and the result token hash, so findLabCallback then resolves null', async () => {
     const t = await tenant();
     const record = await queued(t);
     const now = server.clock.now();
-    expect((await findLabCallback(server.connection, record.id, sha('token-a'), now))?.calibrationId).toBe(record.id);
+    expect((await findLabCallback(server.connection, record.id, now, null))?.calibrationId).toBe(record.id);
     expect(await calibrations.markRunning(t.scope, record.id, { now, imageDigest: null })).toBe(true);
+    const input = { inputSha256: sha('input'), dataThrough: '2026-04-30', resultTokenSha256: sha('result-a') };
+    expect(await calibrations.recordInput(t.scope, record.id, input)).toBe(true);
     expect(await calibrations.finish(t.scope, record.id, { status: 'succeeded' }, now)).toBe(true);
     const raw = await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(record.id) });
     expect(raw).not.toHaveProperty('liveLocation');
     expect(raw).not.toHaveProperty('tokenSha256');
-    expect(await findLabCallback(server.connection, record.id, sha('token-a'), now)).toBeNull();
+    expect(await findLabCallback(server.connection, record.id, now, null)).toBeNull();
+    expect(await findLabCallback(server.connection, record.id, now, sha('result-a'))).toBeNull();
     // A finished calibration cannot finish again.
     expect(await calibrations.finish(t.scope, record.id, { status: 'failed', failure: 'timeout' }, now)).toBe(false);
   });
 
-  it('findLabCallback needs the id, the token hash, a live status and an unexpired token', async () => {
+  it('findLabCallback needs the id, a live status and an open window, and the result token hash when one is given', async () => {
     const t = await tenant();
     const record = await queued(t);
     const other = await tenant();
     const otherRecord = await queued(other, 'token-z');
     const now = server.clock.now();
-    const claim = await findLabCallback(server.connection, record.id, sha('token-a'), now);
+    // Without a result token (the input fetch): any live calibration by its id, in its own organization's scope.
+    const claim = await findLabCallback(server.connection, record.id, now, null);
     expect(claim).toEqual({ calibrationId: record.id, orgId: t.orgId, locationId: t.locationId });
     expect(claim === null ? null : scopeForLabCallback(claim).orgId).toBe(t.orgId);
-    expect(await findLabCallback(server.connection, record.id, sha('wrong'), now)).toBeNull();
-    expect(await findLabCallback(server.connection, otherRecord.id, sha('token-a'), now)).toBeNull();
-    expect(await findLabCallback(server.connection, 'not-an-id', sha('token-a'), now)).toBeNull();
-    expect(await findLabCallback(server.connection, new Types.ObjectId().toHexString(), sha('token-a'), now)).toBeNull();
-    expect(await findLabCallback(server.connection, record.id, sha('token-a'), new Date(now.getTime() + 21 * 60_000))).toBeNull();
+    expect((await findLabCallback(server.connection, otherRecord.id, now, null))?.orgId).toBe(other.orgId);
+    expect(await findLabCallback(server.connection, 'not-an-id', now, null)).toBeNull();
+    expect(await findLabCallback(server.connection, `${record.id}0`, now, null)).toBeNull();
+    expect(await findLabCallback(server.connection, new Types.ObjectId().toHexString(), now, null)).toBeNull();
+    expect(await findLabCallback(server.connection, record.id, new Date(now.getTime() + 21 * 60_000), null)).toBeNull();
+    // With one (the result post): only once the input fetch recorded that hash, and only for that calibration.
+    expect(await findLabCallback(server.connection, record.id, now, sha('result-a'))).toBeNull();
+    await calibrations.markRunning(t.scope, record.id, { now, imageDigest: null });
+    expect(await calibrations.recordInput(t.scope, record.id, { inputSha256: sha('input'), dataThrough: '2026-04-30', resultTokenSha256: sha('result-a') }))
+      .toBe(true);
+    expect((await findLabCallback(server.connection, record.id, now, sha('result-a')))?.calibrationId).toBe(record.id);
+    expect(await findLabCallback(server.connection, record.id, now, sha('wrong'))).toBeNull();
+    expect(await findLabCallback(server.connection, otherRecord.id, now, sha('result-a'))).toBeNull();
+    expect(await findLabCallback(server.connection, record.id, new Date(now.getTime() + 21 * 60_000), sha('result-a'))).toBeNull();
   });
 
   it('recordResult is a compare-and-set on running and keeps a runId once set', async () => {
@@ -113,7 +126,7 @@ describe('calibrations', () => {
     // Not running yet.
     expect(await calibrations.recordResult(t.scope, record.id, result)).toBe(false);
     await calibrations.markRunning(t.scope, record.id, { now, imageDigest: 'sha256:abc' });
-    const input = { tokenSha256: sha('token-a'), inputSha256: sha('input'), dataThrough: '2026-04-30', resultTokenSha256: sha('result-a') };
+    const input = { inputSha256: sha('input'), dataThrough: '2026-04-30', resultTokenSha256: sha('result-a') };
     expect(await calibrations.recordInput(t.scope, record.id, input)).toBe(true);
     expect(await calibrations.recordResult(t.scope, record.id, result)).toBe(true);
     expect(await calibrations.recordResult(t.scope, record.id, { ...result, runId: new Types.ObjectId().toHexString() })).toBe(false);
@@ -122,25 +135,24 @@ describe('calibrations', () => {
     expect(await calibrations.markRunning(t.scope, record.id, { now, imageDigest: null })).toBe(false);
   });
 
-  it('recordInput is the one input fetch: it needs running, the token called with and no input yet, and swaps the token', async () => {
+  it('recordInput is the one input fetch: it needs running and no input yet, and sets the result token hash', async () => {
     const t = await tenant();
     const record = await queued(t);
     const now = server.clock.now();
-    const input = { tokenSha256: sha('token-a'), inputSha256: sha('input'), dataThrough: '2026-04-30', resultTokenSha256: sha('result-a') };
+    const input = { inputSha256: sha('input'), dataThrough: '2026-04-30', resultTokenSha256: sha('result-a') };
     // Not running yet.
     expect(await calibrations.recordInput(t.scope, record.id, input)).toBe(false);
     expect(await calibrations.markRunning(t.scope, record.id, { now, imageDigest: null })).toBe(true);
     // findLabCallback resolves a running calibration.
-    expect((await findLabCallback(server.connection, record.id, sha('token-a'), now))?.calibrationId).toBe(record.id);
-    expect(await calibrations.recordInput(t.scope, record.id, { ...input, tokenSha256: sha('wrong') })).toBe(false);
+    expect((await findLabCallback(server.connection, record.id, now, null))?.calibrationId).toBe(record.id);
     expect(await calibrations.recordInput(t.scope, record.id, input)).toBe(true);
-    // The start token is dead and the result token works; a second fetch, with either, changes nothing.
-    expect(await findLabCallback(server.connection, record.id, sha('token-a'), now)).toBeNull();
-    expect((await findLabCallback(server.connection, record.id, sha('result-a'), now))?.calibrationId).toBe(record.id);
+    // The result token works; a second fetch, whatever it brings, changes nothing.
+    expect((await findLabCallback(server.connection, record.id, now, sha('result-a')))?.calibrationId).toBe(record.id);
     expect(await calibrations.recordInput(t.scope, record.id, { ...input, inputSha256: sha('other') })).toBe(false);
     expect(await calibrations.recordInput(t.scope, record.id, {
-      tokenSha256: sha('result-a'), inputSha256: sha('other'), dataThrough: '2026-05-01', resultTokenSha256: sha('result-b'),
+      inputSha256: sha('other'), dataThrough: '2026-05-01', resultTokenSha256: sha('result-b'),
     })).toBe(false);
+    expect(await findLabCallback(server.connection, record.id, now, sha('result-b'))).toBeNull();
     expect(await calibrations.find(t.scope, record.id)).toMatchObject({ inputSha256: sha('input'), dataThrough: '2026-04-30' });
   });
 
@@ -186,7 +198,7 @@ describe('calibrations', () => {
     expect(await calibrations.list(other.scope, 10, t.locationId)).toEqual([]);
     expect(await calibrations.markRunning(other.scope, record.id, { now, imageDigest: null })).toBe(false);
     expect(await calibrations.recordInput(other.scope, record.id, {
-      tokenSha256: sha('token-a'), inputSha256: sha('x'), dataThrough: '2026-04-30', resultTokenSha256: sha('result-x'),
+      inputSha256: sha('x'), dataThrough: '2026-04-30', resultTokenSha256: sha('result-x'),
     })).toBe(false);
     expect(await calibrations.recordImageDigest(other.scope, record.id, 'sha256:other')).toBe(false);
     expect(await calibrations.recordResult(other.scope, record.id, { runId: 'r', scorecardJson: '{}', codeVersion: 'c' })).toBe(false);
