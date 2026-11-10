@@ -146,14 +146,14 @@ describe('starting a calibration', () => {
       regimeStart: null, requestedAt: '2026-06-01T12:00:00.000Z', startedAt: '2026-06-01T12:00:00.000Z', finishedAt: null, runId: null,
       chargedUsd: 0.1, gate: null, summary: null,
     });
-    // While the job started, the calibration was queued, its event already written, and only the token's hash stored.
-    const startToken = runner.jobs.at(-1)?.token ?? '';
-    const tokenSha256 = createHash('sha256').update(startToken).digest('hex');
-    expect(seen).toEqual([{ status: 'queued', requested: 1, tokenSha256 }]);
-    expect(startToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    // While the job started, the calibration was queued and its event already written. The job was handed its
+    // calibration id and nothing else, and no token hash is stored until its input fetch.
+    expect(seen).toEqual([{ status: 'queued', requested: 1, tokenSha256: undefined }]);
+    expect(runner.jobs.at(-1)).toEqual({ calibrationId: calibration.id });
     const doc = await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(calibration.id) });
     expect(doc).toMatchObject({ status: 'running', imageDigest: IMAGE_DIGEST, chargedMicroUsd: CALIBRATION_CHARGE_MICRO_USD, championRunId: null });
-    expect(JSON.stringify(doc)).not.toContain(startToken);
+    expect(doc).not.toHaveProperty('tokenSha256');
+    expect(doc?.tokenExpiresAt).toEqual(new Date(Date.parse('2026-06-01T12:00:00.000Z') + CALIBRATION_TIMEOUT_MS));
     const usage = await server.connection.collection('tw_chat_usage').find({ orgId: new Types.ObjectId(t.orgId) }).toArray();
     expect(usage.map((row) => ({ month: row.month as unknown, costMicroUsd: row.costMicroUsd as unknown })))
       .toEqual([{ month: '2026-06', costMicroUsd: 100_000 }]);

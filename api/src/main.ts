@@ -122,7 +122,7 @@ function labFor(): { labRunner?: LabRunner; labCaller?: LabCaller } {
   }
   const secret = randomBytes(32).toString('base64url');
   return {
-    labRunner: createLocalLabRunner({ projectDir: resolve(lab.projectDir), apiUrl: lab.apiUrl, path: PATH ?? '', home: HOME ?? '' }),
+    labRunner: createLocalLabRunner({ projectDir: resolve(lab.projectDir), apiUrl: lab.apiUrl, token: secret, path: PATH ?? '', home: HOME ?? '' }),
     labCaller: createLocalLabCaller(secret),
   };
 }

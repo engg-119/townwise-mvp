@@ -1,12 +1,13 @@
 // tw_calibrations (forecast lab, spec 14.3): one document per calibration of one location's forecast model. A
 // calibration is `queued` until the job starts, `running` while it fetches its input and posts its result, then
 // `succeeded` or `failed`. `liveLocation` equals the location until the calibration finishes and then goes, under a
-// unique partial index, so a location has one live calibration (the tw_imports.activeLocation pattern). The job holds a
-// per-calibration bearer token; only its sha256 is stored, and `finish` removes it, so a finished calibration's token
-// is dead (cross-tenant.ts findLabCallback). The token the job starts with fetches the input once: that fetch swaps it
-// for a result token the API hands only to the job (recordInput). Every transition is a compare-and-set (no transactions), so a retried
-// result completes the work once. Results are the scorecard as a JSON string (a chat-messages precedent), never read
-// as a figure by anything that logs. Nothing here logs.
+// unique partial index, so a location has one live calibration (the tw_imports.activeLocation pattern). The job signs
+// in as the lab identity and holds no secret of its own; its callback is open until `tokenExpiresAt` (20 minutes after
+// the request). Its one input fetch (recordInput) stores the sha256 of a result token the API hands only to that
+// fetch, which the result is posted with, and `finish` removes it, so a finished calibration takes no result
+// (cross-tenant.ts findLabCallback). Every transition is a compare-and-set (no transactions), so a retried result
+// completes the work once. Results are the scorecard as a JSON string (a chat-messages precedent), never read as a
+// figure by anything that logs. Nothing here logs.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
@@ -16,7 +17,7 @@ export const CALIBRATIONS_COLLECTION = 'tw_calibrations';
 
 export type CalibrationStatus = 'queued' | 'running' | 'succeeded' | 'failed';
 export const CALIBRATION_STATUSES: readonly CalibrationStatus[] = ['queued', 'running', 'succeeded', 'failed'];
-/** Statuses of a live calibration: the ones that hold the location's slot and a usable token. */
+/** Statuses of a live calibration: the ones that hold the location's slot and an open callback. */
 export const LIVE_STATUSES: readonly CalibrationStatus[] = ['queued', 'running'];
 
 export type CalibrationFailure = 'start_failed' | 'timeout' | 'job_failed' | 'not_enough_history' | 'invalid_result';
@@ -54,8 +55,9 @@ interface CalibrationFields {
   finishedAt: Date | null;
   /** Equals locationId while the calibration is live; unset once it finishes. */
   liveLocation?: Types.ObjectId;
-  /** sha256 of the job's bearer token; unset once the calibration finishes. */
+  /** sha256 of the result token, from the input fetch until the calibration finishes. */
   tokenSha256?: string;
+  /** The end of the callback window (20 minutes after the request). */
   tokenExpiresAt: Date;
 }
 
@@ -132,7 +134,7 @@ export interface CalibrationStore {
   /** Inserts a queued calibration holding the location's live slot; null when the slot is taken. */
   insertQueued(scope: OrgScope, input: {
     id: string; locationId: string; requestedBy: CalibrationRequester; regimeStart: string | null;
-    championRunId: string | null; tokenSha256: string; tokenExpiresAt: Date; now: Date;
+    championRunId: string | null; tokenExpiresAt: Date; now: Date;
   }): Promise<CalibrationRecord | null>;
   find(scope: OrgScope, id: string): Promise<CalibrationRecord | null>;
   /** The location's live (queued or running) calibration, if any. */
@@ -154,7 +156,7 @@ export interface CalibrationStore {
   /** Compare-and-set on running with no gate yet: the gate is set once. */
   recordGate(scope: OrgScope, id: string, gate: CalibrationGate): Promise<boolean>;
   setCharge(scope: OrgScope, id: string, chargedMicroUsd: number): Promise<boolean>;
-  /** Compare-and-set from a live status; clears the live slot and the token. */
+  /** Compare-and-set from a live status; clears the live slot and the result token hash. */
   finish(scope: OrgScope, id: string, outcome: CalibrationOutcome, now: Date): Promise<boolean>;
   /** Location deletion and deleting its sales data. Resolves the number deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
@@ -205,7 +207,6 @@ export function createCalibrationStore(connection: Connection): CalibrationStore
           championRunId: input.championRunId,
           requestedAt: input.now,
           liveLocation: new Types.ObjectId(input.locationId),
-          tokenSha256: input.tokenSha256,
           tokenExpiresAt: input.tokenExpiresAt,
         });
         return toCalibration(doc.toObject());

@@ -1,6 +1,7 @@
 // The forecast lab's data layer (stores/calibrations.ts and its neighbours): one live calibration per location, the
-// job's token that dies with the calibration, compare-and-set transitions, tenant scoping, deletion before runs, lab
-// runs in the forecast store, the forecasts switch and the audit wording. The fixture's numbers are synthetic.
+// callback lookup and the result token that dies with the calibration, compare-and-set transitions, tenant scoping,
+// deletion before runs, lab runs in the forecast store, the forecasts switch and the audit wording. The fixture's
+// numbers are synthetic.
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
@@ -43,16 +44,16 @@ async function tenant(): Promise<Tenant> {
   return { orgId, locationId, scope: scopeForNewOrg(STAFF, orgId) };
 }
 
-async function queue(t: Tenant, token = 'token-a', opts: { locationId?: string; minutes?: number } = {}) {
+async function queue(t: Tenant, opts: { locationId?: string; minutes?: number } = {}) {
   const now = server.clock.now();
   return calibrations.insertQueued(t.scope, {
     id: new Types.ObjectId().toHexString(), locationId: opts.locationId ?? t.locationId, requestedBy: ADMIN, regimeStart: null,
-    championRunId: null, tokenSha256: sha(token), tokenExpiresAt: new Date(now.getTime() + (opts.minutes ?? 20) * 60_000), now,
+    championRunId: null, tokenExpiresAt: new Date(now.getTime() + (opts.minutes ?? 20) * 60_000), now,
   });
 }
 
-async function queued(t: Tenant, token = 'token-a') {
-  const record = await queue(t, token);
+async function queued(t: Tenant) {
+  const record = await queue(t);
   if (record === null) throw new Error('slot was taken');
   return record;
 }
@@ -65,13 +66,21 @@ describe('calibrations', () => {
   it('allows one live calibration per location: a second insertQueued resolves null until the first finishes', async () => {
     const t = await tenant();
     const first = await queued(t);
-    expect(await queue(t, 'token-b')).toBeNull();
+    expect(await queue(t)).toBeNull();
     expect((await calibrations.live(t.scope, t.locationId))?.id).toBe(first.id);
     const other = await addLocation(server, { orgId: t.orgId, name: 'Patio' });
-    expect(await queue(t, 'token-c', { locationId: other })).not.toBeNull();
+    expect(await queue(t, { locationId: other })).not.toBeNull();
     expect(await calibrations.finish(t.scope, first.id, { status: 'failed', failure: 'start_failed' }, server.clock.now())).toBe(true);
     expect(await calibrations.live(t.scope, t.locationId)).toBeNull();
-    expect(await queue(t, 'token-d')).not.toBeNull();
+    expect(await queue(t)).not.toBeNull();
+  });
+
+  it('insertQueued stores no token: the result token’s hash arrives with the input fetch', async () => {
+    const t = await tenant();
+    const record = await queued(t);
+    const raw = await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(record.id) });
+    expect(raw).not.toHaveProperty('tokenSha256');
+    expect(raw?.tokenExpiresAt).toEqual(new Date(server.clock.now().getTime() + 20 * 60_000));
   });
 
   it('finish clears liveLocation and the result token hash, so findLabCallback then resolves null', async () => {
@@ -96,7 +105,7 @@ describe('calibrations', () => {
     const t = await tenant();
     const record = await queued(t);
     const other = await tenant();
-    const otherRecord = await queued(other, 'token-z');
+    const otherRecord = await queued(other);
     const now = server.clock.now();
     // Without a result token (the input fetch): any live calibration by its id, in its own organization's scope.
     const claim = await findLabCallback(server.connection, record.id, now, null);
@@ -215,7 +224,7 @@ describe('calibrations', () => {
     const t = await tenant();
     const second = await addLocation(server, { orgId: t.orgId, name: 'Patio' });
     await queued(t);
-    await queue(t, 'token-b', { locationId: second });
+    await queue(t, { locationId: second });
     expect(await calibrations.removeForLocation(t.scope, t.locationId)).toBe(1);
     expect(await calibrations.removeForOrg(t.scope)).toBe(1);
     expect(await count('tw_calibrations', { orgId: new Types.ObjectId(t.orgId) })).toBe(0);
