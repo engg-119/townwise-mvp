@@ -15,6 +15,7 @@ import type { ChatModel } from './model.ts';
 import { costMicroUsd, messageCostMicroUsd, tokensOf, type TokenCounts } from './pricing.ts';
 import { SYSTEM_PROMPT } from './prompt.ts';
 import { inputViewOf, resultViewOf, runTool, toolNamed, TOOLS, type ToolContext, type ToolView } from './tools/registry.ts';
+import type { Visual } from './tools/visual.ts';
 
 export const CHAT_MODEL = 'claude-opus-5-5';
 export const MAX_TOKENS = 16_000;
@@ -39,11 +40,15 @@ export type FailureCode = 'internal' | 'provider_unavailable' | 'provider_overlo
  */
 export type TurnEvent =
   | { type: 'text'; data: { delta: string } }
+  /** A piece of the reply's thinking summary: text only, never the signature. Same class as message text, never logged. */
+  | { type: 'thinking'; data: { delta: string } }
   | {
     type: 'tool';
     data: { id: string; name: string; state: 'running' | 'done' | 'error'; input: ToolView | null; result: ToolView | null };
   }
-  | { type: 'proposal'; data: { id: string; proposal: NoteContent } };
+  | { type: 'proposal'; data: { id: string; proposal: NoteContent } }
+  | { type: 'visual'; data: { id: string; visual: Visual } }
+  | { type: 'suggestions'; data: { id: string; prompts: string[] } };
 
 /** How every answer to a tool call that never ran begins; GET .../chat/:conversationId leaves those calls out. */
 export const NOT_RUN = 'Not run: ';
@@ -52,17 +57,25 @@ export type TurnResult =
   | {
     kind: 'done'; stopReason: DoneReason; messages: StoredMessage[]; calls: number; model: string;
     inputTokens: number; outputTokens: number; costMicroUsd: number;
+    /** The reply node when it stored an assistant message, else the user node, else the reply's parent. */
+    leafId: string;
   }
   | { kind: 'refused'; calls: number; model: string; costMicroUsd: number }
   | { kind: 'failed'; code: FailureCode; errType: string; status: number | null; calls: number; costMicroUsd: number }
   | { kind: 'aborted'; calls: number; costMicroUsd: number };
 
+/** A tree node the turn writes (src/chat/tree.ts). */
+export interface TurnNode { readonly id: string; readonly parentId: string | null }
+
 export interface TurnInput {
   readonly model: ChatModel;
   readonly tools: ToolContext;
-  /** The conversation so far, exactly as stored. */
+  /** The path the turn continues, root to the turn's parent, exactly as stored. */
   readonly history: readonly BetaMessageParam[];
-  readonly userMessage: BetaMessageParam;
+  /** Null for a regenerate: the history already ends with the person's message. */
+  readonly userMessage: BetaMessageParam | null;
+  /** The nodes the turn's messages are stored under: `user` is null for a regenerate, and `reply.parentId` is the user node. */
+  readonly nodes: { readonly user: TurnNode | null; readonly reply: { readonly id: string; readonly parentId: string } };
   readonly signal: AbortSignal;
   readonly now: () => Date;
   readonly emit: (event: TurnEvent) => void;
@@ -78,7 +91,9 @@ export function requestParams(messages: BetaMessageParam[]): BetaMessageStreamPa
     model: CHAT_MODEL,
     max_tokens: MAX_TOKENS,
     output_config: { effort: 'low' },
-    // Adaptive thinking is Opus 5.5's only mode, so `thinking` is omitted.
+    // Adaptive is Opus 5.5's only thinking mode (`disabled` and `budget_tokens` both 400). `display` changes what the
+    // stream shows, not what is billed: Opus 5.5 omits the thinking text by default, so ask for its summary.
+    thinking: { type: 'adaptive', display: 'summarized' },
     betas: ['server-side-fallback-2026-07-01'],
     fallbacks: 'default',
     cache_control: { type: 'ephemeral' },
@@ -129,7 +144,7 @@ function streamedCharacters(delta: BetaRawContentBlockDelta): number {
  *   min(max_tokens, max(ceil(streamed characters / 3), ceil(seconds since message_start x 150)))
  *
  * at the price of the model that was answering. Streamed characters are those of text, thinking and tool input
- * deltas; the time term covers thinking that is billed but not streamed (Opus 5.5 omits its text by default).
+ * deltas; the time term covers thinking that is billed but not streamed (a summary is shorter than the thinking behind it).
  */
 function usageTracker(now: () => Date): { observe(event: BetaRawMessageStreamEvent): void; costMicroUsd(): number } {
   let model: string | null = null;
@@ -201,9 +216,10 @@ export function echoable(content: readonly BetaContentBlock[]): BetaContentBlock
 export async function runTurn(input: TurnInput): Promise<TurnResult> {
   const turn: BetaMessageParam[] = [];
   const stored: StoredMessage[] = [];
-  const append = (param: BetaMessageParam): void => {
+  const { user, reply } = input.nodes;
+  const append = (param: BetaMessageParam, node: TurnNode = reply): void => {
     turn.push(param);
-    stored.push({ at: input.now(), param: JSON.stringify(param) });
+    stored.push({ at: input.now(), param: JSON.stringify(param), nodeId: node.id, parentId: node.parentId });
   };
   let calls = 0;
   let spent = 0;
@@ -217,12 +233,14 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
   };
   const done = (stopReason: DoneReason): TurnResult => ({
     kind: 'done', stopReason, messages: stored, calls, model, inputTokens, outputTokens, costMicroUsd: spent,
+    // A reply's messages start with an assistant message, so the last one stored names the deepest node written.
+    leafId: stored.at(-1)?.nodeId ?? reply.parentId,
   });
 
   // A function, not a property read: the signal changes under the loop, which narrowing cannot see.
   const aborted = (): boolean => input.signal.aborted;
 
-  append(input.userMessage);
+  if (input.userMessage !== null && user !== null) append(input.userMessage, user);
   try {
     let jsonRetries = 0;
     for (;;) {
@@ -240,6 +258,8 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
           usage.observe(event);
           if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
             input.emit({ type: 'text', data: { delta: event.delta.text } });
+          } else if (event.type === 'content_block_delta' && event.delta.type === 'thinking_delta') {
+            input.emit({ type: 'thinking', data: { delta: event.delta.thinking } });
           }
         }
         message = await stream.finalMessage();
@@ -287,12 +307,17 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
         const outcome = await runTool(input.tools, block);
         results.push(outcome.result);
         if (outcome.proposal !== null) input.emit({ type: 'proposal', data: { id, proposal: outcome.proposal } });
+        if (outcome.visual !== null) input.emit({ type: 'visual', data: { id, visual: outcome.visual } });
+        if (outcome.prompts !== null) input.emit({ type: 'suggestions', data: { id, prompts: outcome.prompts } });
         if (known) {
           const state = outcome.result.is_error === true ? 'error' : 'done';
           input.emit({ type: 'tool', data: { id, name, state, input: view, result: resultViewOf(name, outcome.result) } });
         }
       }
       append({ role: 'user', content: results });
+      // suggest_next is a reply's last step: a message that called only it is answered and ends the turn without
+      // another model call, valid or not (the client then picks its own three). The saved reply ends with its results.
+      if (toolUses.every((block) => block.name === 'suggest_next')) return done('end_turn');
     }
   } catch (err) {
     if (aborted()) return { kind: 'aborted', calls, costMicroUsd: spent };

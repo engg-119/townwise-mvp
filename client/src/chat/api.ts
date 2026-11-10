@@ -3,10 +3,13 @@ import { z } from 'zod';
 import type { ApiClient } from '../api/client';
 import { createNote, noteSchema, type Note } from '../portal/locations/api';
 import type { SseEvent } from '../api/sse';
+import type { TreeNode } from './tree';
+import { visualSchema, type Visual } from './visuals/schema';
 
 // TownwiseAI's API (docs/portal/tuning-chat.md, sections 2 and 3; spec 10.12) and its side panel (GET and POST
 // .../agent, spec P25). Schemas strip unknown keys; an event whose data does not match is dropped, so a stream that
-// loses its `done` reads as cut off. A tool view is dates, counts and source links only, never a figure.
+// loses its `done` reads as cut off. A tool view is dates, counts and source links only, never a figure. Every field
+// the redesign added (trees, ratings, visuals, next questions) reads with a default, so an answer without it loads.
 
 /** Exactly the body of POST /api/org/locations/:locationId/notes. */
 const noteProposalSchema = z.object({
@@ -49,12 +52,23 @@ const proposalStatusSchema = z.enum(['open', 'saved', 'dismissed']);
 const proposalViewSchema = noteProposalSchema.extend({ id: z.string(), status: proposalStatusSchema, noteId: z.string().nullable() });
 
 const partSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('thinking'), text: z.string() }),
   z.object({ type: z.literal('text'), text: z.string() }),
   z.object({
     type: z.literal('tool'), id: z.string(), name: z.string(), state: z.enum(['done', 'error']), input: viewSchema, result: viewSchema,
   }),
   z.object({ type: z.literal('proposal'), proposal: proposalViewSchema }),
+  // Read on its own (visualSchema), so a visual this client can't draw is left out and the rest of the reply loads.
+  z.object({ type: z.literal('visual'), id: z.string(), visual: z.unknown() }),
 ]);
+
+const feedbackReasonSchema = z.enum(['wrong_figures', 'made_up', 'missed_context', 'not_helpful', 'too_long', 'other']);
+/** Why a reply was Not helpful: one of six fixed reasons, never free text (tuning-chat.md 5). */
+export type FeedbackReason = z.infer<typeof feedbackReasonSchema>;
+export interface Feedback { rating: 'up' | 'down'; reason: FeedbackReason | null }
+const feedbackSchema = z.object({ rating: z.enum(['up', 'down']), reason: feedbackReasonSchema.nullable() });
+
+const treeNodeSchema = z.object({ id: z.string(), parentId: z.string().nullable(), role: z.enum(['user', 'assistant']) });
 
 const budgetSchema = z.object({ month: z.string(), usedUsd: z.number(), limitUsd: z.number(), exhausted: z.boolean() });
 const conversationSummarySchema = z.object({ id: z.string(), title: z.string(), updatedAt: z.string(), turnCount: z.number() });
@@ -63,16 +77,24 @@ const chatSummarySchema = z.object({
   budget: budgetSchema,
   conversations: z.array(conversationSummarySchema),
 });
+/** GET .../chat/:conversationId, and POST .../active: the tree and the path to `activeLeafId`, the leaf shown. */
 const conversationSchema = z.object({
   id: z.string(),
   title: z.string(),
   updatedAt: z.string(),
+  activeLeafId: z.string().nullable().default(null),
+  tree: z.array(treeNodeSchema).default([]),
   messages: z.array(z.object({
+    nodeId: z.string().nullable().default(null),
     role: z.enum(['user', 'assistant']),
     text: z.string(),
     proposals: z.array(proposalViewSchema),
     parts: z.array(partSchema).default([]),
     at: z.string(),
+    // Absent from a server that predates it: the entry's own `at`.
+    endedAt: z.string().optional(),
+    feedback: feedbackSchema.nullable().default(null),
+    next: z.array(z.string()).nullable().default(null),
   })),
 });
 
@@ -88,28 +110,63 @@ export interface ProposalView extends NoteProposal {
 }
 
 export type StoredPart =
+  | { type: 'thinking'; text: string }
   | { type: 'text'; text: string }
   | { type: 'tool'; id: string; name: string; state: 'done' | 'error'; input: ToolView | null; result: ToolView | null }
-  | { type: 'proposal'; proposal: ProposalView };
+  | { type: 'proposal'; proposal: ProposalView }
+  | { type: 'visual'; id: string; visual: Visual };
 
-export interface StoredMessage { role: 'user' | 'assistant'; text: string; parts: StoredPart[] }
+export interface StoredMessage {
+  role: 'user' | 'assistant';
+  text: string;
+  parts: StoredPart[];
+  /** When its first message was stored, and its last (a reply's end), in ms since the epoch; null when unreadable. */
+  at: number | null;
+  endedAt: number | null;
+  /** Its node in the tree; null from a server without trees. */
+  nodeId: string | null;
+  /** The author's rating of a reply; null for none and for the person's messages. */
+  feedback: Feedback | null;
+  /** The three questions suggested after a reply; null for none and for the person's messages. */
+  next: string[] | null;
+}
+
+/** A conversation as the server shows it: the messages of one path, every node, and that path's leaf. */
+export interface ConversationLoad { messages: StoredMessage[]; tree: TreeNode[]; activeLeafId: string | null }
 
 export type ChatEvent =
-  | { type: 'conversation'; id: string; title: string }
+  /**
+   * The turn's conversation and its new nodes: the person's message (null for a regenerate) and the reply, and the
+   * node the first of them hangs under. Null from a server without trees.
+   */
+  | { type: 'conversation'; id: string; title: string; userNodeId: string | null; replyNodeId: string | null; parentId: string | null }
   | { type: 'text'; delta: string }
+  /** A piece of the reply's thinking summary. */
+  | { type: 'thinking'; delta: string }
   | { type: 'tool'; id: string; name: string; state: 'running' | 'done' | 'error'; input: ToolView | null; result: ToolView | null }
   | { type: 'proposal'; id: string; proposal: NoteProposal }
-  | { type: 'done'; stopReason: string }
+  | { type: 'visual'; id: string; visual: Visual }
+  | { type: 'suggestions'; id: string; prompts: string[] }
+  /**
+   * `leafId`: the conversation's leaf after the turn (the last node it saved, else the node it hung under); null for a
+   * refusal, or from a server without trees.
+   */
+  | { type: 'done'; stopReason: string; leafId: string | null }
   | { type: 'error'; code: string };
 
+const nodeIdOrNull = z.string().nullable().default(null);
+
 const eventSchemas = {
-  conversation: z.object({ id: z.string(), title: z.string() }),
+  conversation: z.object({ id: z.string(), title: z.string(), userNodeId: nodeIdOrNull, replyNodeId: nodeIdOrNull, parentId: nodeIdOrNull }),
   text: z.object({ delta: z.string() }),
+  thinking: z.object({ delta: z.string() }),
   tool: z.object({
     id: z.string(), name: z.string(), state: z.enum(['running', 'done', 'error']), input: viewSchema.default(null), result: viewSchema.default(null),
   }),
   proposal: z.object({ id: z.string(), proposal: noteProposalSchema }),
-  done: z.object({ stopReason: z.string() }),
+  visual: z.object({ id: z.string(), visual: visualSchema }),
+  suggestions: z.object({ id: z.string(), prompts: z.array(z.string()) }),
+  done: z.object({ stopReason: z.string(), leafId: nodeIdOrNull }),
   error: z.object({ code: z.string() }),
 };
 
@@ -130,6 +187,10 @@ export function chatEventOf(sse: SseEvent): ChatEvent | null {
       const parsed = eventSchemas.text.safeParse(data);
       return parsed.success ? { type: 'text', ...parsed.data } : null;
     }
+    case 'thinking': {
+      const parsed = eventSchemas.thinking.safeParse(data);
+      return parsed.success ? { type: 'thinking', ...parsed.data } : null;
+    }
     case 'tool': {
       const parsed = eventSchemas.tool.safeParse(data);
       return parsed.success ? { type: 'tool', ...parsed.data } : null;
@@ -137,6 +198,14 @@ export function chatEventOf(sse: SseEvent): ChatEvent | null {
     case 'proposal': {
       const parsed = eventSchemas.proposal.safeParse(data);
       return parsed.success ? { type: 'proposal', id: parsed.data.id, proposal: proposalOf(parsed.data.proposal) } : null;
+    }
+    case 'visual': {
+      const parsed = eventSchemas.visual.safeParse(data);
+      return parsed.success ? { type: 'visual', ...parsed.data } : null;
+    }
+    case 'suggestions': {
+      const parsed = eventSchemas.suggestions.safeParse(data);
+      return parsed.success ? { type: 'suggestions', ...parsed.data } : null;
     }
     case 'done': {
       const parsed = eventSchemas.done.safeParse(data);
@@ -167,13 +236,66 @@ function proposalViewOf(raw: z.infer<typeof proposalViewSchema>): ProposalView {
   return { ...proposalOf(raw), id: raw.id, status: raw.status, noteId: raw.noteId };
 }
 
-export async function loadConversation(api: ApiClient, locationId: string, conversationId: string): Promise<StoredMessage[]> {
-  const conversation = await api.json(conversationPath(locationId, conversationId), conversationSchema);
-  return conversation.messages.map((message) => ({
-    role: message.role,
-    text: message.text,
-    parts: message.parts.map((part): StoredPart => (part.type === 'proposal' ? { type: 'proposal', proposal: proposalViewOf(part.proposal) } : part)),
+function partOf(part: z.infer<typeof partSchema>): StoredPart[] {
+  if (part.type === 'proposal') return [{ type: 'proposal', proposal: proposalViewOf(part.proposal) }];
+  if (part.type !== 'visual') return [part];
+  const visual = visualSchema.safeParse(part.visual);
+  return visual.success ? [{ type: 'visual', id: part.id, visual: visual.data }] : [];
+}
+
+function millis(value: string): number | null {
+  const time = Date.parse(value);
+  return Number.isNaN(time) ? null : time;
+}
+
+function conversationOf(conversation: z.infer<typeof conversationSchema>): ConversationLoad {
+  return {
+    activeLeafId: conversation.activeLeafId,
+    tree: conversation.tree,
+    messages: conversation.messages.map((message) => ({
+      role: message.role,
+      text: message.text,
+      parts: message.parts.flatMap(partOf),
+      at: millis(message.at),
+      endedAt: millis(message.endedAt ?? message.at),
+      nodeId: message.nodeId,
+      feedback: message.feedback,
+      next: message.next,
+    })),
+  };
+}
+
+/** The path to the stored leaf, or with `node` the newest version under that node, read without storing it (view-as). */
+export async function loadConversation(api: ApiClient, locationId: string, conversationId: string, node?: string): Promise<ConversationLoad> {
+  const query = node === undefined ? '' : `?node=${encodeURIComponent(node)}`;
+  return conversationOf(await api.json(`${conversationPath(locationId, conversationId)}${query}`, conversationSchema));
+}
+
+/** Shows another version: stores the newest leaf under `nodeId` as the one shown, and answers its path. */
+export async function setActiveVersion(api: ApiClient, locationId: string, conversationId: string, nodeId: string): Promise<ConversationLoad> {
+  return conversationOf(await api.json(`${conversationPath(locationId, conversationId)}/active`, conversationSchema, {
+    method: 'POST', body: { nodeId },
   }));
+}
+
+const renamedSchema = z.object({ id: z.string(), title: z.string() });
+
+/** The title as the server keeps it (trimmed, 1 to 60 characters); a title it refuses is a 400. */
+export function renameConversation(api: ApiClient, locationId: string, conversationId: string, title: string): Promise<{ id: string; title: string }> {
+  return api.json(conversationPath(locationId, conversationId), renamedSchema, { method: 'PATCH', body: { title } });
+}
+
+const ratedSchema = z.object({ nodeId: z.string(), rating: z.enum(['up', 'down']).nullable(), reason: feedbackReasonSchema.nullable() });
+
+/** Rates a reply, or clears its rating with null. A reason goes only with Not helpful. Answers the rating stored. */
+export async function rateReply(
+  api: ApiClient, locationId: string, conversationId: string, nodeId: string, rating: 'up' | 'down' | null, reason: FeedbackReason | null,
+): Promise<Feedback | null> {
+  const body = rating === 'down' && reason !== null ? { rating, reason } : { rating };
+  const rated = await api.json(`${conversationPath(locationId, conversationId)}/feedback/${encodeURIComponent(nodeId)}`, ratedSchema, {
+    method: 'POST', body,
+  });
+  return rated.rating === null ? null : { rating: rated.rating, reason: rated.reason };
 }
 
 /** 204. The conversation's proposal records go with it; notes saved from it stay. */
@@ -181,15 +303,30 @@ export async function deleteConversation(api: ApiClient, locationId: string, con
   await api.request(conversationPath(locationId, conversationId), { method: 'DELETE' });
 }
 
-/** One turn. No `conversationId` starts a new conversation. Resolves when the stream ends. */
+/**
+ * A turn: a message, or a regenerate of the reply to the person's message `replyTo`. A message's `parentId` is the
+ * node it hangs under (an edit names the edited message's parent; null starts a second root); left out, the server
+ * appends to the leaf it has stored. No `conversationId` starts a new conversation, with no `parentId`.
+ */
+export type TurnRequest = { conversationId: string | null; content: string; parentId?: string | null } | { conversationId: string; replyTo: string };
+
+function turnBody(turn: TurnRequest): Record<string, unknown> {
+  if ('replyTo' in turn) return { conversationId: turn.conversationId, replyTo: turn.replyTo };
+  if (turn.conversationId === null) return { content: turn.content };
+  const body: Record<string, unknown> = { conversationId: turn.conversationId, content: turn.content };
+  if (turn.parentId !== undefined) body.parentId = turn.parentId;
+  return body;
+}
+
+/** One turn. Resolves when the stream ends. */
 export function sendTurn(
   api: ApiClient,
   locationId: string,
-  turn: { conversationId: string | null; content: string },
+  turn: TurnRequest,
   signal: AbortSignal,
   onEvent: (event: ChatEvent) => void,
 ): Promise<void> {
-  const body = turn.conversationId === null ? { content: turn.content } : { conversationId: turn.conversationId, content: turn.content };
+  const body = turnBody(turn);
   return api.stream(`${locationPath(locationId)}/chat/turns`, {
     body,
     signal,

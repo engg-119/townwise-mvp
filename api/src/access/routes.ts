@@ -11,7 +11,8 @@ import {
 } from '../handlers/admin.ts';
 import { answerQuestion, getAgent } from '../handlers/agent.ts';
 import { getLocationCalendar } from '../handlers/calendar.ts';
-import { deleteConversation, getChat, getConversation, postTurn } from '../handlers/chat.ts';
+import { deleteConversation, getChat, getConversation, postTurn, renameConversation, showVersion } from '../handlers/chat.ts';
+import { rateReply } from '../handlers/chat-feedback.ts';
 import { actOnProposal } from '../handlers/chat-proposals.ts';
 import { deleteOrg, deletePerson, purgeOriginals } from '../handlers/deletion.ts';
 import { getEstimatesAbout, getForecast, getPeopleInTown } from '../handlers/estimates.ts';
@@ -26,6 +27,7 @@ import { createNote, deleteNote, listNotes, updateNote } from '../handlers/notes
 import { startOpenAsAdmin } from '../handlers/open-as-admin.ts';
 import { getStaffActivity, leaveOrg, renameOrg } from '../handlers/org.ts';
 import { placesAutocomplete, placesDetails } from '../handlers/places.ts';
+import { getProfile, updateProfile } from '../handlers/profile.ts';
 import { createAccessRequest } from '../handlers/requests.ts';
 import { deleteSales, getSales, getSalesDays, getSalesHistory, uploadSales } from '../handlers/sales.ts';
 import { createSetupLocation, deleteSetupLocation, deleteSetupSales, updateSetupLocation, uploadSetupSales } from '../handlers/staff-setup.ts';
@@ -43,10 +45,10 @@ export interface TownwiseRoute {
   readonly path: `/${string}`;
   readonly policy: Policy;
   /**
-   * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer; '2kb' on the Places and files JSON routes; '8kb'
-   * on a TownwiseAI proposal; '256kb' only on the upload routes (the member one and, D23, staff setup's) and (U13B) the
-   * staff forecast import; 'stream' only on the chunk route, whose handler reads the raw body itself after the policy
-   * has passed.
+   * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer, a conversation's rename and a version switch;
+   * '2kb' on the Places and files JSON routes; '8kb' on a TownwiseAI proposal; '256kb' only on the upload routes (the
+   * member one and, D23, staff setup's) and (U13B) the staff forecast import; 'stream' only on the chunk route, whose
+   * handler reads the raw body itself after the policy has passed.
    */
   readonly bodyLimit: 'none' | '1kb' | '2kb' | '8kb' | '32kb' | '256kb' | 'stream';
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
@@ -66,6 +68,9 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   { id: 'me.decline', method: 'POST', path: '/me/decline', policy: 'signed_in', bodyLimit: '32kb', handler: declineInvite },
   // U11, statement moments: no body, so none is parsed; the writes limiter only.
   { id: 'me.welcome', method: 'POST', path: '/me/welcome', policy: 'member', bodyLimit: 'none', handler: recordWelcome },
+  // The display name for TownwiseAI's greeting: own account only; writes limiter only.
+  { id: 'me.profile.get', method: 'GET', path: '/me/profile', policy: 'member', bodyLimit: 'none', handler: getProfile },
+  { id: 'me.profile.update', method: 'PATCH', path: '/me/profile', policy: 'member', bodyLimit: '1kb', handler: updateProfile },
   {
     id: 'requests.create', method: 'POST', path: '/access-requests', policy: 'signed_in', bodyLimit: '32kb',
     limiter: 'requests', handler: createAccessRequest,
@@ -220,10 +225,24 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     id: 'org.chat.remove', method: 'DELETE', path: '/org/locations/:locationId/chat/:conversationId', policy: 'member',
     bodyLimit: 'none', openAsAdmin: true, handler: deleteConversation,
   },
+  // TownwiseAI's conversation trees: renaming, and switching the version shown. Neither calls the model: writes only.
+  {
+    id: 'org.chat.rename', method: 'PATCH', path: '/org/locations/:locationId/chat/:conversationId', policy: 'member',
+    bodyLimit: '1kb', handler: renameConversation,
+  },
+  {
+    id: 'org.chat.active', method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/active', policy: 'member',
+    bodyLimit: '1kb', handler: showVersion,
+  },
   // U9 (TownwiseAI): saving or setting aside a proposed note.
   {
     id: 'org.chat.proposal', method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/proposals/:proposalId',
     policy: 'member', bodyLimit: '8kb', openAsAdmin: true, handler: actOnProposal,
+  },
+  // Rating a reply: private display state that never calls the model, so writes only.
+  {
+    id: 'org.chat.feedback', method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/feedback/:nodeId',
+    policy: 'member', bodyLimit: '1kb', handler: rateReply,
   },
   // U9 (TownwiseAI): the side panel's questions and activity, and answering a question.
   {

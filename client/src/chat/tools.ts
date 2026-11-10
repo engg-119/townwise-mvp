@@ -43,7 +43,7 @@ interface ToolRow {
   reads?(ctx: ToolContext): string | null;
   /** Its `reads` needs the location's sales: left out of what TownwiseAI can use before any are uploaded. */
   needsSales?: true;
-  /** Not a card: propose_note shows the proposal card instead. */
+  /** Not a card: propose_note shows the proposal card, show_visual its visual and suggest_next its next questions instead. */
   hidden?: true;
   /** Words for this tool's view fields where the shared VIEW_TERMS would mislabel them. */
   terms?: Readonly<Record<string, string>>;
@@ -253,6 +253,16 @@ const TOOLS: Readonly<Record<string, ToolRow>> = {
     sources: sourcesOf,
     terms: { date: 'Day', hasSales: 'Sales recorded', closed: 'Closed', noteCount: 'Notes', eventCount: 'Calendar entries' },
   },
+  // The chat redesign's show_visual and suggest_next (api/src/chat/tools/visual.ts, next.ts; tuning-chat.md 4): their
+  // views are null, and a reply shows the visual and the three next questions their own events carry.
+  show_visual: {
+    object: () => 'the figures for a chart',
+    hidden: true,
+  },
+  suggest_next: {
+    object: () => 'questions to ask next',
+    hidden: true,
+  },
 };
 
 const GENERIC = { running: 'Looking something up', done: 'Looked something up', error: 'Couldn’t look something up' } as const;
@@ -261,7 +271,7 @@ export function isKnownTool(name: string): boolean {
   return Object.hasOwn(TOOLS, name);
 }
 
-/** propose_note's calls show as the proposal card, not a tool card. */
+/** propose_note, show_visual and suggest_next show as what they make (a proposal card, a visual, next questions), not a tool card. */
 export function isHiddenTool(name: string): boolean {
   return TOOLS[name]?.hidden === true;
 }

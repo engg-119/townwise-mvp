@@ -29,11 +29,22 @@ export interface ConfirmDialogProps {
   typedName?: string;
   onConfirm: () => void;
   onCancel: () => void;
+  /**
+   * Once the dialog has gone, after it returned focus to its opener (web: react-native-web's focus trap is gone, so
+   * focus can move elsewhere). For an action that took the opener away.
+   */
+  onDismiss?: () => void;
 }
 
 export function ConfirmDialog(props: ConfirmDialogProps): React.JSX.Element {
   return (
-    <Modal visible={props.visible} transparent animationType="none" onRequestClose={() => { if (props.pending !== true) props.onCancel(); }}>
+    <Modal
+      visible={props.visible}
+      transparent
+      animationType="none"
+      onRequestClose={() => { if (props.pending !== true) props.onCancel(); }}
+      {...(props.onDismiss === undefined ? {} : { onDismiss: props.onDismiss })}
+    >
       {props.visible ? <DialogBody {...props} /> : null}
     </Modal>
   );

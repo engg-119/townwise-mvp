@@ -13,10 +13,12 @@ import { z } from 'zod';
 import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
-import { runTurn, type TurnEvent } from '../chat/turn.ts';
-import { chatMessageViews, OPEN, type ChatMessageView, type ProposalState, type ShownProposal } from '../chat/view.ts';
+import { runTurn, type TurnEvent, type TurnInput } from '../chat/turn.ts';
+import { newestLeafUnder, newNodeId, nodeIdSchema, nodesOf, pathTo, type ChatNode, type TreeNodeView } from '../chat/tree.ts';
+import { chatMessageViews, OPEN, type ChatMessageView, type FeedbackView, type ProposalState, type ShownProposal } from '../chat/view.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import type { ConversationOwner, ConversationRecord, ConversationSummary } from '../stores/chat-conversations.ts';
+import type { LocationRecord } from '../stores/locations.ts';
 import { loadLocation, memberOf } from './locations.ts';
 import { sameNoteContent } from './notes.ts';
 import { actorOf } from './team.ts';
@@ -25,7 +27,9 @@ import { actorOf } from './team.ts';
 export interface ChatBudget { month: string; usedUsd: number; limitUsd: number; exhausted: boolean }
 export interface ConversationListItem { id: string; title: string; updatedAt: string; turnCount: number }
 export interface ChatSummary { enabled: boolean; budget: ChatBudget; conversations: ConversationListItem[] }
-export interface ConversationView { id: string; title: string; updatedAt: string; messages: ChatMessageView[] }
+export interface ConversationView {
+  id: string; title: string; updatedAt: string; activeLeafId: string | null; tree: TreeNodeView[]; messages: ChatMessageView[];
+}
 
 const MAX_LISTED = 50;
 /** Section 5 caps. */
@@ -37,9 +41,25 @@ const STALE_TURN_MS = 3 * 60 * 1000;
 const PING_MS = 15_000;
 const TITLE_CHARS = 60;
 
-const turnBody = z.object({
+/**
+ * A send, or a regenerate. A send's `parentId` makes it an edit: the node the new message hangs under, null for a new
+ * first message; omitted, the stored active leaf (an older client's append). Only in an existing conversation.
+ */
+const sendBody = z.strictObject({
   conversationId: objectId.optional(),
   content: z.string().trim().min(1).max(4000),
+  parentId: nodeIdSchema.nullable().optional(),
+}).refine((body) => body.parentId === undefined || body.conversationId !== undefined);
+/** A regenerate: a new reply to the person's message `replyTo`, with no new message. */
+const regenerateBody = z.strictObject({ conversationId: objectId, replyTo: nodeIdSchema });
+const turnBody = z.union([sendBody, regenerateBody]);
+type TurnBody = z.infer<typeof turnBody>;
+
+const activeBody = z.strictObject({ nodeId: nodeIdSchema });
+const renameBody = z.strictObject({
+  title: z.string().trim()
+    .refine((title) => Array.from(title).length >= 1 && Array.from(title).length <= TITLE_CHARS)
+    .refine((title) => !/\p{Cc}/u.test(title)),
 });
 
 export function notFound(): AppError {
@@ -91,13 +111,12 @@ export async function getChat(ctx: TownwiseContext, req: Request, res: Response,
   res.status(200).json(body);
 }
 
-/** GET /api/org/locations/:locationId/chat/:conversationId: the caller's own conversation, its visible messages. */
-export async function getConversation(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
-  const caller = memberOf(principal);
-  const location = await loadLocation(ctx, caller.scope, req.params.locationId);
-  const conversationId = parseInput(objectId, req.params.conversationId);
-  const conversation = await ctx.stores.chatConversations.find(caller.scope, ownerOf(caller, location.id), conversationId);
-  if (conversation === null) throw notFound();
+/** The conversation showing the path to `leafId` (null or unknown: the last node), its visible messages. */
+async function conversationView(
+  ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord, conversation: ConversationRecord, nodes: readonly ChatNode[],
+  leafId: string | null,
+): Promise<ConversationView> {
+  const path = pathTo(nodes, leafId);
   const [rows, notes] = await Promise.all([
     ctx.stores.chatProposals.list(caller.scope, conversation.id),
     ctx.stores.notes.list(caller.scope, location.id),
@@ -113,12 +132,63 @@ export async function getConversation(ctx: TownwiseContext, req: Request, res: R
     const same = notes.find((note) => note.createdBy === caller.userId && sameNoteContent(note, proposal));
     return same === undefined ? OPEN : { status: 'saved', noteId: same.id };
   };
-  const body: ConversationView = {
-    id: conversation.id, title: conversation.title, updatedAt: conversation.updatedAt.toISOString(),
-    // U13A: input views re-read their dates against the town's local day, as the tools ran them.
-    messages: chatMessageViews(conversation.messages, localDay(ctx.now(), timeZoneOf(location.town).timeZone), stateOf),
+  const feedbackOf = (nodeId: string): FeedbackView | null => {
+    const stored = conversation.feedback.get(nodeId);
+    return stored === undefined ? null : { rating: stored.rating, reason: stored.reason };
   };
+  return {
+    id: conversation.id, title: conversation.title, updatedAt: conversation.updatedAt.toISOString(),
+    activeLeafId: path.at(-1)?.id ?? null,
+    tree: nodes.map(({ id, parentId, role }) => ({ id, parentId, role })),
+    // U13A: input views re-read their dates against the town's local day, as the tools ran them.
+    messages: chatMessageViews(path, localDay(ctx.now(), timeZoneOf(location.town).timeZone), stateOf, feedbackOf),
+  };
+}
+
+/** GET /api/org/locations/:locationId/chat/:conversationId: the caller's own conversation, its visible messages. */
+export async function getConversation(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const caller = memberOf(principal);
+  const location = await loadLocation(ctx, caller.scope, req.params.locationId);
+  const conversationId = parseInput(objectId, req.params.conversationId);
+  const { node } = parseInput(z.strictObject({ node: nodeIdSchema.optional() }), req.query);
+  const conversation = await ctx.stores.chatConversations.find(caller.scope, ownerOf(caller, location.id), conversationId);
+  if (conversation === null) throw notFound();
+  const nodes = nodesOf(conversation.messages);
+  // `?node=` shows another version without storing it; otherwise the stored active leaf.
+  if (node !== undefined && !nodes.some((candidate) => candidate.id === node)) throw notFound();
+  const leafId = node === undefined ? conversation.activeLeafId : newestLeafUnder(nodes, node);
+  const body: ConversationView = await conversationView(ctx, caller, location, conversation, nodes, leafId);
   res.status(200).json(body);
+}
+
+/**
+ * POST /api/org/locations/:locationId/chat/:conversationId/active: shows another version and stores it, the path to
+ * the newest leaf under `nodeId`. Display state, like a rename: no audit event, no log, and `updatedAt` stays.
+ */
+export async function showVersion(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const caller = memberOf(principal);
+  const { nodeId } = parseInput(activeBody, req.body);
+  const location = await loadLocation(ctx, caller.scope, req.params.locationId);
+  const conversationId = parseInput(objectId, req.params.conversationId);
+  const owner = ownerOf(caller, location.id);
+  const conversation = await ctx.stores.chatConversations.find(caller.scope, owner, conversationId);
+  if (conversation === null) throw notFound();
+  const nodes = nodesOf(conversation.messages);
+  if (!nodes.some((candidate) => candidate.id === nodeId)) throw notFound();
+  const leafId = newestLeafUnder(nodes, nodeId);
+  if (!(await ctx.stores.chatConversations.setActiveLeaf(caller.scope, owner, conversationId, leafId))) throw notFound();
+  const body: ConversationView = await conversationView(ctx, caller, location, conversation, nodes, leafId);
+  res.status(200).json(body);
+}
+
+/** PATCH /api/org/locations/:locationId/chat/:conversationId: the author renames their conversation (display state). */
+export async function renameConversation(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const caller = memberOf(principal);
+  const { title } = parseInput(renameBody, req.body);
+  const location = await loadLocation(ctx, caller.scope, req.params.locationId);
+  const conversationId = parseInput(objectId, req.params.conversationId);
+  if (!(await ctx.stores.chatConversations.rename(caller.scope, ownerOf(caller, location.id), conversationId, title))) throw notFound();
+  res.status(200).json({ id: conversationId, title });
 }
 
 /** DELETE /api/org/locations/:locationId/chat/:conversationId: the caller's own conversation. */
@@ -138,29 +208,62 @@ export async function deleteConversation(ctx: TownwiseContext, req: Request, res
   res.status(204).end();
 }
 
-interface ClaimedTurn { conversationId: string; title: string; history: BetaMessageParam[] }
+interface ClaimedTurn { conversationId: string; title: string; history: BetaMessageParam[]; nodes: TurnInput['nodes'] }
 interface TurnClaim { turnId: string; now: Date; staleBefore: Date }
 
-/** Claims an existing conversation for this turn, or creates a new one already claimed. */
-async function claimTurn(
-  ctx: TownwiseContext, scope: OrgScope, owner: ConversationOwner, body: z.infer<typeof turnBody>, claim: TurnClaim,
-): Promise<ClaimedTurn> {
+/** True when the node a branch names is in the conversation: an edit's parent, or a regenerate's message of the person. */
+function namesKnownNode(nodes: readonly ChatNode[], body: TurnBody): boolean {
+  if ('replyTo' in body) return nodes.some((node) => node.id === body.replyTo && node.role === 'user');
+  return body.parentId === undefined || body.parentId === null || nodes.some((node) => node.id === body.parentId);
+}
+
+/** Section 3: a branch's history is its path, root to `leafId`, every message exactly as stored. */
+function historyTo(nodes: readonly ChatNode[], leafId: string | null): BetaMessageParam[] {
+  if (leafId === null) return [];
+  return pathTo(nodes, leafId).flatMap((node) => node.messages.map((message) => JSON.parse(message.param) as BetaMessageParam));
+}
+
+/** A send's two new nodes: the person's message under `parentId`, and the reply under it. */
+function sendNodes(parentId: string | null): TurnInput['nodes'] {
+  const user = { id: newNodeId(), parentId };
+  return { user, reply: { id: newNodeId(), parentId: user.id } };
+}
+
+/** Claims the author's conversation for this turn: 404 when it is gone, 409 while another turn holds it. */
+async function claimExisting(
+  ctx: TownwiseContext, scope: OrgScope, owner: ConversationOwner, conversationId: string, claim: TurnClaim,
+): Promise<ConversationRecord> {
   const conversations = ctx.stores.chatConversations;
-  const { turnId, now } = claim;
+  const claimed = await conversations.claim(scope, owner, conversationId, claim);
+  if (claimed !== null) return claimed;
+  if ((await conversations.find(scope, owner, conversationId)) === null) throw notFound();
+  throw new AppError(409, 'chat_turn_in_progress', 'This conversation is still answering. Wait for it, or stop it first.');
+}
+
+/**
+ * Claims an existing conversation for this turn, or creates a new one already claimed. The turn continues the path to
+ * its parent: a regenerate's message (that message included), an edit's parent, or else the stored active leaf. The
+ * node postTurn checked is still there after the claim: messages are only ever appended.
+ */
+async function claimTurn(
+  ctx: TownwiseContext, scope: OrgScope, owner: ConversationOwner, body: TurnBody, claim: TurnClaim,
+): Promise<ClaimedTurn> {
+  if ('replyTo' in body) {
+    const claimed = await claimExisting(ctx, scope, owner, body.conversationId, claim);
+    return {
+      conversationId: claimed.id, title: claimed.title, history: historyTo(nodesOf(claimed.messages), body.replyTo),
+      nodes: { user: null, reply: { id: newNodeId(), parentId: body.replyTo } },
+    };
+  }
   if (body.conversationId === undefined) {
     const title = titleOf(body.content);
-    return { conversationId: await conversations.create(scope, owner, { title, turnId, now }), title, history: [] };
+    const conversationId = await ctx.stores.chatConversations.create(scope, owner, { title, turnId: claim.turnId, now: claim.now });
+    return { conversationId, title, history: [], nodes: sendNodes(null) };
   }
-  const claimed = await conversations.claim(scope, owner, body.conversationId, claim);
-  if (claimed === null) {
-    if ((await conversations.find(scope, owner, body.conversationId)) === null) throw notFound();
-    throw new AppError(409, 'chat_turn_in_progress', 'This conversation is still answering. Wait for it, or stop it first.');
-  }
-  return {
-    conversationId: claimed.id,
-    title: claimed.title,
-    history: claimed.messages.map((message) => JSON.parse(message.param) as BetaMessageParam),
-  };
+  const claimed = await claimExisting(ctx, scope, owner, body.conversationId, claim);
+  const nodes = nodesOf(claimed.messages);
+  const parentId = body.parentId === undefined ? pathTo(nodes, claimed.activeLeafId).at(-1)?.id ?? null : body.parentId;
+  return { conversationId: claimed.id, title: claimed.title, history: historyTo(nodes, parentId), nodes: sendNodes(parentId) };
 }
 
 /**
@@ -181,6 +284,9 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   if (body.conversationId !== undefined) {
     const existing = await ctx.stores.chatConversations.find(scope, owner, body.conversationId);
     if (existing === null) throw notFound();
+    // Before any claim: an edit's parent, or a regenerate's message, must be in the conversation.
+    if (!namesKnownNode(nodesOf(existing.messages), body)) throw notFound();
+    // Every branch counts toward the caps.
     if (isFull(existing)) throw new AppError(409, 'conversation_full', 'This conversation is full. Start a new one.');
   }
   if ((await budgetOf(ctx, scope)).exhausted) {
@@ -210,7 +316,7 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
     await releaseLiveTurn();
     throw err;
   }
-  const { conversationId, title, history } = claimed;
+  const { conversationId, title, history, nodes } = claimed;
   const ids = { orgId: scope.orgId, locationId: location.id, conversationId };
 
   res.status(200);
@@ -232,13 +338,18 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   }, PING_MS);
 
   try {
-    send('conversation', { id: conversationId, title });
+    // `parentId` is where the turn's first new node hangs: the person's message, or a regenerate's reply.
+    send('conversation', {
+      id: conversationId, title, userNodeId: nodes.user?.id ?? null, replyNodeId: nodes.reply.id,
+      parentId: nodes.user === null ? nodes.reply.parentId : nodes.user.parentId,
+    });
     const result = await runTurn({
       model,
       // U13A: today is the town's local date, so an evening turn is not already tomorrow.
       tools: { ctx, scope, location, today: localDay(ctx.now(), timeZone), timeZone },
       history,
-      userMessage: { role: 'user', content: body.content },
+      userMessage: 'replyTo' in body ? null : { role: 'user', content: body.content },
+      nodes,
       signal,
       now: ctx.now,
       emit: (event: TurnEvent) => { send(event.type, event.data); },
@@ -250,7 +361,7 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
       await ctx.stores.chatConversations.release(scope, conversationId, turnId);
       if (result.kind === 'refused') {
         ctx.logger.info({ ...ids, calls: result.calls, stopReason: 'refusal', costMicroUsd: result.costMicroUsd }, 'townwise.chat_turn');
-        send('done', { stopReason: 'refusal', costUsd: result.costMicroUsd / 1_000_000 });
+        send('done', { stopReason: 'refusal', costUsd: result.costMicroUsd / 1_000_000, leafId: null });
         return;
       }
       if (result.kind === 'aborted') {
@@ -270,7 +381,9 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
       send('error', { code: result.code });
       return;
     }
-    const saved = await ctx.stores.chatConversations.finish(scope, conversationId, turnId, { messages: result.messages, now: ctx.now() });
+    const saved = await ctx.stores.chatConversations.finish(scope, conversationId, turnId, {
+      messages: result.messages, now: ctx.now(), leafId: result.leafId,
+    });
     if (!saved) {
       // Another turn took over the claim (this one ran past 3 minutes), or the conversation was deleted.
       ctx.logger.warn({ ...ids, calls: result.calls, costMicroUsd: result.costMicroUsd }, 'townwise.chat_turn_not_saved');
@@ -288,7 +401,7 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
     ctx.logger.info({
       ...ids, calls: result.calls, stopReason: result.stopReason, costMicroUsd: result.costMicroUsd,
     }, 'townwise.chat_turn');
-    send('done', { stopReason: result.stopReason, costUsd: result.costMicroUsd / 1_000_000 });
+    send('done', { stopReason: result.stopReason, costUsd: result.costMicroUsd / 1_000_000, leafId: result.leafId });
   } catch (err) {
     // A store failure while saving: nothing was saved, and the claim goes if it can.
     ctx.logger.error({ ...ids, code: 'internal', errType: err instanceof Error ? err.constructor.name : typeof err }, 'townwise.chat_turn_failed');

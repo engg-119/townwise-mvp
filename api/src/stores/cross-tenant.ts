@@ -19,6 +19,7 @@ import { importModel } from './imports.ts';
 import { locationModel } from './locations.ts';
 import { memberModel } from './members.ts';
 import { orgModel } from './orgs.ts';
+import { profileModel } from './profiles.ts';
 import { HAS_VALUE, SALES_DAYS_COLLECTION } from './sales-days.ts';
 import { uploadDayModel } from './upload-days.ts';
 import { UPLOADS_COLLECTION } from './uploads.ts';
@@ -263,7 +264,7 @@ export interface DeletedPersonRecords {
 /**
  * Person deletion (spec 10.7 step 3): their access requests, their open invitations in every organization, their
  * removed seats, their tuning chat conversations, live turns and proposal records, and their welcome markers, in every
- * organization (the notes they saved from proposals stay with the organization, as every note does). Their staff id
+ * organization, and their display name (the notes they saved from proposals stay with the organization, as every note does). Their staff id
  * is cleared from the forecast runs they imported or published (U13B). Never an active
  * seat: the handler refuses a person who holds one. An address with no kit user has only invitations. Deletes by
  * filter, so a retry completes the work. (U9: tw_agent_answers holds no person id, so nothing of it is the person's.)
@@ -293,6 +294,8 @@ export async function deletePersonRecords(
   await chatProposalModel(connection).deleteMany({ userId });
   // U11: the welcome markers, in every organization. Not counted, so the audit details are unchanged.
   await welcomeModel(connection).deleteMany({ userId });
+  // The display name (spec 6.22). Not counted, so the audit details are unchanged.
+  await profileModel(connection).deleteMany({ userId });
   // U13B: a staff member's id on the forecast runs they imported or published, in every organization. Not counted.
   await forecastRunModel(connection).updateMany({ importedBy: userId }, { $set: { importedBy: null } });
   await forecastRunModel(connection).updateMany({ publishedBy: userId }, { $set: { publishedBy: null } });

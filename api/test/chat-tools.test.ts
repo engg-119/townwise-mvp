@@ -25,6 +25,8 @@ const FROZEN_NAMES = [
   'get_forecast',
   // F2.
   'get_day',
+  // Chat redesign A4: visuals and next questions.
+  'show_visual', 'suggest_next',
 ];
 
 describe('the tool registry', () => {

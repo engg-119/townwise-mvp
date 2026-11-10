@@ -200,6 +200,38 @@ describe('route table', () => {
     expect(proposal?.limiter).toBeUndefined();
   });
 
+  it('renaming and switching a TownwiseAI version are member writes with a 1kb body and no route limiter', () => {
+    const base = '/org/locations/:locationId/chat/:conversationId';
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id === 'org.chat.rename' || r.id === 'org.chat.active')
+      .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));
+    expect(rows).toEqual([
+      { id: 'org.chat.rename', method: 'PATCH', path: base, policy: 'member', bodyLimit: '1kb', limiter: undefined },
+      { id: 'org.chat.active', method: 'POST', path: `${base}/active`, policy: 'member', bodyLimit: '1kb', limiter: undefined },
+    ]);
+    const ids = TOWNWISE_ROUTES.map((entry) => entry.id);
+    const after = ids.indexOf('org.chat.remove') + 1;
+    expect(ids.slice(after, after + 2)).toEqual(['org.chat.rename', 'org.chat.active']);
+  });
+
+  it('the profile is a member GET and a member PATCH with a 1kb body and no route limiter', () => {
+    const pick = (id: string) => {
+      const entry = TOWNWISE_ROUTES.find((candidate) => candidate.id === id);
+      return { id: entry?.id, method: entry?.method, path: entry?.path, policy: entry?.policy, bodyLimit: entry?.bodyLimit, limiter: entry?.limiter };
+    };
+    expect(pick('me.profile.get')).toEqual({ id: 'me.profile.get', method: 'GET', path: '/me/profile', policy: 'member', bodyLimit: 'none', limiter: undefined });
+    expect(pick('me.profile.update')).toEqual({ id: 'me.profile.update', method: 'PATCH', path: '/me/profile', policy: 'member', bodyLimit: '1kb', limiter: undefined });
+  });
+
+  it('rating a TownwiseAI reply is a member POST with a 1kb body and no route limiter', () => {
+    const feedback = TOWNWISE_ROUTES.find((entry) => entry.id === 'org.chat.feedback');
+    expect(feedback).toMatchObject({
+      method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/feedback/:nodeId', policy: 'member', bodyLimit: '1kb',
+    });
+    expect(feedback?.limiter).toBeUndefined();
+    const ids = TOWNWISE_ROUTES.map((entry) => entry.id);
+    expect(ids.indexOf('org.chat.feedback')).toBe(ids.indexOf('org.chat.proposal') + 1);
+  });
+
   // U9, TownwiseAI's side panel.
   it('the side panel is a member GET, and answering a question a member POST with a 1kb body and no route limiter', () => {
     const base = '/org/locations/:locationId';

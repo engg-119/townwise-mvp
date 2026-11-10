@@ -3,9 +3,9 @@ import type { z } from 'zod';
 import { ApiError, type ApiClient, type RequestOptions, type StreamOptions } from '../../src/api/client';
 
 // A fake ApiClient for TownwiseAI: GETs answer from mutable fixtures, each turn is a stream the test drives event by
-// event, and writes (proposal saves, notes, question answers, deletes) are recorded and answered by `respond`, which
-// a test can replace path by path. Aborting a turn's signal rejects it as the real client does. Fixtures are
-// synthetic: low-entropy ids, example.com addresses, no real figures.
+// event, and writes (proposal saves, notes, question answers, deletes, renames, version switches, ratings, the name) are
+// recorded and answered by `respond`, which a test can replace path by path. Aborting a turn's signal rejects it as
+// the real client does. Fixtures are synthetic: low-entropy ids, example.com addresses, no real figures.
 
 const EMAIL = ['a', 'example.com'].join('@');
 
@@ -28,23 +28,31 @@ export const SALES_STEP = {
   result: { from: '2025-12-01', to: '2025-12-31', dayCount: 31, guestsDayCount: 31, netSalesDayCount: 30 },
 } as const;
 
+/** As GET .../chat/:conversationId answers it: the tree, the leaf of the path shown, and that path's messages. */
 export const CONVERSATION = {
   id: 'c1',
   title: 'Earlier chat',
   updatedAt: '2026-11-02T15:00:00.000Z',
+  activeLeafId: 'a1',
+  tree: [{ id: 'u1', parentId: null, role: 'user' }, { id: 'a1', parentId: 'u1', role: 'assistant' }],
   messages: [
-    { role: 'user', text: 'We close for the holidays.', proposals: [], parts: [], at: '2026-11-02T14:59:00.000Z' },
+    { nodeId: 'u1', role: 'user', text: 'We close for the holidays.', proposals: [], parts: [], at: '2026-11-02T14:59:00.000Z' },
     {
+      nodeId: 'a1',
       role: 'assistant',
       text: 'Last December you were open every day.\n\nHere is a note for that.',
       proposals: [{ ...PROPOSAL, id: PROPOSAL_ID, status: 'open', noteId: null }],
       parts: [
+        { type: 'thinking', text: 'Checked December against the notes.' },
         { type: 'text', text: 'Last December you were open every day.' },
         { type: 'tool', state: 'done', ...SALES_STEP },
         { type: 'text', text: 'Here is a note for that.' },
         { type: 'proposal', proposal: { ...PROPOSAL, id: PROPOSAL_ID, status: 'open', noteId: null } },
       ],
-      at: '2026-11-02T15:00:00.000Z',
+      // Its first stored message's time, at or after the person's and at or before its end, as the server stores them.
+      at: '2026-11-02T14:59:01.000Z',
+      // 12 seconds after the person's message.
+      endedAt: '2026-11-02T14:59:12.000Z',
     },
   ],
 };
@@ -84,14 +92,23 @@ export interface Write { method: string; path: string; body: unknown }
 
 export interface FakeChatApi extends ApiClient {
   summary: unknown;
+  /** GET .../chat/:conversationId, and the answer to a version switch that `versions` doesn't list. */
   conversation: unknown;
+  /** The view of another version, by node id: GET .../chat/:conversationId?node= and POST .../active answer it. */
+  versions: Record<string, unknown>;
+  /** Every GET .../chat/:conversationId path read, with its query. */
+  conversationReads: string[];
   panel: unknown;
+  /** GET /api/me/profile, the name TownwiseAI greets by; a PATCH stores the name sent and stops asking. */
+  profile: unknown;
   /** Thrown by GET .../chat when set. */
   chatError: ApiError | null;
   /** Thrown by GET .../agent when set. */
   panelError: ApiError | null;
   /** Rejects the next turns before any event, as a refused POST does. */
   refuse: ApiError | null;
+  /** Rejects one turn each, in order, before `refuse` applies (a claim the server still holds, then a stream). */
+  refusals: ApiError[];
   /** The answer to a write, by path: a body, an ApiError to throw, or a promise of either. Unlisted paths get the defaults. */
   respond: Record<string, (body: unknown) => unknown>;
   turns: LiveTurn[];
@@ -102,8 +119,21 @@ export interface FakeChatApi extends ApiClient {
 
 const BASE = '/api/org/locations/l1';
 
-function defaultAnswer(path: string, body: unknown): unknown {
-  const input = (body ?? {}) as { action?: string; note?: Record<string, unknown>; answer?: string };
+function defaultAnswer(api: FakeChatApi, method: string, path: string, body: unknown): unknown {
+  const input = (body ?? {}) as {
+    action?: string; note?: Record<string, unknown>; answer?: string; nodeId?: string; title?: string; rating?: string | null; reason?: string | null;
+    displayName?: string | null;
+  };
+  if (method === 'PATCH' && path === '/api/me/profile') {
+    api.profile = { displayName: input.displayName ?? null, askName: false };
+    return api.profile;
+  }
+  const active = new RegExp(`^${BASE}/chat/[^/]+/active$`).exec(path);
+  if (active !== null) return (input.nodeId === undefined ? undefined : api.versions[input.nodeId]) ?? api.conversation;
+  const feedback = new RegExp(`^${BASE}/chat/[^/]+/feedback/([^/]+)$`).exec(path);
+  if (feedback !== null) return { nodeId: feedback[1], rating: input.rating ?? null, reason: input.reason ?? null };
+  const renamed = new RegExp(`^${BASE}/chat/([^/]+)$`).exec(path);
+  if (method === 'PATCH' && renamed !== null) return { id: renamed[1], title: input.title };
   const proposal = new RegExp(`^${BASE}/chat/[^/]+/proposals/([^/]+)$`).exec(path);
   if (proposal !== null) {
     const save = input.action === 'save';
@@ -135,10 +165,14 @@ export function fakeChatApi(): FakeChatApi {
   const api: FakeChatApi = {
     summary: SUMMARY,
     conversation: CONVERSATION,
+    versions: {},
+    conversationReads: [],
     panel: PANEL,
+    profile: { displayName: null, askName: false },
     chatError: null,
     panelError: null,
     refuse: null,
+    refusals: [],
     respond: {},
     turns: [],
     writes: [],
@@ -149,19 +183,24 @@ export function fakeChatApi(): FakeChatApi {
       if (method !== 'GET') {
         api.writes.push({ method, path, body: opts?.body });
         const answer = api.respond[path];
-        return settle(answer === undefined ? defaultAnswer(path, opts?.body) : answer(opts?.body), schema);
+        return settle(answer === undefined ? defaultAnswer(api, method, path, opts?.body) : answer(opts?.body), schema);
       }
       if (path === `${BASE}/chat`) {
         api.summaryLoads += 1;
         if (api.chatError !== null) return Promise.reject(api.chatError);
         return settle(api.summary, schema);
       }
+      if (path === '/api/me/profile') return settle(api.profile, schema);
       if (path === `${BASE}/agent`) {
         api.panelLoads += 1;
         if (api.panelError !== null) return Promise.reject(api.panelError);
         return settle(api.panel, schema);
       }
-      if (path.startsWith(`${BASE}/chat/`)) return settle(api.conversation, schema);
+      if (path.startsWith(`${BASE}/chat/`)) {
+        api.conversationReads.push(path);
+        const node = /[?&]node=([^&]+)/.exec(path)?.[1];
+        return settle((node === undefined ? undefined : api.versions[decodeURIComponent(node)]) ?? api.conversation, schema);
+      }
       return Promise.reject(new ApiError('http', 'The request was refused.', { status: 404, code: 'not_found' }));
     },
     async request(path: `/${string}`, opts?: RequestOptions): Promise<Response> {
@@ -173,7 +212,8 @@ export function fakeChatApi(): FakeChatApi {
       return resolved as Response;
     },
     stream(path: `/${string}`, opts: StreamOptions): Promise<void> {
-      if (api.refuse !== null) return Promise.reject(api.refuse);
+      const refused = api.refusals.shift() ?? api.refuse;
+      if (refused !== null) return Promise.reject(refused);
       return new Promise<void>((resolve, reject) => {
         opts.signal?.addEventListener('abort', () => { reject(new ApiError('aborted', 'The request was stopped.')); });
         api.turns.push({

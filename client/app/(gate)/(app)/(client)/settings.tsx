@@ -6,6 +6,7 @@ import { roleLabel } from '../../../../src/portal/format';
 import { personEmail } from '../../../../src/portal/gate';
 import { useAction, useLoad } from '../../../../src/portal/hooks';
 import { usePortal, useReadOnly } from '../../../../src/portal/PortalProvider';
+import { NameField } from '../../../../src/portal/profile/NameField';
 import { fetchStaffActivity, type StaffActivity, type StaffActivityPage } from '../../../../src/portal/settings/api';
 import { SETTINGS_COPY, SETTINGS_READ_ONLY_ID } from '../../../../src/portal/settings/copy';
 import { LeaveSection } from '../../../../src/portal/settings/LeaveSection';
@@ -80,6 +81,7 @@ export default function SettingsPage(): React.JSX.Element {
                   { term: 'Role', value: roleLabel(access.role) },
                 ]}
               />
+              <NameField onSaved={onSaved} onEdit={onEdit} />
             </Section>
           )}
           side={(
