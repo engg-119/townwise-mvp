@@ -6,7 +6,10 @@ import { scorecardSchema, type Metrics } from './scorecard.ts';
 import { FAILURE_WORDS } from './service.ts';
 
 export interface CalibrationSummary {
-  /** Held-out weeks compared with the current forecast, or backtest weeks with no current forecast to compare. */
+  /**
+   * Held-out weeks compared with the current forecast, or backtest weeks with an 80% range with no current forecast to
+   * compare: the weeks the gate judged, as calibration.finished's heldOutWeeks counts them.
+   */
   weeks: number;
   weeklyWapePct: number;
   /** The current forecast's on the same weeks; null with nothing compared. */
@@ -64,7 +67,7 @@ function summaryOf(scorecardJson: string | null): CalibrationSummary | null {
     championWeekdayBiasPct: champion === null ? null : pct(champion.weekdayBiasMeanAbs),
   });
   return comparison === null
-    ? of(backtest.weeks, backtest.metrics, null)
+    ? of(backtest.weeksWithRange, backtest.metrics, null)
     : of(comparison.weeks, comparison.challenger, comparison.champion);
 }
 

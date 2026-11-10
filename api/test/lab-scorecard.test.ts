@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { scorecardWith } from './lab-fixtures.ts';
+import { scorecardWith } from './helpers/lab-scorecard.ts';
 import { scorecardSchema } from '../src/lab/scorecard.ts';
 
 describe('scorecardSchema', () => {

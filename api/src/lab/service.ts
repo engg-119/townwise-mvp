@@ -46,7 +46,7 @@ export type StartRefusal =
 
 export const START_REFUSAL_WORDS: Record<StartRefusal, string> = {
   lab_unavailable: 'Calibration isn’t available right now.',
-  not_enough_history: 'Calibration needs at least 420 days from the first to the last day of sales history.',
+  not_enough_history: 'Calibration needs at least 595 days from the first to the last day of sales history.',
   invalid_regime_start: 'The pattern change date must fall inside the sales history, at least 8 weeks before its last day.',
   budget_exhausted: 'This month’s TownwiseAI budget is used up, so a calibration can’t start until it resets.',
   in_progress: 'A calibration for this location is already running.',
@@ -96,10 +96,13 @@ async function budgetSpent(ctx: TownwiseContext, scope: OrgScope): Promise<boole
   return used >= Math.round(ctx.config.chatMonthlyBudgetUsd * 1_000_000);
 }
 
-async function historyOf(ctx: TownwiseContext, scope: OrgScope, locationId: string): Promise<{ first: string; last: string } | null> {
+/** The span the job's input will hold (lab/input.ts guestSpan), in the town's `today`. */
+async function historyOf(
+  ctx: TownwiseContext, scope: OrgScope, locationId: string, today: string,
+): Promise<{ first: string; last: string } | null> {
   const coverage = await ctx.stores.salesDays.coverage(scope, locationId);
   if (coverage.firstDate === null || coverage.lastDate === null) return null;
-  return guestSpan(await ctx.stores.salesDays.days(scope, locationId, { from: coverage.firstDate, to: coverage.lastDate }));
+  return guestSpan(await ctx.stores.salesDays.days(scope, locationId, { from: coverage.firstDate, to: coverage.lastDate }), today);
 }
 
 /** What a finished calibration's event names besides its status: its run, the gate's reason and the weeks it judged. */
@@ -142,13 +145,14 @@ export async function expireStale(ctx: TownwiseContext, scope: OrgScope, record:
 
 /**
  * The checks before a start, in order: the lab is on; the history (first to last day with guests) spans at least
- * GATE.minHistoryDays; a pattern change date falls inside it, at least 8 weeks before its last day; the month's
- * TownwiseAI budget is not spent; and no calibration of the location is live (a stale one is timed out first).
+ * GATE.minHistoryDays, the span that always gives the gate 12 weeks to judge; a pattern change date falls inside it, at
+ * least 8 weeks before its last day; the month's TownwiseAI budget is not spent; and no calibration of the location is
+ * live (a stale one is timed out first).
  */
 export async function checkStart(ctx: TownwiseContext, req: StartRequest): Promise<StartRefusal | null> {
   if (ctx.labRunner === null) return 'lab_unavailable';
   const { scope, location } = req;
-  const history = await historyOf(ctx, scope, location.id);
+  const history = await historyOf(ctx, scope, location.id, req.today);
   if (history === null || daysBetween(history.first, history.last) < GATE.minHistoryDays) return 'not_enough_history';
   if (req.regimeStart !== null && (req.regimeStart < history.first || daysBetween(req.regimeStart, history.last) < REGIME_TAIL_DAYS)) {
     return 'invalid_regime_start';
@@ -199,7 +203,11 @@ export async function launch(
     await finishCalibration(ctx, scope, queued, { status: 'failed', failure: 'start_failed' });
     return { ok: false, code: 'start_failed' };
   }
-  await ctx.stores.calibrations.markRunning(scope, queued.id, { now: ctx.now(), imageDigest: started.imageDigest });
+  // The job's input fetch may have marked it running first; the image it runs is recorded either way (G3).
+  if (!(await ctx.stores.calibrations.markRunning(scope, queued.id, { now: ctx.now(), imageDigest: started.imageDigest }))
+    && started.imageDigest !== null) {
+    await ctx.stores.calibrations.recordImageDigest(scope, queued.id, started.imageDigest);
+  }
   await ctx.stores.chatUsage.add(scope, monthOf(now), CALIBRATION_CHARGE_MICRO_USD, ctx.now());
   await ctx.stores.calibrations.setCharge(scope, queued.id, CALIBRATION_CHARGE_MICRO_USD);
   ctx.logger.info({ orgId: scope.orgId, locationId: location.id, calibrationId: queued.id, via: req.requester.via }, 'townwise.calibration_started');
@@ -239,8 +247,11 @@ async function publishDraft(ctx: TownwiseContext, scope: OrgScope, calibration: 
 /**
  * The gate (G2) on the draft this calibration made, once: forecasts on means switched on with the organization active
  * (G1); the current forecast is read again, in the town's today, to compare with the one the calibration was given; and
- * the decision is set on the calibration by compare-and-set, so only the request that set it publishes. A run that is
- * no longer a draft, or that another calibration made (the same file again), is never gated or changed (G3).
+ * the decision is set on the calibration by compare-and-set. A request that finds the gate already set and saying
+ * publish (a retry after an outage between the gate and the publish, or a concurrent post) publishes the run if it is
+ * still the draft and the gate still publishes now; publishDraft's draft-to-published compare-and-set lets at most one
+ * publish apply, and a racer that loses records its event as not applied. A run that is no longer a draft, or that
+ * another calibration made (the same file again), is never gated or changed (G3).
  */
 async function gateDraft(
   ctx: TownwiseContext, scope: OrgScope, calibration: CalibrationRecord, location: LocationRecord, runId: string, scorecard: Scorecard,
@@ -257,9 +268,15 @@ async function gateDraft(
     scorecard,
   });
   const gate = { published: decision.publish, reason: decision.reason };
-  if (await ctx.stores.calibrations.recordGate(scope, calibration.id, gate) && decision.publish) {
-    await publishDraft(ctx, scope, calibration, run);
+  if (await ctx.stores.calibrations.recordGate(scope, calibration.id, gate)) {
+    if (decision.publish) await publishDraft(ctx, scope, calibration, run);
+    return;
   }
+  // The gate was recorded first by a concurrent post, or by an earlier try of this one whose publish never happened.
+  const recorded = (await ctx.stores.calibrations.find(scope, calibration.id))?.gate ?? null;
+  if (recorded?.published !== true || !decision.publish) return;
+  const current = await forecasts.find(scope, runId);
+  if (current?.status === 'draft') await publishDraft(ctx, scope, calibration, current);
 }
 
 /**

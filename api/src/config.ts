@@ -106,12 +106,13 @@ export type LabRunnerConfig =
 
 type LabKeys = 'TOWNWISE_LAB_RUNNER' | 'TOWNWISE_LAB_API_URL' | 'TOWNWISE_LAB_JOB_ID' | 'TOWNWISE_LAB_PROJECT_DIR';
 
-/** A runner missing its variable refuses boot, naming it. */
-export function labRunnerOf(config: Pick<TownwiseConfig, LabKeys>): LabRunnerConfig | null {
+/** A runner missing its variable refuses boot, naming it, and so does `local` in production (it is for development). */
+export function labRunnerOf(config: Pick<TownwiseConfig, LabKeys> & Partial<Pick<ServerConfig, 'NODE_ENV'>>): LabRunnerConfig | null {
   switch (config.TOWNWISE_LAB_RUNNER) {
     case 'off':
       return null;
     case 'local': {
+      if (config.NODE_ENV === 'production') throw new ConfigError('TOWNWISE_LAB_RUNNER', 'local is for development only');
       if (config.TOWNWISE_LAB_API_URL === undefined) throw new ConfigError('TOWNWISE_LAB_API_URL', 'required with TOWNWISE_LAB_RUNNER=local');
       const apiUrl = bareOrigin(config.TOWNWISE_LAB_API_URL);
       if (apiUrl === null) throw new ConfigError('TOWNWISE_LAB_API_URL', 'expected a bare origin, with no path or query');

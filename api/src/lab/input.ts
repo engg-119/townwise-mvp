@@ -57,7 +57,10 @@ const championSchema = z.strictObject({
   })),
 });
 
-/** The Contracts shape (plan, "LabInput"); the lab's schema.validate_input checks the same on its side. */
+/**
+ * The Contracts shape (plan, "LabInput"); the lab's schema.validate_input checks the same on its side, and
+ * lab-input.test.ts's golden (modeling/lab/tests/golden/api-input.json) holds the two together.
+ */
 export const labInputSchema = z.strictObject({
   schema: z.literal(LAB_INPUT_SCHEMA),
   calibrationId: z.string().regex(/^[0-9a-f]{24}$/),
@@ -68,7 +71,7 @@ export const labInputSchema = z.strictObject({
   regimeStart: isoDate.nullable(),
   days: z.array(labDaySchema).min(1),
   champion: championSchema.nullable(),
-});
+}).refine((input) => input.dataThrough <= input.today, { path: ['today'], message: 'dataThrough is after today' });
 
 export type LabInput = z.infer<typeof labInputSchema>;
 export type LabDay = LabInput['days'][number];
@@ -78,12 +81,15 @@ function plusDays(day: string, days: number): string {
   return utcDay(new Date(`${day}T00:00:00.000Z`), days);
 }
 
-/** The first and the last day with guests above zero, or null with none (the lab trains on no other span). */
-export function guestSpan(days: readonly SalesDay[]): { first: string; last: string } | null {
+/**
+ * The first and the last day with guests above zero on or before `today` (the town's date), or null with none: the lab
+ * trains on no other span. A day after today (an upload may run a day ahead of the town's clock) is not history yet.
+ */
+export function guestSpan(days: readonly SalesDay[], today: string): { first: string; last: string } | null {
   let first: string | null = null;
   let last: string | null = null;
   for (const day of days) {
-    if (day.guests === null || day.guests <= 0) continue;
+    if (day.guests === null || day.guests <= 0 || day.date > today) continue;
     if (first === null || day.date < first) first = day.date;
     if (last === null || day.date > last) last = day.date;
   }
@@ -146,8 +152,9 @@ function championOf(champion: { run: ForecastRunRecord; rows: readonly ForecastR
 }
 
 /**
- * The input for `calibration`, or null when the location has no day with guests. Days run from the first day with guests
- * to the last one (dataThrough) plus 182 days, with no gaps; guests are null after dataThrough and on days with no row.
+ * The input for `calibration`, or null when the location has no day with guests by `today`. Days run from the first day
+ * with guests to the last one on or before today (dataThrough) plus 182 days, with no gaps; guests are null after
+ * dataThrough and on days with no row.
  * Notes: a private event sets privateEvent, and with effect closed also booked (a buyout); any other closure note, or
  * note with effect closed, sets closed.
  */
@@ -159,7 +166,7 @@ export function labInputOf(args: {
   today: string;
   champion: { run: ForecastRunRecord; rows: readonly ForecastRow[] } | null;
 }): LabInput | null {
-  const span = guestSpan(args.days);
+  const span = guestSpan(args.days, args.today);
   if (span === null) return null;
   const last = plusDays(span.last, HORIZON_DAYS);
   const dates = eachDay(span.first, last);

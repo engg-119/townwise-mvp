@@ -3,7 +3,8 @@
 // `succeeded` or `failed`. `liveLocation` equals the location until the calibration finishes and then goes, under a
 // unique partial index, so a location has one live calibration (the tw_imports.activeLocation pattern). The job holds a
 // per-calibration bearer token; only its sha256 is stored, and `finish` removes it, so a finished calibration's token
-// is dead (cross-tenant.ts findLabCallback). Every transition is a compare-and-set (no transactions), so a retried
+// is dead (cross-tenant.ts findLabCallback). The token the job starts with fetches the input once: that fetch swaps it
+// for a result token the API hands only to the job (recordInput). Every transition is a compare-and-set (no transactions), so a retried
 // result completes the work once. Results are the scorecard as a JSON string (a chat-messages precedent), never read
 // as a figure by anything that logs. Nothing here logs.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
@@ -140,8 +141,16 @@ export interface CalibrationStore {
   list(scope: OrgScope, limit: number, locationId?: string): Promise<CalibrationRecord[]>;
   /** Compare-and-set queued to running. */
   markRunning(scope: OrgScope, id: string, input: { now: Date; imageDigest: string | null }): Promise<boolean>;
-  /** Compare-and-set on running: the hash of the input the job was given and the last day it holds. */
-  recordInput(scope: OrgScope, id: string, input: { inputSha256: string; dataThrough: string }): Promise<boolean>;
+  /** Compare-and-set on running with no image recorded yet: the image the job runs, when it was running first. */
+  recordImageDigest(scope: OrgScope, id: string, imageDigest: string): Promise<boolean>;
+  /**
+   * The job's one input fetch, by compare-and-set on running, the token it called with and no input recorded yet: the
+   * hash of the input it is given and the last day it holds, and the token swapped for the result token (its sha256),
+   * so the token the job was started with is dead from here on. False for any second fetch.
+   */
+  recordInput(scope: OrgScope, id: string, input: {
+    tokenSha256: string; inputSha256: string; dataThrough: string; resultTokenSha256: string;
+  }): Promise<boolean>;
   /** Compare-and-set on running with no run recorded yet: a run id, once set, is kept. */
   recordResult(scope: OrgScope, id: string, result: { runId: string; scorecardJson: string; codeVersion: string }): Promise<boolean>;
   /** Compare-and-set on running with no gate yet: the gate is set once. */
@@ -227,10 +236,14 @@ export function createCalibrationStore(connection: Connection): CalibrationStore
       );
       return result.modifiedCount === 1;
     },
+    async recordImageDigest(scope, id, imageDigest) {
+      const result = await Calibration.updateOne({ ...ofId(scope, id), status: 'running', imageDigest: null }, { $set: { imageDigest } });
+      return result.modifiedCount === 1;
+    },
     async recordInput(scope, id, input) {
       const result = await Calibration.updateOne(
-        { ...ofId(scope, id), status: 'running' },
-        { $set: { inputSha256: input.inputSha256, dataThrough: input.dataThrough } },
+        { ...ofId(scope, id), status: 'running', tokenSha256: input.tokenSha256, inputSha256: null },
+        { $set: { inputSha256: input.inputSha256, dataThrough: input.dataThrough, tokenSha256: input.resultTokenSha256 } },
       );
       return result.modifiedCount === 1;
     },

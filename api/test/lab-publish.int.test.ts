@@ -6,7 +6,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { StaffActivityView } from '../src/audit.ts';
 import type { ForecastWindow } from '../src/forecasts/reader.ts';
@@ -43,7 +43,7 @@ function switchForecasts(t: Pick<Team, 'orgId'>, body: unknown, session = staff)
 }
 
 /**
- * An organization with an org admin and one Hanover location holding guests from 2025-01-01 to `to` (2026-05-31), with
+ * An organization with an org admin and one Hanover location holding guests from 2024-10-01 to `to` (2026-05-31), with
  * its forecasts switched on through the console when `forecastsOn`.
  */
 async function team(opts?: { forecastsOn?: boolean; to?: string }): Promise<Team> {
@@ -52,7 +52,7 @@ async function team(opts?: { forecastsOn?: boolean; to?: string }): Promise<Team
   const admin = await signIn(server, email);
   await addSeat(server, { orgId, userId: admin.userId, email, role: 'org_admin' });
   const locationId = await addLocation(server, { orgId, name: 'Hanover Room' });
-  await seedHistory(server, { orgId, locationId, from: '2025-01-01', to: opts?.to ?? '2026-05-31' });
+  await seedHistory(server, { orgId, locationId, from: '2024-10-01', to: opts?.to ?? '2026-05-31' });
   if (opts?.forecastsOn === true) expect((await switchForecasts({ orgId }, ON)).status).toBe(200);
   return { orgId, locationId, admin };
 }
@@ -282,6 +282,34 @@ describe('retries, races and existing runs', () => {
     await onePublish(late, second.calibration.id, lateAnswers);
   });
 
+  it('an outage between the gate and the publish: the job’s retried post publishes the draft once', async () => {
+    const t = await team({ forecastsOn: true });
+    const { calibration, job } = await started(t);
+    const result = labResultFor(await inputFor(job));
+    // The audit store refuses the first forecast.published event, after the gate was recorded.
+    const events = server.connection.models.TwAuditEvent as unknown as { create: (...args: unknown[]) => Promise<unknown> };
+    const create = events.create.bind(events);
+    let refused = 0;
+    const spy = vi.spyOn(events, 'create').mockImplementation(async (...args: unknown[]) => {
+      if ((args[0] as { action?: string }).action === 'forecast.published' && refused === 0) {
+        refused += 1;
+        throw new Error('audit store unavailable');
+      }
+      return create(...args);
+    });
+    try {
+      expect((await post(job, result)).status).toBe(503);
+      const doc = await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(calibration.id) });
+      expect(doc).toMatchObject({ status: 'running', gate: { published: true, reason: 'published' } });
+      expect(await runDoc(String(doc?.runId))).toMatchObject({ status: 'draft' });
+      expect(await post(job, result)).toEqual(SUCCEEDED);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(refused).toBe(1);
+    await onePublish(t, calibration.id, [SUCCEEDED, SUCCEEDED]);
+  });
+
   it('the lab never changes an existing run: a result equal to a published run’s file answers that run unchanged', async () => {
     const t = await team({ forecastsOn: true });
     // The first calibration publishes a forecast reaching 70 days ahead, so it becomes the current one.
@@ -338,7 +366,7 @@ describe('a published lab run', () => {
     const body = await forecastOf(t, '2026-05-25', '2026-06-07');
     expect(body.runs).toEqual([{
       id: runId, metric: 'guests', model: { family: 'hybrid_linear_xgboost', version: 'v6', label: 'Townwise demand model v6' },
-      trainingSource: 'townwise_lab', trainedFrom: '2025-01-01', dataThrough: '2026-05-24', madeAt: '2026-06-01', frozen: false,
+      trainingSource: 'townwise_lab', trainedFrom: '2024-10-01', dataThrough: '2026-05-24', madeAt: '2026-06-01', frozen: false,
       interval: { level: 0.8, widened: true },
       backtest: { from: '2026-01-05', to: '2026-03-29', weeks: 12, weeklyTypicalErrorPct: 9.5, weeksOver20Pct: 1, weeklyRangePct: { below: 10, above: 20 } },
       // Seven days scored, each 5 guests off a forecast of 50 and inside its range: 35 over 385 guests.

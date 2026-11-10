@@ -1,5 +1,5 @@
 // Synthetic scorecards for the gate tests; the numbers mean nothing.
-import type { Metrics, Scorecard } from '../src/lab/scorecard.ts';
+import type { Metrics, Scorecard } from '../../src/lab/scorecard.ts';
 
 export function metricsWith(overrides: Partial<Metrics> = {}): Metrics {
   return {
@@ -36,7 +36,7 @@ export function scorecardWith(overrides: {
         };
   return {
     horizonDays: 28,
-    history: { firstDate: '2025-01-01', lastDate: '2026-06-01', days: 500, spanDays: 500, ...overrides.history },
+    history: { firstDate: '2024-10-01', lastDate: '2026-06-01', days: 600, spanDays: 608, ...overrides.history },
     backtest: {
       from: '2026-01-05',
       to: '2026-03-29',

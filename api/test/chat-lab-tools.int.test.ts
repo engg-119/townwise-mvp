@@ -17,7 +17,7 @@ import { FAILURE_WORDS, START_REFUSAL_WORDS } from '../src/lab/service.ts';
 import { addLocation, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { message, scriptedModel, text, toolUse, type ScriptedModel, type Step, type UsageInput } from './helpers/chat-model.ts';
 import { CODE_VERSION, fakeLabRunner, jobCall, labFailure, labResultFor, runDays, seedHistory, type FakeLabRunner } from './helpers/lab.ts';
-import { comparisonWith, scorecardWith } from './lab-fixtures.ts';
+import { comparisonWith, scorecardWith } from './helpers/lab-scorecard.ts';
 import { call, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
 
 let server: TownwiseTestServer;
@@ -51,7 +51,7 @@ async function seat(orgId: string, role: 'org_admin' | 'member', on = server): P
 }
 
 /** An organization with an org admin, a member and a Hanover location holding guests from `from` to 2026-05-31. */
-async function team(from = '2025-01-01'): Promise<Team> {
+async function team(from = '2024-10-01'): Promise<Team> {
   const orgId = await createOrg(server, { name: `Lab Chat ${randomUUID().slice(0, 6)}` });
   const locationId = await addLocation(server, { orgId, name: 'Hanover Room' });
   await seedHistory(server, { orgId, locationId, from, to: '2026-05-31' });
@@ -135,8 +135,12 @@ async function finished(t: Team, withComparison: boolean): Promise<{ calibration
     },
     comparison: withComparison
       ? {
-        // The challenger has a range on fewer weeks than the champion, so the cards carry both counts.
-        ...comparisonWith({ weeklyWape: 0.2 }, { weeklyWape: 0.15, coverage80: { inside: 9, weeks: 11 } }), championRunId: input.champion?.runId ?? '',
+        // The challenger has a range on fewer of the 13 weeks than the champion (12, the gate's minimum), so the cards
+        // carry both counts.
+        ...comparisonWith(
+          { weeklyWape: 0.2, coverage80: { inside: 11, weeks: 13 } }, { weeklyWape: 0.15, coverage80: { inside: 9, weeks: 12 } }, 13,
+        ),
+        championRunId: input.champion?.runId ?? '',
         championDataThrough: input.champion?.dataThrough ?? '',
         series: weeks.map((week, i) => ({
           week, actual: 300 + i, champion: 310.4 + i, challenger: 295.6 + i, challengerLow: 250.2, challengerHigh: 340.1,
@@ -213,7 +217,7 @@ describe('start_calibration', () => {
     });
     expect(failed.views).toEqual([{ input: null, result: { available: true, status: 'failed', weeks: null, published: null } }]);
     await refusal('invalid_regime_start', t, { regimeStart: '2026-05-20' });
-    await refusal('not_enough_history', await team('2025-04-07'));
+    await refusal('not_enough_history', await team('2024-10-14'));
     const unstarted = await team();
     runner.failNext(new LabStartError('upstream_status', { status: 403 }));
     await refusal('start_failed', unstarted);
@@ -308,7 +312,7 @@ describe('get_calibration and compare_forecast_models', () => {
     const { calibrationId } = await finished(t, true);
     const reply = await ask(t, 'admin', 'compare_forecast_models', { calibrationId });
     expect(reply.result).toMatchObject({
-      available: true, calibrationId, status: 'succeeded', weeks: 12, published: false, gate: GATE_WORDS.forecasts_off,
+      available: true, calibrationId, status: 'succeeded', weeks: 13, published: false, gate: GATE_WORDS.forecasts_off,
       suggestedNextSteps: [...NEXT_STEPS.compared],
     });
     const [table, chart] = reply.result.components as { type: string; columns?: unknown; rows: { label?: string; current?: string; candidate?: string; compare?: number | null }[] }[];
@@ -316,14 +320,14 @@ describe('get_calibration and compare_forecast_models', () => {
     expect(table?.rows[0]).toEqual({ label: 'Weekly error (WAPE)', current: '20.0%', candidate: '15.0%' });
     expect(chart).toMatchObject({ type: 'line_band_chart', series: [{ label: 'Actual' }, { label: 'Forecast' }, { label: 'Current forecast' }] });
     expect(chart?.rows[0]).toEqual({ x: '2026-03-02', actual: 300, mid: 296, low: 250, high: 341, compare: 310 });
-    expect(reply.views).toEqual([{ input: { calibrationId }, result: { available: true, status: 'succeeded', weeks: 12, published: false } }]);
+    expect(reply.views).toEqual([{ input: { calibrationId }, result: { available: true, status: 'succeeded', weeks: 13, published: false } }]);
     // get_calibration's cards put the calibration beside the current forecast, each count with its own weeks.
     const read = await ask(t, 'admin', 'get_calibration', { calibrationId });
     const cards = (read.result.components as { cards?: Record<string, unknown>[] }[])[1]?.cards;
     expect(cards?.find((card) => card.key === 'coverage80')).toEqual({
-      key: 'coverage80', label: '80% range held', value: 9, unit: 'count', of: 11, compare: 10, compareOf: 12, better: 'closer_to_80',
+      key: 'coverage80', label: '80% range held', value: 9, unit: 'count', of: 12, compare: 11, compareOf: 13, better: 'closer_to_80',
     });
-    expect(cards?.find((card) => card.key === 'weeksOver20')).toMatchObject({ value: 3, of: 12, compare: 3, compareOf: 12 });
+    expect(cards?.find((card) => card.key === 'weeksOver20')).toMatchObject({ value: 3, of: 13, compare: 3, compareOf: 13 });
 
     const first = await team();
     expect(await ask(first, 'admin', 'compare_forecast_models')).toMatchObject({ result: { available: false } });

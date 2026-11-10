@@ -122,7 +122,7 @@ jobs:
         working-directory: modeling/lab
         run: |
           set -euo pipefail
-          uv sync --frozen
-          uv run pytest -q
+          uv sync --locked # fails when uv.lock is out of date with pyproject.toml
+          uv run --frozen pytest -q
       - name: Build the job image
         run: docker build -f modeling/lab/Dockerfile modeling/lab

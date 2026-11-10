@@ -1,14 +1,18 @@
 """python -m townwise_lab job: the lab's Azure entrypoint.
 
-Reads four environment variables, GETs the calibration's LabInput from the API, calibrates, and POSTs the LabResult
-back. The bearer token only ever goes in the Authorization header, and no redirect is followed (urllib's default
-handler would carry that header to whatever host Location names and turn the result POST into a GET). Standard library
-only (urllib), 30 seconds per request, one retry of the POST on a connection error and none on an HTTP status.
+Reads four environment variables, GETs the calibration's LabInput from the API once, calibrates, and POSTs the
+LabResult back with the result token the input answer named (X-Townwise-Result-Token): the token in the environment is
+readable from the job's execution history and fetches the input only once. A bearer token only ever goes in the
+Authorization header, and no redirect is followed (urllib's default handler would carry that header to whatever host
+Location names and turn the result POST into a GET). Standard library only (urllib), 30 seconds per request, and one
+retry of the POST on a connection error, a lost or timed-out answer or a 5xx (the API stores a result once however
+often it comes), none on a 4xx.
 
 It prints only `fetched input: {n} days` and `posted result: ok|failed {code}`; an error prints its class name, never
 its message, because a message can hold a value from the input. Library warnings are ignored for the same reason.
 """
 
+import http.client
 import json
 import sys
 import urllib.error
@@ -21,6 +25,7 @@ from townwise_lab.pipeline import calibrate
 
 TIMEOUT_SECONDS = 30
 NAMES = ("TOWNWISE_LAB_API_URL", "TOWNWISE_LAB_CALIBRATION_ID", "TOWNWISE_LAB_TOKEN", "TOWNWISE_LAB_CODE_VERSION")
+RESULT_TOKEN_HEADER = "X-Townwise-Result-Token"  # api/src/lab/callback.ts
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -41,9 +46,12 @@ def _post(opener, url: str, token: str, data: bytes) -> None:
             with opener(request, timeout=TIMEOUT_SECONDS) as response:
                 response.read()
             return
-        except urllib.error.HTTPError:
-            raise
-        except urllib.error.URLError:  # a connection error: the only case worth one retry
+        except urllib.error.HTTPError as error:
+            if error.code < 500 or attempt == 2:  # a 4xx is final
+                raise
+        # A connection error before sending (URLError), or an answer lost or late after it (RemoteDisconnected is a
+        # ConnectionError; a read past the timeout a TimeoutError; a garbled one an HTTPException)
+        except (urllib.error.URLError, ConnectionError, TimeoutError, http.client.HTTPException):
             if attempt == 2:
                 raise
 
@@ -58,10 +66,12 @@ def main(env: Mapping[str, str], opener=_OPENER.open) -> int:
     calibration_id = env["TOWNWISE_LAB_CALIBRATION_ID"]
     token = env["TOWNWISE_LAB_TOKEN"]
     root = f"{base}/lab/calibrations/{calibration_id}"
+    result_token = token  # until the input answer names the result token: a failure posted before then
     try:
         request = urllib.request.Request(f"{root}/input", method="GET", headers={
             "Authorization": f"Bearer {token}", "Accept": "application/json"})
         with opener(request, timeout=TIMEOUT_SECONDS) as response:
+            result_token = response.headers.get(RESULT_TOKEN_HEADER) or token
             inp = json.loads(response.read())
         days = inp.get("days") if isinstance(inp, dict) else None
         if isinstance(days, list):  # otherwise calibrate answers invalid_input
@@ -73,7 +83,7 @@ def main(env: Mapping[str, str], opener=_OPENER.open) -> int:
         result = {"schema": schema.RESULT_SCHEMA, "calibrationId": calibration_id, "ok": False, "code": "internal"}
         data = json.dumps(result).encode("utf-8")
     try:
-        _post(opener, f"{root}/result", token, data)
+        _post(opener, f"{root}/result", result_token, data)
     except Exception as error:
         print(f"failed: {type(error).__name__}", file=sys.stderr)
         return 1

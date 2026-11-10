@@ -13,14 +13,14 @@ import type { TownwiseContext } from '../src/app.ts';
 import { canonicalSha256, type FileIssue } from '../src/forecasts/file.ts';
 import { labInputSchema, type LabInput } from '../src/lab/input.ts';
 import { LabStartError } from '../src/lab/runner.ts';
-import { CALIBRATION_CHARGE_MICRO_USD, CALIBRATION_TIMEOUT_MS, checkStart, type StartRequest } from '../src/lab/service.ts';
+import { CALIBRATION_CHARGE_MICRO_USD, CALIBRATION_TIMEOUT_MS, checkStart, launch, type StartRequest } from '../src/lab/service.ts';
 import type { CalibrationView } from '../src/lab/views.ts';
 import { addChatUsage, addLocation, addNote, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { holdCalls } from './helpers/hold.ts';
 import {
-  CODE_VERSION, fakeLabRunner, IMAGE_DIGEST, jobCall, labFailure, labResultFor, runDays, seedHistory, type FakeLabRunner,
+  CODE_VERSION, fakeLabRunner, IMAGE_DIGEST, jobCall, labFailure, labResultFor, resultTokenOf, runDays, seedHistory, type FakeLabRunner,
 } from './helpers/lab.ts';
-import { comparisonWith, metricsWith, scorecardWith } from './lab-fixtures.ts';
+import { comparisonWith, metricsWith, scorecardWith } from './helpers/lab-scorecard.ts';
 import {
   call, logLines, refresh, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
@@ -42,14 +42,14 @@ beforeEach(async () => {
 
 interface Team { orgId: string; locationId: string; admin: TestSession }
 
-/** An organization with an org admin and one Hanover location holding guests from `from` (2025-01-01) to 2026-05-31. */
+/** An organization with an org admin and one Hanover location holding guests from `from` (2024-10-01) to 2026-05-31. */
 async function team(opts?: { from?: string; guests?: (date: string, index: number) => number }): Promise<Team> {
   const orgId = await createOrg(server, { name: `Lab Kitchen ${randomUUID().slice(0, 6)}` });
   const email = `admin-${randomUUID().slice(0, 8)}@example.test`;
   const admin = await signIn(server, email);
   await addSeat(server, { orgId, userId: admin.userId, email, role: 'org_admin' });
   const locationId = await addLocation(server, { orgId, name: 'Hanover Room' });
-  await seedHistory(server, { orgId, locationId, from: opts?.from ?? '2025-01-01', to: '2026-05-31', ...(opts?.guests === undefined ? {} : { guests: opts.guests }) });
+  await seedHistory(server, { orgId, locationId, from: opts?.from ?? '2024-10-01', to: '2026-05-31', ...(opts?.guests === undefined ? {} : { guests: opts.guests }) });
   return { orgId, locationId, admin };
 }
 
@@ -185,25 +185,35 @@ describe('starting a calibration', () => {
     expect(usage?.costMicroUsd).toBe(4 * CALIBRATION_CHARGE_MICRO_USD);
   });
 
-  it('under 420 days of history is 409 not_enough_history and starts no job', async () => {
-    // 2025-04-07 to 2026-05-31 spans 419 days; one day more is enough.
-    const short = await team({ from: '2025-04-07' });
+  it('under 595 days of history is 409 not_enough_history and starts no job', async () => {
+    // 2024-10-14 to 2026-05-31 spans 594 days; one day more is enough.
+    const short = await team({ from: '2024-10-14' });
     const jobs = runner.jobs.length;
     const before = (await auditEvents(server)).length;
     const res = await start(short);
     expect(await res.clone().json()).toMatchObject({
-      error: 'not_enough_history', message: 'Calibration needs at least 420 days from the first to the last day of sales history.',
+      error: 'not_enough_history', message: 'Calibration needs at least 595 days from the first to the last day of sales history.',
     });
     expect(res.status).toBe(409);
     expect(runner.jobs).toHaveLength(jobs);
     expect((await auditEvents(server)).length).toBe(before);
     expect(await count('tw_calibrations', { orgId: new Types.ObjectId(short.orgId) })).toBe(0);
-    await started(await team({ from: '2025-04-06' }));
+    await started(await team({ from: '2024-10-13' }));
+  });
+
+  it('a guest day after the town’s today is not history yet: the span and the input stop at today', async () => {
+    // 2024-10-14 to 2026-06-01 (today) spans 595 days, and a row dated tomorrow adds nothing.
+    const t = await team({ from: '2024-10-14' });
+    await seedHistory(server, { orgId: t.orgId, locationId: t.locationId, from: '2026-06-01', to: '2026-06-02' });
+    const { job } = await started(t);
+    const input = await inputFor(job);
+    expect(input).toMatchObject({ today: '2026-06-01', dataThrough: '2026-06-01' });
+    expect(input.days.find((day) => day.date === '2026-06-02')?.guests).toBeNull();
   });
 
   it('a pattern change date outside the history or in its last 8 weeks is 400 invalid_regime_start', async () => {
     const t = await team();
-    for (const regimeStart of ['2024-12-31', '2026-04-06', 'not-a-date']) {
+    for (const regimeStart of ['2024-09-30', '2026-04-06', 'not-a-date']) {
       const res = await start(t, { regimeStart });
       expect(res.status).toBe(400);
       expect((await res.json() as { error: string }).error).toBe(regimeStart === 'not-a-date' ? 'invalid_request' : 'invalid_regime_start');
@@ -252,6 +262,24 @@ describe('starting a calibration', () => {
     expect(await checkStart(ctx, {} as StartRequest)).toBe('lab_unavailable');
   });
 
+  it('a store outage of townwise:calibrations denies the start: nothing is queued, started or charged', async () => {
+    // A Redis client whose connection has ended stands for the outage (the limiter refuses without waiting).
+    let touched = 0;
+    const touch = (): Promise<null> => { touched += 1; return Promise.resolve(null); };
+    const ctx = {
+      labRunner: { start: () => { touched += 1; return Promise.resolve({ imageDigest: null, codeVersion: null }); } },
+      redis: { status: 'end' },
+      now: () => new Date('2026-06-01T12:00:00.000Z'),
+      stores: { forecasts: { published: touch }, calibrations: { insertQueued: touch }, chatUsage: { add: touch } },
+    } as unknown as TownwiseContext;
+    const req = {
+      id: new Types.ObjectId().toHexString(), scope: { orgId: new Types.ObjectId().toHexString() }, location: { id: new Types.ObjectId().toHexString() },
+      requester: { userId: 'staff-0000', role: 'superadmin', via: 'console' }, regimeStart: null, today: '2026-06-01',
+    } as unknown as StartRequest;
+    expect(await launch(ctx, req)).toEqual({ ok: false, code: 'rate_limited' });
+    expect(touched).toBe(0);
+  });
+
   it('is staff only', async () => {
     const t = await team();
     expect((await call(server, `/api/admin/orgs/${t.orgId}/locations/${t.locationId}/calibrations`, { session: t.admin, json: {} })).status).toBe(403);
@@ -270,7 +298,7 @@ describe('the job’s callback', () => {
     const { calibration, job } = await started(t);
     const input = await inputFor(job);
     expect(input).toMatchObject({ calibrationId: calibration.id, today: '2026-06-01', dataThrough: '2026-05-31', horizonDays: 182, regimeStart: null });
-    expect(input.days[0]?.date).toBe('2025-01-01');
+    expect(input.days[0]?.date).toBe('2024-10-01');
     expect(input.days.find((day) => day.date === '2026-02-03')).toMatchObject({ closed: true });
     expect(input.champion?.runId).toBe(championId);
     expect(input.champion?.days).toHaveLength(70);
@@ -318,6 +346,60 @@ describe('the job’s callback', () => {
       .toEqual([]);
     // The finished calibration's token is dead.
     expect((await jobCall(server, job, 'input')).status).toBe(404);
+  });
+
+  it('the start token fetches the input once; the result goes only with the result token that fetch handed out', async () => {
+    const t = await team();
+    const { calibration, job } = await started(t);
+    server.logs.length = 0;
+    const res = await jobCall(server, job, 'input');
+    expect(res.status).toBe(200);
+    const resultToken = res.headers.get('x-townwise-result-token') ?? '';
+    expect(resultToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(resultToken).not.toBe(job.token);
+    const input = labInputSchema.parse(await res.json());
+    const sha = (token: string): string => createHash('sha256').update(token).digest('hex');
+    const stored = () => server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(calibration.id) });
+    expect(await stored()).toMatchObject({ tokenSha256: sha(resultToken), inputSha256: canonicalSha256(input), dataThrough: '2026-05-31' });
+    // A second fetch, with either token (someone who read the start token from the job's execution history, say), is 404
+    // and changes nothing recorded.
+    expect((await jobCall(server, job, 'input')).status).toBe(404);
+    expect((await jobCall(server, { ...job, token: resultToken }, 'input')).status).toBe(404);
+    // The start token can no longer post anything.
+    const start = { authorization: `Bearer ${job.token}` };
+    expect((await jobCall(server, job, 'result', labResultFor(input), start)).status).toBe(404);
+    expect((await jobCall(server, job, 'result', labFailure(job, 'internal'), start)).status).toBe(404);
+    expect(await stored()).toMatchObject({ status: 'running', tokenSha256: sha(resultToken), inputSha256: canonicalSha256(input) });
+    expect(resultTokenOf(calibration.id)).toBe(resultToken);
+    expect((await jobCall(server, job, 'result', labResultFor(input))).status).toBe(200);
+    expect((await viewOf(t, calibration.id)).status).toBe('succeeded');
+    expect(JSON.stringify(await stored())).not.toContain(resultToken);
+    const logs = server.logs.join('\n');
+    expect(logs).not.toContain(resultToken);
+    expect(JSON.stringify(await eventsFor(calibration.id))).not.toContain(resultToken);
+  });
+
+  it('a job that fetches its input before its start returns still has its image recorded', async () => {
+    const t = await team();
+    const fetched: number[] = [];
+    runner.onStart = async (job) => { fetched.push((await jobCall(server, job, 'input')).status); };
+    const { calibration } = await started(t);
+    expect(fetched).toEqual([200]);
+    const doc = await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(calibration.id) });
+    expect(doc).toMatchObject({ status: 'running', imageDigest: IMAGE_DIGEST, chargedMicroUsd: CALIBRATION_CHARGE_MICRO_USD });
+  });
+
+  it('before the input was fetched, the start token can only fail the calibration', async () => {
+    const t = await team();
+    const { calibration, job } = await started(t);
+    const res = await jobCall(server, job, 'result', labResultFor(labInputSchema.parse({
+      schema: 'townwise.lab-input/1', calibrationId: calibration.id, metric: 'guests', today: '2026-06-01', dataThrough: '2026-05-31',
+      horizonDays: 182, regimeStart: null, days: [{ date: '2026-05-31', guests: 1, term: 'interim', weekOfTerm: -1, events: [], closed: false, privateEvent: false, booked: false }],
+      champion: null,
+    })));
+    expect(res.status).toBe(400);
+    expect(await viewOf(t, calibration.id)).toMatchObject({ status: 'failed', failure: 'invalid_result', runId: null });
+    expect(await count('tw_forecast_runs', { locationId: new Types.ObjectId(t.locationId) })).toBe(0);
   });
 
   it('input and result answer 404 for an unknown id, a wrong token, another org’s id and a finished calibration, never 401', async () => {
@@ -482,10 +564,13 @@ describe('the job’s callback', () => {
     expect((await viewOf(t, calibration.id)).summary?.weeklyWapePct).toBe(12.3);
     const logs = server.logs.join('\n');
     const events = JSON.stringify(await eventsFor(calibration.id));
+    const resultToken = resultTokenOf(calibration.id);
+    expect(resultToken).toBeDefined();
     for (const text of [logs, events]) {
       expect(text).not.toContain('98765');
       expect(text).not.toContain('0.123456');
       expect(text).not.toContain(job.token);
+      expect(text).not.toContain(resultToken);
     }
     const own = logLines(server).filter((line) => String(line.msg).startsWith('townwise.calibration') || String(line.msg).startsWith('townwise.lab'));
     expect(own.map((line) => line.msg)).toEqual(['townwise.calibration_started', 'townwise.calibration_finished']);

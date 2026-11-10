@@ -13,9 +13,12 @@ import pandas as pd
 from townwise_lab import backtest, compare, features, forecast, holidays, metrics, model, schema
 from townwise_lab.forecast import iso
 
-# From the first to the last history day: the gate's minimum for a first draft (GATE.minHistoryDays, a [CONFIRM] in
-# spec D27), which the API also checks before it starts a calibration
-MIN_HISTORY_DAYS = 420
+# From the first to the last history day: the span that always gives 12 horizon-28 backtest weeks with an 80% range,
+# so the gate can judge the draft (GATE.minHistoryDays, a [CONFIRM] in spec D27, which the API checks before it starts
+# a calibration). The first refit is up to 30 days after first day + 364, scoring starts up to 34 days after it, and the
+# 12th week with a range is the 24th scored, ending 167 days after the first: 364 + 30 + 34 + 167. Pinned by
+# test_min_history_days_always_gives_twelve_weeks_with_a_range.
+MIN_HISTORY_DAYS = 595
 HORIZON = 28  # the scorecard's horizon: each week forecast from a refit at least 28 days before its Monday
 SHORT_HORIZON = 7
 CODE_VERSION = re.compile(r"[0-9a-f]{40}")
@@ -58,8 +61,8 @@ def _folds(frame: pd.DataFrame, hist: pd.DataFrame, through: pd.Timestamp, base_
 def calibrate(inp: dict, code_version: str) -> dict:
     """The LabResult for `inp`, its run named by `code_version` (the 40-character commit the lab runs).
 
-    An input that breaks the contract comes back as ok false with invalid_input, and less than 420 days of history (or
-    no week yet scored 28 days ahead) as not_enough_history. Anything else that goes wrong raises.
+    An input that breaks the contract comes back as ok false with invalid_input, and less than MIN_HISTORY_DAYS of
+    history (or no week yet scored 28 days ahead) as not_enough_history. Anything else that goes wrong raises.
     """
     if not (isinstance(code_version, str) and CODE_VERSION.fullmatch(code_version)):
         raise ValueError("code_version is not a 40-character commit")
@@ -125,7 +128,7 @@ def calibrate(inp: dict, code_version: str) -> dict:
             "folds": _folds(frame, hist, through, base_cols, event_cols),
             "series": series,
         },
-        "comparison": compare.compare(frame, hist, inp["champion"], origins, base_cols, event_cols),
+        "comparison": compare.compare(frame, hist, inp["champion"], origins, base_cols, event_cols, preds=preds),
     }
     run_backtest = {
         "from": iso(window[0]), "to": iso(window[1]), "weeks": len(weeks28),

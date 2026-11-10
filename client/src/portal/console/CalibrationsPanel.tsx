@@ -31,7 +31,7 @@ const STATUS_WORDS: Readonly<Record<Calibration['status'], string>> = {
 // client’s errors carry the code, not the text. calibrations.test.web.tsx pins each line to the server’s file.
 export const REFUSALS: readonly (readonly [number, string, string])[] = [
   [503, 'lab_unavailable', 'Calibration isn’t available right now.'],
-  [409, 'not_enough_history', 'Calibration needs at least 420 days from the first to the last day of sales history.'],
+  [409, 'not_enough_history', 'Calibration needs at least 595 days from the first to the last day of sales history.'],
   [400, 'invalid_regime_start', 'The pattern change date must fall inside the sales history, at least 8 weeks before its last day.'],
   [409, 'chat_budget_exhausted', 'This month’s TownwiseAI budget is used up, so a calibration can’t start until it resets.'],
   [409, 'calibration_in_progress', 'A calibration for this location is already running.'],

@@ -11,6 +11,7 @@ import { scopeForLabCallback, scopeForNewOrg, type OrgScope } from '../src/acces
 import { summaryOf } from '../src/audit.ts';
 import { checkLabRunFile, runFileSha256, type LabRunFile } from '../src/forecasts/file.ts';
 import { runView } from '../src/forecasts/reader.ts';
+import { createAuditEventStore, type AuditEventInput } from '../src/stores/audit-events.ts';
 import { createCalibrationStore, type CalibrationStore } from '../src/stores/calibrations.ts';
 import { deletePersonRecords, findLabCallback } from '../src/stores/cross-tenant.ts';
 import { createForecastStore } from '../src/stores/forecasts.ts';
@@ -112,12 +113,53 @@ describe('calibrations', () => {
     // Not running yet.
     expect(await calibrations.recordResult(t.scope, record.id, result)).toBe(false);
     await calibrations.markRunning(t.scope, record.id, { now, imageDigest: 'sha256:abc' });
-    expect(await calibrations.recordInput(t.scope, record.id, { inputSha256: sha('input'), dataThrough: '2026-04-30' })).toBe(true);
+    const input = { tokenSha256: sha('token-a'), inputSha256: sha('input'), dataThrough: '2026-04-30', resultTokenSha256: sha('result-a') };
+    expect(await calibrations.recordInput(t.scope, record.id, input)).toBe(true);
     expect(await calibrations.recordResult(t.scope, record.id, result)).toBe(true);
     expect(await calibrations.recordResult(t.scope, record.id, { ...result, runId: new Types.ObjectId().toHexString() })).toBe(false);
     const kept = await calibrations.find(t.scope, record.id);
     expect(kept).toMatchObject({ runId: result.runId, scorecardJson: '{"a":1}', codeVersion: 'abc1234', status: 'running', imageDigest: 'sha256:abc' });
     expect(await calibrations.markRunning(t.scope, record.id, { now, imageDigest: null })).toBe(false);
+  });
+
+  it('recordInput is the one input fetch: it needs running, the token called with and no input yet, and swaps the token', async () => {
+    const t = await tenant();
+    const record = await queued(t);
+    const now = server.clock.now();
+    const input = { tokenSha256: sha('token-a'), inputSha256: sha('input'), dataThrough: '2026-04-30', resultTokenSha256: sha('result-a') };
+    // Not running yet.
+    expect(await calibrations.recordInput(t.scope, record.id, input)).toBe(false);
+    expect(await calibrations.markRunning(t.scope, record.id, { now, imageDigest: null })).toBe(true);
+    // findLabCallback resolves a running calibration.
+    expect((await findLabCallback(server.connection, record.id, sha('token-a'), now))?.calibrationId).toBe(record.id);
+    expect(await calibrations.recordInput(t.scope, record.id, { ...input, tokenSha256: sha('wrong') })).toBe(false);
+    expect(await calibrations.recordInput(t.scope, record.id, input)).toBe(true);
+    // The start token is dead and the result token works; a second fetch, with either, changes nothing.
+    expect(await findLabCallback(server.connection, record.id, sha('token-a'), now)).toBeNull();
+    expect((await findLabCallback(server.connection, record.id, sha('result-a'), now))?.calibrationId).toBe(record.id);
+    expect(await calibrations.recordInput(t.scope, record.id, { ...input, inputSha256: sha('other') })).toBe(false);
+    expect(await calibrations.recordInput(t.scope, record.id, {
+      tokenSha256: sha('result-a'), inputSha256: sha('other'), dataThrough: '2026-05-01', resultTokenSha256: sha('result-b'),
+    })).toBe(false);
+    expect(await calibrations.find(t.scope, record.id)).toMatchObject({ inputSha256: sha('input'), dataThrough: '2026-04-30' });
+  });
+
+  it('recordImageDigest records the image once, on a running calibration with none', async () => {
+    const t = await tenant();
+    const record = await queued(t);
+    expect(await calibrations.recordImageDigest(t.scope, record.id, 'sha256:aaa')).toBe(false);
+    await calibrations.markRunning(t.scope, record.id, { now: server.clock.now(), imageDigest: null });
+    expect(await calibrations.recordImageDigest(t.scope, record.id, 'sha256:aaa')).toBe(true);
+    expect(await calibrations.recordImageDigest(t.scope, record.id, 'sha256:bbb')).toBe(false);
+    expect((await calibrations.find(t.scope, record.id))?.imageDigest).toBe('sha256:aaa');
+  });
+
+  it('finish succeeded needs running: a queued calibration only fails', async () => {
+    const t = await tenant();
+    const record = await queued(t);
+    expect(await calibrations.finish(t.scope, record.id, { status: 'succeeded' }, server.clock.now())).toBe(false);
+    expect((await calibrations.find(t.scope, record.id))?.status).toBe('queued');
+    expect(await calibrations.finish(t.scope, record.id, { status: 'failed', failure: 'timeout' }, server.clock.now())).toBe(true);
   });
 
   it('recordGate sets the gate once; a second call resolves false', async () => {
@@ -143,7 +185,10 @@ describe('calibrations', () => {
     expect(await calibrations.list(other.scope, 10)).toEqual([]);
     expect(await calibrations.list(other.scope, 10, t.locationId)).toEqual([]);
     expect(await calibrations.markRunning(other.scope, record.id, { now, imageDigest: null })).toBe(false);
-    expect(await calibrations.recordInput(other.scope, record.id, { inputSha256: sha('x'), dataThrough: '2026-04-30' })).toBe(false);
+    expect(await calibrations.recordInput(other.scope, record.id, {
+      tokenSha256: sha('token-a'), inputSha256: sha('x'), dataThrough: '2026-04-30', resultTokenSha256: sha('result-x'),
+    })).toBe(false);
+    expect(await calibrations.recordImageDigest(other.scope, record.id, 'sha256:other')).toBe(false);
     expect(await calibrations.recordResult(other.scope, record.id, { runId: 'r', scorecardJson: '{}', codeVersion: 'c' })).toBe(false);
     expect(await calibrations.recordGate(other.scope, record.id, { published: true, reason: 'x' })).toBe(false);
     expect(await calibrations.setCharge(other.scope, record.id, 5)).toBe(false);
@@ -224,6 +269,20 @@ describe('lab runs, the forecasts switch and the audit words', () => {
     const doc = await server.connection.collection('tw_orgs').findOne({ _id: new Types.ObjectId(t.orgId) });
     expect(doc?.forecasts).toEqual({ on: true, at, by: null });
     expect((await orgs.findById(t.orgId))?.forecasts).toEqual({ on: true, at });
+  });
+
+  it('an audit query by several actor roles returns each of them and no other', async () => {
+    const t = await tenant();
+    const audit = createAuditEventStore(server.connection);
+    const event = (actorRole: AuditEventInput['actorRole'], minutes: number): AuditEventInput => ({
+      actorUserId: `${actorRole}-0001`, actorEmail: `${actorRole}@example.test`, actorRole, viewAsGrantId: null,
+      at: new Date(server.clock.now().getTime() + minutes * 60_000), orgId: t.orgId, action: 'org.forecasts_switched',
+      target: { type: 'org', id: t.orgId }, details: { on: true },
+    });
+    for (const [role, minutes] of [['superadmin', 1], ['system', 2], ['org_admin', 3]] as const) await audit.insert(event(role, minutes));
+    const page = await audit.query({ orgId: t.orgId, actorRole: ['superadmin', 'system'], limit: 10 });
+    expect(page.events.map((each) => each.actorRole)).toEqual(['system', 'superadmin']);
+    expect((await audit.query({ orgId: t.orgId, actorRole: 'org_admin', limit: 10 })).events).toHaveLength(1);
   });
 
   it('summaryOf words the new actions', () => {

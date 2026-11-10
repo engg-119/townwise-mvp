@@ -1,7 +1,12 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
-import { comparisonWith, metricsWith, scorecardWith } from './lab-fixtures.ts';
-import { currentChampion, decideGate, GATE_REASONS, GATE_WORDS, type GateInput } from '../src/lab/gate.ts';
+import { comparisonWith, metricsWith, scorecardWith } from './helpers/lab-scorecard.ts';
+import { currentChampion, decideGate, GATE, GATE_REASONS, GATE_WORDS, type GateInput } from '../src/lab/gate.ts';
+import { labResultSchema } from '../src/lab/result.ts';
+import type { Scorecard } from '../src/lab/scorecard.ts';
+import { START_REFUSAL_WORDS } from '../src/lab/service.ts';
 import type { ForecastRunRecord } from '../src/stores/forecasts.ts';
 
 function withChampion(over: Partial<GateInput> = {}, comparison = comparisonWith({ weeklyWape: 0.2 }, { weeklyWape: 0.19 })): GateInput {
@@ -14,7 +19,9 @@ function withChampion(over: Partial<GateInput> = {}, comparison = comparisonWith
   };
 }
 
-function first(over: Partial<GateInput> = {}, backtest = {}, history = {}): GateInput {
+function first(
+  over: Partial<GateInput> = {}, backtest: Partial<Scorecard['backtest']> = {}, history: Partial<Scorecard['history']> = {},
+): GateInput {
   return {
     forecastsOn: true,
     championAtStart: null,
@@ -39,6 +46,15 @@ describe('decideGate with a current forecast', () => {
     expect(decideGate(input)).toEqual({ publish: false, reason: 'too_few_weeks' });
     const none = withChampion({ scorecard: scorecardWith({ comparison: null }) });
     expect(decideGate(none).reason).toBe('too_few_weeks');
+  });
+
+  it('needs 12 of those weeks with an 80% range from the calibration, however many were compared', () => {
+    const at = (coverage80: { inside: number; weeks: number }) =>
+      decideGate(withChampion({}, comparisonWith({ weeklyWape: 0.2 }, { weeklyWape: 0.1, coverage80 })));
+    expect(at({ inside: 3, weeks: 4 })).toEqual({ publish: false, reason: 'too_few_weeks' });
+    expect(at({ inside: 0, weeks: 0 })).toEqual({ publish: false, reason: 'too_few_weeks' });
+    expect(at({ inside: 8, weeks: 11 }).reason).toBe('too_few_weeks');
+    expect(at({ inside: 9, weeks: 12 })).toEqual({ publish: true, reason: 'published' });
   });
 
   it('coverage 7 of 12 and 12 of 12 are out of band; 8 of 12 and 11 of 12 pass', () => {
@@ -72,19 +88,37 @@ describe('decideGate with a current forecast', () => {
     expect(decideGate(withChampion({ championNow: 'run-b' }))).toEqual({ publish: false, reason: 'champion_changed' });
     expect(decideGate(withChampion({ championNow: null })).reason).toBe('champion_changed');
   });
+
+  it('champion_changed is checked first', () => {
+    expect(decideGate(withChampion({ championNow: 'run-b', scorecard: scorecardWith({ comparison: null }) })).reason).toBe('champion_changed');
+    const worse = comparisonWith({ weeklyWape: 0.1 }, { weeklyWape: 0.3, coverage80: { inside: 0, weeks: 3 } }, 2);
+    expect(decideGate(withChampion({ championNow: 'run-b', forecastsOn: false }, worse)).reason).toBe('champion_changed');
+  });
 });
 
 describe('decideGate for a first draft', () => {
-  it('publishes with 420+ days, 12 weeks with a range, coverage in band, 1 point under the weekday median', () => {
-    expect(decideGate(first({}, { metrics: metricsWith({ weeklyWape: 0.19 }) }, { spanDays: 420 }))).toEqual({
+  it('publishes with 595+ days, 12 weeks with a range, coverage in band, 1 point under the weekday median', () => {
+    expect(decideGate(first({}, { metrics: metricsWith({ weeklyWape: 0.19 }) }, { spanDays: 595 }))).toEqual({
       publish: true,
       reason: 'published',
     });
   });
 
-  it('419 days or 11 weeks with a range is not_enough_history', () => {
-    expect(decideGate(first({}, {}, { spanDays: 419 })).reason).toBe('not_enough_history');
+  it('594 days or 11 weeks with a range is not_enough_history', () => {
+    expect(decideGate(first({}, {}, { spanDays: 594 })).reason).toBe('not_enough_history');
     expect(decideGate(first({}, { weeksWithRange: 11 })).reason).toBe('not_enough_history');
+    // What 420 days gives under the lab's rules (modeling/lab pins them): at most 4 scored weeks, none with a range.
+    expect(decideGate(first({}, { weeks: 4, weeksWithRange: 0 }, { spanDays: 420 })).reason).toBe('not_enough_history');
+  });
+
+  it('the lab’s own scorecard (its golden result, made by its origin and window rules) clears the history check', () => {
+    const golden = labResultSchema.parse(JSON.parse(readFileSync(new URL('../../modeling/lab/tests/golden/result.json', import.meta.url), 'utf8')));
+    if (!golden.ok) return expect.unreachable('the golden result is a success');
+    const { history, backtest } = golden.scorecard;
+    expect(history.spanDays).toBeGreaterThanOrEqual(GATE.minHistoryDays);
+    expect(backtest.weeksWithRange).toBeGreaterThanOrEqual(GATE.heldOutWeeksMin);
+    const input: GateInput = { forecastsOn: true, championAtStart: null, championNow: null, scorecard: { ...golden.scorecard, comparison: null } };
+    expect(decideGate(input).reason).not.toBe('not_enough_history');
   });
 
   it('0.4 points under the median is baseline_not_beaten', () => {
@@ -104,8 +138,8 @@ describe('decideGate for a first draft', () => {
 });
 
 describe('currentChampion', () => {
-  const run = (id: string, dataThrough: string, to: string) =>
-    ({ id, dataThrough, range: { from: dataThrough, to } }) as unknown as ForecastRunRecord;
+  const run = (id: string, dataThrough: string, to: string, status = 'published') =>
+    ({ id, status, dataThrough, range: { from: dataThrough, to } }) as unknown as ForecastRunRecord;
 
   it('skips a run ending before today + 28 and picks the newest dataThrough of the rest; null with none', () => {
     const today = '2026-06-01';
@@ -117,6 +151,13 @@ describe('currentChampion', () => {
     expect(currentChampion([short], today)).toBeNull();
     expect(currentChampion([], today)).toBeNull();
   });
+
+  it('skips a run that is not published, and keeps the first of two with the same dataThrough', () => {
+    const today = '2026-06-01';
+    expect(currentChampion([run('draft', '2026-05-01', '2026-07-01', 'draft'), run('kept', '2026-03-01', '2026-07-01')], today)?.id).toBe('kept');
+    expect(currentChampion([run('newer-publish', '2026-03-01', '2026-07-01'), run('older-publish', '2026-03-01', '2026-07-01')], today)?.id)
+      .toBe('newer-publish');
+  });
 });
 
 describe('GATE_WORDS', () => {
@@ -125,5 +166,20 @@ describe('GATE_WORDS', () => {
       expect(GATE_WORDS[reason]).toBeTruthy();
       expect(GATE_WORDS[reason]).not.toMatch(/[—']/);
     }
+  });
+
+  it('states the gate’s own values, so a changed value changes its words too', () => {
+    const weeks = `${String(GATE.heldOutWeeksMin)} weeks`;
+    expect(GATE_WORDS.too_few_weeks).toContain(weeks);
+    expect(GATE_WORDS.not_enough_history).toContain(`${String(GATE.heldOutWeeksMin)} held-out weeks`);
+    expect(GATE_WORDS.coverage_out_of_band).toContain(`between ${String(GATE.coverageMin * 100)}% and ${String(GATE.coverageMax * 100)}%`);
+    expect(GATE.wapeMargin).toBe(0.005);
+    expect(GATE_WORDS.not_better).toContain('half a point');
+    expect(START_REFUSAL_WORDS.not_enough_history).toContain(`${String(GATE.minHistoryDays)} days`);
+  });
+
+  it('the lab’s own history minimum is the gate’s', () => {
+    const pipeline = readFileSync(new URL('../../modeling/lab/townwise_lab/pipeline.py', import.meta.url), 'utf8');
+    expect(/^MIN_HISTORY_DAYS = (\d+)/m.exec(pipeline)?.[1]).toBe(String(GATE.minHistoryDays));
   });
 });

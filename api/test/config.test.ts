@@ -190,6 +190,14 @@ describe('config', () => {
         .toMatchObject({ projectDir: '/srv/lab' });
     });
 
+    it('production refuses local, as it refuses Azurite', () => {
+      const env = { TOWNWISE_LAB_RUNNER: 'local', TOWNWISE_LAB_API_URL: 'http://localhost:8080' };
+      expect(problemsOf(() => labRunnerOf({ ...loadEnv(configSchema, env), NODE_ENV: 'production' }))).toEqual(['TOWNWISE_LAB_RUNNER']);
+      expect(labRunnerOf({ ...loadEnv(configSchema, env), NODE_ENV: 'development' })).toMatchObject({ kind: 'local' });
+      expect(labRunnerOf({ ...loadEnv(configSchema, { TOWNWISE_LAB_RUNNER: 'azure', TOWNWISE_LAB_JOB_ID: JOB_ID }), NODE_ENV: 'production' }))
+        .toEqual({ kind: 'azure', jobId: JOB_ID });
+    });
+
     it('azure starts the job by its resource id', () => {
       expect(lab({ TOWNWISE_LAB_RUNNER: 'azure', TOWNWISE_LAB_JOB_ID: JOB_ID })).toEqual({ kind: 'azure', jobId: JOB_ID });
     });

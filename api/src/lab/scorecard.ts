@@ -1,9 +1,12 @@
-// The scorecard a calibration returns (the lab result's `scorecard`). Strict: unknown keys and non-finite numbers are refused.
+// The scorecard a calibration returns (the lab result's `scorecard`). Strict: unknown keys and non-finite numbers are
+// refused, and so are a negative error and more weeks inside a range than weeks with one, since the gate trusts them.
 import { z } from 'zod';
 
 import { isoDate } from '../dates.ts';
 
 const num = z.number();
+/** An error measure (a WAPE, a week's error, a mean absolute bias): zero or more. */
+const error = z.number().min(0);
 const count = z.number().int().min(0);
 const nullableNum = num.nullable();
 
@@ -18,15 +21,16 @@ const bias = z.strictObject({
 });
 
 export const metricsSchema = z.strictObject({
-  weeklyWape: num,
-  dailyWape: num,
-  typicalWeek: num,
+  weeklyWape: error,
+  dailyWape: error,
+  typicalWeek: error,
   weeksOver20: count,
-  worstWeek: num,
-  coverage80: z.strictObject({ inside: count, weeks: count }),
+  worstWeek: error,
+  coverage80: z.strictObject({ inside: count, weeks: count })
+    .refine((coverage) => coverage.inside <= coverage.weeks, { message: 'more weeks inside than weeks with a range' }),
   dailyCoverage80: nullableNum,
   weekdayBias: bias,
-  weekdayBiasMeanAbs: num,
+  weekdayBiasMeanAbs: error,
 });
 
 export const scorecardSchema = z.strictObject({
@@ -40,9 +44,9 @@ export const scorecardSchema = z.strictObject({
     weeksWithRange: count,
     metrics: metricsSchema,
     metrics7: metricsSchema,
-    weekdayMedianWeeklyWape: num,
+    weekdayMedianWeeklyWape: error,
     folds: z.array(
-      z.strictObject({ trainThrough: isoDate, from: isoDate, to: isoDate, weeks: count, weeklyWape: num, weeksOver20: count }),
+      z.strictObject({ trainThrough: isoDate, from: isoDate, to: isoDate, weeks: count, weeklyWape: error, weeksOver20: count }),
     ),
     series: z.array(
       z.strictObject({ week: isoDate, actual: z.number().int(), mid: num, low: nullableNum, high: nullableNum }),

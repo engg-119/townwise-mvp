@@ -3,12 +3,14 @@
 // API served, as the lab would answer it. Every number is synthetic.
 import { Types } from 'mongoose';
 
+import { daysBetween } from '../../src/dates.ts';
 import { eachDay } from '../../src/forecasts/file.ts';
+import { RESULT_TOKEN_HEADER } from '../../src/lab/callback.ts';
 import type { LabInput } from '../../src/lab/input.ts';
 import type { LabResult, LabSuccess } from '../../src/lab/result.ts';
 import type { LabJob, LabRunner, LabStart } from '../../src/lab/runner.ts';
 import type { Scorecard } from '../../src/lab/scorecard.ts';
-import { comparisonWith, scorecardWith } from '../lab-fixtures.ts';
+import { comparisonWith, scorecardWith } from './lab-scorecard.ts';
 import type { TownwiseTestServer } from './server.ts';
 
 export const IMAGE_DIGEST = `sha256:${'5e'.repeat(32)}`;
@@ -44,20 +46,36 @@ export function fakeLabRunner(): FakeLabRunner {
   return runner;
 }
 
-/** The job's own calls: GET .../input, or POST .../result with `body`, with the job's bearer token. */
-export function jobCall(
+/** The result token each calibration's input answer named, by calibration id: what the job posts its result with. */
+const resultTokens = new Map<string, string>();
+
+/** The result token the input answer for `calibrationId` named, if its input was fetched. */
+export function resultTokenOf(calibrationId: string): string | undefined {
+  return resultTokens.get(calibrationId);
+}
+
+/**
+ * The job's own calls: GET .../input with the token it was started with, or POST .../result with `body`. Like the job, a
+ * result goes with the result token its input answer named (X-Townwise-Result-Token), or the start token when no
+ * input was fetched. `authorization` replaces the header (null leaves it out).
+ */
+export async function jobCall(
   server: Pick<TownwiseTestServer, 'url'>, job: Pick<LabJob, 'calibrationId' | 'token'>, verb: 'input' | 'result', body?: unknown,
   opts?: { authorization?: string | null },
 ): Promise<Response> {
   const headers = new Headers();
-  const authorization = opts?.authorization === undefined ? `Bearer ${job.token}` : opts.authorization;
+  const token = verb === 'result' ? resultTokens.get(job.calibrationId) ?? job.token : job.token;
+  const authorization = opts?.authorization === undefined ? `Bearer ${token}` : opts.authorization;
   if (authorization !== null) headers.set('authorization', authorization);
   if (verb === 'result') headers.set('content-type', 'application/json');
-  return fetch(new URL(`/lab/calibrations/${job.calibrationId}/${verb}`, server.url), {
+  const res = await fetch(new URL(`/lab/calibrations/${job.calibrationId}/${verb}`, server.url), {
     method: verb === 'input' ? 'GET' : 'POST',
     headers,
     ...(verb === 'result' ? { body: JSON.stringify(body) } : {}),
   });
+  const resultToken = verb === 'input' && res.status === 200 ? res.headers.get(RESULT_TOKEN_HEADER) : null;
+  if (resultToken !== null) resultTokens.set(job.calibrationId, resultToken);
+  return res;
 }
 
 /** One synthetic day of guests on every date from `from` to `to`, written straight to tw_sales_days. */
@@ -99,8 +117,9 @@ export function runDays(dataThrough: string, days: number): Pick<LabSuccess['run
 
 /** The lab's answer to `input`: a draft run for the 14 days after its last day, compared with its champion if it has one. */
 export function labResultFor(input: LabInput, overrides?: { scorecard?: Scorecard; run?: Partial<LabSuccess['run']> }): LabSuccess {
+  const firstDate = input.days[0]?.date ?? '';
   const scorecard = overrides?.scorecard ?? scorecardWith({
-    history: { firstDate: input.days[0]?.date ?? '', lastDate: input.dataThrough },
+    history: { firstDate, lastDate: input.dataThrough, spanDays: daysBetween(firstDate, input.dataThrough) },
     comparison: input.champion === null ? null : {
       ...comparisonWith({ weeklyWape: 0.2 }, { weeklyWape: 0.15 }), championRunId: input.champion.runId,
       championDataThrough: input.champion.dataThrough,

@@ -1,5 +1,6 @@
 """townwise_lab job: GET the input from the API, calibrate, POST the result. A fake API on localhost stands in."""
 
+import http.client
 import json
 import re
 import threading
@@ -17,14 +18,16 @@ from townwise_lab.__main__ import main
 GOLDEN_INPUT = Path(__file__).resolve().parent / "golden" / "input.json"
 CALIBRATION_ID = "a" * 24
 TOKEN = "t0k3n-" + "b" * 40
+RESULT_TOKEN = "r3sult-" + "c" * 40
 CODE = "0" * 40
 
 
 class FakeApi:
-    def __init__(self, input_status: int = 200, result_status: int = 204, body: bytes | None = None,
-                 location: str | None = None):
+    def __init__(self, input_status: int = 200, result_status: int | list[int] = 204, body: bytes | None = None,
+                 location: str | None = None, result_token: str | None = RESULT_TOKEN):
         self.requests: list[dict] = []
         self.body = GOLDEN_INPUT.read_bytes() if body is None else body
+        statuses = list(result_status) if isinstance(result_status, list) else None
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -42,6 +45,8 @@ class FakeApi:
                 self.send_header("Content-Type", "application/json")
                 if location:
                     self.send_header("Location", location)
+                if input_status == 200 and result_token is not None:
+                    self.send_header("X-Townwise-Result-Token", result_token)
                 payload = outer.body if input_status == 200 else b"{}"
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
@@ -50,7 +55,7 @@ class FakeApi:
             def do_POST(self):
                 data = self.rfile.read(int(self.headers.get("Content-Length", "0")))
                 self._record(data)
-                self.send_response(result_status)
+                self.send_response(statuses.pop(0) if statuses else result_status if isinstance(result_status, int) else 204)
                 if location:
                     self.send_header("Location", location)
                 self.send_header("Content-Length", "0")
@@ -81,7 +86,8 @@ def test_job_fetches_input_and_posts_result():
     get, post = api.requests
     assert (get["method"], get["path"]) == ("GET", f"/lab/calibrations/{CALIBRATION_ID}/input")
     assert (post["method"], post["path"]) == ("POST", f"/lab/calibrations/{CALIBRATION_ID}/result")
-    assert get["auth"] == post["auth"] == f"Bearer {TOKEN}"
+    # The start token fetches the input; the result goes with the token the input answer named.
+    assert get["auth"] == f"Bearer {TOKEN}" and post["auth"] == f"Bearer {RESULT_TOKEN}"
     assert post["headers"]["Content-Type"] == "application/json"
     result = json.loads(post["data"])
     assert result["ok"] is True and result["codeVersion"] == CODE
@@ -171,21 +177,36 @@ def test_job_refuses_missing_env_without_echoing_values(capsys):
     assert "TOWNWISE_LAB_TOKEN" in capsys.readouterr().err
 
 
-def test_job_never_sends_the_token_anywhere_but_the_header():
+def test_job_never_sends_a_token_anywhere_but_the_header(capsys):
     with FakeApi() as api:
         job.main(api.env())
     for request in api.requests:
-        assert TOKEN not in request["path"]
-        assert TOKEN not in (request["data"] or b"").decode()
-        others = {k: v for k, v in request["headers"].items() if k.lower() != "authorization"}
-        assert TOKEN not in json.dumps(others)
+        for token in (TOKEN, RESULT_TOKEN):
+            assert token not in request["path"]
+            assert token not in (request["data"] or b"").decode()
+            others = {k: v for k, v in request["headers"].items() if k.lower() != "authorization"}
+            assert token not in json.dumps(others)
+    printed = capsys.readouterr()
+    assert RESULT_TOKEN not in printed.out + printed.err and TOKEN not in printed.out + printed.err
 
 
-def test_job_does_not_retry_an_http_status_and_prints_no_message(capsys):
-    with FakeApi(result_status=500) as api:
+def test_job_does_not_retry_a_4xx_and_prints_no_message(capsys):
+    with FakeApi(result_status=400) as api:
         assert job.main(api.env()) == 1
     assert [r["method"] for r in api.requests] == ["GET", "POST"]
     assert re.fullmatch(r"failed: \w+\n", capsys.readouterr().err)
+
+
+def test_job_retries_the_post_once_on_a_5xx(capsys):
+    with FakeApi(result_status=[503, 204]) as api:
+        assert job.main(api.env()) == 0
+    assert [r["method"] for r in api.requests] == ["GET", "POST", "POST"]
+    assert api.requests[1]["data"] == api.requests[2]["data"]
+    assert {r["auth"] for r in api.requests[1:]} == {f"Bearer {RESULT_TOKEN}"}
+    with FakeApi(result_status=[500, 502]) as api:
+        assert job.main(api.env()) == 1
+    assert [r["method"] for r in api.requests] == ["GET", "POST", "POST"]
+    assert capsys.readouterr().err.endswith("failed: HTTPError\n")
 
 
 def test_job_reports_internal_when_the_input_is_refused(capsys):
@@ -193,6 +214,7 @@ def test_job_reports_internal_when_the_input_is_refused(capsys):
         assert job.main(api.env()) == 1
     assert [r["method"] for r in api.requests] == ["GET", "POST"]  # a best-effort failure post
     assert json.loads(api.requests[1]["data"])["code"] == "internal"
+    assert api.requests[1]["auth"] == f"Bearer {TOKEN}"  # no input answer, so no result token
     assert re.fullmatch(r"failed: \w+\n", capsys.readouterr().err)
 
 
@@ -250,6 +272,24 @@ def test_job_retries_the_post_once_on_a_connection_error():
     with FakeApi() as api:
         assert job.main(api.env(), opener) == 0
     assert [c[0] for c in calls] == ["GET", "POST", "POST"] and {c[1] for c in calls} == {30}
+
+
+@pytest.mark.parametrize("lost", [http.client.RemoteDisconnected("gone"), TimeoutError("late")])
+def test_job_retries_the_post_once_when_its_answer_is_lost(lost):
+    """urllib does not wrap an error after the request went (the API may have it), so the job retries these too."""
+    posts = []
+
+    def opener(request, timeout):
+        if request.get_method() == "POST":
+            posts.append(request.get_header("Authorization"))
+            if len(posts) == 1:
+                raise lost
+        return urllib.request.urlopen(request, timeout=timeout)
+
+    with FakeApi() as api:
+        assert job.main(api.env(), opener) == 0
+    assert posts == [f"Bearer {RESULT_TOKEN}"] * 2
+    assert [r["method"] for r in api.requests] == ["GET", "POST"]
 
 
 def test_cli_job_subcommand_reads_the_environment(monkeypatch):

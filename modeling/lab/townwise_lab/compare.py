@@ -17,7 +17,7 @@ def _scored(days: pd.DataFrame, weeks: pd.DataFrame, side: str) -> tuple[pd.Data
 
 
 def compare(frame: pd.DataFrame, hist: pd.DataFrame, champion: dict | None, origins: list[pd.Timestamp],
-            base_cols: list[str], event_cols: list[str]) -> dict | None:
+            base_cols: list[str], event_cols: list[str], *, preds: pd.DataFrame | None = None) -> dict | None:
     """The champion and the challenger's rolling backtest scored on the same weeks; None without a champion or without a
     comparable week.
 
@@ -27,11 +27,14 @@ def compare(frame: pd.DataFrame, hist: pd.DataFrame, champion: dict | None, orig
     days before the Monday. Both are scored over the champion's open days: the champion's weekly forecast is its week
     row's mid, the challenger's the sum of its daily mids. The champion's 80% weekly range is the one it published (as
     the notebook's section 10 scores a frozen forecast); the challenger's is the past-only band from the whole
-    horizon-28 backtest's weekly errors (section 8)."""
+    horizon-28 backtest's weekly errors (section 8). `preds` is that backtest when the caller already ran it
+    (forecast.backtest_predictions with the same origins and columns, which predicts only `hist` rows, so its end does
+    not matter); without it, it is run here."""
     if champion is None:
         return None
     end = hist.date.max()
-    preds = backtest_predictions(frame, hist, origins, end, base_cols, event_cols)
+    if preds is None:
+        preds = backtest_predictions(frame, hist, origins, end, base_cols, event_cols)
     window = backtest.score_window(origins, end, HORIZON)
     backtest_weeks = metrics.weekly_totals(backtest.pick(preds, HORIZON, *window))
     log_err = np.log(backtest_weeks.actual / backtest_weeks.pred)

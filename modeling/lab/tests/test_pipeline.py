@@ -279,7 +279,7 @@ def test_result_matches_contract(result, lab_input):
     assert set(history) == {"firstDate", "lastDate", "days", "spanDays"}
     assert is_date(history["firstDate"]) and is_date(history["lastDate"])
     assert is_int(history["days"]) and is_int(history["spanDays"])
-    assert history["spanDays"] == (day(history["lastDate"]) - day(history["firstDate"])).days >= 420
+    assert history["spanDays"] == (day(history["lastDate"]) - day(history["firstDate"])).days >= pipeline.MIN_HISTORY_DAYS
 
     bt = card["backtest"]
     assert set(bt) == {"from", "to", "origins", "weeks", "weeksWithRange", "metrics", "metrics7",
@@ -496,9 +496,32 @@ def test_messy_history_gives_finite_valid_output(messy):
     assert hist.guests.gt(0).all() and not hist.closed.any() and not hist.booked.any()
 
 
+def _weeks_with_range(first: pd.Timestamp, span: int) -> int:
+    """Backtest weeks with an 80% range for history running every day for `span` days from `first`, by the lab's own
+    origin, window and band rules."""
+    through = first + pd.Timedelta(days=span)
+    origins = backtest.quarterly_origins(first, through)
+    if not origins:
+        return 0
+    start, end = backtest.score_window(origins, through, pipeline.HORIZON)
+    starts = pd.date_range(start, end - pd.Timedelta(days=6), freq="7D")
+    return metrics.weekly_band_coverage(pd.Series(np.zeros(len(starts))), starts, starts + pd.Timedelta(days=6),
+                                        pipeline.HORIZON)[1]
+
+
+def test_min_history_days_always_gives_twelve_weeks_with_a_range():
+    # The gate's 12 weeks (api/src/lab/gate.ts GATE.minHistoryDays, which the API checks before a start): every first
+    # day of a year, a leap day included, has them at MIN_HISTORY_DAYS, and some first day does not one day sooner.
+    firsts = pd.date_range("2023-01-01", periods=366)
+    assert min(_weeks_with_range(first, pipeline.MIN_HISTORY_DAYS) for first in firsts) >= 12
+    assert min(_weeks_with_range(first, pipeline.MIN_HISTORY_DAYS - 1) for first in firsts) < 12
+    # 420 days, the first value tried, never gave one week with a range
+    assert max(_weeks_with_range(first, 420) for first in firsts) == 0
+
+
 def test_not_enough_history(lab_input):
     inp = copy.deepcopy(lab_input)
-    start = (day(inp["dataThrough"]) - timedelta(days=419)).isoformat()
+    start = (day(inp["dataThrough"]) - timedelta(days=pipeline.MIN_HISTORY_DAYS - 1)).isoformat()
     inp["days"] = [d for d in inp["days"] if d["date"] >= start]
     out = pipeline.calibrate(inp, CODE)
     assert out == {"schema": schema.RESULT_SCHEMA, "calibrationId": inp["calibrationId"], "ok": False,
