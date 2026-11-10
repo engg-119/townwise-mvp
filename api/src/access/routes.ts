@@ -69,8 +69,15 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   // U11, statement moments: no body, so none is parsed; the writes limiter only.
   { id: 'me.welcome', method: 'POST', path: '/me/welcome', policy: 'member', bodyLimit: 'none', handler: recordWelcome },
   // The display name for TownwiseAI's greeting: own account only; writes limiter only.
-  { id: 'me.profile.get', method: 'GET', path: '/me/profile', policy: 'member', bodyLimit: 'none', handler: getProfile },
-  { id: 'me.profile.update', method: 'PATCH', path: '/me/profile', policy: 'member', bodyLimit: '1kb', handler: updateProfile },
+  // D25: open as admin, it is the staff member's own name (per person, not per organization).
+  {
+    id: 'me.profile.get', method: 'GET', path: '/me/profile', policy: 'member', bodyLimit: 'none', openAsAdmin: true,
+    handler: getProfile,
+  },
+  {
+    id: 'me.profile.update', method: 'PATCH', path: '/me/profile', policy: 'member', bodyLimit: '1kb', openAsAdmin: true,
+    handler: updateProfile,
+  },
   {
     id: 'requests.create', method: 'POST', path: '/access-requests', policy: 'signed_in', bodyLimit: '32kb',
     limiter: 'requests', handler: createAccessRequest,
@@ -228,11 +235,11 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   // TownwiseAI's conversation trees: renaming, and switching the version shown. Neither calls the model: writes only.
   {
     id: 'org.chat.rename', method: 'PATCH', path: '/org/locations/:locationId/chat/:conversationId', policy: 'member',
-    bodyLimit: '1kb', handler: renameConversation,
+    bodyLimit: '1kb', openAsAdmin: true, handler: renameConversation,
   },
   {
     id: 'org.chat.active', method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/active', policy: 'member',
-    bodyLimit: '1kb', handler: showVersion,
+    bodyLimit: '1kb', openAsAdmin: true, handler: showVersion,
   },
   // U9 (TownwiseAI): saving or setting aside a proposed note.
   {
@@ -242,7 +249,7 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   // Rating a reply: private display state that never calls the model, so writes only.
   {
     id: 'org.chat.feedback', method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/feedback/:nodeId',
-    policy: 'member', bodyLimit: '1kb', handler: rateReply,
+    policy: 'member', bodyLimit: '1kb', openAsAdmin: true, handler: rateReply,
   },
   // U9 (TownwiseAI): the side panel's questions and activity, and answering a question.
   {
