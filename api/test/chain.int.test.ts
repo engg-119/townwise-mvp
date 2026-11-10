@@ -148,8 +148,18 @@ describe('GET is side-effect free (7.3)', () => {
     });
     await server.connection.collection('tw_files').updateOne({ _id: new Types.ObjectId(setupFileId) }, { $set: { kind: 'zip' } });
     const setupImportId = String((await server.connection.collection('tw_files').findOne({ _id: new Types.ObjectId(setupFileId) }))?.importId);
+    // The staff member's own conversation there, with the same proposal to keep text (D28), so its card's GET answers too.
+    const setupConversationId = await addConversation(server, {
+      orgId: setupOrgId, locationId: setupLocationId, userId: opened.userId, text: 'Keep our setup list',
+    });
+    await server.connection.collection('tw_chat_conversations').updateOne(
+      { _id: new Types.ObjectId(setupConversationId) },
+      { $push: { messages: { $each: proposed.map((param) => ({ at: server.clock.now(), param: JSON.stringify(param) })) } } } as Record<string, unknown>,
+    );
     await addOpenAsAdminGrant(server, { actorUserId: opened.userId, sessionId: opened.sessionId, orgId: setupOrgId });
-    const setupIds = { ...ids, orgId: setupOrgId, locationId: setupLocationId, fileId: setupFileId, importId: setupImportId };
+    const setupIds = {
+      ...ids, orgId: setupOrgId, locationId: setupLocationId, fileId: setupFileId, importId: setupImportId, conversationId: setupConversationId,
+    };
     const openedAnswered: string[] = [];
     for (const route of getRoutes) {
       const { status, writes } = await writesDuring(opened, pathOf(route, setupIds));

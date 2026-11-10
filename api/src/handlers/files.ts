@@ -481,6 +481,7 @@ export async function keepTextItem(
   };
   const saved = await saveTextItem(ctx.stores, writer, scope, locationId, {
     ...input, uploadedBy: member.userId, uploaderRole: member.role, now,
+    ...(member.openAsAdmin === null ? {} : { openAsAdminGrantId: member.openAsAdmin.grantId }),
   });
   if (saved === 'storage_full') {
     const storedBytesLeft = Math.max(0, STORED_BYTES_PER_ORG - await ctx.stores.files.storedBytes(scope, now));
@@ -504,7 +505,7 @@ export async function addTextItem(ctx: TownwiseContext, req: Request, res: Respo
   const body = parseInput(textBody, req.body);
   const location = await loadLocation(ctx, member.scope, req.params.locationId);
   const saved = await keepTextItem(ctx, res, member, blobs, location.id, { title: body.title, text: body.text, addedVia: null });
-  if (saved !== null) res.status(201).json({ file: fileView(member, saved.file, member.email, null) });
+  if (saved !== null) res.status(201).json({ file: fileView(member, saved.file, saved.file.byStaff ? TOWNWISE_STAFF : member.email, null) });
 }
 
 // ---- Reading the list ---------------------------------------------------------------------------------------------

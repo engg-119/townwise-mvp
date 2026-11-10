@@ -200,17 +200,20 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   },
   {
     id: 'org.data.text', method: 'POST', path: '/org/locations/:locationId/data/text', policy: 'member', bodyLimit: '32kb',
-    limiter: 'files', handler: addTextItem,
+    limiter: 'files', openAsAdmin: true, handler: addTextItem,
   },
   // D28, Your data: the list (a location's, or the organization's), and turning an item off or on, or deleting it.
-  { id: 'org.data.list', method: 'GET', path: '/org/data', policy: 'member', bodyLimit: 'none', handler: listData },
+  {
+    id: 'org.data.list', method: 'GET', path: '/org/data', policy: 'member', bodyLimit: 'none', openAsAdmin: true,
+    handler: listData,
+  },
   {
     id: 'org.data.update', method: 'PATCH', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: '2kb',
-    handler: updateDataItem,
+    openAsAdmin: true, handler: updateDataItem,
   },
   {
     id: 'org.data.remove', method: 'DELETE', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: 'none',
-    handler: removeDataItem,
+    openAsAdmin: true, handler: removeDataItem,
   },
   {
     id: 'org.originals.remove', method: 'DELETE', path: '/org/locations/:locationId/originals', policy: 'org_admin',
@@ -271,12 +274,12 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.chat.item_proposal.get', method: 'GET',
     path: '/org/locations/:locationId/chat/:conversationId/item-proposals/:proposalId', policy: 'member', bodyLimit: 'none',
-    handler: getItemProposal,
+    openAsAdmin: true, handler: getItemProposal,
   },
   {
     id: 'org.chat.item_proposal', method: 'POST',
     path: '/org/locations/:locationId/chat/:conversationId/item-proposals/:proposalId', policy: 'member', bodyLimit: '2kb',
-    handler: actOnItemProposal,
+    openAsAdmin: true, handler: actOnItemProposal,
   },
   // U9 (TownwiseAI): the side panel's questions and activity, and answering a question.
   {

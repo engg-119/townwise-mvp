@@ -12,9 +12,11 @@ import { DAILY_UPLOAD_BYTES, FILES_PER_LOCATION, STORED_BYTES_PER_ORG } from '..
 import { createMemoryFileBlobs, type MemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import { fileModel } from '../src/stores/files.ts';
 import { createTownwiseStores } from '../src/stores/index.ts';
-import { addLocation, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
+import { addInvite, addLocation, addOpenAsAdminGrant, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { filesPath, putChunk, uploadFile, type Created } from './helpers/files.ts';
-import { call, startTownwiseServer, signIn, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
+import {
+  call, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
+} from './helpers/server.ts';
 
 let server: TownwiseTestServer;
 let blobs: MemoryFileBlobs;
@@ -285,5 +287,34 @@ describe('reference items (D28)', () => {
     const everything = JSON.stringify([...server.logs, ...await auditEvents(server)]);
     expect(everything).not.toContain('Catering');
     expect(everything).not.toContain('Café');
+  });
+});
+
+describe('kept while staff have the organization open as admin (D25)', () => {
+  it('pasted text reads “Townwise staff” in its answer and on Your data, and file.uploaded is staff’s, under the grant', async () => {
+    const staff = await signInStaff(server);
+    try {
+      const setup = await createOrg(server, { name: 'Setup Intake' });
+      await addInvite(server, {
+        orgId: setup, email: `first-admin-${randomUUID().slice(0, 8)}@example.test`, invitedBy: staff.userId, role: 'org_admin', addedByStaff: true,
+      });
+      const location = await addLocation(server, { orgId: setup, name: 'Setup Room' });
+      const grantId = await addOpenAsAdminGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, orgId: setup });
+      const res = await call(server, textPath(location), { session: staff, json: { title: 'Opening list', text: 'Set up before anyone joined' } });
+      expect(res.status).toBe(201);
+      const { file } = await res.json() as { file: { id: string; uploadedByEmail: string } };
+      expect(file.uploadedByEmail).toBe('Townwise staff');
+      expect(await server.connection.collection('tw_files').findOne({ _id: new Types.ObjectId(file.id) }))
+        .toMatchObject({ byStaff: true, openAsAdminGrantId: grantId });
+      const list = await call(server, `/api/org/data?locationId=${location}`, { session: staff });
+      expect(list.status).toBe(200);
+      const { items } = await list.json() as { items: { ref: string; addedByEmail: string }[] };
+      expect(items).toEqual([expect.objectContaining({ ref: `f_${file.id}`, addedByEmail: 'Townwise staff' })]);
+      const event = (await auditEvents(server)).filter((e) => e.action === 'file.uploaded').at(-1);
+      expect(event).toMatchObject({ actorRole: 'superadmin', actorUserId: staff.userId, viewAsGrantId: grantId });
+    } finally {
+      await removeStaffFactor(server);
+      await server.connection.collection('tw_view_as_grants').deleteMany({});
+    }
   });
 });

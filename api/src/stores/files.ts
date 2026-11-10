@@ -323,6 +323,8 @@ export interface FileStore {
   insertStored(scope: OrgScope, locationId: string, input: {
     id: string; uploadedBy: string; uploaderRole: Role; uploadedAt: Date; name: string; sizeBytes: number; fingerprint: string;
     addedVia: 'townwise_ai' | null;
+    /** D25: kept by staff open as admin under this grant; the row is then `byStaff` too. */
+    openAsAdminGrantId?: string;
   }): Promise<FileRecord | 'exists'>;
   /**
    * Another live file of the location with this purpose and fingerprint: a copy kept for reference never blocks the same
@@ -502,6 +504,7 @@ export function createFileStore(connection: Connection): FileStore {
         const doc = await File.create({
           _id: oid(input.id), orgId: org(scope), locationId: oid(locationId), importId: null, purpose: 'reference',
           uploadedBy: input.uploadedBy, uploaderRole: input.uploaderRole, uploadedAt: input.uploadedAt, name: input.name,
+          ...(input.openAsAdminGrantId === undefined ? {} : { byStaff: true, openAsAdminGrantId: input.openAsAdminGrantId }),
           kind: 'text', sizeBytes: input.sizeBytes, fingerprint: input.fingerprint, upload: null, status: 'kept', outcome: 'reference',
           answers: {}, attempts: 0,
           ...(input.addedVia === null ? {} : { addedVia: input.addedVia }),

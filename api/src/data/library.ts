@@ -93,7 +93,8 @@ function fileItem(file: FileRecord): DataItemRecord {
     kind: file.kind,
     addedAt: file.uploadedAt,
     addedBy: file.uploadedBy,
-    byStaff: false,
+    // D25: a file staff stored, or text they kept, while open as admin.
+    byStaff: file.byStaff,
     enabled: file.disabledAt === null,
     state: fileState(file),
     outcome: file.outcome,

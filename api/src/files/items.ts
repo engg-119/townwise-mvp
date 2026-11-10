@@ -29,6 +29,8 @@ export interface TextItemInput {
   readonly text: string;
   readonly uploadedBy: string;
   readonly uploaderRole: Role;
+  /** D25: staff kept it while open as admin, under this grant, so it reads “Townwise staff”. */
+  readonly openAsAdminGrantId?: string;
   readonly addedVia: 'townwise_ai' | null;
   readonly now: Date;
 }
@@ -71,6 +73,7 @@ export async function saveTextItem(
     await blobs.writeRaw(scope, { locationId, fileId: id }, bytes, 'text/plain; charset=utf-8');
     inserted = await stores.files.insertStored(scope, locationId, {
       id, uploadedBy: input.uploadedBy, uploaderRole: input.uploaderRole, uploadedAt: input.now,
+      ...(input.openAsAdminGrantId === undefined ? {} : { openAsAdminGrantId: input.openAsAdminGrantId }),
       name: textItemName(input.title), sizeBytes: bytes.length,
       fingerprint: fingerprintOf(CHUNK_BYTES, [createHash('sha256').update(bytes).digest('hex')]), addedVia: input.addedVia,
     });
