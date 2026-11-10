@@ -401,13 +401,13 @@ A location's Google place (Places unit): an org admin picks it with the Places s
 
 | Method and path | Policy | Request | Success | Errors |
 |---|---|---|---|---|
-| `GET /api/org/locations/:locationId/sales` | member | | 200 `{ coverage, calibration, months, uploads }` (newest 20 uploads) | 404 |
+| `GET /api/org/locations/:locationId/sales` | member | | 200 `{ coverage, uploadsOff, calibration, months, uploads }` (newest 20 uploads) | 404 |
 | `GET /api/org/locations/:locationId/sales/days?from=&to=` | member | `YYYY-MM-DD` dates, at most 366 days inclusive | 200 `{ days }` | 400; 404 |
-| `GET /api/org/locations/:locationId/sales/history` | member | | 200 `{ coverage, days, uploads }`: every stored day | 400; 404 |
+| `GET /api/org/locations/:locationId/sales/history` | member | | 200 `{ coverage, uploadsOff, days, uploads }`: every stored day | 400; 404 |
 | `POST /api/org/locations/:locationId/sales/uploads` | member; 256 KB; limiter `uploads` | `{ days }` (see Sales upload) | 201 `{ upload, coverage, calibration }` | 400; 404; 413; 429 |
 | `DELETE /api/org/locations/:locationId/sales` | org_admin | | 200 `{ deletedDays, deletedUploads, deletedFiles }`: the location's stored files go too, and so do its forecast runs and its answers to TownwiseAI’s questions (notes stay, closure notes saved from answers included) | 404; 409 `import_running` (one of its files is being read); 503 `files_unavailable` (stored files are off while it has files) |
 
-`sales/history` answers every stored day, oldest first, as columns of equal length: `days` is `{ date, guests, netSalesCents, upload }`, where `upload` indexes `uploads` (the upload that last wrote the day, or -1 if it has no record). `uploads` lists every upload a day references, newest first, each `{ id, uploadedAt, uploadedByEmail, status, firstDate, lastDate, file }`; `file` is the stored file the upload was read from, `{ id, name, kind }`, or null for a browser upload, a deleted file, and every upload while stored files are off; `name` is null during view-as. Neither sales read logs anything.
+`sales/history` answers every stored day, oldest first, as columns of equal length: `days` is `{ date, guests, netSalesCents, upload }`, where `upload` indexes `uploads` (the upload that last wrote the day, or -1 if it has no record). `uploads` lists every upload a day references, newest first, each `{ id, uploadedAt, uploadedByEmail, status, firstDate, lastDate, file }`; `file` is the stored file the upload was read from, `{ id, name, kind }`, or null for a browser upload, a deleted file, and every upload while stored files are off; `name` is null during view-as. `uploadsOff` (on both reads) is true when `coverage.dayCount` is 0 and a turned-off upload still holds a day at the location, so the client says its uploads are turned off instead of “No sales history yet”; it is a boolean only. Neither sales read logs anything.
 
 ### Calendar
 

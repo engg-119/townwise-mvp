@@ -43,6 +43,8 @@ const historyColumnsSchema = z.object({
  */
 export const salesHistorySchema = z.object({
   coverage: coverageSchema,
+  /** True when no day shows because every upload holding days is turned off (D28). Optional for an API from before it. */
+  uploadsOff: z.boolean().optional(),
   days: historyColumnsSchema,
   uploads: z.array(historyUploadSchema),
 }).superRefine((body, ctx) => {

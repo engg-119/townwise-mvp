@@ -313,6 +313,15 @@ test('no days here but another location has some: the cards stay, each saying so
   expect(screen.queryByRole('heading', { name: 'Drop in everything you have' })).toBeNull();
 });
 
+test('every upload turned off: Home says so and points to Your data, not "no history"', async () => {
+  await renderApp('/locations/l1', portal({ history: { ...historyBody([]), uploadsOff: true } }));
+  expect(await screen.findByText('Every sales upload for this location is turned off. Turn one back on in Your data to see its days.')).toBeTruthy();
+  expect(screen.getByText('Every sales upload is turned off, so there is nothing to compare.')).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Open Your data' })).toBeTruthy();
+  expect(screen.queryByText('No sales history yet for this location.')).toBeNull();
+  expect(screen.queryByText('No sales history yet, so there is nothing to compare.')).toBeNull();
+});
+
 test('view-as shows the same page and writes nothing', async () => {
   const api = portal({ me: viewAsMe(ACCESS.member) });
   await renderApp('/locations/l1', api);

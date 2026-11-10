@@ -972,13 +972,15 @@ A location's Google place (Places unit; P10, P16 "Change this location's place")
 
 | Method and path | Policy | Request | Success | Extra errors |
 |---|---|---|---|---|
-| `GET /api/org/locations/:locationId/sales` | member | | 200 `{ coverage, calibration, months: { month: 'YYYY-MM'; dayCount; guests: number \| null; netSalesCents: number \| null }[], uploads: UploadView[] }` (newest 20 uploads) | 404 |
+| `GET /api/org/locations/:locationId/sales` | member | | 200 `{ coverage, uploadsOff, calibration, months: { month: 'YYYY-MM'; dayCount; guests: number \| null; netSalesCents: number \| null }[], uploads: UploadView[] }` (newest 20 uploads) | 404 |
 | `GET /api/org/locations/:locationId/sales/days?from=&to=` | member | dates `YYYY-MM-DD`, `from <= to`, span at most 366 days | 200 `{ days: SalesDay[] }` | 400; 404 |
 | `GET /api/org/locations/:locationId/sales/history` | member | | 200 `SalesHistory` (10.10): every stored day, oldest first, each upload with the stored file it was read from | 400; 404 |
 | `POST /api/org/locations/:locationId/sales/uploads` | member, 256 KB, limiter `uploads` | `{ days: SalesDay[] }` (Section 11.3) | 201 `{ upload: UploadView, coverage, calibration }`; a member’s upload adds new days only (11.4) | 400; 404; 413; 429 |
 | `DELETE /api/org/locations/:locationId/sales` | org_admin | | 200 `{ deletedDays, deletedUploads, deletedFiles }`: with the days and upload records go the location's stored files (11A), forecast runs (6.20, 6.21) and answers to TownwiseAI's questions (6.17); notes stay, closure notes saved from answers included | 404; 409 `import_running`; 503 `files_unavailable` (10.9) |
 
 Month sums run over the days that have a value. A month whose days have no guest counts returns `guests: null`.
+
+`uploadsOff` (here and on `SalesHistory`, 10.10) is true when `coverage.dayCount` is 0 and a turned-off upload (D28) still holds at least one day at the location, so every upload holding days is off. The client then says the uploads are turned off and points to Your data instead of “No sales history yet”. It is a boolean only: no count, date or upload id. A location with no stored day at all answers false.
 
 ### 10.5 Notes
 
@@ -1159,6 +1161,7 @@ Two reads for Home, Analytics and TownwiseAI. Both are `member` GETs in `TOWNWIS
 ```ts
 interface SalesHistory {
   coverage: Coverage;
+  uploadsOff: boolean;                 // D28: no day shows because every upload holding days is turned off (10.4)
   days: {                              // columns of equal length, oldest first, one entry per stored day
     date: string[];
     guests: (number | null)[];
@@ -1906,7 +1909,7 @@ Home replaced the Forecast page here (owner decision, 2026-11-05); its data chec
 
 - **Layout: a dashboard of blocks** (2026-11-09, owner request: “more like a dashboard … things fit together like blocks”; `home/Block.tsx`). Every card is a `panel` region with its eyebrow (and any tag) and its h2, on the 12-column grid with the 20px gutter between blocks. From 1024px the blocks of a row sit side by side by their spans and each grows to the row’s height, so edges line up; below 1024px they stack (the glance tiles stay side by side down to 641px). Top to bottom: the lead; At a glance (4, 4, 4); This week (12); This month (8) beside Last week (4); On the calendar in {November} (6) beside Who’s in town (6); Your {November} in past years (6) beside Bar order (6); Your history (12). A block with nothing to show is left out and the others keep their spans.
 - Page header (15.2): the title is “Week of {Monday}”.
-- Lead: “From your sales through {Wed, Nov 4, 2026} and {Hanover}’s researched calendar.” (“US federal holidays” for a town with no researched calendar; “No sales history yet. Home shows …” with no days). Then an In progress line, “Forecasts are in development. Until then, Home shows your history and the calendar, never a guess.”, and, when TownwiseAI has questions, a text link to P25, “{2} questions from TownwiseAI” (“1 question”), counting the questions `GET .../agent` asks that the client knows (P25’s side panel’s read, made on its own after Home’s three). While that read loads, when it fails and when there are none, the line is left out: P25 says “No questions right now” or the error. Side: outline “Ask TownwiseAI” (P25).
+- Lead: “From your sales through {Wed, Nov 4, 2026} and {Hanover}’s researched calendar.” (“US federal holidays” for a town with no researched calendar; “No sales history yet. Home shows …” with no days; “Every sales upload is turned off. Home shows …” when `uploadsOff`). Then an In progress line, “Forecasts are in development. Until then, Home shows your history and the calendar, never a guess.”, and, when TownwiseAI has questions, a text link to P25, “{2} questions from TownwiseAI” (“1 question”), counting the questions `GET .../agent` asks that the client knows (P25’s side panel’s read, made on its own after Home’s three). While that read loads, when it fails and when there are none, the line is left out: P25 says “No questions right now” or the error. Side: outline “Ask TownwiseAI” (P25).
 - **At a glance** (region), three tiles, shown when the location has days and the history step is not: **This week, last year**: when last year’s same week has at least 5 days with data, its total (40px `value` type), “Same week last year, {Mon, Nov 3} to {Sun, Nov 9, 2025}. From all 7 days.” (or “From {n} of its 7 days.”), “{+9%} against that year’s usual for those days, compared over {n} days.” (when at least 5 have a usual), the busiest day and the quietest open day; otherwise “Fewer than 5 days of the same week last year have data, so there is no total to show.” **Last week**: last week’s total and “{+10%} against the same week last year ({740}), over all 7 days.” (“over the {n} days both weeks have”), or for the other states of the Last week card “Your sales stop at {date}.”, “No {guests} stored for last week.”, “No data for the same week last year.” or “No day has data in both weeks.”; the first two add “Upload sales history” (web; native says where to upload), as the card does. **Next on the calendar**: the first holiday or town event from today to the end of Home’s calendar read (term and season periods mark no day), its title, “{Sat, Nov 7, 2026}, in {2} days” (“Today”, “Tomorrow, {date}”, or “On now, until {date}” for one that began earlier) and its kind; otherwise “Nothing on {Town}’s calendar through {date}.”. Each figure is history; none is a guess.
 - **This week in {Town}**, “What’s on the calendar, and how this week went before”. Always: “On the calendar this week: {title} ({weekday}), and {n} more.” or “Nothing on {Town}’s researched calendar this week.”, over holidays and town events only. Term and season periods span weeks, so they mark no day: each one covering the week is said once under that line with its whole span and sources (“Fall term classes. Term, Sep 14 to Nov 17, 2026.”), and with no holiday or event the line reads “No holiday or town event on {Town}’s researched calendar this week.” From 1024px the week is a strip, a column per day, Monday to Sunday, with today’s column `raised` and its 6px `mint` square: the day (with this week’s own figure only for a past day with data), then rows On the calendar (each event with its kind and “Source: {label}” links, each note in words with its detail, or “Nothing listed”), Last year and Two years ago (the same weekday 52 and 104 weeks earlier: “{Sat, Nov 8, 2025}: {241} guests”, “{+31%} vs usual”, closed, and the holidays and town events on that day; “No data”; the second row only when any of its days has data). Last year’s cells start with a `mint` bar (aria-hidden) scaled to the busiest of those seven days, over the printed figure. The strip is a table: a column header per day, a row header per row. Below 1024px the same content is a row per day (today in the selected-row idiom), with columns Day, On the calendar, Last year and Two years ago. The footnote defines both terms: “Last year means the same weekday 52 weeks earlier. Usual is your average for that weekday in the 4 weeks either side, leaving out closed days, days with a note, and holiday and event days.” [CONFIRM: the baseline for usual] With the strip, “Bars show last year’s days, scaled to the busiest of them.” The coverage line, always: “{Town}’s researched calendar covers {from} to {to} so far, plus US federal holidays.”, or the not-researched lines of P24’s Day panel. “Show the numbers”: Day, Last year, Two years ago, Usual (last year). With no days at all, only Day and On the calendar show.
 - **Bar order** (panel), StatusTag Planned, “Order suggestions are planned”: “Townwise will suggest how much more or less beer, wine and spirits to order each week, and by when. It needs a forecast and your usual weekly order first. Townwise can’t see your stock.” No inputs. One line of history when last year’s same week has data for Thursday to Sunday: “Last year this week, Thursday to Sunday brought {58%} of the week’s guests.” (with the day count when the week is partial). [DECISION NEEDED: where the usual order comes from]
@@ -1929,7 +1932,7 @@ Home replaced the Forecast page here (owner decision, 2026-11-05); its data chec
 | State | Shows |
 |---|---|
 | Loading | “Loading {location}” |
-| Empty | No days here: the calendar parts, and each card saying it has no history (“No sales history yet for this location.”, “No sales history yet, so there is nothing to compare.”); the HistoryStep while `needsHistory` |
+| Empty | No days here: the calendar parts, and each card saying it has no history (“No sales history yet for this location.”, “No sales history yet, so there is nothing to compare.”). When `uploadsOff` they say “Every sales upload for this location is turned off. Turn one back on in Your data to see its days.” (Your history, with an “Open Your data” link) and “Every sales upload is turned off, so there is nothing to compare.” instead; the HistoryStep while `needsHistory` |
 | Error | Network copy with Try again. A location id that is not in the organization (deleted, or never theirs): “This location isn’t available.” and a link to Locations. |
 | Success | As above |
 | View-as | The same page; the upload links are disabled with the read-only line |
@@ -1946,6 +1949,7 @@ Home replaced the Forecast page here (owner decision, 2026-11-05); its data chec
 | State | Shows |
 |---|---|
 | Loading | “Loading sales data” |
+| Empty, uploads off | “Every sales upload for this location is turned off. Turn one back on in Your data to see its days.” (`uploadsOff`), with the Your data link below; no upload prompt |
 | Empty | “No sales history yet for {location}. Upload a CSV export from your point-of-sale system. The upload sends Townwise only the date, guest count and net sales for each day.” with the primary |
 | Error | Network copy with Try again; 404 as on P11 |
 | Success | As above; after a delete, the notice “Deleted {n} days.” |
@@ -2064,6 +2068,7 @@ Every figure is a count or an average of the location’s own stored days that t
 | State | Shows |
 |---|---|
 | Loading | “Loading analytics” |
+| Empty, uploads off | The filters, disabled, and “Every sales upload for this location is turned off. Turn one back on in Your data to see its days.” (`uploadsOff`) with an “Open Your data” link |
 | Empty | The filters, disabled, and “No sales history yet.” with “Upload sales history” (web) or “Upload from a computer at townwise.tech.” (native) |
 | Error | Network copy with Try again; 404 as on P11 |
 | Success | As above |
