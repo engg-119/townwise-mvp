@@ -9,7 +9,7 @@ import type { MeResponse } from '../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../helpers/app';
 import { fakeAuth } from '../helpers/fakes';
 import {
-  ACCESS, deferred, EMAIL, fakePortalApi, meOf, orgOf, refusal, STAFF_EMAIL, staffMe, VERIFIED_UNTIL, viewAsMe, writes,
+  ACCESS, deferred, EMAIL, fakePortalApi, meOf, openAsAdminMe, orgOf, refusal, STAFF_EMAIL, staffMe, VERIFIED_UNTIL, viewAsMe, writes,
   type FakePortalApi,
 } from '../helpers/portal';
 
@@ -126,7 +126,8 @@ test('view-as: the title names the target; disabled controls stay focusable; End
   fireEvent.click(add);
   fireEvent.click(screen.getByRole('button', { name: 'End view-as' }));
   await waitFor(() => { expect(window.location.pathname).toBe('/admin'); });
-  expect(writes(api)).toEqual([{ method: 'POST', path: '/api/admin/view-as/end', body: {} }]);
+  // End names the grant the banner shows, so a tab left on an ended view-as never ends a newer grant of the session.
+  expect(writes(api)).toEqual([{ method: 'POST', path: '/api/admin/view-as/end', body: { grantId: 'g1' } }]);
   expect(await screen.findByRole('status')).toBeTruthy();
   expect(screen.getByText(/^View-as ended at \d{1,2}:\d{2} (AM|PM)\.$/)).toBeTruthy();
   expect(screen.queryByRole('region', { name: 'View-as' })).toBeNull();
@@ -152,6 +153,80 @@ test('a GET /api/me read that started before End view-as and answers after it do
   await new Promise((resolve) => { setTimeout(resolve, 0); });
   expect(screen.queryByRole('region', { name: 'View-as' })).toBeNull();
   expect(window.location.pathname).toBe('/admin');
+});
+
+test('open as admin: the banner is on every page; End opens the console with the notice', async () => {
+  const api = fakePortalApi({ me: openAsAdminMe(), org: orgOf('org_admin') });
+  api.answers['/api/admin/view-as/end'] = () => staffMe();
+  renderAt('/dashboard', api);
+  const banner = await screen.findByRole('region', { name: 'Townwise staff setup' });
+  expect(within(banner).getByText('You’re setting up Test Group as Townwise staff. This ends when someone joins.')).toBeTruthy();
+  await waitFor(() => { expect(document.title).toBe('Setting up Test Group · Townwise'); });
+  const nav = screen.getByRole('navigation', { name: 'Main' });
+  expect(within(nav).queryByRole('link', { name: 'Team' })).toBeNull();
+  fireEvent.click(within(nav).getByRole('link', { name: 'Settings' }));
+  await waitFor(() => { expect(window.location.pathname).toBe('/settings'); });
+  expect(screen.getByRole('region', { name: 'Townwise staff setup' })).toBeTruthy();
+  fireEvent.click(within(nav).getByRole('link', { name: 'Home' }));
+  await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1'); });
+  expect(screen.getByRole('region', { name: 'Townwise staff setup' })).toBeTruthy();
+  fireEvent.click(within(nav).getByRole('link', { name: 'Notes' }));
+  await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/notes'); });
+  const shown = screen.getByRole('region', { name: 'Townwise staff setup' });
+  fireEvent.click(within(shown).getByRole('button', { name: 'End' }));
+  await waitFor(() => { expect(window.location.pathname).toBe('/admin'); });
+  // D25: End names the grant this tab shows, so a tab left on an earlier grant never ends a newer one.
+  expect(writes(api)).toEqual([{ method: 'POST', path: '/api/admin/view-as/end', body: { grantId: 'g2' } }]);
+  expect(await screen.findByRole('status')).toBeTruthy();
+  expect(screen.getByText(/^Setting up Test Group as Townwise staff ended at \d{1,2}:\d{2} (AM|PM)\.$/)).toBeTruthy();
+  expect(screen.queryByRole('region', { name: 'Townwise staff setup' })).toBeNull();
+});
+
+test('open as admin: Sign out stays enabled, and the top bar has no Team', async () => {
+  renderAt('/dashboard', fakePortalApi({ me: openAsAdminMe(), org: orgOf('org_admin') }));
+  await screen.findByRole('region', { name: 'Townwise staff setup' });
+  expect(screen.getByRole('button', { name: 'Sign out' }).getAttribute('aria-disabled')).not.toBe('true');
+  expect(within(screen.getByRole('navigation', { name: 'Main' })).queryByRole('link', { name: 'Team' })).toBeNull();
+});
+
+test('open as admin: Sign out sends End for the grant it shows first, so the end is recorded now; a failed End still signs out', async () => {
+  for (const answer of [() => staffMe(), () => refusal(503, 'unavailable')]) {
+    const api = fakePortalApi({ me: openAsAdminMe(), org: orgOf('org_admin') });
+    api.answers['/api/admin/view-as/end'] = answer;
+    let writesBefore: unknown = null;
+    const signOut = jest.fn(() => { writesBefore = writes(api); return Promise.resolve(); });
+    renderAt('/dashboard', api, { signOut });
+    await screen.findByRole('region', { name: 'Townwise staff setup' });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    await waitFor(() => { expect(signOut).toHaveBeenCalledTimes(1); });
+    expect(writesBefore).toEqual([{ method: 'POST', path: '/api/admin/view-as/end', body: { grantId: 'g2' } }]);
+    cleanup();
+  }
+  // Outside the mode, Sign out sends nothing first.
+  const api = fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin') });
+  const signOut = jest.fn(() => Promise.resolve());
+  renderAt('/dashboard', api, { signOut });
+  fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }));
+  await waitFor(() => { expect(signOut).toHaveBeenCalledTimes(1); });
+  expect(writes(api)).toEqual([]);
+});
+
+test('a GET /api/me read that finds open as admin over sends End once, and the console shows the notice', async () => {
+  // The page read is refused, so the portal re-reads GET /api/me, which now shows the staff member's own access.
+  const api = fakePortalApi({ me: openAsAdminMe(), org: refusal(403, 'no_access') });
+  const json = api.json.bind(api);
+  api.json = (path, schema, opts) => {
+    const answer = json(path, schema, opts);
+    if (path === '/api/me') api.me = staffMe();
+    return answer;
+  };
+  api.answers['/api/admin/view-as/end'] = () => staffMe();
+  renderAt('/dashboard', api);
+  await waitFor(() => { expect(window.location.pathname).toBe('/admin'); });
+  expect(await screen.findByText(/^Setting up Test Group as Townwise staff ended at \d{1,2}:\d{2} (AM|PM)\.$/)).toBeTruthy();
+  await waitFor(() => { expect(writes(api)).toEqual([{ method: 'POST', path: '/api/admin/view-as/end', body: { grantId: 'g2' } }]); });
+  await new Promise((resolve) => { setTimeout(resolve, 20); });
+  expect(writes(api)).toHaveLength(1);
 });
 
 test('Waiting draws the town’s chart on web, with its summary and the numbers', async () => {

@@ -70,6 +70,7 @@ test('the header, the team, the locations as metadata only, recent activity, and
     'Hanover', 'Hanover, NH', '400', 'Jan 1, 2025', 'Feb 4, 2026', '2', 'Feb 5, 2026',
   ]);
   expect(screen.getByText('Sales figures and notes are visible only through View as.')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Open as admin' })).toBeNull();
 
   const activity = screen.getByRole('region', { name: 'Recent activity' });
   expect(within(activity).getByText(`Added ${CHEF_EMAIL} as member`)).toBeTruthy();

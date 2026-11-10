@@ -89,6 +89,9 @@ interface FileFields {
   purpose: 'history';
   uploadedBy: string;
   uploaderRole: Role;
+  byStaff?: boolean;
+  /** The open-as-admin grant it was stored under (D25), so the reader's sales.uploaded carries it too. */
+  openAsAdminGrantId?: string;
   uploadedAt: Date;
   name: string;
   kind: FileKind;
@@ -125,6 +128,8 @@ function fileSchema(): Schema<FileFields> {
     purpose: { type: String, required: true, enum: ['history'] },
     uploadedBy: { type: String, required: true },
     uploaderRole: { type: String, required: true, enum: ['org_admin', 'member'] },
+    byStaff: { type: Boolean },
+    openAsAdminGrantId: { type: String },
     uploadedAt: { type: Date, required: true },
     name: { type: String, required: true },
     kind: { type: String, required: true, enum: FILE_KINDS },
@@ -172,6 +177,10 @@ export interface FileRecord {
   readonly purpose: 'history';
   readonly uploadedBy: string;
   readonly uploaderRole: Role;
+  /** Uploaded by Townwise staff in open as admin (D25); shown as "Townwise staff", never the staff email. */
+  readonly byStaff: boolean;
+  /** The open-as-admin grant it was stored under (D25); null otherwise, and on files from before the field. */
+  readonly openAsAdminGrantId: string | null;
   readonly uploadedAt: Date;
   readonly name: string;
   readonly kind: FileKind;
@@ -207,6 +216,8 @@ function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
     purpose: doc.purpose,
     uploadedBy: doc.uploadedBy,
     uploaderRole: doc.uploaderRole,
+    byStaff: doc.byStaff === true,
+    openAsAdminGrantId: doc.openAsAdminGrantId ?? null,
     uploadedAt: doc.uploadedAt,
     name: doc.name,
     kind: doc.kind,
@@ -237,6 +248,8 @@ export interface NewFile {
   readonly importId: string;
   readonly uploadedBy: string;
   readonly uploaderRole: Role;
+  readonly byStaff?: boolean;
+  readonly openAsAdminGrantId?: string;
   readonly uploadedAt: Date;
   readonly name: string;
   readonly kind: FileKind;
@@ -334,7 +347,9 @@ export function createFileStore(connection: Connection): FileStore {
     async create(scope, locationId, input) {
       const doc = await File.create({
         orgId: org(scope), locationId: oid(locationId), importId: oid(input.importId), purpose: 'history',
-        uploadedBy: input.uploadedBy, uploaderRole: input.uploaderRole, uploadedAt: input.uploadedAt, name: input.name,
+        uploadedBy: input.uploadedBy, uploaderRole: input.uploaderRole, ...(input.byStaff === true ? { byStaff: true } : {}),
+        ...(input.openAsAdminGrantId === undefined ? {} : { openAsAdminGrantId: input.openAsAdminGrantId }),
+        uploadedAt: input.uploadedAt, name: input.name,
         kind: input.kind, sizeBytes: input.sizeBytes, fingerprint: null, status: 'uploading',
         upload: {
           chunkSize: input.chunkSize,

@@ -40,6 +40,7 @@ export async function recordBefore(ctx: TownwiseContext, event: AuditEventInput)
 export const NOT_APPLIED_REASONS = {
   request_not_pending: 'The request was already decided',
   view_as_active: 'Another view-as was already running',
+  open_as_admin_active: 'Another view-as or setup as admin was already running',
   last_admin: 'The organization needs at least one admin',
   already_invited: 'That address was already invited',
   not_found: 'It was already gone',
@@ -189,6 +190,12 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
       if (d.endReason === 'expired') return 'View-as expired';
       if (d.endReason === 'replaced') return 'View-as replaced by a new one';
       return 'Ended view-as';
+    // D25.
+    case 'open_as_admin.started': return 'Opened the organization as its admin, to set it up';
+    case 'open_as_admin.ended':
+      if (d.endReason === 'expired') return 'Setting up as admin ended with the staff sign-in';
+      if (d.endReason === 'replaced') return 'Setting up as admin ended';
+      return 'Ended setting up as admin';
     case 'people.signed_out_everywhere': return 'Signed a person out everywhere';
     case 'person.deleted': return 'Deleted a person’s Townwise records';
     case 'staff_action.not_applied': return `Didn’t take effect (${text(d.code)})`;

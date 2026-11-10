@@ -33,6 +33,7 @@ interface NoteFields {
   expectedGuests: number | null;
   detail: string | null;
   createdBy: string;
+  byStaff?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -49,6 +50,7 @@ function noteSchema(): Schema<NoteFields> {
     expectedGuests: { type: Number, default: null },
     detail: { type: String, default: null, maxlength: 280 },
     createdBy: { type: String, required: true },
+    byStaff: { type: Boolean },
     createdAt: { type: Date, required: true },
     updatedAt: { type: Date, required: true },
   }, { strict: true, versionKey: false, read: 'primary' });
@@ -65,6 +67,8 @@ export function noteModel(connection: Connection): Model<NoteFields> {
 export interface NoteRecord extends NoteContent {
   readonly id: string;
   readonly createdBy: string;
+  /** Made by Townwise staff in open as admin (D25); shown as "Townwise staff", never the staff email. */
+  readonly byStaff: boolean;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -80,7 +84,7 @@ export interface NoteStore {
   count(scope: OrgScope, locationId: string): Promise<number>;
   hasAny(scope: OrgScope, locationId: string): Promise<boolean>;
   /** `id`, when given, becomes the note's id: a second create with it fails on the primary key. */
-  create(scope: OrgScope, locationId: string, content: NoteContent, input: { createdBy: string; now: Date; id?: string }): Promise<NoteRecord>;
+  create(scope: OrgScope, locationId: string, content: NoteContent, input: { createdBy: string; now: Date; id?: string; byStaff?: boolean }): Promise<NoteRecord>;
   /** A full replace of the content; null when the note is gone. */
   replace(scope: OrgScope, locationId: string, noteId: string, content: NoteContent, now: Date): Promise<NoteRecord | null>;
   remove(scope: OrgScope, locationId: string, noteId: string): Promise<boolean>;
@@ -99,6 +103,7 @@ function toNote(doc: NoteFields & { _id: Types.ObjectId }): NoteRecord {
     expectedGuests: doc.expectedGuests,
     detail: doc.detail,
     createdBy: doc.createdBy,
+    byStaff: doc.byStaff === true,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -144,7 +149,7 @@ export function createNoteStore(connection: Connection): NoteStore {
     async create(scope, locationId, content, input) {
       const doc = await Note.create({
         ...(input.id === undefined ? {} : { _id: new Types.ObjectId(input.id) }),
-        orgId: scope.orgId, locationId, ...fieldsOf(content), createdBy: input.createdBy, createdAt: input.now, updatedAt: input.now,
+        orgId: scope.orgId, locationId, ...fieldsOf(content), createdBy: input.createdBy, ...(input.byStaff === true ? { byStaff: true } : {}), createdAt: input.now, updatedAt: input.now,
       });
       return toNote(doc.toObject());
     },

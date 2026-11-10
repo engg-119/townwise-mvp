@@ -70,6 +70,10 @@ export const viewAsSchema = z.object({
 });
 export type ViewAs = z.infer<typeof viewAsSchema>;
 
+/** Staff set up an organization nobody has joined as its admin (D25). The access is then that organization's admin. */
+export const openAsAdminSchema = z.object({ id: z.string(), org: orgRef, startedAt: z.string() });
+export type OpenAsAdmin = z.infer<typeof openAsAdminSchema>;
+
 export const welcomeSchema = z.object({ firstName: z.string().nullable(), restaurant: z.string() });
 
 /** GET /api/me, and the answer of join, decline, access requests and view-as start and end. */
@@ -79,6 +83,8 @@ export const meResponseSchema = z.object({
   /** During view-as, the target's access. */
   access: accessSchema,
   viewAs: viewAsSchema.nullable(),
+  /** Set while staff set up an organization as its admin; the access is then that organization's admin. */
+  openAsAdmin: openAsAdminSchema.nullable().optional(),
   staff: z.object({ verifiedUntil: z.string() }).nullable(),
   /** GET /api/me only: the first visit after approval (spec 15.8). Other answers carry null. */
   welcome: welcomeSchema.nullable().optional(),

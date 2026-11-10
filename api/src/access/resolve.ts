@@ -1,5 +1,5 @@
-// resolveAccess(): the only code that decides staff, membership, organization and view-as (spec 4.2).
-// It never writes, reads from the primary (every Townwise schema sets read: 'primary') and reads the
+// resolveAccess(): the only code that decides staff, membership, organization, view-as and open as admin (spec 4.2,
+// D25). It never writes, reads from the primary (every Townwise schema sets read: 'primary') and reads the
 // time only from ctx.now.
 import type { AuthContext, User } from '@ckeith26/auth';
 import { AppError } from '@ckeith26/server-core';
@@ -7,8 +7,10 @@ import { AppError } from '@ckeith26/server-core';
 import type { TownwiseContext } from '../app.ts';
 import type { AccessRequestRecord } from '../stores/access-requests.ts';
 import { findActiveSeat, findOpenInvites, latestRemovedSeat, type OpenInvite } from '../stores/cross-tenant.ts';
-import type { ViewAsGrantRecord } from '../stores/view-as-grants.ts';
+import type { OpenAsAdminGrantRecord, ViewAsGrantRecord } from '../stores/view-as-grants.ts';
 import type { Town } from '../towns.ts';
+import { scopeForOpenAsAdmin, type OrgScope } from './policy.ts';
+import { isInSetup } from './setup.ts';
 
 export type Role = 'org_admin' | 'member';
 
@@ -46,16 +48,22 @@ export interface ResolvedSeat { readonly id: string; readonly orgId: string; rea
 export interface Resolution {
   /** The signed-in kit user. */
   readonly user: User;
-  /** The signed-in person's own access, before any view-as substitution. */
+  /** The signed-in person's own access, before any view-as or open-as-admin substitution. */
   readonly self: Access;
-  /** What policies evaluate: `self`, or the view-as target's access. */
+  /** What policies evaluate: `self`, the view-as target's access, or (open as admin) the grant organization's admin access. */
   readonly effective: Access;
-  /** The resolved seat of the person `effective` describes. */
+  /** The resolved seat of the person `effective` describes; null in open as admin, where nobody holds one. */
   readonly seat: ResolvedSeat | null;
   /** Set whenever `self` is staff. */
   readonly staffVerifiedUntil: Date | null;
-  /** Set only while a grant is live for this session. */
+  /** Set only while a view-as grant is live for this session. */
   readonly viewAs: { readonly grant: ViewAsGrantRecord; readonly target: User } | null;
+  /**
+   * Set only while an open-as-admin grant is live for this session (D25): held by a staff session that passes the
+   * gate, not ended, not expired, its organization still in setup and not suspended since it started. Null on every
+   * other path.
+   */
+  readonly openAsAdmin: { readonly grant: OpenAsAdminGrantRecord; readonly scope: OrgScope; readonly orgName: string } | null;
 }
 
 /** The one place product code answers unauthenticated: the kit user no longer exists (D19). */
@@ -167,24 +175,42 @@ export async function resolveAccess(ctx: TownwiseContext, auth: AuthContext): Pr
   // A staff address never resolves as a member, even when an organization invited it.
   if (!ctx.config.superadminEmails.has(user.email)) {
     const person = await resolvePerson(ctx, user);
-    return { user, self: person.access, effective: person.access, seat: person.seat, staffVerifiedUntil: null, viewAs: null };
+    return {
+      user, self: person.access, effective: person.access, seat: person.seat, staffVerifiedUntil: null, viewAs: null, openAsAdmin: null,
+    };
   }
 
   const self = await staffGate(ctx, auth, now);
   if (self.state !== 'staff') {
-    return { user, self, effective: self, seat: null, staffVerifiedUntil: null, viewAs: null };
+    return { user, self, effective: self, seat: null, staffVerifiedUntil: null, viewAs: null, openAsAdmin: null };
   }
   const staffVerifiedUntil = new Date(auth.authenticatedAt.getTime() + STAFF_WINDOW_MS);
-  const staffOnly: Resolution = { user, self, effective: self, seat: null, staffVerifiedUntil, viewAs: null };
+  const staffOnly: Resolution = { user, self, effective: self, seat: null, staffVerifiedUntil, viewAs: null, openAsAdmin: null };
 
-  // Section 8, live grant: holds this session, not ended, not expired, and the target's resolved
-  // organization still equals the grant's (null equals null). Anything else is ignored like an expired grant.
+  // Section 8 and 8a, live grant of either kind: holds this session, not ended, not expired. Then a view-as grant is
+  // live while the target's resolved organization still equals the grant's (null equals null), and an open-as-admin
+  // grant while its organization is in setup (below). Anything else is ignored like an expired grant.
   const grant = await ctx.stores.grants.findBySession(auth.sessionId);
   if (grant === null) return staffOnly;
   if (grant.endedAt !== null || grant.expiresAt.getTime() <= now.getTime()) return staffOnly;
+  if (grant.kind === 'open_as_admin') {
+    // D25: live only while its organization exists and is in setup (active, nobody has ever joined it), so a join or a
+    // suspension ends it from the next request on. The organization comes from the grant, never from the request.
+    const org = await ctx.stores.orgs.findById(grant.orgId);
+    if (org === null) return staffOnly;
+    // A suspension ends it for good: a grant started at or before the last one stays dead after a reactivation, whether
+    // or not End was ever sent (fails closed; nothing here writes).
+    if (org.lastSuspendedAt !== null && grant.startedAt.getTime() <= org.lastSuspendedAt.getTime()) return staffOnly;
+    const scope = scopeForOpenAsAdmin(grant);
+    if (!(await isInSetup(ctx, scope, org))) return staffOnly;
+    return {
+      user, self, effective: { state: 'member', org: { id: org.id, name: org.name }, role: 'org_admin' }, seat: null,
+      staffVerifiedUntil, viewAs: null, openAsAdmin: { grant, scope, orgName: org.name },
+    };
+  }
   const target = await ctx.authStores.users.findById(grant.targetUserId);
   if (target === null) return staffOnly;
   const person = await resolvePerson(ctx, target);
   if ((person.seat?.orgId ?? null) !== grant.orgId) return staffOnly;
-  return { user, self, effective: person.access, seat: person.seat, staffVerifiedUntil, viewAs: { grant, target } };
+  return { user, self, effective: person.access, seat: person.seat, staffVerifiedUntil, viewAs: { grant, target }, openAsAdmin: null };
 }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'expo-router';
 
-import { createLocation, type TownInput } from './api';
+import { createLocation, openAsAdminOrgId, type TownInput } from './api';
 import { CONTACT_EMAIL } from './contact';
 import { hasCode } from './errors';
 import { useAction } from './hooks';
@@ -89,7 +89,7 @@ export function AddLocationForm(props: {
   onRowsLeft?: (left: boolean) => void;
 }): React.JSX.Element {
   const { target, onRowsLeft } = props;
-  const { api, org, reloadOrg } = usePortal();
+  const { api, me, org, reloadOrg } = usePortal();
   const router = useRouter();
   const { readOnly, line } = useReadOnly();
   const orgSearch = org?.status === 'ready' ? org.data.placeSearch === true : null;
@@ -114,8 +114,9 @@ export function AddLocationForm(props: {
 
   const send = useCallback((input: { name: string; town: TownInput }, placeId: string | null): Promise<Added | null> => {
     if (target !== undefined) return target.create(input, placeId);
-    return placeId === null ? createLocation(api, input) : createLocationAt(api, input, placeId);
-  }, [api, target]);
+    const orgId = openAsAdminOrgId(me);
+    return placeId === null ? createLocation(api, input, orgId) : createLocationAt(api, input, placeId, orgId);
+  }, [api, me, target]);
 
   /** After a press that added any: the organization reloads, and once none is left the first one's Home opens. */
   const after = useCallback(async (added: readonly Added[], finished: boolean): Promise<void> => {

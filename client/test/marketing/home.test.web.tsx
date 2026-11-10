@@ -255,6 +255,9 @@ test('step 03 and the FAQ say what the portal does today: uploads and notes, no 
     .toContain('Once you have access, you drop your files in the app, and we store them privately for your organization and read the date, guest count and net sales for each day. Or your browser can read a CSV and send us only those three values a day, without the file.');
   expect(faq.getByText(/^No\. Your sales data/).textContent)
     .toContain('Your sales data is used only to provide Townwise to your restaurant: its own forecasts and TownwiseAI, its AI assistant. It is not shared with or used for other restaurants, and it is not used to train AI models.');
+  // D25: staff also see the figures while setting up an organization nobody has joined.
+  expect(faq.getByText(/^No\. Your sales data/).textContent)
+    .toContain('only through a read-only view that is recorded and shown to your organization’s admins, or, before anyone from your organization has joined, while setting it up for you with your consent, which is recorded and shown to your admins too.');
   expect(faq.getByText(/^Townwise does not charge/).textContent).toBe('Townwise does not charge for early access. Pricing is not set yet.');
   expect(within(section('Tell us about your town.')).getByText(/^Townwise is in early access/).textContent)
     .toBe('Townwise is in early access. Sign in with Google and fill in a short form about your restaurant and your town. Someone on our team reviews each request by hand.');

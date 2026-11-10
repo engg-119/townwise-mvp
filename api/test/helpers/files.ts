@@ -85,7 +85,7 @@ export async function seedReadFile(
   blobs: MemoryFileBlobs,
   opts: {
     orgId: string; locationId: string; uploadedBy: string; name: string; raw: Buffer; clean: string;
-    importId?: string; uploaderRole?: 'org_admin' | 'member';
+    importId?: string; uploaderRole?: 'org_admin' | 'member'; byStaff?: boolean;
   },
 ): Promise<string> {
   const _id = new Types.ObjectId();
@@ -99,7 +99,7 @@ export async function seedReadFile(
   }
   await server.connection.collection('tw_files').insertOne({
     _id, orgId: new Types.ObjectId(opts.orgId), locationId: new Types.ObjectId(opts.locationId), importId, purpose: 'history',
-    uploadedBy: opts.uploadedBy, uploaderRole: opts.uploaderRole ?? 'member', uploadedAt: server.clock.now(), name: opts.name,
+    uploadedBy: opts.uploadedBy, uploaderRole: opts.uploaderRole ?? 'member', ...(opts.byStaff === true ? { byStaff: true } : {}), uploadedAt: server.clock.now(), name: opts.name,
     kind: 'text', sizeBytes: opts.raw.length, fingerprint: `${'0'.repeat(63)}1`, upload: null, status: 'read', outcome: null,
     progress: null, readStartedAt: server.clock.now(), readMs: 10, answers: {}, uploadId: new Types.ObjectId(),
     result: {

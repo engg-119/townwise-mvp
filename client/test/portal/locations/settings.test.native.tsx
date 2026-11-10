@@ -11,7 +11,7 @@ import { act, cleanup, fireEvent, screen, waitFor } from 'expo-router/testing-li
 
 import type { LocationSummary } from '../../../src/portal/schemas';
 import {
-  ACCESS, deferred, fakePortalApi, LOCATIONS, locationOf, meOf, orgOf, refusal, viewAsMe, writes, type FakePortalApi,
+  ACCESS, deferred, fakePortalApi, LOCATIONS, locationOf, meOf, openAsAdminMe, orgOf, refusal, viewAsMe, writes, type FakePortalApi,
 } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { locationsFake, salesOf, type LocationsFake } from './fakes';
@@ -234,6 +234,25 @@ describe('P10 Add location', () => {
     await waitFor(() => { expect(router.getPathname()).toBe('/locations/l9'); });
     expect(writes(api)).toEqual([{ method: 'POST', path: '/api/org/locations', body: { name: 'Harbor Room', town: { townId: 'stowe-vt' } } }]);
     expect(await screen.findByText('Harbor Room, Stowe, VT')).toBeTruthy();
+  });
+
+  test('D25: in open as admin the form also names the organization the page shows', async () => {
+    const { api } = setup(openAsAdminMe());
+    const added = locationOf('l9', 'Harbor Room', { townId: 'stowe-vt', name: 'Stowe', state: 'VT' });
+    api.answers['/api/org/locations'] = () => {
+      api.org = orgOf('org_admin', [...LOCATIONS, added]);
+      return { location: added };
+    };
+    const { router } = await renderApp('/locations/new', api);
+    expect(await screen.findByRole('heading', { name: 'Add location' })).toBeTruthy();
+    await fireEvent.changeText(screen.getByLabelText('Name'), 'Harbor Room');
+    await fireEvent.press(screen.getByLabelText('Town'));
+    await fireEvent.press(screen.getByRole('radio', { name: 'Stowe, VT' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Add location' }));
+    await waitFor(() => { expect(router.getPathname()).toBe('/locations/l9'); });
+    expect(writes(api)).toEqual([
+      { method: 'POST', path: '/api/org/locations', body: { name: 'Harbor Room', town: { townId: 'stowe-vt' }, orgId: 'o1' } },
+    ]);
   });
 
   test('Cancel returns to Locations', async () => {

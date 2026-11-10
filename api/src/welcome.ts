@@ -1,5 +1,6 @@
 // Who gets the welcome statement (spec 15.8, 10.1): only the person whose approved request created the organization,
-// on their first visit, while the organization has no sales days (so “ready to set up” is true), never under view-as.
+// on their first visit, while the organization has no sales days (so “ready to set up” is true), never under view-as
+// or open as admin.
 // Invited teammates and admins of staff-created organizations have the Joining notice instead. Reads only.
 import type { TownwiseContext } from './app.ts';
 import type { Principal } from './access/policy.ts';
@@ -29,7 +30,7 @@ export function firstNameOf(contactName: string): string | null {
  * teammates of organizations with data.
  */
 export async function welcomeFor(ctx: TownwiseContext, principal: Principal): Promise<WelcomeView | null> {
-  if (principal.kind !== 'member' || principal.viewAs !== null) return null;
+  if (principal.kind !== 'member' || principal.viewAs !== null || principal.openAsAdmin !== null) return null;
   const { scope, userId } = principal;
   if (await ctx.stores.welcomes.has(scope, userId)) return null;
   if (await ctx.stores.salesDays.hasAnyForOrg(scope)) return null;

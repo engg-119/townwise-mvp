@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import type { ApiClient } from '../../api/client';
-import type { AccessRequestInput, TownInput } from '../api';
+import { withOrgId, type AccessRequestInput, type TownInput } from '../api';
 import { hasCode } from '../errors';
 import { placeMapSchema } from '../places/map';
 import { createdLocationSchema, meResponseSchema, townSchema, type LocationSummary, type MeResponse, type Town } from '../schemas';
@@ -108,8 +108,10 @@ export function sendAccessRequestAt(api: ApiClient, input: AccessRequestInput, p
  * POST /api/org/locations, as createLocation (../api.ts) with the place's id. The API asks Google for the place and
  * refuses a town that isn't its own (400 place_town_mismatch).
  */
-export async function createLocationAt(api: ApiClient, input: { name: string; town: TownInput }, placeId: string): Promise<LocationSummary> {
-  const body = await api.json('/api/org/locations', createdLocationSchema, { method: 'POST', body: { ...input, placeId } });
+export async function createLocationAt(
+  api: ApiClient, input: { name: string; town: TownInput }, placeId: string, orgId: string | null,
+): Promise<LocationSummary> {
+  const body = await api.json('/api/org/locations', createdLocationSchema, { method: 'POST', body: withOrgId({ ...input, placeId }, orgId) });
   return body.location;
 }
 

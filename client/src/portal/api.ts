@@ -40,14 +40,32 @@ export function fetchOrg(api: ApiClient): Promise<OrgResponse> {
   return api.json('/api/org', orgResponseSchema);
 }
 
-export async function createLocation(api: ApiClient, input: { name: string; town: TownInput }): Promise<LocationSummary> {
-  const body = await api.json('/api/org/locations', createdLocationSchema, { method: 'POST', body: input });
+/**
+ * D25: the organization open as admin, null outside it. Renaming the organization and adding a location name nothing
+ * of it in their path, so in open as admin they send it as `orgId`: a tab left on an organization this session no
+ * longer has open is then refused (409 open_as_admin_active, which reads GET /api/me again) instead of writing into
+ * the one it has open now.
+ */
+export function openAsAdminOrgId(me: MeResponse): string | null {
+  return me.openAsAdmin?.org.id ?? null;
+}
+
+/** `orgId` from openAsAdminOrgId: sent only when set. */
+export function withOrgId<T extends object>(body: T, orgId: string | null): T & { orgId?: string } {
+  return orgId === null ? body : { ...body, orgId };
+}
+
+export async function createLocation(api: ApiClient, input: { name: string; town: TownInput }, orgId: string | null): Promise<LocationSummary> {
+  const body = await api.json('/api/org/locations', createdLocationSchema, { method: 'POST', body: withOrgId(input, orgId) });
   return body.location;
 }
 
-/** Idempotent; answers the staff member's own access. */
-export function endViewAs(api: ApiClient): Promise<MeResponse> {
-  return api.json('/api/admin/view-as/end', meResponseSchema, { method: 'POST', body: {} });
+/**
+ * Idempotent; answers the session's access after it. `grantId`, the view-as or open-as-admin grant the tab shows (D25),
+ * ends that grant only, so a tab left on an earlier one never ends a newer one.
+ */
+export function endViewAs(api: ApiClient, grantId?: string): Promise<MeResponse> {
+  return api.json('/api/admin/view-as/end', meResponseSchema, { method: 'POST', body: grantId === undefined ? {} : { grantId } });
 }
 
 export async function fetchPendingCount(api: ApiClient): Promise<number> {

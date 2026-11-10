@@ -59,7 +59,7 @@ describe('POST /api/me/join', () => {
     expect(body).toEqual({
       user: { id: session.userId, email },
       access: { state: 'member', org: { id: orgId, name: 'Harbor House' }, role: 'org_admin' },
-      viewAs: null, staff: null, welcome: null,
+      viewAs: null, openAsAdmin: null, staff: null, welcome: null,
     });
 
     const seat = await memberDoc(server, inviteId);

@@ -23,7 +23,7 @@ import type { LocationRecord } from '../stores/locations.ts';
 import { NO_COVERAGE, type Coverage } from '../stores/sales-days.ts';
 import { resolveTown, townInputSchema, type Town } from '../towns.ts';
 import { townOfAddress } from './places.ts';
-import { actorOf, orgAdmin } from './team.ts';
+import { actorOf, assertOpenAsAdminTab, orgAdmin } from './team.ts';
 
 /** Spec 10.1. */
 export interface LocationSummary {
@@ -261,13 +261,16 @@ export async function removeLocation(ctx: TownwiseContext, scope: OrgScope, loca
   return true;
 }
 
-/** POST /api/org/locations (P10). */
+/** POST /api/org/locations (P10). `orgId`, the organization the page shows, is required in open as admin (D25). */
 export async function createLocation(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const admin = orgAdmin(principal);
+  assertOpenAsAdminTab(admin, req.body);
   const { scope } = admin;
   const input = await checkedCreate(ctx, scope, 'org.locations.create', admin.userId, req.body);
   const now = ctx.now();
-  const location = await ctx.stores.locations.create(scope, { ...input, createdAt: now, createdBy: admin.userId });
+  const location = await ctx.stores.locations.create(scope, {
+    ...input, createdAt: now, createdBy: admin.userId, ...(admin.openAsAdmin !== null ? { byStaff: true } : {}),
+  });
   if (location === null) throw nameTaken();
   await recordAfter(ctx, {
     ...actorOf(admin), at: now, orgId: scope.orgId, action: 'location.created',

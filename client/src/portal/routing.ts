@@ -54,6 +54,8 @@ export function isAllowed(me: MeResponse, pathname: string): boolean {
   // Two-step settings are the signed-in person's own kit account. Under view-as they would be the staff
   // member's, not the target's, so view-as never shows them.
   if (path === '/settings/security') return me.viewAs === null;
+  // Team is closed while staff set up an organization as its admin; the console shows the team (D25).
+  if (path === '/team' && me.openAsAdmin != null) return false;
   // `staff` is never the access during view-as: the access is then the target's.
   if (CONSOLE_PAGES.test(path)) return access.state === 'staff';
   const gate = GATE_PAGES[path];
@@ -95,10 +97,10 @@ const SECTIONS: readonly (readonly [TabKey, string])[] = [
 
 /**
  * The client app's top bar (15.3): the sections of `locationId` (Home, Analytics, TownwiseAI, Notes, Town, Upload),
- * then Team for org admins and Settings. With no location (none yet, or not known yet) only Team and Settings.
+ * then Team for org admins (not while staff open the organization as admin) and Settings. With no location (none yet, or not known yet) only Team and Settings.
  * Analytics also marks Sales data, which lives under it.
  */
-export function clientNav(role: Role, pathname: string, locationId: string | null): NavItem[] {
+export function clientNav(role: Role, pathname: string, locationId: string | null, openAsAdmin = false): NavItem[] {
   const path = normalize(pathname);
   const items: NavItem[] = [];
   if (locationId !== null) {
@@ -108,7 +110,7 @@ export function clientNav(role: Role, pathname: string, locationId: string | nul
       items.push({ label, href, current });
     }
   }
-  const account: NavItem[] = role === 'org_admin' ? [{ label: 'Team', href: '/team', current: currentFor(path, '/team', null) }] : [];
+  const account: NavItem[] = role === 'org_admin' && !openAsAdmin ? [{ label: 'Team', href: '/team', current: currentFor(path, '/team', null) }] : [];
   account.push({ label: 'Settings', href: '/settings', current: currentFor(path, '/settings', /^\/settings\//) });
   return [...items, ...account.map((item, index) => (index === 0 ? { ...item, end: true } : item))];
 }

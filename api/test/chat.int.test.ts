@@ -23,8 +23,9 @@ import {
 import {
   eventsOf, message, messagesOf, scriptedModel, text, thinking, toolUse, type ScriptedModel,
 } from './helpers/chat-model.ts';
+import { setupOrg } from './helpers/setup-org.ts';
 import {
-  call, limiterKey, MINUTE, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
+  call, limiterKey, MINUTE, removeStaffFactor, signIn, signInStaff, startTownwiseServer, STAFF_EMAIL, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
 
 let server: TownwiseTestServer;
@@ -849,5 +850,53 @@ describe('audit events and logs', () => {
       expect(everything).not.toContain(sentinel);
     }
     expect(server.logs.some((line) => line.includes('townwise.chat_turn'))).toBe(true);
+  });
+});
+
+/** Staff open a new organization nobody has joined as its admin and add a location. */
+async function openAsAdminOrg(): Promise<{ staff: TestSession; orgId: string; locationId: string }> {
+  const staff = await signInStaff(server);
+  const setup = await setupOrg(server, staff);
+  const started = await call(server, `/api/admin/orgs/${setup.orgId}/open-as-admin`, { method: 'POST', session: staff });
+  expect(started.status).toBe(201);
+  const created = await call(server, '/api/org/locations', {
+    session: staff, json: { name: 'Main Street', town: { townId: 'hanover-nh' }, orgId: setup.orgId },
+  });
+  expect(created.status).toBe(201);
+  return { staff, orgId: setup.orgId, locationId: (await created.json() as { location: { id: string } }).location.id };
+}
+
+describe('open as admin', () => {
+  const orgUsage = (id: string): Promise<Record<string, unknown> | null> =>
+    server.connection.collection('tw_chat_usage').findOne({ orgId: new Types.ObjectId(id), month: '2026-06' });
+
+  it('open as admin: a turn is charged to the organization’s budget and recorded as Townwise staff', async () => {
+    const { staff, orgId: setupId, locationId: staffLocation } = await openAsAdminOrg();
+    try {
+      expect(await orgUsage(setupId)).toBeNull();
+      model.script({ kind: 'message', message: message([text('Hello from the model.')], { usage: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0 } }) });
+      const res = await turn({ content: 'Set this up' }, { session: staff, email: STAFF_EMAIL }, staffLocation);
+      expect(res.status).toBe(200);
+      expect(Number((await orgUsage(setupId))?.costMicroUsd)).toBeGreaterThan(0);
+      const event = (await auditEvents(server)).find((e) => e.action === 'chat.turn_completed' && String(e.orgId) === setupId);
+      expect(event).toMatchObject({ actorRole: 'superadmin', actorEmail: STAFF_EMAIL, actorUserId: staff.userId });
+    } finally {
+      await removeStaffFactor(server);
+      await server.connection.collection('tw_view_as_grants').deleteMany({});
+    }
+  });
+
+  it('open as admin: a used-up organization budget answers 409 chat_budget_exhausted', async () => {
+    const { staff, orgId: setupId, locationId: staffLocation } = await openAsAdminOrg();
+    try {
+      await server.connection.collection('tw_chat_usage').insertOne({
+        orgId: new Types.ObjectId(setupId), month: '2026-06', costMicroUsd: 20_000_000, updatedAt: server.clock.now(),
+      });
+      const refused = await turn({ content: 'Over budget' }, { session: staff, email: STAFF_EMAIL }, staffLocation);
+      expect(refused).toMatchObject({ status: 409, error: 'chat_budget_exhausted' });
+    } finally {
+      await removeStaffFactor(server);
+      await server.connection.collection('tw_view_as_grants').deleteMany({});
+    }
   });
 });

@@ -75,4 +75,9 @@ describe('isolation (source)', () => {
     const callers = sourceFiles().filter((file) => file.text.includes('scopeForSweep(')).map((file) => file.path).sort();
     expect(callers).toEqual(['access/policy.ts', 'files/sweeper.ts']);
   });
+
+  it('only access/policy.ts mints the open-as-admin scope, and only access/resolve.ts asks for it', () => {
+    const callers = sourceFiles().filter((file) => file.text.includes('scopeForOpenAsAdmin(')).map((file) => file.path).sort();
+    expect(callers).toEqual(['access/policy.ts', 'access/resolve.ts']);
+  });
 });

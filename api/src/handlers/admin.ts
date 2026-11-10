@@ -15,6 +15,7 @@ import {
 import type { TownwiseContext } from '../app.ts';
 import { scopeForNewOrg, scopeForStaffOrg, type OrgScope, type Principal, type StaffPrincipal } from '../access/policy.ts';
 import { requestView, type AccessRequestView } from '../access/resolve.ts';
+import { isInSetup } from '../access/setup.ts';
 import { normalizeEmail } from '../normalize-email.ts';
 import { currentEmail } from '../people.ts';
 import type { AccessRequestRecord } from '../stores/access-requests.ts';
@@ -270,7 +271,8 @@ export async function rejectRequest(ctx: TownwiseContext, req: Request, res: Res
 }
 
 // Organizations, people and the audit log (spec 10.7, P20 to P23). Staff reads here are not recorded (D7), and
-// they carry counts, dates, emails and names only: sales figures and note text are visible only through view-as.
+// they carry counts, dates, emails and names only: never a sales figure or note text. Staff read those through view-as
+// (D7), or by opening an organization nobody has joined as its admin (D25).
 
 /** P21: the newest events on the organization's page. */
 const RECENT_EVENTS = 20;
@@ -299,15 +301,6 @@ function staffOrgView(org: OrgRecord): Record<string, string | null> {
     id: org.id, name: org.name, status: org.status, createdAt: org.createdAt.toISOString(),
     fromRequestId: org.fromRequestId, suspendedAt: org.suspendedAt?.toISOString() ?? null,
   };
-}
-
-/**
- * Staff setup (D23): the organization is active and nobody has ever joined it, by its `firstJoinedAt`, which outlives
- * every seat and person deletion, or, for an organization from before that field, by any member row that joined
- * (`joinedAt`, active or removed). The setup routes (staff-setup.ts) and `inSetup` below read this one predicate.
- */
-export async function isInSetup(ctx: TownwiseContext, scope: OrgScope, org: OrgRecord): Promise<boolean> {
-  return org.status === 'active' && org.firstJoinedAt === null && !(await ctx.stores.members.anyJoined(scope));
 }
 
 export async function getOrg(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {

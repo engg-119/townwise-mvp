@@ -317,10 +317,18 @@ describe('GET /api/org/staff-activity (D9)', () => {
     await server.connection.collection('tw_audit_events').insertMany(Array.from({ length: 10 }, (_, i) => staffEvent(
       100_000 + i, 'staff_action.not_applied', { eventId: new Types.ObjectId().toHexString(), code: 'internal' },
     )));
-    const { events } = await (await call(server, '/api/org/staff-activity', { session: admin.session })).json() as { events: StaffActivityView[] };
+    interface Page { events: StaffActivityView[]; nextBefore: string | null }
+    const { events, nextBefore } = await (await call(server, '/api/org/staff-activity', { session: admin.session })).json() as Page;
     expect(events).toHaveLength(50);
     expect(events[0]?.at).toBe(new Date(base + 54_000).toISOString());
     expect(events.every((event) => event.summary === 'Suspended the organization')).toBe(true);
+    // The oldest ones are a page away, not gone: open as admin makes every change a staff event (D25).
+    expect(nextBefore).toBe(new Date(base + 5_000).toISOString());
+    const older = await (await call(server, `/api/org/staff-activity?before=${encodeURIComponent(nextBefore ?? '')}`, { session: admin.session })).json() as Page;
+    expect(older.events.map((event) => event.at)).toEqual([4, 3, 2, 1, 0].map((i) => new Date(base + i * 1000).toISOString()));
+    expect(older.nextBefore).toBeNull();
+    expect(await errorOf(await call(server, '/api/org/staff-activity?before=yesterday', { session: admin.session })))
+      .toEqual({ status: 400, error: 'invalid_request' });
   });
 
   it('a staff invitation made in the console appears in the org admin’s staff activity', async () => {

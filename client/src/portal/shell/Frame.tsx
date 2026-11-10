@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth, useAuthState } from '../../auth/AuthProvider';
 import { theme } from '../../theme';
-import { fetchPendingCount } from '../api';
+import { endViewAs, fetchPendingCount } from '../api';
 import { COPY } from '../errors';
 import { useAction } from '../hooks';
 import { useOptionalPortal, usePortal, useReadOnly } from '../PortalProvider';
@@ -92,10 +92,18 @@ function signOutState(readOnly: boolean): { signOutDisabled: boolean; signOutDes
   return readOnly ? { signOutDisabled: true, signOutDescribedBy: VIEW_AS_LINE_ID } : { signOutDisabled: false };
 }
 
-/** Sign out, and the line that says it didn't work (web keeps the session when the server can't clear it). */
+/**
+ * Sign out, and the line that says it didn't work (web keeps the session when the server can't clear it). In open as
+ * admin (D25) it sends End for the grant this tab shows first, so the end is recorded now rather than once the grant
+ * expires; a failed End never stops the sign-out, which ends the mode anyway.
+ */
 function useSignOut(): { run: () => void; failed: React.ReactNode } {
   const auth = useAuth();
-  const action = useAction(useCallback(() => auth.signOut(), [auth]));
+  const grantId = useOptionalPortal()?.me.openAsAdmin?.id ?? null;
+  const action = useAction(useCallback(async () => {
+    if (grantId !== null) await endViewAs(auth.api, grantId).catch(() => undefined);
+    await auth.signOut();
+  }, [auth, grantId]));
   const failed = action.error === null ? null : (
     <Wrap style={styles.signOutError}><ErrorNotice message={COPY.signOutFailed} /></Wrap>
   );
@@ -135,7 +143,7 @@ export function ClientFrame(props: { children: React.ReactNode }): React.JSX.Ele
       kind="client"
       email={me.user.email}
       orgName={access.org.name}
-      nav={clientNav(access.role, pathname, navLocationId(pathname, lastLocationId, locations))}
+      nav={clientNav(access.role, pathname, navLocationId(pathname, lastLocationId, locations), me.openAsAdmin != null)}
       {...signOutState(readOnly)}
       onSignOut={signOut.run}
     />

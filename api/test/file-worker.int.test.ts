@@ -11,7 +11,10 @@ import type { FileView, ImportView } from '../src/handlers/files.ts';
 import { createMemoryFileBlobs, type MemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import { addLocation, addSalesDay, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { uploadFile } from './helpers/files.ts';
-import { call, signIn, startTownwiseServer, writesDuring, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
+import { setupOrg } from './helpers/setup-org.ts';
+import {
+  call, removeStaffFactor, signIn, signInStaff, startTownwiseServer, writesDuring, type TestSession, type TownwiseTestServer,
+} from './helpers/server.ts';
 
 const FIXTURES = join(import.meta.dirname, 'fixtures', 'sales-files');
 const fixture = (name: string): Buffer => readFileSync(join(FIXTURES, name));
@@ -373,5 +376,40 @@ describe('import routes', () => {
     expect(done.status).toBe('done');
     expect(done.files.map((file) => file.status)).toEqual(['uploading', 'read']);
     expect(done.files[1]?.id).toBe(later.file.id);
+  });
+});
+
+/** Staff open a new organization nobody has joined as its admin and add a location; resolves what the tests below need. */
+async function openAsAdminOrg(): Promise<{ staff: TestSession; orgId: string; locationId: string; grantId: string }> {
+  const staff = await signInStaff(server);
+  const setup = await setupOrg(server, staff);
+  const started = await call(server, `/api/admin/orgs/${setup.orgId}/open-as-admin`, { method: 'POST', session: staff });
+  expect(started.status).toBe(201);
+  const grantId = (await started.json() as { openAsAdmin: { id: string } }).openAsAdmin.id;
+  const created = await call(server, '/api/org/locations', {
+    session: staff, json: { name: 'Main Street', town: { townId: 'hanover-nh' }, orgId: setup.orgId },
+  });
+  expect(created.status).toBe(201);
+  return { staff, orgId: setup.orgId, locationId: (await created.json() as { location: { id: string } }).location.id, grantId };
+}
+
+describe('open as admin', () => {
+  it('a file stored byStaff is read as Townwise staff: sales.uploaded has actor role superadmin and the grant id, and the upload record byStaff', async () => {
+    const { staff, orgId: setupId, locationId: staffLocation, grantId } = await openAsAdminOrg();
+    try {
+      const { file, importId } = await drop(staffLocation, staff, 'day-level.csv', fixture('day-level.csv'));
+      expect((await start(staffLocation, importId, staff)).status).toBe(202);
+      const done = await settledImport(staffLocation, importId, staff);
+      expect(done).toMatchObject({ status: 'done', files: [{ status: 'read', uploadedByEmail: 'Townwise staff' }] });
+      const event = (await auditEvents(server)).find((e) => e.action === 'sales.uploaded' && String(e.orgId) === setupId);
+      expect(event).toMatchObject({
+        actorUserId: staff.userId, actorRole: 'superadmin', viewAsGrantId: grantId, details: { fileId: file.id, via: 'file' },
+      });
+      const upload = await server.connection.collection('tw_uploads').findOne({ orgId: new Types.ObjectId(setupId) });
+      expect(upload).toMatchObject({ byStaff: true, uploadedBy: staff.userId });
+    } finally {
+      await removeStaffFactor(server);
+      await server.connection.collection('tw_view_as_grants').deleteMany({});
+    }
   });
 });
