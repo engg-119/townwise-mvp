@@ -3,8 +3,8 @@ import { metricNumber, shortDate, signedPercent, type Metric } from '../analytic
 import { ShowNumbers, UploadAction } from '../locations/parts';
 import { Actions } from '../ui/Button';
 import { DataTable } from '../ui/DataTable';
-import { Panel, Stack } from '../ui/layout';
-import { Eyebrow, Heading, Small } from '../ui/text';
+import { Small } from '../ui/text';
+import { Block } from './Block';
 import { LastWeekChart } from './LastWeekChart';
 
 // Last week (home.md 2.4): last week, Monday to Sunday, against the same weekdays 52 weeks earlier. Until a
@@ -23,11 +23,7 @@ export function LastWeek(props: {
   const days = comparison.state === 'compared' || comparison.state === 'no_last_year' || comparison.state === 'no_overlap' ? comparison.days : null;
   const number = (value: number | null): string => (value === null ? 'No data' : metricNumber(value, metric));
   return (
-    <Panel label="Last week">
-      <Stack gap={8}>
-        <Eyebrow>{range === null ? 'Last week' : `Last week, ${range}`}</Eyebrow>
-        <Heading level={3}>Against the same week last year</Heading>
-      </Stack>
+    <Block label="Last week" eyebrow={range === null ? 'Last week' : `Last week, ${range}`} title="Against the same week last year">
       {comparison.state === 'compared' ? <LastWeekChart days={comparison.days} metric={metric} /> : null}
       <Small white>{lastWeekLine(comparison, metric)}</Small>
       {comparison.state === 'no_recent' || comparison.state === 'no_days' ? (
@@ -53,6 +49,6 @@ export function LastWeek(props: {
           />
         </ShowNumbers>
       )}
-    </Panel>
+    </Block>
   );
 }

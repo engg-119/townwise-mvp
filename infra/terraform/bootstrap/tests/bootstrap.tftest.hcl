@@ -145,11 +145,11 @@ run "rbac_scopes" {
 
   assert {
     condition = (
-      !contains([for key, role in local.team_roles : role.role if role.group == "developers"], "Key Vault Secrets User") &&
+      [for key, role in local.team_roles : role.scope if role.group == "developers" && role.role == "Key Vault Secrets User"] == ["/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/anthropic-dev-key"] &&
       !contains([for key, role in local.team_roles : role.role if role.group == "developers"], "Key Vault Secrets Officer") &&
       !contains([for key, role in local.team_roles : role.role if role.group == "developers"], "Contributor")
     )
-    error_message = "Developers get no Key Vault secret access and cannot change resources."
+    error_message = "Developers read one secret, the shared dev Anthropic key, and cannot change resources."
   }
 }
 

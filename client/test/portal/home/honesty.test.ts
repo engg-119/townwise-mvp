@@ -2,9 +2,12 @@ import { dayContext } from '../../../src/portal/analytics/days';
 import { byDate, type DayRecord } from '../../../src/portal/analytics/history';
 import {
   calendarCoverageLine, calendarWeekLine, lastWeekComparison, lastWeekLine, LAST_YEAR_FOOTNOTE, lateWeekLine, lateWeekShare, leadLine,
-  mondayOf, monthFactLine, monthFacts, pastDay, sameWeekdayYearsAgo, summaryLabel, thisWeek, vsUsualLine, weekDates, type HomeInput,
+  mondayOf, monthDay, monthFactLine, monthFacts, nextEvent, nextEventWhen, pastDay, sameWeekdayYearsAgo, summaryLabel, thisWeek, vsUsualLine,
+  weekDates, type HomeInput,
 } from '../../../src/portal/analytics/week';
+import { addDays, monthRange } from '../../../src/portal/locations/dates';
 import { BAR_ORDER_BODY } from '../../../src/portal/home/BarOrder';
+import { lastWeekGlance } from '../../../src/portal/home/Glance';
 import { FORECAST_LINE, questionsLabel } from '../../../src/portal/home/Home';
 import { PEOPLE_HEAD } from '../../../src/portal/home/ThisMonth';
 import { calendarBody, holiday, note, run, townEvent } from '../analytics/fakes';
@@ -57,12 +60,27 @@ describe.each(ENDINGS)('history ending %s', (end) => {
     for (const fact of monthFacts(home)) expect(fact.year).toBeLessThan(2026);
   });
 
+  test('the month card’s day detail gives no figure after the last day of data or after today', () => {
+    const { from, to } = monthRange(TODAY.slice(0, 7));
+    for (let date = from; date <= to; date = addDays(date, 1)) {
+      const day = monthDay(date, home);
+      if (date > end || date > TODAY) expect(day.value).toBeNull();
+      if (date > TODAY) expect(day.future).toBe(true);
+      for (const past of [day.lastYear, day.twoYearsAgo]) {
+        if (past.date > end) expect([past.value, past.usual, past.change]).toEqual([null, null, null]);
+      }
+    }
+  });
+
   test('every sentence Home builds is free of forecast wording', () => {
     const week = thisWeek(home);
     const sentences = [
       leadLine(home.lastDate, calendarBody()), calendarWeekLine(week, calendarBody()), calendarCoverageLine(calendarBody()),
-      lastWeekLine(lastWeekComparison(home), 'guests'), ...monthFacts(home).map((fact) => monthFactLine(fact, 'guests')),
+      lastWeekLine(lastWeekComparison(home), 'guests'), lastWeekGlance(lastWeekComparison(home), 'guests'),
+      ...monthFacts(home).map((fact) => monthFactLine(fact, 'guests')),
     ];
+    const next = nextEvent(TODAY, CONTEXT);
+    if (next !== null) sentences.push(nextEventWhen(next));
     if (week.summary !== null) sentences.push(summaryLabel(week.summary), vsUsualLine(week.summary) ?? '');
     const share = lateWeekShare(home);
     if (share !== null) sentences.push(lateWeekLine(share, 'guests'));
@@ -75,6 +93,7 @@ test('a day after today has no figure even when a row for it is stored', () => {
   const home: HomeInput = { today: TODAY, byDate: byDate(future), context: CONTEXT, metric: 'guests', lastDate: '2026-11-06' };
   expect(thisWeek(home).rows.find((row) => row.date === '2026-11-06')?.value).toBeNull();
   expect(pastDay('2026-11-06', home).value).toBeNull();
+  expect(monthDay('2026-11-06', home).value).toBeNull();
 });
 
 test('no history at all: no figure anywhere', () => {
