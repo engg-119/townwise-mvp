@@ -1,5 +1,6 @@
 # GitHub Actions reaches Azure only through OIDC federated credentials on user-assigned managed identities:
-# no app registration, no client secret. Entra matches the subject exactly. GitHub Free with a private
+# no app registration, no client secret. (The one app registration, lab.tf's, is the lab callback's audience and
+# holds no credential.) Entra matches the subject exactly. GitHub Free with a private
 # repository has no branch protection, so the main-only deploy rests on only the owner having write access
 # (infra/README.md). The identities live in the bootstrap group, where only admins can add credentials.
 
