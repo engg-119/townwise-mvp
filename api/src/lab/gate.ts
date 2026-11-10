@@ -1,4 +1,4 @@
-// The publish gate (G2): pure, so every threshold is one test. Every value is a [CONFIRM] in spec D27.
+// The publish gate (G2): pure, so every threshold is one test. Every value but minHistoryDays (decided by the owner, 2026-11-10) is a [CONFIRM] in spec D27.
 import { daysBetween } from '../dates.ts';
 import type { ForecastRunRecord } from '../stores/forecasts.ts';
 import type { Scorecard } from './scorecard.ts';
