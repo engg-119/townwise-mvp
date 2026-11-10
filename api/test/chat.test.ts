@@ -101,7 +101,11 @@ describe('the request', () => {
 describe('thinking summaries', () => {
   it('asks for adaptive thinking with a summarized display, and keeps the effort', () => {
     const params = requestParams([{ role: 'user', content: 'One' }]);
-    expect(params.thinking).toEqual({ type: 'adaptive', display: 'summarized' });
+    expect(params.thinking).toEqual({
+      type: 'adaptive', display: 'summarized', block_binding: { prefix_mismatch_behavior: 'drop_block' },
+    });
+    // block_binding is a 400 without its beta.
+    expect(params.betas).toContain('thinking-binding-controls-2026-08-01');
     expect(params.output_config).toEqual({ effort: 'low' });
   });
 

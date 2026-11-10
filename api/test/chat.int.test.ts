@@ -171,10 +171,12 @@ describe('a plain answer', () => {
     const params = model.calls[0]?.params;
     expect(params).toMatchObject({
       model: 'claude-opus-5-5', max_tokens: 16_000, output_config: { effort: 'low' },
-      betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default', cache_control: { type: 'ephemeral' },
-      system: SYSTEM_PROMPT, messages: [{ role: 'user', content: 'What changed in May?' }],
+      betas: ['server-side-fallback-2026-07-01', 'thinking-binding-controls-2026-08-01'], fallbacks: 'default',
+      cache_control: { type: 'ephemeral' }, system: SYSTEM_PROMPT, messages: [{ role: 'user', content: 'What changed in May?' }],
     });
-    expect(params).toMatchObject({ thinking: { type: 'adaptive', display: 'summarized' } });
+    expect(params).toMatchObject({
+      thinking: { type: 'adaptive', display: 'summarized', block_binding: { prefix_mismatch_behavior: 'drop_block' } },
+    });
     expect(params?.tools?.map((tool) => ('name' in tool ? tool.name : null))).toEqual([
       'get_location_overview', 'get_sales_days', 'list_notes', 'get_town_profile', 'propose_note',
       'get_town_calendar', 'get_people_in_town', 'get_forecast', 'get_day', 'show_visual', 'suggest_next',

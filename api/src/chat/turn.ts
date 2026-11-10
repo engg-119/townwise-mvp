@@ -96,8 +96,11 @@ export function requestParams(messages: BetaMessageParam[]): BetaMessageStreamPa
     output_config: { effort: 'low' },
     // Adaptive is Opus 5.5's only thinking mode (`disabled` and `budget_tokens` both 400). `display` changes what the
     // stream shows, not what is billed: Opus 5.5 omits the thinking text by default, so ask for its summary.
-    thinking: { type: 'adaptive', display: 'summarized' },
-    betas: ['server-side-fallback-2026-07-01'],
+    // A stored thinking block is valid only against the system prompt and tools it was made with, so a release that
+    // changes either invalidates every earlier conversation's blocks. drop_block drops those blocks and answers, where
+    // the default (enforced for newer Anthropic accounts) would refuse every later turn of those conversations.
+    thinking: { type: 'adaptive', display: 'summarized', block_binding: { prefix_mismatch_behavior: 'drop_block' } },
+    betas: ['server-side-fallback-2026-07-01', 'thinking-binding-controls-2026-08-01'],
     fallbacks: 'default',
     cache_control: { type: 'ephemeral' },
     system: SYSTEM_PROMPT,
