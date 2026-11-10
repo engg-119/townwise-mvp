@@ -144,9 +144,11 @@ describe('the system prompt, calibrations', () => {
     for (const rule of [
       '- Call start_calibration only when an org admin asks to retrain or calibrate the forecast, and say it uses part of the monthly budget. If the owner describes a lasting change in their weekly pattern with a start date, pass that date as regimeStart.',
       '- After starting one, say it runs on Townwise’s servers and usually takes a few minutes; call get_calibration when they ask how it went. Never say a calibration is better or published unless get_calibration or compare_forecast_models says so, and give the reason it gives.',
-      '- Calibration results come with charts and cards the app draws; describe what they show in a sentence or two instead of reading out every number.',
+      '- A calibration result carries its scorecard; describe what it shows in a sentence or two instead of reading out every number.',
     ]) expect(SYSTEM_PROMPT).toContain(rule);
     expect(SYSTEM_PROMPT).toContain('compare_forecast_models');
+    // Until the chat redesign draws the lab's components, nothing tells the model the owner sees a chart.
+    expect(SYSTEM_PROMPT).not.toContain('charts');
     expect(SYSTEM_PROMPT).not.toMatch(/\d/);
   });
 });

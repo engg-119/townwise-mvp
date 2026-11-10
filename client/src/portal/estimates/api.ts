@@ -66,7 +66,8 @@ export const forecastRunSchema = z.object({
   id: z.string(),
   metric: z.literal('guests'),
   model: z.object({ family: z.string(), version: z.string(), label: z.string() }),
-  trainingSource: z.enum(['files_from_owner', 'townwise_lab']),
+  // Any string: a source this client doesn’t know yet reads as sales history (trainedOnWords), never fails the card.
+  trainingSource: z.string(),
   trainedFrom: z.string(),
   dataThrough: z.string(),
   madeAt: z.string(),
@@ -77,6 +78,16 @@ export const forecastRunSchema = z.object({
   }).nullable(),
 });
 export type ForecastRun = z.infer<typeof forecastRunSchema>;
+
+const TRAINED_ON: Readonly<Record<string, string>> = {
+  files_from_owner: 'sales exports you sent Townwise',
+  townwise_lab: 'sales history and notes you uploaded to Townwise',
+};
+
+/** What a run was trained on, in words; a source this client doesn’t know reads as sales history. */
+export function trainedOnWords(trainingSource: string): string {
+  return TRAINED_ON[trainingSource] ?? 'sales history';
+}
 
 /** U13B: how the published days compared with what happened; null under 5 scored days. */
 export const liveAccuracySchema = z.object({

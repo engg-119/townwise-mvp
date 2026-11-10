@@ -1,8 +1,8 @@
 // The forecast lab's three TownwiseAI tools through a real chat turn (scripted model, helpers/chat-model.ts) and the lab's
 // own job callback (helpers/lab.ts): the org-admin rule, starting a calibration (its event after the effect, its
-// refusals in words), reading its scorecard as components, comparing it with the published forecast, and results
-// and cards with no parameters, code version, input hash, token, draft forecast day or date after the data. Every number
-// is synthetic.
+// refusals in words, with and without a lab runner), reading its scorecard as components, comparing it with the published
+// forecast, and results and cards with no parameters, code version, input hash, token, draft forecast day or date after
+// the data. Every number is synthetic.
 import { randomUUID } from 'node:crypto';
 
 import type { BetaMessageParam, BetaToolResultBlockParam } from '@anthropic-ai/sdk/resources/beta/messages/messages';
@@ -13,9 +13,9 @@ import { NEXT_STEPS } from '../src/lab/components.ts';
 import { GATE_WORDS } from '../src/lab/gate.ts';
 import { labInputSchema, type LabInput } from '../src/lab/input.ts';
 import { LabStartError } from '../src/lab/runner.ts';
-import { START_REFUSAL_WORDS } from '../src/lab/service.ts';
+import { FAILURE_WORDS, START_REFUSAL_WORDS } from '../src/lab/service.ts';
 import { addLocation, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
-import { message, messagesOf, scriptedModel, text, toolUse, type ScriptedModel } from './helpers/chat-model.ts';
+import { message, scriptedModel, text, toolUse, type ScriptedModel, type Step, type UsageInput } from './helpers/chat-model.ts';
 import { CODE_VERSION, fakeLabRunner, jobCall, labFailure, labResultFor, runDays, seedHistory, type FakeLabRunner } from './helpers/lab.ts';
 import { comparisonWith, scorecardWith } from './lab-fixtures.ts';
 import { call, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
@@ -43,10 +43,10 @@ interface Team { orgId: string; locationId: string; admin: TestSession; member: 
 interface Job { calibrationId: string; token: string }
 interface Reply { result: Record<string, unknown>; raw: string; views: { input: unknown; result: unknown }[]; isError: boolean }
 
-async function seat(orgId: string, role: 'org_admin' | 'member'): Promise<TestSession> {
+async function seat(orgId: string, role: 'org_admin' | 'member', on = server): Promise<TestSession> {
   const email = `${role}-${randomUUID().slice(0, 8)}@example.test`;
-  const session = await signIn(server, email);
-  await addSeat(server, { orgId, userId: session.userId, email, role });
+  const session = await signIn(on, email);
+  await addSeat(on, { orgId, userId: session.userId, email, role });
   return session;
 }
 
@@ -63,24 +63,32 @@ function toolResultsOf(param: BetaMessageParam | undefined): BetaToolResultBlock
   return param.content.filter((block): block is BetaToolResultBlockParam => block.type === 'tool_result');
 }
 
-/** One chat turn in which the model calls `name` once; the tool's result and the views its card streamed. */
-async function ask(t: Team, who: 'admin' | 'member', name: string, input: unknown = {}): Promise<Reply> {
+interface Chat { server: TownwiseTestServer; model: ScriptedModel }
+
+/**
+ * One chat turn in which the model calls `name` once; the tool's result, as the turn saved it, and the views its card
+ * streamed. With `usage`, that one call costs it: when it spends the month the turn ends after the tool ran, with no
+ * second call.
+ */
+async function ask(t: Team, who: 'admin' | 'member', name: string, input: unknown = {}, opts: { on?: Chat; usage?: UsageInput } = {}): Promise<Reply> {
+  const on = opts.on ?? { server, model };
   const id = `toolu_${randomUUID().slice(0, 8)}`;
-  model.script(
-    { kind: 'message', message: message([toolUse(id, name, input)]) },
-    { kind: 'message', message: message([text('Done.')]) },
-  );
-  const calls = model.calls.length;
-  const res = await call(server, `/api/org/locations/${t.locationId}/chat/turns`, { session: t[who], json: { content: 'Calibrate' } });
+  const first: Step = { kind: 'message', message: message([toolUse(id, name, input)], opts.usage === undefined ? {} : { usage: opts.usage }) };
+  if (opts.usage === undefined) on.model.script(first, { kind: 'message', message: message([text('Done.')]) });
+  else on.model.script(first);
+  const res = await call(on.server, `/api/org/locations/${t.locationId}/chat/turns`, { session: t[who], json: { content: 'Calibrate' } });
   expect(res.status).toBe(200);
-  const body = await res.text();
-  const views = body.split('\n\n').flatMap((chunk) => {
+  const events = (await res.text()).split('\n\n').flatMap((chunk) => {
     const lines = chunk.split('\n');
-    if (lines.find((line) => line.startsWith('event: '))?.slice(7) !== 'tool') return [];
-    const data = JSON.parse(lines.find((line) => line.startsWith('data: '))?.slice(6) ?? 'null') as { state: string; input: unknown; result: unknown };
-    return data.state === 'running' ? [] : [{ input: data.input, result: data.result }];
+    const event = lines.find((line) => line.startsWith('event: '))?.slice(7);
+    const data = lines.find((line) => line.startsWith('data: '))?.slice(6);
+    return event === undefined || data === undefined ? [] : [{ event, data: JSON.parse(data) as Record<string, unknown> }];
   });
-  const [block] = toolResultsOf(messagesOf(model.calls[calls + 1]).at(-1));
+  const views = events.flatMap(({ event, data }) => (event !== 'tool' || data.state === 'running' ? [] : [{ input: data.input, result: data.result }]));
+  const conversationId = String(events.find(({ event }) => event === 'conversation')?.data.id);
+  const doc = await on.server.connection.collection('tw_chat_conversations').findOne({ _id: new Types.ObjectId(conversationId) });
+  const saved = (doc?.messages as { param: string }[] | undefined ?? []).map((m) => JSON.parse(m.param) as BetaMessageParam);
+  const block = saved.flatMap(toolResultsOf).find((result) => result.tool_use_id === id);
   if (block === undefined || typeof block.content !== 'string') throw new Error('no tool result');
   return { result: JSON.parse(block.content) as Record<string, unknown>, raw: block.content, views, isError: block.is_error === true };
 }
@@ -127,7 +135,8 @@ async function finished(t: Team, withComparison: boolean): Promise<{ calibration
     },
     comparison: withComparison
       ? {
-        ...comparisonWith({ weeklyWape: 0.2 }, { weeklyWape: 0.15 }), championRunId: input.champion?.runId ?? '',
+        // The challenger has a range on fewer weeks than the champion, so the cards carry both counts.
+        ...comparisonWith({ weeklyWape: 0.2 }, { weeklyWape: 0.15, coverage80: { inside: 9, weeks: 11 } }), championRunId: input.champion?.runId ?? '',
         championDataThrough: input.champion?.dataThrough ?? '',
         series: weeks.map((week, i) => ({
           week, actual: 300 + i, champion: 310.4 + i, challenger: 295.6 + i, challengerLow: 250.2, challengerHigh: 340.1,
@@ -197,12 +206,26 @@ describe('start_calibration', () => {
     const finishedJob = runner.jobs.at(-1);
     if (finishedJob === undefined) throw new Error('no job');
     expect((await jobCall(server, finishedJob, 'result', labFailure(finishedJob, 'internal'))).status).toBe(200);
+    // A calibration that failed says why, with three next steps, and its card says it didn't finish.
+    const failed = await ask(t, 'admin', 'get_calibration');
+    expect(failed.result).toMatchObject({
+      available: true, status: 'failed', weeks: null, published: null, failure: FAILURE_WORDS.job_failed, suggestedNextSteps: [...NEXT_STEPS.failed],
+    });
+    expect(failed.views).toEqual([{ input: null, result: { available: true, status: 'failed', weeks: null, published: null } }]);
     await refusal('invalid_regime_start', t, { regimeStart: '2026-05-20' });
     await refusal('not_enough_history', await team('2025-04-07'));
-    // budget_exhausted has no chat path to test: a turn stops after a model call that spends the month, before any tool runs
-    // (lab.int.test.ts covers the start's own budget check).
+    const unstarted = await team();
     runner.failNext(new LabStartError('upstream_status', { status: 403 }));
-    await refusal('start_failed', await team());
+    await refusal('start_failed', unstarted);
+    // The job never started, but the calibration exists (failed start_failed), so its request is recorded with its finish.
+    const record = await server.connection.collection('tw_calibrations').findOne({ orgId: new Types.ObjectId(unstarted.orgId) });
+    expect(record).toMatchObject({ status: 'failed', failure: 'start_failed', requestedBy: { userId: unstarted.admin.userId, via: 'chat' } });
+    const trail = (await auditEvents(server)).filter((event) => (event.details as { calibrationId?: string } | undefined)?.calibrationId === record?._id.toHexString());
+    expect(trail.map((event) => event.action)).toEqual(expect.arrayContaining(['calibration.requested', 'calibration.finished']));
+    expect(trail).toHaveLength(2);
+    const [requested, finish] = ['calibration.requested', 'calibration.finished'].map((action) => trail.find((event) => event.action === action));
+    expect(requested).toMatchObject({ actorRole: 'org_admin', details: { via: 'chat', hasRegime: false } });
+    expect((requested?.at as Date).getTime()).toBeLessThanOrEqual((finish?.at as Date).getTime());
     for (let n = 1; n <= 3; n += 1) {
       const more = await ask(t, 'admin', 'start_calibration');
       expect(more.result.started).toBe(true);
@@ -211,6 +234,22 @@ describe('start_calibration', () => {
       expect((await jobCall(server, job, 'result', labFailure(job, 'internal'))).status).toBe(200);
     }
     await refusal('rate_limited', t);
+  });
+
+  it('refuses budget_exhausted when the model call that asked for it spent the month, and starts nothing', async () => {
+    // The turn checks the budget before each later model call, so the tools the spending call asked for still run.
+    const t = await team();
+    const jobs = runner.jobs.length;
+    const now = server.clock.now();
+    await server.connection.collection('tw_chat_usage').insertOne({
+      orgId: new Types.ObjectId(t.orgId), month: now.toISOString().slice(0, 7), costMicroUsd: 19_990_000, updatedAt: now,
+    });
+    const reply = await ask(t, 'admin', 'start_calibration', {}, { usage: { input: 1000, output: 500, cacheRead: 10_000, cacheWrite: 2000 } });
+    expect(reply.result).toEqual({ started: false, code: 'budget_exhausted', message: START_REFUSAL_WORDS.budget_exhausted });
+    expect(reply.views).toEqual([{ input: { hasRegimeStart: false }, result: { started: false, status: null, code: 'budget_exhausted' } }]);
+    expect(runner.jobs).toHaveLength(jobs);
+    expect(await count('tw_calibrations', { orgId: new Types.ObjectId(t.orgId) })).toBe(0);
+    expect(model.remaining()).toBe(0);
   });
 });
 
@@ -238,12 +277,21 @@ describe('get_calibration and compare_forecast_models', () => {
     expect(cards?.cards?.map((card) => card.label)).toEqual([
       'Weekly error (WAPE)', 'Typical week off by', 'Weeks over 20% off', 'Worst week', '80% range held', 'Weekday bias',
     ]);
+    // Counted over the backtest's 12 weeks, with no current forecast beside them.
+    expect(cards?.cards?.[2]).toMatchObject({ key: 'weeksOver20', of: 12, compare: null, compareOf: null });
     expect(reply.views).toEqual([{ input: null, result: { available: true, status: 'succeeded', weeks: 12, published: false } }]);
     // A named calibration of another location is not found.
     const other = await team();
     expect(await ask(other, 'admin', 'get_calibration', { calibrationId })).toMatchObject({
       result: { available: false, reason: 'There is no such calibration for this location.' },
     });
+    // Nor is one of another location in the same organization.
+    const patio: Team = { ...t, locationId: await addLocation(server, { orgId: t.orgId, name: 'Patio' }) };
+    for (const name of ['get_calibration', 'compare_forecast_models']) {
+      expect(await ask(patio, 'admin', name, { calibrationId })).toMatchObject({
+        result: { available: false, reason: 'There is no such calibration for this location.' },
+      });
+    }
   });
 
   it('get_calibration on a live calibration says it has not finished', async () => {
@@ -269,6 +317,13 @@ describe('get_calibration and compare_forecast_models', () => {
     expect(chart).toMatchObject({ type: 'line_band_chart', series: [{ label: 'Actual' }, { label: 'Forecast' }, { label: 'Current forecast' }] });
     expect(chart?.rows[0]).toEqual({ x: '2026-03-02', actual: 300, mid: 296, low: 250, high: 341, compare: 310 });
     expect(reply.views).toEqual([{ input: { calibrationId }, result: { available: true, status: 'succeeded', weeks: 12, published: false } }]);
+    // get_calibration's cards put the calibration beside the current forecast, each count with its own weeks.
+    const read = await ask(t, 'admin', 'get_calibration', { calibrationId });
+    const cards = (read.result.components as { cards?: Record<string, unknown>[] }[])[1]?.cards;
+    expect(cards?.find((card) => card.key === 'coverage80')).toEqual({
+      key: 'coverage80', label: '80% range held', value: 9, unit: 'count', of: 11, compare: 10, compareOf: 12, better: 'closer_to_80',
+    });
+    expect(cards?.find((card) => card.key === 'weeksOver20')).toMatchObject({ value: 3, of: 12, compare: 3, compareOf: 12 });
 
     const first = await team();
     expect(await ask(first, 'admin', 'compare_forecast_models')).toMatchObject({ result: { available: false } });
@@ -300,5 +355,24 @@ describe('what a lab result may carry', () => {
     }
     const started = await ask(t, 'admin', 'start_calibration');
     expect(started.raw).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+  });
+});
+
+describe('without a lab runner', () => {
+  let off: Chat;
+  beforeAll(async () => {
+    const offModel = scriptedModel();
+    off = { server: await startTownwiseServer({ chat: offModel }), model: offModel };
+  });
+  afterAll(async () => { await off.server.close(); });
+
+  it('start_calibration answers lab_unavailable in words and starts nothing', async () => {
+    const orgId = await createOrg(off.server, { name: `Lab Off ${randomUUID().slice(0, 6)}` });
+    const locationId = await addLocation(off.server, { orgId, name: 'Hanover Room' });
+    const admin = await seat(orgId, 'org_admin', off.server);
+    const reply = await ask({ orgId, locationId, admin, member: admin }, 'admin', 'start_calibration', {}, { on: off });
+    expect(reply.result).toEqual({ started: false, code: 'lab_unavailable', message: START_REFUSAL_WORDS.lab_unavailable });
+    expect(reply.views).toEqual([{ input: { hasRegimeStart: false }, result: { started: false, status: null, code: 'lab_unavailable' } }]);
+    expect(await off.server.connection.collection('tw_calibrations').countDocuments({})).toBe(0);
   });
 });

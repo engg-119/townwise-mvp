@@ -1,6 +1,6 @@
-// What a calibration looks like in the TownwiseAI chat: chart-ready data and cards the app draws (forecast lab design
-// call 10), and the three next steps each reply suggests. Pure. Only backtest weeks reach the chat, which are the
-// owner's own history; no draft forecast day does.
+// What a calibration looks like in the TownwiseAI chat: chart-ready data and cards for the app to draw (forecast lab
+// design call 10; the chat redesign's renderer, not yet wired), and the three next steps each reply suggests. Pure.
+// Only backtest weeks reach the chat, which are the owner's own history; no draft forecast day does.
 import type { Metrics, Scorecard } from './scorecard.ts';
 
 export type ChatComponent =
@@ -14,9 +14,13 @@ export type ChatComponent =
   }
   | {
     type: 'metric_cards';
+    /**
+     * `of` is the count's denominator (the weeks it was counted over), `compareOf` the current forecast's: the 80% range
+     * held counts weeks with a range, which the two models need not have on the same number of weeks.
+     */
     cards: {
       key: string; label: string; value: number; unit: 'pct' | 'count'; of: number | null; compare: number | null;
-      better: 'lower' | 'closer_to_80';
+      compareOf: number | null; better: 'lower' | 'closer_to_80';
     }[];
   }
   | {
@@ -28,13 +32,18 @@ export type ChatComponent =
 type MetricCard = Extract<ChatComponent, { type: 'metric_cards' }>['cards'][number];
 type Comparison = NonNullable<Scorecard['comparison']>;
 
-export type NextStepsKind = 'started' | 'published' | 'draft' | 'compared';
+export type NextStepsKind = 'started' | 'published' | 'draft' | 'compared' | 'failed';
 
+/**
+ * Every answer about a calibration suggests three. A refusal (not an org admin, no calibration, nothing to compare)
+ * suggests none: it has nothing to follow up.
+ */
 export const NEXT_STEPS: Readonly<Record<NextStepsKind, readonly [string, string, string]>> = {
   started: ['How is the calibration going?', 'What does a calibration check before it’s published?', 'Show this week’s forecast'],
   published: ['Compare it with the old forecast', 'Which weeks did it miss most?', 'Show next week’s forecast'],
   draft: ['Why wasn’t it published?', 'Compare it with the current forecast', 'Calibrate again with a change in our weekly pattern'],
   compared: ['Which weeks did it miss most?', 'Show next week’s forecast', 'What would make it better?'],
+  failed: ['Why didn’t the calibration finish?', 'Calibrate again', 'Show this week’s forecast'],
 };
 
 const CHART_TITLE = 'Held-out weeks: guests and the forecast’s 80% range';
@@ -80,22 +89,28 @@ export function comparisonChart(comparison: Comparison): ChatComponent {
   })), true);
 }
 
-/** The six metrics as cards, each beside the current forecast's when there is one. */
-export function metricCards(metrics: Metrics, compare: Metrics | null): ChatComponent {
-  const pctCard = (key: string, label: string, pick: (m: Metrics) => number): MetricCard => ({ key, label, value: pct(pick(metrics)), unit: 'pct', of: null, compare: compare === null ? null : pct(pick(compare)), better: 'lower' });
+/**
+ * The six metrics as cards, each beside the current forecast's when there is one; `weeks` is how many weeks both were
+ * scored on (the backtest's, or the comparison's).
+ */
+export function metricCards(metrics: Metrics, compare: Metrics | null, weeks: number): ChatComponent {
+  const pctCard = (key: string, label: string, pick: (m: Metrics) => number): MetricCard => ({
+    key, label, value: pct(pick(metrics)), unit: 'pct', of: null, compare: compare === null ? null : pct(pick(compare)), compareOf: null,
+    better: 'lower',
+  });
   return {
     type: 'metric_cards',
     cards: [
       pctCard('weeklyWape', 'Weekly error (WAPE)', (m) => m.weeklyWape),
       pctCard('typicalWeek', 'Typical week off by', (m) => m.typicalWeek),
       {
-        key: 'weeksOver20', label: 'Weeks over 20% off', value: metrics.weeksOver20, unit: 'count', of: null,
-        compare: compare?.weeksOver20 ?? null, better: 'lower',
+        key: 'weeksOver20', label: 'Weeks over 20% off', value: metrics.weeksOver20, unit: 'count', of: weeks,
+        compare: compare?.weeksOver20 ?? null, compareOf: compare === null ? null : weeks, better: 'lower',
       },
       pctCard('worstWeek', 'Worst week', (m) => m.worstWeek),
       {
         key: 'coverage80', label: '80% range held', value: metrics.coverage80.inside, unit: 'count', of: metrics.coverage80.weeks,
-        compare: compare?.coverage80.inside ?? null, better: 'closer_to_80',
+        compare: compare?.coverage80.inside ?? null, compareOf: compare?.coverage80.weeks ?? null, better: 'closer_to_80',
       },
       pctCard('weekdayBias', 'Weekday bias', (m) => m.weekdayBiasMeanAbs),
     ],

@@ -1,8 +1,13 @@
 // The forecast lab's three TownwiseAI tools (forecast lab design call 7), for org admins: start a calibration, read its
 // status and scorecard, and compare it with the published forecast. Results carry the words, the gate's reason, chart
-// and card components the app draws (lab/components.ts) and three suggested next steps. A result never carries the
-// model's parameters, its code version, its input hash, a token, a draft forecast day or a date after the data the
-// calibration saw; its card (the result view) carries counts only.
+// and card components for the app to draw (lab/components.ts) and three suggested next steps; until the chat redesign
+// renders them, only the model reads them. A result never carries the model's parameters, its code version, its input
+// hash, a token, a draft forecast day or a date after the data the calibration saw (checkLabResult refuses a scorecard
+// week after it); its card (the result view) carries counts only.
+//
+// [CONFIRM: lab tools show backtest forecasts to org admins and Anthropic while forecasts are off] The components carry
+// a calibration's backtest and comparison weeks (the owner's own history, design call 10) whether or not staff have
+// switched the organization's forecasts on (G1).
 import { objectId } from '@ckeith26/mongo';
 import { z } from 'zod';
 
@@ -103,14 +108,17 @@ export const startCalibrationTool: ChatTool<StartInput> = {
     };
     const refusal = await checkStart(ctx, request);
     if (refusal !== null) return json({ started: false, code: refusal, message: START_REFUSAL_WORDS[refusal] });
-    const launched = await launch(ctx, request);
-    if (!launched.ok) return json({ started: false, code: launched.code, message: START_REFUSAL_WORDS[launched.code] });
+    // Recorded after the effect, at the time of the request, so it comes before the calibration's own finish.
     const event: AuditEventInput = {
       ...tc.actor, at: ctx.now(), orgId: scope.orgId, action: 'calibration.requested',
       target: { type: 'calibration', id: request.id },
       details: { locationId: location.id, calibrationId: request.id, via: 'chat', hasRegime: request.regimeStart !== null },
     };
-    await recordAfter(ctx, event);
+    const launched = await launch(ctx, request);
+    // A job that couldn't start leaves a calibration failed start_failed, so its request is recorded too; the other
+    // refusals left none.
+    if (launched.ok || launched.code === 'start_failed') await recordAfter(ctx, event);
+    if (!launched.ok) return json({ started: false, code: launched.code, message: START_REFUSAL_WORDS[launched.code] });
     return json({
       started: true, status: launched.calibration.status, calibrationId: launched.calibration.id,
       message: 'The calibration is running on Townwise’s servers and usually takes a few minutes. It used part of this month’s TownwiseAI budget.',
@@ -150,7 +158,10 @@ export const getCalibrationTool: ChatTool<NamedInput> = {
     if (record === 'not_found') return unavailable(NOT_FOUND);
     const base = { available: true, calibrationId: record.id, status: record.status };
     if (record.status === 'failed') {
-      return json({ ...base, weeks: null, published: null, failure: record.failure === null ? null : FAILURE_WORDS[record.failure], regimeStart: record.regimeStart });
+      return json({
+        ...base, weeks: null, published: null, failure: record.failure === null ? null : FAILURE_WORDS[record.failure],
+        regimeStart: record.regimeStart, suggestedNextSteps: stepsFor('failed'),
+      });
     }
     const scorecard = scorecardOf(record);
     if (record.status !== 'succeeded' || scorecard === null) {
@@ -160,7 +171,9 @@ export const getCalibrationTool: ChatTool<NamedInput> = {
     const comparison = scorecard.comparison;
     const components: ChatComponent[] = [
       backtestChart(scorecard),
-      comparison === null ? metricCards(scorecard.backtest.metrics, null) : metricCards(comparison.challenger, comparison.champion),
+      comparison === null
+        ? metricCards(scorecard.backtest.metrics, null, scorecard.backtest.weeks)
+        : metricCards(comparison.challenger, comparison.champion, comparison.weeks),
     ];
     return json({
       ...base, weeks: comparison?.weeks ?? scorecard.backtest.weeksWithRange, published, regimeStart: record.regimeStart,
