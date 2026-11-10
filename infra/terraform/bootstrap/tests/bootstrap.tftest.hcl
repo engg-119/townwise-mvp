@@ -15,6 +15,18 @@ mock_provider "azuread" {
       object_id = "00000000-0000-0000-0000-0000000000dd"
     }
   }
+  mock_resource "azuread_application" {
+    defaults = {
+      id        = "/applications/00000000-0000-0000-0000-0000000000e1"
+      object_id = "00000000-0000-0000-0000-0000000000e1"
+      client_id = "00000000-0000-0000-0000-0000000000e2"
+    }
+  }
+  mock_resource "azuread_service_principal" {
+    defaults = {
+      object_id = "00000000-0000-0000-0000-0000000000e3"
+    }
+  }
 }
 
 override_resource {
@@ -174,5 +186,46 @@ run "state_and_budget" {
       toset(one(one(azurerm_consumption_budget_subscription.townwise.filter).dimension).values) == toset(["rg-townwise-bootstrap", "rg-townwise-prod", "rg-townwise-prod-infra"])
     )
     error_message = "A $60 monthly budget over every Townwise group, the Container Apps managed group included, alerting at 80% actual and 100% forecast."
+  }
+}
+
+run "lab_callback_app" {
+  command = plan
+
+  assert {
+    condition = (
+      azuread_application.lab_callback.display_name == "townwise-lab-callback" &&
+      azuread_application.lab_callback.sign_in_audience == "AzureADMyOrg" &&
+      one(azuread_application.lab_callback.api).requested_access_token_version == 2 &&
+      azuread_application.lab_callback.owners == toset(["00000000-0000-0000-0000-0000000000cc"])
+    )
+    error_message = "The lab callback app is single tenant, issues v2 access tokens (aud is its client id), and is owned by the applier."
+  }
+
+  assert {
+    condition = (
+      azuread_application_identifier_uri.lab_callback.application_id == azuread_application.lab_callback.id &&
+      azuread_application_identifier_uri.lab_callback.identifier_uri == "api://00000000-0000-0000-0000-0000000000e2" &&
+      azuread_service_principal.lab_callback.client_id == "00000000-0000-0000-0000-0000000000e2" &&
+      !azuread_service_principal.lab_callback.app_role_assignment_required
+    )
+    error_message = "The app's identifier URI is api://<client id>, the one resource the lab job asks a token for, and its service principal exists so Entra issues tokens for it."
+  }
+
+  assert {
+    condition = (
+      length(azuread_application.lab_callback.password) == 0 &&
+      length(azuread_application.lab_callback.app_role) == 0 &&
+      length(azuread_application.lab_callback.required_resource_access) == 0 &&
+      length(azuread_application.lab_callback.web) == 0 &&
+      length(azuread_application.lab_callback.public_client) == 0 &&
+      length(azuread_application.lab_callback.single_page_application) == 0
+    )
+    error_message = "The lab callback app is only an audience: no secret, no app role, no permission, no redirect URI."
+  }
+
+  assert {
+    condition     = output.lab_callback_client_id == "00000000-0000-0000-0000-0000000000e2"
+    error_message = "lab_callback_client_id outputs the app's client id, for production's lab_callback_client_id."
   }
 }
