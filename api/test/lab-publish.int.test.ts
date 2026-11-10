@@ -184,6 +184,16 @@ describe('the gate decides', () => {
     expect(own[1]).toMatchObject({ calibrationId: calibration.id, status: 'succeeded', gate: 'published', heldOutWeeks: 12 });
   });
 
+  it('beating a published forecast publishes with the words for the current forecast, not the weekday average', async () => {
+    const t = await team({ forecastsOn: true });
+    await publishedChampion(t);
+    const { calibration, job } = await started(t);
+    expect(await post(job, labResultFor(await inputFor(job)))).toEqual(SUCCEEDED);
+    const view = await viewOf(t, calibration.id);
+    expect(view).toMatchObject({ gate: { published: true, reason: 'published', words: GATE_WORDS.published } });
+    expect(GATE_WORDS.published).toContain('current forecast');
+  });
+
   it('a passing draft with forecasts off stays a draft with gate forecasts_off, and nothing is published', async () => {
     const t = await team();
     const { calibration, job } = await started(t);
