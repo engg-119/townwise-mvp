@@ -1,4 +1,5 @@
 // Composition root, from api/kit/server-core/MODULE.md "Wire it in". The only file that reads process.env.
+import { randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
 
 import { z } from 'zod';
@@ -19,6 +20,7 @@ import { createAzureFileBlobs, createAzuriteFileBlobs, storageCredential, type F
 import { createAnthropicExtractModel } from './files/extract/model.ts';
 import { createFileSweeper } from './files/sweeper.ts';
 import { createFileWorker } from './files/worker.ts';
+import { createEntraLabCaller, createLocalLabCaller, type LabCaller } from './lab/caller.ts';
 import { createAzureLabRunner, createLocalLabRunner, type LabRunner } from './lab/runner.ts';
 import { createAcsTransport } from './mail/acs.ts';
 import { createMailer, OFF_MAILER } from './mail/mailer.ts';
@@ -106,16 +108,27 @@ const fileSweeper = files === undefined ? undefined : createFileSweeper({
   connection: mongo.connection, stores: createTownwiseStores(mongo.connection), blobs: files, logger, now,
 });
 // The forecast lab (calibrations) is off unless TOWNWISE_LAB_RUNNER is set: in Azure the API's identity starts the
-// Container Apps job; locally the API runs the job with uv. Either way the job calls back on /lab.
-function labRunnerFor(): LabRunner | undefined {
+// Container Apps job, which calls back on /lab signed in as the lab identity (lab/caller.ts checks its Entra token);
+// locally the API runs the job with uv, and the job calls back with this process's own secret, made here and never
+// stored.
+function labFor(): { labRunner?: LabRunner; labCaller?: LabCaller } {
   const lab = labRunnerOf(config);
-  if (lab === null) return undefined;
-  if (lab.kind === 'azure') return createAzureLabRunner({ tokens: azureTokensFor('TOWNWISE_LAB_RUNNER'), jobId: lab.jobId });
-  return createLocalLabRunner({ projectDir: resolve(lab.projectDir), apiUrl: lab.apiUrl, path: PATH ?? '', home: HOME ?? '' });
+  if (lab === null) return {};
+  if (lab.kind === 'azure') {
+    return {
+      labRunner: createAzureLabRunner({ tokens: azureTokensFor('TOWNWISE_LAB_RUNNER'), jobId: lab.jobId }),
+      labCaller: createEntraLabCaller({ tenantId: lab.caller.tenantId, audience: lab.caller.audience, callerObjectId: lab.caller.objectId, now }),
+    };
+  }
+  const secret = randomBytes(32).toString('base64url');
+  return {
+    labRunner: createLocalLabRunner({ projectDir: resolve(lab.projectDir), apiUrl: lab.apiUrl, path: PATH ?? '', home: HOME ?? '' }),
+    labCaller: createLocalLabCaller(secret),
+  };
 }
 const deps = {
   config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now, chat, places, placesMap, mailer,
-  files, fileWorker, labRunner: labRunnerFor(),
+  files, fileWorker, ...labFor(),
 };
 const api = createTownwiseApi(deps);
 const labRouter = createTownwiseLab(deps);
