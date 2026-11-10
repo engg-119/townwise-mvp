@@ -1,7 +1,9 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 
 import type { OrgDetail, OrgLocation } from '../../../src/portal/console/schemas';
-import { refusal } from '../../helpers/portal';
+import { GOOGLE_SOURCE, PLACES_SOURCE } from '../../../src/portal/places/PlaceCard';
+import { openAsAdminMe, refusal } from '../../helpers/portal';
+import { choicesOf, choose } from '../../helpers/select';
 import { installPlaces } from '../onboarding/places-fakes';
 import { consoleApi, emailOf, member, orgDetail, renderAt, type ConsoleApi } from './helpers';
 
@@ -53,6 +55,7 @@ function summary(name: string): unknown {
 function serve(api: ConsoleApi, read: () => unknown): void {
   api.routes[`GET ${PATH}`] = read;
   api.routes[`GET ${PATH}/forecast-runs`] = () => ({ runs: [] });
+  api.routes[`GET ${PATH}/calibrations`] = () => ({ forecasts: { on: false, at: null }, calibrations: [] });
 }
 
 function gets(api: ConsoleApi): number {
@@ -115,7 +118,7 @@ test('Add a location sends the setup route, reads the organization again, and st
   };
   renderAt('/admin/orgs/o1', api);
   fireEvent.change(await screen.findByRole('textbox', { name: 'Name' }), { target: { value: ' Hanover ' } });
-  fireEvent.change(screen.getByRole('combobox', { name: 'Town' }), { target: { value: 'hanover-nh' } });
+  choose(screen.getByRole('combobox', { name: 'Town' }), 'Hanover, NH');
   await click('Add location');
   expect(await screen.findByText('Added Hanover.')).toBeTruthy();
   expect(setupWrites(api)).toEqual([{ method: 'POST', path: SETUP, body: { name: 'Hanover', town: { townId: 'hanover-nh' } } }]);
@@ -139,13 +142,82 @@ test('Add a location: the Places search leads while it is on, as on P10', async 
   expect(api.calls.filter((call) => call.path === '/api/places/autocomplete')).toHaveLength(1);
 });
 
+/** A checked place's row, named by the place and its town as its suggestion words them. */
+const RESTAURANT_ROW = 'Lou’s Restaurant, Hanover, NH, USA';
+const BAKERY_ROW = 'Lou’s Bakery, Norwich, VT, USA';
+
+/** Checks the option whose row is `row` in the add form's search for “Lou”, and waits for Google's answer. */
+async function checkPlace(row: string): Promise<void> {
+  const [name = row] = row.split(', ');
+  const option = await screen.findByRole('option', { name: new RegExp(`^${name}`) });
+  fireEvent.mouseDown(option);
+  await settle(() => { fireEvent.click(option); });
+  await screen.findByRole('group', { name: row });
+}
+
+/** POST of the setup route as the API answers it: `refuse` answers a place's own refusal, else the location joins the read. */
+function serveAdds(api: ConsoleApi, read: { detail: OrgDetail }, refuse: Record<string, unknown> = {}): void {
+  const added: OrgLocation[] = [];
+  api.routes[`POST ${SETUP}`] = (raw) => {
+    const body = raw as { name: string; placeId: string };
+    const refused = refuse[body.placeId];
+    if (refused !== undefined) return refused;
+    added.push({ ...hanover(), id: `l${String(added.length + 1)}`, name: body.name });
+    read.detail = inSetup([...added]);
+    return summary(body.name);
+  };
+}
+
+test('Add a location with places: each checked place goes to the setup route, then one read, one line, and the form starts over', async () => {
+  const api = consoleApi();
+  installPlaces(api);
+  const read = { detail: inSetup([]) };
+  serve(api, () => read.detail);
+  serveAdds(api, read);
+  renderAt('/admin/orgs/o1', api);
+  fireEvent.change(await screen.findByRole('combobox', { name: 'Search Google Maps for the location' }), { target: { value: 'Lou' } });
+  await checkPlace(RESTAURANT_ROW);
+  await checkPlace(BAKERY_ROW);
+  await click('Add 2 locations');
+  expect(await screen.findByText('Added 2 locations.')).toBeTruthy();
+  expect(setupWrites(api)).toEqual([
+    { method: 'POST', path: SETUP, body: { name: 'Lou’s Restaurant', town: { townId: 'hanover-nh' }, placeId: 'ChIJTestPlace0001' } },
+    { method: 'POST', path: SETUP, body: { name: 'Lou’s Bakery', town: { townId: null, name: 'Norwich', state: 'VT' }, placeId: 'ChIJTestPlace0002' } },
+  ]);
+  expect(gets(api)).toBe(2);
+  const locations = screen.getByRole('region', { name: 'Locations' });
+  expect(within(locations).getByText('Lou’s Bakery')).toBeTruthy();
+  expect(screen.getByRole<HTMLInputElement>('combobox', { name: 'Search Google Maps for the location' }).value).toBe('');
+  expect(screen.queryByRole('group', { name: RESTAURANT_ROW })).toBeNull();
+});
+
+test('Add a location with places: the limit stops the rest with the panel’s line, and the rows left stay', async () => {
+  const api = consoleApi();
+  installPlaces(api);
+  const read = { detail: inSetup([]) };
+  serve(api, () => read.detail);
+  serveAdds(api, read, { ChIJTestPlace0002: refusal(409, 'location_limit') });
+  renderAt('/admin/orgs/o1', api);
+  fireEvent.change(await screen.findByRole('combobox', { name: 'Search Google Maps for the location' }), { target: { value: 'Lou' } });
+  await checkPlace(RESTAURANT_ROW);
+  await checkPlace(BAKERY_ROW);
+  await click('Add 2 locations');
+  expect(await screen.findByText('Added Lou’s Restaurant.')).toBeTruthy();
+  expect(screen.getByText(`${NAME} has 25 locations, the most an organization can have.`)).toBeTruthy();
+  expect(setupWrites(api)).toHaveLength(2);
+  expect(gets(api)).toBe(2);
+  expect(screen.queryByRole('group', { name: RESTAURANT_ROW })).toBeNull();
+  expect(screen.getByRole('group', { name: BAKERY_ROW })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Add location' })).toBeTruthy();
+});
+
 test('a location name another location uses is said under the field, as on P10', async () => {
   const api = consoleApi();
   serve(api, () => inSetup([hanover()]));
   api.routes[`POST ${SETUP}`] = () => refusal(409, 'location_name_taken');
   renderAt('/admin/orgs/o1', api);
   fireEvent.change(await screen.findByRole('textbox', { name: 'Name' }), { target: { value: 'Hanover' } });
-  fireEvent.change(screen.getByRole('combobox', { name: 'Town' }), { target: { value: 'hanover-nh' } });
+  choose(screen.getByRole('combobox', { name: 'Town' }), 'Hanover, NH');
   await click('Add location');
   expect(await screen.findByText('Another location already uses that name.')).toBeTruthy();
   expect(gets(api)).toBe(1);
@@ -189,6 +261,9 @@ test('Rename with a place on Google Maps sends its id and town, as P16 does', as
   await settle(() => { fireEvent.click(option); });
   expect(await within(dialog).findByText('Using this place moves Hanover to Norwich, VT.')).toBeTruthy();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Looks right' }));
+  // A location keeps only the place's id and town, so the summary says so, not what a request keeps.
+  expect(within(dialog).getByText(GOOGLE_SOURCE)).toBeTruthy();
+  expect(within(dialog).queryByText(PLACES_SOURCE)).toBeNull();
   fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name' }), { target: { value: 'Lou’s Bakery' } });
   await click('Save changes', dialog);
   expect(await screen.findByText('Saved.')).toBeTruthy();
@@ -282,7 +357,7 @@ test('409 org_not_in_setup: the page reads again without the panel and says some
   };
   renderAt('/admin/orgs/o1', api);
   fireEvent.change(await screen.findByRole('textbox', { name: 'Name' }), { target: { value: 'Lebanon' } });
-  fireEvent.change(screen.getByRole('combobox', { name: 'Town' }), { target: { value: 'hanover-nh' } });
+  choose(screen.getByRole('combobox', { name: 'Town' }), 'Hanover, NH');
   await click('Add location');
   expect(await screen.findByText(CLOSED)).toBeTruthy();
   expect(screen.queryByRole('heading', { name: HEADING })).toBeNull();
@@ -493,7 +568,7 @@ test('the staff upload has no location column, so no cell of the file ever shows
   expect(screen.queryByRole('combobox', { name: 'Location column (optional)' })).toBeNull();
   expect(screen.queryByRole('combobox', { name: /^Which value is/ })).toBeNull();
   // The pickers name the columns, never their cells.
-  expect([...screen.getByRole<HTMLSelectElement>('combobox', { name: 'Guests' }).options].map((option) => option.text)).toEqual([
+  expect(choicesOf(screen.getByRole('combobox', { name: 'Guests' }))).toEqual([
     'Not in this file', 'Business Date: dates', 'Customer: text', 'Guest Count: numbers', 'Net Sales: numbers', 'Server: text',
   ]);
   for (const cell of CELLS) expect(pageText()).not.toContain(cell);
@@ -513,7 +588,7 @@ test('a header name that reads as a value shows as an unnamed column, never as t
   serve(api, () => inSetup([hanover()]));
   renderAt('/admin/orgs/o1', api);
   await toMatch(['Business Date,Guest Count,98765.43', '2025-03-04,4321,87654.32'].join('\n'));
-  expect([...screen.getByRole<HTMLSelectElement>('combobox', { name: 'Net sales' }).options].map((option) => option.text)).toEqual([
+  expect(choicesOf(screen.getByRole('combobox', { name: 'Net sales' }))).toEqual([
     'Not in this file', 'Business Date: dates', 'Guest Count: numbers', 'Unnamed (column 3): numbers',
   ]);
   for (const cell of CELLS) expect(pageText()).not.toContain(cell);
@@ -617,4 +692,76 @@ test('setup closed by a suspension comes back once the organization is reactivat
   expect(await screen.findByRole('heading', { name: HEADING })).toBeTruthy();
   expect(screen.getByText('Saved.')).toBeTruthy();
   expect(gets(api)).toBe(3);
+});
+
+const OPEN = `${PATH}/open-as-admin`;
+
+/** The writes the Open as admin button sends. */
+function openWrites(api: ConsoleApi): { method: string; path: string; body: unknown }[] {
+  return api.calls.filter((call) => call.method !== 'GET' && call.path === OPEN);
+}
+
+test('Open as admin shows only in setup, posts the start route with no body, and opens the dashboard under the banner', async () => {
+  const api = consoleApi();
+  serve(api, () => inSetup([hanover()]));
+  api.routes[`POST ${OPEN}`] = () => {
+    // The answer is the organization's admin access with openAsAdmin set and the staff member as the user.
+    api.me = openAsAdminMe();
+    return api.me;
+  };
+  renderAt('/admin/orgs/o1', api);
+  await screen.findByRole('heading', { name: HEADING });
+  await click('Open as admin');
+  expect(openWrites(api)).toEqual([{ method: 'POST', path: OPEN, body: undefined }]);
+  await waitFor(() => { expect(window.location.pathname).toBe('/dashboard'); });
+  const banner = await screen.findByRole('region', { name: 'Townwise staff setup' });
+  expect(within(banner).getByText('You’re setting up Test Group as Townwise staff. This ends when someone joins.')).toBeTruthy();
+});
+
+test('Open as admin answering 409 org_not_in_setup closes setup and says someone joined', async () => {
+  const api = consoleApi();
+  let detail = inSetup([hanover()]);
+  serve(api, () => detail);
+  api.routes[`POST ${OPEN}`] = () => {
+    detail = orgDetail({ org: { fromRequestId: null, inSetup: false }, locations: [hanover()], recent: [] });
+    return refusal(409, 'org_not_in_setup');
+  };
+  renderAt('/admin/orgs/o1', api);
+  await screen.findByRole('heading', { name: HEADING });
+  await click('Open as admin');
+  expect(await screen.findByText(CLOSED)).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Open as admin' })).toBeNull();
+  expect(screen.queryByRole('heading', { name: HEADING })).toBeNull();
+  expect(window.location.pathname).toBe('/admin/orgs/o1');
+});
+
+test('Open as admin answering 404 shows the organization as gone', async () => {
+  const api = consoleApi();
+  serve(api, () => inSetup([]));
+  api.routes[`POST ${OPEN}`] = () => refusal(404, 'not_found');
+  renderAt('/admin/orgs/o1', api);
+  await screen.findByRole('heading', { name: HEADING });
+  await click('Open as admin');
+  expect(await screen.findByText('This organization doesn’t exist.')).toBeTruthy();
+});
+
+test('Open as admin answering anything else shows the error under the header facts and keeps the page', async () => {
+  const api = consoleApi();
+  serve(api, () => inSetup([]));
+  api.routes[`POST ${OPEN}`] = () => refusal(503, 'unavailable');
+  renderAt('/admin/orgs/o1', api);
+  await screen.findByRole('heading', { name: HEADING });
+  await click('Open as admin');
+  expect(await screen.findByRole('alert')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Open as admin' })).toBeTruthy();
+  expect(screen.getByRole('heading', { name: HEADING })).toBeTruthy();
+});
+
+test('the Locations line names Open as admin while in setup', async () => {
+  const api = consoleApi();
+  serve(api, () => inSetup([]));
+  renderAt('/admin/orgs/o1', api);
+  await screen.findByRole('heading', { name: HEADING });
+  expect(screen.getByText('Sales figures and notes are visible through Open as admin until someone joins, then only through View as.')).toBeTruthy();
+  expect(screen.queryByText('Sales figures and notes are visible only through View as.')).toBeNull();
 });

@@ -5,7 +5,8 @@ import { theme } from '../../theme';
 // A checkbox (home.md 4.2, spec 15.7): a 44px row with a 16px square box and its label. Checked takes the mint
 // fill with an `onMint` check, which spec 15.6 allows for a pressed control. Disabled keeps its place, reads
 // `text3`, and pressing it does nothing. Native is a Pressable with the checkbox role and its checked and disabled
-// state; Checkbox.web.tsx is a real <input type="checkbox"> inside a <label>.
+// state; Checkbox.web.tsx is a real <input type="checkbox"> inside a <label>. CheckMark is the drawn box alone, for a
+// control that is a checkbox of its own (the places checklist's suggestions); it is native only.
 
 export interface CheckboxProps {
   label: string;
@@ -27,11 +28,18 @@ export function Checkbox(props: CheckboxProps): React.JSX.Element {
       onPress={() => { props.onChange(!props.checked); }}
       style={styles.row}
     >
-      <View style={[styles.box, props.checked ? styles.on : null, disabled ? styles.off : null]}>
-        {props.checked ? <View style={styles.check} /> : null}
-      </View>
+      <CheckMark checked={props.checked} disabled={disabled} />
       <Text style={[styles.label, disabled ? styles.labelOff : null]}>{props.label}</Text>
     </Pressable>
+  );
+}
+
+/** The 16px box, with the mint fill and check while checked. */
+export function CheckMark(props: { checked: boolean; disabled: boolean }): React.JSX.Element {
+  return (
+    <View style={[styles.box, props.checked ? styles.on : null, props.disabled ? styles.off : null]}>
+      {props.checked ? <View style={styles.check} /> : null}
+    </View>
   );
 }
 

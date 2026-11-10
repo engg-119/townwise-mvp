@@ -1,8 +1,8 @@
 // One tuning chat turn (docs/portal/tuning-chat.md sections 3 and 4): a manual streaming loop. Stream a model call,
 // take its finalMessage(), run its tool calls, append, repeat, for at most 8 calls. Every assistant message is kept
 // exactly as received, thinking blocks included, except what a mid-reply fallback requires dropping (echoable). The
-// turn's messages are returned for one save; a failed, aborted or refused turn returns nothing to save, only its cost,
-// which is charged after every call either way.
+// turn's messages are returned for one save (savedTurn: an item's text is kept only as a stub); a failed, aborted or
+// refused turn returns nothing to save, only its cost, which is charged after every call either way.
 import { AnthropicError, APIConnectionError, APIError, InternalServerError, RateLimitError } from '@anthropic-ai/sdk';
 import type {
   BetaContentBlock, BetaMessage, BetaMessageParam, BetaMessageStreamParams, BetaRawContentBlockDelta, BetaRawMessageStreamEvent,
@@ -14,7 +14,8 @@ import type { StoredMessage } from '../stores/chat-conversations.ts';
 import type { ChatModel } from './model.ts';
 import { costMicroUsd, messageCostMicroUsd, tokensOf, type TokenCounts } from './pricing.ts';
 import { SYSTEM_PROMPT } from './prompt.ts';
-import { inputViewOf, resultViewOf, runTool, toolNamed, TOOLS, type ToolContext, type ToolView } from './tools/registry.ts';
+import { inputViewOf, resultViewOf, runTool, savedResultOf, toolNamed, TOOLS, type ToolContext, type ToolView } from './tools/registry.ts';
+import type { Visual } from './tools/visual.ts';
 
 export const CHAT_MODEL = 'claude-opus-5-5';
 export const MAX_TOKENS = 16_000;
@@ -39,11 +40,15 @@ export type FailureCode = 'internal' | 'provider_unavailable' | 'provider_overlo
  */
 export type TurnEvent =
   | { type: 'text'; data: { delta: string } }
+  /** A piece of the reply's thinking summary: text only, never the signature. Same class as message text, never logged. */
+  | { type: 'thinking'; data: { delta: string } }
   | {
     type: 'tool';
     data: { id: string; name: string; state: 'running' | 'done' | 'error'; input: ToolView | null; result: ToolView | null };
   }
-  | { type: 'proposal'; data: { id: string; proposal: NoteContent } };
+  | { type: 'proposal'; data: { id: string; proposal: NoteContent } }
+  | { type: 'visual'; data: { id: string; visual: Visual } }
+  | { type: 'suggestions'; data: { id: string; prompts: string[] } };
 
 /** How every answer to a tool call that never ran begins; GET .../chat/:conversationId leaves those calls out. */
 export const NOT_RUN = 'Not run: ';
@@ -52,17 +57,28 @@ export type TurnResult =
   | {
     kind: 'done'; stopReason: DoneReason; messages: StoredMessage[]; calls: number; model: string;
     inputTokens: number; outputTokens: number; costMicroUsd: number;
+    /** The reply node when it stored an assistant message, else the user node, else the reply's parent. */
+    leafId: string;
   }
   | { kind: 'refused'; calls: number; model: string; costMicroUsd: number }
   | { kind: 'failed'; code: FailureCode; errType: string; status: number | null; calls: number; costMicroUsd: number }
   | { kind: 'aborted'; calls: number; costMicroUsd: number };
 
+/** A tree node the turn writes (src/chat/tree.ts). */
+export interface TurnNode { readonly id: string; readonly parentId: string | null }
+
+/** One message of a turn as it ran, with the tree node it is stored under (absent only in savedTurn's own tests). */
+export interface TurnMessage { readonly at: Date; readonly param: BetaMessageParam; readonly nodeId?: string; readonly parentId?: string | null }
+
 export interface TurnInput {
   readonly model: ChatModel;
   readonly tools: ToolContext;
-  /** The conversation so far, exactly as stored. */
+  /** The path the turn continues, root to the turn's parent, exactly as stored. */
   readonly history: readonly BetaMessageParam[];
-  readonly userMessage: BetaMessageParam;
+  /** Null for a regenerate: the history already ends with the person's message. */
+  readonly userMessage: BetaMessageParam | null;
+  /** The nodes the turn's messages are stored under: `user` is null for a regenerate, and `reply.parentId` is the user node. */
+  readonly nodes: { readonly user: TurnNode | null; readonly reply: { readonly id: string; readonly parentId: string } };
   readonly signal: AbortSignal;
   readonly now: () => Date;
   readonly emit: (event: TurnEvent) => void;
@@ -78,8 +94,13 @@ export function requestParams(messages: BetaMessageParam[]): BetaMessageStreamPa
     model: CHAT_MODEL,
     max_tokens: MAX_TOKENS,
     output_config: { effort: 'low' },
-    // Adaptive thinking is Opus 5.5's only mode, so `thinking` is omitted.
-    betas: ['server-side-fallback-2026-07-01'],
+    // Adaptive is Opus 5.5's only thinking mode (`disabled` and `budget_tokens` both 400). `display` changes what the
+    // stream shows, not what is billed: Opus 5.5 omits the thinking text by default, so ask for its summary.
+    // A stored thinking block is valid only against the system prompt and tools it was made with, so a release that
+    // changes either invalidates every earlier conversation's blocks. drop_block drops those blocks and answers, where
+    // the default (enforced for newer Anthropic accounts) would refuse every later turn of those conversations.
+    thinking: { type: 'adaptive', display: 'summarized', block_binding: { prefix_mismatch_behavior: 'drop_block' } },
+    betas: ['server-side-fallback-2026-07-01', 'thinking-binding-controls-2026-08-01'],
     fallbacks: 'default',
     cache_control: { type: 'ephemeral' },
     system: SYSTEM_PROMPT,
@@ -129,7 +150,7 @@ function streamedCharacters(delta: BetaRawContentBlockDelta): number {
  *   min(max_tokens, max(ceil(streamed characters / 3), ceil(seconds since message_start x 150)))
  *
  * at the price of the model that was answering. Streamed characters are those of text, thinking and tool input
- * deltas; the time term covers thinking that is billed but not streamed (Opus 5.5 omits its text by default).
+ * deltas; the time term covers thinking that is billed but not streamed (a summary is shorter than the thinking behind it).
  */
 function usageTracker(now: () => Date): { observe(event: BetaRawMessageStreamEvent): void; costMicroUsd(): number } {
   let model: string | null = null;
@@ -198,12 +219,48 @@ export function echoable(content: readonly BetaContentBlock[]): BetaContentBlock
   return content.filter((block, index) => index > boundary || block.type === 'text');
 }
 
+/**
+ * What one finished turn saves (section 3): its messages as the model read them, except a result its tool keeps only a
+ * stub of (read_data_item, D28), so a later turn never resends an item's text after it is turned off, deleted or
+ * purged. A thinking block's signature binds everything before it (preserved thinking), so every thinking block after
+ * the first stubbed result is dropped too; blocks before it stay valid, and an assistant message left with nothing is
+ * dropped. The turn's own later calls already read the whole result. The saved history is append-only from then on.
+ */
+export function savedTurn(turn: readonly TurnMessage[]): StoredMessage[] {
+  const names = new Map<string, string>();
+  let stubbed = false;
+  const saved: StoredMessage[] = [];
+  for (const { param, ...placed } of turn) {
+    let kept = param;
+    if (typeof param.content !== 'string' && param.role === 'assistant') {
+      for (const block of param.content) if (block.type === 'tool_use') names.set(block.id, block.name);
+      if (stubbed) {
+        const content = param.content.filter((block) => block.type !== 'thinking' && block.type !== 'redacted_thinking');
+        if (content.length === 0) continue;
+        kept = { ...param, content };
+      }
+    } else if (typeof param.content !== 'string' && param.role === 'user') {
+      const content: typeof param.content = [];
+      for (const block of param.content) {
+        const result = block.type === 'tool_result' ? savedResultOf(names.get(block.tool_use_id) ?? '', block) : block;
+        if (result !== block) stubbed = true;
+        content.push(result);
+      }
+      kept = { ...param, content };
+    }
+    // Its time and its tree node, unchanged: a dropped message never moves another one to a different node.
+    saved.push({ ...placed, param: JSON.stringify(kept) });
+  }
+  return saved;
+}
+
 export async function runTurn(input: TurnInput): Promise<TurnResult> {
   const turn: BetaMessageParam[] = [];
-  const stored: StoredMessage[] = [];
-  const append = (param: BetaMessageParam): void => {
+  const timed: TurnMessage[] = [];
+  const { user, reply } = input.nodes;
+  const append = (param: BetaMessageParam, node: TurnNode = reply): void => {
     turn.push(param);
-    stored.push({ at: input.now(), param: JSON.stringify(param) });
+    timed.push({ at: input.now(), param, nodeId: node.id, parentId: node.parentId });
   };
   let calls = 0;
   let spent = 0;
@@ -215,14 +272,19 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     spent += cost;
     await input.charge(cost);
   };
-  const done = (stopReason: DoneReason): TurnResult => ({
-    kind: 'done', stopReason, messages: stored, calls, model, inputTokens, outputTokens, costMicroUsd: spent,
-  });
+  const done = (stopReason: DoneReason): TurnResult => {
+    const messages = savedTurn(timed);
+    return {
+      kind: 'done', stopReason, messages, calls, model, inputTokens, outputTokens, costMicroUsd: spent,
+      // A reply's messages start with an assistant message, so the last one stored names the deepest node written.
+      leafId: messages.at(-1)?.nodeId ?? reply.parentId,
+    };
+  };
 
   // A function, not a property read: the signal changes under the loop, which narrowing cannot see.
   const aborted = (): boolean => input.signal.aborted;
 
-  append(input.userMessage);
+  if (input.userMessage !== null && user !== null) append(input.userMessage, user);
   try {
     let jsonRetries = 0;
     for (;;) {
@@ -240,6 +302,8 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
           usage.observe(event);
           if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
             input.emit({ type: 'text', data: { delta: event.delta.text } });
+          } else if (event.type === 'content_block_delta' && event.delta.type === 'thinking_delta') {
+            input.emit({ type: 'thinking', data: { delta: event.delta.thinking } });
           }
         }
         message = await stream.finalMessage();
@@ -287,12 +351,17 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
         const outcome = await runTool(input.tools, block);
         results.push(outcome.result);
         if (outcome.proposal !== null) input.emit({ type: 'proposal', data: { id, proposal: outcome.proposal } });
+        if (outcome.visual !== null) input.emit({ type: 'visual', data: { id, visual: outcome.visual } });
+        if (outcome.prompts !== null) input.emit({ type: 'suggestions', data: { id, prompts: outcome.prompts } });
         if (known) {
           const state = outcome.result.is_error === true ? 'error' : 'done';
           input.emit({ type: 'tool', data: { id, name, state, input: view, result: resultViewOf(name, outcome.result) } });
         }
       }
       append({ role: 'user', content: results });
+      // suggest_next is a reply's last step: a message that called only it is answered and ends the turn without
+      // another model call, valid or not (the client then picks its own three). The saved reply ends with its results.
+      if (toolUses.every((block) => block.name === 'suggest_next')) return done('end_turn');
     }
   } catch (err) {
     if (aborted()) return { kind: 'aborted', calls, costMicroUsd: spent };

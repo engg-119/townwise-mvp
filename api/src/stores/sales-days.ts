@@ -1,9 +1,14 @@
 // tw_sales_days (spec 6.5, 11.4): one row per location per business day, holding only the guest count and net
 // sales. The schema is strict: 'throw', and the write path builds each row field by field, so nothing else can be
 // stored. Nothing here logs.
+//
+// D28, the read rule: coverage, coverageByLocation, months, days and history leave out the days whose upload (the one
+// that last wrote the day) is turned off, with no fallback to an earlier upload's values, which no longer exist.
+// hasAny, hasAnyForOrg, apply and the deletes see every day.
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
+import { uploadModel } from './uploads.ts';
 
 export const SALES_DAYS_COLLECTION = 'tw_sales_days';
 
@@ -40,6 +45,8 @@ function salesDaySchema(): Schema<SalesDayFields> {
     updatedAt: { type: Date, required: true },
   }, { strict: 'throw', versionKey: false, read: 'primary' });
   schema.index({ orgId: 1, locationId: 1, date: 1 }, { unique: true });
+  // D28: the days an upload still holds (Your data's "in use" count, and deleting one upload).
+  schema.index({ orgId: 1, uploadId: 1 });
   return schema;
 }
 
@@ -88,15 +95,24 @@ interface MonthRow { _id: string; days: number; guestsDays: number; guests: numb
 
 /** Tenant store: every function takes the OrgScope first and filters on its orgId. */
 export interface SalesDayStore {
-  /** Coverage per location id, for the locations that have any day with a value. */
+  /**
+   * Coverage per location id, for the locations that have any day with a value, except the days a turned-off upload
+   * holds (D28).
+   */
   coverageByLocation(scope: OrgScope): Promise<Map<string, Coverage>>;
+  /** The location's coverage, except the days a turned-off upload holds (D28). */
   coverage(scope: OrgScope, locationId: string): Promise<Coverage>;
-  /** Oldest month first. */
+  /** Oldest month first, except the days a turned-off upload holds (D28). */
   months(scope: OrgScope, locationId: string): Promise<SalesMonth[]>;
-  /** The days from `from` to `to`, inclusive, oldest first. */
+  /** The days from `from` to `to`, inclusive, oldest first, except the days a turned-off upload holds (D28). */
   days(scope: OrgScope, locationId: string, range: { from: string; to: string }): Promise<SalesDay[]>;
-  /** Every stored day of the location, oldest first, each with the upload that last wrote it. */
+  /**
+   * Every stored day of the location, oldest first, each with the upload that last wrote it, except the days a
+   * turned-off upload holds (D28).
+   */
   history(scope: OrgScope, locationId: string): Promise<SalesDayWithUpload[]>;
+  /** D28: the dates from `from` to `to`, inclusive, whose day a turned-off upload holds, oldest first. */
+  disabledDates(scope: OrgScope, locationId: string, range: { from: string; to: string }): Promise<string[]>;
   /**
    * Spec 11.4 step 2: one unordered bulkWrite of upserts keyed by { orgId, locationId, date }. `replace` sets each
    * day in full, nulls included; otherwise each day is written only if it does not exist yet. `matched` counts the
@@ -108,6 +124,13 @@ export interface SalesDayStore {
   hasAny(scope: OrgScope, locationId: string): Promise<boolean>;
   /** Whether any location of the organization has a day with a value (the welcome's “ready to set up”). */
   hasAnyForOrg(scope: OrgScope): Promise<boolean>;
+  /**
+   * D28: how many stored days each of `uploadIds` still holds (it last wrote them), turned off or not, by upload id. An
+   * upload that holds none is left out.
+   */
+  ownedDayCounts(scope: OrgScope, uploadIds: readonly string[]): Promise<Map<string, number>>;
+  /** D28: deletes the days the upload still holds at the location. Resolves the number deleted. */
+  removeForUpload(scope: OrgScope, locationId: string, uploadId: string): Promise<number>;
   /** Resolves the number of days deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
   /** Organization deletion (spec 10.7). Resolves the number deleted. */
@@ -116,10 +139,26 @@ export interface SalesDayStore {
 
 export function createSalesDayStore(connection: Connection): SalesDayStore {
   const SalesDay = salesDayModel(connection);
+  const Upload = uploadModel(connection);
 
-  async function coverageRows(match: Record<string, Types.ObjectId>): Promise<Map<string, Coverage>> {
+  /** The ids of the organization's turned-off uploads, at the location when one is given (D28). */
+  async function offIds(scope: OrgScope, locationId: string | null): Promise<Types.ObjectId[]> {
+    const docs = await Upload.find({
+      orgId: scope.orgId, ...(locationId === null ? {} : { locationId }), disabledAt: trusted({ $type: 'date' }),
+    }, { _id: 1 }).lean();
+    return docs.map((doc) => doc._id);
+  }
+
+  /** The read rule's clause for an aggregate's $match: empty when nothing is turned off. */
+  const onlyOn = (ids: readonly Types.ObjectId[]) => (ids.length === 0 ? {} : { uploadId: { $nin: [...ids] } });
+  /** The same clause for a model's find filter, marked trusted() as HAS_VALUE_FILTER is. */
+  const onlyOnFilter = (ids: readonly Types.ObjectId[]) => (ids.length === 0 ? {} : { uploadId: trusted({ $nin: [...ids] }) });
+
+  async function coverageRows(scope: OrgScope, locationId: string | null): Promise<Map<string, Coverage>> {
+    const match = locationId === null ? { orgId: new Types.ObjectId(scope.orgId) } : ofLocation(scope, locationId);
+    const ids = await offIds(scope, locationId);
     const rows = await connection.collection(SALES_DAYS_COLLECTION).aggregate<CoverageRow>([
-      { $match: { ...match, ...HAS_VALUE } },
+      { $match: { ...match, ...HAS_VALUE, ...onlyOn(ids) } },
       {
         $group: {
           _id: '$locationId',
@@ -150,14 +189,15 @@ export function createSalesDayStore(connection: Connection): SalesDayStore {
 
   return {
     coverageByLocation(scope) {
-      return coverageRows({ orgId: new Types.ObjectId(scope.orgId) });
+      return coverageRows(scope, null);
     },
     async coverage(scope, locationId) {
-      return (await coverageRows(ofLocation(scope, locationId))).get(locationId) ?? NO_COVERAGE;
+      return (await coverageRows(scope, locationId)).get(locationId) ?? NO_COVERAGE;
     },
     async months(scope, locationId) {
+      const ids = await offIds(scope, locationId);
       const rows = await connection.collection(SALES_DAYS_COLLECTION).aggregate<MonthRow>([
-        { $match: { ...ofLocation(scope, locationId), ...HAS_VALUE } },
+        { $match: { ...ofLocation(scope, locationId), ...HAS_VALUE, ...onlyOn(ids) } },
         {
           $group: {
             _id: { $substrBytes: ['$date', 0, 7] },
@@ -178,20 +218,33 @@ export function createSalesDayStore(connection: Connection): SalesDayStore {
       }));
     },
     async days(scope, locationId, range) {
+      const ids = await offIds(scope, locationId);
       const docs = await SalesDay
-        .find({ ...ofLocation(scope, locationId), date: trusted({ $gte: range.from, $lte: range.to }) })
+        .find({ ...ofLocation(scope, locationId), date: trusted({ $gte: range.from, $lte: range.to }), ...onlyOnFilter(ids) })
         .sort({ date: 1 })
         .lean();
       return docs.map((doc) => ({ date: doc.date, guests: doc.guests ?? null, netSalesCents: doc.netSalesCents ?? null }));
     },
     async history(scope, locationId) {
+      const ids = await offIds(scope, locationId);
       const docs = await SalesDay
-        .find(ofLocation(scope, locationId), { _id: 0, date: 1, guests: 1, netSalesCents: 1, uploadId: 1 })
+        .find({ ...ofLocation(scope, locationId), ...onlyOnFilter(ids) }, { _id: 0, date: 1, guests: 1, netSalesCents: 1, uploadId: 1 })
         .sort({ date: 1 })
         .lean();
       return docs.map((doc) => ({
         date: doc.date, guests: doc.guests ?? null, netSalesCents: doc.netSalesCents ?? null, uploadId: doc.uploadId.toHexString(),
       }));
+    },
+    async disabledDates(scope, locationId, range) {
+      const ids = await offIds(scope, locationId);
+      if (ids.length === 0) return [];
+      const docs = await SalesDay
+        .find({
+          ...ofLocation(scope, locationId), date: trusted({ $gte: range.from, $lte: range.to }), uploadId: trusted({ $in: ids }),
+        }, { _id: 0, date: 1 })
+        .sort({ date: 1 })
+        .lean();
+      return docs.map((doc) => doc.date);
     },
     async apply(scope, locationId, input) {
       const key = ofLocation(scope, locationId);
@@ -213,6 +266,17 @@ export function createSalesDayStore(connection: Connection): SalesDayStore {
     },
     async hasAnyForOrg(scope) {
       return (await SalesDay.exists({ orgId: new Types.ObjectId(scope.orgId), ...HAS_VALUE_FILTER })) !== null;
+    },
+    async ownedDayCounts(scope, uploadIds) {
+      if (uploadIds.length === 0) return new Map();
+      const rows = await connection.collection(SALES_DAYS_COLLECTION).aggregate<{ _id: Types.ObjectId; days: number }>([
+        { $match: { orgId: new Types.ObjectId(scope.orgId), uploadId: { $in: uploadIds.map((id) => new Types.ObjectId(id)) } } },
+        { $group: { _id: '$uploadId', days: { $sum: 1 } } },
+      ]).toArray();
+      return new Map(rows.map((row) => [row._id.toHexString(), row.days]));
+    },
+    async removeForUpload(scope, locationId, uploadId) {
+      return (await SalesDay.deleteMany({ ...ofLocation(scope, locationId), uploadId: new Types.ObjectId(uploadId) })).deletedCount;
     },
     async removeForLocation(scope, locationId) {
       return (await SalesDay.deleteMany(ofLocation(scope, locationId))).deletedCount;

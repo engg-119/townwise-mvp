@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import { Text, StyleSheet } from 'react-native';
 
-import { deleteOrg, fetchOrg, updateOrg } from '../../../../../../src/portal/console/api';
+import { deleteOrg, fetchOrg, openAsAdmin, updateOrg } from '../../../../../../src/portal/console/api';
 import { AuditTable } from '../../../../../../src/portal/console/AuditTable';
 import { Dialog } from '../../../../../../src/portal/console/Dialog';
 import { ForecastRuns } from '../../../../../../src/portal/console/ForecastRuns';
@@ -31,11 +31,15 @@ import { theme } from '../../../../../../src/theme';
 // Every change here is a staff action its admins see (D9); after one the page reads the organization again in
 // place. A change that answers 404, or a read after one that does, means another staff member deleted the
 // organization meanwhile: the page shows its 404 state, as on load, with no “Saved.”, and focus moves to that line.
+// While nobody has joined the organization the header also offers Open as admin (D25): the portal as its admin, under
+// a banner, until someone joins or the staff sign-in ends.
 // While nobody has joined the organization (`org.inSetup`, D23) the setup panel follows Locations (SetupPanel). When
 // any read finds setup closed that the page showed open (someone joined, or it was suspended), the notice says which.
 // A setup write that answers 409 org_not_in_setup hides the panel at once, until a newer read lets `inSetup` decide.
 
 const NAME_COPY = 'Enter the organization’s name, 2 to 120 characters.';
+const SALES_NOTES_LINE = 'Sales figures and notes are visible only through View as.';
+const SALES_NOTES_LINE_IN_SETUP = 'Sales figures and notes are visible through Open as admin until someone joins, then only through View as.';
 const NO_LOCATIONS = 'No locations yet. The first admin adds one after joining.';
 const NO_LOCATIONS_IN_SETUP = 'No locations yet. Add the first one below.';
 /** A change went through, but reading the organization again didn't: what the page shows may be old. */
@@ -201,7 +205,7 @@ function LocationTable(props: { locations: readonly OrgLocation[] }): React.JSX.
 }
 
 export default function OrganizationPage(): React.JSX.Element {
-  const { api, showNotice } = usePortal();
+  const { api, applyMe, showNotice } = usePortal();
   const pathname = usePathname();
   const params = useLocalSearchParams<{ orgId: string }>();
   const orgId = typeof params.orgId === 'string' ? params.orgId : '';
@@ -254,6 +258,23 @@ export default function OrganizationPage(): React.JSX.Element {
     focusMessage();
     showNotice({ text: setupClosedCopy(shown.org.name, shown.org.status === 'suspended') }, pathname);
   }, [shown, focusMessage, showNotice, pathname]);
+  // Open as admin (D25): the answer is the organization's admin access under the banner, and the portal routes to
+  // its dashboard. 409 org_not_in_setup is the setup panel's refusal, so it closes setup the same way.
+  const opening = useAction(useCallback(async () => {
+    try {
+      applyMe(await openAsAdmin(api, orgId));
+    } catch (error) {
+      if (gone(error)) {
+        onGone();
+        return;
+      }
+      if (hasCode(error, 409, 'org_not_in_setup') && shown !== null) {
+        await setupClosed(shown);
+        return;
+      }
+      throw error;
+    }
+  }, [api, applyMe, orgId, onGone, setupClosed, shown]));
   const savedAndClosed = useCallback(async () => {
     if (!await refreshed()) return;
     setOpen(null);
@@ -299,6 +320,7 @@ export default function OrganizationPage(): React.JSX.Element {
   const inSetup = org.inSetup === true && closedOn !== detail;
   const side = (
     <>
+      {inSetup ? <Button variant="outline" label={opening.pending ? 'Opening…' : 'Open as admin'} disabled={opening.pending} onPress={opening.run} /> : null}
       <Button variant="outline" label="Rename" onPress={() => { setOpen('rename'); }} />
       {suspended
         ? <Button variant="outline" label={reactivate.pending ? 'Reactivating…' : 'Reactivate'} disabled={reactivate.pending} onPress={reactivate.run} />
@@ -323,6 +345,7 @@ export default function OrganizationPage(): React.JSX.Element {
         <Small>{`What you change here is listed in ${org.name}’s Townwise staff activity, which its admins see.`}</Small>
         {suspended ? <Small>{`Members of ${org.name} see that access is paused. Data is kept.`}</Small> : null}
         {noAdmin ? <Small white>No admin yet. Add an admin email.</Small> : null}
+        {opening.error === null ? null : <ErrorNotice error={opening.error} />}
         {reactivate.error === null ? null : <ErrorNotice error={reactivate.error} />}
         {refreshError === null ? null : <ErrorNotice message={REFRESH_COPY} onRetry={() => { void refresh(); }} />}
       </Stack>
@@ -335,7 +358,7 @@ export default function OrganizationPage(): React.JSX.Element {
         {locations.length === 0
           ? <EmptyState text={inSetup ? NO_LOCATIONS_IN_SETUP : NO_LOCATIONS} />
           : <LocationTable locations={locations} />}
-        <Small>Sales figures and notes are visible only through View as.</Small>
+        <Small>{inSetup ? SALES_NOTES_LINE_IN_SETUP : SALES_NOTES_LINE}</Small>
       </Section>
 
       {inSetup ? <SetupPanel org={org} locations={locations} onChanged={refreshed} onClosed={() => { void setupClosed(detail); }} /> : null}

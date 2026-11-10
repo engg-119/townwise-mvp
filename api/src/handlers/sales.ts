@@ -245,7 +245,7 @@ export async function uploadSales(ctx: TownwiseContext, req: Request, res: Respo
   const checked = checkedUpload(req.body, now);
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const applied = await applyUpload(ctx, scope, location.id, {
-    ...checked, replace: member.role === 'org_admin', uploadedBy: member.userId, now,
+    ...checked, replace: member.role === 'org_admin', uploadedBy: member.userId, ...(member.openAsAdmin !== null ? { byStaff: true } : {}), now,
   });
   await recordAfter(ctx, {
     ...actorOf(member), at: now, orgId: scope.orgId, action: 'sales.uploaded',
@@ -255,7 +255,7 @@ export async function uploadSales(ctx: TownwiseContext, req: Request, res: Respo
       firstDate: applied.firstDate, lastDate: applied.lastDate,
     },
   });
-  res.status(201).json(await uploadAnswer(ctx, scope, location.id, applied, member.email));
+  res.status(201).json(await uploadAnswer(ctx, scope, location.id, applied, applied.byStaff ? TOWNWISE_STAFF : member.email));
 }
 
 export function filesUnavailable(): AppError {
@@ -284,6 +284,8 @@ export async function removeSalesData(
   if (removed === 'files_unavailable') return removed;
   const deletedDays = await ctx.stores.salesDays.removeForLocation(scope, locationId);
   const deletedUploads = await ctx.stores.uploads.removeForLocation(scope, locationId);
+  // The forecast lab: calibrations go before their runs, so a running job's token dies before its run could be written.
+  await ctx.stores.calibrations.removeForLocation(scope, locationId);
   // U13B: forecasts are made from the sales data, so they go with it.
   await ctx.stores.forecasts.removeForLocation(scope, locationId);
   // Answers to TownwiseAI's questions were about these days, so they go too, after the days: with no days left no

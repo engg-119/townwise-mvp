@@ -155,7 +155,7 @@ export function calibrationLine(calibration: Calibration): string {
   if (calibration.state === 'no_sales_data') {
     return 'Upload your sales history to start. The upload sends Townwise only the date, guest count and net sales for each day.';
   }
-  return `Your sales history is in: ${plural(calibration.dayCount, 'day', 'days')}, ${formatDate(calibration.firstDate)} to ${formatDate(calibration.lastDate)}. Calibration isn’t built yet, so there is no forecast.`;
+  return `Your sales history is in: ${plural(calibration.dayCount, 'day', 'days')}, ${formatDate(calibration.firstDate)} to ${formatDate(calibration.lastDate)}.`;
 }
 
 const KIND: Readonly<Record<ColumnProfile['kind'], string>> = { dates: 'dates', numbers: 'numbers', text: 'text', empty: 'empty' };

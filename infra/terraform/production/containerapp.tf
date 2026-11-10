@@ -117,6 +117,15 @@ resource "azurerm_container_app" "api" {
         value = azurerm_user_assigned_identity.api.client_id
       }
 
+      # Calibrations run in the lab job (lab.tf) only when enable_lab is true; otherwise the runner stays off.
+      dynamic "env" {
+        for_each = var.enable_lab ? { TOWNWISE_LAB_RUNNER = "azure", TOWNWISE_LAB_JOB_ID = local.lab_job_id } : {}
+        content {
+          name  = env.key
+          value = env.value
+        }
+      }
+
       dynamic "env" {
         for_each = local.api_secrets
         content {

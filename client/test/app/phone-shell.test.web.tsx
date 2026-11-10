@@ -120,38 +120,47 @@ describe.each([
   ['a member', meOf(ACCESS.member)],
   ['staff viewing as a member', viewAsMe(ACCESS.member)],
 ])('TownwiseAI at 320px, for %s', (_who, me) => {
-  test('a compact header (the eyebrow, and the title on one line, no switcher) scrolls with the thread; the sections stay in the top bar; the composer stays below', async () => {
+  test('a compact greeting (the eyebrow, and the title on one line, no switcher) scrolls with the landing and the thread; the sections stay in the top bar; the composer docks under the thread', async () => {
     renderAt('/locations/l1/agent', me);
-    // While the chat loads, the header sits above the loading line; then it moves into the thread.
-    const thread = await screen.findByTestId('chat-thread');
-    const title = screen.getByRole('heading', { level: 1, name: 'TownwiseAI' });
+    // While the chat loads, the header sits above the loading line; then it moves into the landing.
+    const landing = await screen.findByTestId('chat-landing');
+    const title = screen.getByRole('heading', { level: 1, name: 'Welcome back.' });
     expect(screen.getAllByRole('heading', { level: 1 })).toEqual([title]);
     expect(style(title).whiteSpace).toBe('nowrap');
     expect(style(title).textOverflow).toBe('ellipsis');
     expect(screen.queryByRole('combobox', { name: 'Location' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'All locations' })).toBeNull();
-    expect(thread.contains(title)).toBe(true);
-    expect(thread.contains(screen.getByText('Main Street Bar, Hanover, NH'))).toBe(true);
+    expect(landing.contains(title)).toBe(true);
+    expect(landing.contains(screen.getByText('Main Street Bar, Hanover, NH'))).toBe(true);
     const sections = screen.getByRole('region', { name: 'Sections' });
-    expect(thread.contains(sections)).toBe(false);
+    expect(landing.contains(sections)).toBe(false);
     expect(within(sections).getByRole('link', { name: 'TownwiseAI' }).getAttribute('aria-current')).toBe('page');
-    const composer = screen.getByLabelText(COMPOSER_LABEL);
-    expect(thread.contains(composer)).toBe(false);
+    expect(landing.contains(screen.getByLabelText(COMPOSER_LABEL))).toBe(true);
+    // With messages, the header scrolls with the thread and the composer stays below it.
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Earlier chat, Nov 2, 2026' }));
+    const thread = await screen.findByTestId('chat-thread');
+    await within(thread).findByText('We close for the holidays.');
+    expect(thread.contains(screen.getByRole('heading', { level: 1, name: 'Welcome back.' }))).toBe(true);
+    expect(thread.contains(screen.getByRole('region', { name: 'Sections' }))).toBe(false);
+    expect(thread.contains(screen.getByLabelText(COMPOSER_LABEL))).toBe(false);
     expect(screen.getByRole('button', { name: 'Send' })).toBeTruthy();
   });
 
-  test('the composer is one row: the input, named by its label with no label drawn, at one line, and Send beside it', async () => {
+  test('the composer is one rounded row: the input, named by its label with no label drawn, at one line, and Send beside it', async () => {
     renderAt('/locations/l1/agent', me);
-    await screen.findByTestId('chat-thread');
+    await screen.findByTestId('chat-landing');
     const input = screen.getByLabelText(COMPOSER_LABEL);
     expect(screen.queryByText(COMPOSER_LABEL)).toBeNull();
     expect(input.tagName).toBe('TEXTAREA');
     expect(input.getAttribute('rows')).toBe('1');
     expect(style(input).minHeight).toBe('44px');
+    expect(input.getAttribute('placeholder')).toBe('Ask TownwiseAI');
     const send = screen.getByRole('button', { name: 'Send' });
-    const row = parentOf(input);
-    expect(row.contains(send)).toBe(true);
-    expect(style(row).flexDirection).toBe('row');
+    const box = parentOf(parentOf(input));
+    expect(box.contains(send)).toBe(true);
+    expect(style(box).flexDirection).toBe('row');
+    expect(style(box).borderTopLeftRadius).toBe('24px');
   });
 });
 
@@ -164,14 +173,15 @@ test('at 320px the composer grows with its text, up to its maximum, and starts o
   });
   try {
     renderAt('/locations/l1/agent', meOf(ACCESS.member));
-    await screen.findByTestId('chat-thread');
+    await screen.findByTestId('chat-landing');
+    // The input has no border of its own: the rounded box around it draws the edge.
     const input = screen.getByLabelText<HTMLTextAreaElement>(COMPOSER_LABEL);
-    expect(input.style.height).toBe('46px');
+    expect(input.style.height).toBe('44px');
     fireEvent.change(input, { target: { value: 'Closed\nfor the\nholidays' } });
-    expect(input.style.height).toBe('94px');
+    expect(input.style.height).toBe('92px');
     expect(style(input).maxHeight).toBe('200px');
     fireEvent.change(input, { target: { value: '' } });
-    expect(input.style.height).toBe('46px');
+    expect(input.style.height).toBe('44px');
   } finally {
     Reflect.deleteProperty(HTMLTextAreaElement.prototype, 'scrollHeight');
     if (scrollHeight !== undefined) Object.defineProperty(HTMLElement.prototype, 'scrollHeight', scrollHeight);

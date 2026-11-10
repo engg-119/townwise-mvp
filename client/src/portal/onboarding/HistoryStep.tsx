@@ -14,7 +14,7 @@ import { removeFile, startImport, type FileView, type ImportView } from '../file
 import {
   acceptHint, actionError, fileLine, fileName, formatSize, overallLine, queueLine, readingLine, timeLeft,
 } from '../files/copy';
-import { ZipEntries } from '../files/FileList';
+import { ZipEntries } from '../files/ZipEntries';
 import { ImportQuestion } from '../files/ImportQuestion';
 import { useImport } from '../files/useImport';
 import { useUploadQueue, type QueuedUpload } from '../files/uploadQueue';

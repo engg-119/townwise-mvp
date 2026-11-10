@@ -9,7 +9,7 @@ import { DefinitionList } from '../ui/DataTable';
 import { ErrorNotice, LoadingLine, StatusTag } from '../ui/feedback';
 import { Panel, Stack } from '../ui/layout';
 import { Heading, Small } from '../ui/text';
-import { fetchEstimatesAbout, type EstimatesAbout, type ForecastRun, type LiveAccuracy } from './api';
+import { fetchEstimatesAbout, trainedOnWords, type EstimatesAbout, type ForecastRun, type LiveAccuracy } from './api';
 import { dayText } from './format';
 
 // "How Townwise estimates" (spec 13.2), the model card: what Townwise's estimates read, what they can't see, their
@@ -35,14 +35,10 @@ function pct(value: number): string {
   return `${String(Math.round(value * 10) / 10)}%`;
 }
 
-const TRAINED_ON: Readonly<Record<ForecastRun['trainingSource'], string>> = {
-  files_from_owner: 'sales exports you sent Townwise',
-};
-
 /** U13B: "Forecast: Townwise demand model v3, trained on sales exports you sent Townwise from ... made Nov 1, 2026." */
 export function runLines(run: ForecastRun): string[] {
   const lines = [
-    `Forecast: ${run.model.label}, trained on ${TRAINED_ON[run.trainingSource]} from ${formatDate(run.trainedFrom)} to ${formatDate(run.dataThrough)}, made ${formatDate(run.madeAt)}. It saw no sales after ${formatDate(run.dataThrough)}.`,
+    `Forecast: ${run.model.label}, trained on ${trainedOnWords(run.trainingSource)} from ${formatDate(run.trainedFrom)} to ${formatDate(run.dataThrough)}, made ${formatDate(run.madeAt)}. It saw no sales after ${formatDate(run.dataThrough)}.`,
     'Each day and week is a range that about 8 in 10 days should land inside.',
   ];
   if (run.interval.widened) lines.push('Its ranges were widened after they ran narrow in backtests.');

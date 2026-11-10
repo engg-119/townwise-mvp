@@ -9,15 +9,23 @@ import type { TownwiseContext } from '../../app.ts';
 import type { OrgScope } from '../../access/policy.ts';
 import type { LocationRecord } from '../../stores/locations.ts';
 import type { NoteContent } from '../../stores/notes.ts';
+import type { Role } from '../../access/resolve.ts';
+import type { AuditEventInput } from '../../stores/audit-events.ts';
+import { compareForecastModelsTool, getCalibrationTool, startCalibrationTool } from './calibration.ts';
 import { dayTool } from './day.ts';
 import { forecastTool } from './forecast.ts';
+import { listDataTool } from './list-data.ts';
+import { suggestNextTool } from './next.ts';
 import { notesTool } from './notes.ts';
 import { overviewTool } from './overview.ts';
 import { peopleInTownTool } from './people-in-town.ts';
+import { proposeDataTool } from './propose-data.ts';
 import { proposeNoteTool } from './propose-note.ts';
+import { readDataTool } from './read-data.ts';
 import { salesDaysTool } from './sales-days.ts';
 import { townCalendarTool } from './town-calendar.ts';
 import { townProfileTool } from './town-profile.ts';
+import { showVisualTool, type Visual } from './visual.ts';
 
 export interface ToolContext {
   readonly ctx: TownwiseContext;
@@ -27,6 +35,10 @@ export interface ToolContext {
   readonly today: string;
   /** U13A: the town's IANA time zone. */
   readonly timeZone: string;
+  /** The caller's role in the organization: the lab tools are for org admins. */
+  readonly role: Role;
+  /** The caller as chat.turn_completed records them, for the events a tool records. */
+  readonly actor: Pick<AuditEventInput, 'actorUserId' | 'actorEmail' | 'actorRole' | 'viewAsGrantId'>;
 }
 
 export type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue };
@@ -38,10 +50,15 @@ export type JsonValue = string | number | boolean | null | readonly JsonValue[] 
  */
 export type ToolView = Readonly<Record<string, JsonValue>>;
 
-/** What a tool's run produced: the result the model reads, and a note to show the owner (propose_note only). */
+/**
+ * What a tool's run produced: the result the model reads, and what to show the owner: a note (propose_note), a visual
+ * (show_visual) or the next questions (suggest_next).
+ */
 export interface ToolRun {
   readonly content: string;
   readonly proposal?: NoteContent;
+  readonly visual?: Visual;
+  readonly prompts?: string[];
 }
 
 /**
@@ -58,13 +75,24 @@ export interface ChatTool<I> {
   inputView(input: I): ToolView | null;
   /** Recomputed from the result the model read, so a stored conversation shows the same card. Null when unreadable. */
   resultView(content: string): ToolView | null;
+  /**
+   * What the saved conversation keeps of a result that did not fail, when not the result itself: read_data_item keeps a
+   * stub, so later turns never resend an item's text (turn.ts, savedTurn). `resultView` reads the stub too.
+   */
+  saved?(content: string): string;
 }
 
 export interface ToolOutcome {
   readonly result: BetaToolResultBlockParam;
   /** Set only when propose_note got a valid note. */
   readonly proposal: NoteContent | null;
+  /** Set only when show_visual drew one. */
+  readonly visual: Visual | null;
+  /** Set only when suggest_next got three valid prompts. */
+  readonly prompts: string[] | null;
 }
+
+const NOTHING_SHOWN = { proposal: null, visual: null, prompts: null } as const;
 
 /** In this order on every request. Append only. */
 export const TOOL_REGISTRY: readonly ChatTool<unknown>[] = [
@@ -80,6 +108,18 @@ export const TOOL_REGISTRY: readonly ChatTool<unknown>[] = [
   forecastTool,
   // F2: everything Townwise has for one day.
   dayTool,
+  // Chat redesign A4: visuals drawn from Townwise's data, and the next questions (a reply's last step).
+  showVisualTool,
+  suggestNextTool,
+  // Your data: what the team added, and the text of a reference item.
+  listDataTool,
+  readDataTool,
+  // Your data: a card proposing to keep text the owner gave.
+  proposeDataTool,
+  // The forecast lab: org admins calibrate a location's forecast and read how it went.
+  startCalibrationTool,
+  getCalibrationTool,
+  compareForecastModelsTool,
 ];
 
 /** The tool definitions sent to the model, in registry order. */
@@ -95,11 +135,14 @@ export function toolNamed(name: string): ChatTool<unknown> | undefined {
 /** Runs one tool call. Store failures throw: the turn then fails as a whole. */
 export async function runTool(tc: ToolContext, block: BetaToolUseBlock): Promise<ToolOutcome> {
   const tool = toolNamed(block.name);
-  if (tool === undefined) return { result: failed(block, 'Unknown tool.'), proposal: null };
+  if (tool === undefined) return { result: failed(block, 'Unknown tool.'), ...NOTHING_SHOWN };
   const input = tool.parse(block.input, tc.today);
-  if (input === null) return { result: failed(block, tool.invalidInput), proposal: null };
+  if (input === null) return { result: failed(block, tool.invalidInput), ...NOTHING_SHOWN };
   const run = await tool.run(tc, input);
-  return { result: { type: 'tool_result', tool_use_id: block.id, content: run.content }, proposal: run.proposal ?? null };
+  return {
+    result: { type: 'tool_result', tool_use_id: block.id, content: run.content },
+    proposal: run.proposal ?? null, visual: run.visual ?? null, prompts: run.prompts ?? null,
+  };
 }
 
 function failed(block: BetaToolUseBlock, content: string): BetaToolResultBlockParam {
@@ -111,6 +154,14 @@ export function inputViewOf(name: string, raw: unknown, today: string): ToolView
   const tool = toolNamed(name);
   const input = tool?.parse(raw, today) ?? null;
   return tool === undefined || input === null ? null : tool.inputView(input);
+}
+
+/** What the saved conversation keeps of one result: the tool's stub of a result that did not fail, else the same block. */
+export function savedResultOf(name: string, result: BetaToolResultBlockParam): BetaToolResultBlockParam {
+  const tool = toolNamed(name);
+  if (tool?.saved === undefined || result.is_error === true || typeof result.content !== 'string') return result;
+  const content = tool.saved(result.content);
+  return content === result.content ? result : { ...result, content };
 }
 
 /** The result view of a call that did not fail; null for an unknown tool, an error result or an unreadable one. */

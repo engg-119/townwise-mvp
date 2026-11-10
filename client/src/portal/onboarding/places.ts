@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import type { ApiClient } from '../../api/client';
-import type { AccessRequestInput, TownInput } from '../api';
+import { withOrgId, type AccessRequestInput, type TownInput } from '../api';
 import { hasCode } from '../errors';
 import { placeMapSchema } from '../places/map';
 import { createdLocationSchema, meResponseSchema, townSchema, type LocationSummary, type MeResponse, type Town } from '../schemas';
@@ -70,9 +70,14 @@ export function autocompletePlaces(
   });
 }
 
-/** Ends the search's session. */
-export async function placeDetails(api: ApiClient, placeId: string, sessionToken: string): Promise<PlaceDetails> {
-  const body = await api.json('/api/places/details', detailsSchema, { method: 'POST', body: { placeId, sessionToken } });
+/**
+ * Ends the session whose token it carries. Null sends none, and the API makes one of its own: a checked place after
+ * the first in one list, whose search's session the first check ended.
+ */
+export async function placeDetails(api: ApiClient, placeId: string, sessionToken: string | null): Promise<PlaceDetails> {
+  const body = await api.json('/api/places/details', detailsSchema, {
+    method: 'POST', body: { placeId, ...(sessionToken === null ? {} : { sessionToken }) },
+  });
   return body.place;
 }
 
@@ -86,17 +91,27 @@ export function townLabel(town: Town): string {
   return `${town.name}, ${town.state}`;
 }
 
-/** POST /api/access-requests, as sendAccessRequest (../api.ts) with the place's id. 201 answers the new access. */
-export function sendAccessRequestAt(api: ApiClient, input: AccessRequestInput, placeId: string): Promise<MeResponse> {
-  return api.json('/api/access-requests', meResponseSchema, { method: 'POST', body: { ...input, placeId } });
+/** Google's name for a place as a request keeps it: trimmed, and at most the API's 80 characters. */
+export function placeName(place: { name: string }): string {
+  return place.name.trim().slice(0, 80);
+}
+
+/** POST /api/access-requests, as sendAccessRequest (../api.ts) with the checked places. 201 answers the new access. */
+export function sendAccessRequestAt(api: ApiClient, input: AccessRequestInput, places: readonly UsablePlace[]): Promise<MeResponse> {
+  return api.json('/api/access-requests', meResponseSchema, {
+    method: 'POST',
+    body: { ...input, places: places.map((p) => ({ placeId: p.placeId, name: placeName(p), town: townInputOf(p.town) })) },
+  });
 }
 
 /**
  * POST /api/org/locations, as createLocation (../api.ts) with the place's id. The API asks Google for the place and
  * refuses a town that isn't its own (400 place_town_mismatch).
  */
-export async function createLocationAt(api: ApiClient, input: { name: string; town: TownInput }, placeId: string): Promise<LocationSummary> {
-  const body = await api.json('/api/org/locations', createdLocationSchema, { method: 'POST', body: { ...input, placeId } });
+export async function createLocationAt(
+  api: ApiClient, input: { name: string; town: TownInput }, placeId: string, orgId: string | null,
+): Promise<LocationSummary> {
+  const body = await api.json('/api/org/locations', createdLocationSchema, { method: 'POST', body: withOrgId({ ...input, placeId }, orgId) });
   return body.location;
 }
 

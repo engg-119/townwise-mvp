@@ -1,10 +1,16 @@
+import { readFileSync } from 'node:fs';
+
 import type { AuthContext } from '@ckeith26/auth';
 import { ConfigError } from '@ckeith26/server-core';
 import { describe, expect, it } from 'vitest';
 
-import { policyRefusal, principalOf, viewAsRefusal, type Policy, type Principal } from '../src/access/policy.ts';
+import {
+  isStaffPrincipal, openAsAdminRefusal, policyRefusal, principalOf, scopeForOpenAsAdmin, viewAsRefusal, type Policy, type Principal,
+} from '../src/access/policy.ts';
 import type { Access, Resolution } from '../src/access/resolve.ts';
 import { assertRouteTable, TOWNWISE_ROUTES, type TownwiseRoute } from '../src/access/routes.ts';
+import type { TownwiseContext } from '../src/app.ts';
+import { createLabCallbackRouter } from '../src/lab/callback.ts';
 
 const handler: TownwiseRoute['handler'] = () => Promise.resolve();
 const route = (overrides: Partial<TownwiseRoute>): TownwiseRoute => ({
@@ -18,19 +24,22 @@ const user = { id: 'a'.repeat(24), email: 'person@example.test', googleSubject: 
 const target = { id: 'b'.repeat(24), email: 'target@example.test', googleSubject: null, createdAt: new Date(0) };
 const seat = { id: 'c'.repeat(24), orgId: 'd'.repeat(24), orgName: 'Org A', role: 'member' as const };
 const grant = {
-  id: 'e'.repeat(24), targetUserId: target.id, orgId: seat.orgId, reason: 'Support request', startedAt: new Date(0),
-  expiresAt: new Date(1), endedAt: null,
+  kind: 'view_as' as const, id: 'e'.repeat(24), targetUserId: target.id, orgId: seat.orgId, reason: 'Support request',
+  startedAt: new Date(0), expiresAt: new Date(1), endedAt: null,
 };
+const openGrant = { kind: 'open_as_admin' as const, id: 'f'.repeat(24), orgId: 'd'.repeat(24), startedAt: new Date(0), expiresAt: new Date(1), endedAt: null };
 
-function resolution(effective: Access, opts?: { staff?: boolean; viewAs?: boolean }): Resolution {
-  const staff = opts?.staff === true || opts?.viewAs === true;
+function resolution(effective: Access, opts?: { staff?: boolean; viewAs?: boolean; openAsAdmin?: boolean }): Resolution {
+  const openAsAdmin = opts?.openAsAdmin === true;
+  const staff = opts?.staff === true || opts?.viewAs === true || openAsAdmin;
   return {
     user,
     self: staff ? { state: 'staff' } : effective,
     effective,
-    seat: effective.state === 'member' || effective.state === 'org_suspended' ? seat : null,
+    seat: !openAsAdmin && (effective.state === 'member' || effective.state === 'org_suspended') ? seat : null,
     staffVerifiedUntil: staff ? new Date('2026-06-01T13:00:00Z') : null,
     viewAs: opts?.viewAs === true ? { grant, target } : null,
+    openAsAdmin: openAsAdmin ? { grant: openGrant, scope: scopeForOpenAsAdmin(openGrant), orgName: 'Org A' } : null,
   };
 }
 
@@ -45,6 +54,7 @@ const principals: Record<string, Principal> = {
   noOrg: principalOf(resolution({ state: 'no_org' }), auth),
   viewAsMember: principalOf(resolution(memberAccess, { viewAs: true }), auth),
   viewAsPending: principalOf(resolution({ state: 'no_org' }, { viewAs: true }), auth),
+  openAsAdmin: principalOf(resolution(adminAccess, { openAsAdmin: true }), auth),
 };
 
 function codeOf(policy: Policy, name: string): string | null {
@@ -95,7 +105,35 @@ describe('route table', () => {
         bodyLimit: '32kb', limiter: undefined,
       },
       { id: 'admin.forecasts.remove', method: 'DELETE', path: '/admin/orgs/:orgId/forecast-runs/:runId', policy: 'staff', bodyLimit: 'none', limiter: undefined },
+      { id: 'admin.forecasts.switch', method: 'POST', path: '/admin/orgs/:orgId/forecasts-switch', policy: 'staff', bodyLimit: '2kb', limiter: undefined },
     ]);
+  });
+
+  it('the forecast lab: calibrations and the forecasts switch are staff routes with 2kb bodies, and no route limiter', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id.startsWith('admin.calibrations.') || r.id === 'admin.forecasts.switch')
+      .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));
+    expect(rows).toEqual([
+      { id: 'admin.calibrations.list', method: 'GET', path: '/admin/orgs/:orgId/calibrations', policy: 'staff', bodyLimit: 'none', limiter: undefined },
+      {
+        id: 'admin.calibrations.start', method: 'POST', path: '/admin/orgs/:orgId/locations/:locationId/calibrations', policy: 'staff',
+        bodyLimit: '2kb', limiter: undefined,
+      },
+      { id: 'admin.forecasts.switch', method: 'POST', path: '/admin/orgs/:orgId/forecasts-switch', policy: 'staff', bodyLimit: '2kb', limiter: undefined },
+    ]);
+  });
+
+  it('/lab holds the only routes outside /auth and /api', () => {
+    // main.ts mounts exactly three routers.
+    const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
+    const mounts = [...main.matchAll(/\{ path: '(\/[^']*)', router: /g)].map((match) => match[1]);
+    expect(mounts).toEqual(['/auth', '/api', '/lab']);
+    // The lab router holds the job's two callback routes and nothing else; building it touches no context.
+    const lab = createLabCallbackRouter({} as TownwiseContext);
+    const routes = lab.stack.flatMap((layer) => {
+      const route = layer.route as { path: string; methods: Record<string, boolean> } | undefined;
+      return route === undefined ? [] : Object.keys(route.methods).map((method) => `${method.toUpperCase()} ${route.path}`);
+    });
+    expect(routes).toEqual(['GET /calibrations/:id/input', 'POST /calibrations/:id/result']);
   });
 
   it('D23: staff setup routes are staff writes with the org routes’ body limits and no route limiter', () => {
@@ -122,6 +160,22 @@ describe('route table', () => {
     ] as const) {
       expect(limitOf(setup)).toBe(limitOf(org));
     }
+  });
+
+  it('D25: Open as admin is a staff POST with no body, sharing the view-as limiter', () => {
+    expect(TOWNWISE_ROUTES.find((r) => r.id === 'admin.orgs.open_as_admin')).toMatchObject({
+      method: 'POST', path: '/admin/orgs/:orgId/open-as-admin', policy: 'staff', bodyLimit: 'none', limiter: 'view-as',
+    });
+  });
+
+  // D25's route classification: people, seats and requests stay closed while open as admin; every other non-staff route runs.
+  const REFUSED = ['me.join', 'me.decline', 'me.welcome', 'requests.create', 'org.leave', 'org.members.list', 'org.members.add', 'org.members.update', 'org.members.remove'];
+  it('D25: every route runs while open as admin except staff routes and the people, seat and request routes', () => {
+    for (const r of TOWNWISE_ROUTES) {
+      const staffRoute = r.policy === 'staff' || r.policy === 'staff_self';
+      expect({ id: r.id, open: r.openAsAdmin === true }).toEqual({ id: r.id, open: !staffRoute && !REFUSED.includes(r.id) });
+    }
+    expect(REFUSED.filter((id) => !TOWNWISE_ROUTES.some((r) => r.id === id))).toEqual([]);
   });
 
   it('boot refuses a duplicate method and path', () => {
@@ -162,6 +216,7 @@ describe('route table', () => {
     expect(table('org.files.clean')).toEqual({ method: 'GET', path: `${base}/files/:fileId/clean`, policy: 'member', bodyLimit: 'none', limiter: 'downloads' });
     expect(table('org.files.remove_raw')).toEqual({ method: 'DELETE', path: `${base}/files/:fileId/raw`, policy: 'member', bodyLimit: 'none' });
     expect(table('org.files.remove')).toEqual({ method: 'DELETE', path: `${base}/files/:fileId`, policy: 'member', bodyLimit: 'none' });
+    expect(table('org.data.text')).toEqual({ method: 'POST', path: `${base}/data/text`, policy: 'member', bodyLimit: '32kb', limiter: 'files' });
     expect(table('org.imports.current')).toEqual({ method: 'GET', path: `${base}/imports/current`, policy: 'member', bodyLimit: 'none' });
     expect(table('org.imports.get')).toEqual({ method: 'GET', path: `${base}/imports/:importId`, policy: 'member', bodyLimit: 'none' });
     expect(table('org.imports.start')).toEqual({ method: 'POST', path: `${base}/imports/:importId/start`, policy: 'member', bodyLimit: '2kb' });
@@ -170,12 +225,64 @@ describe('route table', () => {
     expect(ids.indexOf('org.imports.current')).toBeLessThan(ids.indexOf('org.imports.get'));
   });
 
+  it('D28: Your data is a member GET of the organization, and a member PATCH and DELETE of one item, with no route limiter', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => ['org.data.list', 'org.data.update', 'org.data.remove'].includes(r.id))
+      .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));
+    expect(rows).toEqual([
+      { id: 'org.data.list', method: 'GET', path: '/org/data', policy: 'member', bodyLimit: 'none', limiter: undefined },
+      { id: 'org.data.update', method: 'PATCH', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: '2kb', limiter: undefined },
+      { id: 'org.data.remove', method: 'DELETE', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: 'none', limiter: undefined },
+    ]);
+  });
+
   it('saving or setting aside a TownwiseAI proposal is a member POST with an 8kb body and no route limiter', () => {
     const proposal = TOWNWISE_ROUTES.find((entry) => entry.id === 'org.chat.proposal');
     expect(proposal).toMatchObject({
       method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/proposals/:proposalId', policy: 'member', bodyLimit: '8kb',
     });
     expect(proposal?.limiter).toBeUndefined();
+  });
+
+  it('renaming and switching a TownwiseAI version are member writes with a 1kb body and no route limiter', () => {
+    const base = '/org/locations/:locationId/chat/:conversationId';
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id === 'org.chat.rename' || r.id === 'org.chat.active')
+      .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));
+    expect(rows).toEqual([
+      { id: 'org.chat.rename', method: 'PATCH', path: base, policy: 'member', bodyLimit: '1kb', limiter: undefined },
+      { id: 'org.chat.active', method: 'POST', path: `${base}/active`, policy: 'member', bodyLimit: '1kb', limiter: undefined },
+    ]);
+    const ids = TOWNWISE_ROUTES.map((entry) => entry.id);
+    const after = ids.indexOf('org.chat.remove') + 1;
+    expect(ids.slice(after, after + 2)).toEqual(['org.chat.rename', 'org.chat.active']);
+  });
+
+  it('the profile is a member GET and a member PATCH with a 1kb body and no route limiter', () => {
+    const pick = (id: string) => {
+      const entry = TOWNWISE_ROUTES.find((candidate) => candidate.id === id);
+      return { id: entry?.id, method: entry?.method, path: entry?.path, policy: entry?.policy, bodyLimit: entry?.bodyLimit, limiter: entry?.limiter };
+    };
+    expect(pick('me.profile.get')).toEqual({ id: 'me.profile.get', method: 'GET', path: '/me/profile', policy: 'member', bodyLimit: 'none', limiter: undefined });
+    expect(pick('me.profile.update')).toEqual({ id: 'me.profile.update', method: 'PATCH', path: '/me/profile', policy: 'member', bodyLimit: '1kb', limiter: undefined });
+  });
+
+  it('rating a TownwiseAI reply is a member POST with a 1kb body and no route limiter', () => {
+    const feedback = TOWNWISE_ROUTES.find((entry) => entry.id === 'org.chat.feedback');
+    expect(feedback).toMatchObject({
+      method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/feedback/:nodeId', policy: 'member', bodyLimit: '1kb',
+    });
+    expect(feedback?.limiter).toBeUndefined();
+    const ids = TOWNWISE_ROUTES.map((entry) => entry.id);
+    expect(ids.indexOf('org.chat.feedback')).toBe(ids.indexOf('org.chat.proposal') + 1);
+  });
+
+  it('D28: a proposal to keep text is a member GET and a member POST with a 2kb body, with no route limiter', () => {
+    const path = '/org/locations/:locationId/chat/:conversationId/item-proposals/:proposalId';
+    const rows = TOWNWISE_ROUTES.filter((r) => ['org.chat.item_proposal.get', 'org.chat.item_proposal'].includes(r.id))
+      .map(({ id, method, path: at, policy, bodyLimit, limiter }) => ({ id, method, path: at, policy, bodyLimit, limiter }));
+    expect(rows).toEqual([
+      { id: 'org.chat.item_proposal.get', method: 'GET', path, policy: 'member', bodyLimit: 'none', limiter: undefined },
+      { id: 'org.chat.item_proposal', method: 'POST', path, policy: 'member', bodyLimit: '2kb', limiter: undefined },
+    ]);
   });
 
   // U9, TownwiseAI's side panel.
@@ -193,6 +300,14 @@ describe('route table', () => {
     expect(() => { assertRouteTable([route({ policy: 'staff_self', path: '/admin/view-as' })]); }).toThrow(ConfigError);
     expect(() => { assertRouteTable([route({ policy: 'staff_self', path: '/admin/view-as/end' })]); }).not.toThrow();
   });
+
+  it('boot refuses openAsAdmin on a staff or staff_self route', () => {
+    expect(() => { assertRouteTable([route({ policy: 'staff', openAsAdmin: true })]); }).toThrow(ConfigError);
+    expect(() => { assertRouteTable([route({ method: 'POST', path: '/admin/view-as/end', policy: 'staff_self', openAsAdmin: true })]); }).toThrow(ConfigError);
+    for (const policy of ['signed_in', 'member', 'org_admin'] as const) {
+      expect(() => { assertRouteTable([route({ policy, openAsAdmin: true })]); }).not.toThrow();
+    }
+  });
 });
 
 describe('principal', () => {
@@ -206,7 +321,21 @@ describe('principal', () => {
     expect(principals.viewAsMember).toMatchObject({
       kind: 'member', userId: target.id, email: target.email,
       viewAs: { grantId: grant.id, actor: { userId: user.id, email: user.email, sessionId: auth.sessionId } },
+      openAsAdmin: null,
     });
+  });
+
+  it('open as admin builds an org admin principal of the grant’s organization, acting as the staff member', () => {
+    expect(principals.openAsAdmin).toMatchObject({
+      kind: 'member', userId: user.id, email: user.email, role: 'org_admin', memberId: null, viewAs: null,
+      openAsAdmin: { grantId: openGrant.id, actor: { userId: user.id, email: user.email, sessionId: auth.sessionId } },
+    });
+    expect(principals.openAsAdmin?.kind === 'member' ? principals.openAsAdmin.scope.orgId : null).toBe(openGrant.orgId);
+  });
+
+  it('a seat member is not in open as admin', () => {
+    expect(principals.member).toMatchObject({ kind: 'member', openAsAdmin: null });
+    expect(principals.admin).toMatchObject({ kind: 'member', openAsAdmin: null });
   });
 });
 
@@ -238,6 +367,19 @@ describe('policies', () => {
     for (const name of ['staff', 'viewAsMember', 'viewAsPending']) expect(codeOf('staff_self', name)).toBeNull();
     expect(codeOf('staff_self', 'staffReauth')).toBe('staff_reauth_required');
     expect(codeOf('staff_self', 'member')).toBe('forbidden');
+    expect(codeOf('staff_self', 'admin')).toBe('forbidden');
+  });
+
+  it('member, org_admin and staff_self pass open as admin, and it counts as a staff principal', () => {
+    for (const policy of ['member', 'org_admin', 'staff_self'] as const) expect(codeOf(policy, 'openAsAdmin')).toBeNull();
+    const staffish = (name: string): boolean => { const p = principals[name]; if (p === undefined) throw new Error(name); return isStaffPrincipal(p); };
+    expect(staffish('openAsAdmin')).toBe(true);
+    expect(staffish('admin')).toBe(false);
+    expect(staffish('viewAsMember')).toBe(false);
+  });
+
+  it('staff answers forbidden in open as admin (the guard answers first in the chain)', () => {
+    expect(codeOf('staff', 'openAsAdmin')).toBe('forbidden');
   });
 });
 
@@ -264,5 +406,46 @@ describe('view-as guard', () => {
 
   it('does nothing outside view-as', () => {
     for (const name of ['staff', 'member', 'noOrg']) expect(refusal('POST', 'signed_in', name)).toBeNull();
+  });
+
+  it('does nothing in open as admin: no write is read-only', () => {
+    for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const) expect(refusal(method, 'member', 'openAsAdmin')).toBeNull();
+  });
+});
+
+describe('open-as-admin guard', () => {
+  const refusal = (target: Pick<TownwiseRoute, 'policy' | 'openAsAdmin'>, name = 'openAsAdmin'): string | null => {
+    const principal = principals[name];
+    if (principal === undefined) throw new Error(name);
+    return openAsAdminRefusal(target, principal)?.code ?? null;
+  };
+
+  it('answers 409 open_as_admin_active on every staff route, any method', () => {
+    for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const) {
+      expect(refusal(route({ method, policy: 'staff' }))).toBe('open_as_admin_active');
+      // Boot refuses the mark on a staff route; the guard would still refuse it.
+      expect(refusal(route({ method, policy: 'staff', openAsAdmin: true }))).toBe('open_as_admin_active');
+    }
+  });
+
+  it('answers 403 open_as_admin_refused on every unmarked route, GETs included, and lets marked routes and staff_self through', () => {
+    for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const) {
+      for (const policy of ['signed_in', 'member', 'org_admin'] as const) {
+        expect(refusal(route({ method, policy }))).toBe('open_as_admin_refused');
+        expect(refusal(route({ method, policy, openAsAdmin: true }))).toBeNull();
+      }
+    }
+    expect(refusal({ policy: 'member' })).toBe('open_as_admin_refused');
+    expect(refusal({ policy: 'signed_in' })).toBe('open_as_admin_refused');
+    expect(refusal({ policy: 'member', openAsAdmin: true })).toBeNull();
+    expect(refusal({ policy: 'staff_self' })).toBeNull();
+  });
+
+  it('does nothing outside open as admin, view-as included', () => {
+    for (const name of ['staff', 'member', 'admin', 'noOrg', 'viewAsMember', 'viewAsPending', 'staffReauth']) {
+      for (const policy of ['signed_in', 'member', 'org_admin', 'staff', 'staff_self'] as const) {
+        expect(refusal({ policy }, name)).toBeNull();
+      }
+    }
   });
 });

@@ -13,21 +13,28 @@ import { Dimensions, StyleSheet } from 'react-native';
 import { act, cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing-library';
 
 import { aboutDraft } from '../../src/chat/about';
+import { resetDrafts } from '../../src/chat/drafts';
 import { COMPOSER_LABEL } from '../../src/chat/ui/Composer';
+import { resetVersionFocus } from '../../src/chat/ui/VersionNav';
 import { localToday } from '../../src/portal/locations/dates';
+import { resetProfiles } from '../../src/portal/profile/useProfile';
 import type { MeResponse } from '../../src/portal/schemas';
 import { fakeChatApi, PROPOSAL, PROPOSAL_ID, refusal as chatRefusal, SALES_STEP, SUMMARY, type FakeChatApi, type LiveTurn } from '../helpers/chat';
 import { ACCESS, fakePortalApi, LOCATIONS, locationOf, meOf, orgOf, refusal, staffMe, viewAsMe } from '../helpers/portal';
 import { renderApp } from '../helpers/renderApp';
 import { PUBLISHED, serveAbout } from './about-fakes';
 
-// P25 TownwiseAI on native (spec 16.3): the chatbox and its side panel inside the portal, against a fake of
+// P25 TownwiseAI on native (spec 16.3, D26): the chat page and its side panel inside the portal, against a fake of
 // the chat and side panel routes. The Pillars: every tool call is a card and the Based on line comes from the
 // cards (transparency); the How TownwiseAI works panel and each question's help line (explainability); "Leave out
 // guest names" under the composer, view-as with every write disabled, nothing in device storage (privacy).
 
 afterEach(async () => {
   await cleanup();
+  // Drafts and the name outlive the page in memory, as they do between visits in one session.
+  resetDrafts();
+  resetProfiles();
+  resetVersionFocus();
   jest.restoreAllMocks();
 });
 
@@ -69,15 +76,29 @@ function disabled(name: string | RegExp): void {
   }
 }
 
+/** Opens Questions and activity: the column from 1024px, the sheet below. */
+async function openPanel(): Promise<ReturnType<typeof screen.getByTestId>> {
+  await fireEvent.press(await screen.findByRole('button', { name: /^Questions and activity/ }));
+  return screen.findByTestId('agent-side');
+}
+
+async function openEarlierChat(): Promise<void> {
+  await fireEvent.press(await screen.findByRole('button', { name: 'History' }));
+  await fireEvent.press(screen.getByRole('button', { name: 'Earlier chat, Nov 2, 2026' }));
+  await screen.findByText('We close for the holidays.');
+}
+
 describe('an empty conversation', () => {
   test('names the location, says what TownwiseAI reads, offers chips, and keeps the privacy line under the composer', async () => {
     await renderAgent(meOf(ACCESS.member));
     expect(await screen.findByRole('heading', { name: 'Ask TownwiseAI about Main Street Bar' })).toBeTruthy();
-    expect(screen.getByText('It reads your sales, your notes, Hanover’s town profile, the town calendar and who’s likely in Hanover, and shows you each thing it reads. It suggests notes; you decide what’s saved.')).toBeTruthy();
-    expect(screen.getByText('Leave out guest names. TownwiseAI answers from your sales, your notes, Hanover’s town profile, the town calendar and who’s likely in Hanover.')).toBeTruthy();
+    expect(screen.getByText('It reads your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data, and shows you each thing it reads. It suggests notes; you decide what’s saved.')).toBeTruthy();
+    expect(screen.getByText('Leave out guest names. TownwiseAI answers from your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Which days last month were unusual?' })).toBeTruthy();
     expect(screen.getByRole('button', { name: /^What’s coming up in \w+ in Hanover\?$/ })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /forecast/i })).toBeNull();
+    // No log until the first message.
+    expect(screen.queryByTestId('chat-thread')).toBeNull();
   });
 
   test('an Ask chip sends at once; a Tell chip fills the composer and sends nothing', async () => {
@@ -87,14 +108,15 @@ describe('an empty conversation', () => {
     expect(chat.turns).toHaveLength(0);
     await fireEvent.press(screen.getByRole('button', { name: 'Which days last month were unusual?' }));
     expect(turn(chat).body).toEqual({ content: 'Which days last month were unusual?' });
-    // What the person was typing stays in the composer.
+    // What the person was typing stays in the composer, which now sits under the thread.
     expect(screen.getByLabelText(COMPOSER_LABEL).props.value).toBe('We’re closed on ');
+    expect(within(await screen.findByTestId('chat-thread')).queryByLabelText(COMPOSER_LABEL)).toBeNull();
   });
 
   test('with no sales yet it says what TownwiseAI can use, and asks what to upload', async () => {
     const org = orgOf('member', [locationOf('l1', 'Main Street Bar', { townId: 'hanover-nh', name: 'Hanover', state: 'NH' })]);
     await renderAgent(meOf(ACCESS.member), fakeChatApi(), org);
-    expect(await screen.findByText('You haven’t uploaded sales yet, so TownwiseAI can only use your notes, Hanover’s town profile, the town calendar and who’s likely in Hanover.')).toBeTruthy();
+    expect(await screen.findByText('You haven’t uploaded sales yet, so TownwiseAI can only use your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'What should I upload?' })).toBeTruthy();
   });
 
@@ -102,27 +124,31 @@ describe('an empty conversation', () => {
     at(1280);
     const org = orgOf('member', [locationOf('l1', 'Main Street Bar', { townId: null, name: 'Hanover', state: 'NH' })]);
     await renderAgent(meOf(ACCESS.member), fakeChatApi(), org);
-    expect(await screen.findByText('You haven’t uploaded sales yet, so TownwiseAI can only use your notes and the town calendar.')).toBeTruthy();
+    expect(await screen.findByText('You haven’t uploaded sales yet, so TownwiseAI can only use your notes, the town calendar and what your team added on Your data.')).toBeTruthy();
     // With no sales yet, no line claims TownwiseAI answers from them.
-    expect(screen.getByText('Leave out guest names. TownwiseAI answers from your notes and the town calendar.')).toBeTruthy();
-    const side = await screen.findByTestId('agent-side');
+    expect(screen.getByText('Leave out guest names. TownwiseAI answers from your notes, the town calendar and what your team added on Your data.')).toBeTruthy();
+    const side = await openPanel();
     await fireEvent.press(within(side).getByRole('button', { name: 'How TownwiseAI works' }));
-    expect(within(side).getByText('It reads your notes and the town calendar, and shows you each thing it reads.')).toBeTruthy();
-    expect(await within(side).findByText('Townwise has no forecast for this location yet, so TownwiseAI answers from your notes and the town calendar.')).toBeTruthy();
+    expect(within(side).getByText('It reads your notes, the town calendar and what your team added on Your data, and shows you each thing it reads.')).toBeTruthy();
+    expect(await within(side).findByText('Townwise has no forecast for this location yet, so TownwiseAI answers from your notes, the town calendar and what your team added on Your data.')).toBeTruthy();
     expect(screen.queryByText(/town profile/)).toBeNull();
     expect(screen.queryByText(/(answers from|reads) your sales/)).toBeNull();
   });
 });
 
 describe('a reply', () => {
-  test('shows thinking, then a running card, then text; folds its cards when done, with a Based on line from them', async () => {
+  test('shows Working for and Thinking…, then a running card, then text; folds them under Worked for when done, with a Based on line from them', async () => {
     const { chat } = await renderAgent(meOf(ACCESS.member));
     await send('How was December?');
     expect(screen.getByText('How was December?')).toBeTruthy();
-    expect(screen.getByText('TownwiseAI is thinking…')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy();
-    await act(() => { turn(chat).emit('tool', { id: SALES_STEP.id, name: SALES_STEP.name, state: 'running', input: SALES_STEP.input, result: null }); });
+    expect(screen.getByText('Working for 0s')).toBeTruthy();
+    expect(screen.getByText('Thinking…')).toBeTruthy();
     expect(screen.queryByText('TownwiseAI is thinking…')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy();
+    await act(() => { turn(chat).emit('thinking', { delta: 'Weighing the weekend.' }); });
+    expect(await screen.findByText('Weighing the weekend.')).toBeTruthy();
+    expect(screen.queryByText('Thinking…')).toBeNull();
+    await act(() => { turn(chat).emit('tool', { id: SALES_STEP.id, name: SALES_STEP.name, state: 'running', input: SALES_STEP.input, result: null }); });
     expect(screen.getByText('Reading')).toBeTruthy();
     expect(screen.getByText('your sales for Dec 1 to Dec 31, 2025')).toBeTruthy();
     await act(() => {
@@ -132,11 +158,15 @@ describe('a reply', () => {
       turn(chat).end();
     });
     expect(await screen.findByText('December was steady.')).toBeTruthy();
-    expect(screen.getByText('Read 1 thing')).toBeTruthy();
+    expect(screen.queryByText(/^Working for/)).toBeNull();
     expect(screen.getByText('Based on your sales from Dec 1 to Dec 31, 2025.')).toBeTruthy();
-    // Folded: the row shows again on Show, and opens to what it read.
+    // Folded under Worked for: the summary and the row show on pressing it, and the row opens to what it read.
+    expect(screen.queryByText('Weighing the weekend.')).toBeNull();
     expect(screen.queryByText('31 days: guests on 31, net sales on 30')).toBeNull();
-    await fireEvent.press(screen.getByRole('button', { name: 'Show' }));
+    const worked = screen.getByRole('button', { name: /^Worked for \d+ seconds?$/ });
+    expect(worked.props.accessibilityState).toMatchObject({ expanded: false });
+    await fireEvent.press(worked);
+    expect(screen.getByText('Weighing the weekend.')).toBeTruthy();
     await fireEvent.press(screen.getByRole('button', { name: 'Read your sales for Dec 1 to Dec 31, 2025. 31 days: guests on 31, net sales on 30' }));
     expect(screen.getByText('Days with net sales')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Send' })).toBeTruthy();
@@ -153,6 +183,27 @@ describe('a reply', () => {
     expect(chat.turns).toHaveLength(2);
     expect(turn(chat).body).toEqual({ content: 'Hello' });
     expect(screen.queryByText('Half a rep')).toBeNull();
+  });
+
+  test('shows exactly three next questions under the newest settled reply only, the model’s when given', async () => {
+    const { chat } = await renderAgent(meOf(ACCESS.member));
+    await send('How was December?');
+    const model = ['Show December as a chart', 'Compare December with November', 'Which December days were slow?'];
+    await act(() => {
+      turn(chat).emit('text', { delta: 'December was steady.' });
+      turn(chat).emit('suggestions', { id: 'toolu_test_0009', prompts: model });
+    });
+    // Not while it streams. (A plain View isn't an accessibility element on native, so the chips are found by name.)
+    for (const prompt of model) expect(screen.queryByRole('button', { name: prompt })).toBeNull();
+    await act(() => {
+      turn(chat).emit('done', { stopReason: 'end_turn', costUsd: 0 });
+      turn(chat).end();
+    });
+    for (const prompt of model) expect(await screen.findByRole('button', { name: prompt })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Show that as a chart' })).toBeNull();
+    await fireEvent.press(screen.getByRole('button', { name: 'Which December days were slow?' }));
+    expect(turn(chat).body).toEqual({ content: 'Which December days were slow?' });
+    for (const prompt of model) expect(screen.queryByRole('button', { name: prompt })).toBeNull();
   });
 });
 
@@ -218,33 +269,32 @@ describe('a proposed note', () => {
 describe('conversations', () => {
   test('a past conversation replays its text, its tool cards and its proposal; Delete asks first', async () => {
     const { chat } = await renderAgent(meOf(ACCESS.member));
-    await fireEvent.press(await screen.findByRole('button', { name: 'Conversations' }));
-    await fireEvent.press(screen.getByRole('button', { name: 'Earlier chat, Nov 2, 2026' }));
-    expect(await screen.findByText('We close for the holidays.')).toBeTruthy();
+    await openEarlierChat();
     expect(screen.getByText('Last December you were open every day.')).toBeTruthy();
-    expect(screen.getByText('Read 1 thing')).toBeTruthy();
+    // Stored times: 12 seconds from the person's message to the reply's end.
+    await fireEvent.press(screen.getByRole('button', { name: 'Worked for 12 seconds' }));
+    expect(screen.getByText('Checked December against the notes.')).toBeTruthy();
     expect(screen.getByText('Based on your sales from Dec 1 to Dec 31, 2025.')).toBeTruthy();
     expect(screen.getByText('Proposed note')).toBeTruthy();
     expect(screen.getAllByText('Earlier chat').length).toBeGreaterThan(0);
 
-    await fireEvent.press(screen.getByRole('button', { name: 'Conversations' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'History' }));
     await fireEvent.press(screen.getByRole('button', { name: 'Delete Earlier chat' }));
     expect(await screen.findByText('TownwiseAI’s replies and your messages in it are deleted. Notes you saved from it stay.')).toBeTruthy();
     await fireEvent.press(screen.getByRole('button', { name: 'Delete' }));
     await waitFor(() => { expect(screen.queryByText('We close for the holidays.')).toBeNull(); });
     expect(chat.writes).toEqual([{ method: 'DELETE', path: '/api/org/locations/l1/chat/c1', body: undefined }]);
     expect(screen.getByText('New conversation')).toBeTruthy();
+    // Back to the landing.
+    expect(screen.getByRole('heading', { name: 'Ask TownwiseAI about Main Street Bar' })).toBeTruthy();
   });
 
-  test('the bubbles and the proposal card have square corners (spec 15.6)', async () => {
+  test('the person’s bubble is rounded (D26) and the proposal card stays square', async () => {
     await renderAgent(meOf(ACCESS.member));
-    await fireEvent.press(await screen.findByRole('button', { name: 'Conversations' }));
-    await fireEvent.press(screen.getByRole('button', { name: /^Earlier chat/ }));
+    await openEarlierChat();
     const card = (await screen.findByText('Proposed note')).parent;
-    const bubble = screen.getByText('You').parent;
-    for (const box of [card, bubble]) {
-      expect(StyleSheet.flatten(box?.props.style)).toMatchObject({ borderWidth: 1, borderRadius: 0 });
-    }
+    expect(StyleSheet.flatten(card?.props.style)).toMatchObject({ borderWidth: 1, borderRadius: 0 });
+    expect(StyleSheet.flatten(screen.getByTestId('user-bubble').props.style)).toMatchObject({ borderWidth: 1, borderRadius: 16 });
   });
 });
 
@@ -263,6 +313,25 @@ describe('states', () => {
     await renderAgent(meOf(ACCESS.member), chat);
     expect(await screen.findByText('Test Group has used its TownwiseAI budget for November. It comes back on Dec 1. Home and Analytics don’t depend on it.')).toBeTruthy();
     expect(screen.queryByLabelText(COMPOSER_LABEL)).toBeNull();
+    // The chips wait for next month too, and the 80% line gives way to the sentence.
+    disabled('Which days last month were unusual?');
+    expect(screen.queryByText(/^Most of November’s budget is used/)).toBeNull();
+  });
+
+  test('shows the 80% budget line above the composer', async () => {
+    const chat = fakeChatApi();
+    chat.summary = { ...SUMMARY, budget: { ...SUMMARY.budget, usedUsd: 17 } };
+    await renderAgent(meOf(ACCESS.member), chat);
+    expect(await screen.findByText('Most of November’s budget is used. TownwiseAI pauses when it runs out.')).toBeTruthy();
+    expect(screen.getByLabelText(COMPOSER_LABEL)).toBeTruthy();
+  });
+
+  test('not found: a chat that answers 404 says the location wasn’t found, with no composer', async () => {
+    const chat = fakeChatApi();
+    chat.chatError = chatRefusal(404, 'not_found');
+    await renderAgent(meOf(ACCESS.member), chat);
+    expect(await screen.findByText('This location wasn’t found.')).toBeTruthy();
+    expect(screen.queryByLabelText(COMPOSER_LABEL)).toBeNull();
   });
 
   test('a chat that can’t load says so with Try again', async () => {
@@ -270,15 +339,39 @@ describe('states', () => {
     chat.chatError = chatRefusal(503, 'unavailable');
     await renderAgent(meOf(ACCESS.member), chat);
     expect(await screen.findByRole('button', { name: 'Try again' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'TownwiseAI' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Welcome back.' })).toBeTruthy();
   });
 });
 
-describe('the side panel at 1280px', () => {
+describe('the side panel', () => {
+  test('is closed by default and opens as a column from 1024px and as a sheet below', async () => {
+    at(1280);
+    const { chat } = await renderAgent(meOf(ACCESS.member));
+    // It reads its questions anyway, for the button's count.
+    expect(chat.panelLoads).toBe(1);
+    const toggle = await screen.findByRole('button', { name: 'Questions and activity (2)' });
+    expect(toggle.props.accessibilityState).toMatchObject({ expanded: false });
+    expect(screen.queryByTestId('agent-side')).toBeNull();
+    await fireEvent.press(toggle);
+    expect(await screen.findByTestId('agent-side')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Questions and activity (2)' }).props.accessibilityState).toMatchObject({ expanded: true });
+    expect(screen.queryByRole('heading', { name: 'Questions and activity' })).toBeNull();
+    await cleanup();
+    jest.restoreAllMocks();
+    // Below 1024px, a full-screen sheet with its heading and Close.
+    at(800);
+    await renderAgent(meOf(ACCESS.member));
+    await fireEvent.press(await screen.findByRole('button', { name: 'Questions and activity (2)' }));
+    expect(await screen.findByRole('heading', { name: 'Questions and activity' })).toBeTruthy();
+    expect(within(screen.getByTestId('agent-side')).getByRole('heading', { name: 'Questions for you' })).toBeTruthy();
+    await fireEvent.press(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('heading', { name: 'Questions and activity' })).toBeNull();
+  });
+
   test('questions with what each answer does; an answer saves and says what it did', async () => {
     at(1280);
     const { chat } = await renderAgent(meOf(ACCESS.member));
-    const side = await screen.findByTestId('agent-side');
+    const side = await openPanel();
     expect(within(side).getByRole('heading', { name: 'Questions for you' })).toBeTruthy();
     expect(await within(side).findByText('2 open')).toBeTruthy();
     expect(within(side).getByRole('heading', { name: 'Are you closed on Mondays?' })).toBeTruthy();
@@ -292,6 +385,7 @@ describe('the side panel at 1280px', () => {
     expect(await within(side).findByText('Saved a note: Closure, Mondays, Nov 3, 2025 to Nov 2, 2026. TownwiseAI treats those days as closed.')).toBeTruthy();
     expect(chat.writes).toEqual([{ method: 'POST', path: '/api/org/locations/l1/agent/questions/weekday_1_2025-11-03_2026-11-02', body: { answer: 'closed' } }]);
     expect(within(side).getByText('1 open')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Questions and activity (1)' })).toBeTruthy();
     await fireEvent.press(within(side).getByRole('button', { name: 'Not sure' }));
     expect(await within(side).findByText('Got it. TownwiseAI won’t ask about these days again.')).toBeTruthy();
   });
@@ -299,7 +393,7 @@ describe('the side panel at 1280px', () => {
   test('activity lists only real, dated events, and the budget shows as percent used', async () => {
     at(1280);
     await renderAgent(meOf(ACCESS.member));
-    const side = await screen.findByTestId('agent-side');
+    const side = await openPanel();
     expect(await within(side).findByText('Saved a note you approved: Closure, Nov 26, 2026.')).toBeTruthy();
     expect(within(side).getByText('Read your upload for Oct 26 to Nov 1, 2026, 7 days.')).toBeTruthy();
     expect(within(side).getByText('You said the data is missing for Jan 1 to Jan 2, 2026.')).toBeTruthy();
@@ -311,11 +405,11 @@ describe('the side panel at 1280px', () => {
   test('How TownwiseAI works says what it reads, what it can’t see, that no forecast exists, and who receives the data', async () => {
     at(1280);
     await renderAgent(meOf(ACCESS.member));
-    const side = await screen.findByTestId('agent-side');
+    const side = await openPanel();
     await fireEvent.press(within(side).getByRole('button', { name: 'How TownwiseAI works' }));
-    expect(await within(side).findByText('Townwise has no forecast for this location yet, so TownwiseAI answers from your sales, your notes, Hanover’s town profile, the town calendar and who’s likely in Hanover.')).toBeTruthy();
+    expect(await within(side).findByText('Townwise has no forecast for this location yet, so TownwiseAI answers from your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data.')).toBeTruthy();
     for (const text of [
-      'It reads your sales, your notes, Hanover’s town profile, the town calendar and who’s likely in Hanover, and shows you each thing it reads.',
+      'It reads your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data, and shows you each thing it reads.',
       'It can’t see the weather, your staffing, your bookings unless you add them as notes, or guest names.',
       'It suggests notes; it never saves one without you.',
     ]) expect(within(side).getByText(text)).toBeTruthy();
@@ -326,9 +420,9 @@ describe('the side panel at 1280px', () => {
     at(1280);
     const chat = serveAbout(fakeChatApi(), PUBLISHED);
     await renderAgent(meOf(ACCESS.member), chat);
-    const reads = 'your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and Townwise’s forecast';
+    const reads = 'your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover, Townwise’s forecast and what your team added on Your data';
     expect(await screen.findByText(`Leave out guest names. TownwiseAI answers from ${reads}.`)).toBeTruthy();
-    const side = await screen.findByTestId('agent-side');
+    const side = await openPanel();
     await fireEvent.press(within(side).getByRole('button', { name: 'How TownwiseAI works' }));
     expect(within(side).getByText(`It reads ${reads}, and shows you each thing it reads.`)).toBeTruthy();
     expect(within(side).getByText('TownwiseAI also reads the forecast Townwise published: Townwise demand model v9, trained on sales exports you sent Townwise from Jan 1, 2025 to Oct 21, 2026, made Nov 1, 2026.')).toBeTruthy();
@@ -340,7 +434,7 @@ describe('the side panel at 1280px', () => {
     at(1280);
     const chat = serveAbout(fakeChatApi(), chatRefusal(503, 'unavailable'));
     await renderAgent(meOf(ACCESS.member), chat);
-    const side = await screen.findByTestId('agent-side');
+    const side = await openPanel();
     await fireEvent.press(within(side).getByRole('button', { name: 'How TownwiseAI works' }));
     expect(await within(side).findByText('Couldn’t check whether Townwise has a forecast for this location.')).toBeTruthy();
     expect(screen.queryByText(/Townwise’s forecast/)).toBeNull();
@@ -353,7 +447,7 @@ describe('the side panel at 1280px', () => {
   test('F10: How Townwise estimates opens the model card in a sheet, and Close shuts it', async () => {
     at(1280);
     await renderAgent(meOf(ACCESS.member));
-    const side = await screen.findByTestId('agent-side');
+    const side = await openPanel();
     await fireEvent.press(within(side).getByRole('button', { name: 'How TownwiseAI works' }));
     expect(screen.queryByRole('heading', { name: 'How Townwise estimates' })).toBeNull();
     await fireEvent.press(within(side).getByRole('button', { name: 'How Townwise estimates' }));
@@ -371,7 +465,7 @@ describe('the side panel at 1280px', () => {
       activity: [{ at: '2026-11-02T15:00:00.000Z', kind: 'file_processed', fileId: '0000000000000000000000f1', firstDate: '2026-10-19', lastDate: '2026-10-25', dayCount: 7 }],
     };
     await renderAgent(meOf(ACCESS.member), chat);
-    const side = await screen.findByTestId('agent-side');
+    const side = await openPanel();
     expect(await within(side).findByText('Read your file for Oct 19 to Oct 25, 2026, 7 days.')).toBeTruthy();
   });
 
@@ -381,8 +475,10 @@ describe('the side panel at 1280px', () => {
     chat.summary = { ...SUMMARY, enabled: false };
     chat.panel = { questions: [], activity: [] };
     await renderAgent(meOf(ACCESS.member), chat);
-    expect(await screen.findByText('No questions right now.')).toBeTruthy();
-    expect(screen.getByText('Nothing yet. Upload sales or save a note and it shows here.')).toBeTruthy();
+    expect(await screen.findByText('TownwiseAI isn’t turned on yet.')).toBeTruthy();
+    const side = await openPanel();
+    expect(await within(side).findByText('No questions right now.')).toBeTruthy();
+    expect(within(side).getByText('Nothing yet. Upload sales or save a note and it shows here.')).toBeTruthy();
   });
 
   test('a panel that can’t load says so with Try again, and reads again', async () => {
@@ -390,43 +486,44 @@ describe('the side panel at 1280px', () => {
     const chat = fakeChatApi();
     chat.panelError = refusal(503, 'unavailable');
     await renderAgent(meOf(ACCESS.member), chat);
-    expect(await screen.findByText('Couldn’t load TownwiseAI’s questions.')).toBeTruthy();
+    const side = await openPanel();
+    expect(await within(side).findByText('Couldn’t load TownwiseAI’s questions.')).toBeTruthy();
     chat.panelError = null;
-    await fireEvent.press(first(screen.getAllByRole('button', { name: 'Try again' })));
-    expect(await screen.findByText('Are you closed on Mondays?')).toBeTruthy();
+    await fireEvent.press(first(within(side).getAllByRole('button', { name: 'Try again' })));
+    expect(await within(side).findByText('Are you closed on Mondays?')).toBeTruthy();
   });
 });
 
 describe('phones', () => {
-  test('at 375px the compact header and the switch sit at the top of the thread; the chat keeps its state while Questions shows', async () => {
+  test('at 375px the compact greeting scrolls with the page, and the panel is a sheet; the chat keeps its state', async () => {
     at(375);
     await renderAgent(meOf(ACCESS.member));
-    const thread = await screen.findByTestId('chat-thread');
-    const title = within(thread).getByRole('heading', { name: 'TownwiseAI' });
+    const landing = await screen.findByTestId('chat-landing');
+    const title = within(landing).getByRole('heading', { name: 'Welcome back.' });
     expect(title.props.numberOfLines).toBe(1);
-    expect(within(thread).getByText('Main Street Bar, Hanover, NH')).toBeTruthy();
+    expect(within(landing).getByText('Main Street Bar, Hanover, NH')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Location' })).toBeNull();
-    expect(within(thread).queryByLabelText(COMPOSER_LABEL)).toBeNull();
-    // The composer is one row, its label the input's name.
+    // The composer's label is the input's name, with nothing drawn.
     expect(screen.queryByText(COMPOSER_LABEL)).toBeNull();
-    expect(StyleSheet.flatten(screen.getByLabelText(COMPOSER_LABEL).parent?.props.style)).toMatchObject({ flexDirection: 'row' });
     await fireEvent.changeText(screen.getByLabelText(COMPOSER_LABEL), 'Half typed');
-    await fireEvent.press(within(thread).getByRole('button', { name: 'Questions (2)' }));
+    await fireEvent.press(within(landing).getByRole('button', { name: 'Questions and activity (2)' }));
     expect(await screen.findByText('Are you closed on Mondays?')).toBeTruthy();
-    await fireEvent.press(first(screen.getAllByRole('button', { name: 'Chat' })));
+    await fireEvent.press(screen.getByRole('button', { name: 'Close' }));
     expect(screen.getByLabelText(COMPOSER_LABEL).props.value).toBe('Half typed');
-    await fireEvent.press(first(screen.getAllByRole('button', { name: 'Activity' })));
-    expect(await screen.findByText('Read your upload for Oct 26 to Nov 1, 2026, 7 days.')).toBeTruthy();
+    // After the first send the header scrolls with the thread, and the composer stays under it.
+    await fireEvent.press(screen.getByRole('button', { name: 'Send' }));
+    const thread = await screen.findByTestId('chat-thread');
+    expect(within(thread).getByRole('heading', { name: 'Welcome back.' })).toBeTruthy();
+    expect(within(thread).queryByLabelText(COMPOSER_LABEL)).toBeNull();
   });
 
-  test('wider screens keep the full header above the chat, with the switch under it', async () => {
+  test('wider screens keep the full header above the chat', async () => {
     await renderAgent(meOf(ACCESS.member));
-    const thread = await screen.findByTestId('chat-thread');
-    expect(within(thread).queryByRole('heading', { name: 'TownwiseAI' })).toBeNull();
+    const landing = await screen.findByTestId('chat-landing');
+    expect(within(landing).queryByRole('heading', { name: 'Welcome back.' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Location' })).toBeTruthy();
-    expect(screen.getAllByRole('heading', { name: 'TownwiseAI' })).toHaveLength(1);
-    expect(screen.getByRole('button', { name: 'Questions (2)' })).toBeTruthy();
-    expect(screen.getByText(COMPOSER_LABEL)).toBeTruthy();
+    expect(screen.getAllByRole('heading', { name: 'Welcome back.' })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Questions and activity (2)' })).toBeTruthy();
   });
 });
 
@@ -457,27 +554,33 @@ describe('F7: ?about=YYYY-MM-DD', () => {
 describe('view-as', () => {
   test('everything reads, every write control stays in place and disabled, with one read-only line', async () => {
     at(1280);
-    const { chat } = await renderAgent(viewAsMe(ACCESS.member));
+    const api = fakeChatApi();
+    // The server never asks under view-as; the page wouldn't either.
+    api.profile = { displayName: null, askName: true };
+    await renderAgent(viewAsMe(ACCESS.member), api);
     expect(await screen.findByText('Read-only while viewing as gm@example.org.')).toBeTruthy();
+    expect(screen.queryByText('What should TownwiseAI call you?')).toBeNull();
     const input = screen.getByLabelText(COMPOSER_LABEL);
     expect(input.props.editable).toBe(false);
     disabled('Send');
     disabled('New chat');
     disabled('Which days last month were unusual?');
-    disabled('Yes, closed Mondays');
     await fireEvent.press(screen.getByRole('button', { name: 'Send' }));
-    await fireEvent.press(screen.getByRole('button', { name: 'Yes, closed Mondays' }));
-    // Reading is allowed: the target's past conversation opens, and its card's actions are disabled too.
-    await fireEvent.press(screen.getByRole('button', { name: 'Conversations' }));
+    const side = await openPanel();
+    disabled('Yes, closed Mondays');
+    await fireEvent.press(within(side).getByRole('button', { name: 'Yes, closed Mondays' }));
+    // Reading is allowed: the target's past conversation opens, and its actions are disabled too.
+    await fireEvent.press(screen.getByRole('button', { name: 'History' }));
     disabled('Delete Earlier chat');
-    await fireEvent.press(screen.getByRole('button', { name: /^Earlier chat/ }));
+    disabled('Rename Earlier chat');
+    await fireEvent.press(screen.getByRole('button', { name: 'Earlier chat, Nov 2, 2026' }));
     expect(await screen.findByText('We close for the holidays.')).toBeTruthy();
-    for (const name of ['Save note', 'Edit first', 'Not now']) {
+    for (const name of ['Save note', 'Edit first', 'Not now', 'Edit', 'Regenerate', 'Helpful', 'Not helpful']) {
       disabled(name);
       await fireEvent.press(screen.getByRole('button', { name }));
     }
-    expect(chat.turns).toHaveLength(0);
-    expect(chat.writes).toHaveLength(0);
+    expect(api.turns).toHaveLength(0);
+    expect(api.writes).toHaveLength(0);
     expect(screen.getAllByText('Read-only while viewing as gm@example.org.')).toHaveLength(1);
   });
 });
@@ -509,8 +612,7 @@ describe('the portal’s client (spec 4.3)', () => {
 
   test('a note saved from a card reads the organization again on leaving, so Locations shows the new count', async () => {
     const { chat, portal } = await renderAgent(meOf(ACCESS.member));
-    await fireEvent.press(await screen.findByRole('button', { name: 'Conversations' }));
-    await fireEvent.press(screen.getByRole('button', { name: /^Earlier chat/ }));
+    await openEarlierChat();
     await fireEvent.press(await screen.findByRole('button', { name: 'Save note' }));
     expect(await screen.findByText('Saved to Notes.')).toBeTruthy();
     expect(chat.writes.map((write) => write.path)).toEqual([`/api/org/locations/l1/chat/c1/proposals/${PROPOSAL_ID}`]);
@@ -527,6 +629,7 @@ test('nothing goes to device storage', async () => {
   expect(store).toContain(SecureStore.setItemAsync);
   for (const fn of store) fn.mockClear();
   await send('Hello');
+  await fireEvent.changeText(screen.getByLabelText(COMPOSER_LABEL), 'Half typed');
   await act(() => {
     turn(chat).emit('text', { delta: 'Hi.' });
     turn(chat).emit('done', { stopReason: 'end_turn', costUsd: 0 });

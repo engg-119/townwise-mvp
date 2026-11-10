@@ -10,7 +10,7 @@ import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, Principal } from '../access/policy.ts';
 import { daysBetween, EARLIEST_DATE, isoDate, plusYears, utcDay } from '../dates.ts';
-import { currentEmail, DELETED_PERSON } from '../people.ts';
+import { authorEmail, DELETED_PERSON, TOWNWISE_STAFF } from '../people.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { NoteContent, NoteRecord } from '../stores/notes.ts';
 import { loadLocation, memberOf } from './locations.ts';
@@ -125,9 +125,11 @@ export async function listNotes(ctx: TownwiseContext, req: Request, res: Respons
   const caller = memberOf(principal);
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
   const notes = await ctx.stores.notes.list(caller.scope, location.id);
-  const authors = [...new Set(notes.map((note) => note.createdBy))];
-  const emails = new Map(await Promise.all(authors.map(async (userId) => [userId, await currentEmail(ctx, userId)] as const)));
-  res.status(200).json({ notes: notes.map((note) => noteView(note, emails.get(note.createdBy) ?? DELETED_PERSON, caller)) });
+  const authors = [...new Set(notes.filter((note) => !note.byStaff).map((note) => note.createdBy))];
+  const emails = new Map(await Promise.all(authors.map(async (userId) => [userId, await authorEmail(ctx, userId, false)] as const)));
+  res.status(200).json({
+    notes: notes.map((note) => noteView(note, note.byStaff ? TOWNWISE_STAFF : emails.get(note.createdBy) ?? DELETED_PERSON, caller)),
+  });
 }
 
 /**
@@ -149,7 +151,9 @@ export async function addNote(
   const now = ctx.now();
   let note: NoteRecord;
   try {
-    note = await notes.create(scope, location.id, content, { createdBy: caller.userId, now, ...(id === undefined ? {} : { id }) });
+    note = await notes.create(scope, location.id, content, {
+      createdBy: caller.userId, now, ...(id === undefined ? {} : { id }), ...(caller.openAsAdmin !== null ? { byStaff: true } : {}),
+    });
   } catch (err) {
     const raced = id !== undefined && isDuplicateKeyError(err) ? await notes.find(scope, location.id, id) : null;
     if (raced !== null) return raced;
@@ -169,7 +173,7 @@ export async function createNote(ctx: TownwiseContext, req: Request, res: Respon
   const content = noteContent(req.body, utcDay(ctx.now()));
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
   const note = await addNote(ctx, caller, location, content);
-  res.status(201).json({ note: noteView(note, caller.email, caller) });
+  res.status(201).json({ note: noteView(note, note.byStaff ? TOWNWISE_STAFF : caller.email, caller) });
 }
 
 /** PATCH /api/org/locations/:locationId/notes/:noteId: a full replace, by the author or an org admin. */
@@ -187,7 +191,7 @@ export async function updateNote(ctx: TownwiseContext, req: Request, res: Respon
     target: { type: 'note', id: note.id },
     details: noteDetails(location.id, note),
   });
-  res.status(200).json({ note: noteView(note, await currentEmail(ctx, note.createdBy), caller) });
+  res.status(200).json({ note: noteView(note, await authorEmail(ctx, note.createdBy, note.byStaff), caller) });
 }
 
 /** DELETE /api/org/locations/:locationId/notes/:noteId, by the author or an org admin. */

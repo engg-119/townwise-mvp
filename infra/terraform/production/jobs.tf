@@ -12,6 +12,7 @@
 # | caj-townwise-db-users    | manual   | db-admin-password and the three user URIs     | none                 | nothing  |
 # | caj-townwise-db-restore  | manual   | mongodb-restore-uri                           | read                 | download |
 # | caj-townwise-db-smoke    | manual   | mongodb-uri                                   | none                 | nothing  |
+# | caj-townwise-lab         | manual   | none (lab.tf, enable_lab)                     | none                 | nothing  |
 
 locals {
   mongo_image = "${azurerm_container_registry.main.login_server}/mongo@${var.mongo_image_digest}"

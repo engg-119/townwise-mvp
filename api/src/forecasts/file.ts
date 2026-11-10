@@ -94,7 +94,18 @@ export const forecastRunFileSchema = z.strictObject({
   weeks: z.array(weekSchema).max(MAX_WEEKS),
 });
 
+/**
+ * A run the forecast lab made from the days an owner uploaded to Townwise (forecasts/lab, stores/calibrations.ts). The
+ * lab posts it to the API's callback, never staff to the import route, which still refuses this training source.
+ * Never frozen: a lab run is scored prospectively like any published run, but no frozen file registered it.
+ */
+export const labRunFileSchema = forecastRunFileSchema.extend({
+  trainingSource: z.literal('townwise_lab'),
+  frozen: z.null(),
+});
+
 export type ForecastRunFile = z.infer<typeof forecastRunFileSchema>;
+export type LabRunFile = z.infer<typeof labRunFileSchema>;
 export type ForecastFileDay = ForecastRunFile['days'][number];
 export type ForecastFileWeek = ForecastRunFile['weeks'][number];
 export type ForecastFileReason = ForecastFileDay['reasons'][number];
@@ -102,7 +113,7 @@ export type ForecastFileReason = ForecastFileDay['reasons'][number];
 /** One problem in a run file: where, as "days[3].high", and a code (the client words it); never the value. */
 export interface FileIssue { path: string; code: string }
 
-export type FileCheck = { ok: true; file: ForecastRunFile } | { ok: false; issues: FileIssue[] };
+export type FileCheck<T extends ForecastRunFile | LabRunFile = ForecastRunFile> = { ok: true; file: T } | { ok: false; issues: FileIssue[] };
 
 function pathText(path: readonly PropertyKey[]): string {
   return path.reduce<string>((text, part) => {
@@ -111,7 +122,8 @@ function pathText(path: readonly PropertyKey[]): string {
   }, '');
 }
 
-function issueOf(issue: z.core.$ZodIssue): FileIssue {
+/** A zod issue as a path and a code (a custom refinement's own code where it gives one), never the value. */
+export function issueOf(issue: z.core.$ZodIssue): FileIssue {
   const params = (issue as { params?: { code?: unknown } }).params;
   const code = issue.code === 'custom' && typeof params?.code === 'string' ? params.code : issue.code;
   return { path: pathText(issue.path), code };
@@ -136,7 +148,7 @@ export function eachDay(from: string, to: string): string[] {
 }
 
 /** The rules across fields (spec 14.4), on a file whose shape already parsed. */
-function crossFieldIssues(file: ForecastRunFile, today: string): FileIssue[] {
+function crossFieldIssues(file: ForecastRunFile | LabRunFile, today: string): FileIssue[] {
   const issues: FileIssue[] = [];
   const add = (path: string, code: string): void => { issues.push({ path, code }); };
   if (file.trainedFrom > file.dataThrough) add('trainedFrom', 'dates_out_of_order');
@@ -203,6 +215,15 @@ export function checkForecastRunFile(raw: unknown, today: string): FileCheck {
   return { ok: true, file: parsed.data };
 }
 
+/** Checks a lab run file the same way as an imported one: the same shape, with the lab's training source, and the same rules. */
+export function checkLabRunFile(raw: unknown, today: string): FileCheck<LabRunFile> {
+  const parsed = labRunFileSchema.safeParse(raw);
+  if (!parsed.success) return { ok: false, issues: parsed.error.issues.slice(0, MAX_ISSUES).map(issueOf) };
+  const issues = crossFieldIssues(parsed.data, today);
+  if (issues.length > 0) return { ok: false, issues: issues.slice(0, MAX_ISSUES) };
+  return { ok: true, file: parsed.data };
+}
+
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
   if (value !== null && typeof value === 'object') {
@@ -211,7 +232,12 @@ function canonical(value: unknown): unknown {
   return value;
 }
 
-/** SHA-256 over the file's canonical JSON (keys sorted at every level), so the same run imported again is found. */
-export function runFileSha256(file: ForecastRunFile): string {
-  return createHash('sha256').update(JSON.stringify(canonical(file)), 'utf8').digest('hex');
+/** SHA-256 over a value's canonical JSON (keys sorted at every level). */
+export function canonicalSha256(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(canonical(value)), 'utf8').digest('hex');
+}
+
+/** SHA-256 over the file's canonical JSON, so the same run imported again is found. */
+export function runFileSha256(file: ForecastRunFile | LabRunFile): string {
+  return canonicalSha256(file);
 }

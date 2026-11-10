@@ -1,11 +1,12 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
+import { resetProfiles } from '../../../src/portal/profile/useProfile';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
-import { ACCESS, EMAIL, fakePortalApi, meOf, orgOf, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
+import { ACCESS, EMAIL, fakePortalApi, meOf, openAsAdminMe, orgOf, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
 import { ADD_EVENT, withRoutes } from '../team/fixtures';
 
 // Settings on web: the two-step link is a real link, Sign out on every device is described by its help line,
@@ -24,6 +25,7 @@ Object.defineProperty(document.documentElement, 'clientWidth', { configurable: t
 
 afterEach(() => {
   cleanup();
+  resetProfiles();
 });
 
 function renderAt(path: string, api: FakePortalApi): void {
@@ -71,4 +73,85 @@ test('view-as of an org admin: every write aria-disabled, focusable, and describ
   expect(describedText(everywhere)).toEqual([`Sign out on every device ends every Townwise sign-in for gm@example.org right away, this one included.`, line]);
   expect(screen.queryByRole('link', { name: 'Two-step sign-in settings' })).toBeNull();
   expect(writes(api)).toEqual([]);
+});
+
+test('open as admin: no Leave section; the rest is the admin’s settings', async () => {
+  const api = fakePortalApi({ me: openAsAdminMe(), org: orgOf('org_admin') });
+  withRoutes(api, { gets: { '/api/org/staff-activity': () => ({ events: [ADD_EVENT] }) } });
+  renderAt('/settings', api);
+  expect(await screen.findByRole('region', { name: 'Townwise staff activity on Test Group' })).toBeTruthy();
+  expect(screen.getByRole('heading', { level: 2, name: 'Townwise staff activity' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Leave Test Group' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Save name' }).getAttribute('aria-disabled')).not.toBe('true');
+  expect(screen.getByRole('button', { name: 'Sign out on every device' }).getAttribute('aria-disabled')).not.toBe('true');
+});
+
+test('open as admin: Save name names the organization the page shows, so a stale tab’s rename never lands in another one', async () => {
+  const api = fakePortalApi({ me: openAsAdminMe(), org: orgOf('org_admin') });
+  withRoutes(api, { gets: { '/api/org/staff-activity': () => ({ events: [ADD_EVENT] }) } });
+  api.answers['/api/org'] = () => ({ org: { id: 'o1', name: 'Harbor Group' } });
+  renderAt('/settings', api);
+  const field = await screen.findByRole('textbox', { name: 'Name' });
+  fireEvent.change(field, { target: { value: 'Harbor Group' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
+  expect(await screen.findByText('Saved.')).toBeTruthy();
+  expect(writes(api)).toEqual([{ method: 'PATCH', path: '/api/org', body: { name: 'Harbor Group', orgId: 'o1' } }]);
+});
+
+test('staff activity pages: Show older staff activity adds the next 50 below, and goes once there are no more', async () => {
+  const api = fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin') });
+  const at = ADD_EVENT.at;
+  const older = { ...ADD_EVENT, at: '2026-10-01T15:00:00.000Z', summary: 'Renamed the organization from A to B' };
+  withRoutes(api, {
+    gets: {
+      '/api/org/staff-activity': () => ({ events: [ADD_EVENT], nextBefore: at }),
+      [`/api/org/staff-activity?before=${encodeURIComponent(at)}`]: () => ({ events: [older], nextBefore: null }),
+    },
+  });
+  renderAt('/settings', api);
+  const table = await screen.findByRole('region', { name: 'Townwise staff activity on Test Group' });
+  expect(table.textContent).toContain(ADD_EVENT.summary);
+  expect(table.textContent).not.toContain(older.summary);
+  fireEvent.click(screen.getByRole('button', { name: 'Show older staff activity' }));
+  expect(await screen.findByText(older.summary)).toBeTruthy();
+  expect(screen.getByRole('region', { name: 'Townwise staff activity on Test Group' }).textContent).toContain(ADD_EVENT.summary);
+  expect(screen.queryByRole('button', { name: 'Show older staff activity' })).toBeNull();
+});
+
+test('D25: the staff activity intro names open as admin, so it never says staff read figures only through View as', async () => {
+  const api = fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin') });
+  withRoutes(api, { gets: { '/api/org/staff-activity': () => ({ events: [ADD_EVENT] }) } });
+  renderAt('/settings', api);
+  expect(await screen.findByText(
+    'Each time Townwise staff use View as to see your sales and notes, it’s recorded here with its reason. Before anyone from '
+    + 'your organization joined, staff setting it up may have opened it as its admin, which shows them what an admin sees; '
+    + 'each time is listed here, with every change they made. Otherwise staff can see your team’s email addresses, your '
+    + 'location names and towns, and which dates your data covers. Any change staff make to your team, name or status is '
+    + 'listed here too.',
+  )).toBeTruthy();
+});
+
+test('Your name is prefilled, saves, clears with an empty field, and shows the one message for a bad name', async () => {
+  const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') });
+  let stored: string | null = 'Pat';
+  api.answers['/api/me/profile'] = (body) => {
+    stored = (body as { displayName: string | null }).displayName;
+    return { displayName: stored, askName: false };
+  };
+  withRoutes(api, { gets: { '/api/me/profile': () => ({ displayName: stored, askName: false }) } });
+  renderAt('/settings', api);
+  const field = await screen.findByRole('textbox', { name: 'Your name' });
+  await waitFor(() => { expect((field as HTMLInputElement).value).toBe('Pat'); });
+  fireEvent.change(field, { target: { value: 'Cam2' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save your name' }));
+  expect(await screen.findByText('Use letters, spaces, hyphens or apostrophes, up to 40 characters.')).toBeTruthy();
+  expect(writes(api)).toEqual([]);
+  fireEvent.change(field, { target: { value: ' Cam ' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save your name' }));
+  expect(await screen.findByText('Saved.')).toBeTruthy();
+  expect(writes(api)).toEqual([{ method: 'PATCH', path: '/api/me/profile', body: { displayName: 'Cam' } }]);
+  fireEvent.change(field, { target: { value: '' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save your name' }));
+  await waitFor(() => { expect(writes(api)).toHaveLength(2); });
+  expect(writes(api)[1]?.body).toEqual({ displayName: null });
 });

@@ -1,6 +1,7 @@
 import { fetchStaffActivity, leaveOrg, renameOrg, signOutEverywhere } from '../../../src/portal/settings/api';
 import { createAuthStore } from '../../../src/auth/store';
-import { ACCESS, EMAIL, fakePortalApi, meOf, offline, refusal, writes } from '../../helpers/portal';
+import { openAsAdminOrgId } from '../../../src/portal/api';
+import { ACCESS, EMAIL, fakePortalApi, meOf, offline, openAsAdminMe, refusal, writes } from '../../helpers/portal';
 import { noContent, REFUSED_EVENT, VIEW_AS_EVENT, withRoutes } from '../team/fixtures';
 
 function api() {
@@ -13,15 +14,35 @@ describe('settings calls (spec 10.3, api/src/handlers/org.ts)', () => {
   test('PATCH /api/org sends the name and returns the organization', async () => {
     const { fake } = api();
     fake.answers['/api/org'] = () => ({ org: { id: 'o1', name: 'Harbor Group' } });
-    expect(await renameOrg(fake, 'Harbor Group')).toEqual({ id: 'o1', name: 'Harbor Group' });
+    expect(await renameOrg(fake, 'Harbor Group', null)).toEqual({ id: 'o1', name: 'Harbor Group' });
     expect(writes(fake)).toEqual([{ method: 'PATCH', path: '/api/org', body: { name: 'Harbor Group' } }]);
+  });
+
+  test('D25: in open as admin, PATCH /api/org also names the organization the page shows', async () => {
+    const { fake } = api();
+    fake.answers['/api/org'] = () => ({ org: { id: 'o1', name: 'Harbor Group' } });
+    await renameOrg(fake, 'Harbor Group', openAsAdminOrgId(openAsAdminMe()));
+    expect(writes(fake)).toEqual([{ method: 'PATCH', path: '/api/org', body: { name: 'Harbor Group', orgId: 'o1' } }]);
+    expect(openAsAdminOrgId(meOf(ACCESS.admin))).toBeNull();
   });
 
   test('GET /api/org/staff-activity returns the events, stripping keys the screen doesn’t read', async () => {
     const { fake, routes } = api();
-    routes.gets['/api/org/staff-activity'] = () => ({ events: [{ ...VIEW_AS_EVENT, details: { reason: 'x' } }, REFUSED_EVENT] });
-    expect(await fetchStaffActivity(fake)).toEqual([VIEW_AS_EVENT, REFUSED_EVENT]);
+    routes.gets['/api/org/staff-activity'] = () => ({ events: [{ ...VIEW_AS_EVENT, details: { reason: 'x' } }, REFUSED_EVENT], nextBefore: null });
+    expect(await fetchStaffActivity(fake)).toEqual({ events: [VIEW_AS_EVENT, REFUSED_EVENT], nextBefore: null });
     expect(REFUSED_EVENT).toMatchObject({ applied: false, notAppliedReason: 'The organization needs at least one admin' });
+  });
+
+  test('GET /api/org/staff-activity pages: nextBefore comes back, and before reads the older page', async () => {
+    const { fake, routes } = api();
+    const at = '2026-10-19T15:00:00.000Z';
+    routes.gets['/api/org/staff-activity'] = () => ({ events: [VIEW_AS_EVENT], nextBefore: at });
+    routes.gets[`/api/org/staff-activity?before=${encodeURIComponent(at)}`] = () => ({ events: [REFUSED_EVENT], nextBefore: null });
+    expect(await fetchStaffActivity(fake)).toEqual({ events: [VIEW_AS_EVENT], nextBefore: at });
+    expect(await fetchStaffActivity(fake, at)).toEqual({ events: [REFUSED_EVENT], nextBefore: null });
+    // An answer without the field (an older server) has no older page.
+    routes.gets['/api/org/staff-activity'] = () => ({ events: [] });
+    expect(await fetchStaffActivity(fake)).toEqual({ events: [], nextBefore: null });
   });
 
   test('POST /api/org/leave sends exactly {} and returns the new access; 409 last_admin passes through', async () => {

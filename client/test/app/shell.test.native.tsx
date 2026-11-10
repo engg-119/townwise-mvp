@@ -34,7 +34,7 @@ function linkNames(region: string, names: readonly string[]): string[] {
   return found;
 }
 
-const NAV = ['Home', 'Analytics', 'TownwiseAI', 'Notes', 'Town', 'Upload', 'Team', 'Settings'];
+const NAV = ['Home', 'Analytics', 'TownwiseAI', 'Notes', 'Town', 'Your data', 'Team', 'Settings'];
 
 function navLabels(): string[] {
   return linkNames('Main', NAV);
@@ -49,7 +49,7 @@ describe('the client app top bar (spec 15.2, 15.3)', () => {
     const signOut = jest.fn(() => Promise.resolve());
     const { router } = await renderApp('/dashboard', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') }), { signOut });
     await screen.findByText('Main Street Bar');
-    expect(navLabels()).toEqual(['Home', 'Analytics', 'TownwiseAI', 'Notes', 'Town', 'Upload', 'Settings']);
+    expect(navLabels()).toEqual(['Home', 'Analytics', 'TownwiseAI', 'Notes', 'Town', 'Your data', 'Settings']);
     // Off a location page no section is current.
     for (const name of navLabels()) expect(navLink(name).props.accessibilityState).toMatchObject({ selected: false });
     expect(screen.getAllByText('Test Group').length).toBeGreaterThan(0);
@@ -101,7 +101,7 @@ describe('the client app top bar (spec 15.2, 15.3)', () => {
       await renderApp('/dashboard', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') }));
       await screen.findAllByText('Main Street Bar');
       expect(screen.queryByText(EMAIL)).toBeNull();
-      expect(navLabels()).toEqual(['Home', 'Analytics', 'TownwiseAI', 'Notes', 'Town', 'Upload', 'Settings']);
+      expect(navLabels()).toEqual(['Home', 'Analytics', 'TownwiseAI', 'Notes', 'Town', 'Your data', 'Settings']);
       expect(within(screen.getByLabelText('Sections')).getByLabelText('Main')).toBeTruthy();
       // The table stacks into label and value pairs.
       const table = screen.getByLabelText('Locations');
@@ -196,7 +196,7 @@ describe('the view-as banner (spec 15.5)', () => {
     expect(signOutButton.props.accessibilityState).toMatchObject({ disabled: true });
     await fireEvent.press(within(banner).getByRole('button', { name: 'End view-as' }));
     await waitFor(() => { expect(router.getPathname()).toBe('/admin'); });
-    expect(writes(api)).toEqual([{ method: 'POST', path: '/api/admin/view-as/end', body: {} }]);
+    expect(writes(api)).toEqual([{ method: 'POST', path: '/api/admin/view-as/end', body: { grantId: 'g1' } }]);
     expect(screen.queryByLabelText('View-as')).toBeNull();
     expect(await screen.findByText(/^View-as ended at \d{1,2}:\d{2} (AM|PM)\.$/)).toBeTruthy();
     expect(signOut).not.toHaveBeenCalled();

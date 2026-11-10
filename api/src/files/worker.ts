@@ -97,8 +97,8 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
   async function audit(scope: OrgScope, file: FileRecord, details: Record<string, string | number>): Promise<void> {
     try {
       await stores.audit.insert({
-        at: now(), actorUserId: file.uploadedBy, actorEmail: await emailOf(file.uploadedBy), actorRole: file.uploaderRole,
-        viewAsGrantId: null, orgId: scope.orgId, action: 'sales.uploaded', target: { type: 'upload', id: String(details.uploadId) },
+        at: now(), actorUserId: file.uploadedBy, actorEmail: await emailOf(file.uploadedBy),
+        actorRole: file.byStaff ? 'superadmin' : file.uploaderRole, viewAsGrantId: file.openAsAdminGrantId, orgId: scope.orgId, action: 'sales.uploaded', target: { type: 'upload', id: String(details.uploadId) },
         details: {
           locationId: file.locationId, dayCount: details.dayCount ?? 0, inserted: details.inserted ?? 0, replaced: details.replaced ?? 0,
           firstDate: details.firstDate ?? '', lastDate: details.lastDate ?? '', fileId: file.id, via: 'file',
@@ -167,7 +167,7 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
     if (uploadId === null) {
       // SEAM (U6 step 2): tw_uploads gains fileId when stores/uploads.ts takes it; until then the file holds the link.
       const started = await stores.uploads.start(scope, file.locationId, {
-        uploadedBy: file.uploadedBy, uploadedAt: now(), dayCount: days.length, firstDate, lastDate,
+        uploadedBy: file.uploadedBy, ...(file.byStaff ? { byStaff: true } : {}), uploadedAt: now(), dayCount: days.length, firstDate, lastDate,
         hasGuests: days.some((day) => day.guests !== null), hasNetSales: days.some((day) => day.netSalesCents !== null),
       });
       uploadId = started.id;

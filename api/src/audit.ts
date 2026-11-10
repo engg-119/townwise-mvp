@@ -32,6 +32,11 @@ export async function recordBefore(ctx: TownwiseContext, event: AuditEventInput)
   }
 }
 
+/** The actor of an event nobody did by hand: the forecast lab publishing a calibrated forecast. */
+export const SYSTEM_ACTOR = {
+  actorUserId: 'system', actorEmail: 'Townwise forecast lab', actorRole: 'system', viewAsGrantId: null,
+} as const satisfies Pick<AuditEventInput, 'actorUserId' | 'actorEmail' | 'actorRole' | 'viewAsGrantId'>;
+
 /**
  * The codes a staff_action.not_applied event may carry (spec 9.3), each with the plain words org admins read in their
  * staff activity. A refusal's code is its error code; `conflict` means a concurrent change to the same row won,
@@ -40,6 +45,7 @@ export async function recordBefore(ctx: TownwiseContext, event: AuditEventInput)
 export const NOT_APPLIED_REASONS = {
   request_not_pending: 'The request was already decided',
   view_as_active: 'Another view-as was already running',
+  open_as_admin_active: 'Another view-as or setup as admin was already running',
   last_admin: 'The organization needs at least one admin',
   already_invited: 'That address was already invited',
   not_found: 'It was already gone',
@@ -48,6 +54,8 @@ export const NOT_APPLIED_REASONS = {
   org_not_suspended: 'The organization was reactivated first',
   files_unavailable: 'Stored files were off, so their files could not be deleted',
   location_name_taken: 'Another location already uses that name',
+  calibration_in_progress: 'A calibration for that location was already running',
+  calibrations_rate_limited: 'Too many calibrations had started that day',
   unavailable: 'Townwise was briefly unavailable',
   internal: 'Something went wrong on Townwise’s side',
 } as const;
@@ -166,6 +174,10 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'location.deleted': return `Deleted the location ${text(d.name)}`;
     case 'sales.uploaded': return `Uploaded ${text(d.dayCount)} days of sales data, ${text(d.firstDate)} to ${text(d.lastDate)}`;
     case 'sales.deleted': return `Deleted ${text(d.deletedDays)} days of sales data`;
+    // D28, Your data.
+    case 'sales.upload_deleted': return `Deleted an upload and ${text(d.deletedDays)} days`;
+    case 'data.turned_off': return d.item === 'file' ? 'Turned off a file' : 'Turned off an upload';
+    case 'data.turned_on': return d.item === 'file' ? 'Turned on a file' : 'Turned on an upload';
     case 'file.uploaded': return 'Uploaded a file';
     case 'file.deleted': return 'Deleted a file';
     case 'file.raw_deleted': return 'Deleted a file’s original';
@@ -181,14 +193,28 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
       return `Answered TownwiseAI’s question about days with no sales: ${QUESTION_ANSWER_WORDS[text(d.answer)] ?? text(d.answer)}`;
     // U13B.
     case 'forecast.imported': return `Imported a forecast (model ${text(d.modelVersion)}) for ${text(d.from)} to ${text(d.to)}`;
-    case 'forecast.published': return `Published a forecast (model ${text(d.modelVersion)}) for ${text(d.from)} to ${text(d.to)}`;
+    case 'forecast.published':
+      if (d.via === 'lab') return `Published a calibrated forecast (model ${text(d.modelVersion)}) for ${text(d.from)} to ${text(d.to)}`;
+      return `Published a forecast (model ${text(d.modelVersion)}) for ${text(d.from)} to ${text(d.to)}`;
     case 'forecast.withdrawn': return `Withdrew a forecast (model ${text(d.modelVersion)}) for ${text(d.from)} to ${text(d.to)}`;
     case 'forecast.deleted': return `Deleted a forecast (model ${text(d.modelVersion)}) for ${text(d.from)} to ${text(d.to)}`;
+    case 'calibration.requested':
+      return d.hasRegime === true ? 'Started a calibration, with a weekly pattern change' : 'Started a calibration';
+    case 'calibration.finished':
+      if (d.status === 'failed') return 'A calibration failed';
+      return d.gate === 'published' ? 'A calibration published a new forecast' : 'A calibration made a draft forecast';
+    case 'org.forecasts_switched': return d.on === true ? 'Switched forecasts on, with the owner’s agreement' : 'Switched forecasts off';
     case 'view_as.started': return `Viewed as ${text(d.targetEmail)}`;
     case 'view_as.ended':
       if (d.endReason === 'expired') return 'View-as expired';
       if (d.endReason === 'replaced') return 'View-as replaced by a new one';
       return 'Ended view-as';
+    // D25.
+    case 'open_as_admin.started': return 'Opened the organization as its admin, to set it up';
+    case 'open_as_admin.ended':
+      if (d.endReason === 'expired') return 'Setting up as admin ended with the staff sign-in';
+      if (d.endReason === 'replaced') return 'Setting up as admin ended';
+      return 'Ended setting up as admin';
     case 'people.signed_out_everywhere': return 'Signed a person out everywhere';
     case 'person.deleted': return 'Deleted a person’s Townwise records';
     case 'staff_action.not_applied': return `Didn’t take effect (${text(d.code)})`;
@@ -244,8 +270,8 @@ export interface StaffActivityView {
 }
 
 /**
- * Rows for staff events (actor role superadmin) on one organization, newest first as given. The caller leaves out the
- * staff_action.not_applied events: each marks the row it qualifies instead.
+ * Rows for staff events (actor role superadmin) and the forecast lab's own (system) on one organization, newest first
+ * as given. The caller leaves out the staff_action.not_applied events: each marks the row it qualifies instead.
  */
 export async function staffActivityViews(ctx: TownwiseContext, events: readonly AuditEventRecord[]): Promise<StaffActivityView[]> {
   const qualifiers = await ctx.stores.audit.findNotApplied(events.map((event) => event.id));

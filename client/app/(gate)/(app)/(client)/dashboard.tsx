@@ -1,4 +1,5 @@
 import { Link, Redirect, type Href } from 'expo-router';
+import { useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 
 import { AddLocationForm } from '../../../../src/portal/AddLocationForm';
@@ -20,7 +21,9 @@ import { theme } from '../../../../src/theme';
 // P9. Locations (spec 16.3; the Dashboard board). One location: its Home, keeping any one-time notice.
 // Several: one row per location with its town, sales history, calibration in words, notes and the next step,
 // then the public profile of each of their towns. None: org admins get the Add location form inline; members
-// get a line saying their admin hasn't added one. After a join, the notice names who added them (F1).
+// get a line saying their admin hasn't added one. After a join, the notice names who added them (F1). When a press
+// of the inline form adds some places and leaves rows (P10), the form stays, through the organization's reload,
+// until a press adds the rest or one is added by hand.
 
 const READ_ONLY_ID = 'locations-ro';
 
@@ -36,7 +39,6 @@ function NextStep(props: { location: LocationSummary; readOnly: boolean }): Reac
   return (
     <View>
       <Text style={styles.cell}>None for now</Text>
-      <Text style={styles.note}>Calibration isn’t built yet.</Text>
     </View>
   );
 }
@@ -91,6 +93,19 @@ export default function LocationsPage(): React.JSX.Element {
   const access = me.access.state === 'member' ? me.access : null;
   const orgName = access?.org.name ?? '';
   const admin = access?.role === 'org_admin';
+  const [rowsLeft, setRowsLeft] = useState(false);
+
+  const first = (
+    <Page
+      eyebrow={orgName}
+      title="Add your first location"
+      lead="Pick its town. For the twelve towns Townwise profiles, you’ll see public data on what moves demand there."
+      gate
+    >
+      <Columns main={<AddLocationForm onRowsLeft={setRowsLeft} />} />
+    </Page>
+  );
+  if (rowsLeft) return first;
 
   if (state.status === 'loading') {
     // Not the notice yet: with one location this page opens its Home, which shows it.
@@ -107,16 +122,7 @@ export default function LocationsPage(): React.JSX.Element {
     if (!admin) {
       return <Page eyebrow={orgName} title="Locations"><EmptyState text="Your admin hasn’t added a location yet." /></Page>;
     }
-    return (
-      <Page
-        eyebrow={orgName}
-        title="Add your first location"
-        lead="Pick its town. For the twelve towns Townwise profiles, you’ll see public data on what moves demand there."
-        gate
-      >
-        <Columns main={<AddLocationForm />} />
-      </Page>
-    );
+    return first;
   }
 
   const add = admin ? (

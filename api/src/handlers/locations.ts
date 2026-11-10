@@ -23,7 +23,7 @@ import type { LocationRecord } from '../stores/locations.ts';
 import { NO_COVERAGE, type Coverage } from '../stores/sales-days.ts';
 import { resolveTown, townInputSchema, type Town } from '../towns.ts';
 import { townOfAddress } from './places.ts';
-import { actorOf, orgAdmin } from './team.ts';
+import { actorOf, assertOpenAsAdminTab, orgAdmin } from './team.ts';
 
 /** Spec 10.1. */
 export interface LocationSummary {
@@ -32,7 +32,7 @@ export interface LocationSummary {
 }
 
 /** Spec 6.4. [CONFIRM: 25 locations] */
-const MAX_LOCATIONS = 25;
+export const MAX_LOCATIONS = 25;
 
 const nameSchema = z.string().trim().min(1).max(80);
 const createBody = z.object({ name: nameSchema, town: townInputSchema, placeId: placeIdSchema.nullish() });
@@ -256,18 +256,23 @@ export async function removeLocation(ctx: TownwiseContext, scope: OrgScope, loca
   await ctx.stores.agentAnswers.removeForLocation(scope, locationId);
   // An empty import left open goes too.
   await ctx.stores.imports.removeForLocation(scope, locationId);
+  // The forecast lab: calibrations go first, so a running job's token dies before its run could be written.
+  await ctx.stores.calibrations.removeForLocation(scope, locationId);
   // U13B: forecasts staff imported for it, even with no sales data left.
   await ctx.stores.forecasts.removeForLocation(scope, locationId);
   return true;
 }
 
-/** POST /api/org/locations (P10). */
+/** POST /api/org/locations (P10). `orgId`, the organization the page shows, is required in open as admin (D25). */
 export async function createLocation(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const admin = orgAdmin(principal);
+  assertOpenAsAdminTab(admin, req.body);
   const { scope } = admin;
   const input = await checkedCreate(ctx, scope, 'org.locations.create', admin.userId, req.body);
   const now = ctx.now();
-  const location = await ctx.stores.locations.create(scope, { ...input, createdAt: now, createdBy: admin.userId });
+  const location = await ctx.stores.locations.create(scope, {
+    ...input, createdAt: now, createdBy: admin.userId, ...(admin.openAsAdmin !== null ? { byStaff: true } : {}),
+  });
   if (location === null) throw nameTaken();
   await recordAfter(ctx, {
     ...actorOf(admin), at: now, orgId: scope.orgId, action: 'location.created',

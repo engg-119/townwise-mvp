@@ -4,7 +4,7 @@ import { fireEvent, render, screen } from '@testing-library/react-native';
 import { PlaceMap } from '../../../src/portal/places/PlaceMap';
 
 // The confirm card's map on native: the image loads the signed URL from Google at 2:1 with a label naming the place,
-// and nothing renders without a map or once the image fails.
+// and nothing renders without a map or once the image fails, not even the frame a row puts around it.
 
 const URL = 'https://maps.googleapis.com/maps/api/staticmap?center=place_id%3AChIJTestPlace0001&key=test-static-key&signature=yLf7UY5VigCJ9Tc0GyjJzgV7Dbs=';
 const LABEL = 'Map of the area around Lou’s Restaurant';
@@ -31,4 +31,11 @@ test('an image that fails to load leaves no empty box, and a new map shows again
   const next = URL.replace('ChIJTestPlace0001', 'ChIJTestPlace0002');
   await view.rerender(<PlaceMap map={{ url: next, width: 640, height: 320 }} label={LABEL} />);
   expect(screen.getByLabelText(LABEL).props.source).toEqual({ uri: next });
+});
+
+test('a frame goes with the image: it wraps the map, and nothing is left of it once the image fails', async () => {
+  await render(<PlaceMap map={{ url: URL, width: 640, height: 320 }} label={LABEL} frame={{ width: 160 }} />);
+  expect(screen.toJSON()).toMatchObject({ type: 'View', props: { style: { width: 160 } } });
+  await fireEvent(screen.getByLabelText(LABEL), 'error', { nativeEvent: { error: 'HTTP 403' } });
+  expect(screen.toJSON()).toBeNull();
 });
