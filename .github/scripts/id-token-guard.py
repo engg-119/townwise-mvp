@@ -8,15 +8,15 @@ every spelling counts that YAML resolves to the same thing: complex keys (? id-t
 - id-token with any value but none, or permissions: write-all, at workflow level in any file;
 - the same at job level in any job except jobs.deploy of deploy.yml;
 - jobs.deploy calling a reusable workflow (uses:), which would pass the token on;
-- any job in deploy.yml whose runs-on is not one literal ubuntu-* label: no expression (the other workflows read
-  CI_RUNS_ON, which can point at the laptop runner), no self-hosted label, no list or group, no reusable workflow.
+- any job in deploy.yml whose runs-on is not exactly one allowed GitHub-hosted label (GITHUB_HOSTED): no expression
+  (the other workflows read CI_RUNS_ON, which can point at the laptop runner), no self-hosted label, no other
+  ubuntu-* name a self-hosted runner could carry, no list or group, no reusable workflow.
   On a shared self-hosted Docker host a build job could reach the deploy job's container (infra/README.md, "CI on
   the laptop runner");
 - duplicate keys, more than one document, and anything it cannot parse or does not understand.
 The server-side control is the deploy identity's federated credential, which matches job_workflow_ref
 (infra/README.md, step 12). Usage: id-token-guard.py [workflows directory]
 """
-import re
 import sys
 from pathlib import Path
 
@@ -24,7 +24,9 @@ import yaml
 
 ALLOWED_FILE = "deploy.yml"
 ALLOWED_JOB = "deploy"
-GITHUB_HOSTED = re.compile(r"ubuntu-[0-9a-z.-]+")
+# An allowlist, not a pattern: a self-hosted runner could be given any ubuntu-* label. Add a label here only for a
+# GitHub-hosted image deploy.yml moves to.
+GITHUB_HOSTED = frozenset({"ubuntu-24.04"})
 
 
 class Loader(yaml.SafeLoader):
@@ -94,8 +96,8 @@ def check(path, relative):
                 continue
             if relative == ALLOWED_FILE:
                 runs_on = _values(job, "runs-on")
-                if len(runs_on) != 1 or not isinstance(runs_on[0], str) or not GITHUB_HOSTED.fullmatch(runs_on[0]):
-                    problems.append(f"job {job_id!r} in {ALLOWED_FILE} does not run on a literal GitHub-hosted ubuntu-* runner")
+                if len(runs_on) != 1 or not isinstance(runs_on[0], str) or runs_on[0] not in GITHUB_HOSTED:
+                    problems.append(f"job {job_id!r} in {ALLOWED_FILE} does not run on {' or '.join(sorted(GITHUB_HOSTED))}")
             if not any(grants_token(p) for p in _values(job, "permissions")):
                 continue
             if relative != ALLOWED_FILE or job_id != ALLOWED_JOB:
@@ -120,7 +122,7 @@ def main(argv):
             failed = True
     if not failed:
         print(f"id-token-guard: {len(files)} workflows; only jobs.{ALLOWED_JOB} in {ALLOWED_FILE} requests id-token, and"
-              f" every job in {ALLOWED_FILE} runs on a GitHub-hosted ubuntu-* runner")
+              f" every job in {ALLOWED_FILE} runs on {' or '.join(sorted(GITHUB_HOSTED))}")
     return 1 if failed else 0
 
 

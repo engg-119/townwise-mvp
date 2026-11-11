@@ -15,7 +15,7 @@ concurrency:
 
 # Every job runs where the CI_RUNS_ON repository variable (JSON) points, else on ubuntu-24.04: set to
 # ["self-hosted","townwise-laptop"] while GitHub-hosted runners are unavailable (infra/README.md, "CI on the
-# laptop runner"). deploy.yml never reads it: id-token-guard requires a literal ubuntu-* runner there.
+# laptop runner"). deploy.yml never reads it: id-token-guard requires literal ubuntu-24.04 there.
 jobs:
   gitleaks:
     # Required check; do not rename (T17).
