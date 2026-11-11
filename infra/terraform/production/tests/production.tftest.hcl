@@ -1069,18 +1069,52 @@ run "lab_requires_image" {
   command = plan
 
   variables {
-    enable_lab = true
+    enable_lab             = true
+    lab_callback_client_id = "22222222-2222-4222-8222-222222222222"
   }
 
   expect_failures = [azapi_resource.job_lab]
+}
+
+run "lab_requires_callback_app" {
+  command = plan
+
+  variables {
+    enable_lab = true
+    lab_image  = "crtownwise2d2c15bf.azurecr.io/townwise-lab@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  }
+
+  expect_failures = [azapi_resource.job_lab]
+}
+
+run "lab_callback_client_id_is_a_guid" {
+  command = plan
+
+  variables {
+    lab_callback_client_id = "api://22222222-2222-4222-8222-222222222222"
+  }
+
+  expect_failures = [var.lab_callback_client_id]
+}
+
+# Entra emits lowercase GUIDs and the API compares aud exactly, so an uppercase id would refuse every lab token.
+run "lab_callback_client_id_is_lowercase" {
+  command = plan
+
+  variables {
+    lab_callback_client_id = "2222222A-2222-4222-8222-222222222222"
+  }
+
+  expect_failures = [var.lab_callback_client_id]
 }
 
 run "lab_enabled" {
   command = plan
 
   variables {
-    enable_lab = true
-    lab_image  = "crtownwise2d2c15bf.azurecr.io/townwise-lab@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    enable_lab             = true
+    lab_image              = "crtownwise2d2c15bf.azurecr.io/townwise-lab@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    lab_callback_client_id = "22222222-2222-4222-8222-222222222222"
   }
 
   assert {
@@ -1100,12 +1134,12 @@ run "lab_enabled" {
   assert {
     condition = (
       length(azapi_resource.job_lab[0].body.properties.configuration.secrets) == 0 &&
-      [for setting in azapi_resource.job_lab[0].body.properties.configuration.identitySettings : setting.lifecycle] == ["None"] &&
+      [for setting in azapi_resource.job_lab[0].body.properties.configuration.identitySettings : setting.lifecycle] == ["Main"] &&
       [for setting in azapi_resource.job_lab[0].body.properties.configuration.identitySettings : setting.identity] == [azurerm_user_assigned_identity.lab[0].id] &&
       [for registry in azapi_resource.job_lab[0].body.properties.configuration.registries : registry.identity] == [azurerm_user_assigned_identity.lab[0].id] &&
       tolist(one(azapi_resource.job_lab[0].identity).identity_ids) == tolist([azurerm_user_assigned_identity.lab[0].id])
     )
-    error_message = "The lab job has no secrets, pulls its image with the lab identity, and no container can obtain a token for it."
+    error_message = "The lab job has no secrets, pulls its image with the lab identity, and only its main container can obtain a token for it (to sign in to the lab callback)."
   }
 
   assert {
@@ -1117,9 +1151,12 @@ run "lab_enabled" {
       azapi_resource.job_lab[0].body.properties.template.containers[0].resources.memory == "2Gi" &&
       azapi_resource.job_lab[0].body.properties.template.containers[0].env == [
         { name = "TOWNWISE_LAB_API_URL", value = "https://${azurerm_container_app.api.ingress[0].fqdn}" },
-      ]
+        { name = "AZURE_CLIENT_ID", value = "00000000-0000-0000-0000-0000000001d1" },
+        { name = "TOWNWISE_LAB_TOKEN_RESOURCE", value = "api://22222222-2222-4222-8222-222222222222" },
+      ] &&
+      !anytrue([for env in azapi_resource.job_lab[0].body.properties.template.containers[0].env : env.name == "TOWNWISE_LAB_TOKEN"])
     )
-    error_message = "One container, lab, at lab_image with 1 vCPU and 2Gi, and only the API URL in its environment."
+    error_message = "One container, lab, at lab_image with 1 vCPU and 2Gi; its environment holds the API URL and what it signs in with (the lab identity's client id and the lab callback app's identifier URI), and no secret."
   }
 
   assert {
@@ -1178,6 +1215,16 @@ run "lab_enabled" {
       output.lab_job_id == "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.App/jobs/caj-townwise-lab"
     )
     error_message = "With enable_lab, the API runs calibrations in the Azure job and knows its resource id."
+  }
+
+  assert {
+    condition = (
+      contains([for env in azurerm_container_app.api.template[0].container[0].env : "${env.name}=${env.value}" if env.value != null], "TOWNWISE_LAB_AUDIENCE=22222222-2222-4222-8222-222222222222") &&
+      contains([for env in azurerm_container_app.api.template[0].container[0].env : "${env.name}=${env.value}" if env.value != null], "TOWNWISE_LAB_CALLER_ID=00000000-0000-0000-0000-0000000000d1") &&
+      contains([for env in azurerm_container_app.api.template[0].container[0].env : "${env.name}=${env.value}" if env.value != null], "TOWNWISE_LAB_TENANT_ID=37acb94f-e2d9-41d9-a697-1bd7a1d60bf1") &&
+      length([for env in azurerm_container_app.api.template[0].container[0].env : env.name if startswith(env.name, "TOWNWISE_LAB_")]) == 5
+    )
+    error_message = "The API accepts the lab callback only from the lab identity (its principal id), with a token for the lab callback app (its client id) from this tenant."
   }
 
   # TOWNWISE_LAB_JOB_ID is built from names (lab.tf, to avoid a cycle). It must name the resource the job

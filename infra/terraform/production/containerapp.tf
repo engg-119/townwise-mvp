@@ -117,9 +117,16 @@ resource "azurerm_container_app" "api" {
         value = azurerm_user_assigned_identity.api.client_id
       }
 
-      # Calibrations run in the lab job (lab.tf) only when enable_lab is true; otherwise the runner stays off.
+      # Calibrations run in the lab job (lab.tf) only when enable_lab is true; otherwise the runner stays off. The
+      # callback accepts only the lab identity's token (its principal id) for the lab callback app, from this tenant.
       dynamic "env" {
-        for_each = var.enable_lab ? { TOWNWISE_LAB_RUNNER = "azure", TOWNWISE_LAB_JOB_ID = local.lab_job_id } : {}
+        for_each = var.enable_lab ? {
+          TOWNWISE_LAB_RUNNER    = "azure"
+          TOWNWISE_LAB_JOB_ID    = local.lab_job_id
+          TOWNWISE_LAB_AUDIENCE  = coalesce(var.lab_callback_client_id, "unset")
+          TOWNWISE_LAB_CALLER_ID = azurerm_user_assigned_identity.lab[0].principal_id
+          TOWNWISE_LAB_TENANT_ID = data.azurerm_client_config.current.tenant_id
+        } : {}
         content {
           name  = env.key
           value = env.value

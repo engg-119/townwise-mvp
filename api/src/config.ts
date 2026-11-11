@@ -56,6 +56,12 @@ export const configSchema = z.object({
   TOWNWISE_LAB_JOB_ID: z.string().regex(LAB_JOB_ID, { message: 'expected a Microsoft.App/jobs resource id' }).optional(),
   /** `local` only: the lab's uv project, relative to the API's working directory. */
   TOWNWISE_LAB_PROJECT_DIR: z.string().default('../modeling/lab'),
+  /** `azure` only: the lab callback app's client id, the audience of the lab job's token (bootstrap's lab_callback_client_id). */
+  TOWNWISE_LAB_AUDIENCE: z.guid({ message: 'expected a GUID' }).optional(),
+  /** `azure` only: the lab identity's principal (object) id, the one caller the callback accepts. */
+  TOWNWISE_LAB_CALLER_ID: z.guid({ message: 'expected a GUID' }).optional(),
+  /** `azure` only: the Entra tenant the lab job's token comes from. */
+  TOWNWISE_LAB_TENANT_ID: z.guid({ message: 'expected a GUID' }).optional(),
 });
 
 export type TownwiseConfig = z.infer<typeof configSchema>;
@@ -99,14 +105,26 @@ export function filesBackendOf(
   return azurite === undefined ? { kind: 'azure', accountUrl } : { kind: 'azurite', connectionString: azurite };
 }
 
-/** How the forecast lab starts a job (main.ts builds the runner from it), or null while the lab is off. */
+/** Who the callback accepts in Azure: the lab identity's Entra token for the lab callback app (lab/caller.ts). */
+export interface LabCallerConfig {
+  readonly audience: string;
+  readonly objectId: string;
+  readonly tenantId: string;
+}
+
+/** How the forecast lab starts a job and who may call back (main.ts builds both from it), or null while the lab is off. */
 export type LabRunnerConfig =
   | { readonly kind: 'local'; readonly apiUrl: string; readonly projectDir: string }
-  | { readonly kind: 'azure'; readonly jobId: string };
+  | { readonly kind: 'azure'; readonly jobId: string; readonly caller: LabCallerConfig };
 
-type LabKeys = 'TOWNWISE_LAB_RUNNER' | 'TOWNWISE_LAB_API_URL' | 'TOWNWISE_LAB_JOB_ID' | 'TOWNWISE_LAB_PROJECT_DIR';
+type LabKeys =
+  | 'TOWNWISE_LAB_RUNNER' | 'TOWNWISE_LAB_API_URL' | 'TOWNWISE_LAB_JOB_ID' | 'TOWNWISE_LAB_PROJECT_DIR'
+  | 'TOWNWISE_LAB_AUDIENCE' | 'TOWNWISE_LAB_CALLER_ID' | 'TOWNWISE_LAB_TENANT_ID';
 
-/** A runner missing its variable refuses boot, naming it, and so does `local` in production (it is for development). */
+/**
+ * A runner missing a variable refuses boot, naming each missing one, and so does `local` in production (it is for
+ * development).
+ */
 export function labRunnerOf(config: Pick<TownwiseConfig, LabKeys> & Partial<Pick<ServerConfig, 'NODE_ENV'>>): LabRunnerConfig | null {
   switch (config.TOWNWISE_LAB_RUNNER) {
     case 'off':
@@ -118,9 +136,17 @@ export function labRunnerOf(config: Pick<TownwiseConfig, LabKeys> & Partial<Pick
       if (apiUrl === null) throw new ConfigError('TOWNWISE_LAB_API_URL', 'expected a bare origin, with no path or query');
       return { kind: 'local', apiUrl, projectDir: config.TOWNWISE_LAB_PROJECT_DIR };
     }
-    case 'azure':
-      if (config.TOWNWISE_LAB_JOB_ID === undefined) throw new ConfigError('TOWNWISE_LAB_JOB_ID', 'required with TOWNWISE_LAB_RUNNER=azure');
-      return { kind: 'azure', jobId: config.TOWNWISE_LAB_JOB_ID };
+    case 'azure': {
+      const {
+        TOWNWISE_LAB_JOB_ID: jobId, TOWNWISE_LAB_AUDIENCE: audience, TOWNWISE_LAB_CALLER_ID: objectId, TOWNWISE_LAB_TENANT_ID: tenantId,
+      } = config;
+      if (jobId === undefined || audience === undefined || objectId === undefined || tenantId === undefined) {
+        const required = { TOWNWISE_LAB_JOB_ID: jobId, TOWNWISE_LAB_AUDIENCE: audience, TOWNWISE_LAB_CALLER_ID: objectId, TOWNWISE_LAB_TENANT_ID: tenantId };
+        throw new ConfigError(Object.entries(required).filter(([, value]) => value === undefined)
+          .map(([variable]) => ({ variable, problem: 'required with TOWNWISE_LAB_RUNNER=azure' })));
+      }
+      return { kind: 'azure', jobId, caller: { audience, objectId, tenantId } };
+    }
   }
 }
 

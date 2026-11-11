@@ -1,11 +1,14 @@
-// The forecast lab in integration tests: a fake runner that records each job (its calibration id and token) instead of
-// starting one, the job's two callback calls, a synthetic sales history, and a valid LabResult built from the input the
-// API served, as the lab would answer it. Every number is synthetic.
+// The forecast lab in integration tests: a fake runner that records each job instead of starting one, the lab
+// identity's Entra token (signed by a test key the server's lab caller trusts in place of Entra's), the job's two
+// callback calls, a synthetic sales history, and a valid LabResult built from the input the API served, as the lab
+// would answer it. Every number and id is synthetic.
+import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT, type JWTVerifyGetKey } from 'jose';
 import { Types } from 'mongoose';
 
 import { daysBetween } from '../../src/dates.ts';
 import { eachDay } from '../../src/forecasts/file.ts';
 import { RESULT_TOKEN_HEADER } from '../../src/lab/callback.ts';
+import { createEntraLabCaller, ENTRA_LOGIN, type LabCaller } from '../../src/lab/caller.ts';
 import type { LabInput } from '../../src/lab/input.ts';
 import type { LabResult, LabSuccess } from '../../src/lab/result.ts';
 import type { LabJob, LabRunner, LabStart } from '../../src/lab/runner.ts';
@@ -46,6 +49,38 @@ export function fakeLabRunner(): FakeLabRunner {
   return runner;
 }
 
+/** The lab callback app, the lab identity and the tenant the test server's lab caller accepts. */
+export const LAB_IDENTITY = {
+  tenantId: '11111111-1111-4111-8111-111111111111',
+  audience: '22222222-2222-4222-8222-222222222222',
+  callerObjectId: '33333333-3333-4333-8333-333333333333',
+} as const;
+
+const KID = 'lab-test-key';
+const signing = await generateKeyPair('RS256');
+/** Entra's key set as the test server's lab caller sees it: the one test key. */
+export const labKeys: JWTVerifyGetKey = createLocalJWKSet({ keys: [{ ...(await exportJWK(signing.publicKey)), kid: KID, use: 'sig' }] });
+
+/** The lab caller a test server with a lab runner gets by default: Entra's checks over `keys` (labKeys). */
+export function testLabCaller(now: () => Date, keys: JWTVerifyGetKey = labKeys): LabCaller {
+  return createEntraLabCaller({ ...LAB_IDENTITY, now, keys });
+}
+
+/**
+ * The Entra v2 access token the lab identity gets for the lab callback app, issued at the server's clock and good for an
+ * hour; `over` replaces claims (another audience, issuer, tenant or caller, or another time).
+ */
+export async function labIdentityToken(
+  server: Pick<TownwiseTestServer, 'clock'>,
+  over: { iss?: string; aud?: string; tid?: string; oid?: string; nbf?: number; exp?: number } = {},
+): Promise<string> {
+  const now = Math.floor(server.clock.now().getTime() / 1000);
+  return new SignJWT({
+    iss: `${ENTRA_LOGIN}/${LAB_IDENTITY.tenantId}/v2.0`, aud: LAB_IDENTITY.audience, tid: LAB_IDENTITY.tenantId,
+    oid: LAB_IDENTITY.callerObjectId, iat: now, nbf: now, exp: now + 3600, ver: '2.0', ...over,
+  }).setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid: KID }).sign(signing.privateKey);
+}
+
 /** The result token each calibration's input answer named, by calibration id: what the job posts its result with. */
 const resultTokens = new Map<string, string>();
 
@@ -55,19 +90,22 @@ export function resultTokenOf(calibrationId: string): string | undefined {
 }
 
 /**
- * The job's own calls: GET .../input with the token it was started with, or POST .../result with `body`. Like the job, a
- * result goes with the result token its input answer named (X-Townwise-Result-Token), or the start token when no
- * input was fetched. `authorization` replaces the header (null leaves it out).
+ * The job's own calls, signed in as the lab identity: GET .../input, or POST .../result with `body` and, like the job,
+ * the result token its input answer named (X-Townwise-Result-Token). `authorization` replaces the Authorization header
+ * and `resultToken` the result token (null leaves either out).
  */
 export async function jobCall(
-  server: Pick<TownwiseTestServer, 'url'>, job: Pick<LabJob, 'calibrationId' | 'token'>, verb: 'input' | 'result', body?: unknown,
-  opts?: { authorization?: string | null },
+  server: Pick<TownwiseTestServer, 'url' | 'clock'>, job: Pick<LabJob, 'calibrationId'>, verb: 'input' | 'result', body?: unknown,
+  opts?: { authorization?: string | null; resultToken?: string | null },
 ): Promise<Response> {
   const headers = new Headers();
-  const token = verb === 'result' ? resultTokens.get(job.calibrationId) ?? job.token : job.token;
-  const authorization = opts?.authorization === undefined ? `Bearer ${token}` : opts.authorization;
+  const authorization = opts?.authorization === undefined ? `Bearer ${await labIdentityToken(server)}` : opts.authorization;
   if (authorization !== null) headers.set('authorization', authorization);
-  if (verb === 'result') headers.set('content-type', 'application/json');
+  if (verb === 'result') {
+    const resultToken = opts?.resultToken === undefined ? resultTokens.get(job.calibrationId) ?? null : opts.resultToken;
+    if (resultToken !== null) headers.set(RESULT_TOKEN_HEADER, resultToken);
+    headers.set('content-type', 'application/json');
+  }
   const res = await fetch(new URL(`/lab/calibrations/${job.calibrationId}/${verb}`, server.url), {
     method: verb === 'input' ? 'GET' : 'POST',
     headers,
@@ -76,6 +114,17 @@ export async function jobCall(
   const resultToken = verb === 'input' && res.status === 200 ? res.headers.get(RESULT_TOKEN_HEADER) : null;
   if (resultToken !== null) resultTokens.set(job.calibrationId, resultToken);
   return res;
+}
+
+/** The job fails its calibration as a real one does: it fetches its input, then posts ok false with `code`. */
+export async function failJob(
+  server: Pick<TownwiseTestServer, 'url' | 'clock'>, job: Pick<LabJob, 'calibrationId'>,
+  code: 'not_enough_history' | 'invalid_input' | 'internal' = 'internal',
+): Promise<Response> {
+  const input = await jobCall(server, job, 'input');
+  if (input.status !== 200) throw new Error(`input answered ${String(input.status)}`);
+  await input.arrayBuffer();
+  return jobCall(server, job, 'result', labFailure(job, code));
 }
 
 /** One synthetic day of guests on every date from `from` to `to`, written straight to tw_sales_days. */

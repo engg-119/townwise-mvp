@@ -317,17 +317,18 @@ export interface LabCallbackClaim {
 }
 
 /**
- * The lab job's callback (docs: forecast lab), across organizations: the calibration with this id whose stored token
- * hash matches, that is still live, and whose token has not expired. Null for anything else, so the route answers 404
- * alike for an unknown id, a wrong or expired token and a finished calibration.
+ * The lab job's callback (lab/callback.ts), across organizations, once the caller signed in as the lab identity: the
+ * calibration with this id that is still live and whose 20-minute callback window is open, and, for a result
+ * (`resultTokenSha256` not null), whose stored result token hash matches. Null for anything else, so the route answers
+ * 404 alike for an unknown id, a wrong result token, a closed window and a finished calibration.
  */
 export async function findLabCallback(
-  connection: Connection, calibrationId: string, tokenSha256: string, now: Date,
+  connection: Connection, calibrationId: string, now: Date, resultTokenSha256: string | null,
 ): Promise<LabCallbackClaim | null> {
   if (!Types.ObjectId.isValid(calibrationId) || calibrationId.length !== 24) return null;
   const doc = await calibrationModel(connection).findOne({
     _id: new Types.ObjectId(calibrationId),
-    tokenSha256,
+    ...(resultTokenSha256 === null ? {} : { tokenSha256: resultTokenSha256 }),
     status: trusted({ $in: [...LIVE_STATUSES] }),
     tokenExpiresAt: trusted({ $gt: now }),
   }).lean();
