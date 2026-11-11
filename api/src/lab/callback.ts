@@ -8,8 +8,10 @@
 //
 // The lab identity's token is not tied to one calibration, so the input is fetched once and the result is bound to that
 // fetch: the input answer carries a fresh result token in X-Townwise-Result-Token, and a result needs it with the
-// identity token. A second fetch, by anyone, is 404 (the job never retries its fetch), so a fetch made first by anyone
-// else leaves the job's own refused and the calibration failing for all to see.
+// identity token. A second fetch, by anyone, is 404 (the job never retries its fetch). Whoever fetches first gets the
+// result token, so code running as the lab identity that fetches another calibration's input first can read it and post
+// a forged result for it, and that calibration's own job is refused (`not_live` in the log): a known risk the owner
+// deferred (infra/README.md, Known risks).
 //
 // Every refusal is 404: a missing or wrong token, an unknown id, another calibration's result token and a finished
 // calibration look alike; nothing here answers unauthenticated (only access/resolve.ts's userGone does). Only when
