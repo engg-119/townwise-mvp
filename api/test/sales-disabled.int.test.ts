@@ -126,9 +126,29 @@ describe('turned-off uploads leave every read (D28)', () => {
     expect((await getJson<SalesHistory>(admin, `/api/org/locations/${l1}/sales/history`)).days.date).toHaveLength(5);
     expect((await getJson<{ days: SalesDay[] }>(admin, `/api/org/locations/${l1}/sales/days?from=2026-05-01&to=2026-05-31`)).days).toEqual([]);
     expect((await getJson<{ locations: LocationSummary[] }>(admin, '/api/org')).locations[0]?.coverage.dayCount).toBe(5);
+    // The days the turned-off upload holds are counted apart (D28), so the upload check can warn about them.
+    expect((await getJson<{ locations: LocationSummary[] }>(admin, '/api/org')).locations[0]?.offDayCount).toBe(10);
     await turnOn(a);
+    expect((await getJson<{ locations: LocationSummary[] }>(admin, '/api/org')).locations[0]?.offDayCount).toBe(0);
     expect((await getJson<SalesView>(admin, `/api/org/locations/${l1}/sales`)).coverage.dayCount).toBe(15);
     expect((await getJson<SalesView>(admin, `/api/org/locations/${l1}/sales`)).months.map((m) => m.month)).toEqual(['2026-05', '2026-06']);
+  });
+
+  it('says uploadsOff only when no day is left and a turned-off upload holds days, on sales and sales/history', async () => {
+    const off = async (): Promise<[boolean, boolean]> => [
+      (await getJson<{ uploadsOff: boolean }>(admin, `/api/org/locations/${l1}/sales`)).uploadsOff,
+      (await getJson<{ uploadsOff: boolean }>(admin, `/api/org/locations/${l1}/sales/history`)).uploadsOff,
+    ];
+    expect(await off()).toEqual([false, false]);
+    const a = await send(admin, l1, '2026-05-01', 3);
+    const b = await send(admin, l1, '2026-06-01', 3);
+    expect(await off()).toEqual([false, false]);
+    await turnOff(a);
+    expect(await off()).toEqual([false, false]);
+    await turnOff(b);
+    expect(await off()).toEqual([true, true]);
+    await turnOn(b);
+    expect(await off()).toEqual([false, false]);
   });
 
   it('a day two uploads covered belongs to the upload that last wrote it: turning off the earlier one keeps it, turning off the later one leaves it out with no fallback', async () => {

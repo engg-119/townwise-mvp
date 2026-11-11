@@ -27,6 +27,8 @@ test('needsHistory: the organization has locations and none has a stored day', (
   expect(needsHistory(orgOf('org_admin'), [empty])).toBe(true);
   expect(needsHistory(orgOf('org_admin'), [empty, withDays])).toBe(false);
   expect(needsHistory(orgOf('org_admin'), [])).toBe(false);
+  // Days a turned-off upload holds are history: Home says the uploads are off instead of asking for a first upload.
+  expect(needsHistory(orgOf('org_admin'), [locationOf('l3', 'Off Cafe', HANOVER, { offDayCount: 10 })])).toBe(false);
 });
 
 test('phases: drop until reading starts, reading while files are read, and done only for an import this screen watched', () => {

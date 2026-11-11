@@ -4,8 +4,6 @@
 // completes it, and every change of a calibration is a compare-and-set, so a duplicated or retried result ends with one
 // run, at most one publish and one calibration.finished event. Logs and audit events carry ids, codes and counts only,
 // never a figure, a date with a value, or anything from the input or the result.
-import { createHash, randomBytes } from 'node:crypto';
-
 import { createRateLimiter, RateLimiterUnavailableError, type RateLimiter } from '@ckeith26/rate-limit';
 import { Types } from 'mongoose';
 
@@ -32,7 +30,7 @@ export { HORIZON_DAYS } from './input.ts';
 export const CALIBRATION_CHARGE_MICRO_USD = 100_000;
 /** Calibrations an organization may start in a day (townwise:calibrations; a store outage denies). [CONFIRM] */
 export const CALIBRATIONS_PER_ORG_PER_DAY = 4;
-/** A calibration still live this long after it was requested has failed (timeout); its token dies at the same time. [CONFIRM] */
+/** A calibration still live this long after it was requested has failed (timeout); its callback closes at the same time. [CONFIRM] */
 export const CALIBRATION_TIMEOUT_MS = 1_200_000;
 /** A pattern change needs this many days of history after it, so the new pattern has weeks to learn from. [CONFIRM] */
 const REGIME_TAIL_DAYS = 56;
@@ -79,10 +77,6 @@ const NOT_FOUND: IngestAnswer = { status: 404, body: { error: 'not_found', messa
 
 function isLive(record: CalibrationRecord): boolean {
   return LIVE_STATUSES.includes(record.status);
-}
-
-function sha256(text: string): string {
-  return createHash('sha256').update(text, 'utf8').digest('hex');
 }
 
 /** The tuning chat's month (UTC), which calibrations are charged to. */
@@ -165,8 +159,9 @@ export async function checkStart(ctx: TownwiseContext, req: StartRequest): Promi
 
 /**
  * Starts a calibration after checkStart passed: one of the organization's 4 a day, a queued calibration holding the
- * location's live slot with a fresh token (its sha256 stored, dead after 20 minutes), the job, then running, then the
- * charge to the month. A job that can't start fails the calibration start_failed and is not charged.
+ * location's live slot with its callback open for 20 minutes, the job (handed the calibration's id and no secret: it
+ * signs in as the lab identity), then running, then the charge to the month. A job that can't start fails the
+ * calibration start_failed and is not charged.
  */
 export async function launch(
   ctx: TownwiseContext, req: StartRequest,
@@ -187,17 +182,16 @@ export async function launch(
     return { ok: false, code: 'rate_limited' };
   }
   const champion = currentChampion(await ctx.stores.forecasts.published(scope, location.id), req.today);
-  const token = randomBytes(32).toString('base64url');
   const now = ctx.now();
   const queued = await ctx.stores.calibrations.insertQueued(scope, {
     id: req.id, locationId: location.id, regimeStart: req.regimeStart, championRunId: champion?.id ?? null,
     requestedBy: { userId: req.requester.userId, role: req.requester.role, via: req.requester.via },
-    tokenSha256: sha256(token), tokenExpiresAt: new Date(now.getTime() + CALIBRATION_TIMEOUT_MS), now,
+    tokenExpiresAt: new Date(now.getTime() + CALIBRATION_TIMEOUT_MS), now,
   });
   if (queued === null) return { ok: false, code: 'in_progress' };
   let started;
   try {
-    started = await runner.start({ calibrationId: queued.id, token });
+    started = await runner.start({ calibrationId: queued.id });
   } catch (err) {
     ctx.logger.warn({ calibrationId: queued.id, code: err instanceof LabStartError ? err.code : 'internal' }, 'townwise.lab_start_failed');
     await finishCalibration(ctx, scope, queued, { status: 'failed', failure: 'start_failed' });

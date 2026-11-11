@@ -21,6 +21,7 @@ import type { ChatModel } from '../../src/chat/model.ts';
 import { configSchema as townwiseSchema } from '../../src/config.ts';
 import type { FileBlobs } from '../../src/files/blobs.ts';
 import { createFileWorker, type FileWorker, type FileWorkerDeps } from '../../src/files/worker.ts';
+import type { LabCaller } from '../../src/lab/caller.ts';
 import type { LabRunner } from '../../src/lab/runner.ts';
 import type { MailTransport } from '../../src/mail/acs.ts';
 import { createMailer, OFF_MAILER, type Mailer } from '../../src/mail/mailer.ts';
@@ -28,6 +29,7 @@ import type { PeopleData } from '../../src/people-in-town/sources.ts';
 import { createTownwiseStores } from '../../src/stores/index.ts';
 import type { PlacesClient } from '../../src/places/google.ts';
 import type { StaticMapSigner } from '../../src/places/static-map.ts';
+import { testLabCaller } from './lab.ts';
 
 export const WEB_ORIGIN = 'https://app.example.test';
 export const STAFF_EMAIL = 'staff@townwise.test';
@@ -107,6 +109,11 @@ export async function startTownwiseServer(opts?: {
   peopleData?: PeopleData;
   /** The forecast lab's runner (helpers/lab.ts has a fake); absent, calibrations are off. /lab is mounted either way. */
   labRunner?: LabRunner;
+  /**
+   * Who may call /lab; absent, helpers/lab.ts's testLabCaller (the lab identity's token, signed by the test key) when
+   * there is a runner, and nobody (/lab answers 404) when there is none, as main.ts builds both or neither.
+   */
+  labCaller?: LabCaller;
 }): Promise<TownwiseTestServer> {
   const env: Record<string, string> = {
     NODE_ENV: 'test',
@@ -169,6 +176,7 @@ export async function startTownwiseServer(opts?: {
       config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now: clock.now, chat: opts?.chat,
       chatTurnTimeLimitMs: opts?.chatTurnTimeLimitMs, places: opts?.places, mailer, placesMap: opts?.placesMap,
       files, fileWorker: reader ?? undefined, peopleData: opts?.peopleData, labRunner: opts?.labRunner,
+      labCaller: opts?.labCaller ?? (opts?.labRunner === undefined ? undefined : testLabCaller(clock.now)),
     };
     const apiRouter = createTownwiseApi(deps);
     // As main.ts mounts them.

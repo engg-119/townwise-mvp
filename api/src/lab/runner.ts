@@ -1,10 +1,12 @@
 // How a calibration's job starts (forecast lab design call 2). LabRunner is the port the service calls; every runner
 // starts the same CLI (python -m townwise_lab job), which fetches its input from and posts its result to the callback
 // (lab/callback.ts), so each mode runs the production path.
-// - azure: the API's managed identity reads the Container Apps job (its template carries the image and
-//   TOWNWISE_LAB_API_URL) and starts one execution of it with TOWNWISE_LAB_CALIBRATION_ID and TOWNWISE_LAB_TOKEN added
-//   to the container's environment. No figure goes into the start request: the job reads its input over the callback.
-// - local: spawns uv in modeling/lab with PATH, HOME and the four TOWNWISE_LAB_ variables only, output ignored.
+// - azure: the API's managed identity reads the Container Apps job (its template carries the image,
+//   TOWNWISE_LAB_API_URL and what the job needs to sign in as the lab identity) and starts one execution of it with
+//   TOWNWISE_LAB_CALIBRATION_ID added to the container's environment. No secret and no figure goes into the start
+//   request: the job signs in with its own managed identity and reads its input over the callback.
+// - local: spawns uv in modeling/lab with PATH, HOME and the four TOWNWISE_LAB_ variables only, output ignored; its
+//   TOWNWISE_LAB_TOKEN is the API process's own secret (main.ts), which the local lab caller accepts.
 // Nothing here logs. A failure is a LabStartError with a code (and an HTTP status for upstream_status), never a response
 // body, a token or a command's output.
 import { spawn as nodeSpawn } from 'node:child_process';
@@ -15,8 +17,6 @@ import { execFileRunner, type AzureTokenSource, type CommandRunner, type FetchLi
 
 export interface LabJob {
   readonly calibrationId: string;
-  /** The calibration's bearer token for the callback; only its sha256 is stored. */
-  readonly token: string;
 }
 
 export interface LabStart {
@@ -46,7 +46,7 @@ export class LabStartError extends Error {
   }
 }
 
-/** The job's environment (modeling/lab/townwise_lab/job.py reads these names). */
+/** The job's environment (modeling/lab/townwise_lab/job.py reads these names). `token` is for a local job only. */
 export const LAB_ENV = {
   apiUrl: 'TOWNWISE_LAB_API_URL',
   calibrationId: 'TOWNWISE_LAB_CALIBRATION_ID',
@@ -135,11 +135,9 @@ export function createAzureLabRunner(deps: {
       const parsed = jobSchema.safeParse(raw);
       const template = parsed.success ? parsed.data.properties.template.containers[0] : undefined;
       if (template === undefined) throw new LabStartError('bad_response');
-      const added = new Set<string>([LAB_ENV.calibrationId, LAB_ENV.token]);
       const env = [
-        ...(template.env ?? []).filter((entry) => !added.has(entry.name)),
+        ...(template.env ?? []).filter((entry) => entry.name !== LAB_ENV.calibrationId),
         { name: LAB_ENV.calibrationId, value: job.calibrationId },
-        { name: LAB_ENV.token, value: job.token },
       ];
       // A start request's template replaces the job's containers for that execution, so it carries the whole container.
       const started = await send(`${jobUrl}/start?api-version=${JOBS_API_VERSION}`, token, {
@@ -176,12 +174,14 @@ const COMMIT = /^[0-9a-f]{40}$/;
 /**
  * Development: runs `uv run --frozen --project <projectDir> python -m townwise_lab job` in `projectDir`, with only
  * PATH and HOME (`path` and `home`, which main.ts passes) and the four TOWNWISE_LAB_ variables in its environment, and
- * the code version from `git rev-parse HEAD`. Its output is ignored, so nothing it prints reaches the API's logs. It
- * resolves once the process has started; a job that then fails is timed out like any other.
+ * the code version from `git rev-parse HEAD`. `token` is the API process's secret, which the local lab caller accepts
+ * (main.ts makes both). Its output is ignored, so nothing it prints reaches the API's logs. It resolves once the process
+ * has started; a job that then fails is timed out like any other.
  */
 export function createLocalLabRunner(deps: {
   projectDir: string;
   apiUrl: string;
+  token: string;
   path: string;
   home: string;
   spawn?: Spawner;
@@ -203,7 +203,7 @@ export function createLocalLabRunner(deps: {
         HOME: deps.home,
         [LAB_ENV.apiUrl]: deps.apiUrl,
         [LAB_ENV.calibrationId]: job.calibrationId,
-        [LAB_ENV.token]: job.token,
+        [LAB_ENV.token]: deps.token,
         [LAB_ENV.codeVersion]: codeVersion,
       };
       const child = spawn('uv', ['run', '--frozen', '--project', deps.projectDir, 'python', '-m', 'townwise_lab', 'job'], {

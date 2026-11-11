@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@ckeith26/server-core": "file:../server-core",
-    "mongoose": "9.11.2",
+    "mongoose": "9.11.4",
     "zod": "4.6.7"
   },
   "devDependencies": {

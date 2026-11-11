@@ -8,6 +8,17 @@ import { addDays } from './dates';
 // a day with no row, or no value for the series, is a gap in the line.
 
 /** The chart covers the last 365 days of data, ending at the last day (spec P12). */
+/**
+ * Shown in place of "No sales history yet" when the location has stored days but every upload holding them is turned
+ * off on Your data (D28; the API's `uploadsOff`).
+ */
+export const UPLOADS_OFF_LINE = 'Every sales upload for this location is turned off. Turn one back on in Your data to see its days.';
+
+/** A location that shows no day only because every upload holding days is turned off (D28; the summary's `offDayCount`). */
+export function allUploadsOff(location: { coverage: { dayCount: number }; offDayCount?: number | undefined }): boolean {
+  return location.coverage.dayCount === 0 && (location.offDayCount ?? 0) > 0;
+}
+
 export function chartRange(coverage: Coverage): { from: string; to: string } | null {
   if (coverage.firstDate === null || coverage.lastDate === null) return null;
   const from = addDays(coverage.lastDate, -364);

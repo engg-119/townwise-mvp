@@ -10,13 +10,15 @@ import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { NEXT_STEPS } from '../src/lab/components.ts';
-import { GATE_WORDS } from '../src/lab/gate.ts';
+import { gateWords, GATE_WORDS } from '../src/lab/gate.ts';
 import { labInputSchema, type LabInput } from '../src/lab/input.ts';
 import { LabStartError } from '../src/lab/runner.ts';
 import { FAILURE_WORDS, START_REFUSAL_WORDS } from '../src/lab/service.ts';
 import { addInvite, addLocation, addOpenAsAdminGrant, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { message, scriptedModel, text, toolUse, type ScriptedModel, type Step, type UsageInput } from './helpers/chat-model.ts';
-import { CODE_VERSION, fakeLabRunner, jobCall, labFailure, labResultFor, runDays, seedHistory, type FakeLabRunner } from './helpers/lab.ts';
+import {
+  CODE_VERSION, failJob, fakeLabRunner, jobCall, labResultFor, resultTokenOf, runDays, seedHistory, type FakeLabRunner,
+} from './helpers/lab.ts';
 import { comparisonWith, scorecardWith } from './helpers/lab-scorecard.ts';
 import { call, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
 
@@ -40,7 +42,7 @@ beforeEach(async () => {
 });
 
 interface Team { orgId: string; locationId: string; admin: TestSession; member: TestSession }
-interface Job { calibrationId: string; token: string }
+interface Job { calibrationId: string }
 interface Reply { result: Record<string, unknown>; raw: string; views: { input: unknown; result: unknown }[]; isError: boolean }
 
 async function seat(orgId: string, role: 'org_admin' | 'member', on = server): Promise<TestSession> {
@@ -228,7 +230,7 @@ describe('start_calibration', () => {
     await refusal('in_progress', t);
     const finishedJob = runner.jobs.at(-1);
     if (finishedJob === undefined) throw new Error('no job');
-    expect((await jobCall(server, finishedJob, 'result', labFailure(finishedJob, 'internal'))).status).toBe(200);
+    expect((await failJob(server, finishedJob)).status).toBe(200);
     // A calibration that failed says why, with three next steps, and its card says it didn't finish.
     const failed = await ask(t, 'admin', 'get_calibration');
     expect(failed.result).toMatchObject({
@@ -254,7 +256,7 @@ describe('start_calibration', () => {
       expect(more.result.started).toBe(true);
       const job = runner.jobs.at(-1);
       if (job === undefined) throw new Error('no job');
-      expect((await jobCall(server, job, 'result', labFailure(job, 'internal'))).status).toBe(200);
+      expect((await failJob(server, job)).status).toBe(200);
     }
     await refusal('rate_limited', t);
   });
@@ -317,6 +319,25 @@ describe('get_calibration and compare_forecast_models', () => {
     }
   });
 
+  it('a published calibration’s gate words say what it beat: the weekday average for a first forecast, the current forecast otherwise', async () => {
+    const publish = (calibrationId: string): Promise<unknown> => server.connection.collection('tw_calibrations').updateOne(
+      { _id: new Types.ObjectId(calibrationId) }, { $set: { gate: { published: true, reason: 'published' } } },
+    );
+    const first = await team();
+    const one = await finished(first, false);
+    await publish(one.calibrationId);
+    expect((await ask(first, 'admin', 'get_calibration')).result).toMatchObject({ published: true, gate: gateWords('published', true) });
+    expect(gateWords('published', true)).toContain('weekday average');
+
+    const beat = await team();
+    await publishedChampion(beat);
+    const two = await finished(beat, true);
+    await publish(two.calibrationId);
+    expect((await ask(beat, 'admin', 'get_calibration')).result).toMatchObject({ published: true, gate: GATE_WORDS.published });
+    expect((await ask(beat, 'admin', 'compare_forecast_models', { calibrationId: two.calibrationId })).result)
+      .toMatchObject({ published: true, gate: GATE_WORDS.published });
+  });
+
   it('get_calibration on a live calibration says it has not finished', async () => {
     const t = await team();
     await ask(t, 'admin', 'start_calibration');
@@ -368,7 +389,7 @@ describe('what a lab result may carry', () => {
       await ask(t, 'admin', 'compare_forecast_models', { calibrationId }),
     ];
     for (const { raw, views } of replies) {
-      for (const secret of [CODE_VERSION, String(doc?.inputSha256), job.token, 'paramsJson', 'codeVersion', 'inputSha256', 'xgb', 'holidayLambdas', 'tokenSha256']) {
+      for (const secret of [CODE_VERSION, String(doc?.inputSha256), resultTokenOf(job.calibrationId) ?? 'no token', 'paramsJson', 'codeVersion', 'inputSha256', 'xgb', 'holidayLambdas', 'tokenSha256']) {
         expect(raw).not.toContain(secret);
         expect(JSON.stringify(views)).not.toContain(secret);
       }

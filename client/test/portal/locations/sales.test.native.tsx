@@ -141,6 +141,15 @@ test('empty: says what is missing and where to upload; no delete, even for an or
   expect(screen.queryByLabelText('Sales by month')).toBeNull();
 });
 
+test('every upload turned off: says so and the Your data link stays, with no upload prompt', async () => {
+  const { api } = setup(meOf(ACCESS.admin), { ...salesOf([]), uploadsOff: true });
+  await renderApp('/locations/l1/sales', api);
+  expect(await screen.findByText('Every sales upload for this location is turned off. Turn one back on in Your data to see its days.')).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Open Your data' })).toBeTruthy();
+  expect(screen.queryByText(EMPTY_LINE)).toBeNull();
+  expect(screen.queryByText('Upload from a computer at townwise.tech.')).toBeNull();
+});
+
 test('org admins delete all sales data behind the typed name, then see the notice and the empty page', async () => {
   const { api, fake } = setup(meOf(ACCESS.admin));
   api.answers['/api/org/locations/l1/sales'] = () => {

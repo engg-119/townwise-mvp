@@ -16,6 +16,7 @@ import { usePortal, useReadOnly } from '../../../../../../src/portal/PortalProvi
 import { useLocation, useScrollingHead } from '../../../../../../src/portal/shell/LocationShell';
 import { Wrap } from '../../../../../../src/portal/ui/layout';
 import { theme } from '../../../../../../src/theme';
+import { allUploadsOff } from '../../../../../../src/portal/locations/sales';
 
 // P25 TownwiseAI (/locations/[locationId]/agent, members; spec 16.3, D26): the chat page and its panel, Questions
 // and activity (Questions for you, What it's been doing, the budget, How TownwiseAI works). The panel is closed by
@@ -70,6 +71,7 @@ export default function TownwiseAIScreen(): React.JSX.Element {
     locationName: location.name,
     orgName: org.org.name,
     hasSales: location.coverage.dayCount > 0,
+    uploadsOff: allUploadsOff(location),
     hasTownProfile: location.town.townId !== null,
     hasForecast: about.state.status === 'ready' && about.state.data.forecast.run !== null,
     coverage: { dayCount: location.coverage.dayCount, lastDate: location.coverage.lastDate },

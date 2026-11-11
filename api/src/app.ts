@@ -11,6 +11,7 @@ import { resolveTownwiseConfig, type ResolvedTownwiseConfig, type TownwiseConfig
 import type { FileBlobs } from './files/blobs.ts';
 import { createItemReader, type ItemReader } from './files/items.ts';
 import { createForecastReader, type ForecastReader } from './forecasts/reader.ts';
+import type { LabCaller } from './lab/caller.ts';
 import { createLabCallbackRouter } from './lab/callback.ts';
 import type { LabRunner } from './lab/runner.ts';
 import { OFF_MAILER, type Mailer } from './mail/mailer.ts';
@@ -50,6 +51,8 @@ export interface TownwiseDeps {
   readonly peopleData?: PeopleData | undefined;
   /** Starts the forecast lab's jobs; absent turns calibrations off (main.ts builds it from TOWNWISE_LAB_RUNNER). */
   readonly labRunner?: LabRunner | undefined;
+  /** Who may call the lab callback (lab/caller.ts); main.ts builds it with the runner. Absent, /lab answers 404 to all. */
+  readonly labCaller?: LabCaller | undefined;
 }
 
 /**
@@ -90,6 +93,8 @@ export interface TownwiseContext {
   readonly ports: TownwisePorts;
   /** Null while the forecast lab is off (503 lab_unavailable). */
   readonly labRunner: LabRunner | null;
+  /** Null while the forecast lab is off (the callback answers 404). */
+  readonly labCaller: LabCaller | null;
 }
 
 /** Registers the Townwise models on `connection` (call it before ensureIndexes) and builds what every handler receives. */
@@ -118,6 +123,7 @@ export function createTownwiseContext(deps: TownwiseDeps): TownwiseContext {
       forecasts: createForecastReader({ stores }),
     },
     labRunner: deps.labRunner ?? null,
+    labCaller: deps.labCaller ?? null,
   };
 }
 

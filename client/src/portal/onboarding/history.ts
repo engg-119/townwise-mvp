@@ -13,7 +13,8 @@ import type { LocationSummary, OrgResponse } from '../schemas';
  * with session 54). Home also checks its own fresh history, so the step leaves as soon as this location has days.
  */
 export function needsHistory(_org: OrgResponse, locations: readonly LocationSummary[]): boolean {
-  return locations.length > 0 && locations.every((location) => location.coverage.dayCount === 0);
+  // Days a turned-off upload holds (D28) are history: Home then says the uploads are off, not that none were sent.
+  return locations.length > 0 && locations.every((location) => location.coverage.dayCount === 0 && (location.offDayCount ?? 0) === 0);
 }
 
 export type Phase = 'drop' | 'reading' | 'done' | 'nothing_used';

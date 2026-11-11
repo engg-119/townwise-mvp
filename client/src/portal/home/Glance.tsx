@@ -65,6 +65,7 @@ function ThisWeekTile(props: { week: ThisWeek; metric: Metric }): React.JSX.Elem
 export function lastWeekGlance(comparison: LastWeek, metric: Metric): string {
   switch (comparison.state) {
     case 'no_history': return 'No sales history yet.';
+    case 'uploads_off': return 'Every sales upload is turned off.';
     case 'no_recent': return `Your sales stop at ${shortDate(comparison.lastDate)}.`;
     case 'no_days': return `No ${METRIC_NOUN[metric]} stored for last week.`;
     case 'no_last_year': return 'No data for the same week last year.';

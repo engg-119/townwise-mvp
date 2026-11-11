@@ -16,7 +16,7 @@ import { isoDate } from '../../dates.ts';
 import {
   backtestChart, comparisonChart, comparisonTable, metricCards, NEXT_STEPS, type ChatComponent, type NextStepsKind,
 } from '../../lab/components.ts';
-import { GATE_REASONS, GATE_WORDS, type GateReason } from '../../lab/gate.ts';
+import { GATE_REASONS, gateWords, type GateReason } from '../../lab/gate.ts';
 import { scorecardSchema, type Scorecard } from '../../lab/scorecard.ts';
 import { checkStart, expireStale, FAILURE_WORDS, launch, START_REFUSAL_WORDS, type StartRequest } from '../../lab/service.ts';
 import type { CalibrationRecord } from '../../stores/calibrations.ts';
@@ -179,7 +179,7 @@ export const getCalibrationTool: ChatTool<NamedInput> = {
     ];
     return json({
       ...base, weeks: comparison?.weeks ?? scorecard.backtest.weeksWithRange, published, regimeStart: record.regimeStart,
-      gate: record.gate === null ? null : (isGateReason(record.gate.reason) ? GATE_WORDS[record.gate.reason] : null),
+      gate: record.gate === null ? null : (isGateReason(record.gate.reason) ? gateWords(record.gate.reason, comparison === null) : null),
       components, suggestedNextSteps: stepsFor(published ? 'published' : 'draft'),
     });
   },
@@ -213,7 +213,7 @@ export const compareForecastModelsTool: ChatTool<NamedInput> = {
     const published = record.gate?.published === true;
     return json({
       available: true, calibrationId: record.id, status: record.status, weeks: comparison.weeks, published,
-      gate: record.gate === null ? null : (isGateReason(record.gate.reason) ? GATE_WORDS[record.gate.reason] : null),
+      gate: record.gate === null ? null : (isGateReason(record.gate.reason) ? gateWords(record.gate.reason, false) : null),
       components: [comparisonTable(comparison), comparisonChart(comparison)], suggestedNextSteps: stepsFor('compared'),
     });
   },

@@ -39,6 +39,8 @@ export type Upload = z.infer<typeof uploadSchema>;
 /** GET .../sales: coverage, calibration, month sums (oldest first) and the newest 20 uploads (newest first). */
 export const salesSchema = z.object({
   coverage: coverageSchema,
+  /** True when no day shows because every upload holding days is turned off (D28). Optional for an API from before it. */
+  uploadsOff: z.boolean().optional(),
   calibration: calibrationSchema,
   months: z.array(salesMonthSchema),
   uploads: z.array(uploadSchema),
