@@ -46,7 +46,7 @@ describe.each(ENDINGS)('history ending %s', (end) => {
 
   test('last week, the bar order share and this month count only stored, past days', () => {
     const comparison = lastWeekComparison(home);
-    if (comparison.state !== 'no_history' && comparison.state !== 'no_recent' && comparison.state !== 'no_days') {
+    if (comparison.state !== 'no_history' && comparison.state !== 'uploads_off' && comparison.state !== 'no_recent' && comparison.state !== 'no_days') {
       for (const day of comparison.days) {
         if (day.date > end) expect(day.value).toBeNull();
       }

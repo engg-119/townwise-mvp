@@ -120,6 +120,14 @@ describe('an empty conversation', () => {
     expect(screen.getByRole('button', { name: 'What should I upload?' })).toBeTruthy();
   });
 
+  test('with every upload turned off it says so and points to Your data, not to uploading', async () => {
+    const org = orgOf('member', [locationOf('l1', 'Main Street Bar', { townId: 'hanover-nh', name: 'Hanover', state: 'NH' }, { offDayCount: 10 })]);
+    await renderAgent(meOf(ACCESS.member), fakeChatApi(), org);
+    expect(await screen.findByText(/^Every sales upload for this location is turned off, so TownwiseAI can only use your notes, .* Turn one back on in Your data\.$/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open Your data' })).toBeTruthy();
+    expect(screen.queryByText(/You haven’t uploaded sales yet/)).toBeNull();
+  });
+
   test('a town Townwise hasn’t researched is never named as a source', async () => {
     at(1280);
     const org = orgOf('member', [locationOf('l1', 'Main Street Bar', { townId: null, name: 'Hanover', state: 'NH' })]);

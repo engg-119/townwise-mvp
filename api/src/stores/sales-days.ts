@@ -111,6 +111,10 @@ export interface SalesDayStore {
    * turned-off upload holds (D28).
    */
   history(scope: OrgScope, locationId: string): Promise<SalesDayWithUpload[]>;
+  /** D28: whether a turned-off upload holds any day at the location (so an empty read may be uploads turned off, not no history). */
+  holdsOffDays(scope: OrgScope, locationId: string): Promise<boolean>;
+  /** D28: per location id, how many days turned-off uploads hold; a location with none is left out. A count only. */
+  offDayCountByLocation(scope: OrgScope): Promise<Map<string, number>>;
   /** D28: the dates from `from` to `to`, inclusive, whose day a turned-off upload holds, oldest first. */
   disabledDates(scope: OrgScope, locationId: string, range: { from: string; to: string }): Promise<string[]>;
   /**
@@ -234,6 +238,20 @@ export function createSalesDayStore(connection: Connection): SalesDayStore {
       return docs.map((doc) => ({
         date: doc.date, guests: doc.guests ?? null, netSalesCents: doc.netSalesCents ?? null, uploadId: doc.uploadId.toHexString(),
       }));
+    },
+    async offDayCountByLocation(scope) {
+      const ids = await offIds(scope, null);
+      if (ids.length === 0) return new Map();
+      const rows = await connection.collection(SALES_DAYS_COLLECTION).aggregate<{ _id: Types.ObjectId; days: number }>([
+        { $match: { orgId: new Types.ObjectId(scope.orgId), uploadId: { $in: ids } } },
+        { $group: { _id: '$locationId', days: { $sum: 1 } } },
+      ]).toArray();
+      return new Map(rows.map((row) => [row._id.toHexString(), row.days]));
+    },
+    async holdsOffDays(scope, locationId) {
+      const ids = await offIds(scope, locationId);
+      if (ids.length === 0) return false;
+      return (await SalesDay.exists({ ...ofLocation(scope, locationId), uploadId: trusted({ $in: ids }) })) !== null;
     },
     async disabledDates(scope, locationId, range) {
       const ids = await offIds(scope, locationId);

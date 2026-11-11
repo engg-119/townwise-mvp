@@ -112,14 +112,14 @@ describe('GET /api/org/locations/:locationId/sales/history', () => {
     const locationId = await newLocation();
     await upload(locationId, team.admin, [{ date: '2026-05-01', guests: 50, netSalesCents: 100_000 }]);
     const body = await (await history(locationId, team.admin)).json() as SalesHistory;
-    expect(Object.keys(body).sort()).toEqual(['coverage', 'days', 'uploads']);
+    expect(Object.keys(body).sort()).toEqual(['coverage', 'days', 'uploads', 'uploadsOff']);
     expect(Object.keys(body.days).sort()).toEqual(['date', 'guests', 'netSalesCents', 'upload']);
     expect(Object.keys(body.uploads[0] ?? {}).sort()).toEqual(['file', 'firstDate', 'id', 'lastDate', 'status', 'uploadedAt', 'uploadedByEmail']);
   });
 
   it('answers empty columns, no uploads and no coverage for a location with no days', async () => {
     const body = await (await history(await newLocation())).json() as SalesHistory;
-    expect(body).toEqual({ coverage: NO_COVERAGE, days: { date: [], guests: [], netSalesCents: [], upload: [] }, uploads: [] });
+    expect(body).toEqual({ coverage: NO_COVERAGE, uploadsOff: false, days: { date: [], guests: [], netSalesCents: [], upload: [] }, uploads: [] });
   });
 
   it('gives a day whose upload has no record the index -1, and lists only uploads that exist', async () => {

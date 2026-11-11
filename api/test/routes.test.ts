@@ -275,13 +275,13 @@ describe('route table', () => {
     expect(ids.indexOf('org.chat.feedback')).toBe(ids.indexOf('org.chat.proposal') + 1);
   });
 
-  it('D28: a proposal to keep text is a member GET and a member POST with a 2kb body, with no route limiter', () => {
+  it('D28: a proposal to keep text is a member GET and a member POST with a 2kb body, limited by files as Paste text is', () => {
     const path = '/org/locations/:locationId/chat/:conversationId/item-proposals/:proposalId';
     const rows = TOWNWISE_ROUTES.filter((r) => ['org.chat.item_proposal.get', 'org.chat.item_proposal'].includes(r.id))
       .map(({ id, method, path: at, policy, bodyLimit, limiter }) => ({ id, method, path: at, policy, bodyLimit, limiter }));
     expect(rows).toEqual([
       { id: 'org.chat.item_proposal.get', method: 'GET', path, policy: 'member', bodyLimit: 'none', limiter: undefined },
-      { id: 'org.chat.item_proposal', method: 'POST', path, policy: 'member', bodyLimit: '2kb', limiter: undefined },
+      { id: 'org.chat.item_proposal', method: 'POST', path, policy: 'member', bodyLimit: '2kb', limiter: 'files' },
     ]);
   });
 

@@ -50,6 +50,16 @@ test('several locations: one row each, with town, sales history, calibration in 
   expect(router.getPathname()).toBe('/locations/l1');
 });
 
+test('a location whose every upload is off says so and links to Your data', async () => {
+  const off = locationOf('l9', 'Off Cafe', { townId: 'hanover-nh', name: 'Hanover', state: 'NH' }, { offDayCount: 10 });
+  const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member', [off, LOCATIONS[1] ?? off]) });
+  await renderApp('/dashboard', api);
+  const table = await screen.findByLabelText('Locations');
+  expect(within(table).getByText('Uploads turned off')).toBeTruthy();
+  expect(within(table).getByRole('link', { name: 'Open Your data' })).toBeTruthy();
+  expect(within(table).queryByText('Upload sales history')).toBeNull();
+});
+
 test('a long location name wraps at the type’s line height and keeps a 44px tap target', async () => {
   const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') });
   await renderApp('/dashboard', api);

@@ -72,6 +72,8 @@ export interface HomeInput {
   metric: Metric;
   /** The last stored day; null with no history. */
   lastDate: string | null;
+  /** No day shows because every upload holding days is turned off (D28). */
+  uploadsOff?: boolean;
 }
 
 /** A stored figure, only for a day that is past: on or before the last day of data and today. */
@@ -286,6 +288,8 @@ export interface ComparedDay { date: string; value: number | null; lastYear: num
 
 export type LastWeek =
   | { state: 'no_history' }
+  /** Every upload holding days is turned off on Your data. */
+  | { state: 'uploads_off' }
   /** The history ends before last week. */
   | { state: 'no_recent'; monday: string; sunday: string; lastDate: string }
   /** Last week has no day with the metric, though the history reaches it: a gap, or days without this metric. */
@@ -300,7 +304,7 @@ export type LastWeek =
 
 /** Last week (Monday to Sunday before this one) against the days 364 days earlier. */
 export function lastWeekComparison(input: HomeInput): LastWeek {
-  if (input.lastDate === null) return { state: 'no_history' };
+  if (input.lastDate === null) return input.uploadsOff === true ? { state: 'uploads_off' } : { state: 'no_history' };
   const monday = addDays(mondayOf(input.today), -7);
   const sunday = addDays(monday, 6);
   const days = weekDates(monday).map((date) => ({
@@ -331,6 +335,7 @@ function moreOrLess(change: number, metric: Metric): string {
 export function lastWeekLine(comparison: LastWeek, metric: Metric): string {
   switch (comparison.state) {
     case 'no_history': return 'No sales history yet, so there is nothing to compare.';
+    case 'uploads_off': return 'Every sales upload is turned off, so there is nothing to compare.';
     case 'no_recent': return `Your history ends ${formatDate(comparison.lastDate)}. Upload the days since to compare last week.`;
     case 'no_days': return `No ${METRIC_NOUN[metric]} stored for last week, so there is nothing to compare yet.`;
     case 'no_last_year': return 'No data for the same week last year, so there is nothing to compare yet.';
@@ -575,9 +580,12 @@ export function eventLine(event: Pick<TownEvent, 'title' | 'kind' | 'scope'>): s
 }
 
 /** The lead under the title (home.md 2.1). */
-export function leadLine(lastDate: string | null, calendar: Pick<Calendar, 'town' | 'researched' | 'covers'>): string {
+export function leadLine(
+  lastDate: string | null, calendar: Pick<Calendar, 'town' | 'researched' | 'covers'>, uploadsOff = false,
+): string {
   const researched = calendar.town.townId !== null && calendar.researched && calendar.covers !== null;
   const source = researched ? `${calendar.town.name}’s researched calendar` : 'US federal holidays';
+  if (lastDate === null && uploadsOff) return `Every sales upload is turned off. Home shows ${source} and your notes.`;
   if (lastDate === null) return `No sales history yet. Home shows ${source} and your notes.`;
   return `From your sales through ${shortDate(lastDate)} and ${source}.`;
 }

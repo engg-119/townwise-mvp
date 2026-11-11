@@ -135,6 +135,8 @@ describe('this week', () => {
     expect(leadLine('2026-11-04', calendarBody())).toBe('From your sales through Wed, Nov 4, 2026 and Hanover’s researched calendar.');
     expect(leadLine(null, calendarBody({ town: { townId: null, name: 'Norwich', state: 'VT' }, researched: false, covers: null })))
       .toBe('No sales history yet. Home shows US federal holidays and your notes.');
+    expect(leadLine(null, calendarBody(), true)).toBe('Every sales upload is turned off. Home shows Hanover’s researched calendar and your notes.');
+    expect(leadLine('2026-11-04', calendarBody(), true)).toBe('From your sales through Wed, Nov 4, 2026 and Hanover’s researched calendar.');
   });
 });
 
@@ -158,6 +160,9 @@ describe('last week', () => {
 
   test('states: no history, no recent days, no last year, nothing in common', () => {
     expect(lastWeekComparison(input([]))).toEqual({ state: 'no_history' });
+    const off = lastWeekComparison({ ...input([]), uploadsOff: true });
+    expect(off).toEqual({ state: 'uploads_off' });
+    expect(lastWeekLine(off, 'guests')).toBe('Every sales upload is turned off, so there is nothing to compare.');
     const old = DAYS.filter((each) => each.date <= '2026-10-20');
     const recent = lastWeekComparison(input(old));
     expect(recent.state).toBe('no_recent');

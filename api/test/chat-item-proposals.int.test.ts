@@ -18,7 +18,7 @@ import { createTownwiseStores } from '../src/stores/index.ts';
 import { message, messagesOf, scriptedModel, text, toolUse, type ScriptedModel } from './helpers/chat-model.ts';
 import { addGrant, addLocation, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import {
-  call, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
+  call, limiterKey, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
 
 const ITEM = { title: 'Catering list', text: 'Party of 40 on Dec 12' } as const;
@@ -161,6 +161,17 @@ describe('keeping it', () => {
     expect(listed.items).toContainEqual(expect.objectContaining({ ref: proposal.item.ref, via: 'townwise_ai' }));
     // TownwiseAI's activity lists saved notes only.
     expect(await createChatProposalStore(server.connection).listSaved(scope(), { locationId: l1, userId: member.userId }, 10)).toEqual([]);
+  });
+
+  it('Keep spends the files budget Paste text uses, and keeps nothing once it is used up', async () => {
+    const convId = await proposed();
+    await act(member, convId, callId, { action: 'save' });
+    expect(await server.redis.get(limiterKey('townwise:files', member.userId))).toBe('1');
+    await server.redis.set(limiterKey('townwise:files', member.userId), '120', 'EX', 3600);
+    const second = await proposed();
+    const refused = await actRaw(member, second, callId, { action: 'save' });
+    expect(refused).toMatchObject({ status: 429, body: { error: 'rate_limited' } });
+    expect(await referenceFiles()).toHaveLength(1);
   });
 
   it('two Keeps at once, or a retry after a crash between the steps, keep one item', async () => {

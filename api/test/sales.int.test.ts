@@ -268,6 +268,7 @@ describe('reads (spec 10.4, 14.1)', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       coverage: { dayCount: 0, guestsDayCount: 0, netSalesDayCount: 0, firstDate: null, lastDate: null, missingDays: 0 },
+      uploadsOff: false,
       calibration: { state: 'no_sales_data' },
       months: [],
       uploads: [],

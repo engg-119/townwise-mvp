@@ -29,6 +29,8 @@ import { actorOf, assertOpenAsAdminTab, orgAdmin } from './team.ts';
 export interface LocationSummary {
   id: string; name: string; town: Town; placeId: string | null; coverage: Coverage; calibration: Calibration;
   notesCount: number; lastUploadAt: string | null;
+  /** D28: days that turned-off uploads hold, which `coverage` leaves out. */
+  offDayCount: number;
 }
 
 /** Spec 6.4. [CONFIRM: 25 locations] */
@@ -137,17 +139,18 @@ export async function loadLocation(ctx: TownwiseContext, scope: OrgScope, rawId:
 
 /** Reads the organization's coverage, note counts and last uploads once; the returned function builds each summary. */
 export async function summarizer(ctx: TownwiseContext, scope: OrgScope): Promise<(location: LocationRecord) => LocationSummary> {
-  const [coverage, notes, uploads] = await Promise.all([
+  const [coverage, notes, uploads, offDays] = await Promise.all([
     ctx.stores.salesDays.coverageByLocation(scope),
     ctx.stores.notes.countByLocation(scope),
     ctx.stores.uploads.lastUploadByLocation(scope),
+    ctx.stores.salesDays.offDayCountByLocation(scope),
   ]);
   return (location) => {
     const covered = coverage.get(location.id) ?? NO_COVERAGE;
     return {
       id: location.id, name: location.name, town: location.town, placeId: location.placeId, coverage: covered,
       calibration: calibrationOf(covered), notesCount: notes.get(location.id) ?? 0,
-      lastUploadAt: uploads.get(location.id)?.toISOString() ?? null,
+      lastUploadAt: uploads.get(location.id)?.toISOString() ?? null, offDayCount: offDays.get(location.id) ?? 0,
     };
   };
 }
