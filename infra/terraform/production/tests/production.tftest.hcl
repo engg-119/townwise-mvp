@@ -1097,6 +1097,17 @@ run "lab_callback_client_id_is_a_guid" {
   expect_failures = [var.lab_callback_client_id]
 }
 
+# Entra emits lowercase GUIDs and the API compares aud exactly, so an uppercase id would refuse every lab token.
+run "lab_callback_client_id_is_lowercase" {
+  command = plan
+
+  variables {
+    lab_callback_client_id = "2222222A-2222-4222-8222-222222222222"
+  }
+
+  expect_failures = [var.lab_callback_client_id]
+}
+
 run "lab_enabled" {
   command = plan
 
