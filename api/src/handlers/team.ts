@@ -45,7 +45,29 @@ export function orgAdmin(principal: Principal): MemberPrincipal {
 }
 
 export function actorOf(principal: MemberPrincipal): Pick<AuditEventInput, 'actorUserId' | 'actorEmail' | 'actorRole' | 'viewAsGrantId'> {
+  // Open as admin (D25): the change is Townwise staff's, whatever the organization role the principal borrows.
+  if (principal.openAsAdmin !== null) {
+    return { actorUserId: principal.userId, actorEmail: principal.email, actorRole: 'superadmin', viewAsGrantId: principal.openAsAdmin.grantId };
+  }
   return { actorUserId: principal.userId, actorEmail: principal.email, actorRole: principal.role, viewAsGrantId: null };
+}
+
+/** The organization the tab shows, on the org admin writes whose path names nothing of the organization (D25). */
+const tabOrgBody = z.object({ orgId: objectId.optional() });
+
+/**
+ * D25: renaming the organization and adding a location name nothing of it in their path, so in open as admin they
+ * carry the `orgId` the tab shows, and one naming another organization, or none, answers 409 open_as_admin_active
+ * (the client then reads GET /api/me again). So a tab still showing an organization this session no longer has open
+ * never writes into the one it has open now. Outside open as admin the organization comes from the seat, and `orgId`
+ * is not read.
+ */
+export function assertOpenAsAdminTab(principal: MemberPrincipal, body: unknown): void {
+  if (principal.openAsAdmin === null) return;
+  const { orgId } = parseInput(tabOrgBody, body);
+  if (orgId?.toLowerCase() !== principal.scope.orgId) {
+    throw new AppError(409, 'open_as_admin_active', 'The organization open as admin is not the one this page shows');
+  }
 }
 
 /** A seat shows the person's current kit email; an invitation shows the address that was added. */

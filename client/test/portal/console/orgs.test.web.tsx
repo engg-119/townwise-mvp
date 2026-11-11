@@ -2,6 +2,7 @@ import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/re
 
 import { deferred, offline, refusal, writes } from '../../helpers/portal';
 import { consoleApi, emailOf, orgDetail, orgRow, renderAt, setWidth } from './helpers';
+import { choose } from '../../helpers/select';
 
 // P20 Organizations, with New organization (C5): docs/portal/spec.md 16.4, F10.
 
@@ -38,7 +39,7 @@ test('every organization with its counts, “No admin yet” and “None yet”;
   fireEvent.change(screen.getByRole('textbox', { name: 'Filter by name' }), { target: { value: 'ski' } });
   expect(rows(screen.getByRole('region', { name: 'Organizations' })).map((row) => row[0])).toEqual(['Sample Ski Bar']);
   fireEvent.change(screen.getByRole('textbox', { name: 'Filter by name' }), { target: { value: '' } });
-  fireEvent.change(screen.getByRole('combobox', { name: 'Status' }), { target: { value: 'suspended' } });
+  choose(screen.getByRole('combobox', { name: 'Status' }), 'Suspended');
   expect(rows(screen.getByRole('region', { name: 'Organizations' })).map((row) => row[0])).toEqual(['Sample Harbor Kitchen']);
   fireEvent.change(screen.getByRole('textbox', { name: 'Filter by name' }), { target: { value: 'tavern' } });
   expect(screen.getByText('No organizations match these filters.')).toBeTruthy();

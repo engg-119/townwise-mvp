@@ -138,6 +138,17 @@ export function alreadyHaveLine(role: Role, first: string, last: string): string
     : `${range} Days you already have stay as they are. Only an admin can replace them.`;
 }
 
+/**
+ * Spec 11.2 step 3, D28: days held by a turned-off upload are not in the coverage above, but the write sees them. An org
+ * admin's file replaces one it covers (it then shows again); a member's leaves it as it is, still hidden.
+ */
+export function turnedOffLine(role: Role, count: number): string {
+  const held = `${plural(count, 'day', 'days')} ${count === 1 ? 'is' : 'are'} held by turned-off uploads.`;
+  return role === 'org_admin'
+    ? `${held} Any of them this file covers will be replaced, and will show again.`
+    : `${held} Any of them this file covers stay as they are, and stay hidden.`;
+}
+
 /** Spec 11.2 step 4: the result, by role. */
 export function resultLines(role: Role, location: string, upload: { dayCount: number; inserted: number; replaced: number; kept: number }): string[] {
   if (role === 'org_admin') {
@@ -155,7 +166,7 @@ export function calibrationLine(calibration: Calibration): string {
   if (calibration.state === 'no_sales_data') {
     return 'Upload your sales history to start. The upload sends Townwise only the date, guest count and net sales for each day.';
   }
-  return `Your sales history is in: ${plural(calibration.dayCount, 'day', 'days')}, ${formatDate(calibration.firstDate)} to ${formatDate(calibration.lastDate)}. Calibration isn’t built yet, so there is no forecast.`;
+  return `Your sales history is in: ${plural(calibration.dayCount, 'day', 'days')}, ${formatDate(calibration.firstDate)} to ${formatDate(calibration.lastDate)}.`;
 }
 
 const KIND: Readonly<Record<ColumnProfile['kind'], string>> = { dates: 'dates', numbers: 'numbers', text: 'text', empty: 'empty' };

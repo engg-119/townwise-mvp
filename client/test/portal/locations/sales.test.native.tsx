@@ -72,11 +72,11 @@ test('coverage, the chart’s text and numbers, by month, and uploads', async ()
   expect(within(months).getByRole('button', { name: 'Jan 2026' }).props.accessibilityState).toMatchObject({ expanded: true });
   await fireEvent.press(within(months).getByRole('button', { name: 'Jan 2026' }));
   expect(screen.queryByLabelText('Days in Jan 2026')).toBeNull();
-  // Uploads, newest first, with the one that didn't finish.
-  const uploads = screen.getByLabelText('Uploads');
-  expect(within(uploads).getByText('This upload didn’t finish. Upload the file again.')).toBeTruthy();
-  expect(within(uploads).getByText('Finished')).toBeTruthy();
-  expect(within(uploads).getByText('gm@example.org')).toBeTruthy();
+  // Uploads and files moved to Your data: P12 keeps one line and a link, and no Uploads table.
+  expect(screen.getByRole('heading', { name: 'Uploads and files' })).toBeTruthy();
+  expect(screen.getByText('Every upload and file for Main Street Bar is on Your data, where your team can download it, turn it off or delete it.')).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Open Your data' })).toBeTruthy();
+  expect(screen.queryByLabelText('Uploads')).toBeNull();
   // Members have no Delete sales data section.
   expect(screen.queryByRole('heading', { name: 'Delete sales data' })).toBeNull();
   expect(writes(api)).toEqual([]);
@@ -87,8 +87,7 @@ test('at 320px By month is one compact table, and a month still opens its days',
   try {
     const { api } = setup(meOf(ACCESS.admin));
     await renderApp('/locations/l1/sales', api);
-    const uploads = await screen.findByLabelText('Uploads');
-    expect(within(uploads).getAllByText('Status')).toHaveLength(2);
+    await screen.findByLabelText('Sales by month');
     const months = screen.getByLabelText('Sales by month');
     // One header row, not a label per month, and every month keeps its four cells.
     for (const head of ['Month', 'Days', 'Guests', 'Net sales']) expect(within(months).getAllByText(head)).toHaveLength(1);
@@ -142,6 +141,15 @@ test('empty: says what is missing and where to upload; no delete, even for an or
   expect(screen.queryByLabelText('Sales by month')).toBeNull();
 });
 
+test('every upload turned off: says so and the Your data link stays, with no upload prompt', async () => {
+  const { api } = setup(meOf(ACCESS.admin), { ...salesOf([]), uploadsOff: true });
+  await renderApp('/locations/l1/sales', api);
+  expect(await screen.findByText('Every sales upload for this location is turned off. Turn one back on in Your data to see its days.')).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Open Your data' })).toBeTruthy();
+  expect(screen.queryByText(EMPTY_LINE)).toBeNull();
+  expect(screen.queryByText('Upload from a computer at townwise.tech.')).toBeNull();
+});
+
 test('org admins delete all sales data behind the typed name, then see the notice and the empty page', async () => {
   const { api, fake } = setup(meOf(ACCESS.admin));
   api.answers['/api/org/locations/l1/sales'] = () => {
@@ -152,7 +160,7 @@ test('org admins delete all sales data behind the typed name, then see the notic
   expect(await screen.findByRole('heading', { name: 'Delete sales data' })).toBeTruthy();
   expect(screen.getByText('Admins only')).toBeTruthy();
   await fireEvent.press(screen.getByRole('button', { name: 'Delete all sales data' }));
-  expect(screen.getByText('This deletes 397 days of sales data for Main Street Bar. Notes stay. This can’t be undone.')).toBeTruthy();
+  expect(screen.getByText('This deletes 397 days of sales data for Main Street Bar, any days turned off on its Your data page, and every file on that page. Notes stay. This can’t be undone.')).toBeTruthy();
   const confirm = (): ReturnType<typeof screen.getByRole> => {
     const button = screen.getAllByRole('button', { name: 'Delete all sales data' }).at(-1);
     if (button === undefined) throw new Error('no dialog');
@@ -178,7 +186,7 @@ test('a failed delete keeps the dialog open with the shared copy', async () => {
   if (confirm === undefined) throw new Error('no dialog');
   await fireEvent.press(confirm);
   expect(await screen.findByText('Can’t reach Townwise. Check your connection and try again.')).toBeTruthy();
-  expect(screen.getByText('This deletes 397 days of sales data for Main Street Bar. Notes stay. This can’t be undone.')).toBeTruthy();
+  expect(screen.getByText('This deletes 397 days of sales data for Main Street Bar, any days turned off on its Your data page, and every file on that page. Notes stay. This can’t be undone.')).toBeTruthy();
   // Opened again, the dialog starts without the earlier error.
   await fireEvent.press(screen.getByRole('button', { name: 'Cancel' }));
   await fireEvent.press(screen.getByRole('button', { name: 'Delete all sales data' }));

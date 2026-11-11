@@ -52,6 +52,31 @@
         flex: 1;
       }
     </style>
+    <!-- Quiet scrollbars in every scroll area on every page (a thin theme.color.border thumb on no track), not the
+         browser's light default: the standard properties for Chrome and Firefox, the -webkit- ones for Safari. -->
+    <style id="scrollbars">
+      * {
+        scrollbar-width: thin;
+        scrollbar-color: #34383e transparent;
+      }
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #34383e;
+        border: 2px solid transparent;
+        background-clip: padding-box;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #7b8187;
+        border: 2px solid transparent;
+        background-clip: padding-box;
+      }
+    </style>
     <!-- Self-hosted (CSP font-src 'self'), latin subset, SIL Open Font License: /fonts/OFL-*.txt -->
     <style id="fonts">
       @font-face {

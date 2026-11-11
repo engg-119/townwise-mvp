@@ -19,12 +19,12 @@ import { PANEL_EMPTY, NO_NOTES, type DayPanelData, type PanelSource } from './pa
 // its status, Your numbers, On the town calendar with each event's sources, Your notes, Where it came from (with the
 // stored file the upload was read from, F4), then Previous day, Next day and a link that opens TownwiseAI with this
 // day in its composer (`?about=`; the Agent page only fills the box, it never sends). It never writes. Under view-as
-// the file's name is not sent and "Download cleaned CSV" is not offered, as on Your files; the API refuses it there
+// the file's name is not sent and "Download cleaned CSV" is not offered, as on Your data; the API refuses it there
 // too. Note text, figures and the file name are only on screen; nothing here logs.
 
 const HEADING_ID = 'analytics-day-heading';
 
-/** F4: the stored file's kind and name, "Download cleaned CSV" (web, members, a finished upload) and Your files. */
+/** F4: the stored file's kind and name, "Download cleaned CSV" (web, members, a finished upload) and Your data. */
 function FileSource(props: { locationId: string; source: PanelSource }): React.JSX.Element | null {
   const { api } = usePortal();
   const { readOnly } = useReadOnly();
@@ -55,7 +55,7 @@ function FileSource(props: { locationId: string; source: PanelSource }): React.J
             onPress={save}
           />
         ) : null}
-        <LinkButton href={locationHref(props.locationId, 'sales')} label={`Open ${FILE_COPY.yourFiles}`} />
+        <LinkButton href={locationHref(props.locationId, 'data')} label="Open Your data" />
       </Actions>
       {error === null ? null : <Messages live="alert" items={[actionError(error)]} />}
     </>

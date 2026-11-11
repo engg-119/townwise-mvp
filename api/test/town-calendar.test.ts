@@ -147,8 +147,8 @@ describe('townCalendarCovers', () => {
   });
 
   it('spans the town’s researched events over all years', () => {
-    // Hanover: winter 2025 classes (the seed) to Commencement 2027 (the registrar's 2026-27 key dates).
-    expect(townCalendarCovers('hanover-nh')).toEqual({ from: '2025-01-06', to: '2027-06-13' });
+    // Hanover: winter 2025 classes (the seed) to fall 2027 finals (the registrar's 2027-28 key dates).
+    expect(townCalendarCovers('hanover-nh')).toEqual({ from: '2025-01-06', to: '2027-11-24' });
     // Amherst: its three key dates only.
     const amherst = townEvents('amherst-ma', EVERYTHING).filter((event) => event.scope === 'town');
     expect(townCalendarCovers('amherst-ma')).toEqual({ from: amherst[0]?.start, to: amherst.at(-1)?.end });
@@ -189,7 +189,7 @@ describe('the researched calendar data', () => {
     }
   });
 
-  it('seeds Hanover from modeling/dartmouth_calendar_2025_2026.csv, one entry per row, then the registrar’s 2027 terms', () => {
+  it('seeds Hanover from modeling/dartmouth_calendar_2025_2026.csv, one entry per row, then the researched 2027 dates', () => {
     const csv = readFileSync(new URL('../../modeling/dartmouth_calendar_2025_2026.csv', import.meta.url), 'utf8');
     const [header, ...rows] = csvRows(csv);
     expect(header).toEqual(['event', 'kind', 'start_date', 'end_date', 'source_url', 'confidence', 'notes']);
@@ -208,15 +208,30 @@ describe('the researched calendar data', () => {
     }));
     expect(rows).toHaveLength(38);
     expect(seeded.slice(0, rows.length)).toEqual(expected);
-    // Researched after the CSV, from the registrar's 2026-27 key dates; the CSV feeds the modeling notebook and is left alone.
+    // Researched after the CSV; the CSV feeds the modeling notebook and is left alone. First the registrar's 2026-27 key
+    // dates (2026-11-06), then the 2027-28 key dates and the October 2026 five-year calendar (2026-11-09).
     const registrar = 'https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027-key-dates';
-    const term = (group: string, start: string, end: string) => ({ start, end, kind: 'term', group: `hanover-nh:${group}`, url: registrar, confidence: 'high' });
+    const registrar2728 = 'https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2027-2028-key-dates';
+    const fiveYear = 'https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf';
+    const term = (group: string, start: string, end: string, url = registrar) => ({ start, end, kind: 'term', group: `hanover-nh:${group}`, url, confidence: 'high' });
+    const event = (group: string, start: string, end: string, confidence: string) => ({ start, end, kind: 'event', group: `hanover-nh:${group}`, url: fiveYear, confidence });
     expect(seeded.slice(rows.length)).toEqual([
       term('classes:winter', '2027-01-05', '2027-03-09'),
       term('finals:winter', '2027-03-12', '2027-03-16'),
       term('classes:spring', '2027-03-29', '2027-06-02'),
       term('finals:spring', '2027-06-04', '2027-06-08'),
       { start: '2027-06-13', end: '2027-06-13', kind: 'event', group: 'hanover-nh:commencement', url: registrar, confidence: 'high' },
+      term('classes:summer', '2027-06-24', '2027-08-25', registrar2728),
+      term('finals:summer', '2027-08-28', '2027-08-31', registrar2728),
+      term('classes:fall', '2027-09-13', '2027-11-16', registrar2728),
+      term('finals:fall', '2027-11-19', '2027-11-24', registrar2728),
+      event('winter-carnival', '2027-02-04', '2027-02-07', 'high'),
+      event('homecoming', '2027-11-05', '2027-11-06', 'high'),
+      event('home-football', '2027-09-18', '2027-09-18', 'medium'),
+      event('home-football', '2027-10-09', '2027-10-09', 'medium'),
+      event('home-football', '2027-10-23', '2027-10-23', 'medium'),
+      event('home-football', '2027-11-06', '2027-11-06', 'medium'),
+      event('home-football', '2027-11-13', '2027-11-13', 'medium'),
     ]);
   });
 });

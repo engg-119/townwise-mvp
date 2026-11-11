@@ -3,7 +3,7 @@ import type { z } from 'zod';
 import type { ApiClient, RequestOptions } from '../../../src/api/client';
 import {
   addOrgMembers, approveRequest, changeOrgMemberRole, createOrg, createSetupLocation, deleteOrg, deletePerson, deleteSetupLocation,
-  deleteSetupSales, fetchAudit, fetchOrg, fetchOrgs, fetchPeople, fetchRequests, lookupPerson, rejectRequest, removeOrgMember,
+  deleteSetupSales, fetchAudit, fetchOrg, fetchOrgs, fetchPeople, fetchRequests, lookupPerson, openAsAdmin, rejectRequest, removeOrgMember,
   signOutEverywhere, startViewAs, updateOrg, updateSetupLocation, uploadSetupSales,
 } from '../../../src/portal/console/api';
 import {
@@ -50,6 +50,8 @@ test.each<[string, unknown, (api: ApiClient) => Promise<unknown>, Sent]>([
     { method: 'GET', path: '/api/admin/requests?status=withdrawn', body: undefined }],
   ['approve', { org: { id: 'o9', name: 'Tavern' }, request: REQUEST }, (api) => approveRequest(api, 'r1', { orgName: 'Tavern', locationName: 'Main' }),
     { method: 'POST', path: '/api/admin/requests/r1/approve', body: { orgName: 'Tavern', locationName: 'Main' } }],
+  ['approve with places', { org: { id: 'o9', name: 'Tavern' }, request: REQUEST }, (api) => approveRequest(api, 'r1', { orgName: 'Tavern', locationNames: ['Main', 'Elm'] }),
+    { method: 'POST', path: '/api/admin/requests/r1/approve', body: { orgName: 'Tavern', locationNames: ['Main', 'Elm'] } }],
   ['reject with a message', { request: REQUEST }, (api) => rejectRequest(api, 'r1', 'Not yet.'),
     { method: 'POST', path: '/api/admin/requests/r1/reject', body: { message: 'Not yet.' } }],
   ['reject without one', { request: REQUEST }, (api) => rejectRequest(api, 'r1', ''),
@@ -90,6 +92,8 @@ test.each<[string, unknown, (api: ApiClient) => Promise<unknown>, Sent]>([
     { method: 'GET', path: '/api/admin/audit?orgId=o1&action=org.renamed&before=2026-10-09T15%3A00%3A00.000Z', body: undefined }],
   ['start view-as', staffMe(), (api) => startViewAs(api, 'u2', 'Helping.'),
     { method: 'POST', path: '/api/admin/view-as', body: { userId: 'u2', reason: 'Helping.' } }],
+  ['open as admin, no body, the id encoded', staffMe(), (api) => openAsAdmin(api, 'o 1'),
+    { method: 'POST', path: '/api/admin/orgs/o%201/open-as-admin', body: undefined }],
   ['setup: add a location', SETUP_LOCATION, (api) => createSetupLocation(api, 'o1', { name: 'Hanover', town: TOWN }),
     { method: 'POST', path: '/api/admin/orgs/o1/locations', body: { name: 'Hanover', town: TOWN } }],
   ['setup: add a location at a place', SETUP_LOCATION, (api) => createSetupLocation(api, 'o1', { name: 'Hanover', town: TOWN, placeId: 'p1' }),

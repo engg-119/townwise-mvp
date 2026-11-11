@@ -174,6 +174,25 @@ describe('answered questions', () => {
   });
 });
 
+describe('turned-off days (D28)', () => {
+  it('dates in turnedOff are explained: no gap and no weekday question counts them', () => {
+    const hole = range('2026-03-01', '2026-03-03');
+    const withHole = input(FROM, TO, (day) => hole.includes(day));
+    expect(questionsFor(withHole).some((q) => q.kind === 'gap')).toBe(true);
+    expect(questionsFor({ ...withHole, turnedOff: hole }).some((q) => q.kind === 'gap')).toBe(false);
+    const closedMondays = input(FROM, TO, (day) => weekday(day) === 1);
+    expect(questionsFor(closedMondays).some((q) => q.kind === 'weekday')).toBe(true);
+    expect(questionsFor({ ...closedMondays, turnedOff: mondays }).some((q) => q.kind === 'weekday')).toBe(false);
+  });
+
+  it('turned-off Mondays in weeks with sales do not make Monday usually closed, so a gap never bridges one', () => {
+    // A Sunday and a Tuesday with no sales around a turned-off Monday: two gaps, never one over the Monday.
+    const missing = (day: string): boolean => weekday(day) === 1 || day === '2026-02-15' || day === '2026-02-17';
+    const ids = questionsFor(input(FROM, TO, missing, { turnedOff: mondays })).map((q) => q.id);
+    expect(ids).toEqual(['gap_2026-02-17_2026-02-17', 'gap_2026-02-15_2026-02-15']);
+  });
+});
+
 describe('the cap and the order', () => {
   it('at most 5: weekday questions first, then gaps newest first', () => {
     const missing = (day: string) => weekday(day) === 3 || weekday(day) === 5

@@ -12,14 +12,19 @@ function sourceFiles(): { path: string; text: string }[] {
 }
 
 describe('isolation (source)', () => {
-  it('only access/resolve.ts, the join and decline handlers, the staff handlers, the file reader and the sweeper import stores/cross-tenant.ts', () => {
+  it('only access/resolve.ts, the join and decline handlers, the staff handlers, the file reader, the sweeper and the lab callback import stores/cross-tenant.ts', () => {
     // A type-only import grants no access to the operations, so it is not counted.
     const importers = sourceFiles()
       .filter((file) => /^import (?!type )[^;]*from '[./]+(stores\/)?cross-tenant\.ts';/m.test(file.text))
       .map((file) => file.path)
       .sort();
     // handlers/me.ts holds the join and decline handlers; handlers/admin.ts and handlers/deletion.ts hold the staff handlers.
-    expect(importers).toEqual(['access/resolve.ts', 'files/sweeper.ts', 'files/worker.ts', 'handlers/admin.ts', 'handlers/deletion.ts', 'handlers/me.ts']);
+    // lab/callback.ts holds the forecast lab job's callback, which finds its calibration by id and token before any
+    // organization is known.
+    expect(importers).toEqual([
+      'access/resolve.ts', 'files/sweeper.ts', 'files/worker.ts', 'handlers/admin.ts', 'handlers/deletion.ts', 'handlers/me.ts',
+      'lab/callback.ts',
+    ]);
   });
 
   it('product code answers 401 only through userGone() in access/resolve.ts', () => {
@@ -56,6 +61,18 @@ describe('isolation (source)', () => {
       .toEqual([]);
   });
 
+  it('chat/* never touches ctx.files or stores.files, so item text comes only through ctx.items', () => {
+    // Dotted reads, destructuring (flat or nested) and bracket reads of `files` from ctx or its stores.
+    const reaches = /\bctx\.files\b|\.stores\.files\b|\bfileEntries\b|\{[^}]*\bfiles\b[^}]*\}\s*=\s*[\w.]*\b(?:ctx|stores)\b|\b(?:ctx|stores)\s*:\s*\{[^}]*\bfiles\b|\[\s*['"`]files['"`]\s*\]/;
+    for (const sample of ['tc.ctx.files', 'ctx.stores.files.get(', 'const { files } = ctx.stores;', 'const { now, files } = tc.ctx;', 'const { stores: { files } } = ctx;', 'ctx.stores[\'files\']']) {
+      expect(sample).toMatch(reaches);
+    }
+    const touching = sourceFiles()
+      .filter((file) => file.path.startsWith('chat/') && reaches.test(file.text))
+      .map((file) => file.path);
+    expect(touching).toEqual([]);
+  });
+
   it('only chat/model.ts and files/extract/model.ts construct a model client', () => {
     const constructs = sourceFiles().filter((file) => /^import Anthropic(?:,| )[^;]*from '@anthropic-ai\/sdk';/m.test(file.text)).map((file) => file.path).sort();
     expect(constructs).toEqual(['chat/model.ts', 'files/extract/model.ts']);
@@ -71,8 +88,18 @@ describe('isolation (source)', () => {
     expect(callers).toEqual(['access/policy.ts', 'files/worker.ts']);
   });
 
+  it('only access/policy.ts mints the lab callback’s scope, and only lab/callback.ts asks for it', () => {
+    const callers = sourceFiles().filter((file) => file.text.includes('scopeForLabCallback(')).map((file) => file.path).sort();
+    expect(callers).toEqual(['access/policy.ts', 'lab/callback.ts']);
+  });
+
   it('only access/policy.ts mints the sweep’s scope, and only files/sweeper.ts asks for it', () => {
     const callers = sourceFiles().filter((file) => file.text.includes('scopeForSweep(')).map((file) => file.path).sort();
     expect(callers).toEqual(['access/policy.ts', 'files/sweeper.ts']);
+  });
+
+  it('only access/policy.ts mints the open-as-admin scope, and only access/resolve.ts asks for it', () => {
+    const callers = sourceFiles().filter((file) => file.text.includes('scopeForOpenAsAdmin(')).map((file) => file.path).sort();
+    expect(callers).toEqual(['access/policy.ts', 'access/resolve.ts']);
   });
 });

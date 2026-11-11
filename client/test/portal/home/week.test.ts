@@ -2,8 +2,8 @@ import { dayContext, EMPTY_CONTEXT, type DayContext } from '../../../src/portal/
 import { byDate, type DayRecord } from '../../../src/portal/analytics/history';
 import {
   calendarCoverageLine, calendarWeekLine, dayMonthRange, eventLine, homeCalendarRange, lastWeekComparison, lastWeekLine,
-  lateWeekLine, lateWeekShare, leadLine, mondayOf, monthFactLine, monthFacts, monthGrid, monthItems, pastDay, periodLine, sameWeekdayYearsAgo,
-  summaryLabel, thisWeek, vsUsualLine, weekDates, type HomeInput,
+  lateWeekLine, lateWeekShare, leadLine, mondayOf, monthDay, monthFactLine, monthFacts, monthGrid, monthItems, monthMove, nextEvent, nextEventWhen,
+  pastDay, periodLine, sameWeekdayYearsAgo, summaryLabel, thisWeek, vsUsualLine, weekDates, type HomeInput,
 } from '../../../src/portal/analytics/week';
 import { calendarBody, day, holiday, note, run, townEvent } from '../analytics/fakes';
 
@@ -135,6 +135,8 @@ describe('this week', () => {
     expect(leadLine('2026-11-04', calendarBody())).toBe('From your sales through Wed, Nov 4, 2026 and Hanover’s researched calendar.');
     expect(leadLine(null, calendarBody({ town: { townId: null, name: 'Norwich', state: 'VT' }, researched: false, covers: null })))
       .toBe('No sales history yet. Home shows US federal holidays and your notes.');
+    expect(leadLine(null, calendarBody(), true)).toBe('Every sales upload is turned off. Home shows Hanover’s researched calendar and your notes.');
+    expect(leadLine('2026-11-04', calendarBody(), true)).toBe('From your sales through Wed, Nov 4, 2026 and Hanover’s researched calendar.');
   });
 });
 
@@ -158,6 +160,9 @@ describe('last week', () => {
 
   test('states: no history, no recent days, no last year, nothing in common', () => {
     expect(lastWeekComparison(input([]))).toEqual({ state: 'no_history' });
+    const off = lastWeekComparison({ ...input([]), uploadsOff: true });
+    expect(off).toEqual({ state: 'uploads_off' });
+    expect(lastWeekLine(off, 'guests')).toBe('Every sales upload is turned off, so there is nothing to compare.');
     const old = DAYS.filter((each) => each.date <= '2026-10-20');
     const recent = lastWeekComparison(input(old));
     expect(recent.state).toBe('no_recent');
@@ -236,5 +241,73 @@ describe('this month', () => {
     expect(items.map((item) => [item.kind, item.dates])).toEqual([['event', 'Nov 11'], ['note', 'Nov 20 to 22'], ['event', 'Nov 26']]);
     expect(eventLine({ title: 'Veterans Day', kind: 'holiday', scope: 'national' })).toBe('Veterans Day. Federal holiday.');
     expect(eventLine({ title: 'Sample game', kind: 'event', scope: 'town' })).toBe('Sample game. Town event.');
+  });
+});
+
+describe('the month card', () => {
+  const context = dayContext(
+    [note({ startDate: '2026-11-06', detail: 'A rehearsal dinner.' })],
+    [holiday('2026-11-11', 'Veterans Day', 'us:veterans', 'Veterans Day'), townEvent({ start: '2026-11-07', title: 'Sample game' })],
+  );
+
+  test('each day of the grid says its marks in words', () => {
+    const cells = monthGrid(TODAY, context).flat().filter((cell) => cell !== null);
+    expect(cells.find((cell) => cell.date === TODAY)?.label).toBe('Thu, Nov 5, 2026. Today. This week.');
+    expect(cells.find((cell) => cell.date === '2026-11-06')?.label).toBe('Fri, Nov 6, 2026. This week. 1 note.');
+    expect(cells.find((cell) => cell.date === '2026-11-11')?.label).toBe('Wed, Nov 11, 2026. Veterans Day.');
+  });
+
+  test('the keys move a day or a week and never leave the month', () => {
+    expect(monthMove('2026-11-05', 'ArrowRight', false)).toBe('2026-11-06');
+    expect(monthMove('2026-11-05', 'ArrowLeft', false)).toBe('2026-11-04');
+    expect(monthMove('2026-11-12', 'ArrowUp', false)).toBe('2026-11-05');
+    // Oct 29 is in October, so the day stays where it is.
+    expect(monthMove('2026-11-05', 'ArrowUp', false)).toBe('2026-11-05');
+    expect(monthMove('2026-11-26', 'ArrowDown', false)).toBe('2026-11-26');
+    expect(monthMove('2026-11-01', 'ArrowLeft', false)).toBe('2026-11-01');
+    expect(monthMove('2026-11-30', 'ArrowRight', false)).toBe('2026-11-30');
+    // Home and End are the row's Monday and Sunday, kept in the month; with Ctrl, the month's ends.
+    expect(monthMove('2026-11-05', 'Home', false)).toBe('2026-11-02');
+    expect(monthMove('2026-11-05', 'End', false)).toBe('2026-11-08');
+    expect(monthMove('2026-11-01', 'Home', false)).toBe('2026-11-01');
+    expect(monthMove('2026-11-30', 'End', false)).toBe('2026-11-30');
+    expect(monthMove('2026-11-05', 'Home', true)).toBe('2026-11-01');
+    expect(monthMove('2026-11-05', 'End', true)).toBe('2026-11-30');
+    expect(monthMove('2026-11-05', 'a', false)).toBeNull();
+  });
+
+  test('a day gives its events, notes and past years, and its own figure only once it is past and stored', () => {
+    const days = run('2024-09-01', '2026-11-04', () => 100);
+    const home = input(days, context);
+    const past = monthDay('2026-11-03', home);
+    expect(past).toMatchObject({ isToday: false, future: false, value: 100 });
+    expect(past.lastYear).toMatchObject({ date: '2025-11-04', value: 100 });
+    // Today and the day after the last stored day: no figure yet.
+    expect(monthDay(TODAY, home)).toMatchObject({ isToday: true, future: false, value: null });
+    const later = monthDay('2026-11-11', home);
+    expect(later).toMatchObject({ future: true, value: null });
+    expect(later.events.map((event) => event.title)).toEqual(['Veterans Day']);
+    // A day after today still shows last year's same weekday: that is history.
+    expect(later.lastYear).toMatchObject({ date: '2025-11-12', value: 100 });
+    expect(monthDay('2026-11-06', home).notes.map((each) => each.detail)).toEqual(['A rehearsal dinner.']);
+  });
+
+  test('the next event is the first holiday or town event from today, and says when', () => {
+    const next = nextEvent(TODAY, context);
+    expect(next).toMatchObject({ date: '2026-11-07', days: 2 });
+    expect(next?.event.title).toBe('Sample game');
+    if (next === null) throw new Error('no next event');
+    expect(nextEventWhen(next)).toBe('Sat, Nov 7, 2026, in 2 days');
+    expect(nextEventWhen({ ...next, days: 1, date: '2026-11-06' })).toBe('Tomorrow, Fri, Nov 6, 2026');
+    expect(nextEventWhen({ ...next, days: 0, date: '2026-11-07' })).toBe('Today');
+    // An event that began before today and is still on.
+    const carnival = townEvent({ start: '2026-11-03', end: '2026-11-08', title: 'Sample festival' });
+    const ongoing = nextEvent(TODAY, dayContext([], [carnival]));
+    expect(ongoing).toMatchObject({ date: TODAY, days: 0 });
+    if (ongoing === null) throw new Error('no ongoing event');
+    expect(nextEventWhen(ongoing)).toBe('On now, until Sun, Nov 8, 2026');
+    // Term periods mark no day, so they are never the next event; nothing through the end of the read is null.
+    const term = townEvent({ start: '2026-09-14', end: '2026-11-17', title: 'Fall term classes', kind: 'term' });
+    expect(nextEvent(TODAY, dayContext([], [term]))).toBeNull();
   });
 });

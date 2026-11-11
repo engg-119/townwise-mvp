@@ -45,6 +45,7 @@ export interface HistoryUploadView {
  */
 export interface SalesHistory {
   coverage: Coverage;
+  uploadsOff: boolean;
   days: { date: string[]; guests: (number | null)[]; netSalesCents: (number | null)[]; upload: number[] };
   uploads: HistoryUploadView[];
 }
@@ -103,6 +104,14 @@ function uploadView(upload: UploadRecord, uploadedByEmail: string): UploadView {
   };
 }
 
+/**
+ * D28: true when the location shows no day because every upload holding days is turned off, so the client can say
+ * that instead of "no history". Only a boolean leaves: no count, date or upload.
+ */
+async function uploadsOffOf(ctx: TownwiseContext, scope: OrgScope, locationId: string, coverage: Coverage): Promise<boolean> {
+  return coverage.dayCount === 0 && await ctx.stores.salesDays.holdsOffDays(scope, locationId);
+}
+
 /** GET /api/org/locations/:locationId/sales: coverage, calibration, month sums and the newest 20 uploads. */
 export async function getSales(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const { scope } = memberOf(principal);
@@ -114,6 +123,7 @@ export async function getSales(ctx: TownwiseContext, req: Request, res: Response
   ]);
   res.status(200).json({
     coverage,
+    uploadsOff: await uploadsOffOf(ctx, scope, location.id, coverage),
     calibration: calibrationOf(coverage),
     months,
     uploads: await Promise.all(uploads.map(async (upload) => uploadView(upload, await uploaderOf(ctx, upload)))),
@@ -167,6 +177,7 @@ export async function getSalesHistory(ctx: TownwiseContext, req: Request, res: R
     ctx.stores.salesDays.coverage(scope, location.id),
     ctx.stores.salesDays.history(scope, location.id),
   ]);
+  const uploadsOff = await uploadsOffOf(ctx, scope, location.id, coverage);
   const uploads = await ctx.stores.uploads.byIds(scope, location.id, [...new Set(days.map((d) => d.uploadId))]);
   const [emails, sources] = await Promise.all([
     Promise.all([...new Set(uploads.flatMap((upload) => (upload.byStaff ? [] : [upload.uploadedBy])))]
@@ -176,6 +187,7 @@ export async function getSalesHistory(ctx: TownwiseContext, req: Request, res: R
   const indexOf = new Map(uploads.map((upload, index) => [upload.id, index]));
   const history: SalesHistory = {
     coverage,
+    uploadsOff,
     days: {
       date: days.map((d) => d.date),
       guests: days.map((d) => d.guests),
@@ -245,7 +257,7 @@ export async function uploadSales(ctx: TownwiseContext, req: Request, res: Respo
   const checked = checkedUpload(req.body, now);
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const applied = await applyUpload(ctx, scope, location.id, {
-    ...checked, replace: member.role === 'org_admin', uploadedBy: member.userId, now,
+    ...checked, replace: member.role === 'org_admin', uploadedBy: member.userId, ...(member.openAsAdmin !== null ? { byStaff: true } : {}), now,
   });
   await recordAfter(ctx, {
     ...actorOf(member), at: now, orgId: scope.orgId, action: 'sales.uploaded',
@@ -255,7 +267,7 @@ export async function uploadSales(ctx: TownwiseContext, req: Request, res: Respo
       firstDate: applied.firstDate, lastDate: applied.lastDate,
     },
   });
-  res.status(201).json(await uploadAnswer(ctx, scope, location.id, applied, member.email));
+  res.status(201).json(await uploadAnswer(ctx, scope, location.id, applied, applied.byStaff ? TOWNWISE_STAFF : member.email));
 }
 
 export function filesUnavailable(): AppError {
@@ -284,6 +296,8 @@ export async function removeSalesData(
   if (removed === 'files_unavailable') return removed;
   const deletedDays = await ctx.stores.salesDays.removeForLocation(scope, locationId);
   const deletedUploads = await ctx.stores.uploads.removeForLocation(scope, locationId);
+  // The forecast lab: calibrations go before their runs, so a running job's callback closes before its run could be written.
+  await ctx.stores.calibrations.removeForLocation(scope, locationId);
   // U13B: forecasts are made from the sales data, so they go with it.
   await ctx.stores.forecasts.removeForLocation(scope, locationId);
   // Answers to TownwiseAI's questions were about these days, so they go too, after the days: with no days left no

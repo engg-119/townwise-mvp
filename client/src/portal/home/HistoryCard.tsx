@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
 import type { HistoryUpload } from '../analytics/api';
 import { heatmapSummary } from '../analytics/cells';
@@ -9,11 +9,12 @@ import type { DayRecord } from '../analytics/history';
 import type { Metric } from '../analytics/words';
 import { formatDate, plural } from '../format';
 import { UploadAction } from '../locations/parts';
+import { UPLOADS_OFF_LINE } from '../locations/sales';
 import { locationHref } from '../routing';
 import type { Coverage } from '../schemas';
 import { Actions, LinkButton } from '../ui/Button';
-import { Panel, Stack } from '../ui/layout';
-import { Eyebrow, Heading, Small } from '../ui/text';
+import { Small } from '../ui/text';
+import { Block } from './Block';
 
 // Your history (home.md 2.6): how many days Townwise has for this location, the span, the missing days and the last
 // finished upload, then the newest year as a small heatmap that takes no focus (web only; native has the words)
@@ -40,6 +41,7 @@ export function historyLine(coverage: Coverage, uploads: readonly HistoryUpload[
 
 export function HistoryCard(props: {
   coverage: Coverage;
+  uploadsOff?: boolean;
   uploads: readonly HistoryUpload[];
   days: readonly DayRecord[];
   context: DayContext;
@@ -55,14 +57,11 @@ export function HistoryCard(props: {
     [days, metric, context, years],
   );
   const empty = coverage.dayCount === 0 || year === null;
+  const off = empty && props.uploadsOff === true;
   return (
-    <View nativeID={HISTORY_ID}>
-      <Panel label="Your history">
-        <Stack gap={8}>
-          <Eyebrow>Your history</Eyebrow>
-          <Heading level={3}>{empty ? 'No days yet' : plural(coverage.dayCount, 'day', 'days')}</Heading>
-        </Stack>
-        {empty ? <Small>No sales history yet for this location.</Small> : (
+    <View nativeID={HISTORY_ID} style={styles.grow}>
+      <Block label="Your history" eyebrow="Your history" title={empty ? (off ? 'No days shown' : 'No days yet') : plural(coverage.dayCount, 'day', 'days')}>
+        {empty ? <Small>{off ? UPLOADS_OFF_LINE : 'No sales history yet for this location.'}</Small> : (
           <>
             <Small>{historyLine(coverage, props.uploads)}</Small>
             <Heatmap
@@ -79,9 +78,14 @@ export function HistoryCard(props: {
         )}
         <Actions>
           {empty ? null : <LinkButton href={locationHref(locationId, 'analytics')} label="See it in Analytics" />}
+          {off ? <LinkButton href={locationHref(locationId, 'data')} label="Open Your data" /> : null}
           <UploadAction locationId={locationId} variant="link" readOnlyId={props.readOnlyId} />
         </Actions>
-      </Panel>
+      </Block>
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  grow: { flexGrow: 1 },
+});

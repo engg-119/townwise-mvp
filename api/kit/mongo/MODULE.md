@@ -36,7 +36,7 @@ await ensureIndexes(mongo.connection, { logger });
 
 `parseInput(objectId, req.params.id)` is chosen per parameter. Google, Stripe and Tavus ids are not ObjectIds.
 
-Stores wrap intentional operators in `trusted(...)`. Every client-supplied filter value is a zod scalar. `sanitizeFilter` does not stop an array value from becoming `$in`.
+Stores wrap intentional operators in `trusted(...)`. Every client-supplied filter value is a zod scalar. Since mongoose 9.11.4, `sanitizeFilter` also refuses an array value on a scalar path (a CastError) instead of casting it to `$in`, so an intentional `$in` must be written out inside `trusted(...)`.
 
 New products start empty, so building at boot is the zero-ops path. A product with a large collection must change `buildAtBoot` before deploy because a TTL build deletes expired documents and a unique build fails on duplicates.
 
@@ -57,7 +57,7 @@ Build one index at a time while watching cluster CPU. A TTL build deletes the ex
 
 ## Security
 
-Every client filter value is zod-parsed to a scalar. `sanitizeFilter` is the second layer, and arrays still become `$in`. Production TLS is checked on the driver's resolved options. Connection errors and logs carry no credentials. Reads stay on the primary. Nothing is ever dropped. A missing or failed unique or TTL index fails boot.
+Every client filter value is zod-parsed to a scalar. `sanitizeFilter` is the second layer, and since mongoose 9.11.4 it also refuses an array on a scalar path. Production TLS is checked on the driver's resolved options. Connection errors and logs carry no credentials. Reads stay on the primary. Nothing is ever dropped. A missing or failed unique or TTL index fails boot.
 
 ## Changes from source
 
@@ -81,3 +81,7 @@ Dropped:
 - `maxPoolSize: 25` (`api/src/shared/config/index.js:318-320`) -> driver default.
 - `loadModels.js` filesystem walk: stores register their models on the connection.
 - The `objectIdParam` router helper: one validation path (`parseInput`) instead of two.
+
+## Local changes
+
+- mongoose 9.11.2 to 9.11.4 (`package.json`, 2026-11-11), with the API, for the advisories osv-scanner reports on 9.11.2 (GHSA-6972-9mcm-vhwj, GHSA-8332-j7wj-wjw4, GHSA-gg4r-jv3p-qx3c, GHSA-wr5m-5jph-8m96). A patch release, published 2026-10-23, past the 7-day release-age gate. Two behaviors changed under `sanitizeFilter`: the `createConnection` option is honored (it was ignored, which is why `src/connect.ts` sets it on the connection, and still does), and an array on a scalar path is refused instead of cast to `$in`. Pinned by `sanitizeFilter regression guard: since mongoose 9.11.4, sanitizeFilter in createConnection options enables it` and `sanitizeFilter: an array filter value on a scalar path is refused, not cast to $in` (`test/mongo.int.test.ts`), and by the rest of this module's suite and the API's, on the new version.

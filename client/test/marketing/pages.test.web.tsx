@@ -265,35 +265,72 @@ test('Privacy names Anthropic as TownwiseAI’s provider, says nothing is sent u
   const items = within(screen.getByRole('region', { name: 'Who else sees it' })).getAllByRole('listitem');
   const anthropic = items.find((item) => item.textContent.startsWith('Anthropic,'));
   if (anthropic === undefined) throw new Error('no Anthropic item');
-  expect(anthropic.textContent).toContain('which provides the AI model behind TownwiseAI, the assistant on each location’s TownwiseAI page. Nothing is sent to Anthropic unless you use it.');
+  expect(anthropic.textContent).toContain('which provides the AI model behind TownwiseAI, the assistant on each location’s TownwiseAI page. Nothing is sent to Anthropic unless you use it, or Townwise staff setting up your organization for you before anyone from it joins use it (see Who can see it, under Your restaurant’s sales data).');
+  // D25: staff in open as admin can run TownwiseAI and drop files, so neither sentence may say only “you”.
+  expect(anthropic.textContent).not.toContain('Nothing is sent to Anthropic unless you use it.');
+  expect(anthropic.textContent).toContain('when you, or staff setting it up for you, drop a file');
   expect(anthropic.textContent).not.toContain('off in production');
   expect(anthropic.textContent).toContain('Anthropic receives the messages you send and the location data the assistant reads to answer them');
+  expect(anthropic.textContent).toContain('its notes, its forecast’s ranges and accuracy and its calibration results, its town profile');
   expect(anthropic.textContent).toContain('which say Anthropic may not train models on that content.');
   expect(within(anthropic).getByRole('link', { name: 'Commercial Terms of Service' }).getAttribute('href')).toBe(ANTHROPIC_TERMS);
   expect(anthropic.querySelectorAll('.chip')).toHaveLength(0);
+});
+
+test('Privacy describes how forecasts are built and what Townwise keeps', () => {
+  renderAt('/privacy');
+  const text = screen.getByRole('main').textContent;
+  expect(text).toContain('Forecasts. Townwise builds your forecasts from your sales history and notes on Townwise’s own servers, in a job that sees only that location’s days. The model it fits learns only from your restaurant and is used only for your restaurant; Townwise keeps the results (a range of guests per day, the dates the model learned from, and how accurate it has been) and not the model. When Townwise staff import a forecast instead, it was built on the team’s own computers from sales exports you sent us; that model and those exports stay with Townwise staff, are used only for your restaurant, and are deleted when your organization is deleted or when you ask. You and TownwiseAI see the results. Deleting your sales data or your organization deletes them.');
 });
 
 test('Privacy makes the three commitments and no longer says the app has no upload', () => {
   renderAt('/privacy');
   const text = screen.getByRole('main').textContent;
   expect(text).toContain('Townwise does not sell personal data.');
-  expect(text).toContain('Your sales data is used only to provide Townwise to your restaurant: its own forecasts and TownwiseAI, its AI assistant. It is not shared with or used for other restaurants, and it is not used to train AI models.');
+  expect(text).toContain('Your sales data is used only to provide Townwise to your restaurant: its own forecasts and TownwiseAI, its AI assistant. It is not shared with or used for other restaurants. It trains only your own location’s forecast model, and it is never used to train AI models such as TownwiseAI’s.');
   expect(text).not.toContain('tuning chat');
   expect(text).toContain('The operator responsible for your data is the Townwise team, a group of students in ENGG 119, AI in the Real World, at Dartmouth’s Thayer School of Engineering in Hanover, NH. Townwise is not an official Dartmouth product.');
   expect(text).toContain('we will delete your account and its data within 30 days');
   expect(text).toContain('sends us only the date, guest count and net sales for each day');
-  expect(text).toContain('Effective November 5, 2026. Last updated November 6, 2026.');
-  expect(text).toContain('public facts about its town (its calendar, and who is likely in town, with the public sources behind them). TownwiseAI never reads your files');
+  expect(text).toContain('Effective November 5, 2026. Last updated November 9, 2026.');
+  // D25: open as admin before anyone joins, then view-as only.
+  expect(text).toContain('Before anyone from your organization has joined Townwise, staff setting it up for you, with your consent, can open it as its admin: they see and change what an admin can, except your team, until the first person joins. Each time, and every change they make, is recorded and shown to your organization’s admins.');
+  expect(text).toContain('Once anyone has joined, Townwise staff can see the sales figures and your location notes only through view-as');
+  expect(text).toContain('uploads, TownwiseAI messages, and staff view-as and open as admin for one hour');
+  expect(text).toContain('public facts about its town (its calendar, and who is likely in town, with the public sources behind them). TownwiseAI never reads the sales files you drop. It reads a text item on Your data, text you pasted or a text file you added, only when you ask, and never a file’s name.');
+  expect(text).toContain('Turning an item off leaves it out of your numbers, forecasts and TownwiseAI until someone turns it back on.');
+  expect(text).toContain('Items you add for reference follow the same rules: we delete each one 365 days after it was sent, or sooner when you delete it.');
+  // Your data as the app gives it: an item's original downloads to the person who added it and org admins only, and
+  // an org admin's "Delete all originals for this location" on P26 leaves items kept for reference whole.
+  expect(text).toContain('Everyone on your organization’s team can see them; the person who added one and your org admins can download it.');
+  expect(text).not.toContain('can see and download them');
+  expect(text).toContain('only an org admin can delete an upload, which deletes the days it still holds. For a sales file, they can instead delete just its original and keep its cleaned daily totals, and an org admin can delete all originals for a location at once and keep the cleaned daily totals; items added for reference stay.');
+  expect(text).toContain('we delete your organization’s originals, items you added for reference included, and keep the cleaned totals.');
+  expect(text).toContain('For a file you drop for your sales history, we never read those fields, and only the three values a day leave it.');
+  expect(text).toContain('Notes, uploads and items on Your data that you added stay with your organization, including text you kept from TownwiseAI.');
   expect(text).toContain('Answers are deleted with the location’s sales data, the location or the organization.');
   // Stored files (privacy pass 2), Google Places and Maps (1b) and the welcome marker (1c).
   expect(text).not.toContain('The file itself never reaches our server');
   expect(text).toContain('we delete each original 365 days after it was sent, or sooner when you delete it');
   expect(text).toContain('never its rows, its name or your restaurant’s name');
   expect(text).toContain('A deleted file can be recovered by us for 7 days, then it is gone.');
-  expect(text).toContain('When a found place shows a map, your browser or app loads the map image straight from Google, so Google sees your IP address. We keep only Google’s id for the place.');
+  expect(text).toContain('When a found place shows a map, your browser or app loads the map image straight from Google, so Google sees your IP address. We keep Google’s id for the place, and on an access request its name and town too.');
+  expect(text).toContain('If you find your business on Google Maps, we also keep Google’s id, name and town for each place you check, not its address or the map.');
   expect(text).toContain('When you first open Townwise after approval, we note that we showed you the welcome, and when.');
   expect(text).toContain('the proposal’s wording stays only in your conversation, and in your notes if you save it.');
   expect(text).not.toMatch(/no place to upload|before any upload exists|email account holders/i);
+});
+
+test('Privacy says which two emails Townwise sends, through whom, and that it keeps only a log line with ids', () => {
+  renderAt('/privacy');
+  const email = [...screen.getByRole('region', { name: 'Email' }).querySelectorAll('p')].map((p) => p.textContent);
+  expect(email[0]).toBe('Townwise sends two emails, each only to the person it concerns: “request received”, after you send an access request, and “you’re in”, after Townwise staff approve it. They come from no-reply@townwise.tech through Microsoft’s Azure Communication Services, with open and click tracking off. Each holds your organization’s name, its town and the address you sign in with, never sales figures, files or notes. Townwise sends no other email, for sign-in, invitations or anything else.');
+  expect(email[1]).toContain('Townwise keeps nothing about a send except one line in our server log: which email it was, the ids of the access request and, for “you’re in”, the organization, and an error code if it failed, never your address.');
+  const text = screen.getByRole('main').textContent;
+  expect(text).not.toContain('Townwise does not send email');
+  expect(text).toContain('Townwise does not email them.');
+  const items = within(screen.getByRole('region', { name: 'Who else sees it' })).getAllByRole('listitem');
+  expect(items.find((item) => item.textContent.startsWith('Microsoft Azure,'))?.textContent).toContain('delivers our two emails through Azure Communication Services');
 });
 
 test('on phones the Privacy tables stack into rows, each cell after the first labeled with its column name', () => {
@@ -343,7 +380,7 @@ test('marketing text keeps its set size when a phone turns sideways', () => {
 
 test('Terms and Security carry the new date, and Security says where Townwise is hosted', () => {
   renderAt('/terms');
-  expect(screen.getByText('Effective November 5, 2026.')).toBeTruthy();
+  expect(screen.getByText('Effective November 9, 2026.')).toBeTruthy();
   expect(screen.getByRole('main').textContent).toContain('you must be 18 or older and acting for your business');
   cleanup();
   renderAt('/security');

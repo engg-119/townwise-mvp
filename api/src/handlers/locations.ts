@@ -23,16 +23,18 @@ import type { LocationRecord } from '../stores/locations.ts';
 import { NO_COVERAGE, type Coverage } from '../stores/sales-days.ts';
 import { resolveTown, townInputSchema, type Town } from '../towns.ts';
 import { townOfAddress } from './places.ts';
-import { actorOf, orgAdmin } from './team.ts';
+import { actorOf, assertOpenAsAdminTab, orgAdmin } from './team.ts';
 
 /** Spec 10.1. */
 export interface LocationSummary {
   id: string; name: string; town: Town; placeId: string | null; coverage: Coverage; calibration: Calibration;
   notesCount: number; lastUploadAt: string | null;
+  /** D28: days that turned-off uploads hold, which `coverage` leaves out. */
+  offDayCount: number;
 }
 
 /** Spec 6.4. [CONFIRM: 25 locations] */
-const MAX_LOCATIONS = 25;
+export const MAX_LOCATIONS = 25;
 
 const nameSchema = z.string().trim().min(1).max(80);
 const createBody = z.object({ name: nameSchema, town: townInputSchema, placeId: placeIdSchema.nullish() });
@@ -137,17 +139,18 @@ export async function loadLocation(ctx: TownwiseContext, scope: OrgScope, rawId:
 
 /** Reads the organization's coverage, note counts and last uploads once; the returned function builds each summary. */
 export async function summarizer(ctx: TownwiseContext, scope: OrgScope): Promise<(location: LocationRecord) => LocationSummary> {
-  const [coverage, notes, uploads] = await Promise.all([
+  const [coverage, notes, uploads, offDays] = await Promise.all([
     ctx.stores.salesDays.coverageByLocation(scope),
     ctx.stores.notes.countByLocation(scope),
     ctx.stores.uploads.lastUploadByLocation(scope),
+    ctx.stores.salesDays.offDayCountByLocation(scope),
   ]);
   return (location) => {
     const covered = coverage.get(location.id) ?? NO_COVERAGE;
     return {
       id: location.id, name: location.name, town: location.town, placeId: location.placeId, coverage: covered,
       calibration: calibrationOf(covered), notesCount: notes.get(location.id) ?? 0,
-      lastUploadAt: uploads.get(location.id)?.toISOString() ?? null,
+      lastUploadAt: uploads.get(location.id)?.toISOString() ?? null, offDayCount: offDays.get(location.id) ?? 0,
     };
   };
 }
@@ -256,18 +259,23 @@ export async function removeLocation(ctx: TownwiseContext, scope: OrgScope, loca
   await ctx.stores.agentAnswers.removeForLocation(scope, locationId);
   // An empty import left open goes too.
   await ctx.stores.imports.removeForLocation(scope, locationId);
+  // The forecast lab: calibrations go first, so a running job's callback closes before its run could be written.
+  await ctx.stores.calibrations.removeForLocation(scope, locationId);
   // U13B: forecasts staff imported for it, even with no sales data left.
   await ctx.stores.forecasts.removeForLocation(scope, locationId);
   return true;
 }
 
-/** POST /api/org/locations (P10). */
+/** POST /api/org/locations (P10). `orgId`, the organization the page shows, is required in open as admin (D25). */
 export async function createLocation(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const admin = orgAdmin(principal);
+  assertOpenAsAdminTab(admin, req.body);
   const { scope } = admin;
   const input = await checkedCreate(ctx, scope, 'org.locations.create', admin.userId, req.body);
   const now = ctx.now();
-  const location = await ctx.stores.locations.create(scope, { ...input, createdAt: now, createdBy: admin.userId });
+  const location = await ctx.stores.locations.create(scope, {
+    ...input, createdAt: now, createdBy: admin.userId, ...(admin.openAsAdmin !== null ? { byStaff: true } : {}),
+  });
   if (location === null) throw nameTaken();
   await recordAfter(ctx, {
     ...actorOf(admin), at: now, orgId: scope.orgId, action: 'location.created',

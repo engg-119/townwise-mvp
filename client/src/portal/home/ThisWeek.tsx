@@ -5,23 +5,29 @@ import { theme } from '../../theme';
 import type { Calendar, TownEvent } from '../analytics/api';
 import { noteWords } from '../analytics/panel';
 import {
-  calendarCoverageLine, calendarWeekLine, dayMonth, EVENT_WORDS, LAST_YEAR_FOOTNOTE, pastDayLine, periodLine, summaryLabel, vsUsualDay, vsUsualLine,
-  type PastDay, type ThisWeek as Week,
+  calendarCoverageLine, calendarWeekLine, dayMonth, EVENT_WORDS, LAST_YEAR_FOOTNOTE, pastDayLine, periodLine, vsUsualDay,
+  type PastDay, type ThisWeek as Week, type WeekRow,
 } from '../analytics/week';
 import { metricNumber, metricText, shortDate, WEEKDAY_NAMES, weekdayOf, type Metric } from '../analytics/words';
 import { useBreakpoint } from '../hooks';
 import type { Note } from '../locations/api';
 import { ShowNumbers } from '../locations/parts';
 import { DataTable, type Column } from '../ui/DataTable';
-import { Section, Stack } from '../ui/layout';
+import { Stack } from '../ui/layout';
 import { Mono, Small } from '../ui/text';
+import { Block } from './Block';
 
-// This week (home.md 2.2): Monday to Sunday of the viewer's week, each day with what is on the town calendar and
-// the location's notes, beside the same weekday last year and two years ago. The summary sums last year's same
-// week, and only when at least 5 of its days have data. No figure is ever shown for a day after the last day of
-// data: the Day column prints a figure only for this week's past days with data. With no history at all
-// (`history` false) the past-year columns and the summary are left out and only the calendar shows. Term and season
-// periods span weeks, so they show once under the headline with their whole span and sources, not in each day.
+// This week (spec P11): Monday to Sunday of the viewer's week, each day with what is on the town calendar and the
+// location's notes, beside the same weekday last year and two years ago. Last year's total for the week is the first
+// tile At a glance. No figure is ever shown for a day after the last day of data: a day prints its own figure only
+// when it is past and has data. With no history at all (`history` false) the past-year rows and the footnote are
+// left out and only the calendar shows. Term and season periods span weeks, so they show once under the headline
+// with their whole span and sources, not in each day.
+//
+// From 1024px the week is a strip, one column a day, with today's column raised: the day (and its own figure), then
+// rows for the calendar, last year (a bar scaled to the week's busiest day last year, aria-hidden, beside the printed
+// figure) and two years ago. It is a table, so each cell is read with its day and its row. Below 1024px it is the
+// day-by-day table, which stacks at 640px and below.
 
 function Sources(props: { event: TownEvent }): React.JSX.Element {
   return (
@@ -60,7 +66,14 @@ function NoteLines(props: { notes: readonly Note[] }): React.JSX.Element {
   );
 }
 
-function PastCell(props: { day: PastDay; metric: Metric }): React.JSX.Element {
+function CalendarCell(props: { row: WeekRow }): React.JSX.Element {
+  const { row } = props;
+  if (row.events.length === 0 && row.notes.length === 0) return <Mono tone="text3">Nothing listed</Mono>;
+  return <View style={styles.cell}><EventLines events={row.events} /><NoteLines notes={row.notes} /></View>;
+}
+
+/** A day in a past year: "Sat, Nov 8, 2025: 241 guests", closed, against usual, and its holidays and events. */
+export function PastCell(props: { day: PastDay; metric: Metric }): React.JSX.Element {
   const { day, metric } = props;
   const line = pastDayLine(day, metric);
   if (line === null) return <Mono tone="text3">No data</Mono>;
@@ -75,12 +88,72 @@ function PastCell(props: { day: PastDay; metric: Metric }): React.JSX.Element {
   );
 }
 
-export function ThisWeek(props: { week: Week; calendar: Calendar; metric: Metric; history: boolean }): React.JSX.Element {
-  const { week, calendar, metric, history } = props;
-  const { phone } = useBreakpoint();
-  const town = calendar.town.name;
-  const { summary } = week;
-  const usualLine = summary === null ? null : vsUsualLine(summary);
+function DayHead(props: { row: WeekRow; metric: Metric }): React.JSX.Element {
+  const { row } = props;
+  return (
+    <View style={styles.item} testID={`home-day-${row.date}`}>
+      <View style={styles.dayHead}>
+        {row.isToday ? <View style={styles.square} /> : null}
+        <Text style={styles.title}>{(WEEKDAY_NAMES[weekdayOf(row.date)] ?? '').slice(0, 3)}</Text>
+      </View>
+      <Mono>{dayMonth(row.date)}</Mono>
+      {row.isToday ? <Mono tone="text3">Today</Mono> : null}
+      {row.value === null ? null : <Mono tone="white">{metricText(row.value, props.metric)}</Mono>}
+    </View>
+  );
+}
+
+const BAR_ZONE = 40;
+
+/** Last year's figure as a bar, scaled to the week's busiest day last year; aria-hidden, the cell prints it. */
+function Bar(props: { value: number | null; top: number }): React.JSX.Element {
+  const height = props.value === null || props.top <= 0 ? 0 : Math.max(1, Math.round((props.value / props.top) * BAR_ZONE));
+  return (
+    <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden style={styles.barZone}>
+      {height === 0 ? null : <View style={[styles.bar, { height }]} />}
+    </View>
+  );
+}
+
+/** The week as a strip of seven columns (from 1024px). */
+function WeekStrip(props: { week: Week; metric: Metric; history: boolean }): React.JSX.Element {
+  const { week, metric, history } = props;
+  const top = Math.max(0, ...week.rows.map((row) => row.lastYear.value ?? 0));
+  const rows: { key: string; label: string; cell: (row: WeekRow) => React.ReactNode }[] = [
+    { key: 'calendar', label: 'On the calendar', cell: (row) => <CalendarCell row={row} /> },
+    ...(history ? [{
+      key: 'lastYear', label: 'Last year',
+      cell: (row: WeekRow) => <View style={styles.cell}><Bar value={row.lastYear.value} top={top} /><PastCell day={row.lastYear} metric={metric} /></View>,
+    }] : []),
+    ...(history && week.twoYears ? [{
+      key: 'twoYears', label: 'Two years ago', cell: (row: WeekRow) => <PastCell day={row.twoYearsAgo} metric={metric} />,
+    }] : []),
+  ];
+  return (
+    <View role="table" aria-label="This week, day by day" style={styles.strip}>
+      <View role="row" style={styles.stripRow}>
+        <View role="cell" style={styles.corner} />
+        {week.rows.map((row) => (
+          <View key={row.date} role="columnheader" style={[styles.stripCell, row.isToday ? styles.today : null]}>
+            <DayHead row={row} metric={metric} />
+          </View>
+        ))}
+      </View>
+      {rows.map((part) => (
+        <View key={part.key} role="row" style={[styles.stripRow, styles.ruled]}>
+          <View role="rowheader" style={styles.corner}><Mono tone="text3">{part.label}</Mono></View>
+          {week.rows.map((row) => (
+            <View key={row.date} role="cell" style={[styles.stripCell, row.isToday ? styles.today : null]}>{part.cell(row)}</View>
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+/** The week as a table, a row a day (below 1024px). */
+function WeekTable(props: { week: Week; metric: Metric; history: boolean }): React.JSX.Element {
+  const { week, metric, history } = props;
   const columns: Column[] = [
     { key: 'day', label: 'Day', flex: 0.8 },
     { key: 'calendar', label: 'On the calendar', flex: 2 },
@@ -91,43 +164,23 @@ export function ThisWeek(props: { week: Week; calendar: Calendar; metric: Metric
     key: row.date,
     selected: row.isToday,
     cells: {
-      day: (
-        <View style={styles.item} testID={`home-day-${row.date}`}>
-          <View style={styles.dayHead}>
-            {row.isToday ? <View style={styles.square} /> : null}
-            <Text style={styles.title}>{(WEEKDAY_NAMES[weekdayOf(row.date)] ?? '').slice(0, 3)}</Text>
-          </View>
-          <Mono>{dayMonth(row.date)}</Mono>
-          {row.isToday ? <Mono tone="text3">Today</Mono> : null}
-          {row.value === null ? null : <Mono tone="white">{metricText(row.value, metric)}</Mono>}
-        </View>
-      ),
-      calendar: row.events.length === 0 && row.notes.length === 0
-        ? <Mono tone="text3">Nothing listed</Mono>
-        : <View style={styles.cell}><EventLines events={row.events} /><NoteLines notes={row.notes} /></View>,
+      day: <DayHead row={row} metric={metric} />,
+      calendar: <CalendarCell row={row} />,
       lastYear: <PastCell day={row.lastYear} metric={metric} />,
       twoYears: <PastCell day={row.twoYearsAgo} metric={metric} />,
     },
   }));
+  return <DataTable label="This week, day by day" columns={columns} rows={rows} />;
+}
+
+export function ThisWeek(props: { week: Week; calendar: Calendar; metric: Metric; history: boolean }): React.JSX.Element {
+  const { week, calendar, metric, history } = props;
+  const { desktop } = useBreakpoint();
   const number = (value: number | null): string => (value === null ? 'No data' : metricNumber(value, metric));
 
   return (
-    <Section first kicker={`This week in ${town}`} title="What’s on the calendar, and how this week went before">
-      <Stack gap={12}>
-        {history && summary !== null ? (
-          <View style={styles.summary}>
-            <View style={styles.big}>
-              <Text style={[phone ? theme.type.valuePhone : theme.type.value, styles.value]}>{metricNumber(summary.total, metric)}</Text>
-              <Mono>{metric === 'guests' ? 'guests' : 'net sales'}</Mono>
-            </View>
-            <View style={styles.summaryLines}>
-              <Small white>{summaryLabel(summary)}</Small>
-              {usualLine === null ? null : <Small>{usualLine}</Small>}
-              {summary.busiest === null ? null : <Small>{`Busiest last year: ${shortDate(summary.busiest)}.`}</Small>}
-              {summary.quietest === null ? null : <Small>{`Quietest last year: ${shortDate(summary.quietest)}.`}</Small>}
-            </View>
-          </View>
-        ) : null}
+    <Block label={`This week in ${calendar.town.name}`} eyebrow={`This week in ${calendar.town.name}`} title="What’s on the calendar, and how this week went before">
+      <Stack gap={8}>
         <Small white>{calendarWeekLine(week, calendar)}</Small>
         {week.periods.map((period) => (
           <View key={period.id} style={styles.item}>
@@ -136,9 +189,10 @@ export function ThisWeek(props: { week: Week; calendar: Calendar; metric: Metric
           </View>
         ))}
       </Stack>
-      <DataTable label="This week, day by day" columns={columns} rows={rows} />
+      {desktop ? <WeekStrip week={week} metric={metric} history={history} /> : <WeekTable week={week} metric={metric} history={history} />}
       <Stack gap={8}>
         {history ? <Mono tone="text3">{LAST_YEAR_FOOTNOTE}</Mono> : null}
+        {history && desktop ? <Mono tone="text3">Bars show last year’s days, scaled to the busiest of them.</Mono> : null}
         <Mono tone="text3">{calendarCoverageLine(calendar)}</Mono>
       </Stack>
       {history ? (
@@ -161,11 +215,12 @@ export function ThisWeek(props: { week: Week; calendar: Calendar; metric: Metric
           />
         </ShowNumbers>
       ) : null}
-    </Section>
+    </Block>
   );
 }
 
 const c = theme.color;
+const CORNER = 124;
 
 const styles = StyleSheet.create({
   item: { gap: 2, minWidth: 0 },
@@ -173,9 +228,14 @@ const styles = StyleSheet.create({
   dayHead: { flexDirection: 'row', alignItems: 'center', columnGap: 6 },
   square: { width: 6, height: 6, backgroundColor: c.mint },
   title: { ...theme.type.ui, color: c.white },
-  source: { ...theme.type.mono, color: c.text2, minHeight: 44, lineHeight: 44, textDecorationLine: 'underline', textDecorationColor: c.line },
-  summary: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', columnGap: theme.space[6], rowGap: theme.space[3] },
-  big: { gap: theme.space[1] },
-  value: { color: c.white, fontVariant: ['tabular-nums'] },
-  summaryLines: { gap: 2, flexShrink: 1, minWidth: 0 },
+  // Padding, not line height, makes the 44px target, so a link that wraps in a narrow day stays one block.
+  source: { ...theme.type.mono, color: c.text2, paddingVertical: 14, textDecorationLine: 'underline', textDecorationColor: c.line },
+  strip: { borderTopWidth: 1, borderBottomWidth: 1, borderColor: c.border },
+  stripRow: { flexDirection: 'row', alignItems: 'stretch' },
+  ruled: { borderTopWidth: 1, borderTopColor: c.border },
+  corner: { width: CORNER, paddingVertical: theme.space[3], paddingRight: theme.space[3] },
+  stripCell: { flex: 1, minWidth: 0, paddingVertical: theme.space[3], paddingHorizontal: theme.space[2], borderLeftWidth: 1, borderLeftColor: c.border },
+  today: { backgroundColor: c.raised },
+  barZone: { height: BAR_ZONE, justifyContent: 'flex-end' },
+  bar: { width: '100%', maxWidth: 40, backgroundColor: c.mint },
 });

@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import { checkForecastRunFile, runFileSha256, type ForecastRunFile } from '../src/forecasts/file.ts';
+import { canonicalSha256, checkForecastRunFile, checkLabRunFile, runFileSha256, type ForecastRunFile } from '../src/forecasts/file.ts';
 import { reasonViews, storedRef, townCalendarOf } from '../src/forecasts/reasons.ts';
 import { townEvents } from '../src/town-calendar.ts';
 
@@ -61,6 +61,23 @@ describe('the run file', () => {
     expect(issuesOf(file((copy) => { (copy as Record<string, unknown>).trainingSource = 'townwise_uploads'; }))).toEqual([
       { path: 'trainingSource', code: 'invalid_value' },
     ]);
+  });
+
+  it('a lab run file passes checkLabRunFile and the import schema still refuses trainingSource townwise_lab', () => {
+    const lab = file((copy) => { (copy as Record<string, unknown>).trainingSource = 'townwise_lab'; });
+    expect(checkLabRunFile(lab, TODAY).ok).toBe(true);
+    expect(issuesOf(lab)).toEqual([{ path: 'trainingSource', code: 'invalid_value' }]);
+    // The lab file takes no other source, and no frozen registration.
+    expect(checkLabRunFile(FIXTURE, TODAY)).toEqual({ ok: false, issues: [{ path: 'trainingSource', code: 'invalid_value' }] });
+    const frozen = file((copy) => {
+      (copy as Record<string, unknown>).trainingSource = 'townwise_lab';
+      (copy as Record<string, unknown>).frozen = { files: [{ name: 'frozen_forecast_x.csv', sha256: 'a'.repeat(64) }] };
+    });
+    expect(checkLabRunFile(frozen, TODAY)).toEqual({ ok: false, issues: [{ path: 'frozen', code: 'invalid_type' }] });
+    // The same cross-field rules apply.
+    const late = file((copy) => { (copy as Record<string, unknown>).trainingSource = 'townwise_lab'; copy.madeAt = '2026-06-02'; });
+    expect(checkLabRunFile(late, TODAY)).toEqual({ ok: false, issues: [{ path: 'madeAt', code: 'made_in_future' }] });
+    expect(runFileSha256(FIXTURE)).toBe(canonicalSha256(FIXTURE));
   });
 
   it('needs low <= mid <= high on open days, and words the issue on the field that is out of order', () => {

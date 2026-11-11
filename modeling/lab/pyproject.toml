@@ -1,0 +1,23 @@
+[project]
+name = "townwise-lab"
+version = "0.1.0"
+description = "The demand model from ../demand_model_v0.ipynb as a tested package for Townwise's forecast lab"
+requires-python = "==3.12.*"
+# The same versions as ../uv.lock, so the lab computes what the notebook computes.
+dependencies = [
+    "numpy==2.5.4",
+    "pandas==3.1.0",
+    "scikit-learn==1.9.1",
+    "scipy==1.18.1",
+    "xgboost==3.4.1",
+]
+
+[dependency-groups]
+dev = ["pytest==9.2.0"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

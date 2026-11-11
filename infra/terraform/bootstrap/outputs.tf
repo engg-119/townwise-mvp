@@ -27,3 +27,8 @@ output "team_groups" {
   description = "Entra groups to add teammates to (Entra admin center, Groups)."
   value       = { for key, group in azuread_group.team : key => group.display_name }
 }
+
+output "lab_callback_client_id" {
+  description = "Client id of the lab callback app, the audience of the lab job's token. Production variable lab_callback_client_id."
+  value       = azuread_application.lab_callback.client_id
+}

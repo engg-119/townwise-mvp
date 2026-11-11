@@ -30,6 +30,7 @@ import csv
 import datetime
 import hashlib
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -87,9 +88,13 @@ def need_columns(rows, columns, name):
 
 def number(value, where):
     try:
-        return float(value)
+        result = float(value)
     except ValueError:
         fail(f"{where} has a value that is not a number")
+    # float() accepts "nan" and "inf", which json.dumps would write as invalid JSON, and guests can't be negative.
+    if not math.isfinite(result) or result < 0:
+        fail(f"{where} is not a finite, non-negative number")
+    return result
 
 
 def days_of(daily, events_by_date, booked, town_id):

@@ -1,6 +1,6 @@
 // Azure Communication Services Email - Send (api-version 2023-03-31) over fetch, as a port: main.ts builds it when
-// EMAIL_ENDPOINT is set, tests use helpers/mail.ts. It authenticates with the managed identity's Entra token, the only
-// way in: infra/terraform/production/email.tf disables access keys. Nothing here logs.
+// EMAIL_ENDPOINT is set, tests use helpers/mail.ts. It authenticates with an Entra token (the managed identity's; locally,
+// the developer's az login), the only way in: infra/terraform/production/email.tf disables access keys. Nothing here logs.
 // ACS error bodies can echo the recipient, so a body is never read into an error: a failure is a MailUnavailableError
 // with a code, the HTTP status and ACS's x-ms-error-code when it looks like a code.
 import { randomUUID } from 'node:crypto';
@@ -26,7 +26,7 @@ export interface MailTransport {
   send(message: OutboundEmail): Promise<void>;
 }
 
-/** `token`: the managed identity gave no token. `upstream_status`: ACS answered something other than 202. */
+/** `token`: no token (from the managed identity, or locally the Azure CLI). `upstream_status`: ACS answered something other than 202. */
 export type MailFailure = 'token' | 'timeout' | 'network' | 'upstream_status';
 
 const ERROR_CODE = /^[A-Za-z0-9_.-]{1,64}$/;

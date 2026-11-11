@@ -1,14 +1,16 @@
 // Operations keyed by a person, or spanning organizations (spec 6.10 rule 8). The list is closed:
 // findActiveSeat, findOpenInvites, claimInvite, declineInvite, latestRemovedSeat, adminOrgStats, peopleRecords,
-// deletePersonRecords, the file reader's claimNextImport, and the daily file sweep's claimFileSweep, finishFileSweep,
+// deletePersonRecords, the forecast lab's findLabCallback, the file reader's claimNextImport, and the daily file sweep's claimFileSweep, finishFileSweep,
 // sweepCandidates, removeOldUploadDays and existingFileIds.
 // Only access/resolve.ts, the join and decline handlers, the staff handlers (admin.ts, deletion.ts), the file reader
-// (files/worker.ts) and the file sweeper (files/sweeper.ts) import this file (test/isolation.test.ts enforces the list).
+// (files/worker.ts), the file sweeper (files/sweeper.ts) and the lab job's callback (lab/callback.ts) import this file
+// (test/isolation.test.ts enforces the list).
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { trusted, Types, type Connection } from 'mongoose';
 
 import type { Role } from '../access/resolve.ts';
 import { accessRequestModel, type AccessRequestStatus } from './access-requests.ts';
+import { calibrationModel, LIVE_STATUSES } from './calibrations.ts';
 import { chatConversationModel } from './chat-conversations.ts';
 import { chatLiveTurnModel } from './chat-live-turns.ts';
 import { chatProposalModel } from './chat-proposals.ts';
@@ -19,6 +21,7 @@ import { importModel } from './imports.ts';
 import { locationModel } from './locations.ts';
 import { memberModel } from './members.ts';
 import { orgModel } from './orgs.ts';
+import { profileModel } from './profiles.ts';
 import { HAS_VALUE, SALES_DAYS_COLLECTION } from './sales-days.ts';
 import { uploadDayModel } from './upload-days.ts';
 import { UPLOADS_COLLECTION } from './uploads.ts';
@@ -263,8 +266,9 @@ export interface DeletedPersonRecords {
 /**
  * Person deletion (spec 10.7 step 3): their access requests, their open invitations in every organization, their
  * removed seats, their tuning chat conversations, live turns and proposal records, and their welcome markers, in every
- * organization (the notes they saved from proposals stay with the organization, as every note does). Their staff id
- * is cleared from the forecast runs they imported or published (U13B). Never an active
+ * organization, and their display name (the notes they saved from proposals stay with the organization, as every note does). Their staff id
+ * is cleared from the forecast runs they imported or published (U13B), and their id from the calibrations they started
+ * and from the forecasts switch they last set (the forecast lab). Never an active
  * seat: the handler refuses a person who holds one. An address with no kit user has only invitations. Deletes by
  * filter, so a retry completes the work. (U9: tw_agent_answers holds no person id, so nothing of it is the person's.)
  */
@@ -293,10 +297,43 @@ export async function deletePersonRecords(
   await chatProposalModel(connection).deleteMany({ userId });
   // U11: the welcome markers, in every organization. Not counted, so the audit details are unchanged.
   await welcomeModel(connection).deleteMany({ userId });
+  // The display name (spec 6.22). Not counted, so the audit details are unchanged.
+  await profileModel(connection).deleteMany({ userId });
   // U13B: a staff member's id on the forecast runs they imported or published, in every organization. Not counted.
   await forecastRunModel(connection).updateMany({ importedBy: userId }, { $set: { importedBy: null } });
   await forecastRunModel(connection).updateMany({ publishedBy: userId }, { $set: { publishedBy: null } });
+  // The forecast lab: the person who asked for a calibration, in every organization. Not counted.
+  await calibrationModel(connection).updateMany({ 'requestedBy.userId': userId }, { $set: { 'requestedBy.userId': null } });
+  // And the staff member who last switched an organization's forecasts, in every organization; the switch stays as it is.
+  await orgModel(connection).updateMany({ 'forecasts.by': userId }, { $set: { 'forecasts.by': null } });
   return { requests, seats: invites + removed, conversations, liveTurns };
+}
+
+/** A calibration the forecast lab's job called back about. Only access/policy.ts's scopeForLabCallback turns it into an OrgScope. */
+export interface LabCallbackClaim {
+  readonly calibrationId: string;
+  readonly orgId: string;
+  readonly locationId: string;
+}
+
+/**
+ * The lab job's callback (lab/callback.ts), across organizations, once the caller signed in as the lab identity: the
+ * calibration with this id that is still live and whose 20-minute callback window is open, and, for a result
+ * (`resultTokenSha256` not null), whose stored result token hash matches. Null for anything else, so the route answers
+ * 404 alike for an unknown id, a wrong result token, a closed window and a finished calibration.
+ */
+export async function findLabCallback(
+  connection: Connection, calibrationId: string, now: Date, resultTokenSha256: string | null,
+): Promise<LabCallbackClaim | null> {
+  if (!Types.ObjectId.isValid(calibrationId) || calibrationId.length !== 24) return null;
+  const doc = await calibrationModel(connection).findOne({
+    _id: new Types.ObjectId(calibrationId),
+    ...(resultTokenSha256 === null ? {} : { tokenSha256: resultTokenSha256 }),
+    status: trusted({ $in: [...LIVE_STATUSES] }),
+    tokenExpiresAt: trusted({ $gt: now }),
+  }).lean();
+  if (doc === null) return null;
+  return { calibrationId: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString() };
 }
 
 /** An import the file reader claimed. Only access/policy.ts's scopeForClaimedImport turns it into an OrgScope. */

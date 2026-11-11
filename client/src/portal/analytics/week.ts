@@ -1,6 +1,6 @@
 import { formatCount, formatDate, plural } from '../format';
 import type { Note } from '../locations/api';
-import { addDays, EARLIEST_DATE, monthRange } from '../locations/dates';
+import { addDays, daysBetween, EARLIEST_DATE, monthRange } from '../locations/dates';
 import { valueOf } from '../locations/sales';
 import type { Calendar, TownEvent } from './api';
 import { usual, type Usual } from './baseline';
@@ -72,6 +72,8 @@ export interface HomeInput {
   metric: Metric;
   /** The last stored day; null with no history. */
   lastDate: string | null;
+  /** No day shows because every upload holding days is turned off (D28). */
+  uploadsOff?: boolean;
 }
 
 /** A stored figure, only for a day that is past: on or before the last day of data and today. */
@@ -286,6 +288,8 @@ export interface ComparedDay { date: string; value: number | null; lastYear: num
 
 export type LastWeek =
   | { state: 'no_history' }
+  /** Every upload holding days is turned off on Your data. */
+  | { state: 'uploads_off' }
   /** The history ends before last week. */
   | { state: 'no_recent'; monday: string; sunday: string; lastDate: string }
   /** Last week has no day with the metric, though the history reaches it: a gap, or days without this metric. */
@@ -300,7 +304,7 @@ export type LastWeek =
 
 /** Last week (Monday to Sunday before this one) against the days 364 days earlier. */
 export function lastWeekComparison(input: HomeInput): LastWeek {
-  if (input.lastDate === null) return { state: 'no_history' };
+  if (input.lastDate === null) return input.uploadsOff === true ? { state: 'uploads_off' } : { state: 'no_history' };
   const monday = addDays(mondayOf(input.today), -7);
   const sunday = addDays(monday, 6);
   const days = weekDates(monday).map((date) => ({
@@ -331,6 +335,7 @@ function moreOrLess(change: number, metric: Metric): string {
 export function lastWeekLine(comparison: LastWeek, metric: Metric): string {
   switch (comparison.state) {
     case 'no_history': return 'No sales history yet, so there is nothing to compare.';
+    case 'uploads_off': return 'Every sales upload is turned off, so there is nothing to compare.';
     case 'no_recent': return `Your history ends ${formatDate(comparison.lastDate)}. Upload the days since to compare last week.`;
     case 'no_days': return `No ${METRIC_NOUN[metric]} stored for last week, so there is nothing to compare yet.`;
     case 'no_last_year': return 'No data for the same week last year, so there is nothing to compare yet.';
@@ -435,6 +440,19 @@ export interface MonthCell {
   note: boolean;
   inWeek: boolean;
   isToday: boolean;
+  /** What a screen reader hears for the cell: everything its number and marks show, in words. */
+  label: string;
+}
+
+/** "Wed, Nov 11, 2026. Today. This week. Veterans Day. 1 note." */
+function monthCellLabel(date: string, events: readonly TownEvent[], notes: number, inWeek: boolean, isToday: boolean): string {
+  return [
+    `${shortDate(date)}.`,
+    isToday ? 'Today.' : null,
+    inWeek ? 'This week.' : null,
+    ...events.map((event) => `${event.title}.`),
+    notes === 0 ? null : `${plural(notes, 'note', 'notes')}.`,
+  ].filter((part) => part !== null).join(' ');
 }
 
 /** This month as week rows, Monday first; null where a row's day is in another month. */
@@ -444,15 +462,92 @@ export function monthGrid(today: string, context: DayContext): (MonthCell | null
   const sunday = addDays(monday, 6);
   const rows: (MonthCell | null)[][] = [];
   for (let start = mondayOf(from); start <= to; start = addDays(start, 7)) {
-    rows.push(weekDates(start).map((date) => (date < from || date > to ? null : {
-      date,
-      event: eventsOf(context, date).some(marksDay),
-      note: notesOf(context, date).length > 0,
-      inWeek: date >= monday && date <= sunday,
-      isToday: date === today,
-    })));
+    rows.push(weekDates(start).map((date) => {
+      if (date < from || date > to) return null;
+      const events = dayEventsOf(context, date);
+      const notes = notesOf(context, date).length;
+      const inWeek = date >= monday && date <= sunday;
+      const isToday = date === today;
+      return { date, event: events.length > 0, note: notes > 0, inWeek, isToday, label: monthCellLabel(date, events, notes, inWeek, isToday) };
+    }));
   }
   return rows;
+}
+
+/**
+ * The month grid's keys (rows are weeks, Monday first): Left and Right move a day, Up and Down a week, Home and End
+ * the row's Monday and Sunday, Ctrl+Home and Ctrl+End the month's first and last day. Every move stays in `date`'s
+ * month; a key that would leave it keeps the day where it is. Null for any other key.
+ */
+export function monthMove(date: string, key: string, ctrl: boolean): string | null {
+  const { from, to } = monthRange(date.slice(0, 7));
+  const clamp = (next: string): string => (next < from ? from : next > to ? to : next);
+  const step = (days: number): string => {
+    const next = addDays(date, days);
+    return next < from || next > to ? date : next;
+  };
+  switch (key) {
+    case 'ArrowLeft': return step(-1);
+    case 'ArrowRight': return step(1);
+    case 'ArrowUp': return step(-7);
+    case 'ArrowDown': return step(7);
+    case 'Home': return ctrl ? from : clamp(mondayOf(date));
+    case 'End': return ctrl ? to : clamp(addDays(mondayOf(date), 6));
+    default: return null;
+  }
+}
+
+/** Everything Home's month card shows for one day of the month (the day detail beside the grid). */
+export interface MonthDay {
+  date: string;
+  isToday: boolean;
+  /** After today: no figure of its own, ever. */
+  future: boolean;
+  /** Holidays and town events on the day; term and season periods are in the month's list. */
+  events: readonly TownEvent[];
+  notes: readonly Note[];
+  /** The day's own stored figure; null for a day after the last day of data or after today. */
+  value: number | null;
+  lastYear: PastDay;
+  twoYearsAgo: PastDay;
+}
+
+export function monthDay(date: string, input: HomeInput): MonthDay {
+  return {
+    date,
+    isToday: date === input.today,
+    future: date > input.today,
+    events: dayEventsOf(input.context, date),
+    notes: notesOf(input.context, date),
+    value: figureOf(date, input),
+    lastYear: pastDay(sameWeekdayYearsAgo(date, 1), input),
+    twoYearsAgo: pastDay(sameWeekdayYearsAgo(date, 2), input),
+  };
+}
+
+/** The next holiday or town event on the calendar, from today to the end of what Home reads. */
+export interface NextEvent {
+  event: TownEvent;
+  /** The first day from today that it covers. */
+  date: string;
+  /** Days from today to `date`: 0 when it is on today. */
+  days: number;
+}
+
+export function nextEvent(today: string, context: DayContext): NextEvent | null {
+  const { to } = homeCalendarRange(today);
+  for (let date = today; date <= to; date = addDays(date, 1)) {
+    const [event] = dayEventsOf(context, date);
+    if (event !== undefined) return { event, date, days: daysBetween(today, date) };
+  }
+  return null;
+}
+
+/** "Today", "Tomorrow", "Sat, Nov 7, 2026, in 2 days". */
+export function nextEventWhen(next: NextEvent): string {
+  if (next.days === 0) return next.event.start < next.date ? `On now, until ${shortDate(next.event.end)}` : 'Today';
+  if (next.days === 1) return `Tomorrow, ${shortDate(next.date)}`;
+  return `${shortDate(next.date)}, in ${plural(next.days, 'day', 'days')}`;
 }
 
 export type MonthItem =
@@ -485,9 +580,12 @@ export function eventLine(event: Pick<TownEvent, 'title' | 'kind' | 'scope'>): s
 }
 
 /** The lead under the title (home.md 2.1). */
-export function leadLine(lastDate: string | null, calendar: Pick<Calendar, 'town' | 'researched' | 'covers'>): string {
+export function leadLine(
+  lastDate: string | null, calendar: Pick<Calendar, 'town' | 'researched' | 'covers'>, uploadsOff = false,
+): string {
   const researched = calendar.town.townId !== null && calendar.researched && calendar.covers !== null;
   const source = researched ? `${calendar.town.name}’s researched calendar` : 'US federal holidays';
+  if (lastDate === null && uploadsOff) return `Every sales upload is turned off. Home shows ${source} and your notes.`;
   if (lastDate === null) return `No sales history yet. Home shows ${source} and your notes.`;
   return `From your sales through ${shortDate(lastDate)} and ${source}.`;
 }

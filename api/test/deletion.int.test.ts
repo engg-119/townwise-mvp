@@ -36,6 +36,8 @@ const TENANT_COLLECTIONS = [
   'tw_agent_answers',
   // U13B.
   'tw_forecast_runs', 'tw_forecasts',
+  // The forecast lab.
+  'tw_calibrations',
 ] as const;
 
 /** A tw_chat_proposals record (spec 6.16): the author dismissed a proposal in one of their conversations. */
@@ -193,8 +195,8 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
     // (U13B) forecasts swept again.
     expect(writes[0]).toBe('insert tw_audit_events');
     // Stored files (none here) are swept again after the row too: imports first. Then (U13B) forecast rows, then runs.
-    expect(writes.slice(-6)).toEqual([
-      'delete tw_orgs', 'delete tw_imports', 'delete tw_sales_days', 'delete tw_chat_usage',
+    expect(writes.slice(-7)).toEqual([
+      'delete tw_orgs', 'delete tw_imports', 'delete tw_sales_days', 'delete tw_chat_usage', 'delete tw_calibrations',
       'delete tw_forecasts', 'delete tw_forecast_runs',
     ]);
 
@@ -404,6 +406,7 @@ async function snapshotOfPerson(target: Person): Promise<string> {
     await server.connection.collection('tw_chat_conversations').find({ userId }).sort({ _id: 1 }).toArray(),
     await server.connection.collection('tw_chat_live_turns').find({ userId }).sort({ _id: 1 }).toArray(),
     await server.connection.collection('tw_chat_proposals').find({ userId }).sort({ _id: 1 }).toArray(),
+    await server.connection.collection('tw_profiles').find({ userId }).sort({ _id: 1 }).toArray(),
     await server.connection.collection('tw_audit_events').find({ $or: [{ actorUserId: userId }, { 'details.email': target.email }] }).sort({ _id: 1 }).toArray(),
     await server.authStores.totp.get(userId),
   ];
@@ -414,6 +417,12 @@ describe('POST /api/admin/people/delete', () => {
   it('deletes every Townwise record of the person, signs them out, removes their authenticator and redacts the audit log', async () => {
     const doomed = await doomedPerson('doomed');
     const bystander = await doomedPerson('bystander');
+    // The display name is account-level: the person's own is deleted, the bystander's stays.
+    const at = server.clock.now();
+    await server.connection.collection('tw_profiles').insertMany([
+      { userId: doomed.person.session.userId, displayName: 'Doomed', createdAt: at, updatedAt: at },
+      { userId: bystander.person.session.userId, displayName: 'Bystander', createdAt: at, updatedAt: at },
+    ]);
     const bystanderBefore = await snapshotOfPerson(bystander.person);
     // Someone who shares the deleted person's organization keeps their seat, invitation, conversations and live turn.
     const sharer = await person('sharer');
@@ -440,6 +449,7 @@ describe('POST /api/admin/people/delete', () => {
     expect(await count('tw_chat_conversations', { userId })).toBe(0);
     expect(await count('tw_chat_live_turns', { userId })).toBe(0);
     expect(await count('tw_chat_proposals', { userId })).toBe(0);
+    expect(await count('tw_profiles', { userId })).toBe(0);
     expect(await server.authStores.totp.get(userId)).toBeNull();
     for (const session of [doomed.person.session, doomed.second]) {
       expect(await errorOf(await call(server, '/api/me', { session }))).toEqual({ status: 401, error: 'unauthenticated' });

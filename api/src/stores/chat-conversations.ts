@@ -12,6 +12,20 @@ export const CHAT_CONVERSATIONS_COLLECTION = 'tw_chat_conversations';
 export interface StoredMessage {
   readonly at: Date;
   readonly param: string;
+  /** The tree node the message belongs to (src/chat/tree.ts); absent on messages written before trees. */
+  readonly nodeId?: string;
+  /** The node's parent (null for a first message); read from the node's first message. */
+  readonly parentId?: string | null;
+}
+
+export type FeedbackReason = 'wrong_figures' | 'made_up' | 'missed_context' | 'not_helpful' | 'too_long' | 'other';
+export const FEEDBACK_REASONS: readonly FeedbackReason[] = ['wrong_figures', 'made_up', 'missed_context', 'not_helpful', 'too_long', 'other'];
+
+/** The author's rating of one reply. An enum and a time: never text (tuning-chat.md section 5). */
+export interface StoredFeedback {
+  readonly rating: 'up' | 'down';
+  readonly reason: FeedbackReason | null;
+  readonly at: Date;
 }
 
 export interface LiveTurn {
@@ -25,6 +39,8 @@ interface ConversationFields {
   userId: string;
   title: string;
   messages: StoredMessage[];
+  activeLeafId: string | null;
+  feedback: Map<string, StoredFeedback>;
   turnCount: number;
   liveTurn: LiveTurn | null;
   createdAt: Date;
@@ -35,10 +51,17 @@ function conversationSchema(): Schema<ConversationFields> {
   const message = new Schema<StoredMessage>({
     at: { type: Date, required: true },
     param: { type: String, required: true },
+    nodeId: { type: String },
+    parentId: { type: String, default: undefined },
   }, { _id: false, strict: true });
   const liveTurn = new Schema<LiveTurn>({
     turnId: { type: String, required: true },
     startedAt: { type: Date, required: true },
+  }, { _id: false, strict: true });
+  const feedback = new Schema<StoredFeedback>({
+    rating: { type: String, enum: ['up', 'down'], required: true },
+    reason: { type: String, enum: FEEDBACK_REASONS, default: null },
+    at: { type: Date, required: true },
   }, { _id: false, strict: true });
   const schema = new Schema<ConversationFields>({
     orgId: { type: Schema.Types.ObjectId, required: true },
@@ -46,6 +69,8 @@ function conversationSchema(): Schema<ConversationFields> {
     userId: { type: String, required: true },
     title: { type: String, required: true },
     messages: { type: [message], default: [] },
+    activeLeafId: { type: String, default: null },
+    feedback: { type: Map, of: feedback, default: {} },
     turnCount: { type: Number, required: true },
     liveTurn: { type: liveTurn, default: null },
     createdAt: { type: Date, required: true },
@@ -70,6 +95,9 @@ export interface ConversationSummary {
 
 export interface ConversationRecord extends ConversationSummary {
   readonly messages: readonly StoredMessage[];
+  readonly activeLeafId: string | null;
+  /** The author's ratings, by reply node id. */
+  readonly feedback: ReadonlyMap<string, StoredFeedback>;
   readonly liveTurn: LiveTurn | null;
 }
 
@@ -94,10 +122,21 @@ export interface ChatConversationStore {
   claim(scope: OrgScope, owner: ConversationOwner, conversationId: string, input: { turnId: string; now: Date; staleBefore: Date }):
     Promise<ConversationRecord | null>;
   /**
-   * Appends a finished turn's messages and clears the claim, in one update, only while `turnId` still holds the
-   * claim. False when it does not (the turn was taken over, or the conversation deleted).
+   * Appends a finished turn's messages, makes `leafId` the active leaf and clears the claim, in one update, only while
+   * `turnId` still holds the claim. False when it does not (the turn was taken over, or the conversation deleted).
    */
-  finish(scope: OrgScope, conversationId: string, turnId: string, input: { messages: readonly StoredMessage[]; now: Date }): Promise<boolean>;
+  finish(
+    scope: OrgScope, conversationId: string, turnId: string, input: { messages: readonly StoredMessage[]; now: Date; leafId: string },
+  ): Promise<boolean>;
+  /** Stores the version shown. Display state: `updatedAt` stays. False when the conversation is not the author's. */
+  setActiveLeaf(scope: OrgScope, owner: ConversationOwner, conversationId: string, leafId: string): Promise<boolean>;
+  /** Display state: `updatedAt` stays, so the conversation keeps its place in the list. False as for setActiveLeaf. */
+  rename(scope: OrgScope, owner: ConversationOwner, conversationId: string, title: string): Promise<boolean>;
+  /**
+   * Display state like a rename: `updatedAt` stays. Sets the rating of the reply `nodeId` (already matched against
+   * nodeIdSchema), or clears it with null. False when the conversation is not the author's.
+   */
+  rate(scope: OrgScope, owner: ConversationOwner, conversationId: string, nodeId: string, feedback: StoredFeedback | null): Promise<boolean>;
   /** Drops a failed turn's claim; a conversation that never finished a turn is deleted instead. */
   release(scope: OrgScope, conversationId: string, turnId: string): Promise<void>;
   remove(scope: OrgScope, owner: ConversationOwner, conversationId: string): Promise<boolean>;
@@ -113,10 +152,22 @@ function toSummary(doc: Pick<ConversationDoc, '_id' | 'title' | 'updatedAt' | 't
   return { id: doc._id.toHexString(), title: doc.title, updatedAt: doc.updatedAt, turnCount: doc.turnCount };
 }
 
+function toStored(message: StoredMessage): StoredMessage {
+  return {
+    at: message.at, param: message.param,
+    ...(message.nodeId === undefined ? {} : { nodeId: message.nodeId }),
+    ...(message.parentId === undefined ? {} : { parentId: message.parentId }),
+  };
+}
+
 function toRecord(doc: ConversationDoc): ConversationRecord {
   return {
     ...toSummary(doc),
-    messages: doc.messages.map((message) => ({ at: message.at, param: message.param })),
+    messages: doc.messages.map(toStored),
+    activeLeafId: doc.activeLeafId ?? null,
+    // lean() hands back the map as a plain object, and applies no default to a document written before feedback.
+    feedback: new Map(Object.entries((doc.feedback as unknown as Record<string, StoredFeedback> | undefined) ?? {})
+      .map(([nodeId, value]) => [nodeId, { rating: value.rating, reason: value.reason ?? null, at: value.at }])),
     liveTurn: doc.liveTurn === null ? null : { turnId: doc.liveTurn.turnId, startedAt: doc.liveTurn.startedAt },
   };
 }
@@ -161,10 +212,26 @@ export function createChatConversationStore(connection: Connection): ChatConvers
     },
     async finish(scope, conversationId, turnId, input) {
       const result = await Conversation.updateOne(claimedBy(scope, conversationId, turnId), {
-        $push: { messages: { $each: input.messages.map((message) => ({ at: message.at, param: message.param })) } },
+        $push: { messages: { $each: input.messages.map(toStored) } },
         $inc: { turnCount: 1 },
-        $set: { liveTurn: null, updatedAt: input.now },
+        $set: { liveTurn: null, updatedAt: input.now, activeLeafId: input.leafId },
       });
+      return result.matchedCount === 1;
+    },
+    async setActiveLeaf(scope, owner, conversationId, leafId) {
+      const result = await Conversation.updateOne({ _id: new Types.ObjectId(conversationId), ...ownedBy(scope, owner) }, { $set: { activeLeafId: leafId } });
+      return result.matchedCount === 1;
+    },
+    async rename(scope, owner, conversationId, title) {
+      const result = await Conversation.updateOne({ _id: new Types.ObjectId(conversationId), ...ownedBy(scope, owner) }, { $set: { title } });
+      return result.matchedCount === 1;
+    },
+    async rate(scope, owner, conversationId, nodeId, feedback) {
+      const path = `feedback.${nodeId}`;
+      const result = await Conversation.updateOne(
+        { _id: new Types.ObjectId(conversationId), ...ownedBy(scope, owner) },
+        feedback === null ? { $unset: { [path]: '' } } : { $set: { [path]: feedback } },
+      );
       return result.matchedCount === 1;
     },
     async release(scope, conversationId, turnId) {

@@ -336,6 +336,32 @@ override_resource {
   }
 }
 
+override_resource {
+  target          = azurerm_user_assigned_identity.lab[0]
+  override_during = plan
+  values = {
+    id           = "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-townwise-job-lab"
+    principal_id = "00000000-0000-0000-0000-0000000000d1"
+    client_id    = "00000000-0000-0000-0000-0000000001d1"
+  }
+}
+
+override_resource {
+  target          = azapi_resource.job_lab[0]
+  override_during = plan
+  values = {
+    id = "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.App/jobs/caj-townwise-lab"
+  }
+}
+
+override_resource {
+  target          = azurerm_role_definition.lab_starter[0]
+  override_during = plan
+  values = {
+    role_definition_resource_id = "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-0000000000f3"
+  }
+}
+
 run "key_vault" {
   command = plan
 
@@ -538,6 +564,8 @@ run "rbac_scopes" {
         "Microsoft.App/containerApps/read",
         "Microsoft.App/containerApps/write",
         "Microsoft.App/containerApps/revisions/read",
+        "Microsoft.App/jobs/read",
+        "Microsoft.App/jobs/write",
         "Microsoft.App/managedEnvironments/read",
         "Microsoft.App/managedEnvironments/join/action",
         "Microsoft.ContainerRegistry/registries/read",
@@ -1015,5 +1043,200 @@ run "email_and_monitoring" {
       azurerm_monitor_scheduled_query_rules_alert_v2.backup_missing.action[0].action_groups == tolist([azurerm_monitor_action_group.ops.id])
     )
     error_message = "A day without the backup job's upload line emails the ops address."
+  }
+}
+
+run "lab_disabled" {
+  command = plan
+
+  assert {
+    condition = (
+      length(azapi_resource.job_lab) == 0 && length(azurerm_user_assigned_identity.lab) == 0 &&
+      length(azurerm_role_assignment.lab_acr_pull) == 0 && length(azurerm_role_definition.lab_starter) == 0 &&
+      length(azurerm_role_assignment.lab_start) == 0 && length(azurerm_role_assignment.deployer_lab_job) == 0 &&
+      output.lab_job_id == null
+    )
+    error_message = "With enable_lab false (the default), no lab resource exists and lab_job_id is null."
+  }
+
+  assert {
+    condition     = !anytrue([for env in azurerm_container_app.api.template[0].container[0].env : startswith(env.name, "TOWNWISE_LAB_")])
+    error_message = "With enable_lab false, the API has no TOWNWISE_LAB_ variable."
+  }
+}
+
+run "lab_requires_image" {
+  command = plan
+
+  variables {
+    enable_lab             = true
+    lab_callback_client_id = "22222222-2222-4222-8222-222222222222"
+  }
+
+  expect_failures = [azapi_resource.job_lab]
+}
+
+run "lab_requires_callback_app" {
+  command = plan
+
+  variables {
+    enable_lab = true
+    lab_image  = "crtownwise2d2c15bf.azurecr.io/townwise-lab@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  }
+
+  expect_failures = [azapi_resource.job_lab]
+}
+
+run "lab_callback_client_id_is_a_guid" {
+  command = plan
+
+  variables {
+    lab_callback_client_id = "api://22222222-2222-4222-8222-222222222222"
+  }
+
+  expect_failures = [var.lab_callback_client_id]
+}
+
+# Entra emits lowercase GUIDs and the API compares aud exactly, so an uppercase id would refuse every lab token.
+run "lab_callback_client_id_is_lowercase" {
+  command = plan
+
+  variables {
+    lab_callback_client_id = "2222222A-2222-4222-8222-222222222222"
+  }
+
+  expect_failures = [var.lab_callback_client_id]
+}
+
+run "lab_enabled" {
+  command = plan
+
+  variables {
+    enable_lab             = true
+    lab_image              = "crtownwise2d2c15bf.azurecr.io/townwise-lab@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    lab_callback_client_id = "22222222-2222-4222-8222-222222222222"
+  }
+
+  assert {
+    condition = (
+      azapi_resource.job_lab[0].name == "caj-townwise-lab" &&
+      azapi_resource.job_lab[0].type == "Microsoft.App/jobs@2025-07-01" &&
+      azapi_resource.job_lab[0].body.properties.environmentId == azurerm_container_app_environment.main.id &&
+      azapi_resource.job_lab[0].body.properties.workloadProfileName == "Consumption" &&
+      azapi_resource.job_lab[0].body.properties.configuration.triggerType == "Manual" &&
+      azapi_resource.job_lab[0].body.properties.configuration.manualTriggerConfig == { parallelism = 1, replicaCompletionCount = 1 } &&
+      azapi_resource.job_lab[0].body.properties.configuration.replicaTimeout == 900 &&
+      azapi_resource.job_lab[0].body.properties.configuration.replicaRetryLimit == 0
+    )
+    error_message = "The lab job is manual, one replica per execution on the Consumption profile, 900 seconds, and never retried."
+  }
+
+  assert {
+    condition = (
+      length(azapi_resource.job_lab[0].body.properties.configuration.secrets) == 0 &&
+      [for setting in azapi_resource.job_lab[0].body.properties.configuration.identitySettings : setting.lifecycle] == ["Main"] &&
+      [for setting in azapi_resource.job_lab[0].body.properties.configuration.identitySettings : setting.identity] == [azurerm_user_assigned_identity.lab[0].id] &&
+      [for registry in azapi_resource.job_lab[0].body.properties.configuration.registries : registry.identity] == [azurerm_user_assigned_identity.lab[0].id] &&
+      tolist(one(azapi_resource.job_lab[0].identity).identity_ids) == tolist([azurerm_user_assigned_identity.lab[0].id])
+    )
+    error_message = "The lab job has no secrets, pulls its image with the lab identity, and only its main container can obtain a token for it (to sign in to the lab callback)."
+  }
+
+  assert {
+    condition = (
+      length(azapi_resource.job_lab[0].body.properties.template.containers) == 1 &&
+      azapi_resource.job_lab[0].body.properties.template.containers[0].name == "lab" &&
+      azapi_resource.job_lab[0].body.properties.template.containers[0].image == var.lab_image &&
+      azapi_resource.job_lab[0].body.properties.template.containers[0].resources.cpu == 1 &&
+      azapi_resource.job_lab[0].body.properties.template.containers[0].resources.memory == "2Gi" &&
+      azapi_resource.job_lab[0].body.properties.template.containers[0].env == [
+        { name = "TOWNWISE_LAB_API_URL", value = "https://${azurerm_container_app.api.ingress[0].fqdn}" },
+        { name = "AZURE_CLIENT_ID", value = "00000000-0000-0000-0000-0000000001d1" },
+        { name = "TOWNWISE_LAB_TOKEN_RESOURCE", value = "api://22222222-2222-4222-8222-222222222222" },
+      ] &&
+      !anytrue([for env in azapi_resource.job_lab[0].body.properties.template.containers[0].env : env.name == "TOWNWISE_LAB_TOKEN"])
+    )
+    error_message = "One container, lab, at lab_image with 1 vCPU and 2Gi; its environment holds the API URL and what it signs in with (the lab identity's client id and the lab callback app's identifier URI), and no secret."
+  }
+
+  assert {
+    condition = (
+      azurerm_role_definition.lab_starter[0].name == "Townwise lab starter" &&
+      toset(one(azurerm_role_definition.lab_starter[0].permissions).actions) == toset(["Microsoft.App/jobs/read", "Microsoft.App/jobs/start/action"]) &&
+      length(one(azurerm_role_definition.lab_starter[0].permissions).actions) == 2 &&
+      try(length(one(azurerm_role_definition.lab_starter[0].permissions).data_actions), 0) == 0 &&
+      try(length(one(azurerm_role_definition.lab_starter[0].permissions).not_actions), 0) == 0
+    )
+    error_message = "The lab starter role reads the job and starts it, with no data actions."
+  }
+
+  assert {
+    condition = (
+      azurerm_role_assignment.lab_start[0].scope == azapi_resource.job_lab[0].id &&
+      azurerm_role_assignment.lab_start[0].principal_id == azurerm_user_assigned_identity.api.principal_id &&
+      azurerm_role_assignment.lab_start[0].role_definition_id == azurerm_role_definition.lab_starter[0].role_definition_resource_id
+    )
+    error_message = "The API identity holds the lab starter role at the lab job and nowhere else."
+  }
+
+  assert {
+    condition = (
+      azurerm_role_assignment.lab_acr_pull[0].role_definition_name == "AcrPull" &&
+      azurerm_role_assignment.lab_acr_pull[0].scope == azurerm_container_registry.main.id &&
+      azurerm_role_assignment.lab_acr_pull[0].principal_id == azurerm_user_assigned_identity.lab[0].principal_id &&
+      # Every other role assignment in the module (the list rbac_scopes checks, plus the lab's own).
+      !contains([
+        for assignment in concat(
+          values(azurerm_role_assignment.api_secret_read), values(azurerm_role_assignment.deployer),
+          values(azurerm_role_assignment.job_secret_read), values(azurerm_role_assignment.job_acr_pull),
+          [azurerm_role_assignment.api_acr_pull, azurerm_role_assignment.api_email, azurerm_role_assignment.deploy_acr_push],
+          [azurerm_role_assignment.backup_blob_create, azurerm_role_assignment.restore_blob_read],
+          [azurerm_role_assignment.api_files_raw, azurerm_role_assignment.api_files_clean],
+          [azurerm_role_assignment.lab_start[0], azurerm_role_assignment.deployer_lab_job[0]],
+        ) : assignment.principal_id
+      ], azurerm_user_assigned_identity.lab[0].principal_id)
+    )
+    error_message = "The lab identity holds AcrPull on the registry and nothing else."
+  }
+
+  assert {
+    condition = (
+      azurerm_role_assignment.deployer_lab_job[0].scope == azapi_resource.job_lab[0].id &&
+      azurerm_role_assignment.deployer_lab_job[0].role_definition_id == azurerm_role_definition.deployer.role_definition_resource_id &&
+      azurerm_role_assignment.deployer_lab_job[0].principal_id == "00000000-0000-0000-0000-0000000000aa"
+    )
+    error_message = "The deploy identity updates the lab job with the deployer role, scoped to that one job."
+  }
+
+  assert {
+    condition = (
+      contains([for env in azurerm_container_app.api.template[0].container[0].env : "${env.name}=${env.value}" if env.value != null], "TOWNWISE_LAB_RUNNER=azure") &&
+      contains([for env in azurerm_container_app.api.template[0].container[0].env : "${env.name}=${env.value}" if env.value != null], "TOWNWISE_LAB_JOB_ID=/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.App/jobs/caj-townwise-lab") &&
+      output.lab_job_id == "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.App/jobs/caj-townwise-lab"
+    )
+    error_message = "With enable_lab, the API runs calibrations in the Azure job and knows its resource id."
+  }
+
+  assert {
+    condition = (
+      contains([for env in azurerm_container_app.api.template[0].container[0].env : "${env.name}=${env.value}" if env.value != null], "TOWNWISE_LAB_AUDIENCE=22222222-2222-4222-8222-222222222222") &&
+      contains([for env in azurerm_container_app.api.template[0].container[0].env : "${env.name}=${env.value}" if env.value != null], "TOWNWISE_LAB_CALLER_ID=00000000-0000-0000-0000-0000000000d1") &&
+      contains([for env in azurerm_container_app.api.template[0].container[0].env : "${env.name}=${env.value}" if env.value != null], "TOWNWISE_LAB_TENANT_ID=37acb94f-e2d9-41d9-a697-1bd7a1d60bf1") &&
+      length([for env in azurerm_container_app.api.template[0].container[0].env : env.name if startswith(env.name, "TOWNWISE_LAB_")]) == 5
+    )
+    error_message = "The API accepts the lab callback only from the lab identity (its principal id), with a token for the lab callback app (its client id) from this tenant."
+  }
+
+  # TOWNWISE_LAB_JOB_ID is built from names (lab.tf, to avoid a cycle). It must name the resource the job
+  # itself declares: its parent, its type without the API version, and its name, which is how an ARM id is
+  # formed. The mocked plan has no real azapi id (the override above fills it in that same form), so the
+  # check against output.lab_job_id only pins that the output and the API's variable carry one value.
+  assert {
+    condition = (
+      one([for env in azurerm_container_app.api.template[0].container[0].env : env.value if env.name == "TOWNWISE_LAB_JOB_ID"]) ==
+      "${azapi_resource.job_lab[0].parent_id}/providers/${split("@", azapi_resource.job_lab[0].type)[0]}/${azapi_resource.job_lab[0].name}" &&
+      one([for env in azurerm_container_app.api.template[0].container[0].env : env.value if env.name == "TOWNWISE_LAB_JOB_ID"]) == output.lab_job_id
+    )
+    error_message = "TOWNWISE_LAB_JOB_ID names the lab job Terraform declares (its parent, type and name), the same id lab_job_id outputs."
   }
 }

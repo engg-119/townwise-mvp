@@ -3,6 +3,7 @@ import type { Connection } from 'mongoose';
 import { createAccessRequestStore, type AccessRequestStore } from './access-requests.ts';
 import { createAgentAnswerStore, type AgentAnswerStore } from './agent-answers.ts';
 import { createAuditEventStore, type AuditEventStore } from './audit-events.ts';
+import { createCalibrationStore, type CalibrationStore } from './calibrations.ts';
 import { createChatConversationStore, type ChatConversationStore } from './chat-conversations.ts';
 import { createChatLiveTurnStore, type ChatLiveTurnStore } from './chat-live-turns.ts';
 import { createChatProposalStore, type ChatProposalStore } from './chat-proposals.ts';
@@ -17,6 +18,7 @@ import { createLocationStore, type LocationStore } from './locations.ts';
 import { createMemberStore, type MemberStore } from './members.ts';
 import { createNoteStore, type NoteStore } from './notes.ts';
 import { createOrgStore, type OrgStore } from './orgs.ts';
+import { createProfileStore, type ProfileStore } from './profiles.ts';
 import { createSalesDayStore, type SalesDayStore } from './sales-days.ts';
 import { createUploadDayStore, type UploadDayStore } from './upload-days.ts';
 import { createUploadStore, type UploadStore } from './uploads.ts';
@@ -42,6 +44,8 @@ export interface TownwiseStores {
   readonly agentAnswers: AgentAnswerStore;
   /** U11, statement moments. */
   readonly welcomes: WelcomeStore;
+  /** The display name for TownwiseAI's greeting (account-level, spec 6.22). */
+  readonly profiles: ProfileStore;
   /** Stored files (spec 11A). */
   readonly files: FileStore;
   readonly imports: ImportStore;
@@ -50,6 +54,8 @@ export interface TownwiseStores {
   readonly filesUsage: FilesUsageStore;
   /** U13B, forecast runs (spec 14.4). */
   readonly forecasts: ForecastStore;
+  /** The forecast lab's calibrations. */
+  readonly calibrations: CalibrationStore;
 }
 
 /** Registers every Townwise model on `connection`; call it before ensureIndexes. */
@@ -74,6 +80,7 @@ export function createTownwiseStores(connection: Connection): TownwiseStores {
     agentAnswers: createAgentAnswerStore(connection),
     // U11, statement moments.
     welcomes: createWelcomeStore(connection),
+    profiles: createProfileStore(connection),
     files: createFileStore(connection),
     imports: createImportStore(connection),
     uploadDays: createUploadDayStore(connection),
@@ -81,5 +88,7 @@ export function createTownwiseStores(connection: Connection): TownwiseStores {
     filesUsage: createFilesUsageStore(connection),
     // U13B, forecast runs.
     forecasts: createForecastStore(connection),
+    // The forecast lab.
+    calibrations: createCalibrationStore(connection),
   };
 }

@@ -18,7 +18,7 @@ import {
   closureNoteOf, parseQuestionId, QUESTION_ANSWERS, questionsFor, questionWindow, type Question, type QuestionAnswer,
 } from '../agent/questions.ts';
 import { utcDay } from '../dates.ts';
-import { currentEmail } from '../people.ts';
+import { authorEmail } from '../people.ts';
 import type { AnswerKey, AnswerRecord } from '../stores/agent-answers.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { NoteRecord } from '../stores/notes.ts';
@@ -53,10 +53,14 @@ async function currentQuestions(ctx: TownwiseContext, caller: MemberPrincipal, l
     ctx.stores.agentAnswers.list(scope, location.id),
   ]);
   const window = questionWindow(coverage);
-  const days = window === null ? [] : await ctx.stores.salesDays.days(scope, location.id, window);
+  // D28: a turned-off upload's days are left out of `days` and explained by `turnedOff`, so they are never asked about.
+  const [days, turnedOff] = window === null ? [[], []] : await Promise.all([
+    ctx.stores.salesDays.days(scope, location.id, window),
+    ctx.stores.salesDays.disabledDates(scope, location.id, window),
+  ]);
   // A save still in progress is not answered yet: the question stays until its answer is done.
   const answered = answers.filter((row) => row.status === 'done').map((row) => row.questionId);
-  return { questions: questionsFor({ coverage, days, notes, answered }), notes, answers };
+  return { questions: questionsFor({ coverage, days, notes, answered, turnedOff }), notes, answers };
 }
 
 /** GET /api/org/locations/:locationId/agent. */
@@ -72,7 +76,7 @@ export async function getAgent(ctx: TownwiseContext, req: Request, res: Response
 async function answerNote(ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord, row: AnswerRecord): Promise<NoteView | null> {
   if (row.answer !== 'closed') return null;
   const note = await ctx.stores.notes.find(caller.scope, location.id, row.noteId);
-  return note === null ? null : noteView(note, await currentEmail(ctx, note.createdBy), caller);
+  return note === null ? null : noteView(note, await authorEmail(ctx, note.createdBy, note.byStaff), caller);
 }
 
 /** POST /api/org/locations/:locationId/agent/questions/:questionId { answer }. */

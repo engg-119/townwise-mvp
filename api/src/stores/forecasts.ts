@@ -9,7 +9,7 @@ import { isDuplicateKeyError } from '@ckeith26/mongo';
 import mongoose, { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
-import type { DayStatus, ForecastRunFile, ReasonKind } from '../forecasts/file.ts';
+import type { DayStatus, ForecastRunFile, LabRunFile, ReasonKind } from '../forecasts/file.ts';
 
 export const FORECAST_RUNS_COLLECTION = 'tw_forecast_runs';
 export const FORECASTS_COLLECTION = 'tw_forecasts';
@@ -19,12 +19,21 @@ export const RUN_STATUSES: readonly RunStatus[] = ['importing', 'draft', 'publis
 
 type Backtest = NonNullable<ForecastRunFile['backtest']>;
 
+/** Where a lab run came from (G3): enough to reproduce it, since the fitted model itself is never stored. */
+export interface LabBlock {
+  calibrationId: string;
+  codeVersion: string;
+  imageDigest: string | null;
+  inputSha256: string;
+  paramsJson: string;
+}
+
 interface RunFields {
   orgId: Types.ObjectId;
   locationId: Types.ObjectId;
   metric: 'guests';
   model: ForecastRunFile['model'];
-  trainingSource: ForecastRunFile['trainingSource'];
+  trainingSource: 'files_from_owner' | 'townwise_lab';
   trainedFrom: string;
   dataThrough: string;
   madeAt: string;
@@ -41,6 +50,8 @@ interface RunFields {
   importedAt: Date;
   publishedAt: Date | null;
   withdrawnAt: Date | null;
+  /** Absent on runs imported before the forecast lab (a lean read applies no default). */
+  lab?: LabBlock | null;
 }
 
 export interface ReasonFields { kind: ReasonKind; ref: string | null; effectPct: number | null }
@@ -75,6 +86,11 @@ function runSchema(): Schema<RunFields> {
     weeklyTypicalErrorPct: { type: Number, required: true }, weeksOver20Pct: { type: Number, required: true },
     weeklyRangePct: { type: range, default: null },
   }, sub);
+  const lab = new Schema({
+    calibrationId: { type: String, required: true }, codeVersion: { type: String, required: true },
+    imageDigest: { type: String, default: null }, inputSha256: { type: String, required: true },
+    paramsJson: { type: String, required: true },
+  }, sub);
   const schema = new Schema<RunFields>({
     orgId: { type: Schema.Types.ObjectId, required: true },
     locationId: { type: Schema.Types.ObjectId, required: true },
@@ -97,6 +113,7 @@ function runSchema(): Schema<RunFields> {
     importedAt: { type: Date, required: true },
     publishedAt: { type: Date, default: null },
     withdrawnAt: { type: Date, default: null },
+    lab: { type: lab, default: null },
   }, { strict: 'throw', versionKey: false, read: 'primary', minimize: false });
   schema.index({ orgId: 1, locationId: 1, fileSha256: 1 }, { unique: true });
   schema.index({ orgId: 1, locationId: 1, status: 1, dataThrough: -1 });
@@ -144,7 +161,7 @@ export interface ForecastRunRecord {
   readonly locationId: string;
   readonly metric: 'guests';
   readonly model: ForecastRunFile['model'];
-  readonly trainingSource: ForecastRunFile['trainingSource'];
+  readonly trainingSource: 'files_from_owner' | 'townwise_lab';
   readonly trainedFrom: string;
   readonly dataThrough: string;
   readonly madeAt: string;
@@ -159,6 +176,7 @@ export interface ForecastRunRecord {
   readonly importedAt: Date;
   readonly publishedAt: Date | null;
   readonly withdrawnAt: Date | null;
+  readonly lab: LabBlock | null;
 }
 
 export interface ForecastRow {
@@ -181,9 +199,12 @@ export type ForecastRowInput = Omit<ForecastRow, 'runId'>;
 /** What the import writes on a new run. */
 export interface RunInput {
   readonly id: string;
-  readonly file: ForecastRunFile;
+  readonly file: ForecastRunFile | LabRunFile;
   readonly fileSha256: string;
-  readonly importedBy: string;
+  /** The staff member who imported it; null for a lab run. */
+  readonly importedBy: string | null;
+  /** Set on a lab run only. */
+  readonly lab: LabBlock | null;
   readonly now: Date;
 }
 
@@ -244,6 +265,10 @@ function toRun(doc: RunDoc): ForecastRunRecord {
     importedAt: doc.importedAt,
     publishedAt: doc.publishedAt,
     withdrawnAt: doc.withdrawnAt,
+    lab: doc.lab == null ? null : {
+      calibrationId: doc.lab.calibrationId, codeVersion: doc.lab.codeVersion, imageDigest: doc.lab.imageDigest,
+      inputSha256: doc.lab.inputSha256, paramsJson: doc.lab.paramsJson,
+    },
   };
 }
 
@@ -283,6 +308,10 @@ function runFields(input: RunInput): Omit<RunFields, 'orgId' | 'locationId' | 'f
     importedAt: input.now,
     publishedAt: null,
     withdrawnAt: null,
+    lab: input.lab === null ? null : {
+      calibrationId: input.lab.calibrationId, codeVersion: input.lab.codeVersion, imageDigest: input.lab.imageDigest,
+      inputSha256: input.lab.inputSha256, paramsJson: input.lab.paramsJson,
+    },
   };
 }
 

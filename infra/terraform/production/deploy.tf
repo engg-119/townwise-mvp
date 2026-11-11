@@ -1,11 +1,12 @@
 # What the deploy identity (bootstrap/github.tf) may do, each grant scoped to one resource:
-# push to the registry, update the one Container App, and read the Static Web App deployment token.
+# push to the registry, update the one Container App (and the one lab job, when the forecast lab is on), and read
+# the Static Web App deployment token.
 # No subscription or resource-group scope, no Key Vault, no listSecrets on the Container App.
 
 resource "azurerm_role_definition" "deployer" {
   name              = "Townwise deployer"
   scope             = data.azurerm_resource_group.prod.id
-  description       = "Update the Townwise API image and read the Static Web App deployment token."
+  description       = "Update the Townwise API image (and the lab job's) and read the Static Web App deployment token."
   assignable_scopes = [data.azurerm_resource_group.prod.id]
 
   permissions {
@@ -13,6 +14,8 @@ resource "azurerm_role_definition" "deployer" {
       "Microsoft.App/containerApps/read",
       "Microsoft.App/containerApps/write",
       "Microsoft.App/containerApps/revisions/read",
+      "Microsoft.App/jobs/read",
+      "Microsoft.App/jobs/write",
       "Microsoft.App/managedEnvironments/read",
       "Microsoft.App/managedEnvironments/join/action",
       "Microsoft.ContainerRegistry/registries/read",

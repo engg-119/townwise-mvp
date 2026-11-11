@@ -1,6 +1,6 @@
 // Forecast runs from the staff console (spec 10.13, 14.4): import as a draft, the same file again, an unfinished
-// import finished by a retry, publish and withdraw by compare-and-set, delete, staff-only routes, another
-// organization's ids answering 404, audit events with no figure that the org's admins see in their staff activity,
+// import finished by a retry, publish and withdraw by compare-and-set, no publish while the organization's forecasts
+// are switched off (G1), delete, staff-only routes, another organization's ids answering 404, audit events with no figure that the org's admins see in their staff activity,
 // log lines with ids and counts only, and the runs deleted with the organization, the location and its sales data,
 // with staff ids cleared on person deletion. The fixture's numbers are synthetic.
 import { randomUUID } from 'node:crypto';
@@ -30,8 +30,9 @@ beforeEach(async () => { await server.redis.flushdb(); });
 
 interface Team { orgId: string; locationId: string; admin: TestSession }
 
-async function team(name = `Forecast Kitchen ${randomUUID().slice(0, 6)}`): Promise<Team> {
-  const orgId = await createOrg(server, { name });
+/** An organization whose forecasts are switched on (G1) unless `forecastsOn` is false. */
+async function team(name = `Forecast Kitchen ${randomUUID().slice(0, 6)}`, opts: { forecastsOn?: boolean } = {}): Promise<Team> {
+  const orgId = await createOrg(server, { name, forecastsOn: opts.forecastsOn ?? true });
   const email = `admin-${randomUUID().slice(0, 8)}@example.test`;
   const admin = await signIn(server, email);
   await addSeat(server, { orgId, userId: admin.userId, email, role: 'org_admin' });
@@ -187,6 +188,21 @@ describe('publish, withdraw and delete', () => {
     expect((await auditEvents(server)).length).toBe(before);
     const doc = await server.connection.collection('tw_forecast_runs').findOne({ _id: new Types.ObjectId(run.id) });
     expect(doc).toMatchObject({ publishedBy: staff.userId, importedBy: staff.userId });
+  });
+
+  it('staff publish of a draft is 409 forecasts_off while the switch is off, and writes no event', async () => {
+    const t = await team(undefined, { forecastsOn: false });
+    const run = await imported(t);
+    const before = (await auditEvents(server)).length;
+    const res = await change(t, run.id, 'publish');
+    expect(await res.json()).toMatchObject({ error: 'forecasts_off', message: 'Forecasts are off for this organization. Switch them on first.' });
+    expect(res.status).toBe(409);
+    expect((await auditEvents(server)).length).toBe(before);
+    expect((await server.connection.collection('tw_forecast_runs').findOne({ _id: new Types.ObjectId(run.id) }))?.status).toBe('draft');
+    // Switched on with the owner's agreement, the same publish goes through.
+    const on = await call(server, `/api/admin/orgs/${t.orgId}/forecasts-switch`, { session: staff, json: { on: true, ownerAgreed: true } });
+    expect(on.status).toBe(200);
+    expect((await change(t, run.id, 'publish')).status).toBe(200);
   });
 
   it('withdraws a draft or a published run; a withdrawn run cannot be published again', async () => {

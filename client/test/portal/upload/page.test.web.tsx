@@ -7,8 +7,9 @@ import { ApiError } from '../../../src/api/client';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
 import {
-  ACCESS, deferred, EMAIL, fakePortalApi, LOCATIONS, meOf, offline, orgOf, refusal, TARGET_EMAIL, viewAsMe, writes, type FakePortalApi,
+  ACCESS, deferred, EMAIL, fakePortalApi, LOCATIONS, locationOf, meOf, offline, orgOf, refusal, TARGET_EMAIL, viewAsMe, writes, type FakePortalApi,
 } from '../../helpers/portal';
+import { choicesOf, choose as pick, shownChoice } from '../../helpers/select';
 
 // P13 on the web, through the whole app: choose a file, match columns, check the totals, send. Every file here is
 // synthetic. A sentinel name sits in the cells of every file and must never reach the screen (D11) or the request
@@ -109,12 +110,12 @@ async function toCheck(file: File): Promise<void> {
   await screen.findByRole('heading', { name: 'Check the totals' });
 }
 
-function select(name: string): HTMLSelectElement {
-  return screen.getByRole<HTMLSelectElement>('combobox', { name });
+function select(name: string): HTMLElement {
+  return screen.getByRole('combobox', { name });
 }
 
 function optionsOf(name: string): string[] {
-  return [...select(name).options].map((option) => option.text);
+  return choicesOf(select(name));
 }
 
 function answerFor(counts: { dayCount: number; inserted: number; replaced: number; kept: number }): () => unknown {
@@ -157,9 +158,9 @@ test('an org admin’s upload: match, check, send one body of days, and the repl
   await toMatch(csvFile(FILE));
   expect(screen.getByText('Step 2 of 4: Choose a file, Match columns, Check the totals, Send.')).toBeTruthy();
   // Header guesses preselect the pickers; each lists header names with their kind, never a cell.
-  expect(select('Date').value).toBe('0');
-  expect(select('Guests').value).toBe('2');
-  expect(select('Net sales').value).toBe('3');
+  expect(shownChoice(select('Date'))).toBe('Business Date: dates');
+  expect(shownChoice(select('Guests'))).toBe('Guest Count: numbers');
+  expect(shownChoice(select('Net sales'))).toBe('Net Sales: numbers');
   expect(optionsOf('Date')).toEqual(['Choose a column', 'Business Date: dates', 'Customer: text', 'Guest Count: numbers', 'Net Sales: numbers', 'Server: text']);
   expect(optionsOf('Guests')[0]).toBe('Not in this file');
   expect(pageText()).not.toContain(SENTINEL);
@@ -184,7 +185,7 @@ test('an org admin’s upload: match, check, send one body of days, and the repl
 
   await click('Send 3 days');
   expect(await screen.findByText('Saved 3 days for Main Street Bar: 2 new, 1 replaced.')).toBeTruthy();
-  expect(screen.getByText('Your sales history is in: 402 days, Jan 1, 2025 to Feb 4, 2026. Calibration isn’t built yet, so there is no forecast.')).toBeTruthy();
+  expect(screen.getByText('Your sales history is in: 402 days, Jan 1, 2025 to Feb 4, 2026.')).toBeTruthy();
   expect(screen.getByText('Step 4 of 4: Choose a file, Match columns, Check the totals, Send.')).toBeTruthy();
   expect(screen.getByRole('link', { name: 'See your sales data' }).getAttribute('href')).toBe('/locations/l1/sales');
   expect(screen.getByRole('link', { name: 'Add notes for unusual days' }).getAttribute('href')).toBe('/locations/l1/notes');
@@ -194,6 +195,19 @@ test('an org admin’s upload: match, check, send one body of days, and the repl
   // The file is gone: no control holds it and no step can go back to it.
   expect(fileInput()).toBeNull();
   expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
+});
+
+test('days held by a turned-off upload are named in the check, for an admin and for a member', async () => {
+  const held = [locationOf('l1', 'Main Street Bar', { townId: 'hanover-nh', name: 'Hanover', state: 'NH' }, { offDayCount: 12 })];
+  renderAt(fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin', held) }));
+  await toCheck(csvFile(FILE));
+  expect(screen.getByText('12 days are held by turned-off uploads. Any of them this file covers will be replaced, and will show again.')).toBeTruthy();
+  expect(screen.queryByText(/^You already have/)).toBeNull();
+  cleanup();
+
+  renderAt(fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member', held) }));
+  await toCheck(csvFile(FILE));
+  expect(screen.getByText('12 days are held by turned-off uploads. Any of them this file covers stay as they are, and stay hidden.')).toBeTruthy();
 });
 
 test('a member’s upload adds new days only, with the member copy before and after', async () => {
@@ -238,11 +252,11 @@ test('the item-level choice blocks Check the totals, and one check or order adds
 test('guests, net sales or both: neither blocks Check the totals', async () => {
   renderAt(adminApi());
   await toMatch(csvFile(FILE));
-  fireEvent.change(select('Guests'), { target: { value: '' } });
-  fireEvent.change(select('Net sales'), { target: { value: '' } });
+  pick(select('Guests'), 'Not in this file');
+  pick(select('Net sales'), 'Not in this file');
   expect(await screen.findByText('Choose a guests column, a net sales column, or both.')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Check the totals' }).getAttribute('aria-disabled')).toBe('true');
-  fireEvent.change(select('Net sales'), { target: { value: '3' } });
+  pick(select('Net sales'), 'Net Sales: numbers');
   await waitFor(() => { expect(screen.queryByText('Choose a guests column, a net sales column, or both.')).toBeNull(); });
 });
 
@@ -290,10 +304,12 @@ test('a location column lists its values, the only cells shown, and other locati
   renderAt(api);
   await toMatch(csvFile(text));
   expect(pageText()).not.toContain('Elm Street Cafe');
-  await settle(() => { fireEvent.change(select('Location column (optional)'), { target: { value: '1' } }); });
-  const values = await screen.findByRole<HTMLSelectElement>('combobox', { name: 'Which value is Main Street Bar?' });
+  // Opening the list needs its own act, so the pick runs outside settle, which then waits out the file read.
+  pick(select('Location column (optional)'), 'Store: text');
+  await settle(() => undefined);
+  const values = await screen.findByRole('combobox', { name: 'Which value is Main Street Bar?' });
   expect(optionsOf('Which value is Main Street Bar?')).toEqual(['Choose a value', 'Elm Street Cafe', 'Main Street Bar']);
-  await waitFor(() => { expect(values.value).toBe('Main Street Bar'); });
+  await waitFor(() => { expect(shownChoice(values)).toBe('Main Street Bar'); });
   expect(pageText()).not.toContain(SENTINEL);
   await click('Check the totals');
   expect(await screen.findByText('1 row was for another location.')).toBeTruthy();
@@ -305,10 +321,12 @@ test('a location column lists its values, the only cells shown, and other locati
 test('a location column whose values don’t include the location’s name waits for a choice', async () => {
   renderAt(adminApi());
   await toMatch(csvFile('Date,Store,Guests\n2025-03-04,Store 1,10\n2025-03-04,Store 2,20'));
-  await settle(() => { fireEvent.change(select('Location column (optional)'), { target: { value: '1' } }); });
+  // Opening the list needs its own act, so the pick runs outside settle, which then waits out the file read.
+  pick(select('Location column (optional)'), 'Store: text');
+  await settle(() => undefined);
   expect(await screen.findByText('Choose which value is Main Street Bar.')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Check the totals' }).getAttribute('aria-disabled')).toBe('true');
-  fireEvent.change(select('Which value is Main Street Bar?'), { target: { value: 'Store 2' } });
+  pick(select('Which value is Main Street Bar?'), 'Store 2');
   await waitFor(() => { expect(screen.getByRole('button', { name: 'Check the totals' }).getAttribute('aria-disabled')).toBeNull(); });
 });
 
@@ -318,7 +336,9 @@ test('while a location column’s values are read, Check the totals is described
   let reads = 0;
   renderAt(adminApi());
   await toMatch(csvFile(text, 'export.csv', { text: () => { reads += 1; return reads === 1 ? Promise.resolve(text) : later.promise; } }));
-  await settle(() => { fireEvent.change(select('Location column (optional)'), { target: { value: '1' } }); });
+  // Opening the list needs its own act, so the pick runs outside settle, which then waits out the file read.
+  pick(select('Location column (optional)'), 'Store: text');
+  await settle(() => undefined);
   expect(screen.getByText('Reading 1 KB file…')).toBeTruthy();
   const check = screen.getByRole('button', { name: 'Check the totals' });
   expect(check.getAttribute('aria-disabled')).toBe('true');
@@ -368,7 +388,7 @@ test('check errors: repeated dates in one-day mode, and no readable date; Back r
   expect(screen.getByText('1 date appears more than once (row 3). Choose “One check or order”, or fix the file.')).toBeTruthy();
   expect(screen.queryByRole('button', { name: /^Send/ })).toBeNull();
   await click('Back');
-  fireEvent.change(await screen.findByRole('combobox', { name: 'Date' }), { target: { value: '1' } });
+  pick(await screen.findByRole('combobox', { name: 'Date' }), 'Guests: numbers');
   await click('Check the totals');
   expect(await screen.findByText('No rows had a readable date. Check the Date column.')).toBeTruthy();
 });

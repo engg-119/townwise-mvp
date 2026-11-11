@@ -1,7 +1,7 @@
 import { ConfigError, loadEnv } from '@ckeith26/server-core';
 import { describe, expect, it } from 'vitest';
 
-import { configSchema, filesBackendOf, resolveTownwiseConfig } from '../src/config.ts';
+import { configSchema, filesBackendOf, labRunnerOf, resolveTownwiseConfig } from '../src/config.ts';
 
 function parse(value: string | undefined): readonly string[] {
   return loadEnv(configSchema, { TOWNWISE_SUPERADMIN_EMAILS: value }).TOWNWISE_SUPERADMIN_EMAILS;
@@ -160,5 +160,82 @@ describe('config', () => {
       TOWNWISE_WEB_URL: 'http://localhost:8081', TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5, ...azurite,
     })).toThrow(ConfigError);
     expect(() => loadEnv(configSchema, { FILES_BLOB_ACCOUNT_URL: 'not a url' })).toThrow(ConfigError);
+  });
+
+  describe('the forecast lab runner', () => {
+    const JOB_ID = '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-townwise-prod/providers/Microsoft.App/jobs/caj-townwise-lab';
+    // The lab callback app's client id, the lab identity's principal id and the tenant (azure only, set by Terraform).
+    const CALLER = {
+      TOWNWISE_LAB_AUDIENCE: '22222222-2222-4222-8222-222222222222',
+      TOWNWISE_LAB_CALLER_ID: '33333333-3333-4333-8333-333333333333',
+      TOWNWISE_LAB_TENANT_ID: '11111111-1111-4111-8111-111111111111',
+    };
+    const AZURE = { kind: 'azure', jobId: JOB_ID, caller: { audience: CALLER.TOWNWISE_LAB_AUDIENCE, objectId: CALLER.TOWNWISE_LAB_CALLER_ID, tenantId: CALLER.TOWNWISE_LAB_TENANT_ID } };
+    const lab = (env: Record<string, string>) => labRunnerOf(loadEnv(configSchema, env));
+
+    function problemsOf(run: () => unknown): string[] {
+      try {
+        run();
+      } catch (err) {
+        expect(err).toBeInstanceOf(ConfigError);
+        expect(String(err)).not.toContain('sentinel');
+        return (err as ConfigError).problems.map((problem) => problem.variable);
+      }
+      return expect.unreachable();
+    }
+
+    it('is off by default, and off ignores the other variables', () => {
+      expect(lab({})).toBeNull();
+      expect(lab({ TOWNWISE_LAB_RUNNER: '' })).toBeNull();
+      expect(lab({ TOWNWISE_LAB_RUNNER: 'off', TOWNWISE_LAB_JOB_ID: JOB_ID, TOWNWISE_LAB_API_URL: 'http://localhost:8080', ...CALLER })).toBeNull();
+    });
+
+    it('local runs uv in ../modeling/lab by default and calls back on the bare origin given', () => {
+      expect(lab({ TOWNWISE_LAB_RUNNER: 'local', TOWNWISE_LAB_API_URL: 'http://localhost:8080/' }))
+        .toEqual({ kind: 'local', apiUrl: 'http://localhost:8080', projectDir: '../modeling/lab' });
+      expect(lab({ TOWNWISE_LAB_RUNNER: 'local', TOWNWISE_LAB_API_URL: 'http://localhost:8080', TOWNWISE_LAB_PROJECT_DIR: '/srv/lab' }))
+        .toMatchObject({ projectDir: '/srv/lab' });
+      // local needs none of azure's sign-in variables, and ignores them.
+      expect(lab({ TOWNWISE_LAB_RUNNER: 'local', TOWNWISE_LAB_API_URL: 'http://localhost:8080', ...CALLER }))
+        .toEqual({ kind: 'local', apiUrl: 'http://localhost:8080', projectDir: '../modeling/lab' });
+    });
+
+    it('production refuses local, as it refuses Azurite', () => {
+      const env = { TOWNWISE_LAB_RUNNER: 'local', TOWNWISE_LAB_API_URL: 'http://localhost:8080' };
+      expect(problemsOf(() => labRunnerOf({ ...loadEnv(configSchema, env), NODE_ENV: 'production' }))).toEqual(['TOWNWISE_LAB_RUNNER']);
+      expect(labRunnerOf({ ...loadEnv(configSchema, env), NODE_ENV: 'development' })).toMatchObject({ kind: 'local' });
+      expect(labRunnerOf({ ...loadEnv(configSchema, { TOWNWISE_LAB_RUNNER: 'azure', TOWNWISE_LAB_JOB_ID: JOB_ID, ...CALLER }), NODE_ENV: 'production' }))
+        .toEqual(AZURE);
+    });
+
+    it('azure starts the job by its resource id and accepts only the lab identity’s token for the callback app', () => {
+      expect(lab({ TOWNWISE_LAB_RUNNER: 'azure', TOWNWISE_LAB_JOB_ID: JOB_ID, ...CALLER })).toEqual(AZURE);
+    });
+
+    it('azure without any of its sign-in variables refuses boot naming each missing one', () => {
+      expect(problemsOf(() => lab({ TOWNWISE_LAB_RUNNER: 'azure', TOWNWISE_LAB_JOB_ID: JOB_ID })))
+        .toEqual(['TOWNWISE_LAB_AUDIENCE', 'TOWNWISE_LAB_CALLER_ID', 'TOWNWISE_LAB_TENANT_ID']);
+      for (const name of Object.keys(CALLER)) {
+        const env: Record<string, string> = { TOWNWISE_LAB_RUNNER: 'azure', TOWNWISE_LAB_JOB_ID: JOB_ID, ...CALLER };
+        env[name] = '';
+        expect(problemsOf(() => lab(env))).toEqual([name]);
+        // A value that is not a GUID refuses boot too, naming the variable and not the value.
+        env[name] = 'sentinel-not-a-guid';
+        expect(problemsOf(() => lab(env))).toEqual([name]);
+      }
+    });
+
+    it('a missing one for the chosen runner is a ConfigError naming it, and no value is echoed', () => {
+      expect(problemsOf(() => lab({ TOWNWISE_LAB_RUNNER: 'local' }))).toEqual(['TOWNWISE_LAB_API_URL']);
+      expect(problemsOf(() => lab({ TOWNWISE_LAB_RUNNER: 'azure', TOWNWISE_LAB_API_URL: 'http://localhost:8080', ...CALLER }))).toEqual(['TOWNWISE_LAB_JOB_ID']);
+      expect(problemsOf(() => lab({ TOWNWISE_LAB_RUNNER: 'azure' }))).toEqual([
+        'TOWNWISE_LAB_JOB_ID', 'TOWNWISE_LAB_AUDIENCE', 'TOWNWISE_LAB_CALLER_ID', 'TOWNWISE_LAB_TENANT_ID',
+      ]);
+      expect(problemsOf(() => lab({ TOWNWISE_LAB_RUNNER: 'sentinel-runner' }))).toEqual(['TOWNWISE_LAB_RUNNER']);
+      expect(problemsOf(() => lab({ TOWNWISE_LAB_RUNNER: 'azure', TOWNWISE_LAB_JOB_ID: '/subscriptions/sentinel/jobs/x' }))).toEqual(['TOWNWISE_LAB_JOB_ID']);
+      expect(problemsOf(() => lab({ TOWNWISE_LAB_RUNNER: 'local', TOWNWISE_LAB_API_URL: 'http://localhost:8080/sentinel-path' })))
+        .toEqual(['TOWNWISE_LAB_API_URL']);
+      expect(problemsOf(() => lab({ TOWNWISE_LAB_RUNNER: 'local', TOWNWISE_LAB_API_URL: 'ftp://sentinel.example.test' }))).toEqual(['TOWNWISE_LAB_API_URL']);
+    });
   });
 });

@@ -98,3 +98,31 @@ variable "enable_places" {
   type        = bool
   default     = false
 }
+
+variable "enable_lab" {
+  description = "Turn on the forecast lab: the lab job, its identity, the API identity's right to start it, and the API's TOWNWISE_LAB_ variables (infra/README.md, step 20). Needs lab_image and lab_callback_client_id. False leaves calibrations off."
+  type        = bool
+  default     = false
+}
+
+variable "lab_image" {
+  description = "Lab image for the first apply with enable_lab, pinned by digest (<registry>/townwise-lab@sha256:...), from the deploy log. Afterwards the deploy workflow owns the image, and Terraform ignores it."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.lab_image == null || can(regex("^[a-z0-9.-]+/townwise-lab@sha256:[0-9a-f]{64}$", var.lab_image))
+    error_message = "lab_image must be <registry>/townwise-lab@sha256:<64 hex>."
+  }
+}
+
+variable "lab_callback_client_id" {
+  description = "Client id of the lab callback app, the audience the lab job's token is for: `terraform output lab_callback_client_id` in bootstrap (infra/README.md, step 20). Required with enable_lab."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.lab_callback_client_id == null || can(regex("^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$", var.lab_callback_client_id))
+    error_message = "lab_callback_client_id must be the app's client id as a lowercase GUID, as bootstrap outputs it (not its api:// identifier URI): the API compares the token's audience to it exactly."
+  }
+}

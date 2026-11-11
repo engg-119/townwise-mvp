@@ -10,6 +10,7 @@ jest.mock('expo-splash-screen', () => ({
 import { Dimensions } from 'react-native';
 import { act, cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing-library';
 
+import { resetProfiles } from '../../../src/portal/profile/useProfile';
 import { formatDate, formatTime } from '../../../src/portal/format';
 import type { StaffActivity } from '../../../src/portal/settings/api';
 import {
@@ -22,21 +23,24 @@ const WINDOW = Dimensions.get('window');
 
 afterEach(async () => {
   await cleanup();
+  resetProfiles();
 });
+
+const PROFILE = (): unknown => ({ displayName: 'Pat', askName: false });
 
 const EVENTS = [VIEW_AS_EVENT, ADD_EVENT, REFUSED_EVENT];
 
 function adminApi(events: StaffActivity[] | (() => unknown) = EVENTS): { api: FakePortalApi; routes: Routes } {
   const api = fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin') });
   const routes = withRoutes(api, {
-    gets: { '/api/org/staff-activity': typeof events === 'function' ? events : () => ({ events }) },
+    gets: { '/api/org/staff-activity': typeof events === 'function' ? events : () => ({ events }), '/api/me/profile': PROFILE },
   });
   return { api, routes };
 }
 
 function memberApi(): { api: FakePortalApi; routes: Routes } {
   const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') });
-  return { api, routes: withRoutes(api) };
+  return { api, routes: withRoutes(api, { gets: { '/api/me/profile': PROFILE } }) };
 }
 
 /** The page's own Sign out (the top bar has the other). */

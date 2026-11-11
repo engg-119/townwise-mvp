@@ -31,6 +31,7 @@ const NO_SALES = {
   calibration: { state: 'no_sales_data' },
   notesCount: 0,
   lastUploadAt: null,
+  offDayCount: 0,
 };
 
 interface Team { orgId: string; admin: TestSession; adminEmail: string; member: TestSession }
@@ -86,7 +87,7 @@ describe('GET /api/org', () => {
           id: busy, name: 'Busy Room', town, placeId: null,
           coverage: { dayCount: 2, guestsDayCount: 1, netSalesDayCount: 1, firstDate: '2026-05-01', lastDate: '2026-05-04', missingDays: 2 },
           calibration: { state: 'not_calibrated', dayCount: 2, firstDate: '2026-05-01', lastDate: '2026-05-04' },
-          notesCount: 1, lastUploadAt: uploadedAt.toISOString(),
+          notesCount: 1, lastUploadAt: uploadedAt.toISOString(), offDayCount: 0,
         },
         { id: quiet, name: 'Quiet Room', town, ...NO_SALES },
       ],
@@ -483,7 +484,7 @@ describe('the Places budget while its store is down', () => {
     } as unknown as TownwiseContext;
     const admin = {
       kind: 'member', userId: '000000000000000000000001', email: 'admin@example.test', role: 'org_admin', memberId: '000000000000000000000002',
-      scope: { orgId: '000000000000000000000003' }, viewAs: null,
+      scope: { orgId: '000000000000000000000003' }, viewAs: null, openAsAdmin: null,
     } as unknown as Principal;
     const res = {} as ExpressResponse;
     const withPlace = { body: { name: 'Outage', town: { townId: 'hanover-nh' }, placeId: 'ChIJTestPlace0001' } } as Request;

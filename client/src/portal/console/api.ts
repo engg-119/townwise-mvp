@@ -22,8 +22,11 @@ export function fetchRequests(api: ApiClient, status: RequestStatus): Promise<Re
   return api.json(`/api/admin/requests?status=${status}`, requestListSchema);
 }
 
+/** A request without places names its one location; one with places names each, in the places' order. */
+export type ApproveInput = { orgName: string; locationName: string } | { orgName: string; locationNames: string[] };
+
 export function approveRequest(
-  api: ApiClient, requestId: string, input: { orgName: string; locationName: string },
+  api: ApiClient, requestId: string, input: ApproveInput,
 ): Promise<{ org: { id: string; name: string }; request: AdminRequest }> {
   return api.json(`/api/admin/requests/${id(requestId)}/approve`, approvedSchema, { method: 'POST', body: input });
 }
@@ -146,6 +149,11 @@ export function fetchAudit(api: ApiClient, query: AuditQuery): Promise<AuditPage
   const params = (['orgId', 'actorUserId', 'action', 'before'] as const)
     .flatMap((key) => (query[key] === undefined || query[key] === '' ? [] : [`${key}=${encodeURIComponent(query[key])}`]));
   return api.json(params.length === 0 ? '/api/admin/audit' : `/api/admin/audit?${params.join('&')}`, auditPageSchema);
+}
+
+/** 201 with the organization's admin access, the staff member still the user (D25). No body. */
+export function openAsAdmin(api: ApiClient, orgId: string): Promise<MeResponse> {
+  return api.json(`/api/admin/orgs/${encodeURIComponent(orgId)}/open-as-admin`, meResponseSchema, { method: 'POST' });
 }
 
 /** 201 with the target's access and `viewAs` set. */

@@ -125,11 +125,12 @@ test('every question says what Townwise asks, and what the answer does', () => {
 test('the drop step offers sending only daily totals, and says what deleting keeps', () => {
   expect(copy.COPY.dailyTotalsOnly).toBe('Prefer to send only daily totals? Read the file in your browser instead.');
   expect(copy.acceptHint(209_715_200)).toBe('Any file: CSV, Excel, PDF, Word, ZIP or text, up to 200 MB each.');
-  expect(copy.deleteFileBody(fileViewOf('f1', { name: 'a.csv' }))).toBe(
-    'This deletes the original, the cleaned copy and what Townwise found in a.csv. The 731 days it added stay in your sales data. This can’t be undone.',
-  );
   expect(copy.deleteRawBody(fileViewOf('f1', { name: 'a.csv' }))).toMatch(/The cleaned copy and the days it added stay/);
+  expect(copy.deleteAllRawBody('Main Room')).toBe(
+    'This deletes the original of every sales file for Main Room. Cleaned copies and days stay, and so do items kept for reference. Files still uploading or being read are skipped. This can’t be undone.',
+  );
   expect(copy.deletedOriginalsLine({ deletedOriginals: 3, skippedBusy: 1 })).toBe('Deleted 3 originals. 1 file was busy and kept.');
+  expect(copy.deletedOriginalsLine({ deletedOriginals: 1, skippedBusy: 0 })).toBe('Deleted 1 original.');
 });
 
 test('no line uses an em dash', () => {

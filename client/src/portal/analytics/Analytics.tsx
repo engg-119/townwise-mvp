@@ -8,6 +8,7 @@ import { useBreakpoint, useLoad } from '../hooks';
 import { addDays, formatMonth, localToday, monthRange } from '../locations/dates';
 import { fetchNotes, type Note } from '../locations/api';
 import { LoadFailure, Loading, ShowNumbers, UploadAction } from '../locations/parts';
+import { UPLOADS_OFF_LINE } from '../locations/sales';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { locationHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
@@ -128,10 +129,16 @@ function AnalyticsView(props: { data: Data; today: string; locationId: string; r
       <View>
         <Stack gap={32}>
           <FilterPanel filters={filters} years={allYears} metrics={metrics} onChange={onFilters} onYear={onYear} keepOneYear={false} disabled />
-          <EmptyState text="No sales history yet.">
-            <UploadAction locationId={locationId} variant="link" readOnlyId={readOnlyId} />
-            {readOnlyId === null ? null : <ReadOnlyLine text={props.readOnlyText} nativeID={readOnlyId} />}
-          </EmptyState>
+          {history.uploadsOff === true ? (
+            <EmptyState text={UPLOADS_OFF_LINE}>
+              <Actions><LinkButton href={locationHref(locationId, 'data')} label="Open Your data" /></Actions>
+            </EmptyState>
+          ) : (
+            <EmptyState text="No sales history yet.">
+              <UploadAction locationId={locationId} variant="link" readOnlyId={readOnlyId} />
+              {readOnlyId === null ? null : <ReadOnlyLine text={props.readOnlyText} nativeID={readOnlyId} />}
+            </EmptyState>
+          )}
         </Stack>
       </View>
     );

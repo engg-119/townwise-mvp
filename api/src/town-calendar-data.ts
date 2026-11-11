@@ -40,6 +40,10 @@ const REGISTRAR_2026_27: CalendarSource = {
   label: 'Dartmouth Registrar, 2026-27 key dates',
   url: 'https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027-key-dates',
 };
+const REGISTRAR_2027_28: CalendarSource = {
+  label: 'Dartmouth Registrar, 2027-28 key dates',
+  url: 'https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2027-2028-key-dates',
+};
 const FIVE_YEAR_JUL_2024: CalendarSource = {
   label: 'Dartmouth Conferences and Events five-year calendar, July 2024 (Internet Archive copy)',
   url: 'https://web.archive.org/web/2/https://dartmouth.edu/cse/docs/5_year_calendar_07082024.pdf',
@@ -169,4 +173,25 @@ export const TOWN_CALENDAR: readonly TownCalendarEntry[] = [
   // Scheduled exams end 2027-06-07; the exam period ends 2027-06-08.
   finals('spring', '2027-06-04', '2027-06-08', high(REGISTRAR_2026_27)),
   event('Commencement', 'commencement', 'Commencement', '2027-06-13', '2027-06-13', high(REGISTRAR_2026_27)),
+
+  // Researched 2026-11-09, so forecasts can reach twelve months ahead. Summer 2027 is on the 2027-28 page, not the
+  // 2026-27 one. The five-year calendar lists Green Key, Family Weekend and orientation for 2027 without dates, so
+  // they are left out until dated.
+  // A special day of classes on Saturday 2027-06-26; no classes on 2027-07-05 (Independence Day observed).
+  classes('summer', '2027-06-24', '2027-08-25', high(REGISTRAR_2027_28)),
+  // Scheduled exams end 2027-08-30.
+  finals('summer', '2027-08-28', '2027-08-31', high(REGISTRAR_2027_28)),
+  // The five-year calendar still marks fall 2027 tentative; the registrar does not.
+  classes('fall', '2027-09-13', '2027-11-16', high(REGISTRAR_2027_28)),
+  // Exams suspended on 2027-11-20; scheduled exams end 2027-11-23.
+  finals('fall', '2027-11-19', '2027-11-24', high(REGISTRAR_2027_28)),
+  event('Winter Carnival', 'winter-carnival', 'Winter Carnival', '2027-02-04', '2027-02-07', high(FIVE_YEAR_OCT_2026)),
+  // In November this year: Dartmouth Night Friday 11-05, football vs Princeton Saturday 11-06.
+  event('Dartmouth Night and Homecoming', 'homecoming', 'Homecoming', '2027-11-05', '2027-11-06', high(FIVE_YEAR_OCT_2026)),
+  // The five-year calendar lists only home games ("Football vs."), all Saturdays; Athletics has not published 2027.
+  homeFootball('Sacred Heart', '2027-09-18', medium(FIVE_YEAR_OCT_2026)),
+  homeFootball('Yale', '2027-10-09', medium(FIVE_YEAR_OCT_2026)),
+  homeFootball('Columbia', '2027-10-23', medium(FIVE_YEAR_OCT_2026)),
+  homeFootball('Princeton', '2027-11-06', medium(FIVE_YEAR_OCT_2026)),
+  homeFootball('Cornell', '2027-11-13', medium(FIVE_YEAR_OCT_2026)),
 ];
