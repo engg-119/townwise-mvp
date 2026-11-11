@@ -9,8 +9,9 @@
 #   -n  jobs at a time (default 2)
 #   -i  run this image tag instead of building infra/ci-runner/Dockerfile
 # Needs Docker Desktop on Apple Silicon, jq, and gh signed in as an admin of the repository (generate-jitconfig
-# requires admin). The runner config stays in shell variables and the container's environment: it is never
-# printed, written to a file or put on a command line.
+# requires admin). The runner config stays in shell variables and the container's environment: this script never
+# prints it, writes it to a file or puts it on a command line. (The runner writes its credentials into the job
+# folder, which is removed with the job.)
 set -euo pipefail
 
 repo=engg-119/engg-119-mvp
@@ -49,6 +50,12 @@ if [ -z "$image" ]; then
   docker build -t "$image" "$here"
 fi
 
+# Each slot gets its own four of the VM's CPUs (--cpuset-cpus), like a 4-vCPU hosted runner. Jest and Vitest size
+# their worker pools from the CPUs a process may use: with all 16, the verify job's Jest alone peaked near 14 GiB
+# and the VM killed a worker. Slots share CPUs only when there are more slots than sets of four.
+cpu_sets=$(($(docker info --format '{{.NCPU}}') / 4))
+if [ "$cpu_sets" -lt 1 ]; then echo "Docker Desktop needs at least 4 CPUs (Settings, Resources)" >&2; exit 1; fi
+
 mkdir -p "$jobs"
 session="$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"
 prefix="townwise-laptop-$session"
@@ -73,7 +80,7 @@ clear_slot() {
 }
 
 start_slot() {
-  local s="$1" n resp cfg id
+  local s="$1" n resp cfg id first_cpu
   count=$((count + 1))
   n="$prefix-$s-$count"
   if ! resp="$(gh api -X POST "repos/$repo/actions/runners/generate-jitconfig" \
@@ -96,9 +103,10 @@ start_slot() {
   fi
   mkdir "${dir[s]}"
   started[s]=$(date +%s)
+  first_cpu=$(((s - 1) % cpu_sets * 4))
   # --pull never: the image is the one built above (or named with -i), never one fetched from a registry.
   if ! TOWNWISE_JIT_CONFIG="$cfg" docker run --detach --init --pull never --name "$n" --label "townwise-ci-session=$session" \
-      --env TOWNWISE_JIT_CONFIG --env "TOWNWISE_JOB_DIR=${dir[s]}" \
+      --cpuset-cpus "$first_cpu-$((first_cpu + 3))" --env TOWNWISE_JIT_CONFIG --env "TOWNWISE_JOB_DIR=${dir[s]}" \
       --env TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal \
       --volume /var/run/docker.sock:/var/run/docker.sock --volume "${dir[s]}:${dir[s]}" \
       "$image" > /dev/null; then
