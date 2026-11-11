@@ -196,6 +196,44 @@ describe('a live open-as-admin grant', () => {
     });
   });
 
+  it('Your data works fully: list, turn off and on, delete; each is staff’s own, recorded with the grant id and no names', async () => {
+    const created = await call(server, '/api/org/locations', {
+      session: staff, json: { name: 'Main Street', town: { townId: 'hanover-nh' }, orgId: org.orgId },
+    });
+    const locationId = (await created.json() as { location: { id: string } }).location.id;
+    const location = `/api/org/locations/${locationId}`;
+    const sent = await call(server, `${location}/sales/uploads`, { session: staff, json: { days: [{ date: '2026-05-01', guests: 101, netSalesCents: null }] } });
+    const uploadId = (await sent.json() as { upload: { id: string } }).upload.id;
+    const ref = `u_${uploadId}`;
+
+    const listed = await call(server, `/api/org/data?locationId=${locationId}`, { session: staff });
+    expect(listed.status).toBe(200);
+    expect((await listed.json() as { items: { ref: string }[] }).items.map((item) => item.ref)).toEqual([ref]);
+    const off = await call(server, `${location}/data/${ref}`, { method: 'PATCH', session: staff, json: { enabled: false } });
+    expect(off.status).toBe(200);
+    expect(await server.connection.collection('tw_uploads').findOne({ _id: new Types.ObjectId(uploadId) })).toMatchObject({ disabledBy: staff.userId });
+    expect((await call(server, `${location}/data/${ref}`, { method: 'PATCH', session: staff, json: { enabled: true } })).status).toBe(200);
+    const removed = await call(server, `${location}/data/${ref}`, { method: 'DELETE', session: staff });
+    expect(removed.status).toBe(200);
+    expect(await removed.json()).toEqual({ deletedDays: 1, deletedFiles: 0 });
+
+    const events = (await auditEvents(server)).filter((event) => ['data.turned_off', 'data.turned_on', 'sales.upload_deleted'].includes(event.action as string));
+    expect(events.map((event) => event.action)).toEqual(['data.turned_off', 'data.turned_on', 'sales.upload_deleted']);
+    for (const event of events) {
+      expect(event).toMatchObject({ actorUserId: staff.userId, actorEmail: STAFF_EMAIL, actorRole: 'superadmin', viewAsGrantId: grantId });
+    }
+  });
+
+  it('the name prompt is asked of the staff member, and the name saves to their own profile, not the organization’s', async () => {
+    const asked = await call(server, '/api/me/profile', { session: staff });
+    expect(await asked.json()).toEqual({ displayName: null, askName: true });
+    const saved = await call(server, '/api/me/profile', { method: 'PATCH', session: staff, json: { displayName: 'Sam' } });
+    expect(saved.status).toBe(200);
+    expect(await server.connection.collection('tw_profiles').find({}).toArray()).toEqual([
+      expect.objectContaining({ userId: staff.userId, displayName: 'Sam' }),
+    ]);
+  });
+
   it('Team is closed: list, add, change and remove answer 403 open_as_admin_refused, and no member row changes', async () => {
     const rows = (): Promise<unknown[]> => server.connection.collection('tw_members').find({ orgId: new Types.ObjectId(org.orgId) }).sort({ _id: 1 }).toArray();
     const before = await rows();

@@ -85,8 +85,8 @@ function HomeView(props: {
   const context = useMemo(() => dayContext(notes, calendar.events), [notes, calendar.events]);
   const metric = metricsWithData(days).guests ? 'guests' : 'netSales';
   const input = useMemo<HomeInput>(
-    () => ({ today, byDate: byDate(days), context, metric, lastDate: history.coverage.lastDate }),
-    [today, days, context, metric, history.coverage.lastDate],
+    () => ({ today, byDate: byDate(days), context, metric, lastDate: history.coverage.lastDate, uploadsOff: history.uploadsOff === true }),
+    [today, days, context, metric, history.coverage.lastDate, history.uploadsOff],
   );
   const week = useMemo(() => thisWeek(input), [input]);
   const lastWeek = useMemo(() => lastWeekComparison(input), [input]);
@@ -101,7 +101,7 @@ function HomeView(props: {
       {readOnlyId === null ? null : <ReadOnlyLine text={props.readOnlyText} nativeID={readOnlyId} />}
       <View style={[styles.lead, desktop ? styles.leadWide : null]}>
         <View style={styles.leadText}>
-          <Mono>{leadLine(history.coverage.lastDate, calendar)}</Mono>
+          <Mono>{leadLine(history.coverage.lastDate, calendar, history.uploadsOff === true)}</Mono>
           <Tagline kind="progress" text={FORECAST_LINE} />
           <QuestionsLink locationId={locationId} />
         </View>
@@ -142,6 +142,7 @@ function HomeView(props: {
       {needs ? null : (
         <HistoryCard
           coverage={history.coverage}
+          uploadsOff={history.uploadsOff === true}
           uploads={history.uploads}
           days={days}
           context={context}
@@ -178,7 +179,7 @@ export function Home(): React.JSX.Element {
       today={today}
       locationId={location.id}
       // The step also leaves once Home's own fresh history has days, whichever of the two reloads answers first.
-      needs={needsHistory(org, org.locations) && state.data.history.coverage.dayCount === 0}
+      needs={needsHistory(org, org.locations) && state.data.history.coverage.dayCount === 0 && state.data.history.uploadsOff !== true}
       onHistory={reload}
       readOnlyId={readOnlyId}
       readOnlyText={line}

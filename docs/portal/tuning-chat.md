@@ -25,7 +25,7 @@ The essentials only. Patterns come from the Coffee Chats chat (streaming over a 
 | `POST /org/locations/:locationId/chat/:conversationId/feedback/:nodeId` | 1kb | none | `{ nodeId, rating, reason }` |
 | `POST /org/locations/:locationId/chat/:conversationId/proposals/:proposalId` | 8kb | none | `{ proposal: { id, status, noteId, edited }, note }` |
 | `GET /org/locations/:locationId/chat/:conversationId/item-proposals/:proposalId` | none | none | `{ proposal: { id, title, text, status, item } }` (Your data, D28) |
-| `POST /org/locations/:locationId/chat/:conversationId/item-proposals/:proposalId` | 2kb | none | `{ proposal }`; body `{ action: "save" }` or `{ action: "dismiss" }` |
+| `POST /org/locations/:locationId/chat/:conversationId/item-proposals/:proposalId` | 2kb | `files` | `{ proposal }`; body `{ action: "save" }` or `{ action: "dismiss" }` |
 | `GET /org/locations/:locationId/agent` | none | none | `{ questions, activity }` (section 8) |
 | `POST /org/locations/:locationId/agent/questions/:questionId` | 1kb | none | `{ question: { id, answer }, note }` (section 8) |
 

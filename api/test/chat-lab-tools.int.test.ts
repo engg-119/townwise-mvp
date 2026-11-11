@@ -10,7 +10,7 @@ import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { NEXT_STEPS } from '../src/lab/components.ts';
-import { GATE_WORDS } from '../src/lab/gate.ts';
+import { gateWords, GATE_WORDS } from '../src/lab/gate.ts';
 import { labInputSchema, type LabInput } from '../src/lab/input.ts';
 import { LabStartError } from '../src/lab/runner.ts';
 import { FAILURE_WORDS, START_REFUSAL_WORDS } from '../src/lab/service.ts';
@@ -317,6 +317,25 @@ describe('get_calibration and compare_forecast_models', () => {
         result: { available: false, reason: 'There is no such calibration for this location.' },
       });
     }
+  });
+
+  it('a published calibration’s gate words say what it beat: the weekday average for a first forecast, the current forecast otherwise', async () => {
+    const publish = (calibrationId: string): Promise<unknown> => server.connection.collection('tw_calibrations').updateOne(
+      { _id: new Types.ObjectId(calibrationId) }, { $set: { gate: { published: true, reason: 'published' } } },
+    );
+    const first = await team();
+    const one = await finished(first, false);
+    await publish(one.calibrationId);
+    expect((await ask(first, 'admin', 'get_calibration')).result).toMatchObject({ published: true, gate: gateWords('published', true) });
+    expect(gateWords('published', true)).toContain('weekday average');
+
+    const beat = await team();
+    await publishedChampion(beat);
+    const two = await finished(beat, true);
+    await publish(two.calibrationId);
+    expect((await ask(beat, 'admin', 'get_calibration')).result).toMatchObject({ published: true, gate: GATE_WORDS.published });
+    expect((await ask(beat, 'admin', 'compare_forecast_models', { calibrationId: two.calibrationId })).result)
+      .toMatchObject({ published: true, gate: GATE_WORDS.published });
   });
 
   it('get_calibration on a live calibration says it has not finished', async () => {

@@ -19,7 +19,7 @@ export function LastWeek(props: {
   readOnlyId: string | null;
 }): React.JSX.Element {
   const { comparison, metric } = props;
-  const range = comparison.state === 'no_history' ? null : `${dayMonth(comparison.monday)} to ${dayMonth(comparison.sunday)}`;
+  const range = comparison.state === 'no_history' || comparison.state === 'uploads_off' ? null : `${dayMonth(comparison.monday)} to ${dayMonth(comparison.sunday)}`;
   const days = comparison.state === 'compared' || comparison.state === 'no_last_year' || comparison.state === 'no_overlap' ? comparison.days : null;
   const number = (value: number | null): string => (value === null ? 'No data' : metricNumber(value, metric));
   return (

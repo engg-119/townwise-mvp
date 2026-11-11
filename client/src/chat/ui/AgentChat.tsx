@@ -38,6 +38,8 @@ export interface AgentChatContext extends ToolContext {
   locationName: string;
   orgName: string;
   hasSales: boolean;
+  /** Every upload holding days is turned off on Your data (D28), so `hasSales` is false for that reason. */
+  uploadsOff?: boolean;
   coverage: { dayCount: number; lastDate: string | null };
 }
 
@@ -320,9 +322,13 @@ export function AgentChat(props: {
         ) : (
           <View style={styles.noSales}>
             <Text style={styles.body}>
-              {`You haven’t uploaded sales yet, so TownwiseAI can only use ${readsLine(ctx, { sales: false })}.`}
+              {ctx.uploadsOff === true
+                ? `Every sales upload for this location is turned off, so TownwiseAI can only use ${readsLine(ctx, { sales: false })}. Turn one back on in Your data.`
+                : `You haven’t uploaded sales yet, so TownwiseAI can only use ${readsLine(ctx, { sales: false })}.`}
             </Text>
-            {Platform.OS === 'web' ? <LinkButton href={locationHref(ctx.locationId, 'upload')} label="Upload sales" /> : null}
+            {ctx.uploadsOff === true
+              ? <LinkButton href={locationHref(ctx.locationId, 'data')} label="Open Your data" />
+              : Platform.OS === 'web' ? <LinkButton href={locationHref(ctx.locationId, 'upload')} label="Upload sales" /> : null}
           </View>
         )}
         <View>

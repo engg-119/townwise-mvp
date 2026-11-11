@@ -10,7 +10,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 
 import type { StaffActivityView } from '../src/audit.ts';
 import type { ForecastWindow } from '../src/forecasts/reader.ts';
-import { GATE_WORDS } from '../src/lab/gate.ts';
+import { gateWords, GATE_WORDS } from '../src/lab/gate.ts';
 import { labInputSchema, type LabInput } from '../src/lab/input.ts';
 import type { LabSuccess } from '../src/lab/result.ts';
 import type { CalibrationView } from '../src/lab/views.ts';
@@ -158,7 +158,7 @@ describe('the gate decides', () => {
     expect(answer).toEqual(SUCCEEDED);
 
     const view = await viewOf(t, calibration.id);
-    expect(view).toMatchObject({ status: 'succeeded', gate: { published: true, reason: 'published', words: GATE_WORDS.published } });
+    expect(view).toMatchObject({ status: 'succeeded', gate: { published: true, reason: 'published', words: gateWords('published', true) } });
     const runId = view.runId ?? '';
     expect(await runDoc(runId)).toMatchObject({
       status: 'published', publishedAt: server.clock.now(), publishedBy: null, importedBy: null, trainingSource: 'townwise_lab',
@@ -182,6 +182,16 @@ describe('the gate decides', () => {
     expect(own.map((line) => line.msg)).toEqual(['townwise.forecast_status', 'townwise.calibration_finished']);
     expect(own[0]).toEqual(expect.objectContaining({ orgId: t.orgId, runId, status: 'published' }));
     expect(own[1]).toMatchObject({ calibrationId: calibration.id, status: 'succeeded', gate: 'published', heldOutWeeks: 12 });
+  });
+
+  it('beating a published forecast publishes with the words for the current forecast, not the weekday average', async () => {
+    const t = await team({ forecastsOn: true });
+    await publishedChampion(t);
+    const { calibration, job } = await started(t);
+    expect(await post(job, labResultFor(await inputFor(job)))).toEqual(SUCCEEDED);
+    const view = await viewOf(t, calibration.id);
+    expect(view).toMatchObject({ gate: { published: true, reason: 'published', words: GATE_WORDS.published } });
+    expect(GATE_WORDS.published).toContain('current forecast');
   });
 
   it('a passing draft with forecasts off stays a draft with gate forecasts_off, and nothing is published', async () => {

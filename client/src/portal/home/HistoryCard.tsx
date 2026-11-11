@@ -9,6 +9,7 @@ import type { DayRecord } from '../analytics/history';
 import type { Metric } from '../analytics/words';
 import { formatDate, plural } from '../format';
 import { UploadAction } from '../locations/parts';
+import { UPLOADS_OFF_LINE } from '../locations/sales';
 import { locationHref } from '../routing';
 import type { Coverage } from '../schemas';
 import { Actions, LinkButton } from '../ui/Button';
@@ -40,6 +41,7 @@ export function historyLine(coverage: Coverage, uploads: readonly HistoryUpload[
 
 export function HistoryCard(props: {
   coverage: Coverage;
+  uploadsOff?: boolean;
   uploads: readonly HistoryUpload[];
   days: readonly DayRecord[];
   context: DayContext;
@@ -55,10 +57,11 @@ export function HistoryCard(props: {
     [days, metric, context, years],
   );
   const empty = coverage.dayCount === 0 || year === null;
+  const off = empty && props.uploadsOff === true;
   return (
     <View nativeID={HISTORY_ID} style={styles.grow}>
-      <Block label="Your history" eyebrow="Your history" title={empty ? 'No days yet' : plural(coverage.dayCount, 'day', 'days')}>
-        {empty ? <Small>No sales history yet for this location.</Small> : (
+      <Block label="Your history" eyebrow="Your history" title={empty ? (off ? 'No days shown' : 'No days yet') : plural(coverage.dayCount, 'day', 'days')}>
+        {empty ? <Small>{off ? UPLOADS_OFF_LINE : 'No sales history yet for this location.'}</Small> : (
           <>
             <Small>{historyLine(coverage, props.uploads)}</Small>
             <Heatmap
@@ -75,6 +78,7 @@ export function HistoryCard(props: {
         )}
         <Actions>
           {empty ? null : <LinkButton href={locationHref(locationId, 'analytics')} label="See it in Analytics" />}
+          {off ? <LinkButton href={locationHref(locationId, 'data')} label="Open Your data" /> : null}
           <UploadAction locationId={locationId} variant="link" readOnlyId={props.readOnlyId} />
         </Actions>
       </Block>

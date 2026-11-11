@@ -16,7 +16,7 @@ import { Lead, Small } from '../ui/text';
 import { deleteSales, fetchSales, fetchSalesDays } from './api';
 import { DaysTable, MonthsTable } from './MonthsTable';
 import { LoadFailure, Loading, ShowNumbers, UploadAction, useOrgRefreshOnLeave } from './parts';
-import { chartRange, chartSummary, SERIES_TITLE, seriesOf } from './sales';
+import { chartRange, chartSummary, SERIES_TITLE, seriesOf, UPLOADS_OFF_LINE } from './sales';
 import { SalesChart } from './SalesChart';
 
 // P12 Sales data (spec 16.3, 10.4): the coverage line, the daily chart (web; the text summary and “Show the
@@ -86,11 +86,15 @@ export function SalesData(): React.JSX.Element {
         {notice}
         <Stack>
           {readOnlyLine}
-          <EmptyState
-            text={`No sales history yet for ${location.name}. Upload a CSV export from your point-of-sale system. The upload sends Townwise only the date, guest count and net sales for each day.`}
-          >
-            <UploadAction locationId={location.id} variant="primary" readOnlyId={readOnlyId} />
-          </EmptyState>
+          {sales.uploadsOff === true ? (
+            <EmptyState text={UPLOADS_OFF_LINE} />
+          ) : (
+            <EmptyState
+              text={`No sales history yet for ${location.name}. Upload a CSV export from your point-of-sale system. The upload sends Townwise only the date, guest count and net sales for each day.`}
+            >
+              <UploadAction locationId={location.id} variant="primary" readOnlyId={readOnlyId} />
+            </EmptyState>
+          )}
         </Stack>
         <DataLink locationName={location.name} locationId={location.id} />
       </View>

@@ -41,10 +41,10 @@ afterEach(async () => {
 const PATH = '/api/org/locations/l1';
 const DAYS = run('2025-09-01', '2026-11-04', (date) => 100 + (new Date(`${date}T00:00:00Z`).getUTCDay() === 6 ? 40 : 0));
 
-function portal(me: MeResponse, days = DAYS, uploads = [upload()]): FakePortalApi {
+function portal(me: MeResponse, days = DAYS, uploads = [upload()], uploadsOff = false): FakePortalApi {
   const from = days[0]?.date.slice(0, 4) ?? '2026';
   const fake = analyticsFake({
-    [`${PATH}/sales/history`]: historyBody(days, uploads),
+    [`${PATH}/sales/history`]: { ...historyBody(days, uploads), uploadsOff },
     [`${PATH}/notes`]: { notes: [note({ startDate: '2026-10-10', detail: 'A rehearsal dinner.' })] },
     [`${PATH}/calendar?from=${from}-01-01&to=2026-12-31`]: calendarBody({ events: [holiday('2025-11-27', 'Thanksgiving Day', 'us:thanksgiving', 'Thanksgiving')] }),
   });
@@ -105,6 +105,14 @@ test('thin and empty states say what is missing', async () => {
   expect(await screen.findByText('No sales history yet.')).toBeTruthy();
   expect(screen.getByText('Upload from a computer at townwise.tech.')).toBeTruthy();
   expect(screen.getByRole('checkbox', { name: 'Closed days' }).props.accessibilityState).toMatchObject({ disabled: true });
+});
+
+test('every upload turned off: says so and points to Your data, with no upload prompt', async () => {
+  await renderApp('/locations/l1/analytics', portal(meOf(ACCESS.member), [], [], true));
+  expect(await screen.findByText('Every sales upload for this location is turned off. Turn one back on in Your data to see its days.')).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Open Your data' })).toBeTruthy();
+  expect(screen.queryByText('No sales history yet.')).toBeNull();
+  expect(screen.queryByText('Upload from a computer at townwise.tech.')).toBeNull();
 });
 
 // A seasonal closure: no rows in Jan 2026, and Christmas 2025 all zero (a closed day the filters leave out).
