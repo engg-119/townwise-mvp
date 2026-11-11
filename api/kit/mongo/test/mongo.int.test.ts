@@ -69,7 +69,9 @@ it('sanitizeFilter: {email: {$ne: null}} throws CastError; trusted({$gt: 0}) wor
   });
 });
 
-it('sanitizeFilter regression guard: passing sanitizeFilter only in createConnection options does NOT enable it', async () => {
+// Up to mongoose 9.11.2 this option was silently ignored, which is why connect.ts sets sanitizeFilter on the
+// connection itself. 9.11.4 honors it; connect.ts keeps connection.set, which works on both.
+it('sanitizeFilter regression guard: since mongoose 9.11.4, sanitizeFilter in createConnection options enables it', async () => {
   const plain = mongoose.createConnection(testUri(), {
     sanitizeFilter: true,
     serverSelectionTimeoutMS: 5000,
@@ -79,22 +81,21 @@ it('sanitizeFilter regression guard: passing sanitizeFilter only in createConnec
     await plain.asPromise();
     const Model = plain.model('Guard', new Schema({ email: String }, { collection: 'guards', autoIndex: false }));
     await Model.create({ email: 'ada@example.com' });
-    const found = await Model.findOne({ email: { $ne: null } });
-    expect(found?.email).toBe('ada@example.com');
+    await expect(Model.findOne({ email: { $ne: null } })).rejects.toThrow(/Cast to string failed/);
   } finally {
     await plain.close();
   }
 });
 
-it('sanitizeFilter limit: an array filter value is cast to $in and matches', async () => {
+// Up to mongoose 9.11.2 an array value was cast to $in even under sanitizeFilter. 9.11.4 (lib/cast.js) refuses it.
+it('sanitizeFilter: an array filter value on a scalar path is refused, not cast to $in', async () => {
   await withKit(async ({ mongo }) => {
     const Model = mongo.connection.model('Code', new Schema(
       { code: String },
       { collection: 'codes', autoIndex: false },
     ));
     await Model.create({ code: '000002' });
-    const found = await Model.findOne({ code: ['000001', '000002'] });
-    expect(found?.code).toBe('000002');
+    await expect(Model.findOne({ code: ['000001', '000002'] })).rejects.toThrow(/Cast to string failed/);
   });
 });
 

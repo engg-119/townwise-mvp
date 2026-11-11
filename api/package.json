@@ -20,7 +20,7 @@
     "@ckeith26/server-core": "file:./kit/server-core",
     "express": "5.3.0",
     "jose": "6.2.12",
-    "mongoose": "9.11.2",
+    "mongoose": "9.11.4",
     "read-excel-file": "9.3.14",
     "saxen": "11.2.0",
     "unpdf": "2.0.1",
