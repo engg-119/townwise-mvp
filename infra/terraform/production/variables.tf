@@ -122,7 +122,7 @@ variable "lab_callback_client_id" {
   default     = null
 
   validation {
-    condition     = var.lab_callback_client_id == null || can(regex("^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$", var.lab_callback_client_id))
-    error_message = "lab_callback_client_id must be the app's client id, a GUID (not its api:// identifier URI)."
+    condition     = var.lab_callback_client_id == null || can(regex("^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$", var.lab_callback_client_id))
+    error_message = "lab_callback_client_id must be the app's client id as a lowercase GUID, as bootstrap outputs it (not its api:// identifier URI): the API compares the token's audience to it exactly."
   }
 }
