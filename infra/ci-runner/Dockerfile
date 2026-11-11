@@ -9,13 +9,36 @@ FROM ubuntu:noble-20261024.1@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf9491
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# What the jobs call on the runner itself (infra/ci-runner/README.md lists them per job): git for
-# actions/checkout and gitleaks, curl, unzip, tar and gzip for the tool downloads and the setup actions, xz-utils
-# for Node archives, jq for the gitleaks canary, python3 with venv for id-token-guard. coreutils (sha256sum) is
-# in the base image.
-RUN apt-get update \
+# apt reads fixed states of the Ubuntu archive, and every package is pinned to its version there (bump procedure:
+# infra/ci-runner/README.md). `apt-get update --snapshot` does not help on arm64: it rewrites only archive.ubuntu.com
+# and security.ubuntu.com, so it silently reads the live ports.ubuntu.com. The sources are written out instead.
+#
+# First, ca-certificates (to reach the snapshot service over HTTPS) from the noble release pocket only, which has
+# not changed since the release (its InRelease is dated 2024-04-25).
+RUN printf '%s\n' 'Types: deb' 'URIs: http://ports.ubuntu.com/ubuntu-ports/' 'Suites: noble' 'Components: main' \
+      'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' > /etc/apt/sources.list.d/ubuntu.sources \
+ && apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      ca-certificates curl git gzip jq python3 python3-venv tar unzip xz-utils \
+      ca-certificates=20240203 openssl=3.0.13-0ubuntu3 \
+ && rm -rf /var/lib/apt/lists/*
+
+# Then the archive as it was at 2026-11-04 00:00 UTC (snapshot.ubuntu.com serves arm64 under /ubuntu/), signed with
+# the same Ubuntu archive key. What the jobs call on the runner itself (infra/ci-runner/README.md lists them per
+# job): git for actions/checkout and gitleaks, curl, unzip, tar and gzip for the tool downloads and the setup
+# actions, xz-utils for Node archives, jq for the gitleaks canary, python3 with venv for id-token-guard. Then what
+# the runner's installdependencies.sh installs (ICU, Kerberos, LTTng, OpenSSL, zlib), so the script finds them
+# present. coreutils (sha256sum) is in the base image.
+RUN printf '%s\n' 'Types: deb' 'URIs: https://snapshot.ubuntu.com/ubuntu/20261104T000000Z/' \
+      'Suites: noble noble-updates noble-security' 'Components: main universe' \
+      'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' > /etc/apt/sources.list.d/ubuntu.sources \
+ && apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates=20260816ubuntu0.24.04.1 openssl=3.0.13-0ubuntu3.16 \
+      curl=8.5.0-2ubuntu10.16 git=1:2.43.0-1ubuntu7.4 gzip=1.12-1ubuntu3.2 jq=1.7.1-3ubuntu0.24.04.2 \
+      python3=3.12.3-0ubuntu2.1 python3-venv=3.12.3-0ubuntu2.1 tar=1.35+dfsg-3ubuntu0.4 unzip=6.0-28ubuntu4.1 \
+      xz-utils=5.6.1+really5.4.5-1ubuntu0.4 \
+      libicu74=74.2-1ubuntu3.1 libkrb5-3=1.20.1-6ubuntu2.10 liblttng-ust1t64=2.13.7-1.1ubuntu2 \
+      libssl3t64=3.0.13-0ubuntu3.16 zlib1g=1:1.3.dfsg-3.1ubuntu2.3 \
  && rm -rf /var/lib/apt/lists/*
 
 # The Docker CLI 29.9.3 and buildx 0.38.1 (docker build in the lab job; docker run for semgrep and checkov), from
@@ -34,8 +57,9 @@ RUN curl -fsSL -o /tmp/docker-ce-cli.deb \
  && rm /tmp/docker-ce-cli.deb /tmp/docker-buildx-plugin.deb
 
 # The GitHub Actions runner 2.338.2 for linux-arm64, SHA-256 from the release notes' "SHA-256 Checksums"
-# (https://github.com/actions/runner/releases/tag/v2.338.2), then its own dependency installer (ICU, OpenSSL,
-# Kerberos, LTTng, zlib from the Ubuntu archive). The entrypoint copies this folder into each job's folder.
+# (https://github.com/actions/runner/releases/tag/v2.338.2), then its own dependency installer, which finds every
+# library already installed above (it reads the same snapshot). The entrypoint copies this folder into each job's
+# folder.
 RUN curl -fsSL -o /tmp/actions-runner.tar.gz \
       https://github.com/actions/runner/releases/download/v2.338.2/actions-runner-linux-arm64-2.338.2.tar.gz \
  && echo "670adb2f268fe21dcbb58b3db0e0aa9d5b3bddfe2c651481336e561ff86de945  /tmp/actions-runner.tar.gz" | sha256sum -c - \
