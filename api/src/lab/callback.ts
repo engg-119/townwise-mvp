@@ -13,9 +13,11 @@
 //
 // Every refusal is 404: a missing or wrong token, an unknown id, another calibration's result token and a finished
 // calibration look alike; nothing here answers unauthenticated (only access/resolve.ts's userGone does). Only when
-// Entra's keys cannot be fetched is it 503 lab_auth_unavailable, which the job's result post retries once. A refused
-// identity token logs its route and reason (townwise.lab_callback_refused), never the token. The body is parsed only
-// after both checks passed. Nothing here logs a figure.
+// Entra's keys cannot be fetched is it 503 lab_auth_unavailable, which the job's result post retries once. Every
+// refusal past the lab being on logs townwise.lab_callback_refused with its route and reason, never an id or a token:
+// the identity check's reason (lab/caller.ts), `not_live` when a signed-in caller names no live calibration or one whose
+// input was already fetched, and `result_token` when a result's token is missing or is not that calibration's, so
+// probing calibrations shows in the log. The body is parsed only after both checks passed. Nothing here logs a figure.
 import { createHash, randomBytes } from 'node:crypto';
 
 import { AppError } from '@ckeith26/server-core';
@@ -25,6 +27,7 @@ import { scopeForLabCallback, type OrgScope } from '../access/policy.ts';
 import type { TownwiseContext } from '../app.ts';
 import { canonicalSha256 } from '../forecasts/file.ts';
 import { findLabCallback, type LabCallbackClaim } from '../stores/cross-tenant.ts';
+import type { LabCallerRefusal } from './caller.ts';
 import { buildLabInput } from './input.ts';
 import { finishCalibration, ingestLabResult } from './service.ts';
 
@@ -39,6 +42,8 @@ export const RESULT_TOKEN_HEADER = 'X-Townwise-Result-Token';
 export const LAB_RESULT_LIMIT = '256kb';
 
 type LabRoute = 'input' | 'result';
+/** Why a call was refused, as townwise.lab_callback_refused logs it. */
+type LabRefusal = LabCallerRefusal | 'not_live' | 'result_token';
 
 interface Claimed { readonly claim: LabCallbackClaim; readonly scope: OrgScope }
 
@@ -46,6 +51,12 @@ const claims = new WeakMap<Request, Claimed>();
 
 function notFound(): AppError {
   return new AppError(404, 'not_found', 'Not found');
+}
+
+/** Logs a refusal with its route and reason only, and answers 404 like every refusal. */
+function refused(ctx: TownwiseContext, route: LabRoute, reason: LabRefusal): AppError {
+  ctx.logger.info({ route, reason }, 'townwise.lab_callback_refused');
+  return notFound();
 }
 
 function sha256(token: string): string {
@@ -78,17 +89,21 @@ export function createLabCallbackRouter(ctx: TownwiseContext): Router {
         ctx.logger.warn({ route, reason: 'keys_unavailable' }, 'townwise.lab_callback_unavailable');
         throw new AppError(503, 'lab_auth_unavailable', 'The lab callback is unavailable');
       }
-      ctx.logger.info({ route, reason: verdict.refusal }, 'townwise.lab_callback_refused');
-      throw notFound();
+      throw refused(ctx, route, verdict.refusal);
     }
     let resultTokenSha256: string | null = null;
     if (route === 'result') {
       const resultToken = req.get(RESULT_TOKEN_HEADER);
-      if (resultToken === undefined || !RESULT_TOKEN.test(resultToken)) throw notFound();
+      if (resultToken === undefined || !RESULT_TOKEN.test(resultToken)) throw refused(ctx, route, 'result_token');
       resultTokenSha256 = sha256(resultToken);
     }
-    const claim = await findLabCallback(ctx.connection, id, ctx.now(), resultTokenSha256);
-    if (claim === null) throw notFound();
+    const now = ctx.now();
+    const claim = await findLabCallback(ctx.connection, id, now, resultTokenSha256);
+    if (claim === null) {
+      // Only a refusal looks again, to say whether the calibration is live and the result token is not its.
+      const live = resultTokenSha256 !== null && (await findLabCallback(ctx.connection, id, now, null)) !== null;
+      throw refused(ctx, route, live ? 'result_token' : 'not_live');
+    }
     claims.set(req, { claim, scope: scopeForLabCallback(claim) });
   });
 
@@ -101,7 +116,7 @@ export function createLabCallbackRouter(ctx: TownwiseContext): Router {
     const { calibrations } = ctx.stores;
     const calibration = await calibrations.find(scope, claim.calibrationId);
     // Gone, or its input already fetched.
-    if (calibration?.inputSha256 !== null) throw notFound();
+    if (calibration?.inputSha256 !== null) throw refused(ctx, 'input', 'not_live');
     if (calibration.status === 'queued') await calibrations.markRunning(scope, calibration.id, { now: ctx.now(), imageDigest: null });
     const input = await buildLabInput(ctx, scope, calibration);
     if (input === null) {
@@ -113,7 +128,8 @@ export function createLabCallbackRouter(ctx: TownwiseContext): Router {
     const recorded = await calibrations.recordInput(scope, calibration.id, {
       inputSha256: canonicalSha256(input), dataThrough: input.dataThrough, resultTokenSha256: sha256(resultToken),
     });
-    if (!recorded) throw notFound();
+    // A concurrent fetch recorded its input first.
+    if (!recorded) throw refused(ctx, 'input', 'not_live');
     res.status(200).set(RESULT_TOKEN_HEADER, resultToken).json(input);
   }));
 

@@ -100,6 +100,15 @@ async function errorOf(res: Response): Promise<{ status: number; error: string }
   return { status: res.status, error: (await res.json() as { error: string }).error };
 }
 
+/** Every townwise.lab_callback_refused line since the logs were last cleared, as { route, reason }; each holds nothing else. */
+function refusedLines(): { route: unknown; reason: unknown }[] {
+  const lines = logLines(server).filter((line) => line.msg === 'townwise.lab_callback_refused');
+  for (const line of lines) {
+    expect(Object.keys(line).filter((key) => !['hostname', 'level', 'msg', 'pid', 'time'].includes(key)).sort()).toEqual(['reason', 'route']);
+  }
+  return lines.map(({ route, reason }) => ({ route, reason }));
+}
+
 function count(collection: string, filter: Record<string, unknown>): Promise<number> {
   return server.connection.collection(collection).countDocuments(filter);
 }
@@ -382,21 +391,26 @@ describe('the job’s callback', () => {
     const result = labResultFor(input);
     const refusedPosts = [
       // The identity token alone.
-      { resultToken: null },
+      { reason: 'result_token', opts: { resultToken: null } },
       // The result token alone, or with a token that is not the lab identity's.
-      { authorization: null, resultToken },
-      { authorization: 'Bearer not.a.token', resultToken },
-      { authorization: `Bearer ${await labIdentityToken(server, { oid: '44444444-4444-4444-8444-444444444444' })}`, resultToken },
+      { reason: 'missing', opts: { authorization: null, resultToken } },
+      { reason: 'malformed', opts: { authorization: 'Bearer not.a.token', resultToken } },
+      { reason: 'caller', opts: { authorization: `Bearer ${await labIdentityToken(server, { oid: '44444444-4444-4444-8444-444444444444' })}`, resultToken } },
       // Another calibration's result token, a garbled one, or the right one cut short.
-      { resultToken: resultTokenOf(other.calibrationId) ?? '' },
-      { resultToken: `${resultToken.slice(0, 42)}!` },
-      { resultToken: resultToken.slice(0, 42) },
+      { reason: 'result_token', opts: { resultToken: resultTokenOf(other.calibrationId) ?? '' } },
+      { reason: 'result_token', opts: { resultToken: `${resultToken.slice(0, 42)}!` } },
+      { reason: 'result_token', opts: { resultToken: resultToken.slice(0, 42) } },
     ];
-    for (const opts of refusedPosts) {
+    for (const { opts } of refusedPosts) {
       expect((await jobCall(server, job, 'result', result, opts)).status).toBe(404);
       expect((await jobCall(server, job, 'result', labFailure(job, 'internal'), opts)).status).toBe(404);
     }
     expect(JSON.stringify(await stored())).toBe(before);
+    // Each refusal is logged with its route and reason only: the second fetch found nothing to fetch.
+    expect(refusedLines()).toEqual([
+      { route: 'input', reason: 'not_live' },
+      ...refusedPosts.flatMap(({ reason }) => [{ route: 'result', reason }, { route: 'result', reason }]),
+    ]);
     expect(resultTokenOf(calibration.id)).toBe(resultToken);
     expect((await jobCall(server, job, 'result', result)).status).toBe(200);
     expect((await viewOf(t, calibration.id)).status).toBe('succeeded');
@@ -426,10 +440,13 @@ describe('the job’s callback', () => {
       horizonDays: 182, regimeStart: null, days: [{ date: '2026-05-31', guests: 1, term: 'interim', weekOfTerm: -1, events: [], closed: false, privateEvent: false, booked: false }],
       champion: null,
     }));
+    server.logs.length = 0;
     for (const resultToken of [null, 'A'.repeat(43), resultTokenOf(other.calibrationId) ?? '']) {
       expect((await jobCall(server, job, 'result', result, { resultToken })).status).toBe(404);
       expect((await jobCall(server, job, 'result', labFailure(job, 'internal'), { resultToken })).status).toBe(404);
     }
+    // The calibration is live, so each is a result token refusal.
+    expect(refusedLines()).toEqual(Array.from({ length: 6 }, () => ({ route: 'result', reason: 'result_token' })));
     expect(await viewOf(t, calibration.id)).toMatchObject({ status: 'running', failure: null, runId: null });
     expect(await count('tw_forecast_runs', { locationId: new Types.ObjectId(t.locationId) })).toBe(0);
     // The job's own fetch still works.
@@ -447,11 +464,14 @@ describe('the job’s callback', () => {
       statuses.push((await jobCall(server, job, 'input', undefined, opts)).status);
       statuses.push((await jobCall(server, job, 'result', labFailure(job, 'internal'), { ...opts, resultToken: 'A'.repeat(43) })).status);
     };
-    // Not a live calibration, with a good identity token: nothing to log.
+    // Not a live calibration, with a good identity token: each logged as not_live, so probing ids shows.
     await both({ calibrationId: new Types.ObjectId().toHexString() });
     await both({ calibrationId: 'not-an-id' });
     await both(finished);
-    expect(logLines(server).filter((line) => String(line.msg).startsWith('townwise.lab_callback'))).toEqual([]);
+    expect(refusedLines()).toEqual(Array.from({ length: 3 }, () => [
+      { route: 'input', reason: 'not_live' }, { route: 'result', reason: 'not_live' },
+    ]).flat());
+    server.logs.length = 0;
     // A live calibration, with anything but the lab identity's token for the callback app.
     const now = Math.floor(server.clock.now().getTime() / 1000);
     const refusals: { reason: string; authorization: string | null }[] = [
@@ -468,13 +488,7 @@ describe('the job’s callback', () => {
     expect(statuses.every((status) => status === 404)).toBe(true);
     expect(statuses).toHaveLength(6 + refusals.length * 2);
     // Each token refusal logs its route and reason, and nothing else.
-    const refused = logLines(server).filter((line) => line.msg === 'townwise.lab_callback_refused');
-    expect(refused.map(({ route, reason }) => ({ route, reason }))).toEqual(refusals.flatMap(({ reason }) => [
-      { route: 'input', reason }, { route: 'result', reason },
-    ]));
-    for (const line of refused) {
-      expect(Object.keys(line).filter((key) => !['hostname', 'level', 'msg', 'pid', 'time'].includes(key)).sort()).toEqual(['reason', 'route']);
-    }
+    expect(refusedLines()).toEqual(refusals.flatMap(({ reason }) => [{ route: 'input', reason }, { route: 'result', reason }]));
     const logs = server.logs.join('\n');
     for (const { authorization } of refusals) {
       for (const part of (authorization ?? '').replace(/^\w+ /, '').split('.').filter((each) => each !== '')) expect(logs).not.toContain(part);
