@@ -1,4 +1,4 @@
-// Reading with TownwiseAI (spec 11A.9, D29): acting on a read's answer, as the reader's onRead (files/ai-reader.ts).
+// Reading with TownwiseAI (spec 11A.9, D34): acting on a read's answer, as the reader's onRead (files/ai-reader.ts).
 // The person opted the file in, so TownwiseAI writes without a second press, and DELETE .../data/:ref/ai undoes it
 // all: the file's dated events become notes, its daily totals a sales upload when the file's own text bears them out
 // (files/ai-verify.ts), its summary and facts a reference item TownwiseAI can read in chat, and, when it wrote notes or

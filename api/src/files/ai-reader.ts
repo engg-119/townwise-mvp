@@ -1,4 +1,4 @@
-// Reading with TownwiseAI (spec 11A.9, D29): a loop in each API replica, beside the file reader (worker.ts) and shaped
+// Reading with TownwiseAI (spec 11A.9, D34): a loop in each API replica, beside the file reader (worker.ts) and shaped
 // like it, so it can move to a job unchanged. It claims the file whose read was asked for first (a lease on the file's
 // `ai`, through stores/cross-tenant.ts: 90 seconds, renewed every 30), makes the model's input from the original, sends
 // it in one call, checks the answer, saves it, hands it to `onRead` (files/ai-actions.ts in production: the notes, days,

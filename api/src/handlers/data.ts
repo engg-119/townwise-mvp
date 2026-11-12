@@ -1,6 +1,6 @@
 // Your data (D28): the list of everything a location (or the organization) received, one item of it, turning an upload
 // or a reference item off and on, renaming one, saving an edit of one, letting TownwiseAI read one and undoing what that
-// read made (spec 11A.9, D29), and deleting one. Every location and item from another
+// read made (spec 11A.9, D34), and deleting one. Every location and item from another
 // organization answers 404 exactly like an unknown one, because each is loaded through the caller's OrgScope. Names
 // travel only in JSON bodies and never reach a log line or an audit event: those carry ids, kinds and counts. Stored
 // files are reached through handlers/files.ts.
@@ -588,7 +588,7 @@ function aiReadRunning(): AppError {
 const aiReadBody = z.strictObject({});
 
 /**
- * POST /locations/:locationId/data/:ref/ai {}: lets TownwiseAI read the item's stored file (spec 11A.9, D29), opted in
+ * POST /locations/:locationId/data/:ref/ai {}: lets TownwiseAI read the item's stored file (spec 11A.9, D34), opted in
  * per file. The ref is a stored file (`f_`) or an upload read from one (`u_`, whose file is read). The person who added
  * it or an org admin (an org admin only, for a Townwise staff upload); never under view-as (the chain refuses it).
  * In order: 400 for the body and the ref, 404 for another organization's or an unknown location or item, 503

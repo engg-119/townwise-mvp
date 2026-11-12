@@ -87,7 +87,7 @@ export interface SavedColumnChoice {
 export type FileColumnChoices = Readonly<Record<string, SavedColumnChoice | null>>;
 
 /**
- * Reading with TownwiseAI (spec 11A.9, D29), opted into per file: `queued` until a reader claims it, `reading` under the
+ * Reading with TownwiseAI (spec 11A.9, D34), opted into per file: `queued` until a reader claims it, `reading` under the
  * claim's lease, then `done`, `failed` (only `refused` or `internal`) or `skipped` (a reason code). `undone` is set when
  * the person undoes what the read did (S2). Failed, skipped and undone reads may be asked for again.
  */

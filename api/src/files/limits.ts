@@ -97,7 +97,7 @@ export const MODEL_CALLS_PER_ZIP = 5;
 export const MODEL_CALLS_PER_IMPORT = 20;
 
 /**
- * Reading with TownwiseAI (spec 11A.9, D29), a file the person opted in: a PDF is sent whole as a document up to 10 MiB
+ * Reading with TownwiseAI (spec 11A.9, D34), a file the person opted in: a PDF is sent whole as a document up to 10 MiB
  * and 600 pages (the API's limit), a PNG, JPEG, GIF or WebP picture up to 5 MiB (the API's limit), and any other file
  * the reader reads as text, cut at 300,000 characters (marked partial, and the prompt says so). A text file is read
  * from storage only as far as that many characters can take (4 bytes a character at most). A PDF's own text, kept in

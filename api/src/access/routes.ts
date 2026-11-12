@@ -222,7 +222,7 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     id: 'org.data.replace', method: 'POST', path: '/org/locations/:locationId/data/:ref/replace', policy: 'member',
     bodyLimit: '2kb', openAsAdmin: true, handler: replaceDataItem,
   },
-  // Spec 11A.9 (D29): letting TownwiseAI read an item's stored file, opted in per file, and undoing what the read made.
+  // Spec 11A.9 (D34): letting TownwiseAI read an item's stored file, opted in per file, and undoing what the read made.
   {
     id: 'org.data.ai_read', method: 'POST', path: '/org/locations/:locationId/data/:ref/ai', policy: 'member', bodyLimit: '2kb',
     openAsAdmin: true, handler: requestAiRead,

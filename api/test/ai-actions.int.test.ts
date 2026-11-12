@@ -1,4 +1,4 @@
-// Reading with TownwiseAI, the actions (spec 11A.9, D29) end to end against the database: notes from the answer's events
+// Reading with TownwiseAI, the actions (spec 11A.9, D34) end to end against the database: notes from the answer's events
 // (the person who asked as author, the file as source, duplicates, the 50 and 1,000 caps), daily totals as one upload
 // when the file's text bears them out (an org admin's replaces, a member's adds), the summary item, the model update
 // (a fake lab), retries after a throw, a file deleted while it is read, ZIP input, the item's fields, and the undo

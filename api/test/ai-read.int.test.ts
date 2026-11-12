@@ -1,4 +1,4 @@
-// Reading with TownwiseAI (spec 11A.9, D29) end to end against the database: the opt-in route (who may, refusals,
+// Reading with TownwiseAI (spec 11A.9, D34) end to end against the database: the opt-in route (who may, refusals,
 // 409 while running, a double press, audit), the item's canAiRead and ai fields, and the reader (claim order, lease
 // takeover, attempts, budget, each input kind, skips, the cut, refusal, the answer checked, the onRead seam, and a
 // request that holds no file, organization or location name). The model is a scripted fake: no call leaves the test.
