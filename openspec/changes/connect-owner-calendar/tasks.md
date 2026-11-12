@@ -24,7 +24,7 @@ Two phases (owner decision, 2026-11-12): phase 1 builds the server side on `orig
 
 ## 4. Routes
 
-- [x] 4.1 Add `'1mb'` to the `bodyLimit` union (used by the calendar create route only), then the five `org.owner_calendars.*` entries to `TOWNWISE_ROUTES` (member, `openAsAdmin`, refresh limiter one per calendar per 5 minutes) and their handlers; the list never returns an address
+- [x] 4.1 Add `'2mb'` to the `bodyLimit` union (used by the calendar create route only, room for a 1 MB file's JSON escaping; the handler holds the file itself to 1 MB), then the five `org.owner_calendars.*` entries to `TOWNWISE_ROUTES` (member, `openAsAdmin`, refresh limiter one per calendar per 5 minutes, 12 link adds per account an hour) and their handlers; the list never returns an address
 - [x] 4.2 Audit events `townwise.owner_calendar_added|removed|refreshed` with the allowlisted fields only (`api/src/audit.ts`); the route integration tests assert the exact audit fields
 - [x] 4.3 Integration tests: add file, add link (against a local HTTPS test server), not a calendar, blocked address, no key (503), cross-tenant 404, view-as write refused, events range read and `bad_range`, refresh limit 429
 - [x] 4.4 Extend `test/isolation.test.ts` for the new stores and routes
@@ -53,7 +53,7 @@ Two phases (owner decision, 2026-11-12): phase 1 builds the server side on `orig
 ## 8. Docs, privacy and infra
 
 - [ ] 8.1 (phase 2) `docs/portal/spec.md`: new D entry (owner decision, 2026-11-12), resolve the two P27 `[DECISION NEEDED]` rows in 22.4 with it, rewrite P27 "Your own calendar" and the section 17 calendar bullet, add the routes section after 10.16, add the `[CONFIRM]` defaults from the design's open questions
-- [ ] 8.2 `api/README.md` (endpoints, collections, env var, audit events), `docs/portal/tuning-chat.md` (tool row appended, PDF and Word in `read_data_item`)
+- [ ] 8.2 `api/README.md` (endpoints, collections, env var, audit events, the `townwise:calendar-links` limit), `docs/portal/tuning-chat.md` (tool row appended, PDF and Word in `read_data_item`)
 - [ ] 8.3 Public privacy page (`client/app/(marketing)/privacy.tsx`): calendars kept with titles, links fetched by Townwise, PDF and Word contents and calendar titles may go to Anthropic through TownwiseAI
 - [ ] 8.4 `infra/terraform/production/containerapp.tf`: add `TOWNWISE_CALENDAR_KEY` to `api_secrets`; `infra/README.md`: create-the-key runbook step and the never-rotate note; run the CI Terraform checks
 

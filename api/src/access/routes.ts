@@ -54,10 +54,12 @@ export interface TownwiseRoute {
    * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer, a conversation's rename and a version switch;
    * '2kb' on the Places, files and (D28) Your data JSON routes, the start of a calibration and the forecasts switch;
    * '8kb' on a TownwiseAI proposal; '256kb' only on the upload routes (the member one and, D23, staff setup's) and
-   * (U13B) the staff forecast import; '1mb' only on adding an owner calendar, whose body may carry a calendar file's
-   * text; 'stream' only on the chunk route, whose handler reads the raw body itself after the policy has passed.
+   * (U13B) the staff forecast import; '2mb' only on adding an owner calendar, whose body may carry a calendar file of
+   * at most 1 MB (its handler counts the file's own bytes) as a JSON string, in which each CR, LF, tab, quote and
+   * backslash takes two bytes; 'stream' only on the chunk route, whose handler reads the raw body itself after the
+   * policy has passed.
    */
-  readonly bodyLimit: 'none' | '1kb' | '2kb' | '8kb' | '32kb' | '256kb' | '1mb' | 'stream';
+  readonly bodyLimit: 'none' | '1kb' | '2kb' | '8kb' | '32kb' | '256kb' | '2mb' | 'stream';
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
   readonly limiter?: 'uploads' | 'requests' | 'view-as' | 'chat' | 'places' | 'files' | 'file_chunks' | 'downloads';
   /**
@@ -164,7 +166,8 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   },
   // The owner's own calendars (openspec change connect-owner-calendar, design decision 7), as notes: every member, open
   // as admin included. events is declared before the :calendarId routes. "Refresh now" has no body; its handler holds
-  // it to one per calendar per 5 minutes.
+  // it to one per calendar per 5 minutes. No route limiter: a file import fetches nothing, and adding a link spends one
+  // of the account's link adds in its handler before the fetch.
   {
     id: 'org.owner_calendars.list', method: 'GET', path: '/org/locations/:locationId/owner-calendars', policy: 'member',
     bodyLimit: 'none', openAsAdmin: true, handler: listOwnerCalendars,
@@ -175,7 +178,7 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   },
   {
     id: 'org.owner_calendars.create', method: 'POST', path: '/org/locations/:locationId/owner-calendars', policy: 'member',
-    bodyLimit: '1mb', openAsAdmin: true, handler: createOwnerCalendar,
+    bodyLimit: '2mb', openAsAdmin: true, handler: createOwnerCalendar,
   },
   {
     id: 'org.owner_calendars.refresh', method: 'POST', path: '/org/locations/:locationId/owner-calendars/:calendarId/refresh',

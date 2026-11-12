@@ -14,6 +14,8 @@
 // the file at 1 MB. [CONFIRM: 1 MB and 2,000 events for a calendar file]
 import { isCalendarDate, utcDay } from '../dates.ts';
 
+/** A calendar file, imported or fetched, is at most this many bytes (1 MB); its callers hold it to that. */
+export const MAX_ICS_BYTES = 1024 * 1024;
 /** At most this many events are kept from one calendar. */
 export const MAX_EVENTS = 2_000;
 /** Events are kept from this many days before the town's today to this many after, the longest read ahead. */

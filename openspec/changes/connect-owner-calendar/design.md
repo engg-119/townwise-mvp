@@ -43,7 +43,7 @@ Owner decisions (2026-11-12, issue #10): keep calendars on the server with title
 
 **7. Routes, spec 10.17, every one `member` with `openAsAdmin`, like notes.** Writes are refused under view-as by the existing guard; reads are allowed.
 - `GET /org/locations/:locationId/owner-calendars`: the calendars (no address).
-- `POST /org/locations/:locationId/owner-calendars`: `{ kind: 'file', label, ics }` or `{ kind: 'link', label, url }`. The route's `bodyLimit` union (`api/src/access/routes.ts:60`) tops out at `'256kb'` today, so this adds `'1mb'`, used by this route only, and notes it in the union's comment. *Alternative:* send the file through the chunked Files upload. Rejected: that needs blob storage, which is off in many environments, for a file the API parses once and does not keep.
+- `POST /org/locations/:locationId/owner-calendars`: `{ kind: 'file', label, ics }` or `{ kind: 'link', label, url }`. The route's `bodyLimit` union (`api/src/access/routes.ts:60`) tops out at `'256kb'` today, so this adds `'2mb'`, used by this route only, and notes it in the union's comment: the file's text arrives as a JSON string, where every CRLF, quote and backslash takes two bytes, so the handler counts the file's own bytes against the 1 MB cap (400 `too_large`). Each link add is a fetch, so it spends one of the account's 12 link adds an hour before fetching (429 `rate_limited`): removing a link and adding it again then fetches it no more often than "Refresh now" may. *Alternative:* send the file through the chunked Files upload. Rejected: that needs blob storage, which is off in many environments, for a file the API parses once and does not keep.
 - `POST /org/locations/:locationId/owner-calendars/:calendarId/refresh`: a link only.
 - `DELETE /org/locations/:locationId/owner-calendars/:calendarId`.
 - `GET /org/locations/:locationId/owner-calendars/events?from&to`: at most 92 days, `to` at most 400 days after today.
@@ -76,4 +76,5 @@ A calendar from another organization or location answers 404, the same as an unk
 
 - [CONFIRM: 5 calendars per location, 6 hour refresh, a 60 character name] (defaults I chose).
 - [CONFIRM: PDFs up to 10 MB and 100 pages for TownwiseAI].
+- [CONFIRM: 12 link adds per account an hour].
 - Whether "Make a note" from an event should now offer the title as the note's detail. This change keeps it empty, as the spec says today.

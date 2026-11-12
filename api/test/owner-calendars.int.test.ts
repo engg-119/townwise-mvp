@@ -1,45 +1,55 @@
 // The owner calendar routes (src/handlers/owner-calendars.ts; openspec change connect-owner-calendar: the owner-calendar
 // and calendar-subscription specs, design decisions 7 and 10): importing a file, adding a link, the failures that store
-// nothing, the 5 calendar limit, "Refresh now" and its one per 5 minutes, removal, the events read and its range, tenant
-// isolation, view-as and open as admin, and the audit events' exact fields. Nothing here reaches the network: links go
-// through the real guarded fetcher (calendar/fetch.ts) with the real address policy, but the injected lookup answers the
-// test names and the injected transport sends every request as plain HTTP to a server on 127.0.0.1. No answer, audit
-// event or log line may hold a link's address. Every title here is made up.
+// nothing, the 1 MB file and the link-add budget, the 5 calendar limit, "Refresh now" and its one per 5 minutes,
+// removal, the events read and its range, tenant isolation, view-as and open as admin, and the audit events' exact
+// fields. Nothing here reaches the network: links go through the real guarded fetcher (calendar/fetch.ts) with the real
+// address policy, its https.request and its own pinned lookup, to an HTTPS server on 127.0.0.1 whose self-signed
+// certificate names the link hosts. The injected lookup answers the test names; the injected transport only changes the
+// port, trusts that certificate alone, and, as a NAT on the way would, moves the one public address the names resolve
+// to onto 127.0.0.1. No answer, audit event or log line may hold a link's address. Every title here is made up.
 import { createSecretKey, randomBytes, randomUUID } from 'node:crypto';
 import type { LookupAddress } from 'node:dns';
 import { once } from 'node:events';
-import { createServer, request as httpRequest } from 'node:http';
-import type { RequestOptions } from 'node:https';
+import { createServer, request as httpsRequest, type RequestOptions } from 'node:https';
 import type { AddressInfo, LookupFunction } from 'node:net';
+import type { TLSSocket } from 'node:tls';
 
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { summaryOf } from '../src/audit.ts';
 import { createCalendarFetcher, type CalendarFetcher } from '../src/calendar/fetch.ts';
+import { MAX_ICS_BYTES } from '../src/calendar/ics.ts';
 import { open, seal } from '../src/calendar/secret.ts';
 import { utcDay } from '../src/dates.ts';
-import type { OwnerCalendarView } from '../src/handlers/owner-calendars.ts';
+import { LINK_ADD_BUDGET, type OwnerCalendarView } from '../src/handlers/owner-calendars.ts';
 import { MAX_CALENDARS, REFRESH_INTERVAL_MS } from '../src/stores/owner-calendars.ts';
 import { localDay } from '../src/time-zones.ts';
 import { addGrant, addLocation, addOpenAsAdminGrant, addOwnerCalendar, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import {
   call, MINUTE, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
+import { selfSignedCertificate } from './helpers/tls.ts';
 
 /** The secret part of every link address here: no answer, audit event or log line may hold it. */
 const TOKEN = 'owner-secret-token-7f3a';
 const ADDRESS = `https://calendar.google.com/calendar/ical/${TOKEN}/basic.ics`;
 const LABEL = 'Front desk bookings';
 const KEY = createSecretKey(randomBytes(32));
-/** A public address the real policy allows; the transport never connects to it. */
-const PUBLIC: readonly LookupAddress[] = [{ address: '93.184.215.14', family: 4 }];
+/** A public address the real policy allows; the transport never connects to it, but to the feed server instead. */
+const PUBLIC_ADDRESS = '93.184.215.14';
+const PUBLIC: readonly LookupAddress[] = [{ address: PUBLIC_ADDRESS, family: 4 }];
+const FEED_ADDRESS = '127.0.0.1';
 const NAMES: Readonly<Record<string, readonly LookupAddress[]>> = {
   'calendar.google.com': PUBLIC,
   'bookings.example.com': PUBLIC,
+  // Public too, but the feed server's certificate does not name it.
+  'other.example.net': PUBLIC,
   // The managed-identity endpoint.
   'metadata.example.com': [{ address: '169.254.169.254', family: 4 }],
 };
+/** The feed server's certificate, naming the link hosts; the transport trusts it and no other. */
+const TLS = selfSignedCertificate(['calendar.google.com', 'bookings.example.com']);
 
 function vevent(...lines: string[]): string {
   return ['BEGIN:VEVENT', ...lines, 'END:VEVENT'].join('\r\n');
@@ -64,10 +74,22 @@ const SECOND = ics(
 );
 const JUNE = '?from=2026-06-01&to=2026-06-30';
 
-// The feed server: what the calendar link answers is set per test.
+/** FIRST padded to exactly `bytes` bytes with lines of 40 to 79 bytes that the parser passes over: about 26,000 CRLFs. */
+function padded(bytes: number): string {
+  const end = 'END:VCALENDAR\r\n';
+  const line = (size: number): string => `X-PAD:${'a'.repeat(size - 8)}\r\n`;
+  const room = bytes - FIRST.length;
+  const lines = Math.floor(room / 40) - 1;
+  return `${FIRST.slice(0, -end.length)}${line(40).repeat(lines)}${line(room - 40 * lines)}${end}`;
+}
+
+// The feed server, over HTTPS: what the calendar link answers is set per test.
 let feed: { status: number; body: string } = { status: 200, body: FIRST };
-const feedServer = createServer((req, res) => {
-  const path = new URL(req.url ?? '', 'http://feed.test').pathname;
+/** The TLS server name (SNI) each request to the feed server came with. */
+const servernames: (string | false | null)[] = [];
+const feedServer = createServer({ key: TLS.key, cert: TLS.cert }, (req, res) => {
+  servernames.push((req.socket as TLSSocket).servername);
+  const path = new URL(req.url ?? '', 'https://feed.test').pathname;
   if (path === '/page') res.writeHead(200, { 'Content-Type': 'text/html' }).end('<!doctype html><title>Bookings</title>');
   else if (path === '/to-private') res.writeHead(302, { Location: 'https://127.0.0.1/cal.ics' }).end();
   else res.writeHead(feed.status, { 'Content-Type': 'text/calendar' }).end(feed.body);
@@ -76,12 +98,25 @@ let feedPort = 0;
 /** Every request the fetcher sent, so a test can see that none was. */
 const sent: RequestOptions[] = [];
 
-const loopback: LookupFunction = (_hostname, options, callback) => {
-  if (options.all === true) callback(null, [{ address: '127.0.0.1', family: 4 }]);
-  else callback(null, '127.0.0.1', 4);
-};
+/**
+ * The fetcher's own lookup, which answers only the address it judged, with that answer moved to the feed server's: the
+ * public address becomes 127.0.0.1, and any other answer fails the connection.
+ */
+function throughNat(pinned: LookupFunction): LookupFunction {
+  return (hostname, options, callback) => {
+    pinned(hostname, options, (error, address, family) => {
+      const answered = typeof address === 'string' ? [address] : address.map((entry) => entry.address);
+      if (error !== null || answered.some((answer) => answer !== PUBLIC_ADDRESS)) callback(error ?? new Error('not the judged address'), '');
+      else if (typeof address === 'string') callback(null, FEED_ADDRESS, family);
+      else callback(null, address.map((entry) => ({ ...entry, address: FEED_ADDRESS })));
+    });
+  };
+}
 
-/** The production fetcher and address policy, over the injected lookup and a transport to the feed server. */
+/**
+ * The production fetcher and address policy, over the injected lookup and https.request to the feed server: the port
+ * changed, the feed server's certificate the only trusted one, and the fetcher's pinned lookup kept (through the NAT).
+ */
 const fetcher: CalendarFetcher = createCalendarFetcher({
   lookup: (hostname) => {
     const found = NAMES[hostname];
@@ -89,7 +124,8 @@ const fetcher: CalendarFetcher = createCalendarFetcher({
   },
   request: (options, onResponse) => {
     sent.push(options);
-    return httpRequest({ ...options, port: feedPort, lookup: loopback }, onResponse);
+    if (options.lookup === undefined) throw new Error('the fetcher pinned no address');
+    return httpsRequest({ ...options, port: feedPort, ca: TLS.cert, lookup: throughNat(options.lookup) }, onResponse);
   },
   timeoutMs: 2000,
 });
@@ -97,7 +133,7 @@ const fetcher: CalendarFetcher = createCalendarFetcher({
 let server: TownwiseTestServer;
 
 beforeAll(async () => {
-  feedServer.listen(0, '127.0.0.1');
+  feedServer.listen(0, FEED_ADDRESS);
   await once(feedServer, 'listening');
   feedPort = (feedServer.address() as AddressInfo).port;
 });
@@ -171,6 +207,7 @@ describe('with the calendar key', () => {
     await server.redis.flushdb();
     feed = { status: 200, body: FIRST };
     sent.length = 0;
+    servernames.length = 0;
   });
 
   it('imports a calendar file: parsed with the town’s today, only titles, dates and hours stored, and audited by ids and counts', async () => {
@@ -228,6 +265,17 @@ describe('with the calendar key', () => {
     expect(sent).toEqual([]);
   });
 
+  it('imports a file of exactly 1 MB, whose JSON body is larger still, and refuses one byte more with 400 too_large', async () => {
+    const t = await tenant('Big File Inn');
+    const atLimit = padded(MAX_ICS_BYTES);
+    expect(Buffer.byteLength(atLimit)).toBe(MAX_ICS_BYTES);
+    // Every CRLF is 4 bytes in JSON, so the body is over 1 MB by about 5%.
+    expect(Buffer.byteLength(JSON.stringify({ kind: 'file', label: LABEL, ics: atLimit }))).toBeGreaterThan(1.05 * MAX_ICS_BYTES);
+    expect(await addFile(t, LABEL, atLimit)).toMatchObject({ status: 201, body: { calendar: { kind: 'file', eventCount: 2, skippedRepeating: 1 } } });
+    expect(await addFile(t, LABEL, padded(MAX_ICS_BYTES + 1))).toMatchObject({ status: 400, body: { error: 'too_large' } });
+    expect(await sourceCount(t)).toBe(1);
+  });
+
   it('adds a link: fetched through the guarded fetcher, stored sealed with its host, and shown by its label and host only', async () => {
     const t = await tenant('Link Bistro');
     const now = server.clock.now();
@@ -242,6 +290,8 @@ describe('with the calendar key', () => {
     expect(sent.map((options) => [options.hostname, options.path, options.headers])).toEqual([
       ['calendar.google.com', `/calendar/ical/${TOKEN}/basic.ics`, { 'User-Agent': 'Townwise calendar reader', Accept: 'text/calendar, */*;q=0.5' }],
     ]);
+    // Over TLS to the pinned address, with the hostname as the server name the certificate was checked against.
+    expect(servernames).toEqual(['calendar.google.com']);
 
     // The database holds the address only sealed under the key, and the host in plain text; the next refresh is 6 hours out.
     const raw = await server.connection.collection('tw_calendar_sources').findOne({ _id: new Types.ObjectId(calendar.id) });
@@ -275,11 +325,35 @@ describe('with the calendar key', () => {
     sent.length = 0;
     expect(await addLink(t, 'http://calendar.google.com/basic.ics')).toMatchObject({ status: 400, body: { error: 'bad_link' } });
     expect(await addLink(t, 'https://unknown.example.com/basic.ics')).toMatchObject({ status: 400, body: { error: 'unreachable' } });
+    // A public name the server's certificate does not name: TLS checks the hostname, not the pinned address.
+    servernames.length = 0;
+    expect(await addLink(t, 'https://other.example.net/basic.ics')).toMatchObject({ status: 400, body: { error: 'unreachable' } });
+    expect(servernames).toEqual([]);
     feed = { status: 500, body: 'broken' };
     expect(await addLink(t)).toMatchObject({ status: 400, body: { error: 'http_error' } });
     expect(await sourceCount(t)).toBe(0);
     expect(await server.connection.collection('tw_calendar_events').countDocuments({ locationId: new Types.ObjectId(t.locationId) })).toBe(0);
     expect((await auditEvents(server)).filter((event) => (event.details as { locationId?: string }).locationId === t.locationId)).toEqual([]);
+  });
+
+  it('spends one of the account’s 12 link adds an hour on each add, failed or removed: the next answers 429 and fetches nothing', async () => {
+    const t = await tenant('Busy Booker');
+    expect(await addLink(t, 'https://bookings.example.com/page')).toMatchObject({ status: 400, body: { error: 'not_calendar' } });
+    // Removing a link and adding it again fetches it each time, so each add spends one.
+    for (let index = 1; index < LINK_ADD_BUDGET.limit; index += 1) {
+      const added = await addLink(t);
+      expect(added.status).toBe(201);
+      expect((await send(`${base(t)}/${calendarOf(added).id}`, t.member, { method: 'DELETE' })).status).toBe(204);
+    }
+    expect(sent).toHaveLength(LINK_ADD_BUDGET.limit);
+    const refused = await addLink(t);
+    expect(refused).toMatchObject({ status: 429, body: { error: 'rate_limited', retryAfterSeconds: expect.any(Number) as number } });
+    expect(Number(refused.res.headers.get('retry-after'))).toBeGreaterThan(0);
+    expect(sent).toHaveLength(LINK_ADD_BUDGET.limit);
+    expect(await sourceCount(t)).toBe(0);
+    // A file import fetches nothing and spends nothing, and another member's link adds are their own.
+    expect((await addFile(t, LABEL)).status).toBe(201);
+    expect((await addLink(t, ADDRESS, t.admin)).status).toBe(201);
   });
 
   it('answers 409 calendar_limit for a sixth calendar, file or link, storing nothing and fetching nothing', async () => {

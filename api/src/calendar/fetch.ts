@@ -15,10 +15,12 @@ import type { ClientRequest, IncomingMessage } from 'node:http';
 import { request as httpsRequest, type RequestOptions } from 'node:https';
 import { BlockList, isIP, isIPv4, isIPv6 } from 'node:net';
 
+import { MAX_ICS_BYTES } from './ics.ts';
+
 /** The whole fetch, from the first lookup to the last byte, redirects included. */
 export const CALENDAR_FETCH_TIMEOUT_MS = 10_000;
 /** A body over this many bytes is not read further: 1 MB, as for an imported file. */
-export const MAX_CALENDAR_BYTES = 1024 * 1024;
+export const MAX_CALENDAR_BYTES = MAX_ICS_BYTES;
 /** Redirects followed after the first request. */
 export const MAX_REDIRECTS = 3;
 export const CALENDAR_USER_AGENT = 'Townwise calendar reader';

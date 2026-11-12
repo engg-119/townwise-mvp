@@ -9,6 +9,7 @@
 import type { KeyObject } from 'node:crypto';
 
 import { objectId } from '@ckeith26/mongo';
+import { createRateLimiter, RateLimiterUnavailableError, type RateLimiter } from '@ckeith26/rate-limit';
 import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
@@ -17,7 +18,7 @@ import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import type { TownwiseContext } from '../app.ts';
 import { recordAfter } from '../audit.ts';
 import type { CalendarFetchCode } from '../calendar/fetch.ts';
-import { parseIcs, WINDOW_DAYS, type IcsTown } from '../calendar/ics.ts';
+import { MAX_ICS_BYTES, parseIcs, WINDOW_DAYS, type IcsTown } from '../calendar/ics.ts';
 import { open, seal } from '../calendar/secret.ts';
 import { daysBetween, isoDate } from '../dates.ts';
 import type { AuditDetails } from '../stores/audit-events.ts';
@@ -52,8 +53,15 @@ const MAX_LINK_CHARS = 2048;
 /** An events read spans at most this many days, both ends counted. */
 const MAX_RANGE_DAYS = 92;
 
+/**
+ * Each account's link adds, every one a fetch: 12 an hour, so removing a link and adding it again fetches it no more
+ * often than "Refresh now" may. [CONFIRM: 12 link adds an hour]
+ */
+export const LINK_ADD_BUDGET = { name: 'townwise:calendar-links', limit: 12, windowSeconds: 3600 } as const;
+const linkAddBudgets = new WeakMap<TownwiseContext['redis'], RateLimiter>();
+
 const labelSchema = z.string().trim().min(1).max(MAX_LABEL_CHARS);
-/** A calendar file as its text (the route's 1 MB body limit bounds it), or a link. */
+/** A calendar file as its text (the handler holds it to 1 MB; the route's body limit leaves room for JSON escaping), or a link. */
 const calendarBody = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('file'), label: labelSchema, ics: z.string() }),
   z.object({ kind: z.literal('link'), label: labelSchema, url: z.string().trim().min(1).max(MAX_LINK_CHARS) }),
@@ -96,10 +104,36 @@ export function ownerCalendarView(calendar: OwnerCalendarRecord): OwnerCalendarV
   };
 }
 
+function linksUnavailable(): AppError {
+  return new AppError(503, 'calendar_links_unavailable', 'Calendar links aren’t available right now');
+}
+
 /** The calendar key; 503 calendar_links_unavailable without one (file imports still work). */
 function linksKey(ctx: TownwiseContext): KeyObject {
-  if (ctx.calendarKey === null) throw new AppError(503, 'calendar_links_unavailable', 'Calendar links aren’t available right now');
+  if (ctx.calendarKey === null) throw linksUnavailable();
   return ctx.calendarKey;
+}
+
+/**
+ * Spends one of the caller's link adds before the fetch: 429 rate_limited when they are used up, and, since the
+ * budget is what bounds the fetches, 503 calendar_links_unavailable when the store can't count it.
+ */
+async function spendLinkAdd(ctx: TownwiseContext, userId: string): Promise<void> {
+  let limiter = linkAddBudgets.get(ctx.redis);
+  if (limiter === undefined) {
+    limiter = createRateLimiter({ redis: ctx.redis, ...LINK_ADD_BUDGET });
+    linkAddBudgets.set(ctx.redis, limiter);
+  }
+  let decision;
+  try {
+    decision = await limiter.consume(`acct:${userId}`);
+  } catch (err) {
+    if (!(err instanceof RateLimiterUnavailableError)) throw err;
+    throw linksUnavailable();
+  }
+  if (!decision.allowed) {
+    throw new AppError(429, 'rate_limited', 'Too many requests. Try again later.', { retryAfterSeconds: decision.retryAfterSeconds });
+  }
 }
 
 /** The location's town, as the parser reads it: its today and its time zone. */
@@ -147,9 +181,10 @@ export async function listOwnerCalendars(ctx: TownwiseContext, req: Request, res
 
 /**
  * POST /api/org/locations/:locationId/owner-calendars: `{ kind: 'file', label, ics }` or `{ kind: 'link', label, url }`.
- * A file is parsed with the town's today and time zone (400 not_calendar). A link needs the calendar key (503
- * calendar_links_unavailable) and is fetched and parsed before anything is stored (400 with the failure's code); its
- * address is stored sealed, with its host. A sixth calendar answers 409 calendar_limit. 201 with the calendar.
+ * A file of at most 1 MB (400 too_large) is parsed with the town's today and time zone (400 not_calendar). A link needs
+ * the calendar key (503 calendar_links_unavailable), spends one of the account's link adds (429 rate_limited), and is
+ * fetched and parsed before anything is stored (400 with the failure's code); its address is stored sealed, with its
+ * host. A sixth calendar answers 409 calendar_limit. 201 with the calendar.
  */
 export async function createOwnerCalendar(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
@@ -162,6 +197,7 @@ export async function createOwnerCalendar(ctx: TownwiseContext, req: Request, re
   let calendar: NewCalendar;
   let parsed: ParsedCalendar;
   if (body.kind === 'file') {
+    if (Buffer.byteLength(body.ics, 'utf8') > MAX_ICS_BYTES) throw new AppError(400, 'too_large', READ_FAILURES.too_large);
     const read = parseIcs(body.ics, town);
     if ('error' in read) throw new AppError(400, read.error, READ_FAILURES[read.error]);
     calendar = { kind: 'file', label: body.label };
@@ -170,6 +206,7 @@ export async function createOwnerCalendar(ctx: TownwiseContext, req: Request, re
     const key = linksKey(ctx);
     // Before the fetch, so a full location costs no request; the add itself holds the limit against concurrent adds.
     if ((await calendars.list(scope, location.id)).length >= MAX_CALENDARS) throw calendarLimit();
+    await spendLinkAdd(ctx, caller.userId);
     const read = await readLink(ctx, body.url, town);
     if (!read.ok) throw new AppError(400, read.code, READ_FAILURES[read.code]);
     calendar = { kind: 'link', label: body.label, sealedAddress: seal(key, body.url), host: read.host };
