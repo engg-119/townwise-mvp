@@ -12,10 +12,10 @@ Two phases (owner decision, 2026-11-12): phase 1 builds the server side on `orig
 
 ## 2. Stores
 
-- [ ] 2.1 Add `tw_calendar_sources` and `tw_calendar_events` stores taking an `OrgScope`, with indexes registered for `ensureIndexes`; extend `test/indexes.test.ts`
-- [ ] 2.2 Implement replace-by-generation (write new generation, switch source, delete old) and removal (events, then source); integration test the crash-between-steps case from the calendar-subscription spec
-- [ ] 2.3 Enforce 5 calendars per location (`calendar_limit`) and 2,000 events per calendar; integration tests
-- [ ] 2.4 Delete both collections in `handlers/deletion.ts` for a location and an organization; extend the deletion integration test
+- [x] 2.1 Add `tw_calendar_sources` and `tw_calendar_events` stores taking an `OrgScope`, with indexes registered for `ensureIndexes`; extend `test/indexes.test.ts`
+- [x] 2.2 Implement replace-by-generation (write new generation, switch source, delete old) and removal (events, then source); integration test the crash-between-steps case from the calendar-subscription spec
+- [x] 2.3 Enforce 5 calendars per location (`calendar_limit`) and 2,000 events per calendar; integration tests
+- [x] 2.4 Delete both collections in `handlers/deletion.ts` for a location and an organization; extend the deletion integration test
 
 ## 3. Address encryption and guarded fetch
 

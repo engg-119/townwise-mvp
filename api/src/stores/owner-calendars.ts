@@ -1,0 +1,381 @@
+// tw_calendar_sources and tw_calendar_events (openspec change connect-owner-calendar: the owner-calendar and
+// calendar-subscription specs, design decisions 1 and 2): a location's own calendars, each an imported .ics file or a
+// subscription link, and their single events. An event keeps its UID, title, dates and hours only (calendar/ics.ts).
+// A link's address is a credential: it is stored only as the opaque string calendar/secret.ts seals, read back only by
+// sealedAddress() for server code, and never part of a record; its host is kept in plain text for display. Titles name
+// customers: nothing here logs, and no label, host, address or title belongs in a log line or an audit event.
+//
+// At most 5 calendars per location, safe against concurrent adds without a transaction: each calendar holds one of 5
+// slots under a unique index on (orgId, locationId, slot), and an add inserts into a slot it saw free, trying the next
+// free one if another add took it first. Two adds racing for the last slot both insert, and the index refuses the
+// second, which a count followed by an insert could not do. Removing a calendar frees its slot.
+//
+// Events are replaced by generation, with no transaction (writes ordered so a retry completes them): a replace reserves
+// a generation number of its own on the calendar ($inc, so two writers never share one; with no crash or race it is the
+// current generation + 1), writes the new events under it, switches the calendar to it with a compare-and-set on the
+// generation it started from, recording the counts, and then deletes the older generations' events. Reads filter on
+// each calendar's current generation, so a reader sees the old events or the new ones, never a mix. A crash (or a lost
+// compare-and-set) before the switch leaves rows of an unused generation that no read returns; the next replace or the
+// removal deletes them. Removal deletes the events, then the calendar, then the events again (removeWhere). Ids are
+// checked by the caller.
+import { isDuplicateKeyError } from '@ckeith26/mongo';
+import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
+
+import type { OrgScope } from '../access/policy.ts';
+import { MAX_EVENTS, MAX_TITLE_CHARS, type IcsEvent } from '../calendar/ics.ts';
+
+export const CALENDAR_SOURCES_COLLECTION = 'tw_calendar_sources';
+export const CALENDAR_EVENTS_COLLECTION = 'tw_calendar_events';
+
+/** At most this many calendars per location. [CONFIRM: 5 calendars per location] */
+export const MAX_CALENDARS = 5;
+/** The owner's name for a calendar. [CONFIRM: a 60 character name] */
+export const MAX_LABEL_CHARS = 60;
+/** A link is fetched again this long after it was added or last refreshed. [CONFIRM: 6 hour refresh] */
+export const REFRESH_INTERVAL_MS = 6 * 60 * 60_000;
+
+export type CalendarKind = 'file' | 'link';
+
+/** `ok`, or the code of the last failed refresh (design decisions 4 and 5). */
+export const CALENDAR_STATUSES = [
+  'ok', 'blocked_address', 'unreachable', 'timeout', 'too_large', 'http_error', 'not_calendar', 'key_mismatch',
+] as const;
+export type CalendarStatus = typeof CALENDAR_STATUSES[number];
+
+interface SourceFields {
+  orgId: Types.ObjectId;
+  locationId: Types.ObjectId;
+  /** 0 to MAX_CALENDARS - 1, unique per location: what holds the limit. */
+  slot: number;
+  kind: CalendarKind;
+  label: string;
+  /** A link's address as calendar/secret.ts sealed it; null for a file. */
+  sealedAddress: string | null;
+  /** A link's host, in plain text; null for a file. */
+  host: string | null;
+  /** The generation reads return; 0 before the first events are written. */
+  generation: number;
+  /** The highest generation handed to a replace. */
+  reservedGeneration: number;
+  eventCount: number;
+  skippedRepeating: number;
+  status: CalendarStatus;
+  lastSuccessAt: Date | null;
+  lastAttemptAt: Date | null;
+  /** When the refresh loop next fetches a link; null for a file, which is never fetched. */
+  nextRefreshAt: Date | null;
+  /** A refresh's claim on the calendar, until this time. */
+  leaseUntil: Date | null;
+  consecutiveFailures: number;
+  /** The last "Refresh now", for its one per 5 minutes. */
+  lastManualRefreshAt: Date | null;
+  createdBy: string;
+  createdAt: Date;
+}
+
+interface EventFields {
+  orgId: Types.ObjectId;
+  locationId: Types.ObjectId;
+  sourceId: Types.ObjectId;
+  generation: number;
+  uid: string;
+  title: string;
+  startDate: string;
+  /** Inclusive. */
+  endDate: string;
+  startTime: string | null;
+  endTime: string | null;
+}
+
+function sourceSchema(): Schema<SourceFields> {
+  const schema = new Schema<SourceFields>({
+    orgId: { type: Schema.Types.ObjectId, required: true },
+    locationId: { type: Schema.Types.ObjectId, required: true },
+    slot: { type: Number, required: true, min: 0, max: MAX_CALENDARS - 1 },
+    kind: { type: String, required: true, enum: ['file', 'link'] },
+    label: { type: String, required: true, maxlength: MAX_LABEL_CHARS },
+    sealedAddress: { type: String, default: null },
+    host: { type: String, default: null },
+    generation: { type: Number, required: true },
+    reservedGeneration: { type: Number, required: true },
+    eventCount: { type: Number, required: true },
+    skippedRepeating: { type: Number, required: true },
+    status: { type: String, required: true, enum: CALENDAR_STATUSES },
+    lastSuccessAt: { type: Date, default: null },
+    lastAttemptAt: { type: Date, default: null },
+    nextRefreshAt: { type: Date, default: null },
+    leaseUntil: { type: Date, default: null },
+    consecutiveFailures: { type: Number, required: true },
+    lastManualRefreshAt: { type: Date, default: null },
+    createdBy: { type: String, required: true },
+    createdAt: { type: Date, required: true },
+  }, { strict: 'throw', versionKey: false, read: 'primary' });
+  schema.index({ orgId: 1, locationId: 1, slot: 1 }, { unique: true });
+  return schema;
+}
+
+function eventSchema(): Schema<EventFields> {
+  const schema = new Schema<EventFields>({
+    orgId: { type: Schema.Types.ObjectId, required: true },
+    locationId: { type: Schema.Types.ObjectId, required: true },
+    sourceId: { type: Schema.Types.ObjectId, required: true },
+    generation: { type: Number, required: true },
+    uid: { type: String, required: true },
+    title: { type: String, required: true, maxlength: MAX_TITLE_CHARS },
+    startDate: { type: String, required: true },
+    endDate: { type: String, required: true },
+    startTime: { type: String, default: null },
+    endTime: { type: String, default: null },
+  }, { strict: 'throw', versionKey: false, read: 'primary' });
+  // A calendar's generation by date (reads), and every row of an organization or a calendar (deletion) by its prefix.
+  schema.index({ orgId: 1, sourceId: 1, generation: 1, startDate: 1 });
+  return schema;
+}
+
+/** Registers TwCalendarSource (tw_calendar_sources) on first call. */
+export function calendarSourceModel(connection: Connection): Model<SourceFields> {
+  const existing = connection.models.TwCalendarSource as Model<SourceFields> | undefined;
+  return existing ?? connection.model<SourceFields>('TwCalendarSource', sourceSchema(), CALENDAR_SOURCES_COLLECTION);
+}
+
+/** Registers TwCalendarEvent (tw_calendar_events) on first call. */
+export function calendarEventModel(connection: Connection): Model<EventFields> {
+  const existing = connection.models.TwCalendarEvent as Model<EventFields> | undefined;
+  return existing ?? connection.model<EventFields>('TwCalendarEvent', eventSchema(), CALENDAR_EVENTS_COLLECTION);
+}
+
+/** A calendar as the API shows it: never its address. */
+export interface OwnerCalendarRecord {
+  readonly id: string;
+  readonly locationId: string;
+  readonly kind: CalendarKind;
+  readonly label: string;
+  /** A link's host (`calendar.google.com`); null for a file. */
+  readonly host: string | null;
+  readonly eventCount: number;
+  readonly skippedRepeating: number;
+  readonly status: CalendarStatus;
+  readonly lastSuccessAt: Date | null;
+  readonly lastAttemptAt: Date | null;
+  readonly nextRefreshAt: Date | null;
+  readonly leaseUntil: Date | null;
+  readonly consecutiveFailures: number;
+  readonly lastManualRefreshAt: Date | null;
+  readonly createdBy: string;
+  readonly createdAt: Date;
+}
+
+/** A stored event with its calendar's name. */
+export interface OwnerCalendarEvent {
+  readonly calendarId: string;
+  /** The calendar's label. */
+  readonly calendar: string;
+  readonly uid: string;
+  readonly title: string;
+  readonly startDate: string;
+  /** Inclusive. */
+  readonly endDate: string;
+  readonly startTime: string | null;
+  readonly endTime: string | null;
+}
+
+/** A calendar to add: a link carries its sealed address and its host. */
+export type NewCalendar =
+  | { readonly kind: 'file'; readonly label: string }
+  | { readonly kind: 'link'; readonly label: string; readonly sealedAddress: string; readonly host: string };
+
+/** What calendar/ics.ts parsed: the single events by start, and the repeating ones it counted. */
+export interface ParsedCalendar {
+  readonly events: readonly IcsEvent[];
+  readonly skippedRepeating: number;
+}
+
+/** Tenant store: every function takes the OrgScope first and filters on its orgId. */
+export interface OwnerCalendarStore {
+  /** The location's calendars, oldest first. */
+  list(scope: OrgScope, locationId: string): Promise<OwnerCalendarRecord[]>;
+  /** One calendar of this location, else null (another location's or organization's id included). */
+  find(scope: OrgScope, locationId: string, calendarId: string): Promise<OwnerCalendarRecord | null>;
+  /** A link calendar's sealed address, for server code only (the refresh); null for a file or a missing calendar. */
+  sealedAddress(scope: OrgScope, locationId: string, calendarId: string): Promise<string | null>;
+  /**
+   * Stores the calendar, then its events (the first 2,000), as one replace. 'calendar_limit' when the location already
+   * has 5, and nothing is stored.
+   */
+  add(scope: OrgScope, locationId: string, calendar: NewCalendar, parsed: ParsedCalendar, input: { createdBy: string; now: Date }): Promise<OwnerCalendarRecord | 'calendar_limit'>;
+  /**
+   * Replaces the calendar's events by generation (the first 2,000) and records the counts and the success. False when
+   * the calendar is gone, or when another replace switched it first: this one's rows are then deleted.
+   */
+  replaceEvents(scope: OrgScope, locationId: string, calendarId: string, parsed: ParsedCalendar, now: Date): Promise<boolean>;
+  /** The calendar's events, then the calendar. False when it was not there. */
+  remove(scope: OrgScope, locationId: string, calendarId: string): Promise<boolean>;
+  /** The location's events overlapping [from, to] (inclusive dates), each calendar's current generation, by start. */
+  eventsBetween(scope: OrgScope, locationId: string, range: { from: string; to: string }): Promise<OwnerCalendarEvent[]>;
+  /** Location deletion. Resolves the number of calendars deleted. */
+  removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
+  /** Organization deletion (spec 10.7). Resolves the number of calendars deleted. */
+  removeForOrg(scope: OrgScope): Promise<number>;
+}
+
+type SourceDoc = SourceFields & { _id: Types.ObjectId };
+
+function toCalendar(doc: SourceDoc): OwnerCalendarRecord {
+  return {
+    id: doc._id.toHexString(),
+    locationId: doc.locationId.toHexString(),
+    kind: doc.kind,
+    label: doc.label,
+    host: doc.host,
+    eventCount: doc.eventCount,
+    skippedRepeating: doc.skippedRepeating,
+    status: doc.status,
+    lastSuccessAt: doc.lastSuccessAt,
+    lastAttemptAt: doc.lastAttemptAt,
+    nextRefreshAt: doc.nextRefreshAt,
+    leaseUntil: doc.leaseUntil,
+    consecutiveFailures: doc.consecutiveFailures,
+    lastManualRefreshAt: doc.lastManualRefreshAt,
+    createdBy: doc.createdBy,
+    createdAt: doc.createdAt,
+  };
+}
+
+function startKey(event: OwnerCalendarEvent): string {
+  return `${event.startDate} ${event.startTime ?? ''}`;
+}
+
+export function createOwnerCalendarStore(connection: Connection): OwnerCalendarStore {
+  const Source = calendarSourceModel(connection);
+  const Event = calendarEventModel(connection);
+  const ofLocation = (scope: OrgScope, locationId: string) => ({
+    orgId: new Types.ObjectId(scope.orgId), locationId: new Types.ObjectId(locationId),
+  });
+  const ofCalendar = (scope: OrgScope, locationId: string, calendarId: string) => ({
+    ...ofLocation(scope, locationId), _id: new Types.ObjectId(calendarId),
+  });
+
+  /**
+   * Events, then calendars, then events again. A replace that switched before its calendar went had written all its
+   * rows first, so the second pass deletes them; one that tries to switch later finds no calendar and deletes its own.
+   */
+  async function removeWhere(events: Record<string, unknown>, sources: Record<string, unknown>): Promise<number> {
+    await Event.deleteMany(events);
+    const { deletedCount } = await Source.deleteMany(sources);
+    await Event.deleteMany(events);
+    return deletedCount;
+  }
+
+  async function replaceEvents(scope: OrgScope, locationId: string, calendarId: string, parsed: ParsedCalendar, now: Date): Promise<boolean> {
+    const key = ofCalendar(scope, locationId, calendarId);
+    const reserved = await Source.findOneAndUpdate(key, { $inc: { reservedGeneration: 1 } }, { returnDocument: 'after' }).lean();
+    if (reserved === null) return false;
+    const previous = reserved.generation;
+    const generation = reserved.reservedGeneration;
+    const events = parsed.events.slice(0, MAX_EVENTS);
+    const mine = { orgId: key.orgId, sourceId: key._id, generation };
+    if (events.length > 0) {
+      await Event.insertMany(events.map((event) => ({
+        ...mine, locationId: key.locationId, uid: event.uid, title: event.title, startDate: event.startDate,
+        endDate: event.endDate, startTime: event.startTime, endTime: event.endTime,
+      })));
+    }
+    const switched = await Source.updateOne({ ...key, generation: previous }, {
+      $set: {
+        generation, eventCount: events.length, skippedRepeating: parsed.skippedRepeating, status: 'ok', lastSuccessAt: now,
+        lastAttemptAt: now, consecutiveFailures: 0,
+      },
+    });
+    if (switched.modifiedCount !== 1) {
+      await Event.deleteMany(mine);
+      return false;
+    }
+    // Older only: a later replace may already be writing a newer generation.
+    await Event.deleteMany({ orgId: key.orgId, sourceId: key._id, generation: trusted({ $lt: generation }) });
+    return true;
+  }
+
+  return {
+    async list(scope, locationId) {
+      const docs = await Source.find(ofLocation(scope, locationId)).sort({ createdAt: 1, _id: 1 }).lean();
+      return docs.map(toCalendar);
+    },
+    async find(scope, locationId, calendarId) {
+      const doc = await Source.findOne(ofCalendar(scope, locationId, calendarId)).lean();
+      return doc === null ? null : toCalendar(doc);
+    },
+    async sealedAddress(scope, locationId, calendarId) {
+      const doc = await Source.findOne({ ...ofCalendar(scope, locationId, calendarId), kind: 'link' }).lean();
+      return doc?.sealedAddress ?? null;
+    },
+    async add(scope, locationId, calendar, parsed, input) {
+      const location = ofLocation(scope, locationId);
+      const taken = new Set(await Source.distinct('slot', location));
+      const free = Array.from({ length: MAX_CALENDARS }, (_, slot) => slot).filter((slot) => !taken.has(slot));
+      const fields: Omit<SourceDoc, 'slot'> = {
+        _id: new Types.ObjectId(), ...location, kind: calendar.kind, label: calendar.label,
+        sealedAddress: calendar.kind === 'link' ? calendar.sealedAddress : null,
+        host: calendar.kind === 'link' ? calendar.host : null,
+        generation: 0, reservedGeneration: 0, eventCount: 0, skippedRepeating: 0, status: 'ok',
+        lastSuccessAt: null, lastAttemptAt: input.now,
+        nextRefreshAt: calendar.kind === 'link' ? new Date(input.now.getTime() + REFRESH_INTERVAL_MS) : null,
+        leaseUntil: null, consecutiveFailures: 0, lastManualRefreshAt: null, createdBy: input.createdBy, createdAt: input.now,
+      };
+      let added: SourceDoc | null = null;
+      for (const slot of free) {
+        try {
+          added = (await Source.create({ ...fields, slot })).toObject();
+          break;
+        } catch (err) {
+          // Another add took this slot after it was read: try the next free one.
+          if (!isDuplicateKeyError(err)) throw err;
+        }
+      }
+      if (added === null) return 'calendar_limit';
+      // A crash before the events are switched in leaves the calendar empty, with no lastSuccessAt: removing it, or a
+      // link's next refresh, completes the work.
+      await replaceEvents(scope, locationId, added._id.toHexString(), parsed, input.now);
+      return toCalendar({
+        ...added, eventCount: Math.min(parsed.events.length, MAX_EVENTS), skippedRepeating: parsed.skippedRepeating, lastSuccessAt: input.now,
+      });
+    },
+    replaceEvents,
+    async remove(scope, locationId, calendarId) {
+      const key = ofCalendar(scope, locationId, calendarId);
+      const events = { orgId: key.orgId, locationId: key.locationId, sourceId: key._id };
+      return (await removeWhere(events, key)) === 1;
+    },
+    async eventsBetween(scope, locationId, range) {
+      const location = ofLocation(scope, locationId);
+      const current = () => Source.find(location, { label: 1, generation: 1 }).sort({ createdAt: 1, _id: 1 }).lean();
+      const read = (sources: Awaited<ReturnType<typeof current>>) => Promise.all(sources.map((source) => Event.find({
+        orgId: location.orgId, sourceId: source._id, generation: source.generation,
+        startDate: trusted({ $lte: range.to }), endDate: trusted({ $gte: range.from }),
+      }).sort({ startDate: 1, _id: 1 }).lean()));
+      let sources = await current();
+      let rows = await read(sources);
+      // A replace that switched meanwhile may have deleted part of the generation just read: read again at its new one.
+      for (let attempt = 1; attempt < 3; attempt += 1) {
+        const after = await current();
+        const unchanged = sources.every((source) => after.some((each) => each._id.equals(source._id) && each.generation === source.generation));
+        if (unchanged) break;
+        sources = after;
+        rows = await read(sources);
+      }
+      const events = sources.flatMap((source, index) => (rows[index] ?? []).map((row): OwnerCalendarEvent => ({
+        calendarId: source._id.toHexString(), calendar: source.label, uid: row.uid, title: row.title, startDate: row.startDate,
+        endDate: row.endDate, startTime: row.startTime, endTime: row.endTime,
+      })));
+      // Stable: events starting together keep their calendars' order.
+      return events.sort((a, b) => (startKey(a) < startKey(b) ? -1 : startKey(a) > startKey(b) ? 1 : 0));
+    },
+    removeForLocation(scope, locationId) {
+      const location = ofLocation(scope, locationId);
+      return removeWhere(location, location);
+    },
+    removeForOrg(scope) {
+      const org = { orgId: new Types.ObjectId(scope.orgId) };
+      return removeWhere(org, org);
+    },
+  };
+}

@@ -9,7 +9,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { MeResponse } from '../src/handlers/me.ts';
 import { AUDIT_DETAIL_KEYS, type AuditAction } from '../src/stores/audit-events.ts';
 import {
-  addAuditEvent, addChatUsage, addConversation, addGrant, addInvite, addLiveTurn, addLocation, addNote, addRemovedSeat,
+  addAuditEvent, addChatUsage, addConversation, addGrant, addInvite, addLiveTurn, addLocation, addNote, addOwnerCalendar, addRemovedSeat,
   addRequest, addSalesDay, addSeat, addUpload, auditEvents, createOrg,
 } from './helpers/fixtures.ts';
 import {
@@ -38,6 +38,8 @@ const TENANT_COLLECTIONS = [
   'tw_forecast_runs', 'tw_forecasts',
   // The forecast lab.
   'tw_calibrations',
+  // The owner's own calendars and their events.
+  'tw_calendar_sources', 'tw_calendar_events',
 ] as const;
 
 /** A tw_chat_proposals record (spec 6.16): the author dismissed a proposal in one of their conversations. */
@@ -131,6 +133,7 @@ async function populatedOrg(name: string, status: 'active' | 'suspended'): Promi
   await addSalesDay(server, { orgId, locationId, date: '2026-05-02', guests: 98, netSalesCents: 287_100 });
   await addUpload(server, { orgId, locationId, uploadedAt: server.clock.now(), status: 'applied' });
   await addNote(server, { orgId, locationId, detail: `${name} note detail`, createdBy: member.session.userId });
+  await addOwnerCalendar(server, { orgId, locationId });
   await addConversation(server, { orgId, locationId, userId: member.session.userId, text: `${name} chat` });
   await addProposal({ orgId, locationId, userId: member.session.userId });
   // U9: an answer to a TownwiseAI question.

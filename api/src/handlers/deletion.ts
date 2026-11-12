@@ -53,6 +53,8 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     const firstDays = await stores.salesDays.removeForOrg(scope);
     const deletedUploads = await stores.uploads.removeForOrg(scope);
     const deletedNotes = await stores.notes.removeForOrg(scope);
+    // The owner's calendars: their events, then the calendars.
+    await stores.ownerCalendars.removeForOrg(scope);
     await stores.chatConversations.removeForOrg(scope);
     await stores.chatLiveTurns.removeForOrg(scope);
     await stores.chatUsage.removeForOrg(scope);
