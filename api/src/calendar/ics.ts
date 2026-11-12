@@ -158,8 +158,10 @@ export function parseIcs(text: string, town: IcsTown): IcsResult {
     const start = momentOf(props.get('DTSTART'), clock);
     if (start === null) return;
     const given = props.get('UID')?.trim() ?? '';
-    let uid = given === '' ? `event-${String(seen)}` : given;
-    if (uids.has(uid)) uid = `${uid}#${String(seen)}`;
+    const base = given === '' ? `event-${String(seen)}` : given;
+    // A taken key, stated or made here, gets the next free suffix, so no two events share one.
+    let uid = base;
+    for (let suffix = seen; uids.has(uid); suffix += 1) uid = `${base}#${String(suffix)}`;
     uids.add(uid);
     events.push({ uid, title: titleOf(props.get('SUMMARY')), ...spanOf(start, momentOf(props.get('DTEND'), clock)) });
   };

@@ -160,6 +160,23 @@ describe('parseIcs', () => {
     expect(eventsOf(text).map((event) => [event.uid, event.title])).toEqual([
       ['d1', 'Wine tasting'], ['d1#2', 'Wine tasting again'], ['d1#3', 'Last wine tasting'],
     ]);
+
+    // A suffixed or made-up key that the file also states is taken too, whichever comes first.
+    const clash = calendar(
+      ...vevent('UID:a#3', 'SUMMARY:Stated', 'DTSTART;VALUE=DATE:20261121'),
+      ...vevent('UID:a', 'SUMMARY:First', 'DTSTART;VALUE=DATE:20261122'),
+      ...vevent('UID:a', 'SUMMARY:Second', 'DTSTART;VALUE=DATE:20261123'),
+      ...vevent('UID:event-5', 'SUMMARY:Stated made-up', 'DTSTART;VALUE=DATE:20261124'),
+      ...vevent('SUMMARY:No UID', 'DTSTART;VALUE=DATE:20261125'),
+      ...vevent('SUMMARY:No UID again', 'DTSTART;VALUE=DATE:20261126'),
+      ...vevent('UID:event-6', 'SUMMARY:Stated after', 'DTSTART;VALUE=DATE:20261127'),
+    );
+    const kept = eventsOf(clash).map((event) => [event.uid, event.title]);
+    expect(kept).toEqual([
+      ['a#3', 'Stated'], ['a', 'First'], ['a#4', 'Second'], ['event-5', 'Stated made-up'],
+      ['event-5#5', 'No UID'], ['event-6', 'No UID again'], ['event-6#7', 'Stated after'],
+    ]);
+    expect(new Set(kept.map(([uid]) => uid)).size).toBe(kept.length);
   });
 });
 
