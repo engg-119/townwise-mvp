@@ -77,6 +77,25 @@ export async function setEnabled(api: ApiClient, locationId: string, ref: string
   return body.item;
 }
 
+/**
+ * Renames an item kept for reference: `title` becomes its name, keeping the current extension; the same name changes
+ * nothing. 409 item_busy while it is not kept (an edit being saved, a delete).
+ */
+export async function renameItem(api: ApiClient, locationId: string, ref: string, title: string): Promise<DataItem> {
+  const body = await api.json(itemPath(locationId, ref), itemSchema, { method: 'PATCH', body: { title } });
+  return body.item;
+}
+
+/**
+ * Puts a reference file the caller stored in the last 24 hours (`fileId`) in an item's place, keeping who added the
+ * item, when and whether it is off; answers the item as it now is, whose ref is `f_<fileId>`. Retry-safe with the
+ * same `fileId`; 409 item_changed when another edit took the item's place first.
+ */
+export async function replaceItem(api: ApiClient, locationId: string, ref: string, fileId: string): Promise<DataItem> {
+  const body = await api.json(`${itemPath(locationId, ref)}/replace`, itemSchema, { method: 'POST', body: { fileId } });
+  return body.item;
+}
+
 /** An upload (org admins): its file and the days it still holds; a stored file: removed whole. */
 export function removeItem(api: ApiClient, locationId: string, ref: string): Promise<{ deletedDays: number; deletedFiles: number }> {
   return api.json(itemPath(locationId, ref), removedSchema, { method: 'DELETE' });

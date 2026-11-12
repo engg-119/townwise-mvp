@@ -1,10 +1,12 @@
-import { formatCount, formatDate } from '../../format';
+import { ApiError } from '../../../api/client';
+import { COPY as SHARED, hasCode } from '../../errors';
+import { formatCount, formatDate, plural } from '../../format';
 import type { FileKind } from '../../files/api';
-import { formatSize } from '../../files/copy';
+import { formatSize, uploadError } from '../../files/copy';
 import type { ViewerErrorReason } from '../../viewer/errors';
 import { VIEW_LIMITS } from '../../viewer/limits';
 import type { DataItem } from '../api';
-import { DATA, daysLine, kindLabel, stateLine, VIA_LINE } from '../copy';
+import { DATA, dataError, daysLine, kindLabel, stateLine, VIA_LINE } from '../copy';
 
 // Every word of an item's page (P27, D28). Like Your data's list, a figure prints only as a count, a size or a date
 // range, and a name only where the API sends one (never under view-as). Each line that stands in for the content says
@@ -116,4 +118,115 @@ export const TRUNCATED = {
 
 export function daysTableLabel(item: string): string {
   return `Days in ${item}`;
+}
+
+// ---- Renaming and editing an item kept for reference (owner request, 2026-11-11) ----------------------------------
+
+export const EDIT = {
+  rename: 'Rename',
+  edit: 'Edit',
+  nameLabel: 'Name',
+  nameMissing: 'Add a name.',
+  save: 'Save',
+  saveCopy: 'Save as a copy',
+  saving: 'Saving…',
+  cancel: 'Cancel',
+  close: 'Close',
+  tryAgain: 'Try again',
+  tryingAgain: 'Trying again…',
+  discardTitle: 'Discard your changes?',
+  discardBody: 'Nothing you changed here has been saved. This can’t be undone.',
+  discardConfirm: 'Discard changes',
+  saved: 'Saved.',
+  savedCopy: 'Saved a copy. The original is still on Your data.',
+  copyNote: 'Saving makes a new Excel file beside this one. The copy keeps each cell’s value; formatting, formulas and charts stay only in the original.',
+  addRow: 'Add a row',
+  addColumn: 'Add a column',
+  deleteRow: 'Delete',
+  atLimit: `Townwise edits tables up to ${formatCount(VIEW_LIMITS.editRows)} rows and ${formatCount(VIEW_LIMITS.editColumns)} columns.`,
+  stillHere: 'Your changes are still here.',
+  openKept: 'Open it',
+  itemChanged: 'Someone else saved an edit of this item first. Yours is kept on Your data as a new item.',
+  notReplaced: 'Townwise saved your edit, but couldn’t put it in this item’s place. Try again. If you leave, your edit stays on Your data as a new item.',
+  keptAsNew: 'Your edit is kept on Your data as a new item.',
+  itemBusy: 'This item is changing right now, maybe because someone is saving an edit of it. Try again in a moment.',
+  badName: 'Townwise can’t use that name. Try another.',
+} as const;
+
+/** A name as its part before the last dot and the rest (“.txt”), as the API keeps the extension on a rename. */
+export function splitName(name: string): { base: string; extension: string } {
+  const dot = name.lastIndexOf('.');
+  return dot === -1 ? { base: name, extension: '' } : { base: name.slice(0, dot), extension: name.slice(dot) };
+}
+
+/** An edited workbook's copy: “Sales (edited).xlsx”. */
+export function copyName(name: string): string {
+  return `${splitName(name).base} (edited).xlsx`;
+}
+
+export function nameHelp(extension: string): string {
+  return `The name keeps its ${extension} ending.`;
+}
+
+export function renamedLine(name: string): string {
+  return `Renamed to ${name}.`;
+}
+
+export function charsLeftLine(left: number): string {
+  return `${plural(left, 'character', 'characters')} left.`;
+}
+
+/** A cell input's accessible name: “Row 3, column B” in a workbook, “Row 3, column 2” in a CSV. */
+export function cellLabel(row: number, column: string): string {
+  return `Row ${String(row)}, column ${column}`;
+}
+
+/** Why an item that could be edited can't be here: it is longer or wider than the editor takes. */
+export function tooBigToEditLine(kind: 'text' | 'table' | 'workbook'): string {
+  const rows = `${formatCount(VIEW_LIMITS.editRows)} rows and ${formatCount(VIEW_LIMITS.editColumns)} columns`;
+  const limit = kind === 'text'
+    ? `This file is too long to edit here: Townwise edits text up to ${formatCount(VIEW_LIMITS.editTextChars)} characters.`
+    : kind === 'table'
+      ? `This file is too big to edit here: Townwise edits tables up to ${rows}.`
+      : `This workbook is too big to edit here: Townwise edits up to ${formatCount(VIEW_LIMITS.sheets)} sheets of ${rows}.`;
+  return `${limit} Download it, edit it on your computer, and add it again.`;
+}
+
+/** A rename's or an edit's refusal: Your data's words, with this page's own for a busy item. */
+function editError(error: unknown): string {
+  return hasCode(error, 409, 'item_busy') ? EDIT.itemBusy : dataError(error);
+}
+
+export function renameError(error: unknown): string {
+  return hasCode(error, 400, 'invalid_request') ? EDIT.badName : editError(error);
+}
+
+/** Upload refusals as an edit meets them (the queue's words say “drop the file again”, which an edit can't). */
+const STORE_ERROR: Readonly<Record<string, string>> = {
+  storage_full: 'Your organization’s file storage is full, and saving an edit needs room for both copies until the old one is removed. Delete some files on Your data, then save again.',
+  daily_upload_limit: 'Your organization reached today’s upload limit, so this edit can’t be saved until tomorrow.',
+  too_many_uploading: 'Too many files are uploading for this location. Wait for some to finish, then save again.',
+  file_duplicate: 'This is the same as another item on Your data, so there’s nothing new to save.',
+  file_empty: 'Townwise can’t save an empty file. Add something to it, or delete the item on Your data instead.',
+  files_unavailable: 'File storage is off right now, so this edit can’t be saved.',
+};
+/** Codes whose upload words fit an edit too. */
+const STORE_SHARED: ReadonlySet<string> = new Set(['network', 'signed_out', 'file_too_large', 'forbidden', 'view_as_read_only', 'no_access']);
+
+/** An edit whose upload was refused or failed: nothing changed, and the editor stays open. */
+export function storeErrorLine(code: string, detail: Readonly<Record<string, unknown>> | null): string {
+  const line = Object.hasOwn(STORE_ERROR, code) ? STORE_ERROR[code] : STORE_SHARED.has(code) ? uploadError(code, detail) : SHARED.server;
+  return `${line ?? SHARED.server} ${EDIT.stillHere}`;
+}
+
+/** Whether putting a stored edit in the item's place is worth trying again: the request may not have arrived. */
+export function replaceRetryable(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return true;
+  if (error.kind === 'http') return error.status >= 500 || error.status === 429;
+  return error.kind !== 'signed_out';
+}
+
+/** An edit stored as its own item that can't take the item's place (another edit came first, or it can't now). */
+export function keptLine(error: unknown): string {
+  return hasCode(error, 409, 'item_changed') ? EDIT.itemChanged : `${editError(error)} ${EDIT.keptAsNew}`;
 }

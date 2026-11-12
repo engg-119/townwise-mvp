@@ -6,9 +6,10 @@ import { ADMIN_EMAIL, refusal } from '../../helpers/portal';
 import { fileViewOf, filesFake, type FilesFake } from '../files/fakes';
 
 // Your data in the API's shapes (api/src/handlers/data.ts) and a fake ApiClient for its routes. The list and GET of
-// one item answer from `items` (the list filtered by locationId, `pageSize` a page, the cursor an offset); PATCH,
-// DELETE and POST text change `items` and are recorded. GET .../sales/history answers from `history` (the item page's
-// days). Anything else goes to the stored-files fake, which sits over the location pages' fake.
+// one item answer from `items` (the list filtered by locationId, `pageSize` a page, the cursor an offset); PATCH
+// (on or off, or a rename keeping the extension), DELETE, POST text and POST replace change `items` and are recorded.
+// GET .../sales/history answers from `history` (the item page's days). Anything else goes to the stored-files fake,
+// which sits over the location pages' fake.
 
 export function itemOf(ref: string, extra?: Partial<DataItem>): DataItem {
   return {
@@ -40,6 +41,8 @@ export interface DataFake extends ApiClient {
   patches: { ref: string; body: unknown }[];
   removed: { locationId: string; ref: string }[];
   texts: { locationId: string; body: unknown }[];
+  /** POST .../data/:ref/replace requests, in order. */
+  replaces: { ref: string; body: unknown }[];
   /** GET .../sales/history bodies (or an ApiError) by location id. */
   history: Record<string, unknown>;
   /** Answers by "METHOD path": a body, an ApiError or a promise of either. */
@@ -63,6 +66,7 @@ export function dataFake(init: { inner: ApiClient; items?: DataItem[] }): DataFa
     patches: [],
     removed: [],
     texts: [],
+    replaces: [],
     history: {},
     answers: {},
     files,
@@ -95,7 +99,11 @@ export function dataFake(init: { inner: ApiClient; items?: DataItem[] }): DataFa
           if (answered !== undefined) return settle(answered, schema);
           const item = fake.items.find((candidate) => candidate.ref === ref);
           if (item === undefined) return Promise.reject(refusal(404, 'not_found'));
-          item.enabled = (opts?.body as { enabled: boolean }).enabled;
+          const body = opts?.body as { enabled: boolean } | { title: string };
+          if ('title' in body) {
+            const dot = item.name?.lastIndexOf('.') ?? -1;
+            item.name = `${body.title}${item.name === null || dot === -1 ? '' : item.name.slice(dot)}`;
+          } else item.enabled = body.enabled;
           return settle({ item: { ...item } }, schema);
         }
         if (method === 'DELETE') {
@@ -104,6 +112,23 @@ export function dataFake(init: { inner: ApiClient; items?: DataItem[] }): DataFa
           fake.items = fake.items.filter((candidate) => candidate.ref !== ref);
           return settle({ deletedDays: 5, deletedFiles: 0 }, schema);
         }
+      }
+      const replace = /^\/api\/org\/locations\/([^/]+)\/data\/([^/]+)\/replace$/.exec(path);
+      if (method === 'POST' && replace?.[2] !== undefined) {
+        const ref = replace[2];
+        fake.replaces.push({ ref, body: opts?.body });
+        const answered = fake.answers['POST replace']?.(opts?.body);
+        if (answered !== undefined) return settle(answered, schema);
+        const old = fake.items.find((candidate) => candidate.ref === ref);
+        if (old === undefined) return Promise.reject(refusal(404, 'not_found'));
+        // The edit takes the item's place: who added it, when and on or off stay; the ref is the new file's.
+        const { fileId } = opts?.body as { fileId: string };
+        const item: DataItem = {
+          ...old, ref: `f_${fileId}`, file: old.file === null ? null : { ...old.file, id: fileId }, editedAt: '2026-11-11T15:00:00.000Z',
+          editedByEmail: ADMIN_EMAIL,
+        };
+        fake.items = fake.items.map((candidate) => (candidate.ref === ref ? item : candidate));
+        return settle({ item }, schema);
       }
       const history = /^\/api\/org\/locations\/([^/]+)\/sales\/history$/.exec(path);
       if (method === 'GET' && history?.[1] !== undefined) {
@@ -127,3 +152,4 @@ export function dataFake(init: { inner: ApiClient; items?: DataItem[] }): DataFa
   };
   return fake;
 }
+

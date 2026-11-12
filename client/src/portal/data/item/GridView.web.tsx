@@ -15,16 +15,17 @@ import { columnLetters, shownCell } from './open';
 // tabs, with column letters. Each grid is a real <table> with row numbers as row headers, in a region that scrolls
 // inside itself, and draws at most VIEW_LIMITS.shownRows rows, saying so when it cuts. A file longer or wider than the
 // readers read (VIEW_LIMITS.sheetRows, sheetColumns, sheets) says that too. The tabs are an ARIA tablist with one tab
-// stop: Left and Right move between sheets (wrapping), Home and End go to the first and last.
+// stop: Left and Right move between sheets (wrapping), Home and End go to the first and last. The editor
+// (GridEditor.web.tsx) shares the tabs and the header styles.
 
 const C = theme.color;
 
-const SR_ONLY = {
+export const SR_ONLY = {
   position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap',
   border: 0,
 } as const;
-const head = { ...mono, color: C.text3, fontWeight: 400, padding: '6px 12px', background: C.raised, border: cellBorder, position: 'sticky', top: 0 } as const;
-const rowHead = { ...mono, color: C.text3, fontWeight: 400, padding: '6px 12px', textAlign: 'right', background: C.raised, border: cellBorder } as const;
+export const head = { ...mono, color: C.text3, fontWeight: 400, padding: '6px 12px', background: C.raised, border: cellBorder, position: 'sticky', top: 0 } as const;
+export const rowHead = { ...mono, color: C.text3, fontWeight: 400, padding: '6px 12px', textAlign: 'right', background: C.raised, border: cellBorder } as const;
 const cell = { ...mono, color: C.text2, padding: '6px 12px', border: cellBorder, whiteSpace: 'pre-wrap', verticalAlign: 'top', maxWidth: 480 } as const;
 
 function Grid(props: { label: string; rows: readonly (readonly string[])[]; columns: number; letters: boolean }): React.JSX.Element {
@@ -69,7 +70,7 @@ export function DelimitedView(props: { table: Delimited; label: string }): React
   );
 }
 
-function SheetTabs(props: { names: readonly string[]; selected: number; onSelect: (index: number) => void; ids: string }): React.JSX.Element {
+export function SheetTabs(props: { names: readonly string[]; selected: number; onSelect: (index: number) => void; ids: string }): React.JSX.Element {
   const { names, selected, onSelect } = props;
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
   function onKeyDown(event: React.KeyboardEvent<HTMLDivElement>): void {

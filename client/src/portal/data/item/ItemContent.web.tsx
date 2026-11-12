@@ -9,9 +9,9 @@ import type { ItemContentProps } from './ItemContent';
 import type { Which } from './open';
 import { UploadDays } from './UploadDays';
 
-// What an item holds, on web (P27): a stored file drawn in the browser (FileView), or an upload's days. A sales file's
-// upload also offers its original file and its cleaned copy as other views, each only when the person may download
-// it, chosen with Show.
+// What an item holds, on web (P27): a stored file drawn in the browser (FileView, which also edits one), or an upload's
+// days. A sales file's upload also offers its original file and its cleaned copy as other views, each only when the
+// person may download it, chosen with Show.
 
 type View = 'days' | Which;
 
@@ -28,7 +28,7 @@ function viewsOf(item: DataItem): View[] {
 export function ItemContent(props: ItemContentProps): React.JSX.Element {
   const { item, viewAs } = props;
   const [view, setView] = useState<View>('days');
-  if (item.ref.startsWith('f_')) return <FileView item={item} which="raw" viewAs={viewAs} />;
+  if (item.ref.startsWith('f_')) return <FileView item={item} which="raw" viewAs={viewAs} edit={props.edit} openRef={props.openRef} />;
   const views = viewAs ? (['days'] as View[]) : viewsOf(item);
   const shown = views.includes(view) ? view : 'days';
   return (

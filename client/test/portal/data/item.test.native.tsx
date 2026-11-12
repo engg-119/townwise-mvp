@@ -39,7 +39,7 @@ function setup() {
     inner: locationsFake(),
     items: [
       dailyTotalsOf(UPLOAD, { days: { count: 2, inUse: 2, firstDate: '2026-05-01', lastDate: '2026-05-02' } }),
-      itemOf(FILE, { name: 'menu-notes.txt', state: 'kept', outcome: 'reference' }),
+      itemOf(FILE, { name: 'menu-notes.txt', state: 'kept', outcome: 'reference', canEdit: true }),
     ],
   });
   fake.history.l1 = HISTORY;
@@ -57,11 +57,12 @@ test('an upload’s page shows its details and the days it holds', async () => {
   expect(screen.getByRole('link', { name: 'Back to Your data' })).toBeTruthy();
 });
 
-test('a stored file’s page says it opens on the web, says where to download it, and fetches nothing', async () => {
+test('a stored file’s page says it opens on the web, says where to download it, fetches nothing, and offers no edits', async () => {
   const { api, fake } = setup();
   await renderApp(`/locations/l1/data/${FILE}`, api);
   expect(await screen.findByText('Open this file from a computer at townwise.tech.')).toBeTruthy();
   expect(screen.getByText('Download from a computer at townwise.tech.')).toBeTruthy();
   expect(screen.queryByRole('button', { name: /^Download/ })).toBeNull();
+  expect(screen.queryByRole('button', { name: /^(Rename|Edit)/ })).toBeNull();
   expect(fake.files.calls.filter((call) => call.path.endsWith('/raw'))).toEqual([]);
 });

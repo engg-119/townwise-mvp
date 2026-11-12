@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { ApiError } from '../../../api/client';
 import { downloadClean, downloadRaw } from '../../files/api';
@@ -14,8 +14,11 @@ import {
   cantShowLine, fetchingLine, ITEM, openingLine, tooLargeLine, VIEWER_ERROR, withDownload,
 } from './copy';
 import { DocumentView } from './DocumentView.web';
+import { editableOf, isEditable, type Saved } from './edit';
+import { ItemEditor } from './Editor.web';
 import { DelimitedView, WorkbookView } from './GridView.web';
 import { ImageView } from './ImageView.web';
+import type { ItemEdit } from './ItemContent';
 import { afterPaint, bytesOf, openBytes, planFor, type Blocked, type Opened, type Which } from './open';
 import { PdfView } from './PdfView.web';
 import { TextView } from './TextView.web';
@@ -25,10 +28,11 @@ import { TextView } from './TextView.web';
 // instead when the person may download it. The fetch shows "Downloading…", then "Opening {size} file…" for a frame
 // before the parse, which can hold the page for a moment on a large file.
 //
-// The seam for editing: this component owns what was opened (`Opened`, the bytes and the parsed model: the text with
-// its encoding and byte-order mark, the Delimited table, the Workbook), and OpenedView is the one place a viewer is
-// chosen, so an editor can take the same model in a viewer's place. The fetch runs again only when what it fetches
-// changes (the file, which copy, its viewer), not when the item is read again after a rename.
+// Editing: this component owns what was opened (`Opened`, the bytes and the parsed model: the text with its encoding
+// and byte-order mark, the Delimited table, the Workbook). Once an original is open it tells the page whether that can
+// be edited here (`edit.onEditable`, edit.ts editableOf), and while the page's editor is open, ItemEditor takes the
+// same model in OpenedView's place. The fetch runs again only when what it fetches changes (the file, which copy, its
+// viewer), not when the item is read again after a rename.
 
 type Phase =
   | { at: 'fetching' }
@@ -40,6 +44,9 @@ export interface FileViewProps {
   item: DataItem;
   which: Which;
   viewAs: boolean;
+  /** Editing the original in the viewer's place (a stored file's page; the page decides who may). */
+  edit?: ItemEdit;
+  openRef?: (ref: string, saved?: Saved) => void;
 }
 
 function blockedLine(blocked: Blocked, item: DataItem, canDownload: boolean): string {
@@ -88,6 +95,13 @@ export function FileView(props: FileViewProps): React.JSX.Element {
   const [attempt, setAttempt] = useState(0);
   const key = `${fetching ?? ''}:${viewer ?? ''}:${fileId}:${String(sizeBytes)}:${delimiter ?? ''}:${String(attempt)}`;
   const [result, setResult] = useState<{ key: string; phase: Phase } | null>(null);
+  const opened = !('blocked' in plan) && result?.key === key && result.phase.at === 'open' ? result.phase.opened : null;
+  const editable = useMemo(() => (opened === null || which !== 'raw' ? null : editableOf(opened)), [opened, which]);
+  const onEditable = props.edit?.onEditable;
+  useEffect(() => {
+    onEditable?.(editable);
+  }, [onEditable, editable]);
+  useEffect(() => () => { onEditable?.(null); }, [onEditable]);
 
   useEffect(() => {
     if (fetching === null || viewer === null) return undefined;
@@ -138,6 +152,10 @@ export function FileView(props: FileViewProps): React.JSX.Element {
     }
     case 'open': {
       const name = which === 'clean' ? `the cleaned copy of ${shownName(item)}` : shownName(item);
+      const { edit, openRef } = props;
+      if (edit?.open === true && editable?.fits === true && openRef !== undefined && isEditable(phase.opened)) {
+        return <ItemEditor item={item} opened={phase.opened} name={name} onSaving={edit.onSaving} onClose={edit.onClose} openRef={openRef} />;
+      }
       return <OpenedView opened={phase.opened} name={name} canDownload={canDownload} />;
     }
   }
