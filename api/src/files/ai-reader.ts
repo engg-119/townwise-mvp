@@ -1,26 +1,33 @@
 // Reading with TownwiseAI (spec 11A.9, D34): a loop in each API replica, beside the file reader (worker.ts) and shaped
 // like it, so it can move to a job unchanged. It claims the file whose read was asked for first (a lease on the file's
-// `ai`, through stores/cross-tenant.ts: 90 seconds, renewed every 30), makes the model's input from the original, sends
-// it in one call, checks the answer, saves it, hands it to `onRead` (files/ai-actions.ts in production: the notes, days,
-// summary item and calibration it writes) and marks the read done. One file per replica at a time; a read is attempted
-// at most three times, then failed `internal`. Only files a person opted in are ever claimed. Logs and audit carry ids,
-// kinds, codes and counts only: never a file name, its content, the summary, a title or a figure.
+// `ai`, through stores/cross-tenant.ts: 90 seconds, renewed every 30; never a second read of an organization that has
+// one under a live lease), checks the month's budget, makes the model's input from the original, reserves the most the
+// call can cost, sends it in one streamed call, corrects the charge to what it cost, checks the answer (and which of its
+// days the file's own text bears out), saves it, hands it to `onRead` (files/ai-actions.ts in production: the notes,
+// days, summary item and calibration it writes) and marks the read done. One file per replica at a time; an attempt
+// that stops waits 1, 2, then 4 minutes before the next, a read is attempted at most three times, then failed
+// `internal`, and an API refusal of the request itself (a 4xx other than 408, 409 or 429) fails it at once. A retry
+// after the answer was saved goes straight to the actions, without the original. Only files a person opted in are
+// ever claimed. Logs and audit carry ids, kinds, codes and counts only: never a file name, its content, the summary, a
+// title or a figure.
 import type { AuthStores } from '@ckeith26/auth';
 import type { Logger } from '@ckeith26/server-core';
 import type { Connection } from 'mongoose';
 
 import { scopeForClaimedAiRead, type OrgScope } from '../access/policy.ts';
 import { DELETED_PERSON } from '../people.ts';
+import { EARLIEST_DATE, utcDay } from '../dates.ts';
 import { claimNextAiRead, type ClaimedAiRead } from '../stores/cross-tenant.ts';
 import type { AiActionsOutcome, AiReadResult, FileRecord } from '../stores/files.ts';
 import type { TownwiseStores } from '../stores/index.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
+import { verifiedIndexes } from './ai-verify.ts';
 import { BlobMissingError, type FileBlobs } from './blobs.ts';
-import { readerRequest, type FileReaderModel, type ImageMediaType, type ReaderInput } from './extract/reader.ts';
+import { readerCeilingMicroUsd, readerRequest, type FileReaderModel, type ImageMediaType, type ReaderInput } from './extract/reader.ts';
 import { readerResult } from './extract/reader-prompt.ts';
 import {
-  AI_IMAGE_BYTES, AI_PDF_BYTES, AI_PDF_PAGES, AI_SOURCE_CHARS, AI_TEXT_CHARS, AI_TEXT_READ_BYTES, AI_ZIP_BYTES, DOCX_READ_BYTES,
-  HEAD_BYTES, MAX_ATTEMPTS, READ_TIME_MS, XLSX_READ_BYTES,
+  AI_IMAGE_BYTES, AI_PDF_BYTES, AI_PDF_PAGES, AI_RETRY_BASE_MS, AI_SOURCE_CHARS, AI_TEXT_CHARS, AI_TEXT_READ_BYTES, AI_ZIP_BYTES,
+  DOCX_READ_BYTES, HEAD_BYTES, MAX_ATTEMPTS, READ_TIME_MS, XLSX_READ_BYTES,
 } from './limits.ts';
 import { extractAiText, textFileText, type AiTextInput, type AiTextOutcome } from './parse/ai-text.ts';
 import { sniff } from './sniff.ts';
@@ -34,18 +41,19 @@ export interface AiFileRead {
 
 /**
  * The seam for acting on a read (files/ai-actions.ts: notes, verified days, a summary item, a calibration). Called once
- * per finished read, after the answer is saved on the file (`ai.result`) and before the read is marked done, inside the
- * same claim and lease (the heartbeat keeps running). `file` is the record as the claim found it, `ai` still `reading`.
- * `sourceText` is the file's own text to check figures against, never stored: the text sent (a text file, a workbook,
- * a Word document, a ZIP's entries without their labels), a PDF's text made in the parse thread (at most
- * AI_SOURCE_CHARS), or null for a picture. A throw puts the read back in the queue (the attempt counts; after three it
- * fails `internal`); a retry finds the saved answer and calls `onRead` again with it, without another model call, so
- * whatever `onRead` writes must be written so a second call completes it (no multi-document transactions). The file can
- * be deleted while it runs (a read never blocks a delete), so a write keyed to the file should be checked against it.
- * What it did is recorded on `ai.actions.outcome`; the reader's log line and audit event read the counts from there.
- * Without one (tests), nothing is acted on.
+ * per finished read, after the answer is saved on the file (`ai.result`, with `daysBorneOut`: which of its days the
+ * file's own text bears out, checked against the text sent, a PDF's text made in the parse thread, or none for a
+ * picture) and before the read is marked done, inside the same claim and lease (the heartbeat keeps running). `file`
+ * is the record as the claim found it, `ai` still `reading`. A throw puts the read back in the queue (the attempt
+ * counts and backs off; after three it fails `internal`); a retry finds the saved answer and calls `onRead` again with
+ * it, without another model call or a read of the original, so whatever `onRead` writes must be written so a second
+ * call completes it (no multi-document transactions). The file can be deleted while it runs (a read never blocks a
+ * delete), so a write keyed to the file should be checked against it. What it did is recorded on `ai.actions.outcome`;
+ * the reader's log line and audit event read the counts from there. It answers `requester_gone` when it wrote nothing
+ * because the person who asked no longer may (the read is then skipped with that reason), else null. Without one
+ * (tests), nothing is acted on.
  */
-export type OnAiRead = (scope: OrgScope, file: FileRecord, read: AiFileRead, sourceText: string | null) => Promise<void>;
+export type OnAiRead = (scope: OrgScope, file: FileRecord, read: AiFileRead) => Promise<'requester_gone' | null>;
 
 export interface AiReaderDeps {
   readonly connection: Connection;
@@ -77,20 +85,34 @@ export interface AiReader {
 }
 
 /**
- * Why a read was skipped (`ai.reason` with status `skipped`): the month's budget is spent; the file is over the size
- * or page caps; its kind is not read (old Excel or Word, Numbers, anything else that is not a picture, or a ZIP with no
- * entry read as text); it is encrypted; its original is gone; making its text ran past the thread's limits; or it could
- * not be opened.
+ * Why a read was skipped (`ai.reason` with status `skipped`): the month's budget is spent (or cannot cover the most the
+ * call may cost); the file is over the size or page caps; its kind is not read (old Excel or Word, Numbers, anything
+ * else that is not a picture, or a ZIP with no entry read as text); it is encrypted; its original is gone; making its
+ * text ran past the thread's limits; it could not be opened; or the person who asked no longer belongs to the
+ * organization (or, for Townwise staff, their open-as-admin grant ended) by the time it was acted on.
  */
-export type AiSkipReason = 'budget_spent' | 'too_large' | 'kind_not_read' | 'encrypted' | 'raw_missing' | 'too_complex' | 'not_readable';
+export type AiSkipReason =
+  | 'budget_spent' | 'too_large' | 'kind_not_read' | 'encrypted' | 'raw_missing' | 'too_complex' | 'not_readable' | 'requester_gone';
 
 const POLL_MS = 5000;
 const LEASE_MS = 90_000;
 const HEARTBEAT_MS = 30_000;
 
+/** `pages` for a PDF (what its reservation is estimated on). */
 type Prepared =
   | { readonly kind: 'skip'; readonly reason: AiSkipReason }
-  | { readonly kind: 'input'; readonly input: ReaderInput; readonly sourceText: string | null; readonly partial: boolean };
+  | {
+    readonly kind: 'input'; readonly input: ReaderInput; readonly sourceText: string | null; readonly partial: boolean;
+    readonly pages: number | null;
+  };
+
+/** HTTP statuses of a failed call that a later attempt may get past; any other 4xx is the request itself refused. */
+const RETRIED_4XX: ReadonlySet<number> = new Set([408, 409, 429]);
+
+/** How long a read put back after attempt `attempt` (1, 2, 3) waits before it may be claimed again. */
+export function retryDelayMs(attempt: number): number {
+  return AI_RETRY_BASE_MS * 2 ** Math.max(0, attempt - 1);
+}
 
 /** A PNG, JPEG, GIF or WebP picture, by its first bytes whatever its name or kind, or null. */
 export function pictureType(head: Uint8Array): ImageMediaType | null {
@@ -106,7 +128,7 @@ export function createAiReader(deps: AiReaderDeps): AiReader {
   const { stores, blobs, logger, now } = deps;
   const leaseMs = deps.leaseMs ?? LEASE_MS;
   const extractText = deps.extractText ?? extractAiText;
-  const onRead: OnAiRead = deps.onRead ?? (() => Promise.resolve());
+  const onRead: OnAiRead = deps.onRead ?? (() => Promise.resolve(null));
   let stopped = false;
   let busy: Promise<void> | null = null;
   let again = false;
@@ -133,7 +155,9 @@ export function createAiReader(deps: AiReaderDeps): AiReader {
     if (picture !== null) {
       if (file.sizeBytes > AI_IMAGE_BYTES) return skip('too_large');
       const bytes = file.sizeBytes <= head.length ? head : await original(scope, file);
-      return { kind: 'input', input: { type: 'image', mediaType: picture, base64: bytes.toString('base64') }, sourceText: null, partial: false };
+      return {
+        kind: 'input', input: { type: 'image', mediaType: picture, base64: bytes.toString('base64') }, sourceText: null, partial: false, pages: null,
+      };
     }
     switch (file.kind) {
       case 'pdf': {
@@ -143,12 +167,12 @@ export function createAiReader(deps: AiReaderDeps): AiReader {
         if (text.kind === 'kept') return skip(text.outcome);
         if (text.pages !== null && text.pages > AI_PDF_PAGES) return skip('too_large');
         // Sent whole as a document (a scanned PDF too: its text is then empty); its text is only checked against.
-        return { kind: 'input', input: { type: 'pdf', base64: bytes.toString('base64') }, sourceText: text.text, partial: false };
+        return { kind: 'input', input: { type: 'pdf', base64: bytes.toString('base64') }, sourceText: text.text, partial: false, pages: text.pages };
       }
       case 'text': {
         const count = Math.min(file.sizeBytes, AI_TEXT_READ_BYTES);
         const { text, cut } = textFileText(await original(scope, file, count), file.sizeBytes > count, AI_TEXT_CHARS);
-        return { kind: 'input', input: { type: 'text', form: 'text', text, cut }, sourceText: text, partial: cut };
+        return { kind: 'input', input: { type: 'text', form: 'text', text, cut }, sourceText: text, partial: cut, pages: null };
       }
       case 'xlsx':
       case 'docx': {
@@ -156,7 +180,7 @@ export function createAiReader(deps: AiReaderDeps): AiReader {
         const made = await extractText({ kind: file.kind, bytes: await original(scope, file), maxChars: AI_TEXT_CHARS });
         if (made.kind === 'kept') return skip(made.outcome);
         const input: ReaderInput = { type: 'text', form: file.kind === 'xlsx' ? 'workbook' : 'word', text: made.text, cut: made.cut };
-        return { kind: 'input', input, sourceText: made.text, partial: made.cut };
+        return { kind: 'input', input, sourceText: made.text, partial: made.cut, pages: null };
       }
       case 'other':
         // The name is read here only for its extension (a password-protected Office file); it never leaves this function.
@@ -167,7 +191,7 @@ export function createAiReader(deps: AiReaderDeps): AiReader {
         const made = await extractText({ kind: 'zip', bytes: await original(scope, file), maxChars: AI_TEXT_CHARS });
         if (made.kind === 'kept') return skip(made.outcome);
         const input: ReaderInput = { type: 'text', form: 'archive', text: made.text, cut: made.cut, skipped: made.skipped ?? 0 };
-        return { kind: 'input', input, sourceText: made.source ?? made.text, partial: made.cut };
+        return { kind: 'input', input, sourceText: made.source ?? made.text, partial: made.cut, pages: null };
       }
       case 'xls':
       case 'doc':
@@ -184,7 +208,7 @@ export function createAiReader(deps: AiReaderDeps): AiReader {
         actorRole: ai.requestedByStaff ? 'superadmin' : ai.requestedByRole, viewAsGrantId: ai.requestedGrantId,
         orgId: scope.orgId, action: 'file.ai_read', target: { type: 'file', id: file.id },
         details: {
-          locationId: file.locationId, kind: result.kind, events: result.events.length, days: result.days.length,
+          locationId: file.locationId, kind: result.kind, events: result.eventCount, days: result.dayCount,
           ...(done === null ? {} : {
             notes: done.notes.length, daysWritten: done.daysWritten, item: done.itemId !== null, calibration: done.calibration.status,
           }),
@@ -197,6 +221,81 @@ export function createAiReader(deps: AiReaderDeps): AiReader {
 
   /** A model call that gave no answer (an API error, a timeout, a stop): the read goes back to the queue. */
   class CallFailed extends Error {}
+
+  /**
+   * The model's answer for a first attempt, checked and saved: within the budget (checked before the original is read,
+   * then the most the call can cost reserved, and corrected to its cost after), and with the days the file's text bears
+   * out. Null when the read ended here (finished as skipped or failed, or no longer held).
+   */
+  async function answer(
+    scope: OrgScope, file: FileRecord, attempt: number, finish: (status: 'failed' | 'skipped', reason: string, costMicroUsd?: number) => Promise<boolean>,
+  ): Promise<{ result: AiReadResult; partial: boolean; costMicroUsd: number } | null> {
+    const month = now().toISOString().slice(0, 7);
+    const budget = Math.round(deps.filesMonthlyBudgetUsd * 1_000_000);
+    if (budget <= 0 || await stores.filesUsage.costMicroUsd(scope, month) >= budget) {
+      await finish('skipped', 'budget_spent');
+      return null;
+    }
+    const location = await stores.locations.find(scope, file.locationId);
+    if (location === null) throw new Error('location gone');
+    const { timeZone } = timeZoneOf(location.town);
+    const today = localDay(now(), timeZone);
+    let prepared: Prepared;
+    try {
+      prepared = await prepare(scope, file);
+    } catch (err) {
+      if (!(err instanceof BlobMissingError)) throw err;
+      prepared = skip('raw_missing');
+    }
+    if (prepared.kind === 'skip') {
+      await finish('skipped', prepared.reason);
+      return null;
+    }
+    const reserved = readerCeilingMicroUsd(prepared.input, prepared.pages);
+    if (!await stores.filesUsage.reserve(scope, month, reserved, budget, now())) {
+      await finish('skipped', 'budget_spent');
+      return null;
+    }
+    let reply;
+    try {
+      reply = await deps.model.readFile(readerRequest(prepared.input, { today, timeZone }), abort.signal);
+    } finally {
+      // The reservation becomes what the call cost (nothing for a call that gave no answer).
+      const cost = reply === undefined || reply.kind === 'failed' ? 0 : reply.costMicroUsd;
+      await stores.filesUsage.add(scope, month, cost - reserved, now());
+    }
+    if (reply.kind === 'failed') {
+      logger.warn({ fileId: file.id, errType: reply.errType, status: reply.status }, 'townwise.ai_read_model_failed');
+      if (reply.status !== null && reply.status >= 400 && reply.status < 500 && !RETRIED_4XX.has(reply.status)) {
+        // The API refused the request itself: another attempt would send the same request.
+        await finish('failed', 'internal');
+        return null;
+      }
+      throw new CallFailed();
+    }
+    if (reply.kind === 'refused' || reply.kind === 'too_long') {
+      // Nothing is written but the outcome and its cost; a retry would cost again.
+      await finish('failed', reply.kind === 'refused' ? 'refused' : 'answer_too_long', reply.costMicroUsd);
+      return null;
+    }
+    const answered = readerResult(reply.output);
+    if (answered === null) {
+      // No answer to keep; a retry would cost again, so the read fails.
+      await finish('failed', 'internal', reply.costMicroUsd);
+      return null;
+    }
+    const latest = utcDay(new Date(`${today}T00:00:00.000Z`), 1);
+    const result: AiReadResult = {
+      ...answered,
+      daysBorneOut: prepared.sourceText === null ? null : verifiedIndexes(answered.days, prepared.sourceText, { earliest: EARLIEST_DATE, latest }),
+    };
+    if (!await stores.files.saveAiResult(scope, file.id, attempt, { result, partial: prepared.partial, costMicroUsd: reply.costMicroUsd })) {
+      // Still held, the original was deleted while the model read it (a purge): nothing of the answer is kept.
+      await finish('skipped', 'raw_missing', reply.costMicroUsd);
+      return null;
+    }
+    return { result, partial: prepared.partial, costMicroUsd: reply.costMicroUsd };
+  }
 
   /** One claimed read. */
   async function readOne(scope: OrgScope, claim: ClaimedAiRead): Promise<void> {
@@ -216,64 +315,31 @@ export function createAiReader(deps: AiReaderDeps): AiReader {
       await finish('skipped', 'raw_missing');
       return;
     }
-    let prepared: Prepared;
-    try {
-      prepared = await prepare(scope, file);
-    } catch (err) {
-      if (!(err instanceof BlobMissingError)) throw err;
-      prepared = skip('raw_missing');
-    }
-    if (prepared.kind === 'skip') {
-      await finish('skipped', prepared.reason);
+    // A retry of a read whose answer was saved acts on it again, without the original or another call.
+    const read = ai.result === null
+      ? await answer(scope, file, claim.attempt, finish)
+      : { result: ai.result, partial: ai.partial, costMicroUsd: ai.costMicroUsd };
+    if (read === null) return;
+    const { result } = read;
+    if (await onRead(scope, file, read) === 'requester_gone') {
+      await finish('skipped', 'requester_gone');
       return;
     }
-    let result = ai.result;
-    let costMicroUsd = ai.costMicroUsd;
-    if (result === null) {
-      // A first answer: within the budget, checked before the call and charged after it whatever it answered.
-      const month = now().toISOString().slice(0, 7);
-      const budget = Math.round(deps.filesMonthlyBudgetUsd * 1_000_000);
-      if (budget <= 0 || await stores.filesUsage.costMicroUsd(scope, month) >= budget) {
-        await finish('skipped', 'budget_spent');
-        return;
-      }
-      const location = await stores.locations.find(scope, file.locationId);
-      if (location === null) throw new Error('location gone');
-      const { timeZone } = timeZoneOf(location.town);
-      const answer = await deps.model.readFile(readerRequest(prepared.input, { today: localDay(now(), timeZone), timeZone }), abort.signal);
-      if (answer.kind === 'failed') {
-        logger.warn({ fileId: file.id, errType: answer.errType, status: answer.status }, 'townwise.ai_read_model_failed');
-        throw new CallFailed();
-      }
-      await stores.filesUsage.add(scope, month, answer.costMicroUsd, now());
-      if (answer.kind === 'refused') {
-        // Nothing is written but the outcome and its cost.
-        await finish('failed', 'refused', answer.costMicroUsd);
-        return;
-      }
-      result = readerResult(answer.output);
-      if (result === null) {
-        // No answer to keep (cut at the token limit, say); a retry would cost again, so the read fails.
-        await finish('failed', 'internal', answer.costMicroUsd);
-        return;
-      }
-      costMicroUsd += answer.costMicroUsd;
-      if (!await stores.files.saveAiResult(scope, file.id, claim.attempt, { result, partial: prepared.partial, costMicroUsd: answer.costMicroUsd })) {
-        // Still held, the original was deleted while the model read it (a purge): nothing of the answer is kept.
-        await finish('skipped', 'raw_missing', answer.costMicroUsd);
-        return;
-      }
+    // What onRead did, as it recorded it: counts and codes only. Stopped short because the original was deleted
+    // meanwhile (a purge), the read is skipped; what it wrote before can still be undone.
+    const after = await stores.files.get(scope, file.locationId, file.id);
+    const done = after?.ai?.actions?.outcome ?? null;
+    if (done === null && after !== null && after.rawDeletedAt !== null) {
+      await finish('skipped', 'raw_missing');
+      return;
     }
-    await onRead(scope, file, { result, partial: prepared.partial, costMicroUsd }, prepared.sourceText);
     if (!await finish('done', null)) return;
-    // What onRead did, as it recorded it: counts and codes only.
-    const done = (await stores.files.get(scope, file.locationId, file.id))?.ai?.actions?.outcome ?? null;
     logger.info({
-      fileId: file.id, kind: result.kind, confidence: result.confidence, events: result.events.length, days: result.days.length,
-      partial: prepared.partial, costMicroUsd,
+      fileId: file.id, kind: result.kind, confidence: result.confidence, events: result.eventCount, days: result.dayCount,
+      daysCut: result.daysCut, partial: read.partial, costMicroUsd: read.costMicroUsd,
       ...(done === null ? {} : {
-        notes: done.notes.length, notesSkipped: done.notesSkipped, daysWritten: done.daysWritten, daysReason: done.daysReason,
-        item: done.itemId !== null, itemReason: done.itemReason, calibration: done.calibration.status,
+        notes: done.notes.length, notesSkipped: done.notesSkipped, daysWritten: done.daysWritten, daysAlreadyHad: done.daysAlreadyHad,
+        daysReason: done.daysReason, item: done.itemId !== null, itemReason: done.itemReason, calibration: done.calibration.status,
       }),
     }, 'townwise.ai_read');
     await audit(scope, file, result, done);
@@ -289,9 +355,9 @@ export function createAiReader(deps: AiReaderDeps): AiReader {
     try {
       await readOne(scope, claim);
     } catch (err) {
-      // Back to the queue; the attempt counted, and after three the read is failed with `internal`.
+      // Back to the queue after a wait; the attempt counted, and after three the read is failed with `internal`.
       if (!(err instanceof CallFailed)) logger.warn({ fileId: claim.id, errType: err instanceof Error ? err.name : 'unknown' }, 'townwise.ai_read_attempt_failed');
-      await stores.files.releaseAiRead(scope, claim.id, claim.attempt).catch(() => undefined);
+      await stores.files.releaseAiRead(scope, claim.id, claim.attempt, new Date(now().getTime() + retryDelayMs(claim.attempt))).catch(() => undefined);
     } finally {
       clearInterval(heartbeat);
     }

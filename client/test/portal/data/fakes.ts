@@ -29,8 +29,8 @@ export function itemOf(ref: string, extra?: Partial<DataItem>): DataItem {
 /** A TownwiseAI read as the API shows it: done by default, having made nothing. */
 export function aiOf(extra?: Partial<AiRead>): AiRead {
   return {
-    status: 'done', reason: null, partial: false, kind: 'other', summary: null, facts: null, notes: [], daysWritten: 0, uploadRef: null, itemRef: null,
-    daysReason: null, itemReason: null, calibration: null, canUndo: false,
+    status: 'done', reason: null, partial: false, kind: 'other', summary: null, facts: null, daysCut: false, notes: [], notesSkipped: null,
+    daysWritten: 0, daysAlreadyHad: 0, uploadRef: null, itemRef: null, daysReason: null, itemReason: null, calibration: null, canUndo: false,
     ...extra,
   };
 }

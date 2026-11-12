@@ -26,9 +26,15 @@ export const aiReadSchema = z.object({
   kind: z.string().nullable(),
   summary: z.string().nullable(),
   facts: z.array(z.string()).nullable(),
+  /** The file has daily totals for more dates than TownwiseAI reads (it read the newest 1,500). */
+  daysCut: z.boolean(),
   /** The notes it made that still exist, with their dates as they are now and the title of the event each came from. */
   notes: z.array(z.object({ id: z.string(), title: z.string().nullable(), startDate: z.string(), endDate: z.string() })),
+  /** Events it made no note of; `guard`: closed periods past the limits (14 days in a row, 31 in all). */
+  notesSkipped: z.object({ guard: z.number() }).nullable(),
   daysWritten: z.number(),
+  /** Days it found that the location already had: TownwiseAI only adds days, never changes one. */
+  daysAlreadyHad: z.number(),
   /** Its upload of days and its summary item, while they exist. */
   uploadRef: z.string().nullable(),
   itemRef: z.string().nullable(),
@@ -37,6 +43,7 @@ export const aiReadSchema = z.object({
   itemReason: z.string().nullable(),
   /** The forecast update: started (with the calibration's id), or why not. */
   calibration: z.object({ status: z.string(), id: z.string().nullable() }).nullable(),
+  /** The caller may undo it: done and made something, or failed or skipped after it began adding. */
   canUndo: z.boolean(),
 });
 export type AiRead = z.infer<typeof aiReadSchema>;
@@ -148,7 +155,8 @@ export async function addText(api: ApiClient, locationId: string, input: { title
 /**
  * Lets TownwiseAI read the item's stored file (an `f_` item's, or the file a `u_` upload was read from); answers the item
  * with its read queued (202), or as it is once a read is done. 409 ai_read_running while one is queued or reading; 503
- * ai_unavailable while reading with TownwiseAI is off, files_unavailable while stored files are off.
+ * ai_unavailable while reading with TownwiseAI is off, files_unavailable while stored files are off; 429 ai_read_queue_full while
+ * the organization has 10 reads queued or reading.
  */
 export async function readWithAi(api: ApiClient, locationId: string, ref: string): Promise<DataItem> {
   const body = await api.json(`${itemPath(locationId, ref)}/ai`, itemSchema, { method: 'POST', body: {} });

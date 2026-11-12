@@ -374,19 +374,28 @@ export interface ClaimedAiRead {
 
 /**
  * The TownwiseAI reader's claim (spec 11A.9), across organizations: the file whose read was asked for first that is
- * `queued`, or `reading` under a lease that ran out (its replica stopped), leaving out a suspended organization's (they
- * wait until it is active again) and files being deleted. The claim sets `reading`, the lease for `leaseMs`, the start,
- * and counts the attempt.
+ * `queued` (and past its `notBefore`, when an attempt put it back), or `reading` under a lease that ran out (its replica
+ * stopped), leaving out a suspended organization's (they wait until it is active again), files being deleted, and every
+ * read of an organization that has one `reading` under a live lease, so one organization never holds two replicas'
+ * readers at once. The claim sets `reading`, the lease for `leaseMs`, the start, and counts the attempt.
  */
 export async function claimNextAiRead(
   connection: Connection, input: { readonly now: Date; readonly leaseMs: number },
 ): Promise<ClaimedAiRead | null> {
-  const held = await orgModel(connection).find({ status: trusted({ $ne: 'active' }) }, { _id: 1 }).lean();
-  const doc = await fileModel(connection).findOneAndUpdate(
+  const File = fileModel(connection);
+  const [held, busy] = await Promise.all([
+    orgModel(connection).find({ status: trusted({ $ne: 'active' }) }, { _id: 1 }).lean(),
+    File.distinct('orgId', { 'ai.status': 'reading', 'ai.leaseUntil': trusted({ $gte: input.now }) }),
+  ]);
+  const skipped = [...held.map((org) => org._id), ...busy];
+  const doc = await File.findOneAndUpdate(
     {
-      $or: [{ 'ai.status': 'queued' }, { 'ai.status': 'reading', 'ai.leaseUntil': trusted({ $lt: input.now }) }],
+      $or: [
+        { 'ai.status': 'queued', 'ai.notBefore': trusted({ $not: { $gt: input.now } }) },
+        { 'ai.status': 'reading', 'ai.leaseUntil': trusted({ $lt: input.now }) },
+      ],
       status: trusted({ $ne: 'deleting' }),
-      ...(held.length === 0 ? {} : { orgId: trusted({ $nin: held.map((org) => org._id) }) }),
+      ...(skipped.length === 0 ? {} : { orgId: trusted({ $nin: skipped }) }),
     },
     {
       $set: { 'ai.status': 'reading', 'ai.leaseUntil': new Date(input.now.getTime() + input.leaseMs), 'ai.startedAt': input.now },

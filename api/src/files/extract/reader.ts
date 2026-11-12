@@ -5,7 +5,8 @@
 // the location's name, or who uploaded it. Nothing here logs.
 import type { BetaContentBlockParam, BetaMessageParam } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 
-import { AI_TEXT_CHARS, AI_ZIP_ENTRIES, MAX_SHEETS } from '../limits.ts';
+import { ceilingCostMicroUsd } from '../../chat/pricing.ts';
+import { AI_PDF_PAGES, AI_TEXT_CHARS, AI_ZIP_ENTRIES, MAX_SHEETS } from '../limits.ts';
 import { READER_MAX_TOKENS, READER_MODEL, READER_SYSTEM_PROMPT } from './reader-prompt.ts';
 
 export type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
@@ -33,10 +34,12 @@ export interface ReaderRequest {
 }
 
 export type ReaderAnswer =
-  /** `output` is the answer's JSON, or null when its text was not JSON (cut at max_tokens, say). */
+  /** `output` is the answer's JSON, or null when its text was not JSON. */
   | { readonly kind: 'answered'; readonly output: unknown; readonly costMicroUsd: number }
   /** Refused through the whole fallback chain; the call still cost what it cost. */
   | { readonly kind: 'refused'; readonly costMicroUsd: number }
+  /** Stopped at max_tokens: the answer is cut, so none is kept; the call still cost what it cost. */
+  | { readonly kind: 'too_long'; readonly costMicroUsd: number }
   /** No answer: the error's class and HTTP status, never its message or the request. */
   | { readonly kind: 'failed'; readonly errType: string; readonly status: number | null };
 
@@ -72,6 +75,25 @@ function contextText(input: ReaderInput, context: ReaderContext): string {
     lines.push(`Everything after the line "${MARKER}", to the end of this message, is the file's content.`, MARKER, input.text);
   }
   return lines.join('\n');
+}
+
+/** A picture's input tokens at most (Claude Opus 5.5 reads one at up to 4,784), and a PDF page's (its text and image). */
+const IMAGE_TOKENS = 5000;
+const PDF_PAGE_TOKENS = 3000;
+
+/** The words that go with any file besides its own text (the date, the zone, what the file is), at most. */
+const CONTEXT_CHARS = 2000;
+
+/**
+ * The most a request for `input` can cost, reserved against the budget before the call: the system prompt and the
+ * words at a token for every three characters, a PDF at 3,000 tokens a page (`pages`, or 600 when not known), a picture
+ * at 5,000, and every output token the request may write, all at the most expensive model's prices (pricing.ts
+ * ceilingCostMicroUsd).
+ */
+export function readerCeilingMicroUsd(input: ReaderInput, pages: number | null): number {
+  const chars = READER_SYSTEM_PROMPT.length + CONTEXT_CHARS + (input.type === 'text' ? input.text.length : 0);
+  const tokens = input.type === 'pdf' ? (pages ?? AI_PDF_PAGES) * PDF_PAGE_TOKENS : input.type === 'image' ? IMAGE_TOKENS : 0;
+  return ceilingCostMicroUsd({ input: tokens + Math.ceil(chars / 3), output: READER_MAX_TOKENS, cacheRead: 0, cacheWrite: 0 });
 }
 
 /** The request for one file, exactly. */

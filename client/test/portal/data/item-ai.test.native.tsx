@@ -58,3 +58,16 @@ test('a done read says what it found and added, with Undo for the person who may
   expect(screen.getByText('The forecast wasn’t updated: TownwiseAI added no notes or days.')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Undo what TownwiseAI added' })).toBeTruthy();
 });
+
+test('a read whose days were all there already, and one that stopped part way, say so in plain words', async () => {
+  const { api } = setup({ ai: aiOf({ kind: 'sales', daysReason: 'already_had_days', daysAlreadyHad: 4, daysCut: true }) });
+  await renderApp(`/locations/l1/data/${FILE}`, api);
+  expect(await screen.findByText('It added no sales days: you already have every day it found, and TownwiseAI never changes a day you already have.')).toBeTruthy();
+  expect(screen.getByText('This file has daily totals for more dates than TownwiseAI reads at once, so it read the newest 1,500 of them.')).toBeTruthy();
+  await cleanup();
+  const stopped = setup({ canAiRead: true, ai: aiOf({ status: 'skipped', reason: 'requester_gone', kind: null, canUndo: true }) });
+  await renderApp(`/locations/l1/data/${FILE}`, stopped.api);
+  expect(await screen.findByText('TownwiseAI added nothing from this file: the person who asked is no longer on your team.')).toBeTruthy();
+  expect(screen.getByText('TownwiseAI stopped before it finished, and may have added some notes, days or a summary first. You can undo what it added.')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Undo what TownwiseAI added' })).toBeTruthy();
+});

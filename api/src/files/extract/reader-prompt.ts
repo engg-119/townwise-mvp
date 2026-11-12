@@ -1,15 +1,17 @@
 // Reading with TownwiseAI (spec 11A.9): the frozen request parts and the answer's schema. The model reads one file a
 // person opted in and answers what kind of file it is, a short summary and facts, the dated events it states and the
-// daily totals it states per day. The schema sent asks for the limits below (the SDK moves the ones the API does not
-// enforce into the schema's descriptions); readerResult checks the answer again here, because the model's output is
-// data like the file is: every list is capped, a malformed entry is dropped, and the read never fails for one.
+// daily totals it states per day (at most 1,500, the newest, saying when the file had more). The schema sent asks for
+// the limits below (the SDK moves the ones the API does not enforce into the schema's descriptions); readerResult
+// checks the answer again here, because the model's output is data like the file is: every list is capped, a malformed
+// entry is dropped, the read never fails for one, and an email address or phone number in its words is replaced.
 import { z } from 'zod';
 
 import { isCalendarDate } from '../../dates.ts';
 import type { AiEventEffect, AiEventKind, AiFileKind, AiReadDay, AiReadEvent, AiReadResult } from '../../stores/files.ts';
 
 export const READER_MODEL = 'claude-opus-5-5';
-export const READER_MAX_TOKENS = 16_000;
+/** Streamed, so a long answer (1,500 days at about 25 tokens each, and the thinking before it) fits. */
+export const READER_MAX_TOKENS = 64_000;
 export const READER_TIMEOUT_MS = 300_000;
 
 export const SUMMARY_CHARS = 600;
@@ -18,7 +20,7 @@ export const FACT_CHARS = 200;
 export const EVENTS_MAX = 50;
 export const EVENT_TITLE_CHARS = 120;
 export const EVENT_DETAIL_CHARS = 280;
-export const DAYS_MAX = 3660;
+export const DAYS_MAX = 1500;
 
 export const AI_FILE_KINDS = ['sales', 'calendar', 'inventory', 'menu', 'staffing', 'other'] as const satisfies readonly AiFileKind[];
 export const AI_EVENT_KINDS = ['closure', 'private_event', 'opening', 'other'] as const satisfies readonly AiEventKind[];
@@ -48,6 +50,8 @@ export const READER_SYSTEM_PROMPT = [
   '  each figure exactly as the file states it. guests is the day\'s guests or covers; netSales is the day\'s net sales',
   '  in dollars (after discounts, before tax and tips). Use null for a figure the file does not state for that day.',
   '  Never estimate, add up, average or fill in a day or a figure. A file with no such table or list has no days.',
+  '  Give at most 1,500 days: when the file states more, give its newest 1,500 dates.',
+  '- daysCut: true only when the file states daily totals for more dates than the days you gave.',
   '',
   'Never write a person\'s name, email address or phone number anywhere in your answer: guests, customers and staff',
   'are never named. Say "a private party of 40", not who booked it.',
@@ -76,6 +80,7 @@ export const readerAnswer = z.object({
     guests: z.number().int().nullable(),
     netSales: z.number().nullable(),
   })).max(DAYS_MAX),
+  daysCut: z.boolean(),
 });
 
 /** Checked here, strictly, one entry at a time. */
@@ -117,22 +122,56 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[], otherwis
   return allowed.find((candidate) => candidate === value) ?? otherwise;
 }
 
+/** An email address. */
+const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
+/**
+ * A phone number: an optional +country code, then three groups of digits apart by a space, dot or dash (an area code
+ * in brackets too), as 603-555-0123, (603) 555-0123, +1 603 555 0123 or +44 20 7946 0958. A date (2026-06-14), an
+ * amount or a count is never one: the groups need 2 to 4, then 3 or 4, then 3 or 4 digits, and no digit, letter or
+ * number part may touch either end (a full stop or comma after one ends a sentence).
+ */
+const PHONE = /(?<![\w$.,/-])(?:\+\d{1,3}[\s.-]?)?(?:\(\d{2,4}\)[\s.-]?|\d{2,4}[\s.-])\d{3,4}[\s.-]\d{3,4}(?![\w/-]|[.,]\d)/g;
+
+/**
+ * `text` with each email address as "[email]" and each phone number as "[phone]", within `max` characters (never
+ * between the two halves of a surrogate pair). The prompt forbids them; this keeps one the model wrote anyway.
+ */
+export function redacted(text: string, max: number): string {
+  const out = text.replace(EMAIL, '[email]').replace(PHONE, '[phone]');
+  if (out.length <= max) return out;
+  const code = out.charCodeAt(max - 1);
+  return out.slice(0, code >= 0xd800 && code <= 0xdbff ? max - 1 : max);
+}
+
+/** The answer as readerResult keeps it; the reader adds which days the file's text bears out (AiReadResult). */
+export type AiAnswer = Omit<AiReadResult, 'daysBorneOut'>;
+
 /**
  * The model's answer as Townwise keeps it, or null when it is not an object at all. An unknown kind reads as `other`
  * and an unknown confidence as `low`; the summary is cut at 600 characters; a fact, event or day that does not pass
- * is dropped, a day whose date an earlier day already gave is dropped, and each list keeps at most its cap.
+ * is dropped, a day whose date an earlier day already gave is dropped, and each list keeps at most its cap: the days
+ * their 1,500 newest, newest first, `daysCut` when the answer had more or said the file did. Email addresses and phone
+ * numbers in the summary, the facts and the events' titles and details are replaced (redacted). `eventCount` and
+ * `dayCount` stay when the lists are cleared (once acted on, and when the original is deleted).
  */
-export function readerResult(raw: unknown): AiReadResult | null {
+export function readerResult(raw: unknown): AiAnswer | null {
   if (!isRecord(raw)) return null;
   const kind: AiFileKind = oneOf(raw.kind, AI_FILE_KINDS, 'other');
   const confidence = oneOf(raw.confidence, ['high', 'medium', 'low'] as const, 'low');
-  const summary = typeof raw.summary === 'string' ? raw.summary.trim().slice(0, SUMMARY_CHARS) : '';
-  const events: AiReadEvent[] = entries(raw.events, eventEntry, EVENTS_MAX);
+  const summary = typeof raw.summary === 'string' ? redacted(raw.summary.trim(), SUMMARY_CHARS) : '';
+  const events: AiReadEvent[] = entries(raw.events, eventEntry, EVENTS_MAX).map((event) => ({
+    ...event, title: redacted(event.title, EVENT_TITLE_CHARS), detail: redacted(event.detail, EVENT_DETAIL_CHARS),
+  }));
   const seen = new Set<string>();
-  const days: AiReadDay[] = entries(raw.days, dayEntry, Number.MAX_SAFE_INTEGER).filter((day) => {
+  const unique: AiReadDay[] = entries(raw.days, dayEntry, Number.MAX_SAFE_INTEGER).filter((day) => {
     if (seen.has(day.date)) return false;
     seen.add(day.date);
     return true;
-  }).slice(0, DAYS_MAX);
-  return { kind, confidence, summary, facts: entries(raw.facts, factEntry, FACTS_MAX), events, days };
+  });
+  const days = unique.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, DAYS_MAX);
+  const facts = entries(raw.facts, factEntry, FACTS_MAX).map((fact) => redacted(fact, FACT_CHARS));
+  return {
+    kind, confidence, summary, facts, events, days, daysCut: raw.daysCut === true || unique.length > DAYS_MAX,
+    eventCount: events.length, dayCount: days.length,
+  };
 }

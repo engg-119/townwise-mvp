@@ -1,8 +1,10 @@
 // Reading with TownwiseAI, the actions (spec 11A.9, D34) end to end against the database: notes from the answer's events
-// (the person who asked as author, the file as source, duplicates, the 50 and 1,000 caps), daily totals as one upload
-// when the file's text bears them out (an org admin's replaces, a member's adds), the summary item, the model update
-// (a fake lab), retries after a throw, a file deleted while it is read, ZIP input, the item's fields, and the undo
-// route. The model is a scripted fake and the lab a fake runner: no call leaves the test. Every figure is synthetic.
+// (the person who asked as author, the file as source, duplicates, the 50 and 1,000 caps, the closed-note guard), daily
+// totals as one upload when the file's text bears them out (only new days, for everyone), the summary item, the model
+// update (a fake lab, decided by the requester's role now), a requester who left, retries after a throw, a file
+// deleted or its original purged while it is read, ZIP input, the item's fields, and the undo route (a read that
+// stopped part way too). The model is a scripted fake and the lab a fake runner: no call leaves the test. Every figure
+// is synthetic.
 import { randomUUID } from 'node:crypto';
 
 import { createRateLimiter } from '@ckeith26/rate-limit';
@@ -17,7 +19,9 @@ import { DAILY_UPLOAD_BYTES } from '../src/files/limits.ts';
 import { createMemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import type { DataItemView } from '../src/handlers/data.ts';
 import type { NoteView } from '../src/handlers/notes.ts';
-import { addChatUsage, addGrant, addLocation, addNote, addSalesDay, addSeat, addUpload, auditEvents, createOrg } from './helpers/fixtures.ts';
+import {
+  addChatUsage, addGrant, addLocation, addNote, addOpenAsAdminGrant, addSalesDay, addSeat, addUpload, auditEvents, createOrg,
+} from './helpers/fixtures.ts';
 import { fakeLabRunner, seedHistory, type FakeLabRunner } from './helpers/lab.ts';
 import { xlsxOf, zipOf } from './helpers/zip.ts';
 import {
@@ -85,13 +89,14 @@ const blobs: FileBlobs = {
 /** Runs before the actions (to delete the file, or suspend the organization), and how many runs throw after them. */
 let before: ((orgId: string, fileId: string) => Promise<void>) | null = null;
 let throwAfter = 0;
-const around = (actions: OnAiRead): OnAiRead => async (scope, file, read, sourceText) => {
+const around = (actions: OnAiRead): OnAiRead => async (scope, file, read) => {
   await before?.(scope.orgId, file.id);
-  await actions(scope, file, read, sourceText);
+  const end = await actions(scope, file, read);
   if (throwAfter > 0) {
     throwAfter -= 1;
     throw new Error('after the actions');
   }
+  return end;
 };
 
 let server: TownwiseTestServer;
@@ -172,6 +177,33 @@ async function readAs(session: TestSession, locationId: string, fileId: string, 
   await on.aiReader?.settled();
 }
 
+/** Runs the reader again as if every backoff had passed (notBefore cleared rather than the clock moved on). */
+async function rerun(times = 1): Promise<void> {
+  for (let index = 0; index < times; index += 1) {
+    await server.connection.collection('tw_files').updateMany({ 'ai.status': 'queued' }, { $set: { 'ai.notBefore': null } });
+    server.aiReader?.nudge();
+    await server.aiReader?.settled();
+  }
+}
+
+/** A new person with a seat in the team's organization. */
+async function newPerson(role: 'org_admin' | 'member'): Promise<TestSession & { email: string }> {
+  const email = `person-${randomUUID().slice(0, 8)}@example.test`;
+  const session = await signIn(server, email);
+  await addSeat(server, { orgId: team.orgId, userId: session.userId, email, role });
+  return { ...session, email };
+}
+
+/** Asks for the read as `session` without running the reader. */
+async function ask(session: TestSession, locationId: string, fileId: string): Promise<void> {
+  expect((await call(server, `${itemPath(locationId, `f_${fileId}`)}/ai`, { session, json: {} })).status).toBe(202);
+}
+
+async function runReader(): Promise<void> {
+  server.aiReader?.nudge();
+  await server.aiReader?.settled();
+}
+
 function undo(session: TestSession, locationId: string, ref: string): Promise<Response> {
   return call(server, `${itemPath(locationId, ref)}/ai`, { session, method: 'DELETE' });
 }
@@ -237,7 +269,7 @@ describe('notes from the events', () => {
     });
     expect((await itemOf(team.other, l1, `f_${fileId}`)).ai?.canUndo).toBe(false);
     expect((await itemOf(team.admin, l1, `f_${fileId}`)).ai?.canUndo).toBe(true);
-    expect(await outcomeOf(fileId)).toMatchObject({ notesSkipped: { duplicate: 0, cap: 0, invalid: 0 }, daysReason: 'not_sales' });
+    expect(await outcomeOf(fileId)).toMatchObject({ notesSkipped: { duplicate: 0, cap: 0, invalid: 0, guard: 0 }, daysReason: 'not_sales' });
 
     const read = (await eventsOf('file.ai_read')).at(-1);
     expect(read).toMatchObject({ details: { locationId: l1, kind: 'calendar', events: 2, days: 0, notes: 2, daysWritten: 0, item: true, calibration: 'not_admin' } });
@@ -256,7 +288,7 @@ describe('notes from the events', () => {
     answers = [answer({ events: [EVENT, other, { ...other, title: 'rehearsal ', detail: 'again' }] })];
     await readAs(team.member, l1, fileId);
     expect(await count('tw_notes', { locationId: oid(l1) })).toBe(2);
-    expect(await outcomeOf(fileId)).toMatchObject({ notesSkipped: { duplicate: 2, cap: 0, invalid: 0 } });
+    expect(await outcomeOf(fileId)).toMatchObject({ notesSkipped: { duplicate: 2, cap: 0, invalid: 0, guard: 0 } });
   });
 
   it('makes at most 50 notes a file, and stops at the location’s 1,000 notes, counting what it skipped', async () => {
@@ -276,7 +308,7 @@ describe('notes from the events', () => {
     answers = [answer({ events: many.slice(0, 3) })];
     await readAs(team.member, l2, second);
     expect(await count('tw_notes', { locationId: oid(l2) })).toBe(1000);
-    expect(await outcomeOf(second)).toMatchObject({ notesSkipped: { duplicate: 0, cap: 2, invalid: 0 } });
+    expect(await outcomeOf(second)).toMatchObject({ notesSkipped: { duplicate: 0, cap: 2, invalid: 0, guard: 0 } });
     expect((await outcomeOf(second)).notes).toHaveLength(1);
   });
 
@@ -291,63 +323,118 @@ describe('notes from the events', () => {
     await readAs(team.member, l1, fileId);
     const notes = await notesOf(l1);
     expect(notes.map((note) => [note.detail, note.expectedGuests])).toEqual([['Huge fair: Back room', null]]);
-    expect(await outcomeOf(fileId)).toMatchObject({ notesSkipped: { duplicate: 0, cap: 0, invalid: 2 } });
+    expect(await outcomeOf(fileId)).toMatchObject({ notesSkipped: { duplicate: 0, cap: 0, invalid: 2, guard: 0 } });
   });
 
-  it('marks a note made for Townwise staff open as admin as staff’s', async () => {
+  it('never makes a closed note over 14 days, nor more than 31 closed days a read, counting what the guard skipped', async () => {
     const l1 = await newLocation();
     const fileId = await seedStored(l1);
+    const closed = (title: string, startDate: string, endDate: string, kind = 'closure', effect = 'closed'): Event => (
+      { title, startDate, endDate, kind, effect, expectedGuests: null, detail: '' }
+    );
+    answers = [answer({ events: [
+      closed('Renovation', '2026-08-01', '2026-08-15'),
+      closed('Winter break', '2026-01-05', '2026-01-14'),
+      closed('Spring break', '2026-03-02', '2026-03-11'),
+      closed('Private buyout', '2026-04-06', '2026-04-15', 'private_event'),
+      closed('Fall break', '2026-10-05', '2026-10-06'),
+      { ...EVENT, title: 'Long festival', startDate: '2026-07-01', endDate: '2026-07-31' },
+    ] })];
+    await readAs(team.member, l1, fileId);
+    const notes = await notesOf(l1);
+    expect(notes.map((note) => note.detail)).toEqual(['Winter break', 'Spring break', 'Private buyout', 'Long festival: Back room']);
+    expect(await outcomeOf(fileId)).toMatchObject({ notesSkipped: { duplicate: 0, cap: 0, invalid: 0, guard: 2 } });
+    expect((await itemOf(team.member, l1, `f_${fileId}`)).ai?.notesSkipped).toEqual({ duplicate: 0, cap: 0, invalid: 0, guard: 2 });
+  });
+
+  /** A read Townwise staff asked for while open as admin under `grantId`, queued straight into the file. */
+  async function queueAsStaff(fileId: string, grantId: string): Promise<void> {
     await server.connection.collection('tw_files').updateOne({ _id: oid(fileId) }, { $set: {
       ai: {
-        status: 'queued', requestedBy: team.admin.userId, requestedByRole: 'org_admin', requestedByStaff: true, requestedGrantId: 'g'.repeat(24),
+        status: 'queued', requestedBy: team.admin.userId, requestedByRole: 'org_admin', requestedByStaff: true, requestedGrantId: grantId,
         requestedAt: server.clock.now(), attempts: 0, leaseUntil: null, startedAt: null, finishedAt: null, reason: null, partial: false, costMicroUsd: 0, result: null,
       },
     } });
-    server.aiReader?.nudge();
-    await server.aiReader?.settled();
+  }
+
+  it('marks a note made for Townwise staff open as admin as staff’s, while their grant lasts', async () => {
+    const l1 = await newLocation();
+    const fileId = await seedStored(l1);
+    const grantId = await addOpenAsAdminGrant(server, { actorUserId: team.admin.userId, sessionId: randomUUID(), orgId: team.orgId });
+    await queueAsStaff(fileId, grantId);
+    await runReader();
     expect((await notesOf(l1))[0]).toMatchObject({ createdByEmail: 'Townwise staff', source: { via: 'ai_file', fileId } });
+  });
+
+  it('writes nothing once the person who asked has left the organization, or staff’s grant ended: skipped requester_gone', async () => {
+    const l1 = await newLocation();
+    const days = mayDays(2);
+    const leaver = await newPerson('member');
+    const fileId = await seedStored(l1, { raw: salesCsv(days), by: leaver });
+    answers = [salesAnswer(days, { events: [EVENT] })];
+    await ask(leaver, l1, fileId);
+    await server.connection.collection('tw_members').updateOne(
+      { activeUserId: leaver.userId }, { $set: { status: 'removed', removedAt: server.clock.now() }, $unset: { activeUserId: '' } },
+    );
+    await runReader();
+    expect(await aiOf(fileId)).toMatchObject({ status: 'skipped', reason: 'requester_gone', actions: null });
+    expect(await count('tw_notes', { 'source.fileId': oid(fileId) })).toBe(0);
+    expect(await count('tw_uploads', { 'source.fileId': oid(fileId) })).toBe(0);
+    expect(await count('tw_files', { 'source.fileId': oid(fileId) })).toBe(0);
+    expect(await itemOf(team.admin, l1, `f_${fileId}`)).toMatchObject({ canAiRead: true, ai: { status: 'skipped', reason: 'requester_gone', canUndo: false } });
+
+    const staffFile = await seedStored(l1);
+    const grantId = await addOpenAsAdminGrant(server, { actorUserId: team.admin.userId, sessionId: randomUUID(), orgId: team.orgId });
+    await server.connection.collection('tw_view_as_grants').updateOne({ _id: oid(grantId) }, { $set: { endedAt: server.clock.now(), endReason: 'ended' } });
+    await queueAsStaff(staffFile, grantId);
+    await runReader();
+    expect(await aiOf(staffFile)).toMatchObject({ status: 'skipped', reason: 'requester_gone' });
+    expect(await count('tw_notes', { 'source.fileId': oid(staffFile) })).toBe(0);
   });
 });
 
 // ---- Days -----------------------------------------------------------------------------------------------------------
 
 describe('days from the daily totals', () => {
-  it('writes verified days as one upload made by TownwiseAI from the file, an org admin’s replacing the days it covers', async () => {
+  it('writes verified days as one upload made by TownwiseAI from the file, never replacing a stored day, even for an org admin', async () => {
     const l1 = await newLocation();
     await addSalesDay(server, { orgId: team.orgId, locationId: l1, date: '2026-05-01', guests: 5, netSalesCents: 500 });
+    const earlier = String((await server.connection.collection('tw_sales_days').findOne({ locationId: oid(l1), date: '2026-05-01' }))?.uploadId);
     const days = mayDays(3);
     const fileId = await seedStored(l1, { name: `${SENTINEL} may.csv`, raw: salesCsv(days), by: team.admin });
-    answers = [salesAnswer(days)];
+    // The answer has no guest count for the stored day: a null is never written over a figure either.
+    answers = [salesAnswer(days.map((day, index) => (index === 0 ? { ...day, guests: null } : day)))];
     await readAs(team.admin, l1, fileId);
 
     const outcome = await outcomeOf(fileId);
-    expect(outcome).toMatchObject({ daysWritten: 3, daysReason: null });
+    expect(outcome).toMatchObject({ daysWritten: 2, daysAlreadyHad: 1, daysReason: null });
     const uploadId = String(outcome.uploadId);
     expect(await server.connection.collection('tw_uploads').findOne({ _id: oid(uploadId) })).toMatchObject({
-      uploadedBy: team.admin.userId, status: 'applied', dayCount: 3, inserted: 2, replaced: 1, kept: 0, firstDate: '2026-05-01', lastDate: '2026-05-03',
+      uploadedBy: team.admin.userId, status: 'applied', dayCount: 3, inserted: 2, replaced: 0, kept: 1, firstDate: '2026-05-01', lastDate: '2026-05-03',
       source: { via: 'ai_file', fileId: oid(fileId) },
     });
     const stored = await server.connection.collection('tw_sales_days').find({ locationId: oid(l1) }).sort({ date: 1 }).toArray();
     expect(stored.map((doc) => [String(doc.date), Number(doc.guests), Number(doc.netSalesCents), String(doc.uploadId)])).toEqual([
-      ['2026-05-01', 101, 201_025, uploadId], ['2026-05-02', 102, 202_050, uploadId], ['2026-05-03', 103, 203_075, uploadId],
+      ['2026-05-01', 5, 500, earlier], ['2026-05-02', 102, 202_050, uploadId], ['2026-05-03', 103, 203_075, uploadId],
     ]);
     // The source file has no upload of its own: deleting the upload never takes the file.
     expect((await server.connection.collection('tw_files').findOne({ _id: oid(fileId) }))?.uploadId).toBeNull();
 
     const upload = await itemOf(team.admin, l1, `u_${uploadId}`);
     expect(upload).toMatchObject({ via: 'townwise_ai', kind: 'daily_totals', fromAiRead: `f_${fileId}`, canTurnOff: true, canDelete: true, ai: null });
-    expect((await itemOf(team.admin, l1, `f_${fileId}`)).ai).toMatchObject({ daysWritten: 3, uploadRef: `u_${uploadId}`, daysReason: null });
+    expect((await itemOf(team.admin, l1, `f_${fileId}`)).ai).toMatchObject({ daysWritten: 2, daysAlreadyHad: 1, uploadRef: `u_${uploadId}`, daysReason: null });
     const uploaded = (await eventsOf('sales.uploaded')).at(-1);
     expect(uploaded).toMatchObject({
       actorUserId: team.admin.userId, actorRole: 'org_admin', target: { type: 'upload', id: uploadId },
-      details: { locationId: l1, dayCount: 3, inserted: 2, replaced: 1, fileId, via: 'townwise_ai' },
+      details: { locationId: l1, dayCount: 3, inserted: 2, replaced: 0, fileId, via: 'townwise_ai' },
     });
 
-    // As any upload: turned off, then deleted.
+    // As any upload: turned off, then deleted; only the days it added go, and the day it found stays.
     const off = await call(server, itemPath(l1, `u_${uploadId}`), { session: team.admin, method: 'PATCH', json: { enabled: false } });
     expect(off.status).toBe(200);
     const deleted = await call(server, itemPath(l1, `u_${uploadId}`), { session: team.admin, method: 'DELETE' });
-    expect(await deleted.json()).toEqual({ deletedDays: 3, deletedFiles: 0 });
+    expect(await deleted.json()).toEqual({ deletedDays: 2, deletedFiles: 0 });
+    expect(await server.connection.collection('tw_sales_days').findOne({ locationId: oid(l1), date: '2026-05-01' })).toMatchObject({ guests: 5, netSalesCents: 500 });
     expect(await count('tw_files', { _id: oid(fileId) })).toBe(1);
     expect((await itemOf(team.admin, l1, `f_${fileId}`)).ai?.uploadRef).toBeNull();
   });
@@ -360,9 +447,24 @@ describe('days from the daily totals', () => {
     answers = [salesAnswer(days)];
     await readAs(team.member, l1, fileId);
     const outcome = await outcomeOf(fileId);
-    expect(outcome).toMatchObject({ daysWritten: 2, daysReason: null, calibration: { status: 'not_admin', id: null } });
+    expect(outcome).toMatchObject({ daysWritten: 2, daysAlreadyHad: 1, daysReason: null, calibration: { status: 'not_admin', id: null } });
     expect(await server.connection.collection('tw_uploads').findOne({ _id: oid(String(outcome.uploadId)) })).toMatchObject({ inserted: 2, replaced: 0, kept: 1 });
     expect(await server.connection.collection('tw_sales_days').findOne({ locationId: oid(l1), date: '2026-05-01' })).toMatchObject({ guests: 5, netSalesCents: 500 });
+  });
+
+  it('makes no upload when the location already has every verified day, an org admin’s or a member’s: already_had_days', async () => {
+    const l1 = await newLocation();
+    const days = mayDays(2);
+    for (const day of days) await addSalesDay(server, { orgId: team.orgId, locationId: l1, date: day.date, guests: 1, netSalesCents: 100 });
+    for (const who of [team.admin, team.member]) {
+      const fileId = await seedStored(l1, { raw: salesCsv(days), by: who });
+      answers = [salesAnswer(days)];
+      await readAs(who, l1, fileId);
+      expect(await outcomeOf(fileId)).toMatchObject({ uploadId: null, daysWritten: 0, daysAlreadyHad: 2, daysReason: 'already_had_days' });
+      expect((await itemOf(who, l1, `f_${fileId}`)).ai).toMatchObject({ daysReason: 'already_had_days', daysAlreadyHad: 2, uploadRef: null });
+    }
+    expect(await count('tw_uploads', { locationId: oid(l1) })).toBe(0);
+    expect(await count('tw_sales_days', { locationId: oid(l1), guests: 1 })).toBe(2);
   });
 
   it('writes nothing below 95% verified, and only the verified days at or above it', async () => {
@@ -382,6 +484,28 @@ describe('days from the daily totals', () => {
     await readAs(team.admin, l1, at);
     expect(await outcomeOf(at)).toMatchObject({ daysWritten: 19, daysReason: null });
     expect(await count('tw_sales_days', { locationId: oid(l1), date: '2026-04-30' })).toBe(0);
+  });
+
+  it('writes no day whose figures are another day’s: rows read shifted by one are not borne out', async () => {
+    const l1 = await newLocation();
+    const days = mayDays(3);
+    const shifted = days.map((day, index) => ({ ...day, guests: days[(index + 1) % 3]?.guests ?? null, netSales: days[(index + 1) % 3]?.netSales ?? null }));
+    const fileId = await seedStored(l1, { raw: salesCsv(days), by: team.admin });
+    answers = [salesAnswer(shifted)];
+    await readAs(team.admin, l1, fileId);
+    expect(await outcomeOf(fileId)).toMatchObject({ uploadId: null, daysWritten: 0, daysReason: 'days_not_verified' });
+    expect(await count('tw_sales_days', { locationId: oid(l1) })).toBe(0);
+  });
+
+  it('drops the answer’s days once they are used, keeping their count, and says when the file had more than were read', async () => {
+    const l1 = await newLocation();
+    const days = mayDays(2);
+    const fileId = await seedStored(l1, { raw: salesCsv(days), by: team.member });
+    answers = [salesAnswer(days, { daysCut: true })];
+    await readAs(team.member, l1, fileId);
+    expect((await aiOf(fileId)).result).toMatchObject({ days: [], daysBorneOut: [], dayCount: 2, daysCut: true, kind: 'sales' });
+    expect(await outcomeOf(fileId)).toMatchObject({ daysWritten: 2 });
+    expect((await itemOf(team.member, l1, `f_${fileId}`)).ai).toMatchObject({ daysCut: true, daysWritten: 2 });
   });
 
   it('writes no days from a picture, a file that wrote days itself, an answer short of high confidence, or one that is not sales', async () => {
@@ -439,6 +563,17 @@ describe('the summary item', () => {
     expect((await eventsOf('file.uploaded')).at(-1)).toMatchObject({ target: { type: 'file', id: itemId }, details: { via: 'townwise_ai', purpose: 'reference' } });
   });
 
+  it('names the file as it is called when the item is kept: a rename while it is read counts', async () => {
+    const l1 = await newLocation();
+    const fileId = await seedStored(l1, { name: `${SENTINEL} old name.csv` });
+    before = async (_orgId, id) => {
+      await server.connection.collection('tw_files').updateOne({ _id: oid(id) }, { $set: { name: `${SENTINEL} new name.csv` } });
+    };
+    await readAs(team.member, l1, fileId);
+    const { itemId } = await outcomeOf(fileId);
+    expect((await itemOf(team.member, l1, `f_${String(itemId)}`)).name).toBe(`TownwiseAI’s notes on ${SENTINEL} new name.txt`);
+  });
+
   it('skips the item when a cap refuses it, or when there is no summary, and the read still finishes', async () => {
     const l1 = await newLocation();
     await server.connection.collection('tw_upload_days').insertOne({
@@ -471,6 +606,8 @@ describe('retries', () => {
     failRawWrites = 1;
     const jobs = runner.jobs.length;
     await readAs(team.admin, l1, fileId);
+    expect(await aiOf(fileId)).toMatchObject({ status: 'queued', attempts: 1 });
+    await rerun();
     expect(requests).toHaveLength(1);
     expect(await aiOf(fileId)).toMatchObject({ status: 'done', attempts: 2 });
     expect(await count('tw_notes', { 'source.fileId': oid(fileId) })).toBe(1);
@@ -493,6 +630,7 @@ describe('retries', () => {
     throwAfter = 1;
     const jobs = runner.jobs.length;
     await readAs(team.admin, l1, fileId);
+    await rerun();
     expect(requests).toHaveLength(1);
     expect(await aiOf(fileId)).toMatchObject({ status: 'done', attempts: 2 });
     expect(await count('tw_notes', { 'source.fileId': oid(fileId) })).toBe(1);
@@ -517,6 +655,45 @@ describe('retries', () => {
     expect(await count('tw_uploads', { locationId: oid(l1) })).toBe(0);
     expect(await count('tw_files', { 'source.fileId': oid(fileId) })).toBe(0);
     expect((await aiOf(fileId)).actions).toBeNull();
+  });
+
+  it('writes nothing once the original is purged while it is read, and skips the read raw_missing', async () => {
+    const l1 = await newLocation();
+    const days = mayDays(2);
+    const fileId = await seedStored(l1, { raw: salesCsv(days) });
+    answers = [salesAnswer(days, { events: [EVENT] })];
+    // The original goes after the answer was saved, as the actions begin.
+    before = async (_orgId, id) => {
+      await server.connection.collection('tw_files').updateOne({ _id: oid(id) }, { $set: { rawDeletedAt: server.clock.now() } });
+    };
+    await readAs(team.member, l1, fileId);
+    expect(await aiOf(fileId)).toMatchObject({ status: 'skipped', reason: 'raw_missing', actions: { outcome: null } });
+    expect(await count('tw_notes', { 'source.fileId': oid(fileId) })).toBe(0);
+    expect(await count('tw_uploads', { 'source.fileId': oid(fileId) })).toBe(0);
+    expect(await count('tw_files', { 'source.fileId': oid(fileId) })).toBe(0);
+  });
+
+  it('fails a read whose actions throw three times, and lets what they wrote be undone', async () => {
+    const l1 = await newLocation();
+    const days = mayDays(2);
+    const fileId = await seedStored(l1, { raw: salesCsv(days), by: team.member });
+    answers = [salesAnswer(days, { events: [EVENT] })];
+    // The summary item's blob write fails every time: notes and days are written, the outcome never recorded.
+    failRawWrites = 10;
+    await readAs(team.member, l1, fileId);
+    await rerun(3);
+    expect(requests).toHaveLength(1);
+    expect(await aiOf(fileId)).toMatchObject({ status: 'failed', reason: 'internal', actions: { outcome: null } });
+    expect(await count('tw_notes', { 'source.fileId': oid(fileId) })).toBe(1);
+    expect(await count('tw_uploads', { 'source.fileId': oid(fileId) })).toBe(1);
+    failRawWrites = 0;
+    expect((await itemOf(team.member, l1, `f_${fileId}`)).ai).toMatchObject({ status: 'failed', canUndo: true });
+    const res = await undo(team.member, l1, `f_${fileId}`);
+    expect(res.status).toBe(200);
+    expect(await count('tw_notes', { 'source.fileId': oid(fileId) })).toBe(0);
+    expect(await count('tw_uploads', { 'source.fileId': oid(fileId) })).toBe(0);
+    expect(await count('tw_sales_days', { locationId: oid(l1) })).toBe(0);
+    expect(await aiOf(fileId)).toMatchObject({ status: 'undone', actions: null, result: null });
   });
 });
 
@@ -591,6 +768,26 @@ describe('the model update', () => {
         label, ai: { status: 'done' }, outcome: { calibration: { status, id: null } },
       });
     }
+  });
+
+  it('decides by the role the person who asked has now: promoted since, it starts; demoted since, it does not', async () => {
+    const l1 = await newLocation();
+    await seedHistory(server, { orgId: team.orgId, locationId: l1, from: '2024-10-01', to: '2026-05-31' });
+    const promoted = await newPerson('member');
+    const first = await seedStored(l1, { by: promoted });
+    await ask(promoted, l1, first);
+    await server.connection.collection('tw_members').updateOne({ activeUserId: promoted.userId }, { $set: { role: 'org_admin' } });
+    await runReader();
+    expect(await outcomeOf(first)).toMatchObject({ calibration: { status: 'started' } });
+    expect((await eventsOf('calibration.requested')).at(-1)).toMatchObject({ actorUserId: promoted.userId, actorRole: 'org_admin' });
+
+    const demoted = await newPerson('org_admin');
+    const second = await seedStored(l1, { by: demoted });
+    answers = [answer({ events: [{ ...EVENT, title: 'Brunch' }] })];
+    await ask(demoted, l1, second);
+    await server.connection.collection('tw_members').updateOne({ activeUserId: demoted.userId }, { $set: { role: 'member' } });
+    await runReader();
+    expect(await outcomeOf(second)).toMatchObject({ calibration: { status: 'not_admin', id: null } });
   });
 
   it('says the lab is off without a runner, the requester is no org admin, or nothing was written', async () => {
@@ -681,7 +878,13 @@ describe('DELETE /api/org/locations/:locationId/data/:ref/ai', () => {
     expect(res.status).toBe(200);
     const body = await res.json() as { item: DataItemView; calibrationKept: string | null };
     expect(body.calibrationKept).toBe(calibration.id);
-    expect(body.item).toMatchObject({ canAiRead: true, ai: { status: 'undone', notes: [], daysWritten: 0, uploadRef: null, itemRef: null, daysReason: null, itemReason: null, calibration: null, canUndo: false } });
+    expect(body.item).toMatchObject({
+      canAiRead: true,
+      ai: {
+        status: 'undone', summary: null, facts: null, notes: [], notesSkipped: null, daysWritten: 0, daysAlreadyHad: 0, uploadRef: null, itemRef: null,
+        daysReason: null, itemReason: null, calibration: null, canUndo: false,
+      },
+    });
     expect(await count('tw_notes', { locationId: oid(l1) })).toBe(0);
     expect(await count('tw_uploads', { _id: oid(String(outcome.uploadId)) })).toBe(0);
     expect(await count('tw_sales_days', { uploadId: oid(String(outcome.uploadId)) })).toBe(0);
@@ -689,7 +892,7 @@ describe('DELETE /api/org/locations/:locationId/data/:ref/ai', () => {
     expect(await count('tw_files', { _id: oid(String(outcome.itemId)) })).toBe(0);
     expect(await count('tw_files', { _id: oid(fileId) })).toBe(1);
     expect(await count('tw_calibrations', { _id: oid(calibration.id) })).toBe(1);
-    expect(await aiOf(fileId)).toMatchObject({ status: 'undone', actions: null });
+    expect(await aiOf(fileId)).toMatchObject({ status: 'undone', actions: null, result: null });
     expect((await aiOf(fileId)).undoing).toBeUndefined();
 
     const undone = (await eventsOf('file.ai_undone')).at(-1);
@@ -769,5 +972,46 @@ describe('DELETE /api/org/locations/:locationId/data/:ref/ai', () => {
     expect((await itemOf(team.member, l1, `f_${nothing}`)).ai?.canUndo).toBe(false);
     const unknown = await undo(team.member, l1, `f_${new Types.ObjectId().toHexString()}`);
     expect(unknown.status).toBe(404);
+  });
+});
+
+// ---- The original deleted ---------------------------------------------------------------------------------------------
+
+describe('a read whose original is deleted', () => {
+  it('loses what TownwiseAI kept of the file’s content when its owner deletes the original; its kind and counts stay', async () => {
+    const l1 = await newLocation();
+    const days = mayDays(2);
+    const fileId = await seedStored(l1, { raw: salesCsv(days), by: team.member, status: 'read' });
+    answers = [salesAnswer(days, { summary: 'Daily totals for May.', facts: ['Two days'], events: [EVENT] })];
+    await readAs(team.member, l1, fileId);
+    const res = await call(server, `/api/org/locations/${l1}/files/${fileId}/raw`, { session: team.member, method: 'DELETE' });
+    expect(res.status).toBe(200);
+    expect((await aiOf(fileId)).result).toEqual({
+      kind: 'sales', confidence: 'high', summary: '', facts: [], events: [], days: [], daysCut: false, eventCount: 1, dayCount: 2, daysBorneOut: [],
+    });
+    const item = await itemOf(team.member, l1, `f_${fileId}`);
+    expect(item.ai).toMatchObject({ status: 'done', kind: 'sales', summary: '', facts: [], daysWritten: 2 });
+    expect(item.ai?.notes.map((note) => note.title)).toEqual([null]);
+    // The summary item stays: the owner deleted the original only.
+    expect(await count('tw_files', { 'source.fileId': oid(fileId) })).toBe(1);
+  });
+
+  it('removes the summary items TownwiseAI kept from a file when staff purge the organization’s originals', async () => {
+    const l1 = await newLocation();
+    const fileId = await seedStored(l1);
+    await readAs(team.member, l1, fileId);
+    const { itemId } = await outcomeOf(fileId);
+    expect(await count('tw_files', { _id: oid(String(itemId)) })).toBe(1);
+    const staff = await signInStaff(server);
+    try {
+      const res = await call(server, `/api/admin/orgs/${team.orgId}/originals/delete`, { session: staff, json: { basis: 'data_subject_request' } });
+      expect(res.status).toBe(200);
+    } finally {
+      await removeStaffFactor(server);
+    }
+    expect(await count('tw_files', { _id: oid(String(itemId)) })).toBe(0);
+    expect((await aiOf(fileId)).result).toMatchObject({ summary: '', facts: [], events: [], kind: 'calendar' });
+    expect(logLines(server).filter((line) => line.msg === 'townwise.originals_deleted').at(-1)).toMatchObject({ by: 'staff' });
+    expect((logLines(server).filter((line) => line.msg === 'townwise.originals_deleted').at(-1)?.deletedSummaries as number)).toBeGreaterThanOrEqual(1);
   });
 });

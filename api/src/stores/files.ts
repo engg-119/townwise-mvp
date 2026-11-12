@@ -88,8 +88,8 @@ export type FileColumnChoices = Readonly<Record<string, SavedColumnChoice | null
 
 /**
  * Reading with TownwiseAI (spec 11A.9, D34), opted into per file: `queued` until a reader claims it, `reading` under the
- * claim's lease, then `done`, `failed` (only `refused` or `internal`) or `skipped` (a reason code). `undone` is set when
- * the person undoes what the read did (S2). Failed, skipped and undone reads may be asked for again.
+ * claim's lease, then `done`, `failed` (`refused`, `answer_too_long` or `internal`) or `skipped` (a reason code).
+ * `undone` is set when the person undoes what the read did. Failed, skipped and undone reads may be asked for again.
  */
 export type AiReadStatus = 'queued' | 'reading' | 'done' | 'failed' | 'skipped' | 'undone';
 
@@ -112,14 +112,30 @@ export interface AiReadEvent {
 /** A daily total the file states per day; `netSales` in dollars, as the file has it. */
 export interface AiReadDay { readonly date: string; readonly guests: number | null; readonly netSales: number | null }
 
-/** The model's answer after validation: every list capped, malformed entries dropped. */
+/**
+ * The model's answer after validation (files/extract/reader-prompt.ts): every list capped, malformed entries dropped,
+ * email addresses and phone numbers replaced. The free text (`summary`, `facts`, `events`, `days`) is cleared when the
+ * original is deleted, and `days` (with `daysBorneOut`) once the actions have used them; `kind`, `confidence`,
+ * `daysCut` and the counts stay.
+ */
 export interface AiReadResult {
   readonly kind: AiFileKind;
   readonly confidence: 'high' | 'medium' | 'low';
   readonly summary: string;
   readonly facts: readonly string[];
   readonly events: readonly AiReadEvent[];
+  /** At most 1,500, newest first. */
   readonly days: readonly AiReadDay[];
+  /** The file states daily totals for more dates than `days` holds (the newest 1,500 were kept). */
+  readonly daysCut: boolean;
+  /** How many events and days the answer gave, after validation. */
+  readonly eventCount: number;
+  readonly dayCount: number;
+  /**
+   * The places in `days` of the days the file's own text bears out (files/ai-verify.ts), checked when the answer was
+   * saved, so a retry needs no second read of the original; null when the file has no text (a picture).
+   */
+  readonly daysBorneOut: readonly number[] | null;
 }
 
 /**
@@ -137,8 +153,9 @@ export interface AiActionPlan {
   readonly calibrationId: string;
 }
 
-/** Why the read wrote no days. */
-export type AiDaysReason = 'not_sales' | 'no_days' | 'file_wrote_days' | 'picture' | 'not_high_confidence' | 'days_not_verified';
+/** Why the read wrote no days. `already_had_days`: every verified day was already stored (AI days never replace one). */
+export type AiDaysReason =
+  | 'not_sales' | 'no_days' | 'file_wrote_days' | 'picture' | 'not_high_confidence' | 'days_not_verified' | 'already_had_days';
 /** Why the read kept no summary item. */
 export type AiItemReason = 'no_summary' | 'storage_full' | 'daily_upload_limit';
 /**
@@ -153,12 +170,18 @@ export interface AiCalibration { readonly status: AiCalibrationStatus; readonly 
 
 /** What a read's actions did, recorded once every write is done. */
 export interface AiActionsOutcome {
-  /** The notes it created (ids), and the events it did not make a note of, by why. */
+  /**
+   * The notes it created (ids), and the events it did not make a note of, by why: an existing note says the same, the
+   * location's 1,000 notes, the notes route would refuse it, or the closed-note guard (a closed span over 14 days, or
+   * past 31 closed days a read).
+   */
   readonly notes: readonly string[];
-  readonly notesSkipped: { readonly duplicate: number; readonly cap: number; readonly invalid: number };
+  readonly notesSkipped: { readonly duplicate: number; readonly cap: number; readonly invalid: number; readonly guard: number };
   /** The upload it wrote days through, and the days that upload held once written; null and 0 with a reason otherwise. */
   readonly uploadId: string | null;
   readonly daysWritten: number;
+  /** Verified days left out because the location already had a day on that date (AI days only add). */
+  readonly daysAlreadyHad: number;
   readonly daysReason: AiDaysReason | null;
   /** The summary item it kept, or null with a reason. */
   readonly itemId: string | null;
@@ -181,6 +204,8 @@ export interface FileAiRead {
   /** Claims so far; also the claim's token: every write under a claim matches the count it set. */
   readonly attempts: number;
   readonly leaseUntil: Date | null;
+  /** A queued read put back after an attempt stopped is not claimed before this (backoff); null otherwise. */
+  readonly notBefore: Date | null;
   readonly startedAt: Date | null;
   readonly finishedAt: Date | null;
   /** Why a read failed or was skipped, as a code; null otherwise. */
@@ -191,14 +216,19 @@ export interface FileAiRead {
   readonly costMicroUsd: number;
   /** Saved before anything acts on it, so a retry acts on the same answer; null until the model answered. */
   readonly result: AiReadResult | null;
-  /** What acting on the answer planned and did; null before, and once undone. */
+  /**
+   * What acting on the answer planned and did; null before, and once undone. A plan whose outcome is null means the
+   * actions began and did not finish (the read then failed or was skipped): what they wrote can still be undone.
+   */
   readonly actions: AiReadActions | null;
   /** While an undo runs: it removes what the read made, then marks the read `undone`. */
   readonly undoing: boolean;
 }
 
-/** As stored: rows from before the actions stage have neither field, and `undoing` is absent unless set. */
-type StoredAiRead = Omit<FileAiRead, 'actions' | 'undoing'> & { actions?: AiReadActions | null; undoing?: boolean };
+/** As stored: `actions` and `notBefore` may be absent, and `undoing` is absent unless set. */
+type StoredAiRead = Omit<FileAiRead, 'actions' | 'undoing' | 'notBefore'> & {
+  actions?: AiReadActions | null; undoing?: boolean; notBefore?: Date | null;
+};
 
 interface FileFields {
   orgId: Types.ObjectId;
@@ -424,7 +454,7 @@ function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
     editedAt: doc.editedAt ?? null,
     editedBy: doc.editedBy ?? null,
     editedByStaff: doc.editedByStaff === true,
-    ai: doc.ai === undefined ? null : { ...doc.ai, actions: doc.ai.actions ?? null, undoing: doc.ai.undoing === true },
+    ai: doc.ai === undefined ? null : { ...doc.ai, actions: doc.ai.actions ?? null, undoing: doc.ai.undoing === true, notBefore: doc.ai.notBefore ?? null },
     source: doc.source === undefined ? null : { via: 'ai_file', fileId: doc.source.fileId.toHexString() },
   };
 }
@@ -453,6 +483,8 @@ const READABLE: FileStatus[] = ['queued', 'reading', 'stored'];
 const AI_READABLE: FileStatus[] = ['read', 'kept', 'failed'];
 /** Reads that may be asked for again. */
 const AI_ASK_AGAIN: AiReadStatus[] = ['failed', 'skipped', 'undone'];
+/** Reads that ended, whose actions (when they began) can be undone. */
+const AI_ENDED: AiReadStatus[] = ['done', 'failed', 'skipped'];
 
 /** Tenant store: every function takes the OrgScope first and filters on its orgId. */
 export interface FileStore {
@@ -538,7 +570,8 @@ export interface FileStore {
   remove(scope: OrgScope, fileId: string): Promise<boolean>;
   /**
    * The original is gone: the name becomes the kind's label (it can itself name a person), and so do a workbook's
-   * sheet names in the report when `sheets` is given.
+   * sheet names in the report when `sheets` is given. What a TownwiseAI read kept of the file's content goes too: its
+   * answer's summary, facts, events and days (the kind and counts stay).
    */
   rawDeleted(scope: OrgScope, fileId: string, at: Date, label: string, sheets?: readonly Record<string, unknown>[]): Promise<void>;
   /** Any file row at the location, or in the organization (a location with files has data). */
@@ -615,8 +648,13 @@ export interface FileStore {
   finishAiRead(scope: OrgScope, fileId: string, attempt: number, input: {
     status: 'done' | 'failed' | 'skipped'; reason: string | null; at: Date; partial?: boolean; costMicroUsd?: number;
   }): Promise<boolean>;
-  /** An attempt that stopped (an error, a failed call): back to `queued`, the attempt counted. False when not held. */
-  releaseAiRead(scope: OrgScope, fileId: string, attempt: number): Promise<boolean>;
+  /**
+   * An attempt that stopped (an error, a failed call): back to `queued`, the attempt counted, not to be claimed before
+   * `notBefore`. False when not held.
+   */
+  releaseAiRead(scope: OrgScope, fileId: string, attempt: number, notBefore: Date): Promise<boolean>;
+  /** How many of the organization's reads are queued or reading (the 10 a time cap). */
+  aiReadsInFlight(scope: OrgScope): Promise<number>;
   /**
    * S2, before any action writes: compare-and-set the plan's ids on `ai.actions` (outcome null) while the read is held
    * under claim `attempt` and has no plan yet. The record after; when a plan was already saved (an earlier attempt's)
@@ -624,19 +662,28 @@ export interface FileStore {
    * longer held (the file deleted, being deleted, or the claim taken over).
    */
   planAiActions(scope: OrgScope, fileId: string, attempt: number, plan: AiActionPlan): Promise<FileRecord | null>;
-  /** S2, after every action: what they did, on the plan, while the read is held under claim `attempt`. */
+  /**
+   * S2, after every action: what they did, on the plan, while the read is held under claim `attempt`; the answer's
+   * days, used now, are dropped (its counts stay).
+   */
   recordAiActions(scope: OrgScope, fileId: string, attempt: number, outcome: AiActionsOutcome): Promise<boolean>;
   /**
-   * Undo, step 1: compare-and-set `ai.undoing` on the location's file while its read is done (a retry finds it set
-   * already and goes on). The record after, or null when the read is not done (or the file is gone or going).
+   * Undo, step 1: compare-and-set `ai.undoing` on the location's file while its read ended (done, failed or skipped)
+   * with a plan (a retry finds it set already and goes on). The record after, or null when the read did not end with a
+   * plan (or the file is gone or going).
    */
   markAiUndoing(scope: OrgScope, locationId: string, fileId: string): Promise<FileRecord | null>;
-  /** Undo, last step: the read becomes `undone` and its actions are cleared, while it is done and undoing. */
+  /**
+   * Undo, last step: the read becomes `undone`, and its actions and its answer are cleared, while it ended and is
+   * undoing.
+   */
   finishAiUndo(scope: OrgScope, locationId: string, fileId: string): Promise<boolean>;
   /** The organization's files among `ids`, leaving out files being deleted (any location). */
   byIds(scope: OrgScope, ids: readonly string[]): Promise<FileRecord[]>;
   /** The location's summary items a TownwiseAI read of `fileId` kept, being deleted or not (an undo resumes them). */
   fromAiRead(scope: OrgScope, locationId: string, fileId: string): Promise<FileRecord[]>;
+  /** The organization's summary items TownwiseAI reads of any of `fileIds` kept, being deleted or not (a staff purge). */
+  fromAiReads(scope: OrgScope, fileIds: readonly string[]): Promise<FileRecord[]>;
 }
 
 export function createFileStore(connection: Connection): FileStore {
@@ -848,6 +895,11 @@ export function createFileStore(connection: Connection): FileStore {
       const set: Record<string, unknown> = { rawDeletedAt: at, name: label };
       if (sheets !== undefined) set['report.sheets'] = sheets;
       await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, { $set: set, $unset: { purgeRaw: '' } });
+      // What TownwiseAI read in it goes with it: the answer's free text, keeping its kind and counts (spec 11A.9).
+      await File.updateOne(
+        { _id: oid(fileId), orgId: org(scope), 'ai.result': trusted({ $type: 'object' }) },
+        { $set: { 'ai.result.summary': '', 'ai.result.facts': [], 'ai.result.events': [], 'ai.result.days': [], 'ai.result.daysBorneOut': [] } },
+      );
     },
     async hasAny(scope, locationId) {
       const filter: Record<string, unknown> = { orgId: org(scope) };
@@ -929,7 +981,7 @@ export function createFileStore(connection: Connection): FileStore {
     async requestAiRead(scope, locationId, fileId, input) {
       const ai: StoredAiRead = {
         status: 'queued', requestedBy: input.by, requestedByRole: input.role, requestedByStaff: input.byStaff,
-        requestedGrantId: input.grantId, requestedAt: input.at, attempts: 0, leaseUntil: null, startedAt: null, finishedAt: null,
+        requestedGrantId: input.grantId, requestedAt: input.at, attempts: 0, leaseUntil: null, notBefore: null, startedAt: null, finishedAt: null,
         reason: null, partial: false, costMicroUsd: 0, result: null, actions: null,
       };
       const doc = await File.findOneAndUpdate(
@@ -960,9 +1012,12 @@ export function createFileStore(connection: Connection): FileStore {
       const result = await File.updateOne(heldAiRead(scope, fileId, attempt), update);
       return result.matchedCount === 1;
     },
-    async releaseAiRead(scope, fileId, attempt) {
-      const result = await File.updateOne(heldAiRead(scope, fileId, attempt), { $set: { 'ai.status': 'queued', 'ai.leaseUntil': null } });
+    async releaseAiRead(scope, fileId, attempt, notBefore) {
+      const result = await File.updateOne(heldAiRead(scope, fileId, attempt), { $set: { 'ai.status': 'queued', 'ai.leaseUntil': null, 'ai.notBefore': notBefore } });
       return result.matchedCount === 1;
+    },
+    async aiReadsInFlight(scope) {
+      return File.countDocuments({ orgId: org(scope), 'ai.status': trusted({ $in: ['queued', 'reading'] }) });
     },
     async planAiActions(scope, fileId, attempt, plan) {
       const actions: AiReadActions = { plan, outcome: null };
@@ -973,13 +1028,17 @@ export function createFileStore(connection: Connection): FileStore {
     },
     async recordAiActions(scope, fileId, attempt, outcome) {
       const result = await File.updateOne(
-        { ...heldAiRead(scope, fileId, attempt), 'ai.actions': trusted({ $type: 'object' }) }, { $set: { 'ai.actions.outcome': outcome } },
+        { ...heldAiRead(scope, fileId, attempt), 'ai.actions': trusted({ $type: 'object' }), 'ai.result': trusted({ $type: 'object' }) },
+        { $set: { 'ai.actions.outcome': outcome, 'ai.result.days': [], 'ai.result.daysBorneOut': [] } },
       );
       return result.matchedCount === 1;
     },
     async markAiUndoing(scope, locationId, fileId) {
       const doc = await File.findOneAndUpdate(
-        { _id: oid(fileId), orgId: org(scope), locationId: oid(locationId), status: trusted({ $ne: 'deleting' }), 'ai.status': 'done' },
+        {
+          _id: oid(fileId), orgId: org(scope), locationId: oid(locationId), status: trusted({ $ne: 'deleting' }),
+          'ai.status': trusted({ $in: AI_ENDED }), 'ai.actions': trusted({ $type: 'object' }),
+        },
         { $set: { 'ai.undoing': true } },
         after,
       ).lean();
@@ -987,8 +1046,8 @@ export function createFileStore(connection: Connection): FileStore {
     },
     async finishAiUndo(scope, locationId, fileId) {
       const result = await File.updateOne(
-        { _id: oid(fileId), orgId: org(scope), locationId: oid(locationId), 'ai.status': 'done', 'ai.undoing': true },
-        { $set: { 'ai.status': 'undone', 'ai.actions': null }, $unset: { 'ai.undoing': 1 } },
+        { _id: oid(fileId), orgId: org(scope), locationId: oid(locationId), 'ai.status': trusted({ $in: AI_ENDED }), 'ai.undoing': true },
+        { $set: { 'ai.status': 'undone', 'ai.actions': null, 'ai.result': null }, $unset: { 'ai.undoing': 1 } },
       );
       return result.matchedCount === 1;
     },
@@ -999,6 +1058,11 @@ export function createFileStore(connection: Connection): FileStore {
     },
     async fromAiRead(scope, locationId, fileId) {
       const docs = await File.find({ orgId: org(scope), locationId: oid(locationId), 'source.fileId': oid(fileId) }).lean();
+      return docs.map(toFile);
+    },
+    async fromAiReads(scope, fileIds) {
+      if (fileIds.length === 0) return [];
+      const docs = await File.find({ orgId: org(scope), 'source.fileId': trusted({ $in: fileIds.map(oid) }) }).lean();
       return docs.map(toFile);
     },
   };

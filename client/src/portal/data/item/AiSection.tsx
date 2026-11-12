@@ -12,7 +12,8 @@ import { Panel, Stack } from '../../ui/layout';
 import { useFocusMessage } from '../../ui/messageFocus';
 import { Heading, Small } from '../../ui/text';
 import {
-  AI, aiError, cantReadLine, daysLine, forecastLine, itemLine, kindFoundLine, noteLine, notesLine, settledLine, undidLine, undoBody,
+  AI, aiError, cantReadLine, daysLine, forecastLine, guardLine, itemLine, kindFoundLine, noteLine, notesLine, settledLine, undidLine,
+  undoBody,
 } from '../aiCopy';
 import { readWithAi, undoAiRead, type AiRead, type DataItem } from '../api';
 
@@ -21,7 +22,8 @@ import { readWithAi, undoAiRead, type AiRead, type DataItem } from '../api';
 // people who may ask (`canAiRead`) get what reading sends and does, the privacy link and “Let TownwiseAI read this
 // file”; a kind TownwiseAI can't read says why instead. While it reads, the item is read again every 3 seconds until
 // the read settles; leaving the page stops that. A done read shows what TownwiseAI found and what it added, each with
-// its link or why not, and, for the person who asked or an org admin, Undo behind a confirm dialog. Under view-as the
+// its link or why not, and, for the person who asked or an org admin, Undo behind a confirm dialog; so does a read that
+// failed or was skipped after it began adding (`canUndo`), with a line that it may have added some. Under view-as the
 // API sends no summary, facts or note titles and no rights, so only the statuses show. The line that says how an
 // action ended takes focus (ui/messageFocus.tsx), since each action takes its button away.
 
@@ -114,6 +116,14 @@ export function AiSection(props: {
       {line === null ? null : <Small>{line}</Small>}
       {failure === null ? null : <Messages live="alert" takesFocus items={[failure]} />}
       {ai?.status === 'done' ? <Done ai={ai} locationId={item.locationId} onUndo={() => { setFailure(null); setConfirming(true); }} /> : null}
+      {ai !== null && ai.status !== 'done' && !running && ai.canUndo ? (
+        <Stack gap={theme.space[3]}>
+          <Small>{AI.stopped}</Small>
+          <Actions>
+            <Button variant="outline" label={AI.undo} onPress={() => { setFailure(null); setConfirming(true); }} />
+          </Actions>
+        </Stack>
+      ) : null}
       {askable && item.canAiRead ? (
         cantRead === null ? (
           <Stack gap={theme.space[3]}>
@@ -128,7 +138,7 @@ export function AiSection(props: {
       <ConfirmDialog
         visible={confirming}
         title={AI.undoTitle}
-        body={ai?.status === 'done' ? undoBody(ai) : ''}
+        body={ai === null ? '' : undoBody(ai)}
         confirmLabel={AI.undoConfirm}
         pendingLabel={AI.undoing}
         pending={undoing}
@@ -144,12 +154,14 @@ function Done(props: { ai: AiRead; locationId: string; onUndo: () => void }): Re
   const { ai, locationId } = props;
   const kind = kindFoundLine(ai.kind);
   const forecast = forecastLine(ai.calibration);
+  const guard = guardLine(ai.notesSkipped);
   return (
     <Stack gap={theme.space[3]}>
       {kind === null ? null : <Small white>{kind}</Small>}
       {ai.summary === null || ai.summary === '' ? null : <Small>{ai.summary}</Small>}
       {ai.facts === null || ai.facts.length === 0 ? null : <Lines label={AI.found} items={ai.facts} />}
       {ai.partial ? <Small>{AI.partial}</Small> : null}
+      {ai.daysCut ? <Small>{AI.daysCut}</Small> : null}
       <Small white>{AI.added}</Small>
       {ai.notes.length === 0 ? <Small>{AI.noNotes}</Small> : (
         <Stack gap={theme.space[2]}>
@@ -158,6 +170,7 @@ function Done(props: { ai: AiRead; locationId: string; onUndo: () => void }): Re
           <LinkButton href={locationHref(locationId, 'notes')} label={AI.notesLink} />
         </Stack>
       )}
+      {guard === null ? null : <Small>{guard}</Small>}
       <Small>{daysLine(ai)}</Small>
       {ai.uploadRef === null ? null : <LinkButton href={itemHref(locationId, ai.uploadRef)} label={AI.daysLink} />}
       <Small>{itemLine(ai)}</Small>

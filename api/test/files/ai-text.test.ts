@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { capText, extractAiText, textFileText } from '../../src/files/parse/ai-text.ts';
+import { textOfXml } from '../../src/files/parse/docx.ts';
 import { pdfOf, row } from '../helpers/pdf.ts';
 import { xlsxOf, zipOf } from '../helpers/zip.ts';
 
@@ -69,6 +70,24 @@ describe('the AI text thread', () => {
     expect(await extractAiText({ kind: 'docx', bytes: docx(body), maxChars: 10_000 })).toEqual({
       kind: 'text', text: 'Spring menu\nSoup\t$8\nDate\tEvent\n2025-05-01\tPrivate party\nLast line & more', cut: false, pages: null,
     });
+  });
+
+  it('stops making a Word document’s text once it has the characters asked for, and says it was cut', async () => {
+    const body = Array.from({ length: 200 }, (_, index) => p(`Paragraph ${String(index)}`)).join('');
+    expect(await extractAiText({ kind: 'docx', bytes: docx(body), maxChars: 30 })).toEqual({
+      kind: 'text', text: 'Paragraph 0\nParagraph 1\nParagr', cut: true, pages: null,
+    });
+    // The parse itself stopped: three paragraphs made, not 200.
+    expect(textOfXml(`<w:document ${W}><w:body>${body}</w:body></w:document>`, 30).split('\n')).toEqual(['Paragraph 0', 'Paragraph 1', 'Paragraph 2']);
+  });
+
+  it('skips a Word document whose word/document.xml is over 8 MiB as too_large', async () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?><w:document ${W}><w:body>${p('x'.repeat(8 * 1024 * 1024))}</w:body></w:document>`;
+    const big = zipOf([
+      { name: '[Content_Types].xml', data: '<Types/>', store: true },
+      { name: 'word/document.xml', data: xml, store: true },
+    ]);
+    expect(await extractAiText({ kind: 'docx', bytes: big, maxChars: 100 })).toEqual({ kind: 'kept', outcome: 'too_large' });
   });
 
   it('keeps a file that is not a Word package as not readable', async () => {

@@ -10,7 +10,7 @@ import { dataError } from './copy';
 
 export const AI = {
   heading: 'TownwiseAI',
-  explain: 'TownwiseAI can read this file and use what it finds. The whole file is sent to Anthropic’s Claude to read. TownwiseAI then adds what it finds to your account: dated events as notes, daily totals it can check against the file as sales days, and a summary TownwiseAI can read later. When an org admin asks, it may also start updating the forecast. Everything it adds can be undone.',
+  explain: 'TownwiseAI can read this file and use what it finds. The whole file is sent to Anthropic’s Claude to read. TownwiseAI then adds what it finds to your account: dated events as notes, daily totals it can check against the file as new sales days (it never changes a day you already have), and a summary TownwiseAI can read later. When an org admin asks, it may also start updating the forecast. Everything it adds can be undone.',
   privacy: 'How Townwise handles your data',
   privacyHref: '/privacy',
   read: 'Let TownwiseAI read this file',
@@ -27,6 +27,8 @@ export const AI = {
   summaryLink: 'Open the summary',
   noNotes: 'It added no notes.',
   partial: 'This file was too long to read whole, so TownwiseAI read only the start of it.',
+  daysCut: 'This file has daily totals for more dates than TownwiseAI reads at once, so it read the newest 1,500 of them.',
+  stopped: 'TownwiseAI stopped before it finished, and may have added some notes, days or a summary first. You can undo what it added.',
   madeBy: 'Made by TownwiseAI from a file',
   undo: 'Undo what TownwiseAI added',
   undoTitle: 'Undo what TownwiseAI added?',
@@ -60,11 +62,13 @@ const SKIPPED: Readonly<Record<string, string>> = {
   kind_not_read: 'TownwiseAI didn’t read this file: it can’t read this kind of file.',
   encrypted: 'TownwiseAI didn’t read this file: it has a password.',
   raw_missing: 'TownwiseAI didn’t read this file: its original was deleted.',
+  requester_gone: 'TownwiseAI added nothing from this file: the person who asked is no longer on your team.',
   too_complex: 'TownwiseAI didn’t read this file: it’s too complex to turn into text.',
   not_readable: 'TownwiseAI didn’t read this file: it couldn’t be opened, so it may be damaged.',
 };
 const FAILED: Readonly<Record<string, string>> = {
   refused: 'TownwiseAI declined to read this file.',
+  answer_too_long: 'TownwiseAI couldn’t finish reading this file: what it found was too long to write down. A shorter file, such as one year of sales, will work.',
   internal: 'TownwiseAI couldn’t read this file because something went wrong on Townwise’s side.',
 };
 
@@ -90,6 +94,13 @@ export function notesLine(count: number): string {
   return `It added ${plural(count, 'note', 'notes')} to Notes:`;
 }
 
+/** The closed periods the guard left out (`notesSkipped.guard`), or null when it left none. */
+export function guardLine(skipped: AiRead['notesSkipped']): string | null {
+  const count = skipped?.guard ?? 0;
+  if (count === 0) return null;
+  return `It left out ${plural(count, 'closed period', 'closed periods')}: TownwiseAI never closes more than 14 days in a row, or 31 days in all, from one file. If ${count === 1 ? 'it’s' : 'they’re'} right, add ${count === 1 ? 'it' : 'them'} in Notes.`;
+}
+
 const ADD_YOURSELF = ' To add them yourself, use Upload sales history.';
 
 /** Why it wrote no days (`ai.daysReason`). */
@@ -100,12 +111,14 @@ const NO_DAYS: Readonly<Record<string, string>> = {
   picture: `It added no sales days: TownwiseAI doesn’t take days from a picture, because it can’t check the figures against the file’s text.${ADD_YOURSELF}`,
   not_high_confidence: `It added no sales days: TownwiseAI wasn’t sure enough that it read the totals right.${ADD_YOURSELF}`,
   days_not_verified: `It added no sales days: too few of the dates and figures it read could be found in the file’s own text.${ADD_YOURSELF}`,
+  already_had_days: 'It added no sales days: you already have every day it found, and TownwiseAI never changes a day you already have.',
 };
 
-/** The days line: what it added, or why it added none. */
-export function daysLine(ai: Pick<AiRead, 'daysWritten' | 'uploadRef' | 'daysReason'>): string {
+/** The days line: what it added (and the days it left as they were), or why it added none. */
+export function daysLine(ai: Pick<AiRead, 'daysWritten' | 'daysAlreadyHad' | 'uploadRef' | 'daysReason'>): string {
   if (ai.daysWritten > 0) {
-    const added = `It added ${plural(ai.daysWritten, 'day', 'days')} of sales.`;
+    const kept = ai.daysAlreadyHad > 0 ? ` It left ${plural(ai.daysAlreadyHad, 'day', 'days')} you already had as ${ai.daysAlreadyHad === 1 ? 'it was' : 'they were'}.` : '';
+    const added = `It added ${plural(ai.daysWritten, 'day', 'days')} of sales.${kept}`;
     return ai.uploadRef === null ? `${added} That upload isn’t on Your data anymore.` : added;
   }
   return NO_DAYS[ai.daysReason ?? ''] ?? 'It added no sales days.';
@@ -170,6 +183,9 @@ export function aiError(error: unknown): string {
   if (error instanceof ApiError && error.kind === 'http') {
     if (error.status === 503 && error.code === 'ai_unavailable') return 'TownwiseAI can’t read files right now. Try again later.';
     if (error.status === 409 && error.code === 'ai_read_running') return 'TownwiseAI is already reading this file.';
+    if (error.status === 429 && error.code === 'ai_read_queue_full') {
+      return 'TownwiseAI is already reading 10 of your organization’s files. Try again when one of them is done.';
+    }
     if (error.status === 400 && error.code === 'nothing_to_undo') return 'There’s nothing TownwiseAI added from this file left to undo.';
     if (error.status === 400) return 'TownwiseAI can’t read this file now. It may still be uploading, or its original was deleted.';
   }

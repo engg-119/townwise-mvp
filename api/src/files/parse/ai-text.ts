@@ -1,14 +1,18 @@
 // Text for reading with TownwiseAI (spec 11A.9), only for a file the person let it read. A PDF, a workbook, a Word
-// document or a ZIP's entries become plain text in a worker thread of its own (ai-text-thread.ts) with the parse
-// thread's heap and a two-minute limit, so a file that would exhaust either ends the thread, not the API; past either
-// it is `too_complex`. This is apart from the sales parse thread (thread.ts), whose raw rows never leave it: only this
-// thread hands a file's content back, and only files/ai-reader.ts asks it (test/isolation.test.ts). A text file is
-// decoded here, in the main thread, as the sales reader decodes one.
+// document or a ZIP's entries become plain text in a worker thread of its own (ai-text-thread.ts) with a smaller heap
+// than the sales parse thread's (AI_THREAD_LIMITS: it keeps at most the characters it was asked for, and stops making
+// text once it has them) and a two-minute limit, so a file that would exhaust either ends the thread, not the API; past
+// either it is `too_complex`. The thread runs only while it holds the process's one parse-thread slot (thread-slot.ts),
+// shared with the sales reader, so the two threads never hold their heaps at once. This is apart from the sales parse
+// thread (thread.ts), whose raw rows never leave it: only this thread hands a file's content back, and only
+// files/ai-reader.ts asks it (test/isolation.test.ts). A text file is decoded here, in the main thread, as the sales
+// reader decodes one.
 import { Worker, type ResourceLimits } from 'node:worker_threads';
 
-import { AI_TEXT_TIME_MS, THREAD_LIMITS } from '../limits.ts';
+import { AI_TEXT_TIME_MS, AI_THREAD_LIMITS } from '../limits.ts';
 import { stripBom } from './csv.ts';
 import { decoderFor, detectEncoding, ENCODING_PROBE_BYTES } from './text.ts';
+import { inThreadSlot } from './thread-slot.ts';
 
 export type AiTextKind = 'pdf' | 'xlsx' | 'docx' | 'zip';
 
@@ -46,9 +50,16 @@ function isTooComplex(err: unknown): boolean {
   return err instanceof Error && 'code' in err && (err as { code?: unknown }).code === 'ERR_WORKER_OUT_OF_MEMORY';
 }
 
-/** One file's text through the thread. Any other thread failure rejects (the reader counts it as an attempt). */
-export async function extractAiText(input: AiTextInput): Promise<AiTextOutcome> {
-  const worker = new Worker(THREAD_URL, { resourceLimits: input.resourceLimits ?? THREAD_LIMITS });
+/**
+ * One file's text through the thread, once the parse-thread slot is free. Any other thread failure rejects (the reader
+ * counts it as an attempt).
+ */
+export function extractAiText(input: AiTextInput): Promise<AiTextOutcome> {
+  return inThreadSlot(() => textThread(input));
+}
+
+async function textThread(input: AiTextInput): Promise<AiTextOutcome> {
+  const worker = new Worker(THREAD_URL, { resourceLimits: input.resourceLimits ?? AI_THREAD_LIMITS });
   let timer: NodeJS.Timeout | undefined;
   try {
     const answered = new Promise<AiTextOutcome>((resolve, reject) => {

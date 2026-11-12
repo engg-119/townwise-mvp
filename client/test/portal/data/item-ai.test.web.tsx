@@ -82,7 +82,7 @@ describe('before a read', () => {
     const box = await section();
     expect(within(box).getByRole('heading', { name: 'TownwiseAI' })).toBeTruthy();
     expect(within(box).getByText(/The whole file is sent to Anthropic’s Claude to read\./)).toBeTruthy();
-    expect(within(box).getByText(/dated events as notes, daily totals it can check against the file as sales days, and a summary TownwiseAI can read later\. When an org admin asks, it may also start updating the forecast\. Everything it adds can be undone\./)).toBeTruthy();
+    expect(within(box).getByText(/dated events as notes, daily totals it can check against the file as new sales days \(it never changes a day you already have\), and a summary TownwiseAI can read later\. When an org admin asks, it may also start updating the forecast\. Everything it adds can be undone\./)).toBeTruthy();
     expect(within(box).getByRole('link', { name: 'How Townwise handles your data' }).getAttribute('href')).toBe('/privacy');
 
     fireEvent.click(within(box).getByRole('button', { name: 'Let TownwiseAI read this file' }));
@@ -118,12 +118,15 @@ describe('before a read', () => {
     expect(screen.queryByRole('region', { name: 'TownwiseAI' })).toBeNull();
   });
 
-  test('a refusal says why in plain words and leaves the button', async () => {
+  test.each<[number, string, string]>([
+    [503, 'ai_unavailable', 'TownwiseAI can’t read files right now. Try again later.'],
+    [429, 'ai_read_queue_full', 'TownwiseAI is already reading 10 of your organization’s files. Try again when one of them is done.'],
+  ])('a refusal (%s %s) says why in plain words and leaves the button', async (status, code, line) => {
     const fake = setup([stored({ canAiRead: true })], REF);
-    fake.answers['POST ai'] = () => refusal(503, 'ai_unavailable');
+    fake.answers['POST ai'] = () => refusal(status, code);
     const box = await section();
     fireEvent.click(within(box).getByRole('button', { name: 'Let TownwiseAI read this file' }));
-    expect(await within(box).findByText('TownwiseAI can’t read files right now. Try again later.')).toBeTruthy();
+    expect(await within(box).findByText(line)).toBeTruthy();
     expect(within(box).getByRole('button', { name: 'Let TownwiseAI read this file' })).toBeTruthy();
   });
 });
@@ -232,12 +235,27 @@ describe('a done read', () => {
       'It added 5 days of sales. That upload isn’t on Your data anymore.',
       'The summary it kept isn’t on Your data anymore.',
     ]],
+    ['every day already there, the file longer than it reads, closed periods left out', {
+      kind: 'sales', daysReason: 'already_had_days', daysAlreadyHad: 30, daysCut: true, notesSkipped: { guard: 2 },
+    }, [
+      'It added no sales days: you already have every day it found, and TownwiseAI never changes a day you already have.',
+      'This file has daily totals for more dates than TownwiseAI reads at once, so it read the newest 1,500 of them.',
+      'It left out 2 closed periods: TownwiseAI never closes more than 14 days in a row, or 31 days in all, from one file. If they’re right, add them in Notes.',
+    ]],
   ])('says why it added nothing, in plain words: %s', async (_, ai, lines) => {
     setup([stored({ ai: aiOf(ai) })], REF);
     const box = await section();
     for (const line of lines) expect(within(box).getByText(line)).toBeTruthy();
     expect(within(box).queryByRole('link', { name: 'Open the days' })).toBeNull();
     expect(within(box).queryByRole('link', { name: 'Open the summary' })).toBeNull();
+  });
+
+  test('says the days it left as they were beside the days it added, and one closed period left out', async () => {
+    setup([stored({ ai: aiOf({ kind: 'sales', daysWritten: 3, daysAlreadyHad: 1, uploadRef: UPLOAD, notesSkipped: { guard: 1 } }) })], REF);
+    const box = await section();
+    expect(within(box).getByText('It added 3 days of sales. It left 1 day you already had as it was.')).toBeTruthy();
+    expect(within(box).getByText('It left out 1 closed period: TownwiseAI never closes more than 14 days in a row, or 31 days in all, from one file. If it’s right, add it in Notes.')).toBeTruthy();
+    expect(within(box).queryByText(/newest 1,500/)).toBeNull();
   });
 
   test('Undo asks first, saying what goes and that a started forecast update keeps running, then removes it and says so', async () => {
@@ -291,6 +309,8 @@ describe('a read that ended without an answer', () => {
     ['skipped', 'encrypted', 'TownwiseAI didn’t read this file: it has a password.'],
     ['skipped', 'newer_reason', 'TownwiseAI didn’t read this file.'],
     ['failed', 'refused', 'TownwiseAI declined to read this file.'],
+    ['failed', 'answer_too_long', 'TownwiseAI couldn’t finish reading this file: what it found was too long to write down. A shorter file, such as one year of sales, will work.'],
+    ['skipped', 'requester_gone', 'TownwiseAI added nothing from this file: the person who asked is no longer on your team.'],
     ['failed', 'internal', 'TownwiseAI couldn’t read this file because something went wrong on Townwise’s side.'],
     ['undone', '', 'What TownwiseAI added from this file was undone. You can let it read the file again.'],
   ])('%s %s says why, and the button is back for someone who may ask', async (status, reason, line) => {
@@ -299,6 +319,28 @@ describe('a read that ended without an answer', () => {
     expect(within(box).getByText(line)).toBeTruthy();
     expect(within(box).getByRole('button', { name: 'Let TownwiseAI read this file' })).toBeTruthy();
   });
+});
+
+test('a read that stopped part way says it may have added some, and offers Undo to the person who may', async () => {
+  const fake = setup([stored({ canAiRead: true, ai: aiOf({ status: 'failed', reason: 'internal', kind: null, canUndo: true }) })], REF);
+  fake.answers['DELETE ai'] = () => {
+    const item = fake.items[0];
+    if (item === undefined) throw new Error('no item');
+    item.ai = aiOf({ status: 'undone', kind: null });
+    return { item: { ...item }, calibrationKept: null };
+  };
+  const box = await section();
+  expect(within(box).getByText('TownwiseAI couldn’t read this file because something went wrong on Townwise’s side.')).toBeTruthy();
+  expect(within(box).getByText('TownwiseAI stopped before it finished, and may have added some notes, days or a summary first. You can undo what it added.')).toBeTruthy();
+  fireEvent.click(within(box).getByRole('button', { name: 'Undo what TownwiseAI added' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Undo what TownwiseAI added?' });
+  expect(within(dialog).getByText('This deletes what TownwiseAI added from this file. The file stays on Your data, and you can let TownwiseAI read it again. This can’t be undone.')).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Undo' }));
+  expect(await within(box).findByText('Removed what TownwiseAI added from this file.')).toBeTruthy();
+  expect(fake.ai).toEqual([{ method: 'DELETE', ref: REF, body: undefined }]);
+  cleanup();
+  setup([stored({ canAiRead: true, ai: aiOf({ status: 'skipped', reason: 'budget_spent', kind: null, canUndo: false }) })], REF);
+  expect(within(await section()).queryByRole('button', { name: 'Undo what TownwiseAI added' })).toBeNull();
 });
 
 test('view-as shows the statuses only: no summary, facts, titles or buttons', async () => {

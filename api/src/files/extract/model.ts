@@ -59,9 +59,15 @@ export function createAnthropicExtractModel(apiKey: string): ExtractModel {
   };
 }
 
-/** The client both models use: the SDK's own logger off, its retries the defaults. Tests pass a fake `fetch`. */
-function anthropicClient(apiKey: string, fetch?: typeof globalThis.fetch): Anthropic {
-  return new Anthropic({ apiKey, logLevel: 'off', ...(fetch === undefined ? {} : { fetch }) });
+/**
+ * The client both models use: the SDK's own logger off, its retries the defaults unless `maxRetries` is given. Tests
+ * pass a fake `fetch`.
+ */
+function anthropicClient(apiKey: string, opts: { fetch?: typeof globalThis.fetch; maxRetries?: number } = {}): Anthropic {
+  return new Anthropic({
+    apiKey, logLevel: 'off', ...(opts.fetch === undefined ? {} : { fetch: opts.fetch }),
+    ...(opts.maxRetries === undefined ? {} : { maxRetries: opts.maxRetries }),
+  });
 }
 
 function failed(err: unknown): Extract<ReaderAnswer, { kind: 'failed' }> {
@@ -83,25 +89,28 @@ function answerJson(message: BetaMessage): unknown {
 export const READER_FORMAT = { type: 'json_schema', schema: betaZodOutputFormat(readerAnswer).schema } as const;
 
 /**
- * Reading with TownwiseAI: the Anthropic API at medium effort, non-streaming, with the server-side refusal fallback
- * the chat uses, structured output, and a 300-second timeout. messages.create, not messages.parse: parse throws on an
- * answer outside the schema's limits or on a refusal's text, and the reader checks the answer itself
- * (reader-prompt.ts, readerResult), so a refusal is charged and an over-long fact is dropped instead of failing the call.
+ * Reading with TownwiseAI: the Anthropic API at medium effort, streamed (the answer may run to 64,000 tokens, which a
+ * single response would not hold within the timeout), with the server-side refusal fallback the chat uses, structured
+ * output, a 300-second timeout to the start of the answer and one SDK retry (the reader backs off and retries the rest itself). Not the parse
+ * helpers: they throw on an answer outside the schema's limits or on a refusal's text, and the reader checks the
+ * answer itself (reader-prompt.ts, readerResult), so a refusal is charged and an over-long fact is dropped instead of
+ * failing the call. An answer cut at max_tokens is `too_long`.
  */
 export function createAnthropicFileReaderModel(apiKey: string, fetch?: typeof globalThis.fetch): FileReaderModel {
-  const client = anthropicClient(apiKey, fetch);
+  const client = anthropicClient(apiKey, { ...(fetch === undefined ? {} : { fetch }), maxRetries: 1 });
   return {
     async readFile(request, signal) {
       try {
-        const message = await client.beta.messages.create({
+        const message = await client.beta.messages.stream({
           ...request,
           // Adaptive thinking is Opus 5.5's only mode, so `thinking` is omitted.
           output_config: { effort: 'medium', format: READER_FORMAT },
           betas: ['server-side-fallback-2026-07-01'],
           fallbacks: 'default',
-        }, { signal, timeout: READER_TIMEOUT_MS });
+        }, { signal, timeout: READER_TIMEOUT_MS }).finalMessage();
         const costMicroUsd = messageCostMicroUsd(message);
         if (message.stop_reason === 'refusal') return { kind: 'refused', costMicroUsd };
+        if (message.stop_reason === 'max_tokens') return { kind: 'too_long', costMicroUsd };
         return { kind: 'answered', output: answerJson(message), costMicroUsd };
       } catch (err) {
         return failed(err);

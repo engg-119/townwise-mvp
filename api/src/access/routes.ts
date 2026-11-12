@@ -56,7 +56,7 @@ export interface TownwiseRoute {
    */
   readonly bodyLimit: 'none' | '1kb' | '2kb' | '8kb' | '32kb' | '256kb' | 'stream';
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
-  readonly limiter?: 'uploads' | 'requests' | 'view-as' | 'chat' | 'places' | 'files' | 'file_chunks' | 'downloads';
+  readonly limiter?: 'uploads' | 'requests' | 'view-as' | 'chat' | 'places' | 'files' | 'file_chunks' | 'downloads' | 'ai_reads';
   /**
    * Runs while staff have the organization open as its admin (D25), as the grant organization's org admin. Without it
    * the route is refused then (403 `open_as_admin_refused`; staff routes 409 `open_as_admin_active`), so a new route
@@ -225,7 +225,7 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   // Spec 11A.9 (D34): letting TownwiseAI read an item's stored file, opted in per file, and undoing what the read made.
   {
     id: 'org.data.ai_read', method: 'POST', path: '/org/locations/:locationId/data/:ref/ai', policy: 'member', bodyLimit: '2kb',
-    openAsAdmin: true, handler: requestAiRead,
+    limiter: 'ai_reads', openAsAdmin: true, handler: requestAiRead,
   },
   {
     id: 'org.data.ai_undo', method: 'DELETE', path: '/org/locations/:locationId/data/:ref/ai', policy: 'member', bodyLimit: 'none',
@@ -455,7 +455,7 @@ const VIEW_AS_END = { method: 'POST', path: '/admin/view-as/end' } as const;
 
 /** Spec 10.8. [CONFIRM: limits] */
 const WRITES_LIMIT = { name: 'townwise:writes', limit: 300, windowSeconds: 600 } as const;
-const ROUTE_LIMITS = {
+export const ROUTE_LIMITS = {
   uploads: { name: 'townwise:uploads', limit: 30, windowSeconds: 3600, whenStoreDown: 'allow' },
   requests: { name: 'townwise:requests', limit: 5, windowSeconds: 86400, whenStoreDown: 'deny' },
   'view-as': { name: 'townwise:view-as', limit: 20, windowSeconds: 3600, whenStoreDown: 'deny' },
@@ -468,6 +468,8 @@ const ROUTE_LIMITS = {
   files: { name: 'townwise:files', limit: 120, windowSeconds: 3600, whenStoreDown: 'allow' },
   file_chunks: { name: 'townwise:file-chunks', limit: 1500, windowSeconds: 3600, whenStoreDown: 'allow' },
   downloads: { name: 'townwise:downloads', limit: 300, windowSeconds: 3600, whenStoreDown: 'allow' },
+  // Spec 11A.9: each read is a model call on a whole file, so a store outage denies (the writes limiter allows).
+  ai_reads: { name: 'townwise:ai-reads', limit: 30, windowSeconds: 3600, whenStoreDown: 'deny' },
 } as const;
 
 /** The only route that may stream its body. */

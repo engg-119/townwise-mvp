@@ -98,19 +98,31 @@ export const MODEL_CALLS_PER_IMPORT = 20;
 
 /**
  * Reading with TownwiseAI (spec 11A.9, D34), a file the person opted in: a PDF is sent whole as a document up to 10 MiB
- * and 600 pages (the API's limit), a PNG, JPEG, GIF or WebP picture up to 5 MiB (the API's limit), and any other file
- * the reader reads as text, cut at 300,000 characters (marked partial, and the prompt says so). A text file is read
- * from storage only as far as that many characters can take (4 bytes a character at most). A PDF's own text, kept in
- * memory to check figures against and never stored, stops at 400,000 characters. Making text in the parse thread takes
- * at most 2 minutes and the thread's usual heap; past either the read is skipped `too_complex`.
+ * and 600 pages (the API's limit), a PNG, JPEG, GIF or WebP picture up to 3,750,000 bytes (so its base64 stays within
+ * the API's 5 MB), and any other file the reader reads as text, cut at 300,000 characters (marked partial, and the
+ * prompt says so). A text file is read from storage only as far as that many characters can take (4 bytes a character
+ * at most). A PDF's own text, kept in memory to check figures against and never stored, stops at 400,000 characters.
+ * Making text takes a thread of its own with a smaller heap than the sales parse thread's (it stops once it has the
+ * characters it needs), at most 2 minutes, and a Word document whose word/document.xml is over 8 MiB is skipped
+ * `too_large`; past the heap or the time the read is skipped `too_complex`.
  */
 export const AI_PDF_BYTES = 10 * MIB;
 export const AI_PDF_PAGES = 600;
-export const AI_IMAGE_BYTES = 5 * MIB;
+export const AI_IMAGE_BYTES = 3_750_000;
 export const AI_TEXT_CHARS = 300_000;
 export const AI_TEXT_READ_BYTES = AI_TEXT_CHARS * 4;
 export const AI_SOURCE_CHARS = 400_000;
 export const AI_TEXT_TIME_MS = 2 * 60 * 1000;
+export const AI_DOCX_DOCUMENT_BYTES = 8 * MIB;
+/** The AI text thread's memory (MiB): smaller than THREAD_LIMITS, since it keeps at most AI_SOURCE_CHARS of text. */
+export const AI_THREAD_LIMITS = { maxOldGenerationSizeMb: 128, maxYoungGenerationSizeMb: 16, stackSizeMb: 4 } as const;
+/**
+ * A read whose attempt stopped (a failed call, an error) waits before it is claimed again: 1 minute after the first
+ * attempt, then 2, then 4 (doubling).
+ */
+export const AI_RETRY_BASE_MS = 60 * 1000;
+/** Reads one organization may have queued or reading at once; one more is refused 429 `ai_read_queue_full`. */
+export const AI_READS_IN_FLIGHT = 10;
 /**
  * A ZIP is read whole into the AI text thread up to 25 MiB, behind the archive guards; at most its first 20 entries
  * that are text, CSV or TSV, workbooks, Word documents or PDFs become text (within 300,000 characters together), each

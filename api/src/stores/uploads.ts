@@ -17,7 +17,10 @@ export interface UploadFields {
   dayCount: number;
   inserted: number;
   replaced: number;
-  /** Days a member's upload left unchanged because they already had data; always 0 for an org admin's. */
+  /**
+   * Days a member's upload, or a TownwiseAI read's (anyone's, spec 11A.9: it only adds), left unchanged because they
+   * already had data; always 0 for an org admin's own.
+   */
   kept: number;
   firstDate: string;
   lastDate: string;

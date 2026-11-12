@@ -17,9 +17,10 @@ import {
 } from '../data/library.ts';
 import type { FileBlobs } from '../files/blobs.ts';
 import { renamedItemName, replaceClaimLive, replaceClaimStaleBefore, TEXT_ITEM_TITLE_MAX } from '../files/items.ts';
+import { AI_READS_IN_FLIGHT } from '../files/limits.ts';
 import { currentEmail, DELETED_PERSON, TOWNWISE_STAFF } from '../people.ts';
 import type {
-  AiCalibration, AiDaysReason, AiFileKind, AiItemReason, AiReadStatus, FileKind, FileRecord, FileStatus,
+  AiActionsOutcome, AiCalibration, AiDaysReason, AiFileKind, AiItemReason, AiReadStatus, FileKind, FileRecord, FileStatus,
 } from '../stores/files.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { NoteRecord } from '../stores/notes.ts';
@@ -73,14 +74,18 @@ export interface DataItemView {
 }
 
 /**
- * A read's state and, once done, what TownwiseAI found and what it made (spec 11A.9). `kind`, `summary` and `facts` only
- * once it is done; under view-as `summary`, `facts` and the notes' titles are null (they may describe private data).
- * What the read made, once recorded: `notes` it created that still exist (each note's id and dates as they are now,
- * and the title of the event it was made from), `daysWritten` (the days its upload held once written), `uploadRef` and
- * `itemRef` (its upload and summary item, while they exist), `daysReason` and `itemReason` (why it wrote no days or kept
- * no summary item, as codes), and `calibration` (the model update's status, and the calibration's id when one started);
- * `[]`, 0, null, null, null, null and null before that and once undone. `canUndo`: the read is done and made something,
- * the caller asked for it or is an org admin, not under view-as (DELETE .../ai).
+ * A read's state and, once done, what TownwiseAI found and what it made (spec 11A.9). `kind`, `summary`, `facts` and
+ * `daysCut` (the file had daily totals for more than the 1,500 dates read) only once it is done; under view-as
+ * `summary`, `facts` and the notes' titles are null (they may describe private data), and once the original is deleted
+ * the summary is empty, the facts none and the titles null. What the read made, once recorded: `notes` it created that
+ * still exist (each note's id and dates as they are now, and the title of the event it was made from), `notesSkipped`
+ * (the events it made no note of, by why: `guard` for the closed-note guard), `daysWritten` (the days its upload held
+ * once written), `daysAlreadyHad` (verified days left out because the location had them), `uploadRef` and `itemRef`
+ * (its upload and summary item, while they exist), `daysReason` and `itemReason` (why it wrote no days or kept no
+ * summary item, as codes), and `calibration` (the model update's status, and the calibration's id when one started);
+ * `[]`, null, 0, 0, null, null, null, null and null before that and once undone. `canUndo`: the read ended (done,
+ * failed or skipped) after its actions began, and made something or stopped before saying what (DELETE .../ai), and the
+ * caller asked for it or is an org admin, not under view-as.
  */
 export interface DataItemAiView {
   status: AiReadStatus;
@@ -89,8 +94,11 @@ export interface DataItemAiView {
   kind: AiFileKind | null;
   summary: string | null;
   facts: string[] | null;
+  daysCut: boolean;
   notes: { id: string; title: string | null; startDate: string; endDate: string }[];
+  notesSkipped: AiActionsOutcome['notesSkipped'] | null;
   daysWritten: number;
+  daysAlreadyHad: number;
   uploadRef: string | null;
   itemRef: string | null;
   daysReason: AiDaysReason | null;
@@ -193,10 +201,18 @@ function mayUndo(member: MemberPrincipal, file: FileRecord): boolean {
   return member.viewAs === null && (member.role === 'org_admin' || member.userId === file.ai?.requestedBy);
 }
 
-/** A done read whose recorded outcome made a note, an upload or a summary item. */
-function madeSomething(file: FileRecord): boolean {
-  const outcome = file.ai?.status === 'done' ? file.ai.actions?.outcome ?? null : null;
-  return outcome !== null && (outcome.notes.length > 0 || outcome.uploadId !== null || outcome.itemId !== null);
+/** Reads that ended, and whose actions (when they began) may be undone. */
+const ENDED: readonly AiReadStatus[] = ['done', 'failed', 'skipped'];
+
+/**
+ * A read that ended (done, failed or skipped) after its actions began (a plan was saved), and whose outcome made a
+ * note, an upload or a summary item, or was never recorded (it stopped part way, so it may have written some).
+ */
+function undoable(file: FileRecord): boolean {
+  const ai = file.ai;
+  if (ai === null || !ENDED.includes(ai.status) || ai.actions === null) return false;
+  const { outcome } = ai.actions;
+  return outcome === null || outcome.notes.length > 0 || outcome.uploadId !== null || outcome.itemId !== null;
 }
 
 function aiView(member: MemberPrincipal, file: FileRecord | null, links: AiLinks): DataItemAiView | null {
@@ -222,14 +238,17 @@ function aiView(member: MemberPrincipal, file: FileRecord | null, links: AiLinks
     kind: result?.kind ?? null,
     summary: result === null || hidden ? null : result.summary,
     facts: result === null || hidden ? null : [...result.facts],
+    daysCut: result?.daysCut ?? false,
     notes,
+    notesSkipped: outcome === null ? null : { ...outcome.notesSkipped },
     daysWritten: outcome?.daysWritten ?? 0,
+    daysAlreadyHad: outcome?.daysAlreadyHad ?? 0,
     uploadRef: uploadId !== null && links.uploads.has(uploadId) ? `u_${uploadId}` : null,
     itemRef: itemId !== null && links.items.has(itemId) ? `f_${itemId}` : null,
     daysReason: outcome?.daysReason ?? null,
     itemReason: outcome?.itemReason ?? null,
     calibration: outcome === null ? null : { ...outcome.calibration },
-    canUndo: madeSomething(file) && mayUndo(member, file),
+    canUndo: undoable(file) && mayUndo(member, file),
   };
 }
 
@@ -601,8 +620,10 @@ const aiReadBody = z.strictObject({});
  * In order: 400 for the body and the ref, 404 for another organization's or an unknown location or item, 503
  * files_unavailable while stored files are off, 503 ai_unavailable while reading with TownwiseAI is off, 403 for anyone
  * else, 409 ai_read_running while a read is queued or reading, 200 with the item unchanged once a read is done (a double
- * press is harmless), and 400 invalid_request for an item with no stored file, one whose original was deleted, or one
- * Townwise is still uploading or reading. A compare-and-set queues the read, so of two presses one wins and the other
+ * press is harmless), 400 invalid_request for an item with no stored file, one whose original was deleted, or one
+ * Townwise is still uploading or reading, and 429 ai_read_queue_full while the organization already has 10 reads queued
+ * or reading (a count, then the write: two presses at once can pass it by one). The route's own limiter (30 an hour per
+ * account) refuses while its store is down. A compare-and-set queues the read, so of two presses one wins and the other
  * answers as above; then it records file.ai_read_requested (the file's kind, never a name), wakes the reader and answers
  * 202 { item }.
  */
@@ -624,6 +645,9 @@ export async function requestAiRead(ctx: TownwiseContext, req: Request, res: Res
   if (file === null) throw new AppError(400, 'invalid_request', 'Only a stored file can be read by TownwiseAI');
   if (file.rawDeletedAt !== null) throw new AppError(400, 'invalid_request', 'This file’s original was deleted');
   if (!FINISHED.includes(file.status)) throw new AppError(400, 'invalid_request', 'Townwise is still uploading or reading this file');
+  if (await ctx.stores.files.aiReadsInFlight(scope) >= AI_READS_IN_FLIGHT) {
+    throw new AppError(429, 'ai_read_queue_full', 'TownwiseAI is already reading 10 of your organization’s files; try again when one is done');
+  }
   const at = ctx.now();
   const queued = await ctx.stores.files.requestAiRead(scope, location.id, file.id, {
     by: member.userId, role: member.role, byStaff: member.openAsAdmin !== null, grantId: member.openAsAdmin?.grantId ?? null, at,
@@ -659,18 +683,20 @@ function nothingToUndo(): AppError {
 /**
  * DELETE /locations/:locationId/data/:ref/ai: undoes what TownwiseAI made from the item's stored file (spec 11A.9): the
  * notes it made from the file (one the person since edited goes too), its upload with the days that upload still holds
- * (days a later upload replaced stay) through the upload delete of DELETE .../data/:ref, and its summary item (an edit
- * of it too) through the file removal. A calibration the read started is not undone: it runs on, and its forecast is
- * published only as any is, when staff switch forecasts on; the answer names it in `calibrationKept`. The person who
- * asked for the read or an org admin; never under view-as (the chain refuses it). In order: 400 for the ref, 404 for
- * another organization's or an unknown location or item, 503 files_unavailable while stored files are off, 400
- * nothing_to_undo for an item with no stored file or no read, 403 for anyone else, 409 ai_read_running while the read is
- * queued or reading, 200 with the item unchanged once it is undone (a retry that finds it done records nothing), and 400
- * nothing_to_undo for a read that failed, was skipped, or made nothing. With no multi-document transactions the order
- * lets a retry finish the work: a compare-and-set marks the read `undoing`; the notes, uploads and summary items that
- * carry this file as their source are removed (each step by filter, so it runs twice harmlessly); then a compare-and-set
- * marks it `undone` and clears its actions, and only the call that does records file.ai_undone (counts of what it
- * removed). Answers 200 { item, calibrationKept }.
+ * (only days it added: a TownwiseAI upload never replaces one) through the upload delete of DELETE .../data/:ref, and
+ * its summary item (an edit of it too) through the file removal. A calibration the read started is not undone: it runs
+ * on, and its forecast is published only as any is, when staff switch forecasts on; the answer names it in
+ * `calibrationKept`. The person who asked for the read or an org admin; never under view-as (the chain refuses it). In
+ * order: 400 for the ref, 404 for another organization's or an unknown location or item, 503 files_unavailable while
+ * stored files are off, 400 nothing_to_undo for an item with no stored file or no read, 403 for anyone else, 409
+ * ai_read_running while the read is queued or reading, 200 with the item unchanged once it is undone (a retry that
+ * finds it done records nothing), and 400 nothing_to_undo for a read whose actions never began or that made nothing. A
+ * read that failed or was skipped after its actions began (its plan saved, its outcome never recorded) can be undone:
+ * whatever it wrote goes. With no multi-document transactions the order lets a retry finish the work: a
+ * compare-and-set marks the read `undoing`; the notes, uploads and summary items that carry this file as their source
+ * are removed (each step by filter, so it runs twice harmlessly); then a compare-and-set marks it `undone` and clears
+ * its actions and its answer, and only the call that does records file.ai_undone (counts of what it removed). Answers
+ * 200 { item, calibrationKept }.
  */
 export async function undoAiRead(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const member = memberOf(principal);
@@ -692,7 +718,7 @@ export async function undoAiRead(ctx: TownwiseContext, req: Request, res: Respon
     res.status(200).json({ item: await itemView(ctx, member, item), calibrationKept: null });
     return;
   }
-  if (!ai.undoing && !madeSomething(file)) throw nothingToUndo();
+  if (!ai.undoing && !undoable(file)) throw nothingToUndo();
   const calibration = ai.actions?.outcome?.calibration ?? null;
   const marked = await ctx.stores.files.markAiUndoing(scope, location.id, file.id);
   if (marked === null) {

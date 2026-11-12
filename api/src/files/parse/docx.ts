@@ -63,16 +63,24 @@ export function tablesOfXml(xml: string): Sheet[] {
 /**
  * The text of a document.xml for reading with TownwiseAI: each paragraph outside a table on a line of its own (a tab
  * as a tab, a line break as a line break), and each top-level table's rows on lines of their own, cells apart by a tab
- * and each cell's text as tablesOfXml reads it (a table inside a cell adds its text to that cell).
+ * and each cell's text as tablesOfXml reads it (a table inside a cell adds its text to that cell). With `maxChars`, the
+ * parse stops once the lines hold more than that many characters (the caller cuts the text there).
  */
-export function textOfXml(xml: string): string {
+export function textOfXml(xml: string, maxChars = Number.POSITIVE_INFINITY): string {
+  const parser = new Parser();
   const lines: string[] = [];
+  let length = 0;
+  const push = (text: string): void => {
+    lines.push(text);
+    // The lines joined are `length - 1` long: stopped past `maxChars`, so the caller's cut marks the text cut.
+    length += text.length + 1;
+    if (length - 1 > maxChars) parser.stop();
+  };
   let depth = 0;
   let line = '';
   let row: string[] | null = null;
   let cell: string | null = null;
   let inText = false;
-  const parser = new Parser();
   parser.on('openTag', (name: string, _attrs: unknown, _decode: unknown, selfClosing: boolean) => {
     if (name === 'w:tbl') depth += 1;
     else if (name === 'w:t') inText = !selfClosing;
@@ -88,7 +96,7 @@ export function textOfXml(xml: string): string {
     else if (name === 'w:tbl') depth -= 1;
     else if (depth === 0) {
       if (name === 'w:p') {
-        lines.push(line);
+        push(line);
         line = '';
       }
     } else if (name === 'w:p' && cell !== null && cell !== '' && !cell.endsWith(' ')) cell += ' ';
@@ -96,7 +104,7 @@ export function textOfXml(xml: string): string {
       row.push(cell.trim());
       cell = null;
     } else if (depth === 1 && name === 'w:tr' && row !== null) {
-      lines.push(row.join('\t'));
+      push(row.join('\t'));
       row = null;
     }
   });
@@ -110,15 +118,20 @@ export function textOfXml(xml: string): string {
   return lines.join('\n');
 }
 
-/** A .docx's word/document.xml, or why it is kept (as readWord keeps it). */
-async function documentXml(buffer: Buffer): Promise<{ kind: 'xml'; xml: string } | { kind: 'kept'; outcome: KeptOutcome }> {
+/**
+ * A .docx's word/document.xml, or why it is kept (as readWord keeps it): `too_large_to_read` past `maxBytes`
+ * uncompressed.
+ */
+async function documentXml(
+  buffer: Buffer, maxBytes = DOCX_MAX_DOCUMENT_BYTES,
+): Promise<{ kind: 'xml'; xml: string } | { kind: 'kept'; outcome: KeptOutcome }> {
   const check = await checkWorkbookArchive(buffer, ['[Content_Types].xml', DOCUMENT]);
   if (check !== 'ok') return { kind: 'kept', outcome: check };
   const read = bufferRead(buffer);
   const listing = await readZip(read, buffer.length, { maxEntries: Number.MAX_SAFE_INTEGER, maxDirectoryBytes: buffer.length });
   const part = listing.entries.find((entry) => entry.name === DOCUMENT);
   if (part === undefined) return { kind: 'kept', outcome: 'not_a_workbook' };
-  if (part.uncompressedSize > DOCX_MAX_DOCUMENT_BYTES) return { kind: 'kept', outcome: 'too_large_to_read' };
+  if (part.uncompressedSize > maxBytes) return { kind: 'kept', outcome: 'too_large_to_read' };
   try {
     return { kind: 'xml', xml: (await entryBuffer(read, part, dataLimits(listing).get(part) ?? 0, ZIP_PIECE_BYTES)).toString('utf8') };
   } catch (err) {
@@ -129,13 +142,16 @@ async function documentXml(buffer: Buffer): Promise<{ kind: 'xml'; xml: string }
 
 /**
  * A .docx's paragraphs and tables as text (textOfXml), for a file the person let TownwiseAI read: kept as readWord
- * keeps it when it is not a Word package or too large, and `not_a_workbook` when its XML does not parse.
+ * keeps it when it is not a Word package or too large (`too_large_to_read` past `limits.maxDocumentBytes` of
+ * document.xml), and `not_a_workbook` when its XML does not parse. Making text stops past `limits.maxChars`.
  */
-export async function readWordText(buffer: Buffer): Promise<{ kind: 'text'; text: string } | { kind: 'kept'; outcome: KeptOutcome }> {
-  const document = await documentXml(buffer);
+export async function readWordText(
+  buffer: Buffer, limits: { readonly maxDocumentBytes: number; readonly maxChars: number },
+): Promise<{ kind: 'text'; text: string } | { kind: 'kept'; outcome: KeptOutcome }> {
+  const document = await documentXml(buffer, limits.maxDocumentBytes);
   if (document.kind === 'kept') return document;
   try {
-    return { kind: 'text', text: textOfXml(document.xml) };
+    return { kind: 'text', text: textOfXml(document.xml, limits.maxChars) };
   } catch {
     return { kind: 'kept', outcome: 'not_a_workbook' };
   }

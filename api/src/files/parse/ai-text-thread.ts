@@ -1,12 +1,12 @@
 // The thread that makes a file's text for reading with TownwiseAI (spec 11A.9), run by ai-text.ts with memory and time
 // limits, one file per thread. It is sent one file whole and answers once: a PDF's lines (pdf.ts, readPdfText), a
 // workbook's sheets as tab-separated rows under a "Sheet: <name>" line (xlsx.ts, readWorkbook, within its limits), a
-// Word document's paragraphs and tables (docx.ts, readWordText), or a ZIP's entries, each of those or a text file,
-// under an "Entry n" line (archive.ts, readArchiveText, behind the archive guards). Only files the person opted in
-// reach it.
+// Word document's paragraphs and tables (docx.ts, readWordText; skipped `too_large` past 8 MiB of document.xml), or a
+// ZIP's entries, each of those or a text file, under an "Entry n" line (archive.ts, readArchiveText, behind the archive
+// guards). Each stops making text once it has the characters asked for. Only files the person opted in reach it.
 import { parentPort } from 'node:worker_threads';
 
-import { AI_ZIP_ENTRIES } from '../limits.ts';
+import { AI_DOCX_DOCUMENT_BYTES, AI_ZIP_ENTRIES } from '../limits.ts';
 import { bufferRead } from '../zip.ts';
 import type { AiTextIn, AiTextOutcome } from './ai-text.ts';
 import { capText, textFileText } from './ai-text.ts';
@@ -51,7 +51,7 @@ async function entryText(entry: ArchiveTextEntry, maxChars: number): Promise<{ t
       return made.kind === 'kept' ? null : { text: made.text, cut: made.cut };
     }
     case 'docx': {
-      const word = await readWordText(entry.bytes);
+      const word = await readWordText(entry.bytes, { maxDocumentBytes: AI_DOCX_DOCUMENT_BYTES, maxChars });
       return word.kind === 'kept' ? null : capText(word.text, maxChars);
     }
     case 'xlsx': {
@@ -72,9 +72,10 @@ async function textOf(input: AiTextIn): Promise<AiTextOutcome> {
   }
   if (input.kind === 'pdf') return readPdfText(buffer, input.maxChars);
   if (input.kind === 'docx') {
-    const word = await readWordText(buffer);
+    const word = await readWordText(buffer, { maxDocumentBytes: AI_DOCX_DOCUMENT_BYTES, maxChars: input.maxChars });
     if (word.kind === 'kept') {
-      return { kind: 'kept', outcome: word.outcome === 'too_complex' || word.outcome === 'too_large_to_read' ? 'too_complex' : 'not_readable' };
+      if (word.outcome === 'too_large_to_read') return { kind: 'kept', outcome: 'too_large' };
+      return { kind: 'kept', outcome: word.outcome === 'too_complex' ? 'too_complex' : 'not_readable' };
     }
     const capped = capText(word.text, input.maxChars);
     return { kind: 'text', text: capped.text, cut: capped.cut, pages: null };
