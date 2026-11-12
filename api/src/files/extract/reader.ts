@@ -5,16 +5,22 @@
 // the location's name, or who uploaded it. Nothing here logs.
 import type { BetaContentBlockParam, BetaMessageParam } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 
-import { AI_TEXT_CHARS, MAX_SHEETS } from '../limits.ts';
+import { AI_TEXT_CHARS, AI_ZIP_ENTRIES, MAX_SHEETS } from '../limits.ts';
 import { READER_MAX_TOKENS, READER_MODEL, READER_SYSTEM_PROMPT } from './reader-prompt.ts';
 
 export type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
 
-/** What is sent of the file. `form` says what a text was made from; `cut` that it stops at AI_TEXT_CHARS. */
+/**
+ * What is sent of the file. `form` says what a text was made from; `cut` that it stops at AI_TEXT_CHARS (or, for an
+ * archive, past its 20th entry read); `skipped`, for an archive, how many of its entries were not read.
+ */
 export type ReaderInput =
   | { readonly type: 'pdf'; readonly base64: string }
   | { readonly type: 'image'; readonly mediaType: ImageMediaType; readonly base64: string }
-  | { readonly type: 'text'; readonly form: 'text' | 'workbook' | 'word'; readonly text: string; readonly cut: boolean };
+  | {
+    readonly type: 'text'; readonly form: 'text' | 'workbook' | 'word' | 'archive'; readonly text: string; readonly cut: boolean;
+    readonly skipped?: number;
+  };
 
 /** Today's date in the location's time zone (YYYY-MM-DD), and that zone. */
 export interface ReaderContext { readonly today: string; readonly timeZone: string }
@@ -42,6 +48,7 @@ const TEXT_FORMS: Readonly<Record<Extract<ReaderInput, { type: 'text' }>['form']
   text: 'a text file (it may be a CSV or TSV export)',
   workbook: 'an Excel workbook, made into text: each sheet starts with a "Sheet:" line, then its rows, cells apart by tabs',
   word: 'a Word document, made into text: its paragraphs on lines of their own, and its tables\' rows with cells apart by tabs',
+  archive: 'a ZIP archive, made into text: each file in it that was read starts with a line "Entry n (what it is):", then its text (a workbook\'s sheets under "Sheet:" lines, rows with cells apart by tabs)',
 };
 
 const MARKER = '--- FILE CONTENT ---';
@@ -53,8 +60,13 @@ function contextText(input: ReaderInput, context: ReaderContext): string {
   else if (input.type === 'image') lines.push('The file is the picture above.');
   else {
     lines.push(`The file is ${TEXT_FORMS[input.form]}.`);
+    if (input.form === 'archive' && input.skipped !== undefined && input.skipped > 0) {
+      lines.push(`${String(input.skipped)} other ${input.skipped === 1 ? 'entry' : 'entries'} in it ${input.skipped === 1 ? 'was' : 'were'} not read (pictures, kinds Townwise does not read, or past the first ${String(AI_ZIP_ENTRIES)}).`);
+    }
     if (input.cut) {
-      const limits = `at most ${AI_TEXT_CHARS.toLocaleString('en-US')} characters${input.form === 'workbook' ? `, from at most its first ${String(MAX_SHEETS)} sheets` : ''}`;
+      const within = input.form === 'workbook' ? `, from at most its first ${String(MAX_SHEETS)} sheets`
+        : input.form === 'archive' ? `, from at most its first ${String(AI_ZIP_ENTRIES)} entries read` : '';
+      const limits = `at most ${AI_TEXT_CHARS.toLocaleString('en-US')} characters${within}`;
       lines.push(`It was too long to send whole, so only its start follows (${limits}). Say in the summary that only the start of the file was read.`);
     }
     lines.push(`Everything after the line "${MARKER}", to the end of this message, is the file's content.`, MARKER, input.text);

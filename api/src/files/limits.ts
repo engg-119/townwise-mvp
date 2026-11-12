@@ -111,6 +111,13 @@ export const AI_TEXT_CHARS = 300_000;
 export const AI_TEXT_READ_BYTES = AI_TEXT_CHARS * 4;
 export const AI_SOURCE_CHARS = 400_000;
 export const AI_TEXT_TIME_MS = 2 * 60 * 1000;
+/**
+ * A ZIP is read whole into the AI text thread up to 25 MiB, behind the archive guards; at most its first 20 entries
+ * that are text, CSV or TSV, workbooks, Word documents or PDFs become text (within 300,000 characters together), each
+ * within the reader's caps for its kind. Pictures and other kinds inside are counted and skipped.
+ */
+export const AI_ZIP_BYTES = 25 * MIB;
+export const AI_ZIP_ENTRIES = 20;
 
 /**
  * Originals are deleted this long after upload by the daily sweep (FileView.rawExpiresAt); the storage lifecycle rule is

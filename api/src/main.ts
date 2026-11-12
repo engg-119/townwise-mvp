@@ -8,7 +8,7 @@ import { configSchema as mongoSchema, connectMongo, ensureIndexes } from '@ckeit
 import { configSchema as redisSchema, createRedis } from '@ckeith26/redis';
 import { createRateLimiter, ipKey, rateLimit } from '@ckeith26/rate-limit';
 import { configSchema as authSchema, createAuth, createMongoAuthStores } from '@ckeith26/auth';
-import { createTownwiseApi, createTownwiseLab } from './app.ts';
+import { createTownwiseApi, createTownwiseContext, createTownwiseLab } from './app.ts';
 import {
   createAzureCliTokenSource, createManagedIdentityTokenSource, resolveManagedIdentity, usesAzureCli, type AzureTokenSource,
 } from './azure-identity.ts';
@@ -17,6 +17,7 @@ import { createAnthropicChatModel } from './chat/model.ts';
 import { configSchema as townwiseSchema, filesBackendOf, labRunnerOf, resolveTownwiseConfig, type FilesBackend } from './config.ts';
 import { createSendMagicLink } from './email.ts';
 import { createAzureFileBlobs, createAzuriteFileBlobs, storageCredential, type FileBlobs } from './files/blobs.ts';
+import { createAiReadActions } from './files/ai-actions.ts';
 import { createAiReader } from './files/ai-reader.ts';
 import { createAnthropicExtractModel, createAnthropicFileReaderModel } from './files/extract/model.ts';
 import { createFileSweeper } from './files/sweeper.ts';
@@ -104,13 +105,6 @@ const fileWorker = files === undefined ? undefined : createFileWorker({
   connection: mongo.connection, stores: createTownwiseStores(mongo.connection), authStores, blobs: files, logger, now,
   extract: ANTHROPIC_API_KEY === undefined ? undefined : createAnthropicExtractModel(ANTHROPIC_API_KEY), filesMonthlyBudgetUsd,
 });
-// Reading with TownwiseAI (files/ai-reader.ts): a file a person opted in is read whole by Claude, with the same
-// ANTHROPIC_API_KEY and within the same TOWNWISE_FILES_MONTHLY_BUDGET_USD as the AI column step, whose 0 turns it off
-// too. Only while stored files are on; off, its route answers 503 ai_unavailable.
-const aiReader = files === undefined || ANTHROPIC_API_KEY === undefined || filesMonthlyBudgetUsd <= 0 ? undefined : createAiReader({
-  connection: mongo.connection, stores: createTownwiseStores(mongo.connection), authStores, blobs: files, logger, now,
-  model: createAnthropicFileReaderModel(ANTHROPIC_API_KEY), filesMonthlyBudgetUsd,
-});
 // The daily sweep (retention, unfinished uploads, orphans) runs while stored files are on; one replica takes it a day.
 const fileSweeper = files === undefined ? undefined : createFileSweeper({
   connection: mongo.connection, stores: createTownwiseStores(mongo.connection), blobs: files, logger, now,
@@ -134,10 +128,19 @@ function labFor(): { labRunner?: LabRunner; labCaller?: LabCaller } {
     labCaller: createLocalLabCaller(secret),
   };
 }
-const deps = {
+const baseDeps = {
   config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now, chat, places, placesMap, mailer,
-  files, fileWorker, aiReader, ...labFor(),
+  files, fileWorker, ...labFor(),
 };
+// Reading with TownwiseAI (files/ai-reader.ts): a file a person opted in is read whole by Claude, with the same
+// ANTHROPIC_API_KEY and within the same TOWNWISE_FILES_MONTHLY_BUDGET_USD as the AI column step, whose 0 turns it off
+// too. Only while stored files are on; off, its route answers 503 ai_unavailable. What it finds is acted on through
+// the same stores, blobs and lab as the routes (files/ai-actions.ts).
+const aiReader = files === undefined || ANTHROPIC_API_KEY === undefined || filesMonthlyBudgetUsd <= 0 ? undefined : createAiReader({
+  connection: mongo.connection, stores: createTownwiseStores(mongo.connection), authStores, blobs: files, logger, now,
+  model: createAnthropicFileReaderModel(ANTHROPIC_API_KEY), filesMonthlyBudgetUsd, onRead: createAiReadActions(createTownwiseContext(baseDeps)),
+});
+const deps = { ...baseDeps, aiReader };
 const api = createTownwiseApi(deps);
 const labRouter = createTownwiseLab(deps);
 await ensureIndexes(mongo.connection, { logger });   // after every store has registered its models

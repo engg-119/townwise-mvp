@@ -1,9 +1,10 @@
 // Reading with TownwiseAI (spec 11A.9, D29): a loop in each API replica, beside the file reader (worker.ts) and shaped
 // like it, so it can move to a job unchanged. It claims the file whose read was asked for first (a lease on the file's
 // `ai`, through stores/cross-tenant.ts: 90 seconds, renewed every 30), makes the model's input from the original, sends
-// it in one call, checks the answer, saves it, hands it to `onRead` and marks the read done. One file per replica at a
-// time; a read is attempted at most three times, then failed `internal`. Only files a person opted in are ever claimed.
-// Logs and audit carry ids, kinds, codes and counts only: never a file name, its content, the summary or a figure.
+// it in one call, checks the answer, saves it, hands it to `onRead` (files/ai-actions.ts in production: the notes, days,
+// summary item and calibration it writes) and marks the read done. One file per replica at a time; a read is attempted
+// at most three times, then failed `internal`. Only files a person opted in are ever claimed. Logs and audit carry ids,
+// kinds, codes and counts only: never a file name, its content, the summary, a title or a figure.
 import type { AuthStores } from '@ckeith26/auth';
 import type { Logger } from '@ckeith26/server-core';
 import type { Connection } from 'mongoose';
@@ -11,15 +12,15 @@ import type { Connection } from 'mongoose';
 import { scopeForClaimedAiRead, type OrgScope } from '../access/policy.ts';
 import { DELETED_PERSON } from '../people.ts';
 import { claimNextAiRead, type ClaimedAiRead } from '../stores/cross-tenant.ts';
-import type { AiReadResult, FileRecord } from '../stores/files.ts';
+import type { AiActionsOutcome, AiReadResult, FileRecord } from '../stores/files.ts';
 import type { TownwiseStores } from '../stores/index.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import { BlobMissingError, type FileBlobs } from './blobs.ts';
 import { readerRequest, type FileReaderModel, type ImageMediaType, type ReaderInput } from './extract/reader.ts';
 import { readerResult } from './extract/reader-prompt.ts';
 import {
-  AI_IMAGE_BYTES, AI_PDF_BYTES, AI_PDF_PAGES, AI_SOURCE_CHARS, AI_TEXT_CHARS, AI_TEXT_READ_BYTES, DOCX_READ_BYTES, HEAD_BYTES,
-  MAX_ATTEMPTS, READ_TIME_MS, XLSX_READ_BYTES,
+  AI_IMAGE_BYTES, AI_PDF_BYTES, AI_PDF_PAGES, AI_SOURCE_CHARS, AI_TEXT_CHARS, AI_TEXT_READ_BYTES, AI_ZIP_BYTES, DOCX_READ_BYTES,
+  HEAD_BYTES, MAX_ATTEMPTS, READ_TIME_MS, XLSX_READ_BYTES,
 } from './limits.ts';
 import { extractAiText, textFileText, type AiTextInput, type AiTextOutcome } from './parse/ai-text.ts';
 import { sniff } from './sniff.ts';
@@ -32,15 +33,17 @@ export interface AiFileRead {
 }
 
 /**
- * THE SEAM for acting on a read (S2: notes, verified days, a summary item, a calibration). Called once per finished
- * read, after the answer is saved on the file (`ai.result`) and before the read is marked done, inside the same claim
- * and lease (the heartbeat keeps running). `file` is the record as the claim found it, `ai` still `reading`.
+ * The seam for acting on a read (files/ai-actions.ts: notes, verified days, a summary item, a calibration). Called once
+ * per finished read, after the answer is saved on the file (`ai.result`) and before the read is marked done, inside the
+ * same claim and lease (the heartbeat keeps running). `file` is the record as the claim found it, `ai` still `reading`.
  * `sourceText` is the file's own text to check figures against, never stored: the text sent (a text file, a workbook,
- * a Word document), a PDF's text made in the parse thread (at most AI_SOURCE_CHARS), or null for a picture.
- * A throw puts the read back in the queue (the attempt counts; after three it fails `internal`); a retry finds the
- * saved answer and calls `onRead` again with it, without another model call, so whatever `onRead` writes must be
- * written so a second call completes it (no multi-document transactions). The file can be deleted while it runs (a
- * read never blocks a delete), so a write keyed to the file should be checked against it. S1's hook does nothing.
+ * a Word document, a ZIP's entries without their labels), a PDF's text made in the parse thread (at most
+ * AI_SOURCE_CHARS), or null for a picture. A throw puts the read back in the queue (the attempt counts; after three it
+ * fails `internal`); a retry finds the saved answer and calls `onRead` again with it, without another model call, so
+ * whatever `onRead` writes must be written so a second call completes it (no multi-document transactions). The file can
+ * be deleted while it runs (a read never blocks a delete), so a write keyed to the file should be checked against it.
+ * What it did is recorded on `ai.actions.outcome`; the reader's log line and audit event read the counts from there.
+ * Without one (tests), nothing is acted on.
  */
 export type OnAiRead = (scope: OrgScope, file: FileRecord, read: AiFileRead, sourceText: string | null) => Promise<void>;
 
@@ -75,8 +78,9 @@ export interface AiReader {
 
 /**
  * Why a read was skipped (`ai.reason` with status `skipped`): the month's budget is spent; the file is over the size
- * or page caps; its kind is not read (a ZIP, old Excel or Word, Numbers, anything else that is not a picture); it is
- * encrypted; its original is gone; making its text ran past the thread's limits; or it could not be opened.
+ * or page caps; its kind is not read (old Excel or Word, Numbers, anything else that is not a picture, or a ZIP with no
+ * entry read as text); it is encrypted; its original is gone; making its text ran past the thread's limits; or it could
+ * not be opened.
  */
 export type AiSkipReason = 'budget_spent' | 'too_large' | 'kind_not_read' | 'encrypted' | 'raw_missing' | 'too_complex' | 'not_readable';
 
@@ -157,14 +161,21 @@ export function createAiReader(deps: AiReaderDeps): AiReader {
       case 'other':
         // The name is read here only for its extension (a password-protected Office file); it never leaves this function.
         return skip(sniff(file.name, head).outcome === 'encrypted' ? 'encrypted' : 'kind_not_read');
-      case 'zip':
+      case 'zip': {
+        // Its entries as text, labelled by their place, never their path (parse/archive.ts readArchiveText).
+        if (file.sizeBytes > AI_ZIP_BYTES) return skip('too_large');
+        const made = await extractText({ kind: 'zip', bytes: await original(scope, file), maxChars: AI_TEXT_CHARS });
+        if (made.kind === 'kept') return skip(made.outcome);
+        const input: ReaderInput = { type: 'text', form: 'archive', text: made.text, cut: made.cut, skipped: made.skipped ?? 0 };
+        return { kind: 'input', input, sourceText: made.source ?? made.text, partial: made.cut };
+      }
       case 'xls':
       case 'doc':
         return skip('kind_not_read');
     }
   }
 
-  async function audit(scope: OrgScope, file: FileRecord, result: AiReadResult): Promise<void> {
+  async function audit(scope: OrgScope, file: FileRecord, result: AiReadResult, done: AiActionsOutcome | null): Promise<void> {
     const ai = file.ai;
     if (ai === null) return;
     try {
@@ -172,7 +183,12 @@ export function createAiReader(deps: AiReaderDeps): AiReader {
         at: now(), actorUserId: ai.requestedBy, actorEmail: (await deps.authStores.users.findById(ai.requestedBy))?.email ?? DELETED_PERSON,
         actorRole: ai.requestedByStaff ? 'superadmin' : ai.requestedByRole, viewAsGrantId: ai.requestedGrantId,
         orgId: scope.orgId, action: 'file.ai_read', target: { type: 'file', id: file.id },
-        details: { locationId: file.locationId, kind: result.kind, events: result.events.length, days: result.days.length },
+        details: {
+          locationId: file.locationId, kind: result.kind, events: result.events.length, days: result.days.length,
+          ...(done === null ? {} : {
+            notes: done.notes.length, daysWritten: done.daysWritten, item: done.itemId !== null, calibration: done.calibration.status,
+          }),
+        },
       });
     } catch {
       logger.error({ action: 'file.ai_read', orgId: scope.orgId, targetId: file.id }, 'townwise.audit_write_failed');
@@ -250,11 +266,17 @@ export function createAiReader(deps: AiReaderDeps): AiReader {
     }
     await onRead(scope, file, { result, partial: prepared.partial, costMicroUsd }, prepared.sourceText);
     if (!await finish('done', null)) return;
+    // What onRead did, as it recorded it: counts and codes only.
+    const done = (await stores.files.get(scope, file.locationId, file.id))?.ai?.actions?.outcome ?? null;
     logger.info({
       fileId: file.id, kind: result.kind, confidence: result.confidence, events: result.events.length, days: result.days.length,
       partial: prepared.partial, costMicroUsd,
+      ...(done === null ? {} : {
+        notes: done.notes.length, notesSkipped: done.notesSkipped, daysWritten: done.daysWritten, daysReason: done.daysReason,
+        item: done.itemId !== null, itemReason: done.itemReason, calibration: done.calibration.status,
+      }),
     }, 'townwise.ai_read');
-    await audit(scope, file, result);
+    await audit(scope, file, result, done);
   }
 
   async function tick(): Promise<boolean> {

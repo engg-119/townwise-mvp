@@ -35,10 +35,13 @@ export const AUDIT_DETAIL_KEYS = {
   'file.deleted': ['locationId', 'kind', 'reason'],
   'file.raw_deleted': ['locationId', 'kind'],
   'files.raw_deleted_all': ['locationId', 'count'],
-  // Reading with TownwiseAI (spec 11A.9): asked for (the file's kind), and done (the kind TownwiseAI found, and how many
-  // dated events and days it read). Never a name, the summary, a fact, an event's title or a figure.
+  // Reading with TownwiseAI (spec 11A.9): asked for (the file's kind); done (the kind TownwiseAI found, how many dated
+  // events and days it read, how many notes and days it wrote, whether it kept a summary item, and the model update's
+  // status); and undone (how many notes, days and items that removed). Never a name, the summary, a fact, an event's
+  // title or a figure.
   'file.ai_read_requested': ['locationId', 'kind'],
-  'file.ai_read': ['locationId', 'kind', 'events', 'days'],
+  'file.ai_read': ['locationId', 'kind', 'events', 'days', 'notes', 'daysWritten', 'item', 'calibration'],
+  'file.ai_undone': ['locationId', 'notes', 'days', 'items'],
   // Staff: an organization's originals purged for a deletion request. The basis is an enum, never free text.
   'org.originals_deleted': ['count', 'basis'],
   'note.created': ['locationId', 'kind', 'startDate', 'endDate'],

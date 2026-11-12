@@ -1,8 +1,9 @@
 // tw_notes (spec 6.7, 12): structured notes per location, the tuning step. Only the tuning chat reads them yet.
 // `detail` is the owner's own words: no function here logs, and nothing copies it into an audit event.
-import { Schema, Types, type Connection, type Model } from 'mongoose';
+import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
+import type { AiSource } from './files.ts';
 
 export const NOTES_COLLECTION = 'tw_notes';
 
@@ -34,6 +35,8 @@ interface NoteFields {
   detail: string | null;
   createdBy: string;
   byStaff?: boolean;
+  /** Spec 11A.9: a note TownwiseAI made from an event in a file someone let it read. Absent otherwise. */
+  source?: { via: 'ai_file'; fileId: Types.ObjectId };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -51,6 +54,11 @@ function noteSchema(): Schema<NoteFields> {
     detail: { type: String, default: null, maxlength: 280 },
     createdBy: { type: String, required: true },
     byStaff: { type: Boolean },
+    source: {
+      type: new Schema({
+        via: { type: String, required: true, enum: ['ai_file'] }, fileId: { type: Schema.Types.ObjectId, required: true },
+      }, { _id: false, strict: 'throw' }),
+    },
     createdAt: { type: Date, required: true },
     updatedAt: { type: Date, required: true },
   }, { strict: true, versionKey: false, read: 'primary' });
@@ -69,6 +77,8 @@ export interface NoteRecord extends NoteContent {
   readonly createdBy: string;
   /** Made by Townwise staff in open as admin (D25); shown as "Townwise staff", never the staff email. */
   readonly byStaff: boolean;
+  /** Made by TownwiseAI from a file someone let it read (spec 11A.9): that file. Null for any other note. */
+  readonly source: AiSource | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -83,11 +93,20 @@ export interface NoteStore {
   find(scope: OrgScope, locationId: string, noteId: string): Promise<NoteRecord | null>;
   count(scope: OrgScope, locationId: string): Promise<number>;
   hasAny(scope: OrgScope, locationId: string): Promise<boolean>;
-  /** `id`, when given, becomes the note's id: a second create with it fails on the primary key. */
-  create(scope: OrgScope, locationId: string, content: NoteContent, input: { createdBy: string; now: Date; id?: string; byStaff?: boolean }): Promise<NoteRecord>;
+  /** The organization's notes among `ids` (any location). */
+  byIds(scope: OrgScope, ids: readonly string[]): Promise<NoteRecord[]>;
+  /**
+   * `id`, when given, becomes the note's id: a second create with it fails on the primary key. `source` marks a note
+   * TownwiseAI made from a file (spec 11A.9).
+   */
+  create(scope: OrgScope, locationId: string, content: NoteContent, input: {
+    createdBy: string; now: Date; id?: string; byStaff?: boolean; source?: AiSource;
+  }): Promise<NoteRecord>;
   /** A full replace of the content; null when the note is gone. */
   replace(scope: OrgScope, locationId: string, noteId: string, content: NoteContent, now: Date): Promise<NoteRecord | null>;
   remove(scope: OrgScope, locationId: string, noteId: string): Promise<boolean>;
+  /** Undoing a TownwiseAI read (spec 11A.9): the location's notes it made from `fileId`, edited or not. Resolves the count. */
+  removeFromAiRead(scope: OrgScope, locationId: string, fileId: string): Promise<number>;
   /** Organization deletion (spec 10.7). Resolves the number deleted. */
   removeForOrg(scope: OrgScope): Promise<number>;
 }
@@ -104,6 +123,7 @@ function toNote(doc: NoteFields & { _id: Types.ObjectId }): NoteRecord {
     detail: doc.detail,
     createdBy: doc.createdBy,
     byStaff: doc.byStaff === true,
+    source: doc.source === undefined ? null : { via: 'ai_file', fileId: doc.source.fileId.toHexString() },
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -146,10 +166,17 @@ export function createNoteStore(connection: Connection): NoteStore {
     async hasAny(scope, locationId) {
       return (await Note.exists({ orgId: scope.orgId, locationId })) !== null;
     },
+    async byIds(scope, ids) {
+      if (ids.length === 0) return [];
+      const docs = await Note.find({ orgId: scope.orgId, _id: trusted({ $in: ids.map((id) => new Types.ObjectId(id)) }) }).lean();
+      return docs.map(toNote);
+    },
     async create(scope, locationId, content, input) {
       const doc = await Note.create({
         ...(input.id === undefined ? {} : { _id: new Types.ObjectId(input.id) }),
-        orgId: scope.orgId, locationId, ...fieldsOf(content), createdBy: input.createdBy, ...(input.byStaff === true ? { byStaff: true } : {}), createdAt: input.now, updatedAt: input.now,
+        orgId: scope.orgId, locationId, ...fieldsOf(content), createdBy: input.createdBy, ...(input.byStaff === true ? { byStaff: true } : {}),
+        ...(input.source === undefined ? {} : { source: { via: 'ai_file', fileId: new Types.ObjectId(input.source.fileId) } }),
+        createdAt: input.now, updatedAt: input.now,
       });
       return toNote(doc.toObject());
     },
@@ -164,6 +191,9 @@ export function createNoteStore(connection: Connection): NoteStore {
     async remove(scope, locationId, noteId) {
       const result = await Note.deleteOne({ _id: noteId, orgId: scope.orgId, locationId });
       return result.deletedCount === 1;
+    },
+    async removeFromAiRead(scope, locationId, fileId) {
+      return (await Note.deleteMany({ orgId: scope.orgId, locationId, 'source.fileId': new Types.ObjectId(fileId) })).deletedCount;
     },
     async removeForOrg(scope) {
       return (await Note.deleteMany({ orgId: scope.orgId })).deletedCount;

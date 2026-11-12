@@ -3,6 +3,7 @@
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
+import type { AiSource } from './files.ts';
 
 export const UPLOADS_COLLECTION = 'tw_uploads';
 
@@ -30,6 +31,11 @@ export interface UploadFields {
    */
   disabledAt?: Date;
   disabledBy?: string;
+  /**
+   * Spec 11A.9: an upload TownwiseAI wrote from the daily totals of a file someone let it read, and that file (Your data
+   * lists it as `townwise_ai`). Absent otherwise.
+   */
+  source?: { via: 'ai_file'; fileId: Types.ObjectId };
 }
 
 function uploadSchema(): Schema<UploadFields> {
@@ -50,6 +56,11 @@ function uploadSchema(): Schema<UploadFields> {
     byStaff: { type: Boolean },
     disabledAt: { type: Date },
     disabledBy: { type: String },
+    source: {
+      type: new Schema({
+        via: { type: String, required: true, enum: ['ai_file'] }, fileId: { type: Schema.Types.ObjectId, required: true },
+      }, { _id: false, strict: 'throw' }),
+    },
   }, { strict: true, versionKey: false, read: 'primary' });
   schema.index({ orgId: 1, locationId: 1, uploadedAt: -1 });
   // D28: the turned-off uploads, which every sales read looks up first.
@@ -82,6 +93,8 @@ export interface UploadRecord {
   /** D28: null while the upload is on. */
   readonly disabledAt: Date | null;
   readonly disabledBy: string | null;
+  /** Spec 11A.9: written by TownwiseAI from this file's daily totals; null for any other upload. */
+  readonly source: AiSource | null;
 }
 
 export interface UploadCounts { readonly inserted: number; readonly replaced: number; readonly kept: number }
@@ -92,11 +105,12 @@ export interface UploadStore {
   lastUploadByLocation(scope: OrgScope): Promise<Map<string, Date>>;
   /**
    * Spec 11.4 step 1: the record, as `applying`, before any day is written. `id`, when given, is the id a staff event
-   * written before it already names; `byStaff` marks staff setup's (D23).
+   * written before it already names (or a TownwiseAI read's plan); `byStaff` marks staff setup's (D23), and `source` one
+   * TownwiseAI wrote from a file (spec 11A.9).
    */
   start(scope: OrgScope, locationId: string, input: {
     id?: string; uploadedBy: string; uploadedAt: Date; dayCount: number; firstDate: string; lastDate: string;
-    hasGuests: boolean; hasNetSales: boolean; byStaff?: boolean;
+    hasGuests: boolean; hasNetSales: boolean; byStaff?: boolean; source?: AiSource;
   }): Promise<UploadRecord>;
   /** Spec 11.4 step 3. */
   finish(scope: OrgScope, uploadId: string, counts: UploadCounts): Promise<void>;
@@ -118,6 +132,8 @@ export interface UploadStore {
   page(scope: OrgScope, input: { locationId: string | null; before: { at: Date; id: string } | null; limit: number }): Promise<UploadRecord[]>;
   /** D28: deletes the location's upload record. False when there was none. */
   remove(scope: OrgScope, locationId: string, uploadId: string): Promise<boolean>;
+  /** Spec 11A.9: the location's uploads TownwiseAI wrote from `fileId` (an undo deletes them). */
+  fromAiRead(scope: OrgScope, locationId: string, fileId: string): Promise<UploadRecord[]>;
   /** Resolves the number of records deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
   /** Organization deletion (spec 10.7). Resolves the number deleted. */
@@ -142,6 +158,7 @@ function toUpload(doc: UploadFields & { _id: Types.ObjectId }): UploadRecord {
     byStaff: doc.byStaff === true,
     disabledAt: doc.disabledAt ?? null,
     disabledBy: doc.disabledBy ?? null,
+    source: doc.source === undefined ? null : { via: 'ai_file', fileId: doc.source.fileId.toHexString() },
   };
 }
 
@@ -161,6 +178,7 @@ export function createUploadStore(connection: Connection): UploadStore {
         orgId: scope.orgId, locationId, uploadedBy: input.uploadedBy, uploadedAt: input.uploadedAt, status: 'applying',
         dayCount: input.dayCount, inserted: 0, replaced: 0, kept: 0, firstDate: input.firstDate, lastDate: input.lastDate,
         hasGuests: input.hasGuests, hasNetSales: input.hasNetSales, ...(input.byStaff === true ? { byStaff: true } : {}),
+        ...(input.source === undefined ? {} : { source: { via: 'ai_file', fileId: new Types.ObjectId(input.source.fileId) } }),
       });
       return toUpload(doc.toObject());
     },
@@ -205,6 +223,10 @@ export function createUploadStore(connection: Connection): UploadStore {
     },
     async remove(scope, locationId, uploadId) {
       return (await Upload.deleteOne({ _id: uploadId, orgId: scope.orgId, locationId })).deletedCount === 1;
+    },
+    async fromAiRead(scope, locationId, fileId) {
+      const docs = await Upload.find({ orgId: scope.orgId, locationId, 'source.fileId': new Types.ObjectId(fileId) }).lean();
+      return docs.map(toUpload);
     },
     async removeForLocation(scope, locationId) {
       return (await Upload.deleteMany({ orgId: scope.orgId, locationId })).deletedCount;

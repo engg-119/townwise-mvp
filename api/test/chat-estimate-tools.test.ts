@@ -69,7 +69,7 @@ function context(opts: { data?: PeopleData; town?: Town; forecasts?: ForecastRea
   const notes: NoteRecord[] = [{
     id: '000000000000000000000002', kind: 'private_event', startDate: '2026-10-10', endDate: '2026-10-10', weekdays: null,
     effect: 'more_guests', expectedGuests: null, detail: `Party booked by ${SENTINEL_EMAIL} from ${SENTINEL_FILE}`,
-    createdBy: SENTINEL_USER, byStaff: false, createdAt: new Date('2026-10-01T00:00:00Z'), updatedAt: new Date('2026-10-01T00:00:00Z'),
+    createdBy: SENTINEL_USER, byStaff: false, source: null, createdAt: new Date('2026-10-01T00:00:00Z'), updatedAt: new Date('2026-10-01T00:00:00Z'),
   }];
   const days = [...saturdays('2026-09-19', 8, 200), ...saturdays('2025-12-06', 3, 90)];
   const stores = {

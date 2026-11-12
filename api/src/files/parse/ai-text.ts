@@ -1,7 +1,7 @@
-// Text for reading with TownwiseAI (spec 11A.9), only for a file the person let it read. A PDF, a workbook or a Word
-// document becomes plain text in a worker thread of its own (ai-text-thread.ts) with the parse thread's heap and a
-// two-minute limit, so a file that would exhaust either ends the thread, not the API; past either it is
-// `too_complex`. This is apart from the sales parse thread (thread.ts), whose raw rows never leave it: only this
+// Text for reading with TownwiseAI (spec 11A.9), only for a file the person let it read. A PDF, a workbook, a Word
+// document or a ZIP's entries become plain text in a worker thread of its own (ai-text-thread.ts) with the parse
+// thread's heap and a two-minute limit, so a file that would exhaust either ends the thread, not the API; past either
+// it is `too_complex`. This is apart from the sales parse thread (thread.ts), whose raw rows never leave it: only this
 // thread hands a file's content back, and only files/ai-reader.ts asks it (test/isolation.test.ts). A text file is
 // decoded here, in the main thread, as the sales reader decodes one.
 import { Worker, type ResourceLimits } from 'node:worker_threads';
@@ -10,15 +10,23 @@ import { AI_TEXT_TIME_MS, THREAD_LIMITS } from '../limits.ts';
 import { stripBom } from './csv.ts';
 import { decoderFor, detectEncoding, ENCODING_PROBE_BYTES } from './text.ts';
 
-export type AiTextKind = 'pdf' | 'xlsx' | 'docx';
+export type AiTextKind = 'pdf' | 'xlsx' | 'docx' | 'zip';
 
 /** What the thread is sent: the file's bytes (a transferred copy) and where to stop. */
 export interface AiTextIn { readonly kind: AiTextKind; readonly data: ArrayBuffer; readonly maxChars: number }
 
-/** `cut` when the text stops short of the file's (at `maxChars`, or past a workbook's tenth sheet); `pages` for a PDF. */
+/**
+ * `cut` when the text stops short of the file's (at `maxChars`, past a workbook's tenth sheet, or past a ZIP's 20th entry
+ * read); `pages` for a PDF. For a ZIP, `source` is its entries' text without their labels (what figures are checked
+ * against) and `skipped` how many entries were not read (pictures, other kinds, or past the 20th); a ZIP refused by the
+ * archive guards is `too_large` or `not_readable`, and one with no entry read `kind_not_read` (or `encrypted`).
+ */
 export type AiTextOutcome =
-  | { readonly kind: 'text'; readonly text: string; readonly cut: boolean; readonly pages: number | null }
-  | { readonly kind: 'kept'; readonly outcome: 'encrypted' | 'not_readable' | 'too_complex' };
+  | {
+    readonly kind: 'text'; readonly text: string; readonly cut: boolean; readonly pages: number | null;
+    readonly source?: string; readonly skipped?: number;
+  }
+  | { readonly kind: 'kept'; readonly outcome: 'encrypted' | 'not_readable' | 'too_complex' | 'too_large' | 'kind_not_read' };
 
 export interface AiTextInput {
   readonly kind: AiTextKind;

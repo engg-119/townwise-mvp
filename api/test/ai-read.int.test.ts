@@ -473,7 +473,7 @@ describe('the TownwiseAI reader', () => {
       const cases: [Seed, string][] = [
         [{ kind: 'pdf', name: 'big.pdf', raw: Buffer.from('%PDF-1.4\n'), sizeBytes: 11 * MIB }, 'too_large'],
         [{ kind: 'other', name: 'big.png', raw: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), sizeBytes: 6 * MIB }, 'too_large'],
-        [{ kind: 'zip', name: 'all.zip', raw: zipOf([{ name: 'a.csv', data: 'x' }]) }, 'kind_not_read'],
+        [{ kind: 'zip', name: 'all.zip', raw: zipOf([{ name: 'photo.png', data: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) }]) }, 'kind_not_read'],
         [{ kind: 'xls', name: 'old.xls', raw: Buffer.from([0xd0, 0xcf, 0x11, 0xe0]) }, 'kind_not_read'],
         [{ kind: 'other', name: 'locked.xlsx', raw: Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1]) }, 'encrypted'],
         [{ kind: 'pdf', name: 'locked.pdf', raw: pdfOf([{ texts: [{ text: 'x', x: 72, y: 700 }] }], { encrypted: true }) }, 'encrypted'],

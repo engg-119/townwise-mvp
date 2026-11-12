@@ -80,6 +80,67 @@ describe('the AI text thread', () => {
   });
 });
 
+const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('picture')]);
+
+describe('a ZIP’s entries in the AI text thread', () => {
+  it('reads text, workbook, Word and PDF entries under "Entry n" lines, never their paths, and counts pictures skipped', async () => {
+    const zip = zipOf([
+      { name: 'Sentinel Party/covers.csv', data: 'Date,Covers\n2026-05-01,120\n' },
+      { name: '__MACOSX/._covers.csv', data: 'junk' },
+      { name: 'Sentinel Party/photo.png', data: PNG },
+      { name: 'book.xlsx', data: xlsxOf([{ name: 'Daily', rows: [['Date', 'Covers'], ['2026-05-02', 98]] }]) },
+      { name: 'rota.docx', data: docx(p('Staff rota')) },
+      { name: 'events.pdf', data: PDF },
+      { name: 'folder/', data: '' },
+    ]);
+    const made = await extractAiText({ kind: 'zip', bytes: zip, maxChars: 10_000 });
+    expect(made).toEqual({
+      kind: 'text',
+      text: [
+        'Entry 1 (a text file):\nDate,Covers\n2026-05-01,120\n',
+        'Entry 2 (an Excel workbook):\nSheet: Daily\nDate\tCovers\n2026-05-02\t98',
+        'Entry 3 (a Word document):\nStaff rota',
+        'Entry 4 (a PDF document, as its text):\nEvents for June\nJune 14 Wedding party, 80 guests\n\nClosed July 4',
+      ].join('\n\n'),
+      source: [
+        'Date,Covers\n2026-05-01,120\n', 'Sheet: Daily\nDate\tCovers\n2026-05-02\t98', 'Staff rota',
+        'Events for June\nJune 14 Wedding party, 80 guests\n\nClosed July 4',
+      ].join('\n'),
+      cut: false, pages: null, skipped: 1,
+    });
+    expect(JSON.stringify(made)).not.toMatch(/Sentinel|covers\.csv|book\.xlsx|photo/);
+  });
+
+  it('reads at most 20 entries, and is cut when more follow', async () => {
+    const zip = zipOf(Array.from({ length: 22 }, (_, index) => ({ name: `day${String(index + 1)}.csv`, data: `row ${String(index + 1)}` })));
+    const made = await extractAiText({ kind: 'zip', bytes: zip, maxChars: 10_000 });
+    expect(made).toMatchObject({ kind: 'text', cut: true, skipped: 2 });
+    const text = made.kind === 'text' ? made.text : '';
+    expect(text).toContain('Entry 20 (a text file):\nrow 20');
+    expect(text).not.toContain('row 21');
+  });
+
+  it('stops at the cap and says the text was cut', async () => {
+    const zip = zipOf([{ name: 'a.csv', data: 'a'.repeat(500) }, { name: 'b.csv', data: 'b'.repeat(500) }]);
+    const made = await extractAiText({ kind: 'zip', bytes: zip, maxChars: 300 });
+    expect(made).toMatchObject({ kind: 'text', cut: true });
+    const text = made.kind === 'text' ? made.text : '';
+    expect(text).toHaveLength(300);
+    expect(text).not.toContain('b');
+  });
+
+  it('keeps an archive with no entry it reads as kind_not_read, one of encrypted entries as encrypted, and a bomb as not readable', async () => {
+    expect(await extractAiText({ kind: 'zip', bytes: zipOf([{ name: 'photo.png', data: PNG }]), maxChars: 100 }))
+      .toEqual({ kind: 'kept', outcome: 'kind_not_read' });
+    expect(await extractAiText({ kind: 'zip', bytes: zipOf([{ name: 'a.csv', data: 'x', flags: 0x801 }]), maxChars: 100 }))
+      .toEqual({ kind: 'kept', outcome: 'encrypted' });
+    const bomb = zipOf([{ name: 'a.csv', data: 'x'.repeat(2048), declaredSize: 600 * 1024 * 1024 }]);
+    expect(await extractAiText({ kind: 'zip', bytes: bomb, maxChars: 100 })).toEqual({ kind: 'kept', outcome: 'not_readable' });
+    expect(await extractAiText({ kind: 'zip', bytes: Buffer.from('not a zip at all, long enough to look'), maxChars: 100 }))
+      .toEqual({ kind: 'kept', outcome: 'not_readable' });
+  });
+});
+
 describe('a text file’s text', () => {
   it('decodes UTF-8 and drops a byte-order mark', () => {
     expect(textFileText(Buffer.from('﻿Date,Guests\n2025-01-01,40\n', 'utf8'), false, 100)).toEqual({ text: 'Date,Guests\n2025-01-01,40\n', cut: false });

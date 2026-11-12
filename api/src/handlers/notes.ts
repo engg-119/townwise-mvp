@@ -16,13 +16,17 @@ import type { NoteContent, NoteRecord } from '../stores/notes.ts';
 import { loadLocation, memberOf } from './locations.ts';
 import { actorOf } from './team.ts';
 
-/** Spec 12. */
+/**
+ * Spec 12. `source` is `{ via: 'ai_file', fileId }` on a note TownwiseAI made from a file someone let it read (spec
+ * 11A.9), else null.
+ */
 export interface NoteView extends NoteContent {
   id: string; createdByEmail: string; createdAt: string; updatedAt: string; canEdit: boolean;
+  source: { via: 'ai_file'; fileId: string } | null;
 }
 
 /** Spec 6.7. [CONFIRM: 1,000 notes] */
-const MAX_NOTES = 1000;
+export const MAX_NOTES = 1000;
 /** An end date at most 366 days after the start. */
 const MAX_SPAN_DAYS = 366;
 const MAX_EXPECTED_GUESTS = 20_000;
@@ -104,6 +108,7 @@ export function noteView(note: NoteRecord, createdByEmail: string, caller: Membe
     createdAt: note.createdAt.toISOString(),
     updatedAt: note.updatedAt.toISOString(),
     canEdit: canEdit(caller, note),
+    source: note.source === null ? null : { via: note.source.via, fileId: note.source.fileId },
   };
 }
 
