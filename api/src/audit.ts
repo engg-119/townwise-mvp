@@ -178,6 +178,8 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'sales.upload_deleted': return `Deleted an upload and ${text(d.deletedDays)} days`;
     case 'data.turned_off': return d.item === 'file' ? 'Turned off a file' : 'Turned off an upload';
     case 'data.turned_on': return d.item === 'file' ? 'Turned on a file' : 'Turned on an upload';
+    case 'data.renamed': return 'Renamed a file';
+    case 'data.edited': return 'Edited a file';
     case 'file.uploaded': return 'Uploaded a file';
     case 'file.deleted': return 'Deleted a file';
     case 'file.raw_deleted': return 'Deleted a file’s original';

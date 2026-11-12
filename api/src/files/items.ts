@@ -36,15 +36,31 @@ export interface TextItemInput {
 }
 
 /**
- * The item's name: the title with `.txt` after it. `sanitizeName` reads a name as a path and keeps what follows the last
- * slash, so a title's slashes (a date such as 12/24) become hyphens first, and it deletes control characters, so a
- * pasted tab or line break becomes a space first ("Lunch menu", not "Lunchmenu"). A title of nothing else is named
- * "Pasted text".
+ * A title's words for a name. `sanitizeName` reads a name as a path and keeps what follows the last slash, so a title's
+ * slashes (a date such as 12/24) become hyphens first, and it deletes control characters, so a pasted tab or line break
+ * becomes a space first ("Lunch menu", not "Lunchmenu"). Empty for a title of nothing else.
  */
-function textItemName(title: string): string {
+function titleWords(title: string): string {
   // eslint-disable-next-line no-control-regex -- a control character inside a title separates words
-  const words = title.replace(/[\\/]/g, '-').replace(/[\u0000-\u001f\u007f-\u009f\s]+/g, ' ').trim();
+  return title.replace(/[\\/]/g, '-').replace(/[\u0000-\u001f\u007f-\u009f\s]+/g, ' ').trim();
+}
+
+/** The item's name: the title with `.txt` after it. A title of nothing else is named "Pasted text". */
+function textItemName(title: string): string {
+  const words = titleWords(title);
   return sanitizeName(`${words === '' ? 'Pasted text' : words}.txt`);
+}
+
+/**
+ * D28, renaming an item: the title's words as a name, with the current name's extension (from its last dot, when that is
+ * not its first character) after them, unless they already end with it in any case. Null for a title of nothing else.
+ */
+export function renamedItemName(current: string, title: string): string | null {
+  const words = titleWords(title);
+  if (words === '') return null;
+  const dot = current.lastIndexOf('.');
+  const extension = dot > 0 ? current.slice(dot) : '';
+  return sanitizeName(words.toLowerCase().endsWith(extension.toLowerCase()) ? words : `${words}${extension}`);
 }
 
 /**

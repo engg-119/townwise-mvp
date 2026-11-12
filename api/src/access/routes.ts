@@ -16,7 +16,7 @@ import { deleteConversation, getChat, getConversation, postTurn, renameConversat
 import { rateReply } from '../handlers/chat-feedback.ts';
 import { actOnItemProposal, getItemProposal } from '../handlers/chat-item-proposals.ts';
 import { actOnProposal } from '../handlers/chat-proposals.ts';
-import { listData, removeDataItem, updateDataItem } from '../handlers/data.ts';
+import { listData, removeDataItem, replaceDataItem, updateDataItem } from '../handlers/data.ts';
 import { deleteOrg, deletePerson, purgeOriginals } from '../handlers/deletion.ts';
 import { getEstimatesAbout, getForecast, getPeopleInTown } from '../handlers/estimates.ts';
 import { deleteForecastRun, importForecastRun, listForecastRuns, publishForecastRun, withdrawForecastRun } from '../handlers/forecast-runs.ts';
@@ -204,7 +204,8 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     id: 'org.data.text', method: 'POST', path: '/org/locations/:locationId/data/text', policy: 'member', bodyLimit: '32kb',
     limiter: 'files', openAsAdmin: true, handler: addTextItem,
   },
-  // D28, Your data: the list (a location's, or the organization's), and turning an item off or on, or deleting it.
+  // D28, Your data: the list (a location's, or the organization's), turning an item off or on or renaming it, saving
+  // an edit of it (another stored file takes its place), and deleting it.
   {
     id: 'org.data.list', method: 'GET', path: '/org/data', policy: 'member', bodyLimit: 'none', openAsAdmin: true,
     handler: listData,
@@ -212,6 +213,10 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.data.update', method: 'PATCH', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: '2kb',
     openAsAdmin: true, handler: updateDataItem,
+  },
+  {
+    id: 'org.data.replace', method: 'POST', path: '/org/locations/:locationId/data/:ref/replace', policy: 'member',
+    bodyLimit: '2kb', openAsAdmin: true, handler: replaceDataItem,
   },
   {
     id: 'org.data.remove', method: 'DELETE', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: 'none',

@@ -1,8 +1,10 @@
-// Your data's refs (D28) and which items TownwiseAI may read (design calls 6 and 8). Synthetic records only.
+// Your data's refs (D28), which items TownwiseAI may read (design calls 6 and 8), and an item's name when it is renamed.
+// Synthetic records only.
 import { AppError } from '@ckeith26/server-core';
 import { describe, expect, it } from 'vitest';
 
 import { parseRef, readableByTownwiseAi, refString, type DataItemRecord } from '../src/data/library.ts';
+import { renamedItemName } from '../src/files/items.ts';
 import type { FileRecord } from '../src/stores/files.ts';
 
 const ID = 'ab'.repeat(12);
@@ -46,5 +48,29 @@ describe('readableByTownwiseAi', () => {
       ['an upload', { ...item, ref: { type: 'upload', id: ID } }, true],
     ];
     for (const [name, each, filesOn] of cases) expect({ name, readable: readableByTownwiseAi(each, filesOn) }).toEqual({ name, readable: false });
+  });
+});
+
+describe('renamedItemName', () => {
+  it('keeps the current extension, unless the title already ends with it in any case', () => {
+    expect(renamedItemName('menu.pdf', 'Dinner menu')).toBe('Dinner menu.pdf');
+    expect(renamedItemName('menu.pdf', 'Dinner.PDF')).toBe('Dinner.PDF');
+    expect(renamedItemName('sales 2026.xlsx', 'Sales v2.final')).toBe('Sales v2.final.xlsx');
+    expect(renamedItemName('archive.tar.gz', 'Backup')).toBe('Backup.gz');
+  });
+
+  it('adds nothing for a name with no extension, or whose only dot comes first', () => {
+    expect(renamedItemName('README', 'Read me')).toBe('Read me');
+    expect(renamedItemName('.env', 'Settings')).toBe('Settings');
+  });
+
+  it('turns slashes into hyphens and control characters and runs of spaces into one space, as a text item’s title', () => {
+    expect(renamedItemName('notes.txt', 'Specials 12/24 \\ 12/25')).toBe('Specials 12-24 - 12-25.txt');
+    expect(renamedItemName('notes.txt', 'Lunch\tmenu\r\n  today ')).toBe('Lunch menu today.txt');
+    expect(renamedItemName('notes.txt', 'Cafe\u0301')).toBe('Caf\u00e9.txt');
+  });
+
+  it('is null for a title of nothing but spaces and control characters', () => {
+    expect(renamedItemName('notes.txt', ' \u0001\t\u007f ')).toBeNull();
   });
 });

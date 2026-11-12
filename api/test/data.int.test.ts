@@ -1,6 +1,6 @@
 // Your data (D28): one list of everything a location received (sales uploads and stored files, newest first), turning
-// an upload or a reference item off and on, and deleting one. Synthetic days and files only; no file name, title or
-// figure reaches an audit event.
+// an upload or a reference item off and on, renaming one, saving an edit of one, and deleting one. Synthetic days and
+// files only; no file name, title or figure reaches an audit event.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
@@ -12,6 +12,7 @@ import { cleanBlobName, rawBlobName } from '../src/files/blobs.ts';
 import { createMemoryFileBlobs, type MemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import type { DataItemView } from '../src/handlers/data.ts';
 import type { SalesHistory } from '../src/handlers/sales.ts';
+import { createTownwiseStores } from '../src/stores/index.ts';
 import { addGrant, addLocation, addSeat, addUpload, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { filesPath, seedReadFile, uploadFile } from './helpers/files.ts';
 import {
@@ -178,6 +179,41 @@ function exists(collection: string, id: string): Promise<boolean> {
   return server.connection.collection(collection).countDocuments({ _id: new Types.ObjectId(id) }).then((count) => count === 1);
 }
 
+async function renamed(session: TestSession, locationId: string, ref: string, title: string): Promise<DataItemView> {
+  const res = await patch(session, locationId, ref, { title });
+  expect(res.status).toBe(200);
+  return (await res.json() as { item: DataItemView }).item;
+}
+
+function replace(session: TestSession, locationId: string, ref: string, fileId: string, on = server): Promise<Response> {
+  return call(on, `${itemPath(locationId, ref)}/replace`, { session, json: { fileId } });
+}
+
+async function replaced(session: TestSession, locationId: string, ref: string, fileId: string): Promise<DataItemView> {
+  const res = await replace(session, locationId, ref, fileId);
+  expect(res.status).toBe(200);
+  return (await res.json() as { item: DataItemView }).item;
+}
+
+/** A reference file stored through the chunked upload routes, as the browser stores an item or an edit; its id. */
+async function keep(session: TestSession, locationId: string, name: string, text: string): Promise<string> {
+  const added = await uploadFile(server, locationId, session, name, Buffer.from(text, 'utf8'), { purpose: 'reference' });
+  expect(added.status).toBe(200);
+  return added.body.file?.id ?? '';
+}
+
+function fileDoc(id: string): Promise<Record<string, unknown> | null> {
+  return server.connection.collection('tw_files').findOne({ _id: new Types.ObjectId(id) });
+}
+
+function hasRaw(locationId: string, fileId: string): boolean {
+  return blobs.raw.has(rawBlobName(scopeOf(team.orgId), { locationId, fileId }));
+}
+
+async function listed(session: TestSession, locationId: string, ref: string): Promise<DataItemView | undefined> {
+  return (await list(session, `?locationId=${locationId}`)).items.find((each) => each.ref === ref);
+}
+
 describe('GET /api/org/data', () => {
   it('lists a location’s uploads and stored files newest first, each once: a file that wrote days as its upload, a kept file on its own', async () => {
     const l1 = await newLocation();
@@ -198,7 +234,7 @@ describe('GET /api/org/data', () => {
     expect(items[2]).toEqual({
       ref: `u_${browser}`, locationId: l1, via: 'browser', kind: 'daily_totals', name: null, addedAt: sentAt, addedByEmail: team.memberEmail,
       sizeBytes: null, enabled: true, state: 'used', outcome: null, days: { count: 3, inUse: 3, firstDate: '2026-05-01', lastDate: '2026-05-03' },
-      file: null, canTurnOff: true, canDelete: true,
+      file: null, canTurnOff: true, canDelete: true, canEdit: false, editedAt: null, editedByEmail: null,
     });
     expect(items[1]).toMatchObject({
       name: 'sales.csv', sizeBytes: RAW.length, enabled: true, state: 'used', addedByEmail: team.adminEmail,
@@ -427,6 +463,316 @@ describe('PATCH /api/org/locations/:locationId/data/:ref', () => {
       expect({ ref, ...(await errorOf(await patch(team.admin, locationId, ref, { enabled: false }))) }).toEqual({ ref, status: 404, error: 'not_found' });
     }
     expect(await dayCount(l1)).toBe(2);
+  });
+});
+
+describe('PATCH /api/org/locations/:locationId/data/:ref { title }: renaming', () => {
+  it('the person who added it renames a reference item; the extension stays and data.renamed carries no name', async () => {
+    const l1 = await newLocation();
+    const id = await keep(team.member, l1, 'menu.pdf', '%PDF-1.4\nsynthetic\n');
+    expect(await renamed(team.member, l1, `f_${id}`, '  Dinner menu  ')).toMatchObject({ ref: `f_${id}`, name: 'Dinner menu.pdf', canEdit: true });
+    expect(await fileDoc(id)).toMatchObject({ name: 'Dinner menu.pdf' });
+    expect((await listed(team.admin, l1, `f_${id}`))?.name).toBe('Dinner menu.pdf');
+    const event = await lastEvent('data.renamed');
+    expect(event).toMatchObject({ target: { type: 'file', id }, details: { locationId: l1, item: 'file', kind: 'pdf' } });
+    expect(Object.keys(event.details).sort()).toEqual(['item', 'kind', 'locationId']);
+    expect(JSON.stringify(event)).not.toMatch(/menu/i);
+    expect(summaryOf('data.renamed', event.details)).toBe('Renamed a file');
+  });
+
+  it('keeps the extension unless the title ends with it, in any case; slashes and control characters become word breaks', async () => {
+    const l1 = await newLocation();
+    const id = await keep(team.member, l1, 'notes.txt', 'hello');
+    expect((await renamed(team.member, l1, `f_${id}`, 'Lunch.TXT')).name).toBe('Lunch.TXT');
+    // The extension is the current name's, as it is written now.
+    expect((await renamed(team.member, l1, `f_${id}`, 'Specials 12/24\tand\nmore')).name).toBe('Specials 12-24 and more.TXT');
+  });
+
+  it('the same name as now answers 200 and writes and records nothing', async () => {
+    const l1 = await newLocation();
+    const id = await keep(team.member, l1, 'notes.txt', 'same name');
+    const before = await fileDoc(id);
+    const count = (await auditEvents(server)).length;
+    expect((await renamed(team.member, l1, `f_${id}`, 'notes')).name).toBe('notes.txt');
+    expect((await renamed(team.member, l1, `f_${id}`, 'notes.txt')).name).toBe('notes.txt');
+    expect(await fileDoc(id)).toEqual(before);
+    expect((await auditEvents(server)).length).toBe(count);
+  });
+
+  it('an upload, a sales file, an item whose original is gone and a malformed title answer 400; an item not kept 409 item_busy', async () => {
+    const l1 = await newLocation();
+    const upload = await send(team.member, l1, '2026-05-01', 1);
+    const sales = await seedFile(l1, { purpose: 'history', importId: new Types.ObjectId(), outcome: 'needs_help', name: 'sales.csv' });
+    const gone = await seedFile(l1, { rawDeletedAt: server.clock.now(), name: 'Text file' });
+    const ok = await seedFile(l1);
+    for (const [ref, body] of [
+      [`u_${upload}`, { title: 'x' }], [`f_${sales}`, { title: 'x' }], [`f_${gone}`, { title: 'x' }],
+      [`f_${ok}`, { title: '   ' }], [`f_${ok}`, { title: 'x'.repeat(121) }], [`f_${ok}`, { title: '\u0001\u0002' }],
+      [`f_${ok}`, { title: 'x', enabled: false }], [`f_${ok}`, { title: 7 }],
+    ] as const) {
+      expect({ ref, body, ...(await errorOf(await patch(team.member, l1, ref, body))) }).toEqual({ ref, body, status: 400, error: 'invalid_request' });
+    }
+    expect((await renamed(team.member, l1, `f_${ok}`, 'x'.repeat(120))).name).toBe(`${'x'.repeat(120)}.txt`);
+    const created = await call(server, filesPath(l1), { session: team.member, json: { name: 'menu.txt', sizeBytes: 10, purpose: 'reference' } });
+    const uploading = (await created.json() as { file: { id: string } }).file.id;
+    expect(await errorOf(await patch(team.member, l1, `f_${uploading}`, { title: 'x' }))).toEqual({ status: 409, error: 'item_busy' });
+    expect(await fileDoc(gone)).toMatchObject({ name: 'Text file' });
+  });
+
+  it('someone else’s item is 403 for a member and renamed by an org admin; a staff-added item by an org admin only', async () => {
+    const l1 = await newLocation();
+    const id = await keep(team.member, l1, 'notes.txt', 'theirs');
+    expect(await errorOf(await patch(team.other, l1, `f_${id}`, { title: 'Mine now' }))).toEqual({ status: 403, error: 'forbidden' });
+    expect((await renamed(team.admin, l1, `f_${id}`, 'Renamed by the admin')).name).toBe('Renamed by the admin.txt');
+    const staffs = await seedFile(l1, { byStaff: true, uploadedBy: team.member.userId });
+    expect(await errorOf(await patch(team.member, l1, `f_${staffs}`, { title: 'x' }))).toEqual({ status: 403, error: 'forbidden' });
+    expect((await renamed(team.admin, l1, `f_${staffs}`, 'Set up')).name).toBe('Set up.txt');
+  });
+
+  it('another location’s or organization’s item answers 404, and stored files off 503 files_unavailable', async () => {
+    const l1 = await newLocation();
+    const l2 = await newLocation();
+    const id = await seedFile(l1);
+    const t = await newTeam('Rename Elsewhere');
+    const foreign = await addLocation(server, { orgId: t.orgId, name: 'Theirs' });
+    const theirs = await seedFile(foreign, { orgId: new Types.ObjectId(t.orgId), uploadedBy: t.admin.userId });
+    for (const [locationId, ref] of [[l2, `f_${id}`], [l1, `f_${theirs}`], [foreign, `f_${id}`]] as const) {
+      expect({ ref, ...(await errorOf(await patch(team.admin, locationId, ref, { title: 'x' }))) }).toEqual({ ref, status: 404, error: 'not_found' });
+    }
+    const offAdmin = await signIn(off, team.adminEmail);
+    expect(await errorOf(await patch(offAdmin, l1, `f_${id}`, { title: 'x' }, off))).toEqual({ status: 503, error: 'files_unavailable' });
+    expect(await fileDoc(id)).toMatchObject({ name: 'notes.txt' });
+    expect(await fileDoc(theirs)).toMatchObject({ name: 'notes.txt' });
+  });
+
+  describe('view-as', () => {
+    afterEach(async () => { await removeStaffFactor(server); });
+
+    it('renaming and saving an edit are 403 view_as_read_only, and canEdit is false', async () => {
+      const l1 = await newLocation();
+      const id = await keep(team.admin, l1, 'notes.txt', 'admin text');
+      const edit = await keep(team.admin, l1, 'notes.txt', 'admin text, edited');
+      const staff = await signInStaff(server);
+      await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: team.admin.userId, orgId: team.orgId });
+      expect(await errorOf(await patch(staff, l1, `f_${id}`, { title: 'x' }))).toEqual({ status: 403, error: 'view_as_read_only' });
+      expect(await errorOf(await replace(staff, l1, `f_${id}`, edit))).toEqual({ status: 403, error: 'view_as_read_only' });
+      expect((await list(staff, `?locationId=${l1}`)).items.map((each) => each.canEdit)).toEqual([false, false]);
+      expect(await fileDoc(id)).toMatchObject({ name: 'notes.txt' });
+      expect(await exists('tw_files', id)).toBe(true);
+    });
+  });
+});
+
+describe('POST /api/org/locations/:locationId/data/:ref/replace', () => {
+  it('saves an edit: the new file takes the item’s place, who added it, when and its off state; the old one goes', async () => {
+    const l1 = await newLocation();
+    const addedAt = server.clock.now().toISOString();
+    const a = await keep(team.member, l1, 'notes.txt', 'first words');
+    await patched(team.member, l1, `f_${a}`, false);
+    const disabledAt = server.clock.now();
+    tick();
+    const b = await keep(team.member, l1, 'notes.txt', 'first words, edited');
+    tick();
+    const editedAt = server.clock.now().toISOString();
+    const shown = await replaced(team.member, l1, `f_${a}`, b);
+    expect(shown).toMatchObject({
+      ref: `f_${b}`, locationId: l1, via: 'file', kind: 'text', name: 'notes.txt', addedAt, addedByEmail: team.memberEmail,
+      sizeBytes: Buffer.byteLength('first words, edited'), enabled: false, state: 'kept', canTurnOff: true, canDelete: true, canEdit: true,
+      editedAt, editedByEmail: team.memberEmail, file: { id: b, rawAvailable: true },
+    });
+    expect(await fileDoc(b)).toMatchObject({
+      uploadedBy: team.member.userId, uploaderRole: 'member', uploadedAt: new Date(addedAt), disabledAt, disabledBy: team.member.userId,
+      replaces: new Types.ObjectId(a), editedAt: new Date(editedAt), editedBy: team.member.userId,
+    });
+    expect(Object.keys(await fileDoc(b) ?? {})).not.toContain('replacedBy');
+    expect(Object.keys(await fileDoc(b) ?? {})).not.toContain('editedByStaff');
+    expect(await exists('tw_files', a)).toBe(false);
+    expect(hasRaw(l1, a)).toBe(false);
+    expect(hasRaw(l1, b)).toBe(true);
+    // One item, where the first one was.
+    expect((await list(team.admin, `?locationId=${l1}`)).items.map((each) => each.ref)).toEqual([`f_${b}`]);
+    const event = await lastEvent('data.edited');
+    expect(event).toMatchObject({ target: { type: 'file', id: b }, details: { locationId: l1, item: 'file', kind: 'text' } });
+    expect(Object.keys(event.details).sort()).toEqual(['item', 'kind', 'locationId']);
+    expect(JSON.stringify(event)).not.toMatch(/notes|first words/);
+    expect(summaryOf('data.edited', event.details)).toBe('Edited a file');
+    expect((await auditEvents(server)).filter((each) => each.action === 'file.deleted' && (each.target as { id: string }).id === a)).toEqual([]);
+  });
+
+  it('an org admin saves an edit of a member’s item: it stays the member’s, and the admin is its editor', async () => {
+    const l1 = await newLocation();
+    const a = await seedFile(l1, { addedVia: 'townwise_ai', name: 'kept.txt' });
+    const b = await keep(team.admin, l1, 'kept.txt', 'the admin’s version');
+    const shown = await replaced(team.admin, l1, `f_${a}`, b);
+    expect(shown).toMatchObject({ ref: `f_${b}`, via: 'townwise_ai', addedByEmail: team.memberEmail, editedByEmail: team.adminEmail, enabled: true });
+    expect(await listed(team.member, l1, `f_${b}`)).toMatchObject({ canTurnOff: true, canDelete: true, canEdit: true, editedByEmail: team.adminEmail });
+    expect(await listed(team.other, l1, `f_${b}`)).toMatchObject({ canEdit: false });
+    const doc = await fileDoc(b);
+    expect(doc).toMatchObject({ uploadedBy: team.member.userId, uploaderRole: 'member', addedVia: 'townwise_ai', editedBy: team.admin.userId });
+    expect(Object.keys(doc ?? {})).not.toContain('disabledAt');
+  });
+
+  it('a retry after each step finishes the work, and one after it is done answers the same item and records nothing', async () => {
+    const stores = createTownwiseStores(server.connection);
+    const scope = scopeOf(team.orgId);
+    const l1 = await newLocation();
+    /** Steps 1 and 2 as the route makes them. */
+    const place = async (a: string, b: string): Promise<void> => {
+      const claimed = await stores.files.claimReplace(scope, l1, a, b);
+      if (claimed === null) throw new Error('the item was not claimed');
+      expect(await stores.files.takePlace(scope, l1, b, { from: claimed, at: server.clock.now(), by: team.member.userId, byStaff: false })).not.toBeNull();
+    };
+    // Step 1 landed, then the call stopped.
+    const a1 = await keep(team.member, l1, 'one.txt', 'one');
+    const b1 = await keep(team.member, l1, 'one.txt', 'one, edited');
+    expect(await stores.files.claimReplace(scope, l1, a1, b1)).not.toBeNull();
+    expect(await listed(team.member, l1, `f_${a1}`)).toMatchObject({ canEdit: false });
+    expect((await replaced(team.member, l1, `f_${a1}`, b1)).ref).toBe(`f_${b1}`);
+    expect(await exists('tw_files', a1)).toBe(false);
+    // Steps 1 and 2 landed.
+    const a2 = await keep(team.member, l1, 'two.txt', 'two');
+    const b2 = await keep(team.member, l1, 'two.txt', 'two, edited');
+    await place(a2, b2);
+    expect((await replaced(team.member, l1, `f_${a2}`, b2)).ref).toBe(`f_${b2}`);
+    expect(await exists('tw_files', a2)).toBe(false);
+    expect(hasRaw(l1, a2)).toBe(false);
+    // Step 3 claimed the old file and stopped: it is no longer listed, and the retry finishes removing it.
+    const a3 = await keep(team.member, l1, 'three.txt', 'three');
+    const b3 = await keep(team.member, l1, 'three.txt', 'three, edited');
+    await place(a3, b3);
+    expect(await stores.files.move(scope, a3, ['kept'], 'deleting')).not.toBeNull();
+    expect(await listed(team.member, l1, `f_${a3}`)).toBeUndefined();
+    expect((await replaced(team.member, l1, `f_${a3}`, b3)).ref).toBe(`f_${b3}`);
+    expect(await exists('tw_files', a3)).toBe(false);
+    expect(hasRaw(l1, a3)).toBe(false);
+    expect((await auditEvents(server)).filter((each) => each.action === 'data.edited').map((each) => (each.target as { id: string }).id))
+      .toEqual(expect.arrayContaining([b1, b2, b3]));
+    // Done: the same call again answers the item and records nothing.
+    const count = (await auditEvents(server)).length;
+    expect(await replaced(team.member, l1, `f_${a3}`, b3)).toMatchObject({ ref: `f_${b3}`, name: 'three.txt', canEdit: true });
+    expect((await auditEvents(server)).length).toBe(count);
+    expect((await list(team.member, `?locationId=${l1}`)).items.map((each) => each.ref).sort()).toEqual([`f_${b1}`, `f_${b2}`, `f_${b3}`].sort());
+  });
+
+  it('a second edit saved with another file answers 409 item_changed while the first is saving, and 404 once it is done', async () => {
+    const stores = createTownwiseStores(server.connection);
+    const l1 = await newLocation();
+    const a = await keep(team.member, l1, 'notes.txt', 'shared');
+    const first = await keep(team.member, l1, 'notes.txt', 'shared, first edit');
+    const second = await keep(team.admin, l1, 'notes.txt', 'shared, second edit');
+    await stores.files.claimReplace(scopeOf(team.orgId), l1, a, first);
+    expect(await errorOf(await replace(team.admin, l1, `f_${a}`, second))).toEqual({ status: 409, error: 'item_changed' });
+    expect(await fileDoc(second)).toMatchObject({ uploadedBy: team.admin.userId });
+    expect(Object.keys(await fileDoc(second) ?? {})).not.toContain('replaces');
+    await replaced(team.member, l1, `f_${a}`, first);
+    expect(await errorOf(await replace(team.admin, l1, `f_${a}`, second))).toEqual({ status: 404, error: 'not_found' });
+    expect(await exists('tw_files', second)).toBe(true);
+  });
+
+  it('refuses a new file that is not the caller’s, is a day old, is a sales file, is the item itself or already took another item’s place', async () => {
+    const l1 = await newLocation();
+    const a = await keep(team.member, l1, 'notes.txt', 'the item');
+    const others = await keep(team.other, l1, 'notes.txt', 'someone else’s');
+    const old = await keep(team.member, l1, 'notes.txt', 'a day old');
+    await server.connection.collection('tw_files').updateOne(
+      { _id: new Types.ObjectId(old) }, { $set: { uploadedAt: new Date(server.clock.now().getTime() - DAY_MS - 1) } },
+    );
+    const sales = await seedFile(l1, { purpose: 'history', importId: new Types.ObjectId(), outcome: 'needs_help', name: 'sales.csv' });
+    const placedElsewhere = await seedFile(l1, { replaces: new Types.ObjectId() });
+    const gone = await seedFile(l1, { rawDeletedAt: server.clock.now() });
+    for (const fileId of [others, old, sales, a, placedElsewhere, gone]) {
+      expect({ fileId, ...(await errorOf(await replace(team.member, l1, `f_${a}`, fileId))) }).toEqual({ fileId, status: 400, error: 'invalid_request' });
+    }
+    for (const body of [{}, { fileId: 'nope' }, { fileId: others, more: 1 }]) {
+      const res = await call(server, `${itemPath(l1, `f_${a}`)}/replace`, { session: team.member, json: body });
+      expect({ body, ...(await errorOf(res)) }).toEqual({ body, status: 400, error: 'invalid_request' });
+    }
+    expect(await exists('tw_files', a)).toBe(true);
+    expect(Object.keys(await fileDoc(a) ?? {})).not.toContain('replacedBy');
+  });
+
+  it('a new file at another location, in another organization or unknown answers 404; so does another organization’s item', async () => {
+    const l1 = await newLocation();
+    const l2 = await newLocation();
+    const a = await keep(team.member, l1, 'notes.txt', 'here');
+    const elsewhere = await keep(team.member, l2, 'notes.txt', 'there');
+    const t = await newTeam('Replace Elsewhere');
+    const foreign = await addLocation(server, { orgId: t.orgId, name: 'Theirs' });
+    const theirs = await seedFile(foreign, { orgId: new Types.ObjectId(t.orgId), uploadedBy: t.admin.userId });
+    for (const fileId of [elsewhere, theirs, new Types.ObjectId().toHexString()]) {
+      expect({ fileId, ...(await errorOf(await replace(team.member, l1, `f_${a}`, fileId))) }).toEqual({ fileId, status: 404, error: 'not_found' });
+    }
+    const mine = await keep(team.admin, l1, 'notes.txt', 'the admin’s');
+    for (const [locationId, ref] of [[l1, `f_${theirs}`], [foreign, `f_${a}`], [l2, `f_${a}`]] as const) {
+      expect({ ref, ...(await errorOf(await replace(team.admin, locationId, ref, mine))) }).toEqual({ ref, status: 404, error: 'not_found' });
+    }
+    expect(await exists('tw_files', a)).toBe(true);
+    expect(await exists('tw_files', theirs)).toBe(true);
+    expect(Object.keys(await fileDoc(theirs) ?? {})).not.toContain('replacedBy');
+  });
+
+  it('the item: someone else’s is 403 for a member, an upload or sales file 400, one not kept 409; stored files off 503', async () => {
+    const l1 = await newLocation();
+    const theirs = await keep(team.other, l1, 'notes.txt', 'theirs');
+    const mine = await keep(team.member, l1, 'notes.txt', 'mine');
+    expect(await errorOf(await replace(team.member, l1, `f_${theirs}`, mine))).toEqual({ status: 403, error: 'forbidden' });
+    const upload = await send(team.member, l1, '2026-05-01', 1);
+    const sales = await seedFile(l1, { purpose: 'history', importId: new Types.ObjectId(), outcome: 'needs_help', name: 'sales.csv' });
+    const gone = await seedFile(l1, { rawDeletedAt: server.clock.now() });
+    for (const ref of [`u_${upload}`, `f_${sales}`, `f_${gone}`]) {
+      expect({ ref, ...(await errorOf(await replace(team.member, l1, ref, mine))) }).toEqual({ ref, status: 400, error: 'invalid_request' });
+    }
+    const created = await call(server, filesPath(l1), { session: team.member, json: { name: 'menu.txt', sizeBytes: 10, purpose: 'reference' } });
+    const uploading = (await created.json() as { file: { id: string } }).file.id;
+    expect(await errorOf(await replace(team.member, l1, `f_${uploading}`, mine))).toEqual({ status: 409, error: 'item_busy' });
+    const offMember = await signIn(off, team.memberEmail);
+    for (const ref of [`f_${theirs}`, `u_${upload}`]) {
+      expect({ ref, ...(await errorOf(await replace(offMember, l1, ref, mine, off))) }).toEqual({ ref, status: 503, error: 'files_unavailable' });
+    }
+    expect(await exists('tw_files', theirs)).toBe(true);
+    expect(Object.keys(await fileDoc(mine) ?? {})).not.toContain('replaces');
+  });
+});
+
+describe('an item’s edit fields', () => {
+  it('canEdit: a kept reference item with its original, for the people who may turn it off; never an upload, a sales file or a gone original', async () => {
+    const l1 = await newLocation();
+    const own = await seedFile(l1);
+    const upload = await send(team.member, l1, '2026-05-01', 1);
+    const sales = await seedFile(l1, { purpose: 'history', importId: new Types.ObjectId(), outcome: 'needs_help', name: 'sales.csv' });
+    const gone = await seedFile(l1, { rawDeletedAt: server.clock.now(), name: 'Text file' });
+    const saving = await seedFile(l1, { replacedBy: new Types.ObjectId() });
+    const staffs = await seedFile(l1, { byStaff: true });
+    const canEdit = async (session: TestSession): Promise<Record<string, boolean>> => Object.fromEntries(
+      (await list(session, `?locationId=${l1}`)).items.map((each) => [each.ref, each.canEdit]),
+    );
+    expect(await canEdit(team.member)).toEqual({
+      [`f_${own}`]: true, [`u_${upload}`]: false, [`f_${sales}`]: false, [`f_${gone}`]: false, [`f_${saving}`]: false, [`f_${staffs}`]: false,
+    });
+    expect(await canEdit(team.other)).toEqual({
+      [`f_${own}`]: false, [`u_${upload}`]: false, [`f_${sales}`]: false, [`f_${gone}`]: false, [`f_${saving}`]: false, [`f_${staffs}`]: false,
+    });
+    expect(await canEdit(team.admin)).toEqual({
+      [`f_${own}`]: true, [`u_${upload}`]: false, [`f_${sales}`]: false, [`f_${gone}`]: false, [`f_${saving}`]: false, [`f_${staffs}`]: true,
+    });
+  });
+
+  it('editedAt and editedByEmail: null if never edited, else when and who, as Townwise staff for staff and Deleted person once gone', async () => {
+    const l1 = await newLocation();
+    const at = new Date(server.clock.now().getTime() - 1000);
+    const never = await seedFile(l1);
+    const byOther = await seedFile(l1, { replaces: new Types.ObjectId(), editedAt: at, editedBy: team.other.userId });
+    const byStaff = await seedFile(l1, { replaces: new Types.ObjectId(), editedAt: at, editedBy: new Types.ObjectId().toHexString(), editedByStaff: true });
+    const byGone = await seedFile(l1, { replaces: new Types.ObjectId(), editedAt: at, editedBy: new Types.ObjectId().toHexString() });
+    const fields = Object.fromEntries((await list(team.member, `?locationId=${l1}`)).items.map((each) => [each.ref, [each.editedAt, each.editedByEmail]]));
+    expect(fields).toEqual({
+      [`f_${never}`]: [null, null],
+      [`f_${byOther}`]: [at.toISOString(), team.otherEmail],
+      [`f_${byStaff}`]: [at.toISOString(), 'Townwise staff'],
+      [`f_${byGone}`]: [at.toISOString(), 'Deleted person'],
+    });
+    const upload = await send(team.member, l1, '2026-05-01', 1);
+    expect(await listed(team.member, l1, `u_${upload}`)).toMatchObject({ editedAt: null, editedByEmail: null });
   });
 });
 

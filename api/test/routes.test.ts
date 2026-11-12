@@ -225,13 +225,17 @@ describe('route table', () => {
     expect(ids.indexOf('org.imports.current')).toBeLessThan(ids.indexOf('org.imports.get'));
   });
 
-  it('D28: Your data is a member GET of the organization, and a member PATCH and DELETE of one item, with no route limiter', () => {
-    const rows = TOWNWISE_ROUTES.filter((r) => ['org.data.list', 'org.data.update', 'org.data.remove'].includes(r.id))
-      .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));
+  it('D28: Your data is a member GET of the organization, and a member PATCH, replace POST and DELETE of one item, with no route limiter', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => ['org.data.list', 'org.data.update', 'org.data.replace', 'org.data.remove'].includes(r.id))
+      .map(({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }) => ({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }));
     expect(rows).toEqual([
-      { id: 'org.data.list', method: 'GET', path: '/org/data', policy: 'member', bodyLimit: 'none', limiter: undefined },
-      { id: 'org.data.update', method: 'PATCH', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: '2kb', limiter: undefined },
-      { id: 'org.data.remove', method: 'DELETE', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: 'none', limiter: undefined },
+      { id: 'org.data.list', method: 'GET', path: '/org/data', policy: 'member', bodyLimit: 'none', limiter: undefined, openAsAdmin: true },
+      { id: 'org.data.update', method: 'PATCH', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: '2kb', limiter: undefined, openAsAdmin: true },
+      {
+        id: 'org.data.replace', method: 'POST', path: '/org/locations/:locationId/data/:ref/replace', policy: 'member', bodyLimit: '2kb',
+        limiter: undefined, openAsAdmin: true,
+      },
+      { id: 'org.data.remove', method: 'DELETE', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: 'none', limiter: undefined, openAsAdmin: true },
     ]);
   });
 
