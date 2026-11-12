@@ -19,8 +19,8 @@ Two phases (owner decision, 2026-11-12): phase 1 builds the server side on `orig
 
 ## 3. Address encryption and guarded fetch
 
-- [ ] 3.1 Add `TOWNWISE_CALENDAR_KEY` to `config.ts` (optional, 32 bytes base64) and `main.ts`; add `api/src/calendar/secret.ts` (AES-256-GCM seal and open, `key_mismatch` on failure); unit tests including a wrong key
-- [ ] 3.2 Add `api/src/calendar/fetch.ts`: `node:https`, checking `lookup`, pinned address, port 443, `webcal:` to `https:`, manual redirects (3, re-checked), 10 s timeout, 1 MB cap, failure codes; unit tests for every blocked range (IPv4, IPv6, IPv4-mapped), a host resolving to `169.254.169.254`, a redirect to `127.0.0.1`, `http:`, user info in the URL, a timeout and an oversize body (local test server, no network)
+- [x] 3.1 Add `TOWNWISE_CALENDAR_KEY` to `config.ts` (optional, 32 bytes base64) and `main.ts`; add `api/src/calendar/secret.ts` (AES-256-GCM seal and open, `key_mismatch` on failure); unit tests including a wrong key
+- [x] 3.2 Add `api/src/calendar/fetch.ts`: `node:https`, checking `lookup`, pinned address, port 443, `webcal:` to `https:`, manual redirects (3, re-checked), 10 s timeout, 1 MB cap, failure codes; unit tests for every blocked range (IPv4, IPv6, IPv4-mapped), a host resolving to `169.254.169.254`, a redirect to `127.0.0.1`, `http:`, user info in the URL, a timeout and an oversize body (local test server, no network)
 
 ## 4. Routes
 

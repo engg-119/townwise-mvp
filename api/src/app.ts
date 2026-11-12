@@ -1,3 +1,5 @@
+import type { KeyObject } from 'node:crypto';
+
 import type { Auth, AuthStores } from '@ckeith26/auth';
 import type { RedisHandle } from '@ckeith26/redis';
 import type { Logger, ServerConfig } from '@ckeith26/server-core';
@@ -53,6 +55,11 @@ export interface TownwiseDeps {
   readonly labRunner?: LabRunner | undefined;
   /** Who may call the lab callback (lab/caller.ts); main.ts builds it with the runner. Absent, /lab answers 404 to all. */
   readonly labCaller?: LabCaller | undefined;
+  /**
+   * Seals and opens owner calendar links (calendar/secret.ts); absent turns links off while calendar files still import
+   * (main.ts passes it only when TOWNWISE_CALENDAR_KEY is set).
+   */
+  readonly calendarKey?: KeyObject | undefined;
 }
 
 /**
@@ -95,6 +102,8 @@ export interface TownwiseContext {
   readonly labRunner: LabRunner | null;
   /** Null while the forecast lab is off (the callback answers 404). */
   readonly labCaller: LabCaller | null;
+  /** Null while calendar links are off (503 calendar_links_unavailable). */
+  readonly calendarKey: KeyObject | null;
 }
 
 /** Registers the Townwise models on `connection` (call it before ensureIndexes) and builds what every handler receives. */
@@ -124,6 +133,7 @@ export function createTownwiseContext(deps: TownwiseDeps): TownwiseContext {
     },
     labRunner: deps.labRunner ?? null,
     labCaller: deps.labCaller ?? null,
+    calendarKey: deps.calendarKey ?? null,
   };
 }
 

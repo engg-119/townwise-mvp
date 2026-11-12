@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+
 import { ConfigError, loadEnv } from '@ckeith26/server-core';
 import { describe, expect, it } from 'vitest';
 
@@ -160,6 +162,49 @@ describe('config', () => {
       TOWNWISE_WEB_URL: 'http://localhost:8081', TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5, ...azurite,
     })).toThrow(ConfigError);
     expect(() => loadEnv(configSchema, { FILES_BLOB_ACCOUNT_URL: 'not a url' })).toThrow(ConfigError);
+  });
+
+  describe('the calendar key', () => {
+    const key = (value: string | undefined) => loadEnv(configSchema, { TOWNWISE_CALENDAR_KEY: value }).TOWNWISE_CALENDAR_KEY;
+
+    it('is optional: unset or empty turns calendar links off', () => {
+      expect(key(undefined)).toBeUndefined();
+      expect(key('')).toBeUndefined();
+    });
+
+    it('reads 32 bytes of base64, as openssl rand -base64 32 writes them, into a secret key', () => {
+      const bytes = randomBytes(32);
+      const parsed = key(bytes.toString('base64'));
+      expect(parsed?.type).toBe('secret');
+      expect(parsed?.symmetricKeySize).toBe(32);
+      expect(parsed?.export().equals(bytes)).toBe(true);
+    });
+
+    it('refuses boot for anything else, naming the variable and how to make one, never the value', () => {
+      const bytes = Buffer.alloc(32, 0xfb);   // base64 '+/', base64url '-_'
+      for (const bad of [
+        randomBytes(16).toString('base64'),
+        randomBytes(33).toString('base64'),
+        randomBytes(64).toString('base64'),
+        bytes.toString('base64url'),
+        bytes.toString('base64').replace(/=$/, ''),
+        `${bytes.toString('base64')}\n`,
+        ` ${bytes.toString('base64')}`,
+        bytes.toString('hex'),
+        'sentinel-not-a-key',
+      ]) {
+        try {
+          key(bad);
+          expect.unreachable(bad);
+        } catch (err) {
+          expect(err).toBeInstanceOf(ConfigError);
+          expect((err as ConfigError).problems).toEqual([
+            { variable: 'TOWNWISE_CALENDAR_KEY', problem: 'expected 32 random bytes in base64 (openssl rand -base64 32)' },
+          ]);
+          expect(String(err)).not.toContain(bad.trim());
+        }
+      }
+    });
   });
 
   describe('the forecast lab runner', () => {

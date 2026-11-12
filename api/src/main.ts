@@ -32,9 +32,11 @@ import { createStaticMapSigner, signingSecretSchema } from './places/static-map.
 // managed identity, and AZURE_CLIENT_ID by containerapp.tf; they are read only when email, stored files or the lab's Azure runner are on. The confirm card's
 // map needs both GOOGLE_MAPS_STATIC_KEY and GOOGLE_MAPS_SIGNING_SECRET: without either there is no map, never an
 // unsigned one. A malformed secret refuses boot. PATH and HOME go only to a local lab job (TOWNWISE_LAB_RUNNER=local).
+// TOWNWISE_CALENDAR_KEY (config.ts checks it) seals owner calendar links; absent, links are off and calendar files
+// still import. Like the API keys, it is kept out of `config` and goes only into deps.
 const {
   ANTHROPIC_API_KEY, GOOGLE_PLACES_API_KEY, GOOGLE_MAPS_STATIC_KEY, GOOGLE_MAPS_SIGNING_SECRET,
-  IDENTITY_ENDPOINT, IDENTITY_HEADER, AZURE_CLIENT_ID, PATH, HOME, ...config
+  IDENTITY_ENDPOINT, IDENTITY_HEADER, AZURE_CLIENT_ID, PATH, HOME, TOWNWISE_CALENDAR_KEY, ...config
 } = loadEnv(z.object({
   ...serverSchema.shape, ...mongoSchema.shape, ...redisSchema.shape, ...authSchema.shape, ...townwiseSchema.shape,
   ANTHROPIC_API_KEY: z.string().optional(),
@@ -128,7 +130,7 @@ function labFor(): { labRunner?: LabRunner; labCaller?: LabCaller } {
 }
 const deps = {
   config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now, chat, places, placesMap, mailer,
-  files, fileWorker, ...labFor(),
+  files, fileWorker, calendarKey: TOWNWISE_CALENDAR_KEY, ...labFor(),
 };
 const api = createTownwiseApi(deps);
 const labRouter = createTownwiseLab(deps);
