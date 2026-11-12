@@ -29,6 +29,9 @@ import { declineInvite, getMe, joinInvite, recordWelcome } from '../handlers/me.
 import { createNote, deleteNote, listNotes, updateNote } from '../handlers/notes.ts';
 import { startOpenAsAdmin } from '../handlers/open-as-admin.ts';
 import { getStaffActivity, leaveOrg, renameOrg } from '../handlers/org.ts';
+import {
+  createOwnerCalendar, listOwnerCalendarEvents, listOwnerCalendars, refreshOwnerCalendar, removeOwnerCalendar,
+} from '../handlers/owner-calendars.ts';
 import { placesAutocomplete, placesDetails } from '../handlers/places.ts';
 import { getProfile, updateProfile } from '../handlers/profile.ts';
 import { createAccessRequest } from '../handlers/requests.ts';
@@ -51,10 +54,10 @@ export interface TownwiseRoute {
    * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer, a conversation's rename and a version switch;
    * '2kb' on the Places, files and (D28) Your data JSON routes, the start of a calibration and the forecasts switch;
    * '8kb' on a TownwiseAI proposal; '256kb' only on the upload routes (the member one and, D23, staff setup's) and
-   * (U13B) the staff forecast import; 'stream' only on the chunk route, whose handler reads the raw body itself after
-   * the policy has passed.
+   * (U13B) the staff forecast import; '1mb' only on adding an owner calendar, whose body may carry a calendar file's
+   * text; 'stream' only on the chunk route, whose handler reads the raw body itself after the policy has passed.
    */
-  readonly bodyLimit: 'none' | '1kb' | '2kb' | '8kb' | '32kb' | '256kb' | 'stream';
+  readonly bodyLimit: 'none' | '1kb' | '2kb' | '8kb' | '32kb' | '256kb' | '1mb' | 'stream';
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
   readonly limiter?: 'uploads' | 'requests' | 'view-as' | 'chat' | 'places' | 'files' | 'file_chunks' | 'downloads';
   /**
@@ -158,6 +161,29 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.notes.remove', method: 'DELETE', path: '/org/locations/:locationId/notes/:noteId', policy: 'member',
     bodyLimit: 'none', openAsAdmin: true, handler: deleteNote,
+  },
+  // The owner's own calendars (openspec change connect-owner-calendar, design decision 7), as notes: every member, open
+  // as admin included. events is declared before the :calendarId routes. "Refresh now" has no body; its handler holds
+  // it to one per calendar per 5 minutes.
+  {
+    id: 'org.owner_calendars.list', method: 'GET', path: '/org/locations/:locationId/owner-calendars', policy: 'member',
+    bodyLimit: 'none', openAsAdmin: true, handler: listOwnerCalendars,
+  },
+  {
+    id: 'org.owner_calendars.events', method: 'GET', path: '/org/locations/:locationId/owner-calendars/events', policy: 'member',
+    bodyLimit: 'none', openAsAdmin: true, handler: listOwnerCalendarEvents,
+  },
+  {
+    id: 'org.owner_calendars.create', method: 'POST', path: '/org/locations/:locationId/owner-calendars', policy: 'member',
+    bodyLimit: '1mb', openAsAdmin: true, handler: createOwnerCalendar,
+  },
+  {
+    id: 'org.owner_calendars.refresh', method: 'POST', path: '/org/locations/:locationId/owner-calendars/:calendarId/refresh',
+    policy: 'member', bodyLimit: 'none', openAsAdmin: true, handler: refreshOwnerCalendar,
+  },
+  {
+    id: 'org.owner_calendars.remove', method: 'DELETE', path: '/org/locations/:locationId/owner-calendars/:calendarId',
+    policy: 'member', bodyLimit: 'none', openAsAdmin: true, handler: removeOwnerCalendar,
   },
   // Stored files and imports (spec 10.11, 11A). imports/current is declared before imports/:importId.
   {

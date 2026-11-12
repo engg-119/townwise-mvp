@@ -7,6 +7,7 @@ import express, { type Router } from 'express';
 import type { Connection } from 'mongoose';
 
 import { mountTownwiseRoutes, TOWNWISE_ROUTES, type TownwiseRoute } from './access/routes.ts';
+import { createCalendarFetcher, type CalendarFetcher } from './calendar/fetch.ts';
 import type { ChatModel } from './chat/model.ts';
 import { TURN_TIME_LIMIT_MS } from './chat/turn.ts';
 import { resolveTownwiseConfig, type ResolvedTownwiseConfig, type TownwiseConfig } from './config.ts';
@@ -60,6 +61,8 @@ export interface TownwiseDeps {
    * (main.ts passes it only when TOWNWISE_CALENDAR_KEY is set).
    */
   readonly calendarKey?: KeyObject | undefined;
+  /** Fetches owner calendar links; absent, calendar/fetch.ts's guarded fetcher. Tests pass one over a local server. */
+  readonly calendarFetcher?: CalendarFetcher | undefined;
 }
 
 /**
@@ -104,6 +107,8 @@ export interface TownwiseContext {
   readonly labCaller: LabCaller | null;
   /** Null while calendar links are off (503 calendar_links_unavailable). */
   readonly calendarKey: KeyObject | null;
+  /** The one way a handler reaches an owner's calendar address (calendar/fetch.ts). */
+  readonly calendarFetcher: CalendarFetcher;
 }
 
 /** Registers the Townwise models on `connection` (call it before ensureIndexes) and builds what every handler receives. */
@@ -134,6 +139,7 @@ export function createTownwiseContext(deps: TownwiseDeps): TownwiseContext {
     labRunner: deps.labRunner ?? null,
     labCaller: deps.labCaller ?? null,
     calendarKey: deps.calendarKey ?? null,
+    calendarFetcher: deps.calendarFetcher ?? createCalendarFetcher(),
   };
 }
 

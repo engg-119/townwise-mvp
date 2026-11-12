@@ -161,7 +161,7 @@ export async function addUpload(
  */
 export async function addOwnerCalendar(
   server: Server,
-  opts: { orgId: string; locationId: string; eventCount?: number },
+  opts: { orgId: string; locationId: string; eventCount?: number; label?: string; title?: string },
 ): Promise<string> {
   const _id = new Types.ObjectId();
   const orgId = new Types.ObjectId(opts.orgId);
@@ -169,7 +169,7 @@ export async function addOwnerCalendar(
   const eventCount = opts.eventCount ?? 2;
   const at = server.clock.now();
   await server.connection.collection('tw_calendar_sources').insertOne({
-    _id, orgId, locationId, slot: 0, kind: 'file', label: 'Bookings', sealedAddress: null, host: null,
+    _id, orgId, locationId, slot: 0, kind: 'file', label: opts.label ?? 'Bookings', sealedAddress: null, host: null,
     generation: 1, reservedGeneration: 1, eventCount, skippedRepeating: 0, status: 'ok', lastSuccessAt: at, lastAttemptAt: at,
     nextRefreshAt: null, leaseUntil: null, consecutiveFailures: 0, lastManualRefreshAt: null, createdBy: 'fixture', createdAt: at,
   });
@@ -177,7 +177,7 @@ export async function addOwnerCalendar(
     await server.connection.collection('tw_calendar_events').insertMany(Array.from({ length: eventCount }, (_, index) => {
       const date = `2026-11-${String(index + 2).padStart(2, '0')}`;
       return {
-        orgId, locationId, sourceId: _id, generation: 1, uid: `fixture-${String(index)}@example.test`, title: 'Private dinner',
+        orgId, locationId, sourceId: _id, generation: 1, uid: `fixture-${String(index)}@example.test`, title: opts.title ?? 'Private dinner',
         startDate: date, endDate: date, startTime: '18:00', endTime: '21:00',
       };
     }));

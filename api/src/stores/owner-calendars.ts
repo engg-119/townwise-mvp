@@ -16,8 +16,9 @@
 // generation it started from, recording the counts, and then deletes the older generations' events. Reads filter on
 // each calendar's current generation, so a reader sees the old events or the new ones, never a mix. A crash (or a lost
 // compare-and-set) before the switch leaves rows of an unused generation that no read returns; the next replace or the
-// removal deletes them. Removal deletes the events, then the calendar, then the events again (removeWhere). Ids are
-// checked by the caller.
+// removal deletes them. Removal deletes the events, then the calendar, then the events again (removeWhere). "Refresh
+// now" is held to one per calendar per 5 minutes by a compare-and-set on lastManualRefreshAt, so two requests at once
+// cannot both pass. Ids are checked by the caller.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
@@ -33,14 +34,20 @@ export const MAX_CALENDARS = 5;
 export const MAX_LABEL_CHARS = 60;
 /** A link is fetched again this long after it was added or last refreshed. [CONFIRM: 6 hour refresh] */
 export const REFRESH_INTERVAL_MS = 6 * 60 * 60_000;
+/** "Refresh now" runs at most once per calendar in this long (the calendar-subscription spec). */
+export const MANUAL_REFRESH_INTERVAL_MS = 5 * 60_000;
 
 export type CalendarKind = 'file' | 'link';
 
-/** `ok`, or the code of the last failed refresh (design decisions 4 and 5). */
+/**
+ * `ok`, or the code of the last failed refresh (design decisions 4 and 5). `bad_link` is a redirect to an address that
+ * is not https on port 443.
+ */
 export const CALENDAR_STATUSES = [
-  'ok', 'blocked_address', 'unreachable', 'timeout', 'too_large', 'http_error', 'not_calendar', 'key_mismatch',
+  'ok', 'bad_link', 'blocked_address', 'unreachable', 'timeout', 'too_large', 'http_error', 'not_calendar', 'key_mismatch',
 ] as const;
 export type CalendarStatus = typeof CALENDAR_STATUSES[number];
+export type CalendarFailure = Exclude<CalendarStatus, 'ok'>;
 
 interface SourceFields {
   orgId: Types.ObjectId;
@@ -208,6 +215,14 @@ export interface OwnerCalendarStore {
    * the calendar is gone, or when another replace switched it first: this one's rows are then deleted.
    */
   replaceEvents(scope: OrgScope, locationId: string, calendarId: string, parsed: ParsedCalendar, now: Date): Promise<boolean>;
+  /**
+   * "Refresh now"'s one per 5 minutes, safe against concurrent requests: one compare-and-set sets lastManualRefreshAt to
+   * `now` on a link whose last one is at least 5 minutes old, or that has none. False when another request took it
+   * first, or the link is gone.
+   */
+  claimManualRefresh(scope: OrgScope, locationId: string, calendarId: string, now: Date): Promise<boolean>;
+  /** A failed refresh: its code and the attempt, counted. The events stay. False when the calendar is gone. */
+  recordFailure(scope: OrgScope, locationId: string, calendarId: string, code: CalendarFailure, now: Date): Promise<boolean>;
   /** The calendar's events, then the calendar. False when it was not there. */
   remove(scope: OrgScope, locationId: string, calendarId: string): Promise<boolean>;
   /** The location's events overlapping [from, to] (inclusive dates), each calendar's current generation, by start. */
@@ -355,6 +370,20 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
       });
     },
     replaceEvents,
+    async claimManualRefresh(scope, locationId, calendarId, now) {
+      const due = new Date(now.getTime() - MANUAL_REFRESH_INTERVAL_MS);
+      const claimed = await Source.updateOne({
+        ...ofCalendar(scope, locationId, calendarId), kind: 'link',
+        $or: [{ lastManualRefreshAt: null }, { lastManualRefreshAt: trusted({ $lte: due }) }],
+      }, { $set: { lastManualRefreshAt: now } });
+      return claimed.matchedCount === 1;
+    },
+    async recordFailure(scope, locationId, calendarId, code, now) {
+      const recorded = await Source.updateOne(ofCalendar(scope, locationId, calendarId), {
+        $set: { status: code, lastAttemptAt: now }, $inc: { consecutiveFailures: 1 },
+      });
+      return recorded.matchedCount === 1;
+    },
     remove,
     async eventsBetween(scope, locationId, range) {
       const location = ofLocation(scope, locationId);

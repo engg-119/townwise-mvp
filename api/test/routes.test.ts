@@ -241,6 +241,21 @@ describe('route table', () => {
     ]);
   });
 
+  it('owner calendars are member routes open as admin, with no route limiter, events before the :calendarId routes, and the only 1mb body', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id.startsWith('org.owner_calendars.'))
+      .map(({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }) => ({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }));
+    const base = '/org/locations/:locationId/owner-calendars';
+    const row = { policy: 'member', limiter: undefined, openAsAdmin: true };
+    expect(rows).toEqual([
+      { id: 'org.owner_calendars.list', method: 'GET', path: base, bodyLimit: 'none', ...row },
+      { id: 'org.owner_calendars.events', method: 'GET', path: `${base}/events`, bodyLimit: 'none', ...row },
+      { id: 'org.owner_calendars.create', method: 'POST', path: base, bodyLimit: '1mb', ...row },
+      { id: 'org.owner_calendars.refresh', method: 'POST', path: `${base}/:calendarId/refresh`, bodyLimit: 'none', ...row },
+      { id: 'org.owner_calendars.remove', method: 'DELETE', path: `${base}/:calendarId`, bodyLimit: 'none', ...row },
+    ]);
+    expect(TOWNWISE_ROUTES.filter((r) => r.bodyLimit === '1mb').map((r) => r.id)).toEqual(['org.owner_calendars.create']);
+  });
+
   it('saving or setting aside a TownwiseAI proposal is a member POST with an 8kb body and no route limiter', () => {
     const proposal = TOWNWISE_ROUTES.find((entry) => entry.id === 'org.chat.proposal');
     expect(proposal).toMatchObject({

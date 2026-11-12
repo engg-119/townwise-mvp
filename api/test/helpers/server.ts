@@ -1,6 +1,6 @@
 // Townwise test harness (spec Section 20). The kit's helpers are not exported, so this composes the
 // public kit API: server-core's createServer with /auth (createAuth) and /api (createTownwiseApi).
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, type KeyObject } from 'node:crypto';
 
 import {
   configSchema as authSchema, createAuth, createMongoAuthStores,
@@ -17,6 +17,7 @@ import { z } from 'zod';
 
 import type { TownwiseRoute } from '../../src/access/routes.ts';
 import { createTownwiseApi, createTownwiseLab } from '../../src/app.ts';
+import type { CalendarFetcher } from '../../src/calendar/fetch.ts';
 import type { ChatModel } from '../../src/chat/model.ts';
 import { configSchema as townwiseSchema } from '../../src/config.ts';
 import type { FileBlobs } from '../../src/files/blobs.ts';
@@ -114,6 +115,10 @@ export async function startTownwiseServer(opts?: {
    * there is a runner, and nobody (/lab answers 404) when there is none, as main.ts builds both or neither.
    */
   labCaller?: LabCaller;
+  /** Seals owner calendar links; absent, links are off (503 calendar_links_unavailable). */
+  calendarKey?: KeyObject;
+  /** Fetches owner calendar links (helpers over a local server); absent, the guarded fetcher over the network. */
+  calendarFetcher?: CalendarFetcher;
 }): Promise<TownwiseTestServer> {
   const env: Record<string, string> = {
     NODE_ENV: 'test',
@@ -182,6 +187,7 @@ export async function startTownwiseServer(opts?: {
       chatTurnTimeLimitMs: opts?.chatTurnTimeLimitMs, places: opts?.places, mailer, placesMap: opts?.placesMap,
       files, fileWorker: reader ?? undefined, peopleData: opts?.peopleData, labRunner: opts?.labRunner,
       labCaller: opts?.labCaller ?? (opts?.labRunner === undefined ? undefined : testLabCaller(clock.now)),
+      calendarKey: opts?.calendarKey, calendarFetcher: opts?.calendarFetcher,
     };
     const apiRouter = createTownwiseApi(deps);
     // As main.ts mounts them.

@@ -98,6 +98,25 @@ describe('isolation (source)', () => {
     expect(callers).toEqual(['access/policy.ts', 'files/sweeper.ts']);
   });
 
+  it('only handlers/owner-calendars.ts seals or opens a calendar link’s address, and only it reads one back from the store', () => {
+    const importers = sourceFiles()
+      .filter((file) => [...file.text.matchAll(/^import (?!type )[^;]*from '(\.[^']+)';/gm)]
+        .some((match) => posix.normalize(posix.join(posix.dirname(file.path), match[1] ?? '')) === 'calendar/secret.ts'))
+      .map((file) => file.path);
+    expect(importers).toEqual(['handlers/owner-calendars.ts']);
+    expect(sourceFiles().filter((file) => file.text.includes('.sealedAddress(')).map((file) => file.path)).toEqual(['handlers/owner-calendars.ts']);
+  });
+
+  it('handlers reach a calendar link only through ctx.calendarFetcher: only app.ts builds one, and only calendar/fetch.ts opens a connection', () => {
+    const importers = sourceFiles()
+      .filter((file) => [...file.text.matchAll(/^import (?!type )[^;]*from '(\.[^']+)';/gm)]
+        .some((match) => posix.normalize(posix.join(posix.dirname(file.path), match[1] ?? '')) === 'calendar/fetch.ts'))
+      .map((file) => file.path);
+    expect(importers).toEqual(['app.ts']);
+    const sockets = sourceFiles().filter((file) => /from 'node:(?:https?|http2|net|tls|dgram)'/.test(file.text)).map((file) => file.path);
+    expect(sockets).toEqual(['calendar/fetch.ts']);
+  });
+
   it('only access/policy.ts mints the open-as-admin scope, and only access/resolve.ts asks for it', () => {
     const callers = sourceFiles().filter((file) => file.text.includes('scopeForOpenAsAdmin(')).map((file) => file.path).sort();
     expect(callers).toEqual(['access/policy.ts', 'access/resolve.ts']);
