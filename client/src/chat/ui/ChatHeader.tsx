@@ -1,21 +1,19 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { useBreakpoint } from '../../portal/hooks';
 import { Button } from '../../portal/ui/Button';
 import { theme } from '../../theme';
 import type { ConversationSummary } from '../api';
 import { described } from './described';
 import { HistoryMenu } from './HistoryMenu';
 
-// The chat's header: the open conversation's title on the left; History, New chat and Questions and activity on the
-// right (they wrap under the title on phones). History and New chat are off while a reply streams, so the open
-// conversation can't change under it; the panel button is never off. History is a disclosure over HistoryMenu:
-// Escape or opening a conversation closes it and focus goes back to the button, as it does after a delete.
+// The chat's header: History, New chat and Questions and activity at the right, wrapping on narrow phones. It shows
+// no title and draws no rule, so the thread gets the height; History's list marks the open conversation. History
+// and New chat are off while a reply streams, so the open conversation can't change under it; the panel button is
+// never off. History is a disclosure over HistoryMenu: Escape or opening a conversation closes it and focus goes
+// back to the button, as it does after a delete.
 
 type Host = React.ComponentRef<typeof View>;
-
-export const NEW_CONVERSATION = 'New conversation';
 
 /**
  * "Questions and activity", with " ({n})" while n questions are open: it opens and closes the panel (a column from
@@ -45,7 +43,6 @@ export function PanelButton(props: {
 }
 
 export function ChatHeader(props: {
-  title: string;
   conversations: readonly ConversationSummary[];
   openId: string | null;
   streaming: boolean;
@@ -60,7 +57,6 @@ export function ChatHeader(props: {
   /** Where the panel sheet returns focus to (web). */
   panelButtonRef?: React.RefObject<Host | null>;
 }): React.JSX.Element {
-  const { phone } = useBreakpoint();
   const [opened, setOpened] = useState(false);
   // A reply that starts streaming shuts the list.
   const open = opened && !props.streaming;
@@ -80,12 +76,13 @@ export function ChatHeader(props: {
     else element?.removeAttribute('aria-disabled');
   }, [props.streaming]);
 
+  // On web History floats over the thread instead of pushing it down. Native keeps it in the flow: Android does not
+  // deliver a touch to a child drawn outside its parent's box.
+  const float = Platform.OS === 'web';
+
   return (
-    <View style={styles.header}>
+    <View style={[styles.header, float ? styles.raised : null]}>
       <View style={styles.bar}>
-        <Text style={[styles.title, phone ? styles.titleFull : null]} numberOfLines={1}>
-          {props.title === '' ? NEW_CONVERSATION : props.title}
-        </Text>
         <View testID="chat-header-controls" style={styles.controls}>
           <Pressable
             ref={button}
@@ -117,22 +114,26 @@ export function ChatHeader(props: {
         </View>
       </View>
       {open ? (
-        <HistoryMenu
-          id={menuId}
-          conversations={props.conversations}
-          openId={props.openId}
-          streaming={props.streaming}
-          readOnlyId={props.readOnlyId}
-          onOpen={(id) => {
-            // The row goes with the list: focus goes back to History.
-            close();
-            props.onOpen(id);
-          }}
-          onClose={close}
-          onDeleted={() => { if (Platform.OS === 'web') button.current?.focus(); }}
-          onDelete={props.onDelete}
-          onRename={props.onRename}
-        />
+        <View testID="chat-history-popover" style={float ? styles.popover : null}>
+          <HistoryMenu
+            id={menuId}
+            conversations={props.conversations}
+            openId={props.openId}
+            streaming={props.streaming}
+            readOnlyId={props.readOnlyId}
+            onOpen={(id) => {
+              // The row goes with the list: focus goes back to History.
+              close();
+              props.onOpen(id);
+            }}
+            onClose={close}
+            onDismiss={() => { setOpened(false); }}
+            anchor={button}
+            onDeleted={() => { if (Platform.OS === 'web') button.current?.focus(); }}
+            onDelete={props.onDelete}
+            onRename={props.onRename}
+          />
+        </View>
       ) : null}
     </View>
   );
@@ -141,10 +142,11 @@ export function ChatHeader(props: {
 const c = theme.color;
 
 const styles = StyleSheet.create({
-  header: { gap: theme.space[2], borderBottomWidth: theme.stroke.hairline, borderBottomColor: c.border, paddingBottom: theme.space[2] },
-  bar: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space[4] },
-  title: { ...theme.type.ui, color: c.text2, flex: 1, minWidth: 0 },
-  titleFull: { flexBasis: '100%' },
+  header: { gap: theme.space[2] },
+  // Above the thread, which follows it, so the popover is drawn over it.
+  raised: { position: 'relative', zIndex: 2 },
+  popover: { position: 'absolute', top: '100%', right: 0, width: 360, maxWidth: '100%', marginTop: theme.space[1] },
+  bar: { flexDirection: 'row', justifyContent: 'flex-end' },
   controls: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space[4] },
   link: { minHeight: 44, minWidth: 44, justifyContent: 'center' },
   linkText: { ...theme.type.ui, color: c.white, textDecorationLine: 'underline', textDecorationColor: c.line },

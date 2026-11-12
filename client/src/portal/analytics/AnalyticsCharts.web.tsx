@@ -4,8 +4,9 @@ import type { BarChartProps, EffectBarProps, LineChartProps } from './AnalyticsC
 import { MONTH_NAMES, metricNumber, type Metric } from './words';
 
 // Analytics' charts on web (home.md 4.6, spec 15.6, D21), inline SVG with no chart library, as the Sales data
-// chart is drawn: mint bars and lines, solid, 2px, square ends, on recessive `border` rules, with the scale printed
-// and "Scale fitted to this location." Every SVG is aria-hidden: the section's summary, basis line and table carry
+// chart is drawn: mint bars and lines, solid, 2px, square ends, on recessive `border` rules at 0, the middle and the
+// top of the scale, each with its count up the side, and the scale printed with "Scale fitted to this location."
+// Every SVG and count is aria-hidden: the section's summary, basis line and table carry
 // the same numbers. With more than one year, the newest is mint and the others `line` grey, each labelled with its
 // year at its end and in the key, so a year is never told by colour alone.
 
@@ -30,6 +31,41 @@ function Scale(props: { top: number; metric: Metric }): React.JSX.Element {
   );
 }
 
+/** Room at the left for the counts up the side, as the Sales data chart has. */
+const GUTTER = 72;
+
+/**
+ * The top of the scale, its middle and 0. `scaleTop` makes the middle a round number, except under 2.5 times a
+ * power of ten, where it is a half (12.5 guests): that middle is left out rather than printed rounded off its rule.
+ */
+function ticks(top: number, metric: Metric): number[] {
+  const middle = top / 2;
+  const whole = metric === 'guests' ? Number.isInteger(middle) : middle % 100 === 0;
+  return whole ? [top, middle, 0] : [top, 0];
+}
+
+function rulesPath(values: readonly number[], y: (value: number) => number, width: number): string {
+  return values.map((value) => `M0 ${String(y(value))} H${String(width)}`).join(' ');
+}
+
+/** Each tick's count, centred on its rule at the left of a `position: relative` box with a GUTTER margin. */
+function Counts(props: { values: readonly number[]; metric: Metric; y: (value: number) => number }): React.JSX.Element {
+  return (
+    <>
+      {props.values.map((value) => (
+        <span
+          key={value}
+          data-count=""
+          aria-hidden="true"
+          style={{ ...mono, position: 'absolute', left: -GUTTER, width: GUTTER - 8, textAlign: 'right', top: props.y(value), transform: 'translateY(-50%)' }}
+        >
+          {metricNumber(value, props.metric)}
+        </span>
+      ))}
+    </>
+  );
+}
+
 function maxOf(values: readonly (number | null)[]): number {
   return values.reduce<number>((max, value) => (value !== null && value > max ? value : max), 0);
 }
@@ -44,17 +80,22 @@ export function BarChart(props: BarChartProps): React.JSX.Element | null {
   const width = 300;
   const slot = width / n;
   const bar = Math.min(28, slot * 0.6);
+  const y = (value: number): number => HEIGHT - 0.5 - (value / top) * (HEIGHT - 1);
+  const values = ticks(top, props.metric);
   return (
     <div style={{ display: 'grid', gap: 8 }}>
-      <svg viewBox={`0 0 ${String(width)} ${String(HEIGHT)}`} preserveAspectRatio="none" aria-hidden="true" focusable="false" style={{ width: '100%', height: HEIGHT, display: 'block' }}>
-        <path d={`M0 0.5 H${String(width)} M0 ${String(HEIGHT - 0.5)} H${String(width)}`} stroke={C.border} strokeWidth={1} vectorEffect="non-scaling-stroke" />
-        {props.bars.map((each, index) => {
-          if (each.value === null) return null;
-          const h = (each.value / top) * (HEIGHT - 1);
-          return <rect key={each.label} x={index * slot + (slot - bar) / 2} y={HEIGHT - h} width={bar} height={h} fill={C.mint} />;
-        })}
-      </svg>
-      <div aria-hidden="true" style={{ ...mono, display: 'grid', gridTemplateColumns: `repeat(${String(n)}, minmax(0, 1fr))`, textAlign: 'center' }}>
+      <div style={{ position: 'relative', height: HEIGHT, marginLeft: GUTTER }}>
+        <svg viewBox={`0 0 ${String(width)} ${String(HEIGHT)}`} preserveAspectRatio="none" aria-hidden="true" focusable="false" style={{ width: '100%', height: HEIGHT, display: 'block' }}>
+          <path d={rulesPath(values, y, width)} stroke={C.border} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+          {props.bars.map((each, index) => {
+            if (each.value === null) return null;
+            const h = (each.value / top) * (HEIGHT - 1);
+            return <rect key={each.label} x={index * slot + (slot - bar) / 2} y={HEIGHT - h} width={bar} height={h} fill={C.mint} />;
+          })}
+        </svg>
+        <Counts values={values} metric={props.metric} y={y} />
+      </div>
+      <div aria-hidden="true" style={{ ...mono, display: 'grid', gridTemplateColumns: `repeat(${String(n)}, minmax(0, 1fr))`, textAlign: 'center', marginLeft: GUTTER }}>
         {props.bars.map((each) => <span key={each.label} style={{ overflow: 'hidden', whiteSpace: 'nowrap' }}>{each.label}</span>)}
       </div>
       <Scale top={top} metric={props.metric} />
@@ -108,6 +149,7 @@ export function LineChart(props: LineChartProps): React.JSX.Element | null {
   const y = (value: number): number => inset + (1 - value / top) * (HEIGHT - 2 * inset);
   const newest = Math.max(...props.lines.map((line) => line.year));
   const colour = (year: number): string => (year === newest ? C.mint : C.line);
+  const ticked = ticks(top, props.metric);
   return (
     <div style={{ display: 'grid', gap: 8 }}>
       <div aria-hidden="true" style={{ ...mono, color: C.text2, display: 'flex', flexWrap: 'wrap', gap: '4px 16px' }}>
@@ -120,9 +162,9 @@ export function LineChart(props: LineChartProps): React.JSX.Element | null {
           <span style={{ display: 'inline-block', width: 8, height: 8, boxSizing: 'border-box', border: `2px solid ${C.line}`, borderRadius: 4 }} />Month not complete
         </span>
       </div>
-      <div style={{ position: 'relative', height: HEIGHT }}>
+      <div style={{ position: 'relative', height: HEIGHT, marginLeft: GUTTER }}>
         <svg viewBox={`0 0 ${String(width)} ${String(HEIGHT)}`} preserveAspectRatio="none" aria-hidden="true" focusable="false" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', overflow: 'visible' }}>
-          <path d={`M0 0.5 H${String(width)} M0 ${String(HEIGHT - 0.5)} H${String(width)}`} stroke={C.border} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+          <path d={rulesPath(ticked, y, width)} stroke={C.border} strokeWidth={1} vectorEffect="non-scaling-stroke" />
           {[...props.lines].sort((a, b) => a.year - b.year).map((line) => {
             const parts: string[] = [];
             let open = false;
@@ -157,8 +199,9 @@ export function LineChart(props: LineChartProps): React.JSX.Element | null {
             {label.year}
           </span>
         ))}
+        <Counts values={ticked} metric={props.metric} y={y} />
       </div>
-      <div aria-hidden="true" style={{ ...mono, position: 'relative', height: 16 }}>
+      <div aria-hidden="true" style={{ ...mono, position: 'relative', height: 16, marginLeft: GUTTER }}>
         {MONTH_NAMES.map((name, index) => (
           <span key={name} style={{ position: 'absolute', left: `${String((x(index + 1) / width) * 100)}%`, transform: 'translateX(-50%)' }}>
             {name.slice(0, 1)}
