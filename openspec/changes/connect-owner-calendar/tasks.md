@@ -39,8 +39,8 @@ Two phases (owner decision, 2026-11-12): phase 1 builds the server side on `orig
 
 - [x] 6.1 Add `chat/tools/owner-calendar.ts` (`get_owner_calendar`), append it to the registry, add the prompt line; update `test/chat-tools.test.ts` for the appended name and the unchanged order
 - [x] 6.2 Unit tests: range limits, `available: false` with no calendar, input and result views carry no title
-- [ ] 6.3 Extend `readableByTownwiseAi` and the item reader to `pdf` and `docx`; PDF as a `document` block in the tool result (10 MB, 100 pages), `.docx` text through the parse thread (20,000 characters); saved conversation keeps reference and counts only
-- [ ] 6.4 Tests: PDF and Word reads, turned-off item, `.doc` refused, PDF over the caps, saved shape holds no bytes or text
+- [x] 6.3 Extend `readableByTownwiseAi` and the item reader to `pdf` and `docx`; PDF as a `document` block in the tool result (10 MB, 100 pages), `.docx` text through the parse thread (20,000 characters); saved conversation keeps reference and counts only
+- [x] 6.4 Tests: PDF and Word reads, turned-off item, `.doc` refused, PDF over the caps, saved shape holds no bytes or text
 
 ## 7. Client (phase 2: after the calendar work lands)
 

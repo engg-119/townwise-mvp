@@ -3,7 +3,9 @@
 // line: a line whose items include a date header and a guests or net sales header, each its own item. The header
 // items' extents make the column bands; each following line's items fall into the band their centre is in; a line
 // with fewer than two filled bands, or one that starts with "total", ends the table. A header repeated on a later
-// page continues its table. The only file that imports unpdf (test/isolation.test.ts).
+// page continues its table. For TownwiseAI's read of a PDF reference item, countPages gives the page count alone
+// (openspec change connect-owner-calendar, design decision 9). The only file that imports unpdf
+// (test/isolation.test.ts).
 import { getDocumentProxy } from 'unpdf';
 
 import { PDF_MAX_ITEMS_PER_PAGE, PDF_MAX_PAGES } from '../limits.ts';
@@ -99,6 +101,28 @@ function isPasswordError(err: unknown): boolean {
   return err instanceof Error && err.name === 'PasswordException';
 }
 
+function open(buffer: Buffer): ReturnType<typeof getDocumentProxy> {
+  // Fonts are never loaded or faked, and pdf.js logs nothing below errors (a warning can quote the file).
+  return getDocumentProxy(new Uint8Array(buffer), {
+    disableFontFace: true, useSystemFonts: false, stopAtErrors: false, verbosity: 0, isOffscreenCanvasSupported: false,
+  });
+}
+
+/** A PDF's page count; null when pdf.js cannot open it (damaged, locked with a password, or not a PDF). */
+export async function countPages(buffer: Buffer): Promise<number | null> {
+  let document;
+  try {
+    document = await open(buffer);
+  } catch {
+    return null;
+  }
+  try {
+    return document.numPages;
+  } finally {
+    await document.cleanup().catch(() => undefined);
+  }
+}
+
 /**
  * A PDF's tables. `onPage` reports pages read. Encrypted: kept `encrypted`; no text on any page: `pdf_scanned`; text but
  * no table: `pdf_no_table`; more pages than the reader takes: `too_complex`; not readable as a PDF, or a page that cannot be read: `not_a_table`.
@@ -106,10 +130,7 @@ function isPasswordError(err: unknown): boolean {
 export async function readPdf(buffer: Buffer, onPage: (done: number, total: number) => void = () => undefined): Promise<PdfTables> {
   let document;
   try {
-    // Fonts are never loaded or faked, and pdf.js logs nothing below errors (a warning can quote the file).
-    document = await getDocumentProxy(new Uint8Array(buffer), {
-      disableFontFace: true, useSystemFonts: false, stopAtErrors: false, verbosity: 0, isOffscreenCanvasSupported: false,
-    });
+    document = await open(buffer);
   } catch (err) {
     return { kind: 'kept', outcome: isPasswordError(err) ? 'encrypted' : 'not_a_table' };
   }

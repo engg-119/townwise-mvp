@@ -1,8 +1,8 @@
 // One tuning chat turn (docs/portal/tuning-chat.md sections 3 and 4): a manual streaming loop. Stream a model call,
 // take its finalMessage(), run its tool calls, append, repeat, for at most 8 calls. Every assistant message is kept
 // exactly as received, thinking blocks included, except what a mid-reply fallback requires dropping (echoable). The
-// turn's messages are returned for one save (savedTurn: an item's text is kept only as a stub); a failed, aborted or
-// refused turn returns nothing to save, only its cost, which is charged after every call either way.
+// turn's messages are returned for one save (savedTurn: an item's text or PDF is kept only as a stub); a failed,
+// aborted or refused turn returns nothing to save, only its cost, which is charged after every call either way.
 import { AnthropicError, APIConnectionError, APIError, InternalServerError, RateLimitError } from '@anthropic-ai/sdk';
 import type {
   BetaContentBlock, BetaMessage, BetaMessageParam, BetaMessageStreamParams, BetaRawContentBlockDelta, BetaRawMessageStreamEvent,
@@ -221,7 +221,7 @@ export function echoable(content: readonly BetaContentBlock[]): BetaContentBlock
 
 /**
  * What one finished turn saves (section 3): its messages as the model read them, except a result its tool keeps only a
- * stub of (read_data_item, D28), so a later turn never resends an item's text after it is turned off, deleted or
+ * stub of (read_data_item, D28), so a later turn never resends an item's text or PDF after it is turned off, deleted or
  * purged. A thinking block's signature binds everything before it (preserved thinking), so every thinking block after
  * the first stubbed result is dropped too; blocks before it stay valid, and an assistant message left with nothing is
  * dropped. The turn's own later calls already read the whole result. The saved history is append-only from then on.

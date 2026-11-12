@@ -1,7 +1,9 @@
 // The parse thread (spec 11A): a node:worker_threads Worker per file, with memory and time limits (run.ts), so a file
 // that would exhaust them ends the thread, not the API. The main thread feeds the file in pieces, one at a time, and
 // waits for each ack. Raw rows never leave this thread: it answers with daily totals, a report of header names, row
-// numbers, dates and counts, or a question whose options are header names or the location column's values.
+// numbers, dates and counts, or a question whose options are header names or the location column's values. A thread
+// for a reference item TownwiseAI reads gets the item whole and answers a PDF's page count or a Word document's text,
+// which go back only to that read (openspec change connect-owner-calendar, design decision 9).
 import { parentPort } from 'node:worker_threads';
 
 import type { ColumnChoice } from '../extract/prompt.ts';
@@ -9,11 +11,11 @@ import { readArchive } from './archive.ts';
 import { CsvPushReader, detectTableDelimiter, stripBom, type Delimiter } from './csv.ts';
 import type { SalesDay } from './days.ts';
 import type { ChooseColumns, KeptOutcome } from './mapping.ts';
-import type { FileOutcome, FileReport, ThreadIn, ThreadOut } from './run.ts';
+import type { FileOutcome, FileReport, ItemOutcome, ThreadIn, ThreadOut } from './run.ts';
 import { dayTotals, readTable, type TableReport } from './table.ts';
 import { decoderFor, detectEncoding, encodingLabel, ENCODING_PROBE_BYTES, type TextEncoding } from './text.ts';
-import { readWord } from './docx.ts';
-import { readPdf } from './pdf.ts';
+import { readWord, readWordText } from './docx.ts';
+import { countPages, readPdf } from './pdf.ts';
 import { readWorkbook, type Sheet } from './xlsx.ts';
 
 const port = parentPort;
@@ -66,6 +68,10 @@ port.on('message', (message: ThreadIn) => {
     post({ type: 'progress', done: Math.min(received, progressTotal ?? received), total: progressTotal });
     pendingReads.get(message.id)?.(bytes);
     pendingReads.delete(message.id);
+    return;
+  }
+  if (message.type === 'item') {
+    void readItem(message).then((outcome) => { post({ type: 'item', outcome }); });
     return;
   }
   if (message.type === 'begin') {
@@ -235,6 +241,18 @@ async function readZipFile(begin: Extract<ThreadIn, { type: 'begin' }>): Promise
   if (outcome.kind === 'question') return outcome;
   if (outcome.kind === 'kept') return { kind: 'kept', outcome: outcome.outcome, report: null, entries: outcome.entries };
   return { kind: 'days', days: outcome.days, report: { ...outcome.report, sheets: [], encoding: null }, entries: outcome.entries };
+}
+
+/** A reference item for TownwiseAI: a PDF's page count, or a Word document's text under the package's guards. */
+async function readItem(message: Extract<ThreadIn, { type: 'item' }>): Promise<ItemOutcome> {
+  const bytes = Buffer.from(message.data);
+  if (message.job.kind === 'pdf_pages') {
+    const pages = await countPages(bytes);
+    return pages === null ? { kind: 'cannot_open' } : { kind: 'pages', pages };
+  }
+  const read = await readWordText(bytes, message.job.maxChars);
+  if (read.kind === 'text') return { kind: 'text', text: read.text, truncated: read.truncated };
+  return read.outcome === 'too_large_to_read' || read.outcome === 'too_complex' ? { kind: 'too_large' } : { kind: 'cannot_open' };
 }
 
 function run(begin: Extract<ThreadIn, { type: 'begin' }>): Promise<FileOutcome> {

@@ -250,15 +250,15 @@ describe('reference items (D28)', () => {
     expect(out.status === 'ok' ? out.text.length : -1).toBe(READ_ITEM_MAX_CHARS);
   });
 
-  it('readText refuses a history file, a PDF kept for reference, a turned-off item, a deleted original and another location’s id', async () => {
+  it('readText refuses a history file, an older Word file kept for reference, a turned-off item, a deleted original and another location’s id', async () => {
     const reader = createItemReader(createTownwiseStores(server.connection), blobs);
     const historyCsvId = await seedItem(l1, Buffer.from('Date,Guests\n'), { purpose: 'history', importId: new Types.ObjectId(), status: 'read' });
-    const refPdfId = await seedItem(l1, pdf, { kind: 'pdf' });
+    const refDocId = await seedItem(l1, Buffer.from('legacy word'), { kind: 'doc' });
     const offTextId = await seedItem(l1, Buffer.from('hello'), { disabledAt: server.clock.now() });
     const rawDeletedId = await seedItem(l1, Buffer.from('hello'), { rawDeletedAt: server.clock.now() });
     const textId = await seedItem(l1, Buffer.from('hello'));
     expect(await reader.readText(scope(), l1, historyCsvId)).toEqual({ status: 'not_readable' });
-    expect(await reader.readText(scope(), l1, refPdfId)).toEqual({ status: 'not_readable' });
+    expect(await reader.readText(scope(), l1, refDocId)).toEqual({ status: 'not_readable' });
     expect(await reader.readText(scope(), l1, offTextId)).toEqual({ status: 'turned_off' });
     expect(await reader.readText(scope(), l1, rawDeletedId)).toEqual({ status: 'gone' });
     expect(await reader.readText(scope(), l2, textId)).toEqual({ status: 'not_found' });

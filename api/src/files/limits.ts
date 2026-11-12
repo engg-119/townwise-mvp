@@ -91,6 +91,16 @@ export const DOCX_READ_BYTES = 10 * MIB;
 /** word/document.xml, uncompressed. */
 export const DOCX_MAX_DOCUMENT_BYTES = 50 * MIB;
 
+/**
+ * TownwiseAI's read of a PDF reference item (openspec change connect-owner-calendar, design decision 9): sent to the
+ * model whole, so at most this size and page count. A Word item is read up to DOCX_READ_BYTES. [CONFIRM: PDFs up to
+ * 10 MB and 100 pages for TownwiseAI]
+ */
+export const ITEM_PDF_BYTES = 10 * MIB;
+export const ITEM_PDF_PAGES = 100;
+/** An item's count or text in the parse thread ends at this time limit: it runs inside a chat turn of 150 seconds. */
+export const ITEM_READ_TIME_MS = 20_000;
+
 /** The AI column step (spec 11A): calls per file, per ZIP (at most one a family of its tables) and per import. */
 export const MODEL_CALLS_PER_FILE = 2;
 export const MODEL_CALLS_PER_ZIP = 5;

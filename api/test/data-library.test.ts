@@ -1,4 +1,5 @@
-// Your data's refs (D28), which items TownwiseAI may read (design calls 6 and 8), and an item's name when it is renamed.
+// Your data's refs (D28), which items TownwiseAI may read (design calls 6 and 8, and the openspec change
+// connect-owner-calendar's PDF and Word items), and an item's name when it is renamed.
 // Synthetic records only.
 import { AppError } from '@ckeith26/server-core';
 import { describe, expect, it } from 'vitest';
@@ -33,15 +34,18 @@ describe('readableByTownwiseAi', () => {
   const file = { purpose: 'reference', kind: 'text', rawDeletedAt: null } as unknown as FileRecord;
   const item = { ref: { type: 'file', id: ID }, kind: 'text', enabled: true, state: 'kept', file } as unknown as DataItemRecord;
 
-  it('reads a turned-on text item kept for reference, with its original, while stored files are on', () => {
-    expect(readableByTownwiseAi(item, true)).toBe(true);
+  const ofKind = (kind: string): DataItemRecord => ({ ...item, kind, file: { ...file, kind } }) as unknown as DataItemRecord;
+
+  it('reads a turned-on text, PDF or Word item kept for reference, with its original, while stored files are on', () => {
+    for (const kind of ['text', 'pdf', 'docx']) expect({ kind, readable: readableByTownwiseAi(ofKind(kind), true) }).toEqual({ kind, readable: true });
   });
 
   it('never a sales file, another kind, a turned-off or unfinished item, a deleted original, an upload, or with files off', () => {
     const cases: [string, DataItemRecord, boolean][] = [
       ['files off', item, false],
       ['sales file', { ...item, file: { ...file, purpose: 'history' } }, true],
-      ['pdf', { ...item, kind: 'pdf', file: { ...file, kind: 'pdf' } }, true],
+      ['sales PDF', { ...ofKind('pdf'), file: { ...file, kind: 'pdf', purpose: 'history' } }, true],
+      ...['doc', 'xlsx', 'xls', 'zip', 'other'].map((kind): [string, DataItemRecord, boolean] => [kind, ofKind(kind), true]),
       ['turned off', { ...item, enabled: false }, true],
       ['uploading', { ...item, state: 'uploading' }, true],
       ['original deleted', { ...item, file: { ...file, rawDeletedAt: new Date(0) } }, true],

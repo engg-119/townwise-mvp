@@ -1,13 +1,14 @@
 // Tables read from a PDF's text (spec 11A): the header line anchors the column bands, a total line ends the table, a
-// header repeated on a later page continues it, and the PDFs Townwise cannot use are kept with the reason. PDFs are
-// written in the test (helpers/pdf.ts).
+// header repeated on a later page continues it, and the PDFs Townwise cannot use are kept with the reason. For
+// TownwiseAI's read of a PDF reference item, the parse thread counts its pages (openspec change connect-owner-calendar,
+// design decision 9). PDFs are written in the test (helpers/pdf.ts).
 import { Readable } from 'node:stream';
 
 import { describe, expect, it } from 'vitest';
 
 import { PDF_MAX_PAGES } from '../../src/files/limits.ts';
-import { readPdf, tablesOf } from '../../src/files/parse/pdf.ts';
-import { runParse } from '../../src/files/parse/run.ts';
+import { countPages, readPdf, tablesOf } from '../../src/files/parse/pdf.ts';
+import { runItemRead, runParse } from '../../src/files/parse/run.ts';
 import { pdfOf, row } from '../helpers/pdf.ts';
 
 const COLUMNS = [72, 200, 300] as const;
@@ -82,4 +83,18 @@ describe('PDF tables', () => {
     await runParse({ ...base, kind: 'pdf', sizeBytes: REPORT.length, open: () => Promise.resolve(Readable.from([REPORT])), onProgress: (done, total) => { seen.push([done, total]); } });
     expect(seen).toEqual([[1, 2], [2, 2]]);
   });
+});
+
+describe('PDF page count for TownwiseAI', () => {
+  it('counts a PDF’s pages through the parse thread, whatever is on them', async () => {
+    expect(await runItemRead({ job: { kind: 'pdf_pages' }, bytes: REPORT })).toEqual({ kind: 'pages', pages: 2 });
+    expect(await runItemRead({ job: { kind: 'pdf_pages' }, bytes: pdfOf([{ drawing: true }, {}, {}]) })).toEqual({ kind: 'pages', pages: 3 });
+  });
+
+  it('answers cannot_open for an encrypted PDF or one pdf.js cannot open, and too_large past the time limit', async () => {
+    expect(await countPages(pdfOf([{}], { encrypted: true }))).toBeNull();
+    expect(await runItemRead({ job: { kind: 'pdf_pages' }, bytes: pdfOf([{}], { encrypted: true }) })).toEqual({ kind: 'cannot_open' });
+    expect(await runItemRead({ job: { kind: 'pdf_pages' }, bytes: Buffer.from('%PDF-1.4\nnot really') })).toEqual({ kind: 'cannot_open' });
+    expect(await runItemRead({ job: { kind: 'pdf_pages' }, bytes: REPORT, timeMs: 1 })).toEqual({ kind: 'too_large' });
+  }, 30_000);
 });

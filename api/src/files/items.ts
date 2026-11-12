@@ -1,16 +1,22 @@
 // Reference items (spec 11A, D28): pasted text kept as a `.txt` stored file, and the one reader TownwiseAI's tools use
-// for a text item's words. The title and the text are never logged or audited. Nothing here logs.
+// for an item's content: a text item's words, a Word document's text taken in the parse thread, or a PDF whose pages
+// the parse thread counts (openspec change connect-owner-calendar, design decision 9). The title and the content are
+// never logged or audited. Nothing here logs.
 import { createHash } from 'node:crypto';
 
 import { Types } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
 import type { Role } from '../access/resolve.ts';
+import { TOWNWISE_AI_KINDS } from '../data/library.ts';
 import { utcDay } from '../dates.ts';
 import type { FileRecord } from '../stores/files.ts';
 import type { TownwiseStores } from '../stores/index.ts';
 import { BlobMissingError, type FileBlobs } from './blobs.ts';
-import { CHUNK_BYTES, DAILY_UPLOAD_BYTES, FILES_PER_LOCATION, STORED_BYTES_PER_ORG } from './limits.ts';
+import {
+  CHUNK_BYTES, DAILY_UPLOAD_BYTES, DOCX_READ_BYTES, FILES_PER_LOCATION, ITEM_PDF_BYTES, ITEM_PDF_PAGES, STORED_BYTES_PER_ORG,
+} from './limits.ts';
+import { runItemRead, type ItemOutcome } from './parse/run.ts';
 import { decoderFor, detectEncoding } from './parse/text.ts';
 import { sanitizeName } from './sniff.ts';
 import { fingerprintOf } from './upload.ts';
@@ -121,20 +127,32 @@ export async function saveTextItem(
   return { file: raced, created: false };
 }
 
-export type ItemText =
+/**
+ * An item's content for TownwiseAI: the text of a text or Word item, or a PDF (base64) with its page count; otherwise
+ * why it cannot be read. `too_large` is a PDF over ITEM_PDF_BYTES or ITEM_PDF_PAGES, or a Word file over
+ * DOCX_READ_BYTES or the Word reader's caps; `cannot_open` is a PDF or Word file that is damaged or locked.
+ */
+export type ItemContent =
   | { readonly status: 'ok'; readonly text: string; readonly truncated: boolean }
-  | { readonly status: 'files_off' | 'not_found' | 'not_readable' | 'turned_off' | 'gone' };
+  | { readonly status: 'pdf'; readonly data: string; readonly pages: number }
+  | { readonly status: 'files_off' | 'not_found' | 'not_readable' | 'turned_off' | 'gone' | 'too_large' | 'cannot_open' };
 
-/** The door TownwiseAI's tools read an item's text through (chat/* imports no file code). */
+/** The door TownwiseAI's tools read an item's content through (chat/* imports no file code). */
 export interface ItemReader {
   readonly on: boolean;
-  readText(scope: OrgScope, locationId: string, fileId: string): Promise<ItemText>;
+  /** A text or Word item's text, or a PDF item whole for the model to read. */
+  readText(scope: OrgScope, locationId: string, fileId: string): Promise<ItemContent>;
 }
 
 async function bytesOf(body: AsyncIterable<unknown>): Promise<Buffer> {
   const parts: Buffer[] = [];
   for await (const part of body) parts.push(Buffer.isBuffer(part) ? part : Buffer.from(part as Uint8Array));
   return Buffer.concat(parts);
+}
+
+/** Why a PDF or Word item the parse thread could not use cannot be read. */
+function unread(outcome: ItemOutcome): ItemContent {
+  return { status: outcome.kind === 'too_large' ? 'too_large' : 'cannot_open' };
 }
 
 export function createItemReader(stores: Pick<TownwiseStores, 'files'>, blobs: FileBlobs | null): ItemReader {
@@ -145,16 +163,29 @@ export function createItemReader(stores: Pick<TownwiseStores, 'files'>, blobs: F
       if (!OBJECT_ID.test(fileId) || !OBJECT_ID.test(locationId)) return { status: 'not_found' };
       const file = await stores.files.get(scope, locationId, fileId);
       if (file === null || file.status === 'deleting') return { status: 'not_found' };
-      if (file.purpose !== 'reference' || file.kind !== 'text' || file.status !== 'kept') return { status: 'not_readable' };
+      if (file.purpose !== 'reference' || !TOWNWISE_AI_KINDS.has(file.kind) || file.status !== 'kept') return { status: 'not_readable' };
       if (file.disabledAt !== null) return { status: 'turned_off' };
       if (file.rawDeletedAt !== null) return { status: 'gone' };
+      // A PDF or Word item over its cap is too large before a byte is fetched, and one within it is read whole; a text
+      // item, up to READ_ITEM_BYTES.
+      if (file.kind !== 'text' && file.sizeBytes > (file.kind === 'pdf' ? ITEM_PDF_BYTES : DOCX_READ_BYTES)) return { status: 'too_large' };
       let bytes: Buffer;
       try {
-        const count = Math.min(file.sizeBytes, READ_ITEM_BYTES);
+        const count = file.kind === 'text' ? Math.min(file.sizeBytes, READ_ITEM_BYTES) : file.sizeBytes;
         bytes = await bytesOf(await blobs.openRaw(scope, { locationId: file.locationId, fileId: file.id }, { offset: 0, count }));
       } catch (err) {
         if (err instanceof BlobMissingError) return { status: 'gone' };
         throw err;
+      }
+      if (file.kind === 'pdf') {
+        const counted = await runItemRead({ job: { kind: 'pdf_pages' }, bytes });
+        if (counted.kind !== 'pages') return unread(counted);
+        if (counted.pages > ITEM_PDF_PAGES) return { status: 'too_large' };
+        return { status: 'pdf', data: bytes.toString('base64'), pages: counted.pages };
+      }
+      if (file.kind === 'docx') {
+        const read = await runItemRead({ job: { kind: 'word_text', maxChars: READ_ITEM_MAX_CHARS }, bytes });
+        return read.kind === 'text' ? { status: 'ok', text: read.text, truncated: read.truncated } : unread(read);
       }
       // When the item was read whole, a last byte that cannot end a UTF-8 character means windows-1252 (detectEncoding
       // forgives it, because a longer file may continue). A cut item streams, so the character cut at the edge is
