@@ -2,8 +2,10 @@
 // calendar-subscription spec, design decision 6), against the database with the test clock and an injected fetcher, so
 // nothing reaches the network: the cross-tenant claim and its lease, two refreshers racing for the same due links, a
 // success that replaces the events, a failure that keeps them and records its code, the backoff (6 hours, then 24), an
-// address the key no longer opens, a suspended organization, a location or organization deleted mid-refresh, the loop's
-// start and close, and log lines that hold no address, host, label or title. Every title here is made up.
+// address the key no longer opens, a suspended organization, a location or organization deleted mid-refresh, a refresh
+// that throws and one that outlives its lease, the loop's start and close (a fetch in flight dropped inside a shutdown
+// hook's 2 seconds, the writes in flight waited for), and log lines that hold no address, host, label or title. Every
+// title here is made up.
 import { createSecretKey, randomBytes, randomUUID, type KeyObject } from 'node:crypto';
 
 import { createLogger } from '@ckeith26/server-core';
@@ -17,7 +19,7 @@ import { createCalendarRefresher, type CalendarRefresher } from '../src/calendar
 import { seal } from '../src/calendar/secret.ts';
 import { claimDueCalendar } from '../src/stores/cross-tenant.ts';
 import { createTownwiseStores, type TownwiseStores } from '../src/stores/index.ts';
-import type { OwnerCalendarRecord } from '../src/stores/owner-calendars.ts';
+import type { OwnerCalendarRecord, OwnerCalendarStore } from '../src/stores/owner-calendars.ts';
 import { addLocation, createOrg } from './helpers/fixtures.ts';
 import { MINUTE, startTownwiseServer, type TownwiseTestServer } from './helpers/server.ts';
 
@@ -53,6 +55,8 @@ const LATER = ics(
 );
 const ADDED_TITLES = ['Rehearsal dinner', 'Office party'];
 const LATER_TITLES = ['Wine tasting', 'Book club', 'Graduation lunch'];
+/** server-core's budget for each shutdown hook (lifecycle.ts): Redis and Mongo close after it, done or not. */
+const HOOK_BUDGET_MS = 2000;
 
 let server: TownwiseTestServer;
 let stores: TownwiseStores;
@@ -132,15 +136,32 @@ function fakeFetcher(answer: (address: string) => CalendarFetchResult | Promise<
 
 const feed = (text: string): CalendarFetchResult => ({ ok: true, text, host: HOST });
 
-function refresherOf(fetcher: CalendarFetcher, opts: { key?: KeyObject; firstTickMs?: number } = {}): CalendarRefresher {
+function refresherOf(fetcher: CalendarFetcher, opts: { key?: KeyObject; firstTickMs?: number; stores?: TownwiseStores } = {}): CalendarRefresher {
   return createCalendarRefresher({
-    connection: server.connection, stores, key: opts.key ?? KEY, logger, now: server.clock.now, fetcher,
+    connection: server.connection, stores: opts.stores ?? stores, key: opts.key ?? KEY, logger, now: server.clock.now, fetcher,
     ...(opts.firstTickMs === undefined ? {} : { firstTickMs: opts.firstTickMs }),
   });
 }
 
 function at(ms: number): Date {
   return new Date(server.clock.now().getTime() + ms);
+}
+
+/** The log lines with this message, without pino's own fields. */
+function logged(msg: string): Record<string, unknown>[] {
+  return logs.map((line) => JSON.parse(line) as Record<string, unknown>).filter((line) => line.msg === msg)
+    .map((line) => Object.fromEntries(Object.entries(line).filter(([key]) => !['level', 'time', 'pid', 'hostname', 'msg'].includes(key))));
+}
+
+/** 'done' when `work` settles within `ms`, else 'late'. */
+async function within(ms: number, work: Promise<unknown>): Promise<'done' | 'late'> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<'late'>((resolve) => { timer = setTimeout(() => { resolve('late'); }, ms); });
+  try {
+    return await Promise.race([work.then(() => 'done' as const), late]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 describe('the claim', () => {
@@ -309,6 +330,57 @@ describe('refreshing', () => {
     expect(await calendarOf(t, calendar.id)).toEqual({ ...before, nextRefreshAt: at(6 * HOUR), leaseUntil: null });
     expect(await titlesOf(t)).toEqual(ADDED_TITLES);
   });
+
+  it('goes on to the next link after a refresh that throws, logs its id and error type only, and leaves its lease to run out', async () => {
+    const t = await tenant();
+    const broken = await addLink(t);
+    // Claimed first.
+    await setSource(broken.calendar.id, { nextRefreshAt: at(-HOUR) });
+    const next = await addLink(t);
+    const before = await calendarOf(t, broken.calendar.id);
+    // Against its contract, a fetcher that throws, with the address in its message.
+    const fetcher = fakeFetcher((address) => {
+      if (address === broken.address) throw new TypeError(`could not read ${address}`);
+      return feed(LATER);
+    });
+
+    expect(await refresherOf(fetcher).drain()).toBe(2);
+
+    expect(await calendarOf(t, next.calendar.id)).toMatchObject({ status: 'ok', eventCount: 3, leaseUntil: null });
+    expect(await calendarOf(t, broken.calendar.id)).toEqual({ ...before, leaseUntil: at(2 * MINUTE) });
+    expect(logged('townwise.calendar_refresh_failed')).toEqual([{ calendarId: broken.calendar.id, errType: 'TypeError' }]);
+    const text = logs.join('\n');
+    for (const secret of [TOKEN, HOST, LABEL, ...ADDED_TITLES]) expect(text).not.toContain(secret);
+    // Once its lease has run out, a later look tries it again.
+    server.clock.advance(2 * MINUTE + 1);
+    expect(await refresherOf(fakeFetcher(() => feed(LATER))).drain()).toBe(1);
+    expect(await calendarOf(t, broken.calendar.id)).toMatchObject({ status: 'ok', eventCount: 3, leaseUntil: null });
+  });
+
+  it('lets go of its own lease only: a refresh that outlived its lease leaves the lease of the claim that took the link over', async () => {
+    const t = await tenant();
+    const { calendar } = await addLink(t);
+    const before = await calendarOf(t, calendar.id);
+    const takeover = at(2 * MINUTE + 1 + 2 * MINUTE);
+    let claimed: unknown;
+    const fetcher = fakeFetcher(async () => {
+      // The fetch outlives the 2 minute lease, and another replica claims the link meanwhile.
+      server.clock.advance(2 * MINUTE + 1);
+      claimed = await claimDueCalendar(server.connection, { now: server.clock.now(), leaseUntil: takeover });
+      return feed(LATER);
+    });
+
+    expect(await refresherOf(fetcher).drain()).toBe(1);
+
+    expect(claimed).toMatchObject({ calendarId: calendar.id });
+    // The other replica's lease stands, so no third one claims the link while it refreshes; its own release ends it.
+    expect(await calendarOf(t, calendar.id)).toMatchObject({ leaseUntil: takeover, nextRefreshAt: before?.nextRefreshAt });
+    expect(await stores.ownerCalendars.releaseRefresh(t.scope, t.locationId, calendar.id, { leaseUntil: at(-1), nextRefreshAt: at(6 * HOUR) }))
+      .toBe(false);
+    expect(await stores.ownerCalendars.releaseRefresh(t.scope, t.locationId, calendar.id, { leaseUntil: takeover, nextRefreshAt: at(6 * HOUR) }))
+      .toBe(true);
+    expect(await calendarOf(t, calendar.id)).toMatchObject({ leaseUntil: null, nextRefreshAt: at(6 * HOUR) });
+  });
 });
 
 describe('a location or organization deleted', () => {
@@ -368,9 +440,10 @@ describe('a location or organization deleted', () => {
 });
 
 describe('the loop', () => {
-  it('looks shortly after start, and close waits for the refresh in flight', async () => {
+  it('looks shortly after start, and close drops a fetch in flight within a shutdown hook’s 2 seconds and writes nothing', async () => {
     const t = await tenant();
     const { calendar } = await addLink(t);
+    const before = await calendarOf(t, calendar.id);
     let release: () => void = () => undefined;
     const held = new Promise<void>((resolve) => { release = resolve; });
     const fetcher = fakeFetcher(async () => {
@@ -381,6 +454,39 @@ describe('the loop', () => {
     refresher.start();
     await vi.waitFor(() => { expect(fetcher.calls).toHaveLength(1); });
 
+    // A fetch may take its whole 10 seconds; close does not wait for it.
+    expect(await within(HOOK_BUDGET_MS, refresher.close())).toBe('done');
+    // Its answer, come too late, writes nothing: the link keeps its events, and its lease runs out.
+    release();
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+    expect(await calendarOf(t, calendar.id)).toEqual({ ...before, leaseUntil: at(2 * MINUTE) });
+    expect(await titlesOf(t)).toEqual(ADDED_TITLES);
+    expect(logged('townwise.calendar_refresh_skipped')).toEqual([{ calendarId: calendar.id, reason: 'stopped' }]);
+    // Closed, it claims nothing more; once the lease has run out, another replica refreshes the link.
+    expect(await refresher.drain()).toBe(0);
+    server.clock.advance(2 * MINUTE + 1);
+    expect(await refresherOf(fakeFetcher(() => feed(LATER))).drain()).toBe(1);
+    expect(await calendarOf(t, calendar.id)).toMatchObject({ status: 'ok', eventCount: 3, leaseUntil: null });
+  });
+
+  it('close waits for the writes in flight, so they end while the database is still open', async () => {
+    const t = await tenant();
+    const { calendar } = await addLink(t);
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let arrived: () => void = () => undefined;
+    const writing = new Promise<void>((resolve) => { arrived = resolve; });
+    const replaceEvents: OwnerCalendarStore['replaceEvents'] = async (...args) => {
+      arrived();
+      await held;
+      return stores.ownerCalendars.replaceEvents(...args);
+    };
+    const refresher = refresherOf(fakeFetcher(() => feed(LATER)), {
+      stores: { ...stores, ownerCalendars: { ...stores.ownerCalendars, replaceEvents } },
+    });
+    const draining = refresher.drain();
+    await writing;
+
     let closed = false;
     const closing = refresher.close().then(() => { closed = true; });
     await new Promise((resolve) => { setTimeout(resolve, 20); });
@@ -388,10 +494,8 @@ describe('the loop', () => {
     release();
     await closing;
 
+    expect(await draining).toBe(1);
     expect(await calendarOf(t, calendar.id)).toMatchObject({ status: 'ok', eventCount: 3, leaseUntil: null });
-    // Closed, it claims nothing more.
-    await makeDue(calendar.id);
-    expect(await refresher.drain()).toBe(0);
   });
 
   it('logs the calendar id, the status, the counts and the duration only: never the address, host, label or a title', async () => {
@@ -402,13 +506,9 @@ describe('the loop', () => {
 
     expect(await refresherOf(fetcher).drain()).toBe(2);
 
-    const lines = logs.map((line) => JSON.parse(line) as Record<string, unknown>);
-    const refreshed = lines.filter((line) => line.msg === 'townwise.calendar_refreshed');
+    const refreshed = logged('townwise.calendar_refreshed');
     expect(refreshed).toHaveLength(2);
-    // Without pino's own fields.
-    const fields = (line: Record<string, unknown>): Record<string, unknown> => Object.fromEntries(Object.entries(line)
-      .filter(([key]) => !['level', 'time', 'pid', 'hostname', 'msg'].includes(key)));
-    expect(refreshed.map(fields)).toEqual(expect.arrayContaining([
+    expect(refreshed).toEqual(expect.arrayContaining([
       { calendarId: ok.calendar.id, status: 'ok', eventCount: 3, skippedRepeating: 1, durationMs: 0 },
       { calendarId: failed.calendar.id, status: 'http_error', eventCount: 2, skippedRepeating: 0, durationMs: 0 },
     ]));

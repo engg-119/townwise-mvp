@@ -8,6 +8,8 @@
 // the first failure in a row, 24 after two or more. A calendar of a suspended organization (deleting one suspends it
 // first) is not fetched and is looked at again in 6 hours. The location and the calendar are checked before the fetch
 // and after the writes: a calendar whose location is gone, or that is gone itself, keeps nothing this refresh wrote.
+// Closing drops a fetch in flight, which may take 10 seconds where a shutdown hook has 2: nothing is written, and the
+// lease runs out so a later look refreshes the calendar. Closing waits for writes in flight, while the database is open.
 // Shaped as createCalendarRefresher(deps) so it can move to a job unchanged. Logs carry the calendar id, the status
 // code, event counts and the duration only: never an address, host, label or title.
 import type { KeyObject } from 'node:crypto';
@@ -21,7 +23,7 @@ import type { TownwiseStores } from '../stores/index.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import { REFRESH_INTERVAL_MS, type CalendarFailure, type ParsedCalendar } from '../stores/owner-calendars.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
-import { createCalendarFetcher, type CalendarFetcher } from './fetch.ts';
+import { createCalendarFetcher, type CalendarFetcher, type CalendarFetchResult } from './fetch.ts';
 import { parseIcs, type IcsTown } from './ics.ts';
 import { open } from './secret.ts';
 
@@ -47,7 +49,7 @@ export interface CalendarRefresher {
    * joins it. Never rejects.
    */
   drain(): Promise<number>;
-  /** Stops the loop and waits for a drain still running. */
+  /** Stops the loop, drops a fetch in flight (its calendar's lease runs out), and waits for the writes still running. */
   close(): Promise<void>;
   readonly name: string;
 }
@@ -77,15 +79,22 @@ export function createCalendarRefresher(deps: CalendarRefresherDeps): CalendarRe
   const calendars = stores.ownerCalendars;
   const fetcher = deps.fetcher ?? createCalendarFetcher();
   let stopped = false;
+  /** Set while a fetch is in flight: answers it `stopped` at once, so close does not wait for it. */
+  let dropFetch: (() => void) | null = null;
   let running: Promise<number> | null = null;
   let first: NodeJS.Timeout | undefined;
   let timer: NodeJS.Timeout | undefined;
 
-  /** Opens the address, fetches it, and parses what it answers in the location's town. */
-  async function read(sealed: string, location: LocationRecord): Promise<Read> {
+  /** Opens the address, fetches it, and parses what it answers in the location's town; `stopped` once close is called. */
+  async function read(sealed: string, location: LocationRecord): Promise<Read | 'stopped'> {
     const address = open(deps.key, sealed);
     if (!address.ok) return address;
-    const fetched = await fetcher.fetch(address.text);
+    if (stopped) return 'stopped';
+    const fetched = await new Promise<CalendarFetchResult | 'stopped'>((resolve, reject) => {
+      dropFetch = () => { resolve('stopped'); };
+      fetcher.fetch(address.text).then(resolve, reject);
+    }).finally(() => { dropFetch = null; });
+    if (fetched === 'stopped') return fetched;
     if (!fetched.ok) return fetched;
     const parsed = parseIcs(fetched.text, townOf(location, now()));
     return 'error' in parsed ? { ok: false, code: parsed.error } : { ok: true, parsed };
@@ -96,7 +105,7 @@ export function createCalendarRefresher(deps: CalendarRefresherDeps): CalendarRe
     const startedAt = now();
     const scope = scopeForCalendarRefresh(claim);
     const { calendarId, locationId } = claim;
-    const skipped = (reason: 'removed' | 'org_inactive'): void => {
+    const skipped = (reason: 'removed' | 'org_inactive' | 'stopped'): void => {
       logger.info({ calendarId, reason }, 'townwise.calendar_refresh_skipped');
     };
     /** The calendar's events, the calendar, and its events again: what a location's deletion would take. */
@@ -118,6 +127,11 @@ export function createCalendarRefresher(deps: CalendarRefresherDeps): CalendarRe
       return;
     }
     const result = await read(sealed, location);
+    // Closed mid-fetch: nothing is written, and the lease runs out.
+    if (result === 'stopped') {
+      skipped('stopped');
+      return;
+    }
     const at = now();
     // The store's replace switches only a calendar still there, and a failure updates one, so neither writes a new one.
     if (result.ok) await calendars.replaceEvents(scope, locationId, calendarId, result.parsed, at);
@@ -171,6 +185,7 @@ export function createCalendarRefresher(deps: CalendarRefresherDeps): CalendarRe
     },
     async close() {
       stopped = true;
+      dropFetch?.();
       clearTimeout(first);
       clearInterval(timer);
       await running;

@@ -152,7 +152,8 @@ const server = createServer({
   routes: [{ path: '/auth', router: auth.router }, { path: '/api', router: api }, { path: '/lab', router: labRouter }],
   middleware: [rateLimit({ limiter: ceiling, key: ipKey, whenStoreDown: 'allow', logger })],
   // The mail drain first, after the HTTP drain: a send still in flight when its 2 seconds end is lost. The reader, the
-  // sweeper and the calendar refresh loop stop next (each waits for its work in flight), while the database is still open.
+  // sweeper and the calendar refresh loop stop next (each waits for its work in flight, but the refresh loop drops a fetch
+  // rather than wait out its 10 seconds), while the database is still open.
   onShutdown: [
     { name: 'mail', close: () => mailer.idle() }, ...(fileWorker === undefined ? [] : [fileWorker]),
     ...(fileSweeper === undefined ? [] : [fileSweeper]), ...(calendarRefresher === undefined ? [] : [calendarRefresher]), redis, mongo,
