@@ -461,6 +461,29 @@ The lab retrains a location's forecast model in Azure, from the sales the API ha
      | while read -r d; do az acr manifest delete -r crtownwise2d2c15bf -n "townwise-lab@$d" --yes; done
    ```
 
+## Releases
+
+A release is a release PR merging `develop` into `main`. The merge deploys through `deploy.yml`; while hosted Actions is blocked, the release is deployed by hand instead (as `v2026.11.11` was). Once the new revision is confirmed live, the release gets an annotated tag and a GitHub Release (owner decision, 2026-11-12; every release since `v2026.11.04` has one).
+
+- **Name:** `v` plus the merge commit's date in Hanover (America/New_York), `vYYYY.MM.DD`. A second release that day ends in `.2`, then `.3` (2026-11-05 ran from `v2026.11.05` to `v2026.11.05.9`).
+- **Target:** the release PR's merge commit on `main`.
+- **Notes:** the release PR and how it deployed (a link to the deploy run, or "deployed by hand"), then GitHub's generated list of the PRs since the previous release.
+
+```sh
+git fetch origin --tags
+sha=$(git rev-parse origin/main)    # the release PR's merge commit
+day=v$(TZ=America/New_York git show -s --format=%cd --date=format-local:%Y.%m.%d "$sha")
+n=$(git ls-remote --tags --refs origin "$day" "$day.*" | wc -l | tr -d ' ')
+tag=$day; [ "$n" -gt 0 ] && tag="$day.$((n + 1))"
+prev=$(gh release view --json tagName --jq .tagName)    # the latest release
+git tag -a "$tag" "$sha" -m "$tag: <release PR title> (#<PR>)"
+git push origin "refs/tags/$tag"
+gh release create "$tag" --verify-tag --title "$tag: <what shipped>" --notes-start-tag "$prev" \
+  --notes "Release PR: #<PR>. Deployed by the [deploy workflow](<run URL>)." --generate-notes
+```
+
+A tag push starts no workflow: `ci.yml` and `deploy.yml` run on branch pushes only.
+
 ## CI on the laptop runner
 
 GitHub-hosted runners are blocked for this private repository: every job fails at once with "The job was not started because recent account payments have failed or your spending limit needs to be increased". Self-hosted runners are free, so the owner decided (2026-11-11) to run the checks on the owner's Mac (Apple Silicon, Docker Desktop) until hosted runners are back. The pieces are in `infra/ci-runner/`.
