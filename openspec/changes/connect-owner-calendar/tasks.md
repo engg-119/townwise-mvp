@@ -7,8 +7,8 @@ Two phases (owner decision, 2026-11-12): phase 1 builds the server side on `orig
 
 ## 1. Server ICS parser
 
-- [ ] 1.1 Port the parser from the main checkout's uncommitted `client/src/portal/calendar/ics.ts` (and its tests under `client/test/portal/calendar/`) to `api/src/calendar/ics.ts` and `api/test/calendar-ics.test.ts`, same rules and limits, using the town's today instead of the device's; the client copy is removed in phase 2 (7.1)
-- [ ] 1.2 Drop DESCRIPTION, LOCATION, ATTENDEE and ORGANIZER from the parsed event and cut titles at 200 characters; add a test that a parsed event has none of them
+- [x] 1.1 Port the parser from the main checkout's uncommitted `client/src/portal/calendar/ics.ts` (and its tests under `client/test/portal/calendar/`) to `api/src/calendar/ics.ts` and `api/test/calendar-ics.test.ts`, same rules and limits, using the town's today instead of the device's; the client copy is removed in phase 2 (7.1)
+- [x] 1.2 Drop DESCRIPTION, LOCATION, ATTENDEE and ORGANIZER from the parsed event and cut titles at 200 characters; add a test that a parsed event has none of them
 
 ## 2. Stores
 
