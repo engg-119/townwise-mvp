@@ -143,6 +143,11 @@ const QUESTION_ANSWER_WORDS: Readonly<Record<string, string>> = {
   closed: 'closed on those days', open: 'the data is missing', not_sure: 'not sure',
 };
 
+/** What TownwiseAI found a file it read to be (spec 11A.9). */
+const AI_KIND_WORDS: Readonly<Record<string, string>> = {
+  sales: 'sales', calendar: 'a calendar', inventory: 'inventory', menu: 'a menu', staffing: 'staffing', other: 'other',
+};
+
 const NOTE_KINDS: Readonly<Record<string, string>> = {
   closure: 'closure', private_event: 'private event', opening: 'opening', other: 'other',
 };
@@ -184,6 +189,8 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'file.deleted': return 'Deleted a file';
     case 'file.raw_deleted': return 'Deleted a file’s original';
     case 'files.raw_deleted_all': return `Deleted ${text(d.count)} original files of a location`;
+    case 'file.ai_read_requested': return 'Asked TownwiseAI to read a file';
+    case 'file.ai_read': return `TownwiseAI read a file (${AI_KIND_WORDS[text(d.kind)] ?? 'other'}): ${text(d.events)} dated events, ${text(d.days)} days`;
     case 'org.originals_deleted':
       return `Purged ${text(d.count)} original files, for ${ORIGINALS_BASIS[text(d.basis)] ?? 'another reason'}: each deleted at once, or as soon as Townwise finishes uploading or reading it`;
     case 'note.created': return noteSummary('Added', d);

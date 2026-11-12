@@ -47,6 +47,11 @@ export interface TownwiseDeps {
   readonly files?: FileBlobs | undefined;
   /** Wakes the file reader (files/worker.ts) after an import starts or a file is queued. */
   readonly fileWorker?: { nudge(): void } | undefined;
+  /**
+   * Reading with TownwiseAI (files/ai-reader.ts, spec 11A.9); absent turns it off (main.ts builds it only while stored
+   * files are on, ANTHROPIC_API_KEY is set and TOWNWISE_FILES_MONTHLY_BUDGET_USD is above 0).
+   */
+  readonly aiReader?: { nudge(): void } | undefined;
   /** U13A: the researched headcount inputs; absent, the committed people-in-town/sources.ts. Tests pass synthetic ones. */
   readonly peopleData?: PeopleData | undefined;
   /** Starts the forecast lab's jobs; absent turns calibrations off (main.ts builds it from TOWNWISE_LAB_RUNNER). */
@@ -87,6 +92,8 @@ export interface TownwiseContext {
   /** Null while stored files are off. */
   readonly files: FileBlobs | null;
   readonly nudgeFiles: () => void;
+  /** Reading with TownwiseAI: null while it is off (503 ai_unavailable); its nudge after a read is asked for. */
+  readonly aiReads: { nudge(): void } | null;
   /** The one door TownwiseAI's tools read a reference item's text through (chat/* imports no file code). */
   readonly items: ItemReader;
   /** U13A. */
@@ -116,6 +123,7 @@ export function createTownwiseContext(deps: TownwiseDeps): TownwiseContext {
     placesMap: deps.placesMap ?? null,
     files: deps.files ?? null,
     nudgeFiles: () => { deps.fileWorker?.nudge(); },
+    aiReads: deps.aiReader ?? null,
     items: createItemReader(stores, deps.files ?? null),
     ports: {
       peopleInTown: createPeopleInTownReader({ stores, data: deps.peopleData ?? PEOPLE_DATA }),

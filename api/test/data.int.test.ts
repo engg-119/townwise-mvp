@@ -248,6 +248,8 @@ describe('GET /api/org/data', () => {
       ref: `u_${browser}`, locationId: l1, via: 'browser', kind: 'daily_totals', name: null, addedAt: sentAt, addedByEmail: team.memberEmail,
       sizeBytes: null, enabled: true, state: 'used', outcome: null, days: { count: 3, inUse: 3, firstDate: '2026-05-01', lastDate: '2026-05-03' },
       file: null, canTurnOff: true, canDelete: true, canEdit: false, editedAt: null, editedByEmail: null,
+      // Spec 11A.9: a browser upload has no stored file for TownwiseAI to read.
+      canAiRead: false, ai: null,
     });
     expect(items[1]).toMatchObject({
       name: 'sales.csv', sizeBytes: RAW.length, enabled: true, state: 'used', addedByEmail: team.adminEmail,

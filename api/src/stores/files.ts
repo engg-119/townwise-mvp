@@ -86,6 +86,66 @@ export interface SavedColumnChoice {
 /** The AI column step's answers for a file, by a hash of the redacted profile each was asked about. */
 export type FileColumnChoices = Readonly<Record<string, SavedColumnChoice | null>>;
 
+/**
+ * Reading with TownwiseAI (spec 11A.9, D29), opted into per file: `queued` until a reader claims it, `reading` under the
+ * claim's lease, then `done`, `failed` (only `refused` or `internal`) or `skipped` (a reason code). `undone` is set when
+ * the person undoes what the read did (S2). Failed, skipped and undone reads may be asked for again.
+ */
+export type AiReadStatus = 'queued' | 'reading' | 'done' | 'failed' | 'skipped' | 'undone';
+
+/** What TownwiseAI found a file to be. Types only: the answer's schema is files/extract/reader-prompt.ts. */
+export type AiFileKind = 'sales' | 'calendar' | 'inventory' | 'menu' | 'staffing' | 'other';
+export type AiEventKind = 'closure' | 'private_event' | 'opening' | 'other';
+export type AiEventEffect = 'closed' | 'more' | 'fewer' | 'unknown';
+
+/** A dated event the file states, as TownwiseAI read it (validated and capped, files/extract/reader-prompt.ts). */
+export interface AiReadEvent {
+  readonly title: string;
+  readonly startDate: string;
+  readonly endDate: string;
+  readonly kind: AiEventKind;
+  readonly effect: AiEventEffect;
+  readonly expectedGuests: number | null;
+  readonly detail: string;
+}
+
+/** A daily total the file states per day; `netSales` in dollars, as the file has it. */
+export interface AiReadDay { readonly date: string; readonly guests: number | null; readonly netSales: number | null }
+
+/** The model's answer after validation: every list capped, malformed entries dropped. */
+export interface AiReadResult {
+  readonly kind: AiFileKind;
+  readonly confidence: 'high' | 'medium' | 'low';
+  readonly summary: string;
+  readonly facts: readonly string[];
+  readonly events: readonly AiReadEvent[];
+  readonly days: readonly AiReadDay[];
+}
+
+/** The `ai` subdocument, absent until someone asks TownwiseAI to read the file. */
+export interface FileAiRead {
+  readonly status: AiReadStatus;
+  /** Who asked, their role then, and whether they were Townwise staff open as admin (D25), with that grant's id. */
+  readonly requestedBy: string;
+  readonly requestedByRole: Role;
+  readonly requestedByStaff: boolean;
+  readonly requestedGrantId: string | null;
+  readonly requestedAt: Date;
+  /** Claims so far; also the claim's token: every write under a claim matches the count it set. */
+  readonly attempts: number;
+  readonly leaseUntil: Date | null;
+  readonly startedAt: Date | null;
+  readonly finishedAt: Date | null;
+  /** Why a read failed or was skipped, as a code; null otherwise. */
+  readonly reason: string | null;
+  /** The text sent was cut at the cap (the prompt said so). */
+  readonly partial: boolean;
+  /** What the model calls of this read cost, in micro-dollars. */
+  readonly costMicroUsd: number;
+  /** Saved before anything acts on it, so a retry acts on the same answer; null until the model answered. */
+  readonly result: AiReadResult | null;
+}
+
 interface FileFields {
   orgId: Types.ObjectId;
   locationId: Types.ObjectId;
@@ -136,6 +196,8 @@ interface FileFields {
   editedAt?: Date;
   editedBy?: string;
   editedByStaff?: boolean;
+  /** Reading with TownwiseAI (spec 11A.9); absent until asked for, never stored as null. */
+  ai?: FileAiRead;
 }
 
 function fileSchema(): Schema<FileFields> {
@@ -180,6 +242,7 @@ function fileSchema(): Schema<FileFields> {
     editedAt: { type: Date },
     editedBy: { type: String },
     editedByStaff: { type: Boolean },
+    ai: { type: Schema.Types.Mixed },
   }, { strict: 'throw', versionKey: false, read: 'primary', minimize: false });
   schema.index({ orgId: 1, locationId: 1, uploadedAt: -1 });
   schema.index({ orgId: 1, importId: 1, uploadedAt: 1 });
@@ -190,6 +253,9 @@ function fileSchema(): Schema<FileFields> {
   schema.index({ purgeRaw: 1 }, { sparse: true });
   // D28: the file each upload on Your data was read from.
   schema.index({ orgId: 1, uploadId: 1 }, { partialFilterExpression: { uploadId: { $type: 'objectId' } } });
+  // The TownwiseAI reader's claim across organizations (stores/cross-tenant.ts): oldest request first. Sparse, so the
+  // files nobody opted in are not in it.
+  schema.index({ 'ai.status': 1, 'ai.requestedAt': 1 }, { sparse: true });
   return schema;
 }
 
@@ -249,6 +315,8 @@ export interface FileRecord {
   readonly editedBy: string | null;
   /** Edited by Townwise staff open as admin (D25): reads "Townwise staff". */
   readonly editedByStaff: boolean;
+  /** Reading with TownwiseAI (spec 11A.9), or null when nobody asked. */
+  readonly ai: FileAiRead | null;
 }
 
 function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
@@ -293,6 +361,7 @@ function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
     editedAt: doc.editedAt ?? null,
     editedBy: doc.editedBy ?? null,
     editedByStaff: doc.editedByStaff === true,
+    ai: doc.ai ?? null,
   };
 }
 
@@ -315,6 +384,11 @@ export interface NewFile {
 
 /** What the reader takes in a started import (nextToRead). */
 const READABLE: FileStatus[] = ['queued', 'reading', 'stored'];
+
+/** Files TownwiseAI may be asked to read: finished, so nothing else is still reading or writing them. */
+const AI_READABLE: FileStatus[] = ['read', 'kept', 'failed'];
+/** Reads that may be asked for again. */
+const AI_ASK_AGAIN: AiReadStatus[] = ['failed', 'skipped', 'undone'];
 
 /** Tenant store: every function takes the OrgScope first and filters on its orgId. */
 export interface FileStore {
@@ -449,6 +523,34 @@ export interface FileStore {
    * queue. False when it was no longer waiting.
    */
   answer(scope: OrgScope, fileId: string, key: string, answers: SheetAnswers): Promise<boolean>;
+
+  /**
+   * Reading with TownwiseAI (spec 11A.9): compare-and-set a fresh `ai`, `queued`, on the location's file while it is
+   * finished (read, kept or failed) with its original, and has no read or a failed, skipped or undone one. The record
+   * after, or null when it no longer qualifies (deleted, its original deleted, or another request won).
+   */
+  requestAiRead(scope: OrgScope, locationId: string, fileId: string, input: {
+    by: string; role: Role; byStaff: boolean; grantId: string | null; at: Date;
+  }): Promise<FileRecord | null>;
+  /** The reader's heartbeat: a later `leaseUntil` while the read is `reading` under claim `attempt`. False once it is not. */
+  renewAiLease(scope: OrgScope, fileId: string, attempt: number, until: Date): Promise<boolean>;
+  /**
+   * The model's validated answer, saved under claim `attempt` before anything acts on it, with `partial` and the call's
+   * cost added, while the original is still stored. False when the claim is no longer this one (a takeover, or the file
+   * deleted) or the original was deleted meanwhile (a purge).
+   */
+  saveAiResult(scope: OrgScope, fileId: string, attempt: number, input: {
+    result: AiReadResult; partial: boolean; costMicroUsd: number;
+  }): Promise<boolean>;
+  /**
+   * Ends the read under claim `attempt`: done, failed or skipped, with its reason, the lease dropped, and a cost to add
+   * (a refused call is charged). False when the claim is no longer this one.
+   */
+  finishAiRead(scope: OrgScope, fileId: string, attempt: number, input: {
+    status: 'done' | 'failed' | 'skipped'; reason: string | null; at: Date; partial?: boolean; costMicroUsd?: number;
+  }): Promise<boolean>;
+  /** An attempt that stopped (an error, a failed call): back to `queued`, the attempt counted. False when not held. */
+  releaseAiRead(scope: OrgScope, fileId: string, attempt: number): Promise<boolean>;
 }
 
 export function createFileStore(connection: Connection): FileStore {
@@ -456,6 +558,10 @@ export function createFileStore(connection: Connection): FileStore {
   const org = (scope: OrgScope): Types.ObjectId => new Types.ObjectId(scope.orgId);
   const oid = (id: string): Types.ObjectId => new Types.ObjectId(id);
   const after = { returnDocument: 'after' } as const;
+  /** A read held under claim `attempt`: `reading`, with the attempt count that claim set, on a file not being deleted. */
+  const heldAiRead = (scope: OrgScope, fileId: string, attempt: number): Record<string, unknown> => ({
+    _id: oid(fileId), orgId: org(scope), status: trusted({ $ne: 'deleting' }), 'ai.status': 'reading', 'ai.attempts': attempt,
+  });
   return {
     async create(scope, locationId, input) {
       const doc = await File.create({
@@ -731,5 +837,44 @@ export function createFileStore(connection: Connection): FileStore {
       const result = await File.updateOne({ _id: oid(fileId), orgId: org(scope), status: 'waiting' }, { $set: set });
       return result.matchedCount === 1;
     },
+    async requestAiRead(scope, locationId, fileId, input) {
+      const ai: FileAiRead = {
+        status: 'queued', requestedBy: input.by, requestedByRole: input.role, requestedByStaff: input.byStaff,
+        requestedGrantId: input.grantId, requestedAt: input.at, attempts: 0, leaseUntil: null, startedAt: null, finishedAt: null,
+        reason: null, partial: false, costMicroUsd: 0, result: null,
+      };
+      const doc = await File.findOneAndUpdate(
+        {
+          _id: oid(fileId), orgId: org(scope), locationId: oid(locationId), status: trusted({ $in: AI_READABLE }), rawDeletedAt: null,
+          $or: [{ ai: null }, { 'ai.status': trusted({ $in: AI_ASK_AGAIN }) }],
+        },
+        { $set: { ai } },
+        after,
+      ).lean();
+      return doc === null ? null : toFile(doc);
+    },
+    async renewAiLease(scope, fileId, attempt, until) {
+      const result = await File.updateOne(heldAiRead(scope, fileId, attempt), { $set: { 'ai.leaseUntil': until } });
+      return result.matchedCount === 1;
+    },
+    async saveAiResult(scope, fileId, attempt, input) {
+      const result = await File.updateOne({ ...heldAiRead(scope, fileId, attempt), rawDeletedAt: null }, {
+        $set: { 'ai.result': input.result, 'ai.partial': input.partial }, $inc: { 'ai.costMicroUsd': input.costMicroUsd },
+      });
+      return result.matchedCount === 1;
+    },
+    async finishAiRead(scope, fileId, attempt, input) {
+      const set: Record<string, unknown> = { 'ai.status': input.status, 'ai.reason': input.reason, 'ai.finishedAt': input.at, 'ai.leaseUntil': null };
+      if (input.partial !== undefined) set['ai.partial'] = input.partial;
+      const update: Record<string, unknown> = { $set: set };
+      if (input.costMicroUsd !== undefined && input.costMicroUsd > 0) update.$inc = { 'ai.costMicroUsd': input.costMicroUsd };
+      const result = await File.updateOne(heldAiRead(scope, fileId, attempt), update);
+      return result.matchedCount === 1;
+    },
+    async releaseAiRead(scope, fileId, attempt) {
+      const result = await File.updateOne(heldAiRead(scope, fileId, attempt), { $set: { 'ai.status': 'queued', 'ai.leaseUntil': null } });
+      return result.matchedCount === 1;
+    },
   };
 }
+

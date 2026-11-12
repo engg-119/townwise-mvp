@@ -241,6 +241,14 @@ describe('route table', () => {
     ]);
   });
 
+  it('spec 11A.9: letting TownwiseAI read an item is a member POST with a 2kb body, open as admin, and no route limiter', () => {
+    const route = TOWNWISE_ROUTES.find((entry) => entry.id === 'org.data.ai_read');
+    expect(route).toMatchObject({
+      method: 'POST', path: '/org/locations/:locationId/data/:ref/ai', policy: 'member', bodyLimit: '2kb', openAsAdmin: true,
+    });
+    expect(route?.limiter).toBeUndefined();
+  });
+
   it('saving or setting aside a TownwiseAI proposal is a member POST with an 8kb body and no route limiter', () => {
     const proposal = TOWNWISE_ROUTES.find((entry) => entry.id === 'org.chat.proposal');
     expect(proposal).toMatchObject({

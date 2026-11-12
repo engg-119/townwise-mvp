@@ -82,6 +82,8 @@ describe('indexes', () => {
         if (model === 'TwMember' && keys[0] === 'userId') continue;
         // The sweeper's index spans organizations (stores/cross-tenant.ts); the reader's claim index is single-key.
         if (model === 'TwFile' && keys[0] === 'status') continue;
+        // The TownwiseAI reader's claim (spec 11A.9) spans organizations too: the oldest read asked for, in any.
+        if (model === 'TwFile' && keys[0] === 'ai.status') continue;
         if (model === 'TwImport' && keys[0] === 'status') continue;
         // The lab callback finds a calibration by its id and token hash, before any organization is known.
         if (model === 'TwCalibration' && keys[0] === '_id') continue;

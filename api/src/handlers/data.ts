@@ -1,5 +1,6 @@
 // Your data (D28): the list of everything a location (or the organization) received, one item of it, turning an upload
-// or a reference item off and on, renaming one, saving an edit of one, and deleting one. Every location and item from another
+// or a reference item off and on, renaming one, saving an edit of one, letting TownwiseAI read one (spec 11A.9, D29),
+// and deleting one. Every location and item from another
 // organization answers 404 exactly like an unknown one, because each is loaded through the caller's OrgScope. Names
 // travel only in JSON bodies and never reach a log line or an audit event: those carry ids, kinds and counts. Stored
 // files are reached through handlers/files.ts.
@@ -17,7 +18,7 @@ import {
 import type { FileBlobs } from '../files/blobs.ts';
 import { renamedItemName, replaceClaimLive, replaceClaimStaleBefore, TEXT_ITEM_TITLE_MAX } from '../files/items.ts';
 import { currentEmail, DELETED_PERSON, TOWNWISE_STAFF } from '../people.ts';
-import type { FileKind, FileRecord } from '../stores/files.ts';
+import type { AiFileKind, AiReadStatus, FileKind, FileRecord, FileStatus } from '../stores/files.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import { fileView, isUploaderOrAdmin, removeWholeFile } from './files.ts';
 import { loadLocation, memberOf } from './locations.ts';
@@ -52,6 +53,34 @@ export interface DataItemView {
   canEdit: boolean;
   /** When an edit last replaced the item's content, and who saved it (as `addedByEmail`); both null if never. */
   editedAt: string | null; editedByEmail: string | null;
+  /**
+   * Spec 11A.9: not in view-as; stored files and reading with TownwiseAI on; a stored file (the item's, or the one an
+   * upload was read from) finished (read, kept or failed) with its original; the people who may turn it off; and no
+   * read yet, or a failed, skipped or undone one. POST .../ai takes these rules.
+   */
+  canAiRead: boolean;
+  /** Reading with TownwiseAI, null when nobody asked (or the item has no stored file). */
+  ai: DataItemAiView | null;
+}
+
+/**
+ * A read's state and, once done, what TownwiseAI found (spec 11A.9). `kind`, `summary` and `facts` only once it is done;
+ * under view-as `summary` and `facts` are null (they may describe private data). What the read did (`notes`,
+ * `daysWritten`, `uploadRef`, `itemRef`, `calibration`, `canUndo`) is filled by the actions stage; empty until then.
+ */
+export interface DataItemAiView {
+  status: AiReadStatus;
+  reason: string | null;
+  partial: boolean;
+  kind: AiFileKind | null;
+  summary: string | null;
+  facts: string[] | null;
+  notes: { id: string; title: string; startDate: string; endDate: string }[];
+  daysWritten: number;
+  uploadRef: string | null;
+  itemRef: string | null;
+  calibration: null;
+  canUndo: boolean;
 }
 
 /** Who added an item and who last edited it, each as the list names them. */
@@ -59,6 +88,12 @@ interface ItemEmails { readonly added: string; readonly edited: string | null }
 
 /** Townwise still has the item: it cannot be turned off until it is done. */
 const BUSY: readonly DataState[] = ['uploading', 'reading', 'waiting'];
+
+/** A stored file TownwiseAI may be asked to read: nothing else is still reading or writing it. */
+const FINISHED: readonly FileStatus[] = ['read', 'kept', 'failed'];
+
+/** Reads that may be asked for again. */
+const ASK_AGAIN: readonly AiReadStatus[] = ['failed', 'skipped', 'undone'];
 
 /** The most time between storing a file and saving it as an edit (POST .../replace). */
 const EDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -120,7 +155,36 @@ function editOf(item: DataItemRecord): { by: string | null } | null {
   return { by: item.file?.editedByStaff === true ? null : by };
 }
 
-function dataItemView(member: MemberPrincipal, item: DataItemRecord, emails: ItemEmails, filesOn: boolean, now: Date): DataItemView {
+/** Whether the caller may ask TownwiseAI to read the item's stored file now (DataItemView.canAiRead). */
+function aiReadable(member: MemberPrincipal, item: DataItemRecord, file: FileRecord | null, aiOn: boolean): boolean {
+  return member.viewAs === null && aiOn && file !== null && file.rawDeletedAt === null && FINISHED.includes(file.status)
+    && mayManage(member, item) && (file.ai === null || ASK_AGAIN.includes(file.ai.status));
+}
+
+function aiView(member: MemberPrincipal, file: FileRecord | null): DataItemAiView | null {
+  const ai = file?.ai ?? null;
+  if (ai === null) return null;
+  const result = ai.status === 'done' ? ai.result : null;
+  const hidden = member.viewAs !== null;
+  return {
+    status: ai.status,
+    reason: ai.reason,
+    partial: ai.partial,
+    kind: result?.kind ?? null,
+    summary: result === null || hidden ? null : result.summary,
+    facts: result === null || hidden ? null : [...result.facts],
+    notes: [],
+    daysWritten: 0,
+    uploadRef: null,
+    itemRef: null,
+    calibration: null,
+    canUndo: false,
+  };
+}
+
+function dataItemView(
+  member: MemberPrincipal, item: DataItemRecord, emails: ItemEmails, filesOn: boolean, aiOn: boolean, now: Date,
+): DataItemView {
   const viewAs = member.viewAs !== null;
   const file = filesOn ? item.file : null;
   const shown = file === null ? null : fileView(member, file, emails.added, null);
@@ -147,6 +211,8 @@ function dataItemView(member: MemberPrincipal, item: DataItemRecord, emails: Ite
     canEdit: !viewAs && mayManage(member, item) && editable(item, filesOn, now),
     editedAt: edited === null ? null : edited.toISOString(),
     editedByEmail: edited === null ? null : emails.edited,
+    canAiRead: aiReadable(member, item, file, aiOn),
+    ai: aiView(member, file),
   };
 }
 
@@ -168,12 +234,12 @@ async function emailsFor(ctx: TownwiseContext, items: readonly DataItemRecord[])
 async function itemViews(ctx: TownwiseContext, member: MemberPrincipal, items: readonly DataItemRecord[]): Promise<DataItemView[]> {
   const emails = await emailsFor(ctx, items);
   const now = ctx.now();
-  return items.map((item) => dataItemView(member, item, emails(item), ctx.files !== null, now));
+  return items.map((item) => dataItemView(member, item, emails(item), ctx.files !== null, ctx.aiReads !== null, now));
 }
 
 /** One item as the client sees it, with its emails read now (also Keep on a TownwiseAI card, chat-item-proposals.ts). */
 export async function itemView(ctx: TownwiseContext, member: MemberPrincipal, item: DataItemRecord): Promise<DataItemView> {
-  return dataItemView(member, item, (await emailsFor(ctx, [item]))(item), ctx.files !== null, ctx.now());
+  return dataItemView(member, item, (await emailsFor(ctx, [item]))(item), ctx.files !== null, ctx.aiReads !== null, ctx.now());
 }
 
 const listQuery = z.object({ locationId: objectId.optional(), after: z.string().max(64).optional() });
@@ -432,6 +498,74 @@ async function finishReplace(
     });
   }
   res.status(200).json({ item: await itemView(ctx, member, item) });
+}
+
+function aiUnavailable(): AppError {
+  return new AppError(503, 'ai_unavailable', 'TownwiseAI can’t read files right now');
+}
+
+function aiReadRunning(): AppError {
+  return new AppError(409, 'ai_read_running', 'TownwiseAI is already reading this file');
+}
+
+const aiReadBody = z.strictObject({});
+
+/**
+ * POST /locations/:locationId/data/:ref/ai {}: lets TownwiseAI read the item's stored file (spec 11A.9, D29), opted in
+ * per file. The ref is a stored file (`f_`) or an upload read from one (`u_`, whose file is read). The person who added
+ * it or an org admin (an org admin only, for a Townwise staff upload); never under view-as (the chain refuses it).
+ * In order: 400 for the body and the ref, 404 for another organization's or an unknown location or item, 503
+ * files_unavailable while stored files are off, 503 ai_unavailable while reading with TownwiseAI is off, 403 for anyone
+ * else, 409 ai_read_running while a read is queued or reading, 200 with the item unchanged once a read is done (a double
+ * press is harmless), and 400 invalid_request for an item with no stored file, one whose original was deleted, or one
+ * Townwise is still uploading or reading. A compare-and-set queues the read, so of two presses one wins and the other
+ * answers as above; then it records file.ai_read_requested (the file's kind, never a name), wakes the reader and answers
+ * 202 { item }.
+ */
+export async function requestAiRead(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const member = memberOf(principal);
+  const { scope } = member;
+  parseInput(aiReadBody, req.body);
+  const ref = parseRef(req.params.ref);
+  const location = await loadLocation(ctx, scope, req.params.locationId);
+  if (ctx.files === null) throw filesUnavailable();
+  const item = await loadDataItem(ctx, scope, location.id, ref, member.userId);
+  if (item === null) throw notFound();
+  const reads = ctx.aiReads;
+  if (reads === null) throw aiUnavailable();
+  if (!mayManage(member, item)) throw new AppError(403, 'forbidden', 'Only the person who added it or an org admin can do that');
+  const answered = await answerAsIs(ctx, res, member, item);
+  if (answered) return;
+  const file = item.file;
+  if (file === null) throw new AppError(400, 'invalid_request', 'Only a stored file can be read by TownwiseAI');
+  if (file.rawDeletedAt !== null) throw new AppError(400, 'invalid_request', 'This file’s original was deleted');
+  if (!FINISHED.includes(file.status)) throw new AppError(400, 'invalid_request', 'Townwise is still uploading or reading this file');
+  const at = ctx.now();
+  const queued = await ctx.stores.files.requestAiRead(scope, location.id, file.id, {
+    by: member.userId, role: member.role, byStaff: member.openAsAdmin !== null, grantId: member.openAsAdmin?.grantId ?? null, at,
+  });
+  if (queued === null) {
+    // Another press won, or the file changed meanwhile: answer as it is now.
+    const now = await loadDataItem(ctx, scope, location.id, item.ref, member.userId);
+    if (now === null) throw notFound();
+    if (await answerAsIs(ctx, res, member, now)) return;
+    throw invalidRequest();
+  }
+  await recordAfter(ctx, {
+    ...actorOf(member), at, orgId: scope.orgId, action: 'file.ai_read_requested',
+    target: { type: 'file', id: file.id }, details: { locationId: location.id, kind: file.kind },
+  });
+  reads.nudge();
+  res.status(202).json({ item: await itemView(ctx, member, { ...item, file: queued }) });
+}
+
+/** A read already asked for: 409 while it runs, the item as it is once done (true); false for anything else. */
+async function answerAsIs(ctx: TownwiseContext, res: Response, member: MemberPrincipal, item: DataItemRecord): Promise<boolean> {
+  const status = item.file?.ai?.status;
+  if (status === 'queued' || status === 'reading') throw aiReadRunning();
+  if (status !== 'done') return false;
+  res.status(200).json({ item: await itemView(ctx, member, item) });
+  return true;
 }
 
 /**

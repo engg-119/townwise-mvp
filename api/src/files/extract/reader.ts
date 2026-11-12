@@ -1,0 +1,80 @@
+// Reading with TownwiseAI (spec 11A.9): the request for one file a person opted in, and the model as a port. main.ts
+// builds the real one (model.ts, the only file here that constructs a client) when ANTHROPIC_API_KEY is set; tests pass
+// a scripted fake. The request holds the file's content (a PDF as a document, a picture as an image, anything else as
+// text), today's date and the location's time zone, and nothing else: never the file's name, the organization's or
+// the location's name, or who uploaded it. Nothing here logs.
+import type { BetaContentBlockParam, BetaMessageParam } from '@anthropic-ai/sdk/resources/beta/messages/messages';
+
+import { AI_TEXT_CHARS, MAX_SHEETS } from '../limits.ts';
+import { READER_MAX_TOKENS, READER_MODEL, READER_SYSTEM_PROMPT } from './reader-prompt.ts';
+
+export type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+
+/** What is sent of the file. `form` says what a text was made from; `cut` that it stops at AI_TEXT_CHARS. */
+export type ReaderInput =
+  | { readonly type: 'pdf'; readonly base64: string }
+  | { readonly type: 'image'; readonly mediaType: ImageMediaType; readonly base64: string }
+  | { readonly type: 'text'; readonly form: 'text' | 'workbook' | 'word'; readonly text: string; readonly cut: boolean };
+
+/** Today's date in the location's time zone (YYYY-MM-DD), and that zone. */
+export interface ReaderContext { readonly today: string; readonly timeZone: string }
+
+export interface ReaderRequest {
+  readonly model: string;
+  readonly max_tokens: number;
+  readonly system: string;
+  readonly messages: BetaMessageParam[];
+}
+
+export type ReaderAnswer =
+  /** `output` is the answer's JSON, or null when its text was not JSON (cut at max_tokens, say). */
+  | { readonly kind: 'answered'; readonly output: unknown; readonly costMicroUsd: number }
+  /** Refused through the whole fallback chain; the call still cost what it cost. */
+  | { readonly kind: 'refused'; readonly costMicroUsd: number }
+  /** No answer: the error's class and HTTP status, never its message or the request. */
+  | { readonly kind: 'failed'; readonly errType: string; readonly status: number | null };
+
+export interface FileReaderModel {
+  readFile(request: ReaderRequest, signal: AbortSignal): Promise<ReaderAnswer>;
+}
+
+const TEXT_FORMS: Readonly<Record<Extract<ReaderInput, { type: 'text' }>['form'], string>> = {
+  text: 'a text file (it may be a CSV or TSV export)',
+  workbook: 'an Excel workbook, made into text: each sheet starts with a "Sheet:" line, then its rows, cells apart by tabs',
+  word: 'a Word document, made into text: its paragraphs on lines of their own, and its tables\' rows with cells apart by tabs',
+};
+
+const MARKER = '--- FILE CONTENT ---';
+
+/** The words that go with the file: the date, the zone, what the file is, and whether it was cut. */
+function contextText(input: ReaderInput, context: ReaderContext): string {
+  const lines = [`Today is ${context.today} in the restaurant's time zone, ${context.timeZone}.`];
+  if (input.type === 'pdf') lines.push('The file is the PDF document above.');
+  else if (input.type === 'image') lines.push('The file is the picture above.');
+  else {
+    lines.push(`The file is ${TEXT_FORMS[input.form]}.`);
+    if (input.cut) {
+      const limits = `at most ${AI_TEXT_CHARS.toLocaleString('en-US')} characters${input.form === 'workbook' ? `, from at most its first ${String(MAX_SHEETS)} sheets` : ''}`;
+      lines.push(`It was too long to send whole, so only its start follows (${limits}). Say in the summary that only the start of the file was read.`);
+    }
+    lines.push(`Everything after the line "${MARKER}", to the end of this message, is the file's content.`, MARKER, input.text);
+  }
+  return lines.join('\n');
+}
+
+/** The request for one file, exactly. */
+export function readerRequest(input: ReaderInput, context: ReaderContext): ReaderRequest {
+  const content: BetaContentBlockParam[] = [];
+  if (input.type === 'pdf') {
+    content.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: input.base64 } });
+  } else if (input.type === 'image') {
+    content.push({ type: 'image', source: { type: 'base64', media_type: input.mediaType, data: input.base64 } });
+  }
+  content.push({ type: 'text', text: contextText(input, context) });
+  return {
+    model: READER_MODEL,
+    max_tokens: READER_MAX_TOKENS,
+    system: READER_SYSTEM_PROMPT,
+    messages: [{ role: 'user', content }],
+  };
+}

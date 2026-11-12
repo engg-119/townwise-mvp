@@ -97,6 +97,22 @@ export const MODEL_CALLS_PER_ZIP = 5;
 export const MODEL_CALLS_PER_IMPORT = 20;
 
 /**
+ * Reading with TownwiseAI (spec 11A.9, D29), a file the person opted in: a PDF is sent whole as a document up to 10 MiB
+ * and 600 pages (the API's limit), a PNG, JPEG, GIF or WebP picture up to 5 MiB (the API's limit), and any other file
+ * the reader reads as text, cut at 300,000 characters (marked partial, and the prompt says so). A text file is read
+ * from storage only as far as that many characters can take (4 bytes a character at most). A PDF's own text, kept in
+ * memory to check figures against and never stored, stops at 400,000 characters. Making text in the parse thread takes
+ * at most 2 minutes and the thread's usual heap; past either the read is skipped `too_complex`.
+ */
+export const AI_PDF_BYTES = 10 * MIB;
+export const AI_PDF_PAGES = 600;
+export const AI_IMAGE_BYTES = 5 * MIB;
+export const AI_TEXT_CHARS = 300_000;
+export const AI_TEXT_READ_BYTES = AI_TEXT_CHARS * 4;
+export const AI_SOURCE_CHARS = 400_000;
+export const AI_TEXT_TIME_MS = 2 * 60 * 1000;
+
+/**
  * Originals are deleted this long after upload by the daily sweep (FileView.rawExpiresAt); the storage lifecycle rule is
  * the backstop at 400 days. [CONFIRM: retention periods]
  */

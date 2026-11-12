@@ -19,7 +19,9 @@ import type { TownwiseRoute } from '../../src/access/routes.ts';
 import { createTownwiseApi, createTownwiseLab } from '../../src/app.ts';
 import type { ChatModel } from '../../src/chat/model.ts';
 import { configSchema as townwiseSchema } from '../../src/config.ts';
+import { createAiReader, type AiReader, type AiReaderDeps } from '../../src/files/ai-reader.ts';
 import type { FileBlobs } from '../../src/files/blobs.ts';
+import type { FileReaderModel } from '../../src/files/extract/reader.ts';
 import { createFileWorker, type FileWorker, type FileWorkerDeps } from '../../src/files/worker.ts';
 import type { LabCaller } from '../../src/lab/caller.ts';
 import type { LabRunner } from '../../src/lab/runner.ts';
@@ -61,6 +63,8 @@ export interface TownwiseTestServer {
   readonly mailer: Mailer;
   /** The file reader, when the server was started with `reader`. */
   readonly reader: FileWorker | null;
+  /** Reading with TownwiseAI, when the server was started with `aiReader`; tests drive it with nudge() and settled(). */
+  readonly aiReader: AiReader | null;
   close(): Promise<void>;
 }
 
@@ -105,6 +109,11 @@ export async function startTownwiseServer(opts?: {
   files?: FileBlobs;
   /** Runs the file reader on `files`; tests drive it with nudge() and settled(). */
   reader?: Partial<Pick<FileWorkerDeps, 'parse' | 'leaseMs' | 'extract' | 'filesMonthlyBudgetUsd'>>;
+  /**
+   * Reading with TownwiseAI on `files`, over a scripted model (no call leaves the test); absent, it is off and its route
+   * answers 503 ai_unavailable. The budget defaults to 5 dollars, as in production.
+   */
+  aiReader?: { model: FileReaderModel } & Partial<Pick<AiReaderDeps, 'leaseMs' | 'extractText' | 'onRead' | 'filesMonthlyBudgetUsd'>>;
   /** U13A: synthetic headcount inputs for people in town; absent, the committed (empty) sources. */
   peopleData?: PeopleData;
   /** The forecast lab's runner (helpers/lab.ts has a fake); absent, calibrations are off. /lab is mounted either way. */
@@ -177,10 +186,14 @@ export async function startTownwiseServer(opts?: {
       connection: mongo.connection, stores: createTownwiseStores(mongo.connection), authStores, blobs: files, logger, now: clock.now,
       replicaId: 'test-reader', pollMs: 60_000, ...opts.reader,
     });
+    const aiReader = files === undefined || opts?.aiReader === undefined ? null : createAiReader({
+      connection: mongo.connection, stores: createTownwiseStores(mongo.connection), authStores, blobs: files, logger, now: clock.now,
+      pollMs: 60_000, filesMonthlyBudgetUsd: 5, ...opts.aiReader,
+    });
     const deps = {
       config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now: clock.now, chat: opts?.chat,
       chatTurnTimeLimitMs: opts?.chatTurnTimeLimitMs, places: opts?.places, mailer, placesMap: opts?.placesMap,
-      files, fileWorker: reader ?? undefined, peopleData: opts?.peopleData, labRunner: opts?.labRunner,
+      files, fileWorker: reader ?? undefined, aiReader: aiReader ?? undefined, peopleData: opts?.peopleData, labRunner: opts?.labRunner,
       labCaller: opts?.labCaller ?? (opts?.labRunner === undefined ? undefined : testLabCaller(clock.now)),
     };
     const apiRouter = createTownwiseApi(deps);
@@ -190,7 +203,8 @@ export async function startTownwiseServer(opts?: {
     ];
     if (opts?.probe !== undefined) routes.push({ path: '/probe', router: createTownwiseApi(deps, opts.probe) });
     await ensureIndexes(mongo.connection, { logger, buildAtBoot: () => true });
-    const server = createServer({ config, logger, routes, onShutdown: reader === null ? [redis, mongo] : [reader, redis, mongo], exit: () => undefined });
+    const readers = [reader, aiReader].filter((each): each is FileWorker | AiReader => each !== null);
+    const server = createServer({ config, logger, routes, onShutdown: [...readers, redis, mongo], exit: () => undefined });
     const listened = await server.listen();
     return {
       url: `http://127.0.0.1:${String(listened.port)}`,
@@ -205,6 +219,7 @@ export async function startTownwiseServer(opts?: {
       mail,
       mailer,
       reader,
+      aiReader,
       close: () => server.shutdown('test'),
     };
   } catch (err) {
