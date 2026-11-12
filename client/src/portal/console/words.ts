@@ -83,6 +83,10 @@ export const AUDIT_ACTIONS: readonly { value: string; label: string }[] = [
   { value: 'file.deleted', label: 'File deleted' },
   { value: 'file.raw_deleted', label: 'Original deleted' },
   { value: 'files.raw_deleted_all', label: 'Originals deleted' },
+  // D34, reading a file with TownwiseAI.
+  { value: 'file.ai_read_requested', label: 'TownwiseAI read asked' },
+  { value: 'file.ai_read', label: 'File read by TownwiseAI' },
+  { value: 'file.ai_undone', label: 'TownwiseAI read undone' },
   { value: 'org.originals_deleted', label: 'Originals purged' },
   { value: 'note.created', label: 'Note added' },
   { value: 'note.updated', label: 'Note changed' },

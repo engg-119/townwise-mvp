@@ -229,7 +229,7 @@ describe('notes from the events', () => {
 
     const item = await itemOf(team.member, l1, `f_${fileId}`);
     expect(item.ai).toMatchObject({
-      status: 'done', daysWritten: 0, uploadRef: null, calibration: { status: 'not_admin', id: null }, canUndo: true,
+      status: 'done', daysWritten: 0, uploadRef: null, daysReason: 'not_sales', itemReason: null, calibration: { status: 'not_admin', id: null }, canUndo: true,
       notes: [
         { id: notes[0]?.id, title: 'Wedding dinner', startDate: '2026-06-14', endDate: '2026-06-14' },
         { id: notes[1]?.id, title: 'Closed for the floor', startDate: '2026-07-01', endDate: '2026-07-02' },
@@ -336,7 +336,7 @@ describe('days from the daily totals', () => {
 
     const upload = await itemOf(team.admin, l1, `u_${uploadId}`);
     expect(upload).toMatchObject({ via: 'townwise_ai', kind: 'daily_totals', fromAiRead: `f_${fileId}`, canTurnOff: true, canDelete: true, ai: null });
-    expect((await itemOf(team.admin, l1, `f_${fileId}`)).ai).toMatchObject({ daysWritten: 3, uploadRef: `u_${uploadId}` });
+    expect((await itemOf(team.admin, l1, `f_${fileId}`)).ai).toMatchObject({ daysWritten: 3, uploadRef: `u_${uploadId}`, daysReason: null });
     const uploaded = (await eventsOf('sales.uploaded')).at(-1);
     expect(uploaded).toMatchObject({
       actorUserId: team.admin.userId, actorRole: 'org_admin', target: { type: 'upload', id: uploadId },
@@ -454,6 +454,8 @@ describe('the summary item', () => {
     answers = [answer({ summary: '', events: [] })];
     await readAs(team.member, l1, empty);
     expect(await outcomeOf(empty)).toMatchObject({ itemId: null, itemReason: 'no_summary' });
+    expect((await itemOf(team.member, l1, `f_${full}`)).ai).toMatchObject({ itemRef: null, itemReason: 'daily_upload_limit' });
+    expect((await itemOf(team.member, l1, `f_${empty}`)).ai).toMatchObject({ itemRef: null, itemReason: 'no_summary' });
   });
 });
 
@@ -679,7 +681,7 @@ describe('DELETE /api/org/locations/:locationId/data/:ref/ai', () => {
     expect(res.status).toBe(200);
     const body = await res.json() as { item: DataItemView; calibrationKept: string | null };
     expect(body.calibrationKept).toBe(calibration.id);
-    expect(body.item).toMatchObject({ canAiRead: true, ai: { status: 'undone', notes: [], daysWritten: 0, uploadRef: null, itemRef: null, calibration: null, canUndo: false } });
+    expect(body.item).toMatchObject({ canAiRead: true, ai: { status: 'undone', notes: [], daysWritten: 0, uploadRef: null, itemRef: null, daysReason: null, itemReason: null, calibration: null, canUndo: false } });
     expect(await count('tw_notes', { locationId: oid(l1) })).toBe(0);
     expect(await count('tw_uploads', { _id: oid(String(outcome.uploadId)) })).toBe(0);
     expect(await count('tw_sales_days', { uploadId: oid(String(outcome.uploadId)) })).toBe(0);

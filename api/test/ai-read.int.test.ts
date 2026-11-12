@@ -210,7 +210,7 @@ describe('POST /api/org/locations/:locationId/data/:ref/ai', () => {
     expect(done).toMatchObject({ canAiRead: false });
     expect(done.ai).toEqual({
       status: 'done', reason: null, partial: false, kind: 'calendar', summary: 'A list of June events.', facts: ['Three events in June'],
-      notes: [], daysWritten: 0, uploadRef: null, itemRef: null, calibration: null, canUndo: false,
+      notes: [], daysWritten: 0, uploadRef: null, itemRef: null, daysReason: null, itemReason: null, calibration: null, canUndo: false,
     });
     expect(await aiOf(fileId)).toMatchObject({ status: 'done', attempts: 1, leaseUntil: null, costMicroUsd: 2500, requestedBy: team.member.userId });
     const readEvent = (await eventsOf('file.ai_read')).at(-1);

@@ -18,7 +18,9 @@ import {
 import type { FileBlobs } from '../files/blobs.ts';
 import { renamedItemName, replaceClaimLive, replaceClaimStaleBefore, TEXT_ITEM_TITLE_MAX } from '../files/items.ts';
 import { currentEmail, DELETED_PERSON, TOWNWISE_STAFF } from '../people.ts';
-import type { AiCalibration, AiFileKind, AiReadStatus, FileKind, FileRecord, FileStatus } from '../stores/files.ts';
+import type {
+  AiCalibration, AiDaysReason, AiFileKind, AiItemReason, AiReadStatus, FileKind, FileRecord, FileStatus,
+} from '../stores/files.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { NoteRecord } from '../stores/notes.ts';
 import { fileView, isUploaderOrAdmin, removeWholeFile } from './files.ts';
@@ -75,9 +77,10 @@ export interface DataItemView {
  * once it is done; under view-as `summary`, `facts` and the notes' titles are null (they may describe private data).
  * What the read made, once recorded: `notes` it created that still exist (each note's id and dates as they are now,
  * and the title of the event it was made from), `daysWritten` (the days its upload held once written), `uploadRef` and
- * `itemRef` (its upload and summary item, while they exist), and `calibration` (the model update's status, and the
- * calibration's id when one started); `[]`, 0, null, null and null before that and once undone. `canUndo`: the read is
- * done and made something, the caller asked for it or is an org admin, not under view-as (DELETE .../ai).
+ * `itemRef` (its upload and summary item, while they exist), `daysReason` and `itemReason` (why it wrote no days or kept
+ * no summary item, as codes), and `calibration` (the model update's status, and the calibration's id when one started);
+ * `[]`, 0, null, null, null, null and null before that and once undone. `canUndo`: the read is done and made something,
+ * the caller asked for it or is an org admin, not under view-as (DELETE .../ai).
  */
 export interface DataItemAiView {
   status: AiReadStatus;
@@ -90,6 +93,8 @@ export interface DataItemAiView {
   daysWritten: number;
   uploadRef: string | null;
   itemRef: string | null;
+  daysReason: AiDaysReason | null;
+  itemReason: AiItemReason | null;
   calibration: AiCalibration | null;
   canUndo: boolean;
 }
@@ -221,6 +226,8 @@ function aiView(member: MemberPrincipal, file: FileRecord | null, links: AiLinks
     daysWritten: outcome?.daysWritten ?? 0,
     uploadRef: uploadId !== null && links.uploads.has(uploadId) ? `u_${uploadId}` : null,
     itemRef: itemId !== null && links.items.has(itemId) ? `f_${itemId}` : null,
+    daysReason: outcome?.daysReason ?? null,
+    itemReason: outcome?.itemReason ?? null,
     calibration: outcome === null ? null : { ...outcome.calibration },
     canUndo: madeSomething(file) && mayUndo(member, file),
   };
