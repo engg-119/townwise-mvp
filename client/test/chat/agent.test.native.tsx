@@ -284,7 +284,8 @@ describe('conversations', () => {
     expect(screen.getByText('Checked December against the notes.')).toBeTruthy();
     expect(screen.getByText('Based on your sales from Dec 1 to Dec 31, 2025.')).toBeTruthy();
     expect(screen.getByText('Proposed note')).toBeTruthy();
-    expect(screen.getAllByText('Earlier chat').length).toBeGreaterThan(0);
+    // The header names no conversation (its title shows only in History).
+    expect(screen.queryByText('Earlier chat')).toBeNull();
 
     await fireEvent.press(screen.getByRole('button', { name: 'History' }));
     await fireEvent.press(screen.getByRole('button', { name: 'Delete Earlier chat' }));
@@ -292,7 +293,7 @@ describe('conversations', () => {
     await fireEvent.press(screen.getByRole('button', { name: 'Delete' }));
     await waitFor(() => { expect(screen.queryByText('We close for the holidays.')).toBeNull(); });
     expect(chat.writes).toEqual([{ method: 'DELETE', path: '/api/org/locations/l1/chat/c1', body: undefined }]);
-    expect(screen.getByText('New conversation')).toBeTruthy();
+    expect(screen.queryByText('New conversation')).toBeNull();
     // Back to the landing.
     expect(screen.getByRole('heading', { name: 'Ask TownwiseAI about Main Street Bar' })).toBeTruthy();
   });

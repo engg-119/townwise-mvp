@@ -274,6 +274,7 @@ const BODY: Record<string, unknown> = {
   'org.agent.answer': { answer: 'not_sure' },
   // D28.
   'org.data.update': { enabled: false },
+  'org.data.replace': { fileId: new Types.ObjectId().toHexString() },
 };
 const QUERY: Record<string, string> = {
   'org.sales.days': '?from=2026-01-01&to=2026-05-31', 'org.calendar.get': '?from=2026-01-01&to=2026-05-31',
@@ -348,7 +349,7 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
       // U13B.
       'org.forecast.get',
       // D28, Your data.
-      'org.data.update', 'org.data.remove', 'org.chat.item_proposal.get', 'org.chat.item_proposal',
+      'org.data.update', 'org.data.remove', 'org.chat.item_proposal.get', 'org.chat.item_proposal', 'org.data.replace', 'org.data.get',
     ]));
   });
 

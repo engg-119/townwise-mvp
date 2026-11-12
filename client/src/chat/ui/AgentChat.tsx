@@ -23,8 +23,8 @@ import { Suggestions } from './Suggestions';
 import { FadeIn } from './ToolGroup';
 import { UserMessage } from './UserMessage';
 
-// The TownwiseAI chat page (spec P25, D26): the one-time name prompt, the header (the conversation's title; History,
-// New chat and Questions and activity), then the landing of an empty conversation (one centered column: what to ask,
+// The TownwiseAI chat page (spec P25, D26): the one-time name prompt, the header (History,
+// New chat and Questions and activity; no title), then the landing of an empty conversation (one centered column: what to ask,
 // what TownwiseAI reads, the composer and the quick-start chips) or the thread, with the composer docked under it.
 // Above the composer: the 80% budget line, the error and the read-only line; once the budget is used up, a sentence
 // takes the composer's place. Messages and the composer share one centered column, at most 760px wide. The thread is
@@ -208,9 +208,6 @@ export function AgentChat(props: {
     );
   }
 
-  const title = state.conversationId === null
-    ? ''
-    : (state.conversations.find((conversation) => conversation.id === state.conversationId)?.title ?? 'Conversation');
   const today = localToday();
   const suggestions = suggestionsFor({ coverage: ctx.coverage, today, townName: ctx.town, hasTownProfile: ctx.hasTownProfile });
   const examples = [...suggestions.flatMap((item) => (item.kind === 'ask' ? [item.text] : [])), ...(ctx.hasSales ? [SATURDAY] : [])];
@@ -239,7 +236,6 @@ export function AgentChat(props: {
 
   const header = (
     <ChatHeader
-      title={title}
       conversations={state.conversations}
       openId={state.conversationId}
       streaming={state.streaming}

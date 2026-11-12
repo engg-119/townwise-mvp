@@ -288,6 +288,16 @@ describe('year over year', () => {
     );
   });
 
+  test('a month is complete once the history runs through it, closed days and gaps inside it included', () => {
+    // Closed Mondays have no row, June 2025 has a gap, and the history runs from Jan 15, 2025 to Nov 4, 2026.
+    const monday = (date: string): boolean => new Date(`${date}T00:00:00Z`).getUTCDay() === 1;
+    const gap = (date: string): boolean => date >= '2025-06-05' && date <= '2025-06-20';
+    const days = run('2025-01-15', '2026-11-04', (date) => (monday(date) || gap(date) ? null : 100));
+    const { cells } = yearOverYear(analyticsInput(days, EMPTY_CONTEXT, defaultFilters(days)));
+    const hollow = cells.filter((cell) => cell.n > 0 && !cell.complete).map((cell) => `${String(cell.year)}-${String(cell.month)}`);
+    expect(hollow).toEqual(['2025-1', '2026-11']);
+  });
+
   test('a month with fewer than 15 days in either year is not compared', () => {
     const days = [...run('2025-03-01', '2025-03-14', () => 100), ...run('2025-04-01', '2025-04-30', () => 100), ...run('2026-03-01', '2026-04-30', () => 90)];
     const result = yearOverYear(analyticsInput(days, EMPTY_CONTEXT, defaultFilters(days)));

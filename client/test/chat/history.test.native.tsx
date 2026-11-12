@@ -12,7 +12,7 @@ it('the header wraps on phones and every control is 44px tall', async () => {
   jest.spyOn(Dimensions, 'get').mockReturnValue({ ...Dimensions.get('window'), width: 390 });
   await render(
     <ChatHeader
-      title="Earlier chat" conversations={[]} openId={null} streaming={false} readOnlyId={null} panelOpen={false} openQuestions={2}
+      conversations={[]} openId={null} streaming={false} readOnlyId={null} panelOpen={false} openQuestions={2}
       onOpen={jest.fn()} onNew={jest.fn()} onDelete={jest.fn()} onRename={jest.fn()} onTogglePanel={jest.fn()}
     />,
   );
