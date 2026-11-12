@@ -10,11 +10,12 @@
 # Usage: infra/ci-runner/run-runners.sh [-n slots] [-i image]
 #   -n  jobs at a time (default 2)
 #   -i  run this image (tag or ID) instead of building infra/ci-runner/Dockerfile
-# Needs Docker Desktop on Apple Silicon, jq, and gh signed in as an admin of the repository (generate-jitconfig
-# requires admin). The runner config stays in shell variables and the container's environment: this script never
-# prints it, writes it to a file or puts it on a command line. (The runner writes its credentials into the job
-# folder, which is removed with the job.) Never run it under bash -x: a trace prints the config. For the same
-# reason it turns tracing off and clears GH_DEBUG and DEBUG, with which gh logs response bodies.
+# Needs Docker Desktop on Apple Silicon sharing only ~/.townwise-ci (Settings, Resources, File sharing; it refuses
+# to start otherwise), jq, and gh signed in as an admin of the repository (generate-jitconfig requires admin). The
+# runner config stays in shell variables and the container's environment: this script never prints it, writes it to
+# a file or puts it on a command line. (The runner writes its credentials into the job folder, which is removed with
+# the job.) Never run it under bash -x: a trace prints the config. For the same reason it turns tracing off and
+# clears GH_DEBUG and DEBUG, with which gh logs response bodies.
 set +x
 set -euo pipefail
 unset GH_DEBUG DEBUG
@@ -51,6 +52,26 @@ if [ "$(docker info --format '{{.Architecture}}' 2> /dev/null)" != aarch64 ]; th
 fi
 if ! gh auth status --hostname github.com > /dev/null 2>&1; then
   echo "gh is not signed in: run gh auth login" >&2
+  exit 1
+fi
+
+# Every job holds the Docker socket, which is root in Docker Desktop's VM, and by default Docker Desktop shares all
+# of /Users (and /Volumes, /private, /tmp, /var/folders) with that VM: any job could read and write the home folder
+# (SSH keys, Azure CLI tokens). So the runner starts only when the saved File sharing list is exactly ~/.townwise-ci.
+# Unset (null) means the defaults. After the image is ready, a probe checks that the list has been applied.
+settings_dir="$HOME/Library/Group Containers/group.com.docker"
+shared=null
+for file in settings-store.json settings.json; do
+  if [ -f "$settings_dir/$file" ]; then
+    shared="$(jq -c '(.FilesharingDirectories // .filesharingDirectories)
+      | if type == "array" then map(sub("/+$"; "")) else null end' "$settings_dir/$file" 2> /dev/null || echo null)"
+    break
+  fi
+done
+if [ "$shared" != "$(jq -cn --arg dir "$root" '[$dir]')" ]; then
+  if [ "$shared" = null ]; then shared='the defaults, all of /Users among them'; fi
+  echo "Docker Desktop must share only $root with its VM; it shares $shared." >&2
+  echo "Set Docker Desktop, Settings, Resources, File sharing to that one folder, Apply & restart, then start again." >&2
   exit 1
 fi
 
@@ -235,6 +256,23 @@ if [ -z "$image" ]; then
 fi
 if ! image_id="$(docker image inspect --format '{{.Id}}' "$image" 2> /dev/null)"; then
   echo "no image $image" >&2
+  exit 1
+fi
+check_stop
+
+# The saved File sharing list takes effect only after Apply & restart. A container that mounts $root must see the
+# job folders (else every job's checkout is refused), and one that mounts the home folder must not see $root in it:
+# Docker Desktop refuses a folder it does not share. The first probe is the control that makes the second meaningful.
+sees() {
+  docker run --rm --pull never --network none --entrypoint test --volume "$1:/probe:ro" "$image_id" -d "/probe/$2" \
+    > /dev/null 2>&1
+}
+if ! sees "$root" jobs; then
+  echo "a container cannot mount $root: check Docker Desktop, Settings, Resources, File sharing" >&2
+  exit 1
+fi
+if sees "$HOME" .townwise-ci; then
+  echo "a container can still mount $HOME: Docker Desktop has not applied the File sharing list; Apply & restart" >&2
   exit 1
 fi
 check_stop
