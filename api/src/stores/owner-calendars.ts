@@ -200,7 +200,7 @@ export interface OwnerCalendarStore {
   sealedAddress(scope: OrgScope, locationId: string, calendarId: string): Promise<string | null>;
   /**
    * Stores the calendar, then its events (the first 2,000), as one replace. 'calendar_limit' when the location already
-   * has 5, and nothing is stored.
+   * has 5, and nothing is stored. When the events are not switched in, the calendar is removed and the add throws.
    */
   add(scope: OrgScope, locationId: string, calendar: NewCalendar, parsed: ParsedCalendar, input: { createdBy: string; now: Date }): Promise<OwnerCalendarRecord | 'calendar_limit'>;
   /**
@@ -295,6 +295,12 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
     return true;
   }
 
+  async function remove(scope: OrgScope, locationId: string, calendarId: string): Promise<boolean> {
+    const key = ofCalendar(scope, locationId, calendarId);
+    const events = { orgId: key.orgId, locationId: key.locationId, sourceId: key._id };
+    return (await removeWhere(events, key)) === 1;
+  }
+
   return {
     async list(scope, locationId) {
       const docs = await Source.find(ofLocation(scope, locationId)).sort({ createdAt: 1, _id: 1 }).lean();
@@ -332,19 +338,24 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
         }
       }
       if (added === null) return 'calendar_limit';
-      // A crash before the events are switched in leaves the calendar empty, with no lastSuccessAt: removing it, or a
-      // link's next refresh, completes the work.
-      await replaceEvents(scope, locationId, added._id.toHexString(), parsed, input.now);
+      // If the events are not switched in (an error, or the calendar removed or refreshed meanwhile), the calendar goes
+      // with every row written and the add fails, so it holds no slot and a retry adds it once. Only a crash before
+      // that removal leaves the calendar empty, with no lastSuccessAt: removing it, or a link's next refresh, completes
+      // the work.
+      const calendarId = added._id.toHexString();
+      let replaced = false;
+      try {
+        replaced = await replaceEvents(scope, locationId, calendarId, parsed, input.now);
+      } finally {
+        if (!replaced) await remove(scope, locationId, calendarId);
+      }
+      if (!replaced) throw new Error('the calendar was removed or refreshed before its events were stored');
       return toCalendar({
         ...added, eventCount: Math.min(parsed.events.length, MAX_EVENTS), skippedRepeating: parsed.skippedRepeating, lastSuccessAt: input.now,
       });
     },
     replaceEvents,
-    async remove(scope, locationId, calendarId) {
-      const key = ofCalendar(scope, locationId, calendarId);
-      const events = { orgId: key.orgId, locationId: key.locationId, sourceId: key._id };
-      return (await removeWhere(events, key)) === 1;
-    },
+    remove,
     async eventsBetween(scope, locationId, range) {
       const location = ofLocation(scope, locationId);
       const current = () => Source.find(location, { label: 1, generation: 1 }).sort({ createdAt: 1, _id: 1 }).lean();

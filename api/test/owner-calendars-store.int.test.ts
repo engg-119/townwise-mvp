@@ -227,6 +227,39 @@ describe('replace by generation', () => {
     expect(await calendars.remove(t.scope, t.locationId, added.id)).toBe(false);
   });
 
+  it('an add that fails after writing its events, before the switch, removes the calendar and its rows, and a retry adds it once', async () => {
+    const t = await tenant();
+    const org = { orgId: new Types.ObjectId(t.orgId) };
+    vi.spyOn(sourceModel(), 'updateOne').mockImplementationOnce(() => Promise.reject(new Error('crashed')));
+    await expect(addCalendar(t, 'Bookings', [event('a', '2026-11-05', { title: 'Rehearsal dinner' })])).rejects.toThrow('crashed');
+    expect(await count('tw_calendar_sources', org)).toBe(0);
+    expect(await count('tw_calendar_events', org)).toBe(0);
+
+    const retried = await addFile(t, 'Bookings', [event('a', '2026-11-05', { title: 'Rehearsal dinner' })]);
+    expect(await calendars.list(t.scope, t.locationId)).toEqual([retried]);
+    expect(await server.connection.collection('tw_calendar_sources').findOne({ _id: new Types.ObjectId(retried.id) })).toMatchObject({ slot: 0, generation: 1 });
+    expect(await titlesIn(t)).toEqual(['Rehearsal dinner']);
+  });
+
+  it('an add whose calendar is removed before its events are switched in fails rather than answer a record, and leaves nothing', async () => {
+    const t = await tenant();
+    const hold = holdCalls(server, 'updateOne', 'TwCalendarSource');
+    try {
+      const adding = addCalendar(t, 'Bookings', [event('a', '2026-11-05', { title: 'Rehearsal dinner' })]);
+      // Created, its events written, about to switch.
+      await hold.arrived(1);
+      const [created] = await calendars.list(t.scope, t.locationId);
+      expect(await calendars.remove(t.scope, t.locationId, created?.id ?? '')).toBe(true);
+      hold.release(1);
+      await expect(adding).rejects.toThrow('removed or refreshed');
+    } finally {
+      hold.restore();
+    }
+    const org = { orgId: new Types.ObjectId(t.orgId) };
+    expect(await count('tw_calendar_sources', org)).toBe(0);
+    expect(await count('tw_calendar_events', org)).toBe(0);
+  });
+
   it('of two replaces started together, the one that switches second loses its compare-and-set and deletes its own rows', async () => {
     const t = await tenant();
     const added = await addFile(t, 'Bookings', [event('a', '2026-11-03', { title: 'Old one' })]);
