@@ -15,10 +15,12 @@ import { listCalibrations, startCalibration, switchForecasts } from '../handlers
 import { deleteConversation, getChat, getConversation, postTurn, renameConversation, showVersion } from '../handlers/chat.ts';
 import { rateReply } from '../handlers/chat-feedback.ts';
 import { actOnItemProposal, getItemProposal } from '../handlers/chat-item-proposals.ts';
+import { actOnOrderProposal, getOrderProposal } from '../handlers/chat-order-proposals.ts';
 import { actOnProposal } from '../handlers/chat-proposals.ts';
 import { listData, removeDataItem, updateDataItem } from '../handlers/data.ts';
 import { deleteOrg, deletePerson, purgeOriginals } from '../handlers/deletion.ts';
 import { getEstimatesAbout, getForecast, getPeopleInTown } from '../handlers/estimates.ts';
+import { getOrders, saveOrderDecision, saveOrderRule, turnOffOrderRule } from '../handlers/orders.ts';
 import { deleteForecastRun, importForecastRun, listForecastRuns, publishForecastRun, withdrawForecastRun } from '../handlers/forecast-runs.ts';
 import {
   addTextItem, answerImport, completeFile, createFile, currentImport, deleteFile, deleteLocationOriginals, deleteRaw, downloadClean, downloadRaw, getFile, getImport,
@@ -305,6 +307,33 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.forecast.get', method: 'GET', path: '/org/locations/:locationId/forecast', policy: 'member', bodyLimit: 'none',
     openAsAdmin: true, handler: getForecast,
+  },
+  // Orders: the board, a saved edit, and a confirmed rule. The sample is a query on the GET.
+  {
+    id: 'org.orders.get', method: 'GET', path: '/org/locations/:locationId/orders', policy: 'member', bodyLimit: 'none',
+    openAsAdmin: true, handler: getOrders,
+  },
+  {
+    id: 'org.orders.decision', method: 'POST', path: '/org/locations/:locationId/orders/decisions', policy: 'member',
+    bodyLimit: '2kb', openAsAdmin: true, handler: saveOrderDecision,
+  },
+  {
+    id: 'org.orders.rule', method: 'POST', path: '/org/locations/:locationId/orders/rules', policy: 'member',
+    bodyLimit: '2kb', openAsAdmin: true, handler: saveOrderRule,
+  },
+  {
+    id: 'org.orders.rule_off', method: 'POST', path: '/org/locations/:locationId/orders/rules/off', policy: 'member',
+    bodyLimit: '1kb', openAsAdmin: true, handler: turnOffOrderRule,
+  },
+  {
+    id: 'org.chat.order_proposal.get', method: 'GET',
+    path: '/org/locations/:locationId/chat/:conversationId/order-proposals/:proposalId', policy: 'member', bodyLimit: 'none',
+    openAsAdmin: true, handler: getOrderProposal,
+  },
+  {
+    id: 'org.chat.order_proposal', method: 'POST',
+    path: '/org/locations/:locationId/chat/:conversationId/order-proposals/:proposalId', policy: 'member', bodyLimit: '2kb',
+    openAsAdmin: true, handler: actOnOrderProposal,
   },
 
   { id: 'org.members.list', method: 'GET', path: '/org/members', policy: 'org_admin', bodyLimit: 'none', handler: listMembers },

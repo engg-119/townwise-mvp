@@ -15,6 +15,7 @@ const REGISTERED = [
   'list_data_items', 'read_data_item', 'propose_data_item',
   // The forecast lab.
   'start_calibration', 'get_calibration', 'compare_forecast_models',
+  'get_order_board', 'get_order_line', 'propose_order_change', 'propose_order_rule',
 ];
 const CTX = { town: 'Hanover', hasTownProfile: true };
 
@@ -31,7 +32,7 @@ test('every registered tool has words for each state; propose_note, propose_data
       .toEqual(name === 'start_calibration' ? ['Starting', 'Asked to start', 'Couldn’t start'] : ['Reading', 'Read', 'Couldn’t read']);
     for (const line of lines) expect(line.object).not.toBe('');
   }
-  expect(REGISTERED.filter(isHiddenTool)).toEqual(['propose_note', 'show_visual', 'suggest_next', 'propose_data_item']);
+  expect(REGISTERED.filter(isHiddenTool)).toEqual(['propose_note', 'show_visual', 'suggest_next', 'propose_data_item', 'propose_order_change', 'propose_order_rule']);
 });
 
 test('the rows read the views: dates, counts and source links only', () => {

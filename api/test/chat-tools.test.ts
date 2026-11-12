@@ -32,6 +32,8 @@ const FROZEN_NAMES = [
   'list_data_items', 'read_data_item', 'propose_data_item',
   // The forecast lab.
   'start_calibration', 'get_calibration', 'compare_forecast_models',
+  // Orders.
+  'get_order_board', 'get_order_line', 'propose_order_change', 'propose_order_rule',
 ];
 
 describe('the tool registry', () => {

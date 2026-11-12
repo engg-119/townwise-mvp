@@ -16,3 +16,26 @@ export function aboutDraft(about: unknown, today: string): string | null {
   const day = `${SHORT_WEEKDAYS[date.getUTCDay()] ?? ''}, ${SHORT_MONTHS[date.getUTCMonth()] ?? ''} ${String(date.getUTCDate())}`;
   return `Tell me about ${about.slice(0, 4) === today.slice(0, 4) ? day : `${day}, ${about.slice(0, 4)}`}`;
 }
+
+export interface OrderDraftLine {
+  readonly itemId: string;
+  readonly name: string;
+}
+
+export interface OrderDraftBoard {
+  readonly delivery: string;
+  readonly lines: readonly OrderDraftLine[];
+}
+
+/** The composer text for `?order=` and an optional `?item=`. A date or item the board does not have is ignored. */
+export function orderDraft(order: unknown, item: unknown, board: OrderDraftBoard | null): string | null {
+  if (board === null || typeof order !== 'string' || !isCalendarDate(order) || order !== board.delivery) return null;
+  const date = new Date(`${order}T00:00:00.000Z`);
+  const day = `${SHORT_WEEKDAYS[date.getUTCDay()] ?? ''}, ${SHORT_MONTHS[date.getUTCMonth()] ?? ''} ${String(date.getUTCDate())}`;
+  const when = order.slice(0, 4) === board.delivery.slice(0, 4) ? day : `${day}, ${order.slice(0, 4)}`;
+  if (item === undefined || item === '') return `Explain the order for the ${when} delivery`;
+  if (typeof item !== 'string') return null;
+  const line = board.lines.find((entry) => entry.itemId === item);
+  if (line === undefined) return null;
+  return `Why ${line.name} for the ${when} delivery?`;
+}

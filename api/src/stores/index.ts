@@ -17,6 +17,7 @@ import { createImportStore, type ImportStore } from './imports.ts';
 import { createLocationStore, type LocationStore } from './locations.ts';
 import { createMemberStore, type MemberStore } from './members.ts';
 import { createNoteStore, type NoteStore } from './notes.ts';
+import { createOrderStore, type OrderStore } from './orders.ts';
 import { createOrgStore, type OrgStore } from './orgs.ts';
 import { createProfileStore, type ProfileStore } from './profiles.ts';
 import { createSalesDayStore, type SalesDayStore } from './sales-days.ts';
@@ -36,6 +37,7 @@ export interface TownwiseStores {
   readonly salesDays: SalesDayStore;
   readonly uploads: UploadStore;
   readonly notes: NoteStore;
+  readonly orders: OrderStore;
   readonly chatConversations: ChatConversationStore;
   readonly chatLiveTurns: ChatLiveTurnStore;
   readonly chatUsage: ChatUsageStore;
@@ -72,6 +74,7 @@ export function createTownwiseStores(connection: Connection): TownwiseStores {
     salesDays: createSalesDayStore(connection),
     uploads: createUploadStore(connection),
     notes: createNoteStore(connection),
+    orders: createOrderStore(connection),
     chatConversations: createChatConversationStore(connection),
     chatLiveTurns: createChatLiveTurnStore(connection),
     chatUsage: createChatUsageStore(connection),

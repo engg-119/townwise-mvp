@@ -2,13 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocalSearchParams } from 'expo-router';
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
 
-import { aboutDraft } from '../../../../../../src/chat/about';
+import { aboutDraft, orderDraft } from '../../../../../../src/chat/about';
 import { useAgentPanel } from '../../../../../../src/chat/useAgentPanel';
 import { useTuningChat } from '../../../../../../src/chat/useTuningChat';
 import { AgentChat, type AgentChatContext } from '../../../../../../src/chat/ui/AgentChat';
 import { AgentSidePanel } from '../../../../../../src/chat/ui/AgentSidePanel';
 import { PanelSheet } from '../../../../../../src/chat/ui/PanelSheet';
 import { fetchEstimatesAbout } from '../../../../../../src/portal/estimates/api';
+import { fetchOrderBoard } from '../../../../../../src/portal/orders/api';
 import { useBreakpoint, useLoad } from '../../../../../../src/portal/hooks';
 import { localToday } from '../../../../../../src/portal/locations/dates';
 import { useOrgRefreshOnLeave } from '../../../../../../src/portal/locations/parts';
@@ -46,8 +47,26 @@ export default function TownwiseAIScreen(): React.JSX.Element {
   const panel = useAgentPanel(api, location.id, markOrgStale);
   const head = useScrollingHead();
   const about = useLoad(useCallback(() => fetchEstimatesAbout(api, location.id), [api, location.id]));
-  const params = useLocalSearchParams<{ about?: string | string[] }>();
-  const draft = aboutDraft(params.about, localToday());
+  const params = useLocalSearchParams<{ about?: string | string[]; order?: string | string[]; item?: string | string[] }>();
+  const orderParam = Array.isArray(params.order) ? params.order[0] : params.order;
+  const itemParam = Array.isArray(params.item) ? params.item[0] : params.item;
+  const [orderText, setOrderText] = useState<string | null>(null);
+  useEffect(() => {
+    if (orderParam === undefined) return undefined;
+    let live = true;
+    void (async () => {
+      try {
+        const own = await fetchOrderBoard(api, location.id);
+        const board = own.available ? own : await fetchOrderBoard(api, location.id, true);
+        const text = orderDraft(orderParam, itemParam, board.available ? board : null);
+        if (live) setOrderText(text);
+      } catch {
+        if (live) setOrderText(null);
+      }
+    })();
+    return () => { live = false; };
+  }, [api, itemParam, location.id, orderParam]);
+  const draft = orderText ?? aboutDraft(params.about, localToday());
   const filled = useRef<string | null>(null);
   const { setDraft } = chat;
   const empty = chat.state.draft === '';

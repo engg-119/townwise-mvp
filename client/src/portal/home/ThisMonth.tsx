@@ -32,7 +32,7 @@ export const PEOPLE_HEAD = 'Who’s in town';
 
 const monthNameOf = (today: string): string => MONTH_NAMES[Number(today.slice(5, 7)) - 1] ?? '';
 
-export function ThisMonth(props: { input: HomeInput; calendar: Calendar; history: boolean }): React.JSX.Element {
+export function ThisMonth(props: { input: HomeInput; calendar: Calendar; history: boolean; locationId: string }): React.JSX.Element {
   const { input, calendar, history } = props;
   const { today, context, metric } = input;
   const town = calendar.town;
@@ -45,13 +45,13 @@ export function ThisMonth(props: { input: HomeInput; calendar: Calendar; history
   const day = useMemo(() => monthDay(shown, input), [shown, input]);
   return (
     <Block label={`This month in ${town.name}`} eyebrow={label} title={`This month in ${town.name}`}>
-      <Small>Choose a day to see what’s on it and how it went last year.</Small>
+      <Small>Choose a day to see its guest forecast and how an order covers it. Open the date for the reasoning on Orders.</Small>
       <View style={styles.split}>
         <View style={styles.gridSide}>
           <MonthGrid rows={rows} selected={selected} onSelect={(date) => { setPreview(null); setSelected(date); }} onPreview={setPreview} label={label} />
         </View>
         <View style={styles.detailSide}>
-          <DayDetail day={day} metric={metric} history={history} />
+          <DayDetail day={day} metric={metric} history={history} locationId={props.locationId} />
         </View>
       </View>
     </Block>

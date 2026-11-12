@@ -38,6 +38,7 @@ const TENANT_COLLECTIONS = [
   'tw_forecast_runs', 'tw_forecasts',
   // The forecast lab.
   'tw_calibrations',
+  'tw_order_cards', 'tw_order_decisions', 'tw_order_rules',
 ] as const;
 
 /** A tw_chat_proposals record (spec 6.16): the author dismissed a proposal in one of their conversations. */

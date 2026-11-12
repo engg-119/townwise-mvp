@@ -12,6 +12,7 @@ import { VisualView } from '../visuals/Visual';
 import { focusLost, Hidden } from './controls';
 import { described } from './described';
 import { ItemProposalCard } from './ItemProposalCard';
+import { OrderProposalCard } from './OrderProposalCard';
 import { ProposalCard } from './ProposalCard';
 import { ReplyActions } from './ReplyActions';
 import { useVersionNav, VersionNav } from './VersionNav';
@@ -95,6 +96,9 @@ export function ReplyView(props: {
         if (part.type === 'visual') return <VisualView key={part.key} visual={part.visual} />;
         if (part.type === 'item') {
           return <ItemProposalCard key={part.key} card={part.card} locationId={props.locationId} actions={chat} readOnlyId={props.readOnlyId} />;
+        }
+        if (part.type === 'order') {
+          return <OrderProposalCard key={part.key} card={part.card} locationId={props.locationId} readOnlyId={props.readOnlyId} />;
         }
         return <ProposalCard key={part.key} card={part.card} locationId={props.locationId} actions={chat} readOnlyId={props.readOnlyId} />;
       })}

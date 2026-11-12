@@ -17,7 +17,7 @@ const ALL: [string, Access][] = Object.entries(ACCESS);
 const GATE = ['/request-access', '/waiting', '/no-access', '/joining', '/staff/sign-in-again'];
 const MEMBER = [
   '/dashboard', '/settings', '/locations/l1', '/locations/l1/analytics', '/locations/l1/sales', '/locations/l1/sales/upload', '/locations/l1/data',
-  '/locations/l1/notes', '/locations/l1/town', '/locations/l1/agent', '/locations/l1/chat',
+  '/locations/l1/notes', '/locations/l1/town', '/locations/l1/orders', '/locations/l1/agent', '/locations/l1/chat',
 ];
 const ADMIN_ONLY = ['/team', '/locations/new', '/locations/l1/settings'];
 const CONSOLE = ['/admin', '/admin/orgs', '/admin/orgs/o1', '/admin/people', '/admin/audit'];
@@ -87,7 +87,8 @@ describe('navigation per role (spec 15.3)', () => {
 
   test('members: the location’s sections, then Settings as the right-hand group', () => {
     expect(rows(clientNav('member', '/locations/l1', 'l1'))).toEqual([
-      ['Home', '/locations/l1', 'page', false], ['Analytics', '/locations/l1/analytics', null, false],
+      ['Home', '/locations/l1', 'page', false], ['Orders', '/locations/l1/orders', null, false],
+      ['Analytics', '/locations/l1/analytics', null, false],
       ['TownwiseAI', '/locations/l1/agent', null, false], ['Notes', '/locations/l1/notes', null, false],
       ['Town', '/locations/l1/town', null, false], ['Your data', '/locations/l1/data', null, false],
       ['Settings', '/settings', null, true],
@@ -154,6 +155,7 @@ describe('navigation per role (spec 15.3)', () => {
     const today = new Date(2026, 10, 5);
     const pages: [string, TabKey, string][] = [
       ['/locations/l1', 'home', 'Week of Nov 2, 2026'],
+      ['/locations/l1/orders', 'orders', 'Orders'],
       ['/locations/l1/analytics', 'analytics', 'Analytics'],
       ['/locations/l1/sales', 'sales', 'Sales data'],
       ['/locations/l1/sales/upload', 'upload', 'Upload'],

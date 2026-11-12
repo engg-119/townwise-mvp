@@ -35,6 +35,7 @@ describe('indexes', () => {
       'tw_forecast_runs', 'tw_forecasts',
       // The forecast lab.
       'tw_calibrations',
+      'tw_order_cards', 'tw_order_decisions', 'tw_order_rules',
     ].sort());
   });
 
@@ -75,6 +76,7 @@ describe('indexes', () => {
       'TwChatProposal', 'TwFile', 'TwImport', 'TwUploadDay', 'TwWelcome',
       // U13B.
       'TwForecastRun', 'TwForecast', 'TwCalibration',
+      'TwOrderCard', 'TwOrderDecision', 'TwOrderRule',
     ]) {
       for (const [fields] of indexesOf(connection, model)) {
         const keys = Object.keys(fields);

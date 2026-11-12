@@ -60,6 +60,8 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     await stores.chatProposals.removeForOrg(scope);
     // U9, TownwiseAI's questions.
     await stores.agentAnswers.removeForOrg(scope);
+    // Orders: edits and rules are the location's, so they go with the organization.
+    await stores.orders.removeForOrg(scope);
     // The forecast lab: calibrations, before the runs.
     await stores.calibrations.removeForOrg(scope);
     // U13B: forecast runs and their rows.

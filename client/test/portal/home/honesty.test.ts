@@ -6,6 +6,7 @@ import {
   weekDates, type HomeInput,
 } from '../../../src/portal/analytics/week';
 import { addDays, monthRange } from '../../../src/portal/locations/dates';
+import { guestForecastSentence, orderCoverSentence, REORDER_OVERVIEW } from '../../../src/portal/home/beside';
 import { BAR_ORDER_BODY } from '../../../src/portal/home/BarOrder';
 import { lastWeekGlance } from '../../../src/portal/home/Glance';
 import { FORECAST_LINE, questionsLabel } from '../../../src/portal/home/Home';
@@ -113,6 +114,18 @@ test('the fixed copy names what is not built yet and promises nothing', () => {
   }
   expect(LAST_YEAR_FOOTNOTE).not.toMatch(FORECAST_WORDING);
   expect(FORECAST_LINE).toMatch(/never a guess/);
+  const glance = [
+    REORDER_OVERVIEW,
+    guestForecastSentence(null),
+    guestForecastSentence({ date: '2026-11-12', status: 'open', low: 150.2, mid: 180.4, high: 210.8 }),
+    guestForecastSentence({ date: '2026-11-12', status: 'closed', low: null, mid: null, high: null }),
+    orderCoverSentence('2026-11-12', null),
+    orderCoverSentence('2026-11-12', { sample: false, cutoff: '2026-11-11', delivery: '2026-11-12', coversThrough: '2026-11-16' }),
+    orderCoverSentence('2026-11-20', { sample: true, cutoff: '2026-11-11', delivery: '2026-11-12', coversThrough: '2026-11-16' }),
+  ];
+  for (const line of glance) expect(line).not.toMatch(FORECAST_WORDING);
+  expect(guestForecastSentence({ date: '2026-11-12', status: 'open', low: 150.2, mid: 180.4, high: 210.8 }))
+    .toBe('About 180 guests, usually 150 to 211 guests. About 8 in 10 days fall between those two.');
   // The questions link is a count of what GET .../agent asks, and nothing more.
   expect(questionsLabel(1)).toBe('1 question from TownwiseAI');
   expect(questionsLabel(5)).toBe('5 questions from TownwiseAI');

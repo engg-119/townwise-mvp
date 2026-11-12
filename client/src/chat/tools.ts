@@ -361,6 +361,27 @@ const TOOLS: Readonly<Record<string, ToolRow>> = {
     terms: { available: 'Available', status: 'Status', weeks: 'Held-out weeks', published: 'Published' },
     values: { status: CALIBRATION_STATUS },
   },
+  // Orders. Figures stay in the result the model reads. The card shows a count and a date.
+  get_order_board: {
+    object: () => 'the order',
+    detail: (result) => (result.available === false ? 'No order yet' : result.sample === true ? 'A labeled sample' : null),
+    basedOn: (_input, _ctx, result) => (result?.sample === true ? 'a labeled sample order' : null),
+    terms: { available: 'Available', sample: 'Sample', delivery: 'Delivery', lineCount: 'Lines' },
+  },
+  get_order_line: {
+    object: () => 'one line of the order',
+    detail: (result) => (result.available === false ? 'No order yet' : result.sample === true ? 'A labeled sample' : null),
+    basedOn: (_input, _ctx, result) => (result?.sample === true ? 'a labeled sample order' : null),
+    terms: { available: 'Available', sample: 'Sample', delivery: 'Delivery' },
+  },
+  propose_order_change: {
+    object: () => 'a change to one line',
+    hidden: true,
+  },
+  propose_order_rule: {
+    object: () => 'a rule to remember',
+    hidden: true,
+  },
 };
 
 const GENERIC = { running: 'Looking something up', done: 'Looked something up', error: 'Couldn’t look something up' } as const;

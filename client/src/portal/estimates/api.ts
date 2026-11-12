@@ -127,6 +127,25 @@ export function fetchEstimatesAbout(api: ApiClient, locationId: string): Promise
   return api.json(`${locationPath(locationId)}/estimates/about`, estimatesAboutSchema);
 }
 
+const forecastDaySchema = z.object({
+  date: z.string(),
+  status: z.string(),
+  low: z.number().nullable(),
+  mid: z.number().nullable(),
+  high: z.number().nullable(),
+});
+export type ForecastGlanceDay = z.infer<typeof forecastDaySchema>;
+
+const forecastWindowSchema = z.object({
+  available: z.boolean(),
+  days: z.array(forecastDaySchema),
+});
+
+/** The published guest forecast for a range of at most 31 days. Drafts never come back. */
+export function fetchForecast(api: ApiClient, locationId: string, range: { from: string; to: string }): Promise<{ available: boolean; days: ForecastGlanceDay[] }> {
+  return api.json(`${locationPath(locationId)}/forecast?from=${range.from}&to=${range.to}`, forecastWindowSchema);
+}
+
 /** The first and last day of a 'YYYY-MM' month. */
 export function monthRange(month: string): { from: string; to: string } {
   const year = Number(month.slice(0, 4));

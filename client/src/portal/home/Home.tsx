@@ -123,7 +123,7 @@ function HomeView(props: {
       <ThisWeek week={week} calendar={calendar} metric={metric} history={hasDays} />
       <BlockRow
         items={[
-          { key: 'month', span: 8, node: <ThisMonth input={input} calendar={calendar} history={hasDays} /> },
+          { key: 'month', span: 8, node: <ThisMonth input={input} calendar={calendar} history={hasDays} locationId={locationId} /> },
           { key: 'last', span: 4, node: needs ? null : <LastWeek comparison={lastWeek} metric={metric} locationId={locationId} readOnlyId={readOnlyId} /> },
         ]}
       />
@@ -136,7 +136,7 @@ function HomeView(props: {
       <BlockRow
         items={[
           { key: 'years', span: 6, node: facts.length === 0 ? null : <PastYears today={today} facts={facts} metric={metric} /> },
-          { key: 'bar', span: 6, node: needs ? null : <BarOrder share={share} metric={metric} /> },
+          { key: 'bar', span: 6, node: needs ? null : <BarOrder share={share} metric={metric} locationId={locationId} /> },
         ]}
       />
       {needs ? null : (

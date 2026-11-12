@@ -5,7 +5,9 @@ import { theme } from '../../theme';
 import { noteWords } from '../analytics/panel';
 import { eventLine, type MonthDay } from '../analytics/week';
 import { metricText, shortDate, type Metric } from '../analytics/words';
+import { locationHref } from '../routing';
 import { Heading, Mono, Small } from '../ui/text';
+import { BesideCalendar } from './BesideCalendar';
 import { PastCell } from './ThisWeek';
 
 // The selected day of This month (spec P11), beside the grid from where they fit side by side, under it otherwise:
@@ -24,12 +26,16 @@ function Part(props: { label: string; children: React.ReactNode }): React.JSX.El
   );
 }
 
-export function DayDetail(props: { day: MonthDay; metric: Metric; history: boolean }): React.JSX.Element {
+export function DayDetail(props: { day: MonthDay; metric: Metric; history: boolean; locationId: string }): React.JSX.Element {
   const { day, metric, history } = props;
   const nothing = day.events.length === 0 && day.notes.length === 0;
+  const title = day.isToday ? `Today, ${shortDate(day.date)}` : shortDate(day.date);
   return (
     <View role="region" aria-label="Selected day" nativeID={DETAIL_ID} style={styles.root}>
-      <Heading level={3}>{day.isToday ? `Today, ${shortDate(day.date)}` : shortDate(day.date)}</Heading>
+      <Heading level={3}>
+        <Link href={`${locationHref(props.locationId, 'orders')}?day=${day.date}` as Href} style={styles.dateLink}>{title}</Link>
+      </Heading>
+      <BesideCalendar locationId={props.locationId} date={day.date} />
       <Part label="On the calendar">
         {nothing ? <Small>Nothing on the calendar this day.</Small> : null}
         {day.events.map((event) => (
@@ -62,6 +68,7 @@ const c = theme.color;
 
 const styles = StyleSheet.create({
   root: { gap: theme.space[4], minWidth: 0 },
+  dateLink: { color: c.white, textDecorationLine: 'underline', textDecorationColor: c.line },
   part: { gap: theme.space[1], minWidth: 0 },
   item: { gap: 0, minWidth: 0 },
   source: { ...theme.type.mono, color: c.text2, paddingVertical: 14, textDecorationLine: 'underline', textDecorationColor: c.line },

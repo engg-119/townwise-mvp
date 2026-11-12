@@ -170,6 +170,7 @@ test('the month calendar opens any day: a click, the arrow keys, and a pointer p
   };
   // Today is selected at first, and is the grid's one tab stop.
   expect(within(detail).getByRole('heading', { name: 'Today, Thu, Nov 5, 2026' })).toBeTruthy();
+  expect(within(detail).getByRole('link', { name: 'Today, Thu, Nov 5, 2026' }).getAttribute('href')).toBe('/locations/l1/orders?day=2026-11-05');
   expect(cell('2026-11-05').getAttribute('aria-selected')).toBe('true');
   expect(grid.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
   expect(cell('2026-11-11').getAttribute('aria-label')).toBe('Wed, Nov 11, 2026. Veterans Day.');
@@ -177,6 +178,7 @@ test('the month calendar opens any day: a click, the arrow keys, and a pointer p
   // A click opens a later day: its holiday and sources, last year's same weekday, and no figure of its own.
   fireEvent.click(cell('2026-11-11'));
   expect(within(detail).getByRole('heading', { name: 'Wed, Nov 11, 2026' })).toBeTruthy();
+  expect(within(detail).getByRole('link', { name: 'Wed, Nov 11, 2026' }).getAttribute('href')).toBe('/locations/l1/orders?day=2026-11-11');
   expect(within(detail).getByText('Veterans Day. Federal holiday.')).toBeTruthy();
   expect(within(detail).getByRole('link', { name: 'Source: U.S. Office of Personnel Management' })).toBeTruthy();
   expect(within(detail).getByText('Wed, Nov 12, 2025: 100 guests')).toBeTruthy();
