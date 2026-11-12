@@ -165,11 +165,13 @@ describe('indexes', () => {
     expect(indexesOf(registered(), 'TwFilesUsage')).toContainEqual([{ orgId: 1, month: 1 }, expect.objectContaining({ unique: true })]);
   });
 
-  it('holds a location’s calendars in 5 unique slots, and reads a calendar’s events by generation and date', () => {
+  it('holds a location’s calendars in 5 unique slots, finds due links for the refresh loop, and reads a calendar’s events by generation and date', () => {
     const connection = registered();
     expect(indexesOf(connection, 'TwCalendarSource')).toContainEqual([
       { orgId: 1, locationId: 1, slot: 1 }, expect.objectContaining({ unique: true }),
     ]);
+    // The refresh loop's claim spans organizations (stores/cross-tenant.ts claimDueCalendar).
+    expect(indexesOf(connection, 'TwCalendarSource')).toContainEqual([{ nextRefreshAt: 1 }, expect.anything()]);
     expect(connection.models.TwCalendarSource?.schema.path('slot')).toMatchObject({ options: { min: 0, max: 4 } });
     expect(indexesOf(connection, 'TwCalendarEvent')).toContainEqual([{ orgId: 1, sourceId: 1, generation: 1, startDate: 1 }, expect.anything()]);
     for (const model of ['TwCalendarSource', 'TwCalendarEvent']) expect(connection.models[model]?.schema.get('strict')).toBe('throw');

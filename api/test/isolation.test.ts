@@ -12,7 +12,7 @@ function sourceFiles(): { path: string; text: string }[] {
 }
 
 describe('isolation (source)', () => {
-  it('only access/resolve.ts, the join and decline handlers, the staff handlers, the file reader, the sweeper and the lab callback import stores/cross-tenant.ts', () => {
+  it('only access/resolve.ts, the join and decline handlers, the staff handlers, the file reader, the sweeper, the lab callback and the calendar refresh loop import stores/cross-tenant.ts', () => {
     // A type-only import grants no access to the operations, so it is not counted.
     const importers = sourceFiles()
       .filter((file) => /^import (?!type )[^;]*from '[./]+(stores\/)?cross-tenant\.ts';/m.test(file.text))
@@ -20,10 +20,10 @@ describe('isolation (source)', () => {
       .sort();
     // handlers/me.ts holds the join and decline handlers; handlers/admin.ts and handlers/deletion.ts hold the staff handlers.
     // lab/callback.ts holds the forecast lab job's callback, which finds its calibration by id and token before any
-    // organization is known.
+    // organization is known. calendar/refresher.ts claims a due calendar link in any organization.
     expect(importers).toEqual([
-      'access/resolve.ts', 'files/sweeper.ts', 'files/worker.ts', 'handlers/admin.ts', 'handlers/deletion.ts', 'handlers/me.ts',
-      'lab/callback.ts',
+      'access/resolve.ts', 'calendar/refresher.ts', 'files/sweeper.ts', 'files/worker.ts', 'handlers/admin.ts', 'handlers/deletion.ts',
+      'handlers/me.ts', 'lab/callback.ts',
     ]);
   });
 
@@ -98,21 +98,31 @@ describe('isolation (source)', () => {
     expect(callers).toEqual(['access/policy.ts', 'files/sweeper.ts']);
   });
 
-  it('only handlers/owner-calendars.ts seals or opens a calendar link’s address, and only it reads one back from the store', () => {
+  it('only access/policy.ts mints the calendar refresh’s scope, and only calendar/refresher.ts asks for it', () => {
+    const callers = sourceFiles().filter((file) => file.text.includes('scopeForCalendarRefresh(')).map((file) => file.path).sort();
+    expect(callers).toEqual(['access/policy.ts', 'calendar/refresher.ts']);
+  });
+
+  it('only the calendar routes and the refresh loop open a calendar link’s address or read one back from the store, and only the routes seal one', () => {
     const importers = sourceFiles()
       .filter((file) => [...file.text.matchAll(/^import (?!type )[^;]*from '(\.[^']+)';/gm)]
         .some((match) => posix.normalize(posix.join(posix.dirname(file.path), match[1] ?? '')) === 'calendar/secret.ts'))
-      .map((file) => file.path);
-    expect(importers).toEqual(['handlers/owner-calendars.ts']);
-    expect(sourceFiles().filter((file) => file.text.includes('.sealedAddress(')).map((file) => file.path)).toEqual(['handlers/owner-calendars.ts']);
+      .map((file) => file.path)
+      .sort();
+    expect(importers).toEqual(['calendar/refresher.ts', 'handlers/owner-calendars.ts']);
+    expect(sourceFiles().filter((file) => file.path !== 'calendar/secret.ts' && /\bseal\(/.test(file.text)).map((file) => file.path))
+      .toEqual(['handlers/owner-calendars.ts']);
+    expect(sourceFiles().filter((file) => file.text.includes('.sealedAddress(')).map((file) => file.path).sort())
+      .toEqual(['calendar/refresher.ts', 'handlers/owner-calendars.ts']);
   });
 
-  it('handlers reach a calendar link only through ctx.calendarFetcher: only app.ts builds one, and only calendar/fetch.ts opens a connection', () => {
+  it('handlers reach a calendar link only through ctx.calendarFetcher: only app.ts and the refresh loop build one, and only calendar/fetch.ts opens a connection', () => {
     const importers = sourceFiles()
       .filter((file) => [...file.text.matchAll(/^import (?!type )[^;]*from '(\.[^']+)';/gm)]
         .some((match) => posix.normalize(posix.join(posix.dirname(file.path), match[1] ?? '')) === 'calendar/fetch.ts'))
-      .map((file) => file.path);
-    expect(importers).toEqual(['app.ts']);
+      .map((file) => file.path)
+      .sort();
+    expect(importers).toEqual(['app.ts', 'calendar/refresher.ts']);
     const sockets = sourceFiles().filter((file) => /from 'node:(?:https?|http2|net|tls|dgram)'/.test(file.text)).map((file) => file.path);
     expect(sockets).toEqual(['calendar/fetch.ts']);
   });

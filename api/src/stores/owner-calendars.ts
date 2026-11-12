@@ -18,7 +18,9 @@
 // compare-and-set) before the switch leaves rows of an unused generation that no read returns; the next replace or the
 // removal deletes them. Removal deletes the events, then the calendar, then the events again (removeWhere). "Refresh
 // now" is held to one per calendar per 5 minutes by a compare-and-set on lastManualRefreshAt, so two requests at once
-// cannot both pass. Ids are checked by the caller.
+// cannot both pass. The refresh loop claims a due link across organizations (stores/cross-tenant.ts claimDueCalendar,
+// by nextRefreshAt) with a lease, and ends its refresh here: releaseRefresh sets the next refresh and lets the lease go
+// only while the lease is still the one it took. Ids are checked by the caller.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
@@ -118,6 +120,8 @@ function sourceSchema(): Schema<SourceFields> {
     createdAt: { type: Date, required: true },
   }, { strict: 'throw', versionKey: false, read: 'primary' });
   schema.index({ orgId: 1, locationId: 1, slot: 1 }, { unique: true });
+  // The refresh loop's claim of a due link, across organizations (stores/cross-tenant.ts); a file's is null.
+  schema.index({ nextRefreshAt: 1 });
   return schema;
 }
 
@@ -223,6 +227,11 @@ export interface OwnerCalendarStore {
   claimManualRefresh(scope: OrgScope, locationId: string, calendarId: string, now: Date): Promise<boolean>;
   /** A failed refresh: its code and the attempt, counted. The events stay. False when the calendar is gone. */
   recordFailure(scope: OrgScope, locationId: string, calendarId: string, code: CalendarFailure, now: Date): Promise<boolean>;
+  /**
+   * The end of a refresh the loop claimed with the lease `leaseUntil`: the link is next due at `nextRefreshAt`, and the
+   * lease is let go. False when the calendar is gone, or another claim holds it now (that refresh ends it instead).
+   */
+  releaseRefresh(scope: OrgScope, locationId: string, calendarId: string, input: { leaseUntil: Date; nextRefreshAt: Date }): Promise<boolean>;
   /** The calendar's events, then the calendar. False when it was not there. */
   remove(scope: OrgScope, locationId: string, calendarId: string): Promise<boolean>;
   /** The location's events overlapping [from, to] (inclusive dates), each calendar's current generation, by start. */
@@ -383,6 +392,12 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
         $set: { status: code, lastAttemptAt: now }, $inc: { consecutiveFailures: 1 },
       });
       return recorded.matchedCount === 1;
+    },
+    async releaseRefresh(scope, locationId, calendarId, input) {
+      const released = await Source.updateOne({ ...ofCalendar(scope, locationId, calendarId), leaseUntil: input.leaseUntil }, {
+        $set: { nextRefreshAt: input.nextRefreshAt, leaseUntil: null },
+      });
+      return released.matchedCount === 1;
     },
     remove,
     async eventsBetween(scope, locationId, range) {

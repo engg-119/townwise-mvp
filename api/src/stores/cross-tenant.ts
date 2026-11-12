@@ -1,10 +1,10 @@
 // Operations keyed by a person, or spanning organizations (spec 6.10 rule 8). The list is closed:
 // findActiveSeat, findOpenInvites, claimInvite, declineInvite, latestRemovedSeat, adminOrgStats, peopleRecords,
-// deletePersonRecords, the forecast lab's findLabCallback, the file reader's claimNextImport, and the daily file sweep's claimFileSweep, finishFileSweep,
-// sweepCandidates, removeOldUploadDays and existingFileIds.
+// deletePersonRecords, the forecast lab's findLabCallback, the file reader's claimNextImport, the daily file sweep's claimFileSweep, finishFileSweep,
+// sweepCandidates, removeOldUploadDays and existingFileIds, and the calendar refresh loop's claimDueCalendar.
 // Only access/resolve.ts, the join and decline handlers, the staff handlers (admin.ts, deletion.ts), the file reader
-// (files/worker.ts), the file sweeper (files/sweeper.ts) and the lab job's callback (lab/callback.ts) import this file
-// (test/isolation.test.ts enforces the list).
+// (files/worker.ts), the file sweeper (files/sweeper.ts), the lab job's callback (lab/callback.ts) and the calendar
+// refresh loop (calendar/refresher.ts) import this file (test/isolation.test.ts enforces the list).
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { trusted, Types, type Connection } from 'mongoose';
 
@@ -21,6 +21,7 @@ import { importModel } from './imports.ts';
 import { locationModel } from './locations.ts';
 import { memberModel } from './members.ts';
 import { orgModel } from './orgs.ts';
+import { calendarSourceModel } from './owner-calendars.ts';
 import { profileModel } from './profiles.ts';
 import { HAS_VALUE, SALES_DAYS_COLLECTION } from './sales-days.ts';
 import { uploadDayModel } from './upload-days.ts';
@@ -453,4 +454,29 @@ export async function existingFileIds(connection: Connection, ids: readonly stri
   if (ids.length === 0) return new Set();
   const docs = await fileModel(connection).find({ _id: trusted({ $in: ids.map((id) => new Types.ObjectId(id)) }) }, { _id: 1 }).lean();
   return new Set(docs.map((doc) => doc._id.toHexString()));
+}
+
+/** A link calendar the refresh loop claimed. Only access/policy.ts's scopeForCalendarRefresh turns it into an OrgScope. */
+export interface ClaimedCalendar {
+  readonly calendarId: string;
+  readonly orgId: string;
+  readonly locationId: string;
+}
+
+/**
+ * The calendar refresh loop's claim (openspec change connect-owner-calendar, design decision 6), across organizations:
+ * one link calendar that is due (`nextRefreshAt` at or before `now`) and under no live lease, the longest due first. One
+ * compare-and-set takes it and sets its lease to `leaseUntil`, so of replicas claiming at once only one gets each
+ * calendar. Ids only: the address, host, label and events stay in the tenant store.
+ */
+export async function claimDueCalendar(
+  connection: Connection, input: { readonly now: Date; readonly leaseUntil: Date },
+): Promise<ClaimedCalendar | null> {
+  const doc = await calendarSourceModel(connection).findOneAndUpdate(
+    { kind: 'link', nextRefreshAt: trusted({ $lte: input.now }), $or: [{ leaseUntil: null }, { leaseUntil: trusted({ $lt: input.now }) }] },
+    { $set: { leaseUntil: input.leaseUntil } },
+    { sort: { nextRefreshAt: 1, _id: 1 }, returnDocument: 'after', projection: { orgId: 1, locationId: 1 } },
+  ).lean();
+  if (doc === null) return null;
+  return { calendarId: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString() };
 }

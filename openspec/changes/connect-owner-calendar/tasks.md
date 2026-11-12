@@ -31,9 +31,9 @@ Two phases (owner decision, 2026-11-12): phase 1 builds the server side on `orig
 
 ## 5. Refresh loop
 
-- [ ] 5.1 Add the cross-tenant due-calendar claim to `stores/cross-tenant.ts` and a refresh scope in `access/policy.ts`; update the isolation test's import allowlist
-- [ ] 5.2 Add `api/src/calendar/refresher.ts` shaped like `createFileWorker` (deps in, start, drain): 15 minute tick, lease claim, fetch, parse, replace, 6 hour next refresh, backoff on failure, counts-only logs; wire it in `main.ts` only when the key is set, drained at shutdown
-- [ ] 5.3 Integration tests: two refreshers claim a due calendar once; failure keeps events and sets status; success replaces events
+- [x] 5.1 Add the cross-tenant due-calendar claim to `stores/cross-tenant.ts` and a refresh scope in `access/policy.ts`; update the isolation test's import allowlist
+- [x] 5.2 Add `api/src/calendar/refresher.ts` shaped like `createFileWorker` (deps in, start, drain): 15 minute tick, lease claim, fetch, parse, replace, 6 hour next refresh, backoff on failure, counts-only logs; wire it in `main.ts` only when the key is set, drained at shutdown
+- [x] 5.3 Integration tests: two refreshers claim a due calendar once; failure keeps events and sets status; success replaces events
 
 ## 6. TownwiseAI
 
