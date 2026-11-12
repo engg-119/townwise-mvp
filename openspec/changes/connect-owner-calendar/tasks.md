@@ -1,11 +1,13 @@
+Two phases (owner decision, 2026-11-12): phase 1 builds the server side on `origin/develop` now; phase 2 (groups 7 and 8.1) waits for the Calendar page and business-rules work (P27, D29 to D32, spec 10.16) to land on `develop`, because the client panel and every `docs/portal/spec.md` edit build on it.
+
 ## 0. Before starting
 
-- [ ] 0.1 Confirm the Calendar page and business-rules work (P27, D30 to D32) is committed on `develop`, then branch `feat/owner-calendar` from it in a worktree (remove the worktree after merge)
-- [ ] 0.2 Run `npm run verify` on the fresh branch and record the baseline (any failure that predates this change is noted, not fixed here)
+- [x] 0.1 Branch `feat/owner-calendar` from `origin/develop` in `.worktrees/owner-calendar` (the calendar work is not on `develop` yet, so phase 2 waits for it; remove the worktree after merge)
+- [x] 0.2 Run `npm run verify` on the fresh branch and record the baseline: all green on c045649 (API 1,701 tests, client 2,872, web export, expo-doctor)
 
 ## 1. Server ICS parser
 
-- [ ] 1.1 Move `client/src/portal/calendar/ics.ts` to `api/src/calendar/ics.ts` with the same rules, and move its tests to `api/test/calendar-ics.test.ts`; verify they pass unchanged in the API
+- [ ] 1.1 Port the parser from the main checkout's uncommitted `client/src/portal/calendar/ics.ts` (and its tests under `client/test/portal/calendar/`) to `api/src/calendar/ics.ts` and `api/test/calendar-ics.test.ts`, same rules and limits, using the town's today instead of the device's; the client copy is removed in phase 2 (7.1)
 - [ ] 1.2 Drop DESCRIPTION, LOCATION, ATTENDEE and ORGANIZER from the parsed event and cut titles at 200 characters; add a test that a parsed event has none of them
 
 ## 2. Stores
@@ -40,7 +42,7 @@
 - [ ] 6.3 Extend `readableByTownwiseAi` and the item reader to `pdf` and `docx`; PDF as a `document` block in the tool result (10 MB, 100 pages), `.docx` text through the parse thread (20,000 characters); saved conversation keeps reference and counts only
 - [ ] 6.4 Tests: PDF and Word reads, turned-off item, `.doc` refused, PDF over the caps, saved shape holds no bytes or text
 
-## 7. Client
+## 7. Client (phase 2: after the calendar work lands)
 
 - [ ] 7.1 `IcsImport.web.tsx` posts the file text to the API instead of parsing it; remove `client/src/portal/calendar/ics.ts` and its client tests
 - [ ] 7.2 The Calendar page reads the month's stored events from the API on web and native, in parallel with its existing reads
@@ -50,7 +52,7 @@
 
 ## 8. Docs, privacy and infra
 
-- [ ] 8.1 `docs/portal/spec.md`: new D entry (owner decision, 2026-11-12), resolve the two P27 `[DECISION NEEDED]` rows in 22.4 with it, rewrite P27 "Your own calendar" and the section 17 calendar bullet, add 10.17 for the routes, add the `[CONFIRM]` defaults from the design's open questions
+- [ ] 8.1 (phase 2) `docs/portal/spec.md`: new D entry (owner decision, 2026-11-12), resolve the two P27 `[DECISION NEEDED]` rows in 22.4 with it, rewrite P27 "Your own calendar" and the section 17 calendar bullet, add the routes section after 10.16, add the `[CONFIRM]` defaults from the design's open questions
 - [ ] 8.2 `api/README.md` (endpoints, collections, env var, audit events), `docs/portal/tuning-chat.md` (tool row appended, PDF and Word in `read_data_item`)
 - [ ] 8.3 Public privacy page (`client/app/(marketing)/privacy.tsx`): calendars kept with titles, links fetched by Townwise, PDF and Word contents and calendar titles may go to Anthropic through TownwiseAI
 - [ ] 8.4 `infra/terraform/production/containerapp.tf`: add `TOWNWISE_CALENDAR_KEY` to `api_secrets`; `infra/README.md`: create-the-key runbook step and the never-rotate note; run the CI Terraform checks
@@ -58,5 +60,5 @@
 ## 9. Verify
 
 - [ ] 9.1 `npm run verify` passes
-- [ ] 9.2 Run the API and client locally: import a file, add a public test `.ics` link, reload and see the events, ask TownwiseAI about next week's bookings and save a proposed note, read a PDF from Your data
+- [ ] 9.2 Run the API locally: import a file, add a public test `.ics` link, read the events, ask TownwiseAI about next week's bookings and save a proposed note, read a PDF from Your data (the Calendar page itself is phase 2)
 - [ ] 9.3 Security review of `calendar/fetch.ts`, `calendar/secret.ts` and the new routes before the PR
