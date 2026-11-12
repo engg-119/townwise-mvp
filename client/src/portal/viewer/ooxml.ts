@@ -92,13 +92,19 @@ export async function readXml(pkg: Package, name: string): Promise<Document | nu
   return parseXml(decodeXml(await readZipEntry(pkg.bytes, entry, VIEW_LIMITS.xmlBytes)));
 }
 
+/** The closing tags a cut may end at, with any namespace prefix: literal patterns, made fresh per cut (they're global). */
+const CLOSING_TAG = {
+  row: () => /<\/([A-Za-z_][\w.-]*:)?row\s*>/g,
+  si: () => /<\/([A-Za-z_][\w.-]*:)?si\s*>/g,
+} as const;
+
 /**
  * A part's XML, cut when it is larger than VIEW_LIMITS.xmlBytes: the text is kept up to the last whole `element`
  * (the last `</row>` of a worksheet, say) and closed with `closers`, outermost last. `cut` says whether it was.
  * Null when the package has no such part; too big when not one whole `element` fits.
  */
 export async function readXmlCut(
-  pkg: Package, name: string, element: string, closers: readonly string[],
+  pkg: Package, name: string, element: keyof typeof CLOSING_TAG, closers: readonly string[],
 ): Promise<{ doc: Document; cut: boolean } | null> {
   const entry = partOf(pkg, name);
   if (entry === undefined) return null;
@@ -106,7 +112,7 @@ export async function readXmlCut(
   const read = await readZipEntryPrefix(pkg.bytes, entry, VIEW_LIMITS.xmlBytes);
   const text = decodeXml(read.data);
   if (read.complete) return { doc: parseXml(text), cut: false };
-  const close = new RegExp(`</([A-Za-z_][\\w.-]*:)?${element}\\s*>`, 'g');
+  const close = CLOSING_TAG[element]();
   let last: RegExpExecArray | null = null;
   for (let match = close.exec(text); match !== null; match = close.exec(text)) last = match;
   if (last === null) throw new ViewerError('too_big', 'xml part');
