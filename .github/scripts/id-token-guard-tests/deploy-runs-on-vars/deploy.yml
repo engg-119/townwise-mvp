@@ -1,0 +1,7 @@
+on: push
+jobs:
+  deploy:
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}
+    permissions:
+      id-token: write
+    steps: [{run: echo}]

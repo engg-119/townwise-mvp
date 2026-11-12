@@ -1,7 +1,8 @@
 # The id-token guard's YAML parser, hash-pinned (CI installs it with --require-hashes --only-binary :all:).
-# Wheels: CPython 3.12 manylinux x86_64 (ubuntu-24.04 runners) and macOS arm64 (local runs); the sdist hash
-# lets pip verify a local source build too.
+# Wheels: CPython 3.12 manylinux x86_64 (ubuntu-24.04 runners), manylinux aarch64 (the laptop runner,
+# infra/ci-runner) and macOS arm64 (local runs); the sdist hash lets pip verify a local source build too.
 pyyaml==6.0.3 \
     --hash=sha256:ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc \
+    --hash=sha256:9149cad251584d5fb4981be1ecde53a1ca46c891a79788c0df828d2f166bda28 \
     --hash=sha256:fc09d0aa354569bc501d4e787133afc08552722d3ab34836a80547331bb5d4a0 \
     --hash=sha256:d76623373421df22fb4cf8817020cbb7ef15c725b9d5e45f17e189bfc384190f

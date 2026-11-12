@@ -12,11 +12,14 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Every job runs where the CI_RUNS_ON repository variable (JSON) points, else on ubuntu-24.04: set to
+# ["self-hosted","townwise-laptop"] while GitHub-hosted runners are unavailable (infra/README.md, "CI on the
+# laptop runner"). deploy.yml never reads it: id-token-guard requires literal ubuntu-24.04 there.
 jobs:
   verify:
     # Stable check name (infra/README.md lists it); keep it if branch protection is added later.
     name: verify
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}
     timeout-minutes: 30
     env:
       TESTCONTAINERS_RYUK_DISABLED: 'true'
@@ -39,7 +42,7 @@ jobs:
   terraform:
     # Stable check name (infra/README.md lists it); keep it if branch protection is added later.
     name: terraform
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}
     timeout-minutes: 15
     defaults:
       run:
@@ -55,9 +58,15 @@ jobs:
       - name: Install tflint 0.64.0 (checksum verified)
         run: |
           set -euo pipefail
+          # SHA-256 from the release's checksums.txt (github.com/terraform-linters/tflint/releases/tag/v0.64.0).
+          if [ "$RUNNER_ARCH" = ARM64 ]; then
+            asset=tflint_linux_arm64.zip sum=560da89aacf59389d4eb029730dd5b109b7288096c32f2726a0d9e783a5ea8eb
+          else
+            asset=tflint_linux_amd64.zip sum=cca9d13e2e1d7a2c627af60ff899a3c9b74212899416aeb96ec764d2ef954537
+          fi
           curl -fsSL -o "$RUNNER_TEMP/tflint.zip" \
-            https://github.com/terraform-linters/tflint/releases/download/v0.64.0/tflint_linux_amd64.zip
-          echo "cca9d13e2e1d7a2c627af60ff899a3c9b74212899416aeb96ec764d2ef954537  $RUNNER_TEMP/tflint.zip" | sha256sum -c -
+            "https://github.com/terraform-linters/tflint/releases/download/v0.64.0/$asset"
+          echo "$sum  $RUNNER_TEMP/tflint.zip" | sha256sum -c -
           unzip -q "$RUNNER_TEMP/tflint.zip" -d "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: fmt
@@ -85,7 +94,7 @@ jobs:
     # an OIDC token. A check, not a gate (GitHub Free has no required checks); the federated credential's
     # job_workflow_ref match is the server-side control (infra/README.md, step 12).
     name: id-token-guard
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -106,7 +115,7 @@ jobs:
   lab:
     # The forecast lab (modeling/lab): its tests on the synthetic fixture, then the job image builds.
     name: lab
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}
     timeout-minutes: 20
     permissions:
       contents: read
