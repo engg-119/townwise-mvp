@@ -1,5 +1,5 @@
-// Your data (D28): the list of everything a location (or the organization) received, turning an upload or a reference
-// item off and on, renaming one, saving an edit of one, and deleting one. Every location and item from another
+// Your data (D28): the list of everything a location (or the organization) received, one item of it, turning an upload
+// or a reference item off and on, renaming one, saving an edit of one, and deleting one. Every location and item from another
 // organization answers 404 exactly like an unknown one, because each is loaded through the caller's OrgScope. Names
 // travel only in JSON bodies and never reach a log line or an audit event: those carry ids, kinds and counts. Stored
 // files are reached through handlers/files.ts.
@@ -193,6 +193,21 @@ export async function listData(ctx: TownwiseContext, req: Request, res: Response
     items: await itemViews(ctx, member, page.items),
     next: page.next === null ? null : `${page.next.at.toISOString()}_${page.next.id}`,
   });
+}
+
+/**
+ * GET /locations/:locationId/data/:ref: one item exactly as the list shows it (P26's item page). An item the list leaves
+ * out answers 404 like an unknown one: every stored file while files are off, a stored file that wrote days (its
+ * upload is the item), a file being deleted and someone else's unfinished upload. A read: it logs nothing and records
+ * nothing.
+ */
+export async function getDataItem(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const member = memberOf(principal);
+  const ref = parseRef(req.params.ref);
+  const location = await loadLocation(ctx, member.scope, req.params.locationId);
+  const item = await loadDataItem(ctx, member.scope, location.id, ref, member.userId);
+  if (item === null) throw notFound();
+  res.status(200).json({ item: await itemView(ctx, member, item) });
 }
 
 /** The location, then the item by its ref; a stored file answers 503 files_unavailable while files are off. */

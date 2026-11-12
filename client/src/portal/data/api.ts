@@ -39,6 +39,11 @@ export const dataItemSchema = z.object({
   }).nullable(),
   canTurnOff: z.boolean(),
   canDelete: z.boolean(),
+  /** A reference item kept with its original, stored files on, not under view-as, for the people who may turn it off. */
+  canEdit: z.boolean(),
+  /** When an edit last replaced the item's content, and who saved it (named as `addedByEmail`); both null if never. */
+  editedAt: z.string().nullable(),
+  editedByEmail: z.string().nullable(),
 });
 export type DataItem = z.infer<typeof dataItemSchema>;
 
@@ -58,6 +63,12 @@ export function listData(api: ApiClient, opts: { locationId?: string; after?: st
   if (opts.after !== undefined) query.set('after', opts.after);
   const text = query.toString();
   return api.json(`/api/org/data${text === '' ? '' : `?${text}`}`, listSchema);
+}
+
+/** One item, as the list shows it; 404 once it is gone (deleted, or replaced by an edit, which changes its ref). */
+export async function getItem(api: ApiClient, locationId: string, ref: string): Promise<DataItem> {
+  const body = await api.json(itemPath(locationId, ref), itemSchema);
+  return body.item;
 }
 
 /** Turns an upload or an item kept for reference off or on; answers the item as it now is. */

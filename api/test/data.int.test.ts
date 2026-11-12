@@ -361,6 +361,85 @@ describe('GET /api/org/data', () => {
   });
 });
 
+describe('GET /api/org/locations/:locationId/data/:ref', () => {
+  function getItem(session: TestSession, locationId: string, ref: string, on = server): Promise<Response> {
+    return call(on, itemPath(locationId, ref), { session });
+  }
+
+  it('answers an upload, a sales file’s upload and a stored file exactly as the caller’s list shows each', async () => {
+    const l1 = await newLocation();
+    await send(team.member, l1, '2026-05-01', 3);
+    tick();
+    await seedReadFileUpload(l1, '2026-05-10', 2);
+    tick();
+    await keep(team.member, l1, 'menu.txt', 'Closed Mondays in January.');
+    for (const session of [team.admin, team.member, team.other]) {
+      const { items } = await list(session, `?locationId=${l1}`);
+      expect(items.map((item) => item.ref.slice(0, 2))).toEqual(['f_', 'u_', 'u_']);
+      for (const item of items) {
+        const res = await getItem(session, l1, item.ref);
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ item });
+      }
+    }
+  });
+
+  it('another location’s or organization’s item, an unknown id and a stored file that wrote days answer 404; a malformed ref 400', async () => {
+    const l1 = await newLocation();
+    const l2 = await newLocation();
+    const upload = await send(team.admin, l1, '2026-05-01', 1);
+    const read = await seedReadFileUpload(l1, '2026-05-10', 1);
+    const fileId = await seedFile(l1);
+    const t = await newTeam('Other Kitchen');
+    const theirs = await addLocation(server, { orgId: t.orgId, name: 'Theirs' });
+    const theirUpload = await send(t.admin, theirs, '2026-05-01', 1);
+    const cases: [string, string][] = [
+      [l2, `u_${upload}`], [l2, `f_${fileId}`], [l1, `u_${theirUpload}`], [theirs, `u_${theirUpload}`], [l1, `f_${read.fileId}`],
+      [l1, `u_${new Types.ObjectId().toHexString()}`], [l1, `f_${new Types.ObjectId().toHexString()}`],
+    ];
+    for (const [locationId, ref] of cases) {
+      expect({ ref, ...(await errorOf(await getItem(team.admin, locationId, ref))) }).toEqual({ ref, status: 404, error: 'not_found' });
+    }
+    for (const ref of [`x_${'a'.repeat(24)}`, `u_${'A'.repeat(24)}`, 'f_abc', 'text']) {
+      expect({ ref, ...(await errorOf(await getItem(team.admin, l1, ref))) }).toEqual({ ref, status: 400, error: 'invalid_request' });
+    }
+  });
+
+  it('with stored files off, an upload answers with no file, and a stored file 404, as the list leaves it out', async () => {
+    const l1 = await newLocation();
+    const read = await seedReadFileUpload(l1, '2026-05-10', 2);
+    const fileId = await seedFile(l1);
+    const offAdmin = await signIn(off, team.adminEmail);
+    const res = await getItem(offAdmin, l1, `u_${read.uploadId}`, off);
+    expect(res.status).toBe(200);
+    const { item } = await res.json() as { item: DataItemView };
+    expect(item).toEqual((await list(offAdmin, `?locationId=${l1}`, off)).items[0]);
+    expect(item).toMatchObject({ ref: `u_${read.uploadId}`, kind: 'daily_totals', name: null, file: null, days: { count: 2, inUse: 2 } });
+    expect(await errorOf(await getItem(offAdmin, l1, `f_${fileId}`, off))).toEqual({ status: 404, error: 'not_found' });
+  });
+
+  describe('view-as', () => {
+    afterEach(async () => { await removeStaffFactor(server); });
+
+    it('under view-as, the item has no name and no rights', async () => {
+      const l1 = await newLocation();
+      const fileId = await keep(team.admin, l1, 'winter-menu.txt', 'Closed Mondays in January.');
+      const staff = await signInStaff(server);
+      await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: team.admin.userId, orgId: team.orgId });
+      const res = await getItem(staff, l1, `f_${fileId}`);
+      expect(res.status).toBe(200);
+      const text = await res.text();
+      expect(text).not.toContain('winter-menu');
+      expect(JSON.parse(text)).toMatchObject({
+        item: {
+          ref: `f_${fileId}`, name: null, canTurnOff: false, canDelete: false, canEdit: false,
+          file: { canDownloadRaw: false, canDownloadClean: false, canDeleteRaw: false },
+        },
+      });
+    });
+  });
+});
+
 describe('PATCH /api/org/locations/:locationId/data/:ref', () => {
   it('the uploader turns their upload off and on; its days leave and return', async () => {
     const l1 = await newLocation();

@@ -5,9 +5,10 @@ import type { DataItem } from '../../../src/portal/data/api';
 import { ADMIN_EMAIL, refusal } from '../../helpers/portal';
 import { fileViewOf, filesFake, type FilesFake } from '../files/fakes';
 
-// Your data in the API's shapes (api/src/handlers/data.ts) and a fake ApiClient for its routes. The list answers
-// from `items` (filtered by locationId, `pageSize` a page, the cursor an offset); PATCH, DELETE and POST text change
-// `items` and are recorded. Anything else goes to the stored-files fake, which sits over the location pages' fake.
+// Your data in the API's shapes (api/src/handlers/data.ts) and a fake ApiClient for its routes. The list and GET of
+// one item answer from `items` (the list filtered by locationId, `pageSize` a page, the cursor an offset); PATCH,
+// DELETE and POST text change `items` and are recorded. GET .../sales/history answers from `history` (the item page's
+// days). Anything else goes to the stored-files fake, which sits over the location pages' fake.
 
 export function itemOf(ref: string, extra?: Partial<DataItem>): DataItem {
   return {
@@ -17,7 +18,7 @@ export function itemOf(ref: string, extra?: Partial<DataItem>): DataItem {
       id: ref.replace(/^[uf]_/, 'file-'), hasClean: false, rawAvailable: true, rawExpiresAt: '2027-11-05T15:00:00.000Z', entries: null,
       canDownloadRaw: true, canDownloadClean: false, canDeleteRaw: true,
     },
-    canTurnOff: true, canDelete: true,
+    canTurnOff: true, canDelete: true, canEdit: false, editedAt: null, editedByEmail: null,
     ...extra,
   };
 }
@@ -39,6 +40,8 @@ export interface DataFake extends ApiClient {
   patches: { ref: string; body: unknown }[];
   removed: { locationId: string; ref: string }[];
   texts: { locationId: string; body: unknown }[];
+  /** GET .../sales/history bodies (or an ApiError) by location id. */
+  history: Record<string, unknown>;
   /** Answers by "METHOD path": a body, an ApiError or a promise of either. */
   answers: Record<string, (body: unknown) => unknown>;
   files: FilesFake;
@@ -60,6 +63,7 @@ export function dataFake(init: { inner: ApiClient; items?: DataItem[] }): DataFa
     patches: [],
     removed: [],
     texts: [],
+    history: {},
     answers: {},
     files,
     json<T>(path: `/${string}`, schema: z.ZodType<T>, opts?: RequestOptions): Promise<T> {
@@ -81,6 +85,11 @@ export function dataFake(init: { inner: ApiClient; items?: DataItem[] }): DataFa
       if (one?.[1] !== undefined && one[2] !== undefined && one[2] !== 'text') {
         const [, locationId, ref] = one;
         const answered = fake.answers[`${method} ${ref}`]?.(opts?.body);
+        if (method === 'GET') {
+          if (answered !== undefined) return settle(answered, schema);
+          const item = fake.items.find((candidate) => candidate.ref === ref && candidate.locationId === locationId);
+          return item === undefined ? Promise.reject(refusal(404, 'not_found')) : settle({ item: { ...item } }, schema);
+        }
         if (method === 'PATCH') {
           fake.patches.push({ ref, body: opts?.body });
           if (answered !== undefined) return settle(answered, schema);
@@ -95,6 +104,11 @@ export function dataFake(init: { inner: ApiClient; items?: DataItem[] }): DataFa
           fake.items = fake.items.filter((candidate) => candidate.ref !== ref);
           return settle({ deletedDays: 5, deletedFiles: 0 }, schema);
         }
+      }
+      const history = /^\/api\/org\/locations\/([^/]+)\/sales\/history$/.exec(path);
+      if (method === 'GET' && history?.[1] !== undefined) {
+        const body = fake.history[history[1]];
+        return body === undefined ? Promise.reject(refusal(404, 'not_found')) : settle(body, schema);
       }
       const text = /^\/api\/org\/locations\/([^/]+)\/data\/text$/.exec(path);
       if (method === 'POST' && text?.[1] !== undefined) {

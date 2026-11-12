@@ -349,7 +349,7 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
       // U13B.
       'org.forecast.get',
       // D28, Your data.
-      'org.data.update', 'org.data.remove', 'org.chat.item_proposal.get', 'org.chat.item_proposal', 'org.data.replace',
+      'org.data.update', 'org.data.remove', 'org.chat.item_proposal.get', 'org.chat.item_proposal', 'org.data.replace', 'org.data.get',
     ]));
   });
 
