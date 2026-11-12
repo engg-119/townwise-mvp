@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 
 import type { ConversationSummary } from '../../src/chat/api';
 import { ChatHeader } from '../../src/chat/ui/ChatHeader';
+import { historyMaxHeight } from '../../src/chat/ui/HistoryMenu';
 
 // B7 on web: the header's History disclosure, inline rename, delete's dialog, and the streaming and panel states.
 
@@ -17,7 +18,7 @@ type Props = React.ComponentProps<typeof ChatHeader>;
 
 function props(over: Partial<Props> = {}): Props {
   return {
-    title: 'Earlier chat', conversations: CONVERSATIONS, openId: 'c1', streaming: false, readOnlyId: null, panelOpen: false,
+    conversations: CONVERSATIONS, openId: 'c1', streaming: false, readOnlyId: null, panelOpen: false,
     openQuestions: null, onOpen: jest.fn(), onNew: jest.fn(), onDelete: jest.fn(() => Promise.resolve()),
     onRename: jest.fn(() => Promise.resolve()), onTogglePanel: jest.fn(), ...over,
   };
@@ -37,9 +38,35 @@ it('History opens a list of conversations, Escape closes it and focus returns to
   expect(document.activeElement).toBe(button);
 });
 
-it('says so when there are no conversations', () => {
-  render(<ChatHeader {...props({ conversations: [], openId: null, title: '' })} />);
-  expect(screen.getByText('New conversation')).toBeTruthy();
+it('History is a small popover over the thread that scrolls inside; a press outside closes it and leaves focus there', () => {
+  render(<><ChatHeader {...props()} /><button type="button">Elsewhere</button></>);
+  fireEvent.click(screen.getByRole('button', { name: 'History' }));
+  // Floats instead of pushing the thread down; at most 360px tall, or 60% of a shorter window.
+  expect(window.getComputedStyle(screen.getByTestId('chat-history-popover')).position).toBe('absolute');
+  expect([historyMaxHeight(1000), historyMaxHeight(500)]).toEqual([360, 300]);
+  const list = screen.getByRole('region', { name: 'History' });
+  fireEvent.pointerDown(list);
+  expect(screen.getByRole('region', { name: 'History' })).toBeTruthy();
+  // A press in the delete dialog, drawn outside the list, leaves the list open under it.
+  fireEvent.click(screen.getByRole('button', { name: 'Delete Another chat' }));
+  const dialog = screen.getByRole('dialog', { name: 'Delete this conversation?' });
+  fireEvent.pointerDown(dialog);
+  expect(screen.getByRole('region', { name: 'History' })).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+  const elsewhere = screen.getByRole('button', { name: 'Elsewhere' });
+  elsewhere.focus();
+  fireEvent.pointerDown(elsewhere);
+  expect(screen.queryByRole('region', { name: 'History' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'History' }).getAttribute('aria-expanded')).toBe('false');
+  expect(document.activeElement).toBe(elsewhere);
+});
+
+it('shows no conversation title, so the thread gets the height, and says so when there are no conversations', () => {
+  const open = render(<ChatHeader {...props()} />);
+  expect(screen.queryByText('Earlier chat')).toBeNull();
+  open.unmount();
+  render(<ChatHeader {...props({ conversations: [], openId: null })} />);
+  expect(screen.queryByText('New conversation')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'History' }));
   expect(screen.getByText('No conversations yet.')).toBeTruthy();
 });
