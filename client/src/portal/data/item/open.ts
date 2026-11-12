@@ -3,7 +3,7 @@ import { readDocument, type DocBlock } from '../../viewer/docx';
 import { sniffImage, viewerFor, type ViewerKind } from '../../viewer/kinds';
 import { VIEW_LIMITS } from '../../viewer/limits';
 import { decodeText, parseDelimited, type Delimited, type Delimiter, type TextEncoding } from '../../viewer/text';
-import { cellText, readWorkbook, type Cell, type Workbook } from '../../viewer/xlsx';
+import { cellText, readWorkbook, TIME_ONLY_DAYS, type Cell, type Workbook } from '../../viewer/xlsx';
 import type { DataItem } from '../api';
 
 // What an item's page does with a stored file on web (P27): whether it fetches one (the original, or a sales file's
@@ -103,9 +103,6 @@ export function bytesOf(blob: Blob): Promise<Uint8Array<ArrayBuffer>> {
 export function afterPaint(): Promise<void> {
   return new Promise((resolve) => { requestAnimationFrame(() => { setTimeout(resolve, 0); }); });
 }
-
-/** The date part Excel gives a time with no date, in the 1900 and the 1904 date systems. */
-const TIME_ONLY_DAYS = new Set(['1899-12-31', '1904-01-01']);
 
 /** A workbook cell as the grid shows it: cellText, except that a time with no date shows only its time. */
 export function shownCell(cell: Cell): string {

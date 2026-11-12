@@ -41,6 +41,10 @@ const MAX_ROWS = 1_048_576;
 const MAX_COLUMNS = 16_384;
 /** Built-in number formats that show a date or a time (ECMA-376 18.8.30). */
 const BUILT_IN_DATE_FORMATS = new Set([14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 46, 47]);
+/** The longest number format code Excel takes. */
+const MAX_FORMAT_CODE = 255;
+/** The date part a time with no date reads with, in the 1900 and the 1904 date systems (serialToIso of a fraction). */
+export const TIME_ONLY_DAYS: ReadonlySet<string> = new Set(['1899-12-31', '1904-01-01']);
 
 function damaged(detail: string): ViewerError {
   return new ViewerError('damaged', detail);
@@ -121,10 +125,13 @@ export function isoToSerial(iso: string): number | null {
 
 /**
  * True when a number format code shows a date or a time: a y, m, d, h or s outside quoted text, backslash escapes,
- * `_x` and `*x` fills, and bracketed sections ([Red], [$-409]) other than the elapsed-time [h], [mm], [ss].
+ * `_x` and `*x` fills, and bracketed sections ([Red], [$-409]; one left open runs to the end) other than the
+ * elapsed-time [h], [mm], [ss]. A code longer than Excel's 255 characters is none Excel wrote, and no date. Every
+ * pattern here is linear in the code's length.
  */
 export function isDateFormat(code: string): boolean {
-  const bare = code.replace(/"[^"]*"|\\.|[_*].|\[(?![hms]+\])[^\]]*\]/gi, '');
+  if (code.length > MAX_FORMAT_CODE) return false;
+  const bare = code.replace(/"[^"]*"|\\.|[_*].|\[(?![hms]+\])[^\]]*(?:\]|$)/gi, '');
   return /[ymdhs]/i.test(bare);
 }
 
@@ -153,7 +160,7 @@ async function readSharedStrings(pkg: Package, part: string | undefined): Promis
   return { strings: childElements(read.doc.documentElement, 'si').map(stringItemText), cut: read.cut };
 }
 
-/** For each cell format (cellXfs index), whether its number format shows a date or time. */
+/** For each cell format (cellXfs index), whether its number format shows a date or time; each format judged once. */
 async function readDateStyles(pkg: Package, part: string | undefined): Promise<boolean[]> {
   const doc = part === undefined ? null : await readXml(pkg, part);
   if (doc === null) return [];
@@ -162,10 +169,16 @@ async function readDateStyles(pkg: Package, part: string | undefined): Promise<b
   for (const format of childElements(childElement(root, 'numFmts'), 'numFmt')) {
     custom.set(Number(format.getAttribute('numFmtId')), format.getAttribute('formatCode') ?? '');
   }
+  const judged = new Map<number, boolean>();
   return childElements(childElement(root, 'cellXfs'), 'xf').map((xf) => {
     const id = Number(xf.getAttribute('numFmtId') ?? '0');
-    const code = custom.get(id);
-    return code === undefined ? BUILT_IN_DATE_FORMATS.has(id) : isDateFormat(code);
+    let date = judged.get(id);
+    if (date === undefined) {
+      const code = custom.get(id);
+      date = code === undefined ? BUILT_IN_DATE_FORMATS.has(id) : isDateFormat(code);
+      judged.set(id, date);
+    }
+    return date;
   });
 }
 
@@ -310,12 +323,26 @@ export async function readWorkbook(bytes: Uint8Array): Promise<Workbook> {
     // A cut shared-strings part truncates only the sheets that name a string past the cut (readCell's `missing`).
     let truncated = listed.length > VIEW_LIMITS.sheets;
     const sheets: Sheet[] = [];
+    // Each worksheet part is read once: a later sheet naming a part already read shows the same cells under its own
+    // name, so a workbook listing one large part many times inflates and parses it once.
+    const readParts = new Map<string, Sheet>();
     for (const entry of listed.slice(0, VIEW_LIMITS.sheets)) {
       const name = entry.getAttribute('name') ?? '';
       const id = attributeOf(entry, 'id', true);
       const rel = rels.find((candidate) => candidate.id === id);
-      // A chart sheet, dialog sheet or macro sheet has no cells: it shows, by name, as an empty sheet.
-      const sheet = rel?.type.endsWith('/worksheet') === true ? await readSheet(pkg, rel.target, name, context) : emptySheet(name);
+      let sheet: Sheet;
+      if (rel?.type.endsWith('/worksheet') === true) {
+        // Part names match without regard to case (ooxml.ts); resolved targets have no leading slash.
+        const key = rel.target.toLowerCase();
+        const earlier = readParts.get(key);
+        if (earlier === undefined) {
+          sheet = await readSheet(pkg, rel.target, name, context);
+          readParts.set(key, sheet);
+        } else sheet = { ...earlier, name };
+      } else {
+        // A chart sheet, dialog sheet or macro sheet has no cells: it shows, by name, as an empty sheet.
+        sheet = emptySheet(name);
+      }
       truncated ||= sheet.truncated;
       sheets.push(sheet);
     }

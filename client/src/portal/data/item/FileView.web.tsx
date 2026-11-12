@@ -68,7 +68,7 @@ function OpenedView(props: { opened: Opened; name: string; canDownload: boolean 
     case 'text': return <TextView text={opened.text} label={`Text of ${name}`} />;
     case 'delimited': return <DelimitedView table={opened.table} label={`Rows of ${name}`} />;
     case 'workbook': return <WorkbookView workbook={opened.workbook} />;
-    case 'pdf': return <PdfView bytes={opened.bytes} title={`PDF: ${name}`} />;
+    case 'pdf': return <PdfView bytes={opened.bytes} name={name} />;
     case 'document': return <DocumentView blocks={opened.blocks} truncated={opened.truncated} label={`Contents of ${name}`} />;
     case 'image':
       return opened.type === null

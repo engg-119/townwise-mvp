@@ -11,17 +11,20 @@ import { Small } from '../../ui/text';
 import type { DataItem } from '../api';
 import { EDIT, keptLine, replaceRetryable, storeErrorLine } from './copy';
 import {
-  encodedLike, gridOfRows, gridOfSheet, sameGrid, tableBytes, workbookBytes, type EditableOpened, type Grid, type Saved,
+  eolOf, gridOfRows, gridOfSheet, lfText, sameGrid, sameText, tableBytes, textBytes, workbookBytes, type EditableOpened, type Eol,
+  type Grid, type Saved,
 } from './edit';
 import { GridEditor, WorkbookEditor } from './GridEditor.web';
 import { replaceStored, saveAsCopy, saveInPlace, type EditTarget, type SaveResult } from './save';
 import { TextEditor } from './TextEditor.web';
 
 // Editing a stored file in its viewer's place on its item page (P27, web; FileView.web.tsx opens it). Text is a
-// textarea and a CSV, TSV or workbook a grid of inputs, drafted from what the viewer opened. Save stays disabled until
-// the draft differs from the file. Text and CSV save in place (save.ts saveInPlace: a new upload under the item's
-// name, then replace) and a workbook as a values-only copy beside it (saveAsCopy); either way the page then opens the
-// saved item with a line saying so. Cancel asks before it drops changes.
+// textarea and a CSV, TSV or workbook a grid of inputs, drafted from what the viewer opened, line breaks as LF (as a
+// browser reports a textarea's value; edit.ts). Save stays disabled until the draft differs from the file other than
+// in its line endings, and saving writes them back as the file had them. Text and CSV save in place (save.ts
+// saveInPlace: a new upload under the item's name, then replace) and a workbook as a values-only copy beside it
+// (saveAsCopy); either way the page then opens the saved item with a line saying so. Cancel asks before it drops
+// changes.
 //
 // Failures say what happened and what to do, and focus moves to that line (ui/messageFocus.tsx). An upload refused or
 // failed changed nothing, so the draft stays open to save again. An upload that stored but didn't take the item's
@@ -29,7 +32,8 @@ import { TextEditor } from './TextEditor.web';
 // same file id (retry-safe); one that can't succeed (another edit came first) says so, with a link to the new item.
 // While a save runs the inputs are read-only, Cancel waits, and `onSaving` tells the page so its actions wait too.
 
-type Draft = { kind: 'text'; text: string } | { kind: 'table'; grid: Grid } | { kind: 'workbook'; grids: Grid[] };
+/** A text draft keeps the line ending its file opened with, which saving writes its line breaks as. */
+type Draft = { kind: 'text'; text: string; eol: Eol } | { kind: 'table'; grid: Grid } | { kind: 'workbook'; grids: Grid[] };
 
 type Phase =
   /** `error`: why the last save stored nothing. */
@@ -42,14 +46,14 @@ type Phase =
 
 function draftOf(opened: EditableOpened): Draft {
   switch (opened.viewer) {
-    case 'text': return { kind: 'text', text: opened.text };
+    case 'text': return { kind: 'text', text: lfText(opened.text), eol: eolOf(opened.text) };
     case 'delimited': return { kind: 'table', grid: gridOfRows(opened.table.rows) };
     case 'workbook': return { kind: 'workbook', grids: opened.workbook.sheets.map(gridOfSheet) };
   }
 }
 
 function sameDraft(a: Draft, b: Draft): boolean {
-  if (a.kind === 'text' && b.kind === 'text') return a.text === b.text;
+  if (a.kind === 'text' && b.kind === 'text') return sameText(a.text, b.text);
   if (a.kind === 'table' && b.kind === 'table') return sameGrid(a.grid, b.grid);
   if (a.kind === 'workbook' && b.kind === 'workbook') {
     return a.grids.length === b.grids.length && a.grids.every((grid, index) => {
@@ -61,7 +65,7 @@ function sameDraft(a: Draft, b: Draft): boolean {
 }
 
 function bytesOf(opened: EditableOpened, draft: Draft): Uint8Array {
-  if (opened.viewer === 'text' && draft.kind === 'text') return encodedLike(draft.text, opened);
+  if (opened.viewer === 'text' && draft.kind === 'text') return textBytes(draft.text, draft.eol, opened);
   if (opened.viewer === 'delimited' && draft.kind === 'table') return tableBytes(opened.table, draft.grid, opened);
   if (opened.viewer === 'workbook' && draft.kind === 'workbook') return workbookBytes(opened.workbook, draft.grids);
   throw new Error('The draft is not of what opened.');
@@ -92,6 +96,9 @@ export function ItemEditor(props: ItemEditorProps): React.JSX.Element {
     return () => { mounted.current = false; };
   }, []);
 
+  const changeText = useCallback((text: string) => {
+    setDraft((current) => (current.kind === 'text' ? { ...current, text } : current));
+  }, []);
   const changeGrid = useCallback((update: (grid: Grid) => Grid) => {
     setDraft((current) => (current.kind === 'table' ? { ...current, grid: update(current.grid) } : current));
   }, []);
@@ -145,7 +152,7 @@ export function ItemEditor(props: ItemEditorProps): React.JSX.Element {
   let surface: React.ReactNode = null;
   if (!stored) {
     if (draft.kind === 'text') {
-      surface = <TextEditor text={draft.text} label={`Text of ${props.name}`} disabled={saving} onChange={(text) => { setDraft({ kind: 'text', text }); }} />;
+      surface = <TextEditor text={draft.text} label={`Text of ${props.name}`} disabled={saving} onChange={changeText} />;
     } else if (draft.kind === 'table') {
       surface = <GridEditor grid={draft.grid} label={`Rows of ${props.name}`} letters={false} disabled={saving} autoFocus onChange={changeGrid} />;
     } else if (opened.viewer === 'workbook') {

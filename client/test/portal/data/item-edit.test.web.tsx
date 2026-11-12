@@ -144,6 +144,18 @@ describe('rename', () => {
     expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Name' }).value).toBe('menu');
     expect(screen.getByRole('heading', { level: 2, name: 'notes.txt' })).toBeTruthy();
   });
+
+  test('a rename refused with 400 (a title that makes no name, or an original deleted meanwhile) says what to do for either', async () => {
+    const ref = refOf(4);
+    const { fake } = setup(editable(ref, { name: 'notes.txt', sizeBytes: 5 }), 'hello');
+    fake.answers[`PATCH ${ref}`] = () => refusal(400, 'invalid_request');
+    fireEvent.click(await screen.findByRole('button', { name: 'Rename: notes.txt' }, SLOW));
+    type(screen.getByRole('textbox', { name: 'Name' }), '///');
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    const line = 'Townwise couldn’t rename this item. Try another name, or go back to Your data in case its file was deleted.';
+    expect(await screen.findByText(line, {}, SLOW)).toBeTruthy();
+    expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Name' }).value).toBe('///');
+  });
 });
 
 describe('editing text', () => {
@@ -193,6 +205,24 @@ describe('editing text', () => {
     expect(disabled(save)).toBe(false);
     type(area, 'hello');
     expect(disabled(save)).toBe(true);
+  });
+
+  test('a CRLF file: a character typed and deleted leaves Save disabled, and a save keeps CRLF', async () => {
+    const ref = refOf(14);
+    const { fake } = setup(editable(ref, { name: 'notes.txt', sizeBytes: 24 }), 'Closed Mondays\r\nOpen at 9\r\n');
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit: notes.txt' }, SLOW));
+    const area = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Text of notes.txt' });
+    const save = screen.getByRole('button', { name: 'Save' });
+    // A browser reports a textarea's value with its line breaks as LF, as these change events do.
+    type(area, 'Closed Mondays\nOpen at 9\n!');
+    expect(disabled(save)).toBe(false);
+    type(area, 'Closed Mondays\nOpen at 9\n');
+    expect(disabled(save)).toBe(true);
+    type(area, 'Closed Mondays\nOpen at 10\n');
+    fireEvent.click(save);
+    const { bytes } = await sent(fake);
+    expect(new TextDecoder().decode(bytes)).toBe('Closed Mondays\r\nOpen at 10\r\n');
+    expect(await screen.findByText('Saved.', {}, SLOW)).toBeTruthy();
   });
 
   test('Cancel with changes asks to discard them; without changes it just closes', async () => {
@@ -281,6 +311,23 @@ describe('editing a CSV', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     const { bytes } = await sent(fake);
     expect(new TextDecoder().decode(bytes)).toBe('day,"notes\nfor the week"\nMon,"two\nlines"\n');
+  });
+
+  test('a CRLF CSV: a cell typed back as it was leaves Save disabled, and a save keeps CRLF, inside cells too', async () => {
+    const ref = refOf(24);
+    const csv = 'day,note\r\nMon,"two\r\nlines"\r\n';
+    const { fake } = setup(editable(ref, { name: 'week.csv', sizeBytes: csv.length }), csv);
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit: week.csv' }, SLOW));
+    const save = screen.getByRole('button', { name: 'Save' });
+    expect(cell('Row 2, column 2').value).toBe('two\nlines');
+    type(cell('Row 2, column 2'), 'two\nlines!');
+    expect(disabled(save)).toBe(false);
+    type(cell('Row 2, column 2'), 'two\nlines');
+    expect(disabled(save)).toBe(true);
+    type(cell('Row 1, column 2'), 'notes\nfor the week');
+    fireEvent.click(save);
+    const { bytes } = await sent(fake);
+    expect(new TextDecoder().decode(bytes)).toBe('day,"notes\r\nfor the week"\r\nMon,"two\r\nlines"\r\n');
   });
 
   test('a windows-1252 CSV saves as UTF-8 with a byte-order mark, so Excel reads it right', async () => {
@@ -376,7 +423,7 @@ describe('what can’t be edited', () => {
 
   test('a PDF can be renamed but not edited, and says nothing about editing', async () => {
     setup(editable(refOf(43), { name: 'menu.pdf', kind: 'pdf', sizeBytes: 20 }), '%PDF-1.4\n%synthetic\n');
-    expect(await screen.findByTitle('PDF: menu.pdf', {}, SLOW)).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Open PDF: menu.pdf' }, SLOW)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Rename: menu.pdf' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /^Edit/ })).toBeNull();
     expect(screen.queryByText(/to edit here/)).toBeNull();

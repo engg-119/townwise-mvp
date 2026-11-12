@@ -1,8 +1,12 @@
 import './setup';
 
+import { TransformStream as NodeTransformStream, WritableStream as NodeWritableStream } from 'node:stream/web';
+
 import { ViewerError } from '../../src/portal/viewer/errors';
 import { VIEW_LIMITS } from '../../src/portal/viewer/limits';
-import { crc32, listZip, readZipEntry, readZipEntryPrefix, zipStore } from '../../src/portal/viewer/zip';
+import {
+  crc32, INFLATE_SLICE, listZip, readZipEntry, readZipEntryPrefix, zipStore, type ZipEntry,
+} from '../../src/portal/viewer/zip';
 import { buildZip } from './fixtures';
 
 // The ZIP reader's guards and the STORE writer. Every archive here is synthetic.
@@ -95,6 +99,133 @@ describe('reading entries', () => {
     const [entry] = listZip(zip);
     if (entry === undefined) throw new Error('missing entry');
     expect(await reason(() => readZipEntry(zip, entry, 1000))).toBe('damaged');
+  });
+});
+
+describe('inflating a slice at a time', () => {
+  const RealDecompressionStream = globalThis.DecompressionStream;
+  /** The size of every write handed to the inflater, and how many of them it inflated. */
+  const writes: number[] = [];
+  let inflated = 0;
+
+  /** A writable side that records each write's size and hands it on to `inner`, settling as `inner` does. */
+  function recording(inner: WritableStream<Uint8Array>): WritableStream<Uint8Array> {
+    const writer = inner.getWriter();
+    return new NodeWritableStream<Uint8Array>({
+      write: (chunk) => {
+        writes.push(chunk.byteLength);
+        return writer.write(chunk);
+      },
+      close: () => writer.close(),
+      abort: (why: unknown) => writer.abort(why),
+    });
+  }
+
+  /** Node's real inflater (setup.ts), its writes recorded. */
+  class RecordingInflater {
+    readonly readable: ReadableStream<Uint8Array>;
+    readonly writable: WritableStream<Uint8Array>;
+
+    constructor(format: CompressionFormat) {
+      const real = new RealDecompressionStream(format);
+      this.readable = real.readable;
+      this.writable = recording(real.writable as WritableStream<Uint8Array>);
+    }
+  }
+
+  /**
+   * An inflater as browsers build one (Compression Streams: a TransformStream that inflates each written chunk whole
+   * and enqueues the output), making `outPerSlice` bytes of each slice. A TransformStream takes the next chunk only once
+   * the reader has read what the last one made. Node's own DecompressionStream does not wait that way.
+   */
+  function fakeInflater(outPerSlice: number): typeof DecompressionStream {
+    return class {
+      readonly readable: ReadableStream<Uint8Array>;
+      readonly writable: WritableStream<Uint8Array>;
+
+      constructor() {
+        const stream = new NodeTransformStream<Uint8Array, Uint8Array>({
+          transform: (_chunk, controller) => {
+            inflated += 1;
+            for (let left = outPerSlice; left > 0; left -= MIB) controller.enqueue(new Uint8Array(Math.min(MIB, left)));
+          },
+        });
+        this.readable = stream.readable as unknown as ReadableStream<Uint8Array>;
+        this.writable = recording(stream.writable);
+      }
+    } as unknown as typeof DecompressionStream;
+  }
+
+  /** Bytes that deflate about 2 to 1 (an LCG's numbers), so an entry spans many slices. */
+  function noisyCsv(bytes: number): string {
+    let seed = 12_345;
+    const parts: string[] = [];
+    let length = 0;
+    while (length < bytes) {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+      const part = `${String(seed % 100_000)},`;
+      parts.push(part);
+      length += part.length;
+    }
+    return parts.join('');
+  }
+
+  /** `slices` slices of data under method 8 that declare `size` (the fake inflaters never read it). */
+  function deflatedEntry(slices: number, size: number): { zip: Uint8Array; entry: ZipEntry } {
+    const zip = buildZip([{ name: 'xl/worksheets/sheet1.xml', data: new Uint8Array(slices * INFLATE_SLICE).fill(7), method: 8, size }]);
+    const [entry] = listZip(zip);
+    if (entry === undefined) throw new Error('missing entry');
+    return { zip, entry };
+  }
+
+  beforeEach(() => {
+    writes.length = 0;
+    inflated = 0;
+  });
+  afterEach(() => {
+    globalThis.DecompressionStream = RealDecompressionStream;
+  });
+
+  test('a multi-MiB entry inflates whole, fed in slices of at most 16 KiB', async () => {
+    globalThis.DecompressionStream = RecordingInflater as unknown as typeof DecompressionStream;
+    const csv = noisyCsv(3 * MIB);
+    const zip = buildZip([{ name: 'big.csv', data: csv, deflate: true }]);
+    const [entry] = listZip(zip);
+    if (entry === undefined) throw new Error('missing entry');
+    expect(entry.compressedSize).toBeGreaterThan(20 * INFLATE_SLICE);
+    expect(text(await readZipEntry(zip, entry, VIEW_LIMITS.zipEntryBytes))).toBe(csv);
+    expect(Math.max(...writes)).toBeLessThanOrEqual(INFLATE_SLICE);
+    expect(writes).toHaveLength(Math.ceil(entry.compressedSize / INFLATE_SLICE));
+    expect(writes.reduce((sum, size) => sum + size, 0)).toBe(entry.compressedSize);
+  });
+
+  test('a bomb declaring 1 KiB over many slices of deflate data inflates one slice, and at most one more is handed over', async () => {
+    // Deflate's ratio at its limit: each 16 KiB slice makes 16 MiB, so 24 MiB of input would make 24 GiB.
+    globalThis.DecompressionStream = fakeInflater(1024 * INFLATE_SLICE);
+    const { zip, entry } = deflatedEntry(8, 1024);
+    expect(await reason(() => readZipEntry(zip, entry, VIEW_LIMITS.xmlBytes))).toBe('damaged');
+    expect(inflated).toBe(1);
+    expect(writes.length).toBeLessThanOrEqual(2);
+    expect(Math.max(...writes)).toBeLessThanOrEqual(INFLATE_SLICE);
+  });
+
+  test('output is checked between slices: a prefix read stops at the slice that passes its limit', async () => {
+    globalThis.DecompressionStream = fakeInflater(4096);
+    const { zip, entry } = deflatedEntry(10, MIB);
+    const part = await readZipEntryPrefix(zip, entry, 12_345);
+    expect(part.complete).toBe(false);
+    expect(part.data).toHaveLength(12_345);
+    // 4 KiB a slice: the fourth passes 12,345 bytes.
+    expect(inflated).toBe(4);
+    expect(writes.length).toBeLessThanOrEqual(5);
+  });
+
+  test('an entry that inflates past its declared size stops there too', async () => {
+    globalThis.DecompressionStream = fakeInflater(4096);
+    const { zip, entry } = deflatedEntry(10, 10_000);
+    expect(await reason(() => readZipEntry(zip, entry, MIB))).toBe('damaged');
+    expect(inflated).toBe(3);
+    expect(writes.length).toBeLessThanOrEqual(4);
   });
 });
 

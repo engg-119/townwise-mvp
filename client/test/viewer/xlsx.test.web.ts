@@ -2,6 +2,7 @@ import './setup';
 
 import { ViewerError } from '../../src/portal/viewer/errors';
 import { VIEW_LIMITS } from '../../src/portal/viewer/limits';
+import { openPackage, readXml, readXmlCut } from '../../src/portal/viewer/ooxml';
 import {
   cellFromText, cellText, isDateFormat, isoToSerial, readWorkbook, serialToIso, type Cell, type Sheet,
 } from '../../src/portal/viewer/xlsx';
@@ -11,6 +12,7 @@ import { buildPackage, workbookBytes } from './fixtures';
 
 // Excel workbooks read in the browser, and the values-only writer. Every workbook here is synthetic.
 
+const MIB = 1024 * 1024;
 const EMPTY: Cell = { t: 'empty' };
 const s = (v: string): Cell => ({ t: 's', v });
 const n = (v: number): Cell => ({ t: 'n', v });
@@ -158,6 +160,17 @@ describe('dates', () => {
       expect([code, isDateFormat(code)]).toEqual([code, false]);
     }
   });
+
+  test('a format code past Excel’s 255 characters is no date, and an unclosed [ runs to the end, in linear time', () => {
+    const started = performance.now();
+    expect(isDateFormat('['.repeat(1_000_000))).toBe(false);
+    expect(isDateFormat('y'.repeat(256))).toBe(false);
+    expect(isDateFormat('['.repeat(255))).toBe(false);
+    expect(isDateFormat(`${'['.repeat(200)}yyyy`)).toBe(false);
+    expect(isDateFormat(`yyyy ${'['.repeat(250)}`)).toBe(true);
+    expect(isDateFormat('[h'.repeat(127))).toBe(false);
+    expect(performance.now() - started).toBeLessThan(50);
+  });
 });
 
 describe('caps', () => {
@@ -177,6 +190,38 @@ describe('caps', () => {
     expect(sheet.columnCount).toBe(VIEW_LIMITS.sheetColumns);
     expect(sheet.rows[0]?.[VIEW_LIMITS.sheetColumns - 1]).toEqual(n(200));
     expect(sheet.truncated).toBe(true);
+  });
+
+  test('sheets naming one worksheet part show the same cells under their own names; the part is read and parsed once', async () => {
+    const names = Array.from({ length: VIEW_LIMITS.sheets }, (_sheet, i) => `S${String(i + 1)}`);
+    const bytes = workbookBytes({
+      sheets: names.map((name, i): [string, string] => [name, i === 0 ? '<row r="1"><c r="A1"><v>7</v></c></row>' : '']),
+      targets: names.map(() => 'worksheets/sheet1.xml'),
+    });
+    const parse = jest.spyOn(DOMParser.prototype, 'parseFromString');
+    try {
+      const workbook = await readWorkbook(bytes);
+      expect(workbook.sheets.map((sheet) => sheet.name)).toEqual(names);
+      expect(workbook.sheets.every((sheet) => sheet.rows === workbook.sheets[0]?.rows)).toBe(true);
+      expect(workbook.sheets[49]?.rows).toEqual([[n(7)]]);
+      expect(workbook.truncated).toBe(false);
+      // _rels/.rels, the workbook, its relationships and the one worksheet.
+      expect(parse).toHaveBeenCalledTimes(4);
+    } finally {
+      parse.mockRestore();
+    }
+  });
+
+  test('every read of a part is charged to one budget per package, so reading one part over and over stops at 128 MiB', async () => {
+    // A stored 1 MiB part that parseXml refuses at once (a DOCTYPE), so each read costs its bytes and nothing more.
+    const pkg = openPackage(buildPackage({ 'xl/big.xml': `<!DOCTYPE x>${' '.repeat(MIB - 12)}` }, true));
+    for (let read = 0; read < VIEW_LIMITS.zipTotalBytes / MIB; read += 1) {
+      expect(await reason(() => readXml(pkg, 'xl/big.xml'))).toBe('damaged');
+    }
+    expect(await reason(() => readXml(pkg, 'xl/big.xml'))).toBe('too_big');
+    expect(await reason(() => readXmlCut(pkg, 'xl/big.xml', 'row', ['sheetData']))).toBe('too_big');
+    // Another package of the same bytes has its own budget.
+    expect(await reason(() => readXml(openPackage(pkg.bytes), 'xl/big.xml'))).toBe('damaged');
   });
 
   test('a workbook with more sheets than are read is truncated at 50', async () => {
@@ -259,6 +304,18 @@ describe('the writer', () => {
     const sheetXml = new TextDecoder().decode(bytes);
     expect(sheetXml).toContain('<c r="A1" s="1"><v>45366</v></c>');
     expect(sheetXml).toContain(`<c r="B1" s="2"><v>${String(45366 + 3723 / 86_400)}</v></c>`);
+  });
+
+  test('a time with no date is written as its fraction of a day under a time style, and reads back as one', async () => {
+    const bytes = writeWorkbook([{ name: 'S', rows: [[d('1899-12-31T12:00:00'), d('1904-01-01T06:30:00'), d('2024-03-15T12:00:00')]] }]);
+    const xml = new TextDecoder().decode(bytes);
+    expect(xml).toContain('<xf numFmtId="21" ');
+    expect(xml).toContain('<c r="A1" s="3"><v>0.5</v></c>');
+    expect(xml).toContain(`<c r="B1" s="3"><v>${String(23_400 / 86_400)}</v></c>`);
+    expect(xml).toContain(`<c r="C1" s="2"><v>${String(45366.5)}</v></c>`);
+    const read = await readWorkbook(bytes);
+    // The writer uses the 1900 system, where a time with no date reads on 1899-12-31.
+    expect(read.sheets[0]?.rows).toEqual([[d('1899-12-31T12:00:00'), d('1899-12-31T06:30:00'), d('2024-03-15T12:00:00')]]);
   });
 
   test('characters XML forbids are dropped; text that is no date or known error is written as text', async () => {

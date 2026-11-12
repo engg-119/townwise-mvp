@@ -1,6 +1,6 @@
 import '../../viewer/setup';
 
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
@@ -17,7 +17,7 @@ import { locationsFake } from '../locations/fakes';
 import { dailyTotalsOf, dataFake, itemOf, type DataFake } from './fakes';
 
 // One item of Your data on web (P27, D28): its details, an upload's days, and a stored file drawn in the browser by
-// kind (text, a CSV grid, a workbook's sheets, a PDF in the browser's viewer, a Word document, a picture), with every
+// kind (text, a CSV grid, a workbook's sheets, a PDF opened in a new tab, a Word document, a picture), with every
 // case that shows nothing saying why. All files are synthetic.
 
 class ResizeObserverPolyfill {
@@ -278,17 +278,30 @@ describe('a stored file', () => {
     expect(document.activeElement).toBe(notes);
   });
 
-  test('a PDF opens in the browser’s viewer on a blob: URL, revoked when the page goes', async () => {
+  test('a PDF draws no frame: Open PDF opens it in a new tab on a blob: URL with noopener, revoked 40 seconds later', async () => {
     const ref = refOf('f', 15);
     setup([storedFile(ref, { name: 'menu.pdf', kind: 'pdf', sizeBytes: 20 })], ref, { downloads: { [rawPath(ref)]: () => new Blob(['%PDF-1.4\n%synthetic\n']) } });
-    const frame = await screen.findByTitle('PDF: menu.pdf');
-    expect(frame.tagName).toBe('IFRAME');
-    expect(frame.getAttribute('sandbox')).toBeNull();
-    await waitFor(() => { expect(frame.getAttribute('src')).toBe('blob:https://townwise.tech/0'); });
-    expect(urls.types).toEqual(['application/pdf']);
-    expect(urls.revoked).toEqual([]);
-    cleanup();
-    expect(urls.revoked).toEqual(['blob:https://townwise.tech/0']);
+    const button = await screen.findByRole('button', { name: 'Open PDF: menu.pdf' });
+    expect(button.textContent).toBe('Open PDF');
+    expect(screen.getByText('A PDF opens in a new tab, in your browser’s own PDF viewer.')).toBeTruthy();
+    expect(document.querySelector('iframe, embed, object')).toBeNull();
+    expect(urls.made).toEqual([]);
+    const open = jest.spyOn(window, 'open').mockImplementation(() => null);
+    jest.useFakeTimers();
+    try {
+      // The tab opens in the click itself, so a popup blocker lets it through.
+      fireEvent.click(button);
+      expect(open).toHaveBeenCalledTimes(1);
+      expect(open).toHaveBeenCalledWith('blob:https://townwise.tech/0', '_blank', 'noopener');
+      expect(urls.types).toEqual(['application/pdf']);
+      act(() => { jest.advanceTimersByTime(39_999); });
+      expect(urls.revoked).toEqual([]);
+      act(() => { jest.advanceTimersByTime(1); });
+      expect(urls.revoked).toEqual(['blob:https://townwise.tech/0']);
+    } finally {
+      jest.useRealTimers();
+    }
+    expect(document.querySelector('iframe, embed, object')).toBeNull();
   });
 
   test('a Word document shows its paragraphs, headings and tables as text', async () => {

@@ -79,7 +79,8 @@ export async function setEnabled(api: ApiClient, locationId: string, ref: string
 
 /**
  * Renames an item kept for reference: `title` becomes its name, keeping the current extension; the same name changes
- * nothing. 409 item_busy while it is not kept (an edit being saved, a delete).
+ * nothing. 409 item_busy while Townwise is still reading it or an edit of it is being saved; 400 invalid_request for a
+ * title that makes no file name, or once its original is deleted.
  */
 export async function renameItem(api: ApiClient, locationId: string, ref: string, title: string): Promise<DataItem> {
   const body = await api.json(itemPath(locationId, ref), itemSchema, { method: 'PATCH', body: { title } });

@@ -1,27 +1,31 @@
-import { useEffect, useRef } from 'react';
+import { Actions, Button } from '../../ui/Button';
+import { Stack } from '../../ui/layout';
+import { Small } from '../../ui/text';
+import { ITEM } from './copy';
 
-import { theme } from '../../../theme';
+// A PDF on its item page (P27): a line and Open PDF, which opens the fetched bytes in a new tab, in the browser's own
+// PDF viewer. The page draws no frame: in Chrome a link in a PDF framed here would navigate the whole Townwise tab,
+// and a sandboxed frame draws no PDF at all. The click makes a blob: URL typed application/pdf, so the browser reads
+// the bytes as nothing else, and opens it with noopener, so the new tab has no handle on this one. It happens in the
+// click itself, with the bytes already fetched, so a popup blocker lets it through. A new tab is a navigation, which no
+// CSP directive here governs, so no header changes (client/MODULE.md, ## Security). The URL is revoked after
+// REVOKE_AFTER_MS, as files/download.web.ts revokes its own, so a slow tab still finds it.
 
-// A PDF on its item page (P27), in the browser's own PDF viewer: an <iframe> on a blob: URL of the fetched bytes,
-// typed application/pdf so the browser reads them as nothing else. The CSP's frame-src allows blob: for this
-// (client/MODULE.md, ## Security). No sandbox attribute: browsers refuse to draw a PDF in a sandboxed frame. The URL
-// is made and revoked by one effect and handed to the frame directly, so it never outlives the view.
+const REVOKE_AFTER_MS = 40_000;
 
-export function PdfView(props: { bytes: Uint8Array; title: string }): React.JSX.Element {
-  const frame = useRef<HTMLIFrameElement>(null);
-  useEffect(() => {
-    const url = URL.createObjectURL(new Blob([props.bytes as Uint8Array<ArrayBuffer>], { type: 'application/pdf' }));
-    if (frame.current !== null) frame.current.src = url;
-    return () => { URL.revokeObjectURL(url); };
-  }, [props.bytes]);
+function openPdf(bytes: Uint8Array): void {
+  const url = URL.createObjectURL(new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'application/pdf' }));
+  window.open(url, '_blank', 'noopener');
+  setTimeout(() => { URL.revokeObjectURL(url); }, REVOKE_AFTER_MS);
+}
+
+export function PdfView(props: { bytes: Uint8Array; name: string }): React.JSX.Element {
   return (
-    <iframe
-      ref={frame}
-      title={props.title}
-      style={{
-        width: '100%', height: '80vh', minHeight: 480, display: 'block', boxSizing: 'border-box', border: `1px solid ${theme.color.border}`,
-        background: theme.color.panel,
-      }}
-    />
+    <Stack>
+      <Small>{ITEM.pdfLine}</Small>
+      <Actions>
+        <Button variant="outline" label={ITEM.openPdf} accessibilityLabel={`${ITEM.openPdf}: ${props.name}`} onPress={() => { openPdf(props.bytes); }} />
+      </Actions>
+    </Stack>
   );
 }

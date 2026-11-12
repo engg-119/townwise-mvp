@@ -4,8 +4,9 @@ import { VIEW_LIMITS } from './limits';
 // A ZIP reader and a STORE-only writer with browser built-ins only. The reader takes the central directory from the
 // end of the archive and checks every guard on the sizes it declares (entry count, each entry, the total, the
 // compression ratio, and that no two entries' data overlap) before a byte is inflated. Inflating (DecompressionStream)
-// stops the moment an entry passes its declared size or the cap. ZIP64, split archives, encryption and methods other
-// than stored and deflate are refused with a typed error.
+// is fed INFLATE_SLICE bytes at a time and stops the moment an entry passes its declared size or the cap, so a small
+// declared size over a long run of deflate data inflates at most one slice past it. ZIP64, split archives,
+// encryption and methods other than stored and deflate are refused with a typed error.
 
 export interface ZipEntry {
   name: string;
@@ -26,6 +27,11 @@ const FLAG_ENCRYPTED = 0x0001;
 const FLAG_UTF8 = 0x0800;
 /** 1980-01-01 in MS-DOS date form: (1980 - 1980) << 9 | 1 << 5 | 1. */
 const DOS_DATE_1980 = 0x0021;
+/**
+ * Compressed bytes handed to the inflater at a time. Deflate inflates at most about 1,032 to 1, so one slice makes at
+ * most about 16.5 MiB, and the output is read and checked between slices rather than after the whole entry.
+ */
+export const INFLATE_SLICE = 16 * 1024;
 
 function damaged(detail: string): ViewerError {
   return new ViewerError('damaged', detail);
@@ -135,7 +141,13 @@ function ignore(): void {
   // A stream error is reported once, by the reader.
 }
 
-/** Inflates `input`, which must produce exactly `size` bytes; stops after `limit` (at most `size`) bytes. */
+/**
+ * Inflates `input`, which must produce exactly `size` bytes; stops after `limit` (at most `size`) bytes. The input goes
+ * in INFLATE_SLICE bytes at a time, each written only once the last write settled: a stream takes a slice only after
+ * the reader has read what the slice before it made (its backpressure), so at most one slice's output waits unread.
+ * Once the output passes the limit, the reader is cancelled, the writer aborted and the feeding awaited, so no slice
+ * after that one is inflated.
+ */
 async function inflateRaw(input: Uint8Array, size: number, limit: number): Promise<{ data: Uint8Array; complete: boolean }> {
   if (typeof DecompressionStream === 'undefined') throw new ViewerError('unsupported', 'browser cannot inflate');
   const out = new Uint8Array(limit);
@@ -143,8 +155,15 @@ async function inflateRaw(input: Uint8Array, size: number, limit: number): Promi
   const stream = new DecompressionStream('deflate-raw');
   const writer = stream.writable.getWriter();
   const reader = stream.readable.getReader();
-  writer.write(input as Uint8Array<ArrayBuffer>).catch(ignore);
-  writer.close().catch(ignore);
+  let stopped = false;
+  // A function, not the flag read inline: TypeScript would keep the flag narrowed across the awaits.
+  const going = (): boolean => !stopped;
+  const feeding = (async () => {
+    for (let at = 0; at < input.length && going(); at += INFLATE_SLICE) {
+      await writer.write(input.subarray(at, at + INFLATE_SLICE) as Uint8Array<ArrayBuffer>);
+    }
+    if (going()) await writer.close();
+  })().catch(ignore);
   try {
     for (;;) {
       const chunk = await reader.read();
@@ -164,7 +183,10 @@ async function inflateRaw(input: Uint8Array, size: number, limit: number): Promi
     if (error instanceof ViewerError) throw error;
     throw damaged('deflate data');
   } finally {
-    reader.cancel().catch(ignore);
+    stopped = true;
+    await reader.cancel().catch(ignore);
+    await writer.abort().catch(ignore);
+    await feeding;
   }
   if (length !== size) throw damaged('entry shorter than declared');
   return { data: out, complete: true };

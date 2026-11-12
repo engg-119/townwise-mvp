@@ -8,8 +8,35 @@ import { shownCell, type Opened } from './open';
 // draft of a CSV or a sheet as a grid of text, and the bytes a draft saves as. Text and CSV save in place, as UTF-8
 // with a byte-order mark when the file had one or wasn't UTF-8 (Excel reads a CSV without one in its own code page);
 // a workbook saves as a values-only copy. Imported only by .web files (it reads open.ts), except for its types.
+//
+// Line endings: a browser reports a <textarea>'s value with every CRLF and CR made LF, so a draft holds LF only and is
+// compared with what opened regardless of line endings (sameText). Saving writes the line breaks back as the file had
+// them: text by the ending it opened with (eolOf), a CSV cell whose text is unchanged exactly as the file had it, and
+// an edited cell's line breaks by the table's own line ending (Delimited.eol).
 
 export type EditKind = 'text' | 'table' | 'workbook';
+
+export type Eol = '\r\n' | '\n';
+
+/** CRLF when every line break in `text` is a CRLF (and it has one), else LF. */
+export function eolOf(text: string): Eol {
+  return text.includes('\r\n') && !/\r(?!\n)|(?:^|[^\r])\n/.test(text) ? '\r\n' : '\n';
+}
+
+/** `text` as a browser reports a textarea's value: every CRLF and CR made LF. */
+export function lfText(text: string): string {
+  return text.replace(/\r\n?/g, '\n');
+}
+
+/** True when two texts differ at most in their line endings. */
+export function sameText(a: string, b: string): boolean {
+  return a === b || lfText(a) === lfText(b);
+}
+
+/** `text` with every line break written as `eol`. */
+export function withEol(text: string, eol: Eol): string {
+  return text.replace(/\r\n?|\n/g, eol);
+}
 
 /** What opened can be edited as `kind`, if it `fits` the editor's limits (VIEW_LIMITS.editRows and the rest). */
 export interface Editable {
@@ -63,12 +90,14 @@ export function editableOf(opened: Opened): Editable | null {
 // ---- Grids ---------------------------------------------------------------------------------------------------------
 
 export interface DraftRow {
-  /** The row's cells as text, as the person sees them; a CSV's ragged rows stay as long as they were. */
+  /** The row's cells as text, as the person sees them, line breaks as LF; a CSV's ragged rows stay as long as they were. */
   text: string[];
   /** How long the row is kept: cells typed past it and cleared again are dropped, so a ragged row stays ragged. */
   base: number;
   /** A workbook row's own cells by column, which an edit's text is read back against (cellOf). */
   cells?: readonly Cell[];
+  /** A CSV row's own fields by column, which a cell whose text is unchanged is written back as (tableBytes). */
+  fields?: readonly string[];
 }
 
 export interface Grid {
@@ -78,12 +107,15 @@ export interface Grid {
 }
 
 export function gridOfRows(rows: readonly (readonly string[])[]): Grid {
-  return { rows: rows.map((row) => ({ text: [...row], base: row.length })), width: widest(rows) };
+  return { rows: rows.map((row) => ({ text: row.map(lfText), base: row.length, fields: row })), width: widest(rows) };
 }
 
 /** A sheet as the grid shows it (a time with no date shows only its time, as in the viewer). */
 export function gridOfSheet(sheet: Sheet): Grid {
-  return { rows: sheet.rows.map((row) => ({ text: row.map(shownCell), base: row.length, cells: row })), width: sheet.columnCount };
+  return {
+    rows: sheet.rows.map((row) => ({ text: row.map((cell) => lfText(shownCell(cell))), base: row.length, cells: row })),
+    width: sheet.columnCount,
+  };
 }
 
 /** Typing in a cell: past a ragged row's end the row grows to that cell; clearing it shrinks the row back. */
@@ -125,14 +157,14 @@ export function canAddColumn(grid: Grid): boolean {
   return grid.width < VIEW_LIMITS.editColumns;
 }
 
-/** True when both grids hold the same rows of the same text. */
+/** True when both grids hold the same rows of the same text, line endings aside. */
 export function sameGrid(a: Grid, b: Grid): boolean {
   if (a.rows.length !== b.rows.length) return false;
   return a.rows.every((row, index) => {
     // A row no edit touched is the same object in both.
     if (row === b.rows[index]) return true;
     const other = b.rows[index]?.text;
-    return other?.length === row.text.length && row.text.every((value, column) => value === other[column]);
+    return other?.length === row.text.length && row.text.every((value, column) => sameText(value, other[column] ?? ''));
   });
 }
 
@@ -144,7 +176,7 @@ const EMPTY: Cell = { t: 'empty' };
  */
 export function cellOf(text: string, previous: Cell): Cell {
   const shown = shownCell(previous);
-  if (text === shown) return previous;
+  if (sameText(text, shown)) return previous;
   if (previous.t === 'd' && shown !== cellText(previous)) {
     const iso = normalizeIso(`${previous.v.slice(0, 10)}T${text.trim()}`);
     if (iso !== null && iso.length > 10) return { t: 'd', v: iso };
@@ -163,9 +195,21 @@ export function encodedLike(text: string, from: { encoding: TextEncoding; bom: b
   return encodeText(text, from.bom || from.encoding !== 'utf-8');
 }
 
-/** A CSV or TSV with its own delimiter and line endings. */
+/** Text with its line breaks written back as `eol`, the ending it opened with (eolOf). */
+export function textBytes(text: string, eol: Eol, from: { encoding: TextEncoding; bom: boolean }): Uint8Array {
+  return encodedLike(withEol(text, eol), from);
+}
+
+/**
+ * A CSV or TSV with its own delimiter and line endings: a cell whose text is unchanged is written as the file had it,
+ * and an edited cell's line breaks as the table's line ending.
+ */
 export function tableBytes(table: Delimited, grid: Grid, from: { encoding: TextEncoding; bom: boolean }): Uint8Array {
-  return encodedLike(toDelimited({ ...table, rows: grid.rows.map((row) => row.text) }), from);
+  const rows = grid.rows.map((row) => row.text.map((value, column) => {
+    const field = row.fields?.[column];
+    return field !== undefined && sameText(field, value) ? field : withEol(value, table.eol);
+  }));
+  return encodedLike(toDelimited({ ...table, rows }), from);
 }
 
 /** Every sheet of the workbook, in order, with its edited cells: a values-only .xlsx (xlsxWrite.ts). */

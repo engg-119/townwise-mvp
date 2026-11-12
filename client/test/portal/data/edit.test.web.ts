@@ -1,11 +1,18 @@
-import { addColumn, addRow, cellOf, editableOf, gridOfRows, sameGrid, setCell } from '../../../src/portal/data/item/edit';
+import '../../viewer/setup';
+
+import {
+  addColumn, addRow, cellOf, editableOf, eolOf, gridOfRows, gridOfSheet, sameGrid, sameText, setCell, tableBytes, textBytes,
+} from '../../../src/portal/data/item/edit';
 import type { Opened } from '../../../src/portal/data/item/open';
+import type { Delimited } from '../../../src/portal/viewer/text';
 import type { Cell } from '../../../src/portal/viewer/xlsx';
 
-// The rules of an edit on an item's page (edit.ts): what fits the editor, how a grid's ragged rows change, and how a
-// workbook cell's text is read back.
+// The rules of an edit on an item's page (edit.ts): what fits the editor, how a grid's ragged rows change, how a
+// workbook cell's text is read back, and how line endings survive a browser's textarea, which reports them as LF.
 
 const bytes = new Uint8Array();
+const UTF8 = { encoding: 'utf-8', bom: false } as const;
+const decode = (data: Uint8Array): string => new TextDecoder().decode(data);
 
 function table(rows: string[][], truncated = false): Opened {
   return { viewer: 'delimited', bytes, table: { rows, delimiter: ',', eol: '\n', trailingEol: true, truncated }, encoding: 'utf-8', bom: false };
@@ -50,4 +57,40 @@ test('a workbook cell: unchanged text keeps the cell; a time with no date keeps 
   expect(cellOf('1e3', { t: 'n', v: 7 })).toEqual({ t: 'n', v: 1000 });
   expect(cellOf('00123', { t: 'empty' })).toEqual({ t: 's', v: '00123' });
   expect(cellOf('', { t: 'n', v: 7 })).toEqual({ t: 'empty' });
+  // A browser reports a cell's CRLF as LF: the same text, so the same cell.
+  const crlf: Cell = { t: 's', v: 'two\r\nlines' };
+  expect(cellOf('two\nlines', crlf)).toBe(crlf);
+});
+
+test('line endings: a text’s own, read when it opens; drafts compared without them; LF written back as the text’s own', () => {
+  expect(eolOf('a\r\nb\r\n')).toBe('\r\n');
+  expect(eolOf('a\r\nb')).toBe('\r\n');
+  expect(eolOf('a\nb\n')).toBe('\n');
+  expect(eolOf('a\r\nb\nc')).toBe('\n');
+  expect(eolOf('a\r\nb\rc')).toBe('\n');
+  expect(eolOf('\na\r\n')).toBe('\n');
+  expect(eolOf('one line')).toBe('\n');
+  expect(sameText('a\r\nb\rc', 'a\nb\nc')).toBe(true);
+  expect(sameText('a\r\nb', 'a\nc')).toBe(false);
+  expect(decode(textBytes('one\ntwo\n', '\r\n', UTF8))).toBe('one\r\ntwo\r\n');
+  expect(decode(textBytes('one\ntwo\n', '\n', UTF8))).toBe('one\ntwo\n');
+});
+
+test('a CSV keeps an unchanged cell as the file had it; an edited cell’s line breaks take the table’s line ending', () => {
+  // Excel's own layout: CRLF between records, LF inside a cell.
+  const csv: Delimited = { rows: [['a', 'b'], ['x\ny', 'z']], delimiter: ',', eol: '\r\n', trailingEol: true, truncated: false };
+  let grid = setCell(gridOfRows(csv.rows), 0, 1, 'B');
+  expect(decode(tableBytes(csv, grid, UTF8))).toBe('a,B\r\n"x\ny",z\r\n');
+  grid = setCell(grid, 1, 1, 'z\nw');
+  expect(decode(tableBytes(csv, grid, UTF8))).toBe('a,B\r\n"x\ny","z\r\nw"\r\n');
+  // A CRLF inside a cell is drafted as LF, as the browser shows it; typed back as it was, nothing changed.
+  const crlf: Delimited = { ...csv, rows: [['two\r\nlines', 'x']] };
+  const drafted = gridOfRows(crlf.rows);
+  expect(drafted.rows[0]?.text).toEqual(['two\nlines', 'x']);
+  const retyped = setCell(drafted, 0, 0, 'two\nlines');
+  expect(sameGrid(retyped, drafted)).toBe(true);
+  expect(decode(tableBytes(crlf, setCell(retyped, 0, 1, 'y'), UTF8))).toBe('"two\r\nlines",y\r\n');
+  // A sheet's cells are drafted the same way.
+  const sheet = gridOfSheet({ name: 'S', rows: [[{ t: 's', v: 'a\r\nb' }]], rowCount: 1, columnCount: 1, truncated: false });
+  expect(sheet.rows[0]?.text).toEqual(['a\nb']);
 });

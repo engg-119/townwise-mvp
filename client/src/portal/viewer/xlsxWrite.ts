@@ -1,11 +1,12 @@
 import { ViewerError } from './errors';
-import { isoToSerial, type Cell } from './xlsx';
+import { isoToSerial, normalizeIso, TIME_ONLY_DAYS, type Cell } from './xlsx';
 import { zipStore } from './zip';
 
 // A values-only .xlsx: one worksheet per sheet, strings inline, dates as serials under a date (numFmtId 14) or
-// date-time (numFmtId 22) style, and nothing else (no formulas, formatting, widths or merged cells). Text is escaped
-// for XML, characters XML 1.0 forbids are dropped, and a carriage return is written as &#13; so it survives the
-// parser's line-end normalization. Every part is stored, not deflated (zipStore).
+// date-time (numFmtId 22) style, a time with no date as its fraction of a day under a time style (numFmtId 21,
+// h:mm:ss), and nothing else (no formulas, formatting, widths or merged cells). Text is escaped for XML, characters
+// XML 1.0 forbids are dropped, and a carriage return is written as &#13; so it survives the parser's line-end
+// normalization. Every part is stored, not deflated (zipStore).
 
 const MAIN = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 const RELS = 'http://schemas.openxmlformats.org/package/2006/relationships';
@@ -15,6 +16,7 @@ const MAX_ROWS = 1_048_576;
 const MAX_COLUMNS = 16_384;
 const STYLE_DATE = 1;
 const STYLE_DATE_TIME = 2;
+const STYLE_TIME = 3;
 /** The error values Excel writes and reads back (t="e"); any other text is written as a string. */
 const ERRORS = new Set([
   '#NULL!', '#DIV/0!', '#VALUE!', '#REF!', '#NAME?', '#NUM!', '#N/A', '#GETTING_DATA', '#SPILL!', '#CALC!', '#FIELD!',
@@ -33,6 +35,17 @@ function xmlAttribute(text: string): string {
 /** Cell text, with a literal `_xHHHH_` escaped (ST_Xstring) so Excel does not read it as a character. */
 function cellString(text: string): string {
   return xmlText(text.replace(/_(?=x[0-9A-Fa-f]{4}_)/g, '_x005F_'));
+}
+
+/**
+ * The fraction of a day of a time with no date (its date part one of TIME_ONLY_DAYS, as the reader gives it), else
+ * null. Written as a date-time it would show as 1/0/1900, and a 1904-system time would land in 1904.
+ */
+function timeOnlyFraction(iso: string): number | null {
+  const normal = normalizeIso(iso);
+  if (normal === null || normal.length <= 10 || !TIME_ONLY_DAYS.has(normal.slice(0, 10))) return null;
+  const [h = 0, m = 0, s = 0] = normal.slice(11).split(':').map(Number);
+  return (h * 3600 + m * 60 + s) / 86_400;
 }
 
 function columnName(index: number): string {
@@ -58,6 +71,8 @@ function cellXml(cell: Cell, reference: string): string {
     case 'e':
       return ERRORS.has(cell.v) ? `<c r="${reference}" t="e"><v>${xmlText(cell.v)}</v></c>` : inlineString(reference, cell.v);
     case 'd': {
+      const fraction = timeOnlyFraction(cell.v);
+      if (fraction !== null) return `<c r="${reference}" s="${String(STYLE_TIME)}"><v>${String(fraction)}</v></c>`;
       const serial = isoToSerial(cell.v);
       if (serial === null) return inlineString(reference, cell.v);
       const style = cell.v.length > 10 ? STYLE_DATE_TIME : STYLE_DATE;
@@ -114,9 +129,10 @@ const STYLES = `${DECLARATION}<styleSheet xmlns="${MAIN}">`
   + '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>'
   + '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
   + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-  + '<cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
+  + '<cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
   + '<xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'
-  + '<xf numFmtId="22" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs>'
+  + '<xf numFmtId="22" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'
+  + '<xf numFmtId="21" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs>'
   + '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
   + '</styleSheet>';
 

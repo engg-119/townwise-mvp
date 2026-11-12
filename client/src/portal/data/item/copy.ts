@@ -36,6 +36,8 @@ export const ITEM = {
   emptyFile: 'This file is empty.',
   emptySheet: 'This sheet is empty.',
   sheets: 'Sheets',
+  pdfLine: 'A PDF opens in a new tab, in your browser’s own PDF viewer.',
+  openPdf: 'Open PDF',
   /** Added after a line that shows no content, when the person may download the original. */
   download: 'Use Download original to open it on your computer.',
 } as const;
@@ -150,7 +152,7 @@ export const EDIT = {
   notReplaced: 'Townwise saved your edit, but couldn’t put it in this item’s place. Try again. If you leave, your edit stays on Your data as a new item.',
   keptAsNew: 'Your edit is kept on Your data as a new item.',
   itemBusy: 'This item is changing right now, maybe because someone is saving an edit of it. Try again in a moment.',
-  badName: 'Townwise can’t use that name. Try another.',
+  renameRefused: 'Townwise couldn’t rename this item. Try another name, or go back to Your data in case its file was deleted.',
 } as const;
 
 /** A name as its part before the last dot and the rest (“.txt”), as the API keeps the extension on a rename. */
@@ -192,13 +194,20 @@ export function tooBigToEditLine(kind: 'text' | 'table' | 'workbook'): string {
   return `${limit} Download it, edit it on your computer, and add it again.`;
 }
 
-/** A rename's or an edit's refusal: Your data's words, with this page's own for a busy item. */
+/**
+ * A rename's or an edit's refusal: Your data's words, with this page's own for 409 item_busy, which the API answers
+ * while Townwise is still reading the item or an edit of it is being saved (a rename then waits for the edit).
+ */
 function editError(error: unknown): string {
   return hasCode(error, 409, 'item_busy') ? EDIT.itemBusy : dataError(error);
 }
 
+/**
+ * A rename's refusal. A 400 is a title that makes no file name or an item that can't be renamed anymore (its original
+ * deleted since the page opened), so its words fit either.
+ */
 export function renameError(error: unknown): string {
-  return hasCode(error, 400, 'invalid_request') ? EDIT.badName : editError(error);
+  return hasCode(error, 400, 'invalid_request') ? EDIT.renameRefused : editError(error);
 }
 
 /** Upload refusals as an edit meets them (the queue's words say “drop the file again”, which an edit can't). */

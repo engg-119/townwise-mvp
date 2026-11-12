@@ -105,6 +105,8 @@ export interface WorkbookFixture {
   styles?: string;
   date1904?: boolean;
   stored?: boolean;
+  /** Each sheet's worksheet target, relative to xl/ (by default worksheets/sheet{n}.xml, its own part). */
+  targets?: string[];
 }
 
 /** An .xlsx built the way Excel lays one out. */
@@ -116,7 +118,10 @@ export function workbookBytes(fixture: WorkbookFixture): Uint8Array {
   const sheetList = fixture.sheets.map(([name], i) => `<sheet name="${name}" sheetId="${String(i + 1)}" r:id="rId${String(i + 1)}"/>`).join('');
   parts['xl/workbook.xml'] = `<?xml version="1.0"?><workbook xmlns="${MAIN}" xmlns:r="${REL}">`
     + `${fixture.date1904 === true ? '<workbookPr date1904="1"/>' : '<workbookPr/>'}<sheets>${sheetList}</sheets></workbook>`;
-  let rels = fixture.sheets.map((_sheet, i) => `<Relationship Id="rId${String(i + 1)}" Type="${REL}/worksheet" Target="worksheets/sheet${String(i + 1)}.xml"/>`).join('');
+  let rels = fixture.sheets.map((_sheet, i) => {
+    const target = fixture.targets?.[i] ?? `worksheets/sheet${String(i + 1)}.xml`;
+    return `<Relationship Id="rId${String(i + 1)}" Type="${REL}/worksheet" Target="${target}"/>`;
+  }).join('');
   if (fixture.sharedStrings !== undefined) {
     rels += `<Relationship Id="rIdS" Type="${REL}/sharedStrings" Target="sharedStrings.xml"/>`;
     const inner = typeof fixture.sharedStrings === 'string'

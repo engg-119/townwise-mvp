@@ -5,7 +5,9 @@ import { listZip, readZipEntry, readZipEntryPrefix, type ZipEntry } from './zip'
 // What .xlsx and .docx share: an Open Packaging (ZIP) container of XML parts found through relationship parts. Parts
 // are matched by name without regard to case, elements by local name without regard to prefix or namespace (so
 // Strict and Transitional packages read alike), and every part is size-capped before DOMParser sees it. A DOCTYPE is
-// refused, so no entity is ever expanded.
+// refused, so no entity is ever expanded. Every read of a part, the same part read again included, is charged against
+// one budget of inflated bytes per opened package (VIEW_LIMITS.zipTotalBytes), so a package that names one large part
+// many times cannot make the reader inflate more than the ZIP guards allow once.
 
 /** The OLE compound-file signature: an encrypted (password-protected) Office file, or an old binary .xls or .doc. */
 const OLE_SIGNATURE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
@@ -13,6 +15,8 @@ const OLE_SIGNATURE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
 export interface Package {
   readonly bytes: Uint8Array;
   readonly parts: ReadonlyMap<string, ZipEntry>;
+  /** The inflated bytes reads of this package may still take, from VIEW_LIMITS.zipTotalBytes (charge). */
+  readonly budget: { left: number };
 }
 
 export interface Relationship {
@@ -49,7 +53,16 @@ export function openPackage(bytes: Uint8Array): Package {
     if (parts.has(key)) throw new ViewerError('damaged', 'duplicate part');
     parts.set(key, entry);
   }
-  return { bytes, parts };
+  return { bytes, parts, budget: { left: VIEW_LIMITS.zipTotalBytes } };
+}
+
+/**
+ * Takes the most a read may inflate (`bytes`: the entry's declared size, or the prefix read's cap when smaller) from the
+ * package's budget, before anything is inflated. Inflating stops at that size (zip.ts), so the charge is never short.
+ */
+function charge(pkg: Package, bytes: number): void {
+  if (bytes > pkg.budget.left) throw new ViewerError('too_big', 'package total');
+  pkg.budget.left -= bytes;
 }
 
 function partOf(pkg: Package, name: string): ZipEntry | undefined {
@@ -74,6 +87,8 @@ export function parseXml(text: string): Document {
 export async function readXml(pkg: Package, name: string): Promise<Document | null> {
   const entry = partOf(pkg, name);
   if (entry === undefined) return null;
+  // A part over the cap is refused before inflating (readZipEntry), so it costs only what it could have read.
+  charge(pkg, Math.min(entry.size, VIEW_LIMITS.xmlBytes));
   return parseXml(decodeXml(await readZipEntry(pkg.bytes, entry, VIEW_LIMITS.xmlBytes)));
 }
 
@@ -87,6 +102,7 @@ export async function readXmlCut(
 ): Promise<{ doc: Document; cut: boolean } | null> {
   const entry = partOf(pkg, name);
   if (entry === undefined) return null;
+  charge(pkg, Math.min(entry.size, VIEW_LIMITS.xmlBytes));
   const read = await readZipEntryPrefix(pkg.bytes, entry, VIEW_LIMITS.xmlBytes);
   const text = decodeXml(read.data);
   if (read.complete) return { doc: parseXml(text), cut: false };
