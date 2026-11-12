@@ -21,6 +21,22 @@ export const TEXT_ITEM_TITLE_MAX = 120;
 export const READ_ITEM_BYTES = 64 * 1024;
 export const READ_ITEM_MAX_CHARS = 20_000;
 
+/**
+ * Editing an item: how long a replace's claim on it (`replacedBy`) holds. An older claim, or one with no `replacedAt`,
+ * is stale: the call that made it stopped, and the next edit may free it.
+ */
+export const REPLACE_CLAIM_MS = 2 * 60 * 1000;
+
+/** Whether an edit is being saved over the item now: it is claimed and the claim is not stale. */
+export function replaceClaimLive(file: Pick<FileRecord, 'replacedBy' | 'replacedAt'>, now: Date): boolean {
+  return file.replacedBy !== null && file.replacedAt !== null && now.getTime() - file.replacedAt.getTime() <= REPLACE_CLAIM_MS;
+}
+
+/** The cutoff for the store's rename: a claim made before it is stale (replaceClaimLive). */
+export function replaceClaimStaleBefore(now: Date): Date {
+  return new Date(now.getTime() - REPLACE_CLAIM_MS);
+}
+
 const OBJECT_ID = /^[0-9a-f]{24}$/;
 
 export interface TextItemInput {

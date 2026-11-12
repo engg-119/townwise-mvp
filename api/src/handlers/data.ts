@@ -10,12 +10,12 @@ import { z } from 'zod';
 
 import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
-import type { MemberPrincipal, Principal } from '../access/policy.ts';
+import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import {
   DATA_PAGE, listDataItems, loadDataItem, parseRef, refString, type DataCursor, type DataItemRecord, type DataState, type DataVia,
 } from '../data/library.ts';
 import type { FileBlobs } from '../files/blobs.ts';
-import { renamedItemName, TEXT_ITEM_TITLE_MAX } from '../files/items.ts';
+import { renamedItemName, replaceClaimLive, replaceClaimStaleBefore, TEXT_ITEM_TITLE_MAX } from '../files/items.ts';
 import { currentEmail, DELETED_PERSON, TOWNWISE_STAFF } from '../people.ts';
 import type { FileKind, FileRecord } from '../stores/files.ts';
 import type { LocationRecord } from '../stores/locations.ts';
@@ -45,9 +45,9 @@ export interface DataItemView {
   /** Not in view-as; an upload: org admins; a file with no days: the person who added it or an org admin. */
   canDelete: boolean;
   /**
-   * Not in view-as; stored files on; a reference item kept with its original stored and no edit being saved; the people
-   * who may turn it off. Saving an edit (POST .../replace) takes these rules, and renaming (PATCH `{ title }`) all but
-   * the edit being saved.
+   * Not in view-as; stored files on; a reference item kept with its original stored and no edit being saved (no claim,
+   * or a stale one: REPLACE_CLAIM_MS); the people who may turn it off. Saving an edit (POST .../replace) and renaming
+   * (PATCH `{ title }`) take these rules.
    */
   canEdit: boolean;
   /** When an edit last replaced the item's content, and who saved it (as `addedByEmail`); both null if never. */
@@ -71,6 +71,15 @@ function invalidRequest(): AppError {
   return new AppError(400, 'invalid_request', 'Invalid request');
 }
 
+function itemChanged(): AppError {
+  return new AppError(409, 'item_changed', 'Someone saved another edit of this item; open it again to see it');
+}
+
+/** A rename while an edit of the item is being saved: the edit would put a file with its own name in its place. */
+function editBeingSaved(): AppError {
+  return new AppError(409, 'item_busy', 'An edit of this item is being saved; try again in a moment');
+}
+
 /** The person who added it or an org admin; only an org admin for a Townwise staff upload. */
 function mayManage(member: MemberPrincipal, item: DataItemRecord): boolean {
   if (member.role === 'org_admin') return true;
@@ -82,11 +91,11 @@ function turnable(item: DataItemRecord): boolean {
   return item.ref.type === 'upload' || item.file?.purpose === 'reference';
 }
 
-/** A reference item kept with its original stored, with no edit being saved, while stored files are on. */
-function editable(item: DataItemRecord, filesOn: boolean): boolean {
+/** A reference item kept with its original stored, with no edit being saved at `now`, while stored files are on. */
+function editable(item: DataItemRecord, filesOn: boolean, now: Date): boolean {
   const file = item.file;
   return filesOn && item.ref.type === 'file' && file !== null && file.purpose === 'reference' && item.state === 'kept'
-    && file.rawDeletedAt === null && file.replacedBy === null;
+    && file.rawDeletedAt === null && !replaceClaimLive(file, now);
 }
 
 /**
@@ -111,7 +120,7 @@ function editOf(item: DataItemRecord): { by: string | null } | null {
   return { by: item.file?.editedByStaff === true ? null : by };
 }
 
-function dataItemView(member: MemberPrincipal, item: DataItemRecord, emails: ItemEmails, filesOn: boolean): DataItemView {
+function dataItemView(member: MemberPrincipal, item: DataItemRecord, emails: ItemEmails, filesOn: boolean, now: Date): DataItemView {
   const viewAs = member.viewAs !== null;
   const file = filesOn ? item.file : null;
   const shown = file === null ? null : fileView(member, file, emails.added, null);
@@ -135,7 +144,7 @@ function dataItemView(member: MemberPrincipal, item: DataItemRecord, emails: Ite
     },
     canTurnOff: !viewAs && mayManage(member, item) && !BUSY.includes(item.state) && turnable(item),
     canDelete: !viewAs && (item.ref.type === 'upload' ? member.role === 'org_admin' : item.file !== null && isUploaderOrAdmin(member, item.file)),
-    canEdit: !viewAs && mayManage(member, item) && editable(item, filesOn),
+    canEdit: !viewAs && mayManage(member, item) && editable(item, filesOn, now),
     editedAt: edited === null ? null : edited.toISOString(),
     editedByEmail: edited === null ? null : emails.edited,
   };
@@ -158,12 +167,13 @@ async function emailsFor(ctx: TownwiseContext, items: readonly DataItemRecord[])
 
 async function itemViews(ctx: TownwiseContext, member: MemberPrincipal, items: readonly DataItemRecord[]): Promise<DataItemView[]> {
   const emails = await emailsFor(ctx, items);
-  return items.map((item) => dataItemView(member, item, emails(item), ctx.files !== null));
+  const now = ctx.now();
+  return items.map((item) => dataItemView(member, item, emails(item), ctx.files !== null, now));
 }
 
 /** One item as the client sees it, with its emails read now (also Keep on a TownwiseAI card, chat-item-proposals.ts). */
 export async function itemView(ctx: TownwiseContext, member: MemberPrincipal, item: DataItemRecord): Promise<DataItemView> {
-  return dataItemView(member, item, (await emailsFor(ctx, [item]))(item), ctx.files !== null);
+  return dataItemView(member, item, (await emailsFor(ctx, [item]))(item), ctx.files !== null, ctx.now());
 }
 
 const listQuery = z.object({ locationId: objectId.optional(), after: z.string().max(64).optional() });
@@ -264,23 +274,27 @@ export async function updateDataItem(ctx: TownwiseContext, req: Request, res: Re
 
 /**
  * PATCH { title }: the reference item's new name is the title as a file name, keeping its extension (files/items.ts).
- * The same name as now changes nothing and records nothing. The rename is a compare-and-set on the item still being
- * kept with its original, so a purge's label (its kind) is never overwritten.
+ * The same name as now changes nothing and records nothing. While an edit of the item is being saved (a live claim) it
+ * answers 409 item_busy, since the edit's file keeps its own name. The rename is a compare-and-set on the item still
+ * being kept with its original and no live claim, so a purge's label (its kind) is never overwritten and no rename lands
+ * while an edit is being saved.
  */
 async function renameItem(
   ctx: TownwiseContext, res: Response, member: MemberPrincipal, location: LocationRecord, item: DataItemRecord, title: string,
 ): Promise<void> {
   const { scope } = member;
+  const now = ctx.now();
   const file = editableFile(member, item);
+  if (replaceClaimLive(file, now)) throw editBeingSaved();
   const name = renamedItemName(file.name, title);
   if (name === null) throw invalidRequest();
   let updated = item;
   if (name !== file.name) {
-    const renamed = await ctx.stores.files.rename(scope, location.id, file.id, name);
+    const renamed = await ctx.stores.files.rename(scope, location.id, file.id, name, replaceClaimStaleBefore(now));
     if (renamed === null) {
-      // Deleted, or its original deleted, meanwhile.
+      // Deleted, its original deleted, or an edit claimed it, meanwhile.
       const again = await loadDataItem(ctx, scope, location.id, item.ref, member.userId);
-      if (again !== null) editableFile(member, again);
+      if (again !== null && replaceClaimLive(editableFile(member, again), now)) throw editBeingSaved();
       throw notFound();
     }
     updated = { ...item, file: renamed };
@@ -299,9 +313,10 @@ const replaceBody = z.strictObject({ fileId: objectId });
  * the edited content as a new reference file (B) through the chunked upload, then this puts B in the item's place (A).
  * B is the caller's, kept, at the same location, stored in the last 24 hours, and holds no other item's place. With no
  * multi-document transactions (DocumentDB), the order lets a retry finish the work: (1) a compare-and-set claims A for
- * B, so a second edit saved with another file answers 409 item_changed; (2) a compare-and-set gives B A's place (who
- * added it, their role, when, how it arrived, its grant, whether it is off) and its edit; (3) A is removed as
- * DELETE /files/:fileId removes a file. A gone whose place B took answers B. Records data.edited, targeting B.
+ * B, so a second edit saved with another file answers 409 item_changed while the first is being saved, and a claim a
+ * stopped call left is freed (claimItem); (2) a compare-and-set gives B A's place (who added it, their role, when, how
+ * it arrived, its grant, whether it is off) and its edit; (3) A is removed as DELETE /files/:fileId removes a file. A
+ * gone whose place B took answers B. Records data.edited, targeting B and naming A in `replaces`.
  */
 export async function replaceDataItem(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const member = memberOf(principal);
@@ -329,19 +344,11 @@ export async function replaceDataItem(ctx: TownwiseContext, req: Request, res: R
       throw invalidRequest();
     }
   }
-  const claimed = await ctx.stores.files.claimReplace(scope, location.id, a.id, b.id);
+  const claimed = await claimItem(ctx, blobs, scope, location.id, a.id, b.id);
   if (claimed === null) {
-    const current = await ctx.stores.files.get(scope, location.id, a.id);
-    if (current === null || current.status === 'deleting') {
-      // Removed meanwhile: by another call saving this same edit, once B took its place.
-      await finishIfPlaced(ctx, res, member, blobs, location.id, a.id, b.id);
-      return;
-    }
-    if (current.replacedBy !== null && current.replacedBy !== b.id) {
-      throw new AppError(409, 'item_changed', 'Someone saved another edit of this item; open it again to see it');
-    }
-    // Its original was deleted meanwhile.
-    throw invalidRequest();
+    // Removed meanwhile: by another call saving this same edit, once B took its place.
+    await finishIfPlaced(ctx, res, member, blobs, location.id, a.id, b.id);
+    return;
   }
   if (!placed) {
     const took = await ctx.stores.files.takePlace(scope, location.id, b.id, {
@@ -355,6 +362,45 @@ export async function replaceDataItem(ctx: TownwiseContext, req: Request, res: R
     }
   }
   await finishReplace(ctx, res, member, blobs, location.id, a.id, b.id);
+}
+
+/**
+ * Step 1: A claimed for B (`replacedBy`, `replacedAt`), or null once A is gone or going. When another file X holds the
+ * claim, it is freed once (freeClaim) and A claimed again; a claim that stays X's answers 409 item_changed.
+ */
+async function claimItem(
+  ctx: TownwiseContext, blobs: FileBlobs, scope: OrgScope, locationId: string, aId: string, bId: string,
+): Promise<FileRecord | null> {
+  for (let attempt = 1; ; attempt += 1) {
+    const claimed = await ctx.stores.files.claimReplace(scope, locationId, aId, bId, ctx.now());
+    if (claimed !== null) return claimed;
+    const current = await ctx.stores.files.get(scope, locationId, aId);
+    if (current === null || current.status === 'deleting') return null;
+    const other = current.replacedBy;
+    // Its original was deleted meanwhile.
+    if (other === null || other === bId) throw invalidRequest();
+    if (attempt > 1 || !(await freeClaim(ctx, blobs, scope, current, other))) throw itemChanged();
+  }
+}
+
+/**
+ * Frees A's claim for another file X that a stopped call left; true when it was released. X gone or being deleted can
+ * never take A's place, so its claim goes at once; a stale claim (REPLACE_CLAIM_MS) goes while X has not taken A's
+ * place. When X took A's place and the stale claim left A behind, A is removed as step 3 removes it, and this edit
+ * answers 409 item_changed. A live claim stays (false).
+ */
+async function freeClaim(ctx: TownwiseContext, blobs: FileBlobs, scope: OrgScope, a: FileRecord, xId: string): Promise<boolean> {
+  const x = await ctx.stores.files.get(scope, a.locationId, xId);
+  const stale = !replaceClaimLive(a, ctx.now());
+  if (x === null || x.status === 'deleting' || (x.replaces !== a.id && stale)) {
+    await ctx.stores.files.releaseReplace(scope, a.id, xId);
+    return true;
+  }
+  if (x.replaces === a.id && stale) {
+    await removeWholeFile(ctx, blobs, scope, a, { resume: true });
+    throw itemChanged();
+  }
+  return false;
 }
 
 /** A replace whose item is gone, or going: B answers once it took A's place (the caller may manage it); else 404. */
@@ -382,7 +428,7 @@ async function finishReplace(
   if (left !== null) {
     await recordAfter(ctx, {
       ...actorOf(member), at: ctx.now(), orgId: scope.orgId, action: 'data.edited',
-      target: { type: 'file', id: bId }, details: { locationId, item: 'file', kind: item.kind },
+      target: { type: 'file', id: bId }, details: { locationId, item: 'file', kind: item.kind, replaces: aId },
     });
   }
   res.status(200).json({ item: await itemView(ctx, member, item) });

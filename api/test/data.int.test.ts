@@ -9,6 +9,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import type { OrgScope } from '../src/access/policy.ts';
 import { summaryOf } from '../src/audit.ts';
 import { cleanBlobName, rawBlobName } from '../src/files/blobs.ts';
+import { REPLACE_CLAIM_MS, replaceClaimStaleBefore } from '../src/files/items.ts';
 import { createMemoryFileBlobs, type MemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import type { DataItemView } from '../src/handlers/data.ts';
 import type { SalesHistory } from '../src/handlers/sales.ts';
@@ -204,6 +205,18 @@ async function keep(session: TestSession, locationId: string, name: string, text
 
 function fileDoc(id: string): Promise<Record<string, unknown> | null> {
   return server.connection.collection('tw_files').findOne({ _id: new Types.ObjectId(id) });
+}
+
+/** A claim on an item for `byId`, made at `at`, as a replace that stopped after step 1 leaves it. */
+async function leaveClaim(itemId: string, byId: string, at: Date): Promise<void> {
+  await server.connection.collection('tw_files').updateOne(
+    { _id: new Types.ObjectId(itemId) }, { $set: { replacedBy: new Types.ObjectId(byId), replacedAt: at } },
+  );
+}
+
+/** A claim time REPLACE_CLAIM_MS and a millisecond ago: stale. */
+function staleTime(): Date {
+  return new Date(server.clock.now().getTime() - REPLACE_CLAIM_MS - 1);
 }
 
 function hasRaw(locationId: string, fileId: string): boolean {
@@ -608,6 +621,22 @@ describe('PATCH /api/org/locations/:locationId/data/:ref { title }: renaming', (
     expect((await renamed(team.admin, l1, `f_${staffs}`, 'Set up')).name).toBe('Set up.txt');
   });
 
+  it('while an edit of the item is being saved answers 409 item_busy, even under a race, and renames once the claim is stale', async () => {
+    const stores = createTownwiseStores(server.connection);
+    const l1 = await newLocation();
+    const id = await keep(team.member, l1, 'notes.txt', 'being edited');
+    const edit = await keep(team.member, l1, 'notes.txt', 'being edited, saved');
+    expect(await stores.files.claimReplace(scopeOf(team.orgId), l1, id, edit, server.clock.now())).not.toBeNull();
+    for (const title of ['Renamed', 'notes']) {
+      expect({ title, ...(await errorOf(await patch(team.member, l1, `f_${id}`, { title }))) }).toEqual({ title, status: 409, error: 'item_busy' });
+    }
+    // The compare-and-set itself refuses it, for a rename that read the item before the claim landed.
+    expect(await stores.files.rename(scopeOf(team.orgId), l1, id, 'Renamed.txt', replaceClaimStaleBefore(server.clock.now()))).toBeNull();
+    expect(await fileDoc(id)).toMatchObject({ name: 'notes.txt' });
+    server.clock.advance(REPLACE_CLAIM_MS + 1);
+    expect(await renamed(team.member, l1, `f_${id}`, 'Renamed')).toMatchObject({ name: 'Renamed.txt', canEdit: true });
+  });
+
   it('another location’s or organization’s item answers 404, and stored files off 503 files_unavailable', async () => {
     const l1 = await newLocation();
     const l2 = await newLocation();
@@ -671,8 +700,8 @@ describe('POST /api/org/locations/:locationId/data/:ref/replace', () => {
     // One item, where the first one was.
     expect((await list(team.admin, `?locationId=${l1}`)).items.map((each) => each.ref)).toEqual([`f_${b}`]);
     const event = await lastEvent('data.edited');
-    expect(event).toMatchObject({ target: { type: 'file', id: b }, details: { locationId: l1, item: 'file', kind: 'text' } });
-    expect(Object.keys(event.details).sort()).toEqual(['item', 'kind', 'locationId']);
+    expect(event).toMatchObject({ target: { type: 'file', id: b }, details: { locationId: l1, item: 'file', kind: 'text', replaces: a } });
+    expect(Object.keys(event.details).sort()).toEqual(['item', 'kind', 'locationId', 'replaces']);
     expect(JSON.stringify(event)).not.toMatch(/notes|first words/);
     expect(summaryOf('data.edited', event.details)).toBe('Edited a file');
     expect((await auditEvents(server)).filter((each) => each.action === 'file.deleted' && (each.target as { id: string }).id === a)).toEqual([]);
@@ -697,14 +726,14 @@ describe('POST /api/org/locations/:locationId/data/:ref/replace', () => {
     const l1 = await newLocation();
     /** Steps 1 and 2 as the route makes them. */
     const place = async (a: string, b: string): Promise<void> => {
-      const claimed = await stores.files.claimReplace(scope, l1, a, b);
+      const claimed = await stores.files.claimReplace(scope, l1, a, b, server.clock.now());
       if (claimed === null) throw new Error('the item was not claimed');
       expect(await stores.files.takePlace(scope, l1, b, { from: claimed, at: server.clock.now(), by: team.member.userId, byStaff: false })).not.toBeNull();
     };
     // Step 1 landed, then the call stopped.
     const a1 = await keep(team.member, l1, 'one.txt', 'one');
     const b1 = await keep(team.member, l1, 'one.txt', 'one, edited');
-    expect(await stores.files.claimReplace(scope, l1, a1, b1)).not.toBeNull();
+    expect(await stores.files.claimReplace(scope, l1, a1, b1, server.clock.now())).not.toBeNull();
     expect(await listed(team.member, l1, `f_${a1}`)).toMatchObject({ canEdit: false });
     expect((await replaced(team.member, l1, `f_${a1}`, b1)).ref).toBe(`f_${b1}`);
     expect(await exists('tw_files', a1)).toBe(false);
@@ -739,13 +768,101 @@ describe('POST /api/org/locations/:locationId/data/:ref/replace', () => {
     const a = await keep(team.member, l1, 'notes.txt', 'shared');
     const first = await keep(team.member, l1, 'notes.txt', 'shared, first edit');
     const second = await keep(team.admin, l1, 'notes.txt', 'shared, second edit');
-    await stores.files.claimReplace(scopeOf(team.orgId), l1, a, first);
+    await stores.files.claimReplace(scopeOf(team.orgId), l1, a, first, server.clock.now());
     expect(await errorOf(await replace(team.admin, l1, `f_${a}`, second))).toEqual({ status: 409, error: 'item_changed' });
     expect(await fileDoc(second)).toMatchObject({ uploadedBy: team.admin.userId });
     expect(Object.keys(await fileDoc(second) ?? {})).not.toContain('replaces');
     await replaced(team.member, l1, `f_${a}`, first);
     expect(await errorOf(await replace(team.admin, l1, `f_${a}`, second))).toEqual({ status: 404, error: 'not_found' });
     expect(await exists('tw_files', second)).toBe(true);
+  });
+
+  it('frees a claim a stopped call left: at once when its file is gone or being deleted, and once stale when that file never took the item’s place', async () => {
+    const l1 = await newLocation();
+    // Its file is gone, or being deleted: it can never take the item's place, so even a live claim is freed.
+    const a1 = await keep(team.member, l1, 'one.txt', 'one');
+    await leaveClaim(a1, new Types.ObjectId().toHexString(), server.clock.now());
+    const b1 = await keep(team.member, l1, 'one.txt', 'one, edited');
+    expect((await replaced(team.member, l1, `f_${a1}`, b1)).ref).toBe(`f_${b1}`);
+    expect(await exists('tw_files', a1)).toBe(false);
+    const a2 = await keep(team.member, l1, 'two.txt', 'two');
+    await leaveClaim(a2, await seedFile(l1, { status: 'deleting' }), server.clock.now());
+    const b2 = await keep(team.member, l1, 'two.txt', 'two, edited');
+    expect((await replaced(team.member, l1, `f_${a2}`, b2)).ref).toBe(`f_${b2}`);
+    expect(await exists('tw_files', a2)).toBe(false);
+    // Its file is there and never took the item's place: freed once the claim is stale. The file is left as it was.
+    const a3 = await keep(team.member, l1, 'three.txt', 'three');
+    const x3 = await keep(team.other, l1, 'three.txt', 'three, someone else’s edit');
+    await leaveClaim(a3, x3, staleTime());
+    expect(await listed(team.member, l1, `f_${a3}`)).toMatchObject({ canEdit: true });
+    const b3 = await keep(team.member, l1, 'three.txt', 'three, edited');
+    expect((await replaced(team.member, l1, `f_${a3}`, b3)).ref).toBe(`f_${b3}`);
+    expect(await exists('tw_files', a3)).toBe(false);
+    expect(await fileDoc(b3)).toMatchObject({ replaces: new Types.ObjectId(a3) });
+    const left = await fileDoc(x3);
+    expect(left).toMatchObject({ uploadedBy: team.other.userId });
+    expect(Object.keys(left ?? {})).not.toContain('replaces');
+  });
+
+  it('a live claim whose file is there answers 409 item_changed and stays', async () => {
+    const l1 = await newLocation();
+    const a = await keep(team.member, l1, 'notes.txt', 'live');
+    const x = await keep(team.other, l1, 'notes.txt', 'live, someone else’s edit');
+    const at = new Date(server.clock.now().getTime() - REPLACE_CLAIM_MS);
+    await leaveClaim(a, x, at);
+    expect(await listed(team.member, l1, `f_${a}`)).toMatchObject({ canEdit: false });
+    const b = await keep(team.member, l1, 'notes.txt', 'live, edited');
+    expect(await errorOf(await replace(team.member, l1, `f_${a}`, b))).toEqual({ status: 409, error: 'item_changed' });
+    expect(await fileDoc(a)).toMatchObject({ replacedBy: new Types.ObjectId(x), replacedAt: at });
+    expect(Object.keys(await fileDoc(b) ?? {})).not.toContain('replaces');
+  });
+
+  it('a stale claim whose file took the item’s place left the item behind: it is removed and the edit answers 409 item_changed', async () => {
+    const stores = createTownwiseStores(server.connection);
+    const scope = scopeOf(team.orgId);
+    const l1 = await newLocation();
+    /** Steps 1 and 2 made by a call that stopped there, its claim made at `at`. */
+    const leftBehind = async (a: string, x: string, at: Date): Promise<void> => {
+      const claimed = await stores.files.claimReplace(scope, l1, a, x, at);
+      if (claimed === null) throw new Error('the item was not claimed');
+      expect(await stores.files.takePlace(scope, l1, x, { from: claimed, at, by: team.other.userId, byStaff: false })).not.toBeNull();
+    };
+    const a = await keep(team.member, l1, 'notes.txt', 'behind');
+    const x = await keep(team.other, l1, 'notes.txt', 'behind, someone else’s edit');
+    await leftBehind(a, x, staleTime());
+    const b = await keep(team.member, l1, 'notes.txt', 'behind, edited');
+    const count = (await auditEvents(server)).length;
+    expect(await errorOf(await replace(team.member, l1, `f_${a}`, b))).toEqual({ status: 409, error: 'item_changed' });
+    expect(await exists('tw_files', a)).toBe(false);
+    expect(hasRaw(l1, a)).toBe(false);
+    expect(await fileDoc(x)).toMatchObject({ replaces: new Types.ObjectId(a), uploadedBy: team.member.userId });
+    expect(Object.keys(await fileDoc(b) ?? {})).not.toContain('replaces');
+    expect((await auditEvents(server)).length).toBe(count);
+    // While the claim is live, the call that made it is still finishing: the item stays for it to remove.
+    const a2 = await keep(team.member, l1, 'live.txt', 'live behind');
+    const x2 = await keep(team.other, l1, 'live.txt', 'live behind, someone else’s edit');
+    await leftBehind(a2, x2, server.clock.now());
+    const b2 = await keep(team.member, l1, 'live.txt', 'live behind, edited');
+    expect(await errorOf(await replace(team.member, l1, `f_${a2}`, b2))).toEqual({ status: 409, error: 'item_changed' });
+    expect(await exists('tw_files', a2)).toBe(true);
+  });
+
+  it('step 2 (takePlace) refuses a new file whose original was deleted after it was checked; releasing the claim clears it', async () => {
+    const stores = createTownwiseStores(server.connection);
+    const scope = scopeOf(team.orgId);
+    const l1 = await newLocation();
+    const a = await keep(team.member, l1, 'notes.txt', 'kept');
+    const b = await keep(team.member, l1, 'notes.txt', 'kept, edited');
+    const claimed = await stores.files.claimReplace(scope, l1, a, b, server.clock.now());
+    if (claimed === null) throw new Error('the item was not claimed');
+    expect(claimed).toMatchObject({ replacedBy: b, replacedAt: server.clock.now() });
+    await server.connection.collection('tw_files').updateOne({ _id: new Types.ObjectId(b) }, { $set: { rawDeletedAt: server.clock.now() } });
+    expect(await stores.files.takePlace(scope, l1, b, { from: claimed, at: server.clock.now(), by: team.member.userId, byStaff: false })).toBeNull();
+    expect(Object.keys(await fileDoc(b) ?? {})).not.toContain('replaces');
+    await stores.files.releaseReplace(scope, a, b);
+    const doc = await fileDoc(a);
+    expect(Object.keys(doc ?? {})).not.toContain('replacedBy');
+    expect(Object.keys(doc ?? {})).not.toContain('replacedAt');
   });
 
   it('refuses a new file that is not the caller’s, is a day old, is a sales file, is the item itself or already took another item’s place', async () => {
@@ -820,19 +937,25 @@ describe('an item’s edit fields', () => {
     const upload = await send(team.member, l1, '2026-05-01', 1);
     const sales = await seedFile(l1, { purpose: 'history', importId: new Types.ObjectId(), outcome: 'needs_help', name: 'sales.csv' });
     const gone = await seedFile(l1, { rawDeletedAt: server.clock.now(), name: 'Text file' });
-    const saving = await seedFile(l1, { replacedBy: new Types.ObjectId() });
+    const saving = await seedFile(l1, { replacedBy: new Types.ObjectId(), replacedAt: new Date(server.clock.now().getTime() - REPLACE_CLAIM_MS) });
+    // A claim older than REPLACE_CLAIM_MS, or with no time, was left by a call that stopped: it does not block an edit.
+    const stale = await seedFile(l1, { replacedBy: new Types.ObjectId(), replacedAt: new Date(server.clock.now().getTime() - REPLACE_CLAIM_MS - 1) });
+    const untimed = await seedFile(l1, { replacedBy: new Types.ObjectId() });
     const staffs = await seedFile(l1, { byStaff: true });
     const canEdit = async (session: TestSession): Promise<Record<string, boolean>> => Object.fromEntries(
       (await list(session, `?locationId=${l1}`)).items.map((each) => [each.ref, each.canEdit]),
     );
     expect(await canEdit(team.member)).toEqual({
-      [`f_${own}`]: true, [`u_${upload}`]: false, [`f_${sales}`]: false, [`f_${gone}`]: false, [`f_${saving}`]: false, [`f_${staffs}`]: false,
+      [`f_${own}`]: true, [`u_${upload}`]: false, [`f_${sales}`]: false, [`f_${gone}`]: false, [`f_${saving}`]: false,
+      [`f_${stale}`]: true, [`f_${untimed}`]: true, [`f_${staffs}`]: false,
     });
     expect(await canEdit(team.other)).toEqual({
-      [`f_${own}`]: false, [`u_${upload}`]: false, [`f_${sales}`]: false, [`f_${gone}`]: false, [`f_${saving}`]: false, [`f_${staffs}`]: false,
+      [`f_${own}`]: false, [`u_${upload}`]: false, [`f_${sales}`]: false, [`f_${gone}`]: false, [`f_${saving}`]: false,
+      [`f_${stale}`]: false, [`f_${untimed}`]: false, [`f_${staffs}`]: false,
     });
     expect(await canEdit(team.admin)).toEqual({
-      [`f_${own}`]: true, [`u_${upload}`]: false, [`f_${sales}`]: false, [`f_${gone}`]: false, [`f_${saving}`]: false, [`f_${staffs}`]: true,
+      [`f_${own}`]: true, [`u_${upload}`]: false, [`f_${sales}`]: false, [`f_${gone}`]: false, [`f_${saving}`]: false,
+      [`f_${stale}`]: true, [`f_${untimed}`]: true, [`f_${staffs}`]: true,
     });
   });
 
