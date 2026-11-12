@@ -1,11 +1,15 @@
 ## ADDED Requirements
 
 ### Requirement: TownwiseAI reads the owner's calendar
-TownwiseAI SHALL have a tool `get_owner_calendar`, appended at the end of the frozen tool list, that takes `{ from, to }` (at most 92 days, `to` at most 400 days after the town's today) and returns the location's stored events in that range with each event's calendar name, title, dates and hours, plus the number of calendars and of repeating events not imported.
+TownwiseAI SHALL have a tool `get_owner_calendar`, appended at the end of the frozen tool list, that takes `{ from, to }` (at most 92 days, `to` at most 400 days after the town's today) and returns the location's stored events in that range, at most the first 100 by start, with each event's calendar name, title, dates and hours, plus whether more were left out, the number of calendars and of repeating events not imported.
 
 #### Scenario: Events in range
 - **WHEN** TownwiseAI calls `get_owner_calendar` for next week and the location has two stored events in it
 - **THEN** the result lists both events with their titles, dates, hours and calendar names
+
+#### Scenario: More than 100 events
+- **WHEN** the location has 1,800 stored events in the range
+- **THEN** the result lists the first 100 by start with `truncated` true, and the result view counts 100
 
 #### Scenario: No calendar
 - **WHEN** the location has no stored calendar

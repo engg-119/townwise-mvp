@@ -119,6 +119,7 @@ describe('get_owner_calendar result', () => {
           endWeekday: 'Sat', startTime: null, endTime: null,
         },
       ],
+      truncated: false,
       calendars: 2,
       skippedRepeating: 5,
     });
@@ -137,7 +138,29 @@ describe('get_owner_calendar result', () => {
   it('lists no events when the location’s calendars have none in range', async () => {
     const { tc } = context([calendar({ skippedRepeating: 0 })]);
     const outcome = await runTool(tc, call({ from: '2026-11-16', to: '2026-11-30' }));
-    expect(JSON.parse(outcome.result.content as string)).toEqual({ events: [], calendars: 1, skippedRepeating: 0 });
+    expect(JSON.parse(outcome.result.content as string)).toEqual({ events: [], truncated: false, calendars: 1, skippedRepeating: 0 });
+  });
+
+  it('lists at most the first 100 events by start, with truncated, so a full location’s result stays small', async () => {
+    // As many as a location can hold (5 calendars of 2,000), each at the longest title and name.
+    const calendars = Array.from({ length: 5 }, (_, index) => calendar({ id: `0000000000000000000000b${String(index)}`, label: String(index).repeat(60) }));
+    const many: OwnerCalendarEvent[] = Array.from({ length: 10_000 }, (_, index) => ({
+      calendarId: `0000000000000000000000b${String(index % 5)}`, calendar: String(index % 5).repeat(60), uid: `uid-${String(index)}`,
+      title: `${String(index).padStart(5, '0')} ${'x'.repeat(194)}`, startDate: '2026-11-21', endDate: '2026-11-22', startTime: '18:00', endTime: '22:00',
+    }));
+    const { tc } = context(calendars, many);
+    const { content } = await toolNamed('get_owner_calendar')?.run(tc, { from: '2026-11-16', to: '2027-02-14' }) ?? { content: '' };
+    const result = JSON.parse(content) as { events: { title: string }[]; truncated: boolean; calendars: number };
+    expect(result.events.map((event) => event.title)).toEqual(many.slice(0, 100).map((event) => event.title));
+    expect(result).toMatchObject({ truncated: true, calendars: 5 });
+    expect(content.length).toBeLessThan(45_000);
+    expect(resultViewOf('get_owner_calendar', ok(content))).toMatchObject({ eventCount: 100, truncated: true });
+
+    // Exactly 100 is all of them.
+    const all = context(calendars, many.slice(0, 100)).tc;
+    const { content: hundred } = await toolNamed('get_owner_calendar')?.run(all, { from: '2026-11-16', to: '2027-02-14' }) ?? { content: '' };
+    expect(JSON.parse(hundred)).toMatchObject({ truncated: false });
+    expect((JSON.parse(hundred) as { events: unknown[] }).events).toHaveLength(100);
   });
 
   it('answers available false when the location has no calendar, and reads no events', async () => {
@@ -161,17 +184,17 @@ describe('get_owner_calendar cards', () => {
     const { tc } = context([calendar(), calendar({ id: '0000000000000000000000a2', label: 'Events', skippedRepeating: 2 })], EVENTS);
     const { content } = await toolNamed('get_owner_calendar')?.run(tc, { from: '2026-11-16', to: '2026-11-30' }) ?? { content: '' };
     const view = resultViewOf('get_owner_calendar', ok(content));
-    expect(view).toEqual({ available: true, calendars: 2, eventCount: 2, skippedRepeating: 5 });
+    expect(view).toEqual({ available: true, calendars: 2, eventCount: 2, truncated: false, skippedRepeating: 5 });
     expect(JSON.stringify(view)).not.toMatch(/Sentinel|Trivia|Events/);
     expect(resultViewOf('get_owner_calendar', ok(JSON.stringify({ available: false, reason: 'No calendar is connected to this location.' }))))
-      .toEqual({ available: false, calendars: 0, eventCount: 0, skippedRepeating: 0 });
+      .toEqual({ available: false, calendars: 0, eventCount: 0, truncated: false, skippedRepeating: 0 });
   });
 
   it('show nothing for an error, an unreadable result or another shape', () => {
     expect(resultViewOf('get_owner_calendar', { ...ok('Invalid input'), is_error: true })).toBeNull();
     expect(resultViewOf('get_owner_calendar', ok('not json'))).toBeNull();
     expect(resultViewOf('get_owner_calendar', ok(JSON.stringify({ events: [] })))).toBeNull();
-    expect(resultViewOf('get_owner_calendar', ok(JSON.stringify({ events: [], calendars: -1, skippedRepeating: 0 })))).toBeNull();
+    expect(resultViewOf('get_owner_calendar', ok(JSON.stringify({ events: [], truncated: false, calendars: -1, skippedRepeating: 0 })))).toBeNull();
   });
 });
 
