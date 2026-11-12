@@ -127,6 +127,15 @@ interface FileFields {
   disabledBy?: string;
   /** Set when TownwiseAI kept the item for the person. */
   addedVia?: 'townwise_ai';
+  /** D28, editing an item: while a replace puts another file in this item's place, that file's id. Absent otherwise. */
+  replacedBy?: Types.ObjectId;
+  /** When `replacedBy` was set; absent with it (and on claims from before the field, which count as stale). */
+  replacedAt?: Date;
+  /** On a file that took an item's place: that item's id, when and by whom (`editedByStaff` while open as admin). */
+  replaces?: Types.ObjectId;
+  editedAt?: Date;
+  editedBy?: string;
+  editedByStaff?: boolean;
 }
 
 function fileSchema(): Schema<FileFields> {
@@ -165,6 +174,12 @@ function fileSchema(): Schema<FileFields> {
     disabledAt: { type: Date },
     disabledBy: { type: String },
     addedVia: { type: String, enum: ['townwise_ai'] },
+    replacedBy: { type: Schema.Types.ObjectId },
+    replacedAt: { type: Date },
+    replaces: { type: Schema.Types.ObjectId },
+    editedAt: { type: Date },
+    editedBy: { type: String },
+    editedByStaff: { type: Boolean },
   }, { strict: 'throw', versionKey: false, read: 'primary', minimize: false });
   schema.index({ orgId: 1, locationId: 1, uploadedAt: -1 });
   schema.index({ orgId: 1, importId: 1, uploadedAt: 1 });
@@ -222,7 +237,18 @@ export interface FileRecord {
   readonly purgeRaw: boolean;
   /** When the item was turned off, or null. */
   readonly disabledAt: Date | null;
+  readonly disabledBy: string | null;
   readonly addedVia: 'townwise_ai' | null;
+  /** D28: the file taking this item's place while a replace runs, or null. */
+  readonly replacedBy: string | null;
+  /** When that claim was made, or null (none, or one from before the field). */
+  readonly replacedAt: Date | null;
+  /** D28: the item this file took the place of, and when and by whom it was edited; null (false) if never edited. */
+  readonly replaces: string | null;
+  readonly editedAt: Date | null;
+  readonly editedBy: string | null;
+  /** Edited by Townwise staff open as admin (D25): reads "Townwise staff". */
+  readonly editedByStaff: boolean;
 }
 
 function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
@@ -259,7 +285,14 @@ function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
     aiChoices: doc.aiChoices ?? {},
     purgeRaw: doc.purgeRaw === true,
     disabledAt: doc.disabledAt ?? null,
+    disabledBy: doc.disabledBy ?? null,
     addedVia: doc.addedVia ?? null,
+    replacedBy: doc.replacedBy === undefined ? null : doc.replacedBy.toHexString(),
+    replacedAt: doc.replacedAt ?? null,
+    replaces: doc.replaces === undefined ? null : doc.replaces.toHexString(),
+    editedAt: doc.editedAt ?? null,
+    editedBy: doc.editedBy ?? null,
+    editedByStaff: doc.editedByStaff === true,
   };
 }
 
@@ -304,6 +337,31 @@ export interface FileStore {
    * the record after it, or null when there is no such file at the location.
    */
   setEnabled(scope: OrgScope, locationId: string, fileId: string, input: { enabled: boolean; by: string; at: Date }): Promise<FileRecord | null>;
+  /**
+   * D28: renames the location's reference item while it is kept with its original stored and no edit is being saved
+   * over it: no claim, or a stale one (no `replacedAt`, or one before `staleBefore`; files/items.ts, replaceClaimLive).
+   * Null when it no longer is one (deleted, or its original deleted meanwhile, which gives it its kind's label as its
+   * name) or an edit is being saved.
+   */
+  rename(scope: OrgScope, locationId: string, fileId: string, name: string, staleBefore: Date): Promise<FileRecord | null>;
+  /**
+   * D28, step 1 of replacing an item: compare-and-set `replacedBy` from absent (or already `byId`, a retry) to `byId`,
+   * with `replacedAt` set to `at`, while the file is a reference item kept with its original stored. Resolves the
+   * record after it, or null.
+   */
+  claimReplace(scope: OrgScope, locationId: string, fileId: string, byId: string, at: Date): Promise<FileRecord | null>;
+  /**
+   * Undoes claimReplace when `byId` could not take the item's place, or frees a stale claim: unsets `replacedBy` and
+   * `replacedAt` only while `replacedBy` is `byId`.
+   */
+  releaseReplace(scope: OrgScope, fileId: string, byId: string): Promise<void>;
+  /**
+   * D28, step 2: the file takes `from`'s place. It gets who added `from`, their role, when, how it arrived, its grant
+   * and whether it is off, with `replaces`, `editedAt`, `editedBy` and `editedByStaff`. Compare-and-set: the file is a
+   * kept reference file at the location with its original stored, not being replaced itself, and replaces nothing yet
+   * (or `from`, a retry). Resolves the record after it, or null.
+   */
+  takePlace(scope: OrgScope, locationId: string, fileId: string, input: { from: FileRecord; at: Date; by: string; byStaff: boolean }): Promise<FileRecord | null>;
   /** Upload order. */
   inImport(scope: OrgScope, importId: string): Promise<FileRecord[]>;
   /** Live files only: an upload session past its expiry is abandoned and counts toward no cap. */
@@ -457,6 +515,60 @@ export function createFileStore(connection: Connection): FileStore {
       const doc = await File.findOneAndUpdate(
         { _id: oid(fileId), orgId: org(scope), locationId: oid(locationId), status: trusted({ $ne: 'deleting' }) },
         input.enabled ? { $unset: { disabledAt: 1, disabledBy: 1 } } : { $set: { disabledAt: input.at, disabledBy: input.by } },
+        after,
+      ).lean();
+      return doc === null ? null : toFile(doc);
+    },
+    async rename(scope, locationId, fileId, name, staleBefore) {
+      const doc = await File.findOneAndUpdate(
+        {
+          _id: oid(fileId), orgId: org(scope), locationId: oid(locationId), purpose: 'reference', status: 'kept', rawDeletedAt: null,
+          // No live claim: none, one with no time, or a stale one.
+          $or: [{ replacedBy: null }, { replacedAt: null }, { replacedAt: trusted({ $lt: staleBefore }) }],
+        },
+        { $set: { name } },
+        after,
+      ).lean();
+      return doc === null ? null : toFile(doc);
+    },
+    async claimReplace(scope, locationId, fileId, byId, at) {
+      const doc = await File.findOneAndUpdate(
+        {
+          _id: oid(fileId), orgId: org(scope), locationId: oid(locationId), purpose: 'reference', status: 'kept', rawDeletedAt: null,
+          replacedBy: trusted({ $in: [null, oid(byId)] }),
+        },
+        { $set: { replacedBy: oid(byId), replacedAt: at } },
+        after,
+      ).lean();
+      return doc === null ? null : toFile(doc);
+    },
+    async releaseReplace(scope, fileId, byId) {
+      await File.updateOne({ _id: oid(fileId), orgId: org(scope), replacedBy: oid(byId) }, { $unset: { replacedBy: 1, replacedAt: 1 } });
+    },
+    async takePlace(scope, locationId, fileId, input) {
+      const { from } = input;
+      const set: Record<string, unknown> = {
+        uploadedBy: from.uploadedBy, uploaderRole: from.uploaderRole, uploadedAt: from.uploadedAt,
+        replaces: oid(from.id), editedAt: input.at, editedBy: input.by,
+      };
+      const unset: Record<string, 1> = {};
+      // The optional fields are absent when unset, never stored as null or false.
+      const carry = (field: string, value: unknown): void => {
+        if (value === null || value === false) unset[field] = 1;
+        else set[field] = value;
+      };
+      carry('byStaff', from.byStaff);
+      carry('openAsAdminGrantId', from.openAsAdminGrantId);
+      carry('addedVia', from.addedVia);
+      carry('disabledAt', from.disabledAt);
+      carry('disabledBy', from.disabledAt === null ? null : from.disabledBy);
+      carry('editedByStaff', input.byStaff);
+      const doc = await File.findOneAndUpdate(
+        {
+          _id: oid(fileId), orgId: org(scope), locationId: oid(locationId), purpose: 'reference', status: 'kept', rawDeletedAt: null,
+          replacedBy: null, replaces: trusted({ $in: [null, oid(from.id)] }),
+        },
+        Object.keys(unset).length === 0 ? { $set: set } : { $set: set, $unset: unset },
         after,
       ).lean();
       return doc === null ? null : toFile(doc);

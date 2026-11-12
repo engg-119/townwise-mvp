@@ -28,7 +28,8 @@ import Forecast from '../../app/(gate)/(app)/(client)/locations/[locationId]/ind
 import Analytics from '../../app/(gate)/(app)/(client)/locations/[locationId]/analytics';
 import Sales from '../../app/(gate)/(app)/(client)/locations/[locationId]/sales/index';
 import Upload from '../../app/(gate)/(app)/(client)/locations/[locationId]/sales/upload';
-import Data from '../../app/(gate)/(app)/(client)/locations/[locationId]/data';
+import Data from '../../app/(gate)/(app)/(client)/locations/[locationId]/data/index';
+import DataItem from '../../app/(gate)/(app)/(client)/locations/[locationId]/data/[ref]';
 import Notes from '../../app/(gate)/(app)/(client)/locations/[locationId]/notes';
 import Town from '../../app/(gate)/(app)/(client)/locations/[locationId]/town';
 import LocationSettings from '../../app/(gate)/(app)/(client)/locations/[locationId]/settings';
@@ -89,7 +90,8 @@ export function appRoutes(root: React.ComponentType, overrides?: Record<string, 
     '(gate)/(app)/(client)/locations/[locationId]/analytics': Analytics,
     '(gate)/(app)/(client)/locations/[locationId]/sales/index': Sales,
     '(gate)/(app)/(client)/locations/[locationId]/sales/upload': Upload,
-    '(gate)/(app)/(client)/locations/[locationId]/data': Data,
+    '(gate)/(app)/(client)/locations/[locationId]/data/index': Data,
+    '(gate)/(app)/(client)/locations/[locationId]/data/[ref]': DataItem,
     '(gate)/(app)/(client)/locations/[locationId]/notes': Notes,
     '(gate)/(app)/(client)/locations/[locationId]/town': Town,
     '(gate)/(app)/(client)/locations/[locationId]/settings': LocationSettings,

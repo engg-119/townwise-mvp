@@ -136,6 +136,26 @@ test('lists every item as a table row: item, added, kind, size, status and days'
   expect(screen.getByRole('link', { name: 'Upload sales history' }).getAttribute('href')).toBe('/locations/l1/sales/upload');
 });
 
+test('Open is each row’s first action and opens the item’s page; an item still uploading has none', async () => {
+  const ref = 'f_00000000000000000000000c';
+  setup(meOf(ACCESS.admin), [
+    itemOf(ref, { name: 'menu-notes.txt', state: 'kept', outcome: 'reference' }),
+    itemOf('f_up', { name: 'arriving.txt', state: 'uploading', canTurnOff: false }),
+    dailyTotalsOf('u_1'),
+  ]);
+  const rows = rowsOf(await table());
+  const open = within(at(rows, 0)).getByRole('link', { name: 'Open: menu-notes.txt' });
+  expect(open.getAttribute('href')).toBe(`/locations/l1/data/${ref}`);
+  expect(open.textContent).toBe('Open');
+  // First among the row's actions.
+  expect(within(at(rows, 0)).getAllByRole('cell').at(-1)?.textContent).toMatch(/^OpenTurn off/);
+  expect(within(at(rows, 1)).queryByRole('link', { name: /^Open/ })).toBeNull();
+  expect(within(at(rows, 2)).getByRole('link', { name: 'Open: Daily totals, May 1, 2026 to May 10, 2026' }).getAttribute('href')).toBe('/locations/l1/data/u_1');
+  await settle(() => { fireEvent.click(open); });
+  await waitFor(() => { expect(window.location.pathname).toBe(`/locations/l1/data/${ref}`); });
+  expect(await screen.findByRole('heading', { level: 2, name: 'menu-notes.txt' })).toBeTruthy();
+});
+
 test('Turn off sends enabled false at once, the row reads Off, and the notice takes focus', async () => {
   const fake = setup(meOf(ACCESS.admin));
   await table();
@@ -234,6 +254,9 @@ test('view-as: names hidden, every action disabled in place with the read-only l
   expect([all.getAttribute('aria-disabled'), all.getAttribute('aria-describedby')]).toEqual(['true', 'data-ro']);
   // With no name, each row's actions name it by its kind and its days, or when it was added.
   expect(within(at(rows, 1)).getByRole('button', { name: 'Turn off: Excel file, Jan 1, 2024 to Dec 31, 2025' })).toBeTruthy();
+  // Opening is a read: Open stays a working link under view-as.
+  const open = within(at(rows, 0)).getByRole('link', { name: 'Open: CSV or text file, added Nov 5, 2026' });
+  expect([open.getAttribute('href'), open.getAttribute('aria-disabled')]).toEqual(['/locations/l1/data/f_ref', null]);
   expect(within(at(rows, 0)).getByRole('button', { name: 'Turn off: CSV or text file, added Nov 5, 2026' })).toBeTruthy();
 });
 

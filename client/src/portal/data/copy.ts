@@ -38,6 +38,7 @@ export const DATA = {
   noFileKept: 'No file kept',
   none: 'None',
   dailyTotals: 'Daily totals',
+  open: 'Open',
   turnOff: 'Turn off',
   turnOn: 'Turn on',
   downloadRaw: 'Download original',

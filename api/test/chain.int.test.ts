@@ -91,7 +91,7 @@ describe('GET is side-effect free (7.3)', () => {
     // organization and its location, and the people lookup asks for the member's address.
     const locationId = await addLocation(server, { orgId, name: 'Main Street' });
     await addSalesDay(server, { orgId, locationId, date: '2026-05-01', guests: 120, netSalesCents: 345_600 });
-    await addUpload(server, { orgId, locationId, uploadedAt: server.clock.now(), status: 'applied' });
+    const uploadId = await addUpload(server, { orgId, locationId, uploadedAt: server.clock.now(), status: 'applied' });
     await addNote(server, { orgId, locationId, detail: 'Closed for a staff day' });
     const fileId = await seedReadFile(server, blobs, {
       orgId, locationId, uploadedBy: admin.userId, name: 'sales.csv', raw: Buffer.from('Date\n'), clean: 'date,guests,net_sales\r\n',
@@ -110,7 +110,9 @@ describe('GET is side-effect free (7.3)', () => {
       { _id: new Types.ObjectId(conversationId) },
       { $push: { messages: { $each: proposed.map((param) => ({ at: server.clock.now(), param: JSON.stringify(param) })) } } } as Record<string, unknown>,
     );
-    const ids: Record<string, string> = { orgId, locationId, townId: 'hanover-nh', fileId, importId, conversationId, proposalId };
+    // D28: one item of Your data, the upload's.
+    const ref = `u_${uploadId}`;
+    const ids: Record<string, string> = { orgId, locationId, townId: 'hanover-nh', fileId, importId, conversationId, proposalId, ref };
     const query: Record<string, string> = {
       'admin.people.lookup': `?q=${encodeURIComponent(memberEmail)}`,
       'org.sales.days': '?from=2026-01-01&to=2026-05-31',
@@ -140,7 +142,7 @@ describe('GET is side-effect free (7.3)', () => {
     await addInvite(server, { orgId: setupOrgId, email: uniqueEmail('first-admin'), invitedBy: staff.userId, role: 'org_admin', addedByStaff: true });
     const setupLocationId = await addLocation(server, { orgId: setupOrgId, name: 'Setup Street' });
     await addSalesDay(server, { orgId: setupOrgId, locationId: setupLocationId, date: '2026-05-01', guests: 90, netSalesCents: 210_000 });
-    await addUpload(server, { orgId: setupOrgId, locationId: setupLocationId, uploadedAt: server.clock.now(), status: 'applied' });
+    const setupUploadId = await addUpload(server, { orgId: setupOrgId, locationId: setupLocationId, uploadedAt: server.clock.now(), status: 'applied' });
     await addNote(server, { orgId: setupOrgId, locationId: setupLocationId, detail: 'Closed for setup', createdBy: staff.userId });
     const setupFileId = await seedReadFile(server, blobs, {
       orgId: setupOrgId, locationId: setupLocationId, uploadedBy: staff.userId, name: 'setup.csv', raw: Buffer.from('Date\n'),
@@ -159,6 +161,7 @@ describe('GET is side-effect free (7.3)', () => {
     await addOpenAsAdminGrant(server, { actorUserId: opened.userId, sessionId: opened.sessionId, orgId: setupOrgId });
     const setupIds = {
       ...ids, orgId: setupOrgId, locationId: setupLocationId, fileId: setupFileId, importId: setupImportId, conversationId: setupConversationId,
+      ref: `u_${setupUploadId}`,
     };
     const openedAnswered: string[] = [];
     for (const route of getRoutes) {
