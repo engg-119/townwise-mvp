@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { TownEvent } from '../../../src/portal/analytics/api';
-import { classOf, dayContext, dayFlags, typicalGuests, type DayClass } from '../../../src/portal/analytics/days';
+import { classOf, dayContext, dayFlags, ruleSchedules, typicalGuests, type DayClass } from '../../../src/portal/analytics/days';
 import type { Note } from '../../../src/portal/locations/api';
 import { day, note, townEvent } from './fakes';
 
@@ -39,4 +39,39 @@ test.each(cases)('$name: $class', (each) => {
   const context = dayContext(notes, events);
   expect(classOf(each.date, record, context)).toBe(each.class);
   expect(dayFlags(each.date, record, context).likelyClosed).toBe(each.likelyClosed === true);
+});
+
+// A business rule's schedule (spec D31) says a near-empty day was open exactly as a note does, for the likely-closed
+// check only (spec D32); the API's tests pin the same in people-history.test.ts.
+describe('rule schedules', () => {
+  const history = [{ date: '2026-09-19', guests: 200 }, { date: '2026-09-26', guests: 200 }, { date: '2026-10-03', guests: 200 }];
+  const guests = new Map(history.map((other) => [other.date, other.guests]));
+  const near = { ...day('2026-10-10', 2), typicalGuests: typicalGuests('2026-10-10', (date) => guests.get(date)) };
+  const rule = (effect: Note['effect'], endDate: string | null = null, weekdays: number[] | null = null) =>
+    ({ startDate: '2026-10-01', endDate, weekdays, effect });
+  const flags = (...rules: ReturnType<typeof rule>[]) => dayFlags('2026-10-10', near, dayContext([], [], rules));
+
+  test('more or fewer guests keep a near-empty day open, and the day stays regular, not noted', () => {
+    for (const effect of ['more_guests', 'fewer_guests'] as const) {
+      expect(flags(rule(effect))).toMatchObject({ closed: false, likelyClosed: false, noted: false });
+      expect(classOf('2026-10-10', near, dayContext([], [], [rule(effect)]))).toBe('regular');
+    }
+  });
+
+  test('no rules, other effects, and rules not covering the day change nothing', () => {
+    expect(flags()).toMatchObject({ closed: true, likelyClosed: true });
+    expect(flags(rule('unknown'))).toMatchObject({ likelyClosed: true });
+    expect(flags(rule('more_guests', '2026-10-09'))).toMatchObject({ likelyClosed: true });
+    expect(flags(rule('more_guests', null, [1]))).toMatchObject({ likelyClosed: true });
+    expect(classOf('2026-10-10', near, dayContext([], []))).toBe('closed');
+  });
+
+  test('a closed rule closes the day, as a closed note does', () => {
+    expect(flags(rule('closed'))).toMatchObject({ closed: true, likelyClosed: false });
+  });
+
+  test('ruleSchedules keeps only the rules that have a schedule', () => {
+    const schedule = rule('more_guests');
+    expect(ruleSchedules([{ schedule }, { schedule: null }, {}])).toEqual([schedule]);
+  });
 });

@@ -29,18 +29,24 @@ export interface YourHistory {
 }
 
 type ClassNote = Pick<NoteContent, 'startDate' | 'endDate' | 'weekdays' | 'effect'>;
+/** A business rule's schedule (D31): a note's dates, weekdays and effect, with `endDate` null for no end. */
+export type ClassRule = Pick<NoteContent, 'startDate' | 'weekdays' | 'effect'> & { readonly endDate: string | null };
 type ClassEvent = Pick<TownEvent, 'start' | 'end' | 'kind'>;
 
-function covers(note: ClassNote, date: string): boolean {
-  if (date < note.startDate || date > note.endDate) return false;
+function covers(note: ClassNote | ClassRule, date: string): boolean {
+  if (date < note.startDate || (note.endDate !== null && date > note.endDate)) return false;
   return note.weekdays === null || note.weekdays.includes(new Date(`${date}T00:00:00.000Z`).getUTCDay());
 }
 
-/** Whether the day is closed or likely closed (spec D32), from the notes covering it and its weekday's typical guests. */
+/**
+ * Whether the day is closed or likely closed (spec D32), from the notes and rule schedules covering it and its
+ * weekday's typical guests. A covering rule schedule counts exactly as a note with its effect.
+ */
 export function closureOfDay(
   date: string, day: Pick<SalesDay, 'guests' | 'netSalesCents'> | undefined, notes: readonly ClassNote[], typical: number | null,
+  rules: readonly ClassRule[] = [],
 ): Closure | null {
-  return closureOf(day, typical, notes.filter((note) => covers(note, date)));
+  return closureOf(day, typical, [...notes, ...rules].filter((note) => covers(note, date)));
 }
 
 /**
@@ -50,11 +56,12 @@ export function closureOfDay(
  */
 export function classOfDay(
   date: string, day: Pick<SalesDay, 'guests' | 'netSalesCents'> | undefined, notes: readonly ClassNote[], events: readonly ClassEvent[],
-  typical: number | null = null,
+  typical: number | null = null, rules: readonly ClassRule[] = [],
 ): DayClass {
   const covering = notes.filter((note) => covers(note, date));
   const on = events.filter((event) => event.start <= date && date <= event.end);
-  if (closureOf(day, typical, covering) !== null) return 'closed';
+  // A rule schedule only closes a day or says it was open (D32); it never makes a day noted, as it is no note.
+  if (closureOf(day, typical, [...covering, ...rules.filter((rule) => covers(rule, date))]) !== null) return 'closed';
   if (covering.length > 0) return 'noted';
   if (on.some((event) => event.kind === 'holiday')) return 'holiday';
   if (on.some((event) => event.kind === 'event')) return 'event';
@@ -66,6 +73,7 @@ const WEEK: readonly Weekday[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun
 /** Every stored open regular day whose term state is known, by term state and weekday. */
 export function yourHistory(
   days: readonly SalesDay[], notes: readonly ClassNote[], events: readonly ClassEvent[], termStateOf: (date: string) => TermState,
+  rules: readonly ClassRule[] = [],
 ): YourHistory {
   const metric = days.some((day) => day.guests !== null) ? 'guests' : 'netSales';
   const typical = typicalByDate(days);
@@ -76,7 +84,7 @@ export function yourHistory(
     const value = metric === 'guests' ? day.guests : day.netSalesCents;
     if (value === null) continue;
     const state = termStateOf(day.date);
-    if (state === 'unknown' || classOfDay(day.date, day, notes, events, typical.get(day.date) ?? null) !== 'regular') continue;
+    if (state === 'unknown' || classOfDay(day.date, day, notes, events, typical.get(day.date) ?? null, rules) !== 'regular') continue;
     const key = `${state}|${weekdayOf(day.date)}`;
     const sum = sums.get(key) ?? { days: 0, total: 0 };
     sums.set(key, { days: sum.days + 1, total: sum.total + value });

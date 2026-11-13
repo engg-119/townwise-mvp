@@ -94,6 +94,32 @@ describe('yourHistory', () => {
     expect([history.first, history.last]).toEqual(['2026-10-03', '2026-10-17']);
   });
 
+  it('treats a covering rule schedule like a note for the likely-closed check (spec D32, D31)', () => {
+    const history = [{ date: '2026-09-19', guests: 200 }, { date: '2026-09-26', guests: 200 }, { date: '2026-10-03', guests: 200 }];
+    const guests = new Map(history.map((other) => [other.date, other.guests]));
+    const typical = typicalGuests('2026-10-10', (date) => guests.get(date));
+    const near = day('2026-10-10', 2);
+    const rule = (effect: NoteContent['effect'], endDate: string | null = null) => ({ startDate: '2026-10-01', endDate, weekdays: null, effect });
+    for (const effect of ['more_guests', 'fewer_guests'] as const) {
+      expect(closureOfDay('2026-10-10', near, [], typical, [rule(effect)])).toBeNull();
+      expect(classOfDay('2026-10-10', near, [], [], typical, [rule(effect)])).toBe('regular');
+    }
+    expect(closureOfDay('2026-10-10', near, [], typical)).toBe('likely_closed');
+    // Other effects change nothing about the override; a closed rule closes the day as a closed note does.
+    expect(closureOfDay('2026-10-10', near, [], typical, [rule('unknown')])).toBe('likely_closed');
+    expect(closureOfDay('2026-10-10', near, [], typical, [rule('closed')])).toBe('closed');
+    // Outside its dates or weekdays, or ended before the day, a rule does not apply.
+    expect(closureOfDay('2026-10-10', near, [], typical, [rule('more_guests', '2026-10-09')])).toBe('likely_closed');
+    expect(closureOfDay('2026-10-10', near, [], typical, [{ ...rule('more_guests'), weekdays: [1] }])).toBe('likely_closed');
+    expect(closureOfDay('2026-10-10', near, [], typical, [{ ...rule('more_guests'), startDate: '2026-10-11' }])).toBe('likely_closed');
+  });
+
+  it('keeps a rule-covered near-empty day in the history as an open day', () => {
+    const days = [day('2026-09-19', 200), day('2026-09-26', 200), day('2026-10-03', 200), day('2026-10-10', 2), day('2026-10-17', 200)];
+    const rules = [{ startDate: '2026-10-10', endDate: null, weekdays: null, effect: 'fewer_guests' as const }];
+    expect(yourHistory(days, [], [], stateOf, rules).cells).toEqual([{ state: 'in_session', weekday: 'Sat', days: 5, mean: 160 }]);
+  });
+
   it('leaves out a likely-closed day (spec D32): its guests are not a slow Saturday', () => {
     const days = [day('2026-09-19', 200), day('2026-09-26', 200), day('2026-10-03', 200), day('2026-10-10', 2), day('2026-10-17', 200)];
     expect(yourHistory(days, [], [], stateOf).cells).toEqual([{ state: 'in_session', weekday: 'Sat', days: 4, mean: 200 }]);

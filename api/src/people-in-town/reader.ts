@@ -3,6 +3,7 @@
 // notes for "your history". The people in town route and TownwiseAI's get_people_in_town both read it. It logs
 // nothing and stores nothing.
 import type { OrgScope } from '../access/policy.ts';
+import { scheduledRules } from '../forecasts/adjust.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { TownwiseStores } from '../stores/index.ts';
 import { timeZoneOf } from '../time-zones.ts';
@@ -21,7 +22,7 @@ export interface PeopleInTownReader {
   window(input: { scope: OrgScope; location: LocationRecord; range: { from: string; to: string } }): Promise<PeopleInTownWindow>;
 }
 
-export function createPeopleInTownReader(deps: { stores: Pick<TownwiseStores, 'salesDays' | 'notes'>; data: PeopleData }): PeopleInTownReader {
+export function createPeopleInTownReader(deps: { stores: Pick<TownwiseStores, 'salesDays' | 'notes' | 'businessRules'>; data: PeopleData }): PeopleInTownReader {
   return {
     data: deps.data,
     async window({ scope, location, range }) {
@@ -29,10 +30,13 @@ export function createPeopleInTownReader(deps: { stores: Pick<TownwiseStores, 's
       const covers = townCalendarCovers(town.townId);
       const terms = covers === null ? [] : termEntries(townEvents(town.townId, covers));
       const termOn = (date: string) => termStateOn(date, terms);
-      const [days, notes] = await Promise.all([
+      const [days, notes, scheduled] = await Promise.all([
         deps.stores.salesDays.history(scope, location.id),
         deps.stores.notes.list(scope, location.id),
+        deps.stores.businessRules.scheduled(scope, location.id),
       ]);
+      // A rule's schedule closes a day or says it was open, as a note does (D31, D32).
+      const rules = scheduledRules(scheduled).map((rule) => rule.schedule);
       const first = days[0]?.date;
       const last = days.at(-1)?.date;
       const historyEvents = first === undefined || last === undefined ? [] : townEvents(town.townId, { from: first, to: last });
@@ -45,7 +49,7 @@ export function createPeopleInTownReader(deps: { stores: Pick<TownwiseStores, 's
         timeZone: timeZoneOf(town).timeZone,
         events: townEvents(town.townId, range),
         termOn,
-        history: yourHistory(days, notes, historyEvents, (date) => termOn(date).state),
+        history: yourHistory(days, notes, historyEvents, (date) => termOn(date).state, rules),
       });
     },
   };

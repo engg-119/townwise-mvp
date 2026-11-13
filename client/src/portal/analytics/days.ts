@@ -1,5 +1,6 @@
 import type { Note } from '../locations/api';
 import { addDays } from '../locations/dates';
+import type { RuleSchedule } from '../rules/api';
 import type { TownEvent } from './api';
 import type { DayRecord } from './history';
 import { weekdayOf } from './words';
@@ -13,6 +14,8 @@ import { weekdayOf } from './words';
 //   tenth of its weekday's typical guests and no covering note says more or fewer guests. The typical guests are the
 //   median over the open days (guests above 0) among the 8 same weekdays before it; with fewer than 3, there are none.
 //   decodeHistory gives each day its typicalGuests; a record without them is never likely closed.
+//   A business rule's schedule (D31) counts like a note here, for this check only: the context's `rules`. It never
+//   makes a day noted, and a context without rules (Home's, today) behaves as before.
 // - A day is noted when a covering note does not close it (a private event, an opening, other, or a closure note
 //   with another effect).
 // - Holiday and event days are those with a `holiday` or an `event` on the calendar. Term and season periods span
@@ -24,6 +27,16 @@ export type DayClass = 'closed' | 'noted' | 'holiday' | 'event' | 'regular';
 export interface DayContext {
   notesByDate: ReadonlyMap<string, readonly Note[]>;
   eventsByDate: ReadonlyMap<string, readonly TownEvent[]>;
+  /** The location's rule schedules (D31), which can say a near-empty day was open; none when absent. */
+  rules?: readonly RuleScheduleLike[];
+}
+
+/** What a day class reads of a rule's schedule. */
+export type RuleScheduleLike = Pick<RuleSchedule, 'startDate' | 'endDate' | 'weekdays' | 'effect'>;
+
+/** The schedules of the rules that have one, for `dayContext`. */
+export function ruleSchedules(rules: readonly { schedule?: RuleScheduleLike | null | undefined }[]): RuleScheduleLike[] {
+  return rules.flatMap((rule) => (rule.schedule === null || rule.schedule === undefined ? [] : [rule.schedule]));
 }
 
 export interface DayFlags {
@@ -59,7 +72,7 @@ function push<T>(map: Map<string, T[]>, date: string, item: T): void {
 }
 
 /** Notes and events indexed by each day they cover, in the order given. */
-export function dayContext(notes: readonly Note[], events: readonly TownEvent[]): DayContext {
+export function dayContext(notes: readonly Note[], events: readonly TownEvent[], rules: readonly RuleScheduleLike[] = NONE): DayContext {
   const notesByDate = new Map<string, Note[]>();
   for (const note of notes) {
     for (let date = note.startDate; date <= note.endDate; date = addDays(date, 1)) {
@@ -70,7 +83,7 @@ export function dayContext(notes: readonly Note[], events: readonly TownEvent[])
   for (const event of events) {
     for (let date = event.start; date <= event.end; date = addDays(date, 1)) push(eventsByDate, date, event);
   }
-  return { notesByDate, eventsByDate };
+  return { notesByDate, eventsByDate, rules };
 }
 
 export const EMPTY_CONTEXT: DayContext = { notesByDate: new Map(), eventsByDate: new Map() };
@@ -141,7 +154,8 @@ export function likelyClosedWords(recorded: string): string {
 export function dayFlags(date: string, day: DayRecord | undefined, context: DayContext): DayFlags {
   const notes = notesOf(context, date);
   const events = eventsOf(context, date);
-  const closure = closureOf(day, notes);
+  const ruleSchedulesOn = (context.rules ?? NONE).filter((rule) => noteCovers(rule, date));
+  const closure = closureOf(day, [...notes, ...ruleSchedulesOn]);
   return {
     closed: closure !== null,
     likelyClosed: closure === 'likely_closed',

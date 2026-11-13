@@ -4,6 +4,7 @@
 // the shared fixture; spec D32), and when the upload that last wrote it was made. Never who uploaded it, a note's author or a file name.
 import { z } from 'zod';
 
+import { scheduledRules } from '../../forecasts/adjust.ts';
 import { typicalGuests } from '../../closed-days.ts';
 import { EARLIEST_DATE, isoDate, utcDay } from '../../dates.ts';
 import { classOfDay, closureOfDay } from '../../people-in-town/history.ts';
@@ -38,7 +39,7 @@ const dayResult = z.object({
 export const dayTool: ChatTool<DayInput> = {
   definition: {
     name: 'get_day',
-    description: 'Everything Townwise has for one day of this location: its weekday, its stored guests and net sales in US dollars (sales is null when the day has no stored row; a null value was not recorded), whether it was closed (a covering note says closed, every recorded value is zero, or it was likely closed), likelyClosed (true when its guests were under a tenth of the typical guests of the same weekday over the 8 weeks before and no note says more or fewer guests: the restaurant was most likely shut, so treat it as closed, never as a slow day, and say it was likely closed), the day\'s class (closed, noted, holiday, event or regular), the notes that cover it, the town calendar entries on it with their sources (covered is false when Townwise\'s researched calendar for the town doesn\'t reach the day, so only holidays are known), and the date in the town when the upload that last wrote the day was made, and whether it finished.',
+    description: 'Everything Townwise has for one day of this location: its weekday, its stored guests and net sales in US dollars (sales is null when the day has no stored row; a null value was not recorded), whether it was closed (a covering note says closed, every recorded value is zero, or it was likely closed), likelyClosed (true when its guests were under a tenth of the typical guests of the same weekday over the 8 weeks before and no note or business rule schedule says more or fewer guests: the restaurant was most likely shut, so treat it as closed, never as a slow day, and say it was likely closed), the day\'s class (closed, noted, holiday, event or regular), the notes that cover it, the town calendar entries on it with their sources (covered is false when Townwise\'s researched calendar for the town doesn\'t reach the day, so only holidays are known), and the date in the town when the upload that last wrote the day was made, and whether it finished.',
     input_schema: {
       type: 'object',
       properties: { date: DATE },
@@ -60,24 +61,26 @@ export const dayTool: ChatTool<DayInput> = {
   async run(tc, { date }) {
     const { ctx, scope, location } = tc;
     const { town } = location;
-    const [history, allNotes] = await Promise.all([
+    const [history, allNotes, scheduled] = await Promise.all([
       ctx.stores.salesDays.history(scope, location.id),
       ctx.stores.notes.list(scope, location.id),
+      ctx.stores.businessRules.scheduled(scope, location.id),
     ]);
+    const rules = scheduledRules(scheduled).map((rule) => rule.schedule);
     const row = history.find((day) => day.date === date);
     const notes = allNotes.filter((note) => covers(note, date));
     const events = townEvents(town.townId, { from: date, to: date });
     const [upload] = row === undefined ? [] : await ctx.stores.uploads.byIds(scope, location.id, [row.uploadId]);
     const guests = new Map(history.map((day) => [day.date, day.guests]));
     const typical = typicalGuests(date, (other) => guests.get(other));
-    const dayClass = classOfDay(date, row, notes, events, typical);
+    const dayClass = classOfDay(date, row, notes, events, typical, rules);
     const range = townCalendarCovers(town.townId);
     return {
       content: JSON.stringify({
         date, weekday: weekdayOf(date),
         sales: row === undefined ? null : { guests: row.guests, netSalesUsd: dollars(row.netSalesCents) },
         closed: dayClass === 'closed',
-        likelyClosed: closureOfDay(date, row, notes, typical) === 'likely_closed',
+        likelyClosed: closureOfDay(date, row, notes, typical, rules) === 'likely_closed',
         dayClass,
         notes: notes.map((note) => ({
           kind: note.kind, startDate: note.startDate, endDate: note.endDate, weekdays: note.weekdays, startTime: note.startTime,

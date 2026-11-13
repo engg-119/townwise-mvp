@@ -8,6 +8,7 @@ import { SYSTEM_PROMPT } from '../src/chat/prompt.ts';
 import { TEXT_ITEM_MAX_CHARS, TEXT_ITEM_TITLE_MAX } from '../src/files/items.ts';
 import { townProfileOf } from '../src/handlers/towns.ts';
 import { inputViewOf, resultViewOf, TOOL_REGISTRY, TOOLS, toolNamed, type ToolContext, type ToolView } from '../src/chat/tools/registry.ts';
+import type { BusinessRuleRecord, BusinessRuleStore } from '../src/stores/business-rules.ts';
 import type { NoteRecord, NoteStore } from '../src/stores/notes.ts';
 import type { SalesDayStore, SalesDayWithUpload } from '../src/stores/sales-days.ts';
 import type { UploadRecord, UploadStore } from '../src/stores/uploads.ts';
@@ -166,7 +167,7 @@ describe('get_day', () => {
     };
   }
 
-  function context(opts: { days?: SalesDayWithUpload[]; notes?: NoteRecord[]; uploads?: UploadRecord[]; townId?: Town['townId'] } = {}) {
+  function context(opts: { days?: SalesDayWithUpload[]; notes?: NoteRecord[]; rules?: Pick<BusinessRuleRecord, 'id' | 'schedule'>[]; uploads?: UploadRecord[]; townId?: Town['townId'] } = {}) {
     const byIds: string[][] = [];
     const ranges: { from: string; to: string }[] = [];
     const upload: UploadRecord = {
@@ -184,6 +185,7 @@ describe('get_day', () => {
         },
       } as unknown as SalesDayStore,
       notes: { list: () => Promise.resolve(opts.notes ?? []) } as unknown as NoteStore,
+      businessRules: { scheduled: () => Promise.resolve(opts.rules ?? []) } as unknown as BusinessRuleStore,
       uploads: {
         byIds: (_scope: OrgScope, _location: string, ids: string[]) => {
           byIds.push(ids);
@@ -318,6 +320,30 @@ describe('get_day', () => {
     const zero = [...saturdays, { date: '2026-11-21', guests: 0, netSalesCents: 0, uploadId: UPLOAD_ID }];
     expect((await run({ date: '2026-11-21' }, context({ days: zero }).tc)).parsed).toMatchObject({ closed: true, likelyClosed: false });
     expect((await run({ date: '2026-11-14' }, context({ days }).tc)).parsed).toMatchObject({ closed: false, likelyClosed: false });
+  });
+
+  it('a covering rule schedule with more or fewer guests keeps a near-empty day open, as a note does; other effects change nothing', async () => {
+    const days = [...saturdays, nearEmpty('2026-11-21')];
+    const rule = (effect: 'more_guests' | 'fewer_guests' | 'unknown' | 'closed', endDate: string | null = null) => ({
+      id: 'r1', schedule: { kind: 'other' as const, startDate: '2026-11-01', endDate, weekdays: null, effect, expectedGuests: null, startTime: null, endTime: null },
+    });
+    for (const effect of ['more_guests', 'fewer_guests'] as const) {
+      expect((await run({ date: '2026-11-21' }, context({ days, rules: [rule(effect)] }).tc)).parsed)
+        .toMatchObject({ closed: false, likelyClosed: false });
+    }
+    expect((await run({ date: '2026-11-21' }, context({ days, rules: [rule('unknown')] }).tc)).parsed)
+      .toMatchObject({ closed: true, likelyClosed: true });
+    expect((await run({ date: '2026-11-21' }, context({ days, rules: [rule('more_guests', '2026-11-20')] }).tc)).parsed)
+      .toMatchObject({ likelyClosed: true });
+    expect((await run({ date: '2026-11-21' }, context({ days, rules: [rule('closed')] }).tc)).parsed)
+      .toMatchObject({ closed: true, likelyClosed: false });
+    const tool = toolNamed('get_sales_days');
+    const range = tool?.parse({ from: '2026-11-21', to: '2026-11-21' }, TODAY) ?? null;
+    if (tool === undefined || range === null) throw new Error('invalid input');
+    const sales = async (rules: ReturnType<typeof rule>[]) =>
+      (JSON.parse((await tool.run(context({ days, rules }).tc, range)).content) as { days: object[] }).days;
+    expect(await sales([rule('fewer_guests')])).toEqual([{ date: '2026-11-21', guests: 1, netSalesUsd: 25 }]);
+    expect(await sales([])).toEqual([{ date: '2026-11-21', guests: 1, netSalesUsd: 25, likelyClosed: true }]);
   });
 
   it('get_sales_days reads the 8 weeks before the range too, gives only the range, and marks likely-closed days (spec D32)', async () => {
