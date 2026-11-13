@@ -8,15 +8,26 @@ import type { PlaceKind } from '../schemas';
 /** The most characters a location's name takes (the API's 80). */
 const MAX_NAME = 80;
 
-function escaped(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** A letter or digit in any script; `undefined` (the text's edge) is not. */
+function isWordChar(char: string | undefined): boolean {
+  return char !== undefined && /[\p{L}\p{N}]/u.test(char);
 }
 
-/** `text` holds `word` as a whole word, ignoring case; with `atEnd`, as its last word. */
+/**
+ * `text` holds `word` as a whole word, ignoring case; with `atEnd`, as its last word. A plain search with its edges
+ * checked, never a pattern built from the word, so a town's punctuation is matched as written.
+ */
 function holdsWord(text: string, word: string, atEnd = false): boolean {
-  const name = word.trim();
+  const name = word.trim().toLocaleLowerCase();
   if (name === '') return false;
-  return new RegExp(`(^|[^\\p{L}\\p{N}])${escaped(name)}(${atEnd ? '' : '[^\\p{L}\\p{N}]|'}$)`, 'iu').test(text.trim());
+  const hay = text.trim().toLocaleLowerCase();
+  for (let at = hay.indexOf(name); at !== -1; at = hay.indexOf(name, at + 1)) {
+    const end = at + name.length;
+    const before = Array.from(hay.slice(0, at)).at(-1);
+    const after = Array.from(hay.slice(end))[0];
+    if (!isWordChar(before) && (atEnd ? end === hay.length : !isWordChar(after))) return true;
+  }
+  return false;
 }
 
 /**

@@ -23,6 +23,10 @@ describe('location naming', () => {
     expect(defaultLocationName({ name: '12 Main', kind: 'address', town: HANOVER }, 'Hanover Hospitality')).toBe('Hanover Hospitality');
     // Only the whole word counts: “Hanoverian” is not Hanover.
     expect(defaultLocationName({ name: 'Hanoverian Pub', kind: 'business', town: HANOVER }, 'Org')).toBe('Hanoverian Pub, Hanover');
+    // A town's punctuation is matched as written, never as a pattern: “Stx Johnsbury” is not St. Johnsbury.
+    const stJ = { name: 'St. Johnsbury' };
+    expect(defaultLocationName({ name: 'St. Johnsbury Diner', kind: 'business', town: stJ }, 'Org')).toBe('St. Johnsbury Diner');
+    expect(defaultLocationName({ name: 'Stx Johnsbury Diner', kind: 'business', town: stJ }, 'Org')).toBe('Stx Johnsbury Diner, St. Johnsbury');
   });
 
   test('a long name is cut so the default keeps its town within 80 characters', () => {
