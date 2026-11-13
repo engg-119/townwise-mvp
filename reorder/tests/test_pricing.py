@@ -2,6 +2,8 @@
 
 from datetime import date
 
+import pytest
+
 from reorder.catalog import load_products
 from reorder.config import load_config, repo_root
 from reorder.contracts import DealTier, Product
@@ -233,6 +235,8 @@ def test_liquor_case_discount_stays_at_the_state_store() -> None:
 
 def test_uploaded_sawtooth_sheet_marks_january_prices_stale_in_november() -> None:
     config = load_config()
+    if not config.resolve("synthetic_root").is_dir():
+        pytest.skip("synthetic data is not in this checkout")
     rules = load_state_rules(config.state_rules, repo_root())
     quotes = load_price_file(config.resolve("price_list"), supplier_channels=config.supplier_channels)
     products = load_products(config.resolve("synthetic_root") / "reference" / "products.csv")

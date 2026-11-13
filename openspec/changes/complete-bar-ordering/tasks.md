@@ -1,12 +1,12 @@
 ## 0. Before starting
 
-- [ ] 0.1 Record the baseline on `feat/inventory-management` at the develop merge (47fe5f4): typecheck, lint, API unit tests, client jest; the known failures are #68 review B1 (lint), B2 (five client tests) and B3 (`chain.int`)
+- [x] 0.1 Record the baseline on `feat/inventory-management` at the develop merge (47fe5f4): typecheck, lint, API unit tests, client jest; the known failures are #68 review B1 (lint), B2 (five client tests) and B3 (`chain.int`)
 
 ## 1. Review fixes that do not need the live board
 
-- [ ] 1.1 Update the five client tests for the Orders tab (`phone-ui.test.web.tsx`, `location-shell.test.native.tsx`, `shell.test.native.tsx`) and spec 15.3's nav list with `[CONFIRM: Orders in the top bar]`
-- [ ] 1.2 Nits: duplicate comment in `handlers/sales.ts` (N1), `DayDetail.tsx` comment (N4), `bodyLimit` doc and `client/test/helpers/routes.ts` spacing (N5)
-- [ ] 1.3 Python: commit `reorder/uv.lock`, lower bounds at the locked versions, a `reorder` CI job beside `lab` (`uv sync --locked`, `uv run --frozen pytest -q -rs`), and a synthetic-data label on `reorder/reports/*` and `reorder/README.md`
+- [x] 1.1 Update the five client tests for the Orders tab (`phone-ui.test.web.tsx`, `location-shell.test.native.tsx`, `shell.test.native.tsx`) and spec 15.3's nav list with `[CONFIRM: Orders in the top bar]`
+- [x] 1.2 Nits: duplicate comment in `handlers/sales.ts` (N1), `DayDetail.tsx` comment (N4), `bodyLimit` doc and `client/test/helpers/routes.ts` spacing (N5)
+- [x] 1.3 Python: commit `reorder/uv.lock`, lower bounds at the locked versions, a `reorder` CI job beside `lab` (`uv sync --locked`, `uv run --frozen pytest -q -rs`), and a synthetic-data label on `reorder/reports/*` and `reorder/README.md`
 
 ## 2. Stores
 

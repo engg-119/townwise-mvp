@@ -1,3 +1,5 @@
+Built from the synthetic dataset in data/synthetic, not a real bar's sales.
+
 # Replay, 2025-05-01 through 2026-11-04
 
 Both policies start from the written par. The forecast for an order uses only sales dated before that cutoff. The score uses held-out true demand, including drinks the historical rules lost. Bottle service is off.

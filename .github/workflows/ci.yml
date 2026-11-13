@@ -135,3 +135,25 @@ jobs:
           uv run --frozen pytest -q
       - name: Build the job image
         run: docker build -f modeling/lab/Dockerfile modeling/lab
+
+  reorder:
+    # The reorder package (reorder/): its tests; the ones that need data/synthetic skip where it is absent.
+    name: reorder
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: 0.11.2 # the Dockerfile's uv; unset, the action installs the newest release
+          enable-cache: false
+      - name: Reorder tests
+        working-directory: reorder
+        run: |
+          set -euo pipefail
+          uv sync --locked # fails when uv.lock is out of date with pyproject.toml
+          uv run --frozen pytest -q -rs

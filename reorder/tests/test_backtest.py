@@ -2,6 +2,8 @@
 
 from datetime import date, timedelta
 
+import pytest
+
 from reorder.backtest import (
     WeekdayStats,
     beats_baseline,
@@ -190,6 +192,8 @@ def test_agent_beats_a_par_that_is_below_demand() -> None:
 
 def test_may_replay_reports_each_category_and_leaves_ground_truth_out_of_sales() -> None:
     config = load_config()
+    if not config.resolve("synthetic_root").is_dir():
+        pytest.skip("synthetic data is not in this checkout")
     root = config.resolve("synthetic_root")
     products = load_products(root / "reference" / "products.csv")
     recipes = load_recipes(root / "reference" / "recipes.csv")

@@ -4,6 +4,8 @@ Turns a bar's sales and the existing guest forecast into the contracts in `docs/
 
 Phase 2 reads sales, counts, and the guest forecast. Phase 3 (`reorder/engine.py`) turns those into an order: the delivery window, an order-up-to level, a deal size, and a one-line reason. Phase 4 (`reorder/pricing.py`) suggests a cheaper deal or a substitute. Both are advisory. The owner approves every order. The phone screens are a later phase.
 
+The reports in `reports/` are built from the synthetic dataset in `data/synthetic`, not a real bar's sales.
+
 Price suggestions use `config/rules/nh.yaml`. That file is not legal advice. A state with no rules file only gets deal-size comparisons from the suppliers already on the account. Prices come from an uploaded sheet (`paths.price_list`). A price older than 30 days is marked stale. `PriceLookup` is the hook for a public price listing and returns nothing until one is connected. Dismissed suggestions stay hidden for 30 days. The log of accept, dismiss, and remind-later is written only when a caller saves it.
 
 ## Run the tests
