@@ -4,8 +4,8 @@
 // too_complex; the API process is untouched. The time limit covers the file's reads from storage too: a stalled read
 // is aborted, so it never holds the replica's reader or the import's lease. A ZIP is not fed: the thread asks for the
 // byte ranges it needs (its directory, then each entry), and this side answers each from storage, continuing one open
-// download while the reads are in order. A reference item TownwiseAI reads (runItemRead) is posted to its own thread
-// whole: a PDF to count its pages, a Word document to take its text.
+// download while the reads are in order. A reference item TownwiseAI reads (runItemRead) is posted to its own, smaller
+// thread whole, one item at a time per replica: a PDF to count its pages, a Word document to take its text.
 import { Worker, type ResourceLimits } from 'node:worker_threads';
 
 import type { FileAnswers } from '../../stores/files.ts';
@@ -13,7 +13,7 @@ import type { RedactedProfile } from '../extract/profile.ts';
 import type { ColumnChoice } from '../extract/prompt.ts';
 import type { EntryRow } from './archive.ts';
 import type { FamilyReport } from './families.ts';
-import { ITEM_READ_TIME_MS, READ_TIME_MS, THREAD_CHUNK_BYTES, THREAD_LIMITS } from '../limits.ts';
+import { ITEM_READ_TIME_MS, ITEM_THREAD_LIMITS, READ_TIME_MS, THREAD_CHUNK_BYTES, THREAD_LIMITS } from '../limits.ts';
 import type { SalesDay } from './days.ts';
 import type { KeptOutcome, QuestionDraft } from './mapping.ts';
 import type { TableReport } from './table.ts';
@@ -287,9 +287,23 @@ export interface ItemReadInput {
   readonly resourceLimits?: ResourceLimits;
 }
 
-/** One reference item through the parse thread, for TownwiseAI. Out of time or memory answers too_large. */
-export async function runItemRead(input: ItemReadInput): Promise<ItemOutcome> {
-  const worker = new Worker(THREAD_URL, { resourceLimits: input.resourceLimits ?? THREAD_LIMITS });
+/** The replica's item reads, in order: each starts when the one before it has settled. */
+let itemReads: Promise<unknown> = Promise.resolve();
+
+/**
+ * One reference item through the parse thread, for TownwiseAI. Item reads run one at a time on a replica, each in a
+ * thread with ITEM_THREAD_LIMITS, so chat reads add at most one small thread to the file reader's; a read's time limit
+ * starts when its turn comes. Out of time or memory answers too_large.
+ */
+export function runItemRead(input: ItemReadInput): Promise<ItemOutcome> {
+  const read = itemReads.then(() => readItem(input));
+  // A read that fails never holds up the next.
+  itemReads = read.catch(() => undefined);
+  return read;
+}
+
+async function readItem(input: ItemReadInput): Promise<ItemOutcome> {
+  const worker = new Worker(THREAD_URL, { resourceLimits: input.resourceLimits ?? ITEM_THREAD_LIMITS });
   const messages = inbox(worker);
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {

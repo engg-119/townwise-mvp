@@ -7,6 +7,7 @@ import type { BetaTool, BetaToolResultBlockParam, BetaToolUseBlock } from '@anth
 
 import type { TownwiseContext } from '../../app.ts';
 import type { OrgScope } from '../../access/policy.ts';
+import type { PdfsSent } from '../../files/items.ts';
 import type { LocationRecord } from '../../stores/locations.ts';
 import type { NoteContent } from '../../stores/notes.ts';
 import type { Role } from '../../access/resolve.ts';
@@ -40,6 +41,11 @@ export interface ToolContext {
   readonly role: Role;
   /** The caller as chat.turn_completed records them, for the events a tool records. */
   readonly actor: Pick<AuditEventInput, 'actorUserId' | 'actorEmail' | 'actorRole' | 'viewAsGrantId'>;
+  /**
+   * The PDFs read_data_item has sent in this turn, which together stay within one PDF's caps (files/items.ts). runTurn
+   * starts each turn's at zero; absent, a read counts alone.
+   */
+  readonly pdfsSent?: PdfsSent;
 }
 
 export type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue };

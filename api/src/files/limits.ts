@@ -93,13 +93,24 @@ export const DOCX_MAX_DOCUMENT_BYTES = 50 * MIB;
 
 /**
  * TownwiseAI's read of a PDF reference item (openspec change connect-owner-calendar, design decision 9): sent to the
- * model whole, so at most this size and page count. A Word item is read up to DOCX_READ_BYTES. [CONFIRM: PDFs up to
- * 10 MB and 100 pages for TownwiseAI]
+ * model whole, so at most this size and page count, and the PDFs of one chat turn together too (items.ts, PdfsSent).
+ * A Word item is read up to DOCX_READ_BYTES. [CONFIRM: PDFs up to 10 MB and 100 pages for TownwiseAI]
  */
 export const ITEM_PDF_BYTES = 10 * MIB;
 export const ITEM_PDF_PAGES = 100;
 /** An item's count or text in the parse thread ends at this time limit: it runs inside a chat turn of 150 seconds. */
 export const ITEM_READ_TIME_MS = 20_000;
+/**
+ * The parse thread's memory (MiB) for an item TownwiseAI reads. Item reads run one at a time on a replica (run.ts,
+ * runItemRead), beside the file reader's thread, so theirs is smaller: a page count or a Word text needs little heap.
+ */
+export const ITEM_THREAD_LIMITS = { maxOldGenerationSizeMb: 64, maxYoungGenerationSizeMb: 16, stackSizeMb: 4 } as const;
+/**
+ * word/document.xml, uncompressed, for TownwiseAI's read of a Word item, which keeps only its first 20,000 characters.
+ * The inflated bytes and their decoded text live outside the thread's heap, so this cap, not ITEM_THREAD_LIMITS, bounds
+ * them (about three times this size).
+ */
+export const ITEM_DOCX_DOCUMENT_BYTES = 10 * MIB;
 
 /** The AI column step (spec 11A): calls per file, per ZIP (at most one a family of its tables) and per import. */
 export const MODEL_CALLS_PER_FILE = 2;

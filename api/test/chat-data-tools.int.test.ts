@@ -190,6 +190,41 @@ describe('with stored files on', () => {
     expect(Array.isArray(atCap?.content) ? atCap.content.at(-1) : null).toMatchObject({ type: 'text', text: expect.stringContaining(`"pages":${String(ITEM_PDF_PAGES)}`) as string });
   }, 60_000);
 
+  it('a turn’s PDFs share one PDF’s caps: a PDF past them is not sent, and the next turn starts at zero', async () => {
+    const seeded = async (bytes: Buffer, over: Record<string, unknown> = {}): Promise<string> =>
+      `f_${await seed(p, blobs, p.locationId, bytes, { name: 'x.pdf', kind: 'pdf', ...over })}`;
+    /** One turn in which the model reads `refs` from one message; resolves the results the model read back. */
+    const turnOf = async (refs: string[]): Promise<BetaToolResultBlockParam[]> => {
+      p.model.calls.length = 0;
+      p.model.script(
+        { kind: 'message', message: message(refs.map((ref, index) => toolUse(`r${String(index)}`, 'read_data_item', { ref }))) },
+        { kind: 'message', message: message([text('Done.')]) },
+      );
+      const res = await call(p.server, `/api/org/locations/${p.locationId}/chat/turns`, { session: p.session, json: { content: 'Compare the PDFs.' } });
+      expect(res.status).toBe(200);
+      await res.text();
+      const last = messagesOf(p.model.calls[1]).at(-1);
+      const blocks = last === undefined || typeof last.content === 'string' ? [] : last.content ?? [];
+      return blocks.filter((block): block is BetaToolResultBlockParam => block.type === 'tool_result');
+    };
+    const sent = (result: BetaToolResultBlockParam): boolean => Array.isArray(result.content) && result.content.some((block) => block.type === 'document');
+    const turnFull = JSON.stringify({
+      available: false,
+      reason: 'This reply has already read as much PDF as one reply can hold (10 MB and 100 pages in all). Answer from the PDFs it has read; this one can be read in the next reply.',
+    });
+    // Each is under the size cap on its own (the row's size counts), and three are over it together.
+    const big = [0, 1, 2].map(() => ({ sizeBytes: Math.floor(ITEM_PDF_BYTES * 0.4) }));
+    const bigRefs = [await seeded(EVENTS_PDF, big[0]), await seeded(EVENTS_PDF, big[1]), await seeded(EVENTS_PDF, big[2])];
+    const first = await turnOf(bigRefs);
+    expect(first.map(sent)).toEqual([true, true, false]);
+    expect(first[2]?.content).toBe(turnFull);
+    // A new turn reads the one refused, then pages count too: 2 + 60 fit, and 60 more do not.
+    const sixty = pdfOf(Array.from({ length: 60 }, () => ({})));
+    const second = await turnOf([bigRefs[2] ?? '', await seeded(sixty), await seeded(sixty)]);
+    expect(second.map(sent)).toEqual([true, true, false]);
+    expect(second[2]?.content).toBe(turnFull);
+  }, 60_000);
+
   it('a later turn never resends a PDF: the saved conversation keeps its ref and page count only', async () => {
     const ref = `f_${pdfId}`;
     const data = EVENTS_PDF.toString('base64');

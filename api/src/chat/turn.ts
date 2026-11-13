@@ -255,6 +255,8 @@ export function savedTurn(turn: readonly TurnMessage[]): StoredMessage[] {
 }
 
 export async function runTurn(input: TurnInput): Promise<TurnResult> {
+  // Every PDF the turn reads goes again in each of its later calls, so the turn's PDFs share one PDF's caps.
+  const tools: ToolContext = { ...input.tools, pdfsSent: { bytes: 0, pages: 0 } };
   const turn: BetaMessageParam[] = [];
   const timed: TurnMessage[] = [];
   const { user, reply } = input.nodes;
@@ -346,9 +348,9 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
         // Only a registered tool gets events; an unknown name is answered as an error without any.
         const known = toolNamed(block.name) !== undefined;
         const { id, name } = block;
-        const view = inputViewOf(name, block.input, input.tools.today);
+        const view = inputViewOf(name, block.input, tools.today);
         if (known) input.emit({ type: 'tool', data: { id, name, state: 'running', input: view, result: null } });
-        const outcome = await runTool(input.tools, block);
+        const outcome = await runTool(tools, block);
         results.push(outcome.result);
         if (outcome.proposal !== null) input.emit({ type: 'proposal', data: { id, proposal: outcome.proposal } });
         if (outcome.visual !== null) input.emit({ type: 'visual', data: { id, visual: outcome.visual } });

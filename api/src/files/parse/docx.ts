@@ -2,11 +2,11 @@
 // directory first (as a workbook's do); then word/document.xml is parsed with saxen, and each top-level w:tbl becomes
 // rows (w:tr) of cells (w:tc, the text of their w:t runs). Paragraph text outside tables is dropped by the table reader
 // and never kept anywhere but the stored original. For TownwiseAI's read of a Word reference item, readWordText takes
-// every paragraph's and table's text instead, under the same guards (openspec change connect-owner-calendar, design
-// decision 9): it reaches the model only in the turn that read it and is never stored.
+// every paragraph's and table's text instead, under the same guards and a smaller document.xml cap (openspec change
+// connect-owner-calendar, design decision 9): it reaches the model only in the turn that read it and is never stored.
 import { Parser } from 'saxen';
 
-import { DOCX_MAX_DOCUMENT_BYTES, ZIP_PIECE_BYTES } from '../limits.ts';
+import { DOCX_MAX_DOCUMENT_BYTES, ITEM_DOCX_DOCUMENT_BYTES, ZIP_PIECE_BYTES } from '../limits.ts';
 import { bufferRead, dataLimits, entryBuffer, readZip, ZipDamagedError } from '../zip.ts';
 import type { KeptOutcome } from './mapping.ts';
 import { checkWorkbookArchive, type Sheet } from './xlsx.ts';
@@ -126,15 +126,15 @@ export function textOfXml(xml: string, maxChars: number): { text: string; trunca
   return { text: cut, truncated: text.length > maxChars };
 }
 
-/** A .docx's document.xml, under the package's guards, or why it is kept unread. */
-async function documentXml(buffer: Buffer): Promise<string | { kind: 'kept'; outcome: KeptOutcome }> {
+/** A .docx's document.xml, under the package's guards and at most `maxBytes` uncompressed, or why it is kept unread. */
+async function documentXml(buffer: Buffer, maxBytes: number): Promise<string | { kind: 'kept'; outcome: KeptOutcome }> {
   const check = await checkWorkbookArchive(buffer, ['[Content_Types].xml', DOCUMENT]);
   if (check !== 'ok') return { kind: 'kept', outcome: check };
   const read = bufferRead(buffer);
   const listing = await readZip(read, buffer.length, { maxEntries: Number.MAX_SAFE_INTEGER, maxDirectoryBytes: buffer.length });
   const part = listing.entries.find((entry) => entry.name === DOCUMENT);
   if (part === undefined) return { kind: 'kept', outcome: 'not_a_workbook' };
-  if (part.uncompressedSize > DOCX_MAX_DOCUMENT_BYTES) return { kind: 'kept', outcome: 'too_large_to_read' };
+  if (part.uncompressedSize > maxBytes) return { kind: 'kept', outcome: 'too_large_to_read' };
   try {
     return (await entryBuffer(read, part, dataLimits(listing).get(part) ?? 0, ZIP_PIECE_BYTES)).toString('utf8');
   } catch (err) {
@@ -145,10 +145,10 @@ async function documentXml(buffer: Buffer): Promise<string | { kind: 'kept'; out
 
 /**
  * A .docx's paragraph and table text for TownwiseAI, cut at `maxChars`: kept `not_a_workbook` (not a Word package, or
- * XML that does not parse), `too_complex` (guards) or `too_large_to_read` (document.xml over its cap).
+ * XML that does not parse), `too_complex` (guards) or `too_large_to_read` (document.xml over ITEM_DOCX_DOCUMENT_BYTES).
  */
 export async function readWordText(buffer: Buffer, maxChars: number): Promise<WordText> {
-  const xml = await documentXml(buffer);
+  const xml = await documentXml(buffer, ITEM_DOCX_DOCUMENT_BYTES);
   if (typeof xml !== 'string') return xml;
   try {
     return { kind: 'text', ...textOfXml(xml, maxChars) };
@@ -159,7 +159,7 @@ export async function readWordText(buffer: Buffer, maxChars: number): Promise<Wo
 
 /** A .docx's tables: kept `not_a_workbook` (not a Word package), `too_complex` (guards), or `word_no_table`. */
 export async function readWord(buffer: Buffer): Promise<WordTables> {
-  const xml = await documentXml(buffer);
+  const xml = await documentXml(buffer, DOCX_MAX_DOCUMENT_BYTES);
   if (typeof xml !== 'string') return xml;
   let tables: Sheet[];
   try {

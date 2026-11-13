@@ -6,6 +6,7 @@ import { Readable } from 'node:stream';
 
 import { describe, expect, it } from 'vitest';
 
+import { DOCX_MAX_DOCUMENT_BYTES, ITEM_DOCX_DOCUMENT_BYTES } from '../../src/files/limits.ts';
 import { readWord, readWordText, tablesOfXml, textOfXml } from '../../src/files/parse/docx.ts';
 import { runItemRead, runParse } from '../../src/files/parse/run.ts';
 import { zipOf } from '../helpers/zip.ts';
@@ -84,6 +85,17 @@ describe('Word text for TownwiseAI', () => {
       .toEqual({ kind: 'cannot_open' });
     expect(await runItemRead({ job: { kind: 'word_text', maxChars: 20_000 }, bytes: Buffer.from('not a zip') })).toEqual({ kind: 'cannot_open' });
     expect(await runItemRead({ job: { kind: 'word_text', maxChars: 20_000 }, bytes: file, timeMs: 1 })).toEqual({ kind: 'too_large' });
+  }, 30_000);
+
+  it('answers too_large for a document.xml over the item cap, before inflating it', async () => {
+    // Declared just over the cap and stored, so the archive guards' ratio passes and only the cap refuses it.
+    const long = zipOf([
+      { name: '[Content_Types].xml', data: '<Types/>' },
+      { name: 'word/document.xml', data: 'x'.repeat(110_000), declaredSize: ITEM_DOCX_DOCUMENT_BYTES + 1, store: true },
+    ]);
+    expect(ITEM_DOCX_DOCUMENT_BYTES).toBeLessThan(DOCX_MAX_DOCUMENT_BYTES);
+    expect(await readWordText(long, 100)).toEqual({ kind: 'kept', outcome: 'too_large_to_read' });
+    expect(await runItemRead({ job: { kind: 'word_text', maxChars: 100 }, bytes: long })).toEqual({ kind: 'too_large' });
   }, 30_000);
 
   it('keeps XML that does not parse as a package it cannot open', async () => {

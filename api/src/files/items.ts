@@ -130,18 +130,26 @@ export async function saveTextItem(
 /**
  * An item's content for TownwiseAI: the text of a text or Word item, or a PDF (base64) with its page count; otherwise
  * why it cannot be read. `too_large` is a PDF over ITEM_PDF_BYTES or ITEM_PDF_PAGES, or a Word file over
- * DOCX_READ_BYTES or the Word reader's caps; `cannot_open` is a PDF or Word file that is damaged or locked.
+ * DOCX_READ_BYTES or the Word reader's caps; `turn_full` is a PDF within them that does not fit beside the PDFs the
+ * turn already sent (PdfsSent); `cannot_open` is a PDF or Word file that is damaged or locked.
  */
 export type ItemContent =
   | { readonly status: 'ok'; readonly text: string; readonly truncated: boolean }
   | { readonly status: 'pdf'; readonly data: string; readonly pages: number }
-  | { readonly status: 'files_off' | 'not_found' | 'not_readable' | 'turned_off' | 'gone' | 'too_large' | 'cannot_open' };
+  | { readonly status: 'files_off' | 'not_found' | 'not_readable' | 'turned_off' | 'gone' | 'too_large' | 'turn_full' | 'cannot_open' };
+
+/**
+ * The PDFs one chat turn has sent so far. Each goes again in every later model call of the turn, and the Messages API
+ * refuses a request over 32 MB, so a turn's PDFs together stay within ITEM_PDF_BYTES and ITEM_PDF_PAGES, as one PDF
+ * does. readText adds each PDF it returns.
+ */
+export interface PdfsSent { bytes: number; pages: number }
 
 /** The door TownwiseAI's tools read an item's content through (chat/* imports no file code). */
 export interface ItemReader {
   readonly on: boolean;
-  /** A text or Word item's text, or a PDF item whole for the model to read. */
-  readText(scope: OrgScope, locationId: string, fileId: string): Promise<ItemContent>;
+  /** A text or Word item's text, or a PDF item whole for the model to read. Without `sent`, a PDF counts alone. */
+  readText(scope: OrgScope, locationId: string, fileId: string, sent?: PdfsSent): Promise<ItemContent>;
 }
 
 async function bytesOf(body: AsyncIterable<unknown>): Promise<Buffer> {
@@ -158,7 +166,7 @@ function unread(outcome: ItemOutcome): ItemContent {
 export function createItemReader(stores: Pick<TownwiseStores, 'files'>, blobs: FileBlobs | null): ItemReader {
   return {
     on: blobs !== null,
-    async readText(scope, locationId, fileId) {
+    async readText(scope, locationId, fileId, sent = { bytes: 0, pages: 0 }) {
       if (blobs === null) return { status: 'files_off' };
       if (!OBJECT_ID.test(fileId) || !OBJECT_ID.test(locationId)) return { status: 'not_found' };
       const file = await stores.files.get(scope, locationId, fileId);
@@ -167,8 +175,9 @@ export function createItemReader(stores: Pick<TownwiseStores, 'files'>, blobs: F
       if (file.disabledAt !== null) return { status: 'turned_off' };
       if (file.rawDeletedAt !== null) return { status: 'gone' };
       // A PDF or Word item over its cap is too large before a byte is fetched, and one within it is read whole; a text
-      // item, up to READ_ITEM_BYTES.
+      // item, up to READ_ITEM_BYTES. A PDF that does not fit beside the turn's earlier ones is not fetched either.
       if (file.kind !== 'text' && file.sizeBytes > (file.kind === 'pdf' ? ITEM_PDF_BYTES : DOCX_READ_BYTES)) return { status: 'too_large' };
+      if (file.kind === 'pdf' && sent.bytes + file.sizeBytes > ITEM_PDF_BYTES) return { status: 'turn_full' };
       let bytes: Buffer;
       try {
         const count = file.kind === 'text' ? Math.min(file.sizeBytes, READ_ITEM_BYTES) : file.sizeBytes;
@@ -181,6 +190,9 @@ export function createItemReader(stores: Pick<TownwiseStores, 'files'>, blobs: F
         const counted = await runItemRead({ job: { kind: 'pdf_pages' }, bytes });
         if (counted.kind !== 'pages') return unread(counted);
         if (counted.pages > ITEM_PDF_PAGES) return { status: 'too_large' };
+        if (sent.pages + counted.pages > ITEM_PDF_PAGES) return { status: 'turn_full' };
+        sent.bytes += file.sizeBytes;
+        sent.pages += counted.pages;
         return { status: 'pdf', data: bytes.toString('base64'), pages: counted.pages };
       }
       if (file.kind === 'docx') {

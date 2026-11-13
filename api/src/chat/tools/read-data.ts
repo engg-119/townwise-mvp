@@ -22,6 +22,7 @@ const REASONS: Readonly<Record<Exclude<ItemContent['status'], 'ok' | 'pdf'>, str
   not_found: 'No item with that ref at this location.',
   // The spec's code for a PDF or Word item over its caps; the tool's description says what it means.
   too_large: 'too_large',
+  turn_full: 'This reply has already read as much PDF as one reply can hold (10 MB and 100 pages in all). Answer from the PDFs it has read; this one can be read in the next reply.',
   cannot_open: 'TownwiseAI couldn’t open that file. It may be damaged or locked with a password.',
 };
 
@@ -54,7 +55,7 @@ function refOf(raw: string): string | null {
 export const readDataTool: ChatTool<ReadDataInput> = {
   definition: {
     name: 'read_data_item',
-    description: 'The content of one item the owner added for reference, by its ref from list_data_items. A text or Word (.docx) item gives its text: at most the first 20,000 characters, with truncated true when there is more. A PDF item gives the PDF itself, with its ref and page count. Only text, PDF and Word items added for reference can be read; sales files, older Word (.doc) files, spreadsheets, images and turned-off items cannot. A PDF over 10 MB or 100 pages, or a Word file over 10 MB, answers available false with reason too_large.',
+    description: 'The content of one item the owner added for reference, by its ref from list_data_items. A text or Word (.docx) item gives its text: at most the first 20,000 characters, with truncated true when there is more. A PDF item gives the PDF itself, with its ref and page count. Only text, PDF and Word items added for reference can be read; sales files, older Word (.doc) files, spreadsheets, images and turned-off items cannot. A PDF over 10 MB or 100 pages, or a Word file over 10 MB, answers available false with reason too_large. The PDFs read in one reply share those caps: a PDF that does not fit beside the ones already read answers available false until the next reply.',
     input_schema: {
       type: 'object',
       properties: { ref: { type: 'string', description: 'An item\'s ref from list_data_items, such as f_ followed by 24 hex characters' } },
@@ -100,7 +101,7 @@ export const readDataTool: ChatTool<ReadDataInput> = {
     // A sales upload is never read.
     const read: ItemContent = parsed.type === 'upload'
       ? { status: 'not_readable' }
-      : await tc.ctx.items.readText(tc.scope, tc.location.id, parsed.id);
+      : await tc.ctx.items.readText(tc.scope, tc.location.id, parsed.id, tc.pdfsSent);
     if (read.status === 'ok') return { content: JSON.stringify({ ref, text: read.text, truncated: read.truncated }) };
     if (read.status === 'pdf') return { content: JSON.stringify({ ref, kind: 'pdf', pages: read.pages }), pdf: read.data };
     return { content: JSON.stringify({ available: false, reason: REASONS[read.status] }) };
