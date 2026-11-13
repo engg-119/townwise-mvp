@@ -1,0 +1,204 @@
+import { useEffect, useRef, useState } from 'react';
+
+import { theme } from '../../theme';
+import { monthMove } from '../analytics/week';
+import { WEEK_ORDER, WEEKDAY_NAMES } from '../analytics/words';
+import { useBreakpoint } from '../hooks';
+import { MARK } from '../home/MonthKey';
+import type { CalendarGridProps } from './CalendarGrid';
+import { anchorOf, DayTooltip, type TooltipAnchor } from './DayTooltip.web';
+import { captionOf, cellSizes, statusWord } from './model';
+
+// The Calendar's month grid on web (P27, spec 16.3): DOM, as Home's month grid is, because each day
+// takes focus. The grid is role="grid" named by its month and one tab stop (roving tabIndex on the selected day).
+// Left and Right move a day, Up and Down a week, Home and End the row's ends, Ctrl+Home and Ctrl+End the month's ends
+// (week.ts monthMove), and the selection follows. A click, Enter or Space selects a day. A mouse or pen over a day
+// shows its tooltip (one delegated handler; touch never does); leaving the grid, or moving over anything that is not a day
+// (a gap, the weekday row), hides it. Hover and the pointer
+// live in one React-rendered stylesheet; the focus ring is the portal's. What a cell shows is CalendarGrid.tsx's.
+
+const C = theme.color;
+const HEAD = WEEK_ORDER.map((day) => WEEKDAY_NAMES[day] ?? '');
+
+// Hover is a ring: each cell's fill and border are inline styles, which a stylesheet rule can't override, but its
+// box-shadow is not.
+const CSS = [
+  '.tw-cg [data-date]{cursor:pointer}',
+  `@media (hover:hover){.tw-cg [data-date]:hover:not([data-sel="1"]){box-shadow:0 0 0 1px ${C.white}}}`,
+].join('\n');
+
+const mono = { fontFamily: theme.font.mono, fontSize: 12, lineHeight: '16px', fontVariantNumeric: 'tabular-nums' } as const;
+const small = { fontFamily: theme.font.mono, fontSize: 10, lineHeight: '14px' } as const;
+const square = { position: 'absolute', width: MARK, height: MARK, pointerEvents: 'none' } as const;
+const row = { display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 3 } as const;
+const line = { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } as const;
+
+function dateOf(target: EventTarget | null): string | null {
+  const element = target instanceof Element ? target.closest('[data-date]') : null;
+  return element?.getAttribute('data-date') ?? null;
+}
+
+/** Runs `run` after the clear delay; the returned function cancels it. One animation frame is too short: the next day's pointerover often lands a frame later. */
+function nextFrame(run: () => void): () => void {
+  const id = setTimeout(run, CLEAR_DELAY_MS);
+  return () => { clearTimeout(id); };
+}
+
+/** How long a pointer may rest over no day (the gap between cells) before the tooltip clears. */
+const CLEAR_DELAY_MS = 80;
+
+export function CalendarGrid(props: CalendarGridProps): React.JSX.Element {
+  const { rows, selected, onSelect, tooltip } = props;
+  const { width } = useBreakpoint();
+  const size = cellSizes(width);
+  const box = useRef<HTMLDivElement>(null);
+  /** The day whose cell takes focus after this render: a key moved there. */
+  const focusNext = useRef<string | null>(null);
+  const [tip, setTip] = useState<{ date: string; anchor: TooltipAnchor } | null>(null);
+  /** Cancels the clear waiting for the next frame, if any. */
+  const pending = useRef<(() => void) | null>(null);
+  // Worded at render, so a tooltip open while the forecast reads again shows the new figures.
+  const lines = tip === null ? null : tooltip(tip.date);
+
+  useEffect(() => {
+    const date = focusNext.current;
+    if (date === null || box.current === null) return;
+    const cell = box.current.querySelector<HTMLElement>(`[data-date="${date}"]`);
+    if (cell === null) return;
+    focusNext.current = null;
+    cell.focus();
+  });
+
+  function cancelClear(): void {
+    pending.current?.();
+    pending.current = null;
+  }
+
+  // Crossing the 3px gap between two days is over no day for a moment: the clear waits a frame, and entering a day
+  // before it runs cancels it, so the tooltip does not blink.
+  function clearSoon(): void {
+    if (pending.current !== null) return;
+    pending.current = nextFrame(() => { pending.current = null; setTip(null); });
+  }
+
+  useEffect(() => cancelClear, []);
+
+  function onKeyDown(event: React.KeyboardEvent<HTMLDivElement>): void {
+    const from = dateOf(event.target);
+    if (from === null) return;
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      onSelect(from);
+      return;
+    }
+    const next = monthMove(from, event.key, event.ctrlKey || event.metaKey);
+    if (next === null) return;
+    event.preventDefault();
+    cancelClear();
+    setTip(null);
+    focusNext.current = next;
+    onSelect(next, true);
+  }
+
+  function onClick(event: React.MouseEvent<HTMLDivElement>): void {
+    const date = dateOf(event.target);
+    if (date !== null) onSelect(date);
+  }
+
+  function onPointerOver(event: React.PointerEvent<HTMLDivElement>): void {
+    if (event.pointerType === 'touch') return;
+    const date = dateOf(event.target);
+    // Over no day (a gap between cells, the weekday row, an empty leading cell): the tooltip goes.
+    if (date === null) { clearSoon(); return; }
+    cancelClear();
+    if (date === tip?.date || box.current === null) return;
+    const cell = box.current.querySelector(`[data-date="${date}"]`);
+    setTip(cell === null ? null : { date, anchor: anchorOf(cell, box.current) });
+  }
+
+  function onPointerLeave(event: React.PointerEvent<HTMLDivElement>): void {
+    if (event.pointerType === 'touch') return;
+    cancelClear();
+    setTip(null);
+  }
+
+  return (
+    <div ref={box} className="tw-cg" style={{ position: 'relative', width: '100%', opacity: props.busy ? 0.6 : 1 }}>
+      <style href="townwise-calendar-grid" precedence="default">{CSS}</style>
+      <div
+        role="grid"
+        aria-label={props.label}
+        aria-readonly
+        aria-busy={props.busy}
+        onKeyDown={onKeyDown}
+        onClick={onClick}
+        onPointerOver={onPointerOver}
+        onPointerLeave={onPointerLeave}
+        style={{ display: 'grid', gap: 3 }}
+      >
+        <div role="row" style={row}>
+          {HEAD.map((day) => (
+            <div key={day} role="columnheader" aria-label={day} style={{ ...mono, color: C.text3, textAlign: 'center' }}>{day.slice(0, 3)}</div>
+          ))}
+        </div>
+        {rows.map((cells, index) => (
+          <div key={index} role="row" style={row}>
+            {cells.map((cell, col) => {
+              if (cell === null) return <div key={col} role="gridcell" />;
+              const isSelected = cell.date === selected;
+              const status = statusWord(cell.status);
+              const caption = captionOf(cell);
+              return (
+                <div
+                  key={cell.date}
+                  role="gridcell"
+                  data-date={cell.date}
+                  {...(isSelected ? { 'data-sel': '1' } : {})}
+                  aria-label={cell.label}
+                  aria-selected={isSelected}
+                  tabIndex={isSelected ? 0 : -1}
+                  style={{
+                    position: 'relative', minHeight: size.minHeight, minWidth: 0, boxSizing: 'border-box', padding: 4,
+                    display: 'flex', flexDirection: 'column', gap: 2,
+                    background: C.raised, border: `1px solid ${isSelected ? C.mint : cell.inWeek ? C.line : C.raised}`,
+                  }}
+                >
+                  <span aria-hidden="true" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 4 }}>
+                    <span style={{ ...mono, fontSize: 13, color: cell.isToday ? C.white : C.text2, fontWeight: cell.isToday ? 600 : 400 }}>
+                      {String(Number(cell.date.slice(8, 10)))}
+                    </span>
+                    {status === null ? null : <span style={{ ...small, color: C.text2, textTransform: 'uppercase' }}>{status}</span>}
+                  </span>
+                  {cell.figure === null ? null : (
+                    <span aria-hidden="true" style={{ display: 'grid', justifyItems: 'center' }}>
+                      <span style={{ ...mono, fontSize: size.figure, lineHeight: `${String(size.figure + 4)}px`, fontWeight: 500, color: cell.figure.kind === 'actual' ? C.text2 : C.white }}>
+                        {String(cell.figure.value)}
+                      </span>
+                      {cell.noteGuests > 0 ? <span style={{ ...mono, color: C.mint }}>{`+${String(cell.noteGuests)}`}</span> : null}
+                      {caption === null ? null : <span style={{ ...small, color: C.text3 }}>{caption}</span>}
+                    </span>
+                  )}
+                  {size.chips ? (
+                    <span aria-hidden="true" style={{ display: 'grid', gap: 2, marginTop: 'auto', minWidth: 0 }}>
+                      {cell.chips.map((chip, at) => <span key={at} style={{ ...small, ...line, fontSize: 11, color: C.text2 }}>{chip}</span>)}
+                      {cell.more > 0 ? <span style={{ ...small, color: C.text3 }}>{`+${String(cell.more)} more`}</span> : null}
+                    </span>
+                  ) : (
+                    <>
+                      {cell.marks.event ? <span aria-hidden="true" style={{ ...square, top: 0, right: 0, background: C.white }} /> : null}
+                      {cell.marks.note ? <span aria-hidden="true" style={{ ...square, bottom: 0, left: 0, background: C.text2 }} /> : null}
+                      {cell.marks.imported ? (
+                        <span aria-hidden="true" style={{ ...square, bottom: 0, right: 0, width: MARK + 2, height: MARK + 2, boxSizing: 'border-box', border: `1px solid ${C.mint}` }} />
+                      ) : null}
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+      {tip === null || lines === null ? null : <DayTooltip tip={lines} anchor={tip.anchor} />}
+    </div>
+  );
+}
