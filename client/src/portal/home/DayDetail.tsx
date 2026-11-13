@@ -13,7 +13,7 @@ import { PastCell } from './ThisWeek';
 // The selected day of This month (spec P11), beside the grid from where they fit side by side, under it otherwise:
 // the day's holidays and town events with their sources, your notes, then, with any history, the day's own figure
 // (only for a past day with data; a day after today gets none, ever) and the same weekday last year and two years
-// ago. Term and season periods are left to the month's list, since they mark no day. It reads nothing of its own.
+// ago. Term and season periods are left to the month's list, since they mark no day. Its own parts read nothing; BesideCalendar, mounted beside them, reads the month forecast and the orders.
 
 export const DETAIL_ID = 'home-day-detail';
 

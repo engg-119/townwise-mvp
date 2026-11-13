@@ -50,8 +50,10 @@ export interface TownwiseRoute {
   readonly path: `/${string}`;
   readonly policy: Policy;
   /**
-   * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer, a conversation's rename and a version switch;
-   * '2kb' on the Places, files and (D28) Your data JSON routes, the start of a calibration and the forecasts switch;
+   * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer, a conversation's rename, a version switch, a reply's rating, the profile
+   * edit and an order rule's turn-off;
+   * '2kb' on the Places, files, imports and (D28) Your data JSON routes, the start of a calibration, the forecasts
+   * switch, the order decisions and rules, and the item and order change cards;
    * '8kb' on a TownwiseAI proposal; '256kb' only on the upload routes (the member one and, D23, staff setup's) and
    * (U13B) the staff forecast import; 'stream' only on the chunk route, whose handler reads the raw body itself after
    * the policy has passed.
