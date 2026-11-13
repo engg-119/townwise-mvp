@@ -127,6 +127,19 @@ describe('isolation (source)', () => {
     expect(sockets).toEqual(['calendar/fetch.ts']);
   });
 
+  it('only the calendar routes, the refresh loop, TownwiseAI’s calendar tool and the deletions reach stored calendars, so no forecast code reads them', () => {
+    // A value import of the store, a read of stores.ownerCalendars (dotted, destructured or bracketed) or a collection by name.
+    const reaches = (file: { path: string; text: string }): boolean => /\bownerCalendars\b|\btw_calendar_/.test(file.text)
+      || [...file.text.matchAll(/^import (?!type )[^;]*from '(\.[^']+)';/gm)]
+        .some((match) => posix.normalize(posix.join(posix.dirname(file.path), match[1] ?? '')) === 'stores/owner-calendars.ts');
+    // The owner-calendar spec: a stored event changes no forecast figure, so forecasts/*, lab/*, people-in-town/* and the
+    // estimates and forecast-run handlers stay off this list.
+    expect(sourceFiles().filter(reaches).map((file) => file.path).sort()).toEqual([
+      'calendar/refresher.ts', 'chat/tools/owner-calendar.ts', 'handlers/deletion.ts', 'handlers/locations.ts', 'handlers/owner-calendars.ts',
+      'stores/cross-tenant.ts', 'stores/index.ts', 'stores/owner-calendars.ts',
+    ]);
+  });
+
   it('only access/policy.ts mints the open-as-admin scope, and only access/resolve.ts asks for it', () => {
     const callers = sourceFiles().filter((file) => file.text.includes('scopeForOpenAsAdmin(')).map((file) => file.path).sort();
     expect(callers).toEqual(['access/policy.ts', 'access/resolve.ts']);

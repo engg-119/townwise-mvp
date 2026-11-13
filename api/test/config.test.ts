@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 import { ConfigError, loadEnv } from '@ckeith26/server-core';
 import { describe, expect, it } from 'vitest';
@@ -170,6 +171,18 @@ describe('config', () => {
     it('is optional: unset or empty turns calendar links off', () => {
       expect(key(undefined)).toBeUndefined();
       expect(key('')).toBeUndefined();
+    });
+
+    it('main.ts builds the refresh loop only when it is set, starts it, and drains it at shutdown before Redis and Mongo close', () => {
+      // The calendar-subscription spec: without the key no refresh runs (tasks 5.2).
+      const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
+      expect(main.match(/\bcreateCalendarRefresher\(/g)).toHaveLength(1);
+      expect(main).toMatch(/^const calendarRefresher = TOWNWISE_CALENDAR_KEY === undefined \? undefined : createCalendarRefresher\(\{$/m);
+      expect(main).toMatch(/^calendarRefresher\?\.start\(\);/m);
+      const shutdown = main.slice(main.indexOf('onShutdown: ['));
+      const drained = shutdown.indexOf('...(calendarRefresher === undefined ? [] : [calendarRefresher])');
+      expect(drained).toBeGreaterThan(0);
+      expect(drained).toBeLessThan(shutdown.indexOf('redis, mongo,'));
     });
 
     it('reads 32 bytes of base64, as openssl rand -base64 32 writes them, into a secret key', () => {
