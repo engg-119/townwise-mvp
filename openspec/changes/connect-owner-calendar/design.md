@@ -54,7 +54,7 @@ A calendar from another organization or location answers 404, the same as an unk
 
 **9. PDF and Word for `read_data_item`.** `readableByTownwiseAi` accepts `pdf` and `docx` as well as `text`, under the same conditions. A PDF is returned as a `document` block inside the tool result (the installed `@anthropic-ai/sdk` 1.3.0 accepts this in `BetaToolResultBlockParam.content`), capped at 10 MB and 100 pages. A larger one answers `{ available: false, reason: 'too_large' }`. The PDFs of one turn share those caps, because each is sent again on every later model call of the turn and the Messages API refuses a request over 32 MB; one that does not fit answers `available: false` until the next turn. A Word file's paragraph and table text is extracted in the parse thread with the existing zip guards, and a `word/document.xml` of at most 10 MB, and returned as text under today's 20,000 character cap. Item reads run one at a time per replica, in a parse thread with smaller memory limits than the file reader's, so they fit beside it in the 0.5 GiB container. The saved conversation keeps only the reference and counts, as it does for text items, so the bytes are not stored twice. *Alternative:* extract PDF text with `unpdf` in the API. Rejected: `pdf.ts` is the only file allowed to import `unpdf` and it runs in the parse thread for tables; the model reads PDFs, layout included, better than our text extraction would.
 
-**10. Privacy and audit.** Audit events `townwise.owner_calendar_added`, `townwise.owner_calendar_removed` and `townwise.owner_calendar_refreshed` carry ids, `kind`, event counts and the status code only. They never carry the label, host, address or a title. The refresh loop logs source id, status code, counts and duration. Deleting a location or organization deletes both collections in `handlers/deletion.ts`.
+**10. Privacy and audit.** Audit events `owner_calendar.added`, `owner_calendar.removed` and `owner_calendar.refreshed` carry ids, `kind`, event counts and the status code only. They never carry the label, host, address or a title. The refresh loop logs source id, status code, counts and duration. Deleting a location or organization deletes both collections in `handlers/deletion.ts`.
 
 ## Risks / Trade-offs
 
@@ -68,7 +68,7 @@ A calendar from another organization or location answers 404, the same as an unk
 
 ## Migration Plan
 
-1. Create the `TOWNWISE_CALENDAR_KEY` secret in Key Vault (runbook step) and add it to `api_secrets` in `containerapp.tf`. Until it exists, links are off and file imports work.
+1. The key joins `api_secrets` (`infra/terraform/production/main.tf`) only when `enable_calendar_links` is true, default false, as `enable_chat` does for the chat, so a release deploys with links off and file imports working. To turn links on, seed `townwise-calendar-key` in Key Vault, then set the flag and apply (`infra/README.md`, step 21).
 2. Deploy. New collections and indexes are created at boot by `ensureIndexes`. No existing data changes.
 3. Rollback: redeploy the previous image. The new collections are ignored by the old code; drop them by hand if the feature is abandoned.
 

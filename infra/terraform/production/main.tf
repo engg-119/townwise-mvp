@@ -24,17 +24,17 @@ locals {
   # Key Vault secret name => the env var the API's schema reads (api/kit/mongo, api/kit/auth MODULE.md).
   # Terraform creates no values; infra/scripts/set-secret.sh seeds them. The tuning chat's key joins the map only
   # when enable_chat is true (infra/README.md, "Enable the tuning chat"), and the Google Places key, the Maps Static
-  # key and its URL signing secret only when enable_places is true ("Enable the Places search"); without its key,
-  # each feature is off. The calendar key, which seals owner calendar links (api/src/calendar/secret.ts), is always
-  # in the map, so it must be seeded before the apply that adds it (infra/README.md, "Calendar links").
+  # key and its URL signing secret only when enable_places is true ("Enable the Places search"), and the calendar key,
+  # which seals owner calendar links (api/src/calendar/secret.ts), only when enable_calendar_links is true ("Calendar
+  # links"); without its key, each feature is off.
   api_secrets = merge(
     {
-      "mongodb-uri"           = "MONGODB_URI"
-      "auth-jwt-keys"         = "AUTH_JWT_KEYS"
-      "auth-encryption-keys"  = "AUTH_ENCRYPTION_KEYS"
-      "townwise-calendar-key" = "TOWNWISE_CALENDAR_KEY"
+      "mongodb-uri"          = "MONGODB_URI"
+      "auth-jwt-keys"        = "AUTH_JWT_KEYS"
+      "auth-encryption-keys" = "AUTH_ENCRYPTION_KEYS"
     },
     { for name, env in { "anthropic-api-key" = "ANTHROPIC_API_KEY" } : name => env if var.enable_chat },
+    { for name, env in { "townwise-calendar-key" = "TOWNWISE_CALENDAR_KEY" } : name => env if var.enable_calendar_links },
     { for name, env in {
       "google-places-api-key"      = "GOOGLE_PLACES_API_KEY"
       "google-maps-static-key"     = "GOOGLE_MAPS_STATIC_KEY"

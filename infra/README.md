@@ -466,16 +466,16 @@ The lab retrains a location's forecast model in Azure, from the sales the API ha
 
 A location keeps its own calendars, each an imported file or a link (`api/README.md`, Owner calendars). Links are off until the API has `TOWNWISE_CALENDAR_KEY`, the AES-256-GCM key that seals each link's address in the database; off, adding a link answers 503 `calendar_links_unavailable` and no refresh runs, while calendar files still import. With it, the API fetches the addresses owners paste, from its own egress, which reaches the virtual network: the guards against request forgery are in code (`api/src/calendar/fetch.ts`).
 
-`townwise-calendar-key` is in `api_secrets` with no switch, so it must exist **before the first production apply that includes it**: a Key Vault reference to a missing secret fails the new revision, and its role assignment is scoped to the secret. A fresh build seeds it in step 5.
+`townwise-calendar-key` joins `api_secrets` only when `enable_calendar_links` is true (default false), so a release that carries this code deploys with links off. Seed the secret before turning it on: a Key Vault reference to a missing secret fails the new revision. A fresh build seeds it in step 5.
 
-1. **Create and seed the key** before deploying, without it reaching argv, history or the terminal (`openssl` writes it to the pipe, and `set-secret.sh` hands it to `az keyvault secret set` on stdin):
+1. **Create and seed the key**, without it reaching argv, history or the terminal (`openssl` writes it to the pipe, and `set-secret.sh` hands it to `az keyvault secret set` on stdin):
 
    ```sh
    cd "$(git rev-parse --show-toplevel)"
    openssl rand -base64 32 | infra/scripts/set-secret.sh kv-townwise-2d2c15bf townwise-calendar-key
    ```
 
-2. **Apply.** `terraform plan` and `terraform apply` from `infra/terraform/production`. The plan adds one role assignment (the app's identity reads `townwise-calendar-key` only) and changes the Container App (the `townwise-calendar-key` Key Vault reference and the `TOWNWISE_CALENDAR_KEY` env var), which starts a new revision. A value that is not 32 bytes of base64 stops the revision at boot with a `ConfigError` naming `TOWNWISE_CALENDAR_KEY`: seed it again and restart.
+2. **Turn it on.** Add `enable_calendar_links = true` to `infra/terraform/production/terraform.tfvars`, then `terraform plan` and `terraform apply` from `infra/terraform/production`. The plan adds one role assignment (the app's identity reads `townwise-calendar-key` only) and changes the Container App (the `townwise-calendar-key` Key Vault reference and the `TOWNWISE_CALENDAR_KEY` env var), which starts a new revision. A value that is not 32 bytes of base64 stops the revision at boot with a `ConfigError` naming `TOWNWISE_CALENDAR_KEY`: seed it again and restart.
 3. **Check.** Signed in as a member of a test organization, add a public test calendar's `.ics` link to a location (`POST /api/org/locations/<id>/owner-calendars` with `kind: 'link'`): it answers 201 with the link's host and event count, and no answer shows the address. About 6 hours later, `ContainerAppConsoleLogs | where Log has "townwise.calendar_refreshed"` shows its refresh, with the calendar id, the status code, counts and the duration only.
 
 **Never change the key.** A link sealed under one key opens under no other, so a new key makes every stored calendar link unreadable: each fails its next refresh with status `key_mismatch` until its owner adds it again (the events already stored stay). Change it only if it leaks: seed a new one with the same command, run `az containerapp revision restart`, and ask the owners to add their links again.

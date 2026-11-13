@@ -379,9 +379,8 @@ run "key_vault" {
       "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/mongodb-uri",
       "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/auth-jwt-keys",
       "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/auth-encryption-keys",
-      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/townwise-calendar-key",
     ])
-    error_message = "The app's secret role is scoped to each of its four secrets, never to the vault."
+    error_message = "The app's secret role is scoped to each of its three secrets, never to the vault."
   }
 
   assert {
@@ -402,9 +401,18 @@ run "key_vault" {
 
   assert {
     condition = toset([for env in azurerm_container_app.api.template[0].container[0].env : "${env.name}=${coalesce(env.secret_name, "-")}" if env.secret_name != null]) == toset([
-      "MONGODB_URI=mongodb-uri", "AUTH_JWT_KEYS=auth-jwt-keys", "AUTH_ENCRYPTION_KEYS=auth-encryption-keys", "TOWNWISE_CALENDAR_KEY=townwise-calendar-key",
+      "MONGODB_URI=mongodb-uri", "AUTH_JWT_KEYS=auth-jwt-keys", "AUTH_ENCRYPTION_KEYS=auth-encryption-keys",
     ])
     error_message = "The secrets map to the env vars the API's schema reads."
+  }
+
+  assert {
+    condition = (
+      !var.enable_calendar_links &&
+      !contains([for secret in azurerm_container_app.api.secret : secret.name], "townwise-calendar-key") &&
+      !contains([for env in azurerm_container_app.api.template[0].container[0].env : env.name], "TOWNWISE_CALENDAR_KEY")
+    )
+    error_message = "By default calendar links are off: no calendar key secret, no TOWNWISE_CALENDAR_KEY, no role on it."
   }
 
   assert {
@@ -469,7 +477,6 @@ run "chat_enabled" {
       "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/mongodb-uri",
       "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/auth-jwt-keys",
       "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/auth-encryption-keys",
-      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/townwise-calendar-key",
       "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/anthropic-api-key",
       ]) && alltrue([
       for key, assignment in azurerm_role_assignment.api_secret_read :
@@ -481,12 +488,44 @@ run "chat_enabled" {
   assert {
     condition = (
       toset([for env in azurerm_container_app.api.template[0].container[0].env : "${env.name}=${coalesce(env.secret_name, "-")}" if env.secret_name != null]) == toset([
-        "MONGODB_URI=mongodb-uri", "AUTH_JWT_KEYS=auth-jwt-keys", "AUTH_ENCRYPTION_KEYS=auth-encryption-keys", "TOWNWISE_CALENDAR_KEY=townwise-calendar-key", "ANTHROPIC_API_KEY=anthropic-api-key",
+        "MONGODB_URI=mongodb-uri", "AUTH_JWT_KEYS=auth-jwt-keys", "AUTH_ENCRYPTION_KEYS=auth-encryption-keys", "ANTHROPIC_API_KEY=anthropic-api-key",
       ]) &&
       contains([for secret in azurerm_container_app.api.secret : secret.key_vault_secret_id], "https://kv-townwise-2d2c15bf.vault.azure.net/secrets/anthropic-api-key") &&
       alltrue([for secret in azurerm_container_app.api.secret : secret.value == null])
     )
     error_message = "With the chat on, ANTHROPIC_API_KEY is a Key Vault reference to anthropic-api-key, with no value in Terraform."
+  }
+}
+
+run "calendar_links_enabled" {
+  command = plan
+
+  variables {
+    enable_calendar_links = true
+  }
+
+  assert {
+    condition = toset([for key, assignment in azurerm_role_assignment.api_secret_read : assignment.scope]) == toset([
+      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/mongodb-uri",
+      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/auth-jwt-keys",
+      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/auth-encryption-keys",
+      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/townwise-calendar-key",
+      ]) && alltrue([
+      for key, assignment in azurerm_role_assignment.api_secret_read :
+      assignment.role_definition_name == "Key Vault Secrets User" && assignment.principal_id == "00000000-0000-0000-0000-0000000000ee"
+    ])
+    error_message = "With calendar links on, the app's identity reads the calendar key by one more secret-scoped assignment, and nothing wider."
+  }
+
+  assert {
+    condition = (
+      toset([for env in azurerm_container_app.api.template[0].container[0].env : "${env.name}=${coalesce(env.secret_name, "-")}" if env.secret_name != null]) == toset([
+        "MONGODB_URI=mongodb-uri", "AUTH_JWT_KEYS=auth-jwt-keys", "AUTH_ENCRYPTION_KEYS=auth-encryption-keys", "TOWNWISE_CALENDAR_KEY=townwise-calendar-key",
+      ]) &&
+      contains([for secret in azurerm_container_app.api.secret : secret.key_vault_secret_id], "https://kv-townwise-2d2c15bf.vault.azure.net/secrets/townwise-calendar-key") &&
+      alltrue([for secret in azurerm_container_app.api.secret : secret.value == null])
+    )
+    error_message = "With calendar links on, TOWNWISE_CALENDAR_KEY is a Key Vault reference to townwise-calendar-key, with no value in Terraform."
   }
 }
 
@@ -502,7 +541,6 @@ run "places_enabled" {
       "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/mongodb-uri",
       "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/auth-jwt-keys",
       "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/auth-encryption-keys",
-      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/townwise-calendar-key",
       "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/google-places-api-key",
       "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/google-maps-static-key",
       "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/google-maps-signing-secret",
@@ -516,7 +554,7 @@ run "places_enabled" {
   assert {
     condition = (
       toset([for env in azurerm_container_app.api.template[0].container[0].env : "${env.name}=${coalesce(env.secret_name, "-")}" if env.secret_name != null]) == toset([
-        "MONGODB_URI=mongodb-uri", "AUTH_JWT_KEYS=auth-jwt-keys", "AUTH_ENCRYPTION_KEYS=auth-encryption-keys", "TOWNWISE_CALENDAR_KEY=townwise-calendar-key", "GOOGLE_PLACES_API_KEY=google-places-api-key",
+        "MONGODB_URI=mongodb-uri", "AUTH_JWT_KEYS=auth-jwt-keys", "AUTH_ENCRYPTION_KEYS=auth-encryption-keys", "GOOGLE_PLACES_API_KEY=google-places-api-key",
         "GOOGLE_MAPS_STATIC_KEY=google-maps-static-key", "GOOGLE_MAPS_SIGNING_SECRET=google-maps-signing-secret",
       ]) &&
       contains([for secret in azurerm_container_app.api.secret : secret.key_vault_secret_id], "https://kv-townwise-2d2c15bf.vault.azure.net/secrets/google-places-api-key") &&
