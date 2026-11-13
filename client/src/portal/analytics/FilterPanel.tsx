@@ -7,7 +7,7 @@ import { KEEP_ONE_YEAR, type Filters as FilterState, type Inclusion, type Marks 
 import { MetricSwitch } from './MetricSwitch';
 import type { Metric } from './words';
 
-// The Analytics filters (home.md 4.2): one block that drives the whole page, as four labelled groups in a row on
+// The Analytics filters (home.md 4.2): one block that drives the whole page, as four labeled groups in a row on
 // desktop and stacked on phones. The state lives in the page (Analytics.tsx, filters.ts), never in the URL or storage.
 // Changing a filter never animates and never moves focus.
 

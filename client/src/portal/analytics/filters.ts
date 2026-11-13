@@ -6,7 +6,7 @@ import { listText, type Metric } from './words';
 
 // The Analytics filters (home.md 4.2). They live in the page's component state only: never in the URL, never in
 // storage. "Include in the numbers" decides which days every average, chart, night type and driver uses, and the
-// heatmap's colour levels; "Show on the calendar" decides only the heatmap's marks.
+// heatmap's color levels; "Show on the calendar" decides only the heatmap's marks.
 
 export interface Marks { townEvents: boolean; holidays: boolean; notes: boolean; closures: boolean }
 
