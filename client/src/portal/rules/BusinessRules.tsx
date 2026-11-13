@@ -5,13 +5,14 @@ import { theme } from '../../theme';
 import { errorCopy, hasCode } from '../errors';
 import { formatDate } from '../format';
 import { useAction } from '../hooks';
-import { LoadFailure, Loading } from '../locations/parts';
+import { LoadFailure } from '../locations/parts';
 import { shownLocationName } from '../locations/naming';
 import { NoteFields } from '../locations/NoteFields';
 import { emptyDraft, type NoteDraft, type NoteMessages, type ScheduleInput } from '../locations/noteRules';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { locationHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
+import { RulesSkeleton } from '../skeleton';
 import { Actions, Button, LinkButton } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { EmptyState, ErrorNotice, Notice, ReadOnlyLine } from '../ui/feedback';
@@ -300,7 +301,7 @@ export function BusinessRules(): React.JSX.Element {
 
   const { state } = rules;
   let content: React.ReactNode;
-  if (state.status === 'loading') content = <Loading text="Loading business rules" minHeight={240} />;
+  if (state.status === 'loading') content = <RulesSkeleton label="Loading business rules" />;
   else if (state.status === 'failed') content = <LoadFailure error={state.error} onRetry={reload} />;
   else {
     const { rules: list, limit } = state.data;

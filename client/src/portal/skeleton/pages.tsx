@@ -2,10 +2,12 @@ import { Platform, StyleSheet, View } from 'react-native';
 
 import { theme } from '../../theme';
 import { useBreakpoint } from '../hooks';
+import { cellSizes } from '../calendar/model';
+import { BlockRow, GUTTER } from '../home/Block';
 import { Actions } from '../ui/Button';
 import { Columns, Pair, Panel, Section, Stack } from '../ui/layout';
 import {
-  Skeleton, SkeletonBlock, SkeletonButton, SkeletonChart, SkeletonDefinitions, SkeletonField, SkeletonHeading, SkeletonPanel,
+  Skeleton, SkeletonBlock, SkeletonButton, SkeletonChart, SkeletonDefinitions, SkeletonField, SkeletonFigure, SkeletonHeading, SkeletonPanel,
   SkeletonTable, SkeletonText, type SkeletonColumn,
 } from './kit';
 
@@ -295,7 +297,224 @@ export function SecuritySkeleton(props: LabelProps): React.JSX.Element {
   );
 }
 
+const WEEKS = 6;
+const DAYS = 7;
+
+/** A month as a grid of `WEEKS` rows of seven cells under a weekday head, always 42 cells, so the grid never changes height. */
+function SkeletonMonth(props: { cellTestID: string; cellHeight: number }): React.JSX.Element {
+  return (
+    <View style={styles.month}>
+      <View style={styles.monthRow}>
+        {Array.from({ length: DAYS }, (_, day) => (
+          <View key={day} style={styles.monthHead}><SkeletonText type="mono" width="60%" /></View>
+        ))}
+      </View>
+      {Array.from({ length: WEEKS }, (_, week) => (
+        <View key={week} style={styles.monthRow}>
+          {Array.from({ length: DAYS }, (_, day) => (
+            <View key={day} testID={props.cellTestID} style={[styles.monthCell, { minHeight: props.cellHeight }]} />
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+/**
+ * P11 Home: the lead line with Ask TownwiseAI, At a glance's three tiles, This week, This month's grid beside its
+ * day and Last week, then On the calendar and Who's in town (the blocks of Home.tsx, in its 12-column rows).
+ */
+export function HomeSkeleton(props: LabelProps): React.JSX.Element {
+  const { desktop } = useBreakpoint();
+  return (
+    <Skeleton name="home" label={props.label}>
+      <View style={styles.page}>
+        <View style={[styles.lead, desktop ? styles.leadWide : null]}>
+          <View style={styles.leadText}><SkeletonText type="mono" width="70%" /></View>
+          <Actions><SkeletonButton width={170} /></Actions>
+        </View>
+        <BlockRow
+          tablet
+          items={['week', 'last', 'next'].map((key) => ({
+            key, span: 4,
+            node: (
+              <SkeletonPanel>
+                <SkeletonHeading kicker width={180} />
+                <SkeletonFigure width={120} />
+                <SkeletonText lines={2} />
+              </SkeletonPanel>
+            ),
+          }))}
+        />
+        <SkeletonPanel>
+          <SkeletonHeading kicker width={240} />
+          {desktop ? (
+            <View style={styles.strip}>
+              {Array.from({ length: DAYS }, (_, day) => (
+                <View key={day} style={styles.stripDay}><SkeletonText type="ui" lines={3} /><SkeletonBlock height={40} /></View>
+              ))}
+            </View>
+          ) : (
+            <SkeletonTable columns={[{}, { flex: 1.5 }, { flex: 1.5 }, { flex: 1.5 }]} rows={DAYS} />
+          )}
+        </SkeletonPanel>
+        <BlockRow
+          items={[
+            {
+              key: 'month', span: 8,
+              node: (
+                <SkeletonPanel>
+                  <SkeletonHeading kicker width={160} />
+                  <SkeletonHeading width={260} />
+                  <SkeletonText width="70%" />
+                  <View style={styles.split}>
+                    <View style={styles.gridSide}><SkeletonMonth cellTestID="skeleton-home-month-cell" cellHeight={52} /></View>
+                    <View style={styles.detailSide}><SkeletonText lines={4} /></View>
+                  </View>
+                  <SkeletonButton link width={160} />
+                </SkeletonPanel>
+              ),
+            },
+            {
+              key: 'last', span: 4,
+              node: (
+                <SkeletonPanel>
+                  <SkeletonHeading kicker width={120} />
+                  <SkeletonFigure width={120} />
+                  <SkeletonText lines={3} />
+                </SkeletonPanel>
+              ),
+            },
+          ]}
+        />
+        <BlockRow
+          items={[
+            {
+              key: 'list', span: 6,
+              node: (
+                <SkeletonPanel>
+                  <SkeletonHeading kicker width={140} />
+                  <SkeletonHeading width={240} />
+                  <SkeletonText lines={3} />
+                </SkeletonPanel>
+              ),
+            },
+            {
+              key: 'people', span: 6,
+              node: (
+                <SkeletonPanel>
+                  <SkeletonHeading kicker width={160} />
+                  <SkeletonHeading width={160} />
+                  <SkeletonText width="80%" />
+                  <SkeletonText type="ui" lines={3} />
+                  <SkeletonText type="ui" lines={2} />
+                </SkeletonPanel>
+              ),
+            },
+          ]}
+        />
+      </View>
+    </Skeleton>
+  );
+}
+
+/**
+ * P27 Calendar: the toolbar (month switcher, filter chips, the calendar file's control), then the month's grid, always
+ * six weeks of seven days, with the day panel beside it from 1024px and under it below.
+ */
+export function CalendarSkeleton(props: LabelProps): React.JSX.Element {
+  const { desktop, width } = useBreakpoint();
+  return (
+    <Skeleton name="calendar" label={props.label}>
+      <View style={styles.calendar}>
+        <View style={[styles.bar, desktop ? styles.barWide : null]}>
+          <View style={styles.switcher}>
+            <SkeletonButton width={44} />
+            <SkeletonBlock height={theme.type.ui.fontSize} width={128} />
+            <SkeletonButton width={44} />
+            <SkeletonButton link width={48} />
+          </View>
+          <View style={styles.chips}>
+            {[88, 96, 80, 104].map((chip) => <SkeletonButton key={chip} width={chip} />)}
+          </View>
+          <SkeletonButton width={170} />
+        </View>
+        <View style={desktop ? styles.split : styles.stacked}>
+          <View style={desktop ? styles.wide : null}>
+            <SkeletonMonth cellTestID="skeleton-calendar-cell" cellHeight={cellSizes(width).minHeight} />
+          </View>
+          <View testID="skeleton-calendar-panel" style={desktop ? styles.narrow : null}>
+            <Stack gap={theme.space[5]}>
+              <SkeletonHeading width={200} />
+              <SkeletonText type="sub" lines={2} />
+              <SkeletonDefinitions rows={3} />
+              <SkeletonText lines={3} />
+              <Actions><SkeletonButton width={140} /></Actions>
+            </Stack>
+          </View>
+        </View>
+      </View>
+    </Skeleton>
+  );
+}
+
+/** P28 Business rules: the add form (New rule, Change the forecast, Add rule) and a few rule rows under their head. */
+export function RulesSkeleton(props: LabelProps): React.JSX.Element {
+  return (
+    <Skeleton name="rules" label={props.label}>
+      <Stack gap={32}>
+        <Columns
+          main={(
+            <Stack>
+              <SkeletonField />
+              <SkeletonButton link width={170} />
+              <Actions><SkeletonButton width={120} /></Actions>
+            </Stack>
+          )}
+        />
+        <Section first>
+          <SkeletonHeading kicker width={80} />
+          <SkeletonHeading width={120} />
+          <View style={styles.rules}>
+            {[0, 1, 2].map((row) => (
+              <View key={row} testID="skeleton-rules-row" style={styles.rule}>
+                <SkeletonText type="sub" width="50%" />
+                <SkeletonText type="ui" width="70%" />
+                <SkeletonText type="ui" width="60%" />
+                <Actions><SkeletonButton link width={40} /><SkeletonButton link width={56} /></Actions>
+              </View>
+            ))}
+          </View>
+        </Section>
+      </Stack>
+    </Skeleton>
+  );
+}
+
 const styles = StyleSheet.create({
+  page: { gap: GUTTER },
+  lead: { gap: theme.space[4], marginBottom: theme.space[4] },
+  leadWide: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', columnGap: theme.space.gutter },
+  leadText: { flexGrow: 1, flexShrink: 1, minWidth: 0 },
+  strip: { flexDirection: 'row', columnGap: theme.space[3] },
+  stripDay: { flex: 1, minWidth: 0, gap: theme.space[2] },
+  split: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space[6], rowGap: theme.space[5], alignItems: 'flex-start' },
+  gridSide: { flexGrow: 1, flexShrink: 1, flexBasis: 280, maxWidth: 420, minWidth: 0 },
+  detailSide: { flexGrow: 1, flexShrink: 1, flexBasis: 220, minWidth: 0 },
+  month: { gap: 3, width: '100%' },
+  monthRow: { flexDirection: 'row', gap: 3 },
+  monthHead: { flex: 1, alignItems: 'center' },
+  monthCell: { flex: 1, minWidth: 0, backgroundColor: c.raised },
+  calendar: { gap: theme.space[6] },
+  bar: { gap: theme.space[4] },
+  barWide: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', columnGap: theme.space[8], rowGap: theme.space[4] },
+  switcher: { flexDirection: 'row', alignItems: 'center', columnGap: theme.space[3] },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space[2], rowGap: theme.space[2] },
+  stacked: { gap: theme.space[8] },
+  wide: { flex: 8, minWidth: 0 },
+  narrow: { flex: 4, minWidth: 0 },
+  rules: { borderTopWidth: 1, borderTopColor: c.border, maxWidth: 720 },
+  rule: { gap: theme.space[1], paddingVertical: theme.space[4], borderBottomWidth: 1, borderBottomColor: c.border },
   towns: { gap: theme.space[5] },
   townsRow: { flexDirection: 'row', flexWrap: 'wrap' },
   town: { flexGrow: 1, flexBasis: 320 },

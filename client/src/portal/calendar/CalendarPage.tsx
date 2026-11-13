@@ -13,11 +13,12 @@ import { localToday, monthRange } from '../locations/dates';
 import { shownLocationName } from '../locations/naming';
 import { NoteForm } from '../locations/NoteForm';
 import { draftOf, draftOfImported, emptyDraft, type NoteDraft } from '../locations/noteRules';
-import { LoadFailure, Loading, useOrgRefreshOnLeave } from '../locations/parts';
+import { LoadFailure, useOrgRefreshOnLeave } from '../locations/parts';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { locationHref } from '../routing';
 import { fetchRules } from '../rules/api';
 import { useLocation } from '../shell/LocationShell';
+import { CalendarSkeleton } from '../skeleton';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { ErrorNotice, Notice } from '../ui/feedback';
 import { CalendarDay, PANEL_ID } from './CalendarDay';
@@ -218,7 +219,7 @@ function CalendarView(): React.JSX.Element {
   // The forecast holds the page back only for its first read: after one answer or failure, Try again, a month change
   // and a note write keep the page showing, dimmed, with no forecast figures until it answers.
   if (input === null || shown === null || !forecast.settled) {
-    return <Loading text="Loading the calendar" minHeight={480} />;
+    return <CalendarSkeleton label="Loading the calendar" />;
   }
   const readOnlyId = readOnly ? READ_ONLY_ID : null;
   const busy = monthData.busy || notes.busy || forecast.busy || shown.month !== month;
