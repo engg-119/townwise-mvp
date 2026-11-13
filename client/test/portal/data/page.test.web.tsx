@@ -274,6 +274,29 @@ test('with one location the lead, the table and the empty line name the organiza
   expect(screen.queryByText(/Main Street Bar/)).toBeNull();
 });
 
+test('with one location the Turned off notice and the delete dialogs name the organization (D29)', async () => {
+  const one = { org: orgOf('org_admin', LOCATIONS.slice(0, 1)) };
+  setup(meOf(ACCESS.admin), ITEMS, one);
+  await table('Your data for Test Group');
+  fireEvent.click(screen.getByRole('button', { name: 'Turn off: Daily totals, May 1, 2026 to May 10, 2026' }));
+  expect((await screen.findByText(/^Turned off Daily totals/)).textContent).toBe(
+    'Turned off Daily totals, May 1, 2026 to May 10, 2026. Test Group’s numbers, forecasts and TownwiseAI leave it out until it’s turned on.',
+  );
+  cleanup();
+  setup(meOf(ACCESS.admin), ITEMS, one);
+  await table('Your data for Test Group');
+  fireEvent.click(screen.getByRole('button', { name: 'Delete: Daily totals, May 1, 2026 to May 10, 2026' }));
+  const upload = await screen.findByRole('dialog', { name: 'Delete this upload' });
+  expect(within(upload).getByText(/^This deletes the 5 days this upload still holds for Test Group, May 1, 2026 to May 10, 2026,/)).toBeTruthy();
+  cleanup();
+  setup(meOf(ACCESS.admin), ITEMS, one);
+  await table('Your data for Test Group');
+  fireEvent.click(screen.getByRole('button', { name: 'Delete all originals for this location' }));
+  const originals = await screen.findByRole('dialog', { name: 'Delete all originals for this location' });
+  expect(within(originals).getByText(/^This deletes the original of every sales file for Test Group\./)).toBeTruthy();
+  expect(screen.queryByText(/Main Street Bar/)).toBeNull();
+});
+
 test('stored files off: no Add a file or Paste text, and the list still shows uploads', async () => {
   setup(meOf(ACCESS.admin), [dailyTotalsOf('u_1')], { files: 'off' });
   const rows = rowsOf(await table());

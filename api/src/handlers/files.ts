@@ -671,7 +671,7 @@ export async function deleteRaw(ctx: TownwiseContext, req: Request, res: Respons
 
 /**
  * removeFile for a route, shared with Your data (handlers/data.ts): a blob failure answers 503 storage_unavailable and a
- * file the reader has 409 file_busy. A cancelled upload is logged, and a file that was waiting on a question nudges the
+ * file the reader has 409 file_busy. A canceled upload is logged, and a file that was waiting on a question nudges the
  * reader. No audit.
  */
 export async function removeWholeFile(ctx: TownwiseContext, blobs: FileBlobs, scope: OrgScope, file: FileRecord): Promise<void> {
@@ -689,7 +689,7 @@ export async function removeWholeFile(ctx: TownwiseContext, blobs: FileBlobs, sc
 
 /**
  * DELETE /files/:fileId: the original, the cleaned copy and the report; the days it added stay. An unfinished upload
- * is cancelled and its bytes given back. A file waiting on a question takes the question with it.
+ * is canceled and its bytes given back. A file waiting on a question takes the question with it.
  */
 export async function deleteFile(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const blobs = filesOn(ctx);

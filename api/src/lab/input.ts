@@ -151,19 +151,21 @@ function championOf(champion: { run: ForecastRunRecord; rows: readonly ForecastR
   return { runId: champion.run.id, dataThrough: champion.run.dataThrough, days, weeks };
 }
 
-/** A private event whose guests the forecast read adds to an open day (adjust.ts rule 3). */
+/** A private event the forecast read applies itself (adjust.ts): a buyout books the day, a counted party adds its guests. */
 function countedOnRead(note: NoteRecord): boolean {
-  return note.effect === 'more_guests' && note.expectedGuests !== null;
+  return note.effect === 'closed' || (note.effect === 'more_guests' && note.expectedGuests !== null);
 }
 
 /**
  * The input for `calibration`, or null when the location has no day with guests by `today`. Days run from the first day
  * with guests to the last one on or before today (dataThrough) plus 182 days, with no gaps; guests are null after
  * dataThrough and on days with no row.
- * Notes: a private event sets privateEvent, and with effect closed also booked (a buyout); any other closure note, or
- * note with effect closed, sets closed. After dataThrough, a private event with more guests and a guest count does not
- * set privateEvent: the forecast read adds its guests (forecasts/adjust.ts), so the lab's own lift would count the party
- * twice.
+ * Notes, on history days (to dataThrough, for training): a private event sets privateEvent, and with effect closed also
+ * booked (a buyout); any other closure note, or note with effect closed, sets closed. After dataThrough the forecast read
+ * applies closures, buyouts and private events with more guests and a guest count itself (forecasts/adjust.ts, spec
+ * 14.5), so closed and booked are false and those private events don't set privateEvent: a run never bakes in a status
+ * or a lift that editing or deleting the note could not undo, and never counts a party twice. Closures the model learns
+ * (weekdays, holidays) still come from the lab.
  */
 export function labInputOf(args: {
   calibration: Pick<CalibrationRecord, 'id' | 'regimeStart'>;
@@ -186,16 +188,17 @@ export function labInputOf(args: {
   const days = dates.map((date): LabDay => {
     const term = terms.get(date) ?? { term: 'interim', weekOfTerm: -1 };
     const privates = privateEvents.filter((note) => noteCovers(note, date));
-    const lifted = date > span.last ? privates.filter((note) => !countedOnRead(note)) : privates;
+    const history = date <= span.last;
+    const lifted = history ? privates : privates.filter((note) => !countedOnRead(note));
     return {
       date,
-      guests: date > span.last ? null : guests.get(date) ?? null,
+      guests: history ? guests.get(date) ?? null : null,
       term: term.term,
       weekOfTerm: term.weekOfTerm,
       events: events.get(date) ?? [],
-      closed: closures.some((note) => noteCovers(note, date)),
+      closed: history && closures.some((note) => noteCovers(note, date)),
       privateEvent: lifted.length > 0,
-      booked: privates.some((note) => note.effect === 'closed'),
+      booked: history && privates.some((note) => note.effect === 'closed'),
     };
   });
   return {

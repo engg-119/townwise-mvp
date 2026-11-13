@@ -62,12 +62,13 @@ describe('the figures of each kind', () => {
     expect(dailyVisual(req('daily', 'guests', '2026-10-01', '2026-10-01'), [day('2026-10-01', 40)], [], null)).toMatchObject({ forecast: null });
   });
 
-  it('daily: the band is the model’s own 80% range, never one an owner’s note moved (spec 14.5)', () => {
-    const model = fc('2026-10-01', 45, 60);
-    const noted: ForecastDayView = { ...model, low: 115, mid: 122.5, high: 130, noteGuests: 70 };
+  it('daily: the band is the day’s range with the owner’s notes, the low and high get_forecast and the Calendar give (spec 14.5)', () => {
+    const noted: ForecastDayView = { ...fc('2026-10-01', 45, 60), low: 115.4, mid: 122.5, high: 129.6, noteGuests: 70 };
     const booked: ForecastDayView = { ...fc('2026-10-02', 45, 60), status: 'booked', low: null, mid: null, high: null, noteGuests: 50 };
-    const v = dailyVisual(req('daily', 'guests', '2026-10-01', '2026-10-02'), [], [noted, booked], run);
-    expect(v).toMatchObject({ days: [{ low: 45, high: 60 }, { low: 45, high: 60 }], forecast: run });
+    // A day the model closed that a private event of 70 opened.
+    const opened: ForecastDayView = { ...fc('2026-10-03', null, null), status: 'open', low: 70, mid: 70, high: 70, noteGuests: 70 };
+    const v = dailyVisual(req('daily', 'guests', '2026-10-01', '2026-10-03'), [], [noted, booked, opened], run);
+    expect(v).toMatchObject({ days: [{ low: 115, high: 130 }, { low: null, high: null }, { low: 70, high: 70 }], forecast: run });
   });
 
   it('daily net sales never carries a band, and gives dollars', () => {
@@ -225,7 +226,7 @@ describe('show_visual’s run', () => {
     return { visual: result.visual, content: JSON.parse(result.content) };
   }
 
-  it('daily guests read the published forecast in windows of at most 31 days, labelled with the newest run that supplied days', async () => {
+  it('daily guests read the published forecast in windows of at most 31 days, labeled with the newest run that supplied days', async () => {
     const older = runOf('v1', '2026-09-15', '2026-09-16');
     const newer = runOf('v2', '2026-10-25', '2026-10-26');
     const { tc, dayReads, windowReads } = context([day('2026-10-01', 40), day('2026-11-02', 60)], (range) => (range.from === '2026-10-01'

@@ -79,7 +79,8 @@ function Data(): React.JSX.Element {
   const [showAll, setShowAll] = useState(false);
   const all = several && showAll;
   const scope = all ? ALL : location.id;
-  const nameOf = (locationId: string): string => org.locations.find((candidate) => candidate.id === locationId)?.name ?? location.name;
+  // The notices and dialogs name a location by its shown name too: the organization's with one location (D29).
+  const nameOf = (locationId: string): string => shownLocationName(org.locations.find((candidate) => candidate.id === locationId) ?? location, org);
 
   const { state, reload } = useLoad(useCallback(
     () => listData(api, scope === ALL ? {} : { locationId: scope }).then((page) => ({ scope, page })),

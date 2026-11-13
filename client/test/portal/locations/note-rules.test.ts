@@ -81,6 +81,13 @@ describe('checkNote: hours and buyouts', () => {
     const away = { uid: 'i2', title: 'Owner away', startDate: '2026-12-24', endDate: '2026-12-26', startTime: null, endTime: null };
     expect(draftOfImported(away)).toMatchObject({ startDate: '2026-12-24', endDate: '2026-12-26', startTime: '', endTime: '' });
   });
+
+  test('draftOfImported: an event that runs past midnight is a note on its start day only, without hours the form refuses', () => {
+    // parseIcs keeps an event ending by 06:00 the next morning on its start day, its end earlier than its start.
+    const late = { uid: 'i3', title: 'Late party', startDate: '2026-12-24', endDate: '2026-12-24', startTime: '18:00', endTime: '01:00' };
+    expect(draftOfImported(late)).toMatchObject({ startDate: '2026-12-24', endDate: '', startTime: '', endTime: '' });
+    expect(checkNote(draftOfImported(late), TODAY)).toMatchObject({ input: { startDate: '2026-12-24', endDate: '2026-12-24', startTime: null, endTime: null } });
+  });
 });
 
 describe('hours and buyouts in words', () => {

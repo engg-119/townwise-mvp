@@ -7,8 +7,9 @@ import type { ImportedEvent } from './model';
 // its VALARMs are not the event's. A date-only event ends the day before its DTEND (which is exclusive), and one
 // with no DTEND is one day. A local or TZID time is the wall time it says; a UTC ("Z") time is the device's local
 // time, as Home uses the device's date. Hours are kept only when the event starts and ends on the same date (an end
-// at midnight closes the day before, with no hours). A repeating event (RRULE or RDATE) is counted, not imported, and
-// its moved instances (RECURRENCE-ID) go with it; a cancelled event is left out. Events within 400 days of today
+// at midnight closes the day before, with no hours), or when it ends by 06:00 the next morning: such a late night is
+// its start day's alone, its end time before its start. A repeating event (RRULE or RDATE) is counted, not imported, and
+// its moved instances (RECURRENCE-ID) go with it; a canceled event is left out. Events within 400 days of today
 // are kept, at most 2,000, the first by start. [CONFIRM: 1 MB and 2,000 events for a calendar file]
 
 /** At most this many events are kept from one file. */
@@ -67,6 +68,9 @@ function titleOf(value: string | undefined): string {
   return text.replace(/\s+/g, ' ').trim() || 'Untitled event';
 }
 
+/** An event that ends by this time the next morning is its start day's late night, not two days. [CONFIRM: 06:00 cutoff] */
+const LATE_NIGHT_END = '06:00';
+
 function spanOf(start: Moment, end: Moment | null): Pick<ImportedEvent, 'startDate' | 'endDate' | 'startTime' | 'endTime'> {
   let endDate = end?.date ?? start.date;
   let endTime = end?.time ?? null;
@@ -74,6 +78,10 @@ function spanOf(start: Moment, end: Moment | null): Pick<ImportedEvent, 'startDa
   if (endDate > start.date && (endTime === null || endTime === '00:00')) {
     endDate = addDays(endDate, -1);
     endTime = null;
+  }
+  // Under a day long, ending by 06:00 the next morning (a party from 18:00 to 01:00): the start day's, with its hours.
+  if (start.time !== null && endTime !== null && endDate === addDays(start.date, 1) && endTime <= LATE_NIGHT_END && endTime < start.time) {
+    return { startDate: start.date, endDate: start.date, startTime: start.time, endTime };
   }
   if (endDate < start.date) endDate = start.date;
   const timed = start.time !== null && endTime !== null && endDate === start.date && start.time < endTime;

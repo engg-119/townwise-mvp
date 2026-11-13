@@ -50,7 +50,7 @@ function textItemName(title: string): string {
 /**
  * Keeps pasted text as a reference item. A retried save with the same `id` answers the stored item and reserves nothing
  * more. Order: caps, the day's reservation, the blob, then the row; a crash after the blob leaves an orphan the daily
- * sweep removes. A failed blob write or row insert gives the day's bytes back before the error goes on, as a cancelled
+ * sweep removes. A failed blob write or row insert gives the day's bytes back before the error goes on, as a canceled
  * upload does, so a retry reserves them once.
  */
 export async function saveTextItem(

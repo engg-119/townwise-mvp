@@ -119,7 +119,7 @@ describe('labInputOf', () => {
       note({ kind: 'opening', startDate: '2025-04-05', effect: 'more_guests' }),
       // Mondays only, over two weeks: 2025-04-07 and 2025-04-14.
       note({ kind: 'closure', startDate: '2025-04-07', endDate: '2025-04-20', weekdays: [1], effect: 'closed' }),
-      // A future closure the forecast should know.
+      // A future closure: left to the forecast read (spec 14.5), so the next test pins it false.
       note({ kind: 'closure', startDate: '2026-07-04', effect: 'closed' }),
     ];
     const input = inputOf(history('2025-01-02', '2026-05-31'), notes);
@@ -135,16 +135,21 @@ describe('labInputOf', () => {
     expect(flags('2025-04-07')).toEqual({ closed: true, privateEvent: false, booked: false });
     expect(flags('2025-04-08')).toEqual({ closed: false, privateEvent: false, booked: false });
     expect(flags('2025-04-14')).toEqual({ closed: true, privateEvent: false, booked: false });
-    expect(flags('2026-07-04')).toEqual({ closed: true, privateEvent: false, booked: false });
-    expect(input.days.filter((each) => each.closed)).toHaveLength(5);
+    expect(flags('2026-07-04')).toEqual({ closed: false, privateEvent: false, booked: false });
+    expect(input.days.filter((each) => each.closed)).toHaveLength(4);
   });
 
-  it('after dataThrough, a private event with a guest count is left to the read (privateEvent false); one without stays true; buyouts stay booked; history days are unchanged', () => {
+  it('after dataThrough, closures, buyouts and a private event with a guest count are left to the read; one without a count stays true; history days are unchanged', () => {
     const notes = [
-      // History days (dataThrough is 2026-05-31): unchanged, whatever the guest count.
+      // History days (dataThrough is 2026-05-31): unchanged, whatever the guest count, for training.
       note({ kind: 'private_event', startDate: '2026-05-30', effect: 'more_guests', expectedGuests: 70 }),
       note({ kind: 'private_event', startDate: '2026-05-31', effect: 'more_guests' }),
-      // After dataThrough: the read layer adds a counted party, so the lab must not apply its lift too.
+      note({ kind: 'closure', startDate: '2026-05-29', effect: 'closed' }),
+      note({ kind: 'private_event', startDate: '2026-05-28', effect: 'closed', expectedGuests: 90 }),
+      // After dataThrough: the read layer adds a counted party, books a buyout's day and closes a closure's (spec 14.5),
+      // so the lab must not apply its lift too, and a run never bakes in a status the owner can't undo by editing the note.
+      note({ kind: 'closure', startDate: '2026-06-08', effect: 'closed' }),
+      note({ kind: 'other', startDate: '2026-06-09', effect: 'closed', detail: 'x' }),
       note({ kind: 'private_event', startDate: '2026-06-10', effect: 'more_guests', expectedGuests: 70 }),
       note({ kind: 'private_event', startDate: '2026-06-11', effect: 'more_guests' }),
       note({ kind: 'private_event', startDate: '2026-06-12', effect: 'closed', expectedGuests: 90 }),
@@ -159,11 +164,15 @@ describe('labInputOf', () => {
       const { closed, privateEvent, booked } = dayOf(input, date);
       return { closed, privateEvent, booked };
     };
+    expect(flags('2026-05-28')).toEqual({ closed: false, privateEvent: true, booked: true });
+    expect(flags('2026-05-29')).toEqual({ closed: true, privateEvent: false, booked: false });
     expect(flags('2026-05-30')).toEqual({ closed: false, privateEvent: true, booked: false });
     expect(flags('2026-05-31')).toEqual({ closed: false, privateEvent: true, booked: false });
+    expect(flags('2026-06-08')).toEqual({ closed: false, privateEvent: false, booked: false });
+    expect(flags('2026-06-09')).toEqual({ closed: false, privateEvent: false, booked: false });
     expect(flags('2026-06-10')).toEqual({ closed: false, privateEvent: false, booked: false });
     expect(flags('2026-06-11')).toEqual({ closed: false, privateEvent: true, booked: false });
-    expect(flags('2026-06-12')).toEqual({ closed: false, privateEvent: true, booked: true });
+    expect(flags('2026-06-12')).toEqual({ closed: false, privateEvent: false, booked: false });
     expect(flags('2026-06-13')).toEqual({ closed: false, privateEvent: true, booked: false });
     expect(flags('2026-06-14')).toEqual({ closed: false, privateEvent: true, booked: false });
   });

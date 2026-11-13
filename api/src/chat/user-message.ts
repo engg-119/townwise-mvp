@@ -1,8 +1,9 @@
 // The person's message as TownwiseAI reads it (docs/portal/tuning-chat.md section 3). Townwise may put context blocks
 // before what the person typed: today the location's business rules (spec 10.16), added only when they differ from the
 // last rules block on the turn's path, so unchanged rules add nothing and a location with no rules sends the plain
-// string it always did. The block is stored with the message, so later requests keep the same prefix. The person's own
-// text is always the message's last block; a context block is never it, so typing the tag never makes one.
+// string it always did. The block is stored with the message, so later requests keep the same prefix until a newer
+// block replaces it; requests then send the older one as a stub (historyForModel). The person's own text is always the
+// message's last block; a context block is never it, so typing the tag never makes one.
 import type { BetaContentBlockParam, BetaMessageParam } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 
 export const RULES_BLOCK_OPEN = '<business_rules>';
@@ -62,4 +63,35 @@ export function userMessageOf(history: readonly BetaMessageParam[], context: Mes
   const block = context.rules.length === 0 && last === null ? null : rulesBlock(context.rules);
   if (block === null || block === last) return { role: 'user', content };
   return { role: 'user', content: [{ type: 'text', text: block }, { type: 'text', text: content }] };
+}
+
+/** What a request sends in place of a rules block that a newer one on the path replaced. */
+export const REPLACED_RULES_BLOCK = '[Earlier business rules, replaced by a later list.]';
+
+/** The positions of the rules blocks in a message. */
+function rulesBlockIndexes(param: BetaMessageParam): number[] {
+  if (param.role !== 'user' || typeof param.content === 'string') return [];
+  const { content } = param;
+  return content.flatMap((_block, index) => (isContextBlock(content, index) ? [index] : []));
+}
+
+/**
+ * The path as the model reads it (the stored messages never change): every rules block but the newest, counting the
+ * turn's new message `next`, becomes REPLACED_RULES_BLOCK, so the model reads only the current list and a deleted or
+ * edited rule's text is not sent again (D28's practice). The newest block stays in place until a newer one arrives, so
+ * the cached prefix changes only when the rules do.
+ */
+export function historyForModel(history: readonly BetaMessageParam[], next: BetaMessageParam | null): BetaMessageParam[] {
+  const newestAt = next !== null && rulesBlockIndexes(next).length > 0
+    ? -1
+    : history.findLastIndex((param) => rulesBlockIndexes(param).length > 0);
+  return history.map((param, at) => {
+    const indexes = rulesBlockIndexes(param);
+    const replaced = at === newestAt ? indexes.slice(0, -1) : indexes;
+    if (replaced.length === 0 || param.role !== 'user' || typeof param.content === 'string') return param;
+    return {
+      ...param,
+      content: param.content.map((block, index) => (replaced.includes(index) ? { type: 'text' as const, text: REPLACED_RULES_BLOCK } : block)),
+    };
+  });
 }

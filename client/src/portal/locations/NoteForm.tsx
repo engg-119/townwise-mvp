@@ -18,7 +18,8 @@ import { ToggleGroup } from './parts';
 
 // C6, the note form (spec P14, 12): Kind, Starts, Ends (optional), Starts at and Ends at (optional hours, hidden
 // for a closure), Only on these days, Effect (defaulted by the kind), Expected guests (hidden when the effect is
-// Closed, except on a private event, where Closed is a buyout and the field takes the party's size) and Details
+// Closed, except on a private event, where Closed is a buyout and the field takes the party's size; on a private event
+// with more guests its helper says Townwise forecasts whole days, so the guests count toward each day's total) and Details
 // (required for Other). It checks the API's rules before it sends, then “Save note” posts or replaces the note.
 // “Cancel” closes it.
 
@@ -29,6 +30,8 @@ const EVENT_EFFECT_OPTIONS = NOTE_EFFECTS.map((effect) => ({
   value: effect, label: effect === 'closed' ? 'Buyout, closed to walk-ins all day' : EFFECT_LABEL[effect],
 }));
 const HOURS_HELP = '24-hour, like 18:30. Leave empty for all day.';
+/** Forecasts are daily (spec 12): shown where a private event's guests change the forecast. */
+const GUESTS_HELP = 'Townwise forecasts whole days, so these guests add to the whole day’s total, on each day the note covers.';
 
 function effectOptions(kind: NoteKind): typeof EFFECT_OPTIONS {
   return kind === 'private_event' ? EVENT_EFFECT_OPTIONS : EFFECT_OPTIONS;
@@ -137,6 +140,7 @@ export function NoteForm(props: {
               numeric
               maxLength={6}
               messages={list(messages.expectedGuests)}
+              {...(draft.kind === 'private_event' && draft.effect === 'more_guests' ? { helper: GUESTS_HELP } : {})}
             />
           </View>
         )}

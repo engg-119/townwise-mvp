@@ -217,6 +217,14 @@ describe('P16 Location settings', () => {
     expect(await screen.findByText('The standing facts TownwiseAI keeps in mind for Test Group. They never change Townwise’s forecast.')).toBeTruthy();
   });
 
+  test('with one location, Add another location opens Add location, since Locations opens this Home', async () => {
+    const { api } = setup();
+    api.org = orgOf('org_admin', [only('l2')]);
+    const { router } = await renderApp('/locations/l2/settings', api);
+    await fireEvent.press(await screen.findByRole('link', { name: 'Add another location' }));
+    await waitFor(() => { expect(router.getPathname()).toBe('/locations/new'); });
+  });
+
   test('when the server finds data after all, the section says to delete it first', async () => {
     const { api, fake } = setup();
     fake.deletes['/api/org/locations/l2'] = () => refusal(409, 'location_has_data');
@@ -233,7 +241,7 @@ describe('P16 Location settings', () => {
     await renderApp('/locations/l2/settings', api);
     expect(await screen.findByText('Read-only while viewing as gm@example.org.')).toBeTruthy();
     expect(screen.getByLabelText('Name').props.editable).toBe(false);
-    for (const name of ['Save changes', 'Delete location']) {
+    for (const name of ['Save changes', 'Add another location', 'Delete location']) {
       const control = screen.getByRole('button', { name });
       expect(control.props.accessibilityState).toMatchObject({ disabled: true });
       await fireEvent.press(control);

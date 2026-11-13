@@ -6788,7 +6788,7 @@
    "term": "summer",
    "weekOfTerm": 1,
    "events": [],
-   "closed": true,
+   "closed": false,
    "privateEvent": false,
    "booked": false
   },

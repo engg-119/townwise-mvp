@@ -8,6 +8,7 @@ import {
 import type { ForecastDay } from '../../../src/portal/estimates/api';
 import { addDays, monthRange } from '../../../src/portal/locations/dates';
 import { BAR_ORDER_BODY } from '../../../src/portal/home/BarOrder';
+import { forecastDayLines } from '../../../src/portal/home/DayDetail';
 import { lastWeekGlance } from '../../../src/portal/home/Glance';
 import { forecastLine, questionsLabel } from '../../../src/portal/home/Home';
 import { PEOPLE_HEAD } from '../../../src/portal/home/ThisMonth';
@@ -124,6 +125,9 @@ test('a future day’s figure is only ever the published forecast’s mid', () =
   const at = (date: string) => cells.get(date);
   expect(at('2026-11-04')?.figure).toEqual({ value: 100, kind: 'actual', text: '100' });
   expect(at('2026-11-05')?.figure).toEqual({ value: 212, kind: 'forecast', text: '212' });
+  // The range rounds low down and high up, as the Calendar, spec 14.4 and TownwiseAI's get_forecast do.
+  expect(at('2026-11-05')?.label).toBe('Thu, Nov 5, 2026. Today. This week. Forecast about 212 guests, 180 to 241.');
+  expect(forecastDayLines(forecast.get('2026-11-05') ?? forecastDay({ date: '' }))).toEqual(['About 212 guests, likely 180 to 241.']);
   expect(at('2026-11-06')?.figure).toEqual({ value: 220, kind: 'forecast', text: '220' });
   expect(at('2026-11-06')?.noteGuests).toBe(70);
   expect(at('2026-11-06')?.label).toBe('Fri, Nov 6, 2026. This week. Forecast about 220 guests, 180 to 260. Includes 70 guests from your notes. 1 note.');

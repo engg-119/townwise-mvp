@@ -370,6 +370,25 @@ describe('get_forecast (U13B)', () => {
     expect(party.weeks).toEqual([expect.objectContaining({ low: 570, mid: 670, high: 770, noteGuests: 70 })]);
   });
 
+  it('get_forecast: a party opens a day the model closed with only its guests; a note on a booked day is day_booked', async () => {
+    const closedRow = dayRow('2026-11-09', { status: 'closed', low: null, mid: null, high: null, reasons: [{ kind: 'closure', ref: null, effectPct: null }] });
+    const opened = await run('get_forecast', { from: '2026-11-09', to: '2026-11-09' }, withRows([closedRow], undefined, [savedNote({ startDate: '2026-11-09' })]));
+    expect((opened.parsed.days as Record<string, unknown>[])[0]).toMatchObject({
+      status: 'open', low: 70, mid: 70, high: 70, noteGuests: 70, modelRange: { status: 'closed', low: null, mid: null, high: null },
+      reasons: [{ note: { guests: 70, outcome: 'added' } }, { label: 'Closed', note: null }],
+    });
+    const booked = await run('get_forecast', { from: '2026-11-10', to: '2026-11-10' }, withRows([dayRow('2026-11-10')], undefined, [
+      savedNote({ startDate: '2026-11-10', effect: 'closed', expectedGuests: 50, startTime: null, endTime: null }),
+      savedNote({ id: 'f'.repeat(24), startDate: '2026-11-10' }),
+    ]));
+    expect(((booked.parsed.days as Record<string, unknown>[])[0]?.reasons as { note: unknown }[]).map((reason) => reason.note)).toEqual([
+      { guests: 50, outcome: 'booked' }, null, { guests: 70, outcome: 'day_booked' },
+    ]);
+    const description = toolNamed('get_forecast')?.definition.description ?? '';
+    expect(description).toContain('a buyout books it, even a day the model expects closed');
+    expect(description).toContain('day_booked');
+  });
+
   it('cards show the model, dates and counts only, never a figure', async () => {
     const { content } = await run('get_forecast', { from: '2026-11-02', to: '2026-11-03' }, withRows([dayRow('2026-11-02')]));
     expect(inputViewOf('get_forecast', { from: '2026-11-02', to: '2026-11-03' }, TODAY)).toEqual({ from: '2026-11-02', to: '2026-11-03' });

@@ -78,8 +78,9 @@ test('lists rules oldest first with who added them, and the lead says they never
   renderAt('/locations/l1/rules', api);
   expect(await screen.findByText('Closed Mondays')).toBeTruthy();
   expect(screen.getByRole('heading', { level: 1, name: 'Business rules' })).toBeTruthy();
-  // The page lives under TownwiseAI in the top bar.
-  expect(screen.getByRole('link', { name: 'TownwiseAI' }).getAttribute('aria-current')).toBe('true');
+  // The page is the top bar's Rules section.
+  expect(screen.getByRole('link', { name: 'Rules' }).getAttribute('aria-current')).toBe('page');
+  expect(screen.getByRole('link', { name: 'TownwiseAI' }).getAttribute('aria-current')).toBeNull();
   // Two locations, so the lead names this one. Rules never change the forecast; notes do, and the lead says which.
   expect(screen.getByText(
     'Standing facts about how Main Street Bar runs, like “Closed Mondays” or “Brunch only on weekends”. TownwiseAI reads them with '

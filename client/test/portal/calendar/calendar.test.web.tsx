@@ -54,6 +54,7 @@ afterEach(() => {
 });
 
 const NOVEMBER_FORECAST = `${PATH}/forecast?from=2026-11-01&to=2026-11-30`;
+const GUESTS_HELP = 'Townwise forecasts whole days, so these guests add to the whole day’s total, on each day the note covers.';
 const GAME = townEvent({ start: '2026-11-21', title: 'Dartmouth home football' });
 const VETERANS = holiday('2026-11-11', 'Veterans Day', 'us:veterans', 'Veterans Day');
 const GAME_REASON = { kind: 'event', label: 'Dartmouth home football', effectPct: 12, sources: [{ label: 'dartmouthsports.com', url: 'https://dartmouthsports.com/' }], note: null };
@@ -204,6 +205,11 @@ test('adding a private event of 70 posts the note, reloads the forecast and the 
   expect(within(panel()).getByRole('button', { name: 'Private event' }).getAttribute('aria-pressed')).toBe('true');
   expect(within(panel()).getByRole('button', { name: 'More guests than usual' }).getAttribute('aria-pressed')).toBe('true');
   expect(within(panel()).getByLabelText<HTMLInputElement>('Starts').value).toBe('2026-11-21');
+  // Forecasts are daily, so the guests count toward the whole day, whatever the hours (spec 12).
+  expect(within(panel()).getByText(GUESTS_HELP)).toBeTruthy();
+  fireEvent.click(within(panel()).getByRole('button', { name: 'Opening' }));
+  expect(within(panel()).queryByText(GUESTS_HELP)).toBeNull();
+  fireEvent.click(within(panel()).getByRole('button', { name: 'Private event' }));
   fireEvent.change(within(panel()).getByLabelText('Expected guests (optional)'), { target: { value: '70' } });
   api.answers[NOTES_PATH] = (body) => {
     const saved = savedNote('n9', body);
@@ -212,7 +218,7 @@ test('adding a private event of 70 posts the note, reloads the forecast and the 
     return saved;
   };
   fireEvent.click(within(panel()).getByRole('button', { name: 'Save note' }));
-  expect(await screen.findByText('Saved. The forecast for Sat, Nov 21 now includes it.')).toBeTruthy();
+  expect(await screen.findByText('Saved. The forecast for Sat, Nov 21 now includes its 70 guests.')).toBeTruthy();
   expect(writes(api)).toEqual([{
     method: 'POST', path: NOTES_PATH,
     body: {
@@ -229,6 +235,26 @@ test('adding a private event of 70 posts the note, reloads the forecast and the 
   expect(within(day).getByText('Townwise’s model: 180 to 240. About 8 in 10 days land in that range. Your notes add 70 guests.')).toBeTruthy();
   expect(within(day).getByText('Your private event, 70 guests')).toBeTruthy();
   expect(within(day).getByText('Adds 70 guests')).toBeTruthy();
+});
+
+test('a saved note that changes nothing says so, from the day read again: no guest count', async () => {
+  const { api, fake } = setup();
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  fireEvent.click(within(panel()).getByRole('button', { name: 'Add an event' }));
+  api.answers[NOTES_PATH] = (body) => {
+    const saved = savedNote('n9', body);
+    fake.notes = [saved.note];
+    const days = (november() as { days: { date: string; reasons: unknown[] }[] }).days.map((day) => (day.date !== '2026-11-21' ? day : {
+      ...day,
+      reasons: [...day.reasons, { kind: 'note', label: 'Your private event', effectPct: null, sources: [], note: { id: 'n9', guests: null, outcome: 'no_guest_count' } }],
+    }));
+    fake.forecasts['2026-11'] = forecastOf(days as Parameters<typeof forecastOf>[0]);
+    return saved;
+  };
+  fireEvent.click(within(panel()).getByRole('button', { name: 'Save note' }));
+  expect(await screen.findByText('Saved. Add a guest count to change the forecast.')).toBeTruthy();
+  expect(screen.queryByText(/now includes/)).toBeNull();
+  expect(within(panel()).getByText('No guest count, so the forecast is unchanged')).toBeTruthy();
 });
 
 test('editing and deleting a note reload the forecast', async () => {
@@ -330,7 +356,7 @@ test('importing an .ics file shows its events under Your calendar; Make a note o
     return saved;
   };
   fireEvent.click(within(form).getByRole('button', { name: 'Save note' }));
-  expect(await screen.findByText('Saved. The forecast for Sat, Nov 21 now includes it.')).toBeTruthy();
+  expect(await screen.findByText('Saved. The forecast for Sat, Nov 21 now includes its 70 guests.')).toBeTruthy();
   expect(writes(api)).toEqual([{
     method: 'POST', path: NOTES_PATH,
     body: {

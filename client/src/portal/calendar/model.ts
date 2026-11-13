@@ -13,7 +13,8 @@ import { KIND_LABEL } from '../locations/noteRules';
 // is on the calendar); the hover tooltip's lines; the filters; and the 25 months the page can show. Every figure
 // from today on is the published forecast's own, as the API's read leaves it after the location's notes (spec
 // 14.5): this file never adds a note's guests, so the rule lives once, in api/src/forecasts/adjust.ts. A day before
-// today shows its stored guests, never a forecast. Forecast figures are rounded here; the range always goes with the
+// today shows its stored guests, never a forecast. Forecast figures are rounded here, the middle figure to the nearest
+// guest and a range's low down and high up (spec 14.4, as TownwiseAI's get_forecast); the range always goes with the
 // middle figure in the label, the tooltip and the panel ([CONFIRM] in spec 14.2), and the "8 in 10" sentence only
 // with the model's own range, since a range a note moved is no longer the model's 80% one.
 
@@ -32,7 +33,10 @@ export interface ImportedEvent {
   title: string;
   startDate: string;
   endDate: string;
-  /** Local 'HH:MM', only when the event starts and ends on the same day. */
+  /**
+   * Local 'HH:MM', only when the event starts and ends on the same day, or ends by 06:00 the next morning (ics.ts), when
+   * endTime is before startTime.
+   */
   startTime: string | null;
   endTime: string | null;
 }
@@ -92,6 +96,11 @@ function storedGuests(date: string, input: CalendarInput): number | null {
 
 function whole(value: number): string {
   return formatCount(Math.round(value));
+}
+
+/** “180 to 240”: a range's low rounded down and its high up (spec 14.4). */
+function rangeWords(low: number, high: number): string {
+  return `${formatCount(Math.floor(low))} to ${formatCount(Math.ceil(high))}`;
 }
 
 /** A note in a cell's chip: “Private event, 70”, “Private buyout”, “Closure”. */
@@ -155,7 +164,7 @@ function figureOf(date: string, input: CalendarInput): FigureOf {
   }
   if (day.mid === null || day.low === null || day.high === null) return { status: null, figure: null, noteGuests: 0, words: null };
   const words = [
-    `Forecast about ${plural(Math.round(day.mid), 'guest', 'guests')}, ${whole(day.low)} to ${whole(day.high)}.`,
+    `Forecast about ${plural(Math.round(day.mid), 'guest', 'guests')}, ${rangeWords(day.low, day.high)}.`,
     day.noteGuests > 0 ? `Includes ${plural(day.noteGuests, 'guest', 'guests')} from your notes.` : null,
   ].filter((part) => part !== null).join(' ');
   return { status: null, figure: { value: Math.round(day.mid), kind: 'forecast' }, noteGuests: day.noteGuests, words };
@@ -228,6 +237,8 @@ export type ForecastPart =
     kind: 'open'; low: number; mid: number; high: number; noteGuests: number;
     /** The model's own range when notes changed the day; null otherwise. */
     model: { low: number; high: number } | null;
+    /** The model expected the day closed and the notes' private events opened it, with only their guests. */
+    modelClosed: boolean;
   }
   | { kind: 'booked'; guests: number; byNote: boolean }
   | { kind: 'closed'; byNote: boolean }
@@ -274,7 +285,7 @@ function forecastPart(date: string, input: CalendarInput): ForecastPart {
   if (day.status === 'booked') return { kind: 'booked', guests: day.noteGuests, byNote: noteDid(day, 'booked') };
   if (day.low === null || day.mid === null || day.high === null) return { kind: 'none', why: 'not_covered' };
   const model = day.noteGuests > 0 && day.model.low !== null && day.model.high !== null ? { low: day.model.low, high: day.model.high } : null;
-  return { kind: 'open', low: day.low, mid: day.mid, high: day.high, noteGuests: day.noteGuests, model };
+  return { kind: 'open', low: day.low, mid: day.mid, high: day.high, noteGuests: day.noteGuests, model, modelClosed: day.model.status === 'closed' };
 }
 
 /** A note reason's outcome in words; null for an outcome this client doesn't know. */
@@ -287,8 +298,31 @@ export function reasonOutcomeWords(outcome: string, guests: number | null): stri
     case 'no_guest_count': return 'No guest count, so the forecast is unchanged';
     case 'not_counted': return 'Townwise only counts guests for private events so far';
     case 'day_closed': return 'The day is closed';
+    case 'day_booked': return 'The day is booked';
     case 'past_day': return 'This day has passed';
     default: return null;
+  }
+}
+
+/**
+ * The panel's notice after a save (spec 16.3 P27): what the saved note did to the selected day, from the note's reason
+ * in the forecast read again. “Saved.” when the day has no forecast, the note isn't among its reasons (moved to other
+ * days, or past the six) or the outcome is one this client doesn't know. The page shows “Saved.” until that read answers.
+ */
+export function savedNotice(date: string, input: CalendarInput, noteId: string): string {
+  const reason = forecastDayOf(date, input)?.reasons.find((each) => each.note?.id === noteId)?.note ?? null;
+  const day = shortDate(date).replace(/, \d{4}$/, '');
+  switch (reason?.outcome) {
+    case 'added': return `Saved. The forecast for ${day} now includes its ${plural(reason.guests ?? 0, 'guest', 'guests')}.`;
+    case 'booked': return `Saved. The forecast for ${day} now shows the day booked.`;
+    case 'closed': return `Saved. The forecast for ${day} now shows the day closed.`;
+    case 'already_in_forecast': return `Saved. The forecast for ${day} already includes this event.`;
+    case 'no_guest_count': return 'Saved. Add a guest count to change the forecast.';
+    case 'not_counted': return 'Saved. Townwise only counts guests for private events so far, so the forecast is unchanged.';
+    case 'day_closed': return 'Saved. The day is closed, so the forecast is unchanged.';
+    case 'day_booked': return 'Saved. The day is booked, so the forecast is unchanged.';
+    case 'past_day': return 'Saved. This day has passed, so its forecast stays as it was made.';
+    default: return 'Saved.';
   }
 }
 
@@ -330,13 +364,16 @@ export function forecastWords(part: ForecastPart, locationName: string): Forecas
   switch (part.kind) {
     case 'open': {
       const figure = { before: 'About', value: whole(part.mid), after: 'guests' };
-      const likely = `Likely ${whole(part.low)} to ${whole(part.high)}.`;
+      if (part.modelClosed) {
+        return { figure, lines: [`Townwise’s model expects you closed. Your notes open the day with ${plural(part.noteGuests, 'guest', 'guests')}.`] };
+      }
+      const likely = `Likely ${rangeWords(part.low, part.high)}.`;
       if (part.model === null) return { figure, lines: [`${likely} About 8 in 10 days land in the range.`] };
       return {
         figure,
         lines: [
           likely,
-          `Townwise’s model: ${whole(part.model.low)} to ${whole(part.model.high)}. About 8 in 10 days land in that range. Your notes add ${plural(part.noteGuests, 'guest', 'guests')}.`,
+          `Townwise’s model: ${rangeWords(part.model.low, part.model.high)}. About 8 in 10 days land in that range. Your notes add ${plural(part.noteGuests, 'guest', 'guests')}.`,
         ],
       };
     }
@@ -353,7 +390,7 @@ export function forecastWords(part: ForecastPart, locationName: string): Forecas
       const lines = part.actual === null ? ['No guests stored for this day.'] : [];
       if (part.modelClosed) lines.push('Townwise’s model expected you closed.');
       else if (part.model !== null) {
-        const range = `Townwise’s model forecast ${whole(part.model.low)} to ${whole(part.model.high)}`;
+        const range = `Townwise’s model forecast ${rangeWords(part.model.low, part.model.high)}`;
         lines.push(part.inRange === null ? `${range}.` : `${range}, and the day landed ${part.inRange ? 'in that range' : 'outside it'}.`);
       }
       return { figure, lines };
@@ -384,7 +421,7 @@ export function tooltipLines(date: string, input: CalendarInput): TooltipLines |
     if (day.status === 'closed') lines.push('Closed');
     else if (day.status === 'booked') lines.push(bookedWords(day));
     else if (day.mid !== null && day.low !== null && day.high !== null) {
-      lines.push(`About ${plural(Math.round(day.mid), 'guest', 'guests')} (${whole(day.low)} to ${whole(day.high)})`);
+      lines.push(`About ${plural(Math.round(day.mid), 'guest', 'guests')} (${rangeWords(day.low, day.high)})`);
       if (day.noteGuests > 0) lines.push(`Includes ${plural(day.noteGuests, 'guest', 'guests')} from your notes`);
     }
   }

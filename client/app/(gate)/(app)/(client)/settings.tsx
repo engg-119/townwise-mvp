@@ -1,5 +1,4 @@
 import { useCallback, useState } from 'react';
-import { Link } from 'expo-router';
 import { StyleSheet, View } from 'react-native';
 
 import { roleLabel } from '../../../../src/portal/format';
@@ -17,13 +16,13 @@ import { Page } from '../../../../src/portal/shell/Page';
 import { Actions, Button, LinkButton } from '../../../../src/portal/ui/Button';
 import { DefinitionList } from '../../../../src/portal/ui/DataTable';
 import { ErrorNotice, LoadingLine, Notice, ReadOnlyLine } from '../../../../src/portal/ui/feedback';
-import { Columns, Section } from '../../../../src/portal/ui/layout';
-import { inlineTarget, Small } from '../../../../src/portal/ui/text';
+import { Columns, Section, Stack } from '../../../../src/portal/ui/layout';
+import { Small } from '../../../../src/portal/ui/text';
 import { theme } from '../../../../src/theme';
 
 // P18. Settings (spec 16.3, F7, D9; the OrgSettings board), for anyone with a seat: the account, the link to
-// two-step settings (/settings/security), Leave and Sign out. Org admins also rename the organization and read
-// its Townwise staff activity (GET /api/org/staff-activity), which the page loads before it shows, 50 events at a
+// two-step settings (/settings/security), Leave and Sign out. Org admins also rename the organization, get Add location
+// (/locations/new), and read its Townwise staff activity (GET /api/org/staff-activity), which the page loads before it shows, 50 events at a
 // time, with Show older for the rest. Under view-as every write is disabled, two-step settings too (they would be
 // the staff member's own), with one read-only line.
 
@@ -101,11 +100,18 @@ export default function SettingsPage(): React.JSX.Element {
           <Columns
             main={<OrgNameForm name={org} onSaved={onSaved} onEdit={onEdit} />}
             side={(
-              <Small>
-                {'Locations have their own pages. Add one from '}
-                <Link href="/dashboard" style={styles.link}>Locations</Link>
-                {'. Rename one or change its town from Location settings on that location’s page.'}
-              </Small>
+              <Stack>
+                <Small>Locations have their own pages. Rename one or change its town from Location settings on that location’s page.</Small>
+                {/* Straight to Add location: with one location, Locations opens that location's Home (P9). */}
+                <Actions>
+                  <LinkButton
+                    variant="outline"
+                    href="/locations/new"
+                    label="Add location"
+                    {...(readOnly ? { disabled: true, describedBy: SETTINGS_READ_ONLY_ID } : {})}
+                  />
+                </Actions>
+              </Stack>
             )}
           />
         </Section>
@@ -135,6 +141,5 @@ export default function SettingsPage(): React.JSX.Element {
 
 const styles = StyleSheet.create({
   top: { marginBottom: theme.space[8] },
-  link: { ...inlineTarget, color: theme.color.white, textDecorationLine: 'underline', textDecorationColor: theme.color.line },
   measure: { maxWidth: 680 },
 });

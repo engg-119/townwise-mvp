@@ -15,7 +15,7 @@ import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import { runTurn, type TurnEvent, type TurnInput } from '../chat/turn.ts';
 import { newestLeafUnder, newNodeId, nodeIdSchema, nodesOf, pathTo, type ChatNode, type TreeNodeView } from '../chat/tree.ts';
-import { userMessageOf } from '../chat/user-message.ts';
+import { historyForModel, userMessageOf } from '../chat/user-message.ts';
 import { chatMessageViews, OPEN, type ChatMessageView, type FeedbackView, type ProposalState, type ShownProposal } from '../chat/view.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import type { ConversationOwner, ConversationRecord, ConversationSummary } from '../stores/chat-conversations.ts';
@@ -93,6 +93,15 @@ function listItem(conversation: ConversationSummary): ConversationListItem {
 function isFull(conversation: ConversationRecord): boolean {
   const bytes = conversation.messages.reduce((sum, message) => sum + Buffer.byteLength(message.param, 'utf8'), 0);
   return conversation.turnCount >= MAX_TURNS || bytes >= MAX_STORED_BYTES;
+}
+
+/**
+ * The location as TownwiseAI's tools read it: with one location its name is the organization's (spec D29), as member
+ * pages show it, so get_location_overview never gives the model the stored name to repeat. Nothing is written.
+ */
+async function locationForTools(ctx: TownwiseContext, scope: OrgScope, location: LocationRecord): Promise<LocationRecord> {
+  const [org, count] = await Promise.all([ctx.stores.orgs.findById(scope.orgId), ctx.stores.locations.count(scope)]);
+  return count > 1 || org === null ? location : { ...location, name: org.name };
 }
 
 /** The first 60 characters of the first message. */
@@ -294,7 +303,10 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
     throw new AppError(409, 'chat_budget_exhausted', 'Your organization’s TownwiseAI budget for this month is used up');
   }
   // Before any claim, so a store failure has nothing to release. A regenerate resends its stored message as it was.
-  const rules = 'replyTo' in body ? [] : await ctx.stores.businessRules.list(scope, location.id);
+  const [rules, toolLocation] = await Promise.all([
+    'replyTo' in body ? [] : ctx.stores.businessRules.list(scope, location.id),
+    locationForTools(ctx, scope, location),
+  ]);
   const now = ctx.now();
   const claim: TurnClaim = { turnId: randomUUID(), now, staleBefore: new Date(now.getTime() - STALE_TURN_MS) };
   const { turnId } = claim;
@@ -341,6 +353,8 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   }, PING_MS);
 
   try {
+    // Spec 10.16: the location's business rules go before the person's text when they differ from the path's last list.
+    const userMessage = 'replyTo' in body ? null : userMessageOf(history, { rules: rules.map((rule) => rule.text) }, body.content);
     // `parentId` is where the turn's first new node hangs: the person's message, or a regenerate's reply.
     send('conversation', {
       id: conversationId, title, userNodeId: nodes.user?.id ?? null, replyNodeId: nodes.reply.id,
@@ -349,10 +363,10 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
     const result = await runTurn({
       model,
       // U13A: today is the town's local date, so an evening turn is not already tomorrow.
-      tools: { ctx, scope, location, today: localDay(ctx.now(), timeZone), timeZone, role: caller.role, actor: actorOf(caller) },
-      history,
-      // Spec 10.16: the location's business rules go before the person's text when they differ from the path's last list.
-      userMessage: 'replyTo' in body ? null : userMessageOf(history, { rules: rules.map((rule) => rule.text) }, body.content),
+      tools: { ctx, scope, location: toolLocation, today: localDay(ctx.now(), timeZone), timeZone, role: caller.role, actor: actorOf(caller) },
+      // Only the newest business_rules block on the path is sent in full; the stored messages keep theirs.
+      history: historyForModel(history, userMessage),
+      userMessage,
       nodes,
       signal,
       now: ctx.now,

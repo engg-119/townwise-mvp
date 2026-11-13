@@ -34,7 +34,8 @@ import { shownLocationName } from './naming';
 // location on Google Maps; using a place sets it and its town (PATCH with `placeId`), and a town changed by hand
 // takes the place off (api/README.md, Organization and locations). The search takes focus when it opens; when it
 // closes (Use this place, Cancel, or Google failing) focus moves to the line that says whether the location is linked.
-// After Name and town, a static Business rules section links to P28 (it reads nothing).
+// After Name and town, a static Business rules section links to P28 (it reads nothing). Beside Name and town, “Add
+// another location” opens P10.
 
 const READ_ONLY_ID = 'location-settings-ro';
 const PLACE_READ_ONLY_ID = 'location-place-ro';
@@ -168,6 +169,20 @@ export function LocationSettings(): React.JSX.Element {
                   disabled={readOnly || save.pending}
                   {...(readOnlyId === null ? {} : { describedBy: readOnlyId })}
                   onPress={submit}
+                />
+              </Actions>
+            </Stack>
+          )}
+          side={(
+            <Stack>
+              <Small>Another restaurant is its own location, with its own sales, notes and forecast.</Small>
+              {/* Straight to Add location: with one location, Locations opens this Home (P9). */}
+              <Actions>
+                <LinkButton
+                  variant="outline"
+                  href="/locations/new"
+                  label="Add another location"
+                  {...(readOnlyId === null ? {} : { disabled: true, describedBy: readOnlyId })}
                 />
               </Actions>
             </Stack>

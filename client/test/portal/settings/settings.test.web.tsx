@@ -61,7 +61,7 @@ test('view-as of an org admin: every write aria-disabled, focusable, and describ
   const line = 'Read-only while viewing as gm@example.org.';
   expect(document.getElementById('settings-ro')?.textContent).toBe(line);
   expect(screen.getByRole('textbox', { name: 'Name' }).getAttribute('aria-readonly')).toBe('true');
-  for (const name of ['Save name', 'Two-step sign-in settings', 'Leave Test Group']) {
+  for (const name of ['Save name', 'Add location', 'Two-step sign-in settings', 'Leave Test Group']) {
     const control = screen.getByRole('button', { name });
     expect(control.getAttribute('aria-disabled')).toBe('true');
     expect(control.hasAttribute('disabled')).toBe(false);

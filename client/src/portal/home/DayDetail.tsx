@@ -30,7 +30,8 @@ export function forecastDayLines(day: ForecastDay): string[] {
     return [day.noteGuests > 0 ? `Booked: a private buyout, ${plural(day.noteGuests, 'guest', 'guests')}. No walk-in forecast.` : 'Booked: a private buyout. No walk-in forecast.'];
   }
   if (day.low === null || day.mid === null || day.high === null) return [];
-  const range = `About ${plural(Math.round(day.mid), 'guest', 'guests')}, likely ${formatCount(Math.round(day.low))} to ${formatCount(Math.round(day.high))}.`;
+  // The range's low rounds down and its high up (spec 14.4), as the Calendar and TownwiseAI give it.
+  const range = `About ${plural(Math.round(day.mid), 'guest', 'guests')}, likely ${formatCount(Math.floor(day.low))} to ${formatCount(Math.ceil(day.high))}.`;
   return [day.noteGuests > 0 ? `${range} Includes ${plural(day.noteGuests, 'guest', 'guests')} from your notes.` : range];
 }
 

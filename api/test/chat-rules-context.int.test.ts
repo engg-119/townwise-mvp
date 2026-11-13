@@ -1,14 +1,15 @@
 // Business rules reach TownwiseAI (spec 10.16, docs/portal/tuning-chat.md section 3) against a scripted model
 // (helpers/chat-model.ts): the person's message carries a business_rules block only when the location's rules differ from
 // the last block on the turn's path. With no rules nothing is added, so the request is byte for byte what it was before
-// rules existed. The block is stored with the message, never shown back as the person's text.
+// rules existed. The block is stored with the message, never shown back as the person's text, and once a newer block
+// replaces it, requests send it as a stub, so a deleted rule's text is not sent again.
 import { randomUUID } from 'node:crypto';
 
 import type { BetaMessageParam } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import { Types } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { rulesBlock } from '../src/chat/user-message.ts';
+import { REPLACED_RULES_BLOCK, rulesBlock } from '../src/chat/user-message.ts';
 import type { ConversationView } from '../src/handlers/chat.ts';
 import { addLocation, addSeat, createOrg } from './helpers/fixtures.ts';
 import { message, messagesOf, scriptedModel, text, type ScriptedModel } from './helpers/chat-model.ts';
@@ -81,6 +82,11 @@ const withBlock = (rules: readonly string[], content: string): BetaMessageParam 
   role: 'user', content: [{ type: 'text', text: rulesBlock(rules) }, { type: 'text', text: content }],
 });
 
+/** A stored message with a rules block, as a later request sends it once a newer block replaced that one. */
+const replacedBlock = (content: string): BetaMessageParam => ({
+  role: 'user', content: [{ type: 'text', text: REPLACED_RULES_BLOCK }, { type: 'text', text: content }],
+});
+
 describe('business rules in the person\'s message', () => {
   it('with no rules, the request\'s person message is the plain string, as before', async () => {
     const first = await turn({ content: 'Are we busy Friday?' });
@@ -101,7 +107,7 @@ describe('business rules in the person\'s message', () => {
     expect(messagesOf(model.calls.at(-1))[0]).toEqual(withBlock(['Closed Mondays', 'Patio opens in May'], 'Are we open Monday?'));
   });
 
-  it('after a rule is edited, the next message carries the new list, and the stored history before it is byte for byte unchanged', async () => {
+  it('after a rule is edited, the next message carries the new list, the earlier block goes as a stub, and the stored history is unchanged', async () => {
     const ruleId = await addRule('Closed Mondays');
     const first = await turn({ content: 'Are we open Monday?' });
     const before = await rawParams(first.id);
@@ -112,20 +118,29 @@ describe('business rules in the person\'s message', () => {
     await turn({ conversationId: first.id, content: 'And Tuesday?' });
     const sent = messagesOf(model.calls.at(-1));
     expect(sent.at(-1)).toEqual(withBlock(['Closed Mondays and Tuesdays'], 'And Tuesday?'));
-    expect(sent.slice(0, before.length).map((param) => JSON.stringify(param))).toEqual(before);
+    expect(sent[0]).toEqual(replacedBlock('Are we open Monday?'));
+    expect(sent.slice(1, before.length).map((param) => JSON.stringify(param))).toEqual(before.slice(1));
+    // Stored messages keep their blocks.
     expect((await rawParams(first.id)).slice(0, before.length)).toEqual(before);
   });
 
-  it('deleting every rule sends the \'no business rules now\' block once', async () => {
+  it('deleting every rule sends the \'no business rules now\' block once, and the deleted rule\'s text never again', async () => {
     const ruleId = await addRule('Closed Mondays');
     const first = await turn({ content: 'Are we open Monday?' });
     const res = await call(server, `/api/org/locations/${locationId}/rules/${ruleId}`, { method: 'DELETE', session: author });
     expect(res.status).toBe(204);
     await turn({ conversationId: first.id, content: 'What about now?' });
     expect(sentUserMessage()).toEqual(withBlock([], 'What about now?'));
+    expect(JSON.stringify(model.calls.at(-1)?.params.messages)).not.toContain('Closed Mondays');
     expect(rulesBlock([])).toContain('There are no business rules for this location now.');
     await turn({ conversationId: first.id, content: 'And now?' });
     expect(sentUserMessage()).toEqual({ role: 'user', content: 'And now?' });
+    const sent = messagesOf(model.calls.at(-1));
+    expect(sent[0]).toEqual(replacedBlock('Are we open Monday?'));
+    expect(sent[2]).toEqual(withBlock([], 'What about now?'));
+    expect(JSON.stringify(sent)).not.toContain('Closed Mondays');
+    // The stored first message still holds it; only what is sent changes.
+    expect((await rawParams(first.id))[0]).toContain('Closed Mondays');
   });
 
   it('a regenerate resends the stored message with its block and adds none', async () => {

@@ -176,7 +176,7 @@ test('reduced motion: a press removes the layer once its click has landed, not o
   expect(layer()).toBeNull();
 });
 
-test('a lift with no click lets presses through after 350ms, and a cancelled press at once', () => {
+test('a lift with no click lets presses through after 350ms, and a canceled press at once', () => {
   show(RECEIVED);
   advance(400);
   fireEvent.pointerDown(shownLayer());

@@ -1,6 +1,6 @@
 import type { TownEvent } from '../../../src/portal/analytics/api';
 import {
-  ALL_FILTERS, calendarMonth, dayView, forecastWords, monthBounds, pastRange, reasonOutcomeWords, selectedDay, tooltipLines,
+  ALL_FILTERS, calendarMonth, dayView, forecastWords, monthBounds, pastRange, reasonOutcomeWords, savedNotice, selectedDay, tooltipLines,
   type CalendarCell, type CalendarInput, type ImportedEvent,
 } from '../../../src/portal/calendar/model';
 import type { ForecastDay, ForecastWindow } from '../../../src/portal/estimates/api';
@@ -176,6 +176,33 @@ test('the day panel words a forecast; the 8 in 10 sentence goes with the model�
   expect(noted.reasons[1]?.sources).toEqual([{ label: 'dartmouthsports.com', url: 'https://dartmouthsports.com/' }]);
 });
 
+test('ranges round low down and high up, as spec 14.4 and TownwiseAI’s get_forecast do; the middle figure to the nearest guest', () => {
+  const day = forecastDay({ date: '2026-11-21', low: 180.6, mid: 212.4, high: 239.2, model: { status: 'open', low: 110.6, mid: 142.4, high: 169.2 }, noteGuests: 70 });
+  const rounded = input({ forecast: windowOf([day, forecastDay({ date: '2026-11-07', model: { status: 'open', low: 120.7, mid: 135, high: 149.1 }, actual: 138, inRange: true })]) });
+  expect(cellOf(calendarMonth(rounded), '2026-11-21').label).toContain('Forecast about 212 guests, 180 to 240.');
+  expect(forecastWords(dayView('2026-11-21', rounded).forecast, 'Sawtooth').lines).toEqual([
+    'Likely 180 to 240.',
+    'Townwise’s model: 110 to 170. About 8 in 10 days land in that range. Your notes add 70 guests.',
+  ]);
+  expect(tooltipLines('2026-11-21', rounded)?.lines[0]).toBe('About 212 guests (180 to 240)');
+  expect(forecastWords(dayView('2026-11-07', rounded).forecast, 'Sawtooth').lines).toEqual(['Townwise’s model forecast 120 to 150, and the day landed in that range.']);
+});
+
+test('a day the model closed that a private event opened shows only the notes’ guests and no 8 in 10 sentence', () => {
+  const opened = forecastDay({
+    date: '2026-11-23', low: 70, mid: 70, high: 70, model: { status: 'closed', low: null, mid: null, high: null }, noteGuests: 70,
+    reasons: [
+      { kind: 'note', label: 'Your private event, 70 guests', effectPct: null, sources: [], note: { id: 'n4', guests: 70, outcome: 'added' } },
+      { kind: 'closure', label: 'Closed', effectPct: null, sources: [], note: null },
+    ],
+  });
+  const view = dayView('2026-11-23', input({ forecast: windowOf([opened]) }));
+  expect(forecastWords(view.forecast, 'Sawtooth')).toEqual({
+    figure: { before: 'About', value: '70', after: 'guests' },
+    lines: ['Townwise’s model expects you closed. Your notes open the day with 70 guests.'],
+  });
+});
+
 test('the tooltip holds the range, the notes’ guests and at most three reasons', () => {
   expect(tooltipLines('2026-11-21', input())).toEqual({
     date: 'Sat, Nov 21, 2026',
@@ -208,6 +235,30 @@ test('monthBounds allows 12 months back and 12 ahead, inside the API’s 400 day
   expect(pastRange('2026-11', '2026-11-01')).toBeNull();
 });
 
+test('savedNotice says what the saved note did to the day, from the forecast read again', () => {
+  const withNote = (outcome: string, guests: number | null = 70): CalendarInput => input({
+    forecast: windowOf([forecastDay({
+      date: '2026-11-21', reasons: [{ kind: 'note', label: 'Your private event', effectPct: null, sources: [], note: { id: 'n9', guests, outcome } }],
+    })]),
+  });
+  expect(savedNotice('2026-11-21', withNote('added'), 'n9')).toBe('Saved. The forecast for Sat, Nov 21 now includes its 70 guests.');
+  expect(savedNotice('2026-11-21', withNote('added', 1), 'n9')).toBe('Saved. The forecast for Sat, Nov 21 now includes its 1 guest.');
+  expect(savedNotice('2026-11-21', withNote('booked'), 'n9')).toBe('Saved. The forecast for Sat, Nov 21 now shows the day booked.');
+  expect(savedNotice('2026-11-21', withNote('closed', null), 'n9')).toBe('Saved. The forecast for Sat, Nov 21 now shows the day closed.');
+  expect(savedNotice('2026-11-21', withNote('already_in_forecast'), 'n9')).toBe('Saved. The forecast for Sat, Nov 21 already includes this event.');
+  expect(savedNotice('2026-11-21', withNote('no_guest_count', null), 'n9')).toBe('Saved. Add a guest count to change the forecast.');
+  expect(savedNotice('2026-11-21', withNote('not_counted'), 'n9')).toBe('Saved. Townwise only counts guests for private events so far, so the forecast is unchanged.');
+  expect(savedNotice('2026-11-21', withNote('day_closed'), 'n9')).toBe('Saved. The day is closed, so the forecast is unchanged.');
+  expect(savedNotice('2026-11-21', withNote('day_booked'), 'n9')).toBe('Saved. The day is booked, so the forecast is unchanged.');
+  expect(savedNotice('2026-11-21', withNote('past_day'), 'n9')).toBe('Saved. This day has passed, so its forecast stays as it was made.');
+  // Not known: an outcome this client doesn't know, the note not on the day (moved, or past the six), no forecast.
+  expect(savedNotice('2026-11-21', withNote('something_new'), 'n9')).toBe('Saved.');
+  expect(savedNotice('2026-11-21', withNote('added'), 'other')).toBe('Saved.');
+  expect(savedNotice('2026-11-22', withNote('added'), 'n9')).toBe('Saved.');
+  expect(savedNotice('2026-11-21', input({ forecast: NONE }), 'n9')).toBe('Saved.');
+  expect(savedNotice('2026-11-21', input({ forecast: null }), 'n9')).toBe('Saved.');
+});
+
 test('reasonOutcomeWords words every NoteOutcome', () => {
   expect(reasonOutcomeWords('added', 70)).toBe('Adds 70 guests');
   expect(reasonOutcomeWords('added', 1)).toBe('Adds 1 guest');
@@ -217,6 +268,7 @@ test('reasonOutcomeWords words every NoteOutcome', () => {
   expect(reasonOutcomeWords('no_guest_count', null)).toBe('No guest count, so the forecast is unchanged');
   expect(reasonOutcomeWords('not_counted', 40)).toBe('Townwise only counts guests for private events so far');
   expect(reasonOutcomeWords('day_closed', 40)).toBe('The day is closed');
+  expect(reasonOutcomeWords('day_booked', 40)).toBe('The day is booked');
   expect(reasonOutcomeWords('past_day', 40)).toBe('This day has passed');
   // An outcome this client doesn't know says nothing rather than something wrong.
   expect(reasonOutcomeWords('something_new', 40)).toBeNull();

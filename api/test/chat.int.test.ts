@@ -325,6 +325,23 @@ describe('tools', () => {
     ]);
   });
 
+  it('with one location get_location_overview names it by the organization\'s name, never its stored name (D29)', async () => {
+    const soloOrgId = await createOrg(server, { name: 'Solo Tavern Group' });
+    const soloLocationId = await addLocation(server, { orgId: soloOrgId, name: 'Solo Tavern Group, Hanover' });
+    const email = `solo-${randomUUID().slice(0, 8)}@example.test`;
+    const session = await signIn(server, email);
+    await addSeat(server, { orgId: soloOrgId, userId: session.userId, email, role: 'member' });
+    model.script(
+      { kind: 'message', message: message([toolUse('t1', 'get_location_overview', {})]) },
+      { kind: 'message', message: message([text('Steady so far.')]) },
+    );
+    const { events } = await turn({ content: 'How are we doing?' }, { session, email }, soloLocationId);
+    expect(events.at(-1)?.event).toBe('done');
+    const [result] = toolResults(messagesOf(model.calls[1])[2]);
+    expect(JSON.parse(result?.content as string)).toMatchObject({ location: { name: 'Solo Tavern Group', town: { name: 'Hanover', state: 'NH' } } });
+    expect(JSON.stringify(model.calls[1]?.params.messages)).not.toContain('Solo Tavern Group, Hanover');
+  });
+
   it('a valid propose_note streams a proposal, writes no note, and the proposal posts unchanged to the notes route', async () => {
     const notesBefore = await server.connection.collection('tw_notes').countDocuments({});
     model.script(

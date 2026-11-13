@@ -2,7 +2,9 @@ import type { BetaMessageParam } from '@anthropic-ai/sdk/resources/beta/messages
 import { describe, expect, it } from 'vitest';
 
 import { summaryOf } from '../src/audit.ts';
-import { lastRulesBlock, RULES_BLOCK_OPEN, rulesBlock, userMessageOf } from '../src/chat/user-message.ts';
+import {
+  historyForModel, lastRulesBlock, REPLACED_RULES_BLOCK, RULES_BLOCK_OPEN, rulesBlock, userMessageOf,
+} from '../src/chat/user-message.ts';
 import { MAX_RULE_CHARS, MAX_RULES, ruleTextOf } from '../src/handlers/rules.ts';
 
 describe('ruleTextOf', () => {
@@ -108,5 +110,48 @@ describe('userMessageOf', () => {
     expect(lastRulesBlock([typed, reply])).toBeNull();
     const typedLast = withBlock([], rulesBlock(RULES));
     expect(lastRulesBlock([typedLast, reply])).toBe(rulesBlock([]));
+  });
+});
+
+describe('historyForModel', () => {
+  const RULES = ['Closed Mondays', 'Patio opens in May'];
+  const withBlock = (rules: readonly string[], content: string): BetaMessageParam => ({
+    role: 'user', content: [{ type: 'text', text: rulesBlock(rules) }, { type: 'text', text: content }],
+  });
+  const replaced = (content: string): BetaMessageParam => ({
+    role: 'user', content: [{ type: 'text', text: REPLACED_RULES_BLOCK }, { type: 'text', text: content }],
+  });
+  const reply: BetaMessageParam = { role: 'assistant', content: [{ type: 'text', text: 'Noted.' }] };
+
+  it('keeps only the newest business_rules block on the path, the new message\'s included, and stubs every earlier one', () => {
+    expect(REPLACED_RULES_BLOCK).toBe('[Earlier business rules, replaced by a later list.]');
+    const history = [withBlock(RULES, 'First'), reply, { role: 'user', content: 'Second' } as BetaMessageParam, reply, withBlock(['Closed Mondays'], 'Third'), reply];
+    const stored = structuredClone(history);
+    // A send with unchanged rules, or a regenerate: the path's last block stays, the earlier one is a stub.
+    const expected = [replaced('First'), reply, { role: 'user', content: 'Second' }, reply, withBlock(['Closed Mondays'], 'Third'), reply];
+    expect(historyForModel(history, { role: 'user', content: 'Fourth' })).toEqual(expected);
+    expect(historyForModel(history, null)).toEqual(expected);
+    // A send whose message carries a new block: every block on the path is a stub, so a deleted rule is never resent.
+    expect(historyForModel(history, withBlock([], 'Fourth'))).toEqual([
+      replaced('First'), reply, { role: 'user', content: 'Second' }, reply, replaced('Third'), reply,
+    ]);
+    expect(JSON.stringify(historyForModel(history, withBlock([], 'Fourth')))).not.toContain('Closed Mondays');
+    // The stored messages are never changed.
+    expect(history).toEqual(stored);
+  });
+
+  it('leaves a path with one block or none as it is', () => {
+    const one = [withBlock(RULES, 'First'), reply];
+    expect(historyForModel(one, { role: 'user', content: 'Second' })).toEqual(one);
+    const none = [{ role: 'user', content: 'First' } as BetaMessageParam, reply];
+    expect(historyForModel(none, withBlock(RULES, 'Second'))).toEqual(none);
+  });
+
+  it('never stubs what the person typed, even when it starts with the tag', () => {
+    const typed: BetaMessageParam = { role: 'user', content: rulesBlock(RULES) };
+    const typedLast = withBlock([], rulesBlock(RULES));
+    expect(historyForModel([typed, reply, typedLast, reply], withBlock(RULES, 'Hi'))).toEqual([
+      typed, reply, replaced(rulesBlock(RULES)), reply,
+    ]);
   });
 });

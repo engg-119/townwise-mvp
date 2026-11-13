@@ -1,6 +1,7 @@
 import { MAX_IMPORTED, parseIcs } from '../../../src/portal/calendar/ics';
 import type { ImportedEvent } from '../../../src/portal/calendar/model';
 import { addDays } from '../../../src/portal/locations/dates';
+import { draftOfImported } from '../../../src/portal/locations/noteRules';
 
 // The owner's calendar file (spec 16.3 P27 and 17): parseIcs reads an exported .ics file's single events in
 // the browser. Repeating events are counted, not imported, and only events within 400 days of today are kept, at most
@@ -36,7 +37,7 @@ test('reads an all-day event with an exclusive DTEND as one day', () => {
     ...vevent('UID:a2@example.com', 'SUMMARY:Inventory weekend', 'DTSTART;VALUE=DATE:20261205', 'DTEND;VALUE=DATE:20261207'),
     // No DTEND: one day.
     ...vevent('UID:a3@example.com', 'SUMMARY:Deep clean', 'DTSTART;VALUE=DATE:20261130'),
-    // A cancelled event is not on the calendar.
+    // A canceled event is not on the calendar.
     ...vevent('UID:a4@example.com', 'SUMMARY:Called off', 'STATUS:CANCELLED', 'DTSTART;VALUE=DATE:20261201', 'DTEND;VALUE=DATE:20261202'),
   );
   expect(parseIcs(text, TODAY)).toEqual({
@@ -59,8 +60,13 @@ test('reads timed events with local, TZID and UTC times, folded lines and escape
     ...vevent('UID:t2', 'SUMMARY:Wine tasting', 'DTSTART;TZID="America/New_York":20261124T170000', 'DTEND;TZID="America/New_York":20261124T190000'),
     // A UTC time is the device's local time.
     ...vevent('UID:t3', 'SUMMARY:Supplier call', 'DTSTART:20261203T233000Z', 'DTEND:20261204T010000Z'),
-    // Over midnight: two dates, so no hours.
+    // Over midnight, ending by 06:00 the next morning: the start day's late night, its hours kept (the end before the start).
     ...vevent('UID:t4', 'SUMMARY:Late shift', 'DTSTART:20261212T220000', 'DTEND:20261213T020000'),
+    // Ending at 06:00 exactly is still the start day's; at 07:00 it is two days, with no hours.
+    ...vevent('UID:t7', 'SUMMARY:All-night bake', 'DTSTART:20261229T190000', 'DTEND:20261230T060000'),
+    ...vevent('UID:t8', 'SUMMARY:Overnight inventory', 'DTSTART:20261230T200000', 'DTEND:20261231T070000'),
+    // A day or more long: two dates, though it ends early in the morning.
+    ...vevent('UID:t9', 'SUMMARY:Two-day fair', 'DTSTART:20261231T050000', 'DTEND:20270101T050000'),
     // Ends at midnight: its own day, no hours (an hour range ends by midnight on its own day).
     ...vevent('UID:t5', 'SUMMARY:Holiday party', 'DTSTART:20261218T190000', 'DTEND:20261219T000000'),
     // An alarm's own lines are not the event's.
@@ -68,18 +74,25 @@ test('reads timed events with local, TZID and UTC times, folded lines and escape
   );
   const start = local(utc);
   const end = local(utcEnd);
-  const sameDay = start.date === end.date;
+  // On the device's clock the call may run past midnight, ending by 06:00: then it is the start day's.
+  const sameDay = start.date === end.date || end.time <= '06:00';
   expect(eventsOf(text)).toEqual([
     { uid: 't1', title: 'Rehearsal dinner, upstairs ; back room by the bar \\ patio', startDate: '2026-11-21', endDate: '2026-11-21', startTime: '18:00', endTime: '21:30' },
     { uid: 't2', title: 'Wine tasting', startDate: '2026-11-24', endDate: '2026-11-24', startTime: '17:00', endTime: '19:00' },
     {
-      uid: 't3', title: 'Supplier call', startDate: start.date, endDate: end.date,
+      uid: 't3', title: 'Supplier call', startDate: start.date, endDate: sameDay ? start.date : end.date,
       startTime: sameDay ? start.time : null, endTime: sameDay ? end.time : null,
     },
-    { uid: 't4', title: 'Late shift', startDate: '2026-12-12', endDate: '2026-12-13', startTime: null, endTime: null },
+    { uid: 't4', title: 'Late shift', startDate: '2026-12-12', endDate: '2026-12-12', startTime: '22:00', endTime: '02:00' },
     { uid: 't5', title: 'Holiday party', startDate: '2026-12-18', endDate: '2026-12-18', startTime: null, endTime: null },
     { uid: 't6', title: 'Delivery', startDate: '2026-12-28', endDate: '2026-12-28', startTime: '09:00', endTime: '10:00' },
+    { uid: 't7', title: 'All-night bake', startDate: '2026-12-29', endDate: '2026-12-29', startTime: '19:00', endTime: '06:00' },
+    { uid: 't8', title: 'Overnight inventory', startDate: '2026-12-30', endDate: '2026-12-31', startTime: null, endTime: null },
+    { uid: 't9', title: 'Two-day fair', startDate: '2026-12-31', endDate: '2027-01-01', startTime: null, endTime: null },
   ]);
+  // Make a note from the late shift: its start day only, and no hours, since a note's hours end after they start.
+  const late = eventsOf(text).find((event) => event.uid === 't4');
+  expect(late === undefined ? null : draftOfImported(late)).toMatchObject({ startDate: '2026-12-12', endDate: '', startTime: '', endTime: '' });
   // LF-only files and a missing title read too.
   const bare = ['BEGIN:VCALENDAR', 'BEGIN:VEVENT', 'DTSTART:20261121T180000', 'DTEND:20261121T200000', 'END:VEVENT', 'END:VCALENDAR'].join('\n');
   expect(eventsOf(bare)).toEqual([{ uid: 'event-1', title: 'Untitled event', startDate: '2026-11-21', endDate: '2026-11-21', startTime: '18:00', endTime: '20:00' }]);

@@ -22,7 +22,7 @@ import { useRules } from './useRules';
 
 // P28 Business rules (spec 16.3, 10.16, D31; /locations/[id]/rules, members): standing facts about how the location
 // runs, which TownwiseAI reads with every message the person sends. They never change Townwise's forecast; notes do,
-// and the lead says which. The page lives under TownwiseAI in the top bar. “New rule” and the page's one primary,
+// and the lead says which. The page is the top bar's Rules section. “New rule” and the page's one primary,
 // “Add rule”, add a rule (Enter submits on web); at the limit both are disabled, described by the limit line. Each
 // rule shows who added it and how; its author or an org admin edits it in place or deletes it after a confirm.
 // Errors show where the write happened: on the add form, the row's edit or the dialog. A 404 on an edit or a delete

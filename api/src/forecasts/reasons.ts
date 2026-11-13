@@ -60,7 +60,7 @@ function distinctSources(events: readonly TownEvent[]): TownEventSource[] {
   return [...seen.values()];
 }
 
-function labelled(entry: TownEvent): { label: string; sources: TownEventSource[] } {
+function labeled(entry: TownEvent): { label: string; sources: TownEventSource[] } {
   return { label: entry.title, sources: distinctSources([entry]) };
 }
 
@@ -68,11 +68,11 @@ function wordsFor(kind: ReasonKind, ref: string | null, date: string, calendar: 
   if (kind === 'weekday') return { label: WEEKDAY_NAME[weekdayOf(date)], sources: [] };
   if (kind !== 'term' && kind !== 'event' && kind !== 'holiday') return { label: PLAIN[kind], sources: [] };
   const named = resolveRef(ref, calendar.events);
-  if (named !== null) return labelled(named);
+  if (named !== null) return labeled(named);
   if (kind === 'holiday') {
     const holidays = calendar.events.filter((event) => event.kind === 'holiday');
     const [only] = holidays;
-    if (holidays.length === 1 && only !== undefined) return labelled(only);
+    if (holidays.length === 1 && only !== undefined) return labeled(only);
   }
   if (kind === 'term' && calendar.term.state !== 'unknown' && calendar.term.label !== null) {
     return { label: calendar.term.label, sources: distinctSources(calendar.term.events) };

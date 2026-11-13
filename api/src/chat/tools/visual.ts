@@ -145,8 +145,10 @@ function valuesOf(days: readonly SalesDay[], of: Metric): number[] {
 }
 
 /**
- * One row per day of the range; the 80% band (low down, high up, as get_forecast rounds) only for guests. The band is
- * the model's own range (spec 14.5), never one an owner's note moved, so it stays the 80% range it is drawn as.
+ * One row per day of the range; the forecast band (low down, high up, as get_forecast rounds) only for guests. The band
+ * is the day's range as the owner's notes leave it from the town's today on (spec 14.5), the same low and high
+ * get_forecast and the Calendar give, so a closed or booked day has none; it is the model's 80% range only on a day no
+ * note changed (get_forecast's modelRange is the model's own on the others).
  */
 export function dailyVisual(
   req: VisualRequest, days: readonly SalesDay[], forecast: readonly ForecastDayView[], run: { model: string; madeAt: string } | null,
@@ -156,8 +158,8 @@ export function dailyVisual(
   const band = new Map(of === 'guests' ? forecast.map((day) => [day.date, day]) : []);
   const out = eachDay(req.from, req.to).map((date) => {
     const row = rows.get(date);
-    const low = band.get(date)?.model.low ?? null;
-    const high = band.get(date)?.model.high ?? null;
+    const low = band.get(date)?.low ?? null;
+    const high = band.get(date)?.high ?? null;
     const banded = low !== null && high !== null;
     return {
       date, value: row === undefined ? null : shown(unitsOf(row, of), of),
@@ -275,7 +277,7 @@ async function visualFor(tc: ToolContext, req: VisualRequest, days: readonly Sal
 export const showVisualTool: ChatTool<VisualRequest> = {
   definition: {
     name: 'show_visual',
-    description: 'Draws a chart, a short table of days or a few totals under your reply from Townwise\'s own data, and returns the figures it drew. Name what to draw, never figures. Every key is required; use null where it does not apply. kind daily: one metric per day for at most 92 days, to at most 31 days after today; for guests it shades Townwise\'s published forecast range (80%) where one exists. kind breakdown: the average per day with a value, by weekday or by month (by is required), for at most 731 days. kind days_table: guests and net sales per day for at most 31 days (metric is null). kind metrics: the total, average per day and number of days with a value for at most 366 days, compared with the same dates 364 days earlier (last_year, so weekdays line up), the same number of days just before (previous_period), or nothing (null). breakdown, days_table and metrics end today or earlier. Net sales are in US dollars. With no sales in the range it shows nothing and says so.',
+    description: 'Draws a chart, a short table of days or a few totals under your reply from Townwise\'s own data, and returns the figures it drew. Name what to draw, never figures. Every key is required; use null where it does not apply. kind daily: one metric per day for at most 92 days, to at most 31 days after today; for guests it shades Townwise\'s published forecast range where one exists, from today on including the owner\'s saved notes, as get_forecast\'s low and high do (the 80% range is the model\'s own: modelRange on a day a note changed). kind breakdown: the average per day with a value, by weekday or by month (by is required), for at most 731 days. kind days_table: guests and net sales per day for at most 31 days (metric is null). kind metrics: the total, average per day and number of days with a value for at most 366 days, compared with the same dates 364 days earlier (last_year, so weekdays line up), the same number of days just before (previous_period), or nothing (null). breakdown, days_table and metrics end today or earlier. Net sales are in US dollars. With no sales in the range it shows nothing and says so.',
     input_schema: {
       type: 'object',
       properties: {

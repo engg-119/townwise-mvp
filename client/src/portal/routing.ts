@@ -93,13 +93,14 @@ const TAB_SUFFIX: Readonly<Record<TabKey, string>> = {
 
 /** The location's sections in the top bar, in order (15.3). Sales data and Location settings are reached from pages. */
 const SECTIONS: readonly (readonly [TabKey, string])[] = [
-  ['home', 'Home'], ['calendar', 'Calendar'], ['analytics', 'Analytics'], ['agent', 'TownwiseAI'], ['notes', 'Notes'], ['town', 'Town'], ['data', 'Your data'],
+  ['home', 'Home'], ['calendar', 'Calendar'], ['analytics', 'Analytics'], ['agent', 'TownwiseAI'], ['notes', 'Notes'], ['rules', 'Rules'],
+  ['town', 'Town'], ['data', 'Your data'],
 ];
 
 /**
- * The client app's top bar (15.3): the sections of `locationId` (Home, Calendar, Analytics, TownwiseAI, Notes, Town, Your data),
- * then Team for org admins (not while staff open the organization as admin) and Settings. With no location (none yet, or not known yet) only Team and Settings.
- * Analytics also marks Sales data, which lives under it, and TownwiseAI marks Business rules (P28).
+ * The client app's top bar (15.3): the sections of `locationId` (Home, Calendar, Analytics, TownwiseAI, Notes, Rules, Town,
+ * Your data), then Team for org admins (not while staff open the organization as admin) and Settings. With no location (none yet, or not known yet) only Team and Settings.
+ * Analytics also marks Sales data, which lives under it. Rules opens Business rules (P28), for every member.
  */
 export function clientNav(role: Role, pathname: string, locationId: string | null, openAsAdmin = false): NavItem[] {
   const path = normalize(pathname);
@@ -107,12 +108,10 @@ export function clientNav(role: Role, pathname: string, locationId: string | nul
   if (locationId !== null) {
     for (const [key, label] of SECTIONS) {
       const href = locationHref(locationId, key);
-      // Analytics also marks Sales data, which lives under it; Your data also marks Upload, which is reached from it;
-      // TownwiseAI also marks Business rules, which lives under it.
+      // Analytics also marks Sales data, which lives under it; Your data also marks Upload, which is reached from it.
       const current = currentFor(path, href, null)
         ?? (key === 'analytics' && path === locationHref(locationId, 'sales') ? 'true' : null)
-        ?? (key === 'data' && path === locationHref(locationId, 'upload') ? 'true' : null)
-        ?? (key === 'agent' && path === locationHref(locationId, 'rules') ? 'true' : null);
+        ?? (key === 'data' && path === locationHref(locationId, 'upload') ? 'true' : null);
       items.push({ label, href, current });
     }
   }

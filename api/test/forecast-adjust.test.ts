@@ -1,5 +1,6 @@
 // Notes in the forecast (spec 14.5), without Docker: from the town's today on, a private event with a guest count adds
-// its guests to an open day, a buyout books the day, a closure closes it (closed beats booked beats open); a party the
+// its guests to an open day, a buyout books the day, a closure note closes it whatever the model said; on a day the
+// model closed, a buyout books it and a private event with a count opens it with only those guests; a party the
 // run already counted, a note with no count, an opening, an other note and a past day change no number and say why;
 // note reasons come at most six, the ones that changed the day first. Synthetic notes.
 import { describe, expect, it } from 'vitest';
@@ -67,7 +68,36 @@ describe('adjustDay', () => {
     const both = adjustDay(DAY, TODAY, OPEN, [], [booked, closing]);
     expect(both).toMatchObject({ status: 'closed', low: null, noteGuests: 0 });
     expect(both.notes).toEqual([{ note: closing, outcome: 'closed' }, { note: booked, outcome: 'day_closed' }]);
-    expect(adjustDay(DAY, TODAY, CLOSED, [], [booked])).toMatchObject({ status: 'closed', noteGuests: 0, notes: [{ outcome: 'day_closed' }] });
+    expect(adjustDay(DAY, TODAY, CLOSED, [], [booked, closing])).toMatchObject({ status: 'closed', noteGuests: 0 });
+  });
+
+  it('on a day the model closed (a learned closure, no note), a buyout books it with its guests', () => {
+    const booked = buyout(50);
+    expect(adjustDay(DAY, TODAY, CLOSED, [{ kind: 'closure' }], [booked])).toEqual({
+      status: 'booked', low: null, mid: null, high: null, noteGuests: 50, notes: [{ note: booked, outcome: 'booked' }],
+    });
+    // A party on the same day can't add walk-ins to a booked day.
+    expect(adjustDay(DAY, TODAY, CLOSED, [], [booked, party(70)])).toMatchObject({
+      status: 'booked', noteGuests: 50, notes: [{ outcome: 'booked' }, { outcome: 'day_booked' }],
+    });
+  });
+
+  it('on a day the model closed, a private event with a guest count opens it with just those guests', () => {
+    const added = party(70);
+    expect(adjustDay(DAY, TODAY, CLOSED, [{ kind: 'closure' }], [added])).toEqual({
+      status: 'open', low: 70, mid: 70, high: 70, noteGuests: 70, notes: [{ note: added, outcome: 'added' }],
+    });
+    expect(adjustDay(DAY, TODAY, CLOSED, [], [party(70), party(30), party(null)])).toMatchObject({
+      status: 'open', low: 100, mid: 100, high: 100, noteGuests: 100, notes: [{ outcome: 'added' }, { outcome: 'added' }, { outcome: 'no_guest_count' }],
+    });
+    // With no count it stays closed, and the note says what would change it; fewer or unknown can't open it.
+    expect(adjustDay(DAY, TODAY, CLOSED, [], [party(null), note({ effect: 'fewer_guests', expectedGuests: 20 })])).toMatchObject({
+      status: 'closed', low: null, noteGuests: 0, notes: [{ outcome: 'no_guest_count' }, { outcome: 'day_closed' }],
+    });
+    // A closure note still wins over everything.
+    expect(adjustDay(DAY, TODAY, CLOSED, [], [party(70), party(null), closure()])).toMatchObject({
+      status: 'closed', low: null, noteGuests: 0, notes: [{ outcome: 'closed' }, { outcome: 'day_closed' }, { outcome: 'day_closed' }],
+    });
   });
 
   it('a private event on a run day with a booking reason adds nothing (already_in_forecast)', () => {
@@ -89,13 +119,14 @@ describe('adjustDay', () => {
     expect(day.notes.map((entry) => entry.outcome)).toEqual(['no_guest_count', 'not_counted', 'not_counted', 'not_counted', 'not_counted']);
   });
 
-  it('a private event on a closed or booked day is day_closed', () => {
-    expect(adjustDay(DAY, TODAY, CLOSED, [], [party(70)])).toMatchObject({ status: 'closed', noteGuests: 0, notes: [{ outcome: 'day_closed' }] });
-    expect(adjustDay(DAY, TODAY, BOOKED, [], [party(70)])).toMatchObject({ status: 'booked', noteGuests: 0, notes: [{ outcome: 'day_closed' }] });
+  it('a private event on a day a closure note closed is day_closed, and on a booked day day_booked', () => {
+    expect(adjustDay(DAY, TODAY, OPEN, [], [party(70), closure()])).toMatchObject({ status: 'closed', noteGuests: 0, notes: [{ outcome: 'closed' }, { outcome: 'day_closed' }] });
+    expect(adjustDay(DAY, TODAY, BOOKED, [], [party(70)])).toMatchObject({ status: 'booked', noteGuests: 0, notes: [{ outcome: 'day_booked' }] });
+    expect(adjustDay(DAY, TODAY, BOOKED, [], [party(null)])).toMatchObject({ status: 'booked', noteGuests: 0, notes: [{ outcome: 'day_booked' }] });
     const booked = buyout(50);
     const added = party(70);
     expect(adjustDay(DAY, TODAY, OPEN, [], [added, booked])).toMatchObject({
-      status: 'booked', noteGuests: 50, notes: [{ note: booked, outcome: 'booked' }, { note: added, outcome: 'day_closed' }],
+      status: 'booked', noteGuests: 50, notes: [{ note: booked, outcome: 'booked' }, { note: added, outcome: 'day_booked' }],
     });
   });
 

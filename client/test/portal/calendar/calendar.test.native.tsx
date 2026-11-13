@@ -95,7 +95,7 @@ test('adds a note from the day and reloads the forecast', async () => {
     return saved;
   };
   await fireEvent.press(screen.getByRole('button', { name: 'Save note' }));
-  expect(await screen.findByText('Saved. The forecast for Sat, Nov 21 now includes it.')).toBeTruthy();
+  expect(await screen.findByText('Saved. The forecast for Sat, Nov 21 now includes its 70 guests.')).toBeTruthy();
   expect(await within(panel()).findByText('Adds 70 guests')).toBeTruthy();
   expect(within(panel()).getByText('About 282 guests')).toBeTruthy();
   expect(fake.paths.filter((path) => path.includes('/forecast?'))).toHaveLength(2);

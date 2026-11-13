@@ -496,7 +496,8 @@ function cellFigure(date: string, figures: MonthFigures | undefined): CellFigure
   if (day.low === null || day.mid === null || day.high === null) return NO_FIGURE;
   const mid = Math.round(day.mid);
   const words = [
-    `Forecast about ${plural(mid, 'guest', 'guests')}, ${formatCount(Math.round(day.low))} to ${formatCount(Math.round(day.high))}.`,
+    // The range's low rounds down and its high up (spec 14.4), as the Calendar and TownwiseAI give it.
+    `Forecast about ${plural(mid, 'guest', 'guests')}, ${formatCount(Math.floor(day.low))} to ${formatCount(Math.ceil(day.high))}.`,
     day.noteGuests > 0 ? `Includes ${plural(day.noteGuests, 'guest', 'guests')} from your notes.` : null,
   ].filter((part) => part !== null).join(' ');
   return { figure: { value: mid, kind: 'forecast', text: formatCount(mid) }, status: null, noteGuests: day.noteGuests, words };

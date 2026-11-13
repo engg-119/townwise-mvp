@@ -109,6 +109,7 @@ describe('navigation per role (spec 15.3)', () => {
     expect(rows(clientNav('member', '/locations/l1', 'l1'))).toEqual([
       ['Home', '/locations/l1', 'page', false], ['Calendar', '/locations/l1/calendar', null, false], ['Analytics', '/locations/l1/analytics', null, false],
       ['TownwiseAI', '/locations/l1/agent', null, false], ['Notes', '/locations/l1/notes', null, false],
+      ['Rules', '/locations/l1/rules', null, false],
       ['Town', '/locations/l1/town', null, false], ['Your data', '/locations/l1/data', null, false],
       ['Settings', '/settings', null, true],
     ]);
@@ -116,8 +117,16 @@ describe('navigation per role (spec 15.3)', () => {
 
   test('clientNav lists Calendar right after Home', () => {
     expect(clientNav('org_admin', '/locations/l1/calendar', 'l1').map((item) => item.label)).toEqual([
-      'Home', 'Calendar', 'Analytics', 'TownwiseAI', 'Notes', 'Town', 'Your data', 'Team', 'Settings',
+      'Home', 'Calendar', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Team', 'Settings',
     ]);
+  });
+
+  test('clientNav lists Rules (P28) right after Notes, for members as for org admins', () => {
+    for (const role of ['member', 'org_admin'] as const) {
+      const labels = clientNav(role, '/locations/l1', 'l1').map((item) => item.label);
+      expect(labels.indexOf('Rules')).toBe(labels.indexOf('Notes') + 1);
+    }
+    expect(clientNav('member', '/locations/l1', 'l1').find((item) => item.label === 'Rules')?.href).toBe('/locations/l1/rules');
   });
 
   test('org admins add Team, which starts the right-hand group', () => {
@@ -144,8 +153,8 @@ describe('navigation per role (spec 15.3)', () => {
     expect(current('/locations/l1/sales/upload')).toEqual([['Your data', 'true']]);
     expect(current('/locations/l1/data')).toEqual([['Your data', 'page']]);
     expect(current('/locations/l1/agent')).toEqual([['TownwiseAI', 'page']]);
-    // Business rules (P28) lives under TownwiseAI, as Sales data under Analytics.
-    expect(current('/locations/l1/rules')).toEqual([['TownwiseAI', 'true']]);
+    // Business rules (P28) has its own section, Rules.
+    expect(current('/locations/l1/rules')).toEqual([['Rules', 'page']]);
     expect(current('/locations/l1/calendar')).toEqual([['Calendar', 'page']]);
     expect(current('/locations/l1/notes/')).toEqual([['Notes', 'page']]);
     expect(current('/locations/l1/town')).toEqual([['Town', 'page']]);

@@ -4,7 +4,7 @@ import { Platform, StyleSheet, View, type ViewStyle } from 'react-native';
 
 import { theme } from '../../theme';
 import { fetchCalendar } from '../analytics/api';
-import { MONTH_NAMES, shortDate } from '../analytics/words';
+import { MONTH_NAMES } from '../analytics/words';
 import { hasCode } from '../errors';
 import { fetchForecast } from '../estimates/api';
 import { useAction, useBreakpoint, useLoad } from '../hooks';
@@ -23,7 +23,7 @@ import { CalendarGrid } from './CalendarGrid';
 import { IcsImport } from './IcsImport';
 import { Toolbar } from './Toolbar';
 import {
-  ALL_FILTERS, calendarMonth, dayView, monthBounds, monthLabel, pastRange, selectedDay, stepMonth, tooltipLines,
+  ALL_FILTERS, calendarMonth, dayView, monthBounds, monthLabel, pastRange, savedNotice, selectedDay, stepMonth, tooltipLines,
   type CalendarInput, type FilterKey, type Filters, type ImportedCalendar, type ImportedEvent,
 } from './model';
 
@@ -35,7 +35,7 @@ import {
 // days). The forecast read stands alone: when it fails the page still shows, with Try again for it only. After a
 // note is saved or deleted the notes and the forecast read again, since the API adjusts the forecast from notes on
 // read (spec 14.5) and the client never adds a note's guests itself; meanwhile the old figures stay, dimmed and
-// aria-busy. Under view-as the page shows in full with its writes disabled in place. The owner's calendar file
+// aria-busy, and a save's notice says “Saved.” until the new read says what the note did to the day. Under view-as the page shows in full with its writes disabled in place. The owner's calendar file
 // (web only, spec 16.3 P27 and 17) is read in the browser and held in this page's state only, so it is gone on
 // reload or on leaving; importing one turns "Your calendar" on, and Make a note opens the form from one of its events
 // with its dates and hours but never its title. Importing is allowed under view-as, since it sends nothing; Make a
@@ -75,10 +75,8 @@ function useKept<T>(load: () => Promise<T>): Kept<T> {
   };
 }
 
-/** “Sat, Nov 21”. */
-function dayWords(date: string): string {
-  return shortDate(date).replace(/, \d{4}$/, '');
-}
+/** The panel's notice: words, or the note just saved, whose notice waits for the forecast read again (savedNotice). */
+type PanelNotice = string | { savedId: string } | null;
 
 export function CalendarPage(): React.JSX.Element {
   const { location } = useLocation();
@@ -102,7 +100,7 @@ function CalendarView(): React.JSX.Element {
   // The owner's calendar file (spec 17), in this page's memory only.
   const [imported, setImported] = useState<ImportedCalendar | null>(null);
   const [form, setForm] = useState<FormState>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<PanelNotice>(null);
   const [deleting, setDeleting] = useState<Note | null>(null);
   // useAction keeps its last error until the next run; a dialog opened again starts without it.
   const [staleError, setStaleError] = useState<unknown>(null);
@@ -167,12 +165,11 @@ function CalendarView(): React.JSX.Element {
     }
   }, [api, location.id, editing, gone]);
 
-  const hasForecast = view !== null && (view.forecast.kind === 'open' || view.forecast.kind === 'booked' || view.forecast.kind === 'closed');
-  const onSaved = useCallback(() => {
+  const onSaved = useCallback((note: Note) => {
     setForm(null);
-    setNotice(hasForecast ? `Saved. The forecast for ${dayWords(selected)} now includes it.` : 'Saved.');
+    setNotice({ savedId: note.id });
     reloadDay();
-  }, [hasForecast, selected, reloadDay]);
+  }, [reloadDay]);
 
   const remove = useAction(useCallback(async (note: Note) => {
     try {
@@ -219,6 +216,9 @@ function CalendarView(): React.JSX.Element {
   }
   const readOnlyId = readOnly ? READ_ONLY_ID : null;
   const busy = monthData.busy || notes.busy || forecast.busy || shown.month !== month;
+  // After a save the forecast reads again; until it answers, the old read can't say what the note did.
+  const noticeText = notice === null || typeof notice === 'string' ? notice
+    : forecast.busy || input.month !== month ? 'Saved.' : savedNotice(selected, input, notice.savedId);
   const unpublished = forecastWindow !== null && !forecastWindow.available && forecastWindow.reason === 'no_published_forecast';
 
   const formNode = form === null ? null : (
@@ -236,7 +236,7 @@ function CalendarView(): React.JSX.Element {
     <CalendarDay
       view={view}
       locationName={locationName}
-      notice={notice}
+      notice={noticeText}
       readOnlyId={readOnlyId}
       readOnlyText={line}
       form={formNode}

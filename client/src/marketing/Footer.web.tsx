@@ -3,7 +3,7 @@ import { useId, type RefObject } from 'react';
 import { EARLY_ACCESS_HREF, footerGroups } from './links';
 import { useReveal, type RevealView } from './useReveal.web';
 
-// TOWNWISE rises letter by letter from the centre out, each delay step 50ms apart.
+// TOWNWISE rises letter by letter from the center out, each delay step 50ms apart.
 const LETTERS = [['T', 3], ['O', 2], ['W', 1], ['N', 0], ['W', 0], ['I', 1], ['S', 2], ['E', 3]] as const;
 const STEP_MS = 50;
 // A quarter of the footer in view above the bottom 5% (a ratio of 0.2 allows for rounding). The letters only
