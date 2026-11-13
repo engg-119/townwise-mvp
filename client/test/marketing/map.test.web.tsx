@@ -66,8 +66,9 @@ function prefersReducedMotion(reduce: boolean): void {
 }
 
 beforeEach(() => {
-  // Every test drives the clock itself, so no intro timer fires unless a test asks for it.
-  jest.useFakeTimers();
+  // Every test drives the clock itself, so no intro timer fires unless a test asks for it. "Today" is Thu,
+  // Nov 5, 2026, so a picked town opens on November.
+  jest.useFakeTimers({ now: new Date(2026, 10, 5, 12, 0, 0) });
 });
 
 afterEach(() => {
@@ -174,8 +175,8 @@ test('the outlines draw in once the map is in view, and the towns wait for the s
 });
 
 test.each([
-  ['a town in the list', () => { fireEvent.click(row('Hanover, NH')); }, 'May'],
-  ['a marker', () => { fireEvent.click(markerButton('Stowe, VT'), { detail: 1 }); }, 'May'],
+  ['a town in the list', () => { fireEvent.click(row('Hanover, NH')); }, 'Nov'],
+  ['a marker', () => { fireEvent.click(markerButton('Stowe, VT'), { detail: 1 }); }, 'Nov'],
   ['the month scrubber', () => { fireEvent.click(screen.getByRole('radio', { name: 'Oct' })); }, 'Oct'],
 ])('%s sets the month by hand, and nothing changes it on its own', (_name, use, month) => {
   const { mapFrame } = renderMap();
@@ -239,13 +240,14 @@ test('choosing a town from the list zooms the map and opens its panel, with focu
   expect(within(card).getByRole('heading', { name: 'Hanover, NH' })).toBeTruthy();
   expect(card.textContent).toContain('College town');
   expect(card.textContent).toContain('Moves with the region; biggest gap with the region in May, −7.3 index points.');
-  // The gap for the month, the county against the Northeast, and both curves drawn.
-  expect(card.querySelector('.bv-v')?.textContent).toBe('−7.3');
-  expect(card.querySelector('.bv-l')?.textContent).toBe('below the Northeast, index points, May 2024');
-  expect(card.querySelector('.bv-s')?.textContent).toBe('Grafton County 95.0 · Northeast 102.2');
+  // The gap for this month (November, not the biggest gap's May), the county against the Northeast, and both
+  // curves drawn.
+  expect(card.querySelector('.bv-v')?.textContent).toBe('−1.7');
+  expect(card.querySelector('.bv-l')?.textContent).toBe('below the Northeast, index points, Nov 2024');
+  expect(card.querySelector('.bv-s')?.textContent).toBe('Grafton County 97.4 · Northeast 99.2');
   expect(card.querySelector('.ch-town')?.getAttribute('d')).toMatch(/^M12 /);
   expect(card.querySelector('.ch-ne')?.getAttribute('d')).toMatch(/^M12 /);
-  expect(within(screen.getByRole('radiogroup', { name: 'Month' })).getByRole('radio', { checked: true }).textContent).toBe('May');
+  expect(within(screen.getByRole('radiogroup', { name: 'Month' })).getByRole('radio', { checked: true }).textContent).toBe('Nov');
   expect(document.querySelector('[aria-live="polite"]')?.textContent)
     .toBe('Hanover, NH: Moves with the region; biggest gap with the region in May, −7.3 index points.');
   // Its drivers and dates link their sources: public institutions by host, other sites as "Source".
@@ -262,7 +264,8 @@ test('a marker click zooms the same way and moves focus to the town’s list but
   expect(world.style.transform).toBe(cameraTransform(cameraFor(town('nantucket-ma').shape.bbox)));
   expect(document.activeElement).toBe(row('Nantucket, MA'));
   expect(within(panel()).getByRole('heading', { name: 'Nantucket, MA' })).toBeTruthy();
-  expect(panel().querySelector('.bv-v')?.textContent).toBe('+93.5');
+  // November's gap, not July's +93.5 peak.
+  expect(panel().querySelector('.bv-v')?.textContent).toBe('−32.7');
 });
 
 test('a pointer click goes to the town whose dot is nearest it, even on a neighbor’s overlapping button', () => {
@@ -371,9 +374,9 @@ test('Escape inside the map resets a zoomed town and returns focus to its list b
   expect(world.style.transform).toBe(zoomed);
 
   // Anywhere inside it, Escape returns to the region.
-  const may = within(screen.getByRole('radiogroup', { name: 'Month' })).getByRole('radio', { checked: true });
-  act(() => { may.focus(); });
-  fireEvent.keyDown(may, { key: 'Escape' });
+  const nov = within(screen.getByRole('radiogroup', { name: 'Month' })).getByRole('radio', { checked: true });
+  act(() => { nov.focus(); });
+  fireEvent.keyDown(nov, { key: 'Escape' });
   expect(world.style.transform).toBe(cameraTransform(REGION));
   expect(document.activeElement).toBe(row('Bar Harbor, ME'));
   expect(row('Bar Harbor, ME').getAttribute('aria-pressed')).toBe('false');

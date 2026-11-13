@@ -140,7 +140,8 @@ export type MapAction =
   | { type: 'towns' }
   | { type: 'story'; on: boolean }
   | { type: 'band'; sides: readonly Side[] }
-  | { type: 'select'; id: string; kb: boolean }
+  // month: the reader's current calendar month, read at the click, which a picked town opens on.
+  | { type: 'select'; id: string; kb: boolean; month: number }
   | { type: 'reset'; kb: boolean }
   | { type: 'month'; month: number; kb: boolean }
   | { type: 'hover'; id: string | null; pointer: boolean };
@@ -200,11 +201,8 @@ export function mapReducer(state: MapState, action: MapAction): MapState {
       const on = storyOn(state);
       return toStep(on, pickStep(action.sides, on.ss));
     }
-    case 'select': {
-      const town = mapTowns.find((candidate) => candidate.id === action.id);
-      const month = town === undefined ? null : town.series.largestGap.monthIndex;
-      return halt(state, { sel: action.id, month, phase: 'local', back: false, cardTick: state.cardTick + 1 }, action.kb);
-    }
+    case 'select':
+      return halt(state, { sel: action.id, month: action.month, phase: 'local', back: false, cardTick: state.cardTick + 1 }, action.kb);
     case 'reset': {
       // During the story, Back returns to the step's own month and, before the towns, to the region.
       const story = state.story ? { month: stepMonth(state.ss), phase: stepPhase(state.ss) } : { month: null };
