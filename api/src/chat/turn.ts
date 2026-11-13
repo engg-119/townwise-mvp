@@ -208,10 +208,20 @@ function tooMany(block: BetaToolUseBlock): BetaToolResultBlockParam {
   };
 }
 
-/** Whether an assistant message of the turn so far has text the owner sees. */
+/**
+ * Whether the turn wrote text the owner sees after its last tool call other than suggest_next: the answer. Text before
+ * that call is an aside written ahead of the work ("Next week, presumably."), not an answer to it, and Opus 5.5
+ * returns text written before a tool call in the same message as thinking, which the owner never sees as a reply.
+ */
 function wroteText(turn: readonly BetaMessageParam[]): boolean {
-  return turn.some((param) => param.role === 'assistant' && typeof param.content !== 'string'
-    && param.content.some((block) => block.type === 'text' && block.text.trim() !== ''));
+  for (let index = turn.length - 1; index >= 0; index -= 1) {
+    const param = turn[index];
+    if (param?.role !== 'assistant' || typeof param.content === 'string') continue;
+    // A message that calls a tool other than suggest_next did work after any text it holds: that text came first.
+    if (param.content.some((block) => block.type === 'tool_use' && block.name !== 'suggest_next')) return false;
+    if (param.content.some((block) => block.type === 'text' && block.text.trim() !== '')) return true;
+  }
+  return false;
 }
 
 /** A suggest_next result that also asks for the answer the turn has not written; an error result stays as it is. */

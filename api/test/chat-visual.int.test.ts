@@ -216,6 +216,22 @@ describe('suggest_next', () => {
     expect(messages.at(-1)?.parts.at(-1)).toMatchObject({ type: 'text', text: 'May started strong.' });
   });
 
+  it('suggest_next alone after tools, with text only before them, still asks for the answer: an aside is no answer', async () => {
+    // Call 1: an aside and get_sales_days; call 2: the answer as thinking and suggest_next only; call 3: the answer.
+    // Opus 5.5 returns text written before a tool call in the same message as thinking, so the owner never saw it.
+    model.script(
+      { kind: 'message', message: message([text('Next week, presumably. '), toolUse('toolu_a1', 'get_sales_days', { from: '2026-05-01', to: '2026-05-05' })]) },
+      { kind: 'message', message: message([thinking('May started strong.'), toolUse('toolu_n9', 'suggest_next', { prompts: THREE })]) },
+      { kind: 'message', message: message([text('May started strong.')]) },
+    );
+    const events = await turn({ content: 'How did May start?' });
+    expect(model.calls).toHaveLength(3);
+    expect(toolResults(messagesOf(model.calls[2]).at(-1))).toEqual([{ type: 'tool_result', tool_use_id: 'toolu_n9', content: UNANSWERED }]);
+    expect(events.at(-1)).toMatchObject({ event: 'done', data: { stopReason: 'end_turn' } });
+    const { messages } = await view(conversationIdOf(events));
+    expect(messages.at(-1)?.parts.at(-1)).toMatchObject({ type: 'text', text: 'May started strong.' });
+  });
+
   it('suggest_next beside another tool runs both and the loop continues; an invalid suggest_next is an is_error result and no event', async () => {
     model.script(
       { kind: 'message', message: message([toolUse('toolu_n2', 'suggest_next', { prompts: THREE }), toolUse('toolu_l1', 'list_notes', {})]) },
