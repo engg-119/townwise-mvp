@@ -4,7 +4,7 @@ import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
 import { formatDate } from '../../../src/portal/format';
-import type { Rule } from '../../../src/portal/rules/api';
+import type { Rule, RuleSchedule } from '../../../src/portal/rules/api';
 import type { MeResponse } from '../../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
@@ -81,11 +81,11 @@ test('lists rules oldest first with who added them, and the lead says they never
   // The page is the top bar's Rules section.
   expect(screen.getByRole('link', { name: 'Rules' }).getAttribute('aria-current')).toBe('page');
   expect(screen.getByRole('link', { name: 'TownwiseAI' }).getAttribute('aria-current')).toBeNull();
-  // Two locations, so the lead names this one. Rules never change the forecast; notes do, and the lead says which.
+  // Two locations, so the lead names this one. A rule changes the forecast only with a schedule, and the lead says which.
   expect(screen.getByText(
     'Standing facts about how Main Street Bar runs, like “Closed Mondays” or “Brunch only on weekends”. TownwiseAI reads them with '
-    + 'every message you send. They never change Townwise’s forecast. For a day that’s different, add a note: a closure, a buyout or a '
-    + 'private event with a guest count changes the forecast for its days.',
+    + 'every message you send. A rule changes Townwise’s forecast only when you give it a schedule under Change the forecast: a closure, '
+    + 'a buyout or a private event with a guest count, on the days you choose. For one day that’s different, add a note.',
   )).toBeTruthy();
   expect(screen.queryByText(/suggests|offers to save/)).toBeNull();
   expect(screen.getByRole('link', { name: 'Open Notes' }).getAttribute('href')).toBe('/locations/l1/notes');
@@ -106,6 +106,107 @@ test('lists rules oldest first with who added them, and the lead says they never
   expect(within(rowOf('Brunch only on weekends')).queryByRole('button')).toBeNull();
   // The field's helper keeps guest names out.
   expect(screen.getByText('One line, up to 200 characters. Leave out guest names.')).toBeTruthy();
+  // A rule with no schedule says TownwiseAI reads it and the forecast doesn't change.
+  expect(within(rowOf('Closed Mondays')).getByText('TownwiseAI reads this. It doesn’t change the forecast.')).toBeTruthy();
+});
+
+const CLOSED_MONDAYS: RuleSchedule = {
+  kind: 'closure', startDate: '2027-01-05', endDate: null, weekdays: [1], effect: 'closed', expectedGuests: null, startTime: null, endTime: null,
+};
+
+function section(within_: HTMLElement = document.body): HTMLElement {
+  return within(within_).getByRole('group', { name: 'Change the forecast' });
+}
+
+/** The row being edited, whose text is in its field. */
+function editingRow(): HTMLElement {
+  const row = field('Edit rule').closest<HTMLElement>('[role="listitem"], li');
+  if (row === null) throw new Error('no row in edit');
+  return row;
+}
+
+test('a rule added with a schedule changes the forecast; the section checks the note form’s rules before anything is sent', async () => {
+  const { api } = setup();
+  renderAt('/locations/l1/rules', api);
+  await screen.findByText('Closed Mondays');
+  expect(screen.queryByRole('group', { name: 'Change the forecast' })).toBeNull();
+  expect(screen.getByText('Optional. Without it, TownwiseAI reads the rule and the forecast doesn’t change.')).toBeTruthy();
+  fireEvent.change(field(), { target: { value: 'Closed Tuesdays in winter' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Change the forecast' }));
+  // The note form's fields, a closure by default, with an end that may stay empty for no end.
+  const fields = section();
+  expect(within(fields).getByRole('button', { name: 'Closure' }).getAttribute('aria-pressed')).toBe('true');
+  expect(within(fields).getByText('Leave it empty to keep it going.')).toBeTruthy();
+  expect(within(fields).queryByLabelText('Details (optional)')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+  expect(within(fields).getByText('Enter the start date.')).toBeTruthy();
+  expect(writes(api)).toEqual([]);
+  fireEvent.change(within(fields).getByLabelText('Starts'), { target: { value: '2026-12-01' } });
+  fireEvent.change(within(fields).getByLabelText('Ends (optional)'), { target: { value: '2027-03-31' } });
+  fireEvent.click(within(fields).getByRole('button', { name: 'Tuesday' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+  expect(await screen.findByText('Closed Tuesdays in winter')).toBeTruthy();
+  expect(writes(api)).toEqual([{
+    method: 'POST', path: PATH, body: {
+      text: 'Closed Tuesdays in winter',
+      schedule: { kind: 'closure', startDate: '2026-12-01', endDate: '2027-03-31', weekdays: [2], effect: 'closed', expectedGuests: null, startTime: null, endTime: null },
+    },
+  }]);
+  // The form starts over: no text, the section closed.
+  expect(field().value).toBe('');
+  expect(screen.queryByRole('group', { name: 'Change the forecast' })).toBeNull();
+  expect(within(rowOf('Closed Tuesdays in winter')).getByText('Changes the forecast: Closed on Tuesdays from 2026-12-01')).toBeTruthy();
+});
+
+test('Remove from the forecast closes the section, and a rule added then sends no schedule', async () => {
+  const { api } = setup();
+  renderAt('/locations/l1/rules', api);
+  await screen.findByText('Closed Mondays');
+  fireEvent.change(field(), { target: { value: 'Kitchen closes at 9' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Change the forecast' }));
+  fireEvent.click(within(section()).getByRole('button', { name: 'Remove from the forecast' }));
+  expect(screen.queryByRole('group', { name: 'Change the forecast' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+  expect(await screen.findByText('Kitchen closes at 9')).toBeTruthy();
+  expect(writes(api)).toEqual([{ method: 'POST', path: PATH, body: { text: 'Kitchen closes at 9' } }]);
+});
+
+test('editing a rule with a schedule opens its section filled in; removing it sends schedule null; adding one to a rule sends it', async () => {
+  const scheduled = ruleOf('r1', 'Closed Mondays', { schedule: CLOSED_MONDAYS, scheduleSummary: 'Closed on Mondays from Jan 5, 2027' });
+  const { api } = setup(meOf(ACCESS.member), [scheduled, ...RULES.slice(1)]);
+  renderAt('/locations/l1/rules', api);
+  await screen.findByText('Closed Mondays');
+  expect(within(rowOf('Closed Mondays')).getByText('Changes the forecast: Closed on Mondays from Jan 5, 2027')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Edit “Closed Mondays”' }));
+  const fields = section(editingRow());
+  expect(within(fields).getByLabelText<HTMLInputElement>('Starts').value).toBe('2027-01-05');
+  expect(within(fields).getByLabelText<HTMLInputElement>('Ends (optional)').value).toBe('');
+  expect(within(fields).getByRole('button', { name: 'Monday' }).getAttribute('aria-pressed')).toBe('true');
+  // Saved unchanged, the schedule goes as it was.
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  expect(await screen.findByText('Saved.')).toBeTruthy();
+  expect(writes(api).at(-1)).toEqual({ method: 'PATCH', path: `${PATH}/r1`, body: { text: 'Closed Mondays', schedule: CLOSED_MONDAYS } });
+  fireEvent.click(screen.getByRole('button', { name: 'Edit “Closed Mondays”' }));
+  fireEvent.click(within(section(editingRow())).getByRole('button', { name: 'Remove from the forecast' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await waitFor(() => { expect(within(rowOf('Closed Mondays')).getByText('TownwiseAI reads this. It doesn’t change the forecast.')).toBeTruthy(); });
+  expect(writes(api).at(-1)).toEqual({ method: 'PATCH', path: `${PATH}/r1`, body: { text: 'Closed Mondays', schedule: null } });
+
+  // A rule with no schedule gets one from its edit.
+  fireEvent.click(screen.getByRole('button', { name: 'Edit “Patio opens in May”' }));
+  const row = editingRow();
+  fireEvent.click(within(row).getByRole('button', { name: 'Change the forecast' }));
+  fireEvent.change(within(section(row)).getByLabelText('Starts'), { target: { value: '2027-05-01' } });
+  fireEvent.click(within(section(row)).getByRole('button', { name: 'Private event' }));
+  fireEvent.change(within(section(row)).getByLabelText('Expected guests (optional)'), { target: { value: '40' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await waitFor(() => { expect(within(rowOf('Patio opens in May')).getByText(/^Changes the forecast: /)).toBeTruthy(); });
+  expect(writes(api).at(-1)).toEqual({
+    method: 'PATCH', path: `${PATH}/r2`, body: {
+      text: 'Patio opens in May',
+      schedule: { kind: 'private_event', startDate: '2027-05-01', endDate: null, weekdays: null, effect: 'more_guests', expectedGuests: 40, startTime: null, endTime: null },
+    },
+  });
 });
 
 test('adds a rule with Enter, edits one in place and deletes one after confirming', async () => {
@@ -240,6 +341,7 @@ test('under view-as every write control is disabled and described by the read-on
   expect(field().getAttribute('aria-readonly')).toBe('true');
   expect(field().getAttribute('aria-describedby')).toContain('rules-ro');
   expectReadOnly(screen.getByRole('button', { name: 'Add rule' }), 'rules-ro');
+  expectReadOnly(screen.getByRole('button', { name: 'Change the forecast' }), 'rules-ro');
   expectReadOnly(screen.getByRole('button', { name: 'Edit “Closed Mondays”' }), 'rules-ro');
   expectReadOnly(screen.getByRole('button', { name: 'Delete “Closed Mondays”' }), 'rules-ro');
   fireEvent.click(screen.getByRole('button', { name: 'Delete “Closed Mondays”' }));

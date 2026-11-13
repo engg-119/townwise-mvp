@@ -9,6 +9,7 @@ import { fakeAuth } from '../../helpers/fakes';
 import { ACCESS, EMAIL, fakePortalApi, meOf, offline, orgOf, refusal, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
 import { holiday, townEvent } from '../analytics/fakes';
 import { noteOf } from '../locations/fakes';
+import { ruleOf } from '../rules/fakes';
 import { calendarFake, forecastDay, forecastOf, NOTES_PATH, PATH, savedNote, type CalendarFake } from './fakes';
 
 // P27 Calendar on web (spec 16.3, D30): the month grid with each day's published forecast, the
@@ -80,7 +81,7 @@ function november(noted?: { guests: number; id: string }): unknown {
   return forecastOf(days);
 }
 
-function setup(me: MeResponse = meOf(ACCESS.member), init: Partial<Pick<CalendarFake, 'notes' | 'forecasts'>> = {}): { api: FakePortalApi; fake: CalendarFake } {
+function setup(me: MeResponse = meOf(ACCESS.member), init: Partial<Pick<CalendarFake, 'notes' | 'rules' | 'forecasts'>> = {}): { api: FakePortalApi; fake: CalendarFake } {
   const fake = calendarFake({
     events: [GAME, VETERANS],
     days: [{ date: '2026-11-07', guests: 138, netSalesCents: 276000 }],
@@ -175,14 +176,43 @@ test('opens at ?day= with that day selected and in the sidebar', async () => {
   expect(within(day).getAllByRole('link', { name: 'Source: home.dartmouth.edu' })[0]?.getAttribute('href')).toBe('https://home.dartmouth.edu/');
 });
 
+test('a business rule with a schedule (D31): its reason shows under Why, and the rule under On the calendar with its summary and a link to Rules', async () => {
+  const closedMondays = ruleOf('r1', 'Sentinel shut Mondays', {
+    schedule: { kind: 'closure', startDate: '2026-11-01', endDate: null, weekdays: [1], effect: 'closed', expectedGuests: null, startTime: null, endTime: null },
+    scheduleSummary: 'Closed on Mondays from Nov 1, 2026',
+  });
+  const days = (november() as { days: unknown[] }).days.map((day) => ((day as { date: string }).date === '2026-11-16' ? forecastDay({
+    date: '2026-11-16', status: 'closed', low: null, mid: null, high: null,
+    reasons: [{ kind: 'rule', label: 'Your rule: closed on Mondays', effectPct: null, sources: [], note: null, rule: { id: 'r1', guests: null, outcome: 'closed' } }],
+  }) : day));
+  const { api } = setup(meOf(ACCESS.member), { rules: [closedMondays, ruleOf('r2', 'Patio opens in May')], forecasts: { '2026-11': forecastOf(days as never) } });
+  await renderAt('/locations/l1/calendar?day=2026-11-16', api);
+  const day = panel();
+  expect(within(day).getByText('Closed.')).toBeTruthy();
+  expect(within(day).getByText('From your business rule.')).toBeTruthy();
+  expect(within(day).getByText('Your rule: closed on Mondays')).toBeTruthy();
+  expect(within(day).getByText('Closes the day')).toBeTruthy();
+  expect(within(day).getByText('Your rule: Sentinel shut Mondays')).toBeTruthy();
+  expect(within(day).getByText('Closed on Mondays from Nov 1, 2026')).toBeTruthy();
+  expect(within(day).queryByText('Your rule: Patio opens in May')).toBeNull();
+  // No inline Edit: the rule is changed on the Rules page.
+  const link = within(day).getByRole('link', { name: 'Open business rules' });
+  expect(link.getAttribute('href')).toBe('/locations/l1/rules');
+  expect(within(day).queryByRole('button', { name: /Sentinel/ })).toBeNull();
+  // A day no rule covers lists none.
+  fireEvent.click(cell('2026-11-17'));
+  await waitFor(() => { expect(within(panel()).getByRole('heading', { name: 'Tue, Nov 17, 2026' })).toBeTruthy(); });
+  expect(within(panel()).queryByText(/^Your rule: /)).toBeNull();
+});
+
 test('the forecast read covers exactly the shown month (one request of at most 31 days)', async () => {
   const { api, fake } = setup();
   await renderAt('/locations/l1/calendar', api);
   expect(cell('2026-11-11').getAttribute('aria-selected')).toBe('true');
   expect(within(panel()).getByRole('heading', { name: 'Today, Wed, Nov 11' })).toBeTruthy();
   expect(forecastReads(fake)).toEqual([NOVEMBER_FORECAST]);
-  // Sales days only for the month's past part.
-  expect(fake.paths.filter((path) => path.includes('/sales/days?'))).toEqual([`${PATH}/sales/days?from=2026-11-01&to=2026-11-10`]);
+  // Sales days only for the month's past part, and the 8 weeks before it that likely closed reads (spec D32).
+  expect(fake.paths.filter((path) => path.includes('/sales/days?'))).toEqual([`${PATH}/sales/days?from=2026-09-06&to=2026-11-10`]);
   fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
   expect(await screen.findByRole('grid', { name: 'December 2026' })).toBeTruthy();
   expect(forecastReads(fake)).toEqual([NOVEMBER_FORECAST, `${PATH}/forecast?from=2026-12-01&to=2026-12-31`]);

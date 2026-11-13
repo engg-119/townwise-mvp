@@ -1,13 +1,14 @@
 import type { z } from 'zod';
 
 import { ApiError, type ApiClient, type RequestOptions } from '../../../src/api/client';
-import type { Rule } from '../../../src/portal/rules/api';
+import type { Rule, RuleSchedule } from '../../../src/portal/rules/api';
 import { normalizeRule } from '../../../src/portal/rules/rules';
 import { ADMIN_EMAIL, EMAIL, refusal } from '../../helpers/portal';
 
 // The Business rules routes (spec 10.16) for fakePortalApi's `fallback`: GET .../rules answers `rules` (a list, an
-// ApiError, or a promise of either) with the 30 limit; POST, PATCH and DELETE change the list as the API would. A
-// write answers an ApiError instead when `fail` has one for it, keyed "METHOD /path".
+// ApiError, or a promise of either) with the 30 limit; POST, PATCH and DELETE change the list as the API would, a
+// schedule included (its summary is fakeSummary's, not the API's words). A write answers an ApiError instead when
+// `fail` has one for it, keyed "METHOD /path".
 
 export interface RulesFake extends ApiClient {
   rules: Rule[] | ApiError | Promise<Rule[] | ApiError>;
@@ -21,6 +22,11 @@ export function ruleOf(id: string, text: string, extra?: Partial<Rule>): Rule {
     id, text, addedVia: 'page', createdByEmail: ADMIN_EMAIL, createdAt: '2026-03-02T15:00:00.000Z', updatedAt: '2026-03-02T15:00:00.000Z',
     canEdit: true, ...extra,
   };
+}
+
+/** The fake's summary of a schedule; the API words its own (api/src/forecasts/reasons.ts scheduleSummary). */
+export function fakeSummary(schedule: RuleSchedule | null): string | null {
+  return schedule === null ? null : `Closed on Tuesdays from ${schedule.startDate}`;
 }
 
 /** `count` rules, r1 first. */
@@ -49,16 +55,24 @@ export function rulesFake(rules: RulesFake['rules'] = []): RulesFake {
         if (answer instanceof ApiError) throw answer;
         return schema.parse({ rules: answer, limit: 30 });
       }
-      const text = normalizeRule((opts?.body as { text: string } | undefined)?.text ?? '');
+      const body = opts?.body as { text?: string; schedule?: RuleSchedule | null } | undefined;
+      const text = normalizeRule(body?.text ?? '');
+      const schedule = body?.schedule ?? null;
       if (method === 'POST' && id === undefined) {
         next += 1;
-        const rule = ruleOf(`r${String(next)}`, text, { createdByEmail: EMAIL, createdAt: '2026-11-04T15:00:00.000Z', updatedAt: '2026-11-04T15:00:00.000Z' });
+        const rule = ruleOf(`r${String(next)}`, text, {
+          createdByEmail: EMAIL, createdAt: '2026-11-04T15:00:00.000Z', updatedAt: '2026-11-04T15:00:00.000Z',
+          ...(body?.schedule === undefined ? {} : { schedule, scheduleSummary: fakeSummary(schedule) }),
+        });
         fake.rules = [...list(), rule];
         return schema.parse({ rule });
       }
       const existing = list().find((rule) => rule.id === id);
       if (method === 'PATCH' && existing !== undefined) {
-        const rule = { ...existing, text, updatedAt: '2026-11-04T16:00:00.000Z' };
+        const rule = {
+          ...existing, updatedAt: '2026-11-04T16:00:00.000Z', ...(body?.text === undefined ? {} : { text }),
+          ...(body?.schedule === undefined ? {} : { schedule, scheduleSummary: fakeSummary(schedule) }),
+        };
         fake.rules = list().map((other) => (other.id === id ? rule : other));
         return schema.parse({ rule });
       }

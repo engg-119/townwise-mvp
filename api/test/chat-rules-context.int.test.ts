@@ -78,8 +78,11 @@ async function rawParams(id: string): Promise<string[]> {
   return (doc?.messages as { param: string }[]).map((m) => m.param);
 }
 
+/** Rules with no schedule, as the block lists them. */
+const plain = (texts: readonly string[]) => texts.map((text) => ({ text, summary: null }));
+
 const withBlock = (rules: readonly string[], content: string): BetaMessageParam => ({
-  role: 'user', content: [{ type: 'text', text: rulesBlock(rules) }, { type: 'text', text: content }],
+  role: 'user', content: [{ type: 'text', text: rulesBlock(plain(rules)) }, { type: 'text', text: content }],
 });
 
 /** A stored message with a rules block, as a later request sends it once a newer block replaced that one. */
@@ -132,7 +135,7 @@ describe('business rules in the person\'s message', () => {
     await turn({ conversationId: first.id, content: 'What about now?' });
     expect(sentUserMessage()).toEqual(withBlock([], 'What about now?'));
     expect(JSON.stringify(model.calls.at(-1)?.params.messages)).not.toContain('Closed Mondays');
-    expect(rulesBlock([])).toContain('There are no business rules for this location now.');
+    expect(rulesBlock(plain([]))).toContain('There are no business rules for this location now.');
     await turn({ conversationId: first.id, content: 'And now?' });
     expect(sentUserMessage()).toEqual({ role: 'user', content: 'And now?' });
     const sent = messagesOf(model.calls.at(-1));
@@ -141,6 +144,26 @@ describe('business rules in the person\'s message', () => {
     expect(JSON.stringify(sent)).not.toContain('Closed Mondays');
     // The stored first message still holds it; only what is sent changes.
     expect((await rawParams(first.id))[0]).toContain('Closed Mondays');
+  });
+
+  it('a rule with a schedule carries its summary on its own line, and adding or taking off a schedule sends a new block', async () => {
+    const schedule = {
+      kind: 'closure', startDate: '2026-12-07', endDate: null, weekdays: [1], effect: 'closed', expectedGuests: null, startTime: null, endTime: null,
+    };
+    const res = await call(server, `/api/org/locations/${locationId}/rules`, { session: author, json: { text: 'Closed Mondays', schedule } });
+    expect(res.status).toBe(201);
+    const ruleId = (await res.json() as { rule: { id: string } }).rule.id;
+    await addRule('Patio opens in May');
+    const scheduled = [{ text: 'Closed Mondays', summary: 'Closed on Mondays from Dec 7, 2026' }, { text: 'Patio opens in May', summary: null }];
+    const first = await turn({ content: 'Are we open Monday?' });
+    expect(sentUserMessage()).toEqual({
+      role: 'user', content: [{ type: 'text', text: rulesBlock(scheduled) }, { type: 'text', text: 'Are we open Monday?' }],
+    });
+    expect(rulesBlock(scheduled)).toContain('- Closed Mondays\n  Forecast schedule: Closed on Mondays from Dec 7, 2026\n- Patio opens in May');
+    const off = await call(server, `/api/org/locations/${locationId}/rules/${ruleId}`, { method: 'PATCH', session: author, json: { schedule: null } });
+    expect(off.status).toBe(200);
+    await turn({ conversationId: first.id, content: 'And now?' });
+    expect(sentUserMessage()).toEqual(withBlock(['Closed Mondays', 'Patio opens in May'], 'And now?'));
   });
 
   it('a regenerate resends the stored message with its block and adds none', async () => {

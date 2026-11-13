@@ -204,7 +204,7 @@ describe('P16 Location settings', () => {
     const { api } = setup();
     const { router } = await renderApp('/locations/l2/settings', api);
     expect(await screen.findByRole('heading', { name: 'Business rules' })).toBeTruthy();
-    expect(screen.getByText('The standing facts TownwiseAI keeps in mind for River Grill. They never change Townwise’s forecast.')).toBeTruthy();
+    expect(screen.getByText('The standing facts TownwiseAI keeps in mind for River Grill. Only a rule with a schedule changes Townwise’s forecast.')).toBeTruthy();
     // A static section: it reads nothing, and the link opens the page.
     expect(api.calls.some((call) => call.path.endsWith('/rules'))).toBe(false);
     await fireEvent.press(screen.getByRole('link', { name: 'Edit business rules' }));
@@ -214,7 +214,7 @@ describe('P16 Location settings', () => {
     const one = setup();
     one.api.org = orgOf('org_admin', [only('l2')]);
     await renderApp('/locations/l2/settings', one.api);
-    expect(await screen.findByText('The standing facts TownwiseAI keeps in mind for Test Group. They never change Townwise’s forecast.')).toBeTruthy();
+    expect(await screen.findByText('The standing facts TownwiseAI keeps in mind for Test Group. Only a rule with a schedule changes Townwise’s forecast.')).toBeTruthy();
   });
 
   test('with one location, Add another location opens Add location, since Locations opens this Home', async () => {

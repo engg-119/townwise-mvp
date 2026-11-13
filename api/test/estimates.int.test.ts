@@ -214,8 +214,8 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
     expect(body.days[0]).toEqual({
       date: '2026-05-01', weekday: 'Fri', status: 'open', low: 80, mid: 100, high: 120, baseline: null,
       reasons: [
-        { kind: 'weekday', label: 'Friday', effectPct: null, sources: [], note: null },
-        { kind: 'term', label: 'Spring term classes', effectPct: null, sources: expect.any(Array) as unknown, note: null },
+        { kind: 'weekday', label: 'Friday', effectPct: null, sources: [], note: null, rule: null },
+        { kind: 'term', label: 'Spring term classes', effectPct: null, sources: expect.any(Array) as unknown, note: null, rule: null },
       ],
       runId: first, madeAt: '2026-05-01', madeAfterDay: true, actual: 100, inRange: true,
       model: { status: 'open', low: 80, mid: 100, high: 120 }, noteGuests: 0, moreNotes: 0,
@@ -332,8 +332,8 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
         status: 'open', low: 150, mid: 170, high: 190, model: { status: 'open', low: 80, mid: 100, high: 120 }, noteGuests: 70, moreNotes: 0,
       });
       expect(dayOf(body, '2026-06-06')?.reasons).toEqual([
-        { kind: 'note', label: 'Your private event, 70 guests, 6 pm to 9 pm', effectPct: null, sources: [], note: { id: noteId, guests: 70, outcome: 'added' } },
-        { kind: 'weekday', label: 'Saturday', effectPct: null, sources: [], note: null },
+        { kind: 'note', label: 'Your private event, 70 guests, 6 pm to 9 pm', effectPct: null, sources: [], note: { id: noteId, guests: 70, outcome: 'added' }, rule: null },
+        { kind: 'weekday', label: 'Saturday', effectPct: null, sources: [], note: null, rule: null },
       ]);
       expect(dayOf(body, '2026-06-05')).toMatchObject(UNCHANGED);
       expect(JSON.stringify(body)).not.toContain('sentinel');
@@ -402,6 +402,75 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
       expect(day).toMatchObject(UNCHANGED);
       expect(day?.reasons.map((reason) => reason.kind)).toEqual(['weekday']);
       await notes.deleteOne({ _id: elsewhere._id });
+    });
+
+    describe('business rules with a schedule (D31)', () => {
+      const RULE_TEXT = 'Sentinel rule for the sentinel-family dinners';
+      const rulesPath = (location = noted) => `/api/org/locations/${location}/rules`;
+      const schedule = (fields: Record<string, unknown>) => ({
+        kind: 'closure', startDate: '2026-05-01', endDate: null, weekdays: [1], effect: 'closed', expectedGuests: null, startTime: null, endTime: null,
+        ...fields,
+      });
+      async function addRule(text: string, ruleSchedule: unknown, location = noted): Promise<string> {
+        const res = await call(server, rulesPath(location), { session: member, json: { text, schedule: ruleSchedule } });
+        expect(res.status).toBe(201);
+        return (await res.json() as { rule: { id: string } }).rule.id;
+      }
+      beforeEach(async () => { await server.connection.collection('tw_business_rules').deleteMany({ locationId: new Types.ObjectId(noted) }); });
+
+      it('closed Mondays closes every Monday from today on with a rule reason worded from the schedule; taking the schedule off restores them', async () => {
+        const ruleId = await addRule(RULE_TEXT, schedule({}));
+        const body = await read();
+        for (const monday of ['2026-06-01', '2026-06-08']) {
+          expect(dayOf(body, monday)).toMatchObject({ status: 'closed', low: null, mid: null, high: null, model: { status: 'open', low: 80, mid: 100, high: 120 } });
+          expect(dayOf(body, monday)?.reasons[0]).toEqual({
+            kind: 'rule', label: 'Your rule: closed on Mondays', effectPct: null, sources: [], note: null, rule: { id: ruleId, guests: null, outcome: 'closed' },
+          });
+        }
+        // A past Monday keeps the model's figures, and the week a rule closed a day in is left out.
+        expect(dayOf(body, '2026-05-25')).toMatchObject({ ...UNCHANGED, reasons: [expect.objectContaining({ kind: 'weekday' }), expect.objectContaining({ rule: { id: ruleId, guests: null, outcome: 'past_day' } })] });
+        expect(dayOf(body, '2026-06-02')).toMatchObject(UNCHANGED);
+        expect(body.weeks.map((week) => week.from)).toEqual(['2026-05-25']);
+        expect(JSON.stringify(body)).not.toContain('entinel');
+        const res = await call(server, `${rulesPath()}/${ruleId}`, { method: 'PATCH', session: member, json: { schedule: null } });
+        expect(res.status).toBe(200);
+        const after = await read();
+        expect(dayOf(after, '2026-06-08')).toMatchObject(UNCHANGED);
+        expect(after.weeks).toHaveLength(3);
+      });
+
+      it('a rule’s party and a note’s on the same day add up; a closure from either wins; a rule without a schedule changes nothing', async () => {
+        await addRule('Rehearsal dinners on Saturdays', schedule({ kind: 'private_event', effect: 'more_guests', expectedGuests: 40, weekdays: [6] }));
+        await addRule('We are a cozy place', null);
+        await save(event({}));
+        await save({ kind: 'closure', startDate: '2026-06-13', endDate: '2026-06-13', effect: 'closed', detail: SECRET });
+        const body = await read();
+        expect(dayOf(body, '2026-06-06')).toMatchObject({ status: 'open', low: 190, mid: 210, high: 230, noteGuests: 110 });
+        expect(dayOf(body, '2026-06-06')?.reasons.map((reason) => [reason.kind, reason.rule?.outcome ?? reason.note?.outcome ?? null])).toEqual([
+          ['rule', 'added'], ['note', 'added'], ['weekday', null],
+        ]);
+        expect(dayOf(body, '2026-06-13')).toMatchObject({ status: 'closed', noteGuests: 0 });
+        expect(dayOf(body, '2026-06-13')?.reasons.map((reason) => reason.rule?.outcome ?? reason.note?.outcome ?? null)).toEqual(['closed', null, 'day_closed']);
+        // The week of June 1 has no status change, so it shifts by the rule's 40 on June 6 and the note's 70.
+        expect(body.weeks.map((week) => [week.from, week.mid, week.noteGuests])).toEqual([['2026-05-25', 700, 0], ['2026-06-01', 810, 110]]);
+        expect(dayOf(body, '2026-06-05')).toMatchObject(UNCHANGED);
+      });
+
+      it('another location’s or organization’s scheduled rule never changes this location’s forecast', async () => {
+        const otherOrg = await createOrg(server, { name: 'Other Ruled Kitchen' });
+        const raw = (org: string, location: string) => ({
+          _id: new Types.ObjectId(), orgId: new Types.ObjectId(org), locationId: new Types.ObjectId(location), text: 'Closed every day',
+          key: `closed every day ${new Types.ObjectId().toHexString()}`, addedVia: 'page', createdBy: 'fixture',
+          schedule: schedule({ weekdays: null }), createdAt: server.clock.now(), updatedAt: server.clock.now(),
+        });
+        const rules = server.connection.collection('tw_business_rules');
+        const elsewhere = raw(orgId, hanover);
+        const foreign = raw(otherOrg, noted);
+        await rules.insertMany([elsewhere, foreign]);
+        const body = await read();
+        expect(body.days.every((day) => day.status === 'open' && day.reasons.every((reason) => reason.kind === 'weekday'))).toBe(true);
+        await rules.deleteMany({ _id: { $in: [elsewhere._id, foreign._id] } });
+      });
     });
 
     it('with no published run, notes change nothing and the read says no_published_forecast', async () => {

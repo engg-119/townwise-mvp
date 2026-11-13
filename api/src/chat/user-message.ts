@@ -2,7 +2,9 @@
 // before what the person typed: today the location's business rules (spec 10.16), added only when they differ from the
 // last rules block on the turn's path, so unchanged rules add nothing and a location with no rules sends the plain
 // string it always did. The block is stored with the message, so later requests keep the same prefix until a newer
-// block replaces it; requests then send the older one as a stub (historyForModel). The person's own text is always the
+// block replaces it; requests then send the older one as a stub (historyForModel). A rule with a schedule (D31) has a
+// second, indented line with the schedule in code-made words, which a rule's one-line text can never forge; with no
+// schedule anywhere the block is what it was before schedules existed. The person's own text is always the
 // message's last block; a context block is never it, so typing the tag never makes one.
 import type { BetaContentBlockParam, BetaMessageParam } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 
@@ -11,23 +13,30 @@ const RULES_BLOCK_CLOSE = '</business_rules>';
 const RULES_LEAD = 'Townwise added this before the person\'s message; they didn\'t type it. The business rules the team saved for this location, as of this message, replacing any earlier list in this conversation:';
 const NO_RULES = 'There are no business rules for this location now.';
 
+/** A rule as the block lists it: its text, and its schedule's summary (scheduleSummary) when it has one. */
+export interface BlockRule {
+  readonly text: string;
+  readonly summary: string | null;
+}
+
 /** What Townwise adds before the person's text. */
 export interface MessageContext {
-  /** The location's rule texts, oldest first. */
-  readonly rules: readonly string[];
+  /** The location's rules, oldest first. */
+  readonly rules: readonly BlockRule[];
 }
 
 /**
  * A rule's text as the block carries it: `<` and `>` become their full-width look-alikes, so no rule can close the
  * block early. Any member writes rules and every member's chat at the location reads them, an org admin's included.
  */
-function blockLine(rule: string): string {
-  return `- ${rule.replaceAll('<', '＜').replaceAll('>', '＞')}`;
+function blockLines(rule: BlockRule): string[] {
+  const line = `- ${rule.text.replaceAll('<', '＜').replaceAll('>', '＞')}`;
+  return rule.summary === null ? [line] : [line, `  Forecast schedule: ${rule.summary}`];
 }
 
-/** The block for these rules: one line each, or the line saying there are none now. */
-export function rulesBlock(texts: readonly string[]): string {
-  const body = texts.length === 0 ? [NO_RULES] : texts.map(blockLine);
+/** The block for these rules: a line each (two with a schedule), or the line saying there are none now. */
+export function rulesBlock(rules: readonly BlockRule[]): string {
+  const body = rules.length === 0 ? [NO_RULES] : rules.flatMap(blockLines);
   return [RULES_BLOCK_OPEN, RULES_LEAD, ...body, RULES_BLOCK_CLOSE].join('\n');
 }
 

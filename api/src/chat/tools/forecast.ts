@@ -6,7 +6,8 @@
 // newer run is never credited with an older one's days; and how past days compared with what happened. From the town's
 // today on, each day already includes the owner's saved notes (forecasts/adjust.ts, spec 14.5): modelRange is the model's
 // own figures when a note changed them, noteGuests the guests notes add, and a note's reason gives its guest count and
-// what it did, never its detail or id. With no published forecast it says so, and what to use instead. The model, its features, its training rows, the run file and staff ids never
+// what it did, never its detail or id. A business rule with a schedule (D31) applies the same way, as a rule reason with
+// its guest count and outcome, never the rule's text or id. With no published forecast it says so, and what to use instead. The model, its features, its training rows, the run file and staff ids never
 // reach the API, so they cannot reach the model either.
 import { z } from 'zod';
 
@@ -91,6 +92,7 @@ export function forecastContent(window: ForecastWindow): Record<string, unknown>
       reasons: day.reasons.map((reason) => ({
         label: reason.label, effectPct: reason.effectPct, sources: reason.sources.map((source) => source.url),
         note: reason.note === null ? null : { guests: reason.note.guests, outcome: reason.note.outcome },
+        rule: reason.rule === null ? null : { guests: reason.rule.guests, outcome: reason.rule.outcome },
       })),
       modelRange: modelRangeOf(day), noteGuests: day.noteGuests,
       madeAt: day.madeAt, madeAfterDay: day.madeAfterDay, actual: day.actual, inRange: day.inRange,
@@ -114,7 +116,7 @@ const forecastResult = z.object({
 export const forecastTool: ChatTool<ForecastRange> = {
   definition: {
     name: 'get_forecast',
-    description: 'Townwise\'s published forecast of guests per day for a date range of at most 31 days (both ends included, starting at most 92 days before today), with an 80% range for each day and for whole weeks, the reasons the model recorded, each model\'s version, training range and made-at date with its own accuracy in backtests and so far (over the days it supplied), and how past forecast days compared with what happened (actual and inRange). A booked day is a private buyout with no walk-in range. From today on, each day includes the owner\'s saved notes: a closure closes the day; otherwise a buyout books it, even a day the model expects closed; a private event with a guest count adds its guests, and opens a day the model expects closed with only those guests. modelRange is the model\'s own figures when a note changed them. A note reason\'s outcome says what the note did: added, booked, closed, already_in_forecast (the model counted the event already), no_guest_count, not_counted (only private events change numbers), day_closed (the day stays closed), day_booked (the day is booked) or past_day. vsBaselinePct is set only when the model recorded its usual level for the day. Says when no forecast exists, and what to use instead.',
+    description: 'Townwise\'s published forecast of guests per day for a date range of at most 31 days (both ends included, starting at most 92 days before today), with an 80% range for each day and for whole weeks, the reasons the model recorded, each model\'s version, training range and made-at date with its own accuracy in backtests and so far (over the days it supplied), and how past forecast days compared with what happened (actual and inRange). A booked day is a private buyout with no walk-in range. From today on, each day includes the owner\'s saved notes: a closure closes the day; otherwise a buyout books it, even a day the model expects closed; a private event with a guest count adds its guests, and opens a day the model expects closed with only those guests. modelRange is the model\'s own figures when a note changed them. The owner\'s business rules with a schedule apply the same way, each as a reason with rule set in place of note. A note or rule reason\'s outcome says what it did: added, booked, closed, already_in_forecast (the model counted the event already), no_guest_count, not_counted (only private events change numbers), day_closed (the day stays closed), day_booked (the day is booked) or past_day. vsBaselinePct is set only when the model recorded its usual level for the day. Says when no forecast exists, and what to use instead.',
     input_schema: {
       type: 'object',
       properties: { from: DATE, to: DATE },

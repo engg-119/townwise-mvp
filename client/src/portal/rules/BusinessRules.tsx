@@ -7,6 +7,8 @@ import { formatDate } from '../format';
 import { useAction } from '../hooks';
 import { LoadFailure, Loading } from '../locations/parts';
 import { shownLocationName } from '../locations/naming';
+import { NoteFields } from '../locations/NoteFields';
+import { emptyDraft, type NoteDraft, type NoteMessages, type ScheduleInput } from '../locations/noteRules';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { locationHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
@@ -15,14 +17,16 @@ import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { EmptyState, ErrorNotice, Notice, ReadOnlyLine } from '../ui/feedback';
 import { FormField } from '../ui/FormField';
 import { Columns, Section, Stack } from '../ui/layout';
-import { Body, Small } from '../ui/text';
-import type { Rule } from './api';
-import { counterLine, normalizeRule, RULES_COPY, ruleProblem } from './rules';
+import { Body, Mono, Small } from '../ui/text';
+import type { Rule, RuleWrite } from './api';
+import { checkSchedule, counterLine, draftOfSchedule, forecastLine, normalizeRule, RULES_COPY, ruleProblem } from './rules';
 import { useRules } from './useRules';
 
 // P28 Business rules (spec 16.3, 10.16, D31; /locations/[id]/rules, members): standing facts about how the location
-// runs, which TownwiseAI reads with every message the person sends. They never change Townwise's forecast; notes do,
-// and the lead says which. The page is the top bar's Rules section. “New rule” and the page's one primary,
+// runs, which TownwiseAI reads with every message the person sends. A rule changes Townwise's forecast only with a
+// schedule: Add and Edit have an optional “Change the forecast” section with the note form's fields and checks
+// (NoteFields, checkSchedule), and “Remove from the forecast” takes it off. Each rule says under it whether it changes
+// the forecast, with its schedule in the API's words. The page is the top bar's Rules section. “New rule” and the page's one primary,
 // “Add rule”, add a rule (Enter submits on web); at the limit both are disabled, described by the limit line. Each
 // rule shows who added it and how; its author or an org admin edits it in place or deletes it after a confirm.
 // Errors show where the write happened: on the add form, the row's edit or the dialog. A 404 on an edit or a delete
@@ -40,6 +44,82 @@ const DELETED_PERSON = 'Deleted person';
 function addedLine(rule: Rule): string {
   const who = rule.createdByEmail === DELETED_PERSON ? 'a deleted person' : rule.createdByEmail;
   return `${rule.addedVia === 'townwise_ai' ? 'Saved from TownwiseAI by' : 'Added by'} ${who}, ${formatDate(rule.createdAt)}`;
+}
+
+const SCHEDULE_HELP = 'Optional. Without it, TownwiseAI reads the rule and the forecast doesn’t change.';
+const SCHEDULE_LEAD = 'Townwise applies this to its forecast as it applies a note: a closure, a buyout or a private event with a guest count changes the days it covers.';
+
+/** The “Change the forecast” section's state: open or not, the note form's draft and its field messages. */
+interface ScheduleState {
+  open: boolean;
+  draft: NoteDraft;
+  messages: NoteMessages;
+}
+
+function scheduleState(rule: Rule | null): ScheduleState {
+  const schedule = rule?.schedule ?? null;
+  return { open: schedule !== null, draft: schedule === null ? emptyDraft('closure') : draftOfSchedule(schedule), messages: {} };
+}
+
+/**
+ * The schedule to send, or null when the section's fields stop the form (their messages are set). `had`: the rule had a
+ * schedule, so a closed section sends null to take it off; without one, a closed section sends nothing.
+ */
+function scheduleToSend(
+  state: ScheduleState, setState: (next: ScheduleState) => void, had: boolean,
+): { schedule?: ScheduleInput | null } | null {
+  if (!state.open) {
+    setState({ ...state, messages: {} });
+    return had ? { schedule: null } : {};
+  }
+  const checked = checkSchedule(state.draft);
+  setState({ ...state, messages: 'messages' in checked ? checked.messages : {} });
+  return 'messages' in checked ? null : { schedule: checked.input };
+}
+
+/**
+ * The optional “Change the forecast” part of the add form and a row's edit. Closed: a button that opens it, and why it is
+ * optional. Open: a group with the note form's fields and “Remove from the forecast”, which closes it.
+ */
+function ScheduleSection(props: {
+  state: ScheduleState;
+  setState: (next: ScheduleState) => void;
+  idPrefix: string;
+  readOnlyId: string | null;
+}): React.JSX.Element {
+  const { state, setState } = props;
+  if (!state.open) {
+    return (
+      <Stack gap={8}>
+        <Actions>
+          <Button
+            variant="outline"
+            label="Change the forecast"
+            {...(props.readOnlyId === null ? {} : { disabled: true, describedBy: props.readOnlyId })}
+            onPress={() => { setState({ ...state, open: true }); }}
+          />
+        </Actions>
+        <Small>{SCHEDULE_HELP}</Small>
+      </Stack>
+    );
+  }
+  return (
+    <View role="group" aria-label="Change the forecast" style={styles.schedule}>
+      <Mono tone="text3">Change the forecast</Mono>
+      <Small>{SCHEDULE_LEAD}</Small>
+      <NoteFields
+        draft={state.draft}
+        set={(patch) => { setState({ ...state, draft: { ...state.draft, ...patch } }); }}
+        messages={state.messages}
+        idPrefix={props.idPrefix}
+        endHelper="Leave it empty to keep it going."
+        noun="rule"
+      />
+      <Actions>
+        <Button variant="link" label="Remove from the forecast" onPress={() => { setState({ ...state, open: false, messages: {} }); }} />
+      </Actions>
+    </View>
+  );
 }
 
 /** A refused write in the page's words; `text` is what was sent, for a 400 the page's own check missed. */
@@ -80,26 +160,28 @@ function RuleField(props: {
   );
 }
 
-/** “New rule” and “Add rule”. Text the API refused stays in the field, with why. */
+/** “New rule”, its optional schedule and “Add rule”. Text the API refused stays in the field, with why. */
 function AddRule(props: {
   atLimit: boolean;
   readOnlyId: string | null;
-  add: (text: string) => Promise<Rule>;
+  add: (write: RuleWrite) => Promise<Rule>;
   onAdded: () => void;
   onGone: () => void;
 }): React.JSX.Element {
   const { add, onAdded, onGone } = props;
   const [text, setText] = useState('');
   const [problem, setProblem] = useState<string | null>(null);
-  const action = useAction(useCallback(async (sent: string) => {
+  const [schedule, setSchedule] = useState<ScheduleState>(() => scheduleState(null));
+  const action = useAction(useCallback(async (write: RuleWrite) => {
     try {
-      await add(sent);
+      await add(write);
     } catch (error) {
       // A new rule can only miss its location, which the list's reload reports.
       if (hasCode(error, 404, 'not_found')) { onGone(); return; }
       throw error;
     }
     setText('');
+    setSchedule(scheduleState(null));
     onAdded();
   }, [add, onAdded, onGone]));
   const blockedBy = props.readOnlyId ?? (props.atLimit ? LIMIT_ID : null);
@@ -108,12 +190,14 @@ function AddRule(props: {
     if (blockedBy !== null || action.pending) return;
     const found = ruleProblem(text);
     setProblem(found);
-    if (found === null) action.run(normalizeRule(text));
+    const sent = scheduleToSend(schedule, setSchedule, false);
+    if (found === null && sent !== null) action.run({ text: normalizeRule(text), ...sent });
   }
 
   return (
     <Stack>
       <RuleField label="New rule" value={text} onChange={setText} onSubmit={submit} message={problem} readOnlyId={blockedBy} />
+      <ScheduleSection state={schedule} setState={setSchedule} idPrefix="rule-new" readOnlyId={blockedBy} />
       {props.atLimit ? <Small nativeID={LIMIT_ID}>{RULES_COPY.limit}</Small> : null}
       {action.error === null ? null : <ErrorNotice message={writeError(action.error, text)} />}
       <Actions>
@@ -128,10 +212,13 @@ function AddRule(props: {
   );
 }
 
-/** A row in edit: the field with the rule's text, Save and Cancel. */
+/**
+ * A row in edit: the field with the rule's text, its schedule (open when it has one), Save and Cancel. Save sends the
+ * schedule when the rule has one or the section is open, null when the section was closed on a rule that had one.
+ */
 function EditRule(props: {
   rule: Rule;
-  edit: (ruleId: string, text: string) => Promise<Rule>;
+  edit: (ruleId: string, write: RuleWrite) => Promise<Rule>;
   onSaved: () => void;
   onCancel: () => void;
   onRefused: (error: unknown) => boolean;
@@ -139,9 +226,10 @@ function EditRule(props: {
   const { rule, edit, onSaved, onRefused } = props;
   const [text, setText] = useState(rule.text);
   const [problem, setProblem] = useState<string | null>(null);
-  const action = useAction(useCallback(async (sent: string) => {
+  const [schedule, setSchedule] = useState<ScheduleState>(() => scheduleState(rule));
+  const action = useAction(useCallback(async (write: RuleWrite) => {
     try {
-      await edit(rule.id, sent);
+      await edit(rule.id, write);
     } catch (error) {
       if (onRefused(error)) return;
       throw error;
@@ -153,12 +241,14 @@ function EditRule(props: {
     if (action.pending) return;
     const found = ruleProblem(text);
     setProblem(found);
-    if (found === null) action.run(normalizeRule(text));
+    const sent = scheduleToSend(schedule, setSchedule, (rule.schedule ?? null) !== null);
+    if (found === null && sent !== null) action.run({ text: normalizeRule(text), ...sent });
   }
 
   return (
     <Stack>
       <RuleField label="Edit rule" value={text} onChange={setText} onSubmit={submit} message={problem} readOnlyId={null} />
+      <ScheduleSection state={schedule} setState={setSchedule} idPrefix={`rule-${rule.id}`} readOnlyId={null} />
       {action.error === null ? null : <ErrorNotice message={writeError(action.error, text)} />}
       <Actions>
         <Button variant="outline" label={action.pending ? 'Saving…' : 'Save'} disabled={action.pending} onPress={submit} />
@@ -243,6 +333,7 @@ export function BusinessRules(): React.JSX.Element {
                   ) : (
                     <>
                       <Text style={styles.text}>{rule.text}</Text>
+                      <Small white={(rule.schedule ?? null) !== null}>{forecastLine(rule)}</Small>
                       <Small>{addedLine(rule)}</Small>
                       {rule.canEdit ? (
                         <Actions>
@@ -281,8 +372,8 @@ export function BusinessRules(): React.JSX.Element {
           <Stack>
             <Body>
               Standing facts about how {shown} runs, like “Closed Mondays” or “Brunch only on weekends”. TownwiseAI reads them with
-              every message you send. They never change Townwise’s forecast. For a day that’s different, add a note: a closure, a
-              buyout or a private event with a guest count changes the forecast for its days.
+              every message you send. A rule changes Townwise’s forecast only when you give it a schedule under Change the forecast: a
+              closure, a buyout or a private event with a guest count, on the days you choose. For one day that’s different, add a note.
             </Body>
             <Actions>
               <LinkButton href={locationHref(location.id, 'notes')} label="Open Notes" />
@@ -318,4 +409,5 @@ const styles = StyleSheet.create({
   list: { borderTopWidth: 1, borderTopColor: c.border, maxWidth: 720 },
   row: { gap: theme.space[1], paddingVertical: theme.space[4], borderBottomWidth: 1, borderBottomColor: c.border },
   text: { ...theme.type.sub, color: c.white },
+  schedule: { gap: theme.space[5], paddingLeft: theme.space[4], borderLeftWidth: 1, borderLeftColor: c.line, minWidth: 0 },
 });

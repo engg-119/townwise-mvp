@@ -144,39 +144,66 @@ function hoursOf(draft: NoteDraft, messages: NoteMessages): { startTime: string 
   return { startTime: start === '' ? null : start, endTime: end === '' ? null : end };
 }
 
-/** The API's NoteInput, or the field messages that stop the form. `today` is the server's day (UTC). */
-export function checkNote(draft: NoteDraft, today: string = utcToday()): { input: NoteInput } | { messages: NoteMessages } {
-  const messages: NoteMessages = {};
+/**
+ * A business rule's schedule as the API takes it (spec 10.16, D31): a note's fields but its detail, with `endDate` null
+ * for no end.
+ */
+export interface ScheduleInput extends Omit<NoteInput, 'detail' | 'endDate' | 'startTime' | 'endTime'> {
+  endDate: string | null;
+  startTime: string | null;
+  endTime: string | null;
+}
+
+/**
+ * The fields a note and a rule's schedule share, checked with the API's rules (its validDays), or null with the
+ * messages that stop the form. An empty end date is one day for a note, no end for a schedule (`openEnd`).
+ */
+function checkFields(draft: NoteDraft, today: string, openEnd: boolean, messages: NoteMessages): ScheduleInput | null {
   const start = draft.startDate.trim();
   const typedEnd = draft.endDate.trim();
-  const end = typedEnd === '' ? start : typedEnd;
+  const end = typedEnd === '' ? (openEnd ? null : start) : typedEnd;
   if (start === '') messages.startDate = NOTE_COPY.start;
   else if (!isCalendarDate(start)) messages.startDate = NOTE_COPY.date;
   else if (start < EARLIEST_DATE || start > plusYears(today, 2)) messages.startDate = startRangeCopy(today);
   if (typedEnd !== '' && !isCalendarDate(typedEnd)) messages.endDate = NOTE_COPY.date;
-  else if (messages.startDate === undefined && end < start) messages.endDate = NOTE_COPY.endBefore;
-  else if (messages.startDate === undefined && daysBetween(start, end) > MAX_SPAN_DAYS) messages.endDate = NOTE_COPY.range;
+  else if (messages.startDate === undefined && end !== null && end < start) messages.endDate = NOTE_COPY.endBefore;
+  else if (messages.startDate === undefined && end !== null && daysBetween(start, end) > MAX_SPAN_DAYS) messages.endDate = NOTE_COPY.range;
   const guests = draft.effect === 'closed' && !isBuyout(draft) ? null : guestsOf(draft.expectedGuests);
   if (guests === 'invalid') messages.expectedGuests = NOTE_COPY.guests;
+  const hours = hoursOf(draft, messages);
+  if (guests === 'invalid' || Object.keys(messages).length > 0) return null;
+  const weekdays = [...new Set(draft.weekdays)].sort((a, b) => a - b);
+  return {
+    kind: draft.kind,
+    startDate: start,
+    endDate: end,
+    weekdays: weekdays.length === 0 ? null : weekdays,
+    effect: draft.effect,
+    expectedGuests: guests,
+    startTime: hours.startTime,
+    endTime: hours.endTime,
+  };
+}
+
+/** The API's NoteInput, or the field messages that stop the form. `today` is the server's day (UTC). */
+export function checkNote(draft: NoteDraft, today: string = utcToday()): { input: NoteInput } | { messages: NoteMessages } {
+  const messages: NoteMessages = {};
   const detail = draft.detail.trim();
   if (detail.length > MAX_DETAIL) messages.detail = NOTE_COPY.detailLong;
   else if (draft.kind === 'other' && detail === '') messages.detail = NOTE_COPY.detailOther;
-  const hours = hoursOf(draft, messages);
-  if (guests === 'invalid' || Object.keys(messages).length > 0) return { messages };
-  const weekdays = [...new Set(draft.weekdays)].sort((a, b) => a - b);
-  return {
-    input: {
-      kind: draft.kind,
-      startDate: start,
-      endDate: end,
-      weekdays: weekdays.length === 0 ? null : weekdays,
-      effect: draft.effect,
-      expectedGuests: guests,
-      detail: detail === '' ? null : detail,
-      startTime: hours.startTime,
-      endTime: hours.endTime,
-    },
-  };
+  const fields = checkFields(draft, today, false, messages);
+  if (fields === null || Object.keys(messages).length > 0) return { messages };
+  return { input: { ...fields, endDate: fields.endDate ?? fields.startDate, detail: detail === '' ? null : detail } };
+}
+
+/**
+ * A rule's schedule, or the field messages that stop the form: the note's checks but the detail, which a schedule never
+ * has or needs, and an empty end date for no end. `today` is the server's day (UTC).
+ */
+export function checkSchedule(draft: NoteDraft, today: string = utcToday()): { input: ScheduleInput } | { messages: NoteMessages } {
+  const messages: NoteMessages = {};
+  const fields = checkFields(draft, today, true, messages);
+  return fields === null ? { messages } : { input: fields };
 }
 
 /** “Mondays only”, “Saturdays and Sundays only”, Monday first; null for every day. */

@@ -8,7 +8,7 @@ import { eventLine } from '../analytics/week';
 import type { Note } from '../locations/api';
 import { Loading } from '../locations/parts';
 import { datesLine, hoursLine, KIND_LABEL, weekdaysLine } from '../locations/noteRules';
-import { Actions, Button } from '../ui/Button';
+import { Actions, Button, LinkButton } from '../ui/Button';
 import { Notice, ReadOnlyLine } from '../ui/feedback';
 import { Heading, Mono, Small } from '../ui/text';
 import { forecastWords, type CalendarDayView, type ImportedEvent } from './model';
@@ -17,7 +17,8 @@ import { forecastWords, type CalendarDayView, type ImportedEvent } from './model
 // under it below. Top to bottom: the day; its Forecast (the published figure and range, what the notes changed, a
 // booked or closed day, a past day's guests against the model, or why there is none); Why (the forecast's reasons
 // in the API's order, a note's with what it did); On the calendar (holidays, town events and term dates with their
-// sources, the day's notes with Edit and Delete where the API allows, events from the owner's calendar file with
+// sources, the day's notes with Edit and Delete where the API allows, the business rules whose schedule covers the day
+// with their summary and a link to Rules, where they are changed (D31), events from the owner's calendar file with
 // Make a note); then
 // Add an event, or the note form open in its place. Under view-as the writes are disabled in place with the
 // read-only line. It reads and writes nothing itself: the page owns the reads, the form and the dialog.
@@ -50,6 +51,8 @@ export function CalendarDay(props: {
   view: CalendarDayView | null;
   /** The location's shown name (shownLocationName). */
   locationName: string;
+  /** The location's Business rules page. */
+  rulesHref: string;
   notice: string | null;
   readOnlyId: string | null;
   readOnlyText: string;
@@ -67,7 +70,7 @@ export function CalendarDay(props: {
   }
   const words = forecastWords(view.forecast, props.locationName);
   const ro = readOnlyId === null ? null : { disabled: true, describedBy: readOnlyId };
-  const nothing = view.events.length === 0 && view.notes.length === 0 && view.imported.length === 0;
+  const nothing = view.events.length === 0 && view.notes.length === 0 && view.rules.length === 0 && view.imported.length === 0;
   return (
     <View role="region" aria-label="Selected day" nativeID={PANEL_ID} style={styles.root}>
       <Heading>{view.heading}</Heading>
@@ -124,6 +127,17 @@ export function CalendarDay(props: {
             </View>
           );
         })}
+        {view.rules.map((rule) => (
+          <View key={rule.id} style={styles.item}>
+            <Small white>{`Your rule: ${rule.text}`}</Small>
+            {rule.scheduleSummary === null || rule.scheduleSummary === undefined ? null : <Mono>{rule.scheduleSummary}</Mono>}
+          </View>
+        ))}
+        {view.rules.length === 0 ? null : (
+          <Actions>
+            <LinkButton href={props.rulesHref} label="Open business rules" />
+          </Actions>
+        )}
         {view.imported.map((event) => (
           <View key={event.uid} style={styles.item}>
             <Small white>{`From your calendar: ${event.title}`}</Small>

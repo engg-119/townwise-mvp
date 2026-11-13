@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 
 import type { ApiClient } from '../../api/client';
 import { useLoad, type LoadState } from '../hooks';
-import { createRule, deleteRule, fetchRules, updateRule, type Rule, type RulesList } from './api';
+import { createRule, deleteRule, fetchRules, updateRule, type Rule, type RulesList, type RuleWrite } from './api';
 
 // A location's business rules for one screen (the Business rules page; the TownwiseAI side panel later): the list
 // as loaded, with this screen's own adds, edits and deletes applied in place, so a write needs no reload. Each write
@@ -11,8 +11,8 @@ import { createRule, deleteRule, fetchRules, updateRule, type Rule, type RulesLi
 export interface Rules {
   state: LoadState<RulesList>;
   reload: () => void;
-  add: (text: string) => Promise<Rule>;
-  edit: (ruleId: string, text: string) => Promise<Rule>;
+  add: (write: RuleWrite) => Promise<Rule>;
+  edit: (ruleId: string, write: RuleWrite) => Promise<Rule>;
   remove: (ruleId: string) => Promise<void>;
 }
 
@@ -30,14 +30,14 @@ export function useRules(api: ApiClient, locationId: string): Rules {
     });
   }, [loaded]);
 
-  const add = useCallback(async (text: string) => {
-    const rule = await createRule(api, locationId, text);
+  const add = useCallback(async (write: RuleWrite) => {
+    const rule = await createRule(api, locationId, write);
     change((rules) => [...rules, rule]);
     return rule;
   }, [api, locationId, change]);
 
-  const edit = useCallback(async (ruleId: string, text: string) => {
-    const rule = await updateRule(api, locationId, ruleId, text);
+  const edit = useCallback(async (ruleId: string, write: RuleWrite) => {
+    const rule = await updateRule(api, locationId, ruleId, write);
     change((rules) => rules.map((other) => (other.id === rule.id ? rule : other)));
     return rule;
   }, [api, locationId, change]);

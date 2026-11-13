@@ -8,6 +8,8 @@ import { describe, expect, it } from 'vitest';
 import { daysBetween } from '../src/dates.ts';
 import { eachDay } from '../src/forecasts/file.ts';
 import { HORIZON_DAYS, labInputOf, labInputSchema, type LabInput } from '../src/lab/input.ts';
+import type { ScheduledRule } from '../src/forecasts/adjust.ts';
+import type { RuleSchedule } from '../src/stores/business-rules.ts';
 import type { ForecastRow, ForecastRunRecord } from '../src/stores/forecasts.ts';
 import type { LocationRecord } from '../src/stores/locations.ts';
 import type { NoteRecord } from '../src/stores/notes.ts';
@@ -38,8 +40,11 @@ function note(overrides: Partial<NoteRecord> & Pick<NoteRecord, 'kind' | 'startD
   };
 }
 
-function inputOf(days: readonly SalesDay[], notes: readonly NoteRecord[] = [], champion: Parameters<typeof labInputOf>[0]['champion'] = null): LabInput {
-  const input = labInputOf({ calibration: CALIBRATION, location: HANOVER, days, notes, today: TODAY, champion });
+function inputOf(
+  days: readonly SalesDay[], notes: readonly NoteRecord[] = [], champion: Parameters<typeof labInputOf>[0]['champion'] = null,
+  rules: readonly ScheduledRule[] = [],
+): LabInput {
+  const input = labInputOf({ calibration: CALIBRATION, location: HANOVER, days, notes, rules, today: TODAY, champion });
   if (input === null) throw new Error('no input');
   return labInputSchema.parse(input);
 }
@@ -70,15 +75,16 @@ describe('labInputOf', () => {
     input.days.forEach((each, index) => {
       if (index > 0) expect(daysBetween(input.days[index - 1]?.date ?? '', each.date)).toBe(1);
     });
-    // No stored row: null. A zero-guest day before the cutoff stays zero. After the cutoff: null, even with a row.
+    // No stored row: null. A zero-guest day with sales among days of about 43 guests is likely closed (spec D32): closed,
+    // with no guest count (the next tests). After the cutoff: null, even with a row.
     expect(dayOf(input, '2025-02-10').guests).toBeNull();
-    expect(dayOf(input, '2025-04-15').guests).toBe(0);
+    expect(dayOf(input, '2025-04-15')).toMatchObject({ guests: null, closed: true });
     expect(dayOf(input, '2026-06-01').guests).toBeNull();
     expect(input.days.filter((each) => each.date > '2026-05-31').every((each) => each.guests === null)).toBe(true);
   });
 
   it('is null with no day with guests', () => {
-    expect(labInputOf({ calibration: CALIBRATION, location: HANOVER, days: [day('2026-01-01', 0), day('2026-01-02', null)], notes: [], today: TODAY, champion: null }))
+    expect(labInputOf({ calibration: CALIBRATION, location: HANOVER, days: [day('2026-01-01', 0), day('2026-01-02', null)], notes: [], rules: [], today: TODAY, champion: null }))
       .toBeNull();
   });
 
@@ -177,6 +183,78 @@ describe('labInputOf', () => {
     expect(flags('2026-06-14')).toEqual({ closed: false, privateEvent: true, booked: false });
   });
 
+  it('a likely-closed history day (spec D32) is closed with no guest count, so the lab neither learns from it nor reads it as open', () => {
+    // About 43 guests a day; three near-empty Saturdays, one all-zero Saturday, and two notes saying open.
+    const near = ['2026-04-04', '2026-04-11', '2026-04-18'];
+    const days = history('2025-01-02', '2026-05-31').map((each) => {
+      if (near.includes(each.date)) return day(each.date, 1);
+      return each.date === '2026-04-25' ? day(each.date, 0, 0) : each;
+    });
+    const notes = [
+      note({ kind: 'other', startDate: '2026-04-11', effect: 'fewer_guests' }),
+      note({ kind: 'private_event', startDate: '2026-04-18', effect: 'more_guests' }),
+    ];
+    const input = inputOf(days, notes);
+    expect(dayOf(input, '2026-04-04')).toMatchObject({ guests: null, closed: true, privateEvent: false, booked: false });
+    // A note with more or fewer guests says the day was open: a real slow day the lab learns from.
+    expect(dayOf(input, '2026-04-11')).toMatchObject({ guests: 1, closed: false });
+    expect(dayOf(input, '2026-04-18')).toMatchObject({ guests: 1, closed: false, privateEvent: true });
+    // An all-zero day already reads as closed in the lab (no guests): unchanged.
+    expect(dayOf(input, '2026-04-25')).toMatchObject({ guests: 0, closed: false });
+    expect(dayOf(input, '2026-04-03')).toMatchObject({ closed: false });
+    expect(input.days.filter((each) => each.closed).map((each) => each.date)).toEqual(['2026-04-04']);
+    // The first weeks have too few of their weekday before them for a typical count, so a near-empty one keeps its guests.
+    const early = inputOf([...history('2025-01-02', '2025-01-17'), day('2025-01-18', 1), ...history('2025-01-19', '2026-05-31')]);
+    expect(dayOf(early, '2025-01-18')).toMatchObject({ guests: 1, closed: false });
+  });
+
+  it('a business rule’s schedule (D31) sets the flags exactly as a note would, on history and future days, and never its text', () => {
+    const rule = (id: string, fields: Partial<RuleSchedule> & Pick<RuleSchedule, 'kind' | 'startDate' | 'effect'>): ScheduledRule => ({
+      id: id.repeat(24), schedule: { endDate: null, weekdays: null, expectedGuests: null, startTime: null, endTime: null, ...fields },
+    });
+    const rules = [
+      // Closed Mondays from April 2025, with no end: history Mondays closed, future ones left to the read.
+      rule('1', { kind: 'closure', startDate: '2025-04-07', weekdays: [1], effect: 'closed' }),
+      // A party every Friday in May 2026 and June 2026: privateEvent on history Fridays; on future ones only without a count.
+      rule('2', { kind: 'private_event', startDate: '2026-05-01', endDate: '2026-06-30', weekdays: [5], effect: 'more_guests', expectedGuests: 40 }),
+      rule('3', { kind: 'private_event', startDate: '2026-06-01', endDate: '2026-06-30', weekdays: [6], effect: 'more_guests' }),
+      // A buyout on one history Sunday.
+      rule('4', { kind: 'private_event', startDate: '2026-05-03', endDate: '2026-05-03', effect: 'closed', expectedGuests: 80 }),
+    ];
+    const withRules = inputOf(history('2025-01-02', '2026-05-31'), [], null, rules);
+    const flags = (date: string) => {
+      const { closed, privateEvent, booked } = dayOf(withRules, date);
+      return { closed, privateEvent, booked };
+    };
+    // The same flags a note with these fields gives.
+    const asNotes = inputOf(history('2025-01-02', '2026-05-31'), rules.map((each) => note({
+      ...each.schedule, endDate: each.schedule.endDate ?? '2026-11-29', detail: null,
+    })));
+    expect(withRules.days.map(({ closed, privateEvent, booked }) => [closed, privateEvent, booked]))
+      .toEqual(asNotes.days.map(({ closed, privateEvent, booked }) => [closed, privateEvent, booked]));
+    expect(flags('2025-04-07')).toEqual({ closed: true, privateEvent: false, booked: false });
+    expect(flags('2026-05-25')).toEqual({ closed: true, privateEvent: false, booked: false });
+    expect(flags('2026-05-29')).toEqual({ closed: false, privateEvent: true, booked: false });
+    expect(flags('2026-05-03')).toEqual({ closed: false, privateEvent: true, booked: true });
+    // After dataThrough (2026-05-31): closures and counted parties are the read's; an uncounted party still marks the day.
+    expect(flags('2026-06-01')).toEqual({ closed: false, privateEvent: false, booked: false });
+    expect(flags('2026-06-05')).toEqual({ closed: false, privateEvent: false, booked: false });
+    expect(flags('2026-06-06')).toEqual({ closed: false, privateEvent: true, booked: false });
+    expect(withRules.days.filter((each) => each.closed && each.date > '2026-05-31')).toEqual([]);
+    expect(JSON.stringify(withRules)).not.toContain('1'.repeat(24));
+  });
+
+  it('a rule with more or fewer guests says a near-empty history day was open, as a note does (spec D32)', () => {
+    const days = history('2025-01-02', '2026-05-31').map((each) => (['2026-04-04', '2026-04-11'].includes(each.date) ? day(each.date, 1) : each));
+    const slowSaturdays: ScheduledRule = {
+      id: '5'.repeat(24),
+      schedule: { kind: 'other', startDate: '2026-04-11', endDate: null, weekdays: [6], effect: 'fewer_guests', expectedGuests: null, startTime: null, endTime: null },
+    };
+    const input = inputOf(days, [], null, [slowSaturdays]);
+    expect(dayOf(input, '2026-04-04')).toMatchObject({ guests: null, closed: true });
+    expect(dayOf(input, '2026-04-11')).toMatchObject({ guests: 1, closed: false });
+  });
+
   it('lists town event groups sorted and one_off for an ungrouped event, and never a holiday, title, note detail or name', () => {
     const notes = [note({ kind: 'closure', startDate: '2025-07-04', effect: 'closed' })];
     const input = inputOf(history('2025-01-02', '2026-05-31'), notes);
@@ -219,7 +297,7 @@ describe('labInputOf', () => {
 
   it('carries the calibration’s pattern change date', () => {
     const input = labInputOf({
-      calibration: { ...CALIBRATION, regimeStart: '2025-09-01' }, location: HANOVER, days: history('2025-01-02', '2026-05-31'), notes: [],
+      calibration: { ...CALIBRATION, regimeStart: '2025-09-01' }, location: HANOVER, days: history('2025-01-02', '2026-05-31'), notes: [], rules: [],
       today: TODAY, champion: null,
     });
     expect(input?.regimeStart).toBe('2025-09-01');
@@ -232,7 +310,7 @@ describe('labInputOf', () => {
     expect(dayOf(input, '2026-06-03').guests).toBeNull();
     expect(input.days.at(-1)?.date).toBe('2026-12-01');
     // Only days after today: nothing to calibrate on.
-    expect(labInputOf({ calibration: CALIBRATION, location: HANOVER, days: [day('2026-06-03', 77)], notes: [], today: TODAY, champion: null }))
+    expect(labInputOf({ calibration: CALIBRATION, location: HANOVER, days: [day('2026-06-03', 77)], notes: [], rules: [], today: TODAY, champion: null }))
       .toBeNull();
   });
 
@@ -245,7 +323,7 @@ describe('labInputOf', () => {
   it('a town outside the researched twelve gets interim days and no events', () => {
     const input = labInputOf({
       calibration: CALIBRATION, location: { town: { townId: null, name: 'Elsewhere', state: 'VT' } },
-      days: history('2025-01-02', '2026-05-31'), notes: [], today: TODAY, champion: null,
+      days: history('2025-01-02', '2026-05-31'), notes: [], rules: [], today: TODAY, champion: null,
     });
     expect(input?.days.every((each) => each.term === 'interim' && each.weekOfTerm === -1 && each.events.length === 0)).toBe(true);
   });
@@ -288,7 +366,7 @@ describe('the input the API builds, against the lab', () => {
     }
     const input = labInputOf({
       calibration: { id: 'ab'.repeat(12), regimeStart: '2026-01-05' }, location: HANOVER,
-      days: [...days, day('2026-06-02', 61)], notes, today: '2026-06-01', champion: { run, rows },
+      days: [...days, day('2026-06-02', 61)], notes, rules: [], today: '2026-06-01', champion: { run, rows },
     });
     if (input === null) throw new Error('no input');
     return input;

@@ -59,3 +59,30 @@ test('lists, adds and deletes a rule with 44px targets', async () => {
   expect(within(screen.getByLabelText('Business rules')).getAllByText(/^(Patio opens in May|Kitchen closes at 9)$/)).toHaveLength(2);
   expect(writes(api).at(-1)).toEqual({ method: 'DELETE', path: `${PATH}/r1`, body: undefined });
 });
+
+test('a rule’s schedule: Change the forecast opens the note form’s fields with 44px targets, and Add rule sends the schedule', async () => {
+  const fake = rulesFake([ruleOf('r1', 'Closed Mondays', {
+    schedule: { kind: 'closure', startDate: '2027-01-05', endDate: null, weekdays: [1], effect: 'closed', expectedGuests: null, startTime: null, endTime: null },
+    scheduleSummary: 'Closed on Mondays from Jan 5, 2027',
+  })]);
+  const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: fake });
+  await renderApp('/locations/l1/rules', api);
+  expect(await screen.findByText('Changes the forecast: Closed on Mondays from Jan 5, 2027')).toBeTruthy();
+  await fireEvent.changeText(screen.getByLabelText('New rule'), 'Closed Tuesdays');
+  const open = screen.getByRole('button', { name: 'Change the forecast' });
+  expect(minHeightOf(open)).toBeGreaterThanOrEqual(44);
+  await fireEvent.press(open);
+  for (const name of ['Closure', 'Tuesday', 'Remove from the forecast']) {
+    expect(minHeightOf(screen.getByRole('button', { name }))).toBeGreaterThanOrEqual(44);
+  }
+  await fireEvent.changeText(screen.getByLabelText('Starts'), '2026-12-01');
+  await fireEvent.press(screen.getByRole('button', { name: 'Tuesday' }));
+  await fireEvent.press(screen.getByRole('button', { name: 'Add rule' }));
+  expect(await screen.findByText('Closed Tuesdays')).toBeTruthy();
+  expect(writes(api)).toEqual([{
+    method: 'POST', path: PATH, body: {
+      text: 'Closed Tuesdays',
+      schedule: { kind: 'closure', startDate: '2026-12-01', endDate: null, weekdays: [2], effect: 'closed', expectedGuests: null, startTime: null, endTime: null },
+    },
+  }]);
+});

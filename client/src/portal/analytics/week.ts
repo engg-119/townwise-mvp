@@ -1,4 +1,4 @@
-import type { ForecastDay } from '../estimates/api';
+import { guestsFromWords, yoursDid, type ForecastDay } from '../estimates/api';
 import { formatCount, formatDate, plural } from '../format';
 import type { Note } from '../locations/api';
 import { addDays, daysBetween, EARLIEST_DATE, monthRange } from '../locations/dates';
@@ -6,7 +6,7 @@ import { valueOf } from '../locations/sales';
 import type { Calendar, TownEvent } from './api';
 import { usual, type Usual } from './baseline';
 import { rowOf } from './cells';
-import { dayFlags, eventsOf, notesOf, type DayContext } from './days';
+import { dayFlags, eventsOf, likelyClosedWords, notesOf, type DayContext } from './days';
 import type { DayRecord } from './history';
 import { METRIC_NOUN, MONTH_NAMES, metricNumber, metricText, shortDate, signedPercent, WEEKDAY_NAMES, weekdayOf, type Metric } from './words';
 
@@ -106,6 +106,8 @@ export interface PastDay {
   date: string;
   value: number | null;
   closed: boolean;
+  /** Closed only because its guests were near zero for its weekday (spec D32). */
+  likelyClosed: boolean;
   usual: Usual | null;
   /** The value against usual, as a fraction; null without both. */
   change: number | null;
@@ -117,10 +119,12 @@ export function pastDay(date: string, input: HomeInput): PastDay {
   const value = figureOf(date, input);
   const day = input.byDate.get(date);
   const found = value === null ? null : usual(date, input.metric, input.byDate, input.context, EVERY_DAY);
+  const flags = dayFlags(date, day, input.context);
   return {
     date,
     value,
-    closed: value !== null && dayFlags(date, day, input.context).closed,
+    closed: value !== null && flags.closed,
+    likelyClosed: value !== null && flags.likelyClosed,
     usual: found,
     change: value === null || found === null || found.mean === 0 ? null : value / found.mean - 1,
     events: dayEventsOf(input.context, date).map((event) => event.title),
@@ -450,12 +454,28 @@ export interface MonthCell {
    * middle figure, or a buyout's party on a booked day. Null otherwise, and always without the month's figures.
    */
   figure: { value: number; kind: 'forecast' | 'actual' | 'booked'; text: string } | null;
-  /** From today on, a day the published forecast has closed or booked. */
+  /** From today on, a day the published forecast has closed or booked; before today, a likely-closed day (closed). */
   status: 'closed' | 'booked' | null;
+  /**
+   * Before today, a day whose guests were near zero for its weekday (spec D32): status closed, and no figure. monthGrid
+   * always sets it; optional so a cell built elsewhere (a test's) reads as not likely closed.
+   */
+  likelyClosed?: boolean;
   /** Guests the location's notes add to a forecast figure (“+70”); 0 when none. */
   noteGuests: number;
   /** What a screen reader hears for the cell: everything its number, figure and marks show, in words. */
   label: string;
+}
+
+/** The word a cell shows for its status: “Likely closed”, “Closed” or “Booked”; null for an open day. */
+export function monthStatusWord(cell: Pick<MonthCell, 'status' | 'likelyClosed'>): string | null {
+  if (cell.likelyClosed === true) return 'Likely closed';
+  return cell.status === 'closed' ? 'Closed' : cell.status === 'booked' ? 'Booked' : null;
+}
+
+/** A likely-closed day's stored figure, for “Likely closed (1 guest recorded)”: “1 guest”, “3 guests” or “$12”. */
+function recordedText(value: number, metric: Metric): string {
+  return metric === 'guests' ? plural(value, 'guest', 'guests') : metricText(value, metric);
 }
 
 /** The figures Home's month grid shows: the location's history, and the month's published forecast days by date. */
@@ -467,12 +487,13 @@ export interface MonthFigures {
 interface CellFigure {
   figure: MonthCell['figure'];
   status: MonthCell['status'];
+  likelyClosed: boolean;
   noteGuests: number;
   /** The figure in the cell's label. */
   words: string | null;
 }
 
-const NO_FIGURE: CellFigure = { figure: null, status: null, noteGuests: 0, words: null };
+const NO_FIGURE: CellFigure = { figure: null, status: null, likelyClosed: false, noteGuests: 0, words: null };
 
 /** A day's figure: stored before today (figureOf), the published forecast's own from today on. */
 function cellFigure(date: string, figures: MonthFigures | undefined): CellFigure {
@@ -481,14 +502,16 @@ function cellFigure(date: string, figures: MonthFigures | undefined): CellFigure
   if (date < input.today) {
     const value = figureOf(date, input);
     if (value === null) return NO_FIGURE;
+    if (dayFlags(date, input.byDate.get(date), input.context).likelyClosed) {
+      return { ...NO_FIGURE, status: 'closed', likelyClosed: true, words: `${likelyClosedWords(recordedText(value, input.metric))}.` };
+    }
     return { ...NO_FIGURE, figure: { value, kind: 'actual', text: metricNumber(value, input.metric) }, words: `${metricText(value, input.metric)}.` };
   }
   const day = figures.forecast.get(date);
   if (day === undefined) return NO_FIGURE;
   if (day.status === 'closed') return { ...NO_FIGURE, status: 'closed', words: 'Closed.' };
   if (day.status === 'booked') {
-    const buyout = day.reasons.some((reason) => reason.note?.outcome === 'booked');
-    const words = !buyout ? 'Booked for a private event.'
+    const words = !yoursDid(day, 'booked') ? 'Booked for a private event.'
       : day.noteGuests > 0 ? `Booked: a private buyout, ${plural(day.noteGuests, 'guest', 'guests')}.` : 'Booked: a private buyout.';
     const figure = day.noteGuests > 0 ? { value: day.noteGuests, kind: 'booked' as const, text: formatCount(day.noteGuests) } : null;
     return { ...NO_FIGURE, status: 'booked', figure, words };
@@ -498,9 +521,9 @@ function cellFigure(date: string, figures: MonthFigures | undefined): CellFigure
   const words = [
     // The range's low rounds down and its high up (spec 14.4), as the Calendar and TownwiseAI give it.
     `Forecast about ${plural(mid, 'guest', 'guests')}, ${formatCount(Math.floor(day.low))} to ${formatCount(Math.ceil(day.high))}.`,
-    day.noteGuests > 0 ? `Includes ${plural(day.noteGuests, 'guest', 'guests')} from your notes.` : null,
+    day.noteGuests > 0 ? `Includes ${plural(day.noteGuests, 'guest', 'guests')} from ${guestsFromWords(day)}.` : null,
   ].filter((part) => part !== null).join(' ');
-  return { figure: { value: mid, kind: 'forecast', text: formatCount(mid) }, status: null, noteGuests: day.noteGuests, words };
+  return { figure: { value: mid, kind: 'forecast', text: formatCount(mid) }, status: null, likelyClosed: false, noteGuests: day.noteGuests, words };
 }
 
 /** "Wed, Nov 11, 2026. Today. This week. Forecast about 212 guests, 180 to 240. Veterans Day. 1 note." */
@@ -533,7 +556,8 @@ export function monthGrid(today: string, context: DayContext, figures?: MonthFig
       const isToday = date === today;
       const found = cellFigure(date, figures);
       return {
-        date, event: events.length > 0, note: notes > 0, inWeek, isToday, figure: found.figure, status: found.status, noteGuests: found.noteGuests,
+        date, event: events.length > 0, note: notes > 0, inWeek, isToday, figure: found.figure, status: found.status, likelyClosed: found.likelyClosed,
+        noteGuests: found.noteGuests,
         label: monthCellLabel(date, events, notes, inWeek, isToday, found.words),
       };
     }));
@@ -575,21 +599,31 @@ export interface MonthDay {
   notes: readonly Note[];
   /** The day's own stored figure; null for a day after the last day of data or after today. */
   value: number | null;
+  /** The day's figure was so few guests for its weekday that it was likely closed (spec D32). */
+  likelyClosed: boolean;
   lastYear: PastDay;
   twoYearsAgo: PastDay;
 }
 
 export function monthDay(date: string, input: HomeInput): MonthDay {
+  const value = figureOf(date, input);
   return {
     date,
     isToday: date === input.today,
     future: date > input.today,
     events: dayEventsOf(input.context, date),
     notes: notesOf(input.context, date),
-    value: figureOf(date, input),
+    value,
+    likelyClosed: value !== null && dayFlags(date, input.byDate.get(date), input.context).likelyClosed,
     lastYear: pastDay(sameWeekdayYearsAgo(date, 1), input),
     twoYearsAgo: pastDay(sameWeekdayYearsAgo(date, 2), input),
   };
+}
+
+/** The day detail's “This day”: “241 guests”, “Likely closed (1 guest recorded)”, or that nothing is stored. */
+export function thisDayLine(day: Pick<MonthDay, 'value' | 'likelyClosed'>, metric: Metric): string {
+  if (day.value === null) return 'No sales stored for this day.';
+  return day.likelyClosed ? likelyClosedWords(recordedText(day.value, metric)) : metricText(day.value, metric);
 }
 
 /** The next holiday or town event on the calendar, from today to the end of what Home reads. */

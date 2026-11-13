@@ -193,7 +193,7 @@ export function LocationSettings(): React.JSX.Element {
         <Columns
           main={(
             <Stack>
-              <Small>{`The standing facts TownwiseAI keeps in mind for ${shown}. They never change Townwise’s forecast.`}</Small>
+              <Small>{`The standing facts TownwiseAI keeps in mind for ${shown}. Only a rule with a schedule changes Townwise’s forecast.`}</Small>
               <Actions>
                 <LinkButton variant="outline" href={locationHref(location.id, 'rules')} label="Edit business rules" />
               </Actions>

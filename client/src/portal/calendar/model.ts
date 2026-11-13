@@ -1,22 +1,26 @@
 import { formatCount, plural } from '../format';
 import type { TownEvent } from '../analytics/api';
-import { noteCovers } from '../analytics/days';
+import { closureOf, likelyClosedWords, noteCovers, TYPICAL_LOOKBACK_DAYS, typicalGuests } from '../analytics/days';
 import { mondayOf, weekDates } from '../analytics/week';
 import { MONTH_NAMES, shortDate, signedPercent } from '../analytics/words';
-import type { ForecastDay, ForecastWindow } from '../estimates/api';
+import { appliedOf, guestsFromWords, yoursDid, type ForecastDay, type ForecastWindow } from '../estimates/api';
 import type { Note, SalesDay } from '../locations/api';
 import { addDays, isCalendarDate, monthRange } from '../locations/dates';
 import { KIND_LABEL } from '../locations/noteRules';
+import type { Rule } from '../rules/api';
 
 // The Calendar's pure model (P27, spec 16.3): the month as week rows with each day's figure,
 // status, chips, corner marks and screen-reader label; the selected day's panel (its forecast, the reasons, and what
 // is on the calendar); the hover tooltip's lines; the filters; and the 25 months the page can show. Every figure
 // from today on is the published forecast's own, as the API's read leaves it after the location's notes (spec
 // 14.5): this file never adds a note's guests, so the rule lives once, in api/src/forecasts/adjust.ts. A day before
-// today shows its stored guests, never a forecast. Forecast figures are rounded here, the middle figure to the nearest
+// today shows its stored guests, never a forecast, or “Likely closed” when they were under a tenth of its weekday's
+// typical guests (spec D32, analytics/days.ts). Forecast figures are rounded here, the middle figure to the nearest
 // guest and a range's low down and high up (spec 14.4, as TownwiseAI's get_forecast); the range always goes with the
 // middle figure in the label, the tooltip and the panel ([CONFIRM] in spec 14.2), and the "8 in 10" sentence only
-// with the model's own range, since a range a note moved is no longer the model's 80% one.
+// with the model's own range, since a range a note moved is no longer the model's 80% one. Business rules with a
+// schedule (D31) change the forecast as notes do, in the API's read: their reasons show like a note's, guests they add
+// are named as theirs, and the panel lists the rules covering the day (no filter hides them; they are edited on Rules).
 
 /** The filter chips, in toolbar order. `imported` ("Your calendar") shows only after an import. */
 export const FILTER_KEYS = ['holidays', 'events', 'terms', 'notes', 'imported'] as const;
@@ -54,10 +58,12 @@ export interface CalendarInput {
   month: string;
   /** The month's forecast read; null while it loads or when it failed. */
   forecast: ForecastWindow | null;
-  /** The stored days of the month's past part. */
+  /** The stored days of the month's past part, and of the 8 weeks before the month that likely closed reads (pastRange). */
   salesDays: readonly SalesDay[];
   events: readonly TownEvent[];
   notes: readonly Note[];
+  /** The location's business rules (D31); Home passes none. */
+  rules?: readonly Rule[];
   imported: readonly ImportedEvent[];
   filters: Filters;
 }
@@ -82,6 +88,11 @@ function notesOn(date: string, input: CalendarInput): Note[] {
   return input.filters.notes ? input.notes.filter((note) => noteCovers(note, date)) : [];
 }
 
+/** The rules whose schedule covers the day, oldest first. */
+function rulesOn(date: string, input: CalendarInput): Rule[] {
+  return (input.rules ?? []).filter((rule) => rule.schedule !== null && rule.schedule !== undefined && noteCovers(rule.schedule, date));
+}
+
 function importedOn(date: string, input: CalendarInput): ImportedEvent[] {
   return input.filters.imported ? input.imported.filter((event) => event.startDate <= date && date <= event.endDate) : [];
 }
@@ -92,6 +103,18 @@ function forecastDayOf(date: string, input: CalendarInput): ForecastDay | null {
 
 function storedGuests(date: string, input: CalendarInput): number | null {
   return input.salesDays.find((day) => day.date === date)?.guests ?? null;
+}
+
+/**
+ * A past day's stored guests when it was likely closed (spec D32), else null. Every note and rule schedule covering the
+ * day counts, whatever the filters show: one with more or fewer guests says the day was open.
+ */
+function likelyClosedGuests(date: string, input: CalendarInput): number | null {
+  const day = input.salesDays.find((each) => each.date === date);
+  if (day === undefined || day.guests === null) return null;
+  const typical = typicalGuests(date, (other) => input.salesDays.find((each) => each.date === other)?.guests);
+  const covering = [...input.notes.filter((note) => noteCovers(note, date)), ...rulesOn(date, input).flatMap((rule) => (rule.schedule ? [rule.schedule] : []))];
+  return closureOf({ ...day, typicalGuests: typical }, covering) === 'likely_closed' ? day.guests : null;
 }
 
 function whole(value: number): string {
@@ -109,10 +132,6 @@ export function noteChip(note: Pick<Note, 'kind' | 'effect' | 'expectedGuests'>)
   return note.expectedGuests === null ? kind : `${kind}, ${formatCount(note.expectedGuests)}`;
 }
 
-/** Whether a note reason with this outcome is on the day. */
-function noteDid(day: ForecastDay, outcome: string): boolean {
-  return day.reasons.some((reason) => reason.note?.outcome === outcome);
-}
 
 // Cells
 
@@ -127,8 +146,8 @@ export interface CalendarCell {
   isToday: boolean;
   /** In today's week, which the grid outlines. */
   inWeek: boolean;
-  /** From today on, a day the forecast has closed or booked. */
-  status: 'closed' | 'booked' | null;
+  /** From today on, a day the forecast has closed or booked; before today, a likely-closed day (spec D32). */
+  status: 'closed' | 'booked' | 'likely_closed' | null;
   figure: CellFigure | null;
   /** Guests the location's notes add to a forecast figure (“+70”); 0 when none. */
   noteGuests: number;
@@ -146,12 +165,14 @@ const MAX_CHIPS = 2;
 interface FigureOf { status: CalendarCell['status']; figure: CellFigure | null; noteGuests: number; words: string | null }
 
 function bookedWords(day: ForecastDay): string {
-  if (!noteDid(day, 'booked')) return 'Booked for a private event';
+  if (!yoursDid(day, 'booked')) return 'Booked for a private event';
   return day.noteGuests > 0 ? `Booked: a private buyout, ${plural(day.noteGuests, 'guest', 'guests')}` : 'Booked: a private buyout';
 }
 
 function figureOf(date: string, input: CalendarInput): FigureOf {
   if (date < input.today) {
+    const likely = likelyClosedGuests(date, input);
+    if (likely !== null) return { status: 'likely_closed', figure: null, noteGuests: 0, words: `${likelyClosedWords(plural(likely, 'guest', 'guests'))}.` };
     const guests = storedGuests(date, input);
     return { status: null, figure: guests === null ? null : { value: guests, kind: 'actual' }, noteGuests: 0, words: guests === null ? null : `${plural(guests, 'guest', 'guests')}.` };
   }
@@ -165,7 +186,7 @@ function figureOf(date: string, input: CalendarInput): FigureOf {
   if (day.mid === null || day.low === null || day.high === null) return { status: null, figure: null, noteGuests: 0, words: null };
   const words = [
     `Forecast about ${plural(Math.round(day.mid), 'guest', 'guests')}, ${rangeWords(day.low, day.high)}.`,
-    day.noteGuests > 0 ? `Includes ${plural(day.noteGuests, 'guest', 'guests')} from your notes.` : null,
+    day.noteGuests > 0 ? `Includes ${plural(day.noteGuests, 'guest', 'guests')} from ${guestsFromWords(day)}.` : null,
   ].filter((part) => part !== null).join(' ');
   return { status: null, figure: { value: Math.round(day.mid), kind: 'forecast' }, noteGuests: day.noteGuests, words };
 }
@@ -226,7 +247,12 @@ export function captionOf(cell: CalendarCell): string | null {
 }
 
 export function statusWord(status: CalendarCell['status']): string | null {
-  return status === 'closed' ? 'Closed' : status === 'booked' ? 'Booked' : null;
+  switch (status) {
+    case 'closed': return 'Closed';
+    case 'booked': return 'Booked';
+    case 'likely_closed': return 'Likely closed';
+    case null: return null;
+  }
 }
 
 // The day panel
@@ -235,15 +261,25 @@ export function statusWord(status: CalendarCell['status']): string | null {
 export type ForecastPart =
   | {
     kind: 'open'; low: number; mid: number; high: number; noteGuests: number;
+    /** Whose those guests are: “your notes”, “your rules” or “your notes and rules”. */
+    from: string;
     /** The model's own range when notes changed the day; null otherwise. */
     model: { low: number; high: number } | null;
     /** The model expected the day closed and the notes' private events opened it, with only their guests. */
     modelClosed: boolean;
   }
-  | { kind: 'booked'; guests: number; byNote: boolean }
-  | { kind: 'closed'; byNote: boolean }
-  /** Before today: the stored guests, and the run's own range and verdict when one covered the day. */
-  | { kind: 'past'; actual: number | null; model: { low: number; high: number } | null; modelClosed: boolean; inRange: boolean | null }
+  /** `buyout`: a note's or a rule's buyout booked it, not the model. */
+  | { kind: 'booked'; guests: number; buyout: boolean }
+  /** `by`: what closed the day, a closure note, a business rule, or the model (null). */
+  | { kind: 'closed'; by: 'note' | 'rule' | null }
+  /**
+   * Before today: the stored guests, whether they were so few the day was likely closed (spec D32), and the run's own
+   * range and verdict when one covered the day.
+   */
+  | {
+    kind: 'past'; actual: number | null; likelyClosed: boolean; model: { low: number; high: number } | null; modelClosed: boolean;
+    inRange: boolean | null;
+  }
   /** unavailable: the forecast read is loading or failed. */
   | { kind: 'none'; why: 'no_published_forecast' | 'not_covered' | 'unavailable' };
 
@@ -267,6 +303,8 @@ export interface CalendarDayView {
   /** Holidays, town events and term periods on the day, as the filters allow. */
   events: TownEvent[];
   notes: Note[];
+  /** The business rules whose schedule covers the day (D31), whatever the filters. */
+  rules: Rule[];
   imported: ImportedEvent[];
 }
 
@@ -276,16 +314,26 @@ function forecastPart(date: string, input: CalendarInput): ForecastPart {
     const low = day?.model.low ?? null;
     const high = day?.model.high ?? null;
     const model = low !== null && high !== null ? { low, high } : null;
-    return { kind: 'past', actual: storedGuests(date, input) ?? day?.actual ?? null, model, modelClosed: day?.model.status === 'closed', inRange: day?.inRange ?? null };
+    return {
+      kind: 'past', actual: storedGuests(date, input) ?? day?.actual ?? null, likelyClosed: likelyClosedGuests(date, input) !== null, model,
+      modelClosed: day?.model.status === 'closed', inRange: day?.inRange ?? null,
+    };
   }
   if (input.forecast === null) return { kind: 'none', why: 'unavailable' };
   if (!input.forecast.available) return { kind: 'none', why: input.forecast.reason ?? 'not_covered' };
   if (day === null) return { kind: 'none', why: 'not_covered' };
-  if (day.status === 'closed') return { kind: 'closed', byNote: noteDid(day, 'closed') };
-  if (day.status === 'booked') return { kind: 'booked', guests: day.noteGuests, byNote: noteDid(day, 'booked') };
+  if (day.status === 'closed') {
+    const by = day.reasons.some((reason) => reason.note?.outcome === 'closed') ? 'note'
+      : day.reasons.some((reason) => reason.rule?.outcome === 'closed') ? 'rule' : null;
+    return { kind: 'closed', by };
+  }
+  if (day.status === 'booked') return { kind: 'booked', guests: day.noteGuests, buyout: yoursDid(day, 'booked') };
   if (day.low === null || day.mid === null || day.high === null) return { kind: 'none', why: 'not_covered' };
   const model = day.noteGuests > 0 && day.model.low !== null && day.model.high !== null ? { low: day.model.low, high: day.model.high } : null;
-  return { kind: 'open', low: day.low, mid: day.mid, high: day.high, noteGuests: day.noteGuests, model, modelClosed: day.model.status === 'closed' };
+  return {
+    kind: 'open', low: day.low, mid: day.mid, high: day.high, noteGuests: day.noteGuests, from: guestsFromWords(day), model,
+    modelClosed: day.model.status === 'closed',
+  };
 }
 
 /** A note reason's outcome in words; null for an outcome this client doesn't know. */
@@ -328,14 +376,17 @@ export function savedNotice(date: string, input: CalendarInput, noteId: string):
 
 function reasonLines(day: ForecastDay | null): ReasonLine[] {
   if (day === null) return [];
-  return day.reasons.map((reason, index) => ({
-    key: `${String(index)}:${reason.kind}`,
-    label: reason.label,
-    detail: reason.note !== null
-      ? reasonOutcomeWords(reason.note.outcome, reason.note.guests)
-      : reason.effectPct === null ? null : signedPercent(reason.effectPct / 100),
-    sources: reason.sources,
-  }));
+  return day.reasons.map((reason, index) => {
+    const applied = appliedOf(reason);
+    return {
+      key: `${String(index)}:${reason.kind}`,
+      label: reason.label,
+      detail: applied !== null
+        ? reasonOutcomeWords(applied.outcome, applied.guests)
+        : reason.effectPct === null ? null : signedPercent(reason.effectPct / 100),
+      sources: reason.sources,
+    };
+  });
 }
 
 export function dayView(date: string, input: CalendarInput): CalendarDayView {
@@ -349,8 +400,14 @@ export function dayView(date: string, input: CalendarInput): CalendarDayView {
     moreNotes: day?.moreNotes ?? 0,
     events: eventsOn(date, input),
     notes: notesOn(date, input),
+    rules: rulesOn(date, input),
     imported: importedOn(date, input),
   };
+}
+
+/** “your rules” as the start of a sentence: “Your rules”. */
+function sentence(words: string): string {
+  return `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
 }
 
 export interface ForecastWords {
@@ -365,7 +422,7 @@ export function forecastWords(part: ForecastPart, locationName: string): Forecas
     case 'open': {
       const figure = { before: 'About', value: whole(part.mid), after: 'guests' };
       if (part.modelClosed) {
-        return { figure, lines: [`Townwise’s model expects you closed. Your notes open the day with ${plural(part.noteGuests, 'guest', 'guests')}.`] };
+        return { figure, lines: [`Townwise’s model expects you closed. ${sentence(part.from)} open the day with ${plural(part.noteGuests, 'guest', 'guests')}.`] };
       }
       const likely = `Likely ${rangeWords(part.low, part.high)}.`;
       if (part.model === null) return { figure, lines: [`${likely} About 8 in 10 days land in the range.`] };
@@ -373,19 +430,26 @@ export function forecastWords(part: ForecastPart, locationName: string): Forecas
         figure,
         lines: [
           likely,
-          `Townwise’s model: ${rangeWords(part.model.low, part.model.high)}. About 8 in 10 days land in that range. Your notes add ${plural(part.noteGuests, 'guest', 'guests')}.`,
+          `Townwise’s model: ${rangeWords(part.model.low, part.model.high)}. About 8 in 10 days land in that range. ${sentence(part.from)} add ${plural(part.noteGuests, 'guest', 'guests')}.`,
         ],
       };
     }
     case 'booked': {
-      const what = part.byNote
+      const what = part.buyout
         ? (part.guests > 0 ? `Booked: a private buyout, ${plural(part.guests, 'guest', 'guests')}.` : 'Booked: a private buyout.')
         : 'Booked for a private event.';
       return { figure: null, lines: [`${what} No walk-in forecast.`] };
     }
-    case 'closed':
-      return { figure: null, lines: ['Closed.', part.byNote ? 'From your closure note.' : 'Townwise’s model expects you closed.'] };
+    case 'closed': {
+      const why = part.by === 'note' ? 'From your closure note.' : part.by === 'rule' ? 'From your business rule.' : 'Townwise’s model expects you closed.';
+      return { figure: null, lines: ['Closed.', why] };
+    }
     case 'past': {
+      if (part.likelyClosed && part.actual !== null) {
+        const lines = [`${likelyClosedWords(plural(part.actual, 'guest', 'guests'))}.`];
+        if (part.model !== null) lines.push(`Townwise’s model forecast ${rangeWords(part.model.low, part.model.high)}.`);
+        return { figure: null, lines };
+      }
       const figure = part.actual === null ? null : { before: '', value: whole(part.actual), after: part.actual === 1 ? 'guest' : 'guests' };
       const lines = part.actual === null ? ['No guests stored for this day.'] : [];
       if (part.modelClosed) lines.push('Townwise’s model expected you closed.');
@@ -416,13 +480,15 @@ export function tooltipLines(date: string, input: CalendarInput): TooltipLines |
   const lines: string[] = [];
   if (date < input.today) {
     const guests = storedGuests(date, input);
-    if (guests !== null) lines.push(plural(guests, 'guest', 'guests'));
+    const likely = likelyClosedGuests(date, input);
+    if (likely !== null) lines.push(likelyClosedWords(plural(likely, 'guest', 'guests')));
+    else if (guests !== null) lines.push(plural(guests, 'guest', 'guests'));
   } else if (day !== null) {
     if (day.status === 'closed') lines.push('Closed');
     else if (day.status === 'booked') lines.push(bookedWords(day));
     else if (day.mid !== null && day.low !== null && day.high !== null) {
       lines.push(`About ${plural(Math.round(day.mid), 'guest', 'guests')} (${rangeWords(day.low, day.high)})`);
-      if (day.noteGuests > 0) lines.push(`Includes ${plural(day.noteGuests, 'guest', 'guests')} from your notes`);
+      if (day.noteGuests > 0) lines.push(`Includes ${plural(day.noteGuests, 'guest', 'guests')} from ${guestsFromWords(day)}`);
     }
   }
   const reasons = day === null ? [] : day.reasons.map((reason) => reason.label);
@@ -468,10 +534,13 @@ export function monthLabel(month: string): string {
   return `${MONTH_NAMES[Number(month.slice(5, 7)) - 1] ?? ''} ${month.slice(0, 4)}`;
 }
 
-/** The days of `month` before today, for GET .../sales/days; null when none are. */
+/**
+ * What GET .../sales/days reads for `month`: its days before today, from the 8 weeks before it, whose same weekdays
+ * give each day's typical guests (spec D32); null when no day of the month is past.
+ */
 export function pastRange(month: string, today: string): { from: string; to: string } | null {
   const { from, to } = monthRange(month);
   const yesterday = addDays(today, -1);
   const end = to < yesterday ? to : yesterday;
-  return from > end ? null : { from, to: end };
+  return from > end ? null : { from: addDays(from, -TYPICAL_LOOKBACK_DAYS), to: end };
 }

@@ -17,6 +17,7 @@ import { runTurn, type TurnEvent, type TurnInput } from '../chat/turn.ts';
 import { newestLeafUnder, newNodeId, nodeIdSchema, nodesOf, pathTo, type ChatNode, type TreeNodeView } from '../chat/tree.ts';
 import { historyForModel, userMessageOf } from '../chat/user-message.ts';
 import { chatMessageViews, OPEN, type ChatMessageView, type FeedbackView, type ProposalState, type ShownProposal } from '../chat/view.ts';
+import { scheduleSummary } from '../forecasts/reasons.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import type { ConversationOwner, ConversationRecord, ConversationSummary } from '../stores/chat-conversations.ts';
 import type { LocationRecord } from '../stores/locations.ts';
@@ -354,7 +355,8 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
 
   try {
     // Spec 10.16: the location's business rules go before the person's text when they differ from the path's last list.
-    const userMessage = 'replyTo' in body ? null : userMessageOf(history, { rules: rules.map((rule) => rule.text) }, body.content);
+    const blockRules = rules.map((rule) => ({ text: rule.text, summary: rule.schedule === null ? null : scheduleSummary(rule.schedule) }));
+    const userMessage = 'replyTo' in body ? null : userMessageOf(history, { rules: blockRules }, body.content);
     // `parentId` is where the turn's first new node hangs: the person's message, or a regenerate's reply.
     send('conversation', {
       id: conversationId, title, userNodeId: nodes.user?.id ?? null, replyNodeId: nodes.reply.id,

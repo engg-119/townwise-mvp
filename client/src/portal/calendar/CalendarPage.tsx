@@ -15,6 +15,8 @@ import { NoteForm } from '../locations/NoteForm';
 import { draftOf, draftOfImported, emptyDraft, type NoteDraft } from '../locations/noteRules';
 import { LoadFailure, Loading, useOrgRefreshOnLeave } from '../locations/parts';
 import { usePortal, useReadOnly } from '../PortalProvider';
+import { locationHref } from '../routing';
+import { fetchRules } from '../rules/api';
 import { useLocation } from '../shell/LocationShell';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { ErrorNotice, Notice } from '../ui/feedback';
@@ -30,9 +32,9 @@ import {
 // P27 Calendar (/locations/[locationId]/calendar, members; spec 16.3, D30): the month's
 // days with the published forecast's guests, what drives each day, and the location's notes, which a member adds,
 // edits and deletes from the day. `?day=YYYY-MM-DD` is the selected day and the month follows it (an invalid day, or
-// one outside the 12 months either side of today's, is today). It reads four existing member routes: the notes, the
-// month's town calendar and stored days (the past part only), and the month's forecast (one read of at most 31
-// days). The forecast read stands alone: when it fails the page still shows, with Try again for it only. After a
+// one outside the 12 months either side of today's, is today). It reads five existing member routes: the notes with the
+// business rules (D31; the day lists the rules whose schedule covers it, edited on Rules), the month's town calendar
+// and stored days (the past part only), and the month's forecast (one read of at most 31 days). The forecast read stands alone: when it fails the page still shows, with Try again for it only. After a
 // note is saved or deleted the notes and the forecast read again, since the API adjusts the forecast from notes on
 // read (spec 14.5) and the client never adds a note's guests itself; meanwhile the old figures stay, dimmed and
 // aria-busy, and a save's notice says “Saved.” until the new read says what the note did to the day. Under view-as the page shows in full with its writes disabled in place. The owner's calendar file
@@ -107,7 +109,11 @@ function CalendarView(): React.JSX.Element {
   const [chosen, setChosen] = useState(0);
   const locationName = shownLocationName(location, org);
 
-  const notes = useKept(useCallback(() => fetchNotes(api, location.id), [api, location.id]));
+  // The notes and the business rules, read and read again together: a write reads both again with the forecast.
+  const notes = useKept(useCallback(async () => {
+    const [list, rules] = await Promise.all([fetchNotes(api, location.id), fetchRules(api, location.id)]);
+    return { list, rules: rules.rules };
+  }, [api, location.id]));
   const monthData = useKept(useCallback(async () => {
     const past = pastRange(month, today);
     const [calendar, days] = await Promise.all([
@@ -133,8 +139,8 @@ function CalendarView(): React.JSX.Element {
   const forecastFailed = forecast.error !== null && shown?.month === month;
   const forecastWindow = forecastFailed || forecast.data === null || forecast.data.month !== shown?.month ? null : forecast.data.window;
   const input = useMemo<CalendarInput | null>(() => (shown === null || notes.data === null ? null : {
-    today, month: shown.month, forecast: forecastWindow, salesDays: shown.days, events: shown.calendar.events, notes: notes.data,
-    imported: imported?.events ?? [], filters,
+    today, month: shown.month, forecast: forecastWindow, salesDays: shown.days, events: shown.calendar.events, notes: notes.data.list,
+    rules: notes.data.rules, imported: imported?.events ?? [], filters,
   }), [today, shown, forecastWindow, notes.data, imported, filters]);
   const rows = useMemo(() => (input === null ? [] : calendarMonth(input)), [input]);
   const view = useMemo(() => (input?.month === month ? dayView(selected, input) : null), [input, month, selected]);
@@ -236,6 +242,7 @@ function CalendarView(): React.JSX.Element {
     <CalendarDay
       view={view}
       locationName={locationName}
+      rulesHref={locationHref(location.id, 'rules')}
       notice={noticeText}
       readOnlyId={readOnlyId}
       readOnlyText={line}

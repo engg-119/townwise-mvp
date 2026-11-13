@@ -1,11 +1,12 @@
 import type { TownEvent } from '../../../src/portal/analytics/api';
 import {
-  ALL_FILTERS, calendarMonth, dayView, forecastWords, monthBounds, pastRange, reasonOutcomeWords, savedNotice, selectedDay, tooltipLines,
-  type CalendarCell, type CalendarInput, type ImportedEvent,
+  ALL_FILTERS, calendarMonth, captionOf, dayView, forecastWords, monthBounds, pastRange, reasonOutcomeWords, savedNotice, selectedDay, statusWord,
+  tooltipLines, type CalendarCell, type CalendarInput, type ImportedEvent,
 } from '../../../src/portal/calendar/model';
 import type { ForecastDay, ForecastWindow } from '../../../src/portal/estimates/api';
 import { daysBetween } from '../../../src/portal/locations/dates';
 import { holiday, note, townEvent } from '../analytics/fakes';
+import { ruleOf } from '../rules/fakes';
 
 // The Calendar's pure model (P27, spec 16.3): each day's figure, marks, chips and words, the day
 // panel's parts, the filters and the month bounds. The client never adds a note's guests itself: every figure after
@@ -90,6 +91,29 @@ test('a past day shows its stored guests and never a forecast figure', () => {
   // A past day the run covered, with no stored day, still shows no forecast figure.
   const noSales = calendarMonth(input({ salesDays: [] }));
   expect(cellOf(noSales, '2026-11-07').figure).toBeNull();
+});
+
+test('a past day under a tenth of its weekday’s typical guests reads “Likely closed”, its count kept in the words (spec D32)', () => {
+  // Saturdays Sep 19 to Oct 31 at 140 guests, then Nov 7 with 1.
+  const saturdays = ['2026-09-19', '2026-09-26', '2026-10-03', '2026-10-10', '2026-10-17', '2026-10-24', '2026-10-31']
+    .map((date) => ({ date, guests: 140, netSalesCents: 280_000 }));
+  const salesDays = [...saturdays, { date: '2026-11-07', guests: 1, netSalesCents: 2_500 }];
+  const near = input({ salesDays, forecast: windowOf([]) });
+  const cell = cellOf(calendarMonth(near), '2026-11-07');
+  expect(cell).toMatchObject({ status: 'likely_closed', figure: null });
+  expect(cell.label).toBe('Sat, Nov 7, 2026. Likely closed (1 guest recorded).');
+  expect(statusWord(cell.status)).toBe('Likely closed');
+  expect(captionOf(cell)).toBeNull();
+  expect(forecastWords(dayView('2026-11-07', near).forecast, 'Sawtooth')).toEqual({ figure: null, lines: ['Likely closed (1 guest recorded).'] });
+  expect(tooltipLines('2026-11-07', near)?.lines).toEqual(['Likely closed (1 guest recorded)']);
+  // A note with fewer guests says the day was open, even with Your notes filtered off.
+  const slow = note({ startDate: '2026-11-07', kind: 'other', effect: 'fewer_guests' });
+  const open = input({ salesDays, forecast: windowOf([]), notes: [slow], filters: { ...ALL_FILTERS, notes: false } });
+  expect(cellOf(calendarMonth(open), '2026-11-07')).toMatchObject({ status: null, figure: { value: 1, kind: 'actual' } });
+  expect(forecastWords(dayView('2026-11-07', open).forecast, 'Sawtooth').figure).toEqual({ before: '', value: '1', after: 'guest' });
+  // Fewer than 3 Saturdays before it with guests: a real 1-guest day.
+  const thin = input({ salesDays: [...saturdays.slice(-2), { date: '2026-11-07', guests: 1, netSalesCents: 2_500 }], forecast: windowOf([]) });
+  expect(cellOf(calendarMonth(thin), '2026-11-07')).toMatchObject({ status: null, figure: { value: 1, kind: 'actual' } });
 });
 
 test('no published forecast: no figure after today on any day', () => {
@@ -228,9 +252,10 @@ test('monthBounds allows 12 months back and 12 ahead, inside the API’s 400 day
   expect(selectedDay('2025-10-31', TODAY)).toBe(TODAY);
   expect(selectedDay('2026-02-30', TODAY)).toBe(TODAY);
   expect(selectedDay(undefined, TODAY)).toBe(TODAY);
-  // The past part of a month, for GET .../sales/days: none for this month's first day or a later month.
-  expect(pastRange('2026-11', TODAY)).toEqual({ from: '2026-11-01', to: '2026-11-10' });
-  expect(pastRange('2026-10', TODAY)).toEqual({ from: '2026-10-01', to: '2026-10-31' });
+  // The past part of a month and the 8 weeks before it (likely closed reads them, spec D32), for GET .../sales/days:
+  // none for this month's first day or a later month.
+  expect(pastRange('2026-11', TODAY)).toEqual({ from: '2026-09-06', to: '2026-11-10' });
+  expect(pastRange('2026-10', TODAY)).toEqual({ from: '2026-08-06', to: '2026-10-31' });
   expect(pastRange('2026-12', TODAY)).toBeNull();
   expect(pastRange('2026-11', '2026-11-01')).toBeNull();
 });
@@ -272,4 +297,83 @@ test('reasonOutcomeWords words every NoteOutcome', () => {
   expect(reasonOutcomeWords('past_day', 40)).toBe('This day has passed');
   // An outcome this client doesn't know says nothing rather than something wrong.
   expect(reasonOutcomeWords('something_new', 40)).toBeNull();
+});
+
+// Business rules with a schedule (D31): the API applies them with the notes, so the panel shows their reasons, and lists
+// the rules covering the day with their summary.
+const CLOSED_MONDAYS = ruleOf('r1', 'Closed Mondays', {
+  schedule: { kind: 'closure', startDate: '2026-11-01', endDate: null, weekdays: [1], effect: 'closed', expectedGuests: null, startTime: null, endTime: null },
+  scheduleSummary: 'Closed on Mondays from Nov 1, 2026',
+});
+const FRIDAY_PARTIES = ruleOf('r2', 'Rehearsal dinners on Fridays', {
+  schedule: {
+    kind: 'private_event', startDate: '2026-11-01', endDate: '2026-12-31', weekdays: [5], effect: 'more_guests', expectedGuests: 40, startTime: null, endTime: null,
+  },
+  scheduleSummary: 'Adds 40 guests on Fridays from Nov 1, 2026 to Dec 31, 2026',
+});
+const RULES = [CLOSED_MONDAYS, FRIDAY_PARTIES, ruleOf('r3', 'Patio opens in May')];
+const ruleReason = (label: string, id: string, guests: number | null, outcome: string) => ({
+  kind: 'rule', label, effectPct: null, sources: [], note: null, rule: { id, guests, outcome },
+});
+
+test('the day panel lists the scheduled rules covering the day, whatever the filters, and a rule’s reason with what it did', () => {
+  const closedMonday = forecastDay({
+    date: '2026-11-16', status: 'closed', low: null, mid: null, high: null,
+    reasons: [ruleReason('Your rule: closed on Mondays', 'r1', null, 'closed'), { kind: 'weekday', label: 'Monday', effectPct: null, sources: [], note: null }],
+  });
+  const withRules = input({ forecast: windowOf([closedMonday]), rules: RULES });
+  const monday = dayView('2026-11-16', withRules);
+  expect(monday.rules.map((rule) => rule.id)).toEqual(['r1']);
+  expect(dayView('2026-11-20', withRules).rules.map((rule) => rule.id)).toEqual(['r2']);
+  expect(dayView('2026-11-17', withRules).rules).toEqual([]);
+  expect(dayView('2027-01-01', { ...withRules, month: '2027-01' }).rules).toEqual([]);
+  expect(dayView('2026-11-16', { ...withRules, filters: { ...ALL_FILTERS, notes: false } }).rules.map((rule) => rule.id)).toEqual(['r1']);
+  // Home passes no rules.
+  expect(dayView('2026-11-16', input()).rules).toEqual([]);
+  expect(monday.reasons.map((reason) => [reason.label, reason.detail])).toEqual([['Your rule: closed on Mondays', 'Closes the day'], ['Monday', null]]);
+  expect(forecastWords(monday.forecast, 'Sawtooth').lines).toEqual(['Closed.', 'From your business rule.']);
+  expect(tooltipLines('2026-11-16', withRules)?.lines).toEqual(['Closed', 'Your rule: closed on Mondays', 'Monday']);
+});
+
+test('guests a rule adds are named as the rule’s, and with a note’s as both', () => {
+  const ruled = forecastDay({
+    date: '2026-11-20', low: 220, mid: 252, high: 280, model: { status: 'open', low: 180, mid: 212, high: 240 }, noteGuests: 40,
+    reasons: [ruleReason('Your rule: adds 40 guests on Fridays', 'r2', 40, 'added'), { kind: 'weekday', label: 'Friday', effectPct: null, sources: [], note: null }],
+  });
+  const both = forecastDay({
+    date: '2026-11-27', low: 290, mid: 322, high: 350, model: { status: 'open', low: 180, mid: 212, high: 240 }, noteGuests: 110,
+    reasons: [
+      ruleReason('Your rule: adds 40 guests on Fridays', 'r2', 40, 'added'),
+      { kind: 'note', label: 'Your private event, 70 guests', effectPct: null, sources: [], note: { id: 'n5', guests: 70, outcome: 'added' } },
+    ],
+  });
+  const opened = forecastDay({
+    date: '2026-11-23', low: 40, mid: 40, high: 40, model: { status: 'closed', low: null, mid: null, high: null }, noteGuests: 40,
+    reasons: [ruleReason('Your rule: adds 40 guests on Mondays', 'r4', 40, 'added')],
+  });
+  const ruledInput = input({ forecast: windowOf([ruled, both, opened]), rules: RULES, notes: [] });
+  expect(cellOf(calendarMonth(ruledInput), '2026-11-20').label).toContain('Includes 40 guests from your rules.');
+  expect(cellOf(calendarMonth(ruledInput), '2026-11-27').label).toContain('Includes 110 guests from your notes and rules.');
+  expect(tooltipLines('2026-11-20', ruledInput)?.lines[1]).toBe('Includes 40 guests from your rules');
+  expect(forecastWords(dayView('2026-11-20', ruledInput).forecast, 'Sawtooth').lines).toEqual([
+    'Likely 220 to 280.', 'Townwise’s model: 180 to 240. About 8 in 10 days land in that range. Your rules add 40 guests.',
+  ]);
+  expect(forecastWords(dayView('2026-11-27', ruledInput).forecast, 'Sawtooth').lines[1]).toContain('Your notes and rules add 110 guests.');
+  expect(forecastWords(dayView('2026-11-23', ruledInput).forecast, 'Sawtooth').lines).toEqual([
+    'Townwise’s model expects you closed. Your rules open the day with 40 guests.',
+  ]);
+  expect(dayView('2026-11-20', ruledInput).reasons[0]).toMatchObject({ label: 'Your rule: adds 40 guests on Fridays', detail: 'Adds 40 guests' });
+});
+
+test('a rule with fewer guests says a near-empty past day was open, as a note does (spec D32)', () => {
+  const saturdays = ['2026-09-19', '2026-09-26', '2026-10-03', '2026-10-10', '2026-10-17', '2026-10-24', '2026-10-31']
+    .map((date) => ({ date, guests: 140, netSalesCents: 280_000 }));
+  const salesDays = [...saturdays, { date: '2026-11-07', guests: 1, netSalesCents: 2_500 }];
+  const slowSaturdays = ruleOf('r5', 'Slow Saturdays this fall', {
+    schedule: { kind: 'other', startDate: '2026-11-01', endDate: null, weekdays: [6], effect: 'fewer_guests', expectedGuests: null, startTime: null, endTime: null },
+    scheduleSummary: 'Other, fewer guests than usual on Saturdays from Nov 1, 2026',
+  });
+  expect(cellOf(calendarMonth(input({ salesDays, forecast: windowOf([]), rules: [slowSaturdays] })), '2026-11-07'))
+    .toMatchObject({ status: null, figure: { value: 1, kind: 'actual' } });
+  expect(cellOf(calendarMonth(input({ salesDays, forecast: windowOf([]), rules: [] })), '2026-11-07')).toMatchObject({ status: 'likely_closed' });
 });

@@ -37,9 +37,9 @@ export const AUDIT_DETAIL_KEYS = {
   'note.created': ['locationId', 'kind', 'startDate', 'endDate'],
   'note.updated': ['locationId', 'kind', 'startDate', 'endDate'],
   'note.deleted': ['locationId', 'kind', 'startDate', 'endDate'],
-  // Business rules (D31): ids and how the rule was added, never its text.
-  'rule.created': ['locationId', 'via'],
-  'rule.updated': ['locationId'],
+  // Business rules (D31): ids, how the rule was added and whether it has a schedule, never its text or the schedule.
+  'rule.created': ['locationId', 'via', 'scheduled'],
+  'rule.updated': ['locationId', 'scheduled'],
   'rule.deleted': ['locationId'],
   'chat.turn_completed': ['locationId', 'conversationId', 'model', 'calls', 'inputTokens', 'outputTokens', 'stopReason'],
   'chat.conversation_deleted': ['locationId', 'conversationId'],

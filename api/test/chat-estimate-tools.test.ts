@@ -10,6 +10,7 @@ import { inputViewOf, resultViewOf, toolNamed, type ToolContext } from '../src/c
 import { createForecastReader, type ForecastReader } from '../src/forecasts/reader.ts';
 import { createPeopleInTownReader } from '../src/people-in-town/reader.ts';
 import type { PeopleData } from '../src/people-in-town/sources.ts';
+import type { BusinessRuleRecord } from '../src/stores/business-rules.ts';
 import type { ForecastRow, ForecastRunRecord, ForecastStore } from '../src/stores/forecasts.ts';
 import type { LocationRecord } from '../src/stores/locations.ts';
 import type { NoteRecord, NoteStore } from '../src/stores/notes.ts';
@@ -57,16 +58,21 @@ function dayRow(date: string, fields: Partial<ForecastRow> = {}): ForecastRow {
 }
 
 const NO_NOTES = { overlapping: () => Promise.resolve([]) };
+const NO_RULES = { scheduled: () => Promise.resolve([]) };
 
 function forecastStores(
   rows: readonly ForecastRow[], runs: readonly ForecastRunRecord[] = rows.length === 0 ? [] : [publishedRun()], saved: readonly NoteRecord[] = [],
+  rules: readonly BusinessRuleRecord[] = [],
 ) {
   const forecasts = {
     published: () => Promise.resolve([...runs]),
     rows: () => Promise.resolve([...rows]),
   } as unknown as ForecastStore;
   const salesDays = { days: () => Promise.resolve([{ date: '2026-11-02', guests: 140, netSalesCents: 1 }]) } as unknown as SalesDayStore;
-  return { forecasts, salesDays, notes: saved.length === 0 ? NO_NOTES : { overlapping: () => Promise.resolve([...saved]) } };
+  return {
+    forecasts, salesDays, notes: saved.length === 0 ? NO_NOTES : { overlapping: () => Promise.resolve([...saved]) },
+    businessRules: { scheduled: () => Promise.resolve([...rules]) },
+  };
 }
 
 const NOTE_DETAIL = 'Sentinel rehearsal dinner for the Smith party';
@@ -234,8 +240,10 @@ describe('get_people_in_town', () => {
 
 describe('get_forecast (U13B)', () => {
   const parse = (input: unknown) => toolNamed('get_forecast')?.parse(input, TODAY) ?? null;
-  const withRows = (rows: readonly ForecastRow[], runs?: readonly ForecastRunRecord[], notes: readonly NoteRecord[] = []) => context({
-    forecasts: createForecastReader({ stores: forecastStores(rows, runs, notes) }),
+  const withRows = (
+    rows: readonly ForecastRow[], runs?: readonly ForecastRunRecord[], notes: readonly NoteRecord[] = [], rules: readonly BusinessRuleRecord[] = [],
+  ) => context({
+    forecasts: createForecastReader({ stores: forecastStores(rows, runs, notes, rules) }),
   });
 
   it('takes { from, to } of at most 31 days, starting at most 92 days back', () => {
@@ -270,7 +278,7 @@ describe('get_forecast (U13B)', () => {
     const days = parsed.days as Record<string, unknown>[];
     expect(days[0]).toEqual({
       date: '2026-11-02', weekday: 'Mon', status: 'open', low: 80, mid: 100, high: 120, vsBaselinePct: null,
-      reasons: [{ label: 'Monday', effectPct: null, sources: [], note: null }], modelRange: null, noteGuests: 0,
+      reasons: [{ label: 'Monday', effectPct: null, sources: [], note: null, rule: null }], modelRange: null, noteGuests: 0,
       madeAt: '2026-11-01', madeAfterDay: false, actual: 140, inRange: false,
     });
     expect(days[1]).toMatchObject({ status: 'closed', low: null, mid: null, high: null, reasons: [{ label: 'Closed' }] });
@@ -293,7 +301,7 @@ describe('get_forecast (U13B)', () => {
     ];
     const forecasts = { published: () => Promise.resolve(runs), rows: () => Promise.resolve(rows) } as unknown as ForecastStore;
     const salesDays = { days: () => Promise.resolve(olderDays.map((date) => ({ date, guests: date === '2026-10-30' ? 130 : 100, netSalesCents: 1 }))) } as unknown as SalesDayStore;
-    const reader = createForecastReader({ stores: { forecasts, salesDays, notes: NO_NOTES } });
+    const reader = createForecastReader({ stores: { forecasts, salesDays, notes: NO_NOTES, businessRules: NO_RULES } });
     const { parsed } = await run('get_forecast', { from: '2026-10-27', to: '2026-11-05' }, context({ forecasts: reader }));
     expect(parsed.accuracy).toBeUndefined();
     expect(parsed.model).toMatchObject({ version: 'v10', madeAt: '2026-11-02', accuracy: { backtest: null, live: null } });
@@ -343,6 +351,35 @@ describe('get_forecast (U13B)', () => {
     for (const sentinel of [NOTE_DETAIL, 'Smith', NOTE_ID, SENTINEL_USER]) expect(content).not.toContain(sentinel);
     const description = toolNamed('get_forecast')?.definition.description ?? '';
     expect(description).toContain('From today on, each day includes the owner\'s saved notes');
+  });
+
+  it('get_forecast applies a business rule\'s schedule with the notes, as a rule reason with its guests and outcome, never the rule\'s text or id', async () => {
+    const RULE_TEXT = 'Sentinel rule: the Smith family dinner every Saturday';
+    const rule = (id: string, schedule: BusinessRuleRecord['schedule']): BusinessRuleRecord => ({
+      id, text: RULE_TEXT, addedVia: 'page', createdBy: SENTINEL_USER, byStaff: false, schedule,
+      createdAt: new Date('2026-10-01T00:00:00Z'), updatedAt: new Date('2026-10-01T00:00:00Z'),
+    });
+    const RULE_ID = '0000000000000000000000bb';
+    const rules = [
+      rule(RULE_ID, { kind: 'private_event', startDate: '2026-10-03', endDate: null, weekdays: [6], effect: 'more_guests', expectedGuests: 40, startTime: '18:00', endTime: '21:00' }),
+      rule('0000000000000000000000cc', { kind: 'closure', startDate: '2026-11-02', endDate: '2026-11-02', weekdays: null, effect: 'closed', expectedGuests: null, startTime: null, endTime: null }),
+    ];
+    const tc = withRows([dayRow('2026-11-06'), dayRow('2026-11-07'), dayRow('2026-11-09')], undefined, [savedNote({ startDate: '2026-11-07' })], rules);
+    const { parsed, content } = await run('get_forecast', { from: '2026-11-06', to: '2026-11-09' }, tc);
+    const days = parsed.days as Record<string, unknown>[];
+    expect(days[0]).toMatchObject({ date: '2026-11-06', low: 80, mid: 100, high: 120, noteGuests: 0 });
+    expect(days[1]).toMatchObject({
+      date: '2026-11-07', status: 'open', low: 190, mid: 210, high: 230, noteGuests: 110,
+      modelRange: { status: 'open', low: 80, mid: 100, high: 120 },
+      reasons: [
+        { label: 'Your rule: adds 40 guests on Saturdays, 6 pm to 9 pm', effectPct: null, sources: [], note: null, rule: { guests: 40, outcome: 'added' } },
+        { label: 'Your private event, 70 guests, 6 pm to 9 pm', note: { guests: 70, outcome: 'added' }, rule: null },
+        { label: 'Saturday', note: null, rule: null },
+      ],
+    });
+    for (const sentinel of [RULE_TEXT, 'Smith', RULE_ID, SENTINEL_USER]) expect(content).not.toContain(sentinel);
+    const description = toolNamed('get_forecast')?.definition.description ?? '';
+    expect(description).toContain('business rules with a schedule');
   });
 
   it('get_forecast keeps a past day\'s figures and says the note came after it', async () => {

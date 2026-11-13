@@ -11,6 +11,7 @@ import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, Principal } from '../access/policy.ts';
 import { daysBetween, EARLIEST_DATE, isoDate, plusYears, utcDay } from '../dates.ts';
 import { authorEmail, DELETED_PERSON, TOWNWISE_STAFF } from '../people.ts';
+import type { RuleSchedule } from '../stores/business-rules.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { NoteContent, NoteRecord } from '../stores/notes.ts';
 import { loadLocation, memberOf } from './locations.ts';
@@ -29,17 +30,55 @@ const MAX_EXPECTED_GUESTS = 20_000;
 /** Local wall-clock time, 24-hour 'HH:MM'. */
 const clockTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 
-const noteBody = z.object({
+/** The fields a note and a business rule's schedule (D31) share. */
+const sharedFields = {
   kind: z.enum(['closure', 'private_event', 'opening', 'other']),
   startDate: isoDate,
-  endDate: isoDate,
   weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7).nullish(),
   effect: z.enum(['closed', 'more_guests', 'fewer_guests', 'unknown']),
   expectedGuests: z.number().int().min(1).max(MAX_EXPECTED_GUESTS).nullish(),
-  detail: z.string().trim().max(280).nullish(),
   startTime: clockTime.nullish(),
   endTime: clockTime.nullish(),
-});
+};
+
+const noteBody = z.object({ ...sharedFields, endDate: isoDate, detail: z.string().trim().max(280).nullish() });
+
+/** A rule's schedule: strict, with no detail (the rule's text is its words), and no end when `endDate` is null or left out. */
+const scheduleBody = z.strictObject({ ...sharedFields, endDate: isoDate.nullish() });
+
+type SharedBody = z.infer<z.ZodObject<typeof sharedFields>>;
+
+/** The shared fields as stored: a missing optional field reads as null, and weekdays sort ascending. */
+function sharedContentOf(body: SharedBody): Omit<RuleSchedule, 'endDate'> {
+  return {
+    kind: body.kind,
+    startDate: body.startDate,
+    weekdays: body.weekdays === undefined || body.weekdays === null ? null : [...body.weekdays].sort((a, b) => a - b),
+    effect: body.effect,
+    expectedGuests: body.expectedGuests ?? null,
+    startTime: body.startTime ?? null,
+    endTime: body.endTime ?? null,
+  };
+}
+
+/**
+ * The rules a note and a rule's schedule share (spec 12): the start date runs from 2010-01-01 to today plus two years;
+ * the end is on or after it, at most 366 days later, unless it is null (a schedule with no end); weekdays are unique;
+ * expected guests is null when the effect is `closed`, except on a buyout (a private event, closed), where it is the
+ * party's size; hours are both set or both null, start before end on the same day, and null on a closure.
+ */
+function validDays(content: RuleSchedule, today: string): boolean {
+  const { startTime, endTime, endDate } = content;
+  // 'HH:MM' strings order as the times do. [CONFIRM: an event with hours ends by midnight on its own day]
+  const validHours = startTime === null || endTime === null
+    ? startTime === endTime
+    : startTime < endTime && content.kind !== 'closure';
+  return content.startDate >= EARLIEST_DATE && content.startDate <= plusYears(today, 2)
+    && (endDate === null || (endDate >= content.startDate && daysBetween(content.startDate, endDate) <= MAX_SPAN_DAYS))
+    && (content.weekdays === null || new Set(content.weekdays).size === content.weekdays.length)
+    && (content.effect !== 'closed' || content.kind === 'private_event' || content.expectedGuests === null)
+    && validHours;
+}
 
 function invalid(): AppError {
   return new AppError(400, 'invalid_request', 'Invalid request');
@@ -50,39 +89,31 @@ function notFound(): AppError {
 }
 
 /**
- * Spec 12 NoteInput. A missing optional field reads as null, and an empty detail as none. The start date runs from
- * 2010-01-01 to today plus two years; the end is on or after it, at most 366 days later; weekdays are unique;
- * expected guests is null when the effect is `closed`, except on a buyout (a private event, closed), where it is the
- * party's size; an `other` note needs a detail; hours are both set or both null, start before end on the same day,
- * and null on a closure. Null when any rule fails. The tuning chat validates its note proposals with this too.
+ * Spec 12 NoteInput. A missing optional field reads as null, and an empty detail as none. The shared rules (validDays),
+ * and an `other` note needs a detail. Null when any rule fails. The tuning chat validates its note proposals with this too.
  */
 export function readNoteContent(raw: unknown, today: string): NoteContent | null {
   const parsed = noteBody.safeParse(raw);
   if (!parsed.success) return null;
   const body = parsed.data;
   const content: NoteContent = {
-    kind: body.kind,
-    startDate: body.startDate,
+    ...sharedContentOf(body),
     endDate: body.endDate,
-    weekdays: body.weekdays === undefined || body.weekdays === null ? null : [...body.weekdays].sort((a, b) => a - b),
-    effect: body.effect,
-    expectedGuests: body.expectedGuests ?? null,
     detail: body.detail === undefined || body.detail === null || body.detail === '' ? null : body.detail,
-    startTime: body.startTime ?? null,
-    endTime: body.endTime ?? null,
   };
-  const { startTime, endTime } = content;
-  // 'HH:MM' strings order as the times do. [CONFIRM: an event with hours ends by midnight on its own day]
-  const validHours = startTime === null || endTime === null
-    ? startTime === endTime
-    : startTime < endTime && content.kind !== 'closure';
-  const valid = content.startDate >= EARLIEST_DATE && content.startDate <= plusYears(today, 2)
-    && content.endDate >= content.startDate && daysBetween(content.startDate, content.endDate) <= MAX_SPAN_DAYS
-    && (content.weekdays === null || new Set(content.weekdays).size === content.weekdays.length)
-    && (content.effect !== 'closed' || content.kind === 'private_event' || content.expectedGuests === null)
-    && (content.kind !== 'other' || content.detail !== null)
-    && validHours;
-  return valid ? content : null;
+  return validDays(content, today) && (content.kind !== 'other' || content.detail !== null) ? content : null;
+}
+
+/**
+ * A business rule's schedule (D31, spec 10.16): a note's fields and rules (validDays) but the detail, which a schedule
+ * never has (an Other schedule needs none: the rule's text is its words), and an `endDate` that may be null or left out
+ * for no end. Strict: any other key, a detail included, is refused. Null when any rule fails.
+ */
+export function readRuleSchedule(raw: unknown, today: string): RuleSchedule | null {
+  const parsed = scheduleBody.safeParse(raw);
+  if (!parsed.success) return null;
+  const schedule: RuleSchedule = { ...sharedContentOf(parsed.data), endDate: parsed.data.endDate ?? null };
+  return validDays(schedule, today) ? schedule : null;
 }
 
 /** True when the two notes say the same thing, field by field. */

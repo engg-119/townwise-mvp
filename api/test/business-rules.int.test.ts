@@ -13,8 +13,14 @@ import {
   call, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
 
+interface Schedule {
+  kind: string; startDate: string; endDate: string | null; weekdays: number[] | null; effect: string; expectedGuests: number | null;
+  startTime: string | null; endTime: string | null;
+}
+
 interface RuleView {
   id: string; text: string; addedVia: 'page' | 'townwise_ai'; createdByEmail: string; createdAt: string; updatedAt: string; canEdit: boolean;
+  schedule: Schedule | null; scheduleSummary: string | null;
 }
 
 let server: TownwiseTestServer;
@@ -98,6 +104,7 @@ describe('a member’s rules', () => {
     const now = server.clock.now().toISOString();
     expect(rule).toEqual({
       id: rule.id, text: 'Sentinel closed Mondays', addedVia: 'page', createdByEmail: author.email, createdAt: now, updatedAt: now, canEdit: true,
+      schedule: null, scheduleSummary: null,
     });
     const stored = await server.connection.collection('tw_business_rules').findOne({ _id: new Types.ObjectId(rule.id) });
     expect(Object.keys(stored ?? {}).sort()).toEqual([
@@ -118,8 +125,8 @@ describe('a member’s rules', () => {
 
     const events = (await auditEvents(server)).filter((e) => (e.target as { id: string }).id === rule.id);
     expect(events.map((e) => [e.action, e.target, e.details, e.actorUserId])).toEqual([
-      ['rule.created', { type: 'rule', id: rule.id }, { locationId: location, via: 'page' }, author.session.userId],
-      ['rule.updated', { type: 'rule', id: rule.id }, { locationId: location }, author.session.userId],
+      ['rule.created', { type: 'rule', id: rule.id }, { locationId: location, via: 'page', scheduled: false }, author.session.userId],
+      ['rule.updated', { type: 'rule', id: rule.id }, { locationId: location, scheduled: false }, author.session.userId],
       ['rule.deleted', { type: 'rule', id: rule.id }, { locationId: location }, author.session.userId],
     ]);
     expect(JSON.stringify(await auditEvents(server))).not.toContain('Sentinel');
@@ -205,6 +212,127 @@ describe('a member’s rules', () => {
     expect((await listed(location, admin)).rules.map((r) => [r.text, r.addedVia, r.createdByEmail, r.canEdit])).toEqual([
       ['Closed Mondays', 'townwise_ai', 'Deleted person', true],
     ]);
+  });
+});
+
+describe('a rule’s schedule (D31)', () => {
+  const CLOSED_MONDAYS: Schedule = {
+    kind: 'closure', startDate: '2026-12-07', endDate: null, weekdays: [1], effect: 'closed', expectedGuests: null, startTime: null, endTime: null,
+  };
+  const SATURDAY_PARTY: Schedule = {
+    kind: 'private_event', startDate: '2026-12-05', endDate: '2027-03-27', weekdays: [6], effect: 'more_guests', expectedGuests: 40,
+    startTime: '18:00', endTime: '21:00',
+  };
+  let held: Hold[] = [];
+  afterEach(() => {
+    for (const hold of held) hold.restore();
+    held = [];
+  });
+
+  async function stored(ruleId: string): Promise<Record<string, unknown> | null> {
+    return await server.connection.collection('tw_business_rules').findOne({ _id: new Types.ObjectId(ruleId) });
+  }
+
+  it('a rule added with a schedule returns it with its summary; the event says only that it is scheduled; a rule without one stores no schedule', async () => {
+    const location = await addLocation(server, { orgId, name: 'Scheduled Room' });
+    server.logs.length = 0;
+    const res = await call(server, rulesPath(location), { session: author.session, json: { text: 'Sentinel shut Mondays', schedule: CLOSED_MONDAYS } });
+    expect(res.status).toBe(201);
+    const rule = (await res.json() as { rule: RuleView }).rule;
+    expect(rule).toMatchObject({ text: 'Sentinel shut Mondays', schedule: CLOSED_MONDAYS, scheduleSummary: 'Closed on Mondays from Dec 7, 2026' });
+    expect((await stored(rule.id))?.schedule).toEqual(CLOSED_MONDAYS);
+    expect((await listed(location)).rules).toEqual([rule]);
+    const plain = await added(location, 'Patio opens in May');
+    expect(plain).toMatchObject({ schedule: null, scheduleSummary: null });
+    expect(Object.keys(await stored(plain.id) ?? {})).not.toContain('schedule');
+    expect((await call(server, rulesPath(location), { session: author.session, json: { text: 'Brunch on Sundays', schedule: null } })).status).toBe(201);
+    const created = (await auditEvents(server)).filter((e) => e.action === 'rule.created' && (e.details as { locationId?: string }).locationId === location);
+    expect(created.map((e) => e.details)).toEqual([
+      { locationId: location, via: 'page', scheduled: true }, { locationId: location, via: 'page', scheduled: false },
+      { locationId: location, via: 'page', scheduled: false },
+    ]);
+    expect(JSON.stringify(await auditEvents(server))).not.toContain('Sentinel');
+    expect(server.logs.join('\n')).not.toMatch(/Sentinel|2026-12-07/);
+  });
+
+  it('PATCH sets, changes and takes off the schedule alone; an unchanged schedule writes nothing', async () => {
+    const location = await addLocation(server, { orgId, name: 'Patched Room' });
+    const rule = await added(location, 'Closed Mondays');
+    server.clock.advance(60_000);
+    const set = await edit(location, rule.id, undefined);
+    expect(await errorOf(set)).toEqual({ status: 400, error: 'invalid_request' });
+    const scheduled = await call(server, `${rulesPath(location)}/${rule.id}`, { method: 'PATCH', session: author.session, json: { schedule: CLOSED_MONDAYS } });
+    expect(scheduled.status).toBe(200);
+    expect((await scheduled.json() as { rule: RuleView }).rule).toMatchObject({
+      text: 'Closed Mondays', schedule: CLOSED_MONDAYS, scheduleSummary: 'Closed on Mondays from Dec 7, 2026', updatedAt: server.clock.now().toISOString(),
+    });
+    // The same schedule again, with or without the same text: 200, no write and no event.
+    server.clock.advance(60_000);
+    const same = await call(server, `${rulesPath(location)}/${rule.id}`, {
+      method: 'PATCH', session: author.session, json: { text: 'Closed Mondays', schedule: { ...CLOSED_MONDAYS, weekdays: [1] } },
+    });
+    expect((await same.json() as { rule: RuleView }).rule.updatedAt).not.toBe(server.clock.now().toISOString());
+    const cleared = await call(server, `${rulesPath(location)}/${rule.id}`, { method: 'PATCH', session: admin.session, json: { schedule: null } });
+    expect((await cleared.json() as { rule: RuleView }).rule).toMatchObject({ schedule: null, scheduleSummary: null });
+    expect(Object.keys(await stored(rule.id) ?? {})).not.toContain('schedule');
+    const updates = (await auditEvents(server)).filter((e) => e.action === 'rule.updated' && (e.target as { id: string }).id === rule.id);
+    expect(updates.map((e) => [e.details, e.actorUserId])).toEqual([
+      [{ locationId: location, scheduled: true }, author.session.userId], [{ locationId: location, scheduled: false }, admin.session.userId],
+    ]);
+  });
+
+  it('refuses a schedule a note’s rules refuse, a detail on it, or a body with neither field, and writes nothing', async () => {
+    const location = await addLocation(server, { orgId, name: 'Refused Schedule Room' });
+    const rule = await added(location, 'Closed Mondays');
+    for (const bad of [
+      { ...CLOSED_MONDAYS, expectedGuests: 20 }, { ...CLOSED_MONDAYS, endDate: '2026-12-01' }, { ...CLOSED_MONDAYS, detail: 'Smith party' },
+      { ...CLOSED_MONDAYS, startDate: '2028-12-01' }, { ...SATURDAY_PARTY, startTime: '21:00', endTime: '18:00' }, 'closed Mondays',
+    ]) {
+      expect(await errorOf(await call(server, rulesPath(location), { session: author.session, json: { text: 'Shut Mondays', schedule: bad } })))
+        .toEqual({ status: 400, error: 'invalid_request' });
+      expect(await errorOf(await call(server, `${rulesPath(location)}/${rule.id}`, { method: 'PATCH', session: author.session, json: { schedule: bad } })))
+        .toEqual({ status: 400, error: 'invalid_request' });
+    }
+    expect(await errorOf(await call(server, `${rulesPath(location)}/${rule.id}`, { method: 'PATCH', session: author.session, json: {} })))
+      .toEqual({ status: 400, error: 'invalid_request' });
+    expect(await ruleCount(location)).toBe(1);
+    expect(Object.keys(await stored(rule.id) ?? {})).not.toContain('schedule');
+  });
+
+  it('an edit of the text and an edit of the schedule racing both land: each writes only the field it changed', async () => {
+    const location = await addLocation(server, { orgId, name: 'Racing Edits Room' });
+    const rule = await added(location, 'Parties on Saturdays');
+    const writes = holdCalls(server, 'findOneAndUpdate', 'TwBusinessRule');
+    held.push(writes);
+    const path = `${rulesPath(location)}/${rule.id}`;
+    // Both read the rule before either writes; each sends the other field as it read it.
+    const textEdit = call(server, path, { method: 'PATCH', session: author.session, json: { text: 'Rehearsal dinners on Saturdays', schedule: null } });
+    await writes.arrived(1);
+    const scheduleEdit = call(server, path, { method: 'PATCH', session: admin.session, json: { text: 'Parties on Saturdays', schedule: SATURDAY_PARTY } });
+    await writes.arrived(2);
+    writes.release(2);
+    writes.release(1);
+    const [a, b] = await Promise.all([textEdit, scheduleEdit]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+    expect((await listed(location)).rules.map((r) => [r.text, r.schedule])).toEqual([['Rehearsal dinners on Saturdays', SATURDAY_PARTY]]);
+  });
+
+  it('taking the schedule off while another edit changes the text with the old schedule leaves no schedule and the new text', async () => {
+    const location = await addLocation(server, { orgId, name: 'Racing Clear Room' });
+    const res = await call(server, rulesPath(location), { session: author.session, json: { text: 'Parties on Saturdays', schedule: SATURDAY_PARTY } });
+    const rule = (await res.json() as { rule: RuleView }).rule;
+    const writes = holdCalls(server, 'findOneAndUpdate', 'TwBusinessRule');
+    held.push(writes);
+    const path = `${rulesPath(location)}/${rule.id}`;
+    const clear = call(server, path, { method: 'PATCH', session: admin.session, json: { schedule: null } });
+    await writes.arrived(1);
+    const retext = call(server, path, { method: 'PATCH', session: author.session, json: { text: 'Big parties on Saturdays', schedule: SATURDAY_PARTY } });
+    await writes.arrived(2);
+    writes.release(1);
+    expect((await clear).status).toBe(200);
+    writes.release(2);
+    expect((await retext).status).toBe(200);
+    expect((await listed(location)).rules.map((r) => [r.text, r.schedule])).toEqual([['Big parties on Saturdays', null]]);
   });
 });
 

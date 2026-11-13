@@ -3,16 +3,16 @@ import { StyleSheet, View } from 'react-native';
 
 import { theme } from '../../theme';
 import { noteWords } from '../analytics/panel';
-import { eventLine, type MonthDay } from '../analytics/week';
-import { metricText, shortDate, type Metric } from '../analytics/words';
-import type { ForecastDay } from '../estimates/api';
+import { eventLine, thisDayLine, type MonthDay } from '../analytics/week';
+import { shortDate, type Metric } from '../analytics/words';
+import { guestsFromWords, yoursDid, type ForecastDay } from '../estimates/api';
 import { formatCount, plural } from '../format';
 import { Heading, Mono, Small } from '../ui/text';
 import { PastCell } from './ThisWeek';
 
 // The selected day of This month (spec P11), beside the grid from where they fit side by side, under it otherwise:
-// from today on, the published forecast's day when there is one (its figure and range, the guests your notes add,
-// and its first three reasons; spec 16.3 P11), the day's holidays and town events with their sources, your
+// from today on, the published forecast's day when there is one (its figure and range, the guests your notes and
+// business rules add, and its first three reasons, a rule's among them; spec 16.3 P11, D31), the day's holidays and town events with their sources, your
 // notes, then, with any history, the day's own figure (only for a past day with data; a day after today gets none of
 // its own, ever) and the same weekday last year and two years ago. Term and season periods are left to the month's
 // list, since they mark no day. It reads nothing of its own; the Calendar has the full day.
@@ -25,14 +25,13 @@ const WHY_LINES = 3;
 export function forecastDayLines(day: ForecastDay): string[] {
   if (day.status === 'closed') return ['Closed.'];
   if (day.status === 'booked') {
-    const buyout = day.reasons.some((reason) => reason.note?.outcome === 'booked');
-    if (!buyout) return ['Booked for a private event. No walk-in forecast.'];
+    if (!yoursDid(day, 'booked')) return ['Booked for a private event. No walk-in forecast.'];
     return [day.noteGuests > 0 ? `Booked: a private buyout, ${plural(day.noteGuests, 'guest', 'guests')}. No walk-in forecast.` : 'Booked: a private buyout. No walk-in forecast.'];
   }
   if (day.low === null || day.mid === null || day.high === null) return [];
   // The range's low rounds down and its high up (spec 14.4), as the Calendar and TownwiseAI give it.
   const range = `About ${plural(Math.round(day.mid), 'guest', 'guests')}, likely ${formatCount(Math.floor(day.low))} to ${formatCount(Math.ceil(day.high))}.`;
-  return [day.noteGuests > 0 ? `${range} Includes ${plural(day.noteGuests, 'guest', 'guests')} from your notes.` : range];
+  return [day.noteGuests > 0 ? `${range} Includes ${plural(day.noteGuests, 'guest', 'guests')} from ${guestsFromWords(day)}.` : range];
 }
 
 function Part(props: { label: string; children: React.ReactNode }): React.JSX.Element {
@@ -81,7 +80,7 @@ export function DayDetail(props: { day: MonthDay; forecast: ForecastDay | null; 
       </Part>
       {history && !day.future ? (
         <Part label="This day">
-          <Mono tone={day.value === null ? 'text3' : 'white'}>{day.value === null ? 'No sales stored for this day.' : metricText(day.value, metric)}</Mono>
+          <Mono tone={day.value === null ? 'text3' : 'white'}>{thisDayLine(day, metric)}</Mono>
         </Part>
       ) : null}
       {history ? <Part label="Same weekday last year"><PastCell day={day.lastYear} metric={metric} /></Part> : null}

@@ -3,7 +3,8 @@
 // Synthetic notes.
 import { describe, expect, it } from 'vitest';
 
-import { clockWords, noteReasonView, reasonViews, townCalendarOf } from '../src/forecasts/reasons.ts';
+import { clockWords, noteReasonView, reasonViews, ruleReasonView, townCalendarOf } from '../src/forecasts/reasons.ts';
+import type { RuleSchedule } from '../src/stores/business-rules.ts';
 import type { NoteContent, NoteRecord } from '../src/stores/notes.ts';
 
 const SENTINEL = 'Smith rehearsal dinner for sentinel-guest';
@@ -22,7 +23,7 @@ describe('note reasons', () => {
     const added = noteReasonView(note({ startTime: '18:00', endTime: '21:00' }), 'added');
     expect(added).toEqual({
       kind: 'note', label: 'Your private event, 70 guests, 6 pm to 9 pm', effectPct: null, sources: [],
-      note: { id: ID, guests: 70, outcome: 'added' },
+      note: { id: ID, guests: 70, outcome: 'added' }, rule: null,
     });
     const labels = [
       noteReasonView(note({ effect: 'closed', expectedGuests: 70 }), 'booked'),
@@ -56,6 +57,35 @@ describe('note reasons', () => {
 
   it('a run’s reasons carry no note', () => {
     const [weekday] = reasonViews('2026-06-06', [{ kind: 'weekday', ref: null, effectPct: null }], townCalendarOf('hanover-nh')('2026-06-06'));
-    expect(weekday).toEqual({ kind: 'weekday', label: 'Saturday', effectPct: null, sources: [], note: null });
+    expect(weekday).toEqual({ kind: 'weekday', label: 'Saturday', effectPct: null, sources: [], note: null, rule: null });
+  });
+});
+
+describe('rule reasons', () => {
+  const RULE_ID = '0000000000000000000000bb';
+  const schedule = (fields: Partial<RuleSchedule> = {}): RuleSchedule => ({
+    kind: 'closure', startDate: '2026-01-05', endDate: null, weekdays: [1], effect: 'closed', expectedGuests: null, startTime: null, endTime: null,
+    ...fields,
+  });
+
+  it('words a rule’s reason from its schedule (no dates), never the rule’s text, and carries the rule’s id, guests and outcome', () => {
+    expect(ruleReasonView({ id: RULE_ID, schedule: schedule() }, 'closed')).toEqual({
+      kind: 'rule', label: 'Your rule: closed on Mondays', effectPct: null, sources: [], note: null,
+      rule: { id: RULE_ID, guests: null, outcome: 'closed' },
+    });
+    const labels = [
+      schedule({ kind: 'private_event', effect: 'more_guests', expectedGuests: 40, weekdays: [5], startTime: '18:00', endTime: '21:00' }),
+      schedule({ weekdays: null }),
+      schedule({ kind: 'private_event', effect: 'closed', expectedGuests: 70, weekdays: [6, 0] }),
+      schedule({ kind: 'other', effect: 'fewer_guests', weekdays: [2] }),
+    ].map((each) => ruleReasonView({ id: RULE_ID, schedule: each }, 'not_counted').label);
+    expect(labels).toEqual([
+      'Your rule: adds 40 guests on Fridays, 6 pm to 9 pm',
+      'Your rule: closed',
+      'Your rule: private buyout, 70 guests on Saturdays and Sundays',
+      'Your rule: other, fewer guests than usual on Tuesdays',
+    ]);
+    expect(ruleReasonView({ id: RULE_ID, schedule: schedule({ kind: 'private_event', effect: 'more_guests', expectedGuests: 40 }) }, 'added').rule)
+      .toEqual({ id: RULE_ID, guests: 40, outcome: 'added' });
   });
 });
