@@ -1,0 +1,13 @@
+on: push
+jobs:
+  build-api:
+    runs-on: ubuntu-laptop
+    permissions:
+      contents: read
+    steps: [{run: echo}]
+  deploy:
+    needs: [build-api]
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write
+    steps: [{run: echo}]

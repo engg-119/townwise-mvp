@@ -295,6 +295,7 @@ const BODY: Record<string, unknown> = {
   'org.agent.answer': { answer: 'not_sure' },
   // D28.
   'org.data.update': { enabled: false },
+  'org.data.replace': { fileId: new Types.ObjectId().toHexString() },
   // Business rules.
   'org.rules.create': { text: 'Closed Mondays' },
   'org.rules.update': { text: 'Closed Tuesdays' },
@@ -372,7 +373,7 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
       // U13B.
       'org.forecast.get',
       // D28, Your data.
-      'org.data.update', 'org.data.remove', 'org.chat.item_proposal.get', 'org.chat.item_proposal',
+      'org.data.update', 'org.data.remove', 'org.chat.item_proposal.get', 'org.chat.item_proposal', 'org.data.replace', 'org.data.get',
       // Business rules.
       'org.rules.list', 'org.rules.create', 'org.rules.update', 'org.rules.remove',
     ]));

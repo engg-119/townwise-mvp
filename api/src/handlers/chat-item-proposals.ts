@@ -19,7 +19,7 @@ import type { FileBlobs } from '../files/blobs.ts';
 import type { ProposalKey, ProposalRecord } from '../stores/chat-proposals.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import { notFound, ownerOf } from './chat.ts';
-import { dataItemView, type DataItemView } from './data.ts';
+import { itemView, type DataItemView } from './data.ts';
 import { keepTextItem } from './files.ts';
 import { loadLocation, memberOf } from './locations.ts';
 import { filesUnavailable } from './sales.ts';
@@ -70,8 +70,7 @@ async function viewOf(ctx: TownwiseContext, caller: MemberPrincipal, shown: Show
   let item: DataItemView | null = null;
   if (row !== null && status === 'saved') {
     const kept = await loadDataItem(ctx, caller.scope, shown.location.id, { type: 'file', id: row.noteId }, caller.userId);
-    // Kept by the conversation's author, who is the caller.
-    item = kept === null ? null : dataItemView(caller, kept, caller.email, ctx.files !== null);
+    item = kept === null ? null : await itemView(ctx, caller, kept);
   }
   return { id: shown.key.proposalId, title: shown.input.title, text: shown.input.text, status, item };
 }

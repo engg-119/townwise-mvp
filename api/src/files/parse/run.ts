@@ -82,8 +82,27 @@ export interface ParseInput {
 
 const THREAD_URL = new URL('./thread.ts', import.meta.url);
 
-/** A queue of the thread's messages, read one at a time. */
-function inbox(worker: Worker): { next(): Promise<ThreadOut> } {
+const THREAD_OUT_TYPES: ReadonlySet<string> = new Set<ThreadOut['type']>(['ack', 'again', 'progress', 'read', 'model', 'result']);
+
+/**
+ * True for the parse thread's own messages. Node can post others on a worker's port: under `node --watch` (the api's
+ * `npm run dev`) each module the thread loads arrives as `{ 'watch:import': [...] }`, some mid-file, since the thread
+ * loads its PDF and archive readers on demand.
+ */
+export function isThreadOut(message: unknown): message is ThreadOut {
+  return typeof message === 'object' && message !== null && 'type' in message
+    && typeof message.type === 'string' && THREAD_OUT_TYPES.has(message.type);
+}
+
+/** The worker events the inbox listens to. */
+export interface InboxSource {
+  on(event: 'message', listener: (message: unknown) => void): unknown;
+  on(event: 'error', listener: (err: Error) => void): unknown;
+  on(event: 'exit', listener: (code: number) => void): unknown;
+}
+
+/** A queue of the thread's messages, read one at a time; any other message on the port is dropped. */
+export function inbox(worker: InboxSource): { next(): Promise<ThreadOut> } {
   const waiting: ((message: ThreadOut | Error) => void)[] = [];
   const queued: (ThreadOut | Error)[] = [];
   const deliver = (message: ThreadOut | Error): void => {
@@ -91,7 +110,9 @@ function inbox(worker: Worker): { next(): Promise<ThreadOut> } {
     if (take === undefined) queued.push(message);
     else take(message);
   };
-  worker.on('message', deliver);
+  worker.on('message', (message: unknown) => {
+    if (isThreadOut(message)) deliver(message);
+  });
   worker.on('error', (err: Error) => { deliver(err); });
   worker.on('exit', (code) => { deliver(new Error(`parse thread exited (${String(code)})`)); });
   return {

@@ -23,7 +23,7 @@ test('the action filter covers every action the API records (api/src/stores/audi
     'org.created', 'org.renamed', 'org.suspended', 'org.reactivated', 'org.deleted',
     'member.invited', 'member.declined', 'member.joined', 'member.role_changed', 'member.removed', 'member.left',
     'location.created', 'location.updated', 'location.deleted', 'sales.uploaded', 'sales.deleted',
-    'sales.upload_deleted', 'data.turned_off', 'data.turned_on',
+    'sales.upload_deleted', 'data.turned_off', 'data.turned_on', 'data.renamed', 'data.edited',
     'file.uploaded', 'file.deleted', 'file.raw_deleted', 'files.raw_deleted_all', 'org.originals_deleted',
     'note.created', 'note.updated', 'note.deleted', 'chat.turn_completed', 'chat.conversation_deleted',
     'agent.question_answered',
@@ -53,6 +53,11 @@ test.each<[string, Record<string, string | number | boolean | null>, string]>([
   ['forecast.published', { locationId: 'l1', modelVersion: 'v9', from: '2026-05-01', to: '2026-05-14', dayCount: 14 }, 'Model v9, May 1, 2026 to May 14, 2026, 14 days'],
 ])('details for %s', (action, details, expected) => {
   expect(auditDetails({ action, details })).toBe(expected);
+});
+
+test('D28: renaming and editing an item have the API’s labels (api/src/audit.ts)', () => {
+  expect(AUDIT_ACTIONS).toContainEqual({ value: 'data.renamed', label: 'Item renamed' });
+  expect(AUDIT_ACTIONS).toContainEqual({ value: 'data.edited', label: 'Item edited' });
 });
 
 test('open as admin has its audit labels and end reasons', () => {

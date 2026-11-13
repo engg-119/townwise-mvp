@@ -14,7 +14,7 @@ import { answerQuestion, loadAgentPanel, type AgentPanel, type QuestionAnswer } 
 // saved (the first try, or Try again under its reply in the thread) is the question answered `other`, whose body is
 // the answer alone. The words are kept here, in memory, while they are being written and sent, so a card drawn again
 // (the sheet opened again, the landing back after a turn taken back) still has them; folding the field keeps them,
-// and they are dropped once the question is answered or the field is cancelled, and never stored.
+// and they are dropped once the question is answered or the field is canceled, and never stored.
 // A card drawn in both places (the column beside the landing) announces what happens only from the copy the person
 // last used, so a screen reader hears it once.
 

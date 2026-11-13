@@ -183,7 +183,7 @@ describe('each card shows its evidence', () => {
 });
 
 describe('Something else…', () => {
-  test('opens a labelled field of the card’s own; Cancel closes it, drops the words and gives focus back', async () => {
+  test('opens a labeled field of the card’s own; Cancel closes it, drops the words and gives focus back', async () => {
     renderAt('/locations/l1/agent', chatApi());
     const side = await openPanel(3);
     const other = within(answers(side, GAP_HEADING)).getByRole('button', { name: 'Something else…' });

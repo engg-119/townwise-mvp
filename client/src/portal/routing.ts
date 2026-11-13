@@ -29,12 +29,17 @@ const GATE_PAGES: Readonly<Record<string, readonly AccessState[]>> = {
 };
 
 const ID = '[^/]+';
+/** A Your data item's ref (D28): `u_` for an upload or `f_` for a stored file, then its 24-hex id. */
+const ITEM_REF = '[uf]_[0-9a-f]{24}';
+const ITEM_REF_ONLY = new RegExp(`^${ITEM_REF}$`);
 /**
- * Client app pages any member may open (P9, P11 to P15, P18, P24 Analytics, P25 TownwiseAI, P28 Calendar, P29 Business
- * rules). `chat` is the tuning chat's old address, which redirects to `agent`. The Calendar's `?day=` is a query, so it
- * never changes this.
+ * Client app pages any member may open (P9, P11 to P15, P18, P24 Analytics, P25 TownwiseAI, P26 Your data and P27 an
+ * item of it, P28 Calendar, P29 Business rules). `chat` is the tuning chat's old address, which redirects to `agent`.
+ * The Calendar's `?day=` is a query, so it never changes this.
  */
-const MEMBER_PAGES = new RegExp(`^/(dashboard|settings|locations/${ID}(/(analytics|sales|sales/upload|data|notes|town|agent|chat|calendar|rules))?)$`);
+const MEMBER_PAGES = new RegExp(
+  `^/(dashboard|settings|locations/${ID}(/(analytics|sales|sales/upload|data|data/${ITEM_REF}|notes|town|agent|chat|calendar|rules))?)$`,
+);
 /** Client app pages for org admins only (P10, P16, P17). Checked before MEMBER_PAGES: /locations/new is not an id. */
 const ADMIN_PAGES = new RegExp(`^/(team|locations/new|locations/${ID}/settings)$`);
 const CONSOLE_PAGES = /^\/admin(\/.*)?$/;
@@ -84,6 +89,11 @@ function currentFor(path: string, own: string, below: RegExp | null): Current {
   return below?.test(path) === true ? 'true' : null;
 }
 
+/** Whether `path` is an item's page under Your data's `dataHref`. */
+function isItemPath(path: string, dataHref: string): boolean {
+  return path.startsWith(`${dataHref}/`) && ITEM_REF_ONLY.test(path.slice(dataHref.length + 1));
+}
+
 export type TabKey = 'home' | 'calendar' | 'analytics' | 'sales' | 'upload' | 'data' | 'notes' | 'town' | 'agent' | 'rules' | 'settings';
 
 const TAB_SUFFIX: Readonly<Record<TabKey, string>> = {
@@ -108,10 +118,11 @@ export function clientNav(role: Role, pathname: string, locationId: string | nul
   if (locationId !== null) {
     for (const [key, label] of SECTIONS) {
       const href = locationHref(locationId, key);
-      // Analytics also marks Sales data, which lives under it; Your data also marks Upload, which is reached from it.
+      // Analytics also marks Sales data, which lives under it; Your data also marks Upload, which is reached from it,
+      // and an item's page, which lives under it.
       const current = currentFor(path, href, null)
         ?? (key === 'analytics' && path === locationHref(locationId, 'sales') ? 'true' : null)
-        ?? (key === 'data' && path === locationHref(locationId, 'upload') ? 'true' : null);
+        ?? (key === 'data' && (path === locationHref(locationId, 'upload') || isItemPath(path, href)) ? 'true' : null);
       items.push({ label, href, current });
     }
   }
@@ -131,10 +142,14 @@ export function consoleNav(pathname: string, pendingCount: number | null): NavIt
   ];
 }
 
-/** The section a location path belongs to. The old chat address belongs to TownwiseAI, where it redirects. */
+/**
+ * The section a location path belongs to. The old chat address belongs to TownwiseAI, where it redirects, and an
+ * item's page to Your data.
+ */
 export function tabOf(pathname: string): TabKey {
   const rest = /^\/locations\/[^/]+(\/.*)?$/.exec(normalize(pathname))?.[1] ?? '';
   if (rest === '/chat') return 'agent';
+  if (isItemPath(rest, '/data')) return 'data';
   const found = (Object.keys(TAB_SUFFIX) as TabKey[]).find((key) => TAB_SUFFIX[key] === rest && key !== 'home');
   return found ?? 'home';
 }
@@ -156,6 +171,11 @@ export function locationHref(locationId: string, tab: TabKey = 'home'): string {
 export function calendarHref(locationId: string, day?: string): string {
   const href = locationHref(locationId, 'calendar');
   return day === undefined ? href : `${href}?day=${encodeURIComponent(day)}`;
+}
+
+/** An item's page under Your data (P27); `ref` as the API gives it. */
+export function itemHref(locationId: string, ref: string): string {
+  return `${locationHref(locationId, 'data')}/${encodeURIComponent(ref)}`;
 }
 
 /**

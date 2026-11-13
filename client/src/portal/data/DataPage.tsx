@@ -13,9 +13,10 @@ import { shownLocationName } from '../locations/naming';
 import { LoadFailure, UploadAction, useOrgRefreshOnLeave } from '../locations/parts';
 import { CAN_DROP } from '../onboarding/HistoryStepDrop';
 import { usePortal, useReadOnly } from '../PortalProvider';
+import { itemHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
 import { TableSkeleton } from '../skeleton';
-import { Actions, Button } from '../ui/Button';
+import { Actions, Button, LinkButton } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { DataTable, type Column } from '../ui/DataTable';
 import { EmptyState, Messages, Notice, ReadOnlyLine } from '../ui/feedback';
@@ -32,10 +33,10 @@ import {
 import { PasteText } from './PasteText';
 
 // P26 Your data (D28), /locations/[locationId]/data: every upload and stored file a location received, newest
-// first, with what Townwise did with it and the actions the person may take: Turn off or on (acts at once), the
-// downloads (web), and the deletes, each of which says in words what goes and what stays. “Show” widens the list to
-// every location. Under view-as the API sends no names and no rights: the rows show kinds and dates, and every
-// action is disabled in place under the read-only line. Stored files off (503) hides Add a file, Paste text and
+// first, with what Townwise did with it and the actions the person may take: Open (its own page, P27, ItemPage.tsx),
+// Turn off or on (acts at once), the downloads (web), and the deletes, each of which says in words what goes and what
+// stays. “Show” widens the list to every location. Under view-as the API sends no names and no rights: the rows show
+// kinds and dates, and every action but Open is disabled in place under the read-only line. Stored files off (503) hides Add a file, Paste text and
 // the file actions; uploads still list, turn off and delete. A delete takes its opener away, so focus moves to the
 // line that says how it ended (MessageFocus, as Your files did). Turning an item off or on and deleting one change
 // the location's day counts, so the organization (GET /api/org) is read again when the page closes. An item kept
@@ -344,9 +345,14 @@ function RowActions(props: {
   const name = itemName(item);
   const named = (action: string): string => `${action}: ${name}`;
   const action = item.enabled ? DATA.turnOff : DATA.turnOn;
+  // Opening is a read, so it stays under view-as. An item still uploading has nothing to open yet.
+  const open = item.state === 'uploading' ? null : (
+    <LinkButton variant="link" href={itemHref(item.locationId, item.ref)} label={DATA.open} accessibilityLabel={named(DATA.open)} />
+  );
   if (props.readOnly) {
     return (
       <Actions>
+        {open}
         <Button variant="link" label={action} accessibilityLabel={named(action)} disabled describedBy={READ_ONLY_ID} />
         <Button variant="link" label={DATA.delete} accessibilityLabel={named(DATA.delete)} disabled describedBy={READ_ONLY_ID} />
       </Actions>
@@ -374,6 +380,7 @@ function RowActions(props: {
     <View style={styles.actions}>
       {(canRaw || canClean) && !CAN_SAVE_FILES ? <Small>{DATA.nativeDownload}</Small> : null}
       <Actions>
+        {open}
         {item.canTurnOff ? (
           <Button variant="link" label={action} accessibilityLabel={named(action)} disabled={props.toggling} onPress={() => { props.onToggle(item); }} />
         ) : null}

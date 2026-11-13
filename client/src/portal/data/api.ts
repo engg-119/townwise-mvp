@@ -39,6 +39,11 @@ export const dataItemSchema = z.object({
   }).nullable(),
   canTurnOff: z.boolean(),
   canDelete: z.boolean(),
+  /** A reference item kept with its original, stored files on, not under view-as, for the people who may turn it off. */
+  canEdit: z.boolean(),
+  /** When an edit last replaced the item's content, and who saved it (named as `addedByEmail`); both null if never. */
+  editedAt: z.string().nullable(),
+  editedByEmail: z.string().nullable(),
 });
 export type DataItem = z.infer<typeof dataItemSchema>;
 
@@ -60,9 +65,35 @@ export function listData(api: ApiClient, opts: { locationId?: string; after?: st
   return api.json(`/api/org/data${text === '' ? '' : `?${text}`}`, listSchema);
 }
 
+/** One item, as the list shows it; 404 once it is gone (deleted, or replaced by an edit, which changes its ref). */
+export async function getItem(api: ApiClient, locationId: string, ref: string): Promise<DataItem> {
+  const body = await api.json(itemPath(locationId, ref), itemSchema);
+  return body.item;
+}
+
 /** Turns an upload or an item kept for reference off or on; answers the item as it now is. */
 export async function setEnabled(api: ApiClient, locationId: string, ref: string, enabled: boolean): Promise<DataItem> {
   const body = await api.json(itemPath(locationId, ref), itemSchema, { method: 'PATCH', body: { enabled } });
+  return body.item;
+}
+
+/**
+ * Renames an item kept for reference: `title` becomes its name, keeping the current extension; the same name changes
+ * nothing. 409 item_busy while Townwise is still reading it or an edit of it is being saved; 400 invalid_request for a
+ * title that makes no file name, or once its original is deleted.
+ */
+export async function renameItem(api: ApiClient, locationId: string, ref: string, title: string): Promise<DataItem> {
+  const body = await api.json(itemPath(locationId, ref), itemSchema, { method: 'PATCH', body: { title } });
+  return body.item;
+}
+
+/**
+ * Puts a reference file the caller stored in the last 24 hours (`fileId`) in an item's place, keeping who added the
+ * item, when and whether it is off; answers the item as it now is, whose ref is `f_<fileId>`. Retry-safe with the
+ * same `fileId`; 409 item_changed when another edit took the item's place first.
+ */
+export async function replaceItem(api: ApiClient, locationId: string, ref: string, fileId: string): Promise<DataItem> {
+  const body = await api.json(`${itemPath(locationId, ref)}/replace`, itemSchema, { method: 'POST', body: { fileId } });
   return body.item;
 }
 
