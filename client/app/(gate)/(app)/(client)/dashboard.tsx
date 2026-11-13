@@ -10,11 +10,12 @@ import { allUploadsOff } from '../../../../src/portal/locations/sales';
 import { locationHref } from '../../../../src/portal/routing';
 import type { LocationSummary } from '../../../../src/portal/schemas';
 import { Page } from '../../../../src/portal/shell/Page';
+import { LocationsSkeleton } from '../../../../src/portal/skeleton';
 import { PatternLine } from '../../../../src/portal/town/TownProfile';
 import { CAVEATS, DATA_YEAR, KIND_LABEL, townProfile, townResearchLine, type TownProfileData } from '../../../../src/portal/towns';
 import { Button, LinkButton } from '../../../../src/portal/ui/Button';
 import { DataTable } from '../../../../src/portal/ui/DataTable';
-import { EmptyState, ErrorNotice, LoadingLine, ReadOnlyLine, StatusTag } from '../../../../src/portal/ui/feedback';
+import { EmptyState, ErrorNotice, ReadOnlyLine, StatusTag } from '../../../../src/portal/ui/feedback';
 import { Columns, Panel, Section, Stack } from '../../../../src/portal/ui/layout';
 import { Heading, Small } from '../../../../src/portal/ui/text';
 import { theme } from '../../../../src/theme';
@@ -112,7 +113,7 @@ export default function LocationsPage(): React.JSX.Element {
 
   if (state.status === 'loading') {
     // Not the notice yet: with one location this page opens its Home, which shows it.
-    return <Page eyebrow={orgName} title="Locations" notice={false}><LoadingLine text="Loading your locations" minHeight={400} /></Page>;
+    return <Page eyebrow={orgName} title="Locations" notice={false}><LocationsSkeleton label="Loading your locations" /></Page>;
   }
   if (state.status === 'failed') {
     return <Page eyebrow={orgName} title="Locations"><ErrorNotice error={state.error} onRetry={reload} /></Page>;

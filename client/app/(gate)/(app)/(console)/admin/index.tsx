@@ -16,9 +16,10 @@ import { defaultLocationName } from '../../../../../src/portal/locations/naming'
 import { usePortal } from '../../../../../src/portal/PortalProvider';
 import { useReportPendingCount } from '../../../../../src/portal/shell/Frame';
 import { Page } from '../../../../../src/portal/shell/Page';
+import { RequestsSkeleton } from '../../../../../src/portal/skeleton';
 import {
   Actions, Button, DataTable, DefinitionList, EmptyState, ErrorNotice, Eyebrow, FormField, Heading, LinkButton,
-  LoadingLine, Messages, Panel, Small, Stack, useFocusMessage, type Column,
+  Messages, Panel, Small, Stack, useFocusMessage, type Column,
 } from '../../../../../src/portal/ui';
 
 // P19. Requests (/admin, staff): docs/portal/spec.md 16.4, F3, F4; the AdminOverview board. Tabs filter by
@@ -354,7 +355,7 @@ export default function RequestsPage(): React.JSX.Element {
 
   let body: React.ReactNode;
   if (state.status === 'loading') {
-    body = <LoadingLine text="Loading requests" minHeight={320} />;
+    body = <RequestsSkeleton label="Loading requests" />;
   } else if (state.status === 'failed') {
     body = <ErrorNotice error={state.error} onRetry={reload} />;
   } else {

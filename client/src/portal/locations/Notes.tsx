@@ -8,6 +8,7 @@ import { formatDate } from '../format';
 import { useAction, useLoad } from '../hooks';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { useLocation } from '../shell/LocationShell';
+import { NotesSkeleton } from '../skeleton';
 import { Actions, Button } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { DataTable } from '../ui/DataTable';
@@ -20,7 +21,7 @@ import { NoteForm } from './NoteForm';
 import {
   datesLine, draftOf, EFFECT_LABEL, emptyDraft, guestsLine, hoursLine, KIND_LABEL, sortNotes, splitNotes, weekdaysLine,
 } from './noteRules';
-import { LoadFailure, Loading, useOrgRefreshOnLeave } from './parts';
+import { LoadFailure, useOrgRefreshOnLeave } from './parts';
 
 // P14 Notes, the tuning step (spec 16.3, 12): the intro, “Add a note” opening C6 inline above the lists, then
 // “Coming up” (ending today or later) and “Past”. Authors edit and delete their own notes; org admins any
@@ -194,7 +195,7 @@ export function Notes(): React.JSX.Element {
     : <Button label="Add a note" disabled describedBy={readOnlyId} />;
 
   let content: React.ReactNode;
-  if (state.status === 'loading') content = <Loading text="Loading notes" minHeight={240} />;
+  if (state.status === 'loading') content = <NotesSkeleton label="Loading notes" />;
   else if (state.status === 'failed') content = <LoadFailure error={state.error} onRetry={reload} />;
   else if (notes === null || notes.length === 0) content = form === null ? <EmptyState text="No notes yet.">{add}</EmptyState> : null;
   else {

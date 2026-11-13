@@ -14,10 +14,11 @@ import { LoadFailure, UploadAction, useOrgRefreshOnLeave } from '../locations/pa
 import { CAN_DROP } from '../onboarding/HistoryStepDrop';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { useLocation } from '../shell/LocationShell';
+import { TableSkeleton } from '../skeleton';
 import { Actions, Button } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { DataTable, type Column } from '../ui/DataTable';
-import { EmptyState, LoadingLine, Messages, Notice, ReadOnlyLine } from '../ui/feedback';
+import { EmptyState, Messages, Notice, ReadOnlyLine } from '../ui/feedback';
 import { Section, Stack } from '../ui/layout';
 import { MessageFocus, useFocusMessage } from '../ui/messageFocus';
 import { Select } from '../ui/Select';
@@ -280,7 +281,7 @@ function Data(): React.JSX.Element {
             />
           </Actions>
         ) : null}
-        {loadError !== null ? <LoadFailure error={loadError} onRetry={reload} /> : items === null ? <LoadingLine text={DATA.loading} /> : items.length === 0 ? (
+        {loadError !== null ? <LoadFailure error={loadError} onRetry={reload} /> : items === null ? <TableSkeleton name="data" label={DATA.loading} columns={columns} rowHeight={56} /> : items.length === 0 ? (
           <EmptyState text={empty(all ? DATA.allLocations.toLowerCase() : locationName)} />
         ) : (
           <DataTable label={tableLabel(all ? null : locationName)} columns={columns} rows={rows} />

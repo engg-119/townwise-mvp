@@ -13,9 +13,10 @@ import { OrgNameForm } from '../../../../src/portal/settings/OrgNameForm';
 import { SignOutSection } from '../../../../src/portal/settings/SignOutSection';
 import { StaffActivityTable } from '../../../../src/portal/settings/StaffActivityTable';
 import { Page } from '../../../../src/portal/shell/Page';
+import { SettingsSkeleton } from '../../../../src/portal/skeleton';
 import { Actions, Button, LinkButton } from '../../../../src/portal/ui/Button';
 import { DefinitionList } from '../../../../src/portal/ui/DataTable';
-import { ErrorNotice, LoadingLine, Notice, ReadOnlyLine } from '../../../../src/portal/ui/feedback';
+import { ErrorNotice, Notice, ReadOnlyLine } from '../../../../src/portal/ui/feedback';
 import { Columns, Section, Stack } from '../../../../src/portal/ui/layout';
 import { Small } from '../../../../src/portal/ui/text';
 import { theme } from '../../../../src/theme';
@@ -58,7 +59,7 @@ export default function SettingsPage(): React.JSX.Element {
     return (
       <Page eyebrow={org} title="Settings">
         {state.status === 'loading'
-          ? <LoadingLine text={SETTINGS_COPY.loading} minHeight={400} />
+          ? <SettingsSkeleton label={SETTINGS_COPY.loading} />
           : <ErrorNotice error={state.error} onRetry={reload} />}
       </Page>
     );

@@ -8,6 +8,7 @@ import { useAction, useLoad } from '../hooks';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { locationHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
+import { SalesSkeleton } from '../skeleton';
 import { Actions, Button, LinkButton } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { EmptyState, Notice, ReadOnlyLine } from '../ui/feedback';
@@ -16,7 +17,7 @@ import { Lead, Small } from '../ui/text';
 import { deleteSales, fetchSales, fetchSalesDays } from './api';
 import { DaysTable, MonthsTable } from './MonthsTable';
 import { shownLocationName } from './naming';
-import { LoadFailure, Loading, ShowNumbers, UploadAction, useOrgRefreshOnLeave } from './parts';
+import { LoadFailure, ShowNumbers, UploadAction, useOrgRefreshOnLeave } from './parts';
 import { chartRange, chartSummary, SERIES_TITLE, seriesOf, UPLOADS_OFF_LINE } from './sales';
 import { SalesChart } from './SalesChart';
 
@@ -76,7 +77,7 @@ export function SalesData(): React.JSX.Element {
   }, [api, location.id, markStale, reload, reloadOrg]));
 
   const notice = deleted === null ? null : <View style={styles.notice}><Notice text={`Deleted ${plural(deleted, 'day', 'days')}.`} /></View>;
-  if (state.status === 'loading') return <>{notice}<Loading text="Loading sales data" /></>;
+  if (state.status === 'loading') return <>{notice}<SalesSkeleton label="Loading sales data" /></>;
   if (state.status === 'failed') return <>{notice}<LoadFailure error={state.error} onRetry={reload} /></>;
 
   const { sales, days } = state.data;

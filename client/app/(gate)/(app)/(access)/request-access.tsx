@@ -13,9 +13,10 @@ import { usePlaceSearchAvailability } from '../../../../src/portal/onboarding/us
 import { usePortal, useReadOnly } from '../../../../src/portal/PortalProvider';
 import { Page } from '../../../../src/portal/shell/Page';
 import type { Access } from '../../../../src/portal/schemas';
+import { RequestAccessSkeleton } from '../../../../src/portal/skeleton';
 import { webAria } from '../../../../src/portal/ui/aria';
 import { Actions, Button } from '../../../../src/portal/ui/Button';
-import { ErrorNotice, LoadingLine, ReadOnlyLine } from '../../../../src/portal/ui/feedback';
+import { ErrorNotice, ReadOnlyLine } from '../../../../src/portal/ui/feedback';
 import { FormField } from '../../../../src/portal/ui/FormField';
 import { Columns, Pair, Panel, Stack } from '../../../../src/portal/ui/layout';
 import { Eyebrow, Heading } from '../../../../src/portal/ui/text';
@@ -207,7 +208,7 @@ export default function RequestAccessPage(): React.JSX.Element {
               <Heading>Joining a team that already uses Townwise?</Heading>
               <Text style={styles.panelBody}>{`You don’t need to request access. Ask an admin on that team to add ${email}, then reload this page.`}</Text>
             </Panel>
-            {search === 'checking' ? <LoadingLine text="Checking for the Google Maps search…" /> : null}
+            {search === 'checking' ? <RequestAccessSkeleton label="Checking for the Google Maps search…" /> : null}
             {search === 'checking' ? null : (
               <Stack gap={20}>
                 {manual ? null : (

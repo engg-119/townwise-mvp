@@ -8,10 +8,11 @@ import { shownLocationName } from '../locations/naming';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { locationHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
+import { UploadReadingSkeleton, UploadSendingSkeleton } from '../skeleton';
 import { ids } from '../ui/aria';
 import { Actions, Button, LinkButton } from '../ui/Button';
 import { DataTable } from '../ui/DataTable';
-import { LoadingLine, Messages, ReadOnlyLine } from '../ui/feedback';
+import { Messages, ReadOnlyLine } from '../ui/feedback';
 import { Columns, Panel, Stack } from '../ui/layout';
 import { Body, Eyebrow, Heading, Mono, Small } from '../ui/text';
 import { sendUpload, type UploadResponse } from './api';
@@ -211,9 +212,9 @@ export function UploadPage(): React.JSX.Element {
   const stepNumber = step === 'choose' ? 1 : step === 'match' ? 2 : step === 'check' ? 3 : 4;
   let content: React.ReactNode;
   if (sales.reading !== null) {
-    content = <LoadingLine text={readingLine(sales.reading)} minHeight={240} />;
+    content = <UploadReadingSkeleton label={readingLine(sales.reading)} />;
   } else if (sending && check?.kind === 'days') {
-    content = <LoadingLine text={sendingLine(check.days.length)} minHeight={240} />;
+    content = <UploadSendingSkeleton label={sendingLine(check.days.length)} />;
   } else if (step === 'match' && opened !== null) {
     content = (
       <MatchStep
