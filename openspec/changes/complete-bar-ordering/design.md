@@ -43,7 +43,7 @@ The upload reads the file in the browser (CSV through `CsvReader`, Excel through
 - Window per delivery row: the next cutoff (date and time, town zone) after `now`; delivery = cutoff date + ((delivery weekday - cutoff weekday) mod 7) days; window = [cutoff date, next delivery of that supplier - 1]; covers through = that next delivery.
 - Daily demand = the item's weekday mean, times a guest index when a published forecast covers the day; window demand mu = the sum over the window (days with no mean skipped). Servings to purchase units: / (servingsPerUnit x (1 - loss)).
 - sigma = sample standard deviation of past window errors (actual minus forecast, each forecast made as of that window's cutoff, no guest index), null under 2 windows.
-- Target 0.98 for never-run-out, else by category; z from a fixed table (0.98: 2.054, 0.95: 1.645, 0.92: 1.405, 0.88: 1.175). S = mu + z x (sigma or 0).
+- Target 0.98 for never-run-out, else by category; z from the engine's table (0.98: 2.05, 0.95: 1.65; 0.92: 1.405 and 0.88: 1.175 from its inverse normal). S = mu + z x (sigma or 0).
 - Quantity: no count gives par; a count older than 7 days gives max(0, par - count); otherwise needed = max(S - count, par - count, 0), then the deal pair (floor and ceil multiples of the deal size) chosen by the engine's cost (holding 0.05, shortage 4.0; the unit price cancels, so no price is needed), with the par swap; no deal size rounds up to a whole unit. The other deal size is the alternative, or null when equal.
 - Confidence: low with no count, a count over 7 days old, or no item sales; medium with a count 3 to 7 days old or under 4 weeks of covered item-sales days; else high.
 
