@@ -1,4 +1,4 @@
-// Business rules (spec 6.24, 10.16, P28): a member adds, lists, edits and deletes a location's standing facts; the 30-rule
+// Business rules (spec 6.24, 10.16, P29): a member adds, lists, edits and deletes a location's standing facts; the 30-rule
 // cap under racing adds (change, recount, revert); duplicates by case and spacing; author-or-admin edits; rules reachable
 // only through their own location and organization; view-as read-only; open as admin; deletion with the location and
 // the organization. The text never reaches a log line or an audit event.

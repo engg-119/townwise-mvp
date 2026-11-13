@@ -138,7 +138,7 @@ describe('location pages (spec 15.2)', () => {
     expect(navLink('Home').props.accessibilityState).toMatchObject({ selected: false });
   });
 
-  test('a member opens Business rules from Rules, right after Notes, and Rules is marked (P28)', async () => {
+  test('a member opens Business rules from Rules, right after Notes, and Rules is marked (P29)', async () => {
     const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: rulesFake([ruleOf('r1', 'Closed Mondays')]) });
     const { router } = await renderApp('/locations/l1', api);
     await screen.findByText('Main Street Bar, Hanover, NH');

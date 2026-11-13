@@ -13,7 +13,7 @@ import { noteOf } from '../locations/fakes';
 import { ruleOf } from '../rules/fakes';
 import { calendarFake, forecastDay, forecastOf, NOTES_PATH, PATH, savedNote, type CalendarFake } from './fakes';
 
-// P27 Calendar on web (spec 16.3, D30): the month grid with each day's published forecast, the
+// P28 Calendar on web (spec 16.3, D30): the month grid with each day's published forecast, the
 // selected day's panel beside it, notes added, edited and deleted from the day with the forecast read again, the
 // filters, view-as, the forecast read failing on its own, no published forecast, the hover tooltip and the keys, and
 // the owner's calendar file (spec 17: read in the browser, kept in the page, a note made from an event without

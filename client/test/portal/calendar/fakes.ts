@@ -9,7 +9,7 @@ import { EMAIL, refusal } from '../../helpers/portal';
 import { calendarBody } from '../analytics/fakes';
 import { noteOf } from '../locations/fakes';
 
-// The Calendar page's five reads (spec 16.3 P27), for fakePortalApi's `fallback`: GET .../notes, .../rules,
+// The Calendar page's five reads (spec 16.3 P28), for fakePortalApi's `fallback`: GET .../notes, .../rules,
 // .../calendar, .../sales/days and .../forecast for location l1, answered from mutable fields so a test can change
 // what the next read returns (the forecast after a note is saved). Any month's calendar answers with `events`, its
 // sales days from `days`, and its forecast from `forecasts` by month ('YYYY-MM'), or no published forecast. DELETE

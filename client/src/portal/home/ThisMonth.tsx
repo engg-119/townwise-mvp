@@ -27,7 +27,7 @@ import { MonthGrid } from './MonthGrid';
 // day with its figure (stored before today, the published forecast's from today on, spec 16.3 P11), and the
 // day the keys select (today at first) or a pointer rests on with its detail beside the grid; on web a pointer also
 // shows the day's tooltip (the Calendar's lines). Choosing a day (a click, Enter, a tap) opens it in the Calendar
-// (P27), which the card also links to. On the calendar in {month} is every town event, holiday and note of the month
+// (P28), which the card also links to. On the calendar in {month} is every town event, holiday and note of the month
 // in date order with its sources. Who's in town is the month's people in town from today on, grouped by time under
 // headings, then the county's food-service jobs for the month (InTown.tsx). Your {month} in past years is the
 // location's own days, each year with its day count.

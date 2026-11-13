@@ -1,7 +1,7 @@
 import { theme } from '../../theme';
 import type { TooltipLines } from './model';
 
-// A day's hover tooltip on web (spec 16.3 P27 and P11): the date, then its lines (the figure and range, the
+// A day's hover tooltip on web (spec 16.3 P28 and P11): the date, then its lines (the figure and range, the
 // notes' guests, the top three reasons in short words, “Saturday: usually more guests”; model.ts tooltipLines). It
 // sits beside the cell a mouse or pen rests on, inside the grid's
 // positioned box, and turns to stay inside it: from the grid's right half it ends at the cell's right edge, and from

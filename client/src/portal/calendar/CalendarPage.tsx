@@ -30,7 +30,7 @@ import {
   type CalendarInput, type FilterKey, type Filters, type ImportedCalendar, type ImportedEvent,
 } from './model';
 
-// P27 Calendar (/locations/[locationId]/calendar, members; spec 16.3, D30): the month's
+// P28 Calendar (/locations/[locationId]/calendar, members; spec 16.3, D30): the month's
 // days with the published forecast's guests, what drives each day, and the location's notes, which a member adds,
 // edits and deletes from the day. `?day=YYYY-MM-DD` is the selected day and the month follows it (an invalid day, or
 // one outside the 12 months either side of today's, is today). It reads five existing member routes: the notes with the
@@ -39,7 +39,7 @@ import {
 // note is saved or deleted the notes and the forecast read again, since the API adjusts the forecast from notes on
 // read (spec 14.5) and the client never adds a note's guests itself; meanwhile the old figures stay, dimmed and
 // aria-busy, and a save's notice says “Saved.” until the new read says what the note did to the day. Under view-as the page shows in full with its writes disabled in place. The owner's calendar file
-// (web only, spec 16.3 P27 and 17) is read in the browser and held in this page's state only, so it is gone on
+// (web only, spec 16.3 P28 and 17) is read in the browser and held in this page's state only, so it is gone on
 // reload or on leaving; importing one turns "Your calendar" on, and Make a note opens the form from one of its events
 // with its dates and hours but never its title. Importing is allowed under view-as, since it sends nothing; Make a
 // note is disabled there. "Today" is the device's date.

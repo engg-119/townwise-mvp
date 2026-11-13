@@ -8,7 +8,7 @@ import { daysBetween } from '../../../src/portal/locations/dates';
 import { holiday, note, townEvent } from '../analytics/fakes';
 import { ruleOf } from '../rules/fakes';
 
-// The Calendar's pure model (P27, spec 16.3): each day's figure, marks, chips and words, the day
+// The Calendar's pure model (P28, spec 16.3): each day's figure, marks, chips and words, the day
 // panel's parts, the filters and the month bounds. The client never adds a note's guests itself: every figure after
 // today is the published forecast's own (spec 14.5). Synthetic figures only.
 

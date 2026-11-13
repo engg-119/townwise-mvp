@@ -121,7 +121,7 @@ describe('navigation per role (spec 15.3)', () => {
     ]);
   });
 
-  test('clientNav lists Rules (P28) right after Notes, for members as for org admins', () => {
+  test('clientNav lists Rules (P29) right after Notes, for members as for org admins', () => {
     for (const role of ['member', 'org_admin'] as const) {
       const labels = clientNav(role, '/locations/l1', 'l1').map((item) => item.label);
       expect(labels.indexOf('Rules')).toBe(labels.indexOf('Notes') + 1);
@@ -153,7 +153,7 @@ describe('navigation per role (spec 15.3)', () => {
     expect(current('/locations/l1/sales/upload')).toEqual([['Your data', 'true']]);
     expect(current('/locations/l1/data')).toEqual([['Your data', 'page']]);
     expect(current('/locations/l1/agent')).toEqual([['TownwiseAI', 'page']]);
-    // Business rules (P28) has its own section, Rules.
+    // Business rules (P29) has its own section, Rules.
     expect(current('/locations/l1/rules')).toEqual([['Rules', 'page']]);
     expect(current('/locations/l1/calendar')).toEqual([['Calendar', 'page']]);
     expect(current('/locations/l1/notes/')).toEqual([['Notes', 'page']]);

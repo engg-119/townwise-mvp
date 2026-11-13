@@ -34,7 +34,7 @@ import { shownLocationName } from './naming';
 // location on Google Maps; using a place sets it and its town (PATCH with `placeId`), and a town changed by hand
 // takes the place off (api/README.md, Organization and locations). The search takes focus when it opens; when it
 // closes (Use this place, Cancel, or Google failing) focus moves to the line that says whether the location is linked.
-// After Name and town, a static Business rules section links to P28 (it reads nothing). Beside Name and town, “Add
+// After Name and town, a static Business rules section links to P29 (it reads nothing). Beside Name and town, “Add
 // another location” opens P10.
 
 const READ_ONLY_ID = 'location-settings-ro';

@@ -14,7 +14,7 @@ import { Notice, ReadOnlyLine } from '../ui/feedback';
 import { Heading, Mono, Small } from '../ui/text';
 import { forecastWords, type CalendarDayView, type ImportedEvent, type ReasonLine } from './model';
 
-// The Calendar's day panel (P27, spec 16.3): a region "Selected day", beside the grid from 1024px and
+// The Calendar's day panel (P28, spec 16.3): a region "Selected day", beside the grid from 1024px and
 // under it below. Top to bottom: the day; its Forecast (the published figure and range, what the notes changed, a
 // booked or closed day, a past day's guests against the model, or why there is none); Why (one row per reason: your
 // notes and rules first with what they did, then the run's reasons, biggest effect first, each its label, then whether

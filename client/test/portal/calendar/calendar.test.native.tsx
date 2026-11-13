@@ -14,7 +14,7 @@ import { renderApp } from '../../helpers/renderApp';
 import { townEvent } from '../analytics/fakes';
 import { calendarFake, forecastDay, forecastOf, NOTES_PATH, savedNote, type CalendarFake } from './fakes';
 
-// P27 Calendar on native (spec 16.3): the same reads and grid as on web, a Pressable grid with the day
+// P28 Calendar on native (spec 16.3): the same reads and grid as on web, a Pressable grid with the day
 // panel under it, adding a note from the day, and no calendar file import (no file picker is installed). Today is
 // Wed, Nov 11, 2026. Synthetic figures only.
 

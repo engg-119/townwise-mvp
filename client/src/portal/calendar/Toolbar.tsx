@@ -6,7 +6,7 @@ import { ToggleGroup } from '../locations/parts';
 import { Button } from '../ui/Button';
 import { FILTER_KEYS, FILTER_LABEL, type FilterKey, type Filters } from './model';
 
-// The Calendar's toolbar (P27, spec 16.3): the month switcher (Previous month, the month in words,
+// The Calendar's toolbar (P28, spec 16.3): the month switcher (Previous month, the month in words,
 // Next month, then Today), the filter chips, and the slot for the owner's calendar file. One row from 1024px,
 // wrapping below. Previous and Next are disabled in place at the 25 months' ends. The filters hide marks and list
 // items, never a figure; "Your calendar" shows only once a file is imported. Filters are page state, not stored.

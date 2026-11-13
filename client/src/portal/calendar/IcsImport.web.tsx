@@ -9,7 +9,7 @@ import { Small } from '../ui/text';
 import { parseIcs } from './ics';
 import type { IcsImportProps } from './IcsImport';
 
-// The owner's calendar file on web (P27, spec 16.3 and 17): "Import a calendar file" opens the browser's file
+// The owner's calendar file on web (P28, spec 16.3 and 17): "Import a calendar file" opens the browser's file
 // picker for an .ics file exported from Google Calendar, Outlook or Apple Calendar. A file over 1 MB is refused
 // unread; anything else is read with File.text() and parsed here (ics.ts). The events go to the page, which keeps
 // them in memory only: nothing is stored or sent, and they are gone on reload or on leaving the page. Allowed under

@@ -92,7 +92,7 @@ U13B, `get_forecast`: the location's published forecast ranges, code-made reason
 
 - Hanover's calendar ends with fall 2027 finals, so from Nov 25, 2027 its term state is `unknown`. Dartmouth's five-year calendar lists Green Key, Family Weekend and orientation for 2027 without dates, so they are not entered yet. Adding either is a calendar data change (13.1).
 - Days between a term's last class and its first exam read `unknown`.
-- U13B: Analytics shows no forecast yet, even with a published run (spec 14.2 build note); the model card, TownwiseAI, Home's This month and the Calendar (P27, D30) do. A `Provenance` kind for forecasts is not built; the model card states the run's facts in its own lines.
+- U13B: Analytics shows no forecast yet, even with a published run (spec 14.2 build note); the model card, TownwiseAI, Home's This month and the Calendar (P28, D30) do. A `Provenance` kind for forecasts is not built; the model card states the run's facts in its own lines.
 - U13B: `weeksScored` (`model.md` 2.6, a separate list of scored weeks) is not built. A week row in a forecast read carries its own `actual` and `inRange` once every open day has passed and none was booked, which is all the model card and TownwiseAI use; a list across all of a run's weeks waits for a page that needs it.
 - U13B: no route or console view shows a draft's stored days to staff before Publish. The check before publishing is of the run file on the team's computer, before import (`infra/README.md`, Forecasts); what is stored differs from it only by refs that name no calendar entry on their day (dropped) and labels made in code. A staff preview of a draft's window is a follow-up.
 

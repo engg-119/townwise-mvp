@@ -11,7 +11,7 @@ import { fakeAuth } from '../../helpers/fakes';
 import { ACCESS, ADMIN_EMAIL, deferred, EMAIL, fakePortalApi, meOf, offline, orgOf, refusal, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
 import { manyRules, ruleOf, rulesFake, type RulesFake } from './fakes';
 
-// P28 Business rules on web (spec 16.3, 10.16): the lead, the add form, the list with who added each rule, inline
+// P29 Business rules on web (spec 16.3, 10.16): the lead, the add form, the list with who added each rule, inline
 // edit and a confirmed delete, the errors in place, the 30 limit, view-as, loading and failure. The page lives
 // under TownwiseAI in the top bar.
 

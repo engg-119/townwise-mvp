@@ -24,7 +24,7 @@ import type { Rule, RuleWrite } from './api';
 import { checkSchedule, counterLine, draftOfSchedule, forecastLine, normalizeRule, RULES_COPY, ruleProblem } from './rules';
 import { useRules } from './useRules';
 
-// P28 Business rules (spec 16.3, 10.16, D31; /locations/[id]/rules, members): standing facts about how the location
+// P29 Business rules (spec 16.3, 10.16, D31; /locations/[id]/rules, members): standing facts about how the location
 // runs, which TownwiseAI reads with every message the person sends. A rule changes Townwise's forecast only with a
 // schedule: Add and Edit have an optional “Change the forecast” section with the note form's fields and checks
 // (NoteFields, checkSchedule), and “Remove from the forecast” takes it off. Either button goes when pressed, so focus

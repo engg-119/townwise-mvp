@@ -9,7 +9,7 @@ import type { CalendarGridProps } from './CalendarGrid';
 import { anchorOf, DayTooltip, type TooltipAnchor } from './DayTooltip.web';
 import { captionOf, cellSizes, statusWord } from './model';
 
-// The Calendar's month grid on web (P27, spec 16.3): DOM, as Home's month grid is, because each day
+// The Calendar's month grid on web (P28, spec 16.3): DOM, as Home's month grid is, because each day
 // takes focus. The grid is role="grid" named by its month and one tab stop (roving tabIndex on the selected day).
 // Left and Right move a day, Up and Down a week, Home and End the row's ends, Ctrl+Home and Ctrl+End the month's ends
 // (week.ts monthMove), and the selection follows. A click, Enter or Space selects a day. A mouse or pen over a day

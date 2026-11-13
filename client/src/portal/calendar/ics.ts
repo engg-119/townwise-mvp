@@ -1,7 +1,7 @@
 import { addDays, isCalendarDate } from '../locations/dates';
 import type { ImportedEvent } from './model';
 
-// The owner's calendar file (P27, spec 16.3 and 17), parsed in the browser: an exported .ics file
+// The owner's calendar file (P28, spec 16.3 and 17), parsed in the browser: an exported .ics file
 // (RFC 5545) as the single events the Calendar shows under "Your calendar". Pure, and nothing here leaves the page.
 // Folded lines are unfolded; each VEVENT's UID, SUMMARY (unescaped), DTSTART and DTEND are read, and lines inside
 // its VALARMs are not the event's. A date-only event ends the day before its DTEND (which is exclusive), and one

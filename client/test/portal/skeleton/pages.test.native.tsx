@@ -111,14 +111,14 @@ describe('the location pages', () => {
     expect(within(skeleton).getAllByTestId('skeleton-home-month-cell', { hidden: true })).toHaveLength(42);
   });
 
-  test('P27 Calendar: the toolbar, a six-week grid of 42 cells and the day panel', async () => {
+  test('P28 Calendar: the toolbar, a six-week grid of 42 cells and the day panel', async () => {
     await renderApp('/locations/l1/calendar', hangLocal());
     await expectSkeleton('calendar', 'Loading the calendar');
     expect(screen.getAllByTestId('skeleton-calendar-cell', { hidden: true })).toHaveLength(42);
     expect(screen.getAllByTestId('skeleton-calendar-panel', { hidden: true })).toHaveLength(1);
   });
 
-  test('P28 Business rules: the add form and a few rows', async () => {
+  test('P29 Business rules: the add form and a few rows', async () => {
     await renderApp('/locations/l1/rules', hangLocal());
     await expectSkeleton('rules', 'Loading business rules');
     expect(screen.getAllByTestId('skeleton-rules-row', { hidden: true }).length).toBeGreaterThanOrEqual(3);

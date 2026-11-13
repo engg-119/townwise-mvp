@@ -419,7 +419,7 @@ export function HomeSkeleton(props: LabelProps): React.JSX.Element {
 }
 
 /**
- * P27 Calendar: the toolbar (month switcher, filter chips, the calendar file's control), then the month's grid, always
+ * P28 Calendar: the toolbar (month switcher, filter chips, the calendar file's control), then the month's grid, always
  * six weeks of seven days, with the day panel beside it from 1024px and under it below.
  */
 export function CalendarSkeleton(props: LabelProps): React.JSX.Element {
@@ -459,7 +459,7 @@ export function CalendarSkeleton(props: LabelProps): React.JSX.Element {
 }
 
 /**
- * P28 Business rules: the add form (New rule with its helper, Change the forecast's outline button over its helper line,
+ * P29 Business rules: the add form (New rule with its helper, Change the forecast's outline button over its helper line,
  * Add rule) and a few rule rows under their head.
  */
 export function RulesSkeleton(props: LabelProps): React.JSX.Element {

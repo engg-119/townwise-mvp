@@ -7,7 +7,7 @@ import { DateField } from './DateField';
 import { DEFAULT_EFFECT, EFFECT_LABEL, KIND_LABEL, WEEKDAYS, type NoteDraft, type NoteMessages } from './noteRules';
 import { ToggleGroup } from './parts';
 
-// The fields a note (C6, spec 12) and a business rule's schedule (D31, P28) share: Kind, Starts, Ends (optional),
+// The fields a note (C6, spec 12) and a business rule's schedule (D31, P29) share: Kind, Starts, Ends (optional),
 // Starts at and Ends at (optional hours, hidden for a closure), Only on these days, Effect (defaulted by the kind) and
 // Expected guests (hidden when the effect is Closed, except on a private event, where Closed is a buyout and the field
 // takes the party's size; on a private event with more guests its helper says Townwise forecasts whole days, so the

@@ -1,7 +1,7 @@
 import { Mono } from '../ui/text';
 import type { ImportedCalendar } from './model';
 
-// The owner's calendar file on native (P27, spec 16.3): no file picker is installed, so the toolbar says
+// The owner's calendar file on native (P28, spec 16.3): no file picker is installed, so the toolbar says
 // where to import one instead. Web has its own file (IcsImport.web.tsx), which takes the same props.
 
 export const NATIVE_IMPORT_LINE = 'To add events from your own calendar file, open Townwise on the web.';

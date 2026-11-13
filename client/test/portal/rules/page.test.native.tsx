@@ -14,7 +14,7 @@ import { ACCESS, fakePortalApi, meOf, orgOf, writes } from '../../helpers/portal
 import { renderApp } from '../../helpers/renderApp';
 import { ruleOf, rulesFake } from './fakes';
 
-// P28 Business rules on native (spec 16.3): the same page, with the Add rule button submitting and every touch
+// P29 Business rules on native (spec 16.3): the same page, with the Add rule button submitting and every touch
 // target at least 44px.
 
 afterEach(async () => {

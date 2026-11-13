@@ -9,7 +9,7 @@ import { addDays, isCalendarDate, monthRange } from '../locations/dates';
 import { KIND_LABEL } from '../locations/noteRules';
 import type { Rule } from '../rules/api';
 
-// The Calendar's pure model (P27, spec 16.3): the month as week rows with each day's figure,
+// The Calendar's pure model (P28, spec 16.3): the month as week rows with each day's figure,
 // status, chips, corner marks and screen-reader label; the selected day's panel (its forecast, the reasons, and what
 // is on the calendar); the hover tooltip's lines; the filters; and the 25 months the page can show. Every figure
 // from today on is the published forecast's own, as the API's read leaves it after the location's notes (spec
@@ -21,7 +21,7 @@ import type { Rule } from '../rules/api';
 // with the model's own range, since a range a note moved is no longer the model's 80% one. Business rules with a
 // schedule (D31) change the forecast as notes do, in the API's read: their reasons show like a note's, guests they add
 // are named as theirs, and the panel lists the rules covering the day (no filter hides them; they are edited on Rules).
-// Why (spec 14.4, P27): the owner's notes and rules first, then the run's reasons by the size of their effect, each
+// Why (spec 14.4, P28): the owner's notes and rules first, then the run's reasons by the size of their effect, each
 // saying in words whether it usually brings more or fewer guests (the API's effect, from the model or the location's
 // own history), then those with none; a direction mark goes before the words but never stands alone. On the calendar
 // leaves out a holiday, event or term Why already names. The tooltip and Home's day detail take the same order in
@@ -240,7 +240,7 @@ export function calendarMonth(input: CalendarInput): (CalendarCell | null)[][] {
   return rows;
 }
 
-/** The cell's sizes (spec 16.3 P27): taller cells and bigger figures as the screen widens. */
+/** The cell's sizes (spec 16.3 P28): taller cells and bigger figures as the screen widens. */
 export function cellSizes(width: number): { minHeight: number; figure: number; chips: boolean } {
   if (width >= 1024) return { minHeight: 96, figure: 22, chips: true };
   if (width > 640) return { minHeight: 64, figure: 18, chips: false };
@@ -376,7 +376,7 @@ export function reasonOutcomeWords(outcome: string, guests: number | null): stri
 }
 
 /**
- * The panel's notice after a save (spec 16.3 P27): what the saved note did to the selected day, from the note's reason
+ * The panel's notice after a save (spec 16.3 P28): what the saved note did to the selected day, from the note's reason
  * in the forecast read again. “Saved.” when the day has no forecast, the note isn't among its reasons (moved to other
  * days, or past the six) or the outcome is one this client doesn't know. The page shows “Saved.” until that read answers.
  */

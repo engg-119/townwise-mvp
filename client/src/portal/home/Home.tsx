@@ -34,7 +34,7 @@ import { ThisWeek } from './ThisWeek';
 
 // P11 Home (/locations/[id], members; spec 16.3), a dashboard built around the Monday decisions. Under the lead, a
 // grid of blocks (Block.tsx), most practical first: At a glance (this week last year, last week, the next event);
-// This week in {Town}, day by day; This month, a calendar whose days open in the Calendar (P27), beside Last week; the
+// This week in {Town}, day by day; This month, a calendar whose days open in the Calendar (P28), beside Last week; the
 // month's events beside Who's in town; this month in past years beside the bar order (Planned); and the location's
 // history. Every figure is a sum, an average or a share of the location's own stored days, of a past day, except This
 // month's days from today on, which show the published forecast's own figures (spec 16.3 P11, 14.5,

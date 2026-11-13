@@ -30,7 +30,7 @@ const GATE_PAGES: Readonly<Record<string, readonly AccessState[]>> = {
 
 const ID = '[^/]+';
 /**
- * Client app pages any member may open (P9, P11 to P15, P18, P24 Analytics, P25 TownwiseAI, P27 Calendar, P28 Business
+ * Client app pages any member may open (P9, P11 to P15, P18, P24 Analytics, P25 TownwiseAI, P28 Calendar, P29 Business
  * rules). `chat` is the tuning chat's old address, which redirects to `agent`. The Calendar's `?day=` is a query, so it
  * never changes this.
  */
@@ -100,7 +100,7 @@ const SECTIONS: readonly (readonly [TabKey, string])[] = [
 /**
  * The client app's top bar (15.3): the sections of `locationId` (Home, Calendar, Analytics, TownwiseAI, Notes, Rules, Town,
  * Your data), then Team for org admins (not while staff open the organization as admin) and Settings. With no location (none yet, or not known yet) only Team and Settings.
- * Analytics also marks Sales data, which lives under it. Rules opens Business rules (P28), for every member.
+ * Analytics also marks Sales data, which lives under it. Rules opens Business rules (P29), for every member.
  */
 export function clientNav(role: Role, pathname: string, locationId: string | null, openAsAdmin = false): NavItem[] {
   const path = normalize(pathname);
@@ -152,7 +152,7 @@ export function locationHref(locationId: string, tab: TabKey = 'home'): string {
   return `/locations/${encodeURIComponent(locationId)}${TAB_SUFFIX[tab]}`;
 }
 
-/** The Calendar (P27), opened at `day` (YYYY-MM-DD) when given, as Home's This month does. */
+/** The Calendar (P28), opened at `day` (YYYY-MM-DD) when given, as Home's This month does. */
 export function calendarHref(locationId: string, day?: string): string {
   const href = locationHref(locationId, 'calendar');
   return day === undefined ? href : `${href}?day=${encodeURIComponent(day)}`;

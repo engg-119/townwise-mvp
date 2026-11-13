@@ -1,4 +1,4 @@
-// Business rules (spec 6.24, 10.16, P28): standing facts about one location ("Closed Mondays") that TownwiseAI reads
+// Business rules (spec 6.24, 10.16, P29): standing facts about one location ("Closed Mondays") that TownwiseAI reads
 // with every message. A rule may carry a schedule (D31), a note's fields but the detail, which the forecast read applies
 // as it applies notes (spec 14.5); a rule without one never changes Townwise's forecast. Authors edit and delete their
 // own; org admins edit and delete any. The text and the schedule are never logged; an audit event says only whether the

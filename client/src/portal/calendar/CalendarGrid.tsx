@@ -6,7 +6,7 @@ import { useBreakpoint } from '../hooks';
 import { MARK } from '../home/MonthKey';
 import { captionOf, cellSizes, statusWord, type CalendarCell, type TooltipLines } from './model';
 
-// The Calendar's month grid on native (P27, spec 16.3): a Pressable per day, Monday first. A cell shows
+// The Calendar's month grid on native (P28, spec 16.3): a Pressable per day, Monday first. A cell shows
 // its day number, "Closed" or "Booked", the figure (the published forecast's middle figure from today on, with a
 // mint "+70" when notes added guests; stored guests before today; a buyout's party over "booked"), and from 1024px
 // up to two chips of the day's entries, below that corner marks (white for a holiday or town event, `text2` for a

@@ -3,7 +3,7 @@ import type { ImportedEvent } from '../../../src/portal/calendar/model';
 import { addDays } from '../../../src/portal/locations/dates';
 import { draftOfImported } from '../../../src/portal/locations/noteRules';
 
-// The owner's calendar file (spec 16.3 P27 and 17): parseIcs reads an exported .ics file's single events in
+// The owner's calendar file (spec 16.3 P28 and 17): parseIcs reads an exported .ics file's single events in
 // the browser. Repeating events are counted, not imported, and only events within 400 days of today are kept, at most
 // 2,000. Every title here is made up.
 
