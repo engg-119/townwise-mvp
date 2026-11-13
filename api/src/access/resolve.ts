@@ -154,8 +154,12 @@ export async function resolvePerson(
   return { access: { state: 'no_org' }, seat: null };
 }
 
-/** Step 2.1 to 2.3: TOTP enabled, a session created after it was enabled, at most 60 minutes old. */
+/**
+ * Step 2.1 to 2.3: TOTP enabled, a session created after it was enabled, at most 60 minutes old. In development with
+ * TOWNWISE_STAFF_TWO_STEP off (config.ts; production refuses it) none of that is asked.
+ */
 async function staffGate(ctx: TownwiseContext, auth: AuthContext, now: Date): Promise<Access> {
+  if (!ctx.config.staffTwoStep) return { state: 'staff' };
   const factor = await ctx.authStores.totp.get(auth.userId);
   if (factor?.status !== 'enabled' || factor.enabledAt === null) return { state: 'staff_setup_required' };
   if (auth.authenticatedAt.getTime() <= factor.enabledAt.getTime()) {
@@ -184,7 +188,8 @@ export async function resolveAccess(ctx: TownwiseContext, auth: AuthContext): Pr
   if (self.state !== 'staff') {
     return { user, self, effective: self, seat: null, staffVerifiedUntil: null, viewAs: null, openAsAdmin: null };
   }
-  const staffVerifiedUntil = new Date(auth.authenticatedAt.getTime() + STAFF_WINDOW_MS);
+  // With two-step sign-in off nothing was verified at sign-in, so the window runs from each request instead.
+  const staffVerifiedUntil = new Date((ctx.config.staffTwoStep ? auth.authenticatedAt : now).getTime() + STAFF_WINDOW_MS);
   const staffOnly: Resolution = { user, self, effective: self, seat: null, staffVerifiedUntil, viewAs: null, openAsAdmin: null };
 
   // Section 8 and 8a, live grant of either kind: holds this session, not ended, not expired. Then a view-as grant is

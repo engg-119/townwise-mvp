@@ -1,12 +1,15 @@
 // suggest_next (docs/portal/tuning-chat.md section 4): exactly three short questions the owner might ask next, shown as
 // buttons under the reply. The model calls it once, as a reply's last step and alone; a message that calls only it
-// ends the turn without another model call (turn.ts). Its prompts are text, so its card has no views and they are
+// ends the turn without another model call once the turn has written text, and otherwise is answered with
+// UNANSWERED_RESULT and the turn goes on (turn.ts). Its prompts are text, so its card has no views and they are
 // never logged.
 import { z } from 'zod';
 
 import type { ChatTool } from './registry.ts';
 
 export const SUGGESTIONS_RESULT = 'Shown to the owner as three buttons.';
+/** suggest_next's result when the turn has written no text yet: the model often puts its answer in its thinking. */
+export const UNANSWERED_RESULT = `${SUGGESTIONS_RESULT} The owner has not seen an answer yet: they see only text you write, never your thinking. Write your answer to the owner now, as text.`;
 
 const MIN_PROMPT = 2;
 const MAX_PROMPT = 80;

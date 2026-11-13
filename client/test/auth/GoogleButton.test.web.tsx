@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
 
 import { GoogleButton, resetGoogleButtonState } from '../../src/auth/GoogleButton';
-import { REVEAL_MS } from '../../src/auth/GoogleButton.web';
+import { REVEAL_MS, SWAP_GRACE_MS } from '../../src/auth/GoogleButton.web';
 
 const GIS = 'https://accounts.google.com/gsi/client';
 const google = { webClientId: '123-abc.apps.googleusercontent.com', iosClientId: null };
@@ -103,6 +103,17 @@ function withSizes(): () => void {
   };
 }
 
+/** The skeleton drawn in the button's place until Google's button is ready. */
+function skeletonOf(host: HTMLElement): HTMLElement | null {
+  return host.querySelector('[data-skeleton="google"]');
+}
+
+/** Google's button is showing: the element it drew into is visible and the skeleton is gone. */
+function buttonShown(host: HTMLElement): boolean {
+  const drawn = host.querySelector('iframe')?.parentElement;
+  return drawn !== null && drawn !== undefined && drawn.style.visibility !== 'hidden' && skeletonOf(host) === null;
+}
+
 async function mountButton(): Promise<HTMLElement> {
   const { container } = render(<GoogleButton google={google} onIdToken={jest.fn()} onError={jest.fn()} />);
   document.querySelector(`script[src="${GIS}"]`)?.dispatchEvent(new Event('load'));
@@ -124,25 +135,38 @@ test('the button gets the container’s width, from 200 to 400px, so Google’s 
   }
 });
 
-test('the button keeps its 44px and stays hidden until Google’s iframe has its size, then fades in', async () => {
+test('a skeleton shaped like Google’s button shows at once in the 44px box, before Google’s script has loaded', () => {
+  fakeGis();
+  const { container } = render(<GoogleButton google={google} onIdToken={jest.fn()} onError={jest.fn()} />);
+  const host = container.firstElementChild as HTMLElement;
+  expect(host.style.height).toBe('44px');
+  const skeleton = skeletonOf(host);
+  expect(skeleton).not.toBeNull();
+  expect(skeleton?.getAttribute('aria-hidden')).toBe('true');
+  expect(skeleton?.style.height).toBe('40px');
+  expect(skeleton?.style.borderRadius).toBe('4px');
+  expect(skeleton?.style.maxWidth).toBe('400px');
+});
+
+test('Google’s button replaces the skeleton, with no fade, once its iframe has its size', async () => {
   const restore = withSizes();
   try {
     const { frames } = fakeGis();
     const host = await mountButton();
     expect(host.style.height).toBe('44px');
-    expect(host.style.visibility).toBe('hidden');
-    expect(host.style.opacity).toBe('0');
+    expect(buttonShown(host)).toBe(false);
     const sizes = FakeSizes.all.at(-1);
     const frame = frames.at(-1);
     if (sizes === undefined || frame === undefined) throw new Error('nothing observed');
     expect(sizes.targets).toEqual([frame]);
-    // The iframe starts 0 wide: still hidden.
+    // The iframe starts 0 wide: the skeleton stays.
     act(() => { sizes.report(frame, 0); });
-    expect(host.style.visibility).toBe('hidden');
+    expect(buttonShown(host)).toBe(false);
     act(() => { sizes.report(frame, 363); });
-    expect(host.style.visibility).toBe('');
-    expect(host.style.opacity).toBe('1');
-    expect(host.style.transition).toBe('opacity 200ms ease-out');
+    expect(buttonShown(host)).toBe(true);
+    const drawn = frame.parentElement;
+    expect(drawn?.style.transition).toBe('');
+    expect(drawn?.style.opacity).toBe('');
     expect(host.style.height).toBe('44px');
   } finally {
     restore();
@@ -160,10 +184,32 @@ test('if Google’s iframe never takes a size, the button shows after REVEAL_MS'
     const host = container.firstElementChild as HTMLElement;
     expect(host.querySelector('iframe')).not.toBeNull();
     act(() => { jest.advanceTimersByTime(REVEAL_MS - 1); });
-    expect(host.style.visibility).toBe('hidden');
+    expect(buttonShown(host)).toBe(false);
     act(() => { jest.advanceTimersByTime(1); });
-    expect(host.style.visibility).toBe('');
-    expect(host.style.opacity).toBe('1');
+    expect(buttonShown(host)).toBe(true);
+  } finally {
+    jest.useRealTimers();
+    restore();
+  }
+});
+
+test('if Google’s iframe loads and stays 0 wide (no personalized button), its placeholder shows SWAP_GRACE_MS later', async () => {
+  const restore = withSizes();
+  jest.useFakeTimers();
+  try {
+    const { frames } = fakeGis();
+    const { container } = render(<GoogleButton google={google} onIdToken={jest.fn()} onError={jest.fn()} />);
+    document.querySelector(`script[src="${GIS}"]`)?.dispatchEvent(new Event('load'));
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const host = container.firstElementChild as HTMLElement;
+    const frame = frames.at(-1);
+    if (frame === undefined) throw new Error('no iframe');
+    act(() => { frame.dispatchEvent(new Event('load')); });
+    act(() => { jest.advanceTimersByTime(SWAP_GRACE_MS - 1); });
+    expect(buttonShown(host)).toBe(false);
+    act(() => { jest.advanceTimersByTime(1); });
+    expect(buttonShown(host)).toBe(true);
+    expect(SWAP_GRACE_MS).toBeLessThan(REVEAL_MS);
   } finally {
     jest.useRealTimers();
     restore();
@@ -174,6 +220,5 @@ test('without ResizeObserver the button shows as soon as Google draws it', async
   expect(typeof (window as { ResizeObserver?: unknown }).ResizeObserver).toBe('undefined');
   fakeGis();
   const host = await mountButton();
-  await waitFor(() => { expect(host.style.opacity).toBe('1'); });
-  expect(host.style.visibility).toBe('');
+  await waitFor(() => { expect(buttonShown(host)).toBe(true); });
 });

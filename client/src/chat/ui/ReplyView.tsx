@@ -3,7 +3,6 @@ import { Platform, StyleSheet, Text, View } from 'react-native';
 
 import { Button } from '../../portal/ui/Button';
 import { theme } from '../../theme';
-import { liveLine } from '../liveLine';
 import { Markdown } from '../markdown/Markdown';
 import { basedOnLine, type ToolContext } from '../tools';
 import type { TreeNode } from '../tree';
@@ -13,6 +12,7 @@ import { focusLost, Hidden } from './controls';
 import { described } from './described';
 import { ItemProposalCard } from './ItemProposalCard';
 import { ProposalCard } from './ProposalCard';
+import { messageMark, type RowShow } from './MessageTime';
 import { ReplyActions } from './ReplyActions';
 import { useVersionNav, VersionNav } from './VersionNav';
 import { isProcessPart, wholeSeconds, Worked, Working } from './Worked';
@@ -20,7 +20,7 @@ import { isProcessPart, wholeSeconds, Worked, Working } from './Worked';
 // One of TownwiseAI's replies (owner decisions 3 to 5): no label box, only a hidden "TownwiseAI said", then its parts
 // in the order they streamed: Markdown text (with a static caret at its end while text is what streams), visuals
 // Townwise drew, and proposal cards (a note's, or one to keep text on Your data, D28). Its thinking summary and tool calls are the timeline at its top: "Working for
-// {n}s" with the timeline under it while it streams ("Thinking…" before anything arrives), then a collapsed "Worked
+// {n}s" with the timeline under it while it streams (the counter alone before anything arrives), then a collapsed "Worked
 // for {n}s" that opens to the same timeline (Worked.tsx). Finished, it has its actions, its version navigator when it has siblings, the Based on line
 // built from its tool calls (never written by the model) and why it ended early, if it did. One that failed or was
 // stopped keeps its note and Try again.
@@ -31,6 +31,8 @@ export function ReplyView(props: {
   tree: readonly TreeNode[];
   /** The newest reply of the path shown (Regenerate). */
   newest: boolean;
+  /** Whether its row of actions always shows (the last message of the thread) or only on hover and focus. */
+  actions: RowShow;
   chat: TuningChat;
   locationId: string;
   readOnlyId: string | null;
@@ -51,10 +53,9 @@ export function ReplyView(props: {
   const nav = useVersionNav(chat, message, props.tree, props.onAnnounce);
   // A streaming reply always has its start (the reducer stamps it); this keeps the timeline up if one ever lacks it.
   const [mounted] = useState(() => Date.now());
-  const line = liveLine(message);
   const process = message.parts.filter(isProcessPart);
   const endedFor = message.startedAt !== null && message.endedAt !== null ? wholeSeconds(message.startedAt, message.endedAt) : null;
-  // The caret ends the text while text is what streams; once a step or visual follows, the live line says what's on.
+  // The caret ends the text while text is what streams; once a step or visual follows, the counter says it is working.
   const last = message.parts.at(-1);
   const caretOn = live && last?.type === 'text' ? last.key : null;
 
@@ -85,9 +86,9 @@ export function ReplyView(props: {
   );
 
   return (
-    <View style={styles.reply}>
+    <View style={styles.reply} {...messageMark()}>
       <Hidden>TownwiseAI said</Hidden>
-      {live ? <Working startedAt={message.startedAt ?? mounted} parts={process} line={line} ctx={props.ctx} /> : null}
+      {live ? <Working startedAt={message.startedAt ?? mounted} parts={process} ctx={props.ctx} /> : null}
       {!live ? <Worked seconds={endedFor} parts={process} ctx={props.ctx} /> : null}
       {message.parts.map((part) => {
         if (part.type === 'text') return <Markdown key={part.key} source={part.text} caret={part.key === caretOn} />;
@@ -100,7 +101,7 @@ export function ReplyView(props: {
       })}
       {complete && message.parts.length > 0 ? (
         <>
-          <ReplyActions message={message} newest={props.newest} chat={chat} canAct={props.canAct} readOnlyId={props.readOnlyId}>
+          <ReplyActions message={message} newest={props.newest} show={props.actions} chat={chat} canAct={props.canAct} readOnlyId={props.readOnlyId}>
             {versions}
           </ReplyActions>
           <Text style={styles.basedOn}>{basedOnLine(stepsOf(message), props.ctx)}</Text>

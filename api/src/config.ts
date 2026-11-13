@@ -26,6 +26,12 @@ export const configSchema = z.object({
     }
     return [...emails];
   }),
+  /**
+   * Whether staff must pass two-step sign-in (spec Section 2, steps 2.1 to 2.3): `required`, or `off` to let a staff
+   * address in with no authenticator. Absent, it is `off` in development and `required` otherwise; production refuses
+   * `off`.
+   */
+  TOWNWISE_STAFF_TWO_STEP: z.preprocess((value) => (value === '' ? undefined : value), z.enum(['required', 'off']).optional()),
   /** The tuning chat's monthly spend limit per organization, in US dollars (docs/portal/tuning-chat.md section 5). */
   TOWNWISE_CHAT_MONTHLY_BUDGET_USD: z.coerce.number().min(0).max(10_000).default(20),
   /** The Communication Services endpoint, https://<resource>.communication.azure.com. Absent turns email off (spec D14). */
@@ -68,6 +74,8 @@ export type TownwiseConfig = z.infer<typeof configSchema>;
 
 export interface ResolvedTownwiseConfig {
   readonly superadminEmails: ReadonlySet<string>;
+  /** False only outside production with TOWNWISE_STAFF_TWO_STEP off: staff then need no codes. */
+  readonly staffTwoStep: boolean;
   readonly chatMonthlyBudgetUsd: number;
   readonly filesMonthlyBudgetUsd: number;
   /** Null while email is off. `endpoint` is a bare origin. */
@@ -151,14 +159,18 @@ export function labRunnerOf(config: Pick<TownwiseConfig, LabKeys> & Partial<Pick
 }
 
 /**
- * Production refuses an empty staff list, email with an http web URL, and Azurite for stored files; email needs both
- * its variables (spec Section 18). The lab's variables are labRunnerOf's.
+ * Production refuses an empty staff list, staff without two-step sign-in, email with an http web URL, and Azurite for
+ * stored files; email needs both its variables (spec Section 18). The lab's variables are labRunnerOf's.
  */
 export function resolveTownwiseConfig(
   config: Omit<TownwiseConfig, LabKeys> & Pick<ServerConfig, 'NODE_ENV'>,
 ): ResolvedTownwiseConfig {
   if (config.NODE_ENV === 'production' && config.TOWNWISE_SUPERADMIN_EMAILS.length === 0) {
     throw new ConfigError('TOWNWISE_SUPERADMIN_EMAILS', 'production requires at least one staff address');
+  }
+  const staffTwoStep = config.TOWNWISE_STAFF_TWO_STEP ?? (config.NODE_ENV === 'development' ? 'off' : 'required');
+  if (config.NODE_ENV === 'production' && staffTwoStep === 'off') {
+    throw new ConfigError('TOWNWISE_STAFF_TWO_STEP', 'production requires two-step sign-in for staff');
   }
   if ((config.EMAIL_ENDPOINT === undefined) !== (config.EMAIL_SENDER === undefined)) {
     throw new ConfigError(config.EMAIL_ENDPOINT === undefined ? 'EMAIL_ENDPOINT' : 'EMAIL_SENDER', 'set EMAIL_ENDPOINT and EMAIL_SENDER together');
@@ -175,6 +187,7 @@ export function resolveTownwiseConfig(
   filesBackendOf(config);
   return {
     superadminEmails: new Set(config.TOWNWISE_SUPERADMIN_EMAILS),
+    staffTwoStep: staffTwoStep === 'required',
     chatMonthlyBudgetUsd: config.TOWNWISE_CHAT_MONTHLY_BUDGET_USD,
     filesMonthlyBudgetUsd: config.TOWNWISE_FILES_MONTHLY_BUDGET_USD,
     email: endpoint === null || config.EMAIL_SENDER === undefined ? null : { endpoint, sender: config.EMAIL_SENDER },

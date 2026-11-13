@@ -13,7 +13,9 @@ import { useBreakpoint, useLoad } from '../../../../../../src/portal/hooks';
 import { localToday } from '../../../../../../src/portal/locations/dates';
 import { useOrgRefreshOnLeave } from '../../../../../../src/portal/locations/parts';
 import { usePortal, useReadOnly } from '../../../../../../src/portal/PortalProvider';
-import { useLocation, useScrollingHead } from '../../../../../../src/portal/shell/LocationShell';
+import { useLocation } from '../../../../../../src/portal/shell/LocationShell';
+import { Hidden } from '../../../../../../src/chat/ui/controls';
+import { webAria } from '../../../../../../src/portal/ui/aria';
 import { Wrap } from '../../../../../../src/portal/ui/layout';
 import { theme } from '../../../../../../src/theme';
 import { allUploadsOff } from '../../../../../../src/portal/locations/sales';
@@ -22,8 +24,9 @@ import { allUploadsOff } from '../../../../../../src/portal/locations/sales';
 // and activity (Questions for you, What it's been doing, the budget, How TownwiseAI works). The panel is closed by
 // default and its open state lives here, in memory. Open from 1024px, the chat takes columns 1 to 8 and the panel 9 to
 // 12, scrolling on its own; closed, the chat takes 1 to 12. Below 1024px the panel is a full-screen sheet. The chat
-// is drawn in the same place either way, so opening the panel never redraws it. On phones the location's compact
-// header sits at the top of what scrolls, so the conversation gets the screen.
+// is drawn in the same place either way, so opening the panel never redraws it. The page has no header of its own: the
+// chat header is the first thing under the portal's top bar and the chat fills the rest of the screen, with a
+// visually hidden h1, TownwiseAI, for screen readers.
 // Under view-as (spec 15.5) everything reads, and every write control stays in place, disabled, described by the one
 // read-only line. The logic is in src/chat; this file only lays it out.
 // F7: `?about=YYYY-MM-DD` (from Analytics' day panel) fills an empty composer with "Tell me about Sat, Nov 21" and
@@ -44,7 +47,6 @@ export default function TownwiseAIScreen(): React.JSX.Element {
   const markOrgStale = useOrgRefreshOnLeave();
   const chat = useTuningChat(api, location.id, { userId: me.user.id, readOnly, onNoteAdded: markOrgStale });
   const panel = useAgentPanel(api, location.id, markOrgStale);
-  const head = useScrollingHead();
   const about = useLoad(useCallback(() => fetchEstimatesAbout(api, location.id), [api, location.id]));
   const params = useLocalSearchParams<{ about?: string | string[] }>();
   const draft = aboutDraft(params.about, localToday());
@@ -60,7 +62,7 @@ export default function TownwiseAIScreen(): React.JSX.Element {
   const [panelOpen, setPanelOpen] = useState(false);
   const panelButton = useRef<Host>(null);
   const closePanel = useCallback(() => { setPanelOpen(false); }, []);
-  // iOS: the keyboard avoider measures itself from its parent, so it is offset by the header above it.
+  // iOS: the keyboard avoider measures itself from its parent, so it is offset by the portal's top bar above it.
   const root = useRef<React.ComponentRef<typeof View>>(null);
   const [top, setTop] = useState(0);
 
@@ -99,6 +101,7 @@ export default function TownwiseAIScreen(): React.JSX.Element {
       style={styles.fill}
       onLayout={() => { root.current?.measureInWindow((_x, y) => { setTop(y); }); }}
     >
+      <View role="heading" accessible {...webAria({ 'aria-level': 1 })}><Hidden>TownwiseAI</Hidden></View>
       <KeyboardAvoidingView behavior="padding" enabled={Platform.OS === 'ios'} keyboardVerticalOffset={top} style={styles.fill}>
         <Wrap style={styles.wrap}>
           <View style={styles.grid}>
@@ -106,7 +109,6 @@ export default function TownwiseAIScreen(): React.JSX.Element {
               <AgentChat
                 chat={chat}
                 ctx={ctx}
-                top={head}
                 readOnlyId={readOnlyId}
                 readOnlyLine={line}
                 panelOpen={panelOpen}

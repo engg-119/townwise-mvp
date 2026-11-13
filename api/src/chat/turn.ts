@@ -14,6 +14,7 @@ import type { StoredMessage } from '../stores/chat-conversations.ts';
 import type { ChatModel } from './model.ts';
 import { costMicroUsd, messageCostMicroUsd, tokensOf, type TokenCounts } from './pricing.ts';
 import { SYSTEM_PROMPT } from './prompt.ts';
+import { UNANSWERED_RESULT } from './tools/next.ts';
 import { inputViewOf, resultViewOf, runTool, savedResultOf, toolNamed, TOOLS, type ToolContext, type ToolView } from './tools/registry.ts';
 import type { Visual } from './tools/visual.ts';
 
@@ -207,6 +208,17 @@ function tooMany(block: BetaToolUseBlock): BetaToolResultBlockParam {
   };
 }
 
+/** Whether an assistant message of the turn so far has text the owner sees. */
+function wroteText(turn: readonly BetaMessageParam[]): boolean {
+  return turn.some((param) => param.role === 'assistant' && typeof param.content !== 'string'
+    && param.content.some((block) => block.type === 'text' && block.text.trim() !== ''));
+}
+
+/** A suggest_next result that also asks for the answer the turn has not written; an error result stays as it is. */
+function askForAnswer(result: BetaToolResultBlockParam): BetaToolResultBlockParam {
+  return result.is_error === true ? result : { ...result, content: UNANSWERED_RESULT };
+}
+
 /**
  * The blocks of a reply that are sent back and acted on. After a server-side fallback in the middle of a reply, the
  * declined model's blocks before the last `fallback` block are echoed back only as text: its thinking, redacted
@@ -358,10 +370,14 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
           input.emit({ type: 'tool', data: { id, name, state, input: view, result: resultViewOf(name, outcome.result) } });
         }
       }
-      append({ role: 'user', content: results });
       // suggest_next is a reply's last step: a message that called only it is answered and ends the turn without
       // another model call, valid or not (the client then picks its own three). The saved reply ends with its results.
-      if (toolUses.every((block) => block.name === 'suggest_next')) return done('end_turn');
+      // The model often calls it right after thinking out its answer, having written no text: the owner sees none of
+      // its thinking, so then its result asks for the answer and the loop goes on.
+      const onlyNext = toolUses.every((block) => block.name === 'suggest_next');
+      const unanswered = onlyNext && !wroteText(turn);
+      append({ role: 'user', content: unanswered ? results.map(askForAnswer) : results });
+      if (onlyNext && !unanswered) return done('end_turn');
     }
   } catch (err) {
     if (aborted()) return { kind: 'aborted', calls, costMicroUsd: spent };

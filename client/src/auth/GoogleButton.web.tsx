@@ -55,9 +55,12 @@ function loadGis(): Promise<void> {
 // Google first draws a placeholder as wide as the container, then swaps in its own button in an iframe: the plain
 // one at its own width, or "Continue as <name>" for someone who signed in before. So the button gets the
 // container's width (Google takes 200 to 400px), the container is fixed at the iframe's 44px (for a moment WebKit
-// shows the placeholder and the iframe together), and it stays hidden until the iframe has its size, then fades
-// in. If that never happens (the iframe is blocked, or Google changes its markup), it shows after REVEAL_MS.
+// shows the placeholder and the iframe together), and it stays hidden behind a skeleton until the iframe has its
+// size, then shows at once. The iframe takes a size only when Google has a personalized button to swap in; otherwise
+// it loads and stays 0 wide and the placeholder is the button, so SWAP_GRACE_MS after the iframe loads with no size
+// it shows. If neither happens (the iframe is blocked, or Google changes its markup), it shows after REVEAL_MS.
 export const REVEAL_MS = 3000;
+export const SWAP_GRACE_MS = 300;
 const BUTTON_HEIGHT = 44;
 
 function buttonWidth(node: HTMLElement): number | null {
@@ -65,23 +68,28 @@ function buttonWidth(node: HTMLElement): number | null {
   return width > 0 ? Math.round(Math.min(400, Math.max(200, width))) : null;
 }
 
-// Calls `done` once an iframe inside `node` has a width, or after REVEAL_MS; returns the cleanup. Without the
-// observers it calls `done` at once.
+// Calls `done` once an iframe inside `node` has a width, SWAP_GRACE_MS after one loads with none, or after
+// REVEAL_MS; returns the cleanup. Without the observers it calls `done` at once.
 function whenSettled(node: HTMLElement, done: () => void): () => void {
   if (typeof ResizeObserver !== 'function' || typeof MutationObserver !== 'function') {
     done();
     return () => undefined;
   }
   let finished = false;
-  const watched = new Set<Element>();
+  let grace: ReturnType<typeof setTimeout> | null = null;
+  const watched = new Set<HTMLIFrameElement>();
   const sizes = new ResizeObserver((entries) => {
     if (entries.some((entry) => entry.contentRect.width > 0)) finish();
   });
+  const loaded = (): void => {
+    grace ??= setTimeout(() => { finish(); }, SWAP_GRACE_MS);
+  };
   const watchFrames = (): void => {
     for (const frame of node.querySelectorAll('iframe')) {
       if (!watched.has(frame)) {
         watched.add(frame);
         sizes.observe(frame);
+        frame.addEventListener('load', loaded);
       }
     }
   };
@@ -89,8 +97,10 @@ function whenSettled(node: HTMLElement, done: () => void): () => void {
   const timer = setTimeout(() => { finish(); }, REVEAL_MS);
   function stop(): void {
     clearTimeout(timer);
+    if (grace !== null) clearTimeout(grace);
     sizes.disconnect();
     added.disconnect();
+    for (const frame of watched) frame.removeEventListener('load', loaded);
   }
   function finish(): void {
     if (finished) return;
@@ -146,8 +156,14 @@ export function GoogleButton(props: GoogleButtonProps): React.JSX.Element | null
   if (unavailable) {
     return <Message tone="error">Google sign-in didn’t load. Check your connection, turn off any blocker for accounts.google.com, and reload.</Message>;
   }
-  const style = settled
-    ? { height: BUTTON_HEIGHT, opacity: 1, transition: 'opacity 200ms ease-out' }
-    : { height: BUTTON_HEIGHT, opacity: 0, visibility: 'hidden' as const };
-  return createElement('div', { ref: setNode, style });
+  // Until Google's button is ready, a skeleton of it (Google's white 40px button, radius 4, at the width Google is
+  // given) holds its place from the first frame; then Google's button replaces it at once, with no fade.
+  const skeleton = settled ? null : createElement('div', { 'aria-hidden': true, 'data-skeleton': 'google', style: SKELETON });
+  const drawn = createElement('div', { ref: setNode, style: settled ? { height: BUTTON_HEIGHT } : { height: BUTTON_HEIGHT, visibility: 'hidden' as const } });
+  return createElement('div', { style: { position: 'relative' as const, height: BUTTON_HEIGHT } }, skeleton, drawn);
 }
+
+const SKELETON = {
+  position: 'absolute' as const, top: 0, left: 0, boxSizing: 'border-box' as const, width: '100%', minWidth: 200, maxWidth: 400,
+  height: 40, borderRadius: 4, border: '1px solid #dadce0', backgroundColor: '#ffffff', pointerEvents: 'none' as const,
+};

@@ -116,7 +116,7 @@ describe('location pages (spec 15.2)', () => {
   test('members: the eyebrow names the location, the h1 the page; Home is current; no Location settings link', async () => {
     const { router } = await renderApp('/locations/l1', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') }));
     expect(await screen.findByText('Main Street Bar, Hanover, NH')).toBeTruthy();
-    expect(screen.getByRole('heading', { name: /^Week of [A-Z][a-z]{2} \d{1,2}, \d{4}$/ })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: /^Welcome back/ })).toBeTruthy();
     expect(navLink('Home').props.accessibilityState).toMatchObject({ selected: true });
     expect(screen.getByRole('link', { name: 'All locations' })).toBeTruthy();
     expect(screen.queryByRole('link', { name: 'Location settings' })).toBeNull();
