@@ -118,16 +118,16 @@ test('on a phone the top bar’s sections scroll, without animating, to keep the
     const router = await renderTab(adminApi());
     await screen.findByText('Probe: Main Street Bar, org_admin');
     const sections = screen.getByLabelText('Sections');
-    // A 320px region, and eight links 90px wide and 4px apart in a nav that starts at the 16px margin: Town, the
-    // fifth, ends at 16 + 466 = 482px, and keeps 16px after it in view.
+    // A 320px region, and nine links 90px wide and 4px apart in a nav that starts at the 16px margin: Town, the
+    // sixth, ends at 16 + 560 = 576px, and keeps 16px after it in view.
     await fireEvent(sections, 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 320, height: 45 } } });
     const links = within(sections).getAllByRole('link');
-    expect(links).toHaveLength(8);
+    expect(links).toHaveLength(9);
     expect(within(sections).getByRole('link', { name: 'Town' }).props.accessibilityState).toMatchObject({ selected: true });
     for (const [index, link] of links.entries()) {
       await fireEvent(link, 'layout', { nativeEvent: { layout: { x: index * 94, y: 0, width: 90, height: 44 } } });
     }
-    expect(scrollTo).toHaveBeenLastCalledWith({ x: 482 + 16 - 320, animated: false });
+    expect(scrollTo).toHaveBeenLastCalledWith({ x: 576 + 16 - 320, animated: false });
     await fireEvent.press(within(sections).getByRole('link', { name: 'Home' }));
     expect(router.getPathname()).toBe('/locations/l1');
     expect(scrollTo).toHaveBeenLastCalledWith({ x: 0, animated: false });

@@ -1673,11 +1673,11 @@ Every signed-in frame ends with a slim footer: a 1px `border` rule, then one `mo
 
 | Who | Top bar nav | Page header links | Notes |
 |---|---|---|---|
-| Member | Home, Analytics, TownwiseAI, Notes, Town, Your data; then Settings | All locations (more than one location) | No Team. Upload and notes are allowed (D16). |
-| Org admin | Home, Analytics, TownwiseAI, Notes, Town, Your data; then Team, Settings | All locations (more than one), Location settings | |
+| Member | Home, Orders, Analytics, TownwiseAI, Notes, Town, Your data; then Settings | All locations (more than one location) | No Team. Upload and notes are allowed (D16). [CONFIRM: Orders in every member’s top bar, after Home] |
+| Org admin | Home, Orders, Analytics, TownwiseAI, Notes, Town, Your data; then Team, Settings | All locations (more than one), Location settings | |
 | Staff | Requests, Organizations, People, Audit log | none | Staff console frame (15.4). |
 | Staff in view-as | the target’s items | the target’s links | Client app frame under the banner; no console items. |
-| Staff open as admin (D25) | the org admin’s items without Team: Home, Analytics, TownwiseAI, Notes, Town, Upload; then Settings | the org admin’s links | Client app frame under the open-as-admin banner (15.5a); no console items. `/team` redirects to Home; Settings has no Leave section. |
+| Staff open as admin (D25) | the org admin’s items without Team: Home, Orders, Analytics, TownwiseAI, Notes, Town, Upload; then Settings | the org admin’s links | Client app frame under the open-as-admin banner (15.5a); no console items. `/team` redirects to Home; Settings has no Leave section. |
 | Signed in, no organization | none | none | Gate frame. |
 
 The sections are Home (`/locations/[id]`), Analytics (`/locations/[id]/analytics`), TownwiseAI (`/locations/[id]/agent`), Notes, Town and Your data (`/locations/[id]/data`, D28, which replaces Upload; the upload page stays at `/locations/[id]/sales/upload` and marks Your data current, as an item’s page, P27, does). They open the location in the path; on a page outside a location (Locations, Team, Settings), the last location opened in this sign-in, held in memory only and never in storage, else the organization’s first. With no location the bar has only Team and Settings. `aria-current="page"` marks the section of the current page; Analytics is also marked (`aria-current="true"`) on Sales data, which lives under it, and on Location settings no section is marked. The wordmark goes to `/dashboard` (Locations), which redirects to the only location’s Home when there is one. Settings is the account page, `/settings`. Two-step sign-in (`/settings/security`, **Exists**) is reached from Settings.

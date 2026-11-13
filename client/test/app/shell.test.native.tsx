@@ -34,7 +34,7 @@ function linkNames(region: string, names: readonly string[]): string[] {
   return found;
 }
 
-const NAV = ['Home', 'Analytics', 'TownwiseAI', 'Notes', 'Town', 'Your data', 'Team', 'Settings'];
+const NAV = ['Home', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Town', 'Your data', 'Team', 'Settings'];
 
 function navLabels(): string[] {
   return linkNames('Main', NAV);
@@ -49,7 +49,7 @@ describe('the client app top bar (spec 15.2, 15.3)', () => {
     const signOut = jest.fn(() => Promise.resolve());
     const { router } = await renderApp('/dashboard', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') }), { signOut });
     await screen.findByText('Main Street Bar');
-    expect(navLabels()).toEqual(['Home', 'Analytics', 'TownwiseAI', 'Notes', 'Town', 'Your data', 'Settings']);
+    expect(navLabels()).toEqual(['Home', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Town', 'Your data', 'Settings']);
     // Off a location page no section is current.
     for (const name of navLabels()) expect(navLink(name).props.accessibilityState).toMatchObject({ selected: false });
     expect(screen.getAllByText('Test Group').length).toBeGreaterThan(0);
@@ -101,7 +101,7 @@ describe('the client app top bar (spec 15.2, 15.3)', () => {
       await renderApp('/dashboard', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') }));
       await screen.findAllByText('Main Street Bar');
       expect(screen.queryByText(EMAIL)).toBeNull();
-      expect(navLabels()).toEqual(['Home', 'Analytics', 'TownwiseAI', 'Notes', 'Town', 'Your data', 'Settings']);
+      expect(navLabels()).toEqual(['Home', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Town', 'Your data', 'Settings']);
       expect(within(screen.getByLabelText('Sections')).getByLabelText('Main')).toBeTruthy();
       // The table stacks into label and value pairs.
       const table = screen.getByLabelText('Locations');
