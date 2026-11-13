@@ -1,37 +1,49 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Platform, ScrollView, StyleSheet, Text, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { Fragment, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
+import {
+  AccessibilityInfo, Platform, ScrollView, StyleSheet, Text, View,
+  type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent, type ViewStyle,
+} from 'react-native';
 
 import { useReducedMotion } from '../../motion';
 import { localToday } from '../../portal/locations/dates';
-import { NamePrompt } from '../../portal/profile/NamePrompt';
 import { locationHref } from '../../portal/routing';
 import { Button, LinkButton } from '../../portal/ui/Button';
 import { ErrorNotice, LoadingLine, ReadOnlyLine } from '../../portal/ui/feedback';
+import { Skeleton, SkeletonText } from '../../portal/skeleton/kit';
 import { Heading } from '../../portal/ui/text';
 import { theme } from '../../theme';
+import { formatCount } from '../format';
 import { INITIAL_PIN, nextPin, type PinEvent, type PinState } from '../scrollPin';
 import { nextFallback, suggestionsFor } from '../suggestions';
 import { readsLine, toolLine, type ToolContext } from '../tools';
-import { canSend, messageText, stepsOf, type ChatMessage, type TuningChat } from '../useTuningChat';
+import { openQuestions, type AgentPanelState } from '../useAgentPanel';
+import { canSend, messageText, stepsOf, type ChatMessage, type Telling, type TuningChat } from '../useTuningChat';
 import { budgetLines } from './AgentSidePanel';
 import { ChatHeader, PanelButton } from './ChatHeader';
 import { Composer, type ComposerHandle } from './Composer';
+import { useComposerFiles } from './ComposerFiles';
 import { focusLost } from './controls';
 import { NextChips } from './NextChips';
+import { QuestionCard, questionChatOf } from './QuestionCard';
 import { ReplyView } from './ReplyView';
 import { Suggestions } from './Suggestions';
 import { FadeIn } from './ToolGroup';
 import { UserMessage } from './UserMessage';
 
-// The TownwiseAI chat page (spec P25, D26): the one-time name prompt, the header (History,
+// The TownwiseAI chat page (spec P25, D26): the header (History,
 // New chat and Questions and activity; no title), then the landing of an empty conversation (one centered column: what to ask,
-// what TownwiseAI reads, the composer and the quick-start chips) or the thread, with the composer docked under it.
+// what TownwiseAI reads, the composer, the quick-start chips and TownwiseAI's questions, the panel's cards sharing its
+// state) or the thread, with the composer docked over its
+// bottom edge. The thread runs the full height and scrolls under the dock: what passes shows above the box and at its
+// top corners, and the ground hides it from the box's middle down (from the dock's top while a line sits above the
+// composer). The thread keeps room at its end as tall as the dock, measured, so its last message scrolls clear of it.
 // Above the composer: the 80% budget line, the error and the read-only line; once the budget is used up, a sentence
 // takes the composer's place. Messages and the composer share one centered column, at most 760px wide. The thread is
 // `role="log"` but not a live region (streamed tokens would chatter); one polite region outside the messages says
 // when TownwiseAI starts replying, each thing it starts reading, when it has replied or why it couldn't, and which
-// version shows after a switch. The log keeps its end in view while pinned (scrollPin.ts), and shows Latest when a
-// reply grows below the view. On phones the location's compact header (`top`) scrolls with the landing or thread.
+// version shows after a switch (and, while a saved conversation loads, its skeleton's “Loading the conversation…”). The log keeps its end in view while pinned (scrollPin.ts), and shows Latest, above
+// the dock, when a reply grows below the view; the dock growing or shrinking moves the end, never the pin. The header
+// sits under the portal's top bar on every screen, above what scrolls.
 
 export interface AgentChatContext extends ToolContext {
   locationId: string;
@@ -45,6 +57,18 @@ export interface AgentChatContext extends ToolContext {
 
 type Scroller = React.ComponentRef<typeof ScrollView>;
 type Host = React.ComponentRef<typeof View>;
+
+/** What the page does through the chat for the panel's question cards. */
+export interface AgentChatHandle {
+  /**
+   * Sends a question's Something else… message in the conversation shown (the landing starts one), as a chip does
+   * (TuningChat.tell). `focus`: on web focus goes to the composer at once (from the column; the sheet moves it there
+   * when it closes).
+   */
+  tell: (message: string, telling: Telling, focus: boolean) => void;
+  /** Focuses the composer, where focus goes when a question's message closes the panel sheet (web). */
+  focusComposer: () => void;
+}
 
 /**
  * What the live region says, from the chat's state: one sentence at a time, never the streamed text. Only a reply to
@@ -72,8 +96,6 @@ const SATURDAY = 'Tell me about last Saturday';
 export function AgentChat(props: {
   chat: TuningChat;
   ctx: AgentChatContext;
-  /** On phones, the location's compact header, at the top of what scrolls; null on wider screens. */
-  top: React.ReactNode;
   readOnlyId: string | null;
   readOnlyLine: string;
   /** Questions and activity is open: a column from 1024px, a sheet below (the page draws it). */
@@ -83,15 +105,27 @@ export function AgentChat(props: {
   openQuestions: number | null;
   /** The panel button, where the panel sheet returns focus (web). */
   panelButtonRef?: React.RefObject<Host | null>;
+  /** TownwiseAI's questions, also shown on the landing under the chips. */
+  panel: AgentPanelState;
+  handleRef?: React.Ref<AgentChatHandle>;
 }): React.JSX.Element {
   const { chat, ctx } = props;
   const { state } = chat;
   const reduced = useReducedMotion();
   const scroll = useRef<Scroller>(null);
   const composer = useRef<ComposerHandle>(null);
+  // The composer's + (web, stored files on): files it added to Your data, and the lines about them.
+  const files = useComposerFiles(ctx.locationId, props.readOnlyId);
+  const toldFiles = useRef(new Set<string>());
   // The pin lives in a ref (every scroll event moves it); only whether Latest shows is drawn.
   const pin = useRef<PinState>(INITIAL_PIN);
   const [behind, setBehind] = useState(false);
+  // The docked composer's measured height (with the lines above it): the room the thread keeps at its end.
+  const [dock, setDock] = useState(0);
+  const dockWas = useRef(0);
+  // On web, the width the thread's scrollbar takes (a classic one; an overlay one takes none): the dock stops short of
+  // it, so the bar shows down to the bottom and the dock's column is centered over the thread's.
+  const [bar, setBar] = useState(0);
   const [before, setBefore] = useState<ReadonlySet<string> | null>(null);
   // Words a message view gave the region ("Showing version 2 of 3."); `n` grows with each, so a repeat is news too.
   const [said, setSaid] = useState<{ words: string; n: number } | null>(null);
@@ -129,6 +163,21 @@ export function AgentChat(props: {
     if (Platform.OS === 'web' ? focusLost() : from === 'composer') composer.current?.focus();
   }, [landing]);
 
+  // The dock grew or shrank (a second line, Expand, a notice), and so did the room under the thread: a pinned thread
+  // goes to its new end before it is drawn; an unpinned one stays where it is, so counted without that room (as the
+  // pin counts it) it moved by the change, and where the pin last saw it moves with it.
+  useLayoutEffect(() => {
+    if (pin.current.pinned) scroll.current?.scrollToEnd({ animated: false });
+    else pin.current = { ...pin.current, lastY: pin.current.lastY - (dock - dockWas.current) };
+    dockWas.current = dock;
+  }, [dock]);
+
+  function measureBar(): void {
+    if (Platform.OS !== 'web') return;
+    const node = scroll.current?.getScrollableNode() as unknown as HTMLElement | null | undefined;
+    setBar(node ? node.offsetWidth - node.clientWidth : 0);
+  }
+
   function apply(event: PinEvent): void {
     const { state: next, scroll: move } = nextPin(pin.current, event);
     pin.current = next;
@@ -137,13 +186,23 @@ export function AgentChat(props: {
     if (move === 'move') scroll.current?.scrollToEnd({ animated: reduced === false });
   }
 
-  function send(run: () => void, from: 'composer' | 'other' = 'other'): void {
+  function send<T>(run: () => T, from: 'composer' | 'other' = 'other'): T {
     docking.current = landing ? from : null;
     setBefore(new Set(state.messages.map((message) => message.key)));
     setSaid(null);
-    run();
+    files.clear();
+    const result = run();
     apply({ type: 'send' });
+    return result;
   }
+
+  // A question card's message: sent as a chip's is, and (`focus`) on web focus goes where Stop is, as after a next question.
+  function tell(message: string, telling: Telling, focus: boolean): void {
+    send(() => { chat.tell(message, telling); });
+    if (focus && Platform.OS === 'web') composer.current?.focus();
+  }
+
+  useImperativeHandle(props.handleRef, () => ({ tell, focusComposer: () => { composer.current?.focus(); } }));
 
   function opened(run: () => void): void {
     docking.current = null;
@@ -159,6 +218,15 @@ export function AgentChat(props: {
     saidCount.current += 1;
     setSaid({ words, n: saidCount.current });
   }
+
+  // A file the + put on Your data is news once, in the polite region; a refused or failed one shows as an alert.
+  useEffect(() => {
+    for (const line of files.lines) {
+      if (line.state !== 'added' || toldFiles.current.has(line.key)) continue;
+      toldFiles.current.add(line.key);
+      announce(line.text);
+    }
+  });
 
   // The message views act through the chat with the page's bookkeeping: an edit or a regenerate is a send (its reply
   // is news, and the log follows it); a version switch draws every message anew, and none of that is news.
@@ -186,12 +254,11 @@ export function AgentChat(props: {
     </View>
   );
 
-  if (state.status === 'loading') return <View style={styles.fill}>{props.top}<LoadingLine text="Loading TownwiseAI…" /></View>;
-  if (state.status === 'not_found') return <View style={styles.fill}>{props.top}<Text style={styles.body}>This location wasn’t found.</Text></View>;
+  if (state.status === 'loading') return <View style={styles.fill}><LoadingLine text="Loading TownwiseAI…" /></View>;
+  if (state.status === 'not_found') return <View style={styles.fill}><Text style={styles.body}>This location wasn’t found.</Text></View>;
   if (state.status === 'failed') {
     return (
       <View style={styles.fill}>
-        {props.top}
         {panelOnly}
         <ErrorNotice message={state.loadError ?? 'Something went wrong.'} onRetry={chat.reload} />
       </View>
@@ -200,7 +267,6 @@ export function AgentChat(props: {
   if (!state.enabled) {
     return (
       <View style={styles.fill}>
-        {props.top}
         {panelOnly}
         <Text style={styles.body}>TownwiseAI isn’t turned on yet.</Text>
         {readOnlyLine}
@@ -257,13 +323,14 @@ export function AgentChat(props: {
       {...(props.panelButtonRef === undefined ? {} : { panelButtonRef: props.panelButtonRef })}
     />
   );
-  // On phones this scrolls with the landing or the thread, under the location's compact header.
-  const lead = <>{props.top}<NamePrompt />{header}</>;
-
+  
   // What sits right above the composer, wherever it is.
   const notices = (
     <>
       {warning === null ? null : <Text style={styles.warning}>{warning}</Text>}
+      {files.lines.map((line) => (line.state === 'failed'
+        ? <ErrorNotice key={line.key} message={line.text} />
+        : <Text key={line.key} style={styles.fileLine}>{line.text}</Text>))}
       {state.error === null ? null : (
         <View style={styles.error}>
           <ErrorNotice message={state.error} />
@@ -275,6 +342,7 @@ export function AgentChat(props: {
       {readOnlyLine}
     </>
   );
+  const noticed = warning !== null || files.lines.length > 0 || state.error !== null || props.readOnlyLine !== '';
 
   function composerAt(placement: 'landing' | 'dock'): React.JSX.Element {
     if (exhausted) {
@@ -301,14 +369,18 @@ export function AgentChat(props: {
         examples={placement === 'dock' && props.readOnlyId === null ? examples : []}
         readOnlyId={props.readOnlyId}
         placement={placement}
+        {...(files.button === null ? {} : { leading: files.button })}
       />
     );
   }
 
+  // The panel's questions, under the chips: none while they load, when they can't be read, or when there are none.
+  const asked = props.panel.state.status === 'ready' ? props.panel.state.data.questions : [];
+  const open = openQuestions(props.panel);
+  const questionChat = questionChatOf(state);
   const last = state.messages.length - 1;
   const body = landing ? (
     <ScrollView testID="chat-landing" style={styles.fill} contentContainerStyle={styles.landingScroll} keyboardShouldPersistTaps="handled">
-      {props.top === null ? null : lead}
       <View testID="chat-landing-column" style={styles.landing}>
         <Heading>{`Ask TownwiseAI about ${ctx.locationName}`}</Heading>
         {ctx.hasSales ? (
@@ -341,96 +413,136 @@ export function AgentChat(props: {
             composer.current?.focus();
           }}
         />
+        {asked.length === 0 ? null : (
+          <View testID="chat-landing-questions" style={styles.questions}>
+            <Heading>{`Questions for you${open !== null && open > 0 ? ` (${formatCount(open)})` : ''}`}</Heading>
+            {asked.map((question) => (
+              <QuestionCard
+                key={question.id}
+                question={question}
+                panel={props.panel}
+                locationName={ctx.locationName}
+                readOnlyId={props.readOnlyId}
+                chat={questionChat}
+                send={(message, ended) => { tell(message, { ended }, true); }}
+                place="landing"
+              />
+            ))}
+          </View>
+        )}
       </View>
     </ScrollView>
   ) : (
-    <>
-      <View style={styles.fill}>
-        <ScrollView
-          ref={scroll}
-          testID="chat-thread"
-          role="log"
-          // A log is polite by default; this one is not live, so streamed text and what scrolls with it go unread.
-          aria-live="off"
-          aria-label="Conversation with TownwiseAI"
-          style={styles.fill}
-          contentContainerStyle={[styles.thread, props.top === null ? styles.threadUnderHeader : null]}
-          keyboardShouldPersistTaps="handled"
-          scrollEventThrottle={16}
-          onScroll={(event: NativeSyntheticEvent<NativeScrollEvent>) => {
-            const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-            apply({ type: 'scroll', y: contentOffset.y, contentHeight: contentSize.height, viewportHeight: layoutMeasurement.height });
-          }}
-          onContentSizeChange={(_width, height) => { apply({ type: 'contentGrew', contentHeight: height }); }}
-        >
-          {props.top === null ? null : lead}
-          <View testID="chat-column" style={styles.column}>
-            {state.conversationLoading ? <Text style={styles.muted}>Loading the conversation…</Text> : null}
-            {state.messages.map((message, index) => {
-              if (message.role === 'user') {
-                return (
-                  <UserMessage
-                    key={message.key}
-                    message={message}
-                    tree={state.tree}
-                    chat={actions}
-                    readOnlyId={props.readOnlyId}
-                    busy={!canAct}
-                    onEdited={() => { composer.current?.focus(); }}
-                    onAnnounce={announce}
-                  />
-                );
-              }
-              const newest = index === last;
+    <View style={styles.fill}>
+      <ScrollView
+        ref={scroll}
+        testID="chat-thread"
+        role="log"
+        // A log is polite by default; this one is not live, so streamed text and what scrolls with it go unread.
+        aria-live="off"
+        aria-label="Conversation with TownwiseAI"
+        // On web, what takes focus in the thread is scrolled into view above the dock, never under it.
+        style={[styles.fill, (Platform.OS === 'web' ? { scrollPaddingBottom: dock } : {}) as unknown as ViewStyle]}
+        contentContainerStyle={[styles.thread, styles.threadUnderHeader, { paddingBottom: dock + theme.space[4] }]}
+        scrollIndicatorInsets={{ bottom: dock }}
+        keyboardShouldPersistTaps="handled"
+        scrollEventThrottle={16}
+        // The pin counts the thread without the room kept for the dock (the offset and the content both less it), so
+        // the distance from the end stays true and the dock growing or shrinking, which moves the end and a pinned
+        // offset with it, is neither the person scrolling nor new content.
+        onScroll={(event: NativeSyntheticEvent<NativeScrollEvent>) => {
+          const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+          const y = contentOffset.y - dock;
+          // At its end a pinned thread was not scrolled up, whatever the pin last saw: that can be from before the
+          // dock was measured (a fresh thread's first overflow) or from another conversation.
+          if (pin.current.pinned && contentSize.height - layoutMeasurement.height - contentOffset.y <= 1) {
+            pin.current = { ...pin.current, lastY: Math.min(pin.current.lastY, y) };
+          }
+          apply({ type: 'scroll', y, contentHeight: contentSize.height - dock, viewportHeight: layoutMeasurement.height });
+        }}
+        // The content's width changes whenever the scrollbar comes or goes, so the bar is measured here.
+        onContentSizeChange={(_width, height) => {
+          measureBar();
+          apply({ type: 'contentGrew', contentHeight: height - dock });
+        }}
+      >
+        <View testID="chat-column" style={styles.column}>
+          {state.conversationLoading ? (
+            <Skeleton name="conversation" label="Loading the conversation…">
+              <SkeletonText type="small" width={200} />
+            </Skeleton>
+          ) : null}
+          {state.messages.map((message, index) => {
+            if (message.role === 'user') {
               return (
-                <Fragment key={message.key}>
-                  <ReplyView
-                    message={message}
-                    ctx={ctx}
-                    tree={state.tree}
-                    newest={newest}
-                    chat={actions}
-                    locationId={ctx.locationId}
-                    readOnlyId={props.readOnlyId}
-                    canAct={canAct}
-                    onRetry={(key) => { send(() => { chat.retry(key); }); }}
-                    onAnnounce={announce}
-                  />
-                  {newest && message.state === 'complete' ? (
-                    <NextChips
-                      prompts={nextOf(message, state.messages[index - 1])}
-                      disabled={!canAct || exhausted}
-                      readOnlyId={props.readOnlyId}
-                      onAsk={(text) => {
-                        send(() => { chat.ask(text); });
-                        // The chips go with the reply above them, now not the newest: on web focus goes where Stop is.
-                        if (Platform.OS === 'web') composer.current?.focus();
-                      }}
-                    />
-                  ) : null}
-                </Fragment>
+                <UserMessage
+                  key={message.key}
+                  message={message}
+                  tree={state.tree}
+                  chat={actions}
+                  readOnlyId={props.readOnlyId}
+                  busy={!canAct}
+                  actions={index === last ? 'always' : 'hover'}
+                  onEdited={() => { composer.current?.focus(); }}
+                  onAnnounce={announce}
+                />
               );
-            })}
-          </View>
-        </ScrollView>
-        {behind ? (
-          <View style={styles.latest}>
-            <FadeIn duration={theme.motion.select}>
-              <Button variant="outline" label="Latest" onPress={() => { apply({ type: 'latest' }); }} />
-            </FadeIn>
-          </View>
-        ) : null}
+            }
+            const newest = index === last;
+            return (
+              <Fragment key={message.key}>
+                <ReplyView
+                  message={message}
+                  ctx={ctx}
+                  tree={state.tree}
+                  newest={newest}
+                  actions={newest ? 'always' : 'hover'}
+                  chat={actions}
+                  locationId={ctx.locationId}
+                  readOnlyId={props.readOnlyId}
+                  canAct={canAct}
+                  onRetry={(key) => { send(() => { chat.retry(key); }); }}
+                  onAnnounce={announce}
+                />
+                {newest && message.state === 'complete' ? (
+                  <NextChips
+                    prompts={nextOf(message, state.messages[index - 1])}
+                    disabled={!canAct || exhausted}
+                    readOnlyId={props.readOnlyId}
+                    onAsk={(text) => {
+                      send(() => { chat.ask(text); });
+                      // The chips go with the reply above them, now not the newest: on web focus goes where Stop is.
+                      if (Platform.OS === 'web') composer.current?.focus();
+                    }}
+                  />
+                ) : null}
+              </Fragment>
+            );
+          })}
+        </View>
+      </ScrollView>
+      {behind ? (
+        <View testID="chat-latest" style={[styles.latest, { bottom: dock + theme.space[3] }]}>
+          <FadeIn duration={theme.motion.select}>
+            <Button variant="outline" label="Latest" onPress={() => { apply({ type: 'latest' }); }} />
+          </FadeIn>
+        </View>
+      ) : null}
+      {/* Over the thread's bottom edge, short of its scrollbar. The dock and its column pass scrolls, wheels and presses
+          on to the thread; the composer and the lines above it take their own. */}
+      <View testID="chat-dock" style={[styles.dock, { right: bar }]} onLayout={(event: LayoutChangeEvent) => { setDock(event.nativeEvent.layout.height); }}>
+        <View style={styles.dockColumn}>
+          <View testID="chat-dock-skirt" style={[styles.skirt, noticed ? null : styles.skirtLow]} />
+          {notices}
+          {composerAt('dock')}
+        </View>
       </View>
-      <View style={styles.dock}>
-        {notices}
-        {composerAt('dock')}
-      </View>
-    </>
+    </View>
   );
 
   return (
     <View style={styles.fill}>
-      {props.top === null ? lead : null}
+      {header}
       {body}
       <View testID="chat-live" style={styles.live} aria-live="polite" accessibilityLiveRegion="polite">
         <Text key={spoken.n}>{spoken.words}</Text>
@@ -442,6 +554,8 @@ export function AgentChat(props: {
 const c = theme.color;
 /** The landing's and the thread's column (spec P25). */
 const COLUMN = 760;
+/** The docked composer's top padding and half its 56px box (Composer.tsx): where the skirt starts with no line above it. */
+const SKIRT_TOP = theme.space[3] + 28;
 
 const styles = StyleSheet.create({
   fill: { flex: 1, minHeight: 0 },
@@ -454,15 +568,20 @@ const styles = StyleSheet.create({
     flexGrow: 1, justifyContent: 'center', width: '100%', maxWidth: COLUMN, minWidth: 0, alignSelf: 'center', gap: theme.space[4],
     paddingVertical: theme.space[6],
   },
-  thread: { gap: theme.space[5], paddingBottom: theme.space[4] },
+  thread: { gap: theme.space[5] },
   threadUnderHeader: { paddingTop: theme.space[4] },
   column: { width: '100%', maxWidth: COLUMN, minWidth: 0, alignSelf: 'center', gap: theme.space[5] },
-  dock: { width: '100%', maxWidth: COLUMN, minWidth: 0, alignSelf: 'center' },
+  dock: { position: 'absolute', left: 0, bottom: 0, pointerEvents: 'box-none' },
+  dockColumn: { width: '100%', maxWidth: COLUMN, minWidth: 0, alignSelf: 'center', pointerEvents: 'box-none' },
+  // The page's ground behind the composer, hiding what scrolls under it; drawn first, so everything in the dock is above it.
+  skirt: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: c.ground, pointerEvents: 'none' },
+  skirtLow: { top: SKIRT_TOP },
   body: { ...theme.type.sub, color: c.text2 },
-  muted: { ...theme.type.small, color: c.text3 },
   warning: { ...theme.type.small, color: c.text2, paddingTop: theme.space[2] },
+  fileLine: { ...theme.type.small, color: c.text2, paddingTop: theme.space[2] },
   noSales: { gap: theme.space[2], alignItems: 'flex-start' },
-  latest: { position: 'absolute', right: 0, bottom: theme.space[3], zIndex: 1, backgroundColor: c.ground },
+  questions: { gap: theme.space[3], paddingTop: theme.space[4] },
+  latest: { position: 'absolute', right: 0, zIndex: 1, backgroundColor: c.ground },
   // Read by screen readers, not drawn.
   live: { position: 'absolute', width: 1, height: 1, margin: -1, overflow: 'hidden' },
   error: { gap: theme.space[2], paddingTop: theme.space[2] },
