@@ -7,7 +7,11 @@
 // that run supplied, so one run is never credited with another's hits and misses. Numbers are raw, as stored; callers
 // round for display. From the town's today on, the location's notes and its business rules with a schedule (D31) adjust
 // each day on read (adjust.ts); past days, accuracy and run rows stay as the model made them. A week a note changed a day's status in is left out; any other
-// week shifts by the guests notes add on its open days. It logs nothing and stores nothing.
+// week shifts by the guests notes add on its open days. From today on, each run reason also says whether it usually
+// brings more or fewer guests (effects.ts), from the same reads: the stored days, read once, reach back over the 52 weeks
+// the effects need when the range reaches today, and the notes and rules read for the range also mark the history's
+// closed days. The town calendar's term entries are made once for the labels and the effects. It logs nothing and
+// stores nothing.
 import type { OrgScope } from '../access/policy.ts';
 import { noteCovers } from '../agent/questions.ts';
 import { daysBetween, utcDay } from '../dates.ts';
@@ -18,12 +22,13 @@ import type { NoteStore } from '../stores/notes.ts';
 import type { SalesDayStore } from '../stores/sales-days.ts';
 import { weekdayOf, type Weekday } from '../time-zones.ts';
 import { adjustDay, orderedReasons, scheduledRules, type AdjustedDay, type ModelDay } from './adjust.ts';
+import { effectHistory, reasonEffects } from './effects.ts';
 import { eachDay, type DayStatus } from './file.ts';
-import { noteReasonView, reasonViews, ruleReasonView, townCalendarOf, type ReasonView } from './reasons.ts';
+import { noteReasonView, reasonViews, ruleReasonView, townCalendarOf, townTermEntries, type ReasonView } from './reasons.ts';
 import { inRangeOf, liveAccuracy, weekActual, type LiveAccuracy, type ScoredDay } from './score.ts';
 
-/** A forecast read covers at most this many days, both ends included. */
-export const MAX_FORECAST_RANGE_DAYS = 31;
+/** A forecast read covers at most this many days, both ends included: six whole weeks, a month's calendar grid. */
+export const MAX_FORECAST_RANGE_DAYS = 42;
 
 export interface ForecastRunView {
   id: string;
@@ -54,7 +59,10 @@ export interface ForecastDayView {
   mid: number | null;
   high: number | null;
   baseline: number | null;
-  /** Rules and notes that changed the day, then the run's reasons, then the other rules and notes (at most 6 notes in all). */
+  /**
+   * Rules and notes that changed the day, then the run's reasons, then the other rules and notes (at most 6 notes in
+   * all). From today on a run reason carries its effect (effects.ts); before today every effect is null.
+   */
   reasons: ReasonView[];
   /** The run's own status and figures, equal to the day's when no note or rule changed it. */
   model: ModelDay;
@@ -101,7 +109,7 @@ export interface ForecastWindow {
 }
 
 export interface ForecastReader {
-  /** `range`: inclusive YYYY-MM-DD days, at most 31 (callers check). `today`: the first day with no actual yet. */
+  /** `range`: inclusive YYYY-MM-DD days, at most 42 (callers check). `today`: the first day with no actual yet. */
   window(scope: OrgScope, location: LocationRecord, range: { from: string; to: string }, today: string): Promise<ForecastWindow>;
   /** The newest published run (by dataThrough) and its own live accuracy, for the model card; null when none is published. */
   latest(scope: OrgScope, locationId: string, today: string): Promise<{ run: ForecastRunView; live: LiveAccuracy | null } | null>;
@@ -159,18 +167,22 @@ export function createForecastReader(deps: {
 }): ForecastReader {
   const { forecasts, salesDays, notes, businessRules } = deps.stores;
 
-  /** Every published run, every chosen day with its actual (before today), and each run's live accuracy over its own days. */
-  async function load(scope: OrgScope, locationId: string, today: string) {
+  /**
+   * Every published run, every chosen day with its actual (before today), and each run's live accuracy over its own
+   * days. The stored days are read once, from the first chosen day, or from `historyFrom` when that is earlier (the
+   * reason effects' history), to yesterday; none are read when no run supplies a day.
+   */
+  async function load(scope: OrgScope, locationId: string, today: string, historyFrom: string | null = null) {
     const runs = await forecasts.published(scope, locationId);
     const rows = await forecasts.rows(scope, locationId, runs.map((run) => run.id));
     const chosen = chooseDays(runs, rows);
     const [first] = [...chosen.keys()].sort();
     const yesterday = utcDay(new Date(`${today}T00:00:00.000Z`), -1);
+    const from = first === undefined || historyFrom === null || first <= historyFrom ? first : historyFrom;
+    const stored = from !== undefined && from <= yesterday ? await salesDays.days(scope, locationId, { from, to: yesterday }) : [];
     const actuals = new Map<string, number>();
-    if (first !== undefined && first <= yesterday) {
-      for (const day of await salesDays.days(scope, locationId, { from: first, to: yesterday })) {
-        if (day.guests !== null) actuals.set(day.date, day.guests);
-      }
+    for (const day of stored) {
+      if (day.guests !== null) actuals.set(day.date, day.guests);
     }
     const scored = (date: string, row: ForecastRow): ScoredDay => ({
       date, status: row.status ?? 'open', low: row.low, mid: row.mid, high: row.high, actual: actuals.get(date) ?? null,
@@ -178,27 +190,38 @@ export function createForecastReader(deps: {
     const daysOf = new Map<string, ScoredDay[]>();
     for (const [date, { run, row }] of chosen) daysOf.set(run.id, [...(daysOf.get(run.id) ?? []), scored(date, row)]);
     const liveOf = (runId: string): LiveAccuracy | null => liveAccuracy(daysOf.get(runId) ?? []);
-    return { runs, rows, chosen, actuals, scored, liveOf };
+    return { runs, rows, chosen, actuals, scored, liveOf, stored };
   }
 
   return {
     async window(scope, location, range, today) {
-      const { runs, rows, chosen, actuals, scored, liveOf } = await load(scope, location.id, today);
+      // Effects are for days from today on, so a range wholly in the past reads no history for them.
+      const history = range.to >= today ? effectHistory(today) : null;
+      const { runs, rows, chosen, actuals, scored, liveOf, stored } = await load(scope, location.id, today, history?.readFrom ?? null);
       const dates = eachDay(range.from, range.to);
       if (runs.length === 0) {
         return { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], notCovered: spans(dates) };
       }
-      const calendarOn = townCalendarOf(location.town.townId);
+      const entries = townTermEntries(location.town.townId);
+      const calendarOn = townCalendarOf(location.town.townId, entries);
       const weekRows = rows.filter((row) => row.span === 'week' && row.from <= range.to && row.to >= range.from);
-      // One read of the notes, over the range and every week reaching past it, and one of the scheduled rules (at most 30).
+      // One read of the notes, over the range, every week reaching past it and the effects' history, and one of the
+      // scheduled rules (at most 30).
       const [noted, scheduled] = await Promise.all([
         notes.overlapping(scope, location.id, {
-          from: [range.from, ...weekRows.map((row) => row.from)].sort()[0] ?? range.from,
+          from: [range.from, ...weekRows.map((row) => row.from), ...(history === null ? [] : [history.from])].sort()[0] ?? range.from,
           to: [range.to, ...weekRows.map((row) => row.to)].sort().at(-1) ?? range.to,
         }),
         businessRules.scheduled(scope, location.id),
       ]);
       const rules = scheduledRules(scheduled);
+      // A history day a closed note or rule covers is closed; one with more or fewer guests was open (D32).
+      const effectOf = history === null ? undefined : reasonEffects({
+        today, townId: location.town.townId, days: stored, termEntries: entries,
+        covering: (date) => [
+          ...noted.filter((note) => noteCovers(note, date)), ...rules.filter((rule) => noteCovers(rule.schedule, date)).map((rule) => rule.schedule),
+        ],
+      });
       const modelOf = (row: ForecastRow): ModelDay => ({ status: row.status ?? 'open', low: row.low, mid: row.mid, high: row.high });
       const adjusted = (date: string, row: ForecastRow): AdjustedDay => adjustDay(
         date, today, modelOf(row), row.reasons, noted.filter((note) => noteCovers(note, date)),
@@ -212,7 +235,7 @@ export function createForecastReader(deps: {
         const model = modelOf(row);
         const day = adjusted(date, row);
         const { reasons, moreNotes } = orderedReasons(
-          day, reasonViews(date, row.reasons, calendarOn(date)),
+          day, reasonViews(date, row.reasons, calendarOn(date), date >= today ? effectOf : undefined),
           (entry) => ('note' in entry ? noteReasonView(entry.note, entry.outcome) : ruleReasonView(entry.rule, entry.outcome)),
         );
         const actual = actuals.get(date) ?? null;

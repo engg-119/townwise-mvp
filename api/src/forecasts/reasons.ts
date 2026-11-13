@@ -3,13 +3,15 @@
 // reach a label, an owner or Anthropic through a forecast. A ref names a calendar entry by its id or its group; one
 // that names nothing on that day is dropped at import and reads as the kind's plain label. A note's reason (spec 14.5)
 // is worded from the note's kind, guest count and hours, never its detail; a business rule's (D31) from its schedule,
-// never the rule's text. A schedule's summary on the rules page is worded here too. Pure.
-import { termEntries, termStateOn, type TermDay } from '../people-in-town/term.ts';
+// never the rule's text. A schedule's summary on the rules page is worded here too. A run reason's effect, from the
+// model or the location's history, is made in effects.ts. Pure.
+import { termEntries, termStateOn, type TermDay, type TermEntry } from '../people-in-town/term.ts';
 import { weekdayOf, type Weekday } from '../time-zones.ts';
 import { townCalendarCovers, townEvents, type TownEvent, type TownEventSource } from '../town-calendar.ts';
 import type { RuleSchedule } from '../stores/business-rules.ts';
 import type { NoteRecord } from '../stores/notes.ts';
 import type { NoteOutcome, ScheduledRule } from './adjust.ts';
+import type { ReasonEffect, ReasonEffectOf } from './effects.ts';
 import type { ReasonKind } from './file.ts';
 
 export interface ReasonView {
@@ -17,6 +19,12 @@ export interface ReasonView {
   label: string;
   /** The reason's effect in percent, only where the run recorded one; null on a note's or a rule's reason. */
   effectPct: number | null;
+  /**
+   * From the town's today on, whether the reason usually brings more or fewer guests (effects.ts): the model's where
+   * the run recorded effectPct, else the location's own history. Null on a day before today, on a note's or a rule's
+   * reason (its outcome says what it did), for a kind history can't speak to, and below the history's minimums.
+   */
+  effect: ReasonEffect | null;
   /** [] on a note's or a rule's reason. */
   sources: TownEventSource[];
   /** Set on kind 'note' only: the note, its guest count and what it did to the day. */
@@ -40,10 +48,17 @@ const PLAIN: Readonly<Record<ReasonKind, string>> = {
   booking: 'Private event booked',
 };
 
-/** The calendar of a town, day by day: one read of its term entries, then each day's events and term state. */
-export function townCalendarOf(townId: string | null): (date: string) => DayCalendar {
+/** A town's term entries, over every year its calendar covers. */
+export function townTermEntries(townId: string | null): TermEntry[] {
   const covers = townCalendarCovers(townId);
-  const entries = covers === null ? [] : termEntries(townEvents(townId, covers));
+  return covers === null ? [] : termEntries(townEvents(townId, covers));
+}
+
+/**
+ * The calendar of a town, day by day: one read of its term entries (or the caller's, from townTermEntries), then each
+ * day's events and term state.
+ */
+export function townCalendarOf(townId: string | null, entries: readonly TermEntry[] = townTermEntries(townId)): (date: string) => DayCalendar {
   return (date) => ({ events: townEvents(townId, { from: date, to: date }), term: termStateOn(date, entries) });
 }
 
@@ -68,30 +83,38 @@ function labeled(entry: TownEvent): { label: string; sources: TownEventSource[] 
   return { label: entry.title, sources: distinctSources([entry]) };
 }
 
+/**
+ * The calendar entry a term, event or holiday reason names on its day: its ref's entry (by id, or by a group with one
+ * entry that day), or for a holiday the day's only holiday; null otherwise. Its label and its effect both read it.
+ */
+export function namedEntry(kind: ReasonKind, ref: string | null, calendar: DayCalendar): TownEvent | null {
+  if (kind !== 'term' && kind !== 'event' && kind !== 'holiday') return null;
+  const named = resolveRef(ref, calendar.events);
+  if (named !== null || kind !== 'holiday') return named;
+  const holidays = calendar.events.filter((event) => event.kind === 'holiday');
+  return holidays.length === 1 ? (holidays[0] ?? null) : null;
+}
+
 function wordsFor(kind: ReasonKind, ref: string | null, date: string, calendar: DayCalendar): { label: string; sources: TownEventSource[] } {
   if (kind === 'weekday') return { label: WEEKDAY_NAME[weekdayOf(date)], sources: [] };
-  if (kind !== 'term' && kind !== 'event' && kind !== 'holiday') return { label: PLAIN[kind], sources: [] };
-  const named = resolveRef(ref, calendar.events);
+  const named = namedEntry(kind, ref, calendar);
   if (named !== null) return labeled(named);
-  if (kind === 'holiday') {
-    const holidays = calendar.events.filter((event) => event.kind === 'holiday');
-    const [only] = holidays;
-    if (holidays.length === 1 && only !== undefined) return labeled(only);
-  }
   if (kind === 'term' && calendar.term.state !== 'unknown' && calendar.term.label !== null) {
     return { label: calendar.term.label, sources: distinctSources(calendar.term.events) };
   }
   return { label: PLAIN[kind], sources: [] };
 }
 
-/** A day's reasons in words, in the run's order. */
+/** A day's reasons in words, in the run's order, each with its effect when `effectOf` is given (a day from today on). */
 export function reasonViews(
   date: string,
   reasons: readonly { kind: ReasonKind; ref: string | null; effectPct: number | null }[],
   calendar: DayCalendar,
+  effectOf?: ReasonEffectOf,
 ): ReasonView[] {
   return reasons.map((reason) => ({
-    kind: reason.kind, effectPct: reason.effectPct, ...wordsFor(reason.kind, reason.ref, date, calendar), note: null, rule: null,
+    kind: reason.kind, effectPct: reason.effectPct, effect: effectOf?.(date, reason, calendar) ?? null,
+    ...wordsFor(reason.kind, reason.ref, date, calendar), note: null, rule: null,
   }));
 }
 
@@ -119,7 +142,7 @@ function noteLabel(note: NoteRecord): string {
 /** A note's reason on a forecast day, worded from its kind, guest count and hours, never its detail. */
 export function noteReasonView(note: NoteRecord, outcome: NoteOutcome): ReasonView {
   return {
-    kind: 'note', label: noteLabel(note), effectPct: null, sources: [], note: { id: note.id, guests: note.expectedGuests, outcome }, rule: null,
+    kind: 'note', label: noteLabel(note), effectPct: null, effect: null, sources: [], note: { id: note.id, guests: note.expectedGuests, outcome }, rule: null,
   };
 }
 
@@ -193,6 +216,7 @@ export function ruleReasonView(rule: ScheduledRule, outcome: NoteOutcome): Reaso
     kind: 'rule',
     label: `Your rule: ${what.charAt(0).toLowerCase()}${what.slice(1)}${days === null ? '' : ` on ${days}`}${hoursWords(schedule)}`,
     effectPct: null,
+    effect: null,
     sources: [],
     note: null,
     rule: { id: rule.id, guests: schedule.expectedGuests, outcome },

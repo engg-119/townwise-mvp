@@ -33,7 +33,9 @@ afterEach(async () => {
   jest.useRealTimers();
 });
 
-const GAME_REASON = { kind: 'event', label: 'Dartmouth home football', effectPct: 12, sources: [], note: null };
+const GAME_REASON = {
+  kind: 'event', label: 'Dartmouth home football', effectPct: null, effect: { direction: 'more', pct: 20, basis: 'history', days: 5 } as const, sources: [], note: null,
+};
 const SATURDAY = '2026-11-21';
 const LABEL = 'Sat, Nov 21, 2026. Forecast about 212 guests, 180 to 240. Dartmouth home football.';
 
@@ -71,7 +73,9 @@ test('tapping a day shows its forecast and reasons under the grid', async () => 
   expect(within(panel()).getByText('About 212 guests')).toBeTruthy();
   expect(within(panel()).getByText('Likely 180 to 240. About 8 in 10 days land in the range.')).toBeTruthy();
   expect(within(panel()).getByText('Dartmouth home football')).toBeTruthy();
-  expect(within(panel()).getByText('+12%')).toBeTruthy();
+  // The effect in words, which is what a screen reader hears; On the calendar doesn't repeat the game.
+  expect(within(panel()).getByText('Usually about 20% more guests than the same weekday without it')).toBeTruthy();
+  expect(within(panel()).queryByText('Dartmouth home football. Town event.')).toBeNull();
   expect(screen.getByLabelText(LABEL).props.accessibilityState).toMatchObject({ selected: true });
 });
 

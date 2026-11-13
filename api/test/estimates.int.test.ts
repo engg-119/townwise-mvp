@@ -214,8 +214,8 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
     expect(body.days[0]).toEqual({
       date: '2026-05-01', weekday: 'Fri', status: 'open', low: 80, mid: 100, high: 120, baseline: null,
       reasons: [
-        { kind: 'weekday', label: 'Friday', effectPct: null, sources: [], note: null, rule: null },
-        { kind: 'term', label: 'Spring term classes', effectPct: null, sources: expect.any(Array) as unknown, note: null, rule: null },
+        { kind: 'weekday', label: 'Friday', effectPct: null, effect: null, sources: [], note: null, rule: null },
+        { kind: 'term', label: 'Spring term classes', effectPct: null, effect: null, sources: expect.any(Array) as unknown, note: null, rule: null },
       ],
       runId: first, madeAt: '2026-05-01', madeAfterDay: true, actual: 100, inRange: true,
       model: { status: 'open', low: 80, mid: 100, high: 120 }, noteGuests: 0, moreNotes: 0,
@@ -262,12 +262,13 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
     expect(await forecast('?from=2026-05-20&to=2026-05-25')).toMatchObject({ available: false, reason: 'not_covered', days: [] });
   });
 
-  it('answers 400 for more than 31 days, a start more than 400 days back, or an extra key', async () => {
-    for (const query of ['?from=2026-05-01&to=2026-06-01', '?from=2025-04-26&to=2025-05-01', '?from=2026-05-01&to=2026-05-02&x=1', '']) {
+  it('answers 400 for more than 42 days, a start more than 400 days back, or an extra key', async () => {
+    for (const query of ['?from=2026-05-01&to=2026-06-12', '?from=2025-04-26&to=2025-05-01', '?from=2026-05-01&to=2026-05-02&x=1', '']) {
       const res = await call(server, `/api/org/locations/${forecasted}/forecast${query}`, { session: member });
       expect({ query, status: res.status }).toEqual({ query, status: 400 });
     }
-    expect((await call(server, `/api/org/locations/${forecasted}/forecast?from=2026-05-01&to=2026-05-31`, { session: member })).status).toBe(200);
+    // 42 days, a whole six-week calendar grid, is one read.
+    expect((await call(server, `/api/org/locations/${forecasted}/forecast?from=2026-05-01&to=2026-06-11`, { session: member })).status).toBe(200);
   });
 
   it('is readable under view-as, showing only what the person sees, and logs no figure', async () => {
@@ -278,6 +279,55 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
     expect(server.logs.filter((line) => line.includes('townwise.')).every((line) => line.includes('townwise.view_as_read'))).toBe(true);
     expect(server.logs.join('\n')).not.toMatch(/"(low|mid|high|actual|guests)"/);
     await server.connection.collection('tw_view_as_grants').deleteMany({ actorUserId: staff.userId });
+  });
+
+  // Spec 14.4: from the town's today (June 1 in Hanover) on, each run reason says whether it usually brings more or
+  // fewer guests: the model's effect where the run recorded one, otherwise the location's own last 52 weeks.
+  describe('reason effects', () => {
+    /** May 25 to June 14, each day a weekday reason; June 6 also an unnamed event the run gave a 30% effect. */
+    const EFFECT_RUN = {
+      ...structuredClone(RUN), dataThrough: '2026-05-24', madeAt: '2026-05-25', weeks: [],
+      days: Array.from({ length: 21 }, (_, plus) => utcDay(new Date('2026-05-25T00:00:00.000Z'), plus)).map((date) => ({
+        date, status: 'open', low: 80, mid: 100, high: 120, baseline: null,
+        reasons: [{ kind: 'weekday', ref: null, effectPct: null }, ...(date === '2026-06-06' ? [{ kind: 'event', ref: null, effectPct: 30 }] : [])],
+      })),
+    };
+    let effects: string;
+
+    beforeAll(async () => {
+      effects = await addLocation(server, { orgId, name: 'Effects Room' });
+      // From April 6, 2025 (the 8 weeks before the history) to May 31, 2026: Saturdays 170 guests, other days 100. The
+      // Saturday a closure note covers had 999, and is left out, as a likely-closed one would be.
+      const rows = [];
+      for (let date = '2025-04-06'; date <= '2026-05-31'; date = utcDay(new Date(`${date}T00:00:00.000Z`), 1)) {
+        const guests = date === '2026-05-02' ? 999 : new Date(`${date}T00:00:00.000Z`).getUTCDay() === 6 ? 170 : 100;
+        rows.push({
+          orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(effects), date, guests, netSalesCents: guests * 1000,
+          uploadId: new Types.ObjectId(), updatedAt: server.clock.now(),
+        });
+      }
+      await server.connection.collection('tw_sales_days').insertMany(rows);
+      await addNote(server, { orgId, locationId: effects, detail: 'Closed for a sentinel party', startDate: '2026-05-02' });
+      const imported = await call(server, `/api/admin/orgs/${orgId}/locations/${effects}/forecast-runs`, { session: staff, json: EFFECT_RUN });
+      expect(imported.status).toBe(201);
+      await staffChange((await imported.json() as { run: { id: string } }).run.id, 'publish');
+    });
+
+    it('from today on, a weekday usually beats or trails the average day, from history; the run’s own effect is the model’s', async () => {
+      const res = await call(server, `/api/org/locations/${effects}/forecast?from=2026-05-25&to=2026-06-14`, { session: member });
+      expect(res.status).toBe(200);
+      const body = await res.json() as ForecastWindow;
+      const reasonsOn = (date: string) => body.days.find((day) => day.date === date)?.reasons.map((reason) => [reason.label, reason.effect]);
+      // 51 Saturdays of 170 against about 110 a day: 55% more. Fridays of 100: 10% fewer.
+      expect(reasonsOn('2026-06-06')).toEqual([
+        ['Saturday', { direction: 'more', pct: 55, basis: 'history', days: 51 }],
+        ['Town event', { direction: 'more', pct: 30, basis: 'model', days: null }],
+      ]);
+      expect(reasonsOn('2026-06-05')).toEqual([['Friday', { direction: 'fewer', pct: 10, basis: 'history', days: 52 }]]);
+      // A day before today keeps its reasons without an effect.
+      expect(reasonsOn('2026-05-30')).toEqual([['Saturday', null]]);
+      expect(JSON.stringify(body)).not.toContain('sentinel');
+    });
   });
 
   // Spec 14.5: the location's notes adjust each day on read from the town's today (June 1 in Hanover) on.
@@ -332,8 +382,9 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
         status: 'open', low: 150, mid: 170, high: 190, model: { status: 'open', low: 80, mid: 100, high: 120 }, noteGuests: 70, moreNotes: 0,
       });
       expect(dayOf(body, '2026-06-06')?.reasons).toEqual([
-        { kind: 'note', label: 'Your private event, 70 guests, 6 pm to 9 pm', effectPct: null, sources: [], note: { id: noteId, guests: 70, outcome: 'added' }, rule: null },
-        { kind: 'weekday', label: 'Saturday', effectPct: null, sources: [], note: null, rule: null },
+        { kind: 'note', label: 'Your private event, 70 guests, 6 pm to 9 pm', effectPct: null, effect: null, sources: [], note: { id: noteId, guests: 70, outcome: 'added' }, rule: null },
+        // One Saturday of history is too little to say how Saturdays usually run.
+        { kind: 'weekday', label: 'Saturday', effectPct: null, effect: null, sources: [], note: null, rule: null },
       ]);
       expect(dayOf(body, '2026-06-05')).toMatchObject(UNCHANGED);
       expect(JSON.stringify(body)).not.toContain('sentinel');
@@ -424,7 +475,7 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
         for (const monday of ['2026-06-01', '2026-06-08']) {
           expect(dayOf(body, monday)).toMatchObject({ status: 'closed', low: null, mid: null, high: null, model: { status: 'open', low: 80, mid: 100, high: 120 } });
           expect(dayOf(body, monday)?.reasons[0]).toEqual({
-            kind: 'rule', label: 'Your rule: closed on Mondays', effectPct: null, sources: [], note: null, rule: { id: ruleId, guests: null, outcome: 'closed' },
+            kind: 'rule', label: 'Your rule: closed on Mondays', effectPct: null, effect: null, sources: [], note: null, rule: { id: ruleId, guests: null, outcome: 'closed' },
           });
         }
         // A past Monday keeps the model's figures, and the week a rule closed a day in is left out.

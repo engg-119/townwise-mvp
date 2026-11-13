@@ -58,8 +58,9 @@ const NOVEMBER_FORECAST = `${PATH}/forecast?from=2026-11-01&to=2026-11-30`;
 const GUESTS_HELP = 'Townwise forecasts whole days, so these guests add to the whole day’s total, on each day the note covers.';
 const GAME = townEvent({ start: '2026-11-21', title: 'Dartmouth home football' });
 const VETERANS = holiday('2026-11-11', 'Veterans Day', 'us:veterans', 'Veterans Day');
-const GAME_REASON = { kind: 'event', label: 'Dartmouth home football', effectPct: 12, sources: [{ label: 'dartmouthsports.com', url: 'https://dartmouthsports.com/' }], note: null };
-const SATURDAY_REASON = { kind: 'weekday', label: 'Saturday', effectPct: null, sources: [], note: null };
+const GAME_REASON = { kind: 'event', label: 'Dartmouth home football', effectPct: null, effect: { direction: 'more', pct: 20, basis: 'history', days: 5 } as const,
+  sources: [{ label: 'dartmouthsports.com', url: 'https://dartmouthsports.com/' }], note: null };
+const SATURDAY_REASON = { kind: 'weekday', label: 'Saturday', effectPct: null, effect: { direction: 'more', pct: 35, basis: 'history', days: 52 } as const, sources: [], note: null };
 
 /** November from today on, with the game on the 21st; `noted` adds the location's notes to that day as the API would. */
 function november(noted?: { guests: number; id: string }): unknown {
@@ -171,9 +172,35 @@ test('opens at ?day= with that day selected and in the sidebar', async () => {
   expect(within(day).getByRole('heading', { name: 'Sat, Nov 21, 2026' })).toBeTruthy();
   expect(within(day).getByText(whole('About 212 guests'))).toBeTruthy();
   expect(within(day).getByText('Likely 180 to 240. About 8 in 10 days land in the range.')).toBeTruthy();
-  expect(within(day).getByText('+12%')).toBeTruthy();
-  expect(within(day).getByText('Dartmouth home football. Town event.')).toBeTruthy();
-  expect(within(day).getAllByRole('link', { name: 'Source: home.dartmouth.edu' })[0]?.getAttribute('href')).toBe('https://home.dartmouth.edu/');
+  // Why: one row per reason, biggest effect first, each saying in words which way it usually moves guests; the mark
+  // before the words is hidden from screen readers, which hear the same words.
+  const why = within(day).getAllByRole('listitem');
+  expect(why.map((row) => row.textContent)).toEqual([
+    'Saturday▲Usually about 35% more guests than your average day',
+    'Dartmouth home football▲Usually about 20% more guests than the same weekday without it Source',
+  ]);
+  for (const mark of within(day).getAllByText('▲')) expect(mark.closest('[aria-hidden="true"]')).not.toBeNull();
+  // The row ends with its source, a small inline link named for where it goes.
+  const game = why[1];
+  if (game === undefined) throw new Error('no second reason');
+  const source = within(game).getByRole('link', { name: 'Source: dartmouthsports.com' });
+  expect(source.getAttribute('href')).toBe('https://dartmouthsports.com/');
+  expect(source.textContent).toBe('Source');
+  // On the calendar no longer repeats the game Why shows.
+  expect(within(day).queryByText('Dartmouth home football. Town event.')).toBeNull();
+  expect(within(day).queryByRole('link', { name: 'Source: home.dartmouth.edu' })).toBeNull();
+  expect(within(day).getByText('Nothing else on the calendar this day.')).toBeTruthy();
+});
+
+test('Why reads at phone width: the label, then the effect in words, then the source', async () => {
+  setWidth(375);
+  const { api } = setup();
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const game = within(panel()).getAllByRole('listitem')[1];
+  if (game === undefined) throw new Error('no second reason');
+  expect(within(game).getByText('Dartmouth home football')).toBeTruthy();
+  expect(within(game).getByText(/^Usually about 20% more guests than the same weekday without it/)).toBeTruthy();
+  expect(within(game).getByRole('link', { name: 'Source: dartmouthsports.com' })).toBeTruthy();
 });
 
 test('a business rule with a schedule (D31): its reason shows under Why, and the rule under On the calendar with its summary and a link to Rules', async () => {

@@ -170,9 +170,9 @@ describe('labels come from code and the public calendar, never the file', () => 
     expect(views[1]?.sources.length).toBeGreaterThan(0);
     const thanksgiving = reasonViews('2026-11-26', [{ kind: 'holiday', ref: null, effectPct: null }], hanover('2026-11-26'));
     expect(thanksgiving).toEqual([{
-      kind: 'holiday', label: 'Thanksgiving Day', effectPct: null,
+      kind: 'holiday', label: 'Thanksgiving Day', effectPct: null, effect: null,
       sources: [{ label: 'U.S. Office of Personnel Management', url: 'https://www.opm.gov/policy-data-oversight/pay-leave/federal-holidays/' }],
-      note: null,
+      note: null, rule: null,
     }]);
     // Halloween is no federal holiday and no calendar entry.
     expect(reasonViews('2026-10-31', [{ kind: 'holiday', ref: null, effectPct: null }], hanover('2026-10-31'))[0]?.label).toBe('Holiday');
@@ -182,7 +182,7 @@ describe('labels come from code and the public calendar, never the file', () => 
     expect(reasonViews('2026-11-21', [{ kind: 'event', ref: 'hanover-nh:home-football', effectPct: null }], hanover('2026-11-21'))[0]?.label)
       .toBe('Home football vs Brown');
     const unresolved = reasonViews('2026-11-21', [{ kind: 'event', ref: `hanover-nh:${SENTINEL}`, effectPct: null }], hanover('2026-11-21'));
-    expect(unresolved).toEqual([{ kind: 'event', label: 'Town event', effectPct: null, sources: [], note: null }]);
+    expect(unresolved).toEqual([{ kind: 'event', label: 'Town event', effectPct: null, effect: null, sources: [], note: null, rule: null }]);
     expect(JSON.stringify(unresolved)).not.toContain(SENTINEL);
     const events = townEvents('hanover-nh', { from: '2026-11-21', to: '2026-11-21' });
     expect(storedRef(`hanover-nh:${SENTINEL}`, events)).toBeNull();

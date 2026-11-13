@@ -1,7 +1,7 @@
 import type { TownEvent } from '../../../src/portal/analytics/api';
 import {
-  ALL_FILTERS, calendarMonth, captionOf, dayView, forecastWords, monthBounds, pastRange, reasonOutcomeWords, savedNotice, selectedDay, statusWord,
-  tooltipLines, type CalendarCell, type CalendarInput, type ImportedEvent,
+  ALL_FILTERS, calendarMonth, captionOf, dayView, forecastWords, monthBounds, pastRange, reasonOutcomeWords, reasonShortLines, savedNotice, selectedDay,
+  statusWord, tooltipLines, type CalendarCell, type CalendarInput, type ImportedEvent,
 } from '../../../src/portal/calendar/model';
 import type { ForecastDay, ForecastWindow } from '../../../src/portal/estimates/api';
 import { daysBetween } from '../../../src/portal/locations/dates';
@@ -32,9 +32,26 @@ const NOTED = forecastDay({
   date: '2026-11-21', low: 250, mid: 282.4, high: 310, noteGuests: 70,
   reasons: [
     { kind: 'note', label: 'Your private event, 70 guests, 6 pm to 9 pm', effectPct: null, sources: [], note: { id: 'n1', guests: 70, outcome: 'added' } },
-    { kind: 'event', label: 'Dartmouth home football', effectPct: 12, sources: [{ label: 'dartmouthsports.com', url: 'https://dartmouthsports.com/' }], note: null },
-    { kind: 'weekday', label: 'Saturday', effectPct: null, sources: [], note: null },
-    { kind: 'term', label: 'Fall term classes', effectPct: null, sources: [], note: null },
+    {
+      kind: 'event', label: 'Dartmouth home football', effectPct: 12, effect: { direction: 'more', pct: 10, basis: 'model', days: null },
+      sources: [{ label: 'dartmouthsports.com', url: 'https://dartmouthsports.com/' }], note: null,
+    },
+    { kind: 'weekday', label: 'Saturday', effectPct: null, effect: { direction: 'more', pct: 35, basis: 'history', days: 52 }, sources: [], note: null },
+    { kind: 'term', label: 'Fall term classes', effectPct: null, effect: null, sources: [], note: null },
+  ],
+});
+const OPM = { label: 'U.S. Office of Personnel Management', url: 'https://www.opm.gov/' };
+const effect = (direction: 'more' | 'fewer' | 'same', pct: number, days: number | null, basis: 'history' | 'model' = 'history') => ({ direction, pct, basis, days });
+/** Thanksgiving, with one reason of each kind of effect, in the API's (run's) order. */
+const THANKSGIVING = forecastDay({
+  date: '2026-11-26',
+  reasons: [
+    { kind: 'level', label: 'Your recent level', effectPct: null, effect: null, sources: [], note: null },
+    { kind: 'holiday', label: 'Thanksgiving Day', effectPct: null, effect: effect('fewer', 70, 1), sources: [OPM], note: null },
+    { kind: 'weekday', label: 'Thursday', effectPct: null, effect: effect('same', 5, 52), sources: [], note: null },
+    { kind: 'booking', label: 'Private event booked', effectPct: 4, effect: effect('same', 5, null, 'model'), sources: [], note: null },
+    { kind: 'term', label: 'Fall term finals', effectPct: null, effect: effect('fewer', 10, 20), sources: [], note: null },
+    { kind: 'event', label: 'Turkey trot', effectPct: null, effect: effect('more', 20, 4), sources: [], note: null },
   ],
 });
 const BOOKED = forecastDay({
@@ -129,7 +146,7 @@ test('no published forecast: no figure after today on any day', () => {
 });
 
 test('filters hide holidays, town events, term dates, notes and imported events by kind', () => {
-  const all = dayView('2026-11-21', input());
+  const all = dayView('2026-11-21', input({ forecast: NONE }));
   expect(all.events.map((event) => event.title)).toEqual(['Dartmouth home football']);
   expect(all.notes.map((each) => each.id)).toEqual([PARTY.id]);
   expect(all.imported.map((event) => event.title)).toEqual(['Wine delivery']);
@@ -190,14 +207,55 @@ test('the day panel words a forecast; the 8 in 10 sentence goes with the model�
   expect(forecastWords(dayView('2026-11-21', input({ forecast: NONE })).forecast, 'Sawtooth').lines).toEqual([
     'No forecast for this day.', 'Townwise hasn’t published a forecast for Sawtooth yet.',
   ]);
-  // Reasons in the API's order, a note's with what it did, a run reason with its effect and sources.
-  expect(noted.reasons.map((reason) => [reason.label, reason.detail])).toEqual([
-    ['Your private event, 70 guests, 6 pm to 9 pm', 'Adds 70 guests'],
-    ['Dartmouth home football', '+12%'],
-    ['Saturday', null],
-    ['Fall term classes', null],
+  // Notes and rules first, with what they did; then the run's reasons by the size of their effect, each in words with a
+  // mark the words repeat, and its sources; then the ones with none.
+  expect(noted.reasons.map((reason) => [reason.label, reason.mark, reason.detail])).toEqual([
+    ['Your private event, 70 guests, 6 pm to 9 pm', null, 'Adds 70 guests'],
+    ['Saturday', '▲', 'Usually about 35% more guests than your average day'],
+    ['Dartmouth home football', '▲', 'Townwise’s model: about 10% more guests'],
+    ['Fall term classes', null, 'Not enough of your history to say yet'],
   ]);
-  expect(noted.reasons[1]?.sources).toEqual([{ label: 'dartmouthsports.com', url: 'https://dartmouthsports.com/' }]);
+  expect(noted.reasons[2]?.sources).toEqual([{ label: 'dartmouthsports.com', url: 'https://dartmouthsports.com/' }]);
+});
+
+test('Why says whether each reason usually brings more or fewer guests, biggest first; a past day says nothing of it', () => {
+  const view = dayView('2026-11-26', input({ forecast: windowOf([THANKSGIVING]) }));
+  expect(view.reasons.map((reason) => [reason.label, reason.mark, reason.detail])).toEqual([
+    ['Thanksgiving Day', '▼', 'Last time, about 70% fewer guests than the same weekday in the weeks around it'],
+    ['Turkey trot', '▲', 'Usually about 20% more guests than the same weekday without it'],
+    ['Fall term finals', '▼', 'Usually about 10% fewer guests than the same weekday at other times of the year'],
+    ['Thursday', '=', 'Usually about as many guests as your average day'],
+    ['Private event booked', '=', 'Townwise’s model: about the same number of guests'],
+    ['Your recent level', null, null],
+  ]);
+  expect(view.reasons[0]?.sources).toEqual([OPM]);
+  // Keys stay unique and stable whatever the order.
+  expect(new Set(view.reasons.map((reason) => reason.key)).size).toBe(6);
+  // A day before today: its reasons carry no effect, and the panel says nothing of one.
+  expect(dayView('2026-11-07', input()).reasons.map((reason) => [reason.label, reason.mark, reason.detail])).toEqual([['Saturday', null, null]]);
+});
+
+test('the tooltip and Home’s day detail give the top reasons with short effect words', () => {
+  expect(reasonShortLines(THANKSGIVING, false)).toEqual([
+    'Thanksgiving Day: fewer guests last time', 'Turkey trot: usually more guests', 'Fall term finals: usually fewer guests',
+    'Thursday: usually about the same', 'Private event booked: about the same in Townwise’s model', 'Your recent level',
+  ]);
+  expect(reasonShortLines(NOTED, false)).toEqual([
+    'Your private event, 70 guests, 6 pm to 9 pm', 'Saturday: usually more guests', 'Dartmouth home football: more guests in Townwise’s model', 'Fall term classes',
+  ]);
+  expect(reasonShortLines(NOTED, true)).toEqual(['Your private event, 70 guests, 6 pm to 9 pm', 'Dartmouth home football', 'Saturday', 'Fall term classes']);
+});
+
+test('On the calendar leaves out what Why already shows, never a note', () => {
+  const view = dayView('2026-11-21', input());
+  expect(view.events).toEqual([]);
+  expect(view.shownInWhy).toBe(1);
+  expect(view.notes.map((each) => each.id)).toEqual([PARTY.id]);
+  // With no forecast for the day, the calendar lists its events itself.
+  const bare = dayView('2026-11-21', input({ forecast: NONE }));
+  expect(bare.events.map((event) => event.title)).toEqual(['Dartmouth home football']);
+  expect(bare.shownInWhy).toBe(0);
+  expect(dayView(TODAY, input()).events.map((event) => event.title)).toEqual(['Veterans Day', 'Fall term classes']);
 });
 
 test('ranges round low down and high up, as spec 14.4 and TownwiseAI’s get_forecast do; the middle figure to the nearest guest', () => {
@@ -230,7 +288,10 @@ test('a day the model closed that a private event opened shows only the notes’
 test('the tooltip holds the range, the notes’ guests and at most three reasons', () => {
   expect(tooltipLines('2026-11-21', input())).toEqual({
     date: 'Sat, Nov 21, 2026',
-    lines: ['About 282 guests (250 to 310)', 'Includes 70 guests from your notes', 'Your private event, 70 guests, 6 pm to 9 pm', 'Dartmouth home football', 'Saturday'],
+    lines: [
+      'About 282 guests (250 to 310)', 'Includes 70 guests from your notes', 'Your private event, 70 guests, 6 pm to 9 pm',
+      'Saturday: usually more guests', 'Dartmouth home football: more guests in Townwise’s model',
+    ],
   });
   expect(tooltipLines('2026-11-07', input())?.lines).toEqual(['138 guests', 'Saturday']);
   expect(tooltipLines('2026-11-30', input())).toBeNull();
@@ -330,7 +391,9 @@ test('the day panel lists the scheduled rules covering the day, whatever the fil
   expect(dayView('2026-11-16', { ...withRules, filters: { ...ALL_FILTERS, notes: false } }).rules.map((rule) => rule.id)).toEqual(['r1']);
   // Home passes no rules.
   expect(dayView('2026-11-16', input()).rules).toEqual([]);
-  expect(monday.reasons.map((reason) => [reason.label, reason.detail])).toEqual([['Your rule: closed on Mondays', 'Closes the day'], ['Monday', null]]);
+  expect(monday.reasons.map((reason) => [reason.label, reason.detail])).toEqual([
+    ['Your rule: closed on Mondays', 'Closes the day'], ['Monday', 'Not enough of your history to say yet'],
+  ]);
   expect(forecastWords(monday.forecast, 'Sawtooth').lines).toEqual(['Closed.', 'From your business rule.']);
   expect(tooltipLines('2026-11-16', withRules)?.lines).toEqual(['Closed', 'Your rule: closed on Mondays', 'Monday']);
 });

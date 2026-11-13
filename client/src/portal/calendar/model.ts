@@ -2,8 +2,8 @@ import { formatCount, plural } from '../format';
 import type { TownEvent } from '../analytics/api';
 import { closureOf, likelyClosedWords, noteCovers, TYPICAL_LOOKBACK_DAYS, typicalGuests } from '../analytics/days';
 import { mondayOf, weekDates } from '../analytics/week';
-import { MONTH_NAMES, shortDate, signedPercent } from '../analytics/words';
-import { appliedOf, guestsFromWords, yoursDid, type ForecastDay, type ForecastWindow } from '../estimates/api';
+import { MONTH_NAMES, shortDate } from '../analytics/words';
+import { appliedOf, guestsFromWords, yoursDid, type ForecastDay, type ForecastReason, type ForecastWindow, type ReasonEffect } from '../estimates/api';
 import type { Note, SalesDay } from '../locations/api';
 import { addDays, isCalendarDate, monthRange } from '../locations/dates';
 import { KIND_LABEL } from '../locations/noteRules';
@@ -21,6 +21,11 @@ import type { Rule } from '../rules/api';
 // with the model's own range, since a range a note moved is no longer the model's 80% one. Business rules with a
 // schedule (D31) change the forecast as notes do, in the API's read: their reasons show like a note's, guests they add
 // are named as theirs, and the panel lists the rules covering the day (no filter hides them; they are edited on Rules).
+// Why (spec 14.4, P27): the owner's notes and rules first, then the run's reasons by the size of their effect, each
+// saying in words whether it usually brings more or fewer guests (the API's effect, from the model or the location's
+// own history), then those with none; a direction mark goes before the words but never stands alone. On the calendar
+// leaves out a holiday, event or term Why already names. The tooltip and Home's day detail take the same order in
+// short words (reasonShortLines).
 
 /** The filter chips, in toolbar order. `imported` ("Your calendar") shows only after an import. */
 export const FILTER_KEYS = ['holidays', 'events', 'terms', 'notes', 'imported'] as const;
@@ -283,11 +288,20 @@ export type ForecastPart =
   /** unavailable: the forecast read is loading or failed. */
   | { kind: 'none'; why: 'no_published_forecast' | 'not_covered' | 'unavailable' };
 
+/** Before an effect's words: more guests, fewer, or about the same. */
+export type EffectMark = '▲' | '▼' | '=';
+
 export interface ReasonLine {
   key: string;
   label: string;
-  /** A note's outcome in words, or a run reason's effect (“+12%”). */
+  /**
+   * What the reason does to the day: a note's or a rule's outcome (“Adds 70 guests”), a run reason's effect
+   * (“Usually about 35% more guests than your average day”), NO_HISTORY, or null (a day before today, or a kind the
+   * history can't speak to, such as “Your recent level”).
+   */
   detail: string | null;
+  /** ▲, ▼ or = before an effect's words; null otherwise. Never the only sign: the words say the same. */
+  mark: EffectMark | null;
   sources: readonly { label: string; url: string }[];
 }
 
@@ -296,12 +310,14 @@ export interface CalendarDayView {
   /** “Today, Wed, Nov 11” or “Sat, Nov 21, 2026”. */
   heading: string;
   forecast: ForecastPart;
-  /** The API's order: notes that changed the day, the run's reasons, then the other notes. */
+  /** Notes and rules (in the API's order), then the run's reasons by the size of their effect, then those with none. */
   reasons: ReasonLine[];
   /** Note reasons the API left out past its first 6. */
   moreNotes: number;
-  /** Holidays, town events and term periods on the day, as the filters allow. */
+  /** Holidays, town events and term periods on the day, as the filters allow, less those Why already names. */
   events: TownEvent[];
+  /** The day's holidays, town events and term periods left out of `events` because Why names them. */
+  shownInWhy: number;
   notes: Note[];
   /** The business rules whose schedule covers the day (D31), whatever the filters. */
   rules: Rule[];
@@ -374,31 +390,98 @@ export function savedNotice(date: string, input: CalendarInput, noteId: string):
   }
 }
 
-function reasonLines(day: ForecastDay | null): ReasonLine[] {
+/** A run reason with no effect from today on, of a kind the location's history could speak to. */
+export const NO_HISTORY = 'Not enough of your history to say yet';
+
+/**
+ * The run reason kinds the location's history speaks to, and what each is held against (api/src/forecasts/effects.ts).
+ * A Map, so a kind named like an Object.prototype key ("constructor") reads as none.
+ */
+const AGAINST: ReadonlyMap<string, string> = new Map([
+  ['weekday', 'your average day'],
+  ['term', 'the same weekday at other times of the year'],
+  ['holiday', 'the same weekday in the weeks around it'],
+  ['event', 'the same weekday without it'],
+]);
+
+const MARK: Readonly<Record<ReasonEffect['direction'], EffectMark>> = { more: '▲', fewer: '▼', same: '=' };
+
+/** A reason's effect as the panel uses it: the API's, from today on only (a past day keeps the model's reasons as made). */
+function effectOf(reason: ForecastReason, past: boolean): ReasonEffect | null {
+  return past || appliedOf(reason) !== null ? null : reason.effect ?? null;
+}
+
+/**
+ * An effect in words: “Usually about 35% more guests than your average day”, “Last time, about 70% fewer guests than
+ * the same weekday in the weeks around it” (one past occurrence is what happened, not what usually does), “Usually about
+ * as many guests as your average day”, or the model's own, “Townwise’s model: about 10% more guests”.
+ */
+function effectWords(kind: string, effect: ReasonEffect): string {
+  if (effect.basis === 'model') {
+    return effect.direction === 'same' ? 'Townwise’s model: about the same number of guests' : `Townwise’s model: about ${String(effect.pct)}% ${effect.direction} guests`;
+  }
+  const lead = effect.days === 1 ? 'Last time,' : 'Usually';
+  const against = AGAINST.get(kind);
+  if (effect.direction === 'same') return against === undefined ? `${lead} about the same number of guests` : `${lead} about as many guests as ${against}`;
+  return `${lead} about ${String(effect.pct)}% ${effect.direction} guests${against === undefined ? '' : ` than ${against}`}`;
+}
+
+/** Notes and rules first, in the API's order (what you changed); then the run's reasons, biggest effect first; then the rest. */
+function inOrder(reasons: readonly ForecastReason[], past: boolean): { reason: ForecastReason; index: number }[] {
+  const indexed = reasons.map((reason, index) => ({ reason, index }));
+  const sized = indexed.filter(({ reason }) => effectOf(reason, past) !== null)
+    .sort((a, b) => (effectOf(b.reason, past)?.pct ?? 0) - (effectOf(a.reason, past)?.pct ?? 0));
+  return [
+    ...indexed.filter(({ reason }) => appliedOf(reason) !== null), ...sized,
+    ...indexed.filter(({ reason }) => appliedOf(reason) === null && effectOf(reason, past) === null),
+  ];
+}
+
+function reasonLines(day: ForecastDay | null, past: boolean): ReasonLine[] {
   if (day === null) return [];
-  return day.reasons.map((reason, index) => {
+  return inOrder(day.reasons, past).map(({ reason, index }): ReasonLine => {
     const applied = appliedOf(reason);
-    return {
-      key: `${String(index)}:${reason.kind}`,
-      label: reason.label,
-      detail: applied !== null
-        ? reasonOutcomeWords(applied.outcome, applied.guests)
-        : reason.effectPct === null ? null : signedPercent(reason.effectPct / 100),
-      sources: reason.sources,
-    };
+    const effect = effectOf(reason, past);
+    const line = { key: `${String(index)}:${reason.kind}`, label: reason.label, sources: reason.sources };
+    if (applied !== null) return { ...line, detail: reasonOutcomeWords(applied.outcome, applied.guests), mark: null };
+    if (effect !== null) return { ...line, detail: effectWords(reason.kind, effect), mark: MARK[effect.direction] };
+    return { ...line, detail: !past && AGAINST.has(reason.kind) ? NO_HISTORY : null, mark: null };
+  });
+}
+
+/** An effect in a few words, after its reason's label: “usually more guests”, “fewer guests last time”, “about the same in Townwise’s model”. */
+function shortEffect(effect: ReasonEffect): string {
+  const what = effect.direction === 'same' ? 'about the same' : `${effect.direction} guests`;
+  if (effect.basis === 'model') return `${what} in Townwise’s model`;
+  return effect.days === 1 ? `${what} last time` : `usually ${what}`;
+}
+
+/**
+ * A forecast day's reasons in the panel's order as short lines, “Saturday: usually more guests”; a note's, a rule's or
+ * one with no effect is its label alone. The tooltip and Home's day detail show the first few. `past`: a day before today.
+ */
+export function reasonShortLines(day: Pick<ForecastDay, 'reasons'>, past: boolean): string[] {
+  return inOrder(day.reasons, past).map(({ reason }) => {
+    const effect = effectOf(reason, past);
+    return effect === null ? reason.label : `${reason.label}: ${shortEffect(effect)}`;
   });
 }
 
 export function dayView(date: string, input: CalendarInput): CalendarDayView {
   const day = forecastDayOf(date, input);
   const short = shortDate(date);
+  // A holiday, town event or term the run's reasons name is in Why with its sources, so On the calendar doesn't repeat it.
+  const inWhy = new Set((day?.reasons ?? []).filter((reason) => appliedOf(reason) === null).map((reason) => reason.label));
+  const listed = eventsOn(date, input);
+  const events = listed.filter((event) => !inWhy.has(event.title));
   return {
     date,
     heading: date === input.today ? `Today, ${short.replace(/, \d{4}$/, '')}` : short,
     forecast: forecastPart(date, input),
-    reasons: reasonLines(day),
+    reasons: reasonLines(day, date < input.today),
     moreNotes: day?.moreNotes ?? 0,
-    events: eventsOn(date, input),
+    events,
+    shownInWhy: listed.length - events.length,
     notes: notesOn(date, input),
     rules: rulesOn(date, input),
     imported: importedOn(date, input),
@@ -474,7 +557,7 @@ export interface TooltipLines { date: string; lines: string[] }
 
 const TOOLTIP_REASONS = 3;
 
-/** The hover tooltip: the day's figure and range, the notes' guests, and up to three reasons (or entries). */
+/** The hover tooltip: the day's figure and range, the notes' guests, and the top three reasons in short words (or entries). */
 export function tooltipLines(date: string, input: CalendarInput): TooltipLines | null {
   const day = forecastDayOf(date, input);
   const lines: string[] = [];
@@ -491,7 +574,7 @@ export function tooltipLines(date: string, input: CalendarInput): TooltipLines |
       if (day.noteGuests > 0) lines.push(`Includes ${plural(day.noteGuests, 'guest', 'guests')} from ${guestsFromWords(day)}`);
     }
   }
-  const reasons = day === null ? [] : day.reasons.map((reason) => reason.label);
+  const reasons = day === null ? [] : reasonShortLines(day, date < input.today);
   const entries = reasons.length > 0 ? reasons : [
     ...eventsOn(date, input).filter(marksCell).map((event) => event.title),
     ...notesOn(date, input).map(noteChip),

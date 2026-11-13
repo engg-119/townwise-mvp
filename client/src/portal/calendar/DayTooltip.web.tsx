@@ -2,7 +2,8 @@ import { theme } from '../../theme';
 import type { TooltipLines } from './model';
 
 // A day's hover tooltip on web (spec 16.3 P27 and P11): the date, then its lines (the figure and range, the
-// notes' guests, up to three reasons). It sits beside the cell a mouse or pen rests on, inside the grid's
+// notes' guests, the top three reasons in short words, “Saturday: usually more guests”; model.ts tooltipLines). It
+// sits beside the cell a mouse or pen rests on, inside the grid's
 // positioned box, and turns to stay inside it: from the grid's right half it ends at the cell's right edge, and from
 // its lower rows it sits above the cell. It is aria-hidden, since the cell's label and the day panel say the same
 // words, and it takes no pointer. Home's month grid (MonthGrid.web.tsx) uses it too.

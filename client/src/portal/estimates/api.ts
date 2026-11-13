@@ -106,16 +106,31 @@ const WEB_LINK = /^https?:\/\//i;
 const appliedSchema = z.object({ id: z.string(), guests: z.number().nullable(), outcome: z.string() });
 
 /**
+ * Whether a reason usually brings more or fewer guests (spec 14.4): `pct` is its size rounded to the nearest 5 (never
+ * negative), 'same' at 5 or less; `basis` 'model' is the run's own effect, 'history' how the location's own last 52
+ * weeks usually ran over `days` days (null for the model's).
+ */
+const reasonEffectSchema = z.object({
+  direction: z.enum(['more', 'fewer', 'same']),
+  pct: z.number(),
+  basis: z.enum(['model', 'history']),
+  days: z.number().nullable(),
+});
+export type ReasonEffect = z.infer<typeof reasonEffectSchema>;
+
+/**
  * A reason a forecast day gives. `kind` is any string, so a kind this client doesn't know never fails a page; 'note'
  * is one of the location's notes, which the API words from its kind, guests and hours (never its detail), with what it
  * did to the day in `note.outcome` (spec 14.5); 'rule' is a business rule with a schedule (D31), worded from the
  * schedule (never the rule's text), with what it did in `rule.outcome` (missing from an API before rules). A source
- * whose url is not a web link is dropped.
+ * whose url is not a web link is dropped. `effect` is set from the town's today on, null when there is nothing honest
+ * to say, missing from an API before effects; one this client can't read is null, so it never fails a page.
  */
 const forecastReasonSchema = z.object({
   kind: z.string(),
   label: z.string(),
   effectPct: z.number().nullable(),
+  effect: reasonEffectSchema.nullish().catch(null),
   sources: z.array(z.object({ label: z.string(), url: z.string() })).transform((sources) => sources.filter((source) => WEB_LINK.test(source.url))),
   note: appliedSchema.nullable(),
   rule: appliedSchema.nullish(),
@@ -209,7 +224,7 @@ export function fetchPeopleInTown(api: ApiClient, locationId: string, range: { f
   return api.json(`${locationPath(locationId)}/people-in-town?from=${range.from}&to=${range.to}`, peopleInTownSchema);
 }
 
-/** The published forecast from `from` to `to`, inclusive, at most 31 days (the API's rule). */
+/** The published forecast from `from` to `to`, inclusive, at most 42 days (the API's rule: a six-week calendar grid). */
 export function fetchForecast(api: ApiClient, locationId: string, range: { from: string; to: string }): Promise<ForecastWindow> {
   return api.json(`${locationPath(locationId)}/forecast?from=${range.from}&to=${range.to}`, forecastWindowSchema);
 }

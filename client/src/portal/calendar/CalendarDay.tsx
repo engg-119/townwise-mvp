@@ -1,4 +1,5 @@
 import { Link, type Href } from 'expo-router';
+import { Fragment } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
@@ -10,13 +11,15 @@ import { Loading } from '../locations/parts';
 import { datesLine, hoursLine, KIND_LABEL, weekdaysLine } from '../locations/noteRules';
 import { Actions, Button, LinkButton } from '../ui/Button';
 import { Notice, ReadOnlyLine } from '../ui/feedback';
-import { Heading, Mono, Small } from '../ui/text';
-import { forecastWords, type CalendarDayView, type ImportedEvent } from './model';
+import { Heading, inlineTarget, Mono, Small } from '../ui/text';
+import { forecastWords, type CalendarDayView, type ImportedEvent, type ReasonLine } from './model';
 
 // The Calendar's day panel (P27, spec 16.3): a region "Selected day", beside the grid from 1024px and
 // under it below. Top to bottom: the day; its Forecast (the published figure and range, what the notes changed, a
-// booked or closed day, a past day's guests against the model, or why there is none); Why (the forecast's reasons
-// in the API's order, a note's with what it did); On the calendar (holidays, town events and term dates with their
+// booked or closed day, a past day's guests against the model, or why there is none); Why (one row per reason: your
+// notes and rules first with what they did, then the run's reasons, biggest effect first, each its label, then whether
+// it usually brings more or fewer guests in words after a direction mark screen readers skip, then a small inline
+// Source link); On the calendar (the holidays, town events and term dates Why doesn't already name, with their
 // sources, the day's notes with Edit and Delete where the API allows, the business rules whose schedule covers the day
 // with their summary and a link to Rules, where they are changed (D31), events from the owner's calendar file with
 // Make a note); then
@@ -46,6 +49,40 @@ function importedLine(event: ImportedEvent): string {
   return [datesLine(event), hoursLine(event)].filter((part) => part !== null).join(', ');
 }
 
+/**
+ * One reason under Why: its label, then what it does in words (the mark before them is hidden from screen readers,
+ * which hear the same words), ending in a small inline “Source” link named for where it goes.
+ */
+function WhyRow(props: { reason: ReasonLine }): React.JSX.Element {
+  const { reason } = props;
+  const many = reason.sources.length > 1;
+  return (
+    <View role="listitem" style={styles.item}>
+      <Small white>{reason.label}</Small>
+      {reason.detail === null && reason.sources.length === 0 ? null : (
+        <View style={styles.effect}>
+          {reason.mark === null ? null : (
+            <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+              <Small white>{reason.mark}</Small>
+            </View>
+          )}
+          <Small style={styles.words}>
+            {reason.detail ?? ''}
+            {reason.sources.map((source, index) => (
+              <Fragment key={source.url}>
+                {reason.detail === null && index === 0 ? '' : ' '}
+                <Link href={source.url as Href} accessibilityLabel={`Source: ${source.label}`} style={styles.inlineSource}>
+                  {many ? `Source ${String(index + 1)}` : 'Source'}
+                </Link>
+              </Fragment>
+            ))}
+          </Small>
+        </View>
+      )}
+    </View>
+  );
+}
+
 export function CalendarDay(props: {
   /** Null while the selected day's month loads. */
   view: CalendarDayView | null;
@@ -71,6 +108,7 @@ export function CalendarDay(props: {
   const words = forecastWords(view.forecast, props.locationName);
   const ro = readOnlyId === null ? null : { disabled: true, describedBy: readOnlyId };
   const nothing = view.events.length === 0 && view.notes.length === 0 && view.rules.length === 0 && view.imported.length === 0;
+  const nothingWords = view.shownInWhy > 0 ? 'Nothing else on the calendar this day.' : 'Nothing on the calendar this day.';
   return (
     <View role="region" aria-label="Selected day" nativeID={PANEL_ID} style={styles.root}>
       <Heading>{view.heading}</Heading>
@@ -88,21 +126,13 @@ export function CalendarDay(props: {
       {view.reasons.length === 0 ? null : (
         <Part label="Why">
           <View role="list" style={styles.list}>
-            {view.reasons.map((reason) => (
-              <View key={reason.key} role="listitem" style={styles.item}>
-                <Small white>{reason.label}</Small>
-                {reason.detail === null ? null : <Mono>{reason.detail}</Mono>}
-                {reason.sources.map((source) => (
-                  <Link key={source.url} href={source.url as Href} style={styles.source}>{`Source: ${source.label}`}</Link>
-                ))}
-              </View>
-            ))}
+            {view.reasons.map((reason) => <WhyRow key={reason.key} reason={reason} />)}
           </View>
           {view.moreNotes === 0 ? null : <Small>{`+${formatCount(view.moreNotes)} more of your notes`}</Small>}
         </Part>
       )}
       <Part label="On the calendar">
-        {nothing ? <Small>Nothing on the calendar this day.</Small> : null}
+        {nothing ? <Small>{nothingWords}</Small> : null}
         {view.events.map((event) => (
           <View key={event.id} style={styles.item}>
             <Small white>{eventLine(event)}</Small>
@@ -169,4 +199,8 @@ const styles = StyleSheet.create({
   list: { gap: theme.space[3] },
   item: { gap: 2, minWidth: 0 },
   source: { ...theme.type.mono, color: c.text2, paddingVertical: 14, textDecorationLine: 'underline', textDecorationColor: c.line },
+  effect: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space[2], minWidth: 0 },
+  words: { flex: 1, minWidth: 0 },
+  // Inside the effect's sentence: the sentence's own type, so the line keeps its height, with a 44px target on web.
+  inlineSource: { ...inlineTarget, color: c.text2, textDecorationLine: 'underline', textDecorationColor: c.line },
 });

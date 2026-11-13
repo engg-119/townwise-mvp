@@ -241,7 +241,7 @@ function hasValue(req: VisualRequest, days: readonly SalesDay[]): boolean {
   return days.some((day) => unitsOf(day, of) !== null);
 }
 
-/** The published forecast over the range, read in windows of at most 31 days, and the newest run that supplied a day. */
+/** The published forecast over the range, read in windows of at most MAX_FORECAST_RANGE_DAYS, and the newest run that supplied a day. */
 async function publishedForecast(tc: ToolContext, from: string, to: string): Promise<{ days: ForecastDayView[]; run: { model: string; madeAt: string } | null }> {
   const ranges: { from: string; to: string }[] = [];
   for (let start = from; start <= to; start = shift(start, MAX_FORECAST_RANGE_DAYS)) {
