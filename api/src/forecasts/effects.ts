@@ -20,10 +20,9 @@
 // a term state 6 days in it and 6 same-weekday days outside it, a holiday 1 past occurrence, an event 3 days with it and
 // 3 without; holidays compare with the same weekday 4 weeks either side; 5% steps, and 5% or less is about the same]
 // Pure: computed on every read, stored nowhere and logged nowhere.
-import { closureOf, TYPICAL_LOOKBACK_DAYS, typicalByDate } from '../closed-days.ts';
+import { closureOf, TYPICAL_LOOKBACK_DAYS, typicalByDate, type Entry } from '../closed-days.ts';
 import { utcDay } from '../dates.ts';
 import { termStateOn, type TermEntry, type TermState } from '../people-in-town/term.ts';
-import type { NoteContent } from '../stores/notes.ts';
 import type { SalesDay } from '../stores/sales-days.ts';
 import { weekdayOf, type Weekday } from '../time-zones.ts';
 import { townEvents } from '../town-calendar.ts';
@@ -77,8 +76,11 @@ export interface EffectHistory {
   readonly townId: string | null;
   /** The location's stored days from effectHistory(today).readFrom to yesterday (others are ignored). */
   readonly days: readonly SalesDay[];
-  /** The notes and rule schedules covering a day: a closed one says the day was closed, more or fewer guests that it was open (D32). */
-  readonly covering: (date: string) => readonly Pick<NoteContent, 'effect'>[];
+  /**
+   * The notes and the rule schedules covering a day: a closure says the day was closed (a rule's only when the day had
+   * few or no guests, and never over a note that decides the day), more or fewer guests that it was open (D32).
+   */
+  readonly covering: (date: string) => { readonly notes: readonly Entry[]; readonly rules: readonly Entry[] };
   /** The town's term entries, when the caller already has them (townTermEntries). */
   readonly termEntries?: readonly TermEntry[];
 }
@@ -135,7 +137,8 @@ export function reasonEffects(history: EffectHistory): ReasonEffectOf {
   const open: OpenDay[] = [];
   for (const day of history.days) {
     if (day.date < from || day.date > to || day.guests === null) continue;
-    if (closureOf(day, typical.get(day.date) ?? null, history.covering(day.date)) !== null) continue;
+    const { notes, rules } = history.covering(day.date);
+    if (closureOf(day, typical.get(day.date) ?? null, notes, { rules, past: true }) !== null) continue;
     const on = events.filter((event) => event.start <= day.date && day.date <= event.end);
     open.push({
       date: day.date, guests: day.guests, weekday: weekdayOf(day.date), state: termStateOn(day.date, entries).state,

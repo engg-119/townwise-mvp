@@ -9,7 +9,8 @@ import { MARK, MonthKey } from './MonthKey';
 
 // This month as a grid (spec P11), Monday first: each day's number, its figure (stored before today, the published
 // forecast's middle figure from today on with a mint "+70" when notes added guests, a buyout's party), "Closed",
-// "Likely closed" (a past day with near-empty guests, spec D32) or "Booked", a white corner mark for a holiday or town event, a `text2` mark for one of your notes, this week outlined
+// "Likely closed" (a past day with near-empty guests, spec D32) or "Booked" (in at most two lines, the type shrinking to
+// fit a narrow cell), a white corner mark for a holiday or town event, a `text2` mark for one of your notes, this week outlined
 // with `line`, and the selected day outlined in `mint`. Each day is a button that opens it in the Calendar (spec
 // 16.3 P11); its label says everything the cell shows. Web has its own file (MonthGrid.web.tsx): one tab
 // stop with arrow keys that select a day for the detail, a pointer that previews a day and shows its tooltip, and a
@@ -54,7 +55,10 @@ export function MonthGrid(props: MonthGridProps): React.JSX.Element {
                 style={[styles.cell, cell.inWeek ? styles.week : null, cell.date === selected ? styles.selected : null]}
               >
                 <Text style={[styles.number, cell.isToday ? styles.today : null]}>{String(Number(cell.date.slice(8, 10)))}</Text>
-                {cell.status === null ? null : <Text style={styles.status}>{monthStatusWord(cell)}</Text>}
+                {cell.status === null ? null : (
+                  // A narrow cell holds about 30px of text, less than “LIKELY” at 10px: the type shrinks so no word breaks.
+                  <Text numberOfLines={2} adjustsFontSizeToFit minimumFontScale={0.7} style={styles.status}>{monthStatusWord(cell)}</Text>
+                )}
                 {cell.figure === null ? null : (
                   <View style={styles.middle}>
                     <Text style={[styles.figure, { fontSize: figureSize, lineHeight: figureSize + 4 }, cell.figure.kind === 'actual' ? styles.past : null]}>

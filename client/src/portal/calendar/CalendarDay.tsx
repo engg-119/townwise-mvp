@@ -1,6 +1,6 @@
 import { Link, type Href } from 'expo-router';
 import { Fragment } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
 import { formatCount } from '../format';
@@ -11,7 +11,7 @@ import { Loading } from '../locations/parts';
 import { datesLine, hoursLine, KIND_LABEL, weekdaysLine } from '../locations/noteRules';
 import { Actions, Button, LinkButton } from '../ui/Button';
 import { Notice, ReadOnlyLine } from '../ui/feedback';
-import { Heading, inlineTarget, Mono, Small } from '../ui/text';
+import { Heading, Mono, Small } from '../ui/text';
 import { forecastWords, type CalendarDayView, type ImportedEvent, type ReasonLine } from './model';
 
 // The Calendar's day panel (P27, spec 16.3): a region "Selected day", beside the grid from 1024px and
@@ -19,7 +19,7 @@ import { forecastWords, type CalendarDayView, type ImportedEvent, type ReasonLin
 // booked or closed day, a past day's guests against the model, or why there is none); Why (one row per reason: your
 // notes and rules first with what they did, then the run's reasons, biggest effect first, each its label, then whether
 // it usually brings more or fewer guests in words after a direction mark screen readers skip, then a small inline
-// Source link); On the calendar (the holidays, town events and term dates Why doesn't already name, with their
+// Source link, InlineSources, which Home's day detail shares); On the calendar (the holidays, town events and term dates Why doesn't already name, with their
 // sources, the day's notes with Edit and Delete where the API allows, the business rules whose schedule covers the day
 // with their summary and a link to Rules, where they are changed (D31), events from the owner's calendar file with
 // Make a note); then
@@ -50,12 +50,33 @@ function importedLine(event: ImportedEvent): string {
 }
 
 /**
+ * A reason's sources as small inline links ending its sentence: “Source”, or “Source 1”, “Source 2” with several. Each
+ * accessible name starts with its visible words and then says where it goes, “Source 1: dartmouthsports.com” (WCAG
+ * 2.5.3, label in name). `lead`: words come before the links, so the first one follows a space.
+ */
+export function InlineSources(props: { sources: readonly { label: string; url: string }[]; lead: boolean }): React.JSX.Element {
+  const many = props.sources.length > 1;
+  return (
+    <>
+      {props.sources.map((source, index) => {
+        const words = many ? `Source ${String(index + 1)}` : 'Source';
+        return (
+          <Fragment key={source.url}>
+            {!props.lead && index === 0 ? '' : ' '}
+            <Link href={source.url} accessibilityLabel={`${words}: ${source.label}`} style={styles.inlineSource}>{words}</Link>
+          </Fragment>
+        );
+      })}
+    </>
+  );
+}
+
+/**
  * One reason under Why: its label, then what it does in words (the mark before them is hidden from screen readers,
- * which hear the same words), ending in a small inline “Source” link named for where it goes.
+ * which hear the same words), ending in its small inline Source links.
  */
 function WhyRow(props: { reason: ReasonLine }): React.JSX.Element {
   const { reason } = props;
-  const many = reason.sources.length > 1;
   return (
     <View role="listitem" style={styles.item}>
       <Small white>{reason.label}</Small>
@@ -68,14 +89,7 @@ function WhyRow(props: { reason: ReasonLine }): React.JSX.Element {
           )}
           <Small style={styles.words}>
             {reason.detail ?? ''}
-            {reason.sources.map((source, index) => (
-              <Fragment key={source.url}>
-                {reason.detail === null && index === 0 ? '' : ' '}
-                <Link href={source.url as Href} accessibilityLabel={`Source: ${source.label}`} style={styles.inlineSource}>
-                  {many ? `Source ${String(index + 1)}` : 'Source'}
-                </Link>
-              </Fragment>
-            ))}
+            <InlineSources sources={reason.sources} lead={reason.detail !== null} />
           </Small>
         </View>
       )}
@@ -129,6 +143,7 @@ export function CalendarDay(props: {
             {view.reasons.map((reason) => <WhyRow key={reason.key} reason={reason} />)}
           </View>
           {view.moreNotes === 0 ? null : <Small>{`+${formatCount(view.moreNotes)} more of your notes`}</Small>}
+          {view.moreRules === 0 ? null : <Small>{`+${formatCount(view.moreRules)} more of your rules`}</Small>}
         </Part>
       )}
       <Part label="On the calendar">
@@ -191,6 +206,13 @@ export function CalendarDay(props: {
 
 const c = theme.color;
 
+/**
+ * On web, the padding that makes a link in the 14px `small` type a 44px target: 15 + 14 + 15 (inlineTarget's 13 is for
+ * 18 to 20px text). An inline element's padding takes no room, so the line keeps its height. Native's nested text takes
+ * no padding.
+ */
+const SMALL_TARGET = Platform.OS === 'web' ? { paddingVertical: Math.ceil((44 - theme.type.small.fontSize) / 2) } : {};
+
 const styles = StyleSheet.create({
   root: { gap: theme.space[5], minWidth: 0 },
   part: { gap: theme.space[2], minWidth: 0 },
@@ -202,5 +224,5 @@ const styles = StyleSheet.create({
   effect: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space[2], minWidth: 0 },
   words: { flex: 1, minWidth: 0 },
   // Inside the effect's sentence: the sentence's own type, so the line keeps its height, with a 44px target on web.
-  inlineSource: { ...inlineTarget, color: c.text2, textDecorationLine: 'underline', textDecorationColor: c.line },
+  inlineSource: { ...SMALL_TARGET, color: c.text2, textDecorationLine: 'underline', textDecorationColor: c.line },
 });

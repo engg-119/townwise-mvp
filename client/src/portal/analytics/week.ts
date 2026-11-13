@@ -139,6 +139,8 @@ export interface WeekRow {
   notes: readonly Note[];
   /** This week's own stored figure; null for any day after the last day of data. */
   value: number | null;
+  /** The day's figure was so few guests for its weekday that it was likely closed (spec D32), as monthDay says. */
+  likelyClosed: boolean;
   lastYear: PastDay;
   twoYearsAgo: PastDay;
 }
@@ -196,15 +198,19 @@ function summaryOf(days: readonly PastDay[]): WeekSummary | null {
 export function thisWeek(input: HomeInput): ThisWeek {
   const monday = mondayOf(input.today);
   const dates = weekDates(monday);
-  const rows = dates.map((date) => ({
-    date,
-    isToday: date === input.today,
-    events: dayEventsOf(input.context, date),
-    notes: notesOf(input.context, date),
-    value: figureOf(date, input),
-    lastYear: pastDay(sameWeekdayYearsAgo(date, 1), input),
-    twoYearsAgo: pastDay(sameWeekdayYearsAgo(date, 2), input),
-  }));
+  const rows = dates.map((date): WeekRow => {
+    const value = figureOf(date, input);
+    return {
+      date,
+      isToday: date === input.today,
+      events: dayEventsOf(input.context, date),
+      notes: notesOf(input.context, date),
+      value,
+      likelyClosed: value !== null && dayFlags(date, input.byDate.get(date), input.context).likelyClosed,
+      lastYear: pastDay(sameWeekdayYearsAgo(date, 1), input),
+      twoYearsAgo: pastDay(sameWeekdayYearsAgo(date, 2), input),
+    };
+  });
   const seen = new Set<string>();
   const periods: TownEvent[] = [];
   for (const date of dates) {
@@ -620,7 +626,7 @@ export function monthDay(date: string, input: HomeInput): MonthDay {
   };
 }
 
-/** The day detail's “This day”: “241 guests”, “Likely closed (1 guest recorded)”, or that nothing is stored. */
+/** The day detail's “This day” and This week's own day: “241 guests”, “Likely closed (1 guest recorded)”, or that nothing is stored. */
 export function thisDayLine(day: Pick<MonthDay, 'value' | 'likelyClosed'>, metric: Metric): string {
   if (day.value === null) return 'No sales stored for this day.';
   return day.likelyClosed ? likelyClosedWords(recordedText(day.value, metric)) : metricText(day.value, metric);

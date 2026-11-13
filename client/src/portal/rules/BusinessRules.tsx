@@ -4,11 +4,12 @@ import { StyleSheet, Text, View } from 'react-native';
 import { theme } from '../../theme';
 import { errorCopy, hasCode } from '../errors';
 import { formatDate } from '../format';
-import { useAction } from '../hooks';
+import { useAction, useBreakpoint } from '../hooks';
 import { LoadFailure } from '../locations/parts';
 import { shownLocationName } from '../locations/naming';
 import { NoteFields } from '../locations/NoteFields';
 import { emptyDraft, type NoteDraft, type NoteMessages, type ScheduleInput } from '../locations/noteRules';
+import { SCRIPT_FOCUS, useFocusOnMount } from '../places/focus';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { locationHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
@@ -18,7 +19,7 @@ import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { EmptyState, ErrorNotice, Notice, ReadOnlyLine } from '../ui/feedback';
 import { FormField } from '../ui/FormField';
 import { Columns, Section, Stack } from '../ui/layout';
-import { Body, Mono, Small } from '../ui/text';
+import { Body, Small } from '../ui/text';
 import type { Rule, RuleWrite } from './api';
 import { checkSchedule, counterLine, draftOfSchedule, forecastLine, normalizeRule, RULES_COPY, ruleProblem } from './rules';
 import { useRules } from './useRules';
@@ -26,7 +27,9 @@ import { useRules } from './useRules';
 // P28 Business rules (spec 16.3, 10.16, D31; /locations/[id]/rules, members): standing facts about how the location
 // runs, which TownwiseAI reads with every message the person sends. A rule changes Townwise's forecast only with a
 // schedule: Add and Edit have an optional “Change the forecast” section with the note form's fields and checks
-// (NoteFields, checkSchedule), and “Remove from the forecast” takes it off. Each rule says under it whether it changes
+// (NoteFields, checkSchedule), and “Remove from the forecast” takes it off. Either button goes when pressed, so focus
+// moves to what takes its place: the section's heading, or the line that says the forecast won't change (web focus,
+// the screen reader on native; places/focus.ts). Each rule says under it whether it changes
 // the forecast, with its schedule in the API's words. The page is the top bar's Rules section. “New rule” and the page's one primary,
 // “Add rule”, add a rule (Enter submits on web); at the limit both are disabled, described by the limit line. Each
 // rule shows who added it and how; its author or an org admin edits it in place or deletes it after a confirm.
@@ -55,12 +58,19 @@ interface ScheduleState {
   open: boolean;
   draft: NoteDraft;
   messages: NoteMessages;
+  /**
+   * The section last opened or closed from its own button, which went with the press, so the part that takes its place
+   * takes focus as it mounts. False for a form as it starts (a page load, an edit opened, the add form after Add rule).
+   */
+  focus: boolean;
 }
 
 function scheduleState(rule: Rule | null): ScheduleState {
   const schedule = rule?.schedule ?? null;
-  return { open: schedule !== null, draft: schedule === null ? emptyDraft('closure') : draftOfSchedule(schedule), messages: {} };
+  return { open: schedule !== null, draft: schedule === null ? emptyDraft('closure') : draftOfSchedule(schedule), messages: {}, focus: false };
 }
+
+type TextHost = React.ComponentRef<typeof Text>;
 
 /**
  * The schedule to send, or null when the section's fields stop the form (their messages are set). `had`: the rule had a
@@ -78,35 +88,41 @@ function scheduleToSend(
   return 'messages' in checked ? null : { schedule: checked.input };
 }
 
-/**
- * The optional “Change the forecast” part of the add form and a row's edit. Closed: a button that opens it, and why it is
- * optional. Open: a group with the note form's fields and “Remove from the forecast”, which closes it.
- */
-function ScheduleSection(props: {
+interface SectionProps {
   state: ScheduleState;
   setState: (next: ScheduleState) => void;
   idPrefix: string;
   readOnlyId: string | null;
-}): React.JSX.Element {
+}
+
+/** Closed: the button that opens the section, and the line that says why it is optional (focused after Remove). */
+function ClosedSchedule(props: SectionProps): React.JSX.Element {
   const { state, setState } = props;
-  if (!state.open) {
-    return (
-      <Stack gap={8}>
-        <Actions>
-          <Button
-            variant="outline"
-            label="Change the forecast"
-            {...(props.readOnlyId === null ? {} : { disabled: true, describedBy: props.readOnlyId })}
-            onPress={() => { setState({ ...state, open: true }); }}
-          />
-        </Actions>
-        <Small>{SCHEDULE_HELP}</Small>
-      </Stack>
-    );
-  }
+  const { phone } = useBreakpoint();
+  const line = useFocusOnMount<TextHost>(state.focus);
+  return (
+    <Stack gap={8}>
+      <Actions>
+        <Button
+          variant="outline"
+          label="Change the forecast"
+          {...(props.readOnlyId === null ? {} : { disabled: true, describedBy: props.readOnlyId })}
+          onPress={() => { setState({ ...state, open: true, focus: true }); }}
+        />
+      </Actions>
+      {/* The `Small` type, on a Text of its own so it can take focus. */}
+      <Text ref={line} {...SCRIPT_FOCUS} style={[phone ? theme.type.sub : theme.type.small, styles.help]}>{SCHEDULE_HELP}</Text>
+    </Stack>
+  );
+}
+
+/** Open: a group with its heading (focused as it opens), the note form's fields and “Remove from the forecast”. */
+function OpenSchedule(props: SectionProps): React.JSX.Element {
+  const { state, setState } = props;
+  const heading = useFocusOnMount<TextHost>(state.focus);
   return (
     <View role="group" aria-label="Change the forecast" style={styles.schedule}>
-      <Mono tone="text3">Change the forecast</Mono>
+      <Text ref={heading} {...SCRIPT_FOCUS} style={styles.scheduleHead}>Change the forecast</Text>
       <Small>{SCHEDULE_LEAD}</Small>
       <NoteFields
         draft={state.draft}
@@ -117,10 +133,18 @@ function ScheduleSection(props: {
         noun="rule"
       />
       <Actions>
-        <Button variant="link" label="Remove from the forecast" onPress={() => { setState({ ...state, open: false, messages: {} }); }} />
+        <Button variant="link" label="Remove from the forecast" onPress={() => { setState({ ...state, open: false, messages: {}, focus: true }); }} />
       </Actions>
     </View>
   );
+}
+
+/**
+ * The optional “Change the forecast” part of the add form and a row's edit. Closed: a button that opens it, and why it is
+ * optional. Open: a group with the note form's fields and “Remove from the forecast”, which closes it.
+ */
+function ScheduleSection(props: SectionProps): React.JSX.Element {
+  return props.state.open ? <OpenSchedule {...props} /> : <ClosedSchedule {...props} />;
 }
 
 /** A refused write in the page's words; `text` is what was sent, for a 400 the page's own check missed. */
@@ -411,4 +435,7 @@ const styles = StyleSheet.create({
   row: { gap: theme.space[1], paddingVertical: theme.space[4], borderBottomWidth: 1, borderBottomColor: c.border },
   text: { ...theme.type.sub, color: c.white },
   schedule: { gap: theme.space[5], paddingLeft: theme.space[4], borderLeftWidth: 1, borderLeftColor: c.line, minWidth: 0 },
+  // The Mono type in text3 (ui/text.tsx), and the Small type's text2, each on a Text that can take focus.
+  scheduleHead: { ...theme.type.mono, fontVariant: ['tabular-nums'], color: c.text3 },
+  help: { color: c.text2 },
 });

@@ -114,7 +114,7 @@ describe('reason effects', () => {
       const guests = guestsOf(date);
       if (guests !== null) days.push({ date, guests, netSalesCents: guests * 2000 });
     }
-    return { today: TODAY, townId: 'hanover-nh', days, covering: () => [], ...fields };
+    return { today: TODAY, townId: 'hanover-nh', days, covering: () => ({ notes: [], rules: [] }), ...fields };
   }
 
   it('rounds the size to the nearest 5, and 5 or less reads as about the same', () => {
@@ -149,8 +149,19 @@ describe('reason effects', () => {
   it('leaves closed and likely-closed days out of every comparison', () => {
     // A Saturday of 1 guest (likely closed), one a closure note covers and an all-zero one. Counted, they would make 50%.
     const guestsOf = (date: string): number => (date === '2026-10-10' ? 1 : date === '2026-10-24' ? 0 : base(date));
-    const effectOf = reasonEffects(history(guestsOf, { covering: (date) => (date === '2026-10-17' ? [{ effect: 'closed' }] : []) }));
+    const effectOf = reasonEffects(history(guestsOf, {
+      covering: (date) => ({ notes: date === '2026-10-17' ? [{ kind: 'closure', effect: 'closed' }] : [], rules: [] }),
+    }));
     expect(effectOf('2026-11-21', reason('weekday'), hanover('2026-11-21'))).toEqual({ direction: 'more', pct: 55, basis: 'history', days: 49 });
+  });
+
+  it('keeps a Saturday’s real guests under a standing closure rule, and leaves out the ones it closed (spec D31, D32)', () => {
+    // Closed Saturdays from Oct 1, but Oct 10 and 17 had their usual 170: they count; the near-empty Oct 24 does not.
+    const guestsOf = (date: string): number => (date === '2026-10-24' ? 3 : base(date));
+    const closedSaturdays = { kind: 'closure', effect: 'closed' } as const;
+    const covering = (date: string) => ({ notes: [], rules: date >= '2026-10-01' && new Date(`${date}T00:00:00Z`).getUTCDay() === 6 ? [closedSaturdays] : [] });
+    const effectOf = reasonEffects(history(guestsOf, { covering }));
+    expect(effectOf('2026-11-21', reason('weekday'), hanover('2026-11-21'))).toEqual({ direction: 'more', pct: 55, basis: 'history', days: 51 });
   });
 
   it('term state: each day in it against the same weekday in the other known term states; 6 a side', () => {
@@ -183,7 +194,7 @@ describe('reason effects', () => {
     const guestsOf = (date: string): number => (date === '2025-11-27' ? 30 : date === '2025-12-25' ? 40 : base(date));
     const effectOf = reasonEffects(history(guestsOf));
     expect(effectOf('2026-11-26', reason('holiday'), hanover('2026-11-26'))).toEqual({ direction: 'fewer', pct: 70, basis: 'history', days: 1 });
-    const closed = reasonEffects(history(guestsOf, { covering: (date) => (date === '2025-11-27' ? [{ effect: 'closed' }] : []) }));
+    const closed = reasonEffects(history(guestsOf, { covering: (date) => ({ notes: date === '2025-11-27' ? [{ kind: 'closure', effect: 'closed' }] : [], rules: [] }) }));
     expect(closed('2026-11-26', reason('holiday'), hanover('2026-11-26'))).toBeNull();
   });
 

@@ -30,7 +30,8 @@ export async function getPeopleInTown(ctx: TownwiseContext, req: Request, res: R
   const { scope } = memberOf(principal);
   const range = parseInput(peopleQuery(utcDay(ctx.now(), MAX_DAYS_AHEAD)), req.query);
   const location = await loadLocation(ctx, scope, req.params.locationId);
-  res.status(200).json(await ctx.ports.peopleInTown.window({ scope, location, range }));
+  const today = localDay(ctx.now(), timeZoneOf(location.town).timeZone);
+  res.status(200).json(await ctx.ports.peopleInTown.window({ scope, location, range, today }));
 }
 
 /** GET /api/org/locations/:locationId/estimates/about: 200 EstimatesAbout. */

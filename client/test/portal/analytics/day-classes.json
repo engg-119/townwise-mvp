@@ -1,5 +1,5 @@
 {
-  "about": "Shared day-class cases (spec 13.2): api/src/people-in-town/history.ts classOfDay and client/src/portal/analytics/days.ts classOf must both give each case's class, and say likely closed (spec D32) exactly where a case has likelyClosed true. `history` is the stored guests of other days, from which each side computes the day's typical guests. The api copy is test/fixtures/day-classes.json; client/test/portal/analytics/day-classes.json must stay identical. Synthetic values only.",
+  "about": "Shared day-class cases (spec 13.2): api/src/people-in-town/history.ts classOfDay and client/src/portal/analytics/days.ts classOf must both give each case's class, and say likely closed (spec D32) exactly where a case has likelyClosed true. `history` is the stored guests of other days, from which each side computes the day's typical guests. `rules` are business rule schedules (spec D31) covering the day, none when absent. `today` is the town's today; a case without one is a day before today. The api copy is test/fixtures/day-classes.json; client/test/portal/analytics/day-classes.json must stay identical. Synthetic values only.",
   "cases": [
     {
       "name": "an open day with no note or event",
@@ -73,6 +73,7 @@
       },
       "notes": [
         {
+          "kind": "closure",
           "startDate": "2026-11-07",
           "endDate": "2026-11-07",
           "weekdays": null,
@@ -91,6 +92,7 @@
       },
       "notes": [
         {
+          "kind": "closure",
           "startDate": "2026-11-01",
           "endDate": "2026-11-30",
           "weekdays": [
@@ -115,6 +117,7 @@
       },
       "notes": [
         {
+          "kind": "private_event",
           "startDate": "2026-11-01",
           "endDate": "2026-11-30",
           "weekdays": [
@@ -128,7 +131,7 @@
       "class": "noted"
     },
     {
-      "name": "a closure note with another effect is noted",
+      "name": "a closure note closes the day whatever its effect",
       "date": "2026-11-07",
       "day": {
         "guests": 120,
@@ -136,6 +139,7 @@
       },
       "notes": [
         {
+          "kind": "closure",
           "startDate": "2026-11-07",
           "endDate": "2026-11-07",
           "weekdays": null,
@@ -143,7 +147,7 @@
         }
       ],
       "events": [],
-      "class": "noted"
+      "class": "closed"
     },
     {
       "name": "closed wins over noted",
@@ -154,12 +158,14 @@
       },
       "notes": [
         {
+          "kind": "other",
           "startDate": "2026-11-07",
           "endDate": "2026-11-07",
           "weekdays": null,
           "effect": "fewer_guests"
         },
         {
+          "kind": "closure",
           "startDate": "2026-11-07",
           "endDate": "2026-11-07",
           "weekdays": null,
@@ -178,6 +184,7 @@
       },
       "notes": [
         {
+          "kind": "private_event",
           "startDate": "2026-11-07",
           "endDate": "2026-11-07",
           "weekdays": null,
@@ -309,6 +316,7 @@
       },
       "notes": [
         {
+          "kind": "closure",
           "startDate": "2026-11-08",
           "endDate": "2026-11-08",
           "weekdays": null,
@@ -633,6 +641,7 @@
       },
       "notes": [
         {
+          "kind": "private_event",
           "startDate": "2026-11-07",
           "endDate": "2026-11-07",
           "weekdays": null,
@@ -685,6 +694,7 @@
       },
       "notes": [
         {
+          "kind": "other",
           "startDate": "2026-11-07",
           "endDate": "2026-11-07",
           "weekdays": null,
@@ -737,6 +747,7 @@
       },
       "notes": [
         {
+          "kind": "other",
           "startDate": "2026-11-07",
           "endDate": "2026-11-07",
           "weekdays": null,
@@ -926,6 +937,7 @@
       },
       "notes": [
         {
+          "kind": "closure",
           "startDate": "2026-11-07",
           "endDate": "2026-11-07",
           "weekdays": null,
@@ -986,6 +998,648 @@
       ],
       "class": "closed",
       "likelyClosed": true
+    },
+    {
+      "name": "today’s near-empty row is never likely closed: its upload may still be partial",
+      "date": "2026-11-07",
+      "today": "2026-11-07",
+      "history": [
+        {
+          "date": "2026-10-31",
+          "guests": 100
+        },
+        {
+          "date": "2026-10-24",
+          "guests": 110
+        },
+        {
+          "date": "2026-10-17",
+          "guests": 120
+        },
+        {
+          "date": "2026-10-10",
+          "guests": 90
+        },
+        {
+          "date": "2026-10-03",
+          "guests": 100
+        },
+        {
+          "date": "2026-09-26",
+          "guests": 105
+        },
+        {
+          "date": "2026-09-19",
+          "guests": 95
+        },
+        {
+          "date": "2026-09-12",
+          "guests": 100
+        }
+      ],
+      "day": {
+        "guests": 1,
+        "netSalesCents": 2500
+      },
+      "notes": [],
+      "events": [],
+      "class": "regular"
+    },
+    {
+      "name": "a near-empty row after today is never likely closed",
+      "date": "2026-11-07",
+      "today": "2026-11-06",
+      "history": [
+        {
+          "date": "2026-10-31",
+          "guests": 100
+        },
+        {
+          "date": "2026-10-24",
+          "guests": 110
+        },
+        {
+          "date": "2026-10-17",
+          "guests": 120
+        },
+        {
+          "date": "2026-10-10",
+          "guests": 90
+        },
+        {
+          "date": "2026-10-03",
+          "guests": 100
+        },
+        {
+          "date": "2026-09-26",
+          "guests": 105
+        },
+        {
+          "date": "2026-09-19",
+          "guests": 95
+        },
+        {
+          "date": "2026-09-12",
+          "guests": 100
+        }
+      ],
+      "day": {
+        "guests": 1,
+        "netSalesCents": 2500
+      },
+      "notes": [],
+      "events": [],
+      "class": "regular"
+    },
+    {
+      "name": "a near-empty day before today is likely closed",
+      "date": "2026-11-07",
+      "today": "2026-11-08",
+      "history": [
+        {
+          "date": "2026-10-31",
+          "guests": 100
+        },
+        {
+          "date": "2026-10-24",
+          "guests": 110
+        },
+        {
+          "date": "2026-10-17",
+          "guests": 120
+        },
+        {
+          "date": "2026-10-10",
+          "guests": 90
+        },
+        {
+          "date": "2026-10-03",
+          "guests": 100
+        },
+        {
+          "date": "2026-09-26",
+          "guests": 105
+        },
+        {
+          "date": "2026-09-19",
+          "guests": 95
+        },
+        {
+          "date": "2026-09-12",
+          "guests": 100
+        }
+      ],
+      "day": {
+        "guests": 1,
+        "netSalesCents": 2500
+      },
+      "notes": [],
+      "events": [],
+      "class": "closed",
+      "likelyClosed": true
+    },
+    {
+      "name": "an all-zero row today is closed",
+      "date": "2026-11-07",
+      "today": "2026-11-07",
+      "day": {
+        "guests": 0,
+        "netSalesCents": 0
+      },
+      "notes": [],
+      "events": [],
+      "class": "closed"
+    },
+    {
+      "name": "a past day a rule closure covers keeps its real guests: recorded guests beat a standing rule",
+      "date": "2026-11-07",
+      "history": [
+        {
+          "date": "2026-10-31",
+          "guests": 100
+        },
+        {
+          "date": "2026-10-24",
+          "guests": 110
+        },
+        {
+          "date": "2026-10-17",
+          "guests": 120
+        },
+        {
+          "date": "2026-10-10",
+          "guests": 90
+        },
+        {
+          "date": "2026-10-03",
+          "guests": 100
+        },
+        {
+          "date": "2026-09-26",
+          "guests": 105
+        },
+        {
+          "date": "2026-09-19",
+          "guests": 95
+        },
+        {
+          "date": "2026-09-12",
+          "guests": 100
+        }
+      ],
+      "day": {
+        "guests": 120,
+        "netSalesCents": 240000
+      },
+      "notes": [],
+      "rules": [
+        {
+          "kind": "closure",
+          "startDate": "2026-09-01",
+          "endDate": null,
+          "weekdays": [
+            6
+          ],
+          "effect": "closed"
+        }
+      ],
+      "events": [],
+      "class": "regular"
+    },
+    {
+      "name": "a rule closure closes a past day whose guests are under a tenth of the typical guests",
+      "date": "2026-11-07",
+      "history": [
+        {
+          "date": "2026-10-31",
+          "guests": 100
+        },
+        {
+          "date": "2026-10-24",
+          "guests": 110
+        },
+        {
+          "date": "2026-10-17",
+          "guests": 120
+        },
+        {
+          "date": "2026-10-10",
+          "guests": 90
+        },
+        {
+          "date": "2026-10-03",
+          "guests": 100
+        },
+        {
+          "date": "2026-09-26",
+          "guests": 105
+        },
+        {
+          "date": "2026-09-19",
+          "guests": 95
+        },
+        {
+          "date": "2026-09-12",
+          "guests": 100
+        }
+      ],
+      "day": {
+        "guests": 2,
+        "netSalesCents": 4000
+      },
+      "notes": [],
+      "rules": [
+        {
+          "kind": "closure",
+          "startDate": "2026-09-01",
+          "endDate": null,
+          "weekdays": [
+            6
+          ],
+          "effect": "closed"
+        }
+      ],
+      "events": [],
+      "class": "closed"
+    },
+    {
+      "name": "a rule closure closes a past day with no guest count",
+      "date": "2026-11-07",
+      "day": {
+        "guests": null,
+        "netSalesCents": 5000
+      },
+      "notes": [],
+      "rules": [
+        {
+          "kind": "closure",
+          "startDate": "2026-09-01",
+          "endDate": null,
+          "weekdays": [
+            6
+          ],
+          "effect": "closed"
+        }
+      ],
+      "events": [],
+      "class": "closed"
+    },
+    {
+      "name": "a rule closure closes a past day with 0 guests and some net sales",
+      "date": "2026-11-07",
+      "day": {
+        "guests": 0,
+        "netSalesCents": 5000
+      },
+      "notes": [],
+      "rules": [
+        {
+          "kind": "closure",
+          "startDate": "2026-09-01",
+          "endDate": null,
+          "weekdays": [
+            6
+          ],
+          "effect": "closed"
+        }
+      ],
+      "events": [],
+      "class": "closed"
+    },
+    {
+      "name": "a rule closure closes a past day with no row",
+      "date": "2026-11-07",
+      "day": null,
+      "notes": [],
+      "rules": [
+        {
+          "kind": "closure",
+          "startDate": "2026-09-01",
+          "endDate": null,
+          "weekdays": [
+            6
+          ],
+          "effect": "closed"
+        }
+      ],
+      "events": [],
+      "class": "closed"
+    },
+    {
+      "name": "a rule closure leaves a past day with guests open when there are no typical guests to hold them to",
+      "date": "2026-11-07",
+      "day": {
+        "guests": 3,
+        "netSalesCents": 6000
+      },
+      "notes": [],
+      "rules": [
+        {
+          "kind": "closure",
+          "startDate": "2026-09-01",
+          "endDate": null,
+          "weekdays": [
+            6
+          ],
+          "effect": "closed"
+        }
+      ],
+      "events": [],
+      "class": "regular"
+    },
+    {
+      "name": "a rule closure closes today whatever its guests",
+      "date": "2026-11-07",
+      "today": "2026-11-07",
+      "history": [
+        {
+          "date": "2026-10-31",
+          "guests": 100
+        },
+        {
+          "date": "2026-10-24",
+          "guests": 110
+        },
+        {
+          "date": "2026-10-17",
+          "guests": 120
+        },
+        {
+          "date": "2026-10-10",
+          "guests": 90
+        },
+        {
+          "date": "2026-10-03",
+          "guests": 100
+        },
+        {
+          "date": "2026-09-26",
+          "guests": 105
+        },
+        {
+          "date": "2026-09-19",
+          "guests": 95
+        },
+        {
+          "date": "2026-09-12",
+          "guests": 100
+        }
+      ],
+      "day": {
+        "guests": 120,
+        "netSalesCents": 240000
+      },
+      "notes": [],
+      "rules": [
+        {
+          "kind": "closure",
+          "startDate": "2026-09-01",
+          "endDate": null,
+          "weekdays": [
+            6
+          ],
+          "effect": "closed"
+        }
+      ],
+      "events": [],
+      "class": "closed"
+    },
+    {
+      "name": "a one-day opening note beats a rule closure",
+      "date": "2026-11-07",
+      "today": "2026-11-07",
+      "history": [
+        {
+          "date": "2026-10-31",
+          "guests": 100
+        },
+        {
+          "date": "2026-10-24",
+          "guests": 110
+        },
+        {
+          "date": "2026-10-17",
+          "guests": 120
+        },
+        {
+          "date": "2026-10-10",
+          "guests": 90
+        },
+        {
+          "date": "2026-10-03",
+          "guests": 100
+        },
+        {
+          "date": "2026-09-26",
+          "guests": 105
+        },
+        {
+          "date": "2026-09-19",
+          "guests": 95
+        },
+        {
+          "date": "2026-09-12",
+          "guests": 100
+        }
+      ],
+      "day": {
+        "guests": 120,
+        "netSalesCents": 240000
+      },
+      "notes": [
+        {
+          "kind": "opening",
+          "startDate": "2026-11-07",
+          "endDate": "2026-11-07",
+          "weekdays": null,
+          "effect": "unknown"
+        }
+      ],
+      "rules": [
+        {
+          "kind": "closure",
+          "startDate": "2026-09-01",
+          "endDate": null,
+          "weekdays": [
+            6
+          ],
+          "effect": "closed"
+        }
+      ],
+      "events": [],
+      "class": "noted"
+    },
+    {
+      "name": "a party note beats a rule closure on a past day with 0 guests",
+      "date": "2026-11-07",
+      "day": {
+        "guests": 0,
+        "netSalesCents": 5000
+      },
+      "notes": [
+        {
+          "kind": "private_event",
+          "startDate": "2026-11-07",
+          "endDate": "2026-11-07",
+          "weekdays": null,
+          "effect": "more_guests"
+        }
+      ],
+      "rules": [
+        {
+          "kind": "closure",
+          "startDate": "2026-09-01",
+          "endDate": null,
+          "weekdays": [
+            6
+          ],
+          "effect": "closed"
+        }
+      ],
+      "events": [],
+      "class": "noted"
+    },
+    {
+      "name": "a note that does not say the day was open leaves a rule closure in force",
+      "date": "2026-11-07",
+      "day": {
+        "guests": 0,
+        "netSalesCents": 5000
+      },
+      "notes": [
+        {
+          "kind": "other",
+          "startDate": "2026-11-07",
+          "endDate": "2026-11-07",
+          "weekdays": null,
+          "effect": "unknown"
+        }
+      ],
+      "rules": [
+        {
+          "kind": "closure",
+          "startDate": "2026-09-01",
+          "endDate": null,
+          "weekdays": [
+            6
+          ],
+          "effect": "closed"
+        }
+      ],
+      "events": [],
+      "class": "closed"
+    },
+    {
+      "name": "a rule buyout closes the day, its party’s guests and all",
+      "date": "2026-11-07",
+      "history": [
+        {
+          "date": "2026-10-31",
+          "guests": 100
+        },
+        {
+          "date": "2026-10-24",
+          "guests": 110
+        },
+        {
+          "date": "2026-10-17",
+          "guests": 120
+        },
+        {
+          "date": "2026-10-10",
+          "guests": 90
+        },
+        {
+          "date": "2026-10-03",
+          "guests": 100
+        },
+        {
+          "date": "2026-09-26",
+          "guests": 105
+        },
+        {
+          "date": "2026-09-19",
+          "guests": 95
+        },
+        {
+          "date": "2026-09-12",
+          "guests": 100
+        }
+      ],
+      "day": {
+        "guests": 70,
+        "netSalesCents": 140000
+      },
+      "notes": [],
+      "rules": [
+        {
+          "kind": "private_event",
+          "startDate": "2026-09-01",
+          "endDate": null,
+          "weekdays": [
+            6
+          ],
+          "effect": "closed"
+        }
+      ],
+      "events": [],
+      "class": "closed"
+    },
+    {
+      "name": "a rule with fewer guests says a near-empty day was open, and never makes it noted",
+      "date": "2026-11-07",
+      "history": [
+        {
+          "date": "2026-10-31",
+          "guests": 100
+        },
+        {
+          "date": "2026-10-24",
+          "guests": 110
+        },
+        {
+          "date": "2026-10-17",
+          "guests": 120
+        },
+        {
+          "date": "2026-10-10",
+          "guests": 90
+        },
+        {
+          "date": "2026-10-03",
+          "guests": 100
+        },
+        {
+          "date": "2026-09-26",
+          "guests": 105
+        },
+        {
+          "date": "2026-09-19",
+          "guests": 95
+        },
+        {
+          "date": "2026-09-12",
+          "guests": 100
+        }
+      ],
+      "day": {
+        "guests": 1,
+        "netSalesCents": 2500
+      },
+      "notes": [],
+      "rules": [
+        {
+          "kind": "other",
+          "startDate": "2026-09-01",
+          "endDate": null,
+          "weekdays": [
+            6
+          ],
+          "effect": "fewer_guests"
+        }
+      ],
+      "events": [],
+      "class": "regular"
     }
   ]
 }

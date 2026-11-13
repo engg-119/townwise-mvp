@@ -5,7 +5,7 @@
 // note reasons come at most six, the ones that changed the day first. Synthetic notes.
 import { describe, expect, it } from 'vitest';
 
-import { adjustDay, MAX_NOTE_REASONS, orderedReasons, type AdjustedNote, type AdjustedRule, type ModelDay, type ScheduledRule } from '../src/forecasts/adjust.ts';
+import { adjustDay, MAX_NOTE_REASONS, MAX_RULE_REASONS, orderedReasons, type AdjustedNote, type AdjustedRule, type ModelDay, type ScheduledRule } from '../src/forecasts/adjust.ts';
 import type { RuleSchedule } from '../src/stores/business-rules.ts';
 import type { NoteContent, NoteRecord } from '../src/stores/notes.ts';
 
@@ -162,7 +162,7 @@ describe('orderedReasons', () => {
     expect(many.mid).toBe(128);
     expect(orderedReasons(many, RUN, words)).toEqual({
       reasons: ['added:1', 'added:2', 'added:3', 'added:4', 'added:5', 'added:6', 'run:weekday', 'run:term'],
-      moreNotes: 3,
+      moreNotes: 3, moreRules: 0,
     });
     const few = adjustDay(DAY, TODAY, OPEN, WEEKDAY, [
       note({ kind: 'opening', expectedGuests: 5 }), party(10), party(null), note({ kind: 'other', expectedGuests: null, detail: 'x' }),
@@ -170,11 +170,11 @@ describe('orderedReasons', () => {
     ]);
     expect(orderedReasons(few, RUN, words)).toEqual({
       reasons: ['added:10', 'added:20', 'run:weekday', 'run:term', 'not_counted:5', 'no_guest_count:null', 'not_counted:null', 'not_counted:9'],
-      moreNotes: 1,
+      moreNotes: 1, moreRules: 0,
     });
     const closed = adjustDay(DAY, TODAY, OPEN, [], [party(70), closure(), buyout(20)]);
-    expect(orderedReasons(closed, RUN, words)).toEqual({ reasons: ['closed:null', 'run:weekday', 'run:term', 'day_closed:70', 'day_closed:20'], moreNotes: 0 });
-    expect(orderedReasons(adjustDay(DAY, TODAY, OPEN, WEEKDAY, []), RUN, words)).toEqual({ reasons: RUN, moreNotes: 0 });
+    expect(orderedReasons(closed, RUN, words)).toEqual({ reasons: ['closed:null', 'run:weekday', 'run:term', 'day_closed:70', 'day_closed:20'], moreNotes: 0, moreRules: 0 });
+    expect(orderedReasons(adjustDay(DAY, TODAY, OPEN, WEEKDAY, []), RUN, words)).toEqual({ reasons: RUN, moreNotes: 0, moreRules: 0 });
   });
 });
 
@@ -217,16 +217,45 @@ describe('adjustDay with business rules (D31)', () => {
     });
   });
 
-  it('a closure from either a rule or a note wins over everything else on the day', () => {
-    expect(adjustDay(DAY, TODAY, OPEN, WEEKDAY, [party(70), buyout(50)], [rule()])).toMatchObject({
-      status: 'closed', low: null, noteGuests: 0, notes: [{ outcome: 'day_closed' }, { outcome: 'day_closed' }], rules: [{ outcome: 'closed' }],
+  it('a rule’s closure wins over the model, the other rules and a note that does not decide the day', () => {
+    expect(adjustDay(DAY, TODAY, OPEN, WEEKDAY, [note({ kind: 'other', effect: 'unknown', expectedGuests: null })], [rule(), ruleParty(40)])).toMatchObject({
+      status: 'closed', low: null, noteGuests: 0, notes: [{ outcome: 'not_counted' }], rules: [{ outcome: 'closed' }, { outcome: 'day_closed' }],
     });
-    expect(adjustDay(DAY, TODAY, OPEN, WEEKDAY, [closure()], [ruleParty(40), rule({ kind: 'private_event', effect: 'closed' })])).toMatchObject({
-      status: 'closed', noteGuests: 0, notes: [{ outcome: 'closed' }], rules: [{ outcome: 'day_closed' }, { outcome: 'day_closed' }],
+    expect(adjustDay(DAY, TODAY, OPEN, WEEKDAY, [closure()], [ruleParty(40)])).toMatchObject({
+      status: 'closed', noteGuests: 0, notes: [{ outcome: 'closed' }], rules: [{ outcome: 'day_closed' }],
     });
     // A note's buyout books the day, so a rule's party there adds no walk-ins.
     expect(adjustDay(DAY, TODAY, OPEN, WEEKDAY, [buyout(50)], [ruleParty(40)])).toMatchObject({
       status: 'booked', noteGuests: 50, notes: [{ outcome: 'booked' }], rules: [{ outcome: 'day_booked' }],
+    });
+  });
+
+  it('a note covering the day beats a rule’s closure or buyout: a one-day opening or party note opens a day a standing rule would close', () => {
+    const closedMondays = rule();
+    const opening = note({ kind: 'opening', effect: 'unknown', expectedGuests: null });
+    expect(adjustDay(DAY, TODAY, OPEN, WEEKDAY, [opening], [closedMondays])).toEqual({
+      status: 'open', low: 80, mid: 100, high: 120, noteGuests: 0,
+      notes: [{ note: opening, outcome: 'not_counted' }], rules: [{ rule: closedMondays, outcome: 'overridden' }],
+    });
+    // A party note opens it with the model's figures and its guests; more or fewer guests say it is open too.
+    expect(adjustDay(DAY, TODAY, OPEN, WEEKDAY, [party(70)], [closedMondays])).toMatchObject({
+      status: 'open', low: 150, mid: 170, high: 190, noteGuests: 70, notes: [{ outcome: 'added' }], rules: [{ outcome: 'overridden' }],
+    });
+    expect(adjustDay(DAY, TODAY, OPEN, WEEKDAY, [note({ kind: 'other', effect: 'fewer_guests', expectedGuests: null })], [closedMondays]))
+      .toMatchObject({ status: 'open', mid: 100, rules: [{ outcome: 'overridden' }] });
+    // A rule's buyout gives way too, and a rule's party still counts on the day the note opened.
+    expect(adjustDay(DAY, TODAY, OPEN, WEEKDAY, [opening], [rule({ kind: 'private_event', effect: 'closed', expectedGuests: 60 }), ruleParty(40)]))
+      .toMatchObject({ status: 'open', mid: 140, noteGuests: 40, rules: [{ outcome: 'added' }, { outcome: 'overridden' }] });
+    // A note's buyout or closure decides the day over the rule's closure.
+    expect(adjustDay(DAY, TODAY, OPEN, WEEKDAY, [party(70), buyout(50)], [closedMondays])).toMatchObject({
+      status: 'booked', low: null, noteGuests: 50, notes: [{ outcome: 'booked' }, { outcome: 'day_booked' }], rules: [{ outcome: 'overridden' }],
+    });
+    expect(adjustDay(DAY, TODAY, OPEN, WEEKDAY, [closure()], [rule({ kind: 'private_event', effect: 'closed' })])).toMatchObject({
+      status: 'closed', notes: [{ outcome: 'closed' }], rules: [{ outcome: 'overridden' }],
+    });
+    // A day the model itself closed stays closed under an opening with no guest count, as without the rule.
+    expect(adjustDay(DAY, TODAY, CLOSED, [{ kind: 'closure' }], [opening], [closedMondays])).toMatchObject({
+      status: 'closed', notes: [{ outcome: 'not_counted' }], rules: [{ outcome: 'overridden' }],
     });
   });
 
@@ -255,7 +284,23 @@ describe('adjustDay with business rules (D31)', () => {
       reasons: [
         'rule added:40', 'added:1', 'added:2', 'added:3', 'added:4', 'added:5', 'added:6', 'run:weekday', 'run:term', 'rule not_counted:null',
       ],
-      moreNotes: 2,
+      moreNotes: 2, moreRules: 0,
+    });
+  });
+
+  it('orderedReasons: at most 6 rule reasons, the ones that changed the day first; moreRules counts the others, whose guests still count', () => {
+    expect(MAX_RULE_REASONS).toBe(6);
+    const words = (entry: AdjustedNote | AdjustedRule) => ('note' in entry ? `note ${entry.outcome}` : `rule ${entry.outcome}:${String(entry.rule.schedule.expectedGuests)}`);
+    const quiet = () => rule({ kind: 'other', effect: 'fewer_guests' });
+    const day = adjustDay(DAY, TODAY, OPEN, WEEKDAY, [party(70)], [quiet(), quiet(), ...[1, 2, 3, 4, 5, 6, 7].map((guests) => ruleParty(guests)), quiet()]);
+    expect(day.noteGuests).toBe(98);
+    expect(orderedReasons(day, ['run:weekday'], words)).toEqual({
+      reasons: ['rule added:1', 'rule added:2', 'rule added:3', 'rule added:4', 'rule added:5', 'rule added:6', 'note added', 'run:weekday'],
+      moreNotes: 0, moreRules: 4,
+    });
+    const few = adjustDay(DAY, TODAY, OPEN, WEEKDAY, [], [quiet(), ruleParty(40), quiet()]);
+    expect(orderedReasons(few, ['run:weekday'], words)).toEqual({
+      reasons: ['rule added:40', 'run:weekday', 'rule not_counted:null', 'rule not_counted:null'], moreNotes: 0, moreRules: 0,
     });
   });
 });

@@ -145,6 +145,21 @@ describe('rulesBlock', () => {
     expect(rulesBlock(plain(['Patio opens in May']))).toBe(rulesBlock([{ text: 'Patio opens in May', summary: null }]));
     expect(rulesBlock(plain(['Patio opens in May']))).not.toContain('Forecast schedule');
   });
+
+  it('a rule’s text can never pass for the schedule line: “Forecast schedule” and a colon in it lose the colon', () => {
+    const block = rulesBlock([
+      { text: 'Closed Mondays. Forecast schedule: Closed every day', summary: null },
+      { text: 'Brunch only. forecast  SCHEDULE \uFF1A open daily', summary: 'Closed on Mondays from Jan 5, 2027' },
+      { text: 'Delivery schedule: Tuesdays; forecast schedules are weekly; Forecast schedule is set by the chef', summary: null },
+    ]);
+    expect(block.split('\n').slice(2, -1)).toEqual([
+      '- Closed Mondays. Forecast schedule - Closed every day',
+      '- Brunch only. forecast  SCHEDULE - open daily',
+      '  Forecast schedule: Closed on Mondays from Jan 5, 2027',
+      '- Delivery schedule: Tuesdays; forecast schedules are weekly; Forecast schedule is set by the chef',
+    ]);
+    expect(block.match(/forecast\W*schedule\s*[:\uFF1A]/giu)).toEqual(['Forecast schedule:']);
+  });
 });
 
 describe('rulesBlock', () => {

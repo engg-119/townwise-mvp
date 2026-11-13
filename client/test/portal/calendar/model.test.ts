@@ -440,3 +440,20 @@ test('a rule with fewer guests says a near-empty past day was open, as a note do
     .toMatchObject({ status: null, figure: { value: 1, kind: 'actual' } });
   expect(cellOf(calendarMonth(input({ salesDays, forecast: windowOf([]), rules: [] })), '2026-11-07')).toMatchObject({ status: 'likely_closed' });
 });
+
+test('today’s stored day is never likely closed: its upload may be partial, so only a day before the town’s today can be (D32)', () => {
+  // Wednesdays Sep 16 to Nov 4 at 140 guests, then today (Wed, Nov 11) with 1 so far.
+  const wednesdays = ['2026-09-16', '2026-09-23', '2026-09-30', '2026-10-07', '2026-10-14', '2026-10-21', '2026-10-28', '2026-11-04']
+    .map((date) => ({ date, guests: 140, netSalesCents: 280_000 }));
+  const partial = input({ salesDays: [...wednesdays, { date: TODAY, guests: 1, netSalesCents: 2_500 }], forecast: windowOf([]) });
+  expect(cellOf(calendarMonth(partial), TODAY).status).not.toBe('likely_closed');
+  expect(tooltipLines(TODAY, partial)?.lines ?? []).not.toContain('Likely closed (1 guest recorded)');
+});
+
+test('a rule a note sets aside says so, and rule reasons past the first six are counted for the panel (D31)', () => {
+  expect(reasonOutcomeWords('overridden', null)).toBe('A note on this day sets this rule aside');
+  const ruled = forecastDay({ date: '2026-11-21', moreRules: 2 });
+  expect(dayView('2026-11-21', input({ forecast: windowOf([ruled]) })).moreRules).toBe(2);
+  // An older answer without the count reads as none.
+  expect(dayView('2026-11-21', input({ forecast: windowOf([forecastDay({ date: '2026-11-21' })]) })).moreRules).toBe(0);
+});

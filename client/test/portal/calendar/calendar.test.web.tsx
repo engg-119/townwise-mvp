@@ -4,6 +4,7 @@ import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
 import type { MeResponse } from '../../../src/portal/schemas';
+import { theme } from '../../../src/theme';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
 import { ACCESS, EMAIL, fakePortalApi, meOf, offline, orgOf, refusal, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
@@ -201,6 +202,24 @@ test('Why reads at phone width: the label, then the effect in words, then the so
   expect(within(game).getByText('Dartmouth home football')).toBeTruthy();
   expect(within(game).getByText(/^Usually about 20% more guests than the same weekday without it/)).toBeTruthy();
   expect(within(game).getByRole('link', { name: 'Source: dartmouthsports.com' })).toBeTruthy();
+});
+
+test('several sources: each link’s name starts with its visible words, “Source 1: …” (WCAG 2.5.3), and each is a 44px target on web', async () => {
+  const sources = [...GAME_REASON.sources, { label: 'Sample events page', url: 'https://example.org/events' }];
+  const days = (november() as { days: { date: string }[] }).days.map((day) => (day.date === '2026-11-21'
+    ? forecastDay({ date: '2026-11-21', reasons: [{ ...GAME_REASON, sources }, SATURDAY_REASON] }) : day));
+  const { api } = setup(meOf(ACCESS.member), { forecasts: { '2026-11': forecastOf(days as never) } });
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const game = within(panel()).getAllByRole('listitem')[1];
+  if (game === undefined) throw new Error('no second reason');
+  const links = within(game).getAllByRole('link');
+  expect(links.map((link) => [link.textContent, link.getAttribute('aria-label')])).toEqual([
+    ['Source 1', 'Source 1: dartmouthsports.com'], ['Source 2', 'Source 2: Sample events page'],
+  ]);
+  // The links sit in the sentence's 14px type; their padding takes no room in the line, so the line doesn't move.
+  for (const link of links) {
+    expect(parseFloat(window.getComputedStyle(link).paddingTop) * 2 + theme.type.small.fontSize).toBeGreaterThanOrEqual(44);
+  }
 });
 
 test('a business rule with a schedule (D31): its reason shows under Why, and the rule under On the calendar with its summary and a link to Rules', async () => {

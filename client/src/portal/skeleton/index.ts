@@ -5,7 +5,7 @@ export {
 } from './kit';
 export { AuditSkeleton, OrgSkeleton, OrgsSkeleton, PeopleSkeleton, RequestsSkeleton } from './console';
 export {
-  CalendarSkeleton, HomeSkeleton, LocationsSkeleton, NotesSkeleton, RulesSkeleton, RequestAccessSkeleton, SalesSkeleton, SecuritySkeleton, SettingsSkeleton, TableSkeleton,
+  AnalyticsSkeleton, CalendarSkeleton, HomeSkeleton, LocationsSkeleton, NotesSkeleton, RulesSkeleton, RequestAccessSkeleton, SalesSkeleton, SecuritySkeleton, SettingsSkeleton, TableSkeleton,
   UploadReadingSkeleton, UploadSendingSkeleton,
 } from './pages';
 export { PULSE, PULSE_KEYFRAMES } from './timing';

@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { typicalGuests } from '../src/closed-days.ts';
 import { classOfDay, closureOfDay, MIN_CELL_DAYS, yourHistory, type DayClass } from '../src/people-in-town/history.ts';
 import type { TermState } from '../src/people-in-town/term.ts';
+import type { RuleSchedule } from '../src/stores/business-rules.ts';
 import type { NoteContent } from '../src/stores/notes.ts';
 import type { SalesDay } from '../src/stores/sales-days.ts';
 import type { TownEvent } from '../src/town-calendar.ts';
@@ -18,8 +19,12 @@ interface ClassCase {
   /** Other stored days' guests, which the day's typical guests come from (spec D32); none when absent. */
   history?: { date: string; guests: number | null }[];
   day: { guests: number | null; netSalesCents: number | null } | null;
-  notes: Pick<NoteContent, 'startDate' | 'endDate' | 'weekdays' | 'effect'>[];
+  notes: Pick<NoteContent, 'kind' | 'startDate' | 'endDate' | 'weekdays' | 'effect'>[];
+  /** Business rule schedules covering the day (spec D31); none when absent. */
+  rules?: Pick<RuleSchedule, 'kind' | 'startDate' | 'endDate' | 'weekdays' | 'effect'>[];
   events: Pick<TownEvent, 'start' | 'end' | 'kind'>[];
+  /** The town's today; absent, the day is before today. */
+  today?: string;
   class: DayClass;
   likelyClosed?: true;
 }
@@ -44,8 +49,9 @@ describe('the day classes', () => {
     it(`${each.name}: ${each.class}${each.likelyClosed === true ? ', likely closed' : ''}`, () => {
       const guests = new Map((each.history ?? []).map((other) => [other.date, other.guests]));
       const typical = typicalGuests(each.date, (date) => guests.get(date));
-      expect(classOfDay(each.date, each.day ?? undefined, each.notes, each.events, typical)).toBe(each.class);
-      expect(closureOfDay(each.date, each.day ?? undefined, each.notes, typical) === 'likely_closed').toBe(each.likelyClosed === true);
+      const [rules, today] = [each.rules ?? [], each.today ?? null];
+      expect(classOfDay(each.date, each.day ?? undefined, each.notes, each.events, typical, rules, today)).toBe(each.class);
+      expect(closureOfDay(each.date, each.day ?? undefined, each.notes, typical, rules, today) === 'likely_closed').toBe(each.likelyClosed === true);
     });
   }
 });
@@ -87,7 +93,7 @@ describe('yourHistory', () => {
       day('2026-10-03', 200), day('2026-10-10', 220), day('2026-10-17', 240), day('2026-10-24', 0, 0),
       day('2026-10-31', 400), day('2026-11-07', 300), day('2026-11-14', 900), day('2026-11-21', 999), day('2026-10-26', null, 50_000),
     ];
-    const notes = [{ startDate: '2026-10-31', endDate: '2026-10-31', weekdays: null, effect: 'more_guests' as const }];
+    const notes = [{ kind: 'private_event' as const, startDate: '2026-10-31', endDate: '2026-10-31', weekdays: null, effect: 'more_guests' as const }];
     const events = [{ start: '2026-11-07', end: '2026-11-07', kind: 'event' as const }, { start: '2026-11-14', end: '2026-11-14', kind: 'holiday' as const }];
     const history = yourHistory(days, notes, events, stateOf);
     expect(history.cells).toEqual([{ state: 'in_session', weekday: 'Sat', days: 3, mean: 220 }]);
@@ -99,7 +105,7 @@ describe('yourHistory', () => {
     const guests = new Map(history.map((other) => [other.date, other.guests]));
     const typical = typicalGuests('2026-10-10', (date) => guests.get(date));
     const near = day('2026-10-10', 2);
-    const rule = (effect: NoteContent['effect'], endDate: string | null = null) => ({ startDate: '2026-10-01', endDate, weekdays: null, effect });
+    const rule = (effect: NoteContent['effect'], endDate: string | null = null) => ({ kind: 'other' as const, startDate: '2026-10-01', endDate, weekdays: null, effect });
     for (const effect of ['more_guests', 'fewer_guests'] as const) {
       expect(closureOfDay('2026-10-10', near, [], typical, [rule(effect)])).toBeNull();
       expect(classOfDay('2026-10-10', near, [], [], typical, [rule(effect)])).toBe('regular');
@@ -116,13 +122,25 @@ describe('yourHistory', () => {
 
   it('keeps a rule-covered near-empty day in the history as an open day', () => {
     const days = [day('2026-09-19', 200), day('2026-09-26', 200), day('2026-10-03', 200), day('2026-10-10', 2), day('2026-10-17', 200)];
-    const rules = [{ startDate: '2026-10-10', endDate: null, weekdays: null, effect: 'fewer_guests' as const }];
+    const rules = [{ kind: 'other' as const, startDate: '2026-10-10', endDate: null, weekdays: null, effect: 'fewer_guests' as const }];
     expect(yourHistory(days, [], [], stateOf, rules).cells).toEqual([{ state: 'in_session', weekday: 'Sat', days: 5, mean: 160 }]);
   });
 
   it('leaves out a likely-closed day (spec D32): its guests are not a slow Saturday', () => {
     const days = [day('2026-09-19', 200), day('2026-09-26', 200), day('2026-10-03', 200), day('2026-10-10', 2), day('2026-10-17', 200)];
     expect(yourHistory(days, [], [], stateOf).cells).toEqual([{ state: 'in_session', weekday: 'Sat', days: 4, mean: 200 }]);
+  });
+
+  it('never calls a day on or after today likely closed (spec D32): today’s upload may be partial', () => {
+    const days = [day('2026-09-19', 200), day('2026-09-26', 200), day('2026-10-03', 200), day('2026-10-10', 2)];
+    expect(yourHistory(days, [], [], stateOf, [], '2026-10-11').cells).toEqual([{ state: 'in_session', weekday: 'Sat', days: 3, mean: 200 }]);
+    expect(yourHistory(days, [], [], stateOf, [], '2026-10-10').cells).toEqual([{ state: 'in_session', weekday: 'Sat', days: 4, mean: 151 }]);
+  });
+
+  it('keeps a past day’s real guests under a standing closure rule, and leaves out the days the rule really closed', () => {
+    const closedSaturdays = [{ kind: 'closure' as const, startDate: '2026-10-01', endDate: null, weekdays: [6], effect: 'closed' as const }];
+    const days = [day('2026-09-19', 200), day('2026-09-26', 200), day('2026-10-03', 210), day('2026-10-10', 2), day('2026-10-17', 0, 500)];
+    expect(yourHistory(days, [], [], stateOf, closedSaturdays, '2026-11-01').cells).toEqual([{ state: 'in_session', weekday: 'Sat', days: 3, mean: 203 }]);
   });
 
   it('uses net sales in whole dollars only when no day has guests', () => {

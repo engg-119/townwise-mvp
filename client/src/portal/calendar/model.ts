@@ -67,7 +67,7 @@ export interface CalendarInput {
   salesDays: readonly SalesDay[];
   events: readonly TownEvent[];
   notes: readonly Note[];
-  /** The location's business rules (D31); Home passes none. */
+  /** The location's business rules (D31); Home passes the same rules for its tooltip. */
   rules?: readonly Rule[];
   imported: readonly ImportedEvent[];
   filters: Filters;
@@ -112,14 +112,17 @@ function storedGuests(date: string, input: CalendarInput): number | null {
 
 /**
  * A past day's stored guests when it was likely closed (spec D32), else null. Every note and rule schedule covering the
- * day counts, whatever the filters show: one with more or fewer guests says the day was open.
+ * day counts, whatever the filters show: one with more or fewer guests says the day was open. Notes and rules go to
+ * the shared check apart, so a note that decides the day sets a rule aside (D31), and a day on or after the town's
+ * today is never likely closed.
  */
 function likelyClosedGuests(date: string, input: CalendarInput): number | null {
   const day = input.salesDays.find((each) => each.date === date);
   if (day === undefined || day.guests === null) return null;
   const typical = typicalGuests(date, (other) => input.salesDays.find((each) => each.date === other)?.guests);
-  const covering = [...input.notes.filter((note) => noteCovers(note, date)), ...rulesOn(date, input).flatMap((rule) => (rule.schedule ? [rule.schedule] : []))];
-  return closureOf({ ...day, typicalGuests: typical }, covering) === 'likely_closed' ? day.guests : null;
+  const notes = input.notes.filter((note) => noteCovers(note, date));
+  const rules = rulesOn(date, input).flatMap((rule) => (rule.schedule ? [rule.schedule] : []));
+  return closureOf({ ...day, typicalGuests: typical }, notes, { rules, past: date < input.today }) === 'likely_closed' ? day.guests : null;
 }
 
 function whole(value: number): string {
@@ -314,6 +317,8 @@ export interface CalendarDayView {
   reasons: ReasonLine[];
   /** Note reasons the API left out past its first 6. */
   moreNotes: number;
+  /** Rule reasons the API left out past its first 6 (D31). */
+  moreRules: number;
   /** Holidays, town events and term periods on the day, as the filters allow, less those Why already names. */
   events: TownEvent[];
   /** The day's holidays, town events and term periods left out of `events` because Why names them. */
@@ -364,6 +369,8 @@ export function reasonOutcomeWords(outcome: string, guests: number | null): stri
     case 'day_closed': return 'The day is closed';
     case 'day_booked': return 'The day is booked';
     case 'past_day': return 'This day has passed';
+    // A rule's closure or buyout on a day a note decides: the note wins (D31).
+    case 'overridden': return 'A note on this day sets this rule aside';
     default: return null;
   }
 }
@@ -480,6 +487,7 @@ export function dayView(date: string, input: CalendarInput): CalendarDayView {
     forecast: forecastPart(date, input),
     reasons: reasonLines(day, date < input.today),
     moreNotes: day?.moreNotes ?? 0,
+    moreRules: day?.moreRules ?? 0,
     events,
     shownInWhy: listed.length - events.length,
     notes: notesOn(date, input),

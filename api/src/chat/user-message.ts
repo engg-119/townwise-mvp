@@ -3,8 +3,9 @@
 // last rules block on the turn's path, so unchanged rules add nothing and a location with no rules sends the plain
 // string it always did. The block is stored with the message, so later requests keep the same prefix until a newer
 // block replaces it; requests then send the older one as a stub (historyForModel). A rule with a schedule (D31) has a
-// second, indented line with the schedule in code-made words, which a rule's one-line text can never forge; with no
-// schedule anywhere the block is what it was before schedules existed. The person's own text is always the
+// second, indented line with the schedule in code-made words, which a rule's one-line text can never forge: it can't
+// start a line, and "Forecast schedule" followed by a colon in it loses the colon, so it can't read as that line inline
+// either. With no schedule anywhere the block is what it was before schedules existed. The person's own text is always the
 // message's last block; a context block is never it, so typing the tag never makes one.
 import type { BetaContentBlockParam, BetaMessageParam } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 
@@ -25,12 +26,22 @@ export interface MessageContext {
   readonly rules: readonly BlockRule[];
 }
 
+/** "Forecast schedule" in any case and spacing, and what follows it up to the next letter or digit. */
+const SCHEDULE_LABEL = /(forecast[^\p{L}\p{N}]*schedule)([^\p{L}\p{N}]*)/giu;
+/** A colon, or a look-alike of one. */
+const COLON = /[:\uFF1A\uFE55\uFE13\uA789\u2236\u02F8]/u;
+
 /**
  * A rule's text as the block carries it: `<` and `>` become their full-width look-alikes, so no rule can close the
- * block early. Any member writes rules and every member's chat at the location reads them, an org admin's included.
+ * block early, and "Forecast schedule" followed by a colon becomes "Forecast schedule -", so no rule's words can pass
+ * for the schedule line Townwise writes under it. Any member writes rules and every member's chat at the location reads
+ * them, an org admin's included.
  */
 function blockLines(rule: BlockRule): string[] {
-  const line = `- ${rule.text.replaceAll('<', '＜').replaceAll('>', '＞')}`;
+  const text = rule.text.replace(SCHEDULE_LABEL, (all: string, label: string, after: string) => (
+    COLON.test(after) ? `${label} -${/\s$/u.test(after) ? ' ' : ''}` : all
+  ));
+  const line = `- ${text.replaceAll('<', '＜').replaceAll('>', '＞')}`;
   return rule.summary === null ? [line] : [line, `  Forecast schedule: ${rule.summary}`];
 }
 

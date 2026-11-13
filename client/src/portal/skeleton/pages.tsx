@@ -458,7 +458,10 @@ export function CalendarSkeleton(props: LabelProps): React.JSX.Element {
   );
 }
 
-/** P28 Business rules: the add form (New rule, Change the forecast, Add rule) and a few rule rows under their head. */
+/**
+ * P28 Business rules: the add form (New rule with its helper, Change the forecast's outline button over its helper line,
+ * Add rule) and a few rule rows under their head.
+ */
 export function RulesSkeleton(props: LabelProps): React.JSX.Element {
   return (
     <Skeleton name="rules" label={props.label}>
@@ -466,8 +469,11 @@ export function RulesSkeleton(props: LabelProps): React.JSX.Element {
         <Columns
           main={(
             <Stack>
-              <SkeletonField />
-              <SkeletonButton link width={170} />
+              <SkeletonField helper />
+              <Stack gap={8}>
+                <Actions><View testID="skeleton-rules-schedule-button"><SkeletonButton width={170} /></View></Actions>
+                <View testID="skeleton-rules-schedule-help"><SkeletonText width="90%" /></View>
+              </Stack>
               <Actions><SkeletonButton width={120} /></Actions>
             </Stack>
           )}
@@ -487,6 +493,165 @@ export function RulesSkeleton(props: LabelProps): React.JSX.Element {
           </View>
         </Section>
       </Stack>
+    </Skeleton>
+  );
+}
+
+/** The heatmap's left column (Mon, Wed, Fri) and its gaps, as Heatmap.web.tsx draws them. */
+const HEATMAP_HEAD = 40;
+const HEATMAP_GAP = 3;
+/** The web charts' frame, beside their 72px scale (AnalyticsCharts.web.tsx). */
+const CHART_HEIGHT = 160;
+/** By type of night's 12px bars, one per type, at made-up lengths (no sample values). */
+const NIGHT_BARS = ['90%', '78%', '66%', '54%', '42%'] as const;
+
+/**
+ * Every day's heatmap on web: the month labels over one year's grid of 7 weekday rows by 53 week columns of square
+ * cells (one block of that shape) beside its weekday labels. Native lists months instead: a 44px row each.
+ */
+function SkeletonHeatmap(): React.JSX.Element {
+  if (Platform.OS !== 'web') {
+    return (
+      <View testID="skeleton-analytics-heatmap">
+        {Array.from({ length: 6 }, (_, month) => (
+          <View key={month} testID="skeleton-analytics-month" style={styles.monthListRow}>
+            <SkeletonText type="ui" width={120} />
+            <SkeletonText type="ui" width={140} />
+          </View>
+        ))}
+      </View>
+    );
+  }
+  return (
+    <View testID="skeleton-analytics-heatmap" style={styles.heatmap}>
+      <View style={styles.heatmapMonths}><SkeletonText type="mono" /></View>
+      <View style={styles.heatmapRow}>
+        <View style={styles.heatmapDays}>
+          {[0, 1, 2].map((day) => <SkeletonText key={day} type="mono" width={24} />)}
+        </View>
+        <View style={styles.heatmapGrid} />
+      </View>
+    </View>
+  );
+}
+
+/** A chart section in the reading column: its summary, the chart (web only, D21), the basis line and Show the numbers. */
+function SkeletonChartSection(props: { children?: React.ReactNode; summary?: number }): React.JSX.Element {
+  return (
+    <Section>
+      <SkeletonHeading width={180} />
+      <Columns
+        main={(
+          <View style={styles.analyticsColumn}>
+            <SkeletonText lines={props.summary ?? 1} width="80%" />
+            {Platform.OS === 'web' ? props.children : null}
+            <SkeletonText width="70%" />
+            <SkeletonButton link width={150} />
+          </View>
+        )}
+      />
+    </Section>
+  );
+}
+
+/** A web bar or line chart: the 160px frame beside its scale, then its axis labels. */
+function AnalyticsChartSkeleton(): React.JSX.Element {
+  return (
+    <View testID="skeleton-analytics-chart" style={styles.chart}>
+      <View style={styles.chartFrame}><SkeletonChart height={CHART_HEIGHT} /></View>
+      <View style={styles.chartFrame}><SkeletonText type="mono" /></View>
+    </View>
+  );
+}
+
+/**
+ * P24 Analytics: the lead, the filter block (Color by's two switches, then Show on the calendar, Include in the numbers
+ * and Years, each a column of 44px boxes; a row from 1024px, stacked below), Every day (the heatmap with the Day panel
+ * beside it, sticky, from 1024px and under it below; month rows on native), then the reading column's sections: Weekly
+ * shape, By month and Year over year (160px charts on web), By type of night (its lines and bars) and Biggest drivers
+ * (a table). Analytics.tsx mounts it while its three reads are out.
+ */
+export function AnalyticsSkeleton(props: LabelProps): React.JSX.Element {
+  const { desktop } = useBreakpoint();
+  const web = Platform.OS === 'web';
+  const panel = (
+    <View testID="skeleton-analytics-panel">
+      <Stack gap={theme.space[5]}>
+        <SkeletonHeading width={200} />
+        <SkeletonDefinitions rows={4} />
+        <SkeletonText lines={2} />
+        <Actions><SkeletonButton link width={110} /><SkeletonButton link width={90} /></Actions>
+      </Stack>
+    </View>
+  );
+  return (
+    <Skeleton name="analytics" label={props.label}>
+      <SkeletonText type="sub" width={320} />
+      <View testID="skeleton-analytics-filters" style={[styles.filters, desktop ? styles.filtersRow : null]}>
+        <View testID="skeleton-analytics-filter-group" style={styles.filterGroup}>
+          <SkeletonText type="ui" width={64} />
+          <View style={styles.switches}><SkeletonButton width={84} /><SkeletonButton width={100} /></View>
+        </View>
+        {[4, 3, 3].map((boxes, group) => (
+          <View key={group} testID="skeleton-analytics-filter-group" style={styles.filterGroup}>
+            <SkeletonText type="ui" width={150} />
+            {Array.from({ length: boxes }, (_, box) => (
+              <View key={box} style={styles.checkRow}>
+                <SkeletonBlock outline width={16} height={16} />
+                <SkeletonText type="ui" width={110} />
+              </View>
+            ))}
+          </View>
+        ))}
+      </View>
+      <Section>
+        <SkeletonHeading width={140} />
+        {web ? (
+          <View style={desktop ? styles.everyDay : styles.everyDayStacked}>
+            <View style={desktop ? styles.wide : null}>
+              <Stack gap={12}>
+                <SkeletonHeatmap />
+                {desktop ? null : panel}
+                <SkeletonText width="80%" />
+                <SkeletonButton link width={150} />
+              </Stack>
+            </View>
+            {desktop ? <View style={styles.narrow}>{panel}</View> : null}
+          </View>
+        ) : (
+          <Stack gap={12}>
+            <SkeletonHeatmap />
+            <SkeletonText lines={3} />
+          </Stack>
+        )}
+      </Section>
+      <SkeletonChartSection><AnalyticsChartSkeleton /></SkeletonChartSection>
+      <SkeletonChartSection><AnalyticsChartSkeleton /></SkeletonChartSection>
+      <SkeletonChartSection>
+        <SkeletonText type="mono" width={240} />
+        <AnalyticsChartSkeleton />
+      </SkeletonChartSection>
+      <SkeletonChartSection summary={4}>
+        <View testID="skeleton-analytics-bars" style={styles.bars}>
+          {NIGHT_BARS.map((width) => (
+            <View key={width} style={styles.barRow}>
+              <View style={styles.barLabel}><SkeletonText type="mono" width="80%" /></View>
+              <View style={styles.barTrack}><SkeletonBlock height={12} width={width} /></View>
+            </View>
+          ))}
+        </View>
+      </SkeletonChartSection>
+      <Section>
+        <SkeletonHeading width={180} />
+        <Columns
+          main={(
+            <View testID="skeleton-analytics-drivers" style={styles.analyticsColumn}>
+              <SkeletonTable columns={[{ flex: 0.4 }, { flex: 1.6 }, ...(web ? [{ flex: 1.4 }] : []), { numeric: true }, { flex: 1.4 }]} rows={5} />
+              <SkeletonText lines={2} />
+            </View>
+          )}
+        />
+      </Section>
     </Skeleton>
   );
 }
@@ -525,4 +690,27 @@ const styles = StyleSheet.create({
   read: { maxWidth: 760 },
   messages: { borderTopWidth: 1, borderTopColor: c.border, maxWidth: 640 },
   message: { paddingVertical: 14, paddingLeft: 36, borderBottomWidth: 1, borderBottomColor: c.border },
+  // Analytics (Analytics.tsx, FilterPanel.tsx, MetricSwitch.tsx, Heatmap.web.tsx, AnalyticsCharts.web.tsx).
+  filters: { marginTop: theme.space[6], gap: theme.space[5] },
+  filtersRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', columnGap: theme.space[10], rowGap: theme.space[5] },
+  filterGroup: { gap: theme.space[1], minWidth: 0 },
+  switches: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space[2], marginTop: theme.space[1] },
+  checkRow: { flexDirection: 'row', alignItems: 'center', columnGap: 10, minHeight: 44 },
+  everyDay: { flexDirection: 'row', alignItems: 'flex-start', columnGap: theme.space.gutter },
+  everyDayStacked: { gap: theme.space[6] },
+  heatmap: { gap: 6 },
+  heatmapMonths: { marginLeft: HEATMAP_HEAD + HEATMAP_GAP },
+  heatmapRow: { flexDirection: 'row', columnGap: HEATMAP_GAP },
+  heatmapDays: { width: HEATMAP_HEAD, justifyContent: 'space-around' },
+  // Seven rows of square cells by 53 columns: about 53 to 7 across the grid's width.
+  heatmapGrid: { flex: 1, minWidth: 0, aspectRatio: 53 / 7, backgroundColor: c.raised },
+  monthListRow: {
+    flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', columnGap: 12, minHeight: 44,
+    borderBottomWidth: 1, borderBottomColor: c.border,
+  },
+  analyticsColumn: { gap: theme.space[5] },
+  bars: { gap: 6 },
+  barRow: { flexDirection: 'row', alignItems: 'center', columnGap: 12 },
+  barLabel: { width: 140 },
+  barTrack: { flex: 1, minWidth: 0 },
 });

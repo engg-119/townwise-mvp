@@ -218,7 +218,7 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
         { kind: 'term', label: 'Spring term classes', effectPct: null, effect: null, sources: expect.any(Array) as unknown, note: null, rule: null },
       ],
       runId: first, madeAt: '2026-05-01', madeAfterDay: true, actual: 100, inRange: true,
-      model: { status: 'open', low: 80, mid: 100, high: 120 }, noteGuests: 0, moreNotes: 0,
+      model: { status: 'open', low: 80, mid: 100, high: 120 }, noteGuests: 0, moreNotes: 0, moreRules: 0,
     });
     expect(body.days.find((day) => day.date === '2026-05-06')).toMatchObject({ actual: 130, inRange: false, madeAfterDay: false });
     expect(body.days.find((day) => day.date === '2026-05-04')).toMatchObject({ status: 'closed', low: null, inRange: null });
@@ -403,7 +403,7 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
       expect(day?.reasons[0]).toMatchObject({ label: 'Your private event, 40 guests', note: { guests: 40, outcome: 'added' } });
     });
 
-    it('a buyout note books the day; a closure note closes it; the week holding either is left out', async () => {
+    it('a buyout note books the day; a closure note closes it; the week holding either loses that day’s model middle', async () => {
       await save(event({ startDate: '2026-06-09', endDate: '2026-06-09', effect: 'closed', expectedGuests: 50 }));
       await save({ kind: 'closure', startDate: '2026-06-03', endDate: '2026-06-03', effect: 'closed', detail: SECRET });
       const body = await read();
@@ -413,7 +413,10 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
       expect(dayOf(body, '2026-06-09')?.reasons[0]).toMatchObject({ kind: 'note', label: 'Your private buyout, 50 guests', note: { guests: 50, outcome: 'booked' } });
       expect(dayOf(body, '2026-06-03')).toMatchObject({ status: 'closed', low: null, mid: null, high: null, noteGuests: 0 });
       expect(dayOf(body, '2026-06-03')?.reasons[0]).toMatchObject({ kind: 'note', label: 'Your closure', note: { guests: null, outcome: 'closed' } });
-      expect(body.weeks.map((week) => week.from)).toEqual(['2026-05-25']);
+      // Each week shifts by the closed or booked day's 100, the buyout's party no walk-in.
+      expect(body.weeks.map((week) => [week.from, week.openDays, week.low, week.mid, week.high, week.noteGuests])).toEqual([
+        ['2026-05-25', 7, 560, 700, 840, 0], ['2026-06-01', 6, 460, 600, 740, 0], ['2026-06-08', 6, 460, 600, 740, 0],
+      ]);
       expect(JSON.stringify(body)).not.toContain('sentinel');
     });
 
@@ -478,10 +481,16 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
             kind: 'rule', label: 'Your rule: closed on Mondays', effectPct: null, effect: null, sources: [], note: null, rule: { id: ruleId, guests: null, outcome: 'closed' },
           });
         }
-        // A past Monday keeps the model's figures, and the week a rule closed a day in is left out.
+        // A past Monday keeps the model's figures, and a week a rule closed a day in loses that day's model middle.
         expect(dayOf(body, '2026-05-25')).toMatchObject({ ...UNCHANGED, reasons: [expect.objectContaining({ kind: 'weekday' }), expect.objectContaining({ rule: { id: ruleId, guests: null, outcome: 'past_day' } })] });
         expect(dayOf(body, '2026-06-02')).toMatchObject(UNCHANGED);
-        expect(body.weeks.map((week) => week.from)).toEqual(['2026-05-25']);
+        expect(body.weeks.map((week) => [week.from, week.openDays, week.mid])).toEqual([['2026-05-25', 7, 700], ['2026-06-01', 6, 600], ['2026-06-08', 6, 600]]);
+        // A one-day opening note beats the standing rule: that Monday is open again, with the model's figures.
+        await save({ kind: 'opening', startDate: '2026-06-08', endDate: '2026-06-08', effect: 'unknown', detail: SECRET });
+        const opened = await read();
+        expect(dayOf(opened, '2026-06-08')).toMatchObject(UNCHANGED);
+        expect(dayOf(opened, '2026-06-08')?.reasons.find((reason) => reason.kind === 'rule')).toMatchObject({ rule: { id: ruleId, outcome: 'overridden' } });
+        expect(opened.weeks.map((week) => week.mid)).toEqual([700, 600, 700]);
         expect(JSON.stringify(body)).not.toContain('entinel');
         const res = await call(server, `${rulesPath()}/${ruleId}`, { method: 'PATCH', session: member, json: { schedule: null } });
         expect(res.status).toBe(200);
@@ -502,8 +511,8 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
         ]);
         expect(dayOf(body, '2026-06-13')).toMatchObject({ status: 'closed', noteGuests: 0 });
         expect(dayOf(body, '2026-06-13')?.reasons.map((reason) => reason.rule?.outcome ?? reason.note?.outcome ?? null)).toEqual(['closed', null, 'day_closed']);
-        // The week of June 1 has no status change, so it shifts by the rule's 40 on June 6 and the note's 70.
-        expect(body.weeks.map((week) => [week.from, week.mid, week.noteGuests])).toEqual([['2026-05-25', 700, 0], ['2026-06-01', 810, 110]]);
+        // The week of June 1 shifts by the rule's 40 on June 6 and the note's 70; the week of June 8 loses closed June 13's 100.
+        expect(body.weeks.map((week) => [week.from, week.mid, week.noteGuests])).toEqual([['2026-05-25', 700, 0], ['2026-06-01', 810, 110], ['2026-06-08', 600, 0]]);
         expect(dayOf(body, '2026-06-05')).toMatchObject(UNCHANGED);
       });
 

@@ -14,14 +14,20 @@
 // - Every other note is listed with why it changed nothing.
 // - A business rule with a schedule (D31) is applied exactly as a note with the same fields is: its closure closes the
 //   day, its buyout books it, its private event with a guest count adds its guests, and every outcome above holds for it.
-//   Rules and notes on one day all apply together: guests add up, and a closure from either wins. Pure: no store, no clock.
-import { isClosure } from '../agent/questions.ts';
+//   Rules and notes on one day all apply together and their guests add up, except that a note covering the day beats a
+//   rule's closure or buyout: when a covering note decides the day (a closure, a buyout, or one that says it is open:
+//   an opening, a private event, or more or fewer guests; ../closed-days.ts notesDecide), each rule's closure and buyout
+//   is set aside (outcome `overridden`), so a one-day opening or party note opens a day a standing closure rule would
+//   close. [CONFIRM: a note covering a day beats a rule schedule's closure or buyout] Pure: no store, no clock.
+import { isBuyout, isClosure, notesDecide } from '../closed-days.ts';
 import type { BusinessRuleRecord, RuleSchedule } from '../stores/business-rules.ts';
 import type { NoteContent, NoteRecord } from '../stores/notes.ts';
 import type { DayStatus, ReasonKind } from './file.ts';
 
 /** A day lists at most this many note reasons; the rest are counted in moreNotes. */
 export const MAX_NOTE_REASONS = 6;
+/** And at most this many rule reasons, apart; the rest are counted in moreRules. */
+export const MAX_RULE_REASONS = 6;
 
 export type NoteOutcome =
   | 'added' //               a private event, more guests, with a guest count: +N to low, mid and high
@@ -32,6 +38,7 @@ export type NoteOutcome =
   | 'not_counted' //         an opening, an other note, fewer guests or unknown: listed, never changes a number
   | 'day_closed' //          a private event on a day that stays closed
   | 'day_booked' //          a private event (not a buyout) on a day that is booked
+  | 'overridden' //          a rule's closure or buyout on a day a covering note decides: the note wins
   | 'past_day'; //           the day is before the town's today: the model's numbers stand
 
 /** The outcomes that changed the day; their reasons come before the run's. */
@@ -63,7 +70,6 @@ export interface AdjustedDay extends ModelDay {
 /** What the adjustment reads of a note or a rule's schedule. */
 type Effect = Pick<NoteContent, 'kind' | 'effect' | 'expectedGuests'>;
 
-const isBuyout = (entry: Effect): boolean => entry.kind === 'private_event' && entry.effect === 'closed';
 const isParty = (entry: Effect): boolean => entry.kind === 'private_event' && entry.effect === 'more_guests' && entry.expectedGuests !== null;
 const closes = (entry: Effect): boolean => isClosure(entry) && !isBuyout(entry);
 const applied = <T extends { outcome: NoteOutcome }>(entries: readonly T[]): T[] => entries.filter((entry) => APPLIED.has(entry.outcome));
@@ -81,7 +87,9 @@ export function adjustDay(
       rules: rules.map((rule) => ({ rule, outcome: 'past_day' })),
     };
   }
-  const effects: Effect[] = [...notes, ...rules.map((rule) => rule.schedule)];
+  // A rule's closure or buyout gives way to a covering note that decides the day.
+  const overridden = (entry: Effect): boolean => notesDecide(notes) && isClosure(entry);
+  const effects: Effect[] = [...notes, ...rules.map((rule) => rule.schedule).filter((schedule) => !overridden(schedule))];
   const closedByNote = effects.some(closes);
   const status: DayStatus = closedByNote ? 'closed'
     : effects.some(isBuyout) || model.status === 'booked' ? 'booked'
@@ -100,7 +108,7 @@ export function adjustDay(
     return counted ? 'added' : 'already_in_forecast';
   };
   const allNotes = notes.map((note): AdjustedNote => ({ note, outcome: outcomeOf(note) }));
-  const allRules = rules.map((rule): AdjustedRule => ({ rule, outcome: outcomeOf(rule.schedule) }));
+  const allRules = rules.map((rule): AdjustedRule => ({ rule, outcome: overridden(rule.schedule) ? 'overridden' : outcomeOf(rule.schedule) }));
   const ordered = {
     notes: [...applied(allNotes), ...unapplied(allNotes)],
     rules: [...applied(allRules), ...unapplied(allRules)],
@@ -114,21 +122,28 @@ export function adjustDay(
   return { status, low: plus(model.low), mid: plus(model.mid), high: plus(model.high), noteGuests, ...ordered };
 }
 
+/** At most `max` entries, the ones that changed the day first: [applied, rest]. */
+function capped<T extends { outcome: NoteOutcome }>(entries: readonly T[], max: number): [T[], T[]] {
+  const first = applied(entries).slice(0, max);
+  return [first, unapplied(entries).slice(0, max - first.length)];
+}
+
 /**
  * A day's reasons: the rules, then the notes, that changed it; the run's own reasons in run order; then the other rules
- * and notes. At most MAX_NOTE_REASONS notes in all, and moreNotes counts the notes left out (their guests still count in
- * the figures). Rules are never left out: a location has at most 30 (D31).
+ * and notes. At most MAX_RULE_REASONS rules and MAX_NOTE_REASONS notes in all, the ones that changed the day first;
+ * moreRules and moreNotes count the ones left out (their guests still count in the figures), so a day's reasons stay
+ * bounded however many of the location's 30 rules (D31) cover it.
  */
 export function orderedReasons<R>(
   day: AdjustedDay, runReasons: readonly R[], reasonOf: (entry: AdjustedNote | AdjustedRule) => R,
-): { reasons: R[]; moreNotes: number } {
-  const notesApplied = applied(day.notes).slice(0, MAX_NOTE_REASONS);
-  const notesRest = unapplied(day.notes).slice(0, MAX_NOTE_REASONS - notesApplied.length);
+): { reasons: R[]; moreNotes: number; moreRules: number } {
+  const [rulesApplied, rulesRest] = capped(day.rules, MAX_RULE_REASONS);
+  const [notesApplied, notesRest] = capped(day.notes, MAX_NOTE_REASONS);
   return {
     reasons: [
-      ...applied(day.rules).map(reasonOf), ...notesApplied.map(reasonOf), ...runReasons,
-      ...unapplied(day.rules).map(reasonOf), ...notesRest.map(reasonOf),
+      ...rulesApplied.map(reasonOf), ...notesApplied.map(reasonOf), ...runReasons, ...rulesRest.map(reasonOf), ...notesRest.map(reasonOf),
     ],
     moreNotes: day.notes.length - notesApplied.length - notesRest.length,
+    moreRules: day.rules.length - rulesApplied.length - rulesRest.length,
   };
 }

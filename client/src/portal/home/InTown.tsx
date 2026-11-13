@@ -13,19 +13,22 @@ import { useBreakpoint, useLoad } from '../hooks';
 import { addDays } from '../locations/dates';
 import { usePortal } from '../PortalProvider';
 import { DATA_YEAR, SOURCES, townProfile } from '../towns';
-import { ErrorNotice, StatusTag } from '../ui/feedback';
+import { ErrorNotice, LoadingLine, StatusTag } from '../ui/feedback';
 import { Heading, Mono, Small } from '../ui/text';
 
 // The inside of Home's Who's in town block (spec P11, 13.2), written for an owner glancing at it. With no headcount
 // for the month, the honest no-number line with its Planned tag comes first. Then the term by time, each group under
 // an h3: This week leads with today's term in plain words (or its headcount as one large figure with its unit), then
-// what starts by Sunday; Later in {month} is one row per run of days, date beside words. Past days are left out.
+// what starts by Sunday; Later in {month} is one row per run of days, its dates (mono) beside words. Past days are left
+// out. While the read is out, its loading line keeps about the groups' height.
 // The term's sources follow once, by name. Then the location's own days by term, and the county's food-service jobs
 // for the month (bundled BLS data, one of the twelve towns only), said as more or fewer than its average month.
 
 const WEB_LINK = /^https:\/\//i;
 const BLS = SOURCES.find((source) => source.url.startsWith('https://www.bls.gov/'));
 const BETWEEN_TERMS_NOTE = 'Between terms is worked out from the term dates.';
+/** About the height of the term groups, which the loading line keeps, so the jobs under it don't move when they arrive. */
+const LOADING_HEIGHT = 240;
 
 const monthNameOf = (date: string): string => MONTH_NAMES[Number(date.slice(5, 7)) - 1] ?? '';
 
@@ -252,7 +255,7 @@ export function InTown(props: { today: string; townId: string | null; locationId
   const { state, reload } = useLoad(useCallback(() => fetchPeopleInTown(api, locationId, monthRange(month)), [api, locationId, month]));
   return (
     <View style={styles.root}>
-      {state.status === 'loading' ? <Small>Loading who’s in town…</Small> : null}
+      {state.status === 'loading' ? <LoadingLine text="Loading who’s in town…" minHeight={LOADING_HEIGHT} /> : null}
       {state.status === 'failed' ? <ErrorNotice error={state.error} onRetry={reload} /> : null}
       {state.status === 'ready' ? <People window={state.data} today={today} /> : null}
       <Jobs townId={props.townId} today={today} />
@@ -275,7 +278,7 @@ const styles = StyleSheet.create({
   rows: { gap: theme.space[3], minWidth: 0 },
   row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: theme.space[4], rowGap: 2, minWidth: 0 },
   rowPhone: { flexDirection: 'column', gap: 2, minWidth: 0 },
-  when: { ...theme.type.ui, color: c.white, fontWeight: '600' },
+  when: { ...theme.type.mono, color: c.text2, fontVariant: ['tabular-nums'] },
   whenWide: { width: 112 },
   words: { flexGrow: 1, flexShrink: 1, flexBasis: 120, minWidth: 0 },
   figure: { ...theme.type.monoValue, fontSize: 18, lineHeight: 24, color: c.white, fontVariant: ['tabular-nums'] },

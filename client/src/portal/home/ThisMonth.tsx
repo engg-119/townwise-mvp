@@ -11,6 +11,7 @@ import { MONTH_NAMES, type Metric } from '../analytics/words';
 import { ALL_FILTERS, tooltipLines, type CalendarInput } from '../calendar/model';
 import type { ForecastDay, ForecastWindow } from '../estimates/api';
 import type { Note } from '../locations/api';
+import type { Rule } from '../rules/api';
 import { weekdaysLine } from '../locations/noteRules';
 import { useBreakpoint } from '../hooks';
 import { calendarHref } from '../routing';
@@ -36,9 +37,10 @@ export const PEOPLE_HEAD = 'Who’s in town';
 const monthNameOf = (today: string): string => MONTH_NAMES[Number(today.slice(5, 7)) - 1] ?? '';
 
 export function ThisMonth(props: {
-  input: HomeInput; calendar: Calendar; notes: readonly Note[]; forecast: ForecastWindow | null; history: boolean; locationId: string;
+  input: HomeInput; calendar: Calendar; notes: readonly Note[]; rules: readonly Rule[]; forecast: ForecastWindow | null; history: boolean;
+  locationId: string;
 }): React.JSX.Element {
-  const { input, calendar, notes, forecast, history, locationId } = props;
+  const { input, calendar, notes, rules, forecast, history, locationId } = props;
   const { today, context, metric } = input;
   const router = useRouter();
   const town = calendar.town;
@@ -46,10 +48,12 @@ export function ThisMonth(props: {
   const label = `${monthName} ${today.slice(0, 4)}`;
   const forecastDays = useMemo(() => new Map((forecast?.days ?? []).map((day): [string, ForecastDay] => [day.date, day])), [forecast]);
   const rows = useMemo(() => monthGrid(today, context, { input, forecast: forecastDays }), [today, context, input, forecastDays]);
-  // The Calendar's own tooltip words; nothing is imported on Home and no filter is off.
+  // The Calendar's own tooltip words, with the same business rules as the grid (D31, D32); nothing is imported on Home
+  // and no filter is off.
   const tipInput = useMemo<CalendarInput>(() => ({
-    today, month: today.slice(0, 7), forecast, salesDays: [...input.byDate.values()], events: calendar.events, notes, imported: [], filters: ALL_FILTERS,
-  }), [today, forecast, input.byDate, calendar.events, notes]);
+    today, month: today.slice(0, 7), forecast, salesDays: [...input.byDate.values()], events: calendar.events, notes, rules, imported: [],
+    filters: ALL_FILTERS,
+  }), [today, forecast, input.byDate, calendar.events, notes, rules]);
   const tooltip = useCallback((date: string) => tooltipLines(date, tipInput), [tipInput]);
   const [selected, setSelected] = useState(today);
   const [preview, setPreview] = useState<string | null>(null);

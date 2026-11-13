@@ -174,6 +174,8 @@ const forecastDaySchema = z.object({
   model: z.object({ status: z.enum(DAY_STATUSES), low: z.number().nullable(), mid: z.number().nullable(), high: z.number().nullable() }),
   noteGuests: z.number(),
   moreNotes: z.number(),
+  /** Rule reasons past the first 6 (D31); an older answer has none. */
+  moreRules: z.number().optional(),
   reasons: z.array(forecastReasonSchema),
   runId: z.string(),
   actual: z.number().nullable(),

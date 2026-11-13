@@ -4,24 +4,29 @@
 // or after that date (dataThrough before it), so no forecast is ever shown for a day its model saw. Weeks come only
 // from a run that supplied every day of the week; they are the run's own week rows, never sums of days. Past days
 // carry the stored guests and whether they landed in the range. Live accuracy is scored per run, over the passed days
-// that run supplied, so one run is never credited with another's hits and misses. Numbers are raw, as stored; callers
-// round for display. From the town's today on, the location's notes and its business rules with a schedule (D31) adjust
-// each day on read (adjust.ts); past days, accuracy and run rows stay as the model made them. A week a note changed a day's status in is left out; any other
-// week shifts by the guests notes add on its open days. From today on, each run reason also says whether it usually
-// brings more or fewer guests (effects.ts), from the same reads: the stored days, read once, reach back over the 52 weeks
-// the effects need when the range reaches today, and the notes and rules read for the range also mark the history's
-// closed days. The town calendar's term entries are made once for the labels and the effects. It logs nothing and
-// stores nothing.
+// that run supplied, so one run is never credited with another's hits and misses; a closed or likely-closed day (spec
+// D32, ../closed-days.ts) is a closure, not a miss, and is left out. [CONFIRM: live accuracy leaves out closed and
+// likely-closed days] Numbers are raw, as stored; callers round for display. From the town's today on, the location's
+// notes and its business rules with a schedule (D31) adjust each day on read (adjust.ts); past days and run rows stay
+// as the model made them. A week's low, mid and high shift by each of its days' adjusted middle less the model's (a
+// newly closed or booked day takes its model middle off, notes' and rules' guests add; never below 0), and its openDays
+// by the days opened less the days closed; a week is left out only when a changed day has no model middle to take off.
+// [CONFIRM: a week's range shifted by its days' note and rule changes] From today on, each run reason also says whether
+// it usually brings more or fewer guests (effects.ts), from the same reads: the stored days, read once, reach back over
+// the 52 weeks the effects need when the range reaches today and over the 8 weeks before the first scored day that
+// likely closed reads, and one read of the notes and rules marks the closed days for the effects and the accuracy. The
+// town calendar's term entries are made once for the labels and the effects. It logs nothing and stores nothing.
 import type { OrgScope } from '../access/policy.ts';
 import { noteCovers } from '../agent/questions.ts';
+import { closureOf, TYPICAL_LOOKBACK_DAYS, typicalByDate } from '../closed-days.ts';
 import { daysBetween, utcDay } from '../dates.ts';
 import type { BusinessRuleStore } from '../stores/business-rules.ts';
 import type { ForecastRow, ForecastRunRecord, ForecastStore } from '../stores/forecasts.ts';
 import type { LocationRecord } from '../stores/locations.ts';
-import type { NoteStore } from '../stores/notes.ts';
+import type { NoteRecord, NoteStore } from '../stores/notes.ts';
 import type { SalesDayStore } from '../stores/sales-days.ts';
 import { weekdayOf, type Weekday } from '../time-zones.ts';
-import { adjustDay, orderedReasons, scheduledRules, type AdjustedDay, type ModelDay } from './adjust.ts';
+import { adjustDay, orderedReasons, scheduledRules, type AdjustedDay, type ModelDay, type ScheduledRule } from './adjust.ts';
 import { effectHistory, reasonEffects } from './effects.ts';
 import { eachDay, type DayStatus } from './file.ts';
 import { noteReasonView, reasonViews, ruleReasonView, townCalendarOf, townTermEntries, type ReasonView } from './reasons.ts';
@@ -60,8 +65,8 @@ export interface ForecastDayView {
   high: number | null;
   baseline: number | null;
   /**
-   * Rules and notes that changed the day, then the run's reasons, then the other rules and notes (at most 6 notes in
-   * all). From today on a run reason carries its effect (effects.ts); before today every effect is null.
+   * Rules and notes that changed the day, then the run's reasons, then the other rules and notes (at most 6 rules and 6
+   * notes). From today on a run reason carries its effect (effects.ts); before today every effect is null.
    */
   reasons: ReasonView[];
   /** The run's own status and figures, equal to the day's when no note or rule changed it. */
@@ -70,6 +75,8 @@ export interface ForecastDayView {
   noteGuests: number;
   /** Note reasons past the first 6; they still count in the figures. */
   moreNotes: number;
+  /** Rule reasons past the first 6; they still count in the figures. */
+  moreRules: number;
   runId: string;
   /** The run's made-at date. */
   madeAt: string;
@@ -84,6 +91,7 @@ export interface ForecastDayView {
 export interface ForecastWeekView {
   from: string;
   to: string;
+  /** The run's open days, plus the days notes and rules opened, less the ones they closed or booked. */
   openDays: number;
   low: number;
   mid: number;
@@ -96,6 +104,10 @@ export interface ForecastWeekView {
   /** Guests notes and rules add on the week's open days, already in low, mid and high. */
   noteGuests: number;
 }
+
+/** The earliest and the latest of some YYYY-MM-DD dates, missing ones skipped; undefined with none. */
+const firstOf = (dates: readonly (string | undefined)[]): string | undefined => dates.filter((date) => date !== undefined).sort()[0];
+const lastOf = (dates: readonly (string | undefined)[]): string | undefined => dates.filter((date) => date !== undefined).sort().at(-1);
 
 export interface ForecastWindow {
   /** False when no published run covers any day of the range. */
@@ -169,35 +181,61 @@ export function createForecastReader(deps: {
 
   /**
    * Every published run, every chosen day with its actual (before today), and each run's live accuracy over its own
-   * days. The stored days are read once, from the first chosen day, or from `historyFrom` when that is earlier (the
-   * reason effects' history), to yesterday; none are read when no run supplies a day.
+   * days, closed and likely-closed days left out. The stored days are read once, from 8 weeks before the first chosen
+   * day (its typical guests, D32), or from `reach.historyFrom` when that is earlier (the reason effects' history), to
+   * yesterday; the notes once, over the chosen days before today and `reach.notes`; the scheduled rules once. None are
+   * read when no run supplies a day.
    */
-  async function load(scope: OrgScope, locationId: string, today: string, historyFrom: string | null = null) {
+  async function load(
+    scope: OrgScope, locationId: string, today: string, reach: { historyFrom?: string; notes?: { from: string; to: string } } = {},
+  ) {
     const runs = await forecasts.published(scope, locationId);
     const rows = await forecasts.rows(scope, locationId, runs.map((run) => run.id));
     const chosen = chooseDays(runs, rows);
-    const [first] = [...chosen.keys()].sort();
+    const dates = [...chosen.keys()].sort();
+    const [first] = dates;
     const yesterday = utcDay(new Date(`${today}T00:00:00.000Z`), -1);
-    const from = first === undefined || historyFrom === null || first <= historyFrom ? first : historyFrom;
-    const stored = from !== undefined && from <= yesterday ? await salesDays.days(scope, locationId, { from, to: yesterday }) : [];
+    const from = first === undefined ? undefined : firstOf([utcDay(new Date(`${first}T00:00:00.000Z`), -TYPICAL_LOOKBACK_DAYS), reach.historyFrom]);
+    // The notes the scored days need (the chosen days to yesterday), and the caller's.
+    const notesFrom = firstOf([first, reach.notes?.from]);
+    const notesTo = lastOf([dates.filter((date) => date <= yesterday).at(-1), reach.notes?.to]);
+    const [stored, noted, scheduled] = await Promise.all([
+      from !== undefined && from <= yesterday ? salesDays.days(scope, locationId, { from, to: yesterday }) : [],
+      first === undefined || notesFrom === undefined || notesTo === undefined ? [] : notes.overlapping(scope, locationId, { from: notesFrom, to: notesTo }),
+      first === undefined ? [] : businessRules.scheduled(scope, locationId),
+    ]);
+    const rules = scheduledRules(scheduled);
+    const notesOn = (date: string): NoteRecord[] => noted.filter((note) => noteCovers(note, date));
+    const rulesOn = (date: string): ScheduledRule[] => rules.filter((rule) => noteCovers(rule.schedule, date));
     const actuals = new Map<string, number>();
     for (const day of stored) {
       if (day.guests !== null) actuals.set(day.date, day.guests);
     }
+    const storedOn = new Map(stored.map((day) => [day.date, day]));
+    const typical = typicalByDate(stored);
+    /** A past day that was closed or likely closed (D32): a closure, not a miss. */
+    const closedOn = (date: string): boolean => date < today && closureOf(
+      storedOn.get(date), typical.get(date) ?? null, notesOn(date), { rules: rulesOn(date).map((rule) => rule.schedule), past: true },
+    ) !== null;
     const scored = (date: string, row: ForecastRow): ScoredDay => ({
-      date, status: row.status ?? 'open', low: row.low, mid: row.mid, high: row.high, actual: actuals.get(date) ?? null,
+      date, status: row.status ?? 'open', low: row.low, mid: row.mid, high: row.high, actual: actuals.get(date) ?? null, closed: closedOn(date),
     });
     const daysOf = new Map<string, ScoredDay[]>();
     for (const [date, { run, row }] of chosen) daysOf.set(run.id, [...(daysOf.get(run.id) ?? []), scored(date, row)]);
     const liveOf = (runId: string): LiveAccuracy | null => liveAccuracy(daysOf.get(runId) ?? []);
-    return { runs, rows, chosen, actuals, scored, liveOf, stored };
+    return { runs, rows, chosen, actuals, scored, liveOf, stored, notesOn, rulesOn };
   }
 
   return {
     async window(scope, location, range, today) {
       // Effects are for days from today on, so a range wholly in the past reads no history for them.
       const history = range.to >= today ? effectHistory(today) : null;
-      const { runs, rows, chosen, actuals, scored, liveOf, stored } = await load(scope, location.id, today, history?.readFrom ?? null);
+      // One read of the notes, over the scored days, the range, a week reaching 6 days past either end and the effects' history.
+      const at = (date: string, days: number): string => utcDay(new Date(`${date}T00:00:00.000Z`), days);
+      const { runs, rows, chosen, actuals, scored, liveOf, stored, notesOn, rulesOn } = await load(scope, location.id, today, {
+        ...(history === null ? {} : { historyFrom: history.readFrom }),
+        notes: { from: firstOf([at(range.from, -6), history?.from]) ?? range.from, to: at(range.to, 6) },
+      });
       const dates = eachDay(range.from, range.to);
       if (runs.length === 0) {
         return { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], notCovered: spans(dates) };
@@ -205,28 +243,13 @@ export function createForecastReader(deps: {
       const entries = townTermEntries(location.town.townId);
       const calendarOn = townCalendarOf(location.town.townId, entries);
       const weekRows = rows.filter((row) => row.span === 'week' && row.from <= range.to && row.to >= range.from);
-      // One read of the notes, over the range, every week reaching past it and the effects' history, and one of the
-      // scheduled rules (at most 30).
-      const [noted, scheduled] = await Promise.all([
-        notes.overlapping(scope, location.id, {
-          from: [range.from, ...weekRows.map((row) => row.from), ...(history === null ? [] : [history.from])].sort()[0] ?? range.from,
-          to: [range.to, ...weekRows.map((row) => row.to)].sort().at(-1) ?? range.to,
-        }),
-        businessRules.scheduled(scope, location.id),
-      ]);
-      const rules = scheduledRules(scheduled);
-      // A history day a closed note or rule covers is closed; one with more or fewer guests was open (D32).
+      // A history day a closure note or a rule's closure that holds covers is closed; one with more or fewer guests was open (D32).
       const effectOf = history === null ? undefined : reasonEffects({
         today, townId: location.town.townId, days: stored, termEntries: entries,
-        covering: (date) => [
-          ...noted.filter((note) => noteCovers(note, date)), ...rules.filter((rule) => noteCovers(rule.schedule, date)).map((rule) => rule.schedule),
-        ],
+        covering: (date) => ({ notes: notesOn(date), rules: rulesOn(date).map((rule) => rule.schedule) }),
       });
       const modelOf = (row: ForecastRow): ModelDay => ({ status: row.status ?? 'open', low: row.low, mid: row.mid, high: row.high });
-      const adjusted = (date: string, row: ForecastRow): AdjustedDay => adjustDay(
-        date, today, modelOf(row), row.reasons, noted.filter((note) => noteCovers(note, date)),
-        rules.filter((rule) => noteCovers(rule.schedule, date)),
-      );
+      const adjusted = (date: string, row: ForecastRow): AdjustedDay => adjustDay(date, today, modelOf(row), row.reasons, notesOn(date), rulesOn(date));
       const days: ForecastDayView[] = [];
       for (const date of dates) {
         const pick = chosen.get(date);
@@ -234,14 +257,14 @@ export function createForecastReader(deps: {
         const { run, row } = pick;
         const model = modelOf(row);
         const day = adjusted(date, row);
-        const { reasons, moreNotes } = orderedReasons(
+        const { reasons, moreNotes, moreRules } = orderedReasons(
           day, reasonViews(date, row.reasons, calendarOn(date), date >= today ? effectOf : undefined),
           (entry) => ('note' in entry ? noteReasonView(entry.note, entry.outcome) : ruleReasonView(entry.rule, entry.outcome)),
         );
         const actual = actuals.get(date) ?? null;
         days.push({
           date, weekday: weekdayOf(date), status: day.status, low: day.low, mid: day.mid, high: day.high,
-          baseline: day.status === model.status ? row.baseline : null, reasons, model, noteGuests: day.noteGuests, moreNotes,
+          baseline: day.status === model.status ? row.baseline : null, reasons, model, noteGuests: day.noteGuests, moreNotes, moreRules,
           runId: run.id, madeAt: run.madeAt, madeAfterDay: run.madeAt >= date,
           actual, inRange: model.status === 'open' ? inRangeOf(actual, row.low, row.high) : null,
         });
@@ -253,13 +276,19 @@ export function createForecastReader(deps: {
         const run = picks[0]?.run;
         if (run === undefined || row.low === null || row.mid === null || row.high === null) return [];
         const actual = weekActual(picks.flatMap((pick, index) => (pick === undefined ? [] : [scored(weekDates[index] ?? '', pick.row)])));
-        // The run's week can't be re-summed honestly once a note or rule changes a day's status, and the reader never sums days.
-        const noteDays = picks.flatMap((pick, index) => (pick === undefined ? [] : [{ model: pick.row.status ?? 'open', day: adjusted(weekDates[index] ?? '', pick.row) }]));
-        if (noteDays.some(({ model, day }) => day.status !== model)) return [];
-        const noteGuests = noteDays.reduce((sum, { day }) => sum + (day.status === 'open' ? day.noteGuests : 0), 0);
+        // The run's own week shifts by each day's adjusted middle less the model's: a day the model closed or booked adds
+        // nothing to the run's week, so only a model-open day with no middle can't be taken off, and leaves the week out.
+        const changes = picks.flatMap((pick, index) => (pick === undefined ? [] : [{ model: modelOf(pick.row), day: adjusted(weekDates[index] ?? '', pick.row) }]));
+        const changed = ({ model, day }: (typeof changes)[number]): boolean => day.status !== model.status || day.mid !== model.mid;
+        if (changes.some((change) => changed(change) && change.model.status === 'open' && change.model.mid === null)) return [];
+        const shift = changes.reduce((sum, { model, day }) => sum + (day.mid ?? 0) - (model.status === 'open' ? model.mid ?? 0 : 0), 0);
+        const opened = changes.filter(({ model, day }) => model.status !== 'open' && day.status === 'open').length;
+        const closed = changes.filter(({ model, day }) => model.status === 'open' && day.status !== 'open').length;
+        const noteGuests = changes.reduce((sum, { day }) => sum + (day.status === 'open' ? day.noteGuests : 0), 0);
+        const shifted = (value: number): number => Math.max(0, value + shift);
         return [{
-          from: row.from, to: row.to, openDays: row.openDays ?? 0, low: row.low + noteGuests, mid: row.mid + noteGuests,
-          high: row.high + noteGuests, runId: run.id, madeAt: run.madeAt, actual, inRange: inRangeOf(actual, row.low, row.high), noteGuests,
+          from: row.from, to: row.to, openDays: Math.max(0, (row.openDays ?? 0) + opened - closed), low: shifted(row.low), mid: shifted(row.mid),
+          high: shifted(row.high), runId: run.id, madeAt: run.madeAt, actual, inRange: inRangeOf(actual, row.low, row.high), noteGuests,
         }];
       });
       const used = new Set(days.map((day) => day.runId));

@@ -171,6 +171,50 @@ test('Remove from the forecast closes the section, and a rule added then sends n
   expect(writes(api)).toEqual([{ method: 'POST', path: PATH, body: { text: 'Kitchen closes at 9' } }]);
 });
 
+test('the pressed control goes, so focus moves: Change the forecast to the section’s heading, Remove from the forecast to the line under its button', async () => {
+  const { api } = setup();
+  renderAt('/locations/l1/rules', api);
+  await screen.findByText('Closed Mondays');
+  // Nothing takes focus on the page's first render.
+  expect(document.activeElement).toBe(document.body);
+  const open = screen.getByRole('button', { name: 'Change the forecast' });
+  open.focus();
+  fireEvent.click(open);
+  const heading = document.activeElement;
+  expect(heading?.textContent).toBe('Change the forecast');
+  expect(section().contains(heading)).toBe(true);
+  // Taken from script only: tabIndex -1 keeps it out of the tab order, so Tab goes on to the first field.
+  expect(heading?.getAttribute('tabindex')).toBe('-1');
+  fireEvent.click(within(section()).getByRole('button', { name: 'Remove from the forecast' }));
+  expect(document.activeElement?.textContent).toBe('Optional. Without it, TownwiseAI reads the rule and the forecast doesn’t change.');
+  // In a row's edit too.
+  fireEvent.click(screen.getByRole('button', { name: 'Edit “Closed Mondays”' }));
+  fireEvent.click(within(editingRow()).getByRole('button', { name: 'Change the forecast' }));
+  expect(section(editingRow()).contains(document.activeElement)).toBe(true);
+  expect(document.activeElement?.textContent).toBe('Change the forecast');
+});
+
+test('a rule opened for edit with its schedule, and a form that starts over after Add rule, move no focus', async () => {
+  const scheduled = ruleOf('r1', 'Closed Mondays', { schedule: CLOSED_MONDAYS, scheduleSummary: 'Closed on Mondays from Jan 5, 2027' });
+  const { api } = setup(meOf(ACCESS.member), [scheduled, ...RULES.slice(1)]);
+  renderAt('/locations/l1/rules', api);
+  await screen.findByText('Closed Mondays');
+  const edit = screen.getByRole('button', { name: 'Edit “Closed Mondays”' });
+  edit.focus();
+  fireEvent.click(edit);
+  expect(section(editingRow())).toBeTruthy();
+  expect(section(editingRow()).contains(document.activeElement)).toBe(false);
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  fireEvent.change(field(), { target: { value: 'Kitchen closes at 9' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Change the forecast' }));
+  fireEvent.change(within(section()).getByLabelText('Starts'), { target: { value: '2026-12-01' } });
+  const add = screen.getByRole('button', { name: 'Add rule' });
+  add.focus();
+  fireEvent.click(add);
+  expect(await screen.findByText('Kitchen closes at 9')).toBeTruthy();
+  expect(document.activeElement).toBe(add);
+});
+
 test('editing a rule with a schedule opens its section filled in; removing it sends schedule null; adding one to a rule sends it', async () => {
   const scheduled = ruleOf('r1', 'Closed Mondays', { schedule: CLOSED_MONDAYS, scheduleSummary: 'Closed on Mondays from Jan 5, 2027' });
   const { api } = setup(meOf(ACCESS.member), [scheduled, ...RULES.slice(1)]);

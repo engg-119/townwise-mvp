@@ -18,14 +18,17 @@ import { termEntries, termStateOn } from './term.ts';
 export interface PeopleInTownReader {
   /** The researched headcount inputs it reads (sources.ts in production). */
   readonly data: PeopleData;
-  /** `range`: inclusive YYYY-MM-DD days, at most 92 (callers check). */
-  window(input: { scope: OrgScope; location: LocationRecord; range: { from: string; to: string } }): Promise<PeopleInTownWindow>;
+  /**
+   * `range`: inclusive YYYY-MM-DD days, at most 92 (callers check). `today`: the town's date; only a day before it can
+   * be likely closed in the history (D32), since today's upload may be partial.
+   */
+  window(input: { scope: OrgScope; location: LocationRecord; range: { from: string; to: string }; today: string }): Promise<PeopleInTownWindow>;
 }
 
 export function createPeopleInTownReader(deps: { stores: Pick<TownwiseStores, 'salesDays' | 'notes' | 'businessRules'>; data: PeopleData }): PeopleInTownReader {
   return {
     data: deps.data,
-    async window({ scope, location, range }) {
+    async window({ scope, location, range, today }) {
       const { town } = location;
       const covers = townCalendarCovers(town.townId);
       const terms = covers === null ? [] : termEntries(townEvents(town.townId, covers));
@@ -49,7 +52,7 @@ export function createPeopleInTownReader(deps: { stores: Pick<TownwiseStores, 's
         timeZone: timeZoneOf(town).timeZone,
         events: townEvents(town.townId, range),
         termOn,
-        history: yourHistory(days, notes, historyEvents, (date) => termOn(date).state, rules),
+        history: yourHistory(days, notes, historyEvents, (date) => termOn(date).state, rules, today),
       });
     },
   };

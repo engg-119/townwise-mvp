@@ -7,7 +7,7 @@ jest.mock('expo-splash-screen', () => ({
   hideAsync: jest.fn(() => Promise.resolve()),
 }));
 
-import { StyleSheet } from 'react-native';
+import { AccessibilityInfo, StyleSheet } from 'react-native';
 import { cleanup, fireEvent, screen, within } from 'expo-router/testing-library';
 
 import { ACCESS, fakePortalApi, meOf, orgOf, writes } from '../../helpers/portal';
@@ -85,4 +85,18 @@ test('a rule’s schedule: Change the forecast opens the note form’s fields wi
       schedule: { kind: 'closure', startDate: '2026-12-01', endDate: null, weekdays: [2], effect: 'closed', expectedGuests: null, startTime: null, endTime: null },
     },
   }]);
+});
+
+test('the pressed control goes, so the screen reader moves: to the section’s heading on Change the forecast, to the line under its button on Remove', async () => {
+  const send = jest.spyOn(AccessibilityInfo, 'sendAccessibilityEvent');
+  const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: rulesFake([ruleOf('r1', 'Closed Mondays')]) });
+  await renderApp('/locations/l1/rules', api);
+  expect(await screen.findByText('Closed Mondays')).toBeTruthy();
+  // The page's own moves (the shell's, on arrival) are not this section's.
+  const before = send.mock.calls.length;
+  await fireEvent.press(screen.getByRole('button', { name: 'Change the forecast' }));
+  expect(send.mock.calls.slice(before).map((call) => call[1])).toEqual(['focus']);
+  await fireEvent.press(screen.getByRole('button', { name: 'Remove from the forecast' }));
+  expect(send.mock.calls.slice(before).map((call) => call[1])).toEqual(['focus', 'focus']);
+  send.mockRestore();
 });

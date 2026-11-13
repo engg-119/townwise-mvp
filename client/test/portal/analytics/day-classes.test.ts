@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { TownEvent } from '../../../src/portal/analytics/api';
-import { classOf, dayContext, dayFlags, ruleSchedules, typicalGuests, type DayClass } from '../../../src/portal/analytics/days';
+import { classOf, dayContext, dayFlags, ruleSchedules, typicalGuests, type DayClass, type RuleScheduleLike } from '../../../src/portal/analytics/days';
 import type { Note } from '../../../src/portal/locations/api';
 import { day, note, townEvent } from './fakes';
 
@@ -16,8 +16,12 @@ interface ClassCase {
   date: string;
   history?: { date: string; guests: number | null }[];
   day: { guests: number | null; netSalesCents: number | null } | null;
-  notes: Pick<Note, 'startDate' | 'endDate' | 'weekdays' | 'effect'>[];
+  notes: Pick<Note, 'kind' | 'startDate' | 'endDate' | 'weekdays' | 'effect'>[];
+  /** Business rule schedules covering the day (spec D31); none when absent. */
+  rules?: RuleScheduleLike[];
   events: Pick<TownEvent, 'start' | 'end' | 'kind'>[];
+  /** The town's today; absent, the day is before today. */
+  today?: string;
   class: DayClass;
   likelyClosed?: true;
 }
@@ -36,7 +40,7 @@ test.each(cases)('$name: $class', (each) => {
   const record = each.day === null
     ? undefined
     : { ...day(each.date, each.day.guests, each.day.netSalesCents), typicalGuests: typicalGuests(each.date, (date) => guests.get(date)) };
-  const context = dayContext(notes, events);
+  const context = dayContext(notes, events, each.rules ?? [], each.today);
   expect(classOf(each.date, record, context)).toBe(each.class);
   expect(dayFlags(each.date, record, context).likelyClosed).toBe(each.likelyClosed === true);
 });
@@ -47,9 +51,9 @@ describe('rule schedules', () => {
   const history = [{ date: '2026-09-19', guests: 200 }, { date: '2026-09-26', guests: 200 }, { date: '2026-10-03', guests: 200 }];
   const guests = new Map(history.map((other) => [other.date, other.guests]));
   const near = { ...day('2026-10-10', 2), typicalGuests: typicalGuests('2026-10-10', (date) => guests.get(date)) };
-  const rule = (effect: Note['effect'], endDate: string | null = null, weekdays: number[] | null = null) =>
-    ({ startDate: '2026-10-01', endDate, weekdays, effect });
-  const flags = (...rules: ReturnType<typeof rule>[]) => dayFlags('2026-10-10', near, dayContext([], [], rules));
+  const rule = (effect: Note['effect'], endDate: string | null = null, weekdays: number[] | null = null): RuleScheduleLike =>
+    ({ kind: 'other', startDate: '2026-10-01', endDate, weekdays, effect });
+  const flags = (...rules: RuleScheduleLike[]) => dayFlags('2026-10-10', near, dayContext([], [], rules));
 
   test('more or fewer guests keep a near-empty day open, and the day stays regular, not noted', () => {
     for (const effect of ['more_guests', 'fewer_guests'] as const) {
@@ -66,8 +70,17 @@ describe('rule schedules', () => {
     expect(classOf('2026-10-10', near, dayContext([], []))).toBe('closed');
   });
 
-  test('a closed rule closes the day, as a closed note does', () => {
+  test('a closed rule closes a near-empty past day, as a closed note does', () => {
     expect(flags(rule('closed'))).toMatchObject({ closed: true, likelyClosed: false });
+  });
+
+  test('a past day’s real guests beat a closed rule; from today on the rule closes the day (spec D31, D32)', () => {
+    const busy = { ...day('2026-10-10', 180), typicalGuests: 200 };
+    expect(dayFlags('2026-10-10', busy, dayContext([], [], [rule('closed')]))).toMatchObject({ closed: false });
+    expect(dayFlags('2026-10-10', busy, dayContext([], [], [rule('closed')], '2026-10-10'))).toMatchObject({ closed: true, likelyClosed: false });
+    // A one-day opening note beats the rule.
+    const opening = note({ kind: 'opening', startDate: '2026-10-10', effect: 'unknown' });
+    expect(classOf('2026-10-10', busy, dayContext([opening], [], [rule('closed')], '2026-10-10'))).toBe('noted');
   });
 
   test('ruleSchedules keeps only the rules that have a schedule', () => {

@@ -167,7 +167,10 @@ describe('get_day', () => {
     };
   }
 
-  function context(opts: { days?: SalesDayWithUpload[]; notes?: NoteRecord[]; rules?: Pick<BusinessRuleRecord, 'id' | 'schedule'>[]; uploads?: UploadRecord[]; townId?: Town['townId'] } = {}) {
+  function context(opts: {
+    days?: SalesDayWithUpload[]; notes?: NoteRecord[]; rules?: Pick<BusinessRuleRecord, 'id' | 'schedule'>[]; uploads?: UploadRecord[]; townId?: Town['townId'];
+    today?: string;
+  } = {}) {
     const byIds: string[][] = [];
     const ranges: { from: string; to: string }[] = [];
     const upload: UploadRecord = {
@@ -200,7 +203,7 @@ describe('get_day', () => {
         id: '000000000000000000000001', name: 'Test Taproom', placeId: null, createdAt: new Date('2026-01-01T00:00:00Z'),
         town: { townId: opts.townId === undefined ? 'hanover-nh' : opts.townId, name: 'Hanover', state: 'NH' },
       },
-      today: TODAY,
+      today: opts.today ?? TODAY,
       timeZone: 'America/New_York',
       role: 'member',
       actor: { actorUserId: SENTINEL_USER, actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null },
@@ -305,21 +308,22 @@ describe('get_day', () => {
     expect(resultViewOf('get_day', ok({ other: 1 }))).toBeNull();
   });
 
-  // Spec D32: Saturdays of 120 guests, then near-empty ones. Synthetic.
+  // Spec D32: Saturdays of 120 guests, then near-empty ones, all before the town's today (AFTER). Synthetic.
+  const AFTER = '2026-12-01';
   const saturdays = ['2026-10-03', '2026-10-10', '2026-10-17', '2026-10-24', '2026-10-31', '2026-11-07', '2026-11-14']
     .map((date) => ({ date, guests: 120, netSalesCents: 240_000, uploadId: UPLOAD_ID }));
   const nearEmpty = (date: string) => ({ date, guests: 1, netSalesCents: 2_500, uploadId: UPLOAD_ID });
 
   it('says a near-empty day is likely closed (spec D32), unless a note says more or fewer guests; an all-zero day is closed', async () => {
     const days = [...saturdays, nearEmpty('2026-11-21')];
-    expect((await run({ date: '2026-11-21' }, context({ days }).tc)).parsed)
+    expect((await run({ date: '2026-11-21' }, context({ today: AFTER, days }).tc)).parsed)
       .toMatchObject({ sales: { guests: 1, netSalesUsd: 25 }, closed: true, likelyClosed: true, dayClass: 'closed' });
     const slow = note({ kind: 'other', effect: 'fewer_guests', expectedGuests: null, detail: null });
-    expect((await run({ date: '2026-11-21' }, context({ days, notes: [slow] }).tc)).parsed)
+    expect((await run({ date: '2026-11-21' }, context({ today: AFTER, days, notes: [slow] }).tc)).parsed)
       .toMatchObject({ closed: false, likelyClosed: false, dayClass: 'noted' });
     const zero = [...saturdays, { date: '2026-11-21', guests: 0, netSalesCents: 0, uploadId: UPLOAD_ID }];
-    expect((await run({ date: '2026-11-21' }, context({ days: zero }).tc)).parsed).toMatchObject({ closed: true, likelyClosed: false });
-    expect((await run({ date: '2026-11-14' }, context({ days }).tc)).parsed).toMatchObject({ closed: false, likelyClosed: false });
+    expect((await run({ date: '2026-11-21' }, context({ today: AFTER, days: zero }).tc)).parsed).toMatchObject({ closed: true, likelyClosed: false });
+    expect((await run({ date: '2026-11-14' }, context({ today: AFTER, days }).tc)).parsed).toMatchObject({ closed: false, likelyClosed: false });
   });
 
   it('a covering rule schedule with more or fewer guests keeps a near-empty day open, as a note does; other effects change nothing', async () => {
@@ -328,20 +332,20 @@ describe('get_day', () => {
       id: 'r1', schedule: { kind: 'other' as const, startDate: '2026-11-01', endDate, weekdays: null, effect, expectedGuests: null, startTime: null, endTime: null },
     });
     for (const effect of ['more_guests', 'fewer_guests'] as const) {
-      expect((await run({ date: '2026-11-21' }, context({ days, rules: [rule(effect)] }).tc)).parsed)
+      expect((await run({ date: '2026-11-21' }, context({ today: AFTER, days, rules: [rule(effect)] }).tc)).parsed)
         .toMatchObject({ closed: false, likelyClosed: false });
     }
-    expect((await run({ date: '2026-11-21' }, context({ days, rules: [rule('unknown')] }).tc)).parsed)
+    expect((await run({ date: '2026-11-21' }, context({ today: AFTER, days, rules: [rule('unknown')] }).tc)).parsed)
       .toMatchObject({ closed: true, likelyClosed: true });
-    expect((await run({ date: '2026-11-21' }, context({ days, rules: [rule('more_guests', '2026-11-20')] }).tc)).parsed)
+    expect((await run({ date: '2026-11-21' }, context({ today: AFTER, days, rules: [rule('more_guests', '2026-11-20')] }).tc)).parsed)
       .toMatchObject({ likelyClosed: true });
-    expect((await run({ date: '2026-11-21' }, context({ days, rules: [rule('closed')] }).tc)).parsed)
+    expect((await run({ date: '2026-11-21' }, context({ today: AFTER, days, rules: [rule('closed')] }).tc)).parsed)
       .toMatchObject({ closed: true, likelyClosed: false });
     const tool = toolNamed('get_sales_days');
     const range = tool?.parse({ from: '2026-11-21', to: '2026-11-21' }, TODAY) ?? null;
     if (tool === undefined || range === null) throw new Error('invalid input');
     const sales = async (rules: ReturnType<typeof rule>[]) =>
-      (JSON.parse((await tool.run(context({ days, rules }).tc, range)).content) as { days: object[] }).days;
+      (JSON.parse((await tool.run(context({ today: AFTER, days, rules }).tc, range)).content) as { days: object[] }).days;
     expect(await sales([rule('fewer_guests')])).toEqual([{ date: '2026-11-21', guests: 1, netSalesUsd: 25 }]);
     expect(await sales([])).toEqual([{ date: '2026-11-21', guests: 1, netSalesUsd: 25, likelyClosed: true }]);
   });
@@ -349,7 +353,7 @@ describe('get_day', () => {
   it('get_sales_days reads the 8 weeks before the range too, gives only the range, and marks likely-closed days (spec D32)', async () => {
     const days = [...saturdays, nearEmpty('2026-11-21'), nearEmpty('2026-11-28')];
     const slow = note({ kind: 'other', startDate: '2026-11-28', endDate: '2026-11-28', effect: 'fewer_guests', expectedGuests: null, detail: null });
-    const { tc, ranges } = context({ days, notes: [slow] });
+    const { tc, ranges } = context({ today: AFTER, days, notes: [slow] });
     const tool = toolNamed('get_sales_days');
     const range = tool?.parse({ from: '2026-11-14', to: '2026-11-30' }, TODAY) ?? null;
     if (tool === undefined || range === null) throw new Error('invalid input');
@@ -365,6 +369,39 @@ describe('get_day', () => {
     });
     expect(tool.definition.description).toContain('likelyClosed');
     expect(toolNamed('get_day')?.definition.description).toContain('likelyClosed');
+  });
+
+  it('never calls today or a later day likely closed: its upload may be partial (spec D32)', async () => {
+    const days = [...saturdays, nearEmpty('2026-11-21')];
+    expect((await run({ date: '2026-11-21' }, context({ today: '2026-11-21', days }).tc)).parsed)
+      .toMatchObject({ closed: false, likelyClosed: false });
+    expect((await run({ date: '2026-11-21' }, context({ today: '2026-11-20', days }).tc)).parsed).toMatchObject({ closed: false, likelyClosed: false });
+    const tool = toolNamed('get_sales_days');
+    const range = tool?.parse({ from: '2026-11-21', to: '2026-11-21' }, '2026-11-21') ?? null;
+    if (tool === undefined || range === null) throw new Error('invalid input');
+    expect(JSON.parse((await tool.run(context({ today: '2026-11-21', days }).tc, range)).content)).toMatchObject({
+      days: [{ date: '2026-11-21', guests: 1, netSalesUsd: 25 }],
+    });
+    expect(tool.definition.description).toContain('before today');
+  });
+
+  it('a past day’s real guests beat a closure rule; it closes a day with few or no guests, and today a one-day note beats it (spec D31, D32)', async () => {
+    const days = [...saturdays, nearEmpty('2026-11-21')];
+    const closedSaturdays = {
+      id: 'r2', schedule: { kind: 'closure' as const, startDate: '2026-10-01', endDate: null, weekdays: [6], effect: 'closed' as const, expectedGuests: null, startTime: null, endTime: null },
+    };
+    expect((await run({ date: '2026-11-14' }, context({ today: AFTER, days, rules: [closedSaturdays] }).tc)).parsed)
+      .toMatchObject({ closed: false, likelyClosed: false, dayClass: 'regular' });
+    expect((await run({ date: '2026-11-21' }, context({ today: AFTER, days, rules: [closedSaturdays] }).tc)).parsed)
+      .toMatchObject({ closed: true, likelyClosed: false, dayClass: 'closed' });
+    // From today on the rule closes the day, unless a note on the day says it is open.
+    const busy = [...saturdays, { ...nearEmpty('2026-11-21'), guests: 90 }];
+    expect((await run({ date: '2026-11-21' }, context({ today: '2026-11-21', days: busy, rules: [closedSaturdays] }).tc)).parsed)
+      .toMatchObject({ closed: true, dayClass: 'closed' });
+    const opening = note({ kind: 'opening', effect: 'unknown', expectedGuests: null, detail: null });
+    expect((await run({ date: '2026-11-21' }, context({ today: '2026-11-21', days: busy, notes: [opening], rules: [closedSaturdays] }).tc)).parsed)
+      .toMatchObject({ closed: false, dayClass: 'noted' });
+    expect(toolNamed('get_day')?.definition.description).toContain('before today');
   });
 
   it('is named in the system prompt, with which kind each of its figures is', () => {
