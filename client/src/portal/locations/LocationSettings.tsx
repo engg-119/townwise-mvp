@@ -34,6 +34,7 @@ import { shownLocationName } from './naming';
 // location on Google Maps; using a place sets it and its town (PATCH with `placeId`), and a town changed by hand
 // takes the place off (api/README.md, Organization and locations). The search takes focus when it opens; when it
 // closes (Use this place, Cancel, or Google failing) focus moves to the line that says whether the location is linked.
+// After Name and town, a static Business rules section links to P28 (it reads nothing).
 
 const READ_ONLY_ID = 'location-settings-ro';
 const PLACE_READ_ONLY_ID = 'location-place-ro';
@@ -168,6 +169,18 @@ export function LocationSettings(): React.JSX.Element {
                   {...(readOnlyId === null ? {} : { describedBy: readOnlyId })}
                   onPress={submit}
                 />
+              </Actions>
+            </Stack>
+          )}
+        />
+      </Section>
+      <Section kicker="TownwiseAI" title="Business rules">
+        <Columns
+          main={(
+            <Stack>
+              <Small>{`The standing facts TownwiseAI keeps in mind for ${shown}. They never change Townwise’s forecast.`}</Small>
+              <Actions>
+                <LinkButton variant="outline" href={locationHref(location.id, 'rules')} label="Edit business rules" />
               </Actions>
             </Stack>
           )}

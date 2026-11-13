@@ -17,7 +17,7 @@ const ALL: [string, Access][] = Object.entries(ACCESS);
 const GATE = ['/request-access', '/waiting', '/no-access', '/joining', '/staff/sign-in-again'];
 const MEMBER = [
   '/dashboard', '/settings', '/locations/l1', '/locations/l1/calendar', '/locations/l1/analytics', '/locations/l1/sales', '/locations/l1/sales/upload', '/locations/l1/data',
-  '/locations/l1/notes', '/locations/l1/town', '/locations/l1/agent', '/locations/l1/chat',
+  '/locations/l1/notes', '/locations/l1/town', '/locations/l1/agent', '/locations/l1/chat', '/locations/l1/rules',
 ];
 const ADMIN_ONLY = ['/team', '/locations/new', '/locations/l1/settings'];
 const CONSOLE = ['/admin', '/admin/orgs', '/admin/orgs/o1', '/admin/people', '/admin/audit'];
@@ -90,6 +90,15 @@ describe('access routing (spec 4.3)', () => {
     expect(isAllowed(staffMe(), '/locations/x/calendar')).toBe(false);
     expect(isAllowed(meOf(ACCESS.member), '/locations/x/calendar/2026-11')).toBe(false);
   });
+
+  test('/locations/l1/rules is a member page, allowed under view-as and open as admin', () => {
+    for (const me of [meOf(ACCESS.member), meOf(ACCESS.admin), viewAsMe(ACCESS.member), viewAsMe(ACCESS.admin), openAsAdminMe()]) {
+      expect(isAllowed(me, '/locations/l1/rules')).toBe(true);
+    }
+    expect(isAllowed(meOf(ACCESS.pending), '/locations/l1/rules')).toBe(false);
+    expect(isAllowed(staffMe(), '/locations/l1/rules')).toBe(false);
+    expect(isAllowed(meOf(ACCESS.member), '/locations/l1/rules/r1')).toBe(false);
+  });
 });
 
 describe('navigation per role (spec 15.3)', () => {
@@ -135,6 +144,8 @@ describe('navigation per role (spec 15.3)', () => {
     expect(current('/locations/l1/sales/upload')).toEqual([['Your data', 'true']]);
     expect(current('/locations/l1/data')).toEqual([['Your data', 'page']]);
     expect(current('/locations/l1/agent')).toEqual([['TownwiseAI', 'page']]);
+    // Business rules (P28) lives under TownwiseAI, as Sales data under Analytics.
+    expect(current('/locations/l1/rules')).toEqual([['TownwiseAI', 'true']]);
     expect(current('/locations/l1/calendar')).toEqual([['Calendar', 'page']]);
     expect(current('/locations/l1/notes/')).toEqual([['Notes', 'page']]);
     expect(current('/locations/l1/town')).toEqual([['Town', 'page']]);
@@ -180,6 +191,7 @@ describe('navigation per role (spec 15.3)', () => {
       ['/locations/l1/notes', 'notes', 'Notes'],
       ['/locations/l1/town', 'town', 'Town'],
       ['/locations/l1/agent', 'agent', 'TownwiseAI'],
+      ['/locations/l1/rules', 'rules', 'Business rules'],
       ['/locations/l1/settings', 'settings', 'Location settings'],
     ];
     for (const [path, key, title] of pages) {

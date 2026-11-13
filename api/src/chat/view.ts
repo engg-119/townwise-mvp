@@ -16,6 +16,7 @@ import { inputViewOf, resultViewOf, toolNamed, type ToolView } from './tools/reg
 import { visualOf, type Visual } from './tools/visual.ts';
 import type { ChatNode } from './tree.ts';
 import { NOT_RUN } from './turn.ts';
+import { isContextBlock } from './user-message.ts';
 
 /** What the author did with a proposal (tw_chat_proposals). `noteId` is the saved note's id, else null. */
 export interface ProposalState {
@@ -133,7 +134,9 @@ export function chatMessageViews(
     const first = items[0];
     if (first === undefined) continue;
     if (node.role === 'user') {
-      const text = blocksOf(first.param).flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('');
+      // Only what the person typed: a business_rules block Townwise added before it is never shown back.
+      const blocks = blocksOf(first.param);
+      const text = blocks.flatMap((block, index) => (block.type === 'text' && !isContextBlock(blocks, index) ? [block.text] : [])).join('');
       if (text !== '') views.push(entry(node.id, 'user', first.at, first.at, [{ type: 'text', text }], null, null));
       continue;
     }

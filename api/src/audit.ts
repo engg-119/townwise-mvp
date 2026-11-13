@@ -187,6 +187,10 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'note.created': return noteSummary('Added', d);
     case 'note.updated': return noteSummary('Edited', d);
     case 'note.deleted': return noteSummary('Deleted', d);
+    // D31: never the rule's text.
+    case 'rule.created': return d.via === 'townwise_ai' ? 'Added a business rule, from TownwiseAI' : 'Added a business rule';
+    case 'rule.updated': return 'Edited a business rule';
+    case 'rule.deleted': return 'Deleted a business rule';
     case 'chat.turn_completed': return 'Asked the tuning chat about a location';
     case 'chat.conversation_deleted': return 'Deleted a tuning chat conversation';
     case 'agent.question_answered':

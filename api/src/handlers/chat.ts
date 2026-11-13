@@ -15,6 +15,7 @@ import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import { runTurn, type TurnEvent, type TurnInput } from '../chat/turn.ts';
 import { newestLeafUnder, newNodeId, nodeIdSchema, nodesOf, pathTo, type ChatNode, type TreeNodeView } from '../chat/tree.ts';
+import { userMessageOf } from '../chat/user-message.ts';
 import { chatMessageViews, OPEN, type ChatMessageView, type FeedbackView, type ProposalState, type ShownProposal } from '../chat/view.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import type { ConversationOwner, ConversationRecord, ConversationSummary } from '../stores/chat-conversations.ts';
@@ -292,6 +293,8 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   if ((await budgetOf(ctx, scope)).exhausted) {
     throw new AppError(409, 'chat_budget_exhausted', 'Your organization’s TownwiseAI budget for this month is used up');
   }
+  // Before any claim, so a store failure has nothing to release. A regenerate resends its stored message as it was.
+  const rules = 'replyTo' in body ? [] : await ctx.stores.businessRules.list(scope, location.id);
   const now = ctx.now();
   const claim: TurnClaim = { turnId: randomUUID(), now, staleBefore: new Date(now.getTime() - STALE_TURN_MS) };
   const { turnId } = claim;
@@ -348,7 +351,8 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
       // U13A: today is the town's local date, so an evening turn is not already tomorrow.
       tools: { ctx, scope, location, today: localDay(ctx.now(), timeZone), timeZone, role: caller.role, actor: actorOf(caller) },
       history,
-      userMessage: 'replyTo' in body ? null : { role: 'user', content: body.content },
+      // Spec 10.16: the location's business rules go before the person's text when they differ from the path's last list.
+      userMessage: 'replyTo' in body ? null : userMessageOf(history, { rules: rules.map((rule) => rule.text) }, body.content),
       nodes,
       signal,
       now: ctx.now,

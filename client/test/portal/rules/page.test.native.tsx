@@ -1,0 +1,61 @@
+jest.mock('@react-native-google-signin/google-signin', () => {
+  const mocked: unknown = jest.requireActual('../../helpers/googleSigninMock');
+  return mocked;
+});
+jest.mock('expo-splash-screen', () => ({
+  preventAutoHideAsync: jest.fn(() => Promise.resolve()),
+  hideAsync: jest.fn(() => Promise.resolve()),
+}));
+
+import { StyleSheet } from 'react-native';
+import { cleanup, fireEvent, screen, within } from 'expo-router/testing-library';
+
+import { ACCESS, fakePortalApi, meOf, orgOf, writes } from '../../helpers/portal';
+import { renderApp } from '../../helpers/renderApp';
+import { ruleOf, rulesFake } from './fakes';
+
+// P28 Business rules on native (spec 16.3): the same page, with the Add rule button submitting and every touch
+// target at least 44px.
+
+afterEach(async () => {
+  await cleanup();
+});
+
+const PATH = '/api/org/locations/l1/rules';
+
+function minHeightOf(element: { props: { style?: unknown } }): number {
+  return (StyleSheet.flatten(element.props.style as object) as { minHeight?: number }).minHeight ?? 0;
+}
+
+test('lists, adds and deletes a rule with 44px targets', async () => {
+  const fake = rulesFake([ruleOf('r1', 'Closed Mondays'), ruleOf('r2', 'Patio opens in May', { addedVia: 'townwise_ai' })]);
+  const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: fake });
+  await renderApp('/locations/l1/rules', api);
+  expect(await screen.findByText('Closed Mondays')).toBeTruthy();
+  expect(screen.getByText('Patio opens in May')).toBeTruthy();
+  expect(screen.getByText(/^Saved from TownwiseAI by /)).toBeTruthy();
+  expect(screen.getByText('2 of 30')).toBeTruthy();
+
+  const field = screen.getByLabelText('New rule');
+  expect(minHeightOf(field)).toBeGreaterThanOrEqual(44);
+  for (const name of ['Add rule', 'Edit “Closed Mondays”', 'Delete “Closed Mondays”']) {
+    expect(minHeightOf(screen.getByRole('button', { name }))).toBeGreaterThanOrEqual(44);
+  }
+  for (const name of ['Open Notes', 'Ask TownwiseAI']) {
+    expect(minHeightOf(screen.getByRole('link', { name }))).toBeGreaterThanOrEqual(44);
+  }
+
+  await fireEvent.changeText(field, 'Kitchen closes at 9');
+  await fireEvent.press(screen.getByRole('button', { name: 'Add rule' }));
+  expect(await screen.findByText('Kitchen closes at 9')).toBeTruthy();
+  expect(writes(api)).toEqual([{ method: 'POST', path: PATH, body: { text: 'Kitchen closes at 9' } }]);
+
+  await fireEvent.press(screen.getByRole('button', { name: 'Delete “Closed Mondays”' }));
+  const dialogButton = screen.getAllByRole('button', { name: 'Delete rule' }).at(-1);
+  if (dialogButton === undefined) throw new Error('no Delete rule');
+  await fireEvent.press(dialogButton);
+  expect(await screen.findByText('Deleted the rule.')).toBeTruthy();
+  expect(screen.queryByText('Closed Mondays')).toBeNull();
+  expect(within(screen.getByLabelText('Business rules')).getAllByText(/^(Patio opens in May|Kitchen closes at 9)$/)).toHaveLength(2);
+  expect(writes(api).at(-1)).toEqual({ method: 'DELETE', path: `${PATH}/r1`, body: undefined });
+});

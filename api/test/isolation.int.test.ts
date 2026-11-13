@@ -45,6 +45,8 @@ interface Tenant {
   uploadId: string;
   /** D28: an item kept for reference at the location (a text file with no import and no upload), the member's. */
   refFileId: string;
+  /** A business rule of the location (spec 6.24), the member's. */
+  ruleId: string;
 }
 
 /**
@@ -63,6 +65,8 @@ interface SetupTenant {
   /** D28: its upload record and an item kept for reference, as A's and B's. */
   uploadId: string;
   refFileId: string;
+  /** A business rule of its location, the staff member's, as A's and B's. */
+  ruleId: string;
 }
 
 let a: Tenant;
@@ -95,6 +99,7 @@ async function tenant(name: string): Promise<Tenant> {
   });
   const importId = String((await server.connection.collection('tw_files').findOne({ _id: new Types.ObjectId(fileId) }))?.importId);
   const refFileId = await addReferenceItem(orgId, locationId, member.session.userId, name);
+  const ruleId = await addRuleRow(orgId, locationId, member.session.userId, name);
   await withProposal(conversationId, name);
   // U9: an answer to a TownwiseAI question.
   await server.connection.collection('tw_agent_answers').insertOne({
@@ -103,6 +108,7 @@ async function tenant(name: string): Promise<Tenant> {
   });
   return {
     orgId, name, admin, member, inviteId, seatIds, locationId, locationName, noteId, conversationId, fileId, importId, uploadId, refFileId,
+    ruleId,
   };
 }
 
@@ -122,7 +128,19 @@ async function setupTenant(name: string, staffUserId: string): Promise<SetupTena
   });
   const importId = String((await server.connection.collection('tw_files').findOne({ _id: new Types.ObjectId(fileId) }))?.importId);
   const refFileId = await addReferenceItem(orgId, locationId, staffUserId, name);
-  return { orgId, inviteId, locationId, noteId, conversationId, fileId, importId, uploadId, refFileId };
+  const ruleId = await addRuleRow(orgId, locationId, staffUserId, name);
+  return { orgId, inviteId, locationId, noteId, conversationId, fileId, importId, uploadId, refFileId, ruleId };
+}
+
+/** A business rule of the location (spec 6.24), in the shape the store writes. */
+async function addRuleRow(orgId: string, locationId: string, createdBy: string, name: string): Promise<string> {
+  const _id = new Types.ObjectId();
+  const text = `${name} private rule`;
+  await server.connection.collection('tw_business_rules').insertOne({
+    _id, orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), text, key: text.toLowerCase(), addedVia: 'page',
+    createdBy, createdAt: server.clock.now(), updatedAt: server.clock.now(),
+  });
+  return _id.toHexString();
 }
 
 /** D28: a `.txt` item kept for reference, as Your data's Paste text leaves one, and its original in the memory blobs. */
@@ -178,6 +196,8 @@ async function snapshotOf(org: Tenant): Promise<string> {
     'tw_welcomes',
     // U9, TownwiseAI's questions.
     'tw_agent_answers',
+    // Business rules (spec 6.24).
+    'tw_business_rules',
   ]) {
     docs.push(await server.connection.collection(name).find({ orgId }).sort({ _id: 1 }).toArray());
   }
@@ -205,7 +225,7 @@ function bIds(): Record<string, string> {
   return {
     orgId: b.orgId, inviteId: b.inviteId, memberId: b.inviteId, userId: b.member.session.userId,
     locationId: b.locationId, noteId: b.noteId, conversationId: b.conversationId, fileId: b.fileId, importId: b.importId,
-    ref: `u_${b.uploadId}`,
+    ref: `u_${b.uploadId}`, ruleId: b.ruleId,
   };
 }
 
@@ -214,6 +234,7 @@ function bSecrets(): string[] {
   return [
     b.orgId, b.name, b.admin.email, b.member.email, b.locationId, b.locationName, b.noteId, b.conversationId, `${b.name} private chat`,
     b.fileId, b.importId, b.uploadId, `${b.name} private item`, b.refFileId, `${b.name} private item.txt`, `${b.name} reference text`,
+    b.ruleId, `${b.name} private rule`,
   ];
 }
 
@@ -274,6 +295,9 @@ const BODY: Record<string, unknown> = {
   'org.agent.answer': { answer: 'not_sure' },
   // D28.
   'org.data.update': { enabled: false },
+  // Business rules.
+  'org.rules.create': { text: 'Closed Mondays' },
+  'org.rules.update': { text: 'Closed Tuesdays' },
 };
 const QUERY: Record<string, string> = {
   'org.sales.days': '?from=2026-01-01&to=2026-05-31', 'org.calendar.get': '?from=2026-01-01&to=2026-05-31',
@@ -290,7 +314,7 @@ const QUERY: Record<string, string> = {
 async function expectForeignIdsNotFound(route: TownwiseRoute, session: TestSession, own: Record<string, string>): Promise<void> {
   const bOwn: Record<string, string[]> = {
     memberId: [b.inviteId, ...b.seatIds], locationId: [b.locationId], noteId: [b.noteId], conversationId: [b.conversationId],
-    fileId: [b.fileId], importId: [b.importId], ref: [`u_${b.uploadId}`, `f_${b.refFileId}`],
+    fileId: [b.fileId], importId: [b.importId], ref: [`u_${b.uploadId}`, `f_${b.refFileId}`], ruleId: [b.ruleId],
   };
   const params = [...route.path.matchAll(/:([A-Za-z]+)/g)].map((match) => match[1] ?? '');
   // Every other segment is the caller's own, so the request reaches the route: an empty one would match no route, and
@@ -319,21 +343,21 @@ async function expectForeignIdsNotFound(route: TownwiseRoute, session: TestSessi
 
 /** The path ids of an organization's own records, and the ids no organization owns, for `route`. */
 function ownIds(
-  org: Pick<Tenant, 'inviteId' | 'locationId' | 'noteId' | 'conversationId' | 'fileId' | 'importId' | 'uploadId'>, route: TownwiseRoute,
+  org: Pick<Tenant, 'inviteId' | 'locationId' | 'noteId' | 'conversationId' | 'fileId' | 'importId' | 'uploadId' | 'ruleId'>, route: TownwiseRoute,
 ): Record<string, string> {
   return {
     memberId: org.inviteId, locationId: org.locationId, noteId: org.noteId, conversationId: org.conversationId, fileId: org.fileId,
     importId: org.importId, index: '0', questionId: 'gap_2026-05-02_2026-05-03',
     // D28: a proposal to keep text is its own call.
     proposalId: route.id.startsWith('org.chat.item_proposal') ? 'toolu_item0001' : 'toolu_proposal0001',
-    ref: `u_${org.uploadId}`,
+    ref: `u_${org.uploadId}`, ruleId: org.ruleId,
     // The reply of the organization's conversation (its stored messages have no tree, so their nodes are legacy-{index}).
     nodeId: 'legacy-1',
   };
 }
 
 describe('isolation of id-bearing tenant routes, generated from the route table', () => {
-  it('covers the team, location, sales, note, tuning chat and proposal routes', () => {
+  it('covers the team, location, sales, note, business rule, tuning chat and proposal routes', () => {
     expect(tenantRoutesWithIds.map((route) => route.id)).toEqual(expect.arrayContaining([
       'org.members.update', 'org.members.remove', 'org.locations.update', 'org.locations.remove', 'org.sales.get',
       'org.sales.days', 'org.sales.upload', 'org.sales.remove', 'org.notes.list', 'org.notes.create', 'org.notes.update',
@@ -349,6 +373,8 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
       'org.forecast.get',
       // D28, Your data.
       'org.data.update', 'org.data.remove', 'org.chat.item_proposal.get', 'org.chat.item_proposal',
+      // Business rules.
+      'org.rules.list', 'org.rules.create', 'org.rules.update', 'org.rules.remove',
     ]));
   });
 

@@ -37,6 +37,10 @@ export const AUDIT_DETAIL_KEYS = {
   'note.created': ['locationId', 'kind', 'startDate', 'endDate'],
   'note.updated': ['locationId', 'kind', 'startDate', 'endDate'],
   'note.deleted': ['locationId', 'kind', 'startDate', 'endDate'],
+  // Business rules (D31): ids and how the rule was added, never its text.
+  'rule.created': ['locationId', 'via'],
+  'rule.updated': ['locationId'],
+  'rule.deleted': ['locationId'],
   'chat.turn_completed': ['locationId', 'conversationId', 'model', 'calls', 'inputTokens', 'outputTokens', 'stopReason'],
   'chat.conversation_deleted': ['locationId', 'conversationId'],
   // U9, TownwiseAI's questions: the question's id holds only dates and a weekday number.
@@ -67,7 +71,9 @@ export type AuditTargetType =
   // U13B.
   | 'forecast_run'
   // The forecast lab.
-  | 'calibration';
+  | 'calibration'
+  // Business rules (D31).
+  | 'rule';
 export type AuditDetails = Record<string, string | number | boolean | null>;
 
 export interface AuditEventFields {
