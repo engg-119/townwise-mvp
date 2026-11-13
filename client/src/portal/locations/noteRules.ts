@@ -6,13 +6,17 @@ import { daysBetween, EARLIEST_DATE, isCalendarDate, plusYears, utcToday } from 
 // The note form (C6) and the notes lists (spec 12, P14). The form checks the same rules as the API's
 // readNoteContent (api/src/handlers/notes.ts), so a 400 means a client bug: the start date from 2010-01-01 to
 // today plus two years, the end on or after it and at most 366 days later, unique weekdays, expected guests a whole
-// number from 1 to 20,000 and none when closed, details up to 280 characters and required for Other.
+// number from 1 to 20,000 and none when closed except on a buyout (a private event, closed, where they are the
+// party's size), details up to 280 characters and required for Other, and hours (local 24-hour 'HH:MM') both set or
+// both empty, the start before the end, and none on a closure.
 
 export { EFFECT_LABEL, KIND_LABEL };
 
 export const MAX_DETAIL = 280;
 const MAX_SPAN_DAYS = 366;
 const MAX_GUESTS = 20_000;
+/** Local wall-clock time, 24-hour 'HH:MM', as the API takes it. */
+const CLOCK_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 /** Each kind sets the form's default effect; the owner can change it (spec 12). */
 export const DEFAULT_EFFECT: Readonly<Record<NoteKind, NoteEffect>> = {
@@ -44,6 +48,9 @@ export const NOTE_COPY = {
   saveFailed: 'Couldn’t save the note. Try again.',
   limit: 'This location has 1,000 notes. Delete old ones to add more.',
   detailHelp: 'Describe the event, not the guests. Leave out names. Up to 280 characters.',
+  time: 'Enter a time as HH:MM, for example 18:30.',
+  timeOrder: 'The end time is before the start time.',
+  timePair: 'Enter both times, or neither.',
 } as const;
 
 /** “Pick a start date from Jan 1, 2010 to {today plus two years}.” */
@@ -60,19 +67,24 @@ export interface NoteDraft {
   effect: NoteEffect;
   expectedGuests: string;
   detail: string;
+  /** 'HH:MM' or empty; both empty means all day. */
+  startTime: string;
+  endTime: string;
 }
 
-export interface NoteMessages { startDate?: string; endDate?: string; expectedGuests?: string; detail?: string }
+export interface NoteMessages {
+  startDate?: string; endDate?: string; expectedGuests?: string; detail?: string; startTime?: string; endTime?: string;
+}
 
 export function emptyDraft(kind: NoteKind = 'closure'): NoteDraft {
-  return { kind, startDate: '', endDate: '', weekdays: [], effect: DEFAULT_EFFECT[kind], expectedGuests: '', detail: '' };
+  return { kind, startDate: '', endDate: '', weekdays: [], effect: DEFAULT_EFFECT[kind], expectedGuests: '', detail: '', startTime: '', endTime: '' };
 }
 
 export function draftOf(note: Note): NoteDraft {
   return draftOfContent(note);
 }
 
-/** The form's draft of a note's content: a saved note, or one TownwiseAI proposed (its card's Edit first). */
+/** The form's draft of a note's content: a saved note, or one TownwiseAI proposed (its card's Edit first; it has no hours). */
 export function draftOfContent(content: NoteInput): NoteDraft {
   return {
     kind: content.kind,
@@ -82,6 +94,23 @@ export function draftOfContent(content: NoteInput): NoteDraft {
     effect: content.effect,
     expectedGuests: content.expectedGuests === null ? '' : String(content.expectedGuests),
     detail: content.detail ?? '',
+    startTime: content.startTime ?? '',
+    endTime: content.endTime ?? '',
+  };
+}
+
+/**
+ * The form's draft of a note made from an event in the owner's calendar file (spec 16.3 P27): a private
+ * event, more guests, the event's dates and, for a timed one-day event, its hours. The detail starts empty and the
+ * title is never copied: calendar titles often name customers.
+ */
+export function draftOfImported(event: { startDate: string; endDate: string; startTime: string | null; endTime: string | null }): NoteDraft {
+  return {
+    ...emptyDraft('private_event'),
+    startDate: event.startDate,
+    endDate: event.endDate === event.startDate ? '' : event.endDate,
+    startTime: event.startTime ?? '',
+    endTime: event.endTime ?? '',
   };
 }
 
@@ -91,6 +120,25 @@ function guestsOf(text: string): number | null | 'invalid' {
   if (!/^\d+$/.test(cleaned)) return 'invalid';
   const value = Number(cleaned);
   return value >= 1 && value <= MAX_GUESTS ? value : 'invalid';
+}
+
+/** A buyout: a private event that closes the day to walk-ins. Its expected guests are the party's size. */
+function isBuyout(draft: Pick<NoteDraft, 'kind' | 'effect'>): boolean {
+  return draft.kind === 'private_event' && draft.effect === 'closed';
+}
+
+/** The hours, or none on a closure (the form hides them there, so anything typed before is dropped). */
+function hoursOf(draft: NoteDraft, messages: NoteMessages): { startTime: string | null; endTime: string | null } {
+  if (draft.kind === 'closure') return { startTime: null, endTime: null };
+  const start = draft.startTime.trim();
+  const end = draft.endTime.trim();
+  if (start !== '' && !CLOCK_TIME.test(start)) messages.startTime = NOTE_COPY.time;
+  if (end !== '' && !CLOCK_TIME.test(end)) messages.endTime = NOTE_COPY.time;
+  if (start === '' && end !== '') messages.startTime = NOTE_COPY.timePair;
+  else if (end === '' && start !== '') messages.endTime = NOTE_COPY.timePair;
+  // 'HH:MM' strings order as the times do; an event ends by midnight on its own day.
+  else if (messages.startTime === undefined && messages.endTime === undefined && start !== '' && end <= start) messages.endTime = NOTE_COPY.timeOrder;
+  return { startTime: start === '' ? null : start, endTime: end === '' ? null : end };
 }
 
 /** The API's NoteInput, or the field messages that stop the form. `today` is the server's day (UTC). */
@@ -105,11 +153,12 @@ export function checkNote(draft: NoteDraft, today: string = utcToday()): { input
   if (typedEnd !== '' && !isCalendarDate(typedEnd)) messages.endDate = NOTE_COPY.date;
   else if (messages.startDate === undefined && end < start) messages.endDate = NOTE_COPY.endBefore;
   else if (messages.startDate === undefined && daysBetween(start, end) > MAX_SPAN_DAYS) messages.endDate = NOTE_COPY.range;
-  const guests = draft.effect === 'closed' ? null : guestsOf(draft.expectedGuests);
+  const guests = draft.effect === 'closed' && !isBuyout(draft) ? null : guestsOf(draft.expectedGuests);
   if (guests === 'invalid') messages.expectedGuests = NOTE_COPY.guests;
   const detail = draft.detail.trim();
   if (detail.length > MAX_DETAIL) messages.detail = NOTE_COPY.detailLong;
   else if (draft.kind === 'other' && detail === '') messages.detail = NOTE_COPY.detailOther;
+  const hours = hoursOf(draft, messages);
   if (guests === 'invalid' || Object.keys(messages).length > 0) return { messages };
   const weekdays = [...new Set(draft.weekdays)].sort((a, b) => a - b);
   return {
@@ -121,6 +170,8 @@ export function checkNote(draft: NoteDraft, today: string = utcToday()): { input
       effect: draft.effect,
       expectedGuests: guests,
       detail: detail === '' ? null : detail,
+      startTime: hours.startTime,
+      endTime: hours.endTime,
     },
   };
 }
@@ -136,6 +187,23 @@ export function weekdaysLine(weekdays: readonly number[] | null): string | null 
 /** “Mar 2, 2026 to Mar 9, 2026”, or the one day. */
 export function datesLine(note: Pick<Note, 'startDate' | 'endDate'>): string {
   return note.startDate === note.endDate ? formatDate(note.startDate) : `${formatDate(note.startDate)} to ${formatDate(note.endDate)}`;
+}
+
+/** A local 'HH:MM' in words, as the API's reasons put it: '18:30' is “6:30 pm”, '18:00' “6 pm”, '12:00' “noon”. */
+export function clockWords(time: string): string {
+  const [hours = 0, minutes = 0] = time.split(':').map(Number);
+  if (minutes === 0 && hours === 12) return 'noon';
+  if (minutes === 0 && hours === 0) return 'midnight';
+  const hour = hours % 12 === 0 ? 12 : hours % 12;
+  return `${String(hour)}${minutes === 0 ? '' : `:${String(minutes).padStart(2, '0')}`} ${hours < 12 ? 'am' : 'pm'}`;
+}
+
+/** “6 pm to 9 pm”; null for all day (a note from an API before hours has neither). */
+export function hoursLine(note: { startTime?: string | null | undefined; endTime?: string | null | undefined }): string | null {
+  const startTime = note.startTime ?? null;
+  const endTime = note.endTime ?? null;
+  if (startTime === null || endTime === null) return null;
+  return `${clockWords(startTime)} to ${clockWords(endTime)}`;
 }
 
 export function guestsLine(expectedGuests: number | null): string | null {

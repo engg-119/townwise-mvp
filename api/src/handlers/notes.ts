@@ -1,6 +1,6 @@
-// Notes, the tuning step (spec 10.5, 12, P14): structured notes per location for what sales can't show. Only the
-// tuning chat reads them yet. Authors edit and delete their own; org admins edit and delete any. `detail` is never
-// logged and never copied into an audit event.
+// Notes, the tuning step (spec 10.5, 12, P14): structured notes per location for what sales can't show. The forecast
+// reader and the tuning chat read them. Authors edit and delete their own; org admins edit and delete any. `detail`,
+// hours and guests are never logged and never copied into an audit event.
 import { isDuplicateKeyError, objectId } from '@ckeith26/mongo';
 import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
@@ -26,6 +26,8 @@ const MAX_NOTES = 1000;
 /** An end date at most 366 days after the start. */
 const MAX_SPAN_DAYS = 366;
 const MAX_EXPECTED_GUESTS = 20_000;
+/** Local wall-clock time, 24-hour 'HH:MM'. */
+const clockTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 
 const noteBody = z.object({
   kind: z.enum(['closure', 'private_event', 'opening', 'other']),
@@ -35,6 +37,8 @@ const noteBody = z.object({
   effect: z.enum(['closed', 'more_guests', 'fewer_guests', 'unknown']),
   expectedGuests: z.number().int().min(1).max(MAX_EXPECTED_GUESTS).nullish(),
   detail: z.string().trim().max(280).nullish(),
+  startTime: clockTime.nullish(),
+  endTime: clockTime.nullish(),
 });
 
 function invalid(): AppError {
@@ -48,8 +52,9 @@ function notFound(): AppError {
 /**
  * Spec 12 NoteInput. A missing optional field reads as null, and an empty detail as none. The start date runs from
  * 2010-01-01 to today plus two years; the end is on or after it, at most 366 days later; weekdays are unique;
- * expected guests is null when the effect is `closed`; an `other` note needs a detail. Null when any rule fails.
- * The tuning chat validates its note proposals with this too.
+ * expected guests is null when the effect is `closed`, except on a buyout (a private event, closed), where it is the
+ * party's size; an `other` note needs a detail; hours are both set or both null, start before end on the same day,
+ * and null on a closure. Null when any rule fails. The tuning chat validates its note proposals with this too.
  */
 export function readNoteContent(raw: unknown, today: string): NoteContent | null {
   const parsed = noteBody.safeParse(raw);
@@ -63,19 +68,27 @@ export function readNoteContent(raw: unknown, today: string): NoteContent | null
     effect: body.effect,
     expectedGuests: body.expectedGuests ?? null,
     detail: body.detail === undefined || body.detail === null || body.detail === '' ? null : body.detail,
+    startTime: body.startTime ?? null,
+    endTime: body.endTime ?? null,
   };
+  const { startTime, endTime } = content;
+  // 'HH:MM' strings order as the times do. [CONFIRM: an event with hours ends by midnight on its own day]
+  const validHours = startTime === null || endTime === null
+    ? startTime === endTime
+    : startTime < endTime && content.kind !== 'closure';
   const valid = content.startDate >= EARLIEST_DATE && content.startDate <= plusYears(today, 2)
     && content.endDate >= content.startDate && daysBetween(content.startDate, content.endDate) <= MAX_SPAN_DAYS
     && (content.weekdays === null || new Set(content.weekdays).size === content.weekdays.length)
-    && (content.effect !== 'closed' || content.expectedGuests === null)
-    && (content.kind !== 'other' || content.detail !== null);
+    && (content.effect !== 'closed' || content.kind === 'private_event' || content.expectedGuests === null)
+    && (content.kind !== 'other' || content.detail !== null)
+    && validHours;
   return valid ? content : null;
 }
 
 /** True when the two notes say the same thing, field by field. */
 export function sameNoteContent(a: NoteContent, b: NoteContent): boolean {
   return a.kind === b.kind && a.startDate === b.startDate && a.endDate === b.endDate && a.effect === b.effect
-    && a.expectedGuests === b.expectedGuests && a.detail === b.detail
+    && a.expectedGuests === b.expectedGuests && a.detail === b.detail && a.startTime === b.startTime && a.endTime === b.endTime
     && JSON.stringify(a.weekdays) === JSON.stringify(b.weekdays);
 }
 
@@ -100,6 +113,8 @@ export function noteView(note: NoteRecord, createdByEmail: string, caller: Membe
     effect: note.effect,
     expectedGuests: note.expectedGuests,
     detail: note.detail,
+    startTime: note.startTime,
+    endTime: note.endTime,
     createdByEmail,
     createdAt: note.createdAt.toISOString(),
     updatedAt: note.updatedAt.toISOString(),
@@ -107,7 +122,7 @@ export function noteView(note: NoteRecord, createdByEmail: string, caller: Membe
   };
 }
 
-/** Audit details for a note: never the detail text (spec 9.2). */
+/** Audit details for a note: never the detail text, hours or guests (spec 9.2). */
 function noteDetails(locationId: string, note: NoteContent): Record<string, string> {
   return { locationId, kind: note.kind, startDate: note.startDate, endDate: note.endDate };
 }

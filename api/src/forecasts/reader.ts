@@ -5,15 +5,20 @@
 // from a run that supplied every day of the week; they are the run's own week rows, never sums of days. Past days
 // carry the stored guests and whether they landed in the range. Live accuracy is scored per run, over the passed days
 // that run supplied, so one run is never credited with another's hits and misses. Numbers are raw, as stored; callers
-// round for display. It logs nothing and stores nothing.
+// round for display. From the town's today on, the location's notes adjust each day on read (adjust.ts); past days,
+// accuracy and run rows stay as the model made them. A week a note changed a day's status in is left out; any other
+// week shifts by the guests notes add on its open days. It logs nothing and stores nothing.
 import type { OrgScope } from '../access/policy.ts';
+import { noteCovers } from '../agent/questions.ts';
 import { daysBetween, utcDay } from '../dates.ts';
 import type { ForecastRow, ForecastRunRecord, ForecastStore } from '../stores/forecasts.ts';
 import type { LocationRecord } from '../stores/locations.ts';
+import type { NoteStore } from '../stores/notes.ts';
 import type { SalesDayStore } from '../stores/sales-days.ts';
 import { weekdayOf, type Weekday } from '../time-zones.ts';
+import { adjustDay, orderedReasons, type AdjustedDay, type ModelDay } from './adjust.ts';
 import { eachDay, type DayStatus } from './file.ts';
-import { reasonViews, townCalendarOf, type ReasonView } from './reasons.ts';
+import { noteReasonView, reasonViews, townCalendarOf, type ReasonView } from './reasons.ts';
 import { inRangeOf, liveAccuracy, weekActual, type LiveAccuracy, type ScoredDay } from './score.ts';
 
 /** A forecast read covers at most this many days, both ends included. */
@@ -42,12 +47,20 @@ export interface ForecastWindowRun extends ForecastRunView {
 export interface ForecastDayView {
   date: string;
   weekday: Weekday;
+  /** The day as the location's notes leave it (spec 14.5); `model` is the run's own. */
   status: DayStatus;
   low: number | null;
   mid: number | null;
   high: number | null;
   baseline: number | null;
+  /** Notes that changed the day, then the run's reasons, then the other notes (at most 6 notes in all). */
   reasons: ReasonView[];
+  /** The run's own status and figures, equal to the day's when no note changed it. */
+  model: ModelDay;
+  /** Guests the notes add to an open day, or a buyout's party on a booked day; 0 when none. */
+  noteGuests: number;
+  /** Note reasons past the first 6; they still count in the figures. */
+  moreNotes: number;
   runId: string;
   /** The run's made-at date. */
   madeAt: string;
@@ -55,7 +68,7 @@ export interface ForecastDayView {
   madeAfterDay: boolean;
   /** The stored guests for a day before today; null otherwise. */
   actual: number | null;
-  /** The actual within [low, high]; null when either is missing or the day was not forecast open. */
+  /** The actual within the model's [low, high]; null when either is missing or the model did not forecast the day open. */
   inRange: boolean | null;
 }
 
@@ -71,6 +84,8 @@ export interface ForecastWeekView {
   /** The week's stored guests once every open day has them and none was booked; null otherwise. */
   actual: number | null;
   inRange: boolean | null;
+  /** Guests notes add on the week's open days, already in low, mid and high. */
+  noteGuests: number;
 }
 
 export interface ForecastWindow {
@@ -135,8 +150,10 @@ function spans(dates: readonly string[]): { from: string; to: string }[] {
   return out;
 }
 
-export function createForecastReader(deps: { stores: { forecasts: ForecastStore; salesDays: Pick<SalesDayStore, 'days'> } }): ForecastReader {
-  const { forecasts, salesDays } = deps.stores;
+export function createForecastReader(deps: {
+  stores: { forecasts: ForecastStore; salesDays: Pick<SalesDayStore, 'days'>; notes: Pick<NoteStore, 'overlapping'> };
+}): ForecastReader {
+  const { forecasts, salesDays, notes } = deps.stores;
 
   /** Every published run, every chosen day with its actual (before today), and each run's live accuracy over its own days. */
   async function load(scope: OrgScope, locationId: string, today: string) {
@@ -168,33 +185,48 @@ export function createForecastReader(deps: { stores: { forecasts: ForecastStore;
         return { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], notCovered: spans(dates) };
       }
       const calendarOn = townCalendarOf(location.town.townId);
+      const weekRows = rows.filter((row) => row.span === 'week' && row.from <= range.to && row.to >= range.from);
+      // One read of the notes, over the range and every week reaching past it.
+      const noted = await notes.overlapping(scope, location.id, {
+        from: [range.from, ...weekRows.map((row) => row.from)].sort()[0] ?? range.from,
+        to: [range.to, ...weekRows.map((row) => row.to)].sort().at(-1) ?? range.to,
+      });
+      const modelOf = (row: ForecastRow): ModelDay => ({ status: row.status ?? 'open', low: row.low, mid: row.mid, high: row.high });
+      const adjusted = (date: string, row: ForecastRow): AdjustedDay => adjustDay(
+        date, today, modelOf(row), row.reasons, noted.filter((note) => noteCovers(note, date)),
+      );
       const days: ForecastDayView[] = [];
       for (const date of dates) {
         const pick = chosen.get(date);
         if (pick === undefined) continue;
         const { run, row } = pick;
-        const status = row.status ?? 'open';
+        const model = modelOf(row);
+        const day = adjusted(date, row);
+        const { reasons, moreNotes } = orderedReasons(day, reasonViews(date, row.reasons, calendarOn(date)), (entry) => noteReasonView(entry.note, entry.outcome));
         const actual = actuals.get(date) ?? null;
         days.push({
-          date, weekday: weekdayOf(date), status, low: row.low, mid: row.mid, high: row.high, baseline: row.baseline,
-          reasons: reasonViews(date, row.reasons, calendarOn(date)), runId: run.id, madeAt: run.madeAt, madeAfterDay: run.madeAt >= date,
-          actual, inRange: status === 'open' ? inRangeOf(actual, row.low, row.high) : null,
+          date, weekday: weekdayOf(date), status: day.status, low: day.low, mid: day.mid, high: day.high,
+          baseline: day.status === model.status ? row.baseline : null, reasons, model, noteGuests: day.noteGuests, moreNotes,
+          runId: run.id, madeAt: run.madeAt, madeAfterDay: run.madeAt >= date,
+          actual, inRange: model.status === 'open' ? inRangeOf(actual, row.low, row.high) : null,
         });
       }
-      const weeks: ForecastWeekView[] = rows
-        .filter((row) => row.span === 'week' && row.from <= range.to && row.to >= range.from)
-        .flatMap((row): ForecastWeekView[] => {
-          const weekDates = eachDay(row.from, row.to);
-          const picks = weekDates.map((date) => chosen.get(date));
-          if (picks.some((pick) => pick?.run.id !== row.runId)) return [];
-          const run = picks[0]?.run;
-          if (run === undefined || row.low === null || row.mid === null || row.high === null) return [];
-          const actual = weekActual(picks.flatMap((pick, index) => (pick === undefined ? [] : [scored(weekDates[index] ?? '', pick.row)])));
-          return [{
-            from: row.from, to: row.to, openDays: row.openDays ?? 0, low: row.low, mid: row.mid, high: row.high, runId: run.id,
-            madeAt: run.madeAt, actual, inRange: inRangeOf(actual, row.low, row.high),
-          }];
-        });
+      const weeks: ForecastWeekView[] = weekRows.flatMap((row): ForecastWeekView[] => {
+        const weekDates = eachDay(row.from, row.to);
+        const picks = weekDates.map((date) => chosen.get(date));
+        if (picks.some((pick) => pick?.run.id !== row.runId)) return [];
+        const run = picks[0]?.run;
+        if (run === undefined || row.low === null || row.mid === null || row.high === null) return [];
+        const actual = weekActual(picks.flatMap((pick, index) => (pick === undefined ? [] : [scored(weekDates[index] ?? '', pick.row)])));
+        // The run's week can't be re-summed honestly once a note changes a day's status, and the reader never sums days.
+        const noteDays = picks.flatMap((pick, index) => (pick === undefined ? [] : [{ model: pick.row.status ?? 'open', day: adjusted(weekDates[index] ?? '', pick.row) }]));
+        if (noteDays.some(({ model, day }) => day.status !== model)) return [];
+        const noteGuests = noteDays.reduce((sum, { day }) => sum + (day.status === 'open' ? day.noteGuests : 0), 0);
+        return [{
+          from: row.from, to: row.to, openDays: row.openDays ?? 0, low: row.low + noteGuests, mid: row.mid + noteGuests,
+          high: row.high + noteGuests, runId: run.id, madeAt: run.madeAt, actual, inRange: inRangeOf(actual, row.low, row.high), noteGuests,
+        }];
+      });
       const used = new Set(days.map((day) => day.runId));
       return {
         available: days.length > 0,

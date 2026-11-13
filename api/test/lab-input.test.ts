@@ -34,7 +34,7 @@ function history(from: string, to: string, skip: readonly string[] = []): SalesD
 function note(overrides: Partial<NoteRecord> & Pick<NoteRecord, 'kind' | 'startDate'>): NoteRecord {
   return {
     id: 'b2'.repeat(12), endDate: overrides.startDate, weekdays: null, effect: 'unknown', expectedGuests: null,
-    detail: 'sentinel-note-detail', createdBy: 'c3'.repeat(12), byStaff: false, createdAt: new Date(0), updatedAt: new Date(0), ...overrides,
+    detail: 'sentinel-note-detail', startTime: null, endTime: null, createdBy: 'c3'.repeat(12), byStaff: false, createdAt: new Date(0), updatedAt: new Date(0), ...overrides,
   };
 }
 
@@ -137,6 +137,35 @@ describe('labInputOf', () => {
     expect(flags('2025-04-14')).toEqual({ closed: true, privateEvent: false, booked: false });
     expect(flags('2026-07-04')).toEqual({ closed: true, privateEvent: false, booked: false });
     expect(input.days.filter((each) => each.closed)).toHaveLength(5);
+  });
+
+  it('after dataThrough, a private event with a guest count is left to the read (privateEvent false); one without stays true; buyouts stay booked; history days are unchanged', () => {
+    const notes = [
+      // History days (dataThrough is 2026-05-31): unchanged, whatever the guest count.
+      note({ kind: 'private_event', startDate: '2026-05-30', effect: 'more_guests', expectedGuests: 70 }),
+      note({ kind: 'private_event', startDate: '2026-05-31', effect: 'more_guests' }),
+      // After dataThrough: the read layer adds a counted party, so the lab must not apply its lift too.
+      note({ kind: 'private_event', startDate: '2026-06-10', effect: 'more_guests', expectedGuests: 70 }),
+      note({ kind: 'private_event', startDate: '2026-06-11', effect: 'more_guests' }),
+      note({ kind: 'private_event', startDate: '2026-06-12', effect: 'closed', expectedGuests: 90 }),
+      note({ kind: 'private_event', startDate: '2026-06-13', effect: 'fewer_guests', expectedGuests: 20 }),
+      // Two on one day: the uncounted one still marks it.
+      note({ kind: 'private_event', startDate: '2026-06-14', effect: 'more_guests', expectedGuests: 40 }),
+      note({ kind: 'private_event', startDate: '2026-06-14', effect: 'unknown' }),
+    ];
+    const input = inputOf(history('2025-01-02', '2026-05-31'), notes);
+    expect(input.dataThrough).toBe('2026-05-31');
+    const flags = (date: string) => {
+      const { closed, privateEvent, booked } = dayOf(input, date);
+      return { closed, privateEvent, booked };
+    };
+    expect(flags('2026-05-30')).toEqual({ closed: false, privateEvent: true, booked: false });
+    expect(flags('2026-05-31')).toEqual({ closed: false, privateEvent: true, booked: false });
+    expect(flags('2026-06-10')).toEqual({ closed: false, privateEvent: false, booked: false });
+    expect(flags('2026-06-11')).toEqual({ closed: false, privateEvent: true, booked: false });
+    expect(flags('2026-06-12')).toEqual({ closed: false, privateEvent: true, booked: true });
+    expect(flags('2026-06-13')).toEqual({ closed: false, privateEvent: true, booked: false });
+    expect(flags('2026-06-14')).toEqual({ closed: false, privateEvent: true, booked: false });
   });
 
   it('lists town event groups sorted and one_off for an ungrouped event, and never a holiday, title, note detail or name', () => {

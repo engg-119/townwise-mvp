@@ -130,7 +130,7 @@ describe('saving a proposal', () => {
 
   it('edited first: the note holds the edit and the proposal says it was edited; a note that breaks a rule is 400', async () => {
     const id = await conversationWithProposal();
-    const broken = await act(id, { action: 'save', note: { ...PROPOSAL, effect: 'closed' } });
+    const broken = await act(id, { action: 'save', note: { ...PROPOSAL, kind: 'opening', effect: 'closed' } });
     expect(broken).toMatchObject({ status: 400, body: { error: 'invalid_request' } });
     expect(await notesOf()).toHaveLength(0);
     expect(await proposalRows(id)).toHaveLength(0);

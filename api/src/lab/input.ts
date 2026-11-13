@@ -151,12 +151,19 @@ function championOf(champion: { run: ForecastRunRecord; rows: readonly ForecastR
   return { runId: champion.run.id, dataThrough: champion.run.dataThrough, days, weeks };
 }
 
+/** A private event whose guests the forecast read adds to an open day (adjust.ts rule 3). */
+function countedOnRead(note: NoteRecord): boolean {
+  return note.effect === 'more_guests' && note.expectedGuests !== null;
+}
+
 /**
  * The input for `calibration`, or null when the location has no day with guests by `today`. Days run from the first day
  * with guests to the last one on or before today (dataThrough) plus 182 days, with no gaps; guests are null after
  * dataThrough and on days with no row.
  * Notes: a private event sets privateEvent, and with effect closed also booked (a buyout); any other closure note, or
- * note with effect closed, sets closed.
+ * note with effect closed, sets closed. After dataThrough, a private event with more guests and a guest count does not
+ * set privateEvent: the forecast read adds its guests (forecasts/adjust.ts), so the lab's own lift would count the party
+ * twice.
  */
 export function labInputOf(args: {
   calibration: Pick<CalibrationRecord, 'id' | 'regimeStart'>;
@@ -179,6 +186,7 @@ export function labInputOf(args: {
   const days = dates.map((date): LabDay => {
     const term = terms.get(date) ?? { term: 'interim', weekOfTerm: -1 };
     const privates = privateEvents.filter((note) => noteCovers(note, date));
+    const lifted = date > span.last ? privates.filter((note) => !countedOnRead(note)) : privates;
     return {
       date,
       guests: date > span.last ? null : guests.get(date) ?? null,
@@ -186,7 +194,7 @@ export function labInputOf(args: {
       weekOfTerm: term.weekOfTerm,
       events: events.get(date) ?? [],
       closed: closures.some((note) => noteCovers(note, date)),
-      privateEvent: privates.length > 0,
+      privateEvent: lifted.length > 0,
       booked: privates.some((note) => note.effect === 'closed'),
     };
   });

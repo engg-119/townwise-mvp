@@ -25,6 +25,7 @@ import Settings from '../../app/(gate)/(app)/(client)/settings';
 import AddLocation from '../../app/(gate)/(app)/(client)/locations/new';
 import LocationLayout from '../../app/(gate)/(app)/(client)/locations/[locationId]/_layout';
 import Forecast from '../../app/(gate)/(app)/(client)/locations/[locationId]/index';
+import Calendar from '../../app/(gate)/(app)/(client)/locations/[locationId]/calendar';
 import Analytics from '../../app/(gate)/(app)/(client)/locations/[locationId]/analytics';
 import Sales from '../../app/(gate)/(app)/(client)/locations/[locationId]/sales/index';
 import Upload from '../../app/(gate)/(app)/(client)/locations/[locationId]/sales/upload';
@@ -86,6 +87,7 @@ export function appRoutes(root: React.ComponentType, overrides?: Record<string, 
     '(gate)/(app)/(client)/locations/new': AddLocation,
     '(gate)/(app)/(client)/locations/[locationId]/_layout': LocationLayout,
     '(gate)/(app)/(client)/locations/[locationId]/index': Forecast,
+    '(gate)/(app)/(client)/locations/[locationId]/calendar': Calendar,
     '(gate)/(app)/(client)/locations/[locationId]/analytics': Analytics,
     '(gate)/(app)/(client)/locations/[locationId]/sales/index': Sales,
     '(gate)/(app)/(client)/locations/[locationId]/sales/upload': Upload,

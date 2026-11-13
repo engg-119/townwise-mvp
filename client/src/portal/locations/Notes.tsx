@@ -18,14 +18,16 @@ import { createNote, deleteNote, fetchNotes, updateNote, type Note, type NoteInp
 import { localToday } from './dates';
 import { NoteForm } from './NoteForm';
 import {
-  datesLine, draftOf, EFFECT_LABEL, emptyDraft, guestsLine, KIND_LABEL, sortNotes, splitNotes, weekdaysLine,
+  datesLine, draftOf, EFFECT_LABEL, emptyDraft, guestsLine, hoursLine, KIND_LABEL, sortNotes, splitNotes, weekdaysLine,
 } from './noteRules';
 import { LoadFailure, Loading, useOrgRefreshOnLeave } from './parts';
 
 // P14 Notes, the tuning step (spec 16.3, 12): the intro, “Add a note” opening C6 inline above the lists, then
 // “Coming up” (ending today or later) and “Past”. Authors edit and delete their own notes; org admins any
-// (`canEdit`). Under view-as, Add, Edit and Delete are disabled in place. Only TownwiseAI (the tuning chat) reads notes yet
-// (api/src/handlers/notes.ts), so the intro says that instead of the spec's “Nothing reads them yet.” Sales data's “Add a closure note.” opens the form as a closure (`?new=closure`).
+// (`canEdit`). Under view-as, Add, Edit and Delete are disabled in place. From the town's today on, a private event
+// with a guest count, a buyout or a closure adjusts the published forecast on read (spec 14.5), and TownwiseAI reads
+// every note, so the intro says both instead of the spec's “Nothing reads them yet.” A row shows a note's hours when
+// it has them. Sales data's “Add a closure note.” opens the form as a closure (`?new=closure`).
 // A 404 on a write means the note, or its location, was deleted in the meantime (spec 10.9): the form or dialog
 // closes, an edit or delete says “This note isn’t available.”, and the list loads again, which shows “This
 // location isn’t available.” if the location went too.
@@ -46,6 +48,12 @@ function NoteCell(props: { note: Note; selected: boolean }): React.JSX.Element {
       {note.detail === null ? null : <Text style={styles.note}>{note.detail}</Text>}
     </View>
   );
+}
+
+/** “Mondays only, 6 pm to 9 pm”: the weekdays and the hours, when the note has either. */
+function whenLine(note: Note): string | null {
+  const parts = [weekdaysLine(note.weekdays), hoursLine(note)].filter((part) => part !== null);
+  return parts.length === 0 ? null : parts.join(', ');
 }
 
 function TwoLines(props: { first: string; second: string | null }): React.JSX.Element {
@@ -84,7 +92,7 @@ function NotesTable(props: {
           selected: note.id === props.selectedId,
           cells: {
             note: <NoteCell note={note} selected={note.id === props.selectedId} />,
-            dates: <TwoLines first={datesLine(note)} second={weekdaysLine(note.weekdays)} />,
+            dates: <TwoLines first={datesLine(note)} second={whenLine(note)} />,
             effect: <TwoLines first={EFFECT_LABEL[note.effect]} second={guestsLine(note.expectedGuests)} />,
             added: <TwoLines first={note.createdByEmail} second={formatDate(note.createdAt)} />,
             actions: note.canEdit ? (
@@ -218,7 +226,8 @@ export function Notes(): React.JSX.Element {
           <Stack>
             <Body>
               Notes record what your sales can’t show: a closure, a private event, an opening. Add past ones to explain unusual
-              days, and upcoming ones for the dates ahead. Townwise keeps them with this location. Only TownwiseAI reads them yet.
+              days, and upcoming ones for the dates ahead. Townwise keeps them with this location. From today on, a private event with a
+              guest count, a buyout or a closure changes Townwise’s forecast for its days. TownwiseAI reads every note.
             </Body>
             <View style={styles.tagline}>
               <StatusTag kind="planned" label="Planned" />

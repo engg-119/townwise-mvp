@@ -2,7 +2,8 @@
 // headcount until its inputs are researched, a synthetic researched entry giving a range, a seasonal town and a town
 // outside the twelve, the model card with no forecast, strict ranges, 404 across organizations, view-as reads, and
 // no log line of their own. U13B: the published forecast (drafts and withdrawn runs invisible, the newest eligible
-// run per date, actuals and live accuracy) and the model card's run state. Every figure is synthetic.
+// run per date, actuals and live accuracy) and the model card's run state. Spec 14.5: saved notes adjusting the read
+// from today on, past days, accuracy and weeks kept honest, and no other tenant's notes. Every figure is synthetic.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
@@ -213,10 +214,11 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
     expect(body.days[0]).toEqual({
       date: '2026-05-01', weekday: 'Fri', status: 'open', low: 80, mid: 100, high: 120, baseline: null,
       reasons: [
-        { kind: 'weekday', label: 'Friday', effectPct: null, sources: [] },
-        { kind: 'term', label: 'Spring term classes', effectPct: null, sources: expect.any(Array) as unknown },
+        { kind: 'weekday', label: 'Friday', effectPct: null, sources: [], note: null },
+        { kind: 'term', label: 'Spring term classes', effectPct: null, sources: expect.any(Array) as unknown, note: null },
       ],
       runId: first, madeAt: '2026-05-01', madeAfterDay: true, actual: 100, inRange: true,
+      model: { status: 'open', low: 80, mid: 100, high: 120 }, noteGuests: 0, moreNotes: 0,
     });
     expect(body.days.find((day) => day.date === '2026-05-06')).toMatchObject({ actual: 130, inRange: false, madeAfterDay: false });
     expect(body.days.find((day) => day.date === '2026-05-04')).toMatchObject({ status: 'closed', low: null, inRange: null });
@@ -276,6 +278,139 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
     expect(server.logs.filter((line) => line.includes('townwise.')).every((line) => line.includes('townwise.view_as_read'))).toBe(true);
     expect(server.logs.join('\n')).not.toMatch(/"(low|mid|high|actual|guests)"/);
     await server.connection.collection('tw_view_as_grants').deleteMany({ actorUserId: staff.userId });
+  });
+
+  // Spec 14.5: the location's notes adjust each day on read from the town's today (June 1 in Hanover) on.
+  describe('notes in the forecast', () => {
+    const SECRET = 'Rehearsal dinner for the sentinel-family';
+    const WEEKS = [['2026-05-25', '2026-05-31'], ['2026-06-01', '2026-06-07'], ['2026-06-08', '2026-06-14']] as const;
+    /** Trained through May 24: May 25 to June 14 at 80 to 120 a day, in three whole weeks of 560 to 840. */
+    const NOTED_RUN = {
+      ...structuredClone(RUN), dataThrough: '2026-05-24', madeAt: '2026-05-25',
+      days: WEEKS.flatMap(([from]) => [0, 1, 2, 3, 4, 5, 6].map((plus) => utcDay(new Date(`${from}T00:00:00.000Z`), plus))).map((date) => ({
+        date, status: 'open', low: 80, mid: 100, high: 120, baseline: null, reasons: [{ kind: 'weekday', ref: null, effectPct: null }],
+      })),
+      weeks: WEEKS.map(([from, to]) => ({ from, to, openDays: 7, low: 560, mid: 700, high: 840 })),
+    };
+    const ALL = '?from=2026-05-25&to=2026-06-14';
+    let noted: string;
+
+    beforeAll(async () => {
+      noted = await addLocation(server, { orgId, name: 'Noted Room' });
+      for (const date of ['2026-05-25', '2026-05-26', '2026-05-27', '2026-05-28', '2026-05-29', '2026-05-30', '2026-05-31']) {
+        const guests = date === '2026-05-30' ? 150 : 100;
+        await addSalesDay(server, { orgId, locationId: noted, date, guests, netSalesCents: guests * 1000 });
+      }
+      const imported = await call(server, `/api/admin/orgs/${orgId}/locations/${noted}/forecast-runs`, { session: staff, json: NOTED_RUN });
+      expect(imported.status).toBe(201);
+      await staffChange((await imported.json() as { run: { id: string } }).run.id, 'publish');
+    });
+    beforeEach(async () => { await server.connection.collection('tw_notes').deleteMany({ locationId: new Types.ObjectId(noted) }); });
+
+    async function read(query = ALL, location = noted): Promise<ForecastWindow> {
+      const res = await call(server, `/api/org/locations/${location}/forecast${query}`, { session: member });
+      expect(res.status).toBe(200);
+      return await res.json() as ForecastWindow;
+    }
+    const dayOf = (body: ForecastWindow, date: string) => body.days.find((day) => day.date === date);
+    const event = (fields: Record<string, unknown>) => ({
+      kind: 'private_event', startDate: '2026-06-06', endDate: '2026-06-06', effect: 'more_guests', expectedGuests: 70, detail: SECRET,
+      ...fields,
+    });
+    async function save(body: Record<string, unknown>, location = noted): Promise<string> {
+      const res = await call(server, `/api/org/locations/${location}/notes`, { session: member, json: body });
+      expect(res.status).toBe(201);
+      return (await res.json() as { note: { id: string } }).note.id;
+    }
+    const notePath = (noteId: string) => `/api/org/locations/${noted}/notes/${noteId}`;
+    const UNCHANGED = { status: 'open', low: 80, mid: 100, high: 120, model: { status: 'open', low: 80, mid: 100, high: 120 }, noteGuests: 0, moreNotes: 0 };
+
+    it('a saved private event of 70 guests raises that day’s range by 70 and names it; deleting the note restores the model’s range', async () => {
+      const noteId = await save(event({ startTime: '18:00', endTime: '21:00' }));
+      const body = await read();
+      expect(dayOf(body, '2026-06-06')).toMatchObject({
+        status: 'open', low: 150, mid: 170, high: 190, model: { status: 'open', low: 80, mid: 100, high: 120 }, noteGuests: 70, moreNotes: 0,
+      });
+      expect(dayOf(body, '2026-06-06')?.reasons).toEqual([
+        { kind: 'note', label: 'Your private event, 70 guests, 6 pm to 9 pm', effectPct: null, sources: [], note: { id: noteId, guests: 70, outcome: 'added' } },
+        { kind: 'weekday', label: 'Saturday', effectPct: null, sources: [], note: null },
+      ]);
+      expect(dayOf(body, '2026-06-05')).toMatchObject(UNCHANGED);
+      expect(JSON.stringify(body)).not.toContain('sentinel');
+      expect((await call(server, notePath(noteId), { method: 'DELETE', session: member })).status).toBe(204);
+      const after = dayOf(await read(), '2026-06-06');
+      expect(after).toMatchObject(UNCHANGED);
+      expect(after?.reasons.map((reason) => reason.kind)).toEqual(['weekday']);
+    });
+
+    it('editing the note’s guests changes the day on the next read', async () => {
+      const noteId = await save(event({}));
+      expect(dayOf(await read(), '2026-06-06')).toMatchObject({ mid: 170, noteGuests: 70 });
+      expect((await call(server, notePath(noteId), { method: 'PATCH', session: member, json: event({ expectedGuests: 40 }) })).status).toBe(200);
+      const day = dayOf(await read(), '2026-06-06');
+      expect(day).toMatchObject({ low: 120, mid: 140, high: 160, noteGuests: 40 });
+      expect(day?.reasons[0]).toMatchObject({ label: 'Your private event, 40 guests', note: { guests: 40, outcome: 'added' } });
+    });
+
+    it('a buyout note books the day; a closure note closes it; the week holding either is left out', async () => {
+      await save(event({ startDate: '2026-06-09', endDate: '2026-06-09', effect: 'closed', expectedGuests: 50 }));
+      await save({ kind: 'closure', startDate: '2026-06-03', endDate: '2026-06-03', effect: 'closed', detail: SECRET });
+      const body = await read();
+      expect(dayOf(body, '2026-06-09')).toMatchObject({
+        status: 'booked', low: null, mid: null, high: null, model: { status: 'open', low: 80, mid: 100, high: 120 }, noteGuests: 50,
+      });
+      expect(dayOf(body, '2026-06-09')?.reasons[0]).toMatchObject({ kind: 'note', label: 'Your private buyout, 50 guests', note: { guests: 50, outcome: 'booked' } });
+      expect(dayOf(body, '2026-06-03')).toMatchObject({ status: 'closed', low: null, mid: null, high: null, noteGuests: 0 });
+      expect(dayOf(body, '2026-06-03')?.reasons[0]).toMatchObject({ kind: 'note', label: 'Your closure', note: { guests: null, outcome: 'closed' } });
+      expect(body.weeks.map((week) => week.from)).toEqual(['2026-05-25']);
+      expect(JSON.stringify(body)).not.toContain('sentinel');
+    });
+
+    it('a week’s range shifts by the guests notes add on its open days', async () => {
+      await save(event({ startDate: '2026-06-02', endDate: '2026-06-02' }));
+      await save(event({ startDate: '2026-06-04', endDate: '2026-06-04', expectedGuests: 30 }));
+      expect((await read()).weeks.map((week) => [week.from, week.low, week.mid, week.high, week.noteGuests])).toEqual([
+        ['2026-05-25', 560, 700, 840, 0], ['2026-06-01', 660, 800, 940, 100], ['2026-06-08', 560, 700, 840, 0],
+      ]);
+      // A week reaching past the range still counts its notes outside it.
+      expect((await read('?from=2026-06-03&to=2026-06-04')).weeks).toEqual([expect.objectContaining({ from: '2026-06-01', mid: 800, noteGuests: 100 })]);
+    });
+
+    it('inRange and live accuracy stay the model’s own', async () => {
+      const before = await read();
+      // Seven scored days, May 30 missed: |50| over 750 guests.
+      expect(before.runs[0]?.live).toEqual({ days: 7, inRange: 6, typicalErrorPct: 6.7, from: '2026-05-25', to: '2026-05-31' });
+      const noteId = await save(event({ startDate: '2026-05-30', endDate: '2026-05-31' }));
+      const body = await read();
+      expect(body.runs[0]?.live).toEqual(before.runs[0]?.live);
+      expect(dayOf(body, '2026-05-30')).toMatchObject({ ...UNCHANGED, actual: 150, inRange: false });
+      expect(dayOf(body, '2026-05-30')?.reasons.map((reason) => reason.note)).toEqual([null, { id: noteId, guests: 70, outcome: 'past_day' }]);
+      expect(body.weeks[0]).toMatchObject({ from: '2026-05-25', mid: 700, actual: 750, inRange: true, noteGuests: 0 });
+    });
+
+    it('another location’s or organization’s notes never change this location’s forecast', async () => {
+      const otherOrg = await createOrg(server, { name: 'Other Noted Kitchen' });
+      const raw = (org: string, location: string) => ({
+        _id: new Types.ObjectId(), orgId: new Types.ObjectId(org), locationId: new Types.ObjectId(location), kind: 'private_event',
+        startDate: '2026-06-06', endDate: '2026-06-06', weekdays: null, effect: 'more_guests', expectedGuests: 70, detail: null,
+        startTime: null, endTime: null, createdBy: 'fixture', createdAt: server.clock.now(), updatedAt: server.clock.now(),
+      });
+      const notes = server.connection.collection('tw_notes');
+      const elsewhere = raw(orgId, hanover);
+      await notes.insertMany([elsewhere, raw(otherOrg, noted)]);
+      const day = dayOf(await read(), '2026-06-06');
+      expect(day).toMatchObject(UNCHANGED);
+      expect(day?.reasons.map((reason) => reason.kind)).toEqual(['weekday']);
+      await notes.deleteOne({ _id: elsewhere._id });
+    });
+
+    it('with no published run, notes change nothing and the read says no_published_forecast', async () => {
+      const bare = await addLocation(server, { orgId, name: 'Unforecast Room' });
+      await save(event({}), bare);
+      expect(await read('?from=2026-06-01&to=2026-06-14', bare)).toEqual({
+        available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], notCovered: [{ from: '2026-06-01', to: '2026-06-14' }],
+      });
+    });
   });
 });
 

@@ -1,6 +1,6 @@
-import { Link, type Href } from 'expo-router';
-import { useMemo, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Link, useRouter, type Href } from 'expo-router';
+import { useCallback, useMemo, useState } from 'react';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 
 import { fmt1 } from '../../marketing/format';
 import { theme } from '../../theme';
@@ -9,22 +9,29 @@ import type { DayContext } from '../analytics/days';
 import { noteWords } from '../analytics/panel';
 import { eventLine, monthDay, monthFactLine, monthFactsHead, monthGrid, monthItems, type HomeInput, type MonthFact } from '../analytics/week';
 import { MONTH_NAMES, type Metric } from '../analytics/words';
+import { ALL_FILTERS, tooltipLines, type CalendarInput } from '../calendar/model';
+import type { ForecastDay, ForecastWindow } from '../estimates/api';
+import type { Note } from '../locations/api';
 import { weekdaysLine } from '../locations/noteRules';
 import { useBreakpoint } from '../hooks';
 import { PeopleInTownSummary } from '../estimates/PeopleInTownSummary';
+import { calendarHref } from '../routing';
 import { DATA_YEAR, SOURCES, townProfile } from '../towns';
+import { LinkButton } from '../ui/Button';
 import { Stack } from '../ui/layout';
 import { Mono, Small } from '../ui/text';
 import { Block } from './Block';
 import { DayDetail } from './DayDetail';
 import { MonthGrid } from './MonthGrid';
 
-// This month in {Town} (spec P11): only sourced facts, in four blocks. The month card is the calendar you can
-// open: the month as a grid, any day of it selected (today at first) with its detail beside the grid. On the
-// calendar in {month} is every town event, holiday and note of the month in date order with its sources. Who's in
-// town is the month's people in town summary (spec 13.2, read on its own) with the county's food-service employment
-// for the month from the bundled BLS data (one of the twelve towns only) and its caveat. Your {month} in past years
-// is the location's own days, each year with its day count.
+// This month in {Town} (spec P11): only sourced facts, in four blocks. The month card is the month as a grid, each
+// day with its figure (stored before today, the published forecast's from today on, spec 16.3 P11), and the
+// day the keys select (today at first) or a pointer rests on with its detail beside the grid; on web a pointer also
+// shows the day's tooltip (the Calendar's lines). Choosing a day (a click, Enter, a tap) opens it in the Calendar
+// (P27), which the card also links to. On the calendar in {month} is every town event, holiday and note of the month
+// in date order with its sources. Who's in town is the month's people in town summary (spec 13.2, read on its own)
+// with the county's food-service employment for the month from the bundled BLS data (one of the twelve towns only)
+// and its caveat. Your {month} in past years is the location's own days, each year with its day count.
 
 const BLS = SOURCES.find((source) => source.url.startsWith('https://www.bls.gov/'));
 
@@ -32,28 +39,47 @@ export const PEOPLE_HEAD = 'Who’s in town';
 
 const monthNameOf = (today: string): string => MONTH_NAMES[Number(today.slice(5, 7)) - 1] ?? '';
 
-export function ThisMonth(props: { input: HomeInput; calendar: Calendar; history: boolean }): React.JSX.Element {
-  const { input, calendar, history } = props;
+export function ThisMonth(props: {
+  input: HomeInput; calendar: Calendar; notes: readonly Note[]; forecast: ForecastWindow | null; history: boolean; locationId: string;
+}): React.JSX.Element {
+  const { input, calendar, notes, forecast, history, locationId } = props;
   const { today, context, metric } = input;
+  const router = useRouter();
   const town = calendar.town;
   const monthName = monthNameOf(today);
   const label = `${monthName} ${today.slice(0, 4)}`;
-  const rows = useMemo(() => monthGrid(today, context), [today, context]);
+  const forecastDays = useMemo(() => new Map((forecast?.days ?? []).map((day): [string, ForecastDay] => [day.date, day])), [forecast]);
+  const rows = useMemo(() => monthGrid(today, context, { input, forecast: forecastDays }), [today, context, input, forecastDays]);
+  // The Calendar's own tooltip words; nothing is imported on Home and no filter is off.
+  const tipInput = useMemo<CalendarInput>(() => ({
+    today, month: today.slice(0, 7), forecast, salesDays: [...input.byDate.values()], events: calendar.events, notes, imported: [], filters: ALL_FILTERS,
+  }), [today, forecast, input.byDate, calendar.events, notes]);
+  const tooltip = useCallback((date: string) => tooltipLines(date, tipInput), [tipInput]);
   const [selected, setSelected] = useState(today);
   const [preview, setPreview] = useState<string | null>(null);
   const shown = preview ?? selected;
   const day = useMemo(() => monthDay(shown, input), [shown, input]);
+  const forecastDay = shown >= today ? forecastDays.get(shown) ?? null : null;
   return (
     <Block label={`This month in ${town.name}`} eyebrow={label} title={`This month in ${town.name}`}>
-      <Small>Choose a day to see what’s on it and how it went last year.</Small>
+      <Small>{Platform.OS === 'web' ? 'Point at a day to see what’s on it. Choose one to open it in the Calendar.' : 'Tap a day to open it in the Calendar.'}</Small>
       <View style={styles.split}>
         <View style={styles.gridSide}>
-          <MonthGrid rows={rows} selected={selected} onSelect={(date) => { setPreview(null); setSelected(date); }} onPreview={setPreview} label={label} />
+          <MonthGrid
+            rows={rows}
+            selected={selected}
+            onSelect={(date) => { setPreview(null); setSelected(date); }}
+            onPreview={setPreview}
+            onOpen={(date) => { router.push(calendarHref(locationId, date)); }}
+            tooltip={tooltip}
+            label={label}
+          />
         </View>
         <View style={styles.detailSide}>
-          <DayDetail day={day} metric={metric} history={history} />
+          <DayDetail day={day} forecast={forecastDay} metric={metric} history={history} />
         </View>
       </View>
+      <View style={styles.open}><LinkButton href={calendarHref(locationId)} label="Open the calendar" /></View>
     </Block>
   );
 }
@@ -130,6 +156,7 @@ export function PastYears(props: { today: string; facts: readonly MonthFact[]; m
 const c = theme.color;
 
 const styles = StyleSheet.create({
+  open: { flexDirection: 'row' },
   split: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space[6], rowGap: theme.space[5], alignItems: 'flex-start' },
   gridSide: { flexGrow: 1, flexShrink: 1, flexBasis: 280, maxWidth: 420, minWidth: 0 },
   detailSide: { flexGrow: 1, flexShrink: 1, flexBasis: 220, minWidth: 0 },

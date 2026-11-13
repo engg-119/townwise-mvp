@@ -144,7 +144,10 @@ function valuesOf(days: readonly SalesDay[], of: Metric): number[] {
   });
 }
 
-/** One row per day of the range; the 80% band (low down, high up, as get_forecast rounds) only for guests. */
+/**
+ * One row per day of the range; the 80% band (low down, high up, as get_forecast rounds) only for guests. The band is
+ * the model's own range (spec 14.5), never one an owner's note moved, so it stays the 80% range it is drawn as.
+ */
 export function dailyVisual(
   req: VisualRequest, days: readonly SalesDay[], forecast: readonly ForecastDayView[], run: { model: string; madeAt: string } | null,
 ): Visual {
@@ -153,8 +156,8 @@ export function dailyVisual(
   const band = new Map(of === 'guests' ? forecast.map((day) => [day.date, day]) : []);
   const out = eachDay(req.from, req.to).map((date) => {
     const row = rows.get(date);
-    const low = band.get(date)?.low ?? null;
-    const high = band.get(date)?.high ?? null;
+    const low = band.get(date)?.model.low ?? null;
+    const high = band.get(date)?.model.high ?? null;
     const banded = low !== null && high !== null;
     return {
       date, value: row === undefined ? null : shown(unitsOf(row, of), of),

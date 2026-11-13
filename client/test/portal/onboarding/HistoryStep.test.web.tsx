@@ -5,7 +5,6 @@ import { getMockContext } from 'expo-router/testing-library';
 import { Animated } from 'react-native';
 
 import type { FileView, ImportView } from '../../../src/portal/files/api';
-import { FORECAST_LINE } from '../../../src/portal/home/Home';
 import { STEP } from '../../../src/portal/onboarding/history';
 import type { MeResponse } from '../../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../../helpers/app';
@@ -84,7 +83,7 @@ async function show(me: MeResponse, current: unknown, locations = EMPTY): Promis
       <ExpoRoot context={getMockContext(appRoutes(seededRoot(auth), { '(marketing)/index': () => null }))} location={path} />
     </Head.Provider>,
   );
-  await screen.findByText(FORECAST_LINE);
+  await screen.findByText(/^Townwise hasn’t published a forecast for /);
   return { api, files, analytics };
 }
 

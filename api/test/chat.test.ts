@@ -180,9 +180,23 @@ describe('the system prompt, forecasts (U13B)', () => {
       'A booked day in the forecast is a private buyout: it has no walk-in range, so don\'t give one.',
       'Say which model made the forecast and when, if the owner asks how it was made. Mention its accuracy, including misses, when the owner is deciding something with it.',
       'Only call a day busier or quieter than usual from the forecast when it gives vsBaselinePct; otherwise compare with the owner\'s history and say so.',
-      'The forecast can\'t answer "what if" questions. Say so, and say what a note would let Townwise take into account.',
+      'The forecast can\'t answer other "what if" questions.',
     ]) expect(SYSTEM_PROMPT).toContain(rule);
     expect(SYSTEM_PROMPT).not.toContain('Townwise has no forecast for this location yet.');
+  });
+});
+
+describe('the system prompt, notes in the forecast (calendar)', () => {
+  it('the system prompt says saved notes are in the forecast and a proposal changes nothing until saved', () => {
+    for (const rule of [
+      'Each record is a note. From today on, Townwise\'s forecast includes the owner\'s saved notes. The owner saves every note themselves.',
+      '- A booked day in the forecast is a private buyout: it has no walk-in range, so don\'t give one.\n'
+        + '- A private event with no guest count, an opening or an other note does not change the forecast\'s numbers; say so if the owner asks.',
+      '- A forecast day already includes the owner\'s saved notes: a reason that has a note says what it changed, and modelRange is the model\'s own range before them. The eight in ten goes only with the model\'s own range, never with a range their notes moved. Say which part comes from their note. A proposed note changes nothing until the owner saves it. The forecast can\'t answer other "what if" questions.',
+    ]) expect(SYSTEM_PROMPT).toContain(rule);
+    expect(SYSTEM_PROMPT).not.toContain('Townwise reads these notes later.');
+    expect(SYSTEM_PROMPT).not.toContain('say what a note would let Townwise take into account');
+    expect(SYSTEM_PROMPT).not.toMatch(/\d/);
   });
 });
 
@@ -226,12 +240,12 @@ describe('the history view', () => {
       { nodeId: 'legacy-0', role: 'user', at: at.toISOString(), endedAt: at.toISOString(), text: 'Were we closed?', proposals: [], parts: [], feedback: null, next: null },
       {
         nodeId: 'legacy-1', role: 'assistant', at: later.toISOString(), endedAt: later.toISOString(), text: 'Let me look. \n\nYou have two notes.\n\nI proposed it.',
-        proposals: [{ ...note, id: 'p1', status: 'open', noteId: null }],
+        proposals: [{ ...note, startTime: null, endTime: null, id: 'p1', status: 'open', noteId: null }],
         parts: [
           { type: 'text', text: 'Let me look. ' },
           { type: 'tool', id: 't1', name: 'list_notes', state: 'done', input: null, result: { count: 2 } },
           { type: 'text', text: 'You have two notes.' },
-          { type: 'proposal', proposal: { ...note, id: 'p1', status: 'open', noteId: null } },
+          { type: 'proposal', proposal: { ...note, startTime: null, endTime: null, id: 'p1', status: 'open', noteId: null } },
           { type: 'text', text: 'I proposed it.' },
         ],
         feedback: null, next: null,

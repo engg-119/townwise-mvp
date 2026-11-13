@@ -34,9 +34,11 @@ function day(date: string, guests: number | null, netSalesCents: number | null =
 }
 
 function fc(date: string, low: number | null, high: number | null): ForecastDayView {
+  const status = low === null ? 'closed' : 'open';
+  const mid = low === null || high === null ? null : (low + high) / 2;
   return {
-    date, weekday: weekdayOf(date), status: low === null ? 'closed' : 'open', low, mid: low === null || high === null ? null : (low + high) / 2,
-    high, baseline: null, reasons: [], runId: 'run-0001', madeAt: run.madeAt, madeAfterDay: false, actual: null, inRange: null,
+    date, weekday: weekdayOf(date), status, low, mid, high, baseline: null, reasons: [], runId: 'run-0001', madeAt: run.madeAt,
+    madeAfterDay: false, actual: null, inRange: null, model: { status, low, mid, high }, noteGuests: 0, moreNotes: 0,
   };
 }
 
@@ -58,6 +60,14 @@ describe('the figures of each kind', () => {
     const none = dailyVisual(req('daily', 'guests', '2026-10-01', '2026-10-01'), [day('2026-10-01', 40)], [fc('2026-10-01', null, null)], run);
     expect(none).toMatchObject({ forecast: null, days: [{ value: 40, low: null, high: null }] });
     expect(dailyVisual(req('daily', 'guests', '2026-10-01', '2026-10-01'), [day('2026-10-01', 40)], [], null)).toMatchObject({ forecast: null });
+  });
+
+  it('daily: the band is the model’s own 80% range, never one an owner’s note moved (spec 14.5)', () => {
+    const model = fc('2026-10-01', 45, 60);
+    const noted: ForecastDayView = { ...model, low: 115, mid: 122.5, high: 130, noteGuests: 70 };
+    const booked: ForecastDayView = { ...fc('2026-10-02', 45, 60), status: 'booked', low: null, mid: null, high: null, noteGuests: 50 };
+    const v = dailyVisual(req('daily', 'guests', '2026-10-01', '2026-10-02'), [], [noted, booked], run);
+    expect(v).toMatchObject({ days: [{ low: 45, high: 60 }, { low: 45, high: 60 }], forecast: run });
   });
 
   it('daily net sales never carries a band, and gives dollars', () => {

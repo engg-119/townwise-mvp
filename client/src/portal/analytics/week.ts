@@ -1,3 +1,4 @@
+import type { ForecastDay } from '../estimates/api';
 import { formatCount, formatDate, plural } from '../format';
 import type { Note } from '../locations/api';
 import { addDays, daysBetween, EARLIEST_DATE, monthRange } from '../locations/dates';
@@ -12,8 +13,12 @@ import { METRIC_NOUN, MONTH_NAMES, metricNumber, metricText, shortDate, signedPe
 // Home's numbers (home.md 2 and 5.6): this week against the same weeks in past years, last week against the same
 // week last year, the late-week share for the bar order, and this month in past years. Every figure is a sum, an
 // average or a share of the location's own stored days, and every one is of a past day: no function here returns a
-// figure for a day after the last day of data or after today, and nothing here estimates. "Last year" is the same
-// weekday 52 weeks (364 days) earlier; "usual" is baseline.ts's, with every day allowed by the filters.
+// figure for a day after the last day of data or after today, and nothing here estimates. The one exception is the
+// month grid's cells from today on, which show a published forecast day's own figures when Home passes the month's
+// forecast read (spec 16.3 P11 and 14.5), as the API leaves them after the notes: nothing here adds a
+// note's guests itself.
+// "Last year" is the same weekday 52 weeks (364 days) earlier; "usual" is baseline.ts's, with every day allowed by
+// the filters.
 
 /** 52 weeks: the same weekday a year earlier. */
 export const YEAR_DAYS = 364;
@@ -440,23 +445,80 @@ export interface MonthCell {
   note: boolean;
   inWeek: boolean;
   isToday: boolean;
-  /** What a screen reader hears for the cell: everything its number and marks show, in words. */
+  /**
+   * Before today, the stored figure in the location's metric; from today on, a published forecast day's rounded
+   * middle figure, or a buyout's party on a booked day. Null otherwise, and always without the month's figures.
+   */
+  figure: { value: number; kind: 'forecast' | 'actual' | 'booked'; text: string } | null;
+  /** From today on, a day the published forecast has closed or booked. */
+  status: 'closed' | 'booked' | null;
+  /** Guests the location's notes add to a forecast figure (“+70”); 0 when none. */
+  noteGuests: number;
+  /** What a screen reader hears for the cell: everything its number, figure and marks show, in words. */
   label: string;
 }
 
-/** "Wed, Nov 11, 2026. Today. This week. Veterans Day. 1 note." */
-function monthCellLabel(date: string, events: readonly TownEvent[], notes: number, inWeek: boolean, isToday: boolean): string {
+/** The figures Home's month grid shows: the location's history, and the month's published forecast days by date. */
+export interface MonthFigures {
+  input: HomeInput;
+  forecast: ReadonlyMap<string, ForecastDay>;
+}
+
+interface CellFigure {
+  figure: MonthCell['figure'];
+  status: MonthCell['status'];
+  noteGuests: number;
+  /** The figure in the cell's label. */
+  words: string | null;
+}
+
+const NO_FIGURE: CellFigure = { figure: null, status: null, noteGuests: 0, words: null };
+
+/** A day's figure: stored before today (figureOf), the published forecast's own from today on. */
+function cellFigure(date: string, figures: MonthFigures | undefined): CellFigure {
+  if (figures === undefined) return NO_FIGURE;
+  const { input } = figures;
+  if (date < input.today) {
+    const value = figureOf(date, input);
+    if (value === null) return NO_FIGURE;
+    return { ...NO_FIGURE, figure: { value, kind: 'actual', text: metricNumber(value, input.metric) }, words: `${metricText(value, input.metric)}.` };
+  }
+  const day = figures.forecast.get(date);
+  if (day === undefined) return NO_FIGURE;
+  if (day.status === 'closed') return { ...NO_FIGURE, status: 'closed', words: 'Closed.' };
+  if (day.status === 'booked') {
+    const buyout = day.reasons.some((reason) => reason.note?.outcome === 'booked');
+    const words = !buyout ? 'Booked for a private event.'
+      : day.noteGuests > 0 ? `Booked: a private buyout, ${plural(day.noteGuests, 'guest', 'guests')}.` : 'Booked: a private buyout.';
+    const figure = day.noteGuests > 0 ? { value: day.noteGuests, kind: 'booked' as const, text: formatCount(day.noteGuests) } : null;
+    return { ...NO_FIGURE, status: 'booked', figure, words };
+  }
+  if (day.low === null || day.mid === null || day.high === null) return NO_FIGURE;
+  const mid = Math.round(day.mid);
+  const words = [
+    `Forecast about ${plural(mid, 'guest', 'guests')}, ${formatCount(Math.round(day.low))} to ${formatCount(Math.round(day.high))}.`,
+    day.noteGuests > 0 ? `Includes ${plural(day.noteGuests, 'guest', 'guests')} from your notes.` : null,
+  ].filter((part) => part !== null).join(' ');
+  return { figure: { value: mid, kind: 'forecast', text: formatCount(mid) }, status: null, noteGuests: day.noteGuests, words };
+}
+
+/** "Wed, Nov 11, 2026. Today. This week. Forecast about 212 guests, 180 to 240. Veterans Day. 1 note." */
+function monthCellLabel(date: string, events: readonly TownEvent[], notes: number, inWeek: boolean, isToday: boolean, figure: string | null): string {
   return [
     `${shortDate(date)}.`,
     isToday ? 'Today.' : null,
     inWeek ? 'This week.' : null,
+    figure,
     ...events.map((event) => `${event.title}.`),
     notes === 0 ? null : `${plural(notes, 'note', 'notes')}.`,
   ].filter((part) => part !== null).join(' ');
 }
 
-/** This month as week rows, Monday first; null where a row's day is in another month. */
-export function monthGrid(today: string, context: DayContext): (MonthCell | null)[][] {
+/**
+ * This month as week rows, Monday first; null where a row's day is in another month. Without `figures` no cell has a
+ * figure; with them, a day before today has its stored figure and a day from today on only the published forecast's.
+ */
+export function monthGrid(today: string, context: DayContext, figures?: MonthFigures): (MonthCell | null)[][] {
   const { from, to } = monthRange(today.slice(0, 7));
   const monday = mondayOf(today);
   const sunday = addDays(monday, 6);
@@ -468,7 +530,11 @@ export function monthGrid(today: string, context: DayContext): (MonthCell | null
       const notes = notesOf(context, date).length;
       const inWeek = date >= monday && date <= sunday;
       const isToday = date === today;
-      return { date, event: events.length > 0, note: notes > 0, inWeek, isToday, label: monthCellLabel(date, events, notes, inWeek, isToday) };
+      const found = cellFigure(date, figures);
+      return {
+        date, event: events.length > 0, note: notes > 0, inWeek, isToday, figure: found.figure, status: found.status, noteGuests: found.noteGuests,
+        label: monthCellLabel(date, events, notes, inWeek, isToday, found.words),
+      };
     }));
   }
   return rows;

@@ -56,20 +56,37 @@ function dayRow(date: string, fields: Partial<ForecastRow> = {}): ForecastRow {
   };
 }
 
-function forecastStores(rows: readonly ForecastRow[], runs: readonly ForecastRunRecord[] = rows.length === 0 ? [] : [publishedRun()]) {
+const NO_NOTES = { overlapping: () => Promise.resolve([]) };
+
+function forecastStores(
+  rows: readonly ForecastRow[], runs: readonly ForecastRunRecord[] = rows.length === 0 ? [] : [publishedRun()], saved: readonly NoteRecord[] = [],
+) {
   const forecasts = {
     published: () => Promise.resolve([...runs]),
     rows: () => Promise.resolve([...rows]),
   } as unknown as ForecastStore;
   const salesDays = { days: () => Promise.resolve([{ date: '2026-11-02', guests: 140, netSalesCents: 1 }]) } as unknown as SalesDayStore;
-  return { forecasts, salesDays };
+  return { forecasts, salesDays, notes: saved.length === 0 ? NO_NOTES : { overlapping: () => Promise.resolve([...saved]) } };
+}
+
+const NOTE_DETAIL = 'Sentinel rehearsal dinner for the Smith party';
+const NOTE_ID = '0000000000000000000000aa';
+
+/** A saved note with synthetic content; its detail and id must never reach the model through get_forecast. */
+function savedNote(fields: Partial<NoteRecord> & Pick<NoteRecord, 'startDate'>): NoteRecord {
+  return {
+    id: NOTE_ID, kind: 'private_event', endDate: fields.startDate, weekdays: null, effect: 'more_guests', expectedGuests: 70,
+    detail: NOTE_DETAIL, startTime: '18:00', endTime: '21:00', createdBy: SENTINEL_USER, byStaff: false,
+    createdAt: new Date('2026-11-01T00:00:00Z'), updatedAt: new Date('2026-11-01T00:00:00Z'), ...fields,
+  };
 }
 
 function context(opts: { data?: PeopleData; town?: Town; forecasts?: ForecastReader } = {}): ToolContext {
   const notes: NoteRecord[] = [{
     id: '000000000000000000000002', kind: 'private_event', startDate: '2026-10-10', endDate: '2026-10-10', weekdays: null,
     effect: 'more_guests', expectedGuests: null, detail: `Party booked by ${SENTINEL_EMAIL} from ${SENTINEL_FILE}`,
-    createdBy: SENTINEL_USER, byStaff: false, createdAt: new Date('2026-10-01T00:00:00Z'), updatedAt: new Date('2026-10-01T00:00:00Z'),
+    startTime: null, endTime: null, createdBy: SENTINEL_USER, byStaff: false, createdAt: new Date('2026-10-01T00:00:00Z'),
+    updatedAt: new Date('2026-10-01T00:00:00Z'),
   }];
   const days = [...saturdays('2026-09-19', 8, 200), ...saturdays('2025-12-06', 3, 90)];
   const stores = {
@@ -217,7 +234,9 @@ describe('get_people_in_town', () => {
 
 describe('get_forecast (U13B)', () => {
   const parse = (input: unknown) => toolNamed('get_forecast')?.parse(input, TODAY) ?? null;
-  const withRows = (rows: readonly ForecastRow[], runs?: readonly ForecastRunRecord[]) => context({ forecasts: createForecastReader({ stores: forecastStores(rows, runs) }) });
+  const withRows = (rows: readonly ForecastRow[], runs?: readonly ForecastRunRecord[], notes: readonly NoteRecord[] = []) => context({
+    forecasts: createForecastReader({ stores: forecastStores(rows, runs, notes) }),
+  });
 
   it('takes { from, to } of at most 31 days, starting at most 92 days back', () => {
     expect(parse({ from: '2026-11-01', to: '2026-12-01' })).toEqual({ from: '2026-11-01', to: '2026-12-01' });
@@ -245,13 +264,14 @@ describe('get_forecast (U13B)', () => {
         dataThrough: '2026-10-31', madeAt: '2026-11-01', frozen: true, rangesWidened: true,
         accuracy: { backtest: { weeks: 10, weeklyTypicalErrorPct: 10, weeksOver20Pct: 1 }, live: null },
       },
-      interval: { level: 0.8, meaning: 'About 8 in 10 days should land inside the range.' },
+      interval: { level: 0.8, meaning: 'About 8 in 10 days should land inside the model\'s own range: a day\'s modelRange when a note changed it, otherwise its low to high. A range that includes guests from notes is not the model\'s.' },
       notCovered: [{ from: '2026-11-04', to: '2026-11-04' }],
     });
     const days = parsed.days as Record<string, unknown>[];
     expect(days[0]).toEqual({
       date: '2026-11-02', weekday: 'Mon', status: 'open', low: 80, mid: 100, high: 120, vsBaselinePct: null,
-      reasons: [{ label: 'Monday', effectPct: null, sources: [] }], madeAt: '2026-11-01', madeAfterDay: false, actual: 140, inRange: false,
+      reasons: [{ label: 'Monday', effectPct: null, sources: [], note: null }], modelRange: null, noteGuests: 0,
+      madeAt: '2026-11-01', madeAfterDay: false, actual: 140, inRange: false,
     });
     expect(days[1]).toMatchObject({ status: 'closed', low: null, mid: null, high: null, reasons: [{ label: 'Closed' }] });
     expect(resultViewOf('get_forecast', ok(content))).toEqual({
@@ -273,7 +293,7 @@ describe('get_forecast (U13B)', () => {
     ];
     const forecasts = { published: () => Promise.resolve(runs), rows: () => Promise.resolve(rows) } as unknown as ForecastStore;
     const salesDays = { days: () => Promise.resolve(olderDays.map((date) => ({ date, guests: date === '2026-10-30' ? 130 : 100, netSalesCents: 1 }))) } as unknown as SalesDayStore;
-    const reader = createForecastReader({ stores: { forecasts, salesDays } });
+    const reader = createForecastReader({ stores: { forecasts, salesDays, notes: NO_NOTES } });
     const { parsed } = await run('get_forecast', { from: '2026-10-27', to: '2026-11-05' }, context({ forecasts: reader }));
     expect(parsed.accuracy).toBeUndefined();
     expect(parsed.model).toMatchObject({ version: 'v10', madeAt: '2026-11-02', accuracy: { backtest: null, live: null } });
@@ -295,9 +315,59 @@ describe('get_forecast (U13B)', () => {
     const week: ForecastRow = { ...dayRow('2026-11-02'), span: 'week', to: '2026-11-08', status: null, low: 500.5, mid: 600.5, high: 700.5, openDays: 7, reasons: [] };
     const days = ['2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06', '2026-11-07', '2026-11-08'].map((date) => dayRow(date));
     const { parsed } = await run('get_forecast', { from: '2026-11-02', to: '2026-11-08' }, withRows([...days, week]));
-    expect(parsed.weeks).toEqual([{ from: '2026-11-02', to: '2026-11-08', openDays: 7, low: 500, mid: 601, high: 701, madeAt: '2026-11-01', actual: null, inRange: null }]);
+    expect(parsed.weeks).toEqual([{
+      from: '2026-11-02', to: '2026-11-08', openDays: 7, low: 500, mid: 601, high: 701, noteGuests: 0, madeAt: '2026-11-01', actual: null, inRange: null,
+    }]);
     const noWeek = await run('get_forecast', { from: '2026-11-02', to: '2026-11-08' }, withRows(days));
     expect(noWeek.parsed.weeks).toEqual([]);
+  });
+
+  it('get_forecast gives a noted day its modelRange, noteGuests and the note reason\'s guests and outcome, never the note\'s detail or id', async () => {
+    const notes = [
+      savedNote({ startDate: '2026-11-07' }),
+      savedNote({ startDate: '2026-11-07', kind: 'opening', effect: 'unknown', expectedGuests: 20, startTime: null, endTime: null }),
+    ];
+    const tc = withRows([dayRow('2026-11-06'), dayRow('2026-11-07')], undefined, notes);
+    const { parsed, content } = await run('get_forecast', { from: '2026-11-06', to: '2026-11-07' }, tc);
+    const days = parsed.days as Record<string, unknown>[];
+    expect(days[0]).toMatchObject({ date: '2026-11-06', low: 80, mid: 100, high: 120, modelRange: null, noteGuests: 0 });
+    expect(days[1]).toMatchObject({
+      date: '2026-11-07', status: 'open', low: 150, mid: 170, high: 190, noteGuests: 70,
+      modelRange: { status: 'open', low: 80, mid: 100, high: 120 },
+      reasons: [
+        { label: 'Your private event, 70 guests, 6 pm to 9 pm', effectPct: null, sources: [], note: { guests: 70, outcome: 'added' } },
+        { label: 'Saturday', effectPct: null, sources: [], note: null },
+        { label: 'Your opening, 20 guests', effectPct: null, sources: [], note: { guests: 20, outcome: 'not_counted' } },
+      ],
+    });
+    for (const sentinel of [NOTE_DETAIL, 'Smith', NOTE_ID, SENTINEL_USER]) expect(content).not.toContain(sentinel);
+    const description = toolNamed('get_forecast')?.definition.description ?? '';
+    expect(description).toContain('From today on, each day includes the owner\'s saved notes');
+  });
+
+  it('get_forecast keeps a past day\'s figures and says the note came after it', async () => {
+    const tc = withRows([dayRow('2026-11-04')], undefined, [savedNote({ startDate: '2026-11-04' })]);
+    const days = (await run('get_forecast', { from: '2026-11-04', to: '2026-11-04' }, tc)).parsed.days as Record<string, unknown>[];
+    expect(days[0]).toMatchObject({ low: 80, mid: 100, high: 120, modelRange: null, noteGuests: 0 });
+    expect((days[0]?.reasons as { note: unknown }[]).find((reason) => reason.note !== null)).toEqual(expect.objectContaining({
+      note: { guests: 70, outcome: 'past_day' },
+    }));
+  });
+
+  it('get_forecast leaves out a week once a buyout or closure note changes a day\'s status, and shifts one by the guests notes add', async () => {
+    const dates = ['2026-11-09', '2026-11-10', '2026-11-11', '2026-11-12', '2026-11-13', '2026-11-14', '2026-11-15'];
+    const week: ForecastRow = { ...dayRow('2026-11-09'), span: 'week', to: '2026-11-15', status: null, low: 500, mid: 600, high: 700, openDays: 7, reasons: [] };
+    const rows = [...dates.map((date) => dayRow(date)), week];
+    const weeksWith = async (notes: readonly NoteRecord[]) => (await run('get_forecast', { from: '2026-11-09', to: '2026-11-15' }, withRows(rows, undefined, notes))).parsed;
+    const buyout = await weeksWith([savedNote({ startDate: '2026-11-14', effect: 'closed', startTime: null, endTime: null })]);
+    expect(buyout.weeks).toEqual([]);
+    expect((buyout.days as Record<string, unknown>[])[5]).toMatchObject({
+      status: 'booked', low: null, mid: null, high: null, noteGuests: 70, modelRange: { status: 'open', low: 80, mid: 100, high: 120 },
+    });
+    const closure = await weeksWith([savedNote({ startDate: '2026-11-10', kind: 'closure', effect: 'closed', expectedGuests: null, startTime: null, endTime: null })]);
+    expect(closure.weeks).toEqual([]);
+    const party = await weeksWith([savedNote({ startDate: '2026-11-14' })]);
+    expect(party.weeks).toEqual([expect.objectContaining({ low: 570, mid: 670, high: 770, noteGuests: 70 })]);
   });
 
   it('cards show the model, dates and counts only, never a figure', async () => {

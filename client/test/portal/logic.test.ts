@@ -3,7 +3,7 @@ import { mapTowns } from '../../src/marketing/map/mapState';
 import { errorCopy, needsRecheck, tooManyAttempts } from '../../src/portal/errors';
 import { formatCount, formatDate, formatTime, plural } from '../../src/portal/format';
 import {
-  clientNav, consoleNav, HOME, homeFor, isAllowed, isFillRoute, locationHref, navLocationId, pageTitle, tabOf, type TabKey,
+  calendarHref, clientNav, consoleNav, HOME, homeFor, isAllowed, isFillRoute, locationHref, navLocationId, pageTitle, tabOf, type TabKey,
 } from '../../src/portal/routing';
 import { meResponseSchema, orgResponseSchema, type Access } from '../../src/portal/schemas';
 import {
@@ -16,7 +16,7 @@ const ALL: [string, Access][] = Object.entries(ACCESS);
 
 const GATE = ['/request-access', '/waiting', '/no-access', '/joining', '/staff/sign-in-again'];
 const MEMBER = [
-  '/dashboard', '/settings', '/locations/l1', '/locations/l1/analytics', '/locations/l1/sales', '/locations/l1/sales/upload', '/locations/l1/data',
+  '/dashboard', '/settings', '/locations/l1', '/locations/l1/calendar', '/locations/l1/analytics', '/locations/l1/sales', '/locations/l1/sales/upload', '/locations/l1/data',
   '/locations/l1/notes', '/locations/l1/town', '/locations/l1/agent', '/locations/l1/chat',
 ];
 const ADMIN_ONLY = ['/team', '/locations/new', '/locations/l1/settings'];
@@ -79,6 +79,17 @@ describe('access routing (spec 4.3)', () => {
     expect(isAllowed(meOf(ACCESS.member), '/dashboard?x=1')).toBe(true);
     expect(isAllowed(meOf(ACCESS.member), '/locations/l1/nope')).toBe(false);
   });
+
+  test('isAllowed lets members open /locations/x/calendar, with or without ?day=', () => {
+    for (const me of [meOf(ACCESS.member), meOf(ACCESS.admin), viewAsMe(ACCESS.member), openAsAdminMe()]) {
+      expect(isAllowed(me, '/locations/x/calendar')).toBe(true);
+      expect(isAllowed(me, '/locations/x/calendar?day=2026-11-21')).toBe(true);
+      expect(isAllowed(me, calendarHref('x', '2026-11-21'))).toBe(true);
+    }
+    expect(isAllowed(meOf(ACCESS.pending), '/locations/x/calendar')).toBe(false);
+    expect(isAllowed(staffMe(), '/locations/x/calendar')).toBe(false);
+    expect(isAllowed(meOf(ACCESS.member), '/locations/x/calendar/2026-11')).toBe(false);
+  });
 });
 
 describe('navigation per role (spec 15.3)', () => {
@@ -87,10 +98,16 @@ describe('navigation per role (spec 15.3)', () => {
 
   test('members: the location’s sections, then Settings as the right-hand group', () => {
     expect(rows(clientNav('member', '/locations/l1', 'l1'))).toEqual([
-      ['Home', '/locations/l1', 'page', false], ['Analytics', '/locations/l1/analytics', null, false],
+      ['Home', '/locations/l1', 'page', false], ['Calendar', '/locations/l1/calendar', null, false], ['Analytics', '/locations/l1/analytics', null, false],
       ['TownwiseAI', '/locations/l1/agent', null, false], ['Notes', '/locations/l1/notes', null, false],
       ['Town', '/locations/l1/town', null, false], ['Your data', '/locations/l1/data', null, false],
       ['Settings', '/settings', null, true],
+    ]);
+  });
+
+  test('clientNav lists Calendar right after Home', () => {
+    expect(clientNav('org_admin', '/locations/l1/calendar', 'l1').map((item) => item.label)).toEqual([
+      'Home', 'Calendar', 'Analytics', 'TownwiseAI', 'Notes', 'Town', 'Your data', 'Team', 'Settings',
     ]);
   });
 
@@ -118,6 +135,7 @@ describe('navigation per role (spec 15.3)', () => {
     expect(current('/locations/l1/sales/upload')).toEqual([['Your data', 'true']]);
     expect(current('/locations/l1/data')).toEqual([['Your data', 'page']]);
     expect(current('/locations/l1/agent')).toEqual([['TownwiseAI', 'page']]);
+    expect(current('/locations/l1/calendar')).toEqual([['Calendar', 'page']]);
     expect(current('/locations/l1/notes/')).toEqual([['Notes', 'page']]);
     expect(current('/locations/l1/town')).toEqual([['Town', 'page']]);
     // Location settings is the header's link, not a top bar item; Settings is the account page.
@@ -154,6 +172,7 @@ describe('navigation per role (spec 15.3)', () => {
     const today = new Date(2026, 10, 5);
     const pages: [string, TabKey, string][] = [
       ['/locations/l1', 'home', 'Week of Nov 2, 2026'],
+      ['/locations/l1/calendar', 'calendar', 'Calendar'],
       ['/locations/l1/analytics', 'analytics', 'Analytics'],
       ['/locations/l1/sales', 'sales', 'Sales data'],
       ['/locations/l1/sales/upload', 'upload', 'Upload'],
@@ -171,6 +190,10 @@ describe('navigation per role (spec 15.3)', () => {
     // The old chat address belongs to TownwiseAI, where it redirects.
     expect(tabOf('/locations/l1/chat')).toBe('agent');
     expect(locationHref('a b')).toBe('/locations/a%20b');
+    // Home's days open the Calendar at a day (?day=).
+    expect(calendarHref('l1')).toBe('/locations/l1/calendar');
+    expect(calendarHref('a b', '2026-11-21')).toBe('/locations/a%20b/calendar?day=2026-11-21');
+    expect(tabOf(calendarHref('l1', '2026-11-21'))).toBe('calendar');
   });
 
   test('Home’s title is the Monday of this week on the device’s calendar, across a month and a year', () => {

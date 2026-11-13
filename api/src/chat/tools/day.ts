@@ -76,8 +76,8 @@ export const dayTool: ChatTool<DayInput> = {
         closed: dayClass === 'closed',
         dayClass,
         notes: notes.map((note) => ({
-          kind: note.kind, startDate: note.startDate, endDate: note.endDate, weekdays: note.weekdays, effect: note.effect,
-          expectedGuests: note.expectedGuests, detail: note.detail,
+          kind: note.kind, startDate: note.startDate, endDate: note.endDate, weekdays: note.weekdays, startTime: note.startTime,
+          endTime: note.endTime, effect: note.effect, expectedGuests: note.expectedGuests, detail: note.detail,
         })),
         town: { name: town.name, state: town.state },
         covered: range !== null && range.from <= date && date <= range.to,

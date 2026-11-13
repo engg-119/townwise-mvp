@@ -161,7 +161,7 @@ describe('get_day', () => {
   function note(fields: Partial<NoteRecord>): NoteRecord {
     return {
       id: '000000000000000000000002', kind: 'private_event', startDate: '2026-11-21', endDate: '2026-11-21', weekdays: null,
-      effect: 'more_guests', expectedGuests: 60, detail: 'Sentinel-day-detail', createdBy: SENTINEL_USER, byStaff: false,
+      effect: 'more_guests', expectedGuests: 60, detail: 'Sentinel-day-detail', startTime: null, endTime: null, createdBy: SENTINEL_USER, byStaff: false,
       createdAt: new Date('2026-11-01T00:00:00Z'), updatedAt: new Date('2026-11-01T00:00:00Z'), ...fields,
     };
   }
@@ -242,6 +242,26 @@ describe('get_day', () => {
     expect(content).not.toContain(SENTINEL_USER);
     expect(content).not.toContain(UPLOAD_ID);
     expect(content).not.toMatch(/createdBy|uploadedBy|email/);
+  });
+
+  it('list_notes includes startTime and endTime, and get_day\'s notes carry them in the same shape (contract S5)', async () => {
+    const timed = note({ startTime: '18:00', endTime: '21:00' });
+    const { tc } = context({ notes: [timed] });
+    const tool = toolNamed('list_notes');
+    if (tool === undefined) throw new Error('no list_notes');
+    const listed = JSON.parse((await tool.run(tc, {})).content) as { notes: Record<string, unknown>[] };
+    const shape = {
+      kind: 'private_event', startDate: '2026-11-21', endDate: '2026-11-21', weekdays: null, startTime: '18:00', endTime: '21:00',
+      effect: 'more_guests', expectedGuests: 60, detail: 'Sentinel-day-detail',
+    };
+    expect(listed.notes).toEqual([shape]);
+    expect(Object.keys(listed.notes[0] ?? {})).toEqual(Object.keys(shape));
+    expect(tool.definition.description).toBe(
+      'The notes already recorded for this location, by start date: kind, dates, weekdays, hours, effect, expected guests and detail.',
+    );
+    const day = (await run({ date: '2026-11-21' }, tc)).parsed.notes as Record<string, unknown>[];
+    expect(day).toEqual([shape]);
+    expect(Object.keys(day[0] ?? {})).toEqual(Object.keys(shape));
   });
 
   it('says so when the day has no row, a covering note closed it, or the town’s calendar isn’t researched', async () => {

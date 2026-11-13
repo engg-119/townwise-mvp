@@ -30,10 +30,10 @@ const GATE_PAGES: Readonly<Record<string, readonly AccessState[]>> = {
 
 const ID = '[^/]+';
 /**
- * Client app pages any member may open (P9, P11 to P15, P18, P24 Analytics, P25 TownwiseAI). `chat` is the tuning
- * chat's old address, which redirects to `agent`.
+ * Client app pages any member may open (P9, P11 to P15, P18, P24 Analytics, P25 TownwiseAI, P27 Calendar). `chat` is
+ * the tuning chat's old address, which redirects to `agent`. The Calendar's `?day=` is a query, so it never changes this.
  */
-const MEMBER_PAGES = new RegExp(`^/(dashboard|settings|locations/${ID}(/(analytics|sales|sales/upload|data|notes|town|agent|chat))?)$`);
+const MEMBER_PAGES = new RegExp(`^/(dashboard|settings|locations/${ID}(/(analytics|sales|sales/upload|data|notes|town|agent|chat|calendar))?)$`);
 /** Client app pages for org admins only (P10, P16, P17). Checked before MEMBER_PAGES: /locations/new is not an id. */
 const ADMIN_PAGES = new RegExp(`^/(team|locations/new|locations/${ID}/settings)$`);
 const CONSOLE_PAGES = /^\/admin(\/.*)?$/;
@@ -83,20 +83,20 @@ function currentFor(path: string, own: string, below: RegExp | null): Current {
   return below?.test(path) === true ? 'true' : null;
 }
 
-export type TabKey = 'home' | 'analytics' | 'sales' | 'upload' | 'data' | 'notes' | 'town' | 'agent' | 'settings';
+export type TabKey = 'home' | 'calendar' | 'analytics' | 'sales' | 'upload' | 'data' | 'notes' | 'town' | 'agent' | 'settings';
 
 const TAB_SUFFIX: Readonly<Record<TabKey, string>> = {
-  home: '', analytics: '/analytics', sales: '/sales', upload: '/sales/upload', data: '/data', notes: '/notes', town: '/town', agent: '/agent',
+  home: '', calendar: '/calendar', analytics: '/analytics', sales: '/sales', upload: '/sales/upload', data: '/data', notes: '/notes', town: '/town', agent: '/agent',
   settings: '/settings',
 };
 
 /** The location's sections in the top bar, in order (15.3). Sales data and Location settings are reached from pages. */
 const SECTIONS: readonly (readonly [TabKey, string])[] = [
-  ['home', 'Home'], ['analytics', 'Analytics'], ['agent', 'TownwiseAI'], ['notes', 'Notes'], ['town', 'Town'], ['data', 'Your data'],
+  ['home', 'Home'], ['calendar', 'Calendar'], ['analytics', 'Analytics'], ['agent', 'TownwiseAI'], ['notes', 'Notes'], ['town', 'Town'], ['data', 'Your data'],
 ];
 
 /**
- * The client app's top bar (15.3): the sections of `locationId` (Home, Analytics, TownwiseAI, Notes, Town, Your data),
+ * The client app's top bar (15.3): the sections of `locationId` (Home, Calendar, Analytics, TownwiseAI, Notes, Town, Your data),
  * then Team for org admins (not while staff open the organization as admin) and Settings. With no location (none yet, or not known yet) only Team and Settings.
  * Analytics also marks Sales data, which lives under it.
  */
@@ -150,6 +150,12 @@ export function locationHref(locationId: string, tab: TabKey = 'home'): string {
   return `/locations/${encodeURIComponent(locationId)}${TAB_SUFFIX[tab]}`;
 }
 
+/** The Calendar (P27), opened at `day` (YYYY-MM-DD) when given, as Home's This month does. */
+export function calendarHref(locationId: string, day?: string): string {
+  const href = locationHref(locationId, 'calendar');
+  return day === undefined ? href : `${href}?day=${encodeURIComponent(day)}`;
+}
+
 /**
  * The location the top bar's sections open: the one in the path, else the last one opened in this sign-in, else
  * the organization's first. `locations` is null while the organization loads; an id is then taken on trust, and
@@ -174,6 +180,7 @@ function weekOf(today: Date): string {
 export function pageTitle(tab: TabKey, today: Date): string {
   switch (tab) {
     case 'home': return `Week of ${weekOf(today)}`;
+    case 'calendar': return 'Calendar';
     case 'analytics': return 'Analytics';
     case 'sales': return 'Sales data';
     case 'upload': return 'Upload';
