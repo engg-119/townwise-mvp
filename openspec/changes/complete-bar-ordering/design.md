@@ -1,0 +1,86 @@
+## Context
+
+PR #68 (mcardin4, `feat/inventory-management`) brings the reorder research (`reorder/`, Python, `docs/REORDER_SPEC.md`) and a product slice: `api/src/orders/board.ts` (types, a labeled sample, `withPreferences`), `stores/orders.ts` (decisions, rules, cards), six routes, four chat tools, an Orders page, order cards in TownwiseAI and Home links. The live board is a stub (`liveBoard(): null`), so the product slice cannot run. The review of #68 (blockers B1 to B5, should-fix S1 to S7, nits N1 to N6) is the checklist this change closes. Recon notes: the engine math is in `reorder/reorder/engine.py`, `forecast_adapter.py` and `mockup_logic.py`; the product has no item-level sales anywhere; the only guest forecast is a published run read through `ctx.ports.forecasts.window` (31 days at most per call, none for most locations); the browser already reads CSV (`client/src/portal/upload/csv.ts`) and Excel (`client/src/portal/viewer/xlsx.ts`, `readWorkbook`).
+
+Constraints: no multi-document transactions (DocumentDB), compare-and-set for concurrent edits, `OrgScope` on every tenant store, view-as read-only, logs and audit details carry ids and counts only, the system prompt is static, the tool registry is append-only once on `develop` (these tools are not on `develop` yet, so their names and inputs can still change), everything pinned, no em dashes in copy.
+
+## Goals / Non-Goals
+
+**Goals:**
+- An owner can set up ordering in one sitting: suppliers and schedule, items (typed or from a sheet), item sales from a point-of-sale export, and a count.
+- The Orders page shows a live next order per supplier, computed by a faithful TypeScript port of the Python engine's core, with every deviation written down.
+- Every write in #68 works end to end and is tested: saving a line, rules, cards.
+- TownwiseAI can answer "what should I order, why, what did we sell, what is set up" from tools.
+- Home links to Orders with live status.
+- #68's review blockers and should-fix items are closed; `npm run verify` and the API integration tests pass.
+
+**Non-Goals:**
+- Price and substitute suggestions, NH purchasing rules, late-order recovery, storage trims, shelf-life caps, keg slots, supplier minimums, deliveries received, a running stock estimate between counts, sending or exporting an order, bottle service, recipes beyond "servings per sale", the backtest in the product.
+- Listing item sales, setup or counts in Your data (Your data gets a one-line pointer to Orders setup instead).
+- Regrouping the top bar (own change on `develop` after #70).
+- Changing the Python engine.
+
+## Decisions
+
+### 1. Work on #68's branch, as merge commits
+Commits go on `feat/inventory-management` in the scratch worktree, merged from `develop` (never rebased; force-push is blocked). The PR then holds her commits plus ours. Alternative, a second PR stacked on hers: rejected, because her PR cannot merge alone (B1 to B5) and two PRs double the review.
+
+### 2. One order per supplier
+`OrderBoard` becomes `{ available: true, sample, missing[], orders: SupplierOrder[] }`, where `SupplierOrder = { supplier, cutoff, cutoffTime, delivery, coversThrough, deadline, lines[] }`, ordered by cutoff. Python computes a window per product; suppliers have different days and times (Sawtooth: three suppliers, cutoffs at 12:00, 14:00 and 17:00). Alternative, keep one cutoff and show only the soonest supplier: rejected, it hides the other orders. Decisions stay keyed by `{itemId, delivery}`: an item belongs to one supplier.
+
+### 3. Three stores, each one document per location or per day
+- `tw_order_setups`: one document per location, `{ suppliers[], items[], version, updatedAt }`, written by `PUT` with `expectedVersion` (compare-and-set: `findOneAndUpdate({orgId, locationId, version}, {$set, $inc})`, 409 `setup_changed` on a mismatch; the first save inserts with version 1 and a unique `{orgId, locationId}` index catches a racing insert). Suppliers: `{ id, name, deliveries: [{ deliveryWeekday, cutoffWeekday, cutoffTime }] }`. Items: `{ id, name, supplierId, category, unit, servingsPerUnit, par, dealSize | null, neverRunOut, posNames: [{ name, perSale }] }`. Ids are 24-hex strings minted by the server for new rows. Limits: 20 suppliers, 7 deliveries each, 300 items, 10 point-of-sale names per item.
+- `tw_item_sales`: one document per location and business date, `{ date, items: { [itemId]: servings }, uploadedAt }`, unique `{orgId, locationId, date}`. A day that is stored counts as covered: an item absent from it sold zero that day. A day not stored is unknown (closed, or no file covered it). Alternative, one row per item and day: rejected, a board read would scan up to 70,000 rows; per day it reads at most 238.
+- `tw_order_counts`: one document per location and count date, `{ date, items: { [itemId]: quantity }, updatedAt }`; a save `$set`s each item, so the latest count per item is the newest date holding it.
+
+All three take an `OrgScope`, register before `ensureIndexes`, lead every index with `orgId`, and are removed with the location and the organization. Item sales are also removed with the location's sales data (`removeSalesData`); counts and setup are not. None holds a person's id, so person deletion has nothing to remove in them.
+
+### 4. Item sales are matched in the browser and sent by range
+The upload reads the file in the browser (CSV through `CsvReader`, Excel through `readWorkbook`), guesses the date, item and quantity columns (presets for Toast "Business Date / Menu Item / Item Qty", Square "Date / Item / Qty", and the clean daily layout), applies the 4 a.m. business-day rule when the date column carries a time, and matches each item name, trimmed and case-folded, to the setup's point-of-sale names. It sends `{ from, to, days: [{ date, items: { [itemId]: servings } }] }` where servings = quantity x `perSale`, in chunks of at most 31 days and 500 items per day (`256kb`). The server upserts each sent day, then deletes stored days in `[from, to]` that the chunk did not send, so a retry completes it and no gap appears mid-way. Unmatched names are shown to the owner with "Add to an item" before sending; they never leave the browser. Alternative, parse on the server through the stored-files pipeline: rejected, it would store the raw export, whose item names can carry customer or group names.
+
+### 5. The engine is a pure port, with written deviations
+`api/src/orders/engine.ts` exports pure functions over plain inputs (setup, item-sales days, latest counts, guest forecast days, history guests, `now` in the town's zone); `board.ts` keeps the types, sample and `withPreferences`; a small `orders/live.ts` reads the stores and calls the engine. Port, from `engine.py` and `forecast_adapter.py`:
+- Window per delivery row: the next cutoff (date and time, town zone) after `now`; delivery = cutoff date + ((delivery weekday - cutoff weekday) mod 7) days; window = [cutoff date, next delivery of that supplier - 1]; covers through = that next delivery.
+- Daily demand = the item's weekday mean, times a guest index when a published forecast covers the day; window demand mu = the sum over the window (days with no mean skipped). Servings to purchase units: / (servingsPerUnit x (1 - loss)).
+- sigma = sample standard deviation of past window errors (actual minus forecast, each forecast made as of that window's cutoff, no guest index), null under 2 windows.
+- Target 0.98 for never-run-out, else by category; z from a fixed table (0.98: 2.054, 0.95: 1.645, 0.92: 1.405, 0.88: 1.175). S = mu + z x (sigma or 0).
+- Quantity: no count gives par; a count older than 7 days gives max(0, par - count); otherwise needed = max(S - count, par - count, 0), then the deal pair (floor and ceil multiples of the deal size) chosen by the engine's cost (holding 0.05, shortage 4.0; the unit price cancels, so no price is needed), with the par swap; no deal size rounds up to a whole unit. The other deal size is the alternative, or null when equal.
+- Confidence: low with no count, a count over 7 days old, or no item sales; medium with a count 3 to 7 days old or under 4 weeks of covered item-sales days; else high.
+
+Deviations from Python, each a `[CONFIRM]` in the spec: (a) the weekday mean uses the last 8 weeks of covered days, not all history (a college-town bar is seasonal); (b) the guest index is forecast guests over the location's own mean guests for that weekday in the same 8 weeks, so it scales history to the forecast (Python divides by the forecast file's own weekday mean); (c) the cutoff time is honored when picking the next order; (d) quantities are whole units; (e) a covered day counts an unsold item as zero (Python skips the day for that item); (f) with no sigma the why line says there is no cushion yet instead of printing a chance; (g) lines with a quantity of 0 stay on the board. Defaults (targets, loss rates by category: bottles and cans 1%, draft 12%, liquor 5%, cocktail ingredients 0%) are Sawtooth's config values, used for every location until the team says otherwise.
+
+### 6. Rules apply to every later order of the item
+A rule saved from an edit adds its change to every later order of that item until turned off; the save copy says "Add 2 cases to every order of {item}". Each rule is listed on its line with its own "Turn off" (`rules[]` replaces `rule`). The rule's text stays the owner's reason. Alternative, apply only in a named situation: rejected, Townwise cannot tell when "a football weekend" happens. Rules apply after deal rounding, as #68 does.
+
+### 7. Concurrency, audit and deletion for the write side
+`setCard` filters `status: {$ne: 'saved'}` and retries once on a duplicate key, as `stores/chat-proposals.ts` does; `addRule` retries once on a duplicate key and returns the existing rule. Audit actions, details from fixed allowlists with no free text: `orders.setup_saved` (supplierCount, itemCount), `orders.item_sales_uploaded` (dayCount, itemCount, firstDate, lastDate), `orders.item_sales_deleted`, `orders.count_saved` (date, itemCount), `orders.decision_saved` (itemId, delivery), `orders.rule_saved`, `orders.rule_turned_off`, `orders.card_saved` / `orders.card_dismissed`. Cards gain removal by conversation (conversation delete) and by a set of conversation ids (person deletion, from the conversations the person owned).
+
+### 8. Who may do what
+Every member edits the setup, uploads item sales and saves counts; an org admin deletes item sales. Staff opened as admin can do all of it; view-as is read-only through the chain. `[CONFIRM]`.
+
+### 9. TownwiseAI
+Tools (appended after the existing registry, names frozen once on `develop`): `get_order_board {}` (the live board, or the labeled sample with `sample: true`, or `{available: false, reason, missing}`), `get_order_line {itemId}` (one line with mu, sigma, S, target, count and age, deal size, history weeks and the last 28 covered days of servings), `get_order_setup {}` (suppliers and days, items with unit, par, deal size, never-run-out, latest count and date, item-sales coverage; never point-of-sale names), `propose_order_change {itemId}` (a card for a live line on its supplier's next order), `propose_order_rule {itemId}`. Result views carry ids, dates and counts only. Prompt lines: read `get_order_board` first, use `get_order_setup` for what is set up or missing, never state a quantity a tool did not return, a rule applies to every later order, never say an order was placed.
+
+### 10. Home and navigation
+The Bar order card calls `GET .../orders`: with a board it shows the soonest deadline and "N items to order"; with no setup it says what is missing and links to setup. It stays hidden while Home shows onboarding (`needs`), as today. Orders stays in the flat top bar as #68 has it, marked `[CONFIRM]` in spec 15.3, until the regroup change.
+
+### 11. Python package
+Commit `reorder/uv.lock` with lower bounds at the locked versions (the `eda/` and `modeling/` pattern), add a `reorder` CI job (`uv sync --locked`, `uv run --frozen pytest -q`) beside `lab`, and label `reorder/reports/*` and the README as built from the synthetic dataset. Tests that need `data/synthetic/` keep skipping with that reason; the CI job prints the skip count.
+
+## Risks / Trade-offs
+
+- [The PR becomes very large for a teammate to review] → Each task is its own commit with a Conventional message; the PR comment lists what was added on top of her work and why.
+- [#70 lands first and conflicts] → Merge `develop` at the end, resolve by keeping both sides, rerun verify and the integration tests.
+- [Engine deviations change her numbers] → Every deviation is written above and marked `[CONFIRM]`; the spec 5g test vector (mu 14, sigma 3, 98%, 5 on hand, deal 6 gives 18, alternative 12) is a unit test.
+- [A board read is heavy] → At most 238 item-sales days, 30 count days, one setup and one forecast window per request; measured in the integration test.
+- [Owners map point-of-sale names wrongly] → The upload shows matched and unmatched counts per item before sending; the setup page shows each item's sales coverage.
+- [No count means par orders] → The board says so per line and the count form is one click from it.
+
+## Migration Plan
+
+New collections only; nothing existing changes shape outside #68. Rollback is reverting the merge. Indexes build at boot.
+
+## Open Questions
+
+- Team sign-off on the `[CONFIRM]` defaults (targets, loss rates, 8 weeks, confidence thresholds, rule scope, who may edit, Orders in the top bar).
+- P30, P31 and D35 assume the numbering in #70 and the two open changes; renumber at merge if needed.
