@@ -140,7 +140,12 @@ const ORIGINALS_BASIS: Readonly<Record<string, string>> = {
 
 /** U9: what an answer to TownwiseAI's question about days with no sales said. */
 const QUESTION_ANSWER_WORDS: Readonly<Record<string, string>> = {
-  closed: 'closed on those days', open: 'the data is missing', not_sure: 'not sure',
+  closed: 'closed on those days', open: 'the data is missing', not_sure: 'not sure', other: 'answered in the chat',
+};
+
+/** What an answer to TownwiseAI's question about a day with almost no guests (D32, likely closed) said. */
+const LIKELY_CLOSED_ANSWER_WORDS: Readonly<Record<string, string>> = {
+  closed: 'closed that day', open: 'open, with few guests', not_sure: 'not sure', other: 'answered in the chat',
 };
 
 const NOTE_KINDS: Readonly<Record<string, string>> = {
@@ -194,6 +199,9 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'chat.turn_completed': return 'Asked the tuning chat about a location';
     case 'chat.conversation_deleted': return 'Deleted a tuning chat conversation';
     case 'agent.question_answered':
+      if (text(d.questionId).startsWith('likely_closed_')) {
+        return `Answered TownwiseAI’s question about a day with almost no guests: ${LIKELY_CLOSED_ANSWER_WORDS[text(d.answer)] ?? text(d.answer)}`;
+      }
       return `Answered TownwiseAI’s question about days with no sales: ${QUESTION_ANSWER_WORDS[text(d.answer)] ?? text(d.answer)}`;
     // U13B.
     case 'forecast.imported': return `Imported a forecast (model ${text(d.modelVersion)}) for ${text(d.from)} to ${text(d.to)}`;

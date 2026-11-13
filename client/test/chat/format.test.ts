@@ -1,5 +1,5 @@
 import { chatEventOf, loadAgentPanel } from '../../src/chat/api';
-import { dayText, formatDate, formatDates, guestsText, rangeText, weekdayName, weekdaysText } from '../../src/chat/format';
+import { dayText, formatDate, formatDates, formatMessageTime, guestsText, rangeText, shortDayText, weekdayName, weekdaysText } from '../../src/chat/format';
 import { fakeChatApi, PROPOSAL } from '../helpers/chat';
 
 test('a proposal reads in plain words', () => {
@@ -46,7 +46,26 @@ test('the side panel reads questions in the shape the API documents', async () =
   // Copied from api/README.md (Tuning chat) and docs/portal/tuning-chat.md section 8, so the two sides can't drift.
   const api = fakeChatApi();
   const weekday = { id: 'weekday_1_2026-01-05_2026-10-26', kind: 'weekday', weekday: 1, from: '2026-01-05', to: '2026-10-26', noSalesCount: 30, weekdayCount: 40 };
-  const gap = { id: 'gap_2026-03-02_2026-03-04', kind: 'gap', from: '2026-03-02', to: '2026-03-04', dayCount: 3 };
-  api.panel = { questions: [weekday, gap], activity: [] };
-  expect(await loadAgentPanel(api, 'l1')).toEqual({ questions: [weekday, gap], activity: [] });
+  const gap = {
+    id: 'gap_2026-03-02_2026-03-04', kind: 'gap', from: '2026-03-02', to: '2026-03-04', dayCount: 3, typicalGuestsLow: 80, typicalGuestsHigh: 120,
+  };
+  const likely = { id: 'likely_closed_2026-03-14', kind: 'likely_closed', date: '2026-03-14', guests: 1, typicalGuests: 100 };
+  api.panel = { questions: [weekday, likely, gap], activity: [] };
+  expect(await loadAgentPanel(api, 'l1')).toEqual({ questions: [weekday, likely, gap], activity: [] });
+  // A gap from an API without its usual guests still reads (its card then says only that there are no sales).
+  const older = { id: 'gap_2026-03-02_2026-03-04', kind: 'gap', from: '2026-03-02', to: '2026-03-04', dayCount: 3 };
+  api.panel = { questions: [older], activity: [] };
+  expect(await loadAgentPanel(api, 'l1')).toEqual({ questions: [older], activity: [] });
+});
+
+test('a short day drops the year', () => {
+  expect(shortDayText('2026-10-19')).toBe('Mon, Oct 19');
+  expect(shortDayText('soon')).toBe('soon');
+});
+
+test('a message’s time is the clock today, then the day, then the year', () => {
+  const now = new Date(2026, 10, 11, 21, 30).getTime();
+  expect(formatMessageTime(new Date(2026, 10, 11, 20, 59).getTime(), now)).toBe('8:59 PM');
+  expect(formatMessageTime(new Date(2026, 10, 9, 20, 59).getTime(), now)).toBe('Nov 9, 8:59 PM');
+  expect(formatMessageTime(new Date(2025, 10, 9, 8, 5).getTime(), now)).toBe('Nov 9, 2025, 8:05 AM');
 });
