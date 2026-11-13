@@ -59,6 +59,6 @@ Two phases (owner decision, 2026-11-12): phase 1 builds the server side on `orig
 
 ## 9. Verify
 
-- [ ] 9.1 `npm run verify` passes
-- [ ] 9.2 Run the API locally: import a file, add a public test `.ics` link, read the events, ask TownwiseAI about next week's bookings and save a proposed note, read a PDF from Your data (the Calendar page itself is phase 2)
-- [ ] 9.3 Security review of `calendar/fetch.ts`, `calendar/secret.ts` and the new routes before the PR
+- [x] 9.1 `npm run verify` passes (66c1132: API 1,858 tests, client 2,875, kit modules, web export, expo-doctor)
+- [ ] 9.2 Run the API locally: import a file, add a public test `.ics` link, read the events, ask TownwiseAI about next week's bookings and save a proposed note, read a PDF from Your data (the Calendar page itself is phase 2). Partly done: the guarded fetcher and parser against Google's public holiday feed over the real network (65 events, `webcal:` too) and refusals for 169.254.169.254, a name resolving to 127.0.0.1, `http:`, user info and port 8443. Left: the signed-in run with TownwiseAI and a PDF, which needs `ANTHROPIC_API_KEY` and stored files on
+- [x] 9.3 Security review of `calendar/fetch.ts`, `calendar/secret.ts` and the new routes before the PR (three-lens audit until a round found nothing new: one high, a quadratic UID loop, fixed in 1e41462; address pinning and redirect checks read by hand)
