@@ -151,6 +151,8 @@ export function parseIcs(text: string, town: IcsTown): IcsResult {
   let seen = 0;
   let skippedRepeating = 0;
   const uids = new Set<string>();
+  /** Each clashing base's next suffix to try. */
+  const nextSuffix = new Map<string, number>();
   const events: IcsEvent[] = [];
 
   const finish = (props: Map<string, string>): void => {
@@ -161,9 +163,13 @@ export function parseIcs(text: string, town: IcsTown): IcsResult {
     if (start === null) return;
     const given = props.get('UID')?.trim() ?? '';
     const base = given === '' ? `event-${String(seen)}` : given;
-    // A taken key, stated or made here, gets the next free suffix, so no two events share one.
+    // A taken key, stated or made here, gets the next free suffix, so no two events share one. A base's search starts
+    // where its last one stopped (every suffix before that is taken), so a file that states the suffixes ahead of its
+    // clashes costs each one look in all, not one per clash.
     let uid = base;
-    for (let suffix = seen; uids.has(uid); suffix += 1) uid = `${base}#${String(suffix)}`;
+    let suffix = Math.max(seen, nextSuffix.get(base) ?? 0);
+    for (; uids.has(uid); suffix += 1) uid = `${base}#${String(suffix)}`;
+    if (uid !== base) nextSuffix.set(base, suffix);
     uids.add(uid);
     events.push({ uid, title: titleOf(props.get('SUMMARY')), ...spanOf(start, momentOf(props.get('DTEND'), clock)) });
   };

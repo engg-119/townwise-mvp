@@ -4,7 +4,7 @@
 // keeps its UID, title (at most 200 characters), dates and hours only. Every title, name and address here is made up.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { MAX_EVENTS, MAX_TITLE_CHARS, parseIcs, WINDOW_DAYS, type IcsEvent } from '../src/calendar/ics.ts';
+import { MAX_EVENTS, MAX_ICS_BYTES, MAX_TITLE_CHARS, parseIcs, WINDOW_DAYS, type IcsEvent } from '../src/calendar/ics.ts';
 import { utcDay } from '../src/dates.ts';
 
 const TODAY = '2026-11-11';
@@ -177,6 +177,24 @@ describe('parseIcs', () => {
       ['event-5#5', 'No UID'], ['event-6', 'No UID again'], ['event-6#7', 'Stated after'],
     ]);
     expect(new Set(kept.map(([uid]) => uid)).size).toBe(kept.length);
+  });
+
+  it('finds a free suffix in one pass, even when the file states every suffix first', () => {
+    // Under 1 MB: x#9001 to x#18000 stated, then 9,000 events with UID x. Searching from each event's own number walked
+    // every stated suffix again for each clash, about 81 million looks, and held the event loop for seconds.
+    const clashes = 9_000;
+    const lines: string[] = [];
+    for (let index = 1; index <= clashes; index += 1) lines.push(...vevent(`UID:x#${String(clashes + index)}`, 'DTSTART:20261122'));
+    for (let index = 1; index <= clashes; index += 1) lines.push(...vevent('UID:x', 'DTSTART:20261121'));
+    const text = calendar(...lines);
+    expect(Buffer.byteLength(text)).toBeLessThanOrEqual(MAX_ICS_BYTES);
+    const started = performance.now();
+    const kept = eventsOf(text).map((event) => event.uid);
+    expect(performance.now() - started).toBeLessThan(1_000);
+    // The clashing events come first by start, each with the first suffix free from its own number on.
+    expect(kept.slice(0, 3)).toEqual(['x', 'x#18001', 'x#18002']);
+    expect(kept.at(-1)).toBe('x#19999');
+    expect(new Set(kept).size).toBe(MAX_EVENTS);
   });
 });
 
