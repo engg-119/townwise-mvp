@@ -25,12 +25,14 @@ locals {
   # Terraform creates no values; infra/scripts/set-secret.sh seeds them. The tuning chat's key joins the map only
   # when enable_chat is true (infra/README.md, "Enable the tuning chat"), and the Google Places key, the Maps Static
   # key and its URL signing secret only when enable_places is true ("Enable the Places search"); without its key,
-  # each feature is off.
+  # each feature is off. The calendar key, which seals owner calendar links (api/src/calendar/secret.ts), is always
+  # in the map, so it must be seeded before the apply that adds it (infra/README.md, "Calendar links").
   api_secrets = merge(
     {
-      "mongodb-uri"          = "MONGODB_URI"
-      "auth-jwt-keys"        = "AUTH_JWT_KEYS"
-      "auth-encryption-keys" = "AUTH_ENCRYPTION_KEYS"
+      "mongodb-uri"           = "MONGODB_URI"
+      "auth-jwt-keys"         = "AUTH_JWT_KEYS"
+      "auth-encryption-keys"  = "AUTH_ENCRYPTION_KEYS"
+      "townwise-calendar-key" = "TOWNWISE_CALENDAR_KEY"
     },
     { for name, env in { "anthropic-api-key" = "ANTHROPIC_API_KEY" } : name => env if var.enable_chat },
     { for name, env in {

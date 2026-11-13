@@ -53,9 +53,9 @@ Two phases (owner decision, 2026-11-12): phase 1 builds the server side on `orig
 ## 8. Docs, privacy and infra
 
 - [ ] 8.1 (phase 2) `docs/portal/spec.md`: new D entry (owner decision, 2026-11-12), resolve the two P27 `[DECISION NEEDED]` rows in 22.4 with it, rewrite P27 "Your own calendar" and the section 17 calendar bullet, add the routes section after 10.16, add the `[CONFIRM]` defaults from the design's open questions
-- [ ] 8.2 `api/README.md` (endpoints, collections, env var, audit events, the `townwise:calendar-links` limit), `docs/portal/tuning-chat.md` (tool row appended, PDF and Word in `read_data_item`)
-- [ ] 8.3 Public privacy page (`client/app/(marketing)/privacy.tsx`): calendars kept with titles, links fetched by Townwise, PDF and Word contents and calendar titles may go to Anthropic through TownwiseAI
-- [ ] 8.4 `infra/terraform/production/containerapp.tf`: add `TOWNWISE_CALENDAR_KEY` to `api_secrets`; `infra/README.md`: create-the-key runbook step and the never-rotate note; run the CI Terraform checks
+- [x] 8.2 `api/README.md` (endpoints, collections, env var, audit events, the `townwise:calendar-links` limit), `docs/portal/tuning-chat.md` (tool row appended, PDF and Word in `read_data_item`)
+- [x] 8.3 Public privacy page (`client/app/(marketing)/privacy.tsx`): calendars kept with titles, links fetched by Townwise, PDF and Word contents and calendar titles may go to Anthropic through TownwiseAI
+- [x] 8.4 `infra/terraform/production/containerapp.tf`: add `TOWNWISE_CALENDAR_KEY` to `api_secrets`; `infra/README.md`: create-the-key runbook step and the never-rotate note; run the CI Terraform checks
 
 ## 9. Verify
 
