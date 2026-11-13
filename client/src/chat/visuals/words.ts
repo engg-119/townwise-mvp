@@ -28,7 +28,7 @@ function valueSentence(value: number, metric: Metric): string {
 const METRIC_WORD: Readonly<Record<Metric, string>> = { guests: 'Guests', netSales: 'Net sales' };
 
 /** The bar's long label: "Saturday", "October 2026". */
-function barLabel(key: string): string {
+export function barLabel(key: string): string {
   if (/^[0-6]$/.test(key)) return WEEKDAY_NAMES[Number(key)] ?? key;
   const match = /^(\d{4})-(\d{2})$/.exec(key);
   const month = match === null ? undefined : MONTH_NAMES[Number(match[2]) - 1];
@@ -70,7 +70,9 @@ export function visualSummary(v: Visual): string | null {
         + `Lowest: ${valueSentence(lowest.value, v.metric)} on ${dayText(lowest.date)}.`;
       if (v.forecast !== null) {
         const banded = v.days.filter((day) => day.low !== null && day.high !== null).length;
-        text += ` The shaded band is ${v.forecast.model}’s forecast range, made ${formatDay(v.forecast.madeAt)}, for ${formatCount(banded)} days. About 8 in 10 days land inside it.`;
+        // The band is the range as the owner's notes leave it (spec 14.5), so the 8 in 10 claim holds only on days no
+        // note changed, as the Calendar puts it only beside the model's own range (calendar/model.ts).
+        text += ` The shaded band is ${v.forecast.model}’s forecast range, made ${formatDay(v.forecast.madeAt)}, for ${formatCount(banded)} days, plus guests from your notes on days that have them. On days without a note, about 8 in 10 land inside it.`;
       }
       return text;
     }
