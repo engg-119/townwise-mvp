@@ -12,6 +12,7 @@ import { ViewAsDialog, type ViewAsTarget } from '../../../../../src/portal/conso
 import { hasCode } from '../../../../../src/portal/errors';
 import { formatCount, formatDate, townLabel } from '../../../../../src/portal/format';
 import { useAction, useLoad } from '../../../../../src/portal/hooks';
+import { defaultLocationName } from '../../../../../src/portal/locations/naming';
 import { usePortal } from '../../../../../src/portal/PortalProvider';
 import { useReportPendingCount } from '../../../../../src/portal/shell/Frame';
 import { Page } from '../../../../../src/portal/shell/Page';
@@ -46,6 +47,8 @@ const HAS_ORG = 'This person already belongs to an organization.';
 const ORG_NAME_COPY = 'Enter the organization’s name, 2 to 120 characters.';
 const LOCATION_NAME_COPY = 'Enter the first location’s name, up to 80 characters.';
 const OWN_NAME_COPY = 'Each location needs its own name.';
+/** Under the one location's name: with one location, member pages show the organization's name (D29). */
+const ONE_LOCATION_HELPER = 'Shown to them only once they have more than one location.';
 
 /** The API's `locationNameKey`: trimmed, lowercase, inner spaces collapsed. Two names with one key are one location. */
 function nameKey(name: string): string {
@@ -74,8 +77,11 @@ function lateDecision(error: unknown): string | null {
 }
 
 /**
- * C3. Without places, the town is the request's; the server takes it from there. With places (a request from
- * the Google search), each has a Location name, prefilled from Google's name and empty for one stored without it.
+ * C3. Without places, the town is the request's; the server takes it from there, and First location name starts as
+ * “{organization}, {Town}”. With places (a request from the Google search), each has a Location name, starting as
+ * “{Google name}, {Town}”, or “{organization}, {Town}” for a street address or a place stored without a name
+ * (locations/naming.ts defaultLocationName). With one location its name gets a helper: they see it only once they
+ * have a second.
  */
 function ApproveDialog(props: {
   request: AdminRequest;
@@ -88,9 +94,9 @@ function ApproveDialog(props: {
   const { request, onApproved, onStale, onRefresh } = props;
   const { api, showNotice, refreshPending } = usePortal();
   const [orgName, setOrgName] = useState(request.orgName);
-  const [locationName, setLocationName] = useState(request.orgName);
+  const [locationName, setLocationName] = useState(() => defaultLocationName({ name: null, kind: 'business', town: request.town }, request.orgName));
   const places = request.places ?? [];
-  const [placeNames, setPlaceNames] = useState<string[]>(() => places.map((place) => place.name ?? ''));
+  const [placeNames, setPlaceNames] = useState<string[]>(() => places.map((place) => defaultLocationName(place, request.orgName)));
   const [badNames, setBadNames] = useState<boolean[]>([]);
   const [messages, setMessages] = useState<{ orgName: string | null; locationName: string | null }>({ orgName: null, locationName: null });
   const email = request.requester.email;
@@ -157,6 +163,7 @@ function ApproveDialog(props: {
         <>
           <FormField
             label="First location name"
+            helper={ONE_LOCATION_HELPER}
             value={locationName}
             onChangeText={setLocationName}
             onSubmitEditing={submit}
@@ -169,9 +176,10 @@ function ApproveDialog(props: {
       ) : (
         places.map((place, index) => (
           <View key={place.placeId} role="group" aria-label={`Place ${index + 1} of ${places.length}`} style={styles.place}>
-            <Small>{place.name === null ? townLabel(place.town) : `${place.name}, ${townLabel(place.town)}`}</Small>
+            <Small>{place.name === null ? townLabel(place.town) : `${place.name}${place.kind === 'address' ? ' (street address)' : ''}, ${townLabel(place.town)}`}</Small>
             <FormField
               label="Location name"
+              {...(places.length === 1 ? { helper: ONE_LOCATION_HELPER } : {})}
               value={placeNames[index] ?? ''}
               onChangeText={(text) => { setPlaceNames((names) => names.map((name, at) => (at === index ? text : name))); }}
               onSubmitEditing={submit}

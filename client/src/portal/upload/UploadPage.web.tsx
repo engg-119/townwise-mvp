@@ -4,6 +4,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { ApiError } from '../../api/client';
 import { theme } from '../../theme';
 import { hasCode } from '../errors';
+import { shownLocationName } from '../locations/naming';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { locationHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
@@ -132,7 +133,9 @@ export function UploadPage(): React.JSX.Element {
   const { location, org } = useLocation();
   const { api, reloadOrg } = usePortal();
   const { readOnly, line } = useReadOnly();
+  // The column value is matched by the stored name; every line shows the organization's name with one location (D29).
   const sales = useSalesFile(location.name);
+  const shown = shownLocationName(location, org);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<unknown>(null);
   const [result, setResult] = useState<UploadResponse | null>(null);
@@ -217,7 +220,7 @@ export function UploadPage(): React.JSX.Element {
         columns={opened.columns}
         mapping={sales.mapping}
         onChange={sales.changeMapping}
-        locationName={location.name}
+        locationName={shown}
         locationValues={sales.values}
         readingLine={readingLine(opened.size)}
         onCheck={checkTotals}
@@ -240,7 +243,7 @@ export function UploadPage(): React.JSX.Element {
       />
     );
   } else if (step === 'done' && result !== null) {
-    content = <ResultStep result={result} role={org.role} locationId={location.id} locationName={location.name} />;
+    content = <ResultStep result={result} role={org.role} locationId={location.id} locationName={shown} />;
   } else {
     content = <ChooseStep readOnly={readOnly} line={line} error={sales.error} onFile={openFile} cancelHref={salesHref} />;
   }

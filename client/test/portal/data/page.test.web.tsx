@@ -259,8 +259,19 @@ test('a single-location organization has no Show select', async () => {
   const [first] = LOCATIONS;
   if (first === undefined) throw new Error('no location');
   setup(meOf(ACCESS.admin), ITEMS, { org: orgOf('org_admin', [first]) });
-  await table();
+  await table('Your data for Test Group');
   expect(screen.queryByLabelText('Show')).toBeNull();
+});
+
+test('with one location the lead, the table and the empty line name the organization (D29)', async () => {
+  const one = { org: orgOf('org_admin', LOCATIONS.slice(0, 1)) };
+  setup(meOf(ACCESS.admin), ITEMS, one);
+  expect(await table('Your data for Test Group')).toBeTruthy();
+  expect(screen.getByText(/^Sales uploads, files and text your team added for Test Group, newest first\./)).toBeTruthy();
+  cleanup();
+  setup(meOf(ACCESS.admin), [], one);
+  expect(await screen.findByText('Nothing here yet. What your team uploads or adds for Test Group shows here.')).toBeTruthy();
+  expect(screen.queryByText(/Main Street Bar/)).toBeNull();
 });
 
 test('stored files off: no Add a file or Paste text, and the list still shows uploads', async () => {

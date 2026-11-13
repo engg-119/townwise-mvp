@@ -9,6 +9,7 @@ import { downloadClean, downloadRaw, listFiles, removeOriginals, removeRaw } fro
 import { cleanName, COPY as FILE_COPY, deleteAllRawBody, deletedOriginalsLine, deleteRawBody, formatSize } from '../files/copy';
 import { CAN_SAVE_FILES, saveFile } from '../files/download';
 import { ZipEntries } from '../files/ZipEntries';
+import { shownLocationName } from '../locations/naming';
 import { LoadFailure, UploadAction, useOrgRefreshOnLeave } from '../locations/parts';
 import { CAN_DROP } from '../onboarding/HistoryStepDrop';
 import { usePortal, useReadOnly } from '../PortalProvider';
@@ -68,6 +69,8 @@ function Data(): React.JSX.Element {
   const readOnlyId = readOnly ? READ_ONLY_ID : null;
   const admin = org.role === 'org_admin';
   const several = org.locations.length > 1;
+  // The lead, the empty line and the table name it as member pages do: the organization's name with one location (D29).
+  const locationName = shownLocationName(location, org);
   const focusMessage = useFocusMessage();
   // Asked one update after a dialog closes: in that update its focus trap still holds focus.
   const [ended, setEnded] = useState(0);
@@ -224,7 +227,7 @@ function Data(): React.JSX.Element {
       <Stack>
         {notice === null ? null : <Notice text={notice} />}
         {failure === null ? null : <Messages live="alert" takesFocus items={[dataError(failure)]} />}
-        <Lead>{lead(all ? DATA.allLocations.toLowerCase() : location.name)}</Lead>
+        <Lead>{lead(all ? DATA.allLocations.toLowerCase() : locationName)}</Lead>
         {readOnly ? <ReadOnlyLine text={line} nativeID={READ_ONLY_ID} /> : null}
         {several ? (
           <Select
@@ -277,9 +280,9 @@ function Data(): React.JSX.Element {
           </Actions>
         ) : null}
         {loadError !== null ? <LoadFailure error={loadError} onRetry={reload} /> : items === null ? <LoadingLine text={DATA.loading} /> : items.length === 0 ? (
-          <EmptyState text={empty(all ? DATA.allLocations.toLowerCase() : location.name)} />
+          <EmptyState text={empty(all ? DATA.allLocations.toLowerCase() : locationName)} />
         ) : (
-          <DataTable label={tableLabel(all ? null : location.name)} columns={columns} rows={rows} />
+          <DataTable label={tableLabel(all ? null : locationName)} columns={columns} rows={rows} />
         )}
         {older.error === null ? null : <Messages live="alert" items={[dataError(older.error)]} />}
         {next === null || items === null || items.length === 0 ? null : (

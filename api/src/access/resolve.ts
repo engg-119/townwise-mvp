@@ -5,6 +5,7 @@ import type { AuthContext, User } from '@ckeith26/auth';
 import { AppError } from '@ckeith26/server-core';
 
 import type { TownwiseContext } from '../app.ts';
+import type { PlaceKind } from '../places/google.ts';
 import type { AccessRequestRecord } from '../stores/access-requests.ts';
 import { findActiveSeat, findOpenInvites, latestRemovedSeat, type OpenInvite } from '../stores/cross-tenant.ts';
 import type { OpenAsAdminGrantRecord, ViewAsGrantRecord } from '../stores/view-as-grants.ts';
@@ -17,7 +18,7 @@ export type Role = 'org_admin' | 'member';
 export interface AccessRequestView {
   id: string; orgName: string; contactName: string; contactRole: string; town: Town;
   locationCount: number; note: string | null;
-  places: { placeId: string; name: string | null; town: Town }[]; status: 'pending' | 'approved' | 'rejected' | 'withdrawn';
+  places: { placeId: string; name: string | null; kind: PlaceKind; town: Town }[]; status: 'pending' | 'approved' | 'rejected' | 'withdrawn';
   createdAt: string; decidedAt: string | null; decisionMessage: string | null;
 }
 
@@ -81,7 +82,7 @@ export function requestView(record: AccessRequestRecord): AccessRequestView {
     locationCount: record.locationCount,
     note: record.note,
     places: record.places.map((place) => ({
-      placeId: place.placeId, name: place.name,
+      placeId: place.placeId, name: place.name, kind: place.kind,
       town: { townId: place.town.townId, name: place.town.name, state: place.town.state },
     })),
     status: record.status,

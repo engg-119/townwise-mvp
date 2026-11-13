@@ -21,6 +21,7 @@ import { useUploadQueue, type QueuedUpload } from '../files/uploadQueue';
 import { townLabel } from '../format';
 import { useAction, useBreakpoint } from '../hooks';
 import { localToday } from '../locations/dates';
+import { shownLocationName } from '../locations/naming';
 import { UploadAction } from '../locations/parts';
 import { useMoment } from '../moments';
 import { usePortal, useReadOnly } from '../PortalProvider';
@@ -140,14 +141,15 @@ function Bar(props: { value: number; label: string }): React.JSX.Element {
   );
 }
 
-function LocationCard(props: { location: LocationSummary }): React.JSX.Element {
+/** `name` is the location as member pages show it: the organization's name with one location (D29). */
+function LocationCard(props: { location: LocationSummary; name: string }): React.JSX.Element {
   const { location } = props;
   const profile = townProfile(location.town.townId);
   return (
     <Panel label={STEP.cardEyebrow}>
       <Stack gap={theme.space[2]}>
         <Eyebrow>{STEP.cardEyebrow}</Eyebrow>
-        <Heading level={3}>{location.name}</Heading>
+        <Heading level={3}>{props.name}</Heading>
       </Stack>
       <View style={styles.town}>
         <Small>{townLabel(location.town)}</Small>
@@ -345,7 +347,8 @@ function ReadCalendar(props: { locationId: string; view: ImportView; reading: bo
 
 export function HistoryStep(props: { onDone?: () => void }): React.JSX.Element {
   const { onDone } = props;
-  const { location } = useLocation();
+  const { location, org } = useLocation();
+  const shown = shownLocationName(location, org);
   const { api, reloadOrg } = usePortal();
   const { readOnly, line } = useReadOnly();
   const reduced = useReducedMotion();
@@ -507,7 +510,7 @@ export function HistoryStep(props: { onDone?: () => void }): React.JSX.Element {
             locationId={location.id}
             importId={view.id}
             question={view.question}
-            locationName={location.name}
+            locationName={shown}
             onAnswered={push}
           />
         )}
@@ -545,7 +548,7 @@ export function HistoryStep(props: { onDone?: () => void }): React.JSX.Element {
 
   const side = (
     <Stack gap={theme.space[8]}>
-      <Animated.View style={{ opacity: motion.cardOpacity, transform: [{ translateX: motion.x }] }}><LocationCard location={location} /></Animated.View>
+      <Animated.View style={{ opacity: motion.cardOpacity, transform: [{ translateX: motion.x }] }}><LocationCard location={location} name={shown} /></Animated.View>
       {filesOff ? null : <Keeps locationId={location.id} />}
     </Stack>
   );

@@ -65,7 +65,7 @@ const RESULT: FileView['result'] = {
 
 interface Setup { api: FakePortalApi; files: FilesFake; analytics: AnalyticsFake }
 
-async function show(me: MeResponse, current: unknown): Promise<Setup> {
+async function show(me: MeResponse, current: unknown, locations = EMPTY): Promise<Setup> {
   const analytics = analyticsFake({
     [HISTORY]: historyBody([]),
     [`${PATH}/notes`]: { notes: [] },
@@ -75,7 +75,7 @@ async function show(me: MeResponse, current: unknown): Promise<Setup> {
   });
   const files = filesFake({ inner: analytics });
   files.current = current;
-  const api = fakePortalApi({ me, org: orgOf(me.access.state === 'member' ? me.access.role : 'member', EMPTY), fallback: files });
+  const api = fakePortalApi({ me, org: orgOf(me.access.state === 'member' ? me.access.role : 'member', locations), fallback: files });
   const auth = fakeAuth({ status: 'signedIn', user: { id: 'u1', email: EMAIL } }, { api });
   const path = '/locations/l1';
   window.history.replaceState(null, '', path);
@@ -118,7 +118,8 @@ test('the drop step: what to drop in, the location card, the accept hint, Read m
   expect(within(region).getByText('Any file: CSV, Excel, PDF, Word, ZIP or text.')).toBeTruthy();
   for (const each of ['Daily sales summaries', 'Sales reports, as Excel, CSV or PDF', 'ZIPs of exports']) expect(within(region).getByText(each)).toBeTruthy();
   const card = within(region).getByRole('region', { name: STEP.cardEyebrow });
-  expect(within(card).getByRole('heading', { name: 'Main Street Bar' })).toBeTruthy();
+  // One location: the card names the organization (D29).
+  expect(within(card).getByRole('heading', { name: 'Test Group' })).toBeTruthy();
   expect(within(card).getByText('Hanover, NH')).toBeTruthy();
   expect(within(card).getByText('College town')).toBeTruthy();
   expect(within(region).getByText(/Each original is deleted after 365 days/)).toBeTruthy();
@@ -129,6 +130,12 @@ test('the drop step: what to drop in, the location card, the accept hint, Read m
   expect(within(region).getByRole('link', { name: STEP.dailyTotalsLink }).getAttribute('href')).toBe('/locations/l1/sales/upload');
   // The cards that need days stay away while the step shows.
   expect(document.getElementById('home-history')).toBeNull();
+});
+
+test('with several locations the card names the location (D29)', async () => {
+  await show(meOf(ACCESS.admin), { import: null }, [...EMPTY, locationOf('l2', 'River Grill', { townId: null, name: 'Norwich', state: 'VT' })]);
+  const card = within(step()).getByRole('region', { name: STEP.cardEyebrow });
+  expect(within(card).getByRole('heading', { name: 'Main Street Bar' })).toBeTruthy();
 });
 
 test('many files upload at once, each with its own progress and line, then Read my history starts reading', async () => {

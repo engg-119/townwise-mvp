@@ -175,6 +175,31 @@ describe('P16 Location settings', () => {
     expect(writes(api)).toEqual([{ method: 'DELETE', path: '/api/org/locations/l2', body: undefined }]);
   });
 
+  test('with one location the Name field says when its name shows, and the delete names the organization (D29)', async () => {
+    const { api, fake } = setup();
+    api.org = orgOf('org_admin', [only('l2')]);
+    fake.deletes['/api/org/locations/l2'] = () => {
+      api.org = orgOf('org_admin', []);
+      return null;
+    };
+    await renderApp('/locations/l2/settings', api);
+    expect(await screen.findByText('Shown only once Test Group has more than one location.')).toBeTruthy();
+    // The field keeps the location's own name, for when a second location makes it show.
+    expect(screen.getByLabelText('Name').props.value).toBe('River Grill');
+    await fireEvent.press(screen.getByRole('button', { name: 'Delete location' }));
+    expect(screen.getByRole('heading', { name: 'Delete Test Group?' })).toBeTruthy();
+    await fireEvent.changeText(screen.getByLabelText('Type Test Group to confirm.'), 'Test Group');
+    await fireEvent.press(dialogButton('Delete location'));
+    expect(await screen.findByText('Deleted Test Group.')).toBeTruthy();
+    expect(writes(api)).toEqual([{ method: 'DELETE', path: '/api/org/locations/l2', body: undefined }]);
+  });
+
+  test('with several locations the Name field has no helper', async () => {
+    await renderApp('/locations/l2/settings', setup().api);
+    expect(await screen.findByLabelText('Name')).toBeTruthy();
+    expect(screen.queryByText(/^Shown only once/)).toBeNull();
+  });
+
   test('when the server finds data after all, the section says to delete it first', async () => {
     const { api, fake } = setup();
     fake.deletes['/api/org/locations/l2'] = () => refusal(409, 'location_has_data');

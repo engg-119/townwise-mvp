@@ -112,21 +112,24 @@ test('Add a location sends the setup route, reads the organization again, and st
   const api = consoleApi();
   let detail = inSetup([]);
   serve(api, () => detail);
-  api.routes[`POST ${SETUP}`] = () => {
-    detail = inSetup([hanover()]);
-    return summary('Hanover');
+  api.routes[`POST ${SETUP}`] = (raw) => {
+    const { name } = raw as { name: string };
+    detail = inSetup([{ ...hanover(), name }]);
+    return summary(name);
   };
   renderAt('/admin/orgs/o1', api);
-  fireEvent.change(await screen.findByRole('textbox', { name: 'Name' }), { target: { value: ' Hanover ' } });
-  choose(screen.getByRole('combobox', { name: 'Town' }), 'Hanover, NH');
+  // The first location by hand has no Name: it is named “{organization}, {Town}”.
+  choose(await screen.findByRole('combobox', { name: 'Town' }), 'Hanover, NH');
+  expect(screen.queryByRole('textbox', { name: 'Name' })).toBeNull();
   await click('Add location');
-  expect(await screen.findByText('Added Hanover.')).toBeTruthy();
-  expect(setupWrites(api)).toEqual([{ method: 'POST', path: SETUP, body: { name: 'Hanover', town: { townId: 'hanover-nh' } } }]);
+  expect(await screen.findByText(`Added ${NAME}, Hanover.`)).toBeTruthy();
+  expect(setupWrites(api)).toEqual([{ method: 'POST', path: SETUP, body: { name: `${NAME}, Hanover`, town: { townId: 'hanover-nh' } } }]);
   // Nothing went to the org admin route.
   expect(api.calls.some((call) => call.path === '/api/org/locations')).toBe(false);
   expect(gets(api)).toBe(2);
   const locations = screen.getByRole('region', { name: 'Locations' });
-  expect(within(locations).getByText('Hanover')).toBeTruthy();
+  expect(within(locations).getByText(`${NAME}, Hanover`)).toBeTruthy();
+  // With a location, the next one asks its Name.
   expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Name' }).value).toBe('');
 });
 
@@ -138,7 +141,7 @@ test('Add a location: the Places search leads while it is on, as on P10', async 
   renderAt('/admin/orgs/o1', api);
   expect(await screen.findByRole('combobox', { name: 'Search Google Maps for the location' })).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Can’t find it? Enter it yourself' }));
-  expect(screen.getByRole('textbox', { name: 'Name' })).toBeTruthy();
+  expect(screen.getByRole('combobox', { name: 'Town' })).toBeTruthy();
   expect(api.calls.filter((call) => call.path === '/api/places/autocomplete')).toHaveLength(1);
 });
 
@@ -181,12 +184,12 @@ test('Add a location with places: each checked place goes to the setup route, th
   await click('Add 2 locations');
   expect(await screen.findByText('Added 2 locations.')).toBeTruthy();
   expect(setupWrites(api)).toEqual([
-    { method: 'POST', path: SETUP, body: { name: 'Lou’s Restaurant', town: { townId: 'hanover-nh' }, placeId: 'ChIJTestPlace0001' } },
-    { method: 'POST', path: SETUP, body: { name: 'Lou’s Bakery', town: { townId: null, name: 'Norwich', state: 'VT' }, placeId: 'ChIJTestPlace0002' } },
+    { method: 'POST', path: SETUP, body: { name: 'Lou’s Restaurant, Hanover', town: { townId: 'hanover-nh' }, placeId: 'ChIJTestPlace0001' } },
+    { method: 'POST', path: SETUP, body: { name: 'Lou’s Bakery, Norwich', town: { townId: null, name: 'Norwich', state: 'VT' }, placeId: 'ChIJTestPlace0002' } },
   ]);
   expect(gets(api)).toBe(2);
   const locations = screen.getByRole('region', { name: 'Locations' });
-  expect(within(locations).getByText('Lou’s Bakery')).toBeTruthy();
+  expect(within(locations).getByText('Lou’s Bakery, Norwich')).toBeTruthy();
   expect(screen.getByRole<HTMLInputElement>('combobox', { name: 'Search Google Maps for the location' }).value).toBe('');
   expect(screen.queryByRole('group', { name: RESTAURANT_ROW })).toBeNull();
 });
@@ -202,13 +205,41 @@ test('Add a location with places: the limit stops the rest with the panel’s li
   await checkPlace(RESTAURANT_ROW);
   await checkPlace(BAKERY_ROW);
   await click('Add 2 locations');
-  expect(await screen.findByText('Added Lou’s Restaurant.')).toBeTruthy();
+  expect(await screen.findByText('Added Lou’s Restaurant, Hanover.')).toBeTruthy();
   expect(screen.getByText(`${NAME} has 25 locations, the most an organization can have.`)).toBeTruthy();
   expect(setupWrites(api)).toHaveLength(2);
   expect(gets(api)).toBe(2);
   expect(screen.queryByRole('group', { name: RESTAURANT_ROW })).toBeNull();
   expect(screen.getByRole('group', { name: BAKERY_ROW })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Add location' })).toBeTruthy();
+});
+
+test('staff setup adds a single first place without a Name field, named “{Google name}, {Town}”', async () => {
+  const api = consoleApi();
+  installPlaces(api);
+  const read = { detail: inSetup([]) };
+  serve(api, () => read.detail);
+  serveAdds(api, read);
+  renderAt('/admin/orgs/o1', api);
+  fireEvent.change(await screen.findByRole('combobox', { name: 'Search Google Maps for the location' }), { target: { value: 'Lou' } });
+  await checkPlace(RESTAURANT_ROW);
+  expect(within(screen.getByRole('group', { name: RESTAURANT_ROW })).queryByRole('textbox', { name: 'Name' })).toBeNull();
+  await click('Add location');
+  expect(await screen.findByText('Added Lou’s Restaurant, Hanover.')).toBeTruthy();
+  expect(setupWrites(api)).toEqual([
+    { method: 'POST', path: SETUP, body: { name: 'Lou’s Restaurant, Hanover', town: { townId: 'hanover-nh' }, placeId: 'ChIJTestPlace0001' } },
+  ]);
+});
+
+test('with a location, a checked place’s Name starts as “{Google name}, {Town}”', async () => {
+  const api = consoleApi();
+  installPlaces(api);
+  serve(api, () => inSetup([hanover()]));
+  renderAt('/admin/orgs/o1', api);
+  fireEvent.change(await screen.findByRole('combobox', { name: 'Search Google Maps for the location' }), { target: { value: 'Lou' } });
+  await checkPlace(BAKERY_ROW);
+  const name = await within(screen.getByRole('group', { name: BAKERY_ROW })).findByRole<HTMLInputElement>('textbox', { name: 'Name' });
+  expect(name.value).toBe('Lou’s Bakery, Norwich');
 });
 
 test('a location name another location uses is said under the field, as on P10', async () => {
@@ -246,7 +277,7 @@ test('Rename sends the name and town to the setup route, then says Saved.', asyn
 
 test('Rename with a place on Google Maps sends its id and town, as P16 does', async () => {
   const api = consoleApi();
-  const places = installPlaces(api, { results: { Lou: [{ placeId: 'ChIJTestPlace0002', name: 'Lou’s Bakery', detail: 'Norwich, VT, USA' }] } });
+  const places = installPlaces(api, { results: { Lou: [{ placeId: 'ChIJTestPlace0002', name: 'Lou’s Bakery', detail: 'Norwich, VT, USA', kind: 'business' }] } });
   serve(api, () => inSetup([hanover()]));
   api.routes[`PATCH ${SETUP}/l1`] = () => summary('Lou’s Bakery');
   renderAt('/admin/orgs/o1', api);

@@ -12,6 +12,8 @@ export interface SelectProps extends FieldChrome {
   placeholder?: string;
   /** The location switcher: at most 280px wide. */
   compact?: boolean;
+  /** When it appears, focus the control (web) or move the screen reader to it (native): places/focus.ts. */
+  autoFocus?: boolean;
 }
 
 export function isGroup(item: SelectOption | SelectGroup): item is SelectGroup {

@@ -164,7 +164,8 @@ describe('location pages (spec 15.2)', () => {
 
   test('one location has no switcher and no All locations', async () => {
     await renderApp('/locations/l1', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member', orgOf('member').locations.slice(0, 1)) }));
-    await screen.findByText('Main Street Bar, Hanover, NH');
+    // With one location the eyebrow is its town alone (D29).
+    await screen.findByText('Hanover, NH');
     expect(screen.queryByRole('button', { name: 'Location' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'All locations' })).toBeNull();
   });

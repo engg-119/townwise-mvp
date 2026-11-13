@@ -38,12 +38,6 @@ export function locationCountFor(typed: string, checked: number): string {
   return String(Math.max(n, checked));
 }
 
-/** The Continue button's label for `count` checked places; “Continue with 0 places” reads badly, so 0 is just Continue. */
-export function continueLabel(count: number): string {
-  if (count === 0) return 'Continue';
-  return count === 1 ? 'Continue with 1 place' : `Continue with ${String(count)} places`;
-}
-
 /** Add location's primary (P10) for `count` checked places: “Add location” up to one, then “Add {n} locations”. */
 export function addLabel(count: number): string {
   return count <= 1 ? 'Add location' : `Add ${String(count)} locations`;

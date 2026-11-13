@@ -29,7 +29,7 @@ import { declineInvite, getMe, joinInvite, recordWelcome } from '../handlers/me.
 import { createNote, deleteNote, listNotes, updateNote } from '../handlers/notes.ts';
 import { startOpenAsAdmin } from '../handlers/open-as-admin.ts';
 import { getStaffActivity, leaveOrg, renameOrg } from '../handlers/org.ts';
-import { placesAutocomplete, placesDetails } from '../handlers/places.ts';
+import { placesAutocomplete, placesDetails, placesMap } from '../handlers/places.ts';
 import { getProfile, updateProfile } from '../handlers/profile.ts';
 import { createAccessRequest } from '../handlers/requests.ts';
 import { deleteSales, getSales, getSalesDays, getSalesHistory, uploadSales } from '../handlers/sales.ts';
@@ -50,7 +50,8 @@ export interface TownwiseRoute {
   /**
    * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer, a conversation's rename and a version switch;
    * '2kb' on the Places, files and (D28) Your data JSON routes, the start of a calibration and the forecasts switch;
-   * '8kb' on a TownwiseAI proposal; '256kb' only on the upload routes (the member one and, D23, staff setup's) and
+   * '8kb' on a TownwiseAI proposal; '32kb' on the other JSON writes, among them (D29) the Places map, whose 25 place
+   * ids may reach 13 KB; '256kb' only on the upload routes (the member one and, D23, staff setup's) and
    * (U13B) the staff forecast import; 'stream' only on the chunk route, whose handler reads the raw body itself after
    * the policy has passed.
    */
@@ -97,6 +98,11 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'places.details', method: 'POST', path: '/places/details', policy: 'signed_in', bodyLimit: '2kb',
     limiter: 'places', openAsAdmin: true, handler: placesDetails,
+  },
+  // D29: the signed map of every checked place; signing is local, so it answers with the Places search off.
+  {
+    id: 'places.map', method: 'POST', path: '/places/map', policy: 'signed_in', bodyLimit: '32kb',
+    limiter: 'places', openAsAdmin: true, handler: placesMap,
   },
 
   { id: 'org.get', method: 'GET', path: '/org', policy: 'member', bodyLimit: 'none', openAsAdmin: true, handler: getOwnOrg },
