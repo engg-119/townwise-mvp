@@ -159,7 +159,7 @@ async function loadCalendar(ctx: TownwiseContext, scope: OrgScope, locationId: s
   return calendar;
 }
 
-type CalendarAction = 'townwise.owner_calendar_added' | 'townwise.owner_calendar_removed' | 'townwise.owner_calendar_refreshed';
+type CalendarAction = 'owner_calendar.added' | 'owner_calendar.removed' | 'owner_calendar.refreshed';
 
 /** Ids, the kind, the event count and (but on removal) the status: never the label, host, address or a title. */
 function recordCalendar(ctx: TownwiseContext, caller: MemberPrincipal, action: CalendarAction, calendar: OwnerCalendarRecord, at: Date): Promise<void> {
@@ -167,7 +167,7 @@ function recordCalendar(ctx: TownwiseContext, caller: MemberPrincipal, action: C
   return recordAfter(ctx, {
     ...actorOf(caller), at, orgId: caller.scope.orgId, action,
     target: { type: 'owner_calendar', id: calendar.id },
-    details: action === 'townwise.owner_calendar_removed' ? details : { ...details, status: calendar.status },
+    details: action === 'owner_calendar.removed' ? details : { ...details, status: calendar.status },
   });
 }
 
@@ -214,7 +214,7 @@ export async function createOwnerCalendar(ctx: TownwiseContext, req: Request, re
   }
   const added = await calendars.add(scope, location.id, calendar, parsed, { createdBy: caller.userId, now });
   if (added === 'calendar_limit') throw calendarLimit();
-  await recordCalendar(ctx, caller, 'townwise.owner_calendar_added', added, now);
+  await recordCalendar(ctx, caller, 'owner_calendar.added', added, now);
   res.status(201).json({ calendar: ownerCalendarView(added) });
 }
 
@@ -254,7 +254,7 @@ export async function refreshOwnerCalendar(ctx: TownwiseContext, req: Request, r
   else await calendars.recordFailure(scope, location.id, found.id, read.code, now);
   const refreshed = await calendars.find(scope, location.id, found.id);
   if (refreshed === null) throw notFound();
-  await recordCalendar(ctx, caller, 'townwise.owner_calendar_refreshed', refreshed, now);
+  await recordCalendar(ctx, caller, 'owner_calendar.refreshed', refreshed, now);
   res.status(200).json({ calendar: ownerCalendarView(refreshed) });
 }
 
@@ -265,7 +265,7 @@ export async function removeOwnerCalendar(ctx: TownwiseContext, req: Request, re
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const calendar = await loadCalendar(ctx, scope, location.id, req.params.calendarId);
   if (!(await ctx.stores.ownerCalendars.remove(scope, location.id, calendar.id))) throw notFound();
-  await recordCalendar(ctx, caller, 'townwise.owner_calendar_removed', calendar, ctx.now());
+  await recordCalendar(ctx, caller, 'owner_calendar.removed', calendar, ctx.now());
   res.status(204).end();
 }
 

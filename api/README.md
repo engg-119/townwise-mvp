@@ -333,8 +333,8 @@ The build contract is spec D27, 14.4 and 10.15 (`../docs/portal/spec.md`); the j
 | `file.raw_deleted` | `locationId`, `kind` | after |
 | `sales.deleted` | `locationId`, `deletedDays`, `deletedFiles`; staff setup’s counts `deletedDays` (the days with a value) before the delete and has no `deletedFiles` | after; before, by staff setup |
 | `note.created`, `note.updated`, `note.deleted` | `locationId`, `kind`, `startDate`, `endDate` | after |
-| `townwise.owner_calendar_added`, `townwise.owner_calendar_refreshed` | `locationId`, `calendarId`, `kind` (`file` or `link`), `eventCount`, `status` (`ok`, or a failed refresh’s code); target `owner_calendar`; never the calendar’s name, a link’s address or host, or an event’s title. `refreshed` is “Refresh now” only: the refresh loop writes no event | after |
-| `townwise.owner_calendar_removed` | `locationId`, `calendarId`, `kind`, `eventCount` | after |
+| `owner_calendar.added`, `owner_calendar.refreshed` | `locationId`, `calendarId`, `kind` (`file` or `link`), `eventCount`, `status` (`ok`, or a failed refresh’s code); target `owner_calendar`; never the calendar’s name, a link’s address or host, or an event’s title. `refreshed` is “Refresh now” only: the refresh loop writes no event | after |
+| `owner_calendar.removed` | `locationId`, `calendarId`, `kind`, `eventCount` | after |
 | `chat.turn_completed` | `locationId`, `conversationId`, `model`, `calls`, `inputTokens`, `outputTokens`, `stopReason` | after |
 | `chat.conversation_deleted` | `locationId`, `conversationId` | after |
 | `agent.question_answered` | `locationId`, `questionId` (dates and a weekday number only), `answer` (`closed`, `open` or `not_sure`); a `closed` answer also records the note’s `note.created` | after |

@@ -194,9 +194,9 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'note.created': return noteSummary('Added', d);
     case 'note.updated': return noteSummary('Edited', d);
     case 'note.deleted': return noteSummary('Deleted', d);
-    case 'townwise.owner_calendar_added': return `Added ${calendarWords(d)} with ${text(d.eventCount)} events`;
-    case 'townwise.owner_calendar_removed': return `Removed ${calendarWords(d)}`;
-    case 'townwise.owner_calendar_refreshed':
+    case 'owner_calendar.added': return `Added ${calendarWords(d)} with ${text(d.eventCount)} events`;
+    case 'owner_calendar.removed': return `Removed ${calendarWords(d)}`;
+    case 'owner_calendar.refreshed':
       return d.status === 'ok' ? `Refreshed ${calendarWords(d)}: ${text(d.eventCount)} events` : `Refreshing ${calendarWords(d)} failed (${text(d.status)})`;
     case 'chat.turn_completed': return 'Asked the tuning chat about a location';
     case 'chat.conversation_deleted': return 'Deleted a tuning chat conversation';

@@ -246,7 +246,7 @@ describe('with the calendar key', () => {
     const [event, ...more] = await auditOf(calendar.id);
     expect(more).toEqual([]);
     expect(event).toMatchObject({
-      action: 'townwise.owner_calendar_added', actorUserId: t.member.userId, actorRole: 'member', viewAsGrantId: null,
+      action: 'owner_calendar.added', actorUserId: t.member.userId, actorRole: 'member', viewAsGrantId: null,
       orgId: new Types.ObjectId(t.orgId), target: { type: 'owner_calendar', id: calendar.id },
     });
     expect(event?.details).toEqual({ locationId: t.locationId, calendarId: calendar.id, kind: 'file', eventCount: 2, status: 'ok' });
@@ -303,7 +303,7 @@ describe('with the calendar key', () => {
     expect(listed.body).toEqual({ calendars: [calendar] });
     expect(await titles(t)).toEqual(['Rehearsal dinner', 'Office party']);
     const [event] = await auditOf(calendar.id);
-    expect(event?.action).toBe('townwise.owner_calendar_added');
+    expect(event?.action).toBe('owner_calendar.added');
     expect(event?.details).toEqual({ locationId: t.locationId, calendarId: calendar.id, kind: 'link', eventCount: 2, status: 'ok' });
 
     // A webcal: address is fetched as https:.
@@ -403,9 +403,9 @@ describe('with the calendar key', () => {
       .toMatchObject({ consecutiveFailures: 1, nextRefreshAt: new Date(addedAt.getTime() + REFRESH_INTERVAL_MS) });
 
     expect((await auditOf(calendar.id)).map((event) => [event.action, event.details])).toEqual([
-      ['townwise.owner_calendar_added', { locationId: t.locationId, calendarId: calendar.id, kind: 'link', eventCount: 2, status: 'ok' }],
-      ['townwise.owner_calendar_refreshed', { locationId: t.locationId, calendarId: calendar.id, kind: 'link', eventCount: 3, status: 'ok' }],
-      ['townwise.owner_calendar_refreshed', { locationId: t.locationId, calendarId: calendar.id, kind: 'link', eventCount: 3, status: 'http_error' }],
+      ['owner_calendar.added', { locationId: t.locationId, calendarId: calendar.id, kind: 'link', eventCount: 2, status: 'ok' }],
+      ['owner_calendar.refreshed', { locationId: t.locationId, calendarId: calendar.id, kind: 'link', eventCount: 3, status: 'ok' }],
+      ['owner_calendar.refreshed', { locationId: t.locationId, calendarId: calendar.id, kind: 'link', eventCount: 3, status: 'http_error' }],
     ]);
   });
 
@@ -416,7 +416,7 @@ describe('with the calendar key', () => {
     const both = await Promise.all([1, 2].map(() => send(`${base(t)}/${calendar.id}/refresh`, t.member, { method: 'POST' })));
     expect(both.map((answer) => answer.status).sort()).toEqual([200, 429]);
     expect(sent).toHaveLength(1);
-    expect((await auditOf(calendar.id)).map((event) => event.action)).toEqual(['townwise.owner_calendar_added', 'townwise.owner_calendar_refreshed']);
+    expect((await auditOf(calendar.id)).map((event) => event.action)).toEqual(['owner_calendar.added', 'owner_calendar.refreshed']);
   });
 
   it('refreshing a file answers 400 not_a_link, and nothing changes', async () => {
@@ -453,7 +453,7 @@ describe('with the calendar key', () => {
     expect(await titles(t)).toEqual(['Kept event']);
     expect((await send(base(t), t.member)).body).toEqual({ calendars: [kept] });
     const removed = (await auditOf(gone.id)).at(-1);
-    expect(removed).toMatchObject({ action: 'townwise.owner_calendar_removed', target: { type: 'owner_calendar', id: gone.id } });
+    expect(removed).toMatchObject({ action: 'owner_calendar.removed', target: { type: 'owner_calendar', id: gone.id } });
     expect(removed?.details).toEqual({ locationId: t.locationId, calendarId: gone.id, kind: 'link', eventCount: 2 });
     expect(await send(`${base(t)}/${gone.id}`, t.member, { method: 'DELETE' })).toMatchObject({ status: 404, body: { error: 'not_found' } });
   });
@@ -528,16 +528,16 @@ describe('with the calendar key', () => {
     const added = await send(base({ locationId }), staff, { json: { kind: 'file', label: LABEL, ics: FIRST } });
     expect(added.status).toBe(201);
     const [event] = await auditOf(calendarOf(added).id);
-    expect(event).toMatchObject({ action: 'townwise.owner_calendar_added', actorUserId: staff.userId, actorRole: 'superadmin', viewAsGrantId: grantId });
+    expect(event).toMatchObject({ action: 'owner_calendar.added', actorUserId: staff.userId, actorRole: 'superadmin', viewAsGrantId: grantId });
     await removeStaffFactor(server);
   });
 
   it('words the audit events by kind, count and status only', () => {
-    expect(summaryOf('townwise.owner_calendar_added', { kind: 'link', eventCount: 12, status: 'ok' })).toBe('Added a calendar link with 12 events');
-    expect(summaryOf('townwise.owner_calendar_added', { kind: 'file', eventCount: 3, status: 'ok' })).toBe('Added a calendar file with 3 events');
-    expect(summaryOf('townwise.owner_calendar_removed', { kind: 'file', eventCount: 3 })).toBe('Removed a calendar file');
-    expect(summaryOf('townwise.owner_calendar_refreshed', { kind: 'link', eventCount: 4, status: 'ok' })).toBe('Refreshed a calendar link: 4 events');
-    expect(summaryOf('townwise.owner_calendar_refreshed', { kind: 'link', eventCount: 4, status: 'timeout' })).toBe('Refreshing a calendar link failed (timeout)');
+    expect(summaryOf('owner_calendar.added', { kind: 'link', eventCount: 12, status: 'ok' })).toBe('Added a calendar link with 12 events');
+    expect(summaryOf('owner_calendar.added', { kind: 'file', eventCount: 3, status: 'ok' })).toBe('Added a calendar file with 3 events');
+    expect(summaryOf('owner_calendar.removed', { kind: 'file', eventCount: 3 })).toBe('Removed a calendar file');
+    expect(summaryOf('owner_calendar.refreshed', { kind: 'link', eventCount: 4, status: 'ok' })).toBe('Refreshed a calendar link: 4 events');
+    expect(summaryOf('owner_calendar.refreshed', { kind: 'link', eventCount: 4, status: 'timeout' })).toBe('Refreshing a calendar link failed (timeout)');
   });
 
   it('no answer, audit event or log line held a link’s address, and no audit event or log line a label, host or title', async () => {
@@ -548,7 +548,7 @@ describe('with the calendar key', () => {
     }
     const audit = JSON.stringify(await auditEvents(server));
     const logs = server.logs.join('\n');
-    expect(audit).toContain('townwise.owner_calendar_refreshed');
+    expect(audit).toContain('owner_calendar.refreshed');
     for (const secret of [TOKEN, 'calendar.google.com', LABEL, 'Rehearsal dinner', 'Office party', 'Wine tasting']) {
       expect(audit).not.toContain(secret);
       expect(logs).not.toContain(secret);

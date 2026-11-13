@@ -25,7 +25,7 @@ Two phases (owner decision, 2026-11-12): phase 1 builds the server side on `orig
 ## 4. Routes
 
 - [x] 4.1 Add `'2mb'` to the `bodyLimit` union (used by the calendar create route only, room for a 1 MB file's JSON escaping; the handler holds the file itself to 1 MB), then the five `org.owner_calendars.*` entries to `TOWNWISE_ROUTES` (member, `openAsAdmin`, refresh limiter one per calendar per 5 minutes, 12 link adds per account an hour) and their handlers; the list never returns an address
-- [x] 4.2 Audit events `townwise.owner_calendar_added|removed|refreshed` with the allowlisted fields only (`api/src/audit.ts`); the route integration tests assert the exact audit fields
+- [x] 4.2 Audit events `owner_calendar.added|removed|refreshed` with the allowlisted fields only (`api/src/audit.ts`); the route integration tests assert the exact audit fields
 - [x] 4.3 Integration tests: add file, add link (against a local HTTPS test server), not a calendar, blocked address, no key (503), cross-tenant 404, view-as write refused, events range read and `bad_range`, refresh limit 429
 - [x] 4.4 Extend `test/isolation.test.ts` for the new stores and routes
 

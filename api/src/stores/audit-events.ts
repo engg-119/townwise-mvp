@@ -42,9 +42,9 @@ export const AUDIT_DETAIL_KEYS = {
   'note.deleted': ['locationId', 'kind', 'startDate', 'endDate'],
   // Owner calendars (openspec change connect-owner-calendar, design decision 10): ids, the kind ('file' or 'link'), the
   // event count and the status code only. Never the calendar's label, host or address, or an event's title.
-  'townwise.owner_calendar_added': ['locationId', 'calendarId', 'kind', 'eventCount', 'status'],
-  'townwise.owner_calendar_removed': ['locationId', 'calendarId', 'kind', 'eventCount'],
-  'townwise.owner_calendar_refreshed': ['locationId', 'calendarId', 'kind', 'eventCount', 'status'],
+  'owner_calendar.added': ['locationId', 'calendarId', 'kind', 'eventCount', 'status'],
+  'owner_calendar.removed': ['locationId', 'calendarId', 'kind', 'eventCount'],
+  'owner_calendar.refreshed': ['locationId', 'calendarId', 'kind', 'eventCount', 'status'],
   'chat.turn_completed': ['locationId', 'conversationId', 'model', 'calls', 'inputTokens', 'outputTokens', 'stopReason'],
   'chat.conversation_deleted': ['locationId', 'conversationId'],
   // U9, TownwiseAI's questions: the question's id holds only dates and a weekday number.
