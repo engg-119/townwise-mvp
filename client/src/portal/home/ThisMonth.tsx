@@ -2,7 +2,6 @@ import { Link, useRouter, type Href } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 
-import { fmt1 } from '../../marketing/format';
 import { theme } from '../../theme';
 import type { Calendar } from '../analytics/api';
 import type { DayContext } from '../analytics/days';
@@ -14,14 +13,13 @@ import type { ForecastDay, ForecastWindow } from '../estimates/api';
 import type { Note } from '../locations/api';
 import { weekdaysLine } from '../locations/noteRules';
 import { useBreakpoint } from '../hooks';
-import { PeopleInTownSummary } from '../estimates/PeopleInTownSummary';
 import { calendarHref } from '../routing';
-import { DATA_YEAR, SOURCES, townProfile } from '../towns';
 import { LinkButton } from '../ui/Button';
 import { Stack } from '../ui/layout';
 import { Mono, Small } from '../ui/text';
 import { Block } from './Block';
 import { DayDetail } from './DayDetail';
+import { InTown } from './InTown';
 import { MonthGrid } from './MonthGrid';
 
 // This month in {Town} (spec P11): only sourced facts, in four blocks. The month card is the month as a grid, each
@@ -29,11 +27,9 @@ import { MonthGrid } from './MonthGrid';
 // day the keys select (today at first) or a pointer rests on with its detail beside the grid; on web a pointer also
 // shows the day's tooltip (the Calendar's lines). Choosing a day (a click, Enter, a tap) opens it in the Calendar
 // (P27), which the card also links to. On the calendar in {month} is every town event, holiday and note of the month
-// in date order with its sources. Who's in town is the month's people in town summary (spec 13.2, read on its own)
-// with the county's food-service employment for the month from the bundled BLS data (one of the twelve towns only)
-// and its caveat. Your {month} in past years is the location's own days, each year with its day count.
-
-const BLS = SOURCES.find((source) => source.url.startsWith('https://www.bls.gov/'));
+// in date order with its sources. Who's in town is the month's people in town from today on, grouped by time under
+// headings, then the county's food-service jobs for the month (InTown.tsx). Your {month} in past years is the
+// location's own days, each year with its day count.
 
 export const PEOPLE_HEAD = 'Who’s in town';
 
@@ -122,20 +118,9 @@ export function MonthList(props: { today: string; context: DayContext }): React.
 /** Who's in town this month, and the county's food-service jobs for the month. */
 export function WhoIsInTown(props: { today: string; calendar: Calendar; locationId: string }): React.JSX.Element {
   const { today, calendar } = props;
-  const monthIndex = Number(today.slice(5, 7)) - 1;
-  const monthName = monthNameOf(today);
-  const profile = townProfile(calendar.town.townId);
-  const index = profile?.series.index[monthIndex];
   return (
-    <Block label={PEOPLE_HEAD} eyebrow={`${calendar.town.name}, ${monthName}`} title={PEOPLE_HEAD}>
-      <PeopleInTownSummary locationId={props.locationId} month={today.slice(0, 7)} />
-      {profile === null || index === undefined ? null : (
-        <Stack gap={4} style={styles.ruled}>
-          <Small white>{`Food-service jobs in ${profile.county}, ${monthName} ${String(DATA_YEAR)}: ${fmt1(index)} (${String(DATA_YEAR)} average = 100).`}</Small>
-          <Mono tone="text3">County, not town. Employment is a stand-in for demand.</Mono>
-          {BLS === undefined ? null : <Link href={BLS.url} style={styles.source}>Source: U.S. Bureau of Labor Statistics, QCEW</Link>}
-        </Stack>
-      )}
+    <Block label={PEOPLE_HEAD} eyebrow={`${calendar.town.name}, ${monthNameOf(today)}`} title={PEOPLE_HEAD}>
+      <InTown today={today} townId={calendar.town.townId} locationId={props.locationId} />
     </Block>
   );
 }
@@ -160,7 +145,6 @@ const styles = StyleSheet.create({
   split: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space[6], rowGap: theme.space[5], alignItems: 'flex-start' },
   gridSide: { flexGrow: 1, flexShrink: 1, flexBasis: 280, maxWidth: 420, minWidth: 0 },
   detailSide: { flexGrow: 1, flexShrink: 1, flexBasis: 220, minWidth: 0 },
-  ruled: { paddingTop: theme.space[4], borderTopWidth: 1, borderTopColor: c.border },
   list: { gap: theme.space[3] },
   item: { flexDirection: 'row', columnGap: theme.space[4], alignItems: 'flex-start' },
   itemPhone: { gap: 2 },
