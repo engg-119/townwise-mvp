@@ -140,7 +140,7 @@ export function dayPanel(date: string, input: PanelInput): DayPanelData {
   const hasValue = day !== undefined && (day.guests !== null || day.netSalesCents !== null);
   const metricValue = day === undefined ? null : valueOf(day, input.metric);
   const status = [
-    flags.closed ? 'Closed' : null,
+    flags.likelyClosed ? 'Likely closed' : flags.closed ? 'Closed' : null,
     hasValue ? null : 'No data for this day',
     metricValue !== null && !input.included(date) ? 'Left out of the numbers by your filters' : null,
     date === input.today ? 'Today' : null,

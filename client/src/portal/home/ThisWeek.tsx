@@ -81,7 +81,7 @@ export function PastCell(props: { day: PastDay; metric: Metric }): React.JSX.Ele
   return (
     <View style={styles.item}>
       <Mono tone="white">{line}</Mono>
-      {day.closed ? <Mono>Closed</Mono> : null}
+      {day.closed ? <Mono>{day.likelyClosed ? 'Likely closed' : 'Closed'}</Mono> : null}
       {change === null ? null : <Mono>{change}</Mono>}
       {day.events.map((title) => <Small key={title}>{title}</Small>)}
     </View>

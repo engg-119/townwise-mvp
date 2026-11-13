@@ -168,13 +168,21 @@ describe('get_day', () => {
 
   function context(opts: { days?: SalesDayWithUpload[]; notes?: NoteRecord[]; uploads?: UploadRecord[]; townId?: Town['townId'] } = {}) {
     const byIds: string[][] = [];
+    const ranges: { from: string; to: string }[] = [];
     const upload: UploadRecord = {
       id: UPLOAD_ID, locationId: '000000000000000000000001', uploadedBy: SENTINEL_USER, uploadedAt: new Date('2026-11-23T03:30:00Z'),
       status: 'applied', dayCount: 7, inserted: 7, replaced: 0, kept: 0, firstDate: '2026-11-16', lastDate: '2026-11-22', hasGuests: true,
       hasNetSales: true, byStaff: false, disabledAt: null, disabledBy: null,
     };
     const stores = {
-      salesDays: { history: () => Promise.resolve(opts.days ?? []) } as unknown as SalesDayStore,
+      salesDays: {
+        history: () => Promise.resolve(opts.days ?? []),
+        days: (_scope: OrgScope, _location: string, range: { from: string; to: string }) => {
+          ranges.push(range);
+          return Promise.resolve((opts.days ?? []).filter((day) => day.date >= range.from && day.date <= range.to)
+            .map(({ date, guests, netSalesCents }) => ({ date, guests, netSalesCents })));
+        },
+      } as unknown as SalesDayStore,
       notes: { list: () => Promise.resolve(opts.notes ?? []) } as unknown as NoteStore,
       uploads: {
         byIds: (_scope: OrgScope, _location: string, ids: string[]) => {
@@ -195,7 +203,7 @@ describe('get_day', () => {
       role: 'member',
       actor: { actorUserId: SENTINEL_USER, actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null },
     };
-    return { tc, byIds };
+    return { tc, byIds, ranges };
   }
 
   async function run(input: unknown, tc: ToolContext): Promise<{ content: string; parsed: Record<string, unknown> }> {
@@ -293,6 +301,44 @@ describe('get_day', () => {
       date: '2026-11-21', hasSales: false, closed: false, noteCount: 0, eventCount: 0, sources: [],
     });
     expect(resultViewOf('get_day', ok({ other: 1 }))).toBeNull();
+  });
+
+  // Spec D32: Saturdays of 120 guests, then near-empty ones. Synthetic.
+  const saturdays = ['2026-10-03', '2026-10-10', '2026-10-17', '2026-10-24', '2026-10-31', '2026-11-07', '2026-11-14']
+    .map((date) => ({ date, guests: 120, netSalesCents: 240_000, uploadId: UPLOAD_ID }));
+  const nearEmpty = (date: string) => ({ date, guests: 1, netSalesCents: 2_500, uploadId: UPLOAD_ID });
+
+  it('says a near-empty day is likely closed (spec D32), unless a note says more or fewer guests; an all-zero day is closed', async () => {
+    const days = [...saturdays, nearEmpty('2026-11-21')];
+    expect((await run({ date: '2026-11-21' }, context({ days }).tc)).parsed)
+      .toMatchObject({ sales: { guests: 1, netSalesUsd: 25 }, closed: true, likelyClosed: true, dayClass: 'closed' });
+    const slow = note({ kind: 'other', effect: 'fewer_guests', expectedGuests: null, detail: null });
+    expect((await run({ date: '2026-11-21' }, context({ days, notes: [slow] }).tc)).parsed)
+      .toMatchObject({ closed: false, likelyClosed: false, dayClass: 'noted' });
+    const zero = [...saturdays, { date: '2026-11-21', guests: 0, netSalesCents: 0, uploadId: UPLOAD_ID }];
+    expect((await run({ date: '2026-11-21' }, context({ days: zero }).tc)).parsed).toMatchObject({ closed: true, likelyClosed: false });
+    expect((await run({ date: '2026-11-14' }, context({ days }).tc)).parsed).toMatchObject({ closed: false, likelyClosed: false });
+  });
+
+  it('get_sales_days reads the 8 weeks before the range too, gives only the range, and marks likely-closed days (spec D32)', async () => {
+    const days = [...saturdays, nearEmpty('2026-11-21'), nearEmpty('2026-11-28')];
+    const slow = note({ kind: 'other', startDate: '2026-11-28', endDate: '2026-11-28', effect: 'fewer_guests', expectedGuests: null, detail: null });
+    const { tc, ranges } = context({ days, notes: [slow] });
+    const tool = toolNamed('get_sales_days');
+    const range = tool?.parse({ from: '2026-11-14', to: '2026-11-30' }, TODAY) ?? null;
+    if (tool === undefined || range === null) throw new Error('invalid input');
+    const parsed = JSON.parse((await tool.run(tc, range)).content) as { from: string; to: string; days: unknown[] };
+    expect(ranges).toEqual([{ from: '2026-09-19', to: '2026-11-30' }]);
+    expect(parsed).toEqual({
+      from: '2026-11-14', to: '2026-11-30',
+      days: [
+        { date: '2026-11-14', guests: 120, netSalesUsd: 2400 },
+        { date: '2026-11-21', guests: 1, netSalesUsd: 25, likelyClosed: true },
+        { date: '2026-11-28', guests: 1, netSalesUsd: 25 },
+      ],
+    });
+    expect(tool.definition.description).toContain('likelyClosed');
+    expect(toolNamed('get_day')?.definition.description).toContain('likelyClosed');
   });
 
   it('is named in the system prompt, with which kind each of its figures is', () => {

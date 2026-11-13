@@ -3,7 +3,8 @@
 //
 // The day classes are the client's (client/src/portal/analytics/days.ts), ported here and pinned by the
 // shared fixture test/fixtures/day-classes.json (client copy: client/test/portal/analytics/day-classes.json). A change
-// to one side needs the other and the fixture.
+// to one side needs the other and the fixture. Closed includes likely closed (../closed-days.ts, spec D32).
+import { closureOf, typicalByDate, type Closure } from '../closed-days.ts';
 import type { NoteContent } from '../stores/notes.ts';
 import type { SalesDay } from '../stores/sales-days.ts';
 import { weekdayOf, type Weekday } from '../time-zones.ts';
@@ -35,21 +36,25 @@ function covers(note: ClassNote, date: string): boolean {
   return note.weekdays === null || note.weekdays.includes(new Date(`${date}T00:00:00.000Z`).getUTCDay());
 }
 
-function isAllZero(day: Pick<SalesDay, 'guests' | 'netSalesCents'>): boolean {
-  if (day.guests === 0) return day.netSalesCents === 0 || day.netSalesCents === null;
-  return day.guests === null && day.netSalesCents === 0;
+/** Whether the day is closed or likely closed (spec D32), from the notes covering it and its weekday's typical guests. */
+export function closureOfDay(
+  date: string, day: Pick<SalesDay, 'guests' | 'netSalesCents'> | undefined, notes: readonly ClassNote[], typical: number | null,
+): Closure | null {
+  return closureOf(day, typical, notes.filter((note) => covers(note, date)));
 }
 
 /**
- * The first that applies: closed (a covering note's effect is closed, or the stored row is all zero), noted (a
- * covering note that does not close it), holiday, event, regular. Term and season entries never make a day irregular.
+ * The first that applies: closed (a covering note's effect is closed, the stored row is all zero, or the day is
+ * likely closed given its weekday's `typical` guests), noted (a covering note that does not close it), holiday, event,
+ * regular. Term and season entries never make a day irregular. With `typical` null, likely closed never applies.
  */
 export function classOfDay(
   date: string, day: Pick<SalesDay, 'guests' | 'netSalesCents'> | undefined, notes: readonly ClassNote[], events: readonly ClassEvent[],
+  typical: number | null = null,
 ): DayClass {
   const covering = notes.filter((note) => covers(note, date));
   const on = events.filter((event) => event.start <= date && date <= event.end);
-  if (covering.some((note) => note.effect === 'closed') || (day !== undefined && isAllZero(day))) return 'closed';
+  if (closureOf(day, typical, covering) !== null) return 'closed';
   if (covering.length > 0) return 'noted';
   if (on.some((event) => event.kind === 'holiday')) return 'holiday';
   if (on.some((event) => event.kind === 'event')) return 'event';
@@ -63,6 +68,7 @@ export function yourHistory(
   days: readonly SalesDay[], notes: readonly ClassNote[], events: readonly ClassEvent[], termStateOf: (date: string) => TermState,
 ): YourHistory {
   const metric = days.some((day) => day.guests !== null) ? 'guests' : 'netSales';
+  const typical = typicalByDate(days);
   const sums = new Map<string, { days: number; total: number }>();
   let first: string | null = null;
   let last: string | null = null;
@@ -70,7 +76,7 @@ export function yourHistory(
     const value = metric === 'guests' ? day.guests : day.netSalesCents;
     if (value === null) continue;
     const state = termStateOf(day.date);
-    if (state === 'unknown' || classOfDay(day.date, day, notes, events) !== 'regular') continue;
+    if (state === 'unknown' || classOfDay(day.date, day, notes, events, typical.get(day.date) ?? null) !== 'regular') continue;
     const key = `${state}|${weekdayOf(day.date)}`;
     const sum = sums.get(key) ?? { days: 0, total: 0 };
     sums.set(key, { days: sum.days + 1, total: sum.total + value });

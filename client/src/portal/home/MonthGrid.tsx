@@ -1,15 +1,15 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
-import type { MonthCell } from '../analytics/week';
+import { monthStatusWord, type MonthCell } from '../analytics/week';
 import { WEEK_ORDER, WEEKDAY_NAMES } from '../analytics/words';
 import type { TooltipLines } from '../calendar/model';
 import { useBreakpoint } from '../hooks';
 import { MARK, MonthKey } from './MonthKey';
 
 // This month as a grid (spec P11), Monday first: each day's number, its figure (stored before today, the published
-// forecast's middle figure from today on with a mint "+70" when notes added guests, a buyout's party), "Closed" or
-// "Booked", a white corner mark for a holiday or town event, a `text2` mark for one of your notes, this week outlined
+// forecast's middle figure from today on with a mint "+70" when notes added guests, a buyout's party), "Closed",
+// "Likely closed" (a past day with near-empty guests, spec D32) or "Booked", a white corner mark for a holiday or town event, a `text2` mark for one of your notes, this week outlined
 // with `line`, and the selected day outlined in `mint`. Each day is a button that opens it in the Calendar (spec
 // 16.3 P11); its label says everything the cell shows. Web has its own file (MonthGrid.web.tsx): one tab
 // stop with arrow keys that select a day for the detail, a pointer that previews a day and shows its tooltip, and a
@@ -54,7 +54,7 @@ export function MonthGrid(props: MonthGridProps): React.JSX.Element {
                 style={[styles.cell, cell.inWeek ? styles.week : null, cell.date === selected ? styles.selected : null]}
               >
                 <Text style={[styles.number, cell.isToday ? styles.today : null]}>{String(Number(cell.date.slice(8, 10)))}</Text>
-                {cell.status === null ? null : <Text style={styles.status}>{cell.status === 'closed' ? 'Closed' : 'Booked'}</Text>}
+                {cell.status === null ? null : <Text style={styles.status}>{monthStatusWord(cell)}</Text>}
                 {cell.figure === null ? null : (
                   <View style={styles.middle}>
                     <Text style={[styles.figure, { fontSize: figureSize, lineHeight: figureSize + 4 }, cell.figure.kind === 'actual' ? styles.past : null]}>

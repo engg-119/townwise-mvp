@@ -5,7 +5,8 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import { classOfDay, MIN_CELL_DAYS, yourHistory, type DayClass } from '../src/people-in-town/history.ts';
+import { typicalGuests } from '../src/closed-days.ts';
+import { classOfDay, closureOfDay, MIN_CELL_DAYS, yourHistory, type DayClass } from '../src/people-in-town/history.ts';
 import type { TermState } from '../src/people-in-town/term.ts';
 import type { NoteContent } from '../src/stores/notes.ts';
 import type { SalesDay } from '../src/stores/sales-days.ts';
@@ -14,10 +15,13 @@ import type { TownEvent } from '../src/town-calendar.ts';
 interface ClassCase {
   name: string;
   date: string;
+  /** Other stored days' guests, which the day's typical guests come from (spec D32); none when absent. */
+  history?: { date: string; guests: number | null }[];
   day: { guests: number | null; netSalesCents: number | null } | null;
   notes: Pick<NoteContent, 'startDate' | 'endDate' | 'weekdays' | 'effect'>[];
   events: Pick<TownEvent, 'start' | 'end' | 'kind'>[];
   class: DayClass;
+  likelyClosed?: true;
 }
 
 const FIXTURE = new URL('fixtures/day-classes.json', import.meta.url);
@@ -32,9 +36,16 @@ describe('the day classes', () => {
     expect(new Set(cases.map((each) => each.class))).toEqual(new Set(['closed', 'noted', 'holiday', 'event', 'regular']));
   });
 
+  it('include likely-closed cases (spec D32)', () => {
+    expect(cases.filter((each) => each.likelyClosed === true).length).toBeGreaterThan(3);
+  });
+
   for (const each of cases) {
-    it(`${each.name}: ${each.class}`, () => {
-      expect(classOfDay(each.date, each.day ?? undefined, each.notes, each.events)).toBe(each.class);
+    it(`${each.name}: ${each.class}${each.likelyClosed === true ? ', likely closed' : ''}`, () => {
+      const guests = new Map((each.history ?? []).map((other) => [other.date, other.guests]));
+      const typical = typicalGuests(each.date, (date) => guests.get(date));
+      expect(classOfDay(each.date, each.day ?? undefined, each.notes, each.events, typical)).toBe(each.class);
+      expect(closureOfDay(each.date, each.day ?? undefined, each.notes, typical) === 'likely_closed').toBe(each.likelyClosed === true);
     });
   }
 });
@@ -81,6 +92,11 @@ describe('yourHistory', () => {
     const history = yourHistory(days, notes, events, stateOf);
     expect(history.cells).toEqual([{ state: 'in_session', weekday: 'Sat', days: 3, mean: 220 }]);
     expect([history.first, history.last]).toEqual(['2026-10-03', '2026-10-17']);
+  });
+
+  it('leaves out a likely-closed day (spec D32): its guests are not a slow Saturday', () => {
+    const days = [day('2026-09-19', 200), day('2026-09-26', 200), day('2026-10-03', 200), day('2026-10-10', 2), day('2026-10-17', 200)];
+    expect(yourHistory(days, [], [], stateOf).cells).toEqual([{ state: 'in_session', weekday: 'Sat', days: 4, mean: 200 }]);
   });
 
   it('uses net sales in whole dollars only when no day has guests', () => {
