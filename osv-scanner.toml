@@ -21,6 +21,11 @@ ignoreUntil = 2026-12-04
 reason = "deepmerge 4.3.1 (@expo/config, jest-config) has no fixed release; @expo/config drops it in 58.0.10 (2026-10-31, inside the 7-day release-age gate) and jest-config 30.5.2, the newest Jest, still requires it."
 
 [[IgnoredVulns]]
+id = "GHSA-5cjw-f85j-cv6r"
+ignoreUntil = 2026-11-20
+reason = "tornado 6.6 (low, an open redirect, published 2026-11-13) is in eda/uv.lock and modeling/uv.lock only, as Jupyter's local notebook server, never in the API release or the web bundle; the fix, tornado 6.6.1 (2026-11-09), is inside the 7-day release-age gate until 2026-11-16, after which the locks take it and this entry goes. Owner approved the suppression on 2026-11-13."
+
+[[IgnoredVulns]]
 id = "GHSA-mrhx-c7xc-m3w5"
 ignoreUntil = 2026-12-04
 reason = "zod 3.25.76 is nested under expo for @expo/cli (^3.25.76); the fix is zod 4.6.6, a new major, and @expo/cli drops zod 3 in 58.1.18 (2026-10-31), which min-release-age=7 rejects until 2026-11-07. The app and API use zod 4.6.7."
