@@ -2,6 +2,7 @@ import { createContext, useEffect, useRef, type RefObject } from 'react';
 import { useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import Head from 'expo-router/head';
 
+import { ThemeToggle } from '../portal/shell/ThemeToggle';
 import { Footer } from './Footer.web';
 import { EARLY_ACCESS_HREF, navLinks, SIGN_IN_HREF } from './links';
 import type { MarketingShellProps } from './MarketingShell';
@@ -11,7 +12,8 @@ import { css } from './styles.web';
 export const ScrollRoot = createContext<RefObject<HTMLElement | null>>({ current: null });
 
 // The web chrome for every marketing page: skip link, header, main and footer, inside one scroll
-// container (the export's body does not scroll). Links are plain anchors; a click on an internal
+// container (the export's body does not scroll). The header has the site's light and dark switch (the portal's,
+// ThemeToggle) before Sign in. Links are plain anchors; a click on an internal
 // one is routed client-side here, and a link to a section (/#how, #cookies) scrolls to it. Each page
 // names itself in the document title; Head applies only the focused screen's.
 export function MarketingShell(props: MarketingShellProps): React.JSX.Element {
@@ -56,6 +58,7 @@ export function MarketingShell(props: MarketingShellProps): React.JSX.Element {
             {navLinks.map((link) => <a key={link.href} href={link.href}>{link.label}</a>)}
           </nav>
           <div className="nav-act">
+            <ThemeToggle />
             <a className="tl" href={SIGN_IN_HREF} aria-current={pathname === SIGN_IN_HREF ? 'page' : undefined}>Sign in</a>
             {offerEarlyAccess ? <a className="btn" href={EARLY_ACCESS_HREF}>Request early access</a> : null}
           </div>

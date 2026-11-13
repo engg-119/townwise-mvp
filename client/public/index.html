@@ -21,6 +21,9 @@
     <meta name="twitter:description" content="We’re building forecasts of daily guests and sales for restaurants and bars, 7 and 28 days ahead, from your town’s calendar, not the region’s. In development. No forecasts are for sale yet." />
     <meta name="twitter:image" content="https://townwise.tech/og/townwise.png" />
     <meta name="twitter:image:alt" content="The word Townwise and the line “Forecasts of daily guests and sales for restaurants and bars, from your town’s calendar.” above a dark map of the northeastern United States, with towns marked by mint dots." />
+    <!-- The browser's color for its own bar: the ground of the system's palette until the app runs, then the ground of
+         the site's mode (SiteTheme, src/portal/shell/PortalStyles.web.tsx, sets both). -->
+    <meta name="theme-color" content="#f5f6f8" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#080a0d" />
     <meta name="apple-mobile-web-app-title" content="Townwise" />
     <!-- Icons, rendered by scripts/share-images. sizes="32x32" on the ICO stops Chrome choosing it over the SVG. -->
@@ -29,6 +32,107 @@
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="preload" href="/fonts/instrument-sans-v4-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <!-- The color tokens. On web theme.color is var(--tw-<token>) (src/theme.ts, colorVar), so these must be here before
+         the app paints. Every page, public or not, shows the site's one mode (src/portal/shell/themeMode.ts): the dark
+         palette at :root; the light one under html[data-theme="light"], which the app sets for a light mode; and, before
+         the app runs, the light one again for a system that asks for light, unless the app has set data-theme="dark" (a
+         dark pick). So a visitor who follows the system sees their palette from the first paint, with no script. --tw-scheme
+         is the palette's color-scheme, for the browser's own parts of a control (a date input's picker button and popup:
+         color-scheme: var(--tw-scheme)). test/public/index-html.test.ts pins all three blocks to theme.palette. -->
+    <style id="theme">
+      :root {
+        --tw-ground: #080a0d;
+        --tw-panel: #101317;
+        --tw-raised: #181c21;
+        --tw-state: #23272c;
+        --tw-border: #34383e;
+        --tw-line: #7b8187;
+        --tw-white: #eff2f6;
+        --tw-text2: #b5bbc2;
+        --tw-text3: #9a9fa6;
+        --tw-mint: #7bd2b4;
+        --tw-mint-ring: rgba(123, 210, 180, 0.4);
+        --tw-error: #f2716a;
+        --tw-warning: #f8c655;
+        --tw-scrim: rgba(8, 10, 13, 0.8);
+        --tw-shadow: rgba(0, 0, 0, 0.6);
+        --tw-cta: #eff2f6;
+        --tw-cta-hover: #b5bbc2;
+        --tw-on-cta: #080a0d;
+        --tw-on-mint: #080a0d;
+        --tw-focus-ring: #7bd2b4;
+        --tw-series-northeast: #9a9fa6;
+        --tw-series-county: #7bd2b4;
+        --tw-delta-above: #7bd2b4;
+        --tw-delta-below: #7b8187;
+        --tw-scheme: dark;
+      }
+      html[data-theme="light"] {
+        --tw-ground: #f5f6f8;
+        --tw-panel: #ffffff;
+        --tw-raised: #e9ecef;
+        --tw-state: #dce0e5;
+        --tw-border: #cfd4da;
+        --tw-line: #7a8088;
+        --tw-white: #0d1014;
+        --tw-text2: #3e444b;
+        --tw-text3: #5d636b;
+        --tw-mint: #136a53;
+        --tw-mint-ring: rgba(19, 106, 83, 0.4);
+        --tw-error: #b42d25;
+        --tw-warning: #8a5b00;
+        --tw-scrim: rgba(13, 16, 20, 0.4);
+        --tw-shadow: rgba(13, 16, 20, 0.18);
+        --tw-cta: #0d1014;
+        --tw-cta-hover: #3e444b;
+        --tw-on-cta: #f5f6f8;
+        --tw-on-mint: #ffffff;
+        --tw-focus-ring: #136a53;
+        --tw-series-northeast: #7a8088;
+        --tw-series-county: #136a53;
+        --tw-delta-above: #136a53;
+        --tw-delta-below: #7a8088;
+        --tw-scheme: light;
+      }
+      @media (prefers-color-scheme: light) {
+        :root:not([data-theme="dark"]) {
+          --tw-ground: #f5f6f8;
+          --tw-panel: #ffffff;
+          --tw-raised: #e9ecef;
+          --tw-state: #dce0e5;
+          --tw-border: #cfd4da;
+          --tw-line: #7a8088;
+          --tw-white: #0d1014;
+          --tw-text2: #3e444b;
+          --tw-text3: #5d636b;
+          --tw-mint: #136a53;
+          --tw-mint-ring: rgba(19, 106, 83, 0.4);
+          --tw-error: #b42d25;
+          --tw-warning: #8a5b00;
+          --tw-scrim: rgba(13, 16, 20, 0.4);
+          --tw-shadow: rgba(13, 16, 20, 0.18);
+          --tw-cta: #0d1014;
+          --tw-cta-hover: #3e444b;
+          --tw-on-cta: #f5f6f8;
+          --tw-on-mint: #ffffff;
+          --tw-focus-ring: #136a53;
+          --tw-series-northeast: #7a8088;
+          --tw-series-county: #136a53;
+          --tw-delta-above: #136a53;
+          --tw-delta-below: #7a8088;
+          --tw-scheme: light;
+        }
+      }
+      /* Native parts of controls (a date input's picker), scrollbars and form fields follow the palette. */
+      html {
+        color-scheme: var(--tw-scheme);
+      }
+      /* Google's sign-in button lives in a cross-origin iframe; a frame whose color-scheme differs from its document's is
+         painted opaque, so the frame keeps normal, as Google's document has it, and stays transparent in either palette. */
+      iframe {
+        color-scheme: normal;
+      }
+    </style>
     <!-- The `react-native-web` recommended style reset: https://necolas.github.io/react-native-web/docs/setup/#root-element -->
     <style id="expo-reset">
       /* These styles make the body full-height */
@@ -36,10 +140,10 @@
       body {
         height: 100%;
       }
-      /* The ground color before the bundles run or while a route chunk loads (theme.color.ground) */
+      /* The ground color before the bundles run or while a route chunk loads (theme.color.ground), in either palette */
       html,
       body {
-        background: #080a0d;
+        background: var(--tw-ground);
       }
       /* These styles disable body scrolling if you are using <ScrollView> */
       body {
@@ -52,12 +156,12 @@
         flex: 1;
       }
     </style>
-    <!-- Quiet scrollbars in every scroll area on every page (a thin theme.color.border thumb on no track), not the
-         browser's light default: the standard properties for Chrome and Firefox, the -webkit- ones for Safari. -->
+    <!-- Quiet scrollbars in every scroll area on every page (a thin theme.color.border thumb on no track, in either
+         palette), not the browser's default: the standard properties for Chrome and Firefox, the -webkit- ones for Safari. -->
     <style id="scrollbars">
       * {
         scrollbar-width: thin;
-        scrollbar-color: #34383e transparent;
+        scrollbar-color: var(--tw-border) transparent;
       }
       ::-webkit-scrollbar {
         width: 8px;
@@ -67,12 +171,12 @@
         background: transparent;
       }
       ::-webkit-scrollbar-thumb {
-        background: #34383e;
+        background: var(--tw-border);
         border: 2px solid transparent;
         background-clip: padding-box;
       }
       ::-webkit-scrollbar-thumb:hover {
-        background: #7b8187;
+        background: var(--tw-line);
         border: 2px solid transparent;
         background-clip: padding-box;
       }
