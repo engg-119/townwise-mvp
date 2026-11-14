@@ -30,7 +30,7 @@ Every member SHALL be able to upload item sales; only an org admin (staff opened
 - **THEN** the system answers 403
 
 ### Requirement: Item sales go with the location's sales data
-Deleting the location's sales data, the location or the organization SHALL delete its item sales. Each upload SHALL write `orders.item_sales_uploaded` with day count, item count, first and last date only, and each delete `orders.item_sales_deleted` with the day count.
+Deleting the location's sales data, the location or the organization SHALL delete its item sales. Each upload SHALL write `order.item_sales_uploaded` with day count, item count, first and last date only, and each delete `order.item_sales_deleted` with the day count.
 
 #### Scenario: Sales data deleted
 - **WHEN** an org admin deletes the location's sales data

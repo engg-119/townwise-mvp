@@ -18,10 +18,10 @@
 
 ## 3. Engine (pure, `api/src/orders/engine.ts`)
 
-- [ ] 3.1 Windows: next order-by after now in the town zone, delivery, window, covers through, per supplier; unit tests for the Sawtooth schedule, a passed cutoff today and same-weekday order-by and delivery
-- [ ] 3.2 Demand: weekday means over 8 weeks of covered days, guest index against the location's own weekday guests, mu in purchase units with loss rates; unit tests
-- [ ] 3.3 Cushion: past window errors over 26 weeks, sample standard deviation, null under 2; unit tests
-- [ ] 3.4 Quantity, deal pair and par swap, whole units, confidence, why line; unit tests including the spec 5g vector (18, alternative 12) and the never-counted par case
+- [x] 3.1 Windows: next order-by after now in the town zone, delivery, window, covers through, per supplier; unit tests for the Sawtooth schedule, a passed cutoff today and same-weekday order-by and delivery
+- [x] 3.2 Demand: weekday means over 8 weeks of covered days, guest index against the location's own weekday guests, mu in purchase units with loss rates; unit tests
+- [x] 3.3 Cushion: past window errors over 26 weeks, sample standard deviation, null under 2; unit tests
+- [x] 3.4 Quantity, deal pair and par swap, whole units, confidence, why line; unit tests including the spec 5g vector (18, alternative 12) and the never-counted par case
 - [ ] 3.5 `board.ts`: `orders[]` per supplier, the sample in the same shape, `rules[]` per line in `withPreferences`; `orders/live.ts` reads setup, item sales, counts, the forecast window and history guests and calls the engine; unit tests for `withPreferences` with two rules
 
 ## 4. Routes and handlers

@@ -62,7 +62,7 @@ A saved edit SHALL show on its line for the same delivery. A rule SHALL add its 
 - **THEN** its line adds 1 and lists both rules, each with "Turn this rule off"
 
 ### Requirement: Order writes are safe under races and audited
-Card status changes SHALL never overwrite a saved card and a racing first insert SHALL not answer 500; saving the same rule twice SHALL return the existing rule. Saving an edit, a rule, turning a rule off and saving or dismissing a card SHALL write `orders.decision_saved`, `orders.rule_saved`, `orders.rule_turned_off`, `orders.card_saved` and `orders.card_dismissed` with ids and dates only, never the reason text. Deleting a conversation or a person SHALL delete the order cards of their conversations.
+Card status changes SHALL never overwrite a saved card and a racing first insert SHALL not answer 500; saving the same rule twice SHALL return the existing rule. Saving an edit, a rule, turning a rule off and saving or dismissing a card SHALL write `order.decision_saved`, `order.rule_saved`, `order.rule_turned_off`, `order.card_saved` and `order.card_dismissed` with ids and dates only, never the reason text. Deleting a conversation or a person SHALL delete the order cards of their conversations.
 
 #### Scenario: Dismiss races save
 - **WHEN** a card is saved and a dismiss for it arrives after

@@ -19,7 +19,7 @@ The board SHALL use, for each item, the quantity from the newest count date that
 - **THEN** its line uses that count with an age of 9 and low confidence
 
 ### Requirement: Counts are audited, scoped and deleted with their location
-Each save SHALL write `orders.count_saved` with the date and item count only. Saving SHALL be allowed for every member, refused under view-as, and a foreign location SHALL answer 404. Deleting the location or the organization SHALL delete its counts.
+Each save SHALL write `order.count_saved` with the date and item count only. Saving SHALL be allowed for every member, refused under view-as, and a foreign location SHALL answer 404. Deleting the location or the organization SHALL delete its counts.
 
 #### Scenario: View-as
 - **WHEN** staff in view-as post a count

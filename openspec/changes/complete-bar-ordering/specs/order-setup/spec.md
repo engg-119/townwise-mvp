@@ -33,7 +33,7 @@ The setup page SHALL offer a template (CSV) with the columns Item, Supplier, Cat
 - **THEN** the table shows 40 items under 3 suppliers, unsaved, with rows that fail a check marked
 
 ### Requirement: Setup changes are audited and deleted with their location
-Each save SHALL write an `orders.setup_saved` audit event with the supplier and item counts only. Deleting the location or the organization SHALL delete its setup.
+Each save SHALL write an `order.setup_saved` audit event with the supplier and item counts only. Deleting the location or the organization SHALL delete its setup.
 
 #### Scenario: Audit details carry counts only
 - **WHEN** a member saves a setup with 2 suppliers and 12 items
