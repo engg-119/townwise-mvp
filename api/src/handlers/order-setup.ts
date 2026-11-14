@@ -1,8 +1,9 @@
 // What the order board is built from (design Decisions 3, 4 and 8; the order-setup, item-sales and order-counts specs):
 // GET and PUT .../orders/setup, POST and DELETE .../orders/item-sales, POST .../orders/counts. Every member edits the
-// setup, uploads item sales and saves counts; only an org admin deletes item sales; view-as is read-only through the
-// chain. Nothing here logs, and audit details carry ids, dates and counts only: never an item or supplier name, a
-// point-of-sale name, servings or a quantity.
+// setup, uploads item sales and saves counts; an org admin's item sales upload replaces its range and a member's adds
+// only days not already stored; only an org admin deletes item sales; view-as is read-only through the chain. Nothing
+// here logs, and audit details carry ids, dates and counts only: never an item or supplier name, a point-of-sale name,
+// servings or a quantity.
 import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
@@ -30,8 +31,7 @@ const MAX_ITEMS_PER_DAY = 500;
 
 /**
  * Item sales for the range [from, to], at most 31 days long and ending before `today` (the town's): today is still
- * open, so its sales are not all in yet. The sent days replace the stored ones, and stored days of the range that were
- * not sent are deleted.
+ * open, so its sales are not all in yet. What the store does with them depends on the caller (uploadItemSales).
  */
 function itemSalesBody(today: string) {
   const day = z.strictObject({
@@ -97,7 +97,13 @@ export async function saveOrderSetup(ctx: TownwiseContext, req: Request, res: Re
   res.status(200).json({ setup: saved });
 }
 
-/** POST .../orders/item-sales { from, to, days }: servings per setup item per day, matched in the browser. */
+/**
+ * POST .../orders/item-sales { from, to, days }: servings per setup item per day, matched in the browser. As with sales
+ * uploads (D16), an org admin's (staff opened as admin included) replaces: the sent days are stored and the range's
+ * stored days it did not send are deleted. A member's adds only the days not already stored, deletes nothing and
+ * reports the rest as `kept`, so a member can't clear what the org admin-only DELETE guards.
+ * [CONFIRM: members add only item-sales days not already stored; org admins replace]
+ */
 export async function uploadItemSales(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
   const { scope } = caller;
@@ -106,13 +112,15 @@ export async function uploadItemSales(ctx: TownwiseContext, req: Request, res: R
   const itemIds = [...new Set(body.days.flatMap((day) => Object.keys(day.items)))];
   assertKnownItems(await ctx.stores.orderSetups.get(scope, location.id), itemIds);
   const now = ctx.now();
-  const result = await ctx.stores.itemSales.apply(scope, location.id, { from: body.from, to: body.to, days: body.days, now });
+  const result = await ctx.stores.itemSales.apply(scope, location.id, {
+    from: body.from, to: body.to, days: body.days, now, replace: caller.role === 'org_admin',
+  });
   await recordAfter(ctx, {
     ...actorOf(caller), at: now, orgId: scope.orgId, action: 'order.item_sales_uploaded',
     target: { type: 'location', id: location.id },
     details: {
       locationId: location.id, dayCount: body.days.length, itemCount: itemIds.length, firstDate: body.from, lastDate: body.to,
-      removedCount: result.removed,
+      removedCount: result.removed, keptCount: result.kept,
     },
   });
   res.status(200).json(result);

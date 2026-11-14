@@ -87,24 +87,45 @@ describe('item sales', () => {
   const lager = id();
   const keg = id();
 
-  it('a re-upload of a range replaces its days and deletes the one it no longer sends; a retry gives the same result', async () => {
+  it('a replacing re-upload of a range replaces its days and deletes the one it no longer sends; a retry gives the same result', async () => {
     const t = tenant();
     const now = server.clock.now();
     expect(await itemSales.apply(t.scope, t.locationId, {
-      from: FIRST, to: LAST, days: week.map((date) => ({ date, items: { [lager]: 10, [keg]: 2 } })), now,
-    })).toEqual({ stored: 7, removed: 0 });
+      from: FIRST, to: LAST, days: week.map((date) => ({ date, items: { [lager]: 10, [keg]: 2 } })), now, replace: true,
+    })).toEqual({ stored: 7, removed: 0, kept: 0 });
     // A day outside the range is untouched.
-    await itemSales.apply(t.scope, t.locationId, { from: '2026-05-11', to: '2026-05-11', days: [{ date: '2026-05-11', items: { [lager]: 1 } }], now });
+    await itemSales.apply(t.scope, t.locationId, {
+      from: '2026-05-11', to: '2026-05-11', days: [{ date: '2026-05-11', items: { [lager]: 1 } }], now, replace: true,
+    });
 
-    const again = { from: FIRST, to: LAST, days: week.slice(0, 6).map((date) => ({ date, items: { [lager]: 12 } })), now };
-    expect(await itemSales.apply(t.scope, t.locationId, again)).toEqual({ stored: 6, removed: 1 });
+    const again = { from: FIRST, to: LAST, days: week.slice(0, 6).map((date) => ({ date, items: { [lager]: 12 } })), now, replace: true };
+    expect(await itemSales.apply(t.scope, t.locationId, again)).toEqual({ stored: 6, removed: 1, kept: 0 });
     const after = await itemSales.days(t.scope, t.locationId, { from: '2026-05-01', to: '2026-05-31' });
     expect(after).toEqual([...week.slice(0, 6).map((date) => ({ date, items: { [lager]: 12 } })), { date: '2026-05-11', items: { [lager]: 1 } }]);
-    expect(await itemSales.apply(t.scope, t.locationId, again)).toEqual({ stored: 6, removed: 0 });
+    expect(await itemSales.apply(t.scope, t.locationId, again)).toEqual({ stored: 6, removed: 0, kept: 0 });
     expect(await itemSales.days(t.scope, t.locationId, { from: '2026-05-01', to: '2026-05-31' })).toEqual(after);
 
     // Sending no day clears the range.
-    expect(await itemSales.apply(t.scope, t.locationId, { from: FIRST, to: '2026-05-05', days: [], now })).toEqual({ stored: 0, removed: 2 });
+    expect(await itemSales.apply(t.scope, t.locationId, { from: FIRST, to: '2026-05-05', days: [], now, replace: true }))
+      .toEqual({ stored: 0, removed: 2, kept: 0 });
+  });
+
+  it('an adding upload inserts only the days not stored, leaves stored days as they are and deletes none; a retry gives the same days', async () => {
+    const t = tenant();
+    const now = server.clock.now();
+    await itemSales.apply(t.scope, t.locationId, {
+      from: FIRST, to: '2026-05-05', days: [{ date: FIRST, items: { [lager]: 10 } }, { date: '2026-05-05', items: { [keg]: 2 } }], now, replace: true,
+    });
+    const before = await itemSales.days(t.scope, t.locationId, { from: '2026-05-01', to: '2026-05-31' });
+    // No day sent, and a stored day sent with no items: nothing is deleted or zeroed.
+    expect(await itemSales.apply(t.scope, t.locationId, { from: FIRST, to: LAST, days: [], now, replace: false }))
+      .toEqual({ stored: 0, removed: 0, kept: 0 });
+    const add = { from: FIRST, to: LAST, days: [{ date: FIRST, items: {} }, { date: '2026-05-06', items: { [lager]: 4 } }], now, replace: false };
+    expect(await itemSales.apply(t.scope, t.locationId, add)).toEqual({ stored: 1, removed: 0, kept: 1 });
+    const after = await itemSales.days(t.scope, t.locationId, { from: '2026-05-01', to: '2026-05-31' });
+    expect(after).toEqual([...before, { date: '2026-05-06', items: { [lager]: 4 } }]);
+    expect(await itemSales.apply(t.scope, t.locationId, add)).toEqual({ stored: 0, removed: 0, kept: 2 });
+    expect(await itemSales.days(t.scope, t.locationId, { from: '2026-05-01', to: '2026-05-31' })).toEqual(after);
   });
 
   it('reads days in a range oldest first, reports coverage, and deletes the location’s days with a count', async () => {
@@ -112,7 +133,7 @@ describe('item sales', () => {
     const now = server.clock.now();
     expect(await itemSales.coverage(t.scope, t.locationId)).toBeNull();
     await itemSales.apply(t.scope, t.locationId, {
-      from: FIRST, to: LAST, days: [...week].reverse().map((date, i) => ({ date, items: { [lager]: i + 0.5 } })), now,
+      from: FIRST, to: LAST, days: [...week].reverse().map((date, i) => ({ date, items: { [lager]: i + 0.5 } })), now, replace: true,
     });
     const days = await itemSales.days(t.scope, t.locationId, { from: '2026-05-05', to: '2026-05-07' });
     expect(days.map((day) => day.date)).toEqual(week.slice(1, 4));
@@ -125,7 +146,7 @@ describe('item sales', () => {
   it('refuses an item id that is not 24 hex characters, and stores nothing', async () => {
     const t = tenant();
     const days = [{ date: FIRST, items: { 'a.b': 1 } }];
-    await expect(itemSales.apply(t.scope, t.locationId, { from: FIRST, to: FIRST, days, now: server.clock.now() })).rejects.toThrow();
+    await expect(itemSales.apply(t.scope, t.locationId, { from: FIRST, to: FIRST, days, now: server.clock.now(), replace: true })).rejects.toThrow();
     expect(await itemSales.coverage(t.scope, t.locationId)).toBeNull();
   });
 });
@@ -261,7 +282,9 @@ describe('scoping', () => {
     const item = id();
     const card = { conversationId: id(), proposalId: 'toolu_order0001' };
     const stored = await setups.save(a.scope, a.locationId, 0, newSetup(), now);
-    await itemSales.apply(a.scope, a.locationId, { from: '2026-05-01', to: '2026-05-01', days: [{ date: '2026-05-01', items: { [item]: 3 } }], now });
+    await itemSales.apply(a.scope, a.locationId, {
+      from: '2026-05-01', to: '2026-05-01', days: [{ date: '2026-05-01', items: { [item]: 3 } }], now, replace: true,
+    });
     await counts.save(a.scope, a.locationId, '2026-05-01', { [item]: 4 }, now);
     await orders.setCard(a.scope, a.locationId, card, { kind: 'change', status: 'saved', now });
 
@@ -272,7 +295,8 @@ describe('scoping', () => {
     expect((await counts.latest(b.scope, b.locationId, '2026-01-01')).size).toBe(0);
     expect(await orders.findCard(b.scope, card)).toBeNull();
     // B's range replace and deletes reach nothing of A's.
-    expect(await itemSales.apply(b.scope, b.locationId, { from: '2026-05-01', to: '2026-05-31', days: [], now })).toEqual({ stored: 0, removed: 0 });
+    expect(await itemSales.apply(b.scope, b.locationId, { from: '2026-05-01', to: '2026-05-31', days: [], now, replace: true }))
+      .toEqual({ stored: 0, removed: 0, kept: 0 });
     expect(await setups.removeForLocation(b.scope, b.locationId)).toBe(0);
     expect(await itemSales.removeForLocation(b.scope, b.locationId)).toBe(0);
     expect(await counts.removeForLocation(b.scope, b.locationId)).toBe(0);

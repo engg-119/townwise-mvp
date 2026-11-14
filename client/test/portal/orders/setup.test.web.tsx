@@ -374,7 +374,7 @@ const EXPORT = [
 
 test('item sales: Toast columns are proposed; the preview counts rows and lists unmatched names; the body holds no names', async () => {
   const { api } = portal();
-  api.answers[`${PATH}/item-sales`] = () => ({ stored: 3, removed: 0 });
+  api.answers[`${PATH}/item-sales`] = () => ({ stored: 3, removed: 0, kept: 0 });
   renderAt(api);
   await screen.findByRole('region', { name: 'Item 1' });
   await pick('item-sales-file', textFile(EXPORT, 'export.csv'));
@@ -443,7 +443,7 @@ test('a failed part stops the send and says which dates did not save; sending ag
   let calls = 0;
   api.answers[`${PATH}/item-sales`] = () => {
     calls += 1;
-    return calls === 2 ? refusal(503, null) : { stored: 1, removed: 0 };
+    return calls === 2 ? refusal(503, null) : { stored: 1, removed: 0, kept: 0 };
   };
   renderAt(api);
   await screen.findByRole('region', { name: 'Item 1' });
@@ -517,9 +517,9 @@ function sentRanges(api: FakePortalApi): string[] {
 
 // #68 review A7, C4, C11 and C14 and R3: the upload uses the town's today from GET .../orders/setup (here a day behind
 // the device), sends only the 244 days the board reads, and says on the preview what it left out and why.
-test('the preview lists each item’s matched rows and every row left out, and warns that left-out rows are not counted', async () => {
-  const { api } = portal({ answer: { ...ANSWER, today: '2026-11-12' } });
-  api.answers[`${PATH}/item-sales`] = () => ({ stored: 2, removed: 0 });
+test('the preview lists each item’s matched rows and every row left out, and warns an org admin that left-out rows are not counted', async () => {
+  const { api } = portal({ answer: { ...ANSWER, today: '2026-11-12' }, me: meOf(ACCESS.admin), role: 'org_admin' });
+  api.answers[`${PATH}/item-sales`] = () => ({ stored: 2, removed: 0, kept: 0 });
   await matched(api, [
     'Date,Item,Qty',
     '3/12/2026,Lager Can,9',
@@ -548,6 +548,25 @@ test('the preview lists each item’s matched rows and every row left out, and w
   expect(sentRanges(api)).toEqual(['2026-11-01..2026-11-03']);
 });
 
+// #68 review A1: a member's upload adds only dates not already saved, so the preview and the result say so.
+test('a member’s preview says sending adds only dates not already saved; the result says how many were kept', async () => {
+  const { api } = portal();
+  api.answers[`${PATH}/item-sales`] = () => ({ stored: 1, removed: 0, kept: 2 });
+  await matched(api, EXPORT);
+  expect(await screen.findByText(
+    'Sending adds only the dates from Nov 1, 2026 to Nov 3, 2026 not already saved; dates already saved stay as they are, and only an org admin can replace them. If your point of sale exports each area or register separately, combine them into one file first.',
+  )).toBeTruthy();
+  expect(screen.getByText(
+    'The 1 row left out for a date or a quantity Townwise can’t read won’t count, and once a date is saved only an org admin can replace it. To count them, fix those rows in the file and choose it again before sending.',
+  )).toBeTruthy();
+  expect(screen.queryByText(/^Sending replaces/)).toBeNull();
+  expect(screen.getByText(/Sending adds only dates not already saved and leaves saved dates as they are \(only an org admin can replace them\)/)).toBeTruthy();
+  await click('Send item sales');
+  expect(await screen.findByText(
+    'Saved item sales for 1 new day, Nov 1, 2026 to Nov 3, 2026. 2 days were already saved and kept as before; an org admin can replace them.',
+  )).toBeTruthy();
+});
+
 test('a setup item no row matched says so on the preview', async () => {
   const { api } = portal();
   await matched(api, 'Date,Item,Qty\n11/1/2026,Lager Can,2');
@@ -560,7 +579,7 @@ test('a setup item no row matched says so on the preview', async () => {
 // #68 review R2.
 test('a per-sale export whose last day has no row the next morning leaves that day out and says why', async () => {
   const { api } = portal();
-  api.answers[`${PATH}/item-sales`] = () => ({ stored: 1, removed: 0 });
+  api.answers[`${PATH}/item-sales`] = () => ({ stored: 1, removed: 0, kept: 0 });
   await matched(api, ['Business Date,Menu Item,Item Qty', '2026-11-01 21:00,Lager Can,2', '2026-11-02 20:30,Lager Can,3'].join('\n'));
   expect(await screen.findByText(
     'Left out Nov 2, 2026, the file’s last day: no row is dated the day after it, so its sales after midnight may be missing. To send it, export through the next morning.',
@@ -622,7 +641,7 @@ test('unknown_item offers the other person’s changes; 400 says to reload; 429 
   await matched(limited.api, EXPORT);
   await click('Send item sales');
   expect(await screen.findByText('Nov 1, 2026 to Nov 3, 2026 didn’t save. Too many item sales were sent in a short time. Wait 3 minutes, then send the rest again.')).toBeTruthy();
-  answer = { stored: 3, removed: 0 };
+  answer = { stored: 3, removed: 0, kept: 0 };
   await click('Send the rest again');
   expect(await screen.findByText('Saved item sales for 3 days, Nov 1, 2026 to Nov 3, 2026.')).toBeTruthy();
 });

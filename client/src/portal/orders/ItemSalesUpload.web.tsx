@@ -29,9 +29,11 @@ import { readSheetFile, SHEET_ACCEPT } from './sheetFile.web';
 // keeps no cell but the unmatched names, which stay on this page. Only item ids, dates and servings are sent, in spans
 // of at most 31 days and 250,000 bytes, in order, for the dates before the town's today (GET .../orders/setup) and in
 // the 244 days the board reads; the preview says what it left out and why. A time with a UTC offset is read in the
-// town's zone, from GET .../estimates/about, read only when the file has such times. A failure stops and says which
-// dates did not save, and sending again resends them (the server replaces whole days, so a resend is safe). Under
-// view-as the file control is disabled in place.
+// town's zone, from GET .../estimates/about, read only when the file has such times. An org admin's upload replaces
+// the dates it covers; a member's adds only dates not already saved, and the copy says which (the person's role in
+// GET /api/org) and, after sending, how many were kept. A failure stops and says which dates did not save, and sending
+// again resends them (either upload gives the same days twice, so a resend is safe). Under view-as the file control
+// is disabled in place.
 
 /** Unmatched names listed with "Add to an item", most rows first. */
 const SHOWN_NAMES = 100;
@@ -52,8 +54,8 @@ type Step =
   | { kind: 'no_dates' }
   | ({ kind: 'preview' } & Matched)
   | { kind: 'sending'; at: number; of: number }
-  | { kind: 'failed'; matched: Matched; chunks: ItemSalesChunk[]; index: number; error: unknown }
-  | { kind: 'done'; days: number; from: string; to: string };
+  | { kind: 'failed'; matched: Matched; chunks: ItemSalesChunk[]; index: number; error: unknown; kept: number }
+  | { kind: 'done'; days: number; from: string; to: string; kept: number };
 
 function columnOptions(columns: readonly ColumnProfile[]): { value: string; label: string }[] {
   return columns.map((column, index) => ({ value: String(index), label: column.name === '' ? `Column ${String(index + 1)}` : column.name }));
@@ -79,9 +81,17 @@ function failureReason(error: unknown): string {
   return errorCopy(error);
 }
 
+/** After sending: the days saved, and, for a member's upload, the days already saved that it left as they were. */
+function doneLine(step: Extract<Step, { kind: 'done' }>): string {
+  const range = formatRange(step.from, step.to);
+  if (step.kept === 0) return `Saved item sales for ${plural(step.days, 'day', 'days')}, ${range}.`;
+  return `Saved item sales for ${plural(step.days - step.kept, 'new day', 'new days')}, ${range}. ${plural(step.kept, 'day was', 'days were')} already saved and kept as before; an org admin can replace ${step.kept === 1 ? 'it' : 'them'}.`;
+}
+
 export function ItemSalesUpload(props: SalesSlot): React.JSX.Element {
   const { api } = usePortal();
-  const { location } = useLocation();
+  const { location, org } = useLocation();
+  const admin = org.role === 'org_admin';
   const input = useRef<HTMLInputElement | null>(null);
   const file = useRef<File | null>(null);
   const run = useRef(0);
@@ -159,18 +169,20 @@ export function ItemSalesUpload(props: SalesSlot): React.JSX.Element {
     setStep({ kind: 'preview', columns, choice, outcome: matcher.finish(), version: saved.version, items: saved.items, zone });
   }
 
-  async function send(matched: Matched, chunks: ItemSalesChunk[], start: number): Promise<void> {
+  /** Sends `chunks` from `start`; `keptBefore` is the days the parts sent before kept, for the result line. */
+  async function send(matched: Matched, chunks: ItemSalesChunk[], start: number, keptBefore: number): Promise<void> {
     const { outcome } = matched;
     if (props.readOnly || outcome.firstDate === null || outcome.lastDate === null) return;
     const mine = run.current;
+    let kept = keptBefore;
     for (let index = start; index < chunks.length; index += 1) {
       const chunk = chunks[index];
       if (chunk === undefined) continue;
       setStep({ kind: 'sending', at: index + 1, of: chunks.length });
       try {
-        await uploadItemSales(api, location.id, chunk);
+        kept += (await uploadItemSales(api, location.id, chunk)).kept;
       } catch (error) {
-        if (run.current === mine) setStep({ kind: 'failed', matched, chunks, index, error });
+        if (run.current === mine) setStep({ kind: 'failed', matched, chunks, index, error, kept });
         if (index > start) props.onUploaded();
         if (hasCode(error, 400, 'unknown_item')) props.onSetupChanged();
         return;
@@ -178,7 +190,7 @@ export function ItemSalesUpload(props: SalesSlot): React.JSX.Element {
       if (run.current !== mine) return;
     }
     file.current = null;
-    setStep({ kind: 'done', days: outcome.days.length, from: outcome.firstDate, to: outcome.lastDate });
+    setStep({ kind: 'done', days: outcome.days.length, from: outcome.firstDate, to: outcome.lastDate, kept });
     props.onUploaded();
   }
 
@@ -230,8 +242,9 @@ export function ItemSalesUpload(props: SalesSlot): React.JSX.Element {
         Upload an item sales export from your point-of-sale system, such as Toast’s Product Mix or Square’s item sales, as a
         CSV or Excel file, with one row per day or per sale. Your browser reads it and matches each item name to the
         point-of-sale names above. Only item ids, dates and servings are sent: never the file, its item names or anything
-        else in it. Sending replaces every item’s sales stored for those dates, so if your point of sale exports each area
-        or register separately, combine them into one file first. Orders read the last {String(ITEM_SALES_DAYS)} days before today.
+        else in it. {admin ? 'Sending replaces every item’s sales stored for those dates' : 'Sending adds only dates not already saved and leaves saved dates as they are (only an org admin can replace them)'},
+        so if your point of sale exports each area or register separately, combine them into one file first. Orders read
+        the last {String(ITEM_SALES_DAYS)} days before today.
       </Small>
       {problem === null ? null : <Messages live="alert" items={[problem]} />}
       {step.kind === 'reading' ? <LoadingLine text="Reading the file…" minHeight={44} /> : null}
@@ -240,7 +253,7 @@ export function ItemSalesUpload(props: SalesSlot): React.JSX.Element {
         <Messages live="alert" items={['This file has no column of dates. The export needs one row per day or per sale, with its date.']} />
       ) : null}
       {step.kind === 'done' ? (
-        <Notice text={`Saved item sales for ${plural(step.days, 'day', 'days')}, ${formatRange(step.from, step.to)}.`} />
+        <Notice text={doneLine(step)} />
       ) : null}
       {step.kind === 'columns' ? (
         <ColumnStep
@@ -255,6 +268,7 @@ export function ItemSalesUpload(props: SalesSlot): React.JSX.Element {
           outcome={step.outcome}
           setupItems={step.items}
           zone={step.zone}
+          admin={admin}
           stale={step.version !== saved.version}
           dirty={props.dirty}
           items={props.items}
@@ -266,7 +280,7 @@ export function ItemSalesUpload(props: SalesSlot): React.JSX.Element {
           onSend={() => {
             const { outcome } = step;
             if (outcome.firstDate === null || outcome.lastDate === null) return;
-            void send(step, chunksOf(outcome.days, outcome.firstDate, outcome.lastDate), 0);
+            void send(step, chunksOf(outcome.days, outcome.firstDate, outcome.lastDate), 0, 0);
           }}
         />
       ) : null}
@@ -286,7 +300,7 @@ export function ItemSalesUpload(props: SalesSlot): React.JSX.Element {
                 label="Send the rest again"
                 disabled={props.readOnly || step.matched.version !== saved.version}
                 {...described}
-                onPress={() => { void send(step.matched, step.chunks, step.index); }}
+                onPress={() => { void send(step.matched, step.chunks, step.index, step.kept); }}
               />
             )}
             <Button
@@ -341,8 +355,13 @@ function ColumnStep(props: {
   );
 }
 
-/** What the preview says about a match: its counts, each setup item's matched rows, and every row or day left out. */
-function previewLines(outcome: MatchOutcome, setupItems: readonly SetupItem[], zone: Zone | null): { lines: string[]; items: string[]; warning: string | null } {
+/**
+ * What the preview says about a match: its counts, each setup item's matched rows, and every row or day left out. The
+ * warning about left-out rows follows the upload rule: an org admin's replaces each date, a member's keeps saved ones.
+ */
+function previewLines(
+  outcome: MatchOutcome, setupItems: readonly SetupItem[], zone: Zone | null, admin: boolean,
+): { lines: string[]; items: string[]; warning: string | null } {
   const lines: string[] = [];
   if (outcome.firstDate !== null && outcome.lastDate !== null) {
     lines.push(`Dates: ${formatRange(outcome.firstDate, outcome.lastDate)}, ${plural(outcome.days.length, 'day', 'days')} with rows.`);
@@ -374,7 +393,9 @@ function previewLines(outcome: MatchOutcome, setupItems: readonly SetupItem[], z
   });
   const unsure = skipped.date + skipped.zoned + skipped.quantity;
   const warning = unsure === 0 || outcome.firstDate === null || outcome.lastDate === null ? null
-    : `Sending replaces the item sales of every date from ${formatRange(outcome.firstDate, outcome.lastDate)}, so the ${plural(unsure, 'row', 'rows')} left out for a date or a quantity Townwise can’t read won’t count, and a date with only such rows is cleared. To count them, fix those rows in the file and choose it again.`;
+    : admin
+      ? `Sending replaces the item sales of every date from ${formatRange(outcome.firstDate, outcome.lastDate)}, so the ${plural(unsure, 'row', 'rows')} left out for a date or a quantity Townwise can’t read won’t count, and a date with only such rows is cleared. To count them, fix those rows in the file and choose it again.`
+      : `The ${plural(unsure, 'row', 'rows')} left out for a date or a quantity Townwise can’t read won’t count, and once a date is saved only an org admin can replace it. To count them, fix those rows in the file and choose it again before sending.`;
   return { lines, items, warning };
 }
 
@@ -382,6 +403,8 @@ function Preview(props: {
   outcome: MatchOutcome;
   setupItems: readonly SetupItem[];
   zone: Zone | null;
+  /** An org admin's upload replaces the dates it covers; a member's adds only dates not already saved. */
+  admin: boolean;
   /** The setup was saved since the file was matched. */
   stale: boolean;
   dirty: boolean;
@@ -396,7 +419,7 @@ function Preview(props: {
   const { outcome } = props;
   const described = props.readOnlyId === null ? {} : { describedBy: props.readOnlyId };
   const itemOptions = props.items.map((item) => ({ value: item.key, label: item.name.trim() === '' ? 'Unnamed item' : item.name.trim() }));
-  const { lines, items, warning } = previewLines(outcome, props.setupItems, props.zone);
+  const { lines, items, warning } = previewLines(outcome, props.setupItems, props.zone, props.admin);
   const blocked = outcome.firstDate === null ? 'No row has a date Townwise can use, so there is nothing to send.'
     : outcome.overLimit > 0 ? `${plural(outcome.overLimit, 'item adds', 'items add')} up to more than 100,000 servings in a day. Check the quantity column.`
       : props.stale ? 'The setup changed since this file was matched. Match it again before sending.'
@@ -438,7 +461,9 @@ function Preview(props: {
       {warning === null ? null : <Messages live="alert" items={[warning]} />}
       {outcome.firstDate === null || outcome.lastDate === null ? null : (
         <Small>
-          {`Sending replaces every item’s sales from ${formatRange(outcome.firstDate, outcome.lastDate)}. If your point of sale exports each area or register separately, combine them into one file first.`}
+          {props.admin
+            ? `Sending replaces every item’s sales from ${formatRange(outcome.firstDate, outcome.lastDate)}. If your point of sale exports each area or register separately, combine them into one file first.`
+            : `Sending adds only the dates from ${formatRange(outcome.firstDate, outcome.lastDate)} not already saved; dates already saved stay as they are, and only an org admin can replace them. If your point of sale exports each area or register separately, combine them into one file first.`}
         </Small>
       )}
       {blocked === null ? null : <Messages live="alert" items={[blocked]} />}

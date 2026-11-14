@@ -13,7 +13,10 @@ import { computeOrders, type ItemSalesDay } from '../src/orders/engine.ts';
 import type { StoredSetup } from '../src/stores/order-setups.ts';
 import { ORDER_CHANGE_RESULT, ORDER_RULE_RESULT } from '../src/chat/tools/orders.ts';
 import { localDay, localMinutes } from '../src/time-zones.ts';
-import { addConversation, addGrant, addLocation, addSalesDay, addSeat, auditEvents, createOrg, ORDER_COLLECTIONS } from './helpers/fixtures.ts';
+import { summaryOf } from '../src/audit.ts';
+import {
+  addConversation, addGrant, addInvite, addLocation, addOpenAsAdminGrant, addSalesDay, addSeat, auditEvents, createOrg, ORDER_COLLECTIONS,
+} from './helpers/fixtures.ts';
 import {
   call, limiterKey, refresh, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
@@ -227,25 +230,93 @@ describe('item sales', () => {
     return call(server, `${base(locationId)}/item-sales`, { session: who.session, json: body });
   }
 
-  it('a member uploads a range: sent days replace, unsent days in the range go, and the event carries counts and dates only', async () => {
+  /** The location's stored item-sales days, date to items, oldest first. */
+  async function storedDays(id: string): Promise<Record<string, unknown>> {
+    const docs = await server.connection.collection('tw_item_sales').find({ locationId: new Types.ObjectId(id) }).sort({ date: 1 }).toArray();
+    return Object.fromEntries(docs.map((doc) => [doc.date as string, doc.items as unknown]));
+  }
+
+  it('an org admin uploads a range: sent days replace, unsent days in the range go, and the event carries counts and dates only', async () => {
     const week = MAY.map((date, i) => ({ date, items: { [lager]: 10 + i, [cider]: i < 2 ? 0 : 2 } }));
-    const first = await upload({ from: MAY[0], to: MAY[6], days: week });
+    const first = await upload({ from: MAY[0], to: MAY[6], days: week }, admin);
     expect(first.status).toBe(200);
-    expect(await first.json()).toEqual({ stored: 7, removed: 0 });
-    const again = await upload({ from: MAY[0], to: MAY[6], days: week.slice(0, 6) });
-    expect(await again.json()).toEqual({ stored: 6, removed: 1 });
+    expect(await first.json()).toEqual({ stored: 7, removed: 0, kept: 0 });
+    const changed = week.slice(0, 6).map((day) => ({ ...day, items: { ...day.items, [lager]: 50 } }));
+    const again = await upload({ from: MAY[0], to: MAY[6], days: changed }, admin);
+    expect(await again.json()).toEqual({ stored: 6, removed: 1, kept: 0 });
+    expect(await storedDays(locationId)).toEqual(Object.fromEntries(changed.map((day) => [day.date, day.items])));
 
     const events = await eventsOf('order.item_sales_uploaded', locationId);
     expect(events.map((event) => event.details)).toEqual([
-      { locationId, dayCount: 7, itemCount: 2, firstDate: '2026-05-01', lastDate: '2026-05-07', removedCount: 0 },
-      { locationId, dayCount: 6, itemCount: 2, firstDate: '2026-05-01', lastDate: '2026-05-07', removedCount: 1 },
+      { locationId, dayCount: 7, itemCount: 2, firstDate: '2026-05-01', lastDate: '2026-05-07', removedCount: 0, keptCount: 0 },
+      { locationId, dayCount: 6, itemCount: 2, firstDate: '2026-05-01', lastDate: '2026-05-07', removedCount: 1, keptCount: 0 },
     ]);
-    expect(events[0]).toMatchObject({ actorUserId: member.session.userId, actorRole: 'member' });
+    expect(events[0]).toMatchObject({ actorUserId: admin.session.userId, actorRole: 'org_admin' });
 
     const read = await (await call(server, `${base(locationId)}/setup`, { session: member.session })).json() as Record<string, unknown>;
     expect(read.coverage).toEqual({ firstDate: '2026-05-01', lastDate: '2026-05-06', dayCount: 6 });
     // Cider sold nothing on the first two days, so it has four days with sales.
     expect(read.itemCoverage).toEqual({ [lager]: 6, [cider]: 4 });
+  });
+
+  // #68 review A1: a member's upload never deletes or overwrites a stored day, so only an org admin's DELETE clears them.
+  it('a member adds only days not already stored: no day sent removes nothing, a new day is stored, and items: {} zeroes nothing', async () => {
+    const own = await locationWithSetup('Member Bar');
+    const week = MAY.map((date, i) => ({ date, items: { [own.lager]: 10 + i, [own.cider]: 2 } }));
+    const send = (body: unknown, who: Person): Promise<Response> => call(server, `${base(own.locationId)}/item-sales`, { session: who.session, json: body });
+    expect(await (await send({ from: MAY[0], to: MAY[6], days: week }, admin)).json()).toEqual({ stored: 7, removed: 0, kept: 0 });
+    const before = await storedDays(own.locationId);
+
+    const none = await send({ from: MAY[0], to: MAY[6], days: [] }, member);
+    expect(none.status).toBe(200);
+    expect(await none.json()).toEqual({ stored: 0, removed: 0, kept: 0 });
+    expect(await storedDays(own.locationId)).toEqual(before);
+
+    const added = await send({ from: MAY[0], to: '2026-05-08', days: [{ date: MAY[0], items: { [own.lager]: 99 } }, { date: '2026-05-08', items: { [own.lager]: 5 } }] }, member);
+    expect(await added.json()).toEqual({ stored: 1, removed: 0, kept: 1 });
+    expect(await storedDays(own.locationId)).toEqual({ ...before, '2026-05-08': { [own.lager]: 5 } });
+
+    const emptied = await send({ from: MAY[0], to: MAY[6], days: MAY.map((date) => ({ date, items: {} })) }, member);
+    expect(await emptied.json()).toEqual({ stored: 0, removed: 0, kept: 7 });
+    expect(await storedDays(own.locationId)).toEqual({ ...before, '2026-05-08': { [own.lager]: 5 } });
+
+    const events = await eventsOf('order.item_sales_uploaded', own.locationId);
+    expect(events.map((event) => event.details)).toEqual([
+      { locationId: own.locationId, dayCount: 7, itemCount: 2, firstDate: '2026-05-01', lastDate: '2026-05-07', removedCount: 0, keptCount: 0 },
+      { locationId: own.locationId, dayCount: 0, itemCount: 0, firstDate: '2026-05-01', lastDate: '2026-05-07', removedCount: 0, keptCount: 0 },
+      { locationId: own.locationId, dayCount: 2, itemCount: 1, firstDate: '2026-05-01', lastDate: '2026-05-08', removedCount: 0, keptCount: 1 },
+      { locationId: own.locationId, dayCount: 7, itemCount: 0, firstDate: '2026-05-01', lastDate: '2026-05-07', removedCount: 0, keptCount: 7 },
+    ]);
+    expect(events.slice(1).map((event) => event.actorRole)).toEqual(['member', 'member', 'member']);
+    expect(summaryOf('order.item_sales_uploaded', events[2]?.details as Record<string, number | string>))
+      .toBe('Uploaded 2 days of item sales for 1 items, 2026-05-01 to 2026-05-08; kept 1 already saved');
+    expect(summaryOf('order.item_sales_uploaded', events[0]?.details as Record<string, number | string>))
+      .toBe('Uploaded 7 days of item sales for 2 items, 2026-05-01 to 2026-05-07');
+
+    // The org admin's upload still replaces what the member could not.
+    expect(await (await send({ from: MAY[0], to: MAY[6], days: [] }, admin)).json()).toEqual({ stored: 0, removed: 7, kept: 0 });
+    expect(await storedDays(own.locationId)).toEqual({ '2026-05-08': { [own.lager]: 5 } });
+  });
+
+  it('staff opened as admin replace, as an org admin does (D25)', async () => {
+    const staff = await signInStaff(server);
+    try {
+      const setupOrg = await createOrg(server, { name: 'Setup Orders' });
+      await addInvite(server, {
+        orgId: setupOrg, email: `first-admin-${randomUUID().slice(0, 8)}@example.test`, invitedBy: staff.userId, role: 'org_admin', addedByStaff: true,
+      });
+      const room = await addLocation(server, { orgId: setupOrg, name: 'Setup Bar' });
+      await addOpenAsAdminGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, orgId: setupOrg });
+      const saved = await call(server, `${base(room)}/setup`, { method: 'PUT', session: staff, json: { expectedVersion: 0, setup: SETUP } });
+      const item = (await saved.json() as { setup: StoredSetup }).setup.items[0]?.id ?? '';
+      const send = (days: unknown[]): Promise<Response> => call(server, `${base(room)}/item-sales`, { session: staff, json: { from: MAY[0], to: MAY[1], days } });
+      expect(await (await send([{ date: MAY[0], items: { [item]: 3 } }, { date: MAY[1], items: { [item]: 4 } }])).json()).toEqual({ stored: 2, removed: 0, kept: 0 });
+      expect(await (await send([{ date: MAY[0], items: { [item]: 6 } }])).json()).toEqual({ stored: 1, removed: 1, kept: 0 });
+      expect(await storedDays(room)).toEqual({ [MAY[0] ?? '']: { [item]: 6 } });
+    } finally {
+      await removeStaffFactor(server);
+      await server.connection.collection('tw_view_as_grants').deleteMany({});
+    }
   });
 
   it('refuses a bad upload with 400 and stores nothing', async () => {

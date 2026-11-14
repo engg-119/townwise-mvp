@@ -208,8 +208,9 @@ export interface ItemSalesDay {
 
 export interface ItemSalesChunk {
   /**
-   * The range, at most 31 days, ending before the town's today (still open): sent days replace stored ones, unsent
-   * ones are deleted.
+   * The range, at most 31 days, ending before the town's today (still open). An org admin's upload replaces: sent days
+   * replace stored ones, unsent ones are deleted. A member's adds only the sent days not already stored, and deletes
+   * nothing.
    */
   readonly from: string;
   readonly to: string;
@@ -217,7 +218,11 @@ export interface ItemSalesChunk {
   readonly days: readonly ItemSalesDay[];
 }
 
-const appliedSchema = z.object({ stored: z.number(), removed: z.number() });
+/**
+ * `stored`: the days written. `removed`: stored days of the range deleted (an org admin's upload). `kept`: sent days
+ * already stored and left as they were (a member's upload).
+ */
+const appliedSchema = z.object({ stored: z.number(), removed: z.number(), kept: z.number() });
 
 /**
  * POST .../orders/item-sales. 400 `unknown_item` names an item no longer in the setup, 400 `invalid_request` a range

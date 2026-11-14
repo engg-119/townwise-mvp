@@ -4,7 +4,7 @@
 // a read (lean) returns a plain object; its keys are the setup's 24-hex item ids, never a name. The schema is
 // strict: 'throw'. Nothing here logs. It goes with the location's sales data, the location and the organization.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
-import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
+import mongoose, { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
 
@@ -58,14 +58,17 @@ export function assertItemIds(items: Readonly<Record<string, number>>): void {
 /** Tenant store: every function takes the OrgScope first and filters on its orgId. */
 export interface ItemSalesStore {
   /**
-   * Stores every sent day, replacing its items, then deletes the stored days from `from` to `to` (inclusive) that were
-   * not sent, so a retry gives the same result. The sent dates lie in the range (the handler checks). Two uploads over
-   * overlapping ranges at once are not merged: each day holds whichever upload wrote it last, and a day one sent and
-   * the other left out may be deleted by the other's sweep. Last writer wins per day, as uploading again would give.
+   * `replace` (an org admin's upload): stores every sent day, replacing its items, then deletes the stored days from
+   * `from` to `to` (inclusive) that were not sent; `stored` is the sent days and `kept` is 0. Otherwise (a member's):
+   * inserts only the sent days not already stored and leaves every stored day as it is, deleting nothing; `stored` is
+   * the days it inserted, `kept` the sent days already stored, and `removed` is 0. Either way a retry gives the same
+   * days. The sent dates lie in the range (the handler checks). Two replacing uploads over overlapping ranges at once
+   * are not merged: each day holds whichever upload wrote it last, and a day one sent and the other left out may be
+   * deleted by the other's sweep. Last writer wins per day, as uploading again would give.
    */
   apply(scope: OrgScope, locationId: string, input: {
-    from: string; to: string; days: readonly ItemSalesDay[]; now: Date;
-  }): Promise<{ stored: number; removed: number }>;
+    from: string; to: string; days: readonly ItemSalesDay[]; now: Date; replace: boolean;
+  }): Promise<{ stored: number; removed: number; kept: number }>;
   /** The covered days from `from` to `to`, inclusive, oldest first. */
   days(scope: OrgScope, locationId: string, range: { from: string; to: string }): Promise<ItemSalesDay[]>;
   /** Null when no day is stored. */
@@ -87,28 +90,31 @@ export function createItemSalesStore(connection: Connection): ItemSalesStore {
     async apply(scope, locationId, input) {
       for (const day of input.days) assertItemIds(day.items);
       const key = place(scope, locationId);
+      let inserted = 0;
       if (input.days.length > 0) {
-        const ops = input.days.map((day) => ({
-          updateOne: {
-            filter: { ...key, date: day.date },
-            update: { $set: { items: { ...day.items }, uploadedAt: input.now } },
-            upsert: true,
-          },
-        }));
+        const ops = input.days.map((day) => {
+          const fields = { items: { ...day.items }, uploadedAt: input.now };
+          return {
+            updateOne: { filter: { ...key, date: day.date }, update: input.replace ? { $set: fields } : { $setOnInsert: fields }, upsert: true },
+          };
+        });
         // Two uploads of one new day can both try to insert it; the one that loses matches the row on a second try.
+        // Each attempt's inserts count, so a day this call inserted before the retry is not counted as kept.
         for (let attempt = 0; ; attempt += 1) {
           try {
-            await ItemSales.bulkWrite(ops, { ordered: false });
+            inserted += (await ItemSales.bulkWrite(ops, { ordered: false })).upsertedCount;
             break;
           } catch (err) {
             if (!isDuplicateKeyError(err) || attempt === 1) throw err;
+            if (err instanceof mongoose.mongo.MongoBulkWriteError) inserted += err.upsertedCount;
           }
         }
       }
+      if (!input.replace) return { stored: inserted, removed: 0, kept: input.days.length - inserted };
       const removed = await ItemSales.deleteMany({
         ...key, date: trusted({ $gte: input.from, $lte: input.to, $nin: input.days.map((day) => day.date) }),
       });
-      return { stored: input.days.length, removed: removed.deletedCount };
+      return { stored: input.days.length, removed: removed.deletedCount, kept: 0 };
     },
     async days(scope, locationId, range) {
       const docs = await ItemSales
