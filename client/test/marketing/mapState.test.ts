@@ -1,5 +1,5 @@
 import type { Side } from '../../src/marketing/map/band';
-import { initialMapState, mapReducer, mapTowns, nearestTown, REST_MONTH, shownMonth, stepMonth, stepPhase, type MapState } from '../../src/marketing/map/mapState';
+import { initialMapState, mapReducer, mapTowns, nearestTown, shownMonth, stepMonth, stepPhase, type MapState } from '../../src/marketing/map/mapState';
 
 // The band with slot `at` in it, the slots before it above and the rest below.
 function band(at: number): Side[] {
@@ -10,20 +10,21 @@ function scrollTo(state: MapState, at: number): MapState {
   return mapReducer(state, { type: 'band', sides: band(at) });
 }
 
-const story = initialMapState({ reduced: false, story: true });
+// The reader's month: November, which is neither the widest spread (July) nor Hanover's biggest gap (May).
+const NOV = 10;
+const story = initialMapState({ reduced: false, story: true, thisMonth: NOV });
 
 test('the story starts at its title with the outlines hidden; reduced motion draws them at once; no observer lies flat', () => {
   expect(story).toMatchObject({ story: true, ss: 0, phase: 'region', draw: 'pre', seen: false, month: null, mby: 'user' });
-  expect(initialMapState({ reduced: true, story: true })).toMatchObject({ story: true, ss: 0, phase: 'region', draw: 'done', seen: false });
+  expect(initialMapState({ reduced: true, story: true, thisMonth: NOV })).toMatchObject({ story: true, ss: 0, phase: 'region', draw: 'done', seen: false });
   for (const reduced of [false, true]) {
-    expect(initialMapState({ reduced, story: false })).toMatchObject({ story: false, ss: 15, phase: 'local', draw: 'done', seen: true, month: null });
+    expect(initialMapState({ reduced, story: false, thisMonth: NOV })).toMatchObject({ story: false, ss: 15, phase: 'local', draw: 'done', seen: true, month: null });
   }
 });
 
-test('each step has its month and phase: the title and region without one, January twice, then the year, then the widest spread', () => {
-  expect([...Array(16).keys()].map(stepMonth)).toEqual([null, null, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, REST_MONTH]);
+test('each step has its month and phase: the title and region without one, January twice, then the year, then the reader’s month', () => {
+  expect([...Array(16).keys()].map((step) => stepMonth(step, 3))).toEqual([null, null, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 3]);
   expect([...Array(16).keys()].map(stepPhase)).toEqual(['region', 'region', ...Array<string>(14).fill('local')]);
-  expect(REST_MONTH).toBe(6);
 });
 
 test('a band report moves the story one step at a time, and only an actual change counts', () => {
@@ -50,9 +51,9 @@ test('a band report moves the story one step at a time, and only an actual chang
 
 test('a town picked during the story keeps its zoom while the scroll moves the month; Back returns to the step', () => {
   const june = scrollTo(story, 8);
-  // A pick opens on the month the click carries (the reader's own), not the town's biggest gap (May for Hanover).
-  const picked = mapReducer(june, { type: 'select', id: 'hanover-nh', kb: false, month: 10 });
-  expect(picked).toMatchObject({ sel: 'hanover-nh', phase: 'local', month: 10, mby: 'user', draw: 'done' });
+  // A pick opens on the reader's month, not the town's biggest gap (May for Hanover).
+  const picked = mapReducer(june, { type: 'select', id: 'hanover-nh', kb: false });
+  expect(picked).toMatchObject({ sel: 'hanover-nh', phase: 'local', month: NOV, mby: 'user', draw: 'done' });
   const moved = scrollTo(picked, 10);
   expect(moved).toMatchObject({ sel: 'hanover-nh', ss: 10, month: 7, mby: 'scroll' });
   // Before the towns the step's phase is the region, but a selected town keeps the map local.
@@ -60,9 +61,9 @@ test('a town picked during the story keeps its zoom while the scroll moves the m
   expect(early).toMatchObject({ sel: 'hanover-nh', phase: 'local', month: null });
   expect(mapReducer(early, { type: 'reset', kb: true })).toMatchObject({ sel: null, phase: 'region', month: null, back: true, kb: true });
   expect(mapReducer(moved, { type: 'reset', kb: false })).toMatchObject({ sel: null, phase: 'local', month: 7 });
-  // Flat, Back returns to the rest month.
-  const flat = mapReducer(initialMapState({ reduced: false, story: false }), { type: 'select', id: 'stowe-vt', kb: false, month: 10 });
-  expect(shownMonth(mapReducer(flat, { type: 'reset', kb: false }))).toBe(REST_MONTH);
+  // Flat, Back returns to the reader's month.
+  const flat = mapReducer(initialMapState({ reduced: false, story: false, thisMonth: NOV }), { type: 'select', id: 'stowe-vt', kb: false });
+  expect(shownMonth(mapReducer(flat, { type: 'reset', kb: false }))).toBe(NOV);
 });
 
 test('the scrubber sets the month by hand and finishes the draw', () => {

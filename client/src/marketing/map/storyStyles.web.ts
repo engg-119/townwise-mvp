@@ -3,7 +3,7 @@
 // scroll container in px (--story-mw, --story-mh, --story-top, and --story-ex for the legend and caption under it).
 
 // The skeleton. Frame A has no box: the map sits on the page ground. Steps are invisible slots; the one alone
-// in the band sets the map. Flat (no observer): one map at the rest month, the step texts in a row under it; from
+// in the band sets the map. Flat (no observer): one map at the reader's current month, the step texts in a row under it; from
 // 1024px the title and its actions, then the month panel 40px under them, beside the map.
 const skeleton = `
 .twmap .app.app-a{border:0;border-radius:0;background:transparent;overflow:visible}
