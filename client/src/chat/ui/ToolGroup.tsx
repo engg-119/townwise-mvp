@@ -34,7 +34,8 @@ export function FadeIn(props: { children: React.ReactNode; duration?: number }):
   return <Animated.View style={{ opacity }}>{props.children}</Animated.View>;
 }
 
-function Sources(props: { sources: readonly SourceLink[] }): React.JSX.Element {
+/** Source links by host, each opening in a new tab: a card's, and a reply's cited pages (ReplyView). */
+export function Sources(props: { sources: readonly SourceLink[] }): React.JSX.Element {
   return (
     <View style={styles.sources}>
       {props.sources.map((source) => (

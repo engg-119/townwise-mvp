@@ -1,7 +1,7 @@
 // What GET /api/org/locations/:locationId/chat/:conversationId shows of a stored conversation (section 2): one entry
 // per message the person wrote, and one per run of TownwiseAI's replies to it, with the tool-result messages between
-// them folded in. A reply's `parts` replay it in order: thinking summaries, text, tool calls (as the cards the stream showed), note
-// proposals and visuals; its `next` is the questions its last valid suggest_next showed. A thinking block is returned as
+// them folded in. A reply's `parts` replay it in order: thinking summaries, text, tool calls and web searches (as the cards the stream showed), note
+// proposals and visuals; its `next` is the questions its last valid suggest_next showed, and its `sources` the pages its text cites. A thinking block is returned as
 // its summary text only (never its signature), and one with no text (stored before summaries were asked for) is left
 // out. Raw tool results are never returned, and neither are calls that never ran.
 import type {
@@ -16,6 +16,7 @@ import { inputViewOf, resultViewOf, toolNamed, type ToolView } from './tools/reg
 import { visualOf, type Visual } from './tools/visual.ts';
 import type { ChatNode } from './tree.ts';
 import { NOT_RUN } from './turn.ts';
+import { citedSources, searchResultView, WEB_SEARCH, type SourceLink } from './web-search.ts';
 
 /** What the author did with a proposal (tw_chat_proposals). `noteId` is the saved note's id, else null. */
 export interface ProposalState {
@@ -63,6 +64,8 @@ export interface ChatMessageView {
   feedback: FeedbackView | null;
   /** The questions the reply's last valid suggest_next showed; null when it has none and for the person's own message. */
   next: string[] | null;
+  /** The pages the reply's text cites from its web searches, shown with it; empty for none and for the person's own message. */
+  sources: SourceLink[];
 }
 
 function blocksOf(param: BetaMessageParam): readonly BetaContentBlockParam[] {
@@ -99,6 +102,7 @@ function partOf(
 
 function entry(
   nodeId: string, role: 'user' | 'assistant', at: Date, endedAt: Date, parts: ChatPart[], feedback: FeedbackView | null, next: string[] | null,
+  sources: SourceLink[] = [],
 ): ChatMessageView {
   const texts = parts.flatMap((part) => (part.type === 'text' ? [part.text] : []));
   return {
@@ -107,6 +111,7 @@ function entry(
     parts: role === 'user' ? [] : parts,
     feedback: role === 'user' ? null : feedback,
     next: role === 'user' ? null : next,
+    sources: role === 'user' ? [] : sources,
   };
 }
 
@@ -123,9 +128,14 @@ export function chatMessageViews(
     node, items: node.messages.map((message) => ({ at: message.at, param: JSON.parse(message.param) as BetaMessageParam })),
   }));
   const results = new Map<string, BetaToolResultBlockParam>();
+  // A web search's result is in the same assistant message as its call (web-search.ts).
+  const searches = new Map<string, unknown>();
   for (const { items } of messages) {
     for (const { param } of items) {
-      for (const block of blocksOf(param)) if (block.type === 'tool_result') results.set(block.tool_use_id, block);
+      for (const block of blocksOf(param)) {
+        if (block.type === 'tool_result') results.set(block.tool_use_id, block);
+        else if (block.type === 'web_search_tool_result') searches.set(block.tool_use_id, block.content);
+      }
     }
   }
   const views: ChatMessageView[] = [];
@@ -139,8 +149,10 @@ export function chatMessageViews(
     }
     const parts: ChatPart[] = [];
     let next: string[] | null = null;
+    const written: BetaContentBlockParam[] = [];
     for (const { param } of items) {
       if (param.role !== 'assistant') continue;
+      written.push(...blocksOf(param));
       for (const block of blocksOf(param)) {
         const last = parts.at(-1);
         if (block.type === 'thinking') {
@@ -154,10 +166,16 @@ export function chatMessageViews(
           if (block.name === 'suggest_next' && result !== undefined && result.is_error !== true) next = nextOf(block.input) ?? next;
           const part = partOf(block, result, today, stateOf);
           if (part !== null) parts.push(part);
+        } else if (block.type === 'server_tool_use' && block.name === WEB_SEARCH && searches.has(block.id)) {
+          // A search that never got its result (the turn ended first) never ran.
+          const result = searchResultView(searches.get(block.id));
+          parts.push({ type: 'tool', id: block.id, name: WEB_SEARCH, state: result === null ? 'error' : 'done', input: null, result });
         }
       }
     }
-    if (parts.length > 0) views.push(entry(node.id, 'assistant', first.at, items.at(-1)?.at ?? first.at, parts, feedbackOf(node.id), next));
+    if (parts.length > 0) {
+      views.push(entry(node.id, 'assistant', first.at, items.at(-1)?.at ?? first.at, parts, feedbackOf(node.id), next, citedSources(written)));
+    }
   }
   return views;
 }

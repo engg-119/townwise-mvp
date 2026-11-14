@@ -223,7 +223,7 @@ describe('the history view', () => {
       { role: 'user', content: 'Thanks' },
     ], [at, later, later, later, later, later, later])), '2026-06-01');
     expect(views).toEqual([
-      { nodeId: 'legacy-0', role: 'user', at: at.toISOString(), endedAt: at.toISOString(), text: 'Were we closed?', proposals: [], parts: [], feedback: null, next: null },
+      { nodeId: 'legacy-0', role: 'user', at: at.toISOString(), endedAt: at.toISOString(), text: 'Were we closed?', proposals: [], parts: [], feedback: null, next: null, sources: [] },
       {
         nodeId: 'legacy-1', role: 'assistant', at: later.toISOString(), endedAt: later.toISOString(), text: 'Let me look. \n\nYou have two notes.\n\nI proposed it.',
         proposals: [{ ...note, id: 'p1', status: 'open', noteId: null }],
@@ -234,9 +234,9 @@ describe('the history view', () => {
           { type: 'proposal', proposal: { ...note, id: 'p1', status: 'open', noteId: null } },
           { type: 'text', text: 'I proposed it.' },
         ],
-        feedback: null, next: null,
+        feedback: null, next: null, sources: [],
       },
-      { nodeId: 'legacy-6', role: 'user', at: later.toISOString(), endedAt: later.toISOString(), text: 'Thanks', proposals: [], parts: [], feedback: null, next: null },
+      { nodeId: 'legacy-6', role: 'user', at: later.toISOString(), endedAt: later.toISOString(), text: 'Thanks', proposals: [], parts: [], feedback: null, next: null, sources: [] },
     ]);
   });
 

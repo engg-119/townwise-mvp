@@ -9,7 +9,7 @@ import {
   type ItemProposal, type NoteProposal, type ProposalResult, type StoredMessage, type TurnRequest,
 } from './api';
 import { draftKey, readDraft, writeDraft } from './drafts';
-import { isHiddenTool, type ToolStep } from './tools';
+import { isHiddenTool, type SourceLink, type ToolStep } from './tools';
 import { siblingAt, withTurn, type TreeNode } from './tree';
 import type { Visual } from './visuals/schema';
 
@@ -88,6 +88,11 @@ export interface ChatMessage {
   ratingError: string | null;
   /** The three questions TownwiseAI suggested after this reply; null when it gave none. */
   next: string[] | null;
+  /**
+   * The pages the reply cites from its web searches, shown under it: from its saved turn's `done`, or as stored.
+   * Absent while it streams; absent or empty when it cites none.
+   */
+  sources?: SourceLink[];
   /** The turn a reply streamed from: what Try again sends again. Null for a message read from the server. */
   request: TurnRequest | null;
   /**
@@ -560,7 +565,9 @@ function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: s
       const budget = event.stopReason === 'budget' && state.budget !== null ? { ...state.budget, exhausted: true } : state.budget;
       const saved = SAVED_STOP_REASONS.includes(event.stopReason);
       if (!saved && state.turn?.earlier) return putBack({ ...state, budget }, state.turn.earlier, REGENERATE_FAILED);
-      const complete = (message: ChatMessage): ChatMessage => settleCards({ ...message, state: 'complete', note: doneNote(event.stopReason), endedAt: now }, saved ? 'kept' : 'lost');
+      const complete = (message: ChatMessage): ChatMessage => settleCards({
+        ...message, state: 'complete', note: doneNote(event.stopReason), endedAt: now, sources: event.sources,
+      }, saved ? 'kept' : 'lost');
       if (saved) return savedTurn({ ...state, budget }, event, complete);
       return { ...state, budget, turn: null, messages: withLive(state, complete) };
     }
@@ -842,7 +849,9 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
 
   function toMessage(stored: StoredMessage, tree: readonly TreeNode[], asked: StoredMessage | undefined, conversationId: string): ChatMessage {
     const parentId = stored.nodeId === null ? null : tree.find((node) => node.id === stored.nodeId)?.parentId ?? null;
-    const message: ChatMessage = { ...blankMessage(nextKey(), stored.role), nodeId: stored.nodeId, parentId, feedback: stored.feedback, next: stored.next };
+    const message: ChatMessage = {
+      ...blankMessage(nextKey(), stored.role), nodeId: stored.nodeId, parentId, feedback: stored.feedback, next: stored.next, sources: stored.sources,
+    };
     if (stored.role === 'assistant') {
       // Time worked runs from the person's message to the reply's end. Only a message's first reply can say so: a
       // later version (a regenerate) started after the message was sent, at a time that was not stored.

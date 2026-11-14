@@ -401,7 +401,7 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
     ctx.logger.info({
       ...ids, calls: result.calls, stopReason: result.stopReason, costMicroUsd: result.costMicroUsd,
     }, 'townwise.chat_turn');
-    send('done', { stopReason: result.stopReason, costUsd: result.costMicroUsd / 1_000_000, leafId: result.leafId });
+    send('done', { stopReason: result.stopReason, costUsd: result.costMicroUsd / 1_000_000, leafId: result.leafId, sources: result.sources });
   } catch (err) {
     // A store failure while saving: nothing was saved, and the claim goes if it can.
     ctx.logger.error({ ...ids, code: 'internal', errType: err instanceof Error ? err.constructor.name : typeof err }, 'townwise.chat_turn_failed');

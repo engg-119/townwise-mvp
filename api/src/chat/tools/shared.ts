@@ -35,10 +35,10 @@ export function viewOf<T>(content: string, schema: z.ZodType<T>, view: (value: T
 /** U13A: at most this many source links on a card. */
 const MAX_SOURCE_LINKS = 5;
 
-/** U13A: the distinct https links among `urls`, in order, at most 5, each with its host (no www.) for display. */
-export function sourceLinks(urls: readonly string[]): { host: string; url: string }[] {
+/** U13A: the distinct https links among `urls`, in order, at most `max` (5 on a card), each with its host (no www.) for display. */
+export function sourceLinks(urls: readonly string[], max = MAX_SOURCE_LINKS): { host: string; url: string }[] {
   return [...new Set(urls)].flatMap((url) => {
     const parsed = URL.parse(url);
     return parsed?.protocol === 'https:' ? [{ host: parsed.hostname.replace(/^www\./, ''), url }] : [];
-  }).slice(0, MAX_SOURCE_LINKS);
+  }).slice(0, max);
 }

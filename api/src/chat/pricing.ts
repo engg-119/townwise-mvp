@@ -3,6 +3,8 @@
 // so the sum is exact before it is rounded up.
 import type { BetaMessage } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 
+import { SEARCH_MICRO_USD } from './web-search.ts';
+
 export interface TokenCounts {
   readonly input: number;
   readonly output: number;
@@ -54,16 +56,23 @@ export function costMicroUsd(model: string, tokens: TokenCounts): number {
   return Math.ceil(nanoUsd(model, tokens) / 1000);
 }
 
+/** Web searches at their list price (web-search.ts): a whole number of micro-dollars each. */
+export function searchCostMicroUsd(searches: number): number {
+  return searches * SEARCH_MICRO_USD;
+}
+
 /**
  * A finished call's cost. When the server ran more than one attempt (a refusal fallback), `usage.iterations` holds
- * each attempt with the model that ran it and is the source of truth; top-level `usage` covers only the last one.
+ * each attempt with the model that ran it and is the source of truth for tokens; top-level `usage` covers only the
+ * last one. Web searches are counted only at the top level, for the whole call, and added on top.
  */
 export function messageCostMicroUsd(message: Pick<BetaMessage, 'model' | 'usage'>): number {
+  const searches = searchCostMicroUsd(message.usage.server_tool_use?.web_search_requests ?? 0);
   const iterations = message.usage.iterations ?? [];
-  if (iterations.length === 0) return costMicroUsd(message.model, tokensOf(message.usage));
+  if (iterations.length === 0) return costMicroUsd(message.model, tokensOf(message.usage)) + searches;
   const nano = iterations.reduce((sum, entry) => {
     const model = 'model' in entry && entry.model !== null ? entry.model : message.model;
     return sum + nanoUsd(model, tokensOf(entry));
   }, 0);
-  return Math.ceil(nano / 1000);
+  return Math.ceil(nano / 1000) + searches;
 }

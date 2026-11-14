@@ -12,10 +12,11 @@ import type {
 import type { NoteContent } from '../stores/notes.ts';
 import type { StoredMessage } from '../stores/chat-conversations.ts';
 import type { ChatModel } from './model.ts';
-import { costMicroUsd, messageCostMicroUsd, tokensOf, type TokenCounts } from './pricing.ts';
+import { costMicroUsd, messageCostMicroUsd, searchCostMicroUsd, tokensOf, type TokenCounts } from './pricing.ts';
 import { SYSTEM_PROMPT } from './prompt.ts';
 import { inputViewOf, resultViewOf, runTool, savedResultOf, toolNamed, TOOLS, type ToolContext, type ToolView } from './tools/registry.ts';
 import type { Visual } from './tools/visual.ts';
+import { citedSources, searchFound, searchResultView, WEB_SEARCH, WEB_SEARCH_TOOL, type SourceLink } from './web-search.ts';
 
 export const CHAT_MODEL = 'claude-opus-5-5';
 export const MAX_TOKENS = 16_000;
@@ -59,6 +60,8 @@ export type TurnResult =
     inputTokens: number; outputTokens: number; costMicroUsd: number;
     /** The reply node when it stored an assistant message, else the user node, else the reply's parent. */
     leafId: string;
+    /** The pages the reply's text cites from its web searches (web-search.ts), shown with it. */
+    sources: SourceLink[];
   }
   | { kind: 'refused'; calls: number; model: string; costMicroUsd: number }
   | { kind: 'failed'; code: FailureCode; errType: string; status: number | null; calls: number; costMicroUsd: number }
@@ -88,7 +91,7 @@ export interface TurnInput {
   readonly budgetSpent: () => Promise<boolean>;
 }
 
-/** Every request: the frozen prefix (system, tools), then the conversation. */
+/** Every request: the frozen prefix (system, the registry's tools, then web search), then the conversation. */
 export function requestParams(messages: BetaMessageParam[]): BetaMessageStreamParams {
   return {
     model: CHAT_MODEL,
@@ -104,7 +107,7 @@ export function requestParams(messages: BetaMessageParam[]): BetaMessageStreamPa
     fallbacks: 'default',
     cache_control: { type: 'ephemeral' },
     system: SYSTEM_PROMPT,
-    tools: [...TOOLS],
+    tools: [...TOOLS, WEB_SEARCH_TOOL],
     messages,
   };
 }
@@ -151,12 +154,14 @@ function streamedCharacters(delta: BetaRawContentBlockDelta): number {
  *
  * at the price of the model that was answering. Streamed characters are those of text, thinking and tool input
  * deltas; the time term covers thinking that is billed but not streamed (a summary is shorter than the thinking behind it).
+ * Each web search whose result came back with pages is charged too, or the count message_delta reports once it has.
  */
 function usageTracker(now: () => Date): { observe(event: BetaRawMessageStreamEvent): void; costMicroUsd(): number } {
   let model: string | null = null;
   let tokens: TokenCounts | null = null;
   let startedAt = 0;
   let characters = 0;
+  let searches = 0;
   let outputReported = false;
   return {
     observe(event) {
@@ -164,10 +169,13 @@ function usageTracker(now: () => Date): { observe(event: BetaRawMessageStreamEve
         model = event.message.model;
         tokens = tokensOf(event.message.usage);
         startedAt = now().getTime();
+      } else if (event.type === 'content_block_start' && event.content_block.type === 'web_search_tool_result') {
+        if (searchFound(event.content_block.content)) searches += 1;
       } else if (event.type === 'content_block_delta') {
         characters += streamedCharacters(event.delta);
       } else if (event.type === 'message_delta' && tokens !== null) {
         outputReported = true;
+        searches = event.usage.server_tool_use?.web_search_requests ?? searches;
         tokens = {
           input: event.usage.input_tokens ?? tokens.input,
           output: event.usage.output_tokens,
@@ -178,12 +186,27 @@ function usageTracker(now: () => Date): { observe(event: BetaRawMessageStreamEve
     },
     costMicroUsd() {
       if (model === null || tokens === null) return 0;
-      if (outputReported) return costMicroUsd(model, tokens);
+      if (outputReported) return costMicroUsd(model, tokens) + searchCostMicroUsd(searches);
       const seconds = (now().getTime() - startedAt) / 1000;
       const output = Math.min(MAX_TOKENS, Math.max(Math.ceil(characters / 3), Math.ceil(seconds * 150)));
-      return costMicroUsd(model, { ...tokens, output });
+      return costMicroUsd(model, { ...tokens, output }) + searchCostMicroUsd(searches);
     },
   };
+}
+
+/**
+ * The card of a web search as it streams: running when the model starts one, then done with its result view, or an
+ * error when it failed. Never its query (web-search.ts). Null for every other event.
+ */
+function searchCard(event: BetaRawMessageStreamEvent): TurnEvent | null {
+  if (event.type !== 'content_block_start') return null;
+  const block = event.content_block;
+  if (block.type === 'server_tool_use' && block.name === WEB_SEARCH) {
+    return { type: 'tool', data: { id: block.id, name: WEB_SEARCH, state: 'running', input: null, result: null } };
+  }
+  if (block.type !== 'web_search_tool_result') return null;
+  const result = searchResultView(block.content);
+  return { type: 'tool', data: { id: block.tool_use_id, name: WEB_SEARCH, state: result === null ? 'error' : 'done', input: null, result } };
 }
 
 /**
@@ -278,6 +301,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       kind: 'done', stopReason, messages, calls, model, inputTokens, outputTokens, costMicroUsd: spent,
       // A reply's messages start with an assistant message, so the last one stored names the deepest node written.
       leafId: messages.at(-1)?.nodeId ?? reply.parentId,
+      sources: citedSources(turn.flatMap((param) => (param.role === 'assistant' && typeof param.content !== 'string' ? param.content : []))),
     };
   };
 
@@ -300,6 +324,8 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
         const stream = input.model.stream(requestParams([...input.history, ...turn]), { signal: input.signal });
         for await (const event of stream) {
           usage.observe(event);
+          const card = searchCard(event);
+          if (card !== null) input.emit(card);
           if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
             input.emit({ type: 'text', data: { delta: event.delta.text } });
           } else if (event.type === 'content_block_delta' && event.delta.type === 'thinking_delta') {
@@ -335,6 +361,8 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
         if (toolUses.length > 0) append(notRun(toolUses));
         return done('max_tokens');
       }
+      // The API paused a long web search turn: the paused reply, sent back unchanged as the last message, resumes it.
+      if (stop === 'pause_turn' && toolUses.length === 0) continue;
       if (toolUses.length === 0) return done('end_turn');
 
       const results: BetaToolResultBlockParam[] = [];

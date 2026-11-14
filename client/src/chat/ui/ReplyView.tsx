@@ -14,6 +14,7 @@ import { described } from './described';
 import { ItemProposalCard } from './ItemProposalCard';
 import { ProposalCard } from './ProposalCard';
 import { ReplyActions } from './ReplyActions';
+import { Sources } from './ToolGroup';
 import { useVersionNav, VersionNav } from './VersionNav';
 import { isProcessPart, wholeSeconds, Worked, Working } from './Worked';
 
@@ -22,7 +23,7 @@ import { isProcessPart, wholeSeconds, Worked, Working } from './Worked';
 // Townwise drew, and proposal cards (a note's, or one to keep text on Your data, D28). Its thinking summary and tool calls are the timeline at its top: "Working for
 // {n}s" with the timeline under it while it streams ("Thinking…" before anything arrives), then a collapsed "Worked
 // for {n}s" that opens to the same timeline (Worked.tsx). Finished, it has its actions, its version navigator when it has siblings, the Based on line
-// built from its tool calls (never written by the model) and why it ended early, if it did. One that failed or was
+// built from its tool calls (never written by the model), the pages it cites from the web, and why it ended early, if it did. One that failed or was
 // stopped keeps its note and Try again.
 
 export function ReplyView(props: {
@@ -104,6 +105,13 @@ export function ReplyView(props: {
             {versions}
           </ReplyActions>
           <Text style={styles.basedOn}>{basedOnLine(stepsOf(message), props.ctx)}</Text>
+          {message.sources === undefined || message.sources.length === 0 ? null : (
+            // The pages its text cites from the web: Anthropic requires them shown with the reply, not behind a disclosure.
+            <View>
+              <Text style={styles.basedOn}>Sources</Text>
+              <Sources sources={message.sources} />
+            </View>
+          )}
         </>
       ) : versions}
       {message.note === null ? null : <Text style={styles.note}>{message.note}</Text>}

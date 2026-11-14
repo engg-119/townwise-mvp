@@ -4,6 +4,7 @@ import type { ApiClient } from '../api/client';
 import { dataItemSchema, type DataItem } from '../portal/data/api';
 import { createNote, noteSchema, type Note } from '../portal/locations/api';
 import type { SseEvent } from '../api/sse';
+import type { SourceLink } from './tools';
 import type { TreeNode } from './tree';
 import { visualSchema, type Visual } from './visuals/schema';
 
@@ -48,6 +49,17 @@ function proposalOf(raw: z.infer<typeof noteProposalSchema>): NoteProposal {
 /** What a tool card shows of a call's input or result: the server's view, read field by field (src/chat/tools.ts). */
 export type ToolView = Record<string, unknown>;
 const viewSchema = z.record(z.string(), z.unknown()).nullable();
+
+/** The pages a reply cites from the web, read link by link: one that isn't an https link is left out, never the event. */
+const sourcesSchema = z.array(z.unknown()).default([]);
+
+function linksOf(raw: readonly unknown[]): SourceLink[] {
+  return raw.flatMap((source) => {
+    if (typeof source !== 'object' || source === null) return [];
+    const { host, url } = source as { host?: unknown; url?: unknown };
+    return typeof host === 'string' && typeof url === 'string' && url.startsWith('https://') ? [{ host, url }] : [];
+  });
+}
 
 const proposalStatusSchema = z.enum(['open', 'saved', 'dismissed']);
 const proposalViewSchema = noteProposalSchema.extend({ id: z.string(), status: proposalStatusSchema, noteId: z.string().nullable() });
@@ -96,6 +108,7 @@ const conversationSchema = z.object({
     endedAt: z.string().optional(),
     feedback: feedbackSchema.nullable().default(null),
     next: z.array(z.string()).nullable().default(null),
+    sources: sourcesSchema,
   })),
 });
 
@@ -130,6 +143,8 @@ export interface StoredMessage {
   feedback: Feedback | null;
   /** The three questions suggested after a reply; null for none and for the person's messages. */
   next: string[] | null;
+  /** The pages a reply cites from the web; empty for none and for the person's messages. */
+  sources: SourceLink[];
 }
 
 /** A conversation as the server shows it: the messages of one path, every node, and that path's leaf. */
@@ -150,9 +165,9 @@ export type ChatEvent =
   | { type: 'suggestions'; id: string; prompts: string[] }
   /**
    * `leafId`: the conversation's leaf after the turn (the last node it saved, else the node it hung under); null for a
-   * refusal, or from a server without trees.
+   * refusal, or from a server without trees. `sources`: the pages the reply cites from the web; empty for none.
    */
-  | { type: 'done'; stopReason: string; leafId: string | null }
+  | { type: 'done'; stopReason: string; leafId: string | null; sources: SourceLink[] }
   | { type: 'error'; code: string };
 
 const nodeIdOrNull = z.string().nullable().default(null);
@@ -167,7 +182,7 @@ const eventSchemas = {
   proposal: z.object({ id: z.string(), proposal: noteProposalSchema }),
   visual: z.object({ id: z.string(), visual: visualSchema }),
   suggestions: z.object({ id: z.string(), prompts: z.array(z.string()) }),
-  done: z.object({ stopReason: z.string(), leafId: nodeIdOrNull }),
+  done: z.object({ stopReason: z.string(), leafId: nodeIdOrNull, sources: sourcesSchema }),
   error: z.object({ code: z.string() }),
 };
 
@@ -210,7 +225,7 @@ export function chatEventOf(sse: SseEvent): ChatEvent | null {
     }
     case 'done': {
       const parsed = eventSchemas.done.safeParse(data);
-      return parsed.success ? { type: 'done', ...parsed.data } : null;
+      return parsed.success ? { type: 'done', ...parsed.data, sources: linksOf(parsed.data.sources) } : null;
     }
     case 'error': {
       const parsed = eventSchemas.error.safeParse(data);
@@ -262,6 +277,7 @@ function conversationOf(conversation: z.infer<typeof conversationSchema>): Conve
       nodeId: message.nodeId,
       feedback: message.feedback,
       next: message.next,
+      sources: linksOf(message.sources),
     })),
   };
 }

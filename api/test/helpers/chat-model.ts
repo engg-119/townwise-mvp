@@ -16,6 +16,8 @@ export interface UsageInput {
   cacheRead?: number;
   cacheWrite?: number;
   iterations?: BetaIterationsUsage;
+  /** Web searches the call ran (usage.server_tool_use); none when absent. */
+  searches?: number;
 }
 
 export function usage(u: UsageInput = {}): BetaUsage {
@@ -29,7 +31,7 @@ export function usage(u: UsageInput = {}): BetaUsage {
     inference_geo: null,
     iterations: u.iterations ?? null,
     output_tokens_details: null,
-    server_tool_use: null,
+    server_tool_use: u.searches === undefined ? null : { web_search_requests: u.searches, web_fetch_requests: 0 },
     service_tier: 'standard',
     speed: 'standard',
   };
@@ -46,6 +48,29 @@ export function thinking(signature: string, value = ''): BetaContentBlock {
 
 export function toolUse(id: string, name: string, input: unknown): BetaContentBlock {
   return { type: 'tool_use', id, name, input };
+}
+
+/** A web search Anthropic runs (a server tool): the query is the model's. */
+export function webSearch(id: string, query: string): BetaContentBlock {
+  return { type: 'server_tool_use', id, name: 'web_search', input: { query } };
+}
+
+/** What a web search found, one page per url; an error code instead makes it a failed search. */
+export function webResults(id: string, urls: string[] | { error: 'unavailable' | 'max_uses_exceeded' }): BetaContentBlock {
+  return {
+    type: 'web_search_tool_result', tool_use_id: id,
+    content: Array.isArray(urls)
+      ? urls.map((url, i) => ({ type: 'web_search_result', url, title: `Page ${String(i + 1)}`, encrypted_content: `enc-${String(i)}`, page_age: null }))
+      : { type: 'web_search_tool_result_error', error_code: urls.error },
+  };
+}
+
+/** Text that cites web pages, as the API returns it after a search. */
+export function cited(value: string, urls: string[]): BetaContentBlock {
+  return {
+    type: 'text', text: value,
+    citations: urls.map((url) => ({ type: 'web_search_result_location', url, title: 'A page', cited_text: value, encrypted_index: 'idx' })),
+  };
 }
 
 let messageCount = 0;
@@ -131,7 +156,7 @@ export function eventsOf(final: BetaMessage): BetaRawMessageStreamEvent[] {
       fallback_credit: null,
       iterations: final.usage.iterations,
       output_tokens_details: null,
-      server_tool_use: null,
+      server_tool_use: final.usage.server_tool_use,
     },
   });
   events.push({ type: 'message_stop' });

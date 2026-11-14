@@ -16,6 +16,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import { SYSTEM_PROMPT } from '../src/chat/prompt.ts';
 import { TOOLS } from '../src/chat/tools/registry.ts';
+import { WEB_SEARCH_TOOL } from '../src/chat/web-search.ts';
 import type { ChatSummary, ConversationView } from '../src/handlers/chat.ts';
 import {
   addConversation, addGrant, addLocation, addNote, addSalesDay, addSeat, auditEvents, createOrg,
@@ -165,7 +166,7 @@ describe('a plain answer', () => {
     });
     expect(streamedText(events)).toBe('May was steady, with two busy Fridays.');
     // 1000 x $4 + 500 x $20 + 10,000 x $0.20 + 2000 x $5 per million tokens.
-    expect(events.at(-1)?.data).toEqual({ stopReason: 'end_turn', costUsd: 0.026, leafId: replyNodeId });
+    expect(events.at(-1)?.data).toEqual({ stopReason: 'end_turn', costUsd: 0.026, leafId: replyNodeId, sources: [] });
     expect(await usedMicroUsd()).toBe(26_000);
 
     const params = model.calls[0]?.params;
@@ -181,8 +182,11 @@ describe('a plain answer', () => {
       'get_location_overview', 'get_sales_days', 'list_notes', 'get_town_profile', 'propose_note',
       'get_town_calendar', 'get_people_in_town', 'get_forecast', 'get_day', 'show_visual', 'suggest_next',
       'list_data_items', 'read_data_item', 'propose_data_item', 'start_calibration', 'get_calibration', 'compare_forecast_models',
+      'web_search',
     ]);
-    expect(params?.tools?.every((tool) => 'eager_input_streaming' in tool && tool.eager_input_streaming === true)).toBe(true);
+    // The registry's tools stream their inputs; Claude's web search, a server tool, comes last as it is.
+    expect(params?.tools?.slice(0, -1).every((tool) => 'eager_input_streaming' in tool && tool.eager_input_streaming === true)).toBe(true);
+    expect(params?.tools?.at(-1)).toEqual(WEB_SEARCH_TOOL);
 
     const doc = await conversationDoc(id);
     expect(doc).toMatchObject({ title: 'What changed in May?', turnCount: 1, liveTurn: null, userId: author.session.userId });
@@ -205,10 +209,10 @@ describe('a plain answer', () => {
         { id: replyNodeId, parentId: userNodeId, role: 'assistant' },
       ],
       messages: [
-        { nodeId: userNodeId, role: 'user', text: 'What changed in May?', proposals: [], parts: [], feedback: null, next: null, at, endedAt: at },
+        { nodeId: userNodeId, role: 'user', text: 'What changed in May?', proposals: [], parts: [], feedback: null, next: null, sources: [], at, endedAt: at },
         {
           nodeId: replyNodeId, role: 'assistant', text: 'May was steady, with two busy Fridays.', proposals: [],
-          parts: [{ type: 'text', text: 'May was steady, with two busy Fridays.' }], feedback: null, next: null, at, endedAt: at,
+          parts: [{ type: 'text', text: 'May was steady, with two busy Fridays.' }], feedback: null, next: null, sources: [], at, endedAt: at,
         },
       ],
     });
@@ -312,7 +316,7 @@ describe('tools', () => {
     // The frozen prefix holds no name, id or date.
     const system = JSON.stringify(model.calls[1]?.params.system);
     for (const value of ['Taproom', 'Hanover', 'Chat Tavern', orgId, locationId, '2026']) expect(system).not.toContain(value);
-    expect(JSON.stringify(model.calls[0]?.params.tools)).toBe(JSON.stringify(TOOLS));
+    expect(JSON.stringify(model.calls[0]?.params.tools)).toBe(JSON.stringify([...TOOLS, WEB_SEARCH_TOOL]));
 
     // A reload shows the same cards, in order, then the reply's text.
     const view = await (await call(server, `/api/org/locations/${locationId}/chat/${conversationIdOf(events)}`, { session: author.session }))
@@ -422,7 +426,7 @@ describe('tools', () => {
     const { events } = await turn({ content: 'Keep checking.' });
     expect(model.calls).toHaveLength(8);
     expect(events.at(-1)).toEqual({
-      event: 'done', data: { stopReason: 'tool_limit', costUsd: expect.any(Number) as unknown, leafId: expect.any(String) as unknown },
+      event: 'done', data: { stopReason: 'tool_limit', costUsd: expect.any(Number) as unknown, leafId: expect.any(String) as unknown, sources: [] },
     });
     expect(eventData(events, 'tool')).toHaveLength(16);
     const id = conversationIdOf(events);

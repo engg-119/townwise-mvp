@@ -376,6 +376,8 @@ The tuning chat (`docs/portal/tuning-chat.md`) is off until the API has `ANTHROP
 
 **Rotate** by seeding a new version, revoking the old key in the Console and telling developers to read it again. Do the same when someone leaves the team, after removing them from `townwise-developers`.
 
+**Web search.** The chat sends Claude's own web search on every turn (`docs/portal/tuning-chat.md`, section 4). It runs on the same key, so neither production nor `townwise-developers` needs another secret or role: there is no separate search key to grant. Anthropic bills each search ($10 per 1,000) to the key's workspace, inside its spend limit. Keep web search on in the Anthropic Console (organization settings, capabilities): turned off, every chat turn fails with a 400, locally and in production.
+
 ### 17. Enable the Places search
 
 The Places search on the access request (`api/README.md`, Places search) is off until the API has `GOOGLE_PLACES_API_KEY`. Off, `POST /api/places/autocomplete` and `POST /api/places/details` answer 503 `places_unavailable`, and the client shows the manual fields. Turning it on sends the text typed into the search, and the place picked, from the API to Google. Nothing Google answers is stored.

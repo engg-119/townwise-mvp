@@ -262,6 +262,20 @@ test('the Based on line comes from the calls that read something, never the mode
   expect(basedOnLine([step('list_notes', 'error')], CTX)).toBe('Based on this conversation only.');
 });
 
+test('web_search, Claude’s server tool (api/src/chat/web-search.ts), searches the web: pages found and their links, never the query', () => {
+  expect(isKnownTool('web_search')).toBe(true);
+  expect(isHiddenTool('web_search')).toBe(false);
+  expect((['running', 'done', 'error'] as const).map((state) => toolLine(step('web_search', state), CTX).sentence))
+    .toEqual(['Searching the web', 'Searched the web', 'Couldn’t search the web']);
+  const sources = [{ host: 'hanover.org', url: 'https://www.hanover.org/fair' }, { host: 'town.gov', url: 'https://town.gov/roads' }];
+  expect(toolLine(step('web_search', 'done', null, { pages: 8, sources }), CTX)).toMatchObject({
+    detail: '8 pages · hanover.org · town.gov', sources,
+  });
+  expect(toolLine(step('web_search', 'done', null, { pages: 0, sources: [] }), CTX).detail).toBe('Nothing found');
+  expect(basedOnLine([step('web_search', 'done', null, { pages: 8, sources })], CTX)).toBe('Based on the web (hanover.org, town.gov).');
+  expect(basedOnLine([step('web_search', 'error')], CTX)).toBe('Based on this conversation only.');
+});
+
 test('what TownwiseAI reads lists the registered tools that have something to read, and a forecast only once one is published', () => {
   expect(readsLine(CTX)).toBe('your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data');
   // A town outside the twelve has no profile and no people in town to read; its calendar is the federal holidays.

@@ -361,6 +361,25 @@ const TOOLS: Readonly<Record<string, ToolRow>> = {
     terms: { available: 'Available', status: 'Status', weeks: 'Held-out weeks', published: 'Published' },
     values: { status: CALIBRATION_STATUS },
   },
+  // Claude's web search (api/src/chat/web-search.ts): a server tool Anthropic runs, not in the registry. Its views
+  // are the pages it found and their first five links, never the query. No `reads` line yet.
+  web_search: {
+    object: () => 'the web',
+    status: (state) => (state === 'running' ? 'Searching' : state === 'done' ? 'Searched' : 'Couldn’t search'),
+    detail: (result) => {
+      const pages = count(result, 'pages');
+      if (pages === 0) return 'Nothing found';
+      const lead = pages === null ? null : plural(pages, 'page', 'pages');
+      const line = [lead, ...sourcesOf(result).map((source) => source.host)].filter((part): part is string => part !== null).join(' · ');
+      return line === '' ? null : line;
+    },
+    sources: sourcesOf,
+    basedOn: (_input, _ctx, result) => {
+      const hosts = hostsOf(result);
+      return hosts === '' ? 'the web' : `the web (${hosts})`;
+    },
+    terms: { pages: 'Pages found' },
+  },
 };
 
 const GENERIC = { running: 'Looking something up', done: 'Looked something up', error: 'Couldn’t look something up' } as const;

@@ -141,6 +141,23 @@ test('a reply streams as ordered parts: text, a group of tool calls updated in p
   expect(turn(api, 1).body).toEqual({ conversationId: 'c2', content: 'And New Year’s Day?', parentId: 'a1' });
 });
 
+test('a web search streams as a card, and a saved turn’s done brings the pages the reply cites', async () => {
+  const api = fakeChatApi();
+  const chat = await ready(api);
+  await send(chat, 'Anything on this weekend?');
+  const live = turn(api);
+  const sources = [{ host: 'hanover.org', url: 'https://www.hanover.org/fair' }];
+  await act(() => {
+    live.emit('tool', { id: 's1', name: 'web_search', state: 'running', input: null, result: null });
+    live.emit('tool', { id: 's1', name: 'web_search', state: 'done', input: null, result: { pages: 4, sources } });
+    live.emit('text', { delta: 'The fair is on Saturday.' });
+  });
+  expect(stepsOf(reply(chat)).map((step) => [step.name, step.state])).toEqual([['web_search', 'done']]);
+  expect(reply(chat).sources).toBeUndefined();
+  await act(() => { live.emit('done', { stopReason: 'end_turn', costUsd: 0.03, leafId: 'a1', sources }); });
+  expect(reply(chat)).toMatchObject({ state: 'complete', sources });
+});
+
 test('text deltas are drawn at most every 32ms, and any other event draws them first', async () => {
   jest.useFakeTimers();
   try {
@@ -195,7 +212,7 @@ test('a reply that ends early says why', () => {
     let state: TuningChatState = { ...initialChatState(), status: 'ready', enabled: true };
     state = chatReducer(state, { type: 'send', content: 'x', userKey: 'u', replyKey: 'r', request: { conversationId: null, content: 'x' } }, 0);
     state = chatReducer(state, { type: 'event', event: { type: 'proposal', id: 'p1', proposal: PROPOSAL }, key: 'k', at: '' }, 0);
-    state = chatReducer(state, { type: 'event', event: { type: 'done', stopReason, leafId: null }, key: 'k', at: '' }, 0);
+    state = chatReducer(state, { type: 'event', event: { type: 'done', stopReason, leafId: null, sources: [] }, key: 'k', at: '' }, 0);
     expect(state.messages.at(-1)).toMatchObject({ state: 'complete', note });
     // A refused turn was never stored, so its proposal is not either.
     const last = state.messages.at(-1);

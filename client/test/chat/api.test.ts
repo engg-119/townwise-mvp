@@ -11,6 +11,20 @@ function sse(event: string, data: unknown): { event: string; data: string } {
   return { event, data: JSON.stringify(data) };
 }
 
+it('reads the pages a reply cites, keeping only https links that parse, so one bad link never loses the turn’s done', async () => {
+  const sources = [
+    { host: 'hanover.org', url: 'https://www.hanover.org/fair' }, { host: 'insecure.test', url: 'http://insecure.test/x' },
+    { host: 'bad.test' }, 'not a link', { host: 'town.gov', url: 'https://town.gov/roads' },
+  ];
+  const kept = [{ host: 'hanover.org', url: 'https://www.hanover.org/fair' }, { host: 'town.gov', url: 'https://town.gov/roads' }];
+  expect(chatEventOf(sse('done', { stopReason: 'end_turn', costUsd: 0.01, leafId: 'a2', sources })))
+    .toEqual({ type: 'done', stopReason: 'end_turn', leafId: 'a2', sources: kept });
+  const api = fakeChatApi();
+  api.conversation = { ...CONVERSATION, messages: [CONVERSATION.messages[0], { ...CONVERSATION.messages[1], sources }] };
+  const load = await loadConversation(api, 'l1', 'c1');
+  expect(load.messages.map((message) => message.sources)).toEqual([[], kept]);
+});
+
 it('reads the new event fields with old-server defaults, and drops a visual that does not parse', () => {
   expect(chatEventOf({ event: 'conversation', data: '{"id":"c","title":"t"}' })).toEqual({ type: 'conversation', id: 'c', title: 't', userNodeId: null, replyNodeId: null, parentId: null });
   expect(chatEventOf({ event: 'visual', data: '{"id":"v","visual":{"kind":"pie"}}' })).toBeNull();
@@ -20,8 +34,8 @@ it('reads the new event fields with old-server defaults, and drops a visual that
   // A regenerate has no new message of the person's.
   expect(chatEventOf(sse('conversation', { id: 'c', title: 't', userNodeId: null, replyNodeId: 'a2b', parentId: 'u2' })))
     .toMatchObject({ userNodeId: null, replyNodeId: 'a2b', parentId: 'u2' });
-  expect(chatEventOf(sse('done', { stopReason: 'end_turn', costUsd: 0.01 }))).toEqual({ type: 'done', stopReason: 'end_turn', leafId: null });
-  expect(chatEventOf(sse('done', { stopReason: 'end_turn', costUsd: 0.01, leafId: 'a2' }))).toEqual({ type: 'done', stopReason: 'end_turn', leafId: 'a2' });
+  expect(chatEventOf(sse('done', { stopReason: 'end_turn', costUsd: 0.01 }))).toEqual({ type: 'done', stopReason: 'end_turn', leafId: null, sources: [] });
+  expect(chatEventOf(sse('done', { stopReason: 'end_turn', costUsd: 0.01, leafId: 'a2' }))).toEqual({ type: 'done', stopReason: 'end_turn', leafId: 'a2', sources: [] });
 
   expect(chatEventOf(sse('visual', { id: 'toolu_v1', visual: daily }))).toEqual({ type: 'visual', id: 'toolu_v1', visual: daily });
   expect(chatEventOf(sse('visual', { id: 'toolu_v1' }))).toBeNull();
