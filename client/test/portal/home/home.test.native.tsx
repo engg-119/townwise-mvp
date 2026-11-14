@@ -305,8 +305,8 @@ test('who’s in town: a headcount leads as one figure with its unit, later days
   expect(screen.getByRole('link', { name: 'Source: Synthetic census' })).toBeTruthy();
   expect(screen.queryByText('census.example.test')).toBeNull();
   expect(screen.queryByText('Townwise can’t put a number on how many people are in Hanover yet.')).toBeNull();
-  // Bar order only.
-  expect(screen.getAllByText('Planned')).toHaveLength(1);
+  // With a headcount nothing on Home is Planned: Bar order is the live card (D35).
+  expect(screen.queryAllByText('Planned')).toHaveLength(0);
   // The location's own days by term, under their own heading.
   expect(screen.getByRole('heading', { name: 'Your sales by term' })).toBeTruthy();
   expect(screen.getByText('Your Saturdays averaged 250 guests in term and 140 between terms (18 and 6 Saturdays).')).toBeTruthy();
