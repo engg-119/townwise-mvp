@@ -64,6 +64,7 @@ function context(calendars: OwnerCalendarRecord[], events: OwnerCalendarEvent[] 
     timeZone: 'America/New_York',
     role: 'member',
     actor: { actorUserId: SENTINEL_USER, actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null },
+    turn: { readUntrusted: false },
   };
   return { tc, reads };
 }
