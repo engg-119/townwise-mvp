@@ -10,7 +10,7 @@ import { Small } from '../ui/text';
 import { Block } from './Block';
 
 // Bar order (home.md 2.3; design Decision 10): the location's own board (GET .../orders, never the sample), which Home
-// reads once on its own for this card and the calendar's side, so Home never waits for it or fails with it. With a
+// reads once on its own for this card and the selected day's Reorder part, so Home never waits for it or fails with it. With a
 // board, the soonest order: how many of its items to order above 0, from which supplier, and its deadline, with how
 // many orders there are, linked to Orders; with no setup, what is missing, linked to Ordering setup. Its one history
 // figure stays: last year's same week, Thursday to Sunday's share, only when all four days have data.

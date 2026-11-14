@@ -165,6 +165,12 @@ test('with history: the lead, this week with the calendar and past years, bar or
   expect(screen.getByText('The soonest of 2 orders, one per supplier. Orders lists them all.')).toBeTruthy();
   expect(screen.getByText('Townwise still can’t see a recent count.')).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Open Orders' })).toBeTruthy();
+  // The selected day (today) against the same board: neither order's window holds Nov 5, so its Reorder part names
+  // the soonest order and says the day is outside it, with the link to that day on Orders.
+  expect(screen.getByText(
+    'The next order from Sample brewery arrives Tue, Nov 10, 2026 and lasts until its next delivery, Thu, Nov 12, 2026. Thu, Nov 5, 2026 is outside it.',
+  )).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Open this day on Orders' })).toBeTruthy();
   expect(screen.getByText('Last year this week, Thursday to Sunday brought 59% of the week’s guests.')).toBeTruthy();
   expect(screen.queryByRole('textbox')).toBeNull();
 
@@ -335,7 +341,7 @@ test('bar order with no ordering setup says what is missing and links to Orderin
 
   const failed = portal({ orders: offline() });
   await renderApp('/locations/l1', failed);
-  // The card and the line beside the calendar each say so, from the one read.
+  // The card and the selected day's Reorder part each say so, from the one read.
   expect(await screen.findAllByText('Townwise couldn’t check the next order.')).toHaveLength(2);
   expect(failed.calls.filter((call) => call.path === `${PATH}/orders`)).toHaveLength(1);
   expect(screen.getByRole('link', { name: 'Open Orders' })).toBeTruthy();

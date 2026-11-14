@@ -174,7 +174,7 @@ test('the fixed copy names what is not built yet and promises nothing', () => {
   expect(questionsLabel(2)).not.toMatch(FORECAST_WORDING);
 });
 
-// #68 review S2: the reorder copy beside the calendar and on Orders describes the method the board runs
+// #68 review S2: the reorder copy on Home's selected day and on Orders describes the method the board runs
 // (api/src/orders/engine.ts), and claims nothing it does not do: no prices, no promise never to run out, no sight of
 // stock beyond the counts, and nothing sent or placed for the owner.
 test('the reorder copy says how the board works and promises nothing it doesn’t do', () => {
