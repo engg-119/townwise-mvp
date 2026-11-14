@@ -66,6 +66,9 @@ const BOARD: LiveBoard = {
   ],
 };
 
+/** GET .../orders/setup for a location that has saved none. */
+const NO_SETUP = { setup: null, coverage: null, itemCoverage: {}, counts: {} };
+
 const UNAVAILABLE = {
   available: false,
   reason: 'Townwise can’t build an order for this location until its ordering setup has a supplier schedule and items.',
@@ -73,7 +76,10 @@ const UNAVAILABLE = {
 };
 
 function portal(board: unknown = BOARD, me = meOf(ACCESS.member)): { api: FakePortalApi; routes: Routes } {
-  const api = fakePortalApi({ me, fallback: analyticsFake({ [PATH]: board, [`${PATH}?sample=true`]: { ...BOARD, sample: true } }) });
+  const api = fakePortalApi({
+    me,
+    fallback: analyticsFake({ [PATH]: board, [`${PATH}?sample=true`]: { ...BOARD, sample: true }, [`${PATH}/setup`]: NO_SETUP }),
+  });
   const routes = withRoutes(api, { requests: { [`POST ${PATH}/counts`]: noContent, [`POST ${PATH}/rules/off`]: noContent } });
   return { api, routes };
 }
@@ -195,6 +201,7 @@ test('no ordering setup: the reason, what is missing, Set up ordering, and the l
   await fireEvent.press(screen.getByRole('link', { name: 'Set up ordering' }));
   expect(router.getPathname()).toBe('/locations/l1/orders/setup');
   expect(await screen.findByRole('heading', { name: 'Ordering setup' })).toBeTruthy();
+  expect(await screen.findByText('No suppliers yet. Add each one you order from, with its delivery days.')).toBeTruthy();
   expect(writes(api)).toEqual([]);
 });
 
@@ -203,6 +210,7 @@ test('a live board links to its setup', async () => {
   const { router } = await renderApp('/locations/l1/orders', api);
   await fireEvent.press(await screen.findByRole('link', { name: 'Edit ordering setup' }));
   expect(router.getPathname()).toBe('/locations/l1/orders/setup');
+  expect(await screen.findByRole('button', { name: 'Save the setup' })).toBeTruthy();
 });
 
 test('view-as: the board reads, and every write is disabled in place', async () => {

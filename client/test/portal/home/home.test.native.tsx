@@ -107,6 +107,8 @@ function portal(options: {
     [AGENT]: options.agent ?? { questions: QUESTIONS, activity: [] },
     [PEOPLE]: options.people ?? NOVEMBER,
     [`${PATH}/orders`]: options.orders ?? BOARD,
+    // The Ordering setup page, which the Bar order card links to, for a location that has saved none.
+    [`${PATH}/orders/setup`]: { setup: null, coverage: null, itemCoverage: {}, counts: {} },
     // Stored files are off, as in production today.
     [`${PATH}/imports/current`]: refusal(503, 'files_unavailable'),
   });
@@ -284,6 +286,7 @@ test('bar order with no ordering setup says what is missing and links to Orderin
   await fireEvent.press(screen.getByRole('link', { name: 'Set up ordering' }));
   expect(router.getPathname()).toBe('/locations/l1/orders/setup');
   expect(await screen.findByRole('heading', { name: 'Ordering setup' })).toBeTruthy();
+  expect(await screen.findByText('No items yet. Add each item you order.')).toBeTruthy();
   await cleanup();
 
   await renderApp('/locations/l1', portal({ orders: offline() }));

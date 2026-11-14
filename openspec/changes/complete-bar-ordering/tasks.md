@@ -42,12 +42,12 @@
 
 - [x] 6.1 `orders/api.ts`: schemas and calls for the board, setup, item sales and counts
 - [x] 6.2 Orders page: one section per supplier with its deadline, `rules[]` with their own turn-off, "Enter a count", links to setup; empty and NaN quantities blocked (N6)
-- [ ] 6.3 Ordering setup page (P31, `/locations/[id]/orders/setup`, `routing.ts`): suppliers and deliveries, item table, template download, CSV and Excel import, save with `expectedVersion` and the 409 copy
-- [ ] 6.4 Item sales upload on the setup page (web): column presets and guessing, business day, matching, unmatched names with "Add to an item", chunked send, coverage and per-item "No sales matched"; native says to use a computer
+- [x] 6.3 Ordering setup page (P31, `/locations/[id]/orders/setup`, `routing.ts`): suppliers and deliveries, item table, template download, CSV and Excel import, save with `expectedVersion` and the 409 copy
+- [x] 6.4 Item sales upload on the setup page (web): column presets and guessing, business day, matching, unmatched names with "Add to an item", chunked send, coverage and per-item "No sales matched"; native says to use a computer
 - [x] 6.5 Home's Bar order card reads the board; `beside.ts` describes the real method (S2); `honesty.test.ts` covers it
 - [x] 6.6 Your data: one line pointing to Ordering setup for item sales and counts
 - [x] 6.7 TownwiseAI client: tool labels for `get_order_setup`, the change card's save on a live line
-- [ ] 6.8 Client tests for the setup page, upload matching, count form, Orders per supplier and the Home card
+- [x] 6.8 Client tests for the setup page, upload matching, count form, Orders per supplier and the Home card
 
 ## 7. Docs
 
