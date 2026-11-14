@@ -15,6 +15,7 @@ import { OrderProposalCard } from './OrderProposalCard';
 import { ProposalCard } from './ProposalCard';
 import { messageMark, type RowShow } from './MessageTime';
 import { ReplyActions } from './ReplyActions';
+import { ReplySources } from './ReplySources';
 import { useVersionNav, VersionNav } from './VersionNav';
 import { isProcessPart, wholeSeconds, Worked, Working } from './Worked';
 
@@ -23,8 +24,8 @@ import { isProcessPart, wholeSeconds, Worked, Working } from './Worked';
 // Townwise drew, and proposal cards (a note's, or one to keep text on Your data, D28). Its thinking summary and tool calls are the timeline at its top: "Working for
 // {n}s" with the timeline under it while it streams (the counter alone before anything arrives), then a collapsed "Worked
 // for {n}s" that opens to the same timeline (Worked.tsx). Finished, it has its actions, its version navigator when it has siblings, the Based on line
-// built from its tool calls (never written by the model) and why it ended early, if it did. One that failed or was
-// stopped keeps its note and Try again.
+// built from its tool calls (never written by the model), the web pages it cites (D37, ReplySources.tsx) and why it
+// ended early, if it did. One that failed or was stopped keeps its note and Try again.
 
 export function ReplyView(props: {
   message: ChatMessage;
@@ -109,6 +110,7 @@ export function ReplyView(props: {
             {versions}
           </ReplyActions>
           <Text style={styles.basedOn}>{basedOnLine(stepsOf(message), props.ctx)}</Text>
+          <ReplySources sources={message.sources} />
         </>
       ) : versions}
       {message.note === null ? null : <Text style={styles.note}>{message.note}</Text>}
