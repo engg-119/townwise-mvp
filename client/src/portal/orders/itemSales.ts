@@ -96,6 +96,11 @@ function isSerial(text: string): boolean {
  * exports print a date column that carries no time ("2026-11-01 00:00:00").
  */
 export function businessDate(cell: string): string | null {
+  return businessDay(cell)?.date ?? null;
+}
+
+/** businessDate, and whether a time before 04:00 moved the sale to the day before its own date. */
+function businessDay(cell: string): { date: string; moved: boolean } | null {
   let text = cell.trim();
   if (isSerial(text)) text = serialToIso(Number(text), false) ?? '';
   let datePart = text;
@@ -113,10 +118,10 @@ export function businessDate(cell: string): string | null {
   }
   const day = readDay(datePart);
   if (day === null) return null;
-  if (timePart === null) return day;
+  if (timePart === null) return { date: day, moved: false };
   const seconds = readTime(timePart.trim());
   if (seconds === null) return null;
-  return seconds > 0 && seconds < BUSINESS_DAY_STARTS ? addDays(day, -1) : day;
+  return seconds > 0 && seconds < BUSINESS_DAY_STARTS ? { date: addDays(day, -1), moved: true } : { date: day, moved: false };
 }
 
 /** A sold quantity: a number of at least 0 ("12", "1,200", "1.5"), or null for an empty, non-numeric or negative cell. */
@@ -253,6 +258,11 @@ export class SalesMatcher {
   private readonly lookup: Map<string, { itemId: string; perSale: number }[]>;
   private readonly today: string;
   private readonly servings = new Map<string, Map<string, number>>();
+  /**
+   * Dates some row names as its own. A date reached only by after-midnight rows moved back (the day before a per-sale
+   * export starts) holds part of a day, so it is left out rather than replacing the full day stored for it.
+   */
+  private readonly ownDates = new Set<string>();
   private readonly unmatched = new Map<string, { name: string; rows: number }>();
   private rowsRead = 0;
   private matchedRows = 0;
@@ -268,11 +278,13 @@ export class SalesMatcher {
   add(cells: readonly string[]): void {
     if (isBlankRecord(cells)) return;
     this.rowsRead += 1;
-    const date = businessDate(cells[this.columns.date] ?? '');
-    if (date === null || date < EARLIEST_DATE || date > this.today) {
+    const read = businessDay(cells[this.columns.date] ?? '');
+    if (read === null || read.date < EARLIEST_DATE || read.date > this.today) {
       this.skipped.date += 1;
       return;
     }
+    const { date } = read;
+    if (!read.moved) this.ownDates.add(date);
     let day = this.servings.get(date);
     if (day === undefined) {
       day = new Map();
@@ -301,7 +313,7 @@ export class SalesMatcher {
   }
 
   finish(): MatchOutcome {
-    const dates = [...this.servings.keys()].sort();
+    const dates = [...this.servings.keys()].filter((date) => this.ownDates.has(date)).sort();
     const sold = new Set<string>();
     let overLimit = 0;
     const days = dates.map((date): ItemSalesDay => {

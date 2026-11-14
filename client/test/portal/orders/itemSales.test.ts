@@ -162,6 +162,16 @@ describe('matching', () => {
     ]);
   });
 
+  test('a day reached only by after-midnight rows is part of a day, so it is left out and does not start the range', () => {
+    const outcome = match([
+      ['2026-11-02 01:30', 'Lager Pint', '5'],
+      ['2026-11-02 20:00', 'Lager Pint', '2'],
+      ['2026-11-03 01:00', 'Lager Pint', '1'],
+    ]);
+    expect(outcome.days).toEqual([{ date: '2026-11-02', items: { a1: 3 } }]);
+    expect(outcome).toMatchObject({ firstDate: '2026-11-02', lastDate: '2026-11-02' });
+  });
+
   test('a day above 100,000 servings of one item is flagged', () => {
     expect(match([['2026-11-01', 'Lager Pitcher', '30000']]).overLimit).toBe(1);
     expect(match([['2026-11-01', 'Lager Pitcher', '20000']]).overLimit).toBe(0);
