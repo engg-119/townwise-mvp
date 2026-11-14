@@ -23,7 +23,10 @@ import { weekdayOf } from '../src/time-zones.ts';
 
 const TODAY = '2026-11-05';
 const SHOWN = 'Shown to the owner under your reply. Describe it in a sentence or two; don’t repeat every figure.';
+const SHOWN_FORECAST = `${SHOWN} Give the forecast as its range.`;
 const NO_SALES = { available: false, reason: 'No sales in this range, so nothing was shown.' };
+const NO_SALES_OR_FORECAST = { available: false, reason: 'No sales or published forecast in this range, so nothing was shown.' };
+const GUESTS_ONLY = { available: false, reason: 'Townwise forecasts guests only, so there are no net sales to show for future days.' };
 const run = { model: 'Townwise demand model v0', madeAt: '2026-09-30' };
 
 function req(
@@ -52,15 +55,15 @@ describe('the figures of each kind', () => {
     expect(v).toEqual({
       kind: 'daily', metric: 'guests', from: '2026-10-01', to: '2026-10-03', forecast: { model: run.model, madeAt: run.madeAt },
       days: [
-        { date: '2026-10-01', value: 40, low: null, high: null }, { date: '2026-10-02', value: null, low: null, high: null },
-        { date: '2026-10-03', value: 52, low: 45, high: 60 },
+        { date: '2026-10-01', value: 40, low: null, mid: null, high: null }, { date: '2026-10-02', value: null, low: null, mid: null, high: null },
+        { date: '2026-10-03', value: 52, low: 45, mid: 53, high: 60 },
       ],
     });
   });
 
   it('daily: the band rounds low down and high up, as get_forecast does; a closed forecast day has none; no band, no forecast', () => {
     const v = dailyVisual(req('daily', 'guests', '2026-10-01', '2026-10-02'), [day('2026-10-01', 40)], [fc('2026-10-01', 44.6, 59.2), fc('2026-10-02', null, null)], run);
-    expect(v).toMatchObject({ days: [{ low: 44, high: 60 }, { low: null, high: null }], forecast: run });
+    expect(v).toMatchObject({ days: [{ low: 44, high: 60 }, { low: null, mid: null, high: null, status: 'closed' }], forecast: run });
     const none = dailyVisual(req('daily', 'guests', '2026-10-01', '2026-10-01'), [day('2026-10-01', 40)], [fc('2026-10-01', null, null)], run);
     expect(none).toMatchObject({ forecast: null, days: [{ value: 40, low: null, high: null }] });
     expect(dailyVisual(req('daily', 'guests', '2026-10-01', '2026-10-01'), [day('2026-10-01', 40)], [], null)).toMatchObject({ forecast: null });
@@ -72,14 +75,38 @@ describe('the figures of each kind', () => {
     // A day the model closed that a private event of 70 opened.
     const opened: ForecastDayView = { ...fc('2026-10-03', null, null), status: 'open', low: 70, mid: 70, high: 70, noteGuests: 70 };
     const v = dailyVisual(req('daily', 'guests', '2026-10-01', '2026-10-03'), [], [noted, booked, opened], run);
-    expect(v).toMatchObject({ days: [{ low: 115, high: 130 }, { low: null, high: null }, { low: 70, high: 70 }], forecast: run });
+    expect(v).toMatchObject({
+      days: [{ low: 115, mid: 123, high: 130 }, { low: null, mid: null, high: null, status: 'booked' }, { low: 70, mid: 70, high: 70 }], forecast: run,
+    });
+  });
+
+  it('daily: the middle rounds to the nearest guest, as get_forecast gives it; a status only on a closed or booked day', () => {
+    const open: ForecastDayView = { ...fc('2026-11-16', 117.4, 255.2), mid: 180.5 };
+    const quiet: ForecastDayView = { ...fc('2026-11-17', 60.9, 90.1), mid: 75.49 };
+    const closed = fc('2026-11-18', null, null);
+    const booked: ForecastDayView = { ...fc('2026-11-19', 45, 60), status: 'booked', low: null, mid: null, high: null, noteGuests: 50 };
+    const v = dailyVisual(req('daily', 'guests', '2026-11-16', '2026-11-20'), [], [open, quiet, closed, booked], run);
+    expect(v).toEqual({
+      kind: 'daily', metric: 'guests', from: '2026-11-16', to: '2026-11-20', forecast: run,
+      days: [
+        { date: '2026-11-16', value: null, low: 117, mid: 181, high: 256 },
+        { date: '2026-11-17', value: null, low: 60, mid: 75, high: 91 },
+        { date: '2026-11-18', value: null, low: null, mid: null, high: null, status: 'closed' },
+        { date: '2026-11-19', value: null, low: null, mid: null, high: null, status: 'booked' },
+        { date: '2026-11-20', value: null, low: null, mid: null, high: null },
+      ],
+    });
+    // Net sales never carry the forecast's middle or status.
+    expect(dailyVisual(req('daily', 'netSales', '2026-11-18', '2026-11-18'), [], [closed], run)).toMatchObject({
+      days: [{ date: '2026-11-18', value: null, low: null, mid: null, high: null }], forecast: null,
+    });
   });
 
   it('daily net sales never carries a band, and gives dollars', () => {
     const v = dailyVisual(req('daily', 'netSales', '2026-10-01', '2026-10-02'), [day('2026-10-01', 40, 123_456), day('2026-10-02', 52, null)], [fc('2026-10-01', 45, 60)], run);
     expect(v).toEqual({
       kind: 'daily', metric: 'netSales', from: '2026-10-01', to: '2026-10-02', forecast: null,
-      days: [{ date: '2026-10-01', value: 1234.56, low: null, high: null }, { date: '2026-10-02', value: null, low: null, high: null }],
+      days: [{ date: '2026-10-01', value: 1234.56, low: null, mid: null, high: null }, { date: '2026-10-02', value: null, low: null, mid: null, high: null }],
     });
   });
 
@@ -247,6 +274,7 @@ describe('show_visual’s run', () => {
       // The forecast lab's fields (#59); show_visual reads neither.
       role: 'member',
       actor: { actorUserId: '000000000000000000000002', actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null },
+      turn: { readUntrusted: false },
     };
     return { tc, dayReads, windowReads };
   }
@@ -270,10 +298,10 @@ describe('show_visual’s run', () => {
     expect(visual).toMatchObject({ kind: 'daily', forecast: { model: 'Townwise demand model v2', madeAt: '2026-10-26' } });
     if (visual?.kind !== 'daily') throw new Error('not daily');
     expect(visual.days).toHaveLength(46);
-    expect(visual.days[0]).toEqual({ date: '2026-10-01', value: 40, low: 30, high: 50 });
-    expect(visual.days.find((d) => d.date === '2026-11-13')).toEqual({ date: '2026-11-13', value: 60, low: 50, high: 70 });
-    // The model reads the same figures, with what to do with them.
-    expect(content).toEqual({ shown: SHOWN, visual });
+    expect(visual.days[0]).toEqual({ date: '2026-10-01', value: 40, low: 30, mid: 40, high: 50 });
+    expect(visual.days.find((d) => d.date === '2026-11-13')).toEqual({ date: '2026-11-13', value: 60, low: 50, mid: 60, high: 70 });
+    // The model reads the same figures, with what to do with them: Nov 13 is a forecast day from today on.
+    expect(content).toEqual({ shown: SHOWN_FORECAST, visual });
   });
 
   it('daily net sales never read the forecast; metrics read the comparison range too', async () => {
@@ -304,6 +332,69 @@ describe('show_visual’s run', () => {
       .toMatchObject({ rows: [{ guests: null, netSales: null }, { guests: null, netSales: 50 }] });
   });
 
+  it('daily guests for days with no sales yet show the published forecast, and the model is told to give it as its range', async () => {
+    // The incident: next week, no sales yet, a published forecast. Mon Nov 9 to Sun Nov 15, today Thu Nov 5.
+    const week = ['2026-11-09', '2026-11-10', '2026-11-11', '2026-11-12', '2026-11-13', '2026-11-14', '2026-11-15'];
+    const forecastDays = week.map((date, i): ForecastDayView => (i === 2 ? fc(date, null, null) : { ...fc(date, 117.4 + i, 255.2 + i), mid: 180.5 + i }));
+    const newer = runOf('v2', '2026-11-04', '2026-11-05');
+    const { tc, windowReads } = context([], () => ({ ...EMPTY, available: true, reason: null, runs: [newer], days: forecastDays }));
+    const { visual, content } = await shown(tc, { kind: 'daily', metric: 'guests', from: '2026-11-09', to: '2026-11-15', by: null, compare: null });
+    expect(windowReads).toEqual([{ from: '2026-11-09', to: '2026-11-15' }]);
+    if (visual?.kind !== 'daily') throw new Error('not daily');
+    expect(visual.forecast).toEqual({ model: 'Townwise demand model v2', madeAt: '2026-11-05' });
+    expect(visual.days.slice(0, 3)).toEqual([
+      { date: '2026-11-09', value: null, low: 117, mid: 181, high: 256 },
+      { date: '2026-11-10', value: null, low: 118, mid: 182, high: 257 },
+      { date: '2026-11-11', value: null, low: null, mid: null, high: null, status: 'closed' },
+    ]);
+    expect(content).toEqual({ shown: SHOWN_FORECAST, visual });
+  });
+
+  it('a range with values and forecast bands keeps both; the forecast line goes only with forecast days from today on', async () => {
+    // Nov 3 and 4 have sales; Nov 3 to 7 have bands, Nov 5 (today) on are forecast days.
+    const covered = ['2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06', '2026-11-07'].map((date) => fc(date, 40, 60));
+    const mixed = context([day('2026-11-03', 44), day('2026-11-04', 58)], () => ({ ...EMPTY, available: true, reason: null, runs: [runOf('v2', '2026-11-01', '2026-11-02')], days: covered }));
+    const both = await shown(mixed.tc, { kind: 'daily', metric: 'guests', from: '2026-11-03', to: '2026-11-07', by: null, compare: null });
+    expect(both.visual).toMatchObject({
+      days: [
+        { value: 44, low: 40, mid: 50, high: 60 }, { value: 58, low: 40, mid: 50, high: 60 }, { value: null, low: 40, mid: 50, high: 60 },
+        { value: null, low: 40 }, { value: null, low: 40 },
+      ],
+    });
+    expect(both.content).toMatchObject({ shown: SHOWN_FORECAST });
+    // A past range with bands is shown as before: its bands are what was forecast, not a forecast to give.
+    const past = context([day('2026-10-01', 44)], () => ({ ...EMPTY, available: true, reason: null, runs: [runOf('v1', '2026-09-15', '2026-09-16')], days: [fc('2026-10-01', 40, 60)] }));
+    expect((await shown(past.tc, { kind: 'daily', metric: 'guests', from: '2026-10-01', to: '2026-10-02', by: null, compare: null })).content)
+      .toMatchObject({ shown: SHOWN, visual: { days: [{ value: 44, low: 40, mid: 50, high: 60 }, { value: null, low: null, mid: null, high: null }] } });
+  });
+
+  it('days from today on whose forecast only closes or books them are still shown; the range line needs a band', async () => {
+    const closedWeek = context([], () => ({ ...EMPTY, available: true, reason: null, runs: [runOf('v2', '2026-11-04', '2026-11-05')], days: [fc('2026-11-09', null, null)] }));
+    const { visual, content } = await shown(closedWeek.tc, { kind: 'daily', metric: 'guests', from: '2026-11-09', to: '2026-11-10', by: null, compare: null });
+    expect(visual).toMatchObject({ forecast: null, days: [{ status: 'closed' }, { low: null }] });
+    expect(content).toMatchObject({ shown: SHOWN });
+  });
+
+  it('says why nothing was shown: no sales or forecast from today on, net sales after today, a past range with no sales', async () => {
+    // No published run: the forecast is read, and there is nothing to show.
+    const none = context([]);
+    expect(await shown(none.tc, { kind: 'daily', metric: 'guests', from: '2026-11-09', to: '2026-11-15', by: null, compare: null }))
+      .toEqual({ visual: undefined, content: NO_SALES_OR_FORECAST });
+    expect(none.windowReads).toEqual([{ from: '2026-11-09', to: '2026-11-15' }]);
+    // A range reaching today counts too, and a band only before today is no forecast to show.
+    const before = context([], () => ({ ...EMPTY, available: true, reason: null, runs: [runOf('v1', '2026-10-01', '2026-10-02')], days: [fc('2026-11-04', 40, 60)] }));
+    expect(await shown(before.tc, { kind: 'daily', metric: 'guests', from: '2026-11-04', to: '2026-11-06', by: null, compare: null }))
+      .toEqual({ visual: undefined, content: NO_SALES_OR_FORECAST });
+    // Net sales after today: the forecast is of guests only, and it is never read.
+    const net = context([]);
+    expect(await shown(net.tc, { kind: 'daily', metric: 'net_sales', from: '2026-11-06', to: '2026-11-12', by: null, compare: null }))
+      .toEqual({ visual: undefined, content: GUESTS_ONLY });
+    // A net sales range from today on is not wholly after it, so it has no sales, as before.
+    expect(await shown(net.tc, { kind: 'daily', metric: 'net_sales', from: TODAY, to: '2026-11-12', by: null, compare: null }))
+      .toEqual({ visual: undefined, content: NO_SALES });
+    expect(net.windowReads).toEqual([]);
+  });
+
   it('reads the notes, the rule schedules and the 8 weeks before the range to find closed and likely-closed days (spec D32)', async () => {
     // Mondays of 100 from Aug 3; Oct 5 near empty (likely closed), Oct 12 under a closure note, Oct 19 under a closure rule
     // with its 90 real guests (they beat the rule), Oct 26 the town's today in a later read.
@@ -332,6 +423,19 @@ describe('show_visual’s run', () => {
     expect(visualOf('not json')).toBeNull();
     expect(visualOf(JSON.stringify({ shown: SHOWN, visual: { ...visual, kind: 'heatmap' } }))).toBeNull();
     expect(visualOf(JSON.stringify({ shown: SHOWN, visual: { kind: 'breakdown', metric: 'guests', from: '2026-10-01', to: '2026-10-03', by: 'weekday' } }))).toBeNull();
+  });
+
+  it('visualOf rebuilds a daily visual stored before mid and status, with mid null, and keeps a status', () => {
+    const old = {
+      kind: 'daily', metric: 'guests', from: '2026-10-01', to: '2026-10-02', forecast: run,
+      days: [{ date: '2026-10-01', value: 40, low: 30, high: 50 }, { date: '2026-10-02', value: null, low: null, high: null }],
+    };
+    expect(visualOf(JSON.stringify({ shown: SHOWN, visual: old }))).toEqual({
+      ...old, days: [{ date: '2026-10-01', value: 40, low: 30, mid: null, high: 50 }, { date: '2026-10-02', value: null, low: null, mid: null, high: null }],
+    });
+    const visual = dailyVisual(req('daily', 'guests', '2026-11-09', '2026-11-10'), [], [{ ...fc('2026-11-09', 40, 60), mid: 50.4 }, fc('2026-11-10', null, null)], run);
+    expect(visualOf(JSON.stringify({ shown: SHOWN_FORECAST, visual }))).toEqual(visual);
+    expect(visualOf(JSON.stringify({ shown: SHOWN, visual: { ...old, days: [{ ...old.days[0], mid: 40, status: 'open' }] } }))).toBeNull();
   });
 
   it('has no input or result view: the visual under the reply is what the owner sees', () => {

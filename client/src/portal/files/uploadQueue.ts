@@ -53,8 +53,8 @@ export interface QueueSnapshot {
 }
 
 export interface UploadQueue extends QueueSnapshot {
-  /** Drag and drop or the picker; any number of files. */
-  add: (files: readonly UploadSource[]) => void;
+  /** Drag and drop or the picker; any number of files. Answers the new rows' keys, in order ([] when no queue runs). */
+  add: (files: readonly UploadSource[]) => string[];
   /** Stops a file and deletes what the server has of it; a waiting file just leaves the queue. */
   cancel: (key: string) => void;
   /**
@@ -156,7 +156,8 @@ function stopsQueue(error: unknown): boolean {
 }
 
 export interface QueueEngine {
-  add: (files: readonly UploadSource[]) => void;
+  /** Answers the new rows' keys, in order. */
+  add: (files: readonly UploadSource[]) => string[];
   cancel: (key: string) => void;
   forget: (key: string) => void;
   snapshot: () => QueueSnapshot;
@@ -429,10 +430,12 @@ export function createUploadQueue(deps: {
     syncSampler();
   }
 
-  function add(files: readonly UploadSource[]): void {
-    if (disposed) return;
+  function add(files: readonly UploadSource[]): string[] {
+    if (disposed) return [];
+    const keys: string[] = [];
     for (const source of files) {
       counter += 1;
+      keys.push(`u${String(counter)}`);
       const entry: Entry = {
         key: `u${String(counter)}`, source, state: 'waiting', fileId: null, file: null, error: null, controller: null,
         acked: 0, loaded: 0, transferred: 0, speed: null, sampleAt: now(), sampleTransferred: 0, sendingSince: null,
@@ -445,6 +448,7 @@ export function createUploadQueue(deps: {
       entries.push(entry);
     }
     pump();
+    return keys;
   }
 
   function cancel(key: string): void {
@@ -496,7 +500,7 @@ export function useUploadQueue(locationId: string, opts: { purpose?: FilePurpose
     };
   }, [api, locationId, purpose, readOnly, owner]);
 
-  const add = useCallback((files: readonly UploadSource[]) => { engine.current?.add(files); }, []);
+  const add = useCallback((files: readonly UploadSource[]) => engine.current?.add(files) ?? [], []);
   const cancel = useCallback((key: string) => { engine.current?.cancel(key); }, []);
   const forget = useCallback((key: string) => { engine.current?.forget(key); }, []);
   // A snapshot of a queue this screen no longer uses (another location, or view-as) is not shown.

@@ -20,7 +20,7 @@ import { localToday } from '../../src/portal/locations/dates';
 import { resetProfiles } from '../../src/portal/profile/useProfile';
 import type { MeResponse } from '../../src/portal/schemas';
 import { theme } from '../../src/theme';
-import { fakeChatApi, PROPOSAL, PROPOSAL_ID, refusal as chatRefusal, SALES_STEP, SUMMARY, type FakeChatApi, type LiveTurn } from '../helpers/chat';
+import { CONVERSATION, fakeChatApi, PROPOSAL, PROPOSAL_ID, refusal as chatRefusal, SALES_STEP, SUMMARY, type FakeChatApi, type LiveTurn } from '../helpers/chat';
 import { ACCESS, fakePortalApi, LOCATIONS, locationOf, meOf, orgOf, refusal, staffMe, viewAsMe } from '../helpers/portal';
 import { renderApp } from '../helpers/renderApp';
 import { PUBLISHED, serveAbout } from './about-fakes';
@@ -305,6 +305,33 @@ describe('conversations', () => {
     const card = (await screen.findByText('Proposed note')).parent;
     expect(StyleSheet.flatten(card?.props.style)).toMatchObject({ borderWidth: 1, borderRadius: 0 });
     expect(StyleSheet.flatten(screen.getByTestId('user-bubble').props.style)).toMatchObject({ borderWidth: 1, borderRadius: 16 });
+  });
+
+  test('the person’s files show as chips over the bubble, with no thumbnail; the composer has no + (D20, D36)', async () => {
+    const chat = fakeChatApi();
+    chat.conversation = {
+      ...CONVERSATION,
+      messages: [
+        {
+          ...CONVERSATION.messages[0],
+          attachments: [
+            { ref: 'f_0123456789abcdef01234567', kind: 'picture', name: 'patio.png', state: 'on' },
+            { ref: 'f_76543210fedcba9876543210', kind: 'pdf', name: null, state: 'gone' },
+          ],
+        },
+        CONVERSATION.messages[1],
+      ],
+    };
+    await renderAgent(meOf(ACCESS.member), chat);
+    await openEarlierChat();
+    const files = screen.getByLabelText('Files attached');
+    expect(within(files).getByRole('link', { name: 'patio.png, Picture. Open on Your data' })).toBeTruthy();
+    expect(within(files).getByText('No longer on Your data')).toBeTruthy();
+    expect(within(files).queryByRole('link', { name: /PDF/ })).toBeNull();
+    expect(screen.queryByTestId('attachment-thumb')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Attach files' })).toBeNull();
+    // Nothing asked for the picture's item or bytes.
+    expect(chat.writes.filter((write) => write.path.includes('/files/'))).toEqual([]);
   });
 });
 

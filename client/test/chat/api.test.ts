@@ -117,3 +117,54 @@ it('sends a turn: a new conversation’s first message, a message after a node, 
   for (const turn of api.turns) turn.end();
   await Promise.all(sent);
 });
+
+it('reads the files a person’s message carries (D36): an unknown kind is a file, an unknown state is gone, an entry with no ref is left out', async () => {
+  const api = fakeChatApi();
+  const [asked, answered] = CONVERSATION.messages;
+  api.conversation = {
+    ...CONVERSATION,
+    messages: [
+      {
+        ...asked,
+        attachments: [
+          { ref: 'f_0123456789abcdef01234567', kind: 'picture', name: 'patio.png', state: 'on' },
+          { ref: 'f_1111111111111111aaaaaaaa', kind: 'hologram', name: null, state: 'off' },
+          { ref: 'f_2222222222222222bbbbbbbb', kind: 'pdf', name: 'menu.pdf', state: 'archived' },
+          { kind: 'text', name: 'no-ref.txt', state: 'on' },
+        ],
+      },
+      // A reply never carries files, whatever the answer says.
+      { ...answered, attachments: [{ ref: 'f_3333333333333333cccccccc', kind: 'text', name: 'x.txt', state: 'on' }] },
+    ],
+  };
+  const load = await loadConversation(api, 'l1', 'c1');
+  expect(load.messages[0]?.attachments).toEqual([
+    { ref: 'f_0123456789abcdef01234567', kind: 'picture', name: 'patio.png', state: 'on' },
+    { ref: 'f_1111111111111111aaaaaaaa', kind: 'file', name: null, state: 'off' },
+    { ref: 'f_2222222222222222bbbbbbbb', kind: 'pdf', name: 'menu.pdf', state: 'gone' },
+  ]);
+  expect(load.messages[1]?.attachments).toEqual([]);
+  // A server from before attachments sends none.
+  api.conversation = CONVERSATION;
+  expect((await loadConversation(api, 'l1', 'c1')).messages.map((message) => message.attachments)).toEqual([[], []]);
+});
+
+it('sends a message’s files as refs only when there are any, and a regenerate never', async () => {
+  const api = fakeChatApi();
+  const signal = new AbortController().signal;
+  const refs = ['f_0123456789abcdef01234567'];
+  const sent = [
+    sendTurn(api, 'l1', { conversationId: null, content: 'Read this', attachments: refs }, signal, () => undefined),
+    sendTurn(api, 'l1', { conversationId: 'c1', content: 'And this', parentId: 'a1', attachments: refs }, signal, () => undefined),
+    sendTurn(api, 'l1', { conversationId: 'c1', content: 'No files', attachments: [] }, signal, () => undefined),
+    sendTurn(api, 'l1', { conversationId: 'c1', replyTo: 'u1' }, signal, () => undefined),
+  ];
+  expect(api.turns.map((turn) => turn.body)).toEqual([
+    { content: 'Read this', attachments: refs },
+    { conversationId: 'c1', content: 'And this', parentId: 'a1', attachments: refs },
+    { conversationId: 'c1', content: 'No files' },
+    { conversationId: 'c1', replyTo: 'u1' },
+  ]);
+  for (const turn of api.turns) turn.end();
+  await Promise.all(sent);
+});

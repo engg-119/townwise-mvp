@@ -7,7 +7,7 @@ import {
 import { useReducedMotion } from '../../motion';
 import { formatCount } from '../../portal/format';
 import { useBreakpoint } from '../../portal/hooks';
-import { webAria } from '../../portal/ui/aria';
+import { ids, webAria } from '../../portal/ui/aria';
 import { theme } from '../../theme';
 import { composerKey, EXAMPLE_MS, nextExample } from '../composerKeys';
 import { ChatButton } from './controls';
@@ -20,7 +20,8 @@ import { ArrowUp, Expand, Shrink, StopSquare } from './icons';
 // then scrolls; from 3,600 characters a counter shows; the help line sits under the box. The input's name is the
 // label (nothing visible). On web Enter sends (not while a reply streams, not while an input method composes),
 // Shift+Enter is a new line, and Tab in an empty composer accepts the shown example; on native Return is a new
-// line and the button sends. The examples rotate on web from 641px, never under reduced motion.
+// line and the button sends. The examples rotate on web from 641px, never under reduced motion. Files attached to the
+// message (web, D36) show as a first row inside the box, above the input, and the placeholder then asks about them.
 
 export const MAX_MESSAGE = 4000;
 const COUNTER_FROM = 3600;
@@ -29,6 +30,7 @@ const ONE_LINE_BOX = 44;
 const INPUT_PADDING = 20;
 export const COMPOSER_LABEL = 'Ask about your sales, or tell TownwiseAI what it can’t see';
 const STATIC_PLACEHOLDER = 'Ask about a closure, an event or an unusual day';
+export const ATTACHED_PLACEHOLDER = 'Ask about the attached file';
 
 export interface ComposerHandle { focus: () => void }
 
@@ -50,10 +52,19 @@ export interface ComposerProps {
   /** 'landing': centered in an empty conversation; 'dock': under the thread. Same box either way. */
   placement: 'landing' | 'dock';
   /**
-   * A leading slot inside the pill, before the input: the + that adds a file to Your data (ComposerFiles), on web
-   * while stored files are on. Rendered only when given.
+   * A leading slot inside the pill, before the input: the + that attaches files (ComposerFiles), on web while stored
+   * files are on. Rendered only when given.
    */
   leading?: React.ReactNode;
+  /**
+   * The attachments slot: the message's file chips (ComposerFiles), a first row inside the box, in normal flow above
+   * the input. Rendered only when given.
+   */
+  attachments?: React.ReactNode;
+  /** Files are on the message: the placeholder asks about them, and no example shows. */
+  attached?: boolean;
+  /** Another line Send is described by: why it waits (a file still uploading). */
+  sendDescribedBy?: string | null;
 }
 
 interface KeyEvent {
@@ -114,7 +125,8 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   const empty = props.draft === '';
   // Sending empties the draft, and the box goes back to its size.
   if (empty && expanded) setExpanded(false);
-  const rotating = web && !phone && props.examples.length > 0;
+  const attached = props.attached === true;
+  const rotating = web && !phone && !attached && props.examples.length > 0;
   const example = rotating ? (props.examples[index % props.examples.length] ?? null) : null;
   useImperativeHandle(props.focusRef, () => ({ focus: () => { input.current?.focus(); } }), []);
 
@@ -173,12 +185,14 @@ export function Composer(props: ComposerProps): React.JSX.Element {
 
   const helpId = 'composer-help';
   const hasText = props.draft.trim() !== '';
+  const sendDescribedBy = ids(props.readOnlyId, props.sendDescribedBy) ?? null;
   let button: React.JSX.Element;
-  if (props.streaming && hasText) button = <ActionButton label="Stop and send" icon="send" disabled={readOnly || !props.canSend} describedBy={props.readOnlyId} onPress={props.onStopAndSend} />;
+  if (props.streaming && hasText) button = <ActionButton label="Stop and send" icon="send" disabled={readOnly || !props.canSend} describedBy={sendDescribedBy} onPress={props.onStopAndSend} />;
   else if (props.streaming) button = <ActionButton label="Stop" icon="stop" disabled={readOnly} describedBy={props.readOnlyId} onPress={props.onStop} />;
-  else button = <ActionButton label="Send" icon="send" disabled={readOnly || !props.canSend} describedBy={props.readOnlyId} onPress={props.onSend} />;
+  else button = <ActionButton label="Send" icon="send" disabled={readOnly || !props.canSend} describedBy={sendDescribedBy} onPress={props.onSend} />;
 
-  const placeholder = phone ? 'Ask TownwiseAI' : (example ?? STATIC_PLACEHOLDER);
+  let placeholder = phone ? 'Ask TownwiseAI' : (example ?? STATIC_PLACEHOLDER);
+  if (attached) placeholder = ATTACHED_PLACEHOLDER;
   const field = (
     <TextInput
       ref={input}
@@ -203,11 +217,15 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   const counter = props.draft.length >= COUNTER_FROM
     ? <Text style={styles.counter}>{`${formatCount(props.draft.length)} of ${formatCount(MAX_MESSAGE)}`}</Text>
     : null;
-  // One flat row of keyed children so the input is never remounted (and never loses focus) when the box grows;
-  // grown, the input takes the whole first line and the rest wraps beneath it.
+  // One flat row of keyed children so the input is never remounted (and never loses focus) when the box grows or a
+  // file is attached; grown, the input takes the whole first line and the rest wraps beneath it. The attachments come
+  // first, a whole line of their own (leaving Expand its corner).
   const leading = props.leading === undefined || props.leading === null
     ? null
     : <View key="leading" style={styles.leading}>{props.leading}</View>;
+  const files = props.attachments === undefined || props.attachments === null
+    ? null
+    : <View key="attachments" testID="composer-attachments" style={[styles.attachments, grown ? styles.attachmentsGrown : null]}>{props.attachments}</View>;
   const fieldKeyed = <View key="field" style={grown ? styles.fieldGrown : styles.fieldRow}>{field}</View>;
   const size = grown ? (
     <View key="size" style={styles.size}>
@@ -221,8 +239,10 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     </View>
   ) : null;
   const box = (
-    <View style={[styles.box, grown ? styles.boxGrown : null, focused ? styles.boxFocused : null]}>
-      {grown ? [fieldKeyed, leading, <View key="button" style={styles.buttonEnd}>{button}</View>, size] : [leading, fieldKeyed, <View key="button" style={styles.buttonEnd}>{button}</View>]}
+    <View style={[styles.box, grown || files !== null ? styles.boxGrown : null, focused ? styles.boxFocused : null]}>
+      {grown
+        ? [files, fieldKeyed, leading, <View key="button" style={styles.buttonEnd}>{button}</View>, size]
+        : [files, leading, fieldKeyed, <View key="button" style={styles.buttonEnd}>{button}</View>]}
     </View>
   );
   return (
@@ -257,6 +277,9 @@ const styles = StyleSheet.create({
   inputGrown: { paddingRight: 52 },
   size: { position: 'absolute', top: 5, right: 5 },
   fieldGrown: { width: '100%' },
+  attachments: { flexBasis: '100%', minWidth: 0 },
+  // Grown, Expand sits at the box's top right, over this row: the chips leave it room.
+  attachmentsGrown: { paddingRight: 48 },
   buttonEnd: { marginLeft: 'auto' },
   inputReadOnly: { color: c.text3 },
   leading: { alignSelf: 'flex-end', justifyContent: 'center', minHeight: 44 },

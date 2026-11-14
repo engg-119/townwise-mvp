@@ -17,8 +17,10 @@ import { INITIAL_PIN, nextPin, type PinEvent, type PinState } from '../scrollPin
 import { nextFallback, suggestionsFor } from '../suggestions';
 import { readsLine, toolLine, type ToolContext } from '../tools';
 import { openQuestions, type AgentPanelState } from '../useAgentPanel';
+import type { MessageAttachment } from '../api';
 import { canSend, messageText, stepsOf, type ChatMessage, type Telling, type TuningChat } from '../useTuningChat';
 import { budgetLines } from './AgentSidePanel';
+import { ChatDrop } from './ChatDrop';
 import { ChatHeader, PanelButton } from './ChatHeader';
 import { Composer, type ComposerHandle } from './Composer';
 import { useComposerFiles } from './ComposerFiles';
@@ -44,6 +46,10 @@ import { UserMessage } from './UserMessage';
 // version shows after a switch (and, while a saved conversation loads, its skeleton's “Loading the conversation…”). The log keeps its end in view while pinned (scrollPin.ts), and shows Latest, above
 // the dock, when a reply grows below the view; the dock growing or shrinking moves the end, never the pin. The header
 // sits under the portal's top bar on every screen, above what scrolls.
+//
+// Files (web, D36): the composer's + and a drop anywhere on the page (ChatDrop, drawn after the body and outside the
+// dock) attach files to the message as chips inside the composer's box (ComposerFiles). Send waits while one
+// uploads, carries the ready ones, and gives them back if the turn is taken back; each conversation keeps its own.
 
 export interface AgentChatContext extends ToolContext {
   locationId: string;
@@ -89,6 +95,15 @@ function announcementOf(chat: TuningChat, ctx: ToolContext, before: ReadonlySet<
   return reply.state === 'stopped' ? 'You stopped the reply' : 'TownwiseAI’s reply didn’t finish';
 }
 
+/** Why files can't be attached now: the drop overlay says so while the drag is over the page. */
+export const DROP_BLOCKED = {
+  loading: 'TownwiseAI is still loading, so files can’t be attached yet.',
+  off: 'TownwiseAI isn’t available here, so files can’t be attached.',
+  viewAs: 'View-as is read-only, so files can’t be attached.',
+  filesOff: 'File storage is off right now, so files can’t be attached.',
+  budget: 'This month’s TownwiseAI budget is used up, so files can’t be attached.',
+} as const;
+
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 /** The docked composer's last rotating example, once there are sales to tell about. */
 const SATURDAY = 'Tell me about last Saturday';
@@ -114,8 +129,8 @@ export function AgentChat(props: {
   const reduced = useReducedMotion();
   const scroll = useRef<Scroller>(null);
   const composer = useRef<ComposerHandle>(null);
-  // The composer's + (web, stored files on): files it added to Your data, and the lines about them.
-  const files = useComposerFiles(ctx.locationId, props.readOnlyId);
+  // The composer's + and the page's drop (web, stored files on): the files on the message, and the lines about them.
+  const files = useComposerFiles(ctx.locationId, props.readOnlyId, () => { composer.current?.focus(); });
   const toldFiles = useRef(new Set<string>());
   // The pin lives in a ref (every scroll event moves it); only whether Latest shows is drawn.
   const pin = useRef<PinState>(INITIAL_PIN);
@@ -190,10 +205,15 @@ export function AgentChat(props: {
     docking.current = landing ? from : null;
     setBefore(new Set(state.messages.map((message) => message.key)));
     setSaid(null);
-    files.clear();
     const result = run();
     apply({ type: 'send' });
     return result;
+  }
+
+  /** The composer's Send or Stop and send: the message's ready files go with it, and come back if it is taken back. */
+  function sendFromComposer(go: (attachments: MessageAttachment[], returned: () => void) => void): void {
+    const taken = files.take();
+    send(() => { go(taken.attachments, taken.restore); }, 'composer');
   }
 
   // A question card's message: sent as a chip's is, and (`focus`) on web focus goes where Stop is, as after a next question.
@@ -204,7 +224,10 @@ export function AgentChat(props: {
 
   useImperativeHandle(props.handleRef, () => ({ tell, focusComposer: () => { composer.current?.focus(); } }));
 
-  function opened(run: () => void): void {
+  /** The person opens conversation `to` (null: a new one): the composer's files stay with the one shown, as its draft does. */
+  function opened(run: () => void, to: string | null): void {
+    // Opening and New chat do nothing while a reply streams (useTuningChat), so the files stay too.
+    if (!state.streaming) files.switchTo(state.conversationId, to);
     docking.current = null;
     docked.current = null;
     switched.current = true;
@@ -219,14 +242,38 @@ export function AgentChat(props: {
     setSaid({ words, n: saidCount.current });
   }
 
-  // A file the + put on Your data is news once, in the polite region; a refused or failed one shows as an alert.
+  // A file attached to the message, or taken off it, is news once, in the polite region; one that couldn't be added
+  // shows as an alert.
   useEffect(() => {
-    for (const line of files.lines) {
-      if (line.state !== 'added' || toldFiles.current.has(line.key)) continue;
+    for (const line of files.news) {
+      if (toldFiles.current.has(line.key)) continue;
       toldFiles.current.add(line.key);
       announce(line.text);
     }
   });
+
+  // Why a drop can't attach files now, in the overlay's words; null when it can.
+  function dropBlocked(): string | null {
+    if (state.status === 'loading' || files.available === null) return DROP_BLOCKED.loading;
+    if (state.status !== 'ready' || !state.enabled) return DROP_BLOCKED.off;
+    if (props.readOnlyId !== null) return DROP_BLOCKED.viewAs;
+    if (!files.available) return DROP_BLOCKED.filesOff;
+    if (state.budget?.exhausted === true) return DROP_BLOCKED.budget;
+    return null;
+  }
+  const blocked = dropBlocked();
+  const drop = (
+    <ChatDrop
+      blocked={blocked}
+      onFiles={(dropped) => {
+        // Past the 5 a message carries, the alert says how many weren't added.
+        const taken = files.add(dropped);
+        const [only] = dropped;
+        if (taken === 1 && only !== undefined) announce(`Attaching ${only.name} to your message.`);
+        else if (taken > 1) announce(`Attaching ${String(taken)} files to your message.`);
+      }}
+    />
+  );
 
   // The message views act through the chat with the page's bookkeeping: an edit or a regenerate is a send (its reply
   // is news, and the log follows it); a version switch draws every message anew, and none of that is news.
@@ -254,13 +301,15 @@ export function AgentChat(props: {
     </View>
   );
 
-  if (state.status === 'loading') return <View style={styles.fill}><LoadingLine text="Loading TownwiseAI…" /></View>;
-  if (state.status === 'not_found') return <View style={styles.fill}><Text style={styles.body}>This location wasn’t found.</Text></View>;
+  // Every state of the page catches a drop of files, so the browser never opens one in its place.
+  if (state.status === 'loading') return <View style={styles.fill}><LoadingLine text="Loading TownwiseAI…" />{drop}</View>;
+  if (state.status === 'not_found') return <View style={styles.fill}><Text style={styles.body}>This location wasn’t found.</Text>{drop}</View>;
   if (state.status === 'failed') {
     return (
       <View style={styles.fill}>
         {panelOnly}
         <ErrorNotice message={state.loadError ?? 'Something went wrong.'} onRetry={chat.reload} />
+        {drop}
       </View>
     );
   }
@@ -270,6 +319,7 @@ export function AgentChat(props: {
         {panelOnly}
         <Text style={styles.body}>TownwiseAI isn’t turned on yet.</Text>
         {readOnlyLine}
+        {drop}
       </View>
     );
   }
@@ -283,8 +333,9 @@ export function AgentChat(props: {
   const nextMonth = MONTHS[Number(state.budget?.month.slice(5, 7) ?? '1') % 12]?.slice(0, 3) ?? '';
   // Edit, the versions, the reply actions and Try again wait while a reply streams or a version or conversation loads.
   const canAct = !state.streaming && !state.switching && !state.conversationLoading;
-  // While a reply streams the button is Stop, or Stop and send once there's text, which needs only the text.
-  const sendable = state.streaming ? state.draft.trim() !== '' && !state.switching && !state.conversationLoading : canSend(state);
+  // While a reply streams the button is Stop, or Stop and send once there's text, which needs only the text. Either
+  // waits while a file on the message still uploads.
+  const sendable = !files.uploading && (state.streaming ? state.draft.trim() !== '' && !state.switching && !state.conversationLoading : canSend(state));
 
   /** The three next questions under the newest settled reply: the model's, else three by the fixed rules. */
   function nextOf(reply: ChatMessage, asked: ChatMessage | undefined): readonly string[] {
@@ -308,15 +359,17 @@ export function AgentChat(props: {
       readOnlyId={props.readOnlyId}
       panelOpen={props.panelOpen}
       openQuestions={props.openQuestions}
-      onOpen={(id) => { opened(() => { chat.openConversation(id); }); }}
-      onNew={() => { opened(chat.newConversation); }}
+      onOpen={(id) => { opened(() => { chat.openConversation(id); }, id); }}
+      onNew={() => { opened(chat.newConversation, null); }}
       onDelete={(id) => {
         // Deleting the open conversation shows the landing, which is not a turn taken back.
-        if (id === state.conversationId) {
+        const open = id === state.conversationId;
+        if (open) {
           docked.current = null;
           switched.current = true;
         }
-        return chat.deleteConversation(id);
+        // The landing's composer shows a new conversation's files.
+        return chat.deleteConversation(id).then(() => { if (open) files.switchTo(id, null); });
       }}
       onRename={chat.rename}
       onTogglePanel={props.onTogglePanel}
@@ -328,21 +381,19 @@ export function AgentChat(props: {
   const notices = (
     <>
       {warning === null ? null : <Text style={styles.warning}>{warning}</Text>}
-      {files.lines.map((line) => (line.state === 'failed'
-        ? <ErrorNotice key={line.key} message={line.text} />
-        : <Text key={line.key} style={styles.fileLine}>{line.text}</Text>))}
+      {files.alerts.map((line) => <ErrorNotice key={line.key} message={line.text} />)}
       {state.error === null ? null : (
         <View style={styles.error}>
           <ErrorNotice message={state.error} />
           {state.error.startsWith('This conversation is full') && props.readOnlyId === null ? (
-            <Button variant="link" label="New chat" onPress={() => { opened(chat.newConversation); }} />
+            <Button variant="link" label="New chat" onPress={() => { opened(chat.newConversation, null); }} />
           ) : null}
         </View>
       )}
       {readOnlyLine}
     </>
   );
-  const noticed = warning !== null || files.lines.length > 0 || state.error !== null || props.readOnlyLine !== '';
+  const noticed = warning !== null || files.alerts.length > 0 || state.error !== null || props.readOnlyLine !== '';
 
   function composerAt(placement: 'landing' | 'dock'): React.JSX.Element {
     if (exhausted) {
@@ -361,15 +412,18 @@ export function AgentChat(props: {
         onChange={chat.setDraft}
         streaming={state.streaming}
         canSend={sendable}
-        onSend={() => { send(chat.send, 'composer'); }}
+        onSend={() => { sendFromComposer(chat.send); }}
         onStop={chat.stop}
-        onStopAndSend={() => { send(chat.stopAndSend, 'composer'); }}
+        onStopAndSend={() => { sendFromComposer(chat.stopAndSend); }}
         help={`Leave out guest names. TownwiseAI answers from ${readsLine(ctx)}.`}
         // On the landing the chips under it already show what to ask; under view-as nothing fills the composer.
         examples={placement === 'dock' && props.readOnlyId === null ? examples : []}
         readOnlyId={props.readOnlyId}
         placement={placement}
+        attached={files.count > 0}
+        sendDescribedBy={files.waitId}
         {...(files.button === null ? {} : { leading: files.button })}
+        {...(files.chips === null ? {} : { attachments: files.chips })}
       />
     );
   }
@@ -480,6 +534,7 @@ export function AgentChat(props: {
                   message={message}
                   tree={state.tree}
                   chat={actions}
+                  locationId={ctx.locationId}
                   readOnlyId={props.readOnlyId}
                   busy={!canAct}
                   actions={index === last ? 'always' : 'hover'}
@@ -544,6 +599,8 @@ export function AgentChat(props: {
     <View style={styles.fill}>
       {header}
       {body}
+      {/* After the body and outside the dock, so a drag never changes the dock's measured height. */}
+      {drop}
       <View testID="chat-live" style={styles.live} aria-live="polite" accessibilityLiveRegion="polite">
         <Text key={spoken.n}>{spoken.words}</Text>
       </View>
@@ -578,7 +635,6 @@ const styles = StyleSheet.create({
   skirtLow: { top: SKIRT_TOP },
   body: { ...theme.type.sub, color: c.text2 },
   warning: { ...theme.type.small, color: c.text2, paddingTop: theme.space[2] },
-  fileLine: { ...theme.type.small, color: c.text2, paddingTop: theme.space[2] },
   noSales: { gap: theme.space[2], alignItems: 'flex-start' },
   questions: { gap: theme.space[3], paddingTop: theme.space[4] },
   latest: { position: 'absolute', right: 0, zIndex: 1, backgroundColor: c.ground },

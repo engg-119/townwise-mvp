@@ -44,7 +44,8 @@ export const AUDIT_DETAIL_KEYS = {
   'rule.created': ['locationId', 'via', 'scheduled'],
   'rule.updated': ['locationId', 'scheduled'],
   'rule.deleted': ['locationId'],
-  'chat.turn_completed': ['locationId', 'conversationId', 'model', 'calls', 'inputTokens', 'outputTokens', 'stopReason'],
+  // `attachments` (D36): how many files the person's message carried, only on a turn whose message carried any.
+  'chat.turn_completed': ['locationId', 'conversationId', 'model', 'calls', 'inputTokens', 'outputTokens', 'stopReason', 'attachments'],
   'chat.conversation_deleted': ['locationId', 'conversationId'],
   // U9, TownwiseAI's questions: the question's id holds only dates and a weekday number.
   'agent.question_answered': ['locationId', 'questionId', 'answer'],
