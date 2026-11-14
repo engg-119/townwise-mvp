@@ -36,6 +36,8 @@ function linkNames(region: string, names: readonly string[]): string[] {
 }
 
 const NAV = ['Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Team', 'Settings'];
+/** The sections under More (D38), which open in a row under the bar on native. */
+const MORE = ['Notes', 'Rules', 'Town', 'Your data'];
 
 function navLabels(): string[] {
   return linkNames('Main', NAV);
@@ -45,14 +47,30 @@ function navLink(name: string) {
   return within(screen.getByLabelText('Main')).getByRole('link', { name });
 }
 
+/** A section under More, opening More first when its row is closed. */
+async function moreLink(name: string) {
+  if (screen.queryByLabelText('More') === null) await fireEvent.press(within(screen.getByLabelText('Main')).getByRole('button', { name: 'More' }));
+  return within(screen.getByLabelText('More')).getByRole('link', { name });
+}
+
 describe('the client app top bar (spec 15.2, 15.3)', () => {
   test('members: the organization, the first location’s sections and Settings, the email and Sign out', async () => {
     const signOut = jest.fn(() => Promise.resolve());
     const { router } = await renderApp('/dashboard', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') }), { signOut });
     await screen.findByText('Main Street Bar');
-    expect(navLabels()).toEqual(['Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Settings']);
+    expect(navLabels()).toEqual(['Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Settings']);
+    // Notes, Rules, Town and Your data open in a row under the bar, and More says so.
+    const more = within(screen.getByLabelText('Main')).getByRole('button', { name: 'More' });
+    expect(more.props.accessibilityState).toMatchObject({ expanded: false });
+    expect(screen.queryByLabelText('More')).toBeNull();
+    await fireEvent.press(more);
+    expect(more.props.accessibilityState).toMatchObject({ expanded: true });
+    expect(linkNames('More', NAV)).toEqual(MORE);
     // Off a location page no section is current.
     for (const name of navLabels()) expect(navLink(name).props.accessibilityState).toMatchObject({ selected: false });
+    for (const name of MORE) expect((await moreLink(name)).props.accessibilityState).toMatchObject({ selected: false });
+    await fireEvent.press(more);
+    expect(screen.queryByLabelText('More')).toBeNull();
     expect(screen.getAllByText('Test Group').length).toBeGreaterThan(0);
     expect(screen.getByText(EMAIL)).toBeTruthy();
     await fireEvent.press(screen.getByRole('button', { name: 'Sign out' }));
@@ -68,7 +86,9 @@ describe('the client app top bar (spec 15.2, 15.3)', () => {
   test('org admins add Team', async () => {
     const { router } = await renderApp('/dashboard', fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin') }));
     await screen.findByText('Main Street Bar');
-    expect(navLabels()).toEqual(NAV);
+    expect(navLabels()).toEqual(NAV.filter((name) => !MORE.includes(name)));
+    await moreLink('Town');
+    expect(linkNames('More', NAV)).toEqual(MORE);
     await fireEvent.press(navLink('Team'));
     expect(router.getPathname()).toBe('/team');
   });
@@ -102,8 +122,12 @@ describe('the client app top bar (spec 15.2, 15.3)', () => {
       await renderApp('/dashboard', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') }));
       await screen.findAllByText('Main Street Bar');
       expect(screen.queryByText(EMAIL)).toBeNull();
-      expect(navLabels()).toEqual(['Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Settings']);
+      expect(navLabels()).toEqual(['Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Settings']);
       expect(within(screen.getByLabelText('Sections')).getByLabelText('Main')).toBeTruthy();
+      // More sits in the scrolling row; its row opens under it, outside the scroller.
+      await moreLink('Notes');
+      expect(linkNames('More', NAV)).toEqual(MORE);
+      expect(within(screen.getByLabelText('Sections')).queryByLabelText('More')).toBeNull();
       // The table stacks into label and value pairs.
       const table = screen.getByLabelText('Locations');
       expect(within(table).getAllByText('Sales history')).toHaveLength(2);
@@ -121,10 +145,12 @@ describe('location pages (spec 15.2)', () => {
     expect(navLink('Home').props.accessibilityState).toMatchObject({ selected: true });
     expect(screen.getByRole('link', { name: 'All locations' })).toBeTruthy();
     expect(screen.queryByRole('link', { name: 'Location settings' })).toBeNull();
-    await fireEvent.press(navLink('Notes'));
+    await fireEvent.press(await moreLink('Notes'));
     expect(router.getPathname()).toBe('/locations/l1/notes');
     expect(screen.getByRole('heading', { name: 'Notes' })).toBeTruthy();
-    expect(navLink('Notes').props.accessibilityState).toMatchObject({ selected: true });
+    // Another page closes More's row.
+    expect(screen.queryByLabelText('More')).toBeNull();
+    expect((await moreLink('Notes')).props.accessibilityState).toMatchObject({ selected: true });
     expect(navLink('Home').props.accessibilityState).toMatchObject({ selected: false });
   });
 
@@ -142,11 +168,11 @@ describe('location pages (spec 15.2)', () => {
     const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: rulesFake([ruleOf('r1', 'Closed Mondays')]) });
     const { router } = await renderApp('/locations/l1', api);
     await screen.findByText('Main Street Bar, Hanover, NH');
-    await fireEvent.press(navLink('Rules'));
+    await fireEvent.press(await moreLink('Rules'));
     expect(router.getPathname()).toBe('/locations/l1/rules');
     expect(await screen.findByRole('heading', { name: 'Business rules' })).toBeTruthy();
     expect(await screen.findByText('Closed Mondays')).toBeTruthy();
-    expect(navLink('Rules').props.accessibilityState).toMatchObject({ selected: true });
+    expect((await moreLink('Rules')).props.accessibilityState).toMatchObject({ selected: true });
     expect(navLink('TownwiseAI').props.accessibilityState).toMatchObject({ selected: false });
   });
 
@@ -177,12 +203,12 @@ describe('location pages (spec 15.2)', () => {
     expect(await screen.findByRole('heading', { name: 'Location settings' })).toBeTruthy();
     // On its own page the link is not repeated.
     expect(screen.queryByRole('link', { name: 'Location settings' })).toBeNull();
-    await fireEvent.press(navLink('Notes'));
+    await fireEvent.press(await moreLink('Notes'));
     await fireEvent.press(screen.getByRole('button', { name: 'Location' }));
     await fireEvent.press(screen.getByRole('radio', { name: 'River Grill' }));
     expect(router.getPathname()).toBe('/locations/l2/notes');
     expect(await screen.findByText('River Grill, Norwich, VT')).toBeTruthy();
-    expect(navLink('Notes').props.accessibilityState).toMatchObject({ selected: true });
+    expect((await moreLink('Notes')).props.accessibilityState).toMatchObject({ selected: true });
   });
 
   test('one location has no switcher and no All locations', async () => {

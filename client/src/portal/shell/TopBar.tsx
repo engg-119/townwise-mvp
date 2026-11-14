@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Link } from 'expo-router';
 import {
-  Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent, type LayoutRectangle, type PressableStateCallbackType,
+  Platform, Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent, type LayoutRectangle, type PressableStateCallbackType,
 } from 'react-native';
 
 import { theme } from '../../theme';
@@ -27,6 +27,9 @@ import { ThemeToggle } from './ThemeToggle';
 // nav: the wordmark, kind tag and switch, then “Verified until” and Sign out (the wordmark, kind tag, switch and Sign
 // out are too wide for one 320px row). The client app's second row is then one line in a
 // focusable region that scrolls sideways, kept on the current section.
+// The client app's Notes, Rules, Town and Your data sit under More (D38), a disclosure where the first of them was:
+// on web above 640px its links drop down under it in a `panel` box over the page; on phones and native they take a
+// row under the bar.
 
 export interface TopBarProps {
   kind: 'gate' | 'client' | 'console';
@@ -46,7 +49,9 @@ function hovered(state: PressableStateCallbackType): boolean {
   return (state as { hovered?: boolean }).hovered === true;
 }
 
-function NavLink(props: { item: NavItem; onMeasure?: (href: string, layout: LayoutRectangle) => void }): React.JSX.Element {
+type Measure = (key: string, layout: LayoutRectangle) => void;
+
+function NavLink(props: { item: NavItem; onMeasure?: Measure | undefined; inBox?: boolean }): React.JSX.Element {
   const { item, onMeasure } = props;
   const current = item.current !== null;
   return (
@@ -56,7 +61,7 @@ function NavLink(props: { item: NavItem; onMeasure?: (href: string, layout: Layo
         accessibilityState={{ selected: current }}
         {...webAria({ 'aria-current': item.current ?? undefined })}
         {...(onMeasure === undefined ? {} : { onLayout: (event: LayoutChangeEvent) => { onMeasure(item.href, event.nativeEvent.layout); } })}
-        style={styles.navLink}
+        style={StyleSheet.flatten([styles.navLink, props.inBox === true ? styles.boxLink : null])}
       >
         {(state) => (
           <Text style={[styles.navText, current || hovered(state) ? styles.white : null]}>
@@ -69,25 +74,141 @@ function NavLink(props: { item: NavItem; onMeasure?: (href: string, layout: Layo
   );
 }
 
+/** More's state (D38), from the bar to the nav that draws it. */
+interface MoreGroup {
+  /** The items under More, in order. */
+  items: readonly NavItem[];
+  open: boolean;
+  /** On web above 640px the links drop down under More, inside the nav; elsewhere the bar draws them in a row under it. */
+  floating: boolean;
+  /** The links' container, for aria-controls; More's button and box take ids built from it (moreIds). */
+  id: string;
+  onToggle: () => void;
+}
+
+/** The ids of More's button, where Escape returns focus, and its box: More and, when floating, its links. */
+function moreIds(id: string): { button: string; box: string } {
+  return { button: `${id}-button`, box: `${id}-box` };
+}
+
+/** The key the phone row measures More under, beside the links' hrefs. */
+const MORE_KEY = 'more';
+
+/**
+ * More: a disclosure over the grouped sections, white while open, hovered or holding the current page, with the
+ * select's drawn chevron, which turns up while open.
+ */
+function More(props: { group: MoreGroup; onMeasure?: Measure | undefined }): React.JSX.Element {
+  const { group, onMeasure } = props;
+  const holdsCurrent = group.items.some((item) => item.current !== null);
+  return (
+    <View
+      nativeID={moreIds(group.id).box}
+      {...(onMeasure === undefined ? {} : { onLayout: (event: LayoutChangeEvent) => { onMeasure(MORE_KEY, event.nativeEvent.layout); } })}
+      style={styles.more}
+    >
+      <Pressable
+        nativeID={moreIds(group.id).button}
+        role="button"
+        aria-expanded={group.open}
+        aria-controls={group.id}
+        accessibilityState={{ expanded: group.open }}
+        onPress={group.onToggle}
+        style={styles.navLink}
+      >
+        {(state) => {
+          const lit = group.open || holdsCurrent || hovered(state);
+          return (
+            <View style={styles.moreLabel}>
+              <Text style={[styles.navText, lit ? styles.white : null]}>More</Text>
+              <View style={[styles.chevron, lit ? styles.chevronLit : null, group.open ? styles.chevronOpen : null]} />
+            </View>
+          );
+        }}
+      </Pressable>
+      {group.floating && group.open ? (
+        <View nativeID={group.id} style={styles.dropdown}>
+          {group.items.map((item) => <NavLink key={item.href} item={item} inBox />)}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/** The bar's entries in order: each link, with the grouped ones replaced by More where the first of them was. */
+function entries(items: readonly NavItem[], group: MoreGroup | null, onMeasure?: Measure): React.JSX.Element[] {
+  const first = items.findIndex((item) => item.more === true);
+  return items.flatMap((item, index) => {
+    if (item.more !== true || group === null) return [<NavLink key={item.href} item={item} onMeasure={onMeasure} />];
+    return index === first ? [<More key={MORE_KEY} group={group} onMeasure={onMeasure} />] : [];
+  });
+}
+
 /** The nav, with the items from the first `end` one on as a group at the row's far end. */
-function Nav(props: { items: readonly NavItem[]; wrapped: boolean }): React.JSX.Element {
+function Nav(props: { items: readonly NavItem[]; wrapped: boolean; group: MoreGroup | null }): React.JSX.Element {
   const gap = { columnGap: props.wrapped ? 20 : 24 };
   const split = props.items.findIndex((item) => item.end === true);
   if (split <= 0) {
     return (
       <View role="navigation" aria-label="Main" style={[styles.nav, gap]}>
-        {props.items.map((item) => <NavLink key={item.href} item={item} />)}
+        {entries(props.items, props.group)}
       </View>
     );
   }
   return (
     <View role="navigation" aria-label="Main" style={[styles.nav, styles.navSplit, gap]}>
-      {props.items.slice(0, split).map((item) => <NavLink key={item.href} item={item} />)}
+      {entries(props.items.slice(0, split), props.group)}
       <View style={[styles.navEnd, gap]}>
-        {props.items.slice(split).map((item) => <NavLink key={item.href} item={item} />)}
+        {entries(props.items.slice(split), props.group)}
       </View>
     </View>
   );
+}
+
+/**
+ * More's links in a row under the bar (phones and native), a navigation of their own, as the phone row's ScrollView
+ * would clip a dropdown. In the flow it covers nothing, so it stays open until More, Escape or another page closes it,
+ * and Tab reaches it after the row's last links.
+ */
+function MoreRow(props: { group: MoreGroup }): React.JSX.Element {
+  return (
+    <View nativeID={props.group.id} role="navigation" aria-label="More" style={styles.navRow}>
+      <View style={[styles.nav, styles.moreRow]}>
+        {props.group.items.map((item) => <NavLink key={item.href} item={item} />)}
+      </View>
+    </View>
+  );
+}
+
+/**
+ * On web, Escape with focus on More or one of its links closes it and hands focus back to More (an Escape meant for
+ * anything else on the page is left alone). The dropdown, which covers the page, also closes on a press or focus
+ * outside More and its links, leaving focus where it went. Native closes it when More is pressed again or the page
+ * changes. react-native-web renders nativeID as the element's id, so the elements are found by id.
+ */
+function useDismiss(open: boolean, floating: boolean, id: string, close: () => void): void {
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !open) return undefined;
+    const { box, button } = moreIds(id);
+    const inside = (target: EventTarget | null): boolean => target instanceof Node
+      && [box, id].some((part) => document.getElementById(part)?.contains(target) === true);
+    const onOutside = (event: Event): void => { if (!inside(event.target)) close(); };
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape' || !inside(document.activeElement)) return;
+      close();
+      document.getElementById(button)?.focus();
+    };
+    document.addEventListener('keydown', onKey);
+    if (floating) {
+      document.addEventListener('pointerdown', onOutside);
+      document.addEventListener('focusin', onOutside);
+    }
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onOutside);
+      document.removeEventListener('focusin', onOutside);
+    };
+  }, [open, floating, id, close]);
 }
 
 /** The phone gutter the scroller reaches into, so a link's focus ring at either end is not cut off. */
@@ -98,11 +219,13 @@ const BLEED = 16;
  * far into the margins as the screen. The row scrolls (without animating) to keep the current item in view, on
  * mount and whenever the route changes.
  */
-function ScrollingNav(props: { items: readonly NavItem[] }): React.JSX.Element {
+function ScrollingNav(props: { items: readonly NavItem[]; group: MoreGroup | null }): React.JSX.Element {
   const scroller = useRef<React.ComponentRef<typeof ScrollView>>(null);
   const [viewport, setViewport] = useState(0);
   const [spans, setSpans] = useState<Readonly<Record<string, { x: number; width: number }>>>({});
-  const current = props.items.find((item) => item.current !== null)?.href;
+  // A current section under More keeps More in view.
+  const currentItem = props.items.find((item) => item.current !== null);
+  const current = currentItem === undefined ? undefined : currentItem.more === true && props.group !== null ? MORE_KEY : currentItem.href;
   const span = current === undefined ? undefined : spans[current];
   // The least scroll that shows the whole current item and the margin after it: none for the first items, the
   // row's end for the last. A link's x is measured from the nav, which starts after the row's BLEED.
@@ -110,8 +233,8 @@ function ScrollingNav(props: { items: readonly NavItem[] }): React.JSX.Element {
   useEffect(() => {
     if (target !== null) scroller.current?.scrollTo({ x: target, animated: false });
   }, [current, target]);
-  const measure = useCallback((href: string, { x, width }: LayoutRectangle) => {
-    setSpans((before) => (before[href]?.x === x && before[href].width === width ? before : { ...before, [href]: { x, width } }));
+  const measure = useCallback((key: string, { x, width }: LayoutRectangle) => {
+    setSpans((before) => (before[key]?.x === x && before[key].width === width ? before : { ...before, [key]: { x, width } }));
   }, []);
   return (
     <View
@@ -125,7 +248,7 @@ function ScrollingNav(props: { items: readonly NavItem[] }): React.JSX.Element {
         {/* Keyed by the items: when the sections arrive (the organization loaded) the links mount again and measure
             where they now sit, as the web's onLayout reports a change of size, not a move. */}
         <View key={props.items.map((item) => item.href).join(' ')} role="navigation" aria-label="Main" style={[styles.nav, styles.navLine]}>
-          {props.items.map((item) => <NavLink key={item.href} item={item} onMeasure={measure} />)}
+          {entries(props.items, props.group, measure)}
         </View>
       </ScrollView>
     </View>
@@ -136,6 +259,23 @@ export function TopBar(props: TopBarProps): React.JSX.Element {
   const { phone, width } = useBreakpoint();
   const consoleBar = props.kind === 'console';
   const sections = (props.nav ?? []).findIndex((item) => item.end === true) > 0;
+  // More opened on one page reads as closed on any other: it holds the nav it was opened on, so following a link,
+  // or the location switcher, closes it without an effect.
+  const where = (props.nav ?? []).map((item) => `${item.href} ${item.current ?? ''}`).join('\n');
+  const [openOn, setOpenOn] = useState<string | null>(null);
+  const open = openOn === where;
+  const moreId = `more-${useId().replace(/:/g, '')}`;
+  const close = useCallback(() => { setOpenOn(null); }, []);
+  const grouped = (props.nav ?? []).filter((item) => item.more === true);
+  const floating = Platform.OS === 'web' && !phone;
+  useDismiss(open && grouped.length > 0, floating, moreId, close);
+  const group: MoreGroup | null = grouped.length === 0 ? null : {
+    items: grouped,
+    open,
+    floating,
+    id: moreId,
+    onToggle: () => { setOpenOn(open ? null : where); },
+  };
   const wrapped = width < (consoleBar ? 1024 : sections ? 1280 : 900);
   const home = consoleBar ? '/admin' : '/dashboard';
   const signOut = (
@@ -199,17 +339,22 @@ export function TopBar(props: TopBarProps): React.JSX.Element {
   const nav = props.nav === undefined || props.nav.length === 0 ? null : props.nav;
   let navRow: React.ReactNode = null;
   if (nav !== null && wrapped) {
-    navRow = <View style={styles.navRow}>{phone && props.kind === 'client' ? <ScrollingNav items={nav} /> : <Nav items={nav} wrapped />}</View>;
+    navRow = (
+      <View style={styles.navRow}>
+        {phone && props.kind === 'client' ? <ScrollingNav items={nav} group={group} /> : <Nav items={nav} wrapped group={group} />}
+      </View>
+    );
   }
   return (
     <View role="banner" style={[styles.bar, consoleBar ? styles.panel : null]}>
       <Wrap>
         <View style={[styles.row, tight]}>
           {stackedConsole ? <View style={styles.stacked}>{identity}<View style={styles.verifiedRow}>{verified}</View></View> : identity}
-          {nav !== null && !wrapped ? <Nav items={nav} wrapped={false} /> : null}
+          {nav !== null && !wrapped ? <Nav items={nav} wrapped={false} group={group} /> : null}
           {me}
         </View>
         {navRow}
+        {group !== null && group.open && !group.floating ? <MoreRow group={group} /> : null}
       </Wrap>
     </View>
   );
@@ -235,7 +380,9 @@ export function Footer(props: { bottomInset: number }): React.JSX.Element {
 const c = theme.color;
 
 const styles = StyleSheet.create({
-  bar: { backgroundColor: c.ground, borderBottomWidth: 1, borderBottomColor: c.border },
+  // Lifted over the page (every react-native-web View is its own stacking context at z-index 0), so More's dropdown,
+  // which hangs below the bar, paints over main.
+  bar: { backgroundColor: c.ground, borderBottomWidth: 1, borderBottomColor: c.border, zIndex: 1 },
   panel: { backgroundColor: c.panel },
   row: { flexDirection: 'row', alignItems: 'center', minHeight: 64, columnGap: 32 },
   identity: { flexDirection: 'row', alignItems: 'center', columnGap: 16, flexShrink: 1, minWidth: 0 },
@@ -254,6 +401,22 @@ const styles = StyleSheet.create({
   scrollRow: { flexGrow: 1, paddingHorizontal: BLEED },
   navRow: { borderTopWidth: 1, borderTopColor: c.border },
   navLink: { minHeight: 44, minWidth: 44, justifyContent: 'center' },
+  // More holds its dropdown, which paints over the nav's later items (Team, Settings).
+  more: { zIndex: 1 },
+  moreLabel: { flexDirection: 'row', alignItems: 'center', columnGap: 8 },
+  // The select's drawn chevron (ui/Select.tsx), in the nav's colors; it points up while More is open.
+  chevron: {
+    width: 7, height: 7, borderRightWidth: 1.5, borderBottomWidth: 1.5, borderColor: c.text2, transform: [{ rotate: '45deg' }], marginTop: -4,
+  },
+  chevronLit: { borderColor: c.white },
+  chevronOpen: { transform: [{ rotate: '-135deg' }], marginTop: 4 },
+  // Under More, over the page: a square `panel` box with its links stacked, their text in line with More's.
+  dropdown: {
+    position: 'absolute', top: '100%', left: -16, marginTop: 4, minWidth: 176, paddingVertical: 8,
+    backgroundColor: c.panel, borderWidth: 1, borderColor: c.border,
+  },
+  boxLink: { paddingHorizontal: 16 },
+  moreRow: { columnGap: 20 },
   navText: { ...theme.type.ui, color: c.text2 },
   white: { color: c.white },
   count: { fontFamily: theme.type.mono.fontFamily, fontVariant: ['tabular-nums'] },

@@ -149,6 +149,20 @@ describe('navigation per role (spec 15.3)', () => {
     expect(clientNav('member', '/locations/l1', 'l1').find((item) => item.label === 'Rules')?.href).toBe('/locations/l1/rules');
   });
 
+  test('Notes, Rules, Town and Your data sit under More (D38); no other item does', () => {
+    for (const role of ['member', 'org_admin'] as const) {
+      const items = clientNav(role, '/locations/l1/sales/upload', 'l1');
+      expect(items.filter((item) => item.more === true).map((item) => [item.label, item.current])).toEqual([
+        ['Notes', null], ['Rules', null], ['Town', null], ['Your data', 'true'],
+      ]);
+      // They are the sections' last four, so More takes Notes' place, right after TownwiseAI.
+      const first = items.findIndex((item) => item.more === true);
+      expect(items[first - 1]?.label).toBe('TownwiseAI');
+      expect(items.slice(first, first + 4).every((item) => item.more === true)).toBe(true);
+    }
+    expect(clientNav('org_admin', '/dashboard', null).some((item) => item.more === true)).toBe(false);
+  });
+
   test('org admins add Team, which starts the right-hand group', () => {
     expect(rows(clientNav('org_admin', '/team', 'l1')).slice(-2)).toEqual([['Team', '/team', 'page', true], ['Settings', '/settings', null, false]]);
     expect(clientNav('org_admin', '/settings/security', 'l1').map((item) => item.current).slice(-2)).toEqual([null, 'true']);
