@@ -71,6 +71,7 @@ const ANSWER: OrderSetupAnswer = {
   coverage: { firstDate: '2026-10-01', lastDate: '2026-10-31', dayCount: 31 },
   itemCoverage: { [LAGER_ID]: 20, [IPA_ID]: 0 },
   counts: { [LAGER_ID]: { quantity: 3, date: '2026-11-10' } },
+  itemsWithHistory: [LAGER_ID],
 };
 
 /** The saved setup as the server answers a PUT: the sent rows, new ones with minted ids, at `version`. */
@@ -478,15 +479,16 @@ test('an org admin deletes item sales after an in-page confirm', async () => {
   expect(screen.getByText('No item sales yet.')).toBeTruthy();
 });
 
-// #68 review R4: an item's sales and counts are kept by its id, so a removal is asked about first.
-test('removing an item with item sales or counts asks first, in the page; one with neither goes at once', async () => {
+// #68 review R4: an item's history is kept by its id, so a removal is asked about first. The second review: the server
+// names the items with history (`itemsWithHistory`), older sales, edits and rules included, not only 8 weeks and counts.
+test('removing an item with history asks first, in the page; one with none goes at once', async () => {
   const { api } = portal();
   renderAt(api);
   const lager = await screen.findByRole('region', { name: 'Item 1' });
   await click('Remove this item', lager);
   const dialog = await screen.findByRole('dialog', { name: 'Remove this item' });
   expect(within(dialog).getByText(
-    'Sample Lager has item sales or counts. Its sales and counts stay with it only while it is in the setup: once the setup is saved without it, they no longer count toward any order, and adding it again later starts it with none. Nothing changes until you save.',
+    'Sample Lager has item sales, counts, saved edits or rules. They stay with it only while it is in the setup: once the setup is saved without it, they no longer count toward any order, and adding it again later starts it with none. Nothing changes until you save.',
   )).toBeTruthy();
   await click('Cancel', dialog);
   expect(within(region('Item 1')).getByRole('textbox', { name: 'Item name' })).toHaveProperty('value', 'Sample Lager');
@@ -499,6 +501,18 @@ test('removing an item with item sales or counts asks first, in the page; one wi
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(screen.getByText('No items yet. Add each item you order.')).toBeTruthy();
   expect(writes(api)).toEqual([]);
+});
+
+test('an item with no recent sales and no count still asks first when the server names its history (a rule, older sales)', async () => {
+  const { api } = portal({ answer: { ...ANSWER, itemCoverage: { [LAGER_ID]: 0, [IPA_ID]: 0 }, counts: {}, itemsWithHistory: [IPA_ID] } });
+  renderAt(api);
+  await click('Remove this item', await screen.findByRole('region', { name: 'Item 2' }));
+  expect(await screen.findByRole('dialog', { name: 'Remove this item' })).toBeTruthy();
+  await click('Cancel', screen.getByRole('dialog', { name: 'Remove this item' }));
+  // The lager has none: it goes at once.
+  await click('Remove this item', region('Item 1'));
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(within(region('Item 1')).getByRole('textbox', { name: 'Item name' })).toHaveProperty('value', 'Sample IPA');
 });
 
 async function matched(api: FakePortalApi, csv: string): Promise<void> {
@@ -582,11 +596,32 @@ test('a per-sale export whose last day has no row the next morning leaves that d
   api.answers[`${PATH}/item-sales`] = () => ({ stored: 1, removed: 0, kept: 0 });
   await matched(api, ['Business Date,Menu Item,Item Qty', '2026-11-01 21:00,Lager Can,2', '2026-11-02 20:30,Lager Can,3'].join('\n'));
   expect(await screen.findByText(
-    'Left out Nov 2, 2026, the file’s last day: no row is dated the day after it, so its sales after midnight may be missing. To send it, export through the next morning.',
+    'Left out Nov 2, 2026, the file’s last day: no row is dated the day after it, so its sales after midnight may be missing. To send it, export through the next morning, or, if nothing was sold after midnight that night, check the box below.',
   )).toBeTruthy();
+  expect(screen.getByRole('checkbox', { name: 'Include Nov 2, 2026: nothing was sold after midnight that night' })).toHaveProperty('checked', false);
   await click('Send item sales');
   expect(await screen.findByText('Saved item sales for 1 day, Nov 1, 2026.')).toBeTruthy();
   expect(sentRanges(api)).toEqual(['2026-11-01..2026-11-01']);
+});
+
+// #68 second review N5: a bar that closes before midnight never has a row dated the next morning, so it can keep that day.
+test('the box keeps the file’s last day for a bar that sold nothing after midnight, and the preview says so', async () => {
+  const { api } = portal();
+  api.answers[`${PATH}/item-sales`] = () => ({ stored: 2, removed: 0, kept: 0 });
+  await matched(api, ['Business Date,Menu Item,Item Qty', '2026-11-01 21:00,Lager Can,2', '2026-11-02 20:30,Lager Can,3'].join('\n'));
+  const box = await screen.findByRole('checkbox', { name: 'Include Nov 2, 2026: nothing was sold after midnight that night' });
+  await settle(() => { fireEvent.click(box); });
+  expect(screen.getByRole('checkbox', { name: 'Include Nov 2, 2026: nothing was sold after midnight that night' })).toHaveProperty('checked', true);
+  expect(screen.getByText('Included Nov 2, 2026, the file’s last day, though no row is dated the day after it: you said nothing was sold after midnight that night.')).toBeTruthy();
+  expect(screen.queryByText(/^Left out Nov 2, 2026/)).toBeNull();
+  expect(screen.getByText('Dates: Nov 1, 2026 to Nov 2, 2026, 2 days with rows.')).toBeTruthy();
+  await click('Send item sales');
+  expect(await screen.findByText('Saved item sales for 2 days, Nov 1, 2026 to Nov 2, 2026.')).toBeTruthy();
+  expect(sentRanges(api)).toEqual(['2026-11-01..2026-11-02']);
+  const [sent] = writes(api).filter((call) => call.path === `${PATH}/item-sales`);
+  expect((sent?.body as { days: { date: string; items: Record<string, number> }[] }).days).toEqual([
+    { date: '2026-11-01', items: { [LAGER_ID]: 2 } }, { date: '2026-11-02', items: { [LAGER_ID]: 3 } },
+  ]);
 });
 
 // #68 review C9: the town's zone is read only for a file whose times carry an offset.
@@ -622,9 +657,11 @@ test('unknown_item offers the other person’s changes; 400 says to reload; 429 
   api.answers[`${PATH}/item-sales`] = () => answer;
   await matched(api, EXPORT);
   await click('Send item sales');
-  expect(await screen.findByText('Nov 1, 2026 to Nov 3, 2026 didn’t save. An item is no longer in the saved setup, so someone else changed it. Load their changes below, then match the file again.')).toBeTruthy();
+  const failed = await screen.findByText('Nov 1, 2026 to Nov 3, 2026 didn’t save. An item is no longer in the saved setup, so someone else changed it. Load their changes above, then match the file again.');
   expect(screen.getByText('Someone else changed this setup since you opened it. Load their changes to see them; your unsaved changes here will be lost.')).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Load their changes' })).toBeTruthy();
+  // #68 second review N2: the offer is drawn above the upload's message, as the copy says.
+  const offer = screen.getByRole('button', { name: 'Load their changes' });
+  expect(offer.compareDocumentPosition(failed) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Send the rest again' })).toBeNull();
   cleanup();
 

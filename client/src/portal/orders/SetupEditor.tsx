@@ -28,12 +28,13 @@ import { itemHasHistory, ItemPanel, SupplierPanel } from './SetupRows';
 // GET .../orders/setup and saved whole with PUT over the version it loaded. Someone else's save in between answers
 // 409 `setup_changed`: the page says so and offers their changes, which replace the draft after a confirm. Shared by
 // both platforms; the web adds the template, the sheet import and the item sales upload through the slots
-// (Setup.web.tsx). Removing an item with item sales or counts asks first, in the page. Under view-as every field and
-// write is disabled in place, described by the read-only line.
+// (Setup.web.tsx). Removing an item with history (item sales, counts, saved edits or rules, as the GET's
+// `itemsWithHistory` names them) asks first, in the page. Under view-as every field and write is disabled in place,
+// described by the read-only line.
 
 const READ_ONLY_ID = 'setup-ro';
 
-type Status = Pick<OrderSetupAnswer, 'today' | 'coverage' | 'itemCoverage' | 'counts'>;
+type Status = Pick<OrderSetupAnswer, 'today' | 'coverage' | 'itemCoverage' | 'counts' | 'itemsWithHistory'>;
 
 /** What the sheet tools (web) work on: the draft, before anything saves. */
 export interface SheetSlot {
@@ -102,7 +103,7 @@ function Editor(props: {
   const [confirm, setConfirm] = useState<'reload' | 'delete' | null>(null);
   const [confirmPending, setConfirmPending] = useState(false);
   const [confirmError, setConfirmError] = useState<unknown>(null);
-  /** The key of an item with item sales or counts that Remove this item asked about. */
+  /** The key of an item with history that Remove this item asked about. */
   const [removing, setRemoving] = useState<string | null>(null);
   const readOnlyId = readOnly ? READ_ONLY_ID : null;
   const locked = readOnly || saving;
@@ -327,7 +328,7 @@ function Editor(props: {
       <ConfirmDialog
         visible={removingItem !== undefined}
         title="Remove this item"
-        body={`${removingItem?.name.trim() ?? 'This item'} has item sales or counts. Its sales and counts stay with it only while it is in the setup: once the setup is saved without it, they no longer count toward any order, and adding it again later starts it with none. Nothing changes until you save.`}
+        body={`${removingItem?.name.trim() ?? 'This item'} has item sales, counts, saved edits or rules. They stay with it only while it is in the setup: once the setup is saved without it, they no longer count toward any order, and adding it again later starts it with none. Nothing changes until you save.`}
         confirmLabel="Remove the item"
         onConfirm={() => {
           if (removing !== null) removeItem(removing);

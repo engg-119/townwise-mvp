@@ -108,7 +108,7 @@ function portal(options: {
     [PEOPLE]: options.people ?? NOVEMBER,
     [`${PATH}/orders`]: options.orders ?? BOARD,
     // The Ordering setup page, which the Bar order card links to, for a location that has saved none.
-    [`${PATH}/orders/setup`]: { today: '2026-11-05', setup: null, coverage: null, itemCoverage: {}, counts: {} },
+    [`${PATH}/orders/setup`]: { today: '2026-11-05', setup: null, coverage: null, itemCoverage: {}, counts: {}, itemsWithHistory: [] },
     // Stored files are off, as in production today.
     [`${PATH}/imports/current`]: refusal(503, 'files_unavailable'),
   });

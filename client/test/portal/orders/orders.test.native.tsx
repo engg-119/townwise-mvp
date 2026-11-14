@@ -67,7 +67,7 @@ const BOARD: LiveBoard = {
 };
 
 /** GET .../orders/setup for a location that has saved none. */
-const NO_SETUP = { today: '2026-11-13', setup: null, coverage: null, itemCoverage: {}, counts: {} };
+const NO_SETUP = { today: '2026-11-13', setup: null, coverage: null, itemCoverage: {}, counts: {}, itemsWithHistory: [] };
 
 const UNAVAILABLE = {
   available: false,

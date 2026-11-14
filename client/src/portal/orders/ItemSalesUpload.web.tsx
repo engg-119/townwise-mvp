@@ -10,6 +10,7 @@ import { formatRange } from '../locations/dates';
 import { usePortal } from '../PortalProvider';
 import { useLocation } from '../shell/LocationShell';
 import { Actions, Button } from '../ui/Button';
+import { Checkbox } from '../ui/Checkbox';
 import { LoadingLine, Messages, Notice } from '../ui/feedback';
 import { Section } from '../ui/layout';
 import { Select } from '../ui/Select';
@@ -32,8 +33,9 @@ import { readSheetFile, SHEET_ACCEPT } from './sheetFile.web';
 // town's zone, from GET .../estimates/about, read only when the file has such times. An org admin's upload replaces
 // the dates it covers; a member's adds only dates not already saved, and the copy says which (the person's role in
 // GET /api/org) and, after sending, how many were kept. A failure stops and says which dates did not save, and sending
-// again resends them (either upload gives the same days twice, so a resend is safe). Under view-as the file control
-// is disabled in place.
+// again resends them (either upload gives the same days twice, so a resend is safe). A timestamped file's last day is
+// left out unless a row is dated the next day (its sales after midnight may be missing); a box on the preview keeps
+// it, for a bar that sold nothing after midnight that night. Under view-as the file control is disabled in place.
 
 /** Unmatched names listed with "Add to an item", most rows first. */
 const SHOWN_NAMES = 100;
@@ -43,16 +45,25 @@ interface Zone { name: string; approximate: boolean }
 
 /**
  * A file matched with these columns against the saved setup at `version`, its items, and the town's zone (null when
- * the file had no time with an offset, or the zone could not be read).
+ * the file had no time with an offset, or the zone could not be read). `withLast` is the match with the left-out last
+ * day kept (null when none was left out).
  */
-interface Matched { columns: ColumnProfile[]; choice: SalesColumns; outcome: MatchOutcome; version: number; items: readonly SetupItem[]; zone: Zone | null }
+interface Matched {
+  columns: ColumnProfile[];
+  choice: SalesColumns;
+  outcome: MatchOutcome;
+  withLast: MatchOutcome | null;
+  version: number;
+  items: readonly SetupItem[];
+  zone: Zone | null;
+}
 
 type Step =
   | { kind: 'choose' }
   | { kind: 'reading' }
   | { kind: 'columns'; columns: ColumnProfile[]; preset: PresetName | null; choice: SalesColumns }
   | { kind: 'no_dates' }
-  | ({ kind: 'preview' } & Matched)
+  | ({ kind: 'preview'; includeLast: boolean } & Matched)
   | { kind: 'sending'; at: number; of: number }
   | { kind: 'failed'; matched: Matched; chunks: ItemSalesChunk[]; index: number; error: unknown; kept: number }
   | { kind: 'done'; days: number; from: string; to: string; kept: number };
@@ -69,7 +80,7 @@ function chosen(choice: SalesColumns): { date: number; item: number; quantity: n
 
 function failureReason(error: unknown): string {
   if (hasCode(error, 400, 'unknown_item')) {
-    return 'An item is no longer in the saved setup, so someone else changed it. Load their changes below, then match the file again.';
+    return 'An item is no longer in the saved setup, so someone else changed it. Load their changes above, then match the file again.';
   }
   if (hasCode(error, 400, 'invalid_request')) {
     return 'Townwise refused these dates. The day may have changed in town since this page opened: reload the page, then match the file again.';
@@ -166,7 +177,11 @@ export function ItemSalesUpload(props: SalesSlot): React.JSX.Element {
       return;
     }
     setAdded({});
-    setStep({ kind: 'preview', columns, choice, outcome: matcher.finish(), version: saved.version, items: saved.items, zone });
+    const matchedOutcome = matcher.finish();
+    setStep({
+      kind: 'preview', columns, choice, outcome: matchedOutcome, withLast: matchedOutcome.cut === null ? null : matcher.finish(true),
+      includeLast: false, version: saved.version, items: saved.items, zone,
+    });
   }
 
   /** Sends `chunks` from `start`; `keptBefore` is the days the parts sent before kept, for the result line. */
@@ -265,7 +280,8 @@ export function ItemSalesUpload(props: SalesSlot): React.JSX.Element {
       ) : null}
       {step.kind === 'preview' ? (
         <Preview
-          outcome={step.outcome}
+          outcome={step.includeLast && step.withLast !== null ? step.withLast : step.outcome}
+          onIncludeLast={(includeLast) => { setStep({ ...step, includeLast }); }}
           setupItems={step.items}
           zone={step.zone}
           admin={admin}
@@ -278,9 +294,9 @@ export function ItemSalesUpload(props: SalesSlot): React.JSX.Element {
           onAdd={addName}
           onMatchAgain={() => { void match(step.columns, step.choice); }}
           onSend={() => {
-            const { outcome } = step;
+            const outcome = step.includeLast && step.withLast !== null ? step.withLast : step.outcome;
             if (outcome.firstDate === null || outcome.lastDate === null) return;
-            void send(step, chunksOf(outcome.days, outcome.firstDate, outcome.lastDate), 0, 0);
+            void send({ ...step, outcome }, chunksOf(outcome.days, outcome.firstDate, outcome.lastDate), 0, 0);
           }}
         />
       ) : null}
@@ -383,7 +399,9 @@ function previewLines(
     lines.push(`Left out ${plural(skipped.old, 'row', 'rows')} before ${formatDate(outcome.earliest)}: orders use only the last ${String(ITEM_SALES_DAYS)} days.`);
   }
   if (outcome.cut !== null) {
-    lines.push(`Left out ${formatDate(outcome.cut)}, the file’s last day: no row is dated the day after it, so its sales after midnight may be missing. To send it, export through the next morning.`);
+    lines.push(outcome.cutIncluded
+      ? `Included ${formatDate(outcome.cut)}, the file’s last day, though no row is dated the day after it: you said nothing was sold after midnight that night.`
+      : `Left out ${formatDate(outcome.cut)}, the file’s last day: no row is dated the day after it, so its sales after midnight may be missing. To send it, export through the next morning, or, if nothing was sold after midnight that night, check the box below.`);
   }
   if (skipped.name > 0) lines.push(`Left out ${plural(skipped.name, 'row', 'rows')} with no item name.`);
   if (skipped.quantity > 0) lines.push(`Left out ${plural(skipped.quantity, 'row', 'rows')} whose quantity is not a number of 0 or more.`);
@@ -400,7 +418,9 @@ function previewLines(
 }
 
 function Preview(props: {
+  /** The match as it will be sent: with the left-out last day kept when its box is checked. */
   outcome: MatchOutcome;
+  onIncludeLast: (include: boolean) => void;
   setupItems: readonly SetupItem[];
   zone: Zone | null;
   /** An org admin's upload replaces the dates it covers; a member's adds only dates not already saved. */
@@ -428,6 +448,15 @@ function Preview(props: {
   return (
     <View style={styles.stack}>
       <Messages live="status" items={lines} />
+      {outcome.cut === null ? null : (
+        <Checkbox
+          label={`Include ${formatDate(outcome.cut)}: nothing was sold after midnight that night`}
+          checked={outcome.cutIncluded}
+          disabled={props.readOnly}
+          onChange={props.onIncludeLast}
+          {...(props.readOnlyId === null ? {} : { describedBy: props.readOnlyId })}
+        />
+      )}
       <View role="group" aria-label="Matched rows by item" style={styles.name}>
         <Small white>Matched rows by item, on the dates sent:</Small>
         <Messages items={items} />

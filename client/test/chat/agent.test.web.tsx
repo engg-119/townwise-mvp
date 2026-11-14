@@ -837,7 +837,7 @@ describe('order cards (#68 review N6, design Decision 6)', () => {
     const view = { kind: 'change', status: 'open', itemId: ITEM, delivery: '2026-11-19' };
     api.reads[CHANGE] = () => ({ proposal: view });
     api.reads[RULE] = () => ({ proposal: { kind: 'rule', status: 'open', itemId: ITEM, situation: 'a football weekend', delta: 2, unit: 'cases' } });
-    api.respond[CHANGE] = () => ({ proposal: { ...view, status: 'saved', quantity: 10, reason: 'Game day' } });
+    api.respond[CHANGE] = () => ({ proposal: { ...view, status: 'saved', quantity: 10, unit: 'cases', reason: 'Game day' } });
     await proposed(api);
     const quantity = await screen.findByLabelText('Quantity');
     // The rule card says its change goes on every later order.
@@ -857,10 +857,37 @@ describe('order cards (#68 review N6, design Decision 6)', () => {
     expect(api.writes.filter((write) => write.path === CHANGE)).toEqual([]);
     fireEvent.change(screen.getByLabelText('Why'), { target: { value: 'Game day' } });
     save();
-    expect(await screen.findByText('Saved for this order.')).toBeTruthy();
+    expect(await screen.findByText('Saved for this order: 10 cases, “Game day”.')).toBeTruthy();
     expect(api.writes.filter((write) => write.path === CHANGE)).toEqual([
       { method: 'POST', path: CHANGE, body: { action: 'save', quantity: 10, reason: 'Game day' } },
     ]);
+  });
+
+  // #68 second review N3: a saved card shows the edit stored under its id, and a save of another one shows that edit.
+  test('a saved change card shows its stored edit; 409 card_saved shows the edit that was kept, not the one sent', async () => {
+    const api = fakeChatApi();
+    const view = { kind: 'change', status: 'open', itemId: ITEM, delivery: '2026-11-19' };
+    const stored = { ...view, status: 'saved', quantity: 1, unit: 'kegs', reason: 'First try' };
+    api.reads[CHANGE] = () => ({ proposal: view });
+    api.reads[RULE] = () => ({ proposal: { kind: 'rule', status: 'saved', itemId: ITEM } });
+    api.respond[CHANGE] = () => new ApiError('http', 'The request was refused.', { status: 409, code: 'card_saved', detail: { proposal: stored } });
+    await proposed(api);
+    fireEvent.change(await screen.findByLabelText('Quantity'), { target: { value: '8' } });
+    fireEvent.change(screen.getByLabelText('Why'), { target: { value: 'Second try' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('Saved for this order: 1 keg, “First try”.')).toBeTruthy();
+    expect(screen.getByText(/^This card was already saved with another quantity or reason, so the one you just sent wasn’t saved\./)).toBeTruthy();
+    expect(screen.queryByLabelText('Quantity')).toBeNull();
+    expect(screen.queryByText(/Second try/)).toBeNull();
+  });
+
+  test('a change card read as saved shows its stored edit', async () => {
+    const api = fakeChatApi();
+    api.reads[CHANGE] = () => ({ proposal: { kind: 'change', status: 'saved', itemId: ITEM, delivery: '2026-11-19', quantity: 0, unit: 'cases', reason: 'Closed for a wedding' } });
+    api.reads[RULE] = () => ({ proposal: { kind: 'rule', status: 'saved', itemId: ITEM } });
+    await proposed(api);
+    expect(await screen.findByText('Saved for this order: 0 cases, “Closed for a wedding”.')).toBeTruthy();
+    expect(screen.queryByText(/already saved/)).toBeNull();
   });
 
   // #68 review A5: Remember sends the situation the card showed; a later edit to the item answers 409 rule_changed.

@@ -126,12 +126,14 @@ export function SupplierPanel(props: {
   );
 }
 
-type Status = Pick<OrderSetupAnswer, 'coverage' | 'itemCoverage' | 'counts'>;
+type Status = Pick<OrderSetupAnswer, 'coverage' | 'itemCoverage' | 'counts' | 'itemsWithHistory'>;
 
-/** A stored item with item sales in the last 8 weeks or a count in the last 400 days, which a removal would leave behind. */
+/**
+ * A stored item with history a removal would leave behind, as the server reads it: item sales the board reads, a count
+ * in its 400 days, or a saved edit or rule (GET .../orders/setup `itemsWithHistory`).
+ */
 export function itemHasHistory(item: ItemDraft, status: Status): boolean {
-  if (item.id === null) return false;
-  return (status.itemCoverage[item.id] ?? 0) > 0 || status.counts[item.id] !== undefined;
+  return item.id !== null && status.itemsWithHistory.includes(item.id);
 }
 
 /** A stored item's latest count, and whether the stored item sales matched it in the last 8 weeks. */

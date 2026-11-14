@@ -252,6 +252,24 @@ describe('matching', () => {
     expect(match([['2026-11-01 00:00:00', 'Lager Pint', '1'], ['2026-11-02 00:00:00', 'Lager Pint', '2']])).toMatchObject({ cut: null, lastDate: '2026-11-02' });
   });
 
+  // #68 second review N5: a bar that closes before midnight has no row the next morning; finish(true) keeps its last day.
+  test('finish(true) keeps the cut last day, and the same matcher still gives the default', () => {
+    const matcher = new SalesMatcher(COLUMNS, [LAGER, IPA], { today: '2026-11-13', zone: null });
+    for (const row of [['2026-11-01 20:00', 'Lager Pint', '1'], ['2026-11-02 21:00', 'Lager Pint', '2'], ['2026-11-02 23:30', 'IPA Pint', '1']]) {
+      matcher.add(row);
+    }
+    const kept = matcher.finish(true);
+    expect(kept).toMatchObject({ cut: '2026-11-02', cutIncluded: true, firstDate: '2026-11-01', lastDate: '2026-11-02', matchedRows: 3 });
+    expect(kept.itemRows).toEqual({ a1: 2, b2: 1 });
+    expect(kept.days).toEqual([{ date: '2026-11-01', items: { a1: 1 } }, { date: '2026-11-02', items: { a1: 2, b2: 1 } }]);
+    expect(matcher.finish()).toMatchObject({ cut: '2026-11-02', cutIncluded: false, lastDate: '2026-11-01', matchedRows: 1 });
+    // Nothing cut: finish(true) is the default match.
+    const whole = new SalesMatcher(COLUMNS, [LAGER, IPA], { today: '2026-11-13', zone: null });
+    whole.add(['2026-11-01', 'Lager Pint', '1']);
+    expect(whole.finish(true)).toEqual(whole.finish());
+    expect(whole.finish(true)).toMatchObject({ cut: null, cutIncluded: false });
+  });
+
   test('times with an offset: counted as zoned without the town’s zone, read in it with one', () => {
     const rows = [['2026-11-02T05:30:00Z', 'Lager Pint', '1'], ['2026-11-02T22:00:00Z', 'Lager Pint', '2'], ['2026-11-03T15:00:00Z', 'IPA Pint', '1']];
     const without = match(rows);

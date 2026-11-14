@@ -344,6 +344,11 @@ export interface MatchOutcome {
    * have stopped at midnight, before that day's sales after midnight. Null when nothing was cut.
    */
   readonly cut: string | null;
+  /**
+   * `cut` is sent after all (finish(true)): the person said nothing was sold after midnight that night, as at a bar
+   * that closes before midnight.
+   */
+  readonly cutIncluded: boolean;
   /** Names no item lists, most rows first. */
   readonly unmatched: readonly UnmatchedName[];
   /** Every date sent, in order, each with the servings of its matched items (none when nothing matched). */
@@ -469,12 +474,16 @@ export class SalesMatcher {
     }
   }
 
-  finish(): MatchOutcome {
+  /**
+   * The match. `includeLast` keeps the file's last business day that `cut` would leave out, for a bar that sold nothing
+   * after midnight that night. It reads only what add() kept, so it can be called again with the other choice.
+   */
+  finish(includeLast = false): MatchOutcome {
     const dates = [...this.servings.keys()].filter((date) => this.ownDates.has(date)).sort();
     const last = dates.at(-1);
     // No row the day after the last one: an export of times may have stopped at midnight, before its sales after midnight.
     const cut = this.timed && last !== undefined && (this.lastCalendar === null || this.lastCalendar <= last) ? last : null;
-    if (cut !== null) dates.pop();
+    if (cut !== null && !includeLast) dates.pop();
     const sold = new Set<string>();
     const itemRows: Record<string, number> = {};
     let matchedRows = 0;
@@ -506,6 +515,7 @@ export class SalesMatcher {
       skipped: { ...this.skipped },
       converted: this.converted,
       cut,
+      cutIncluded: cut !== null && includeLast,
       unmatched,
       days,
       overLimit,

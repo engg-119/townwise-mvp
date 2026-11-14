@@ -144,8 +144,9 @@ export type ItemSalesCoverage = z.infer<typeof itemSalesCoverageSchema>;
 
 /**
  * GET .../orders/setup: the town's today (YYYY-MM-DD), the setup (null when none was saved), item-sales coverage (null
- * with none stored), each item's covered days with any servings in the last 8 weeks, and each item's latest count in
- * the last 400 days (the window the board reads counts in).
+ * with none stored), each item's covered days with any servings in the last 8 weeks, each item's latest count in the
+ * last 400 days (the window the board reads counts in), and the ids of the items with history a removal would leave
+ * behind: servings in the 244 days of item sales the board reads, a count in its 400 days, or any saved edit or rule.
  */
 export const orderSetupAnswerSchema = z.object({
   today: z.string(),
@@ -153,6 +154,7 @@ export const orderSetupAnswerSchema = z.object({
   coverage: itemSalesCoverageSchema.nullable(),
   itemCoverage: z.record(z.string(), z.number()),
   counts: z.record(z.string(), z.object({ quantity: z.number(), date: z.string() })),
+  itemsWithHistory: z.array(z.string()),
 });
 export type OrderSetupAnswer = z.infer<typeof orderSetupAnswerSchema>;
 
