@@ -862,6 +862,73 @@ describe('order cards (#68 review N6, design Decision 6)', () => {
       { method: 'POST', path: CHANGE, body: { action: 'save', quantity: 10, reason: 'Game day' } },
     ]);
   });
+
+  // #68 review A5: Remember sends the situation the card showed; a later edit to the item answers 409 rule_changed.
+  test('a rule card sends the situation it showed; 409 rule_changed asks to look at Orders again', async () => {
+    const api = fakeChatApi();
+    api.reads[CHANGE] = () => ({ proposal: { kind: 'change', status: 'open', itemId: ITEM, delivery: '2026-11-19' } });
+    api.reads[RULE] = () => ({ proposal: { kind: 'rule', status: 'open', itemId: ITEM, situation: 'a football weekend', delta: 2, unit: 'cases' } });
+    let answer: unknown = chatRefusal(409, 'rule_changed');
+    api.respond[RULE] = () => answer;
+    await proposed(api);
+    await screen.findByText('Adds 2 cases to every order: “a football weekend”');
+    fireEvent.click(screen.getByRole('button', { name: 'Remember' }));
+    expect(await screen.findByText('This item’s latest edit changed since this card was shown, so nothing was remembered. Look at Orders again for the edit it has now.')).toBeTruthy();
+    answer = { proposal: { kind: 'rule', status: 'saved', itemId: ITEM, situation: 'a football weekend', delta: 2, unit: 'cases' } };
+    fireEvent.click(screen.getByRole('button', { name: 'Remember' }));
+    expect(await screen.findByText('Remembered.')).toBeTruthy();
+    expect(api.writes.filter((write) => write.path === RULE).map((write) => write.body)).toEqual([
+      { action: 'save', situation: 'a football weekend' }, { action: 'save', situation: 'a football weekend' },
+    ]);
+  });
+});
+
+// #68 review C8: an order link from Orders fills the composer only from the location's own live board.
+describe('an order link (?order=, &item=)', () => {
+  const BOARD_PATH = '/api/org/locations/l1/orders';
+  const LINE = {
+    itemId: 'lager', name: 'Sample lager', supplier: 'Sample distributor', unit: 'cases', neverRunOut: false, recommended: 6, alternative: null,
+    par: 2, mu: null, sigma: null, orderUpTo: null, target: 0.95, onHand: null, countAgeDays: null, confidence: 'low', dealSize: null,
+    coveredDays: 0, why: 'No count, so this is the par.', sample: false, edit: null, rules: [],
+  };
+  const BOARD = {
+    available: true, today: '2026-11-13', sample: false, missing: [],
+    orders: [{
+      supplierId: 's1', supplier: 'Sample distributor', cutoff: '2026-11-18', cutoffTime: '14:00', delivery: '2026-11-19', coversThrough: '2026-11-23',
+      deadline: 'Order by Wed, Nov 18, 2:00pm. Thursday’s delivery lasts until Monday’s.', lines: [LINE],
+    }],
+  };
+
+  async function composerAfter(path: string, api: FakeChatApi): Promise<HTMLTextAreaElement> {
+    renderAt(path, api);
+    const composer = await screen.findByLabelText(COMPOSER_LABEL);
+    await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 0); }); });
+    return composer as HTMLTextAreaElement;
+  }
+
+  test('the live board drafts the question; an unavailable board drafts nothing and never reads the sample', async () => {
+    const live = fakeChatApi();
+    live.reads[BOARD_PATH] = () => BOARD;
+    const composer = await composerAfter('/locations/l1/agent?order=2026-11-19&item=lager', live);
+    await waitFor(() => { expect(composer.value).toBe('Why Sample lager for the Thu, Nov 19 delivery?'); });
+    // Drafts are kept in memory per person and location, so each render starts from none.
+    cleanup();
+    resetDrafts();
+
+    const unset = fakeChatApi();
+    let sampleReads = 0;
+    unset.reads[BOARD_PATH] = () => ({ available: false, today: '2026-11-13', reason: 'No setup.', missing: ['the items'] });
+    unset.reads[`${BOARD_PATH}?sample=true`] = () => { sampleReads += 1; return { ...BOARD, sample: true }; };
+    expect((await composerAfter('/locations/l1/agent?order=2026-11-19&item=lager', unset)).value).toBe('');
+    expect(sampleReads).toBe(0);
+    cleanup();
+    resetDrafts();
+
+    // A sample board, should one come back, drafts nothing either.
+    const sample = fakeChatApi();
+    sample.reads[BOARD_PATH] = () => ({ ...BOARD, sample: true });
+    expect((await composerAfter('/locations/l1/agent?order=2026-11-19', sample)).value).toBe('');
+  });
 });
 
 describe('a proposal to keep text (D28)', () => {

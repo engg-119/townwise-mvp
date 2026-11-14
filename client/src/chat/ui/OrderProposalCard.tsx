@@ -3,6 +3,7 @@ import { StyleSheet, View } from 'react-native';
 import { z } from 'zod';
 
 import { ApiError } from '../../api/client';
+import { hasCode } from '../../portal/errors';
 import { orderUnitSchema } from '../../portal/orders/api';
 import { LINE_QUANTITY_RULE, parseLineQuantity, REASON_RULE, ruleLine } from '../../portal/orders/words';
 import { usePortal } from '../../portal/PortalProvider';
@@ -16,7 +17,8 @@ import type { OrderCard } from '../useTuningChat';
 // A propose_order_change or propose_order_rule card. The item and the delivery come from the stored call,
 // which this card reads (GET .../order-proposals/:id). The owner types the quantity, a whole number from 0 to 999,
 // checked before it is sent (#68 review N6). A remembered rule adds its change to every later order of the item
-// (design Decision 6). Nothing is sent to a distributor.
+// (design Decision 6); Remember sends the situation the card showed, so a later edit to the item answers 409
+// `rule_changed` instead of remembering something the owner never saw. Nothing is sent to a distributor.
 
 const proposalSchema = z.object({
   proposal: z.discriminatedUnion('kind', [
@@ -68,9 +70,11 @@ export function OrderProposalCard(props: { card: OrderCard; locationId: string; 
       const next = await api.json(target, proposalSchema, { method: 'POST', body });
       setView(next.proposal);
     } catch (caught) {
-      setError(caught instanceof ApiError && caught.kind === 'http' && caught.code === 'view_as_read_only'
-        ? 'View-as is read-only, so this can’t be saved.'
-        : 'That didn’t save. Try again.');
+      if (caught instanceof ApiError && caught.kind === 'http' && caught.code === 'view_as_read_only') {
+        setError('View-as is read-only, so this can’t be saved.');
+      } else if (hasCode(caught, 409, 'rule_changed')) {
+        setError('This item’s latest edit changed since this card was shown, so nothing was remembered. Look at Orders again for the edit it has now.');
+      } else setError('That didn’t save. Try again.');
     } finally {
       setPending(false);
     }
@@ -120,7 +124,7 @@ export function OrderProposalCard(props: { card: OrderCard; locationId: string; 
           disabled={readOnly || pending}
           onPress={() => {
             if (view.kind === 'rule') {
-              void act({ action: 'save' });
+              void act({ action: 'save', ...(view.situation === undefined ? {} : { situation: view.situation }) });
               return;
             }
             const parsed = parseLineQuantity(quantity);

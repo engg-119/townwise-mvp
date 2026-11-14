@@ -29,7 +29,9 @@ import { allUploadsOff } from '../../../../../../src/portal/locations/sales';
 // read-only line. The logic is in src/chat; this file only lays it out.
 // F7: `?about=YYYY-MM-DD` (from Analytics' day panel) fills an empty composer with "Tell me about Sat, Nov 21" and
 // sends nothing; a date that isn't valid is ignored. F10: GET .../estimates/about says whether a forecast is published,
-// for what TownwiseAI says it reads and How TownwiseAI works' forecast line.
+// for what TownwiseAI says it reads and How TownwiseAI works' forecast line. `?order=YYYY-MM-DD` (and `&item=`, from
+// Orders) fills it with a question about that order, drafted only from the location's own live board (GET .../orders,
+// never the sample); an order or item the board doesn't have fills nothing.
 
 const READ_ONLY_ID = 'chat-ro';
 
@@ -54,12 +56,11 @@ export default function TownwiseAIScreen(): React.JSX.Element {
   useEffect(() => {
     if (orderParam === undefined) return undefined;
     let live = true;
-    fetchOrderBoard(api, location.id)
-      .then((own) => (own.available ? own : fetchOrderBoard(api, location.id, true)))
-      .then(
-        (board) => { if (live) setOrderText(orderDraft(orderParam, itemParam, board.available ? board : null)); },
-        () => { if (live) setOrderText(null); },
-      );
+    // The location's own board only: the sample is never explained in chat, so a sample's link fills nothing.
+    fetchOrderBoard(api, location.id).then(
+      (board) => { if (live) setOrderText(orderDraft(orderParam, itemParam, board.available && !board.sample ? board : null)); },
+      () => { if (live) setOrderText(null); },
+    );
     return () => { live = false; };
   }, [api, itemParam, location.id, orderParam]);
   const draft = orderText ?? aboutDraft(params.about, localToday());
