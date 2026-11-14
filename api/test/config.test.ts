@@ -41,7 +41,7 @@ describe('config', () => {
 
   it('production refuses an empty staff list; development and test allow it', () => {
     const budget = {
-      TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20, TOWNWISE_WEB_URL: 'http://localhost:8081',
+      TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20, TOWNWISE_CHAT_WEB_SEARCH: false, TOWNWISE_WEB_URL: 'http://localhost:8081',
       FILES_BLOB_ACCOUNT_URL: undefined, FILES_AZURITE_CONNECTION_STRING: undefined, TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5,
     };
     expect(() => resolveTownwiseConfig({ NODE_ENV: 'production', TOWNWISE_SUPERADMIN_EMAILS: [], ...budget })).toThrow(ConfigError);
@@ -52,7 +52,7 @@ describe('config', () => {
 
   it('staff two-step sign-in is off by default in development only, and production refuses off', () => {
     const base = {
-      TOWNWISE_SUPERADMIN_EMAILS: ['staff@townwise.test'], TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20, TOWNWISE_WEB_URL: 'http://localhost:8081',
+      TOWNWISE_SUPERADMIN_EMAILS: ['staff@townwise.test'], TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20, TOWNWISE_CHAT_WEB_SEARCH: false, TOWNWISE_WEB_URL: 'http://localhost:8081',
       FILES_BLOB_ACCOUNT_URL: undefined, FILES_AZURITE_CONNECTION_STRING: undefined, TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5,
     };
     const twoStep = (nodeEnv: 'development' | 'test' | 'production', value?: string): boolean => resolveTownwiseConfig({
@@ -76,6 +76,23 @@ describe('config', () => {
     expect(budget('35.5')).toBe(35.5);
     expect(budget('0')).toBe(0);
     for (const bad of ['-1', 'twenty', '10001']) expect(() => budget(bad)).toThrow(ConfigError);
+  });
+
+  it('reads TownwiseAI’s web search switch (D37): off unless set, true or false, and refuses anything else', () => {
+    const webSearch = (value: string | undefined): boolean =>
+      loadEnv(configSchema, { TOWNWISE_CHAT_WEB_SEARCH: value }).TOWNWISE_CHAT_WEB_SEARCH;
+    expect(webSearch(undefined)).toBe(false);
+    expect(webSearch('')).toBe(false);
+    expect(webSearch('true')).toBe(true);
+    expect(webSearch('false')).toBe(false);
+    expect(() => webSearch('sometimes')).toThrow(ConfigError);
+    const base = {
+      NODE_ENV: 'production' as const, TOWNWISE_SUPERADMIN_EMAILS: ['staff@townwise.test'], TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20,
+      TOWNWISE_WEB_URL: 'http://localhost:8081', FILES_BLOB_ACCOUNT_URL: undefined, FILES_AZURITE_CONNECTION_STRING: undefined,
+      TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5,
+    };
+    expect(resolveTownwiseConfig({ ...base, TOWNWISE_CHAT_WEB_SEARCH: webSearch('true') }).chatWebSearch).toBe(true);
+    expect(resolveTownwiseConfig({ ...base, TOWNWISE_CHAT_WEB_SEARCH: webSearch(undefined) }).chatWebSearch).toBe(false);
   });
 
   it('reads the file reader’s AI budget in dollars, 5 by default, 0 turning it off, and refuses anything outside 0 to 1,000', () => {
@@ -178,7 +195,7 @@ describe('config', () => {
     }
     expect(() => resolveTownwiseConfig({
       NODE_ENV: 'production', TOWNWISE_SUPERADMIN_EMAILS: ['staff@townwise.test'], TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20,
-      TOWNWISE_WEB_URL: 'http://localhost:8081', TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5, ...azurite,
+      TOWNWISE_CHAT_WEB_SEARCH: false, TOWNWISE_WEB_URL: 'http://localhost:8081', TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5, ...azurite,
     })).toThrow(ConfigError);
     expect(() => loadEnv(configSchema, { FILES_BLOB_ACCOUNT_URL: 'not a url' })).toThrow(ConfigError);
   });

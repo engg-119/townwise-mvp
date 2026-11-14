@@ -46,9 +46,11 @@ export interface ToolContext {
    * turn's requests carry the content of files attached to the person's message, and by read_data_item once it hands
    * back an item's text in this turn. While it is set, start_calibration (the one tool that acts at once) refuses, so
    * words from a file of Your data can never start it. A read from an earlier turn is sent again only as a stub
-   * (savedTurn), so it never sets it.
+   * (savedTurn), so it never sets it. D37: turn.ts sets both flags when the turn's requests carry a web search's
+   * results, which the API puts back in the model's context on every later request too: from the start when the history
+   * holds one, and otherwise before the client tools of the message that got one run. `readWeb` says which refusal.
    */
-  readonly turn: { readUntrusted: boolean };
+  readonly turn: { readUntrusted: boolean; readWeb: boolean };
 }
 
 export type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue };

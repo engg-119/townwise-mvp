@@ -63,16 +63,21 @@ export function costMicroUsd(model: string, tokens: TokenCounts): number {
   return Math.ceil(nanoUsd(model, tokens) / 1000);
 }
 
+/** D37: a web search, $10 per 1,000 (list price), on top of its tokens. A search that fails is not billed. */
+export const SEARCH_MICRO_USD = 10_000;
+
 /**
  * A finished call's cost. When the server ran more than one attempt (a refusal fallback), `usage.iterations` holds
  * each attempt with the model that ran it and is the source of truth; top-level `usage` covers only the last one.
+ * Web searches are counted once, from the call's top-level `usage.server_tool_use` (D37): its iterations carry none.
  */
 export function messageCostMicroUsd(message: Pick<BetaMessage, 'model' | 'usage'>): number {
+  const searches = (message.usage.server_tool_use?.web_search_requests ?? 0) * SEARCH_MICRO_USD;
   const iterations = message.usage.iterations ?? [];
-  if (iterations.length === 0) return costMicroUsd(message.model, tokensOf(message.usage));
+  if (iterations.length === 0) return costMicroUsd(message.model, tokensOf(message.usage)) + searches;
   const nano = iterations.reduce((sum, entry) => {
     const model = 'model' in entry && entry.model !== null ? entry.model : message.model;
     return sum + nanoUsd(model, tokensOf(entry));
   }, 0);
-  return Math.ceil(nano / 1000);
+  return Math.ceil(nano / 1000) + searches;
 }

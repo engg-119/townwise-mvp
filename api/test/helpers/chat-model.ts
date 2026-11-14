@@ -16,6 +16,8 @@ export interface UsageInput {
   cacheRead?: number;
   cacheWrite?: number;
   iterations?: BetaIterationsUsage;
+  /** D37: the web searches the call was billed for, as usage.server_tool_use reports them. */
+  searches?: number;
 }
 
 export function usage(u: UsageInput = {}): BetaUsage {
@@ -29,7 +31,7 @@ export function usage(u: UsageInput = {}): BetaUsage {
     inference_geo: null,
     iterations: u.iterations ?? null,
     output_tokens_details: null,
-    server_tool_use: null,
+    server_tool_use: u.searches === undefined ? null : { web_search_requests: u.searches, web_fetch_requests: 0 },
     service_tier: 'standard',
     speed: 'standard',
   };
@@ -46,6 +48,52 @@ export function thinking(signature: string, value = ''): BetaContentBlock {
 
 export function toolUse(id: string, name: string, input: unknown): BetaContentBlock {
   return { type: 'tool_use', id, name, input };
+}
+
+/** D37: a web search as the API returns it, with no caller key (S0, 2026-11-14). */
+export function webSearch(id: string, query = 'Sentinel-query: events in town this weekend'): BetaContentBlock {
+  return { type: 'server_tool_use', id, name: 'web_search', input: { query } };
+}
+
+/** Its results: synthetic pages, each with made-up title and opaque encrypted_content, as the API returns them. */
+export function webResults(id: string, urls: readonly string[]): BetaContentBlock {
+  return {
+    type: 'web_search_tool_result', tool_use_id: id, caller: { type: 'direct' },
+    content: urls.map((url, index) => ({
+      type: 'web_search_result', title: `Sentinel-title ${String(index + 1)}`, url,
+      encrypted_content: `Sentinel-encrypted/${id}/${String(index + 1)}+opaque==`, page_age: index === 0 ? '3 days ago' : null,
+    })),
+  };
+}
+
+/** A search that failed: its result holds the API's error code instead of pages. */
+export function webError(id: string, code: 'max_uses_exceeded' | 'unavailable' | 'too_many_requests' = 'unavailable'): BetaContentBlock {
+  return { type: 'web_search_tool_result', tool_use_id: id, caller: { type: 'direct' }, content: { type: 'web_search_tool_result_error', error_code: code } };
+}
+
+/**
+ * Text citing search results, in the shape and key order the API returned in S0 step c (2026-11-14): `citations` first,
+ * each `{ type, cited_text, url, title, encrypted_index }`. Citations are always on for web search; `cited_text` is page
+ * text, which is stored (the echo needs it) and never logged or shown.
+ */
+export function cited(value: string, urls: readonly string[]): BetaContentBlock {
+  return {
+    citations: urls.map((url) => ({
+      type: 'web_search_result_location', cited_text: 'Sentinel-cited words from the page', url, title: 'Sentinel-title',
+      encrypted_index: `Sentinel-index/${url}`,
+    })),
+    type: 'text', text: value,
+  };
+}
+
+/** A text block of a reply after a search that cites nothing: in S0 step c it has no `citations` key at all. */
+export function bareText(value: string): BetaContentBlock {
+  return { type: 'text', text: value } as unknown as BetaContentBlock;
+}
+
+/** A client tool call as the API returns it beside a web search, with its caller (S0). */
+export function directToolUse(id: string, name: string, input: unknown): BetaContentBlock {
+  return { type: 'tool_use', id, name, caller: { type: 'direct' }, input };
 }
 
 let messageCount = 0;
@@ -109,6 +157,8 @@ export function eventsOf(final: BetaMessage): BetaRawMessageStreamEvent[] {
         events.push({ type: 'content_block_delta', index, delta: { type: 'signature_delta', signature: block.signature } });
         break;
       case 'tool_use':
+      case 'server_tool_use':
+        // A web search's query streams as input deltas after its block starts, as a tool call's input does.
         events.push({ type: 'content_block_start', index, content_block: { ...block, input: {} } });
         for (const piece of pieces(JSON.stringify(block.input))) {
           events.push({ type: 'content_block_delta', index, delta: { type: 'input_json_delta', partial_json: piece } });
@@ -131,7 +181,7 @@ export function eventsOf(final: BetaMessage): BetaRawMessageStreamEvent[] {
       fallback_credit: null,
       iterations: final.usage.iterations,
       output_tokens_details: null,
-      server_tool_use: null,
+      server_tool_use: final.usage.server_tool_use,
     },
   });
   events.push({ type: 'message_stop' });

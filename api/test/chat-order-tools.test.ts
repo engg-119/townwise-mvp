@@ -93,7 +93,7 @@ function context(fakes: Fakes = {}): ToolContext {
     timeZone: 'America/New_York',
     role: 'member',
     actor: { actorUserId: 'user-1', actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null },
-    turn: { readUntrusted: false },
+    turn: { readUntrusted: false, readWeb: false },
   };
 }
 

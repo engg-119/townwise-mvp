@@ -47,6 +47,12 @@ export const configSchema = z.object({
   TOWNWISE_STAFF_TWO_STEP: z.preprocess((value) => (value === '' ? undefined : value), z.enum(['required', 'off']).optional()),
   /** The tuning chat's monthly spend limit per organization, in US dollars (docs/portal/tuning-chat.md section 5). */
   TOWNWISE_CHAT_MONTHLY_BUDGET_USD: z.coerce.number().min(0).max(10_000).default(20),
+  /**
+   * D37: whether TownwiseAI sends Anthropic's web search tool (`true` or `false`). Off unless set, so a deploy that
+   * never set it never sends the tool. Web search must be on for the Anthropic organization in Claude Console first, or
+   * every turn fails; turning this off is the fix (infra/README.md). [CONFIRM: web search on in production; off by default in code]
+   */
+  TOWNWISE_CHAT_WEB_SEARCH: z.stringbool().default(false),
   /** The Communication Services endpoint, https://<resource>.communication.azure.com. Absent turns email off (spec D14). */
   EMAIL_ENDPOINT: z.url({ protocol: /^https$/, hostname: ACS_HOST }).optional(),
   /** The From address, a sender username on the verified domain. Required with EMAIL_ENDPOINT. */
@@ -96,6 +102,8 @@ export interface ResolvedTownwiseConfig {
   /** False only outside production with TOWNWISE_STAFF_TWO_STEP off: staff then need no codes. */
   readonly staffTwoStep: boolean;
   readonly chatMonthlyBudgetUsd: number;
+  /** D37: whether every TownwiseAI request sends the web search tool. */
+  readonly chatWebSearch: boolean;
   readonly filesMonthlyBudgetUsd: number;
   /** Null while email is off. `endpoint` is a bare origin. */
   readonly email: { readonly endpoint: string; readonly sender: string } | null;
@@ -208,6 +216,7 @@ export function resolveTownwiseConfig(
     superadminEmails: new Set(config.TOWNWISE_SUPERADMIN_EMAILS),
     staffTwoStep: staffTwoStep === 'required',
     chatMonthlyBudgetUsd: config.TOWNWISE_CHAT_MONTHLY_BUDGET_USD,
+    chatWebSearch: config.TOWNWISE_CHAT_WEB_SEARCH,
     filesMonthlyBudgetUsd: config.TOWNWISE_FILES_MONTHLY_BUDGET_USD,
     email: endpoint === null || config.EMAIL_SENDER === undefined ? null : { endpoint, sender: config.EMAIL_SENDER },
     emailReplyTo: config.TOWNWISE_EMAIL_REPLY_TO ?? null,

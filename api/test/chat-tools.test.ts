@@ -8,6 +8,8 @@ import { SYSTEM_PROMPT } from '../src/chat/prompt.ts';
 import { TEXT_ITEM_MAX_CHARS, TEXT_ITEM_TITLE_MAX } from '../src/files/items.ts';
 import { townProfileOf } from '../src/handlers/towns.ts';
 import { inputViewOf, resultViewOf, TOOL_REGISTRY, TOOLS, toolNamed, type ToolContext, type ToolView } from '../src/chat/tools/registry.ts';
+import { requestParams } from '../src/chat/turn.ts';
+import { WEB_SEARCH_TOOL } from '../src/chat/web-search.ts';
 import type { BusinessRuleRecord, BusinessRuleStore } from '../src/stores/business-rules.ts';
 import type { NoteRecord, NoteStore } from '../src/stores/notes.ts';
 import type { SalesDayStore, SalesDayWithUpload } from '../src/stores/sales-days.ts';
@@ -49,6 +51,14 @@ describe('the tool registry', () => {
   it('sends the model exactly the registry’s definitions, in order, each streaming its input unbuffered', () => {
     expect(TOOLS).toEqual(TOOL_REGISTRY.map((tool) => tool.definition));
     expect(TOOLS.every((tool) => tool.eager_input_streaming === true)).toBe(true);
+  });
+
+  it('keeps web search (D37) out of the registry: sent after every registry tool while on, so a tool appended later goes before it', () => {
+    expect(FROZEN_NAMES).not.toContain('web_search');
+    expect(toolNamed('web_search')).toBeUndefined();
+    const tools = requestParams([{ role: 'user', content: 'Hi' }], true).tools ?? [];
+    expect(tools.map((tool) => ('name' in tool ? tool.name : null))).toEqual([...FROZEN_NAMES, 'web_search']);
+    expect(tools.at(-1)).toBe(WEB_SEARCH_TOOL);
   });
 
   it('finds a tool by name and nothing for an unknown one', () => {
@@ -211,7 +221,7 @@ describe('get_day', () => {
       timeZone: 'America/New_York',
       role: 'member',
       actor: { actorUserId: SENTINEL_USER, actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null },
-      turn: { readUntrusted: false },
+      turn: { readUntrusted: false, readWeb: false },
     };
     return { tc, byIds, ranges };
   }

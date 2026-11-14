@@ -1,23 +1,26 @@
 // One tuning chat turn (docs/portal/tuning-chat.md sections 3 and 4): a manual streaming loop. Stream a model call,
 // take its finalMessage(), run its tool calls, append, repeat, for at most 8 calls. Every assistant message is kept
 // exactly as received, thinking blocks included, except what a mid-reply fallback requires dropping (echoable). The
-// turn's messages are returned for one save (savedTurn: an item's text is kept only as a stub, and an attached file's
-// content is sent but never saved); a failed, aborted or refused turn returns nothing to save, only its cost, which is
-// charged after every call either way.
+// turn's messages are returned for one save (savedTurn: an item's text is kept only as a stub, an attached file's
+// content is sent but never saved, and a web search cut off before its result is not saved); a failed, aborted or
+// refused turn returns nothing to save, only its cost, which is charged after every call either way. A web search
+// (D37, web-search.ts) runs inside a call: its card streams from the call's events, and a call the API paused in the
+// middle of its searches (pause_turn) is sent back unchanged to resume.
 import { AnthropicError, APIConnectionError, APIError, InternalServerError, RateLimitError } from '@anthropic-ai/sdk';
 import type {
-  BetaContentBlock, BetaMessage, BetaMessageParam, BetaMessageStreamParams, BetaRawContentBlockDelta, BetaRawMessageStreamEvent,
-  BetaToolResultBlockParam, BetaToolUseBlock,
+  BetaContentBlock, BetaContentBlockParam, BetaMessage, BetaMessageParam, BetaMessageStreamParams, BetaRawContentBlockDelta,
+  BetaRawContentBlockStartEvent, BetaRawMessageStreamEvent, BetaToolResultBlockParam, BetaToolUseBlock,
 } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 
 import type { NoteContent } from '../stores/notes.ts';
 import type { StoredMessage } from '../stores/chat-conversations.ts';
 import type { ChatModel } from './model.ts';
-import { costMicroUsd, messageCostMicroUsd, tokensOf, type TokenCounts } from './pricing.ts';
+import { costMicroUsd, messageCostMicroUsd, SEARCH_MICRO_USD, tokensOf, type TokenCounts } from './pricing.ts';
 import { SYSTEM_PROMPT } from './prompt.ts';
 import { UNANSWERED_RESULT } from './tools/next.ts';
 import { inputViewOf, resultViewOf, runTool, savedResultOf, toolNamed, TOOLS, type ToolContext, type ToolView } from './tools/registry.ts';
 import type { Visual } from './tools/visual.ts';
+import { carriesWebPages, citedSources, searchCard, WEB_SEARCH, WEB_SEARCH_TOOL, type SourceLink } from './web-search.ts';
 
 export const CHAT_MODEL = 'claude-opus-5-5';
 export const MAX_TOKENS = 16_000;
@@ -38,7 +41,9 @@ export type FailureCode = 'internal' | 'provider_unavailable' | 'provider_overlo
 
 /**
  * What the turn streams to the client between `conversation` and `done` or `error`. `id` is the tool_use block's id.
- * A tool event's `input` is its input view on every state; `result` is its result view, on `done` only.
+ * A tool event's `input` is its input view on every state; `result` is its result view, on `done` only. A web search's
+ * (D37) `id` is its server_tool_use block's, its `input` always null (never its query), and its `result` web-search.ts
+ * searchCard's: `{ pages, sources }` on `done`, `{ code }` on `error`.
  */
 export type TurnEvent =
   | { type: 'text'; data: { delta: string } }
@@ -55,16 +60,19 @@ export type TurnEvent =
 /** How every answer to a tool call that never ran begins; GET .../chat/:conversationId leaves those calls out. */
 export const NOT_RUN = 'Not run: ';
 
+/** Every kind of result carries `webSearches`: how many web searches the turn's calls were billed for (D37), a count only. */
 export type TurnResult =
   | {
     kind: 'done'; stopReason: DoneReason; messages: StoredMessage[]; calls: number; model: string;
-    inputTokens: number; outputTokens: number; costMicroUsd: number;
+    inputTokens: number; outputTokens: number; costMicroUsd: number; webSearches: number;
     /** The reply node when it stored an assistant message, else the user node, else the reply's parent. */
     leafId: string;
+    /** D37: the pages the reply's text cites from its web searches (web-search.ts citedSources), shown under it. */
+    sources: SourceLink[];
   }
-  | { kind: 'refused'; calls: number; model: string; costMicroUsd: number }
-  | { kind: 'failed'; code: FailureCode; errType: string; status: number | null; calls: number; costMicroUsd: number }
-  | { kind: 'aborted'; calls: number; costMicroUsd: number };
+  | { kind: 'refused'; calls: number; model: string; costMicroUsd: number; webSearches: number }
+  | { kind: 'failed'; code: FailureCode; errType: string; status: number | null; calls: number; costMicroUsd: number; webSearches: number }
+  | { kind: 'aborted'; calls: number; costMicroUsd: number; webSearches: number };
 
 /** A tree node the turn writes (src/chat/tree.ts). */
 export interface TurnNode { readonly id: string; readonly parentId: string | null }
@@ -95,10 +103,15 @@ export interface TurnInput {
   readonly charge: (costMicroUsd: number) => Promise<void>;
   /** True when the organization's budget for the month is spent. Asked before every model call after the first. */
   readonly budgetSpent: () => Promise<boolean>;
+  /** D37: TOWNWISE_CHAT_WEB_SEARCH. On, every request sends the web search tool; absent or false, it never does. */
+  readonly webSearch?: boolean;
 }
 
-/** Every request: the frozen prefix (system, tools), then the conversation. */
-export function requestParams(messages: BetaMessageParam[]): BetaMessageStreamParams {
+/**
+ * Every request: the frozen prefix (system, tools), then the conversation. With `webSearch` the tools end with the web
+ * search tool (D37), after every registry tool, so a tool appended to the registry later still goes before it.
+ */
+export function requestParams(messages: BetaMessageParam[], webSearch = false): BetaMessageStreamParams {
   return {
     model: CHAT_MODEL,
     max_tokens: MAX_TOKENS,
@@ -113,7 +126,7 @@ export function requestParams(messages: BetaMessageParam[]): BetaMessageStreamPa
     fallbacks: 'default',
     cache_control: { type: 'ephemeral' },
     system: SYSTEM_PROMPT,
-    tools: [...TOOLS],
+    tools: webSearch ? [...TOOLS, WEB_SEARCH_TOOL] : [...TOOLS],
     messages,
   };
 }
@@ -160,23 +173,35 @@ function streamedCharacters(delta: BetaRawContentBlockDelta): number {
  *
  * at the price of the model that was answering. Streamed characters are those of text, thinking and tool input
  * deltas; the time term covers thinking that is billed but not streamed (a summary is shorter than the thinking behind it).
+ * Its web searches (D37) are charged as message_delta reports them, and before it does, one for each search the call
+ * started that did not come back as an error (a failed search is not billed).
  */
-function usageTracker(now: () => Date): { observe(event: BetaRawMessageStreamEvent): void; costMicroUsd(): number } {
+function usageTracker(now: () => Date): {
+  observe(event: BetaRawMessageStreamEvent): void; costMicroUsd(): number; searches(): number;
+} {
   let model: string | null = null;
   let tokens: TokenCounts | null = null;
   let startedAt = 0;
   let characters = 0;
   let outputReported = false;
+  let searchesStarted = 0;
+  let searchesReported: number | null = null;
+  const searches = (): number => searchesReported ?? Math.max(0, searchesStarted);
   return {
     observe(event) {
       if (event.type === 'message_start') {
         model = event.message.model;
         tokens = tokensOf(event.message.usage);
         startedAt = now().getTime();
+      } else if (event.type === 'content_block_start') {
+        const block = event.content_block;
+        if (block.type === 'server_tool_use' && block.name === WEB_SEARCH) searchesStarted += 1;
+        if (block.type === 'web_search_tool_result' && !Array.isArray(block.content)) searchesStarted -= 1;
       } else if (event.type === 'content_block_delta') {
         characters += streamedCharacters(event.delta);
       } else if (event.type === 'message_delta' && tokens !== null) {
         outputReported = true;
+        searchesReported = event.usage.server_tool_use?.web_search_requests ?? searchesReported;
         tokens = {
           input: event.usage.input_tokens ?? tokens.input,
           output: event.usage.output_tokens,
@@ -187,12 +212,26 @@ function usageTracker(now: () => Date): { observe(event: BetaRawMessageStreamEve
     },
     costMicroUsd() {
       if (model === null || tokens === null) return 0;
-      if (outputReported) return costMicroUsd(model, tokens);
+      const searched = searches() * SEARCH_MICRO_USD;
+      if (outputReported) return costMicroUsd(model, tokens) + searched;
       const seconds = (now().getTime() - startedAt) / 1000;
       const output = Math.min(MAX_TOKENS, Math.max(Math.ceil(characters / 3), Math.ceil(seconds * 150)));
-      return costMicroUsd(model, { ...tokens, output });
+      return costMicroUsd(model, { ...tokens, output }) + searched;
     },
+    searches,
   };
+}
+
+/**
+ * D37: a web search's card as the call streams it: `running` when the model starts one, never with its query (the
+ * query streams after, as input deltas nothing reads), then `done` or `error` with its result. Null for any other block.
+ */
+function searchEvent(block: BetaRawContentBlockStartEvent['content_block']): TurnEvent | null {
+  if (block.type === 'server_tool_use' && block.name === WEB_SEARCH) {
+    return { type: 'tool', data: { id: block.id, name: WEB_SEARCH, state: 'running', input: null, result: null } };
+  }
+  if (block.type !== 'web_search_tool_result') return null;
+  return { type: 'tool', data: { id: block.tool_use_id, name: WEB_SEARCH, input: null, ...searchCard(block.content) } };
 }
 
 /**
@@ -227,7 +266,10 @@ function wroteText(turn: readonly BetaMessageParam[]): boolean {
     if (param?.role !== 'assistant' || typeof param.content === 'string') continue;
     // A message that calls a tool other than suggest_next did work after any text it holds: that text came first.
     if (param.content.some((block) => block.type === 'tool_use' && block.name !== 'suggest_next')) return false;
-    if (param.content.some((block) => block.type === 'text' && block.text.trim() !== '')) return true;
+    // D37: a web search is work done inside the message, so only text after its last search block answers it.
+    const searched = param.content.findLastIndex((block) => block.type === 'server_tool_use' || block.type === 'web_search_tool_result');
+    if (param.content.some((block, at) => at > searched && block.type === 'text' && block.text.trim() !== '')) return true;
+    if (searched !== -1) return false;
   }
   return false;
 }
@@ -240,13 +282,18 @@ function askForAnswer(result: BetaToolResultBlockParam): BetaToolResultBlockPara
 /**
  * The blocks of a reply that are sent back and acted on. After a server-side fallback in the middle of a reply, the
  * declined model's blocks before the last `fallback` block are echoed back only as text: its thinking, redacted
- * thinking, tool calls and any other model-internal blocks are dropped, and its tool calls never run. The `fallback`
- * block itself is an audit marker and is dropped too. Everything after the boundary is kept unchanged.
+ * thinking, tool calls, web searches and their results (D37) and any other model-internal blocks are dropped, and its
+ * tool calls never run. Its text goes without its citations, which point at the results dropped. The `fallback` block
+ * itself is an audit marker and is dropped too. Everything after the boundary is kept unchanged.
  */
 export function echoable(content: readonly BetaContentBlock[]): BetaContentBlock[] {
   const boundary = content.findLastIndex((block) => block.type === 'fallback');
   if (boundary === -1) return [...content];
-  return content.filter((block, index) => index > boundary || block.type === 'text');
+  return content.flatMap((block, index) => {
+    if (index > boundary) return [block];
+    if (block.type !== 'text') return [];
+    return [Array.isArray(block.citations) ? { ...block, citations: null } : block];
+  });
 }
 
 /**
@@ -257,20 +304,32 @@ export function echoable(content: readonly BetaContentBlock[]): BetaContentBlock
  * dropped. The turn's own later calls already read the whole result. The saved history is append-only from then on.
  * `expanded` (the turn sent the person's message other than as stored, D36): every thinking block of the turn comes
  * after content that is never saved, so none is.
+ * D37: a web search with no result anywhere in the turn (it ended paused, or cut off by tool_limit, budget or
+ * max_tokens, or the API left the search for a next call that never came) is not saved, since the API refuses a
+ * stored one on every later request; the thinking after it, bound to it, goes the same way. Its cost was charged.
  */
 export function savedTurn(turn: readonly TurnMessage[], expanded = false): StoredMessage[] {
   const names = new Map<string, string>();
+  const answered = new Set(turn.flatMap(({ param }) => (param.role === 'assistant' && typeof param.content !== 'string'
+    ? param.content.flatMap((block) => (block.type === 'web_search_tool_result' ? [block.tool_use_id] : []))
+    : [])));
   let stubbed = expanded;
   const saved: StoredMessage[] = [];
   for (const { param, ...placed } of turn) {
     let kept = param;
     if (typeof param.content !== 'string' && param.role === 'assistant') {
-      for (const block of param.content) if (block.type === 'tool_use') names.set(block.id, block.name);
-      if (stubbed) {
-        const content = param.content.filter((block) => block.type !== 'thinking' && block.type !== 'redacted_thinking');
-        if (content.length === 0) continue;
-        kept = { ...param, content };
+      const content: BetaContentBlockParam[] = [];
+      for (const block of param.content) {
+        if (block.type === 'tool_use') names.set(block.id, block.name);
+        if (block.type === 'server_tool_use' && block.name === WEB_SEARCH && !answered.has(block.id)) {
+          stubbed = true;
+          continue;
+        }
+        if (stubbed && (block.type === 'thinking' || block.type === 'redacted_thinking')) continue;
+        content.push(block);
       }
+      if (content.length === 0) continue;
+      if (content.length !== param.content.length) kept = { ...param, content };
     } else if (typeof param.content !== 'string' && param.role === 'user') {
       const content: typeof param.content = [];
       for (const block of param.content) {
@@ -298,6 +357,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
   let spent = 0;
   let inputTokens = 0;
   let outputTokens = 0;
+  let webSearches = 0;
   let model = CHAT_MODEL;
   const charge = async (cost: number): Promise<void> => {
     if (cost <= 0) return;
@@ -306,15 +366,26 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
   };
   const done = (stopReason: DoneReason): TurnResult => {
     const messages = savedTurn(timed, input.expanded !== null);
+    const written = turn.flatMap((param): BetaContentBlockParam[] => (param.role === 'assistant' && typeof param.content !== 'string' ? param.content : []));
     return {
-      kind: 'done', stopReason, messages, calls, model, inputTokens, outputTokens, costMicroUsd: spent,
+      kind: 'done', stopReason, messages, calls, model, inputTokens, outputTokens, costMicroUsd: spent, webSearches,
       // A reply's messages start with an assistant message, so the last one stored names the deepest node written.
       leafId: messages.at(-1)?.nodeId ?? reply.parentId,
+      sources: citedSources(written),
     };
   };
 
   // A function, not a property read: the signal changes under the loop, which narrowing cannot see.
   const aborted = (): boolean => input.signal.aborted;
+  const abortedResult = (): TurnResult => ({ kind: 'aborted', calls, costMicroUsd: spent, webSearches });
+
+  // D37: a request that carries a search's results carries web pages' text, which the API restores into the model's
+  // context on every later request too; from then on the turn's client tools run as in a turn that read untrusted words.
+  const readWeb = (): void => {
+    input.tools.turn.readUntrusted = true;
+    input.tools.turn.readWeb = true;
+  };
+  if (carriesWebPages(input.history)) readWeb();
 
   // Every request: the history and the turn so far, with the person's message (a regenerate's is the history's last)
   // sent as `expanded` when it carries attachments. What is saved is `turn`, which holds the stored form.
@@ -330,7 +401,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     let jsonRetries = 0;
     for (;;) {
       if (calls === MAX_CALLS_PER_TURN) return done('tool_limit');
-      if (aborted()) return { kind: 'aborted', calls, costMicroUsd: spent };
+      if (aborted()) return abortedResult();
       // The handler checked the budget before the first call. A later call that finds it spent is not made: the turn
       // ends after its last complete step, whose tool calls all have results, so the saved history stays valid.
       if (calls > 0 && await input.budgetSpent()) return done('budget');
@@ -338,10 +409,13 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       const usage = usageTracker(input.now);
       let message: BetaMessage;
       try {
-        const stream = input.model.stream(requestParams(requestMessages()), { signal: input.signal });
+        const stream = input.model.stream(requestParams(requestMessages(), input.webSearch === true), { signal: input.signal });
         for await (const event of stream) {
           usage.observe(event);
-          if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+          if (event.type === 'content_block_start') {
+            const card = searchEvent(event.content_block);
+            if (card !== null) input.emit(card);
+          } else if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
             input.emit({ type: 'text', data: { delta: event.delta.text } });
           } else if (event.type === 'content_block_delta' && event.delta.type === 'thinking_delta') {
             input.emit({ type: 'thinking', data: { delta: event.delta.thinking } });
@@ -350,6 +424,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
         message = await stream.finalMessage();
       } catch (err) {
         await charge(usage.costMicroUsd());
+        webSearches += usage.searches();
         if (!aborted() && isUnparseableToolInput(err) && jsonRetries < MAX_JSON_RETRIES) {
           // The tool_use block never completed, so there is no id to answer: re-issue the same call.
           jsonRetries += 1;
@@ -359,13 +434,16 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       }
       jsonRetries = 0;
       await charge(messageCostMicroUsd(message));
+      webSearches += message.usage.server_tool_use?.web_search_requests ?? 0;
       const tokens = tokensOf(message.usage);
       inputTokens += tokens.input + tokens.cacheRead + tokens.cacheWrite;
       outputTokens += tokens.output;
       model = message.model;
       const stop = message.stop_reason;
       // A refused turn saves nothing, as a failed one: no user message, no partial reply, no results for its calls.
-      if (stop === 'refusal') return { kind: 'refused', calls, model, costMicroUsd: spent };
+      if (stop === 'refusal') return { kind: 'refused', calls, model, costMicroUsd: spent, webSearches };
+      // D37: before this message's client tools run; a search's result and a start_calibration call can share one.
+      if (message.content.some((block) => block.type === 'web_search_tool_result')) readWeb();
       const content = echoable(message.content);
       // An empty assistant message would make the next request invalid.
       if (content.length > 0) append({ role: 'assistant', content });
@@ -376,6 +454,9 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
         if (toolUses.length > 0) append(notRun(toolUses));
         return done('max_tokens');
       }
+      // D37: the API paused its own loop of web searches. The paused message, sent back unchanged as the request's
+      // last, resumes it; that call counts toward the 8 and is made only while the budget lasts, like any other.
+      if (stop === 'pause_turn' && toolUses.length === 0) continue;
       if (toolUses.length === 0) return done('end_turn');
 
       const results: BetaToolResultBlockParam[] = [];
@@ -409,9 +490,9 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       if (onlyNext && !unanswered) return done('end_turn');
     }
   } catch (err) {
-    if (aborted()) return { kind: 'aborted', calls, costMicroUsd: spent };
+    if (aborted()) return abortedResult();
     return {
-      kind: 'failed', code: failureCode(err), calls, costMicroUsd: spent,
+      kind: 'failed', code: failureCode(err), calls, costMicroUsd: spent, webSearches,
       errType: err instanceof Error ? err.constructor.name : typeof err,
       status: err instanceof APIError && typeof err.status === 'number' ? err.status : null,
     };

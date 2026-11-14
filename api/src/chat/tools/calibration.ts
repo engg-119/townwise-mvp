@@ -34,6 +34,11 @@ const NOT_FINISHED = 'The calibration hasn’t finished yet.';
  * calibration, so a file's words can't start one.
  */
 const FILE_TURN = 'A calibration can’t start in a turn that read a file from Your data. Ask the owner to confirm in a new message.';
+/**
+ * D37: nor in one whose requests carry web pages a search found. The API puts a search's results back in the model's
+ * context on every later request of the conversation, so the owner asks for it in a new conversation.
+ */
+const WEB_TURN = 'A calibration can’t start in a conversation that read web pages. Ask the owner to ask for it in a new conversation.';
 
 const startInput = z.strictObject({ regimeStart: isoDate.optional() });
 const namedInput = z.strictObject({ calibrationId: objectId.optional() });
@@ -106,6 +111,7 @@ export const startCalibrationTool: ChatTool<StartInput> = {
   })),
   async run(tc, input) {
     if (tc.role !== 'org_admin') return json({ started: false, code: 'org_admin_only', message: NOT_ADMIN });
+    if (tc.turn.readWeb) return json({ started: false, code: 'web_turn', message: WEB_TURN });
     if (tc.turn.readUntrusted) return json({ started: false, code: 'file_turn', message: FILE_TURN });
     const { ctx, scope, location } = tc;
     const request: StartRequest = {
