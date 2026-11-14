@@ -7,7 +7,7 @@ import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { Coverage, SalesDay } from '../src/stores/sales-days.ts';
-import { addLocation, addNote, addSeat, addUpload, auditEvents, createOrg } from './helpers/fixtures.ts';
+import { addLocation, addNote, addOrderRecords, addSeat, addUpload, auditEvents, createOrg, ORDER_COLLECTIONS } from './helpers/fixtures.ts';
 import {
   call, limiterKey, logLines, signIn, startTownwiseServer, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
@@ -374,6 +374,23 @@ describe('DELETE /api/org/locations/:locationId/sales', () => {
     expect((await upload(locationId, { days })).status).toBe(201);
     expect(await asked(locationId)).toContain(GAP);
     expect(await asked(other)).not.toContain(GAP);
+  });
+
+  it('also deletes its item sales; its ordering setup, counts, edits, rules and cards stay', async () => {
+    const locationId = await newLocation();
+    const other = await newLocation();
+    for (const id of [locationId, other]) await addOrderRecords(server, { orgId: team.orgId, locationId: id });
+    const rows = async (id: string): Promise<Record<string, number>> => {
+      const found: Record<string, number> = {};
+      for (const name of ORDER_COLLECTIONS) found[name] = await server.connection.collection(name).countDocuments({ locationId: new Types.ObjectId(id) });
+      return found;
+    };
+    const all = Object.fromEntries(ORDER_COLLECTIONS.map((name) => [name, 1]));
+
+    const res = await call(server, `/api/org/locations/${locationId}/sales`, { method: 'DELETE', session: team.admin });
+    expect(res.status).toBe(200);
+    expect(await rows(locationId)).toEqual({ ...all, tw_item_sales: 0 });
+    expect(await rows(other)).toEqual(all);
   });
 });
 

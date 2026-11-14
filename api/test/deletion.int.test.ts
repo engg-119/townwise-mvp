@@ -1,6 +1,6 @@
 // Deletion (spec D22, F13, 9.3, 10.7, 19 item 7): staff delete a suspended organization's records, or a person's.
-// Each writes its event first, deletes by filter (the tuning chat's records, TownwiseAI's proposal records included),
-// and redacts the audit log.
+// Each writes its event first, deletes by filter (the tuning chat's records, TownwiseAI's proposal records and order
+// cards included), and redacts the audit log.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
@@ -9,8 +9,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { MeResponse } from '../src/handlers/me.ts';
 import { AUDIT_DETAIL_KEYS, type AuditAction } from '../src/stores/audit-events.ts';
 import {
-  addAuditEvent, addChatUsage, addConversation, addGrant, addInvite, addLiveTurn, addLocation, addNote, addRemovedSeat,
-  addRequest, addSalesDay, addSeat, addUpload, auditEvents, createOrg,
+  addAuditEvent, addChatUsage, addConversation, addGrant, addInvite, addLiveTurn, addLocation, addNote, addOrderRecords, addRemovedSeat,
+  addRequest, addSalesDay, addSeat, addUpload, auditEvents, createOrg, ORDER_COLLECTIONS,
 } from './helpers/fixtures.ts';
 import {
   call, makeStaff, MINUTE, signIn, signInStaff, startTownwiseServer, STAFF_EMAIL, writesDuring,
@@ -38,7 +38,8 @@ const TENANT_COLLECTIONS = [
   'tw_forecast_runs', 'tw_forecasts',
   // The forecast lab.
   'tw_calibrations',
-  'tw_order_cards', 'tw_order_decisions', 'tw_order_rules',
+  // Orders: edits, rules, cards, setups, item sales and counts.
+  ...ORDER_COLLECTIONS,
 ] as const;
 
 /** A tw_chat_proposals record (spec 6.16): the author dismissed a proposal in one of their conversations. */
@@ -48,6 +49,14 @@ async function addProposal(opts: { orgId: string; locationId: string; userId: st
     orgId: new Types.ObjectId(opts.orgId), locationId: new Types.ObjectId(opts.locationId), conversationId: new Types.ObjectId(),
     userId: opts.userId, proposalId: 'toolu_proposal0001', status: 'dismissed', noteId: new Types.ObjectId(), edited: false,
     createdAt: at, updatedAt: at,
+  });
+}
+
+/** A tw_order_cards record: the author set aside an order change TownwiseAI proposed in the conversation. */
+async function addOrderCard(opts: { orgId: string; locationId: string; conversationId: string }): Promise<void> {
+  await server.connection.collection('tw_order_cards').insertOne({
+    orgId: new Types.ObjectId(opts.orgId), locationId: new Types.ObjectId(opts.locationId), conversationId: new Types.ObjectId(opts.conversationId),
+    proposalId: 'toolu_order0001', kind: 'change', status: 'dismissed', createdAt: server.clock.now(),
   });
 }
 
@@ -132,8 +141,10 @@ async function populatedOrg(name: string, status: 'active' | 'suspended'): Promi
   await addSalesDay(server, { orgId, locationId, date: '2026-05-02', guests: 98, netSalesCents: 287_100 });
   await addUpload(server, { orgId, locationId, uploadedAt: server.clock.now(), status: 'applied' });
   await addNote(server, { orgId, locationId, detail: `${name} note detail`, createdBy: member.session.userId });
-  await addConversation(server, { orgId, locationId, userId: member.session.userId, text: `${name} chat` });
+  const conversationId = await addConversation(server, { orgId, locationId, userId: member.session.userId, text: `${name} chat` });
   await addProposal({ orgId, locationId, userId: member.session.userId });
+  // Orders: a record in each of its collections, the card in the member's conversation.
+  await addOrderRecords(server, { orgId, locationId, conversationId });
   // U9: an answer to a TownwiseAI question.
   await server.connection.collection('tw_agent_answers').insertOne({
     orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), questionId: 'gap_2026-05-03_2026-05-04',
@@ -340,7 +351,7 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
 });
 
 interface DoomedPerson {
-  person: Person; second: TestSession; formerOrgId: string; locationId: string; noteId: string; grantId: string;
+  person: Person; second: TestSession; formerOrgId: string; locationId: string; noteId: string; grantId: string; conversationId: string;
   /** Addresses they had before: in their own events, on an old seat, on a request, and only in an event about that seat. */
   oldEmail: string; seatEmail: string; requestEmail: string; changedEmail: string;
 }
@@ -357,8 +368,10 @@ async function doomedPerson(name: string): Promise<DoomedPerson> {
   const seatEmail = uniqueEmail(`${name}-seat`);
   const olderSeat = await addRemovedSeat(server, { orgId: olderOrgId, userId, email: seatEmail, removedAt: server.clock.now(), removedBy: 'e'.repeat(24) });
   const noteId = await addNote(server, { orgId: formerOrgId, locationId, detail: 'Written before leaving', createdBy: userId });
-  await addConversation(server, { orgId: formerOrgId, locationId, userId, text: `${name} private chat` });
+  const conversationId = await addConversation(server, { orgId: formerOrgId, locationId, userId, text: `${name} private chat` });
   await addProposal({ orgId: formerOrgId, locationId, userId });
+  // Orders: the location's records, with an order card in the person's conversation.
+  await addOrderRecords(server, { orgId: formerOrgId, locationId, conversationId });
   await addLiveTurn(server, { orgId: formerOrgId, userId });
   const inviting = await createOrg(server, { name: `${name} Inviting Cafe` });
   const paused = await createOrg(server, { name: `${name} Paused Inviter`, status: 'suspended' });
@@ -395,18 +408,21 @@ async function doomedPerson(name: string): Promise<DoomedPerson> {
   await addAuditEvent(server, {
     at, orgId: olderOrgId, action: 'member.joined', actorEmail: STAFF_EMAIL, actorRole: 'superadmin', details: { email: requestEmail, role: 'org_admin' },
   });
-  return { person: doomed, second, formerOrgId, locationId, noteId, grantId, oldEmail, seatEmail, requestEmail, changedEmail };
+  return { person: doomed, second, formerOrgId, locationId, noteId, grantId, conversationId, oldEmail, seatEmail, requestEmail, changedEmail };
 }
 
 /** One person's records in every collection that holds any, serialized. */
 async function snapshotOfPerson(target: Person): Promise<string> {
   const { userId } = target.session;
+  const conversationIds = (await server.connection.collection('tw_chat_conversations').find({ userId }).toArray()).map((doc) => doc._id);
   const docs: unknown[] = [
     await server.connection.collection('tw_access_requests').find({ userId }).sort({ _id: 1 }).toArray(),
     await server.connection.collection('tw_members').find({ $or: [{ userId }, { inviteEmail: target.email }] }).sort({ _id: 1 }).toArray(),
     await server.connection.collection('tw_chat_conversations').find({ userId }).sort({ _id: 1 }).toArray(),
     await server.connection.collection('tw_chat_live_turns').find({ userId }).sort({ _id: 1 }).toArray(),
     await server.connection.collection('tw_chat_proposals').find({ userId }).sort({ _id: 1 }).toArray(),
+    // Order cards hold no person id: they are the cards in the person's conversations.
+    await server.connection.collection('tw_order_cards').find({ conversationId: { $in: conversationIds } }).sort({ _id: 1 }).toArray(),
     await server.connection.collection('tw_profiles').find({ userId }).sort({ _id: 1 }).toArray(),
     await server.connection.collection('tw_audit_events').find({ $or: [{ actorUserId: userId }, { 'details.email': target.email }] }).sort({ _id: 1 }).toArray(),
     await server.authStores.totp.get(userId),
@@ -428,7 +444,8 @@ describe('POST /api/admin/people/delete', () => {
     // Someone who shares the deleted person's organization keeps their seat, invitation, conversations and live turn.
     const sharer = await person('sharer');
     await addSeat(server, { orgId: doomed.formerOrgId, userId: sharer.session.userId, email: sharer.email });
-    await addConversation(server, { orgId: doomed.formerOrgId, locationId: doomed.locationId, userId: sharer.session.userId, text: 'Sharer chat' });
+    const sharerConversation = await addConversation(server, { orgId: doomed.formerOrgId, locationId: doomed.locationId, userId: sharer.session.userId, text: 'Sharer chat' });
+    await addOrderCard({ orgId: doomed.formerOrgId, locationId: doomed.locationId, conversationId: sharerConversation });
     await addProposal({ orgId: doomed.formerOrgId, locationId: doomed.locationId, userId: sharer.session.userId });
     await addLiveTurn(server, { orgId: doomed.formerOrgId, userId: sharer.session.userId });
     await addRemovedSeat(server, {
@@ -450,6 +467,7 @@ describe('POST /api/admin/people/delete', () => {
     expect(await count('tw_chat_conversations', { userId })).toBe(0);
     expect(await count('tw_chat_live_turns', { userId })).toBe(0);
     expect(await count('tw_chat_proposals', { userId })).toBe(0);
+    expect(await count('tw_order_cards', { conversationId: new Types.ObjectId(doomed.conversationId) })).toBe(0);
     expect(await count('tw_profiles', { userId })).toBe(0);
     expect(await server.authStores.totp.get(userId)).toBeNull();
     for (const session of [doomed.person.session, doomed.second]) {
@@ -457,6 +475,10 @@ describe('POST /api/admin/people/delete', () => {
     }
     // Their notes stay with their organization, and view-as grants keep only ids and the staff reason.
     expect(await count('tw_notes', { _id: new Types.ObjectId(doomed.noteId) })).toBe(1);
+    // So do the location's order records other than their cards.
+    for (const name of ORDER_COLLECTIONS.filter((each) => each !== 'tw_order_cards')) {
+      expect({ name, n: await count(name, { locationId: new Types.ObjectId(doomed.locationId) }) }).toEqual({ name, n: 1 });
+    }
     expect(await count('tw_view_as_grants', { _id: new Types.ObjectId(doomed.grantId) })).toBe(1);
     expect(await snapshotOfPerson(bystander.person)).toBe(bystanderBefore);
     expect(await snapshotOfPerson(sharer)).toBe(sharerBefore);

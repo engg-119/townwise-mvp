@@ -200,6 +200,7 @@ export async function deleteConversation(ctx: TownwiseContext, req: Request, res
   if (!(await ctx.stores.chatConversations.remove(scope, ownerOf(caller, location.id), conversationId))) throw notFound();
   // After the conversation: while it exists its proposals keep their state, so none is offered for a second note.
   await ctx.stores.chatProposals.removeForConversation(scope, conversationId);
+  await ctx.stores.orders.removeForConversation(scope, conversationId);
   await recordAfter(ctx, {
     ...actorOf(caller), at: ctx.now(), orgId: scope.orgId, action: 'chat.conversation_deleted',
     target: { type: 'conversation', id: conversationId },

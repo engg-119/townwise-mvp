@@ -12,7 +12,7 @@ import { createLocation, type LocationSummary } from '../src/handlers/locations.
 import type { TownProfile } from '../src/handlers/towns.ts';
 import { createGooglePlacesClient } from '../src/places/google.ts';
 import {
-  addLocation, addNote, addRequest, addSalesDay, addSeat, addUpload, auditEvents, createOrg,
+  addLocation, addNote, addOrderRecords, addRequest, addSalesDay, addSeat, addUpload, auditEvents, createOrg, ORDER_COLLECTIONS,
 } from './helpers/fixtures.ts';
 import { fakePlaces, placeDetails, usAddress } from './helpers/places-fetch.ts';
 import {
@@ -249,6 +249,19 @@ describe('DELETE /api/org/locations/:locationId', () => {
     expect((await remove(t.admin, doomed)).status).toBe(204);
     expect(await answers.countDocuments({ locationId: new Types.ObjectId(doomed) })).toBe(0);
     expect(await answers.countDocuments({ locationId: new Types.ObjectId(kept) })).toBe(1);
+  });
+
+  it('deletes the location’s ordering records with it (edits, rules, cards, setup, item sales, counts), and no other location’s', async () => {
+    const t = await team('Order Group');
+    const doomed = await addLocation(server, { orgId: t.orgId, name: 'Doomed' });
+    const kept = await addLocation(server, { orgId: t.orgId, name: 'Kept' });
+    for (const locationId of [doomed, kept]) await addOrderRecords(server, { orgId: t.orgId, locationId });
+    expect((await remove(t.admin, doomed)).status).toBe(204);
+    for (const name of ORDER_COLLECTIONS) {
+      const collection = server.connection.collection(name);
+      expect({ name, doomed: await collection.countDocuments({ locationId: new Types.ObjectId(doomed) }) }).toEqual({ name, doomed: 0 });
+      expect({ name, kept: await collection.countDocuments({ locationId: new Types.ObjectId(kept) }) }).toEqual({ name, kept: 1 });
+    }
   });
 });
 

@@ -327,6 +327,19 @@ describe('deletion and logs', () => {
     expect(await notesOf()).toHaveLength(1);
   });
 
+  it('deleting the conversation deletes its order cards, and no other conversation’s', async () => {
+    const id = await conversationWithProposal();
+    const keep = await conversationWithProposal();
+    const cards = server.connection.collection('tw_order_cards');
+    await cards.insertMany([id, keep].map((conversationId) => ({
+      orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), conversationId: new Types.ObjectId(conversationId),
+      proposalId: 'toolu_order0001', kind: 'change', status: 'dismissed', createdAt: server.clock.now(),
+    })));
+    expect((await call(server, `/api/org/locations/${locationId}/chat/${id}`, { method: 'DELETE', session: author })).status).toBe(204);
+    expect(await cards.countDocuments({ conversationId: new Types.ObjectId(id) })).toBe(0);
+    expect(await cards.countDocuments({ conversationId: new Types.ObjectId(keep) })).toBe(1);
+  });
+
   it('logs the outcome with ids only, and no log line or event holds the note’s text', async () => {
     const id = await conversationWithProposal();
     server.logs.length = 0;

@@ -10,11 +10,11 @@
 
 ## 2. Stores
 
-- [ ] 2.1 `stores/order-setups.ts` (`tw_order_setups`): get, save with compare-and-set (`setup_changed`), id minting, limits; indexes; unit and integration tests including the racing first insert
-- [ ] 2.2 `stores/item-sales.ts` (`tw_item_sales`): upsert sent days then delete unsent days in range, read days in a range, coverage, remove for location, organization and sales data; integration tests including retry
-- [ ] 2.3 `stores/order-counts.ts` (`tw_order_counts`): save (`$set` per item), latest per item with date, remove for location and organization; integration tests
-- [ ] 2.4 `stores/orders.ts`: `setCard` never overwrites saved and retries once on a duplicate key; `addRule` returns the existing rule on a duplicate key; `removeForConversations(ids)`; integration tests for each race
-- [ ] 2.5 Deletion: location, organization, sales data (item sales only), conversation and person (order cards); `deletion.int.test.ts` seeds a row in all six order collections
+- [x] 2.1 `stores/order-setups.ts` (`tw_order_setups`): get, save with compare-and-set (`setup_changed`), id minting, limits; indexes; unit and integration tests including the racing first insert
+- [x] 2.2 `stores/item-sales.ts` (`tw_item_sales`): upsert sent days then delete unsent days in range, read days in a range, coverage, remove for location, organization and sales data; integration tests including retry
+- [x] 2.3 `stores/order-counts.ts` (`tw_order_counts`): save (`$set` per item), latest per item with date, remove for location and organization; integration tests
+- [x] 2.4 `stores/orders.ts`: `setCard` never overwrites saved and retries once on a duplicate key; `addRule` returns the existing rule on a duplicate key; `removeForConversations(ids)`; integration tests for each race
+- [x] 2.5 Deletion: location, organization, sales data (item sales only), conversation and person (order cards); `deletion.int.test.ts` seeds a row in all six order collections
 
 ## 3. Engine (pure, `api/src/orders/engine.ts`)
 
