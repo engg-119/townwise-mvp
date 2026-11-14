@@ -13,7 +13,7 @@ export const SHEET_COPY = {
   notSheet: 'Choose a CSV file or an Excel workbook (.xlsx).',
   oldExcel: 'Townwise reads Excel workbooks saved as .xlsx. Save it as .xlsx or CSV and choose it again.',
   tooLarge: 'That file is larger than 50 MB. Export a shorter date range.',
-  tooManyRows: 'That workbook has more rows than Townwise reads from Excel (5,000). Export it as CSV instead.',
+  sheetCut: 'That workbook is larger than Townwise reads from Excel (5,000 rows and 200 columns), so none of it was read. Export it as CSV instead.',
   password: 'That workbook has a password. Save a copy without one, or export it as CSV.',
   unreadable: 'Townwise couldn’t read that file. Export it again as CSV and choose it again.',
   empty: 'That file has no rows.',
@@ -75,8 +75,9 @@ async function readExcel(file: File, visit: RowVisitor, cancelled: () => boolean
   if (cancelled()) return 'cancelled';
   const sheet = workbook.sheets.find((each) => each.rowCount > 0);
   if (sheet === undefined) return { problem: SHEET_COPY.empty };
-  // A cut sheet would drop the rows of its last days, and an upload replaces whole days.
-  if (sheet.truncated) return { problem: SHEET_COPY.tooManyRows };
+  // Past its rows, columns or parts, a sheet is read in part: refused whole, since a part would leave items out of an
+  // import, or rows out of an upload, which replaces whole days.
+  if (sheet.truncated) return { problem: SHEET_COPY.sheetCut };
   sheet.rows.forEach((cells, index) => {
     if (index === 0) visit.header(cells.map(cellText));
     else visit.row(cells.map(cellText), index + 1);

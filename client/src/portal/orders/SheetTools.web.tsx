@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { theme } from '../../theme';
+import { listText } from '../analytics/words';
 import { saveFile } from '../files/download';
 import { plural } from '../format';
 import { Actions, Button } from '../ui/Button';
@@ -14,8 +15,9 @@ import { importSheet, TEMPLATE_COLUMNS, TEMPLATE_FILE_NAME, templateCsv, type Sh
 
 // The template and the sheet import on the Ordering setup page (web; the order-setup spec): download a CSV with one
 // row per item, fill it in, and import it (CSV or Excel) into the draft. The browser reads the sheet; it merges by
-// item name, creates the suppliers it names, and lists each row it left out with why. Nothing saves until Save. Under
-// view-as the import is disabled in place, so no client file is read into a staff browser.
+// item name, creates the suppliers it names, says which replaced items kept what the sheet left blank, and lists
+// each row it left out with why. Nothing saves until Save. Under view-as the import is disabled in place, so no
+// client file is read into a staff browser.
 
 type Shown = { kind: 'idle' } | { kind: 'reading' } | { kind: 'done'; result: SheetImport } | { kind: 'failed'; message: string };
 
@@ -24,6 +26,9 @@ function summary(result: SheetImport): string[] {
     `Imported ${plural(result.added + result.replaced, 'item', 'items')}: ${String(result.added)} new, ${String(result.replaced)} replaced by name. `
       + 'Nothing is saved yet: check them below, then save the setup.',
   ];
+  if (result.kept.length > 0) {
+    lines.push(`Kept what the sheet left blank: ${result.kept.map((each) => `${each.item} (${listText(each.fields)})`).join(', ')}.`);
+  }
   if (result.newSuppliers.length > 0) lines.push(`Add the delivery days of the new suppliers: ${result.newSuppliers.join(', ')}.`);
   if (result.examplesSkipped > 0) lines.push(`Left out the template’s ${plural(result.examplesSkipped, 'example row', 'example rows')}.`);
   if (result.problems.length > 0) lines.push(`Left out ${plural(result.problems.length, 'row', 'rows')} that failed a check:`);
@@ -75,7 +80,8 @@ export function SheetTools(props: SheetSlot): React.JSX.Element {
         Download the template, fill in one row per item in Excel, Numbers or Google Sheets, then import it. Its columns:{' '}
         {TEMPLATE_COLUMNS.join(', ')}. Put an item’s point-of-sale names in one cell, separated by semicolons, with x and a
         number for servings per sale, such as Lager Pint;Lager Pitcher x4. An item already here with the same name is
-        replaced. Nothing saves until you save the setup.
+        replaced, but keeps its point-of-sale names, deal size and never run out where the sheet leaves those blank.
+        Nothing saves until you save the setup.
       </Small>
       {props.locked ? null : (
         <input

@@ -17,6 +17,8 @@ export const SETUP_LIMITS = {
   supplierName: 60,
   itemName: 80,
   posName: 80,
+  /** Servings per unit run from 0.1 to 2,000, as the server takes them. */
+  servingsPerUnitMin: 0.1,
   servingsPerUnit: 2000,
   par: 999,
   dealSize: 999,
@@ -136,12 +138,12 @@ export function normalizeName(name: string): string {
 
 const DECIMAL = /^(?:\d+(?:\.\d*)?|\.\d+)$/;
 
-/** Servings per unit: above 0, at most 2,000; null when the text is not one. */
+/** Servings per unit: from 0.1 to 2,000; null when the text is not one. */
 export function parseServings(text: string): number | null {
   const trimmed = text.trim();
   if (!DECIMAL.test(trimmed)) return null;
   const value = Number(trimmed);
-  return value > 0 && value <= SETUP_LIMITS.servingsPerUnit ? value : null;
+  return value >= SETUP_LIMITS.servingsPerUnitMin && value <= SETUP_LIMITS.servingsPerUnit ? value : null;
 }
 
 /** A par: a whole number from 0 to 999. */
@@ -193,7 +195,7 @@ export const SETUP_COPY = {
   supplier: 'Choose a supplier.',
   category: 'Choose a category.',
   unit: 'Choose a unit.',
-  servings: 'Enter a number above 0, up to 2,000.',
+  servings: 'Enter a number from 0.1 to 2,000.',
   par: 'Enter a whole number from 0 to 999.',
   dealSize: 'Leave it empty, or enter a whole number from 1 to 999.',
   posName: 'Enter a name of up to 80 characters.',

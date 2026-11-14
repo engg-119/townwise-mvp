@@ -1,5 +1,7 @@
 import type { OrderSetup } from '../../../src/portal/orders/api';
-import { checkDraft, draftOf, fieldId, newItem, newSupplier, parseTime, SETUP_COPY, type SetupDraft } from '../../../src/portal/orders/setupDraft';
+import {
+  checkDraft, draftOf, fieldId, newItem, newSupplier, parseServings, parseTime, SETUP_COPY, type SetupDraft,
+} from '../../../src/portal/orders/setupDraft';
 import { importSheet, parsePosNames, TEMPLATE_COLUMNS, templateCsv } from '../../../src/portal/orders/template';
 import { parseCsv } from '../../../src/portal/upload/csv';
 
@@ -71,7 +73,7 @@ describe('importing a sheet', () => {
       {
         row: 5, item: 'Bad Row',
         reason: 'Category: use Bottles and cans, Draft, Liquor or Cocktail ingredient. Unit: use cases, kegs, bottles or units. '
-          + 'Servings per unit: enter a number above 0, up to 2,000. Par: enter a whole number from 0 to 999. '
+          + 'Servings per unit: enter a number from 0.1 to 2,000. Par: enter a whole number from 0 to 999. '
           + 'Deal size: leave it empty, or enter a whole number from 1 to 999. Never run out: use yes or no.',
       },
       { row: 6, item: 'sample ipa', reason: 'This item is already on row 3.' },
@@ -81,11 +83,13 @@ describe('importing a sheet', () => {
       ['Sample Distributor', false, 1], ['New Brewery', true, 0], ['New Spirits', true, 0],
     ]);
     const lager = draft.items[0];
+    // Its Deal size cell is blank, so it keeps the 5 it had (#68 review C1).
     expect(lager).toMatchObject({
       id: 'bbbbbbbbbbbbbbbbbbbbbbb1', name: 'Sample Lager', supplierKey: 'aaaaaaaaaaaaaaaaaaaaaaa1', category: 'bottles_cans', unit: 'cases',
-      servingsPerUnit: '24', par: '3', dealSize: '', neverRunOut: true,
+      servingsPerUnit: '24', par: '3', dealSize: '5', neverRunOut: true,
       posNames: [{ name: 'Lager Can', perSale: '1' }, { name: 'Lager Bucket', perSale: '5' }],
     });
+    expect(result.kept).toEqual([{ item: 'Sample Lager', fields: ['deal size'] }]);
     expect(draft.items.map((each) => [each.name, each.id, draft.suppliers.find((s) => s.key === each.supplierKey)?.name])).toEqual([
       ['Sample Lager', 'bbbbbbbbbbbbbbbbbbbbbbb1', 'Sample Distributor'], ['Sample IPA', null, 'New Brewery'], ['Sample Gin', null, 'New Spirits'],
     ]);
@@ -94,6 +98,46 @@ describe('importing a sheet', () => {
     expect(check.ok).toBe(false);
     if (check.ok) return;
     expect(check.problems[fieldId.supplier(draft.suppliers[1]?.key ?? '', 'deliveries')]).toEqual([SETUP_COPY.noDelivery]);
+  });
+
+  // #68 review C1: a blank optional cell, or a sheet without that column, would otherwise wipe a replaced item's
+  // point-of-sale names (so item sales stop matching it), its deal size and its never run out.
+  test('a replaced item keeps the point-of-sale names, deal size and never run out the sheet leaves blank or leaves out', () => {
+    const kept = {
+      ...SAVED,
+      items: [{ ...SAVED.items[0], dealSize: 5, neverRunOut: true, posNames: [{ name: 'Lager Can', perSale: 1 }, { name: 'Lager Bucket', perSale: 5 }] }],
+    } as OrderSetup;
+    const blank = rowsOf([
+      [...TEMPLATE_COLUMNS].join(','),
+      'Sample Lager,Sample Distributor,Bottles and cans,cases,24,4,, ,',
+      'Sample Stout,Sample Distributor,Draft,kegs,124,1,,,',
+    ].join('\n'));
+    const outcome = importSheet(blank.header, blank.rows, draftOf(kept));
+    if (!outcome.ok) throw new Error('import refused');
+    expect(outcome.result.draft.items[0]).toMatchObject({
+      par: '4', dealSize: '5', neverRunOut: true, posNames: [{ name: 'Lager Can', perSale: '1' }, { name: 'Lager Bucket', perSale: '5' }],
+    });
+    // A new item has nothing to keep: no deal size, no point-of-sale names, not never run out.
+    expect(outcome.result.draft.items[1]).toMatchObject({ name: 'Sample Stout', dealSize: '', neverRunOut: false, posNames: [] });
+    expect(outcome.result.kept).toEqual([{ item: 'Sample Lager', fields: ['point-of-sale names', 'deal size', 'never run out'] }]);
+
+    // Without the optional columns at all, the same.
+    const required = rowsOf('Item,Supplier,Category,Unit,Servings per unit,Par\nSample Lager,Sample Distributor,Bottles and cans,cases,24,6');
+    const short = importSheet(required.header, required.rows, draftOf(kept));
+    if (!short.ok) throw new Error('import refused');
+    expect(short.result.draft.items[0]).toMatchObject({ par: '6', dealSize: '5', neverRunOut: true });
+    expect(short.result.draft.items[0]?.posNames).toHaveLength(2);
+    expect(short.result.kept).toEqual([{ item: 'Sample Lager', fields: ['point-of-sale names', 'deal size', 'never run out'] }]);
+
+    // A cell that says something replaces it: "no" turns never run out off, new names replace the old ones.
+    const filled = rowsOf([
+      [...TEMPLATE_COLUMNS].join(','),
+      'Sample Lager,Sample Distributor,Bottles and cans,cases,24,4,2,no,Lager Draft Can',
+    ].join('\n'));
+    const replaced = importSheet(filled.header, filled.rows, draftOf(kept));
+    if (!replaced.ok) throw new Error('import refused');
+    expect(replaced.result.draft.items[0]).toMatchObject({ dealSize: '2', neverRunOut: false, posNames: [{ name: 'Lager Draft Can', perSale: '1' }] });
+    expect(replaced.result.kept).toEqual([]);
   });
 
   test('a sheet without the required columns, or with no rows, is refused whole', () => {
@@ -177,6 +221,12 @@ describe('the draft', () => {
       [fieldId.pos(item.key, 2, 'name')]: [SETUP_COPY.posName],
     });
     expect(check.count).toBe(14);
+  });
+
+  test('servings per unit run from 0.1 to 2,000, as the server takes them (#68 review A11)', () => {
+    expect(['0.1', '2000', '24', '.5'].map(parseServings)).toEqual([0.1, 2000, 24, 0.5]);
+    for (const text of ['0', '0.05', '0.09', '2000.5', '', 'lots']) expect(parseServings(text)).toBeNull();
+    expect(SETUP_COPY.servings).toBe('Enter a number from 0.1 to 2,000.');
   });
 
   test('order-by times are HH:MM, 24 hour', () => {
