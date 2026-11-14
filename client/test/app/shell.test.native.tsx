@@ -154,6 +154,18 @@ describe('location pages (spec 15.2)', () => {
     expect(navLink('Home').props.accessibilityState).toMatchObject({ selected: false });
   });
 
+  test('any move to another page closes More, also between pages that draw the same nav (Location settings and Locations)', async () => {
+    const { router } = await renderApp('/locations/l1/settings', fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin') }));
+    expect(await screen.findByRole('heading', { name: 'Location settings' })).toBeTruthy();
+    await moreLink('Town');
+    expect(screen.getByLabelText('More')).toBeTruthy();
+    await fireEvent.press(screen.getByRole('link', { name: 'All locations' }));
+    expect(router.getPathname()).toBe('/dashboard');
+    await screen.findByText('Main Street Bar');
+    expect(screen.queryByLabelText('More')).toBeNull();
+    expect(within(screen.getByLabelText('Main')).getByRole('button', { name: 'More' }).props.accessibilityState).toMatchObject({ expanded: false });
+  });
+
   test('Calendar opens under its own title, right after Home, and is marked', async () => {
     const { router } = await renderApp('/locations/l1', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') }));
     await screen.findByText('Main Street Bar, Hanover, NH');

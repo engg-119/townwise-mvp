@@ -9,7 +9,7 @@
 ## 2. The bar
 
 - [x] 2.1 Closing More on web (`useDismiss` in `TopBar.tsx`): Escape with focus inside, and a press or focus outside the dropdown
-- [x] 2.2 `TopBar.tsx`: the More control in the row, the second row and the phone scroll row; the dropdown on web above 640px; the row under the bar on phones and native; the open state keyed to the nav; the bar's root lifted with `zIndex: 1`
+- [x] 2.2 `TopBar.tsx`: the More control in the row, the second row and the phone scroll row; the dropdown on web above 640px; the row under the bar on phones and native; the open state keyed to the path and the nav; the bar's root lifted with `zIndex: 1` only while the dropdown is open
 - [x] 2.3 Tests: web (open, Tab into links, Escape returns focus, outside press closes, following a link closes, `aria-expanded`, `aria-controls`, current marking), native (the row under the bar, the phone scroll target with More current), and every existing test that reaches a grouped section through the bar
 
 ## 3. Docs

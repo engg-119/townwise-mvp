@@ -12,7 +12,7 @@ The client app's top bar SHALL show a location's sections Home, Calendar, Orders
 - **THEN** the nav holds only Settings and there is no More
 
 ### Requirement: More is a disclosure
-More SHALL be a button with `aria-expanded` and, on web, `aria-controls` naming its links' container. Pressing it SHALL toggle its links. On web above 640px the links SHALL open in a box under More, inside the Main nav, over the page. On phones and in the native apps they SHALL open in a row under the bar, labeled "More". Escape SHALL close it and return focus to More. A press or focus outside More and its links SHALL close it, and so SHALL moving to another page or location.
+More SHALL be a button with `aria-expanded` and, on web while open, `aria-controls` naming its links' container. Pressing it SHALL toggle its links. On web above 640px the links SHALL open in a box under More, inside the Main nav, over the page. On phones and in the native apps they SHALL open in a row under the bar, labeled "More". Escape, with focus on More or one of its links, SHALL close it and return focus to More. A press or focus outside More and its links SHALL close the dropdown; the row, which covers nothing, SHALL stay open until More, Escape or another page closes it. Moving to another page or location SHALL close either.
 
 #### Scenario: Keyboard
 - **WHEN** a keyboard user focuses More, presses Enter, then Tab
@@ -21,6 +21,10 @@ More SHALL be a button with `aria-expanded` and, on web, `aria-controls` naming 
 #### Scenario: Following a link
 - **WHEN** someone opens More and follows Town
 - **THEN** Town's page opens and More's links are closed
+
+#### Scenario: Two pages with the same nav
+- **WHEN** an org admin with two locations opens More's row on Location settings and follows All locations
+- **THEN** Locations opens and More's row is closed, although both pages mark no section
 
 ### Requirement: More shows where you are
 More SHALL be drawn white while open, hovered, or when one of its sections is the current page, or a page below one (Your data on Upload and an item's page). That section's link SHALL keep its `aria-current` (`page`, or `true` below it). On phones the scrolling row SHALL keep More in view when one of its sections is current.

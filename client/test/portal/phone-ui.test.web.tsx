@@ -109,6 +109,8 @@ test('on a phone the sections take one row in a focusable region that scrolls si
   const row = screen.getByRole('navigation', { name: 'More' });
   expect(region.contains(row)).toBe(false);
   expect(row.id).toBe(more.getAttribute('aria-controls'));
+  // The row is in the flow, so the bar is never lifted for it.
+  expect(style(screen.getByRole('banner')).zIndex).not.toBe('1');
   expect(style(row).borderTopWidth).toBe('1px');
   expect(within(row).getAllByRole('link').map((link) => link.textContent)).toEqual(['Notes', 'Rules', 'Town', 'Your data']);
   const notes = within(row).getByRole('link', { name: 'Notes' });
@@ -174,13 +176,17 @@ test('from 641px More is a dropdown: a square panel box over the page, inside th
   setWidth(1280);
   renderBar('/locations/l1/sales/upload');
   const banner = screen.getByRole('banner');
-  // The bar is lifted over the page, so the box, which hangs below it, paints over main.
-  expect(style(banner).zIndex).toBe('1');
   const nav = within(banner).getByRole('navigation', { name: 'Main' });
   const more = within(nav).getByRole('button', { name: 'More' });
+  // Closed, More names no container, and the bar stays level with the page, so a layer drawn in main (TownwiseAI's
+  // file drop) still covers it.
+  expect(more.hasAttribute('aria-controls')).toBe(false);
+  expect(style(banner).zIndex).not.toBe('1');
   // Upload lives under Your data, so More holds the current page.
   expect(style(within(more).getByText('More')).color).toBe(WHITE);
   fireEvent.click(more);
+  // Open, the bar is lifted over the page, so the box, which hangs below it, paints over main.
+  expect(style(banner).zIndex).toBe('1');
   const box = document.getElementById(more.getAttribute('aria-controls') ?? '');
   if (box === null) throw new Error('no dropdown');
   expect(nav.contains(box)).toBe(true);
@@ -202,6 +208,7 @@ test('from 641px More is a dropdown: a square panel box over the page, inside th
   fireEvent.keyDown(rules, { key: 'Escape' });
   expect(more.getAttribute('aria-expanded')).toBe('false');
   expect(document.activeElement).toBe(more);
+  expect(style(banner).zIndex).not.toBe('1');
   // A press outside closes it.
   fireEvent.click(more);
   fireEvent.pointerDown(document.body);

@@ -36,7 +36,7 @@ The client app's top bar is `TopBar.tsx`, fed by `clientNav()` in `routing.ts`. 
 | Inside a landmark | The Main nav, right after More, so Tab order runs into them | Its own navigation landmark, labeled "More" |
 
 The two differ for these reasons:
-- **The bar is lifted above the page.** The bar's root takes `zIndex: 1`, so the dropdown, which overflows the bar's box, paints over `main`, a later sibling with z-index 0.
+- **The bar is lifted above the page while the dropdown is open.** The bar's root then takes `zIndex: 1`, so the dropdown, which overflows the bar's box, paints over `main`, a later sibling with z-index 0. Only then: TownwiseAI's file drop is a fixed layer at z-index 9000 inside `main`, and a bar lifted all the time would stay bright above its scrim (found in review).
 - **Why no portal:** a portal (as `Select.web.tsx` uses) would take the links out of the nav and out of Tab order after More.
 - **Why the row elsewhere:**
   - On phones, More sits in a horizontal ScrollView, which clips anything that overflows it.
@@ -44,7 +44,7 @@ The two differ for these reasons:
 
 ### 3. Open state that closes itself
 
-The open state is the "where" key it was opened at: the joined hrefs and current markers of the nav. When the page or location changes, the key changes and the menu reads as closed. There is no effect that sets state.
+The open state is the "where" key it was opened at: the pathname, then the joined hrefs and current markers of the nav. When the page or location changes, the key changes and the menu reads as closed. There is no effect that sets state. The pathname counts on its own because some pages draw the same nav: Location settings, Locations and Add location mark nothing, and Upload and an item's page both mark Your data (found in review).
 
 On web, `useDismiss` in `TopBar.tsx` adds document listeners while the menu is open, following `chat/ui/HistoryMenu.tsx`:
 - `keydown` Escape, with focus on More or one of its links, closes it and focuses More. An Escape meant for anything else on the page is left alone.

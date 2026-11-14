@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { Link } from 'expo-router';
+import { Link, usePathname } from 'expo-router';
 import {
   Platform, Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent, type LayoutRectangle, type PressableStateCallbackType,
 } from 'react-native';
@@ -81,7 +81,7 @@ interface MoreGroup {
   open: boolean;
   /** On web above 640px the links drop down under More, inside the nav; elsewhere the bar draws them in a row under it. */
   floating: boolean;
-  /** The links' container, for aria-controls; More's button and box take ids built from it (moreIds). */
+  /** The links' container, named by aria-controls while open; More's button and box take ids built from it (moreIds). */
   id: string;
   onToggle: () => void;
 }
@@ -111,7 +111,7 @@ function More(props: { group: MoreGroup; onMeasure?: Measure | undefined }): Rea
         nativeID={moreIds(group.id).button}
         role="button"
         aria-expanded={group.open}
-        aria-controls={group.id}
+        {...(group.open ? { 'aria-controls': group.id } : {})}
         accessibilityState={{ expanded: group.open }}
         onPress={group.onToggle}
         style={styles.navLink}
@@ -259,9 +259,11 @@ export function TopBar(props: TopBarProps): React.JSX.Element {
   const { phone, width } = useBreakpoint();
   const consoleBar = props.kind === 'console';
   const sections = (props.nav ?? []).findIndex((item) => item.end === true) > 0;
-  // More opened on one page reads as closed on any other: it holds the nav it was opened on, so following a link,
-  // or the location switcher, closes it without an effect.
-  const where = (props.nav ?? []).map((item) => `${item.href} ${item.current ?? ''}`).join('\n');
+  // More opened on one page reads as closed on any other: it holds the path and nav it was opened on, so following a
+  // link, the location switcher or any other move closes it without an effect. The path counts on its own, since
+  // pages such as Location settings and Locations draw the same nav.
+  const pathname = usePathname();
+  const where = [pathname, ...(props.nav ?? []).map((item) => `${item.href} ${item.current ?? ''}`)].join('\n');
   const [openOn, setOpenOn] = useState<string | null>(null);
   const open = openOn === where;
   const moreId = `more-${useId().replace(/:/g, '')}`;
@@ -346,7 +348,7 @@ export function TopBar(props: TopBarProps): React.JSX.Element {
     );
   }
   return (
-    <View role="banner" style={[styles.bar, consoleBar ? styles.panel : null]}>
+    <View role="banner" style={[styles.bar, consoleBar ? styles.panel : null, group?.floating === true && group.open ? styles.lifted : null]}>
       <Wrap>
         <View style={[styles.row, tight]}>
           {stackedConsole ? <View style={styles.stacked}>{identity}<View style={styles.verifiedRow}>{verified}</View></View> : identity}
@@ -380,9 +382,11 @@ export function Footer(props: { bottomInset: number }): React.JSX.Element {
 const c = theme.color;
 
 const styles = StyleSheet.create({
-  // Lifted over the page (every react-native-web View is its own stacking context at z-index 0), so More's dropdown,
-  // which hangs below the bar, paints over main.
-  bar: { backgroundColor: c.ground, borderBottomWidth: 1, borderBottomColor: c.border, zIndex: 1 },
+  bar: { backgroundColor: c.ground, borderBottomWidth: 1, borderBottomColor: c.border },
+  // While More's dropdown is open the bar is lifted over the page (every react-native-web View is its own stacking
+  // context at z-index 0), so the box, which hangs below the bar, paints over main. Only then: a layer inside main,
+  // such as TownwiseAI's file drop (z-index 9000 within main), must still cover the bar, and main's focus ring show.
+  lifted: { zIndex: 1 },
   panel: { backgroundColor: c.panel },
   row: { flexDirection: 'row', alignItems: 'center', minHeight: 64, columnGap: 32 },
   identity: { flexDirection: 'row', alignItems: 'center', columnGap: 16, flexShrink: 1, minWidth: 0 },
