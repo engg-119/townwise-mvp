@@ -2,10 +2,16 @@
 // every figure from the location's stored days (and, for daily guests, its published forecast through
 // ctx.ports.forecasts), returns them to the model as the result and streams the same visual to the owner, who sees it
 // under the reply. Four kinds: a daily line, a weekday or month breakdown, a short table of days and a few totals.
-// Visuals hold figures, so the tool's card has no views and nothing of a visual is ever logged.
+// Closed and likely-closed days (spec D32, closed-days.ts, from the location's notes, rule schedules and the 8 weeks
+// before each range) are closures, not slow days: breakdown and metrics average open days only, as Analytics does, and
+// a days table marks a likely-closed row. Visuals hold figures, so the tool's card has no views and nothing of a visual
+// is ever logged.
 import { z } from 'zod';
 
+import { noteCovers } from '../../agent/questions.ts';
+import { closureOf, TYPICAL_LOOKBACK_DAYS, typicalByDate, type Closure } from '../../closed-days.ts';
 import { daysBetween, EARLIEST_DATE, isoDate, utcDay } from '../../dates.ts';
+import { scheduledRules } from '../../forecasts/adjust.ts';
 import { eachDay } from '../../forecasts/file.ts';
 import { MAX_FORECAST_RANGE_DAYS, type ForecastDayView, type ForecastWindowRun } from '../../forecasts/reader.ts';
 import type { SalesDay } from '../../stores/sales-days.ts';
@@ -25,7 +31,11 @@ export type Visual =
     /** `key`: '0' to '6' (Sunday 0), Monday first, or 'YYYY-MM'. */
     bars: { key: string; value: number | null; days: number }[];
   }
-  | { kind: 'days_table'; from: string; to: string; rows: { date: string; guests: number | null; netSales: number | null }[] }
+  | {
+    kind: 'days_table'; from: string; to: string;
+    /** `likelyClosed` is set, true, only on a likely-closed day (spec D32). */
+    rows: { date: string; guests: number | null; netSales: number | null; likelyClosed?: true | undefined }[];
+  }
   | {
     kind: 'metrics'; metric: Metric; from: string; to: string; total: number | null; dailyAverage: number | null; dayCount: number;
     compare: { basis: 'last_year' | 'previous_period'; from: string; to: string; total: number | null; dayCount: number } | null;
@@ -83,7 +93,7 @@ export const visualSchema: z.ZodType<Visual> = z.discriminatedUnion('kind', [
   }),
   z.object({
     kind: z.literal('days_table'), from: isoDate, to: isoDate,
-    rows: z.array(z.object({ date: isoDate, guests: value, netSales: value })),
+    rows: z.array(z.object({ date: isoDate, guests: value, netSales: value, likelyClosed: z.literal(true).optional() })),
   }),
   z.object({
     kind: z.literal('metrics'), metric, from: isoDate, to: isoDate, total: value, dailyAverage: value, dayCount: z.number(),
@@ -117,6 +127,10 @@ function required<T>(field: T | null, name: string): T {
   return field;
 }
 
+/** Whether a stored day was closed or likely closed (spec D32); none by default. */
+export type ClosureOn = (day: SalesDay) => Closure | null;
+const NO_CLOSURES: ClosureOn = () => null;
+
 /** A day's value in whole units: guests, or net sales in cents. */
 function unitsOf(day: SalesDay, of: Metric): number | null {
   return of === 'guests' ? day.guests : day.netSalesCents;
@@ -144,7 +158,12 @@ function valuesOf(days: readonly SalesDay[], of: Metric): number[] {
   });
 }
 
-/** One row per day of the range; the 80% band (low down, high up, as get_forecast rounds) only for guests. */
+/**
+ * One row per day of the range; the forecast band (low down, high up, as get_forecast rounds) only for guests. The band
+ * is the day's range as the owner's notes leave it from the town's today on (spec 14.5), the same low and high
+ * get_forecast and the Calendar give, so a closed or booked day has none; it is the model's 80% range only on a day no
+ * note changed (get_forecast's modelRange is the model's own on the others).
+ */
 export function dailyVisual(
   req: VisualRequest, days: readonly SalesDay[], forecast: readonly ForecastDayView[], run: { model: string; madeAt: string } | null,
 ): Visual {
@@ -174,8 +193,11 @@ function monthsOf(from: string, to: string): string[] {
   return months;
 }
 
-/** The average per day with a value, by weekday (Monday first, Sunday 0) or by month, with each one's day count. */
-export function breakdownVisual(req: VisualRequest, days: readonly SalesDay[]): Visual {
+/**
+ * The average per open day with a value, by weekday (Monday first, Sunday 0) or by month, with each one's day count:
+ * closed and likely-closed days are left out, as Analytics leaves them out.
+ */
+export function breakdownVisual(req: VisualRequest, days: readonly SalesDay[], closureOn: ClosureOn = NO_CLOSURES): Visual {
   const of = required(req.metric, 'metric');
   const by = required(req.by, 'by');
   const keys = by === 'weekday' ? WEEK_ORDER.map(String) : monthsOf(req.from, req.to);
@@ -183,7 +205,7 @@ export function breakdownVisual(req: VisualRequest, days: readonly SalesDay[]): 
   const groups = new Map(keys.map((key): [string, number[]] => [key, []]));
   for (const day of days) {
     const units = unitsOf(day, of);
-    if (units !== null) groups.get(keyOf(day.date))?.push(units);
+    if (units !== null && closureOn(day) === null) groups.get(keyOf(day.date))?.push(units);
   }
   return {
     kind: 'breakdown', metric: of, from: req.from, to: req.to, by,
@@ -194,14 +216,15 @@ export function breakdownVisual(req: VisualRequest, days: readonly SalesDay[]): 
   };
 }
 
-/** One row per day of the range: guests and net sales in dollars. */
-export function daysTableVisual(req: VisualRequest, days: readonly SalesDay[]): Visual {
+/** One row per day of the range: guests and net sales in dollars, and likelyClosed on a likely-closed day. */
+export function daysTableVisual(req: VisualRequest, days: readonly SalesDay[], closureOn: ClosureOn = NO_CLOSURES): Visual {
   const rows = new Map(days.map((day) => [day.date, day]));
   return {
     kind: 'days_table', from: req.from, to: req.to,
     rows: eachDay(req.from, req.to).map((date) => {
       const row = rows.get(date);
-      return { date, guests: row?.guests ?? null, netSales: shown(row?.netSalesCents ?? null, 'netSales') };
+      const likely = row !== undefined && closureOn(row) === 'likely_closed';
+      return { date, guests: row?.guests ?? null, netSales: shown(row?.netSalesCents ?? null, 'netSales'), ...(likely ? { likelyClosed: true as const } : {}) };
     }),
   };
 }
@@ -214,17 +237,24 @@ export function compareRangeOf(req: VisualRequest): { from: string; to: string }
   return { from: shift(req.from, -length), to: shift(req.from, -1) };
 }
 
-/** The total, average per day with a value and day count over the range, and the comparison range's total and count. */
-export function metricsVisual(req: VisualRequest, days: readonly SalesDay[], compareDays: readonly SalesDay[] | null): Visual {
+/**
+ * The total over every day with a value, and the average per day and day count over the open ones (closed and
+ * likely-closed days left out, as Analytics leaves them out), over the range; the comparison range's total and count.
+ */
+export function metricsVisual(
+  req: VisualRequest, days: readonly SalesDay[], compareDays: readonly SalesDay[] | null, closureOn: ClosureOn = NO_CLOSURES,
+): Visual {
   const of = required(req.metric, 'metric');
   const values = valuesOf(days, of);
+  const open = valuesOf(days.filter((day) => closureOn(day) === null), of);
   const range = compareRangeOf(req);
   const before = valuesOf(compareDays ?? [], of);
+  const openBefore = valuesOf((compareDays ?? []).filter((day) => closureOn(day) === null), of);
   return {
     kind: 'metrics', metric: of, from: req.from, to: req.to,
-    total: values.length === 0 ? null : shown(sum(values), of), dailyAverage: average(values, of), dayCount: values.length,
+    total: values.length === 0 ? null : shown(sum(values), of), dailyAverage: average(open, of), dayCount: open.length,
     compare: range === null || req.compare === null ? null : {
-      basis: req.compare, ...range, total: before.length === 0 ? null : shown(sum(before), of), dayCount: before.length,
+      basis: req.compare, ...range, total: before.length === 0 ? null : shown(sum(before), of), dayCount: openBefore.length,
     },
   };
 }
@@ -236,7 +266,7 @@ function hasValue(req: VisualRequest, days: readonly SalesDay[]): boolean {
   return days.some((day) => unitsOf(day, of) !== null);
 }
 
-/** The published forecast over the range, read in windows of at most 31 days, and the newest run that supplied a day. */
+/** The published forecast over the range, read in windows of at most MAX_FORECAST_RANGE_DAYS, and the newest run that supplied a day. */
 async function publishedForecast(tc: ToolContext, from: string, to: string): Promise<{ days: ForecastDayView[]; run: { model: string; madeAt: string } | null }> {
   const ranges: { from: string; to: string }[] = [];
   for (let start = from; start <= to; start = shift(start, MAX_FORECAST_RANGE_DAYS)) {
@@ -252,19 +282,45 @@ async function publishedForecast(tc: ToolContext, from: string, to: string): Pro
   };
 }
 
-async function visualFor(tc: ToolContext, req: VisualRequest, days: readonly SalesDay[]): Promise<Visual> {
+/** A range's stored days, from the 8 weeks before it too: their same weekdays give each day its typical guests (D32). */
+function readWithLookback(tc: ToolContext, range: { from: string; to: string }): Promise<SalesDay[]> {
+  return tc.ctx.stores.salesDays.days(tc.scope, tc.location.id, { from: shift(range.from, -TYPICAL_LOOKBACK_DAYS), to: range.to });
+}
+
+/**
+ * Which of the stored days `read` were closed or likely closed, from the location's notes and rule schedules (read
+ * once) and the town's today: a function of the read, so the comparison range gets its own typical guests.
+ */
+async function closuresOf(tc: ToolContext): Promise<(read: readonly SalesDay[]) => ClosureOn> {
+  const [notes, scheduled] = await Promise.all([
+    tc.ctx.stores.notes.list(tc.scope, tc.location.id), tc.ctx.stores.businessRules.scheduled(tc.scope, tc.location.id),
+  ]);
+  const schedules = scheduledRules(scheduled).map((rule) => rule.schedule);
+  return (read) => {
+    const typical = typicalByDate(read);
+    return (day) => closureOf(day, typical.get(day.date) ?? null, notes.filter((note) => noteCovers(note, day.date)), {
+      rules: schedules.filter((schedule) => noteCovers(schedule, day.date)), past: day.date < tc.today,
+    });
+  };
+}
+
+/** `days` is the range's stored days; `read` the same with the 8 weeks before (every kind but daily). */
+async function visualFor(tc: ToolContext, req: VisualRequest, days: readonly SalesDay[], read: readonly SalesDay[]): Promise<Visual> {
+  if (req.kind === 'daily') {
+    if (req.metric !== 'guests') return dailyVisual(req, days, [], null);
+    const forecast = await publishedForecast(tc, req.from, req.to);
+    return dailyVisual(req, days, forecast.days, forecast.run);
+  }
+  const closures = await closuresOf(tc);
   switch (req.kind) {
-    case 'daily': {
-      if (req.metric !== 'guests') return dailyVisual(req, days, [], null);
-      const forecast = await publishedForecast(tc, req.from, req.to);
-      return dailyVisual(req, days, forecast.days, forecast.run);
-    }
-    case 'breakdown': return breakdownVisual(req, days);
-    case 'days_table': return daysTableVisual(req, days);
+    case 'breakdown': return breakdownVisual(req, days, closures(read));
+    case 'days_table': return daysTableVisual(req, days, closures(read));
     case 'metrics': {
       const range = compareRangeOf(req);
-      const before = range === null ? null : await tc.ctx.stores.salesDays.days(tc.scope, tc.location.id, range);
-      return metricsVisual(req, days, before);
+      if (range === null) return metricsVisual(req, days, null, closures(read));
+      const before = await readWithLookback(tc, range);
+      const closureOn = closures([...before, ...read]);
+      return metricsVisual(req, days, before.filter((day) => day.date >= range.from), closureOn);
     }
   }
 }
@@ -272,7 +328,7 @@ async function visualFor(tc: ToolContext, req: VisualRequest, days: readonly Sal
 export const showVisualTool: ChatTool<VisualRequest> = {
   definition: {
     name: 'show_visual',
-    description: 'Draws a chart, a short table of days or a few totals under your reply from Townwise\'s own data, and returns the figures it drew. Name what to draw, never figures. Every key is required; use null where it does not apply. kind daily: one metric per day for at most 92 days, to at most 31 days after today; for guests it shades Townwise\'s published forecast range (80%) where one exists. kind breakdown: the average per day with a value, by weekday or by month (by is required), for at most 731 days. kind days_table: guests and net sales per day for at most 31 days (metric is null). kind metrics: the total, average per day and number of days with a value for at most 366 days, compared with the same dates 364 days earlier (last_year, so weekdays line up), the same number of days just before (previous_period), or nothing (null). breakdown, days_table and metrics end today or earlier. Net sales are in US dollars. With no sales in the range it shows nothing and says so.',
+    description: 'Draws a chart, a short table of days or a few totals under your reply from Townwise\'s own data, and returns the figures it drew. Name what to draw, never figures. Every key is required; use null where it does not apply. kind daily: one metric per day for at most 92 days, to at most 31 days after today; for guests it shades Townwise\'s published forecast range where one exists, from today on including the owner\'s saved notes, as get_forecast\'s low and high do (the 80% range is the model\'s own: modelRange on a day a note changed). kind breakdown: the average per open day with a value, by weekday or by month (by is required), for at most 731 days. kind days_table: guests and net sales per day for at most 31 days (metric is null); a row with likelyClosed true was likely closed (before today, guests under a tenth of the typical guests of the same weekday over the 8 weeks before, and no note or business rule schedule says more or fewer guests), so treat it as closed, never as a slow day. kind metrics: the total over every day with a value, and the average per day and number of days over the open days with a value, for at most 366 days, compared with the same dates 364 days earlier (last_year, so weekdays line up), the same number of days just before (previous_period), or nothing (null). Open days leave out closed and likely-closed days, as Analytics does. breakdown, days_table and metrics end today or earlier. Net sales are in US dollars. With no sales in the range it shows nothing and says so.',
     input_schema: {
       type: 'object',
       properties: {
@@ -306,9 +362,12 @@ export const showVisualTool: ChatTool<VisualRequest> = {
   inputView: () => null,
   resultView: () => null,
   async run(tc, req) {
-    const days = await tc.ctx.stores.salesDays.days(tc.scope, tc.location.id, { from: req.from, to: req.to });
+    const read = req.kind === 'daily'
+      ? await tc.ctx.stores.salesDays.days(tc.scope, tc.location.id, { from: req.from, to: req.to })
+      : await readWithLookback(tc, req);
+    const days = read.filter((day) => day.date >= req.from);
     if (!hasValue(req, days)) return { content: JSON.stringify({ available: false, reason: NO_SALES_REASON }) };
-    const visual = await visualFor(tc, req, days);
+    const visual = await visualFor(tc, req, days, read);
     return { content: JSON.stringify({ shown: VISUAL_RESULT, visual }), visual };
   },
 };

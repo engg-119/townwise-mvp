@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 import { Composer, COMPOSER_LABEL, type ComposerProps } from '../../src/chat/ui/Composer';
+import { PortalStyles } from '../../src/portal/shell/PortalStyles';
 
 // The rounded composer on web: the button's three readings, rotating examples, the radii, the leading slot, growth
 // and the counter.
@@ -17,6 +18,7 @@ globalThis.ResizeObserver = ResizeObserverPolyfill as unknown as typeof ResizeOb
 
 const width = 1280;
 Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, get: () => width });
+Object.defineProperty(document.documentElement, 'clientHeight', { configurable: true, get: () => 900 });
 
 afterEach(() => {
   cleanup();
@@ -118,11 +120,31 @@ test('Enter sends when it can and does nothing while streaming', () => {
   expect(onSend).toHaveBeenCalledTimes(1);
 });
 
-test('is a rounded box: radius 24, and the button radius 22', () => {
-  render(<Composer {...props()} />);
+test('is a rounded box: radius 28 with 5px inside it, and the button a 44px circle with an icon, never a word', () => {
+  const { rerender } = render(<Composer {...props()} />);
   const box = boxOf(screen.getByLabelText(COMPOSER_LABEL));
-  expect(getComputedStyle(box).getPropertyValue('border-top-left-radius')).toBe('24px');
-  expect(getComputedStyle(screen.getByRole('button', { name: 'Send' })).getPropertyValue('border-top-left-radius')).toBe('22px');
+  expect(getComputedStyle(box).getPropertyValue('border-top-left-radius')).toBe('28px');
+  expect(getComputedStyle(box).getPropertyValue('padding-right')).toBe('5px');
+  expect(getComputedStyle(box).getPropertyValue('padding-top')).toBe('5px');
+  for (const [over, name] of [[{}, 'Send'], [{ streaming: true }, 'Stop'], [{ streaming: true, draft: 'next' }, 'Stop and send']] as const) {
+    rerender(<Composer {...props(over)} />);
+    const button = screen.getByRole('button', { name });
+    expect(getComputedStyle(button).getPropertyValue('border-top-left-radius')).toBe('22px');
+    expect(getComputedStyle(button).getPropertyValue('width')).toBe('44px');
+    expect(getComputedStyle(button).getPropertyValue('height')).toBe('44px');
+    expect(button.textContent).toBe('');
+    expect(button.querySelector('svg')).not.toBeNull();
+  }
+});
+
+test('the box draws the one focus ring: the field opts out of the portal’s square ring', () => {
+  render(<><PortalStyles /><Composer {...props()} /></>);
+  const field = screen.getByLabelText(COMPOSER_LABEL);
+  expect(field.getAttribute('data-ring')).toBe('box');
+  const css = [...document.querySelectorAll('style')].map((element) => element.textContent).find((text) => text.includes('#tw-portal'));
+  expect(css).toContain('#tw-portal [data-ring="box"]:focus-visible{outline:none}');
+  act(() => { field.focus(); });
+  expect(window.getComputedStyle(boxOf(field)).outlineStyle).toBe('solid');
 });
 
 test('renders the leading slot first inside the box only when given', () => {
@@ -146,6 +168,47 @@ test('grows to 200px and then scrolls; the counter shows from 3,600 characters',
   expect(screen.getByText('3,600 of 4,000')).toBeTruthy();
 });
 
+test('once the text needs a second line, Expand makes the field tall; Shrink, or sending (an empty draft), brings it back', () => {
+  Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', { configurable: true, get: () => 72 });
+  const { rerender } = render(<Composer {...props({ draft: 'a long question', canSend: true })} />);
+  const field = screen.getByLabelText<HTMLTextAreaElement>(COMPOSER_LABEL);
+  // 60% of the window's 900px.
+  const tall = '540px';
+  act(() => { observers.forEach((callback) => { callback(); }); });
+  expect(getComputedStyle(field).maxHeight).toBe('200px');
+  fireEvent.click(screen.getByRole('button', { name: 'Expand the message box' }));
+  expect(screen.getByLabelText(COMPOSER_LABEL)).toBe(field);
+  expect(getComputedStyle(field).minHeight).toBe(tall);
+  expect(getComputedStyle(field).maxHeight).toBe(tall);
+  fireEvent.click(screen.getByRole('button', { name: 'Shrink the message box' }));
+  expect(getComputedStyle(field).maxHeight).toBe('200px');
+  fireEvent.click(screen.getByRole('button', { name: 'Expand the message box' }));
+  rerender(<Composer {...props({ draft: '' })} />);
+  expect(screen.queryByRole('button', { name: 'Shrink the message box' })).toBeNull();
+  expect(getComputedStyle(field).maxHeight).toBe('200px');
+});
+
+test('hovering Expand fills a 44px circle (inside the box corner), and leaving clears it', () => {
+  Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', { configurable: true, get: () => 72 });
+  render(<Composer {...props({ draft: 'a long question', canSend: true })} />);
+  act(() => { observers.forEach((callback) => { callback(); }); });
+  const size = screen.getByRole('button', { name: 'Expand the message box' });
+  const radius = (): string => getComputedStyle(size).getPropertyValue('border-top-left-radius');
+  expect(radius()).toBe('22px');
+  expect(getComputedStyle(size).getPropertyValue('width')).toBe('44px');
+  const rest = getComputedStyle(size).backgroundColor;
+  fireEvent.mouseEnter(size);
+  expect(getComputedStyle(size).backgroundColor).not.toBe(rest);
+  expect(radius()).toBe('22px');
+  fireEvent.mouseLeave(size);
+  expect(getComputedStyle(size).backgroundColor).toBe(rest);
+});
+
+test('a one-line draft has no Expand', () => {
+  render(<Composer {...props({ draft: 'hi', canSend: true })} />);
+  expect(screen.queryByRole('button', { name: 'Expand the message box' })).toBeNull();
+});
+
 test('the second-line layout keeps the same input (and its focus), with the leading slot after it', () => {
   Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', { configurable: true, get: () => 72 });
   const leading = <span>Add data</span>;
@@ -159,4 +222,20 @@ test('the second-line layout keeps the same input (and its focus), with the lead
   expect(document.activeElement).toBe(field);
   expect(box.firstElementChild).toBe(field.parentElement);
   expect(box.children[1]?.textContent).toBe('Add data');
+});
+
+test('the root passes pointer events through (box-none) while the box and its buttons still take presses', () => {
+  for (const placement of ['dock', 'landing'] as const) {
+    const onSend = jest.fn();
+    const { unmount } = render(<Composer {...props({ placement, draft: 'hi', canSend: true, onSend })} />);
+    const box = boxOf(screen.getByLabelText(COMPOSER_LABEL));
+    const root = box.parentElement;
+    if (root === null) throw new Error('no root');
+    expect(getComputedStyle(root).getPropertyValue('pointer-events')).toBe('none');
+    // Its children stay hittable (react-native-web gives them `auto` under box-none).
+    expect(getComputedStyle(box).getPropertyValue('pointer-events')).not.toBe('none');
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(onSend).toHaveBeenCalledTimes(1);
+    unmount();
+  }
 });

@@ -326,7 +326,7 @@ test('forget drops a finished upload the screen deleted itself, with no request;
   expect(last.overall.files).toBe(1);
 });
 
-test('a file cancelled while it is being created is deleted once the server answers', async () => {
+test('a file canceled while it is being created is deleted once the server answers', async () => {
   start();
   let answer: (value: unknown) => void = () => undefined;
   fake.answers['POST /files'] = () => new Promise((resolve) => { answer = resolve; });

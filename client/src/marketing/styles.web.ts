@@ -5,6 +5,10 @@ import { theme } from '../theme';
 // stay mounted in the stack, so every rule applies document-wide and page rules must not collide.
 // On phones a link inside running text gets vertical padding, which does not move the lines and makes its
 // tap target 44px tall; it is positioned so that the next line does not cover the lower half.
+// The header's actions: the light and dark switch 8px before Sign in, as the portal's bar sets it before Sign out,
+// then Request early access. On phones the header stays one row. Up to 420px the gap after the wordmark and the
+// button's padding tighten, which keeps the label on one line down to 388px; under that the three do not fit beside
+// the wordmark, so the button's label wraps to two lines inside its 44px instead of the row wrapping.
 
 const c = theme.color;
 const easeOut = `cubic-bezier(${theme.motion.easeOut.join(',')})`;
@@ -15,7 +19,7 @@ const chrome = `
 .tw h1,.tw h2,.tw h3,.tw p,.tw ul,.tw ol{margin:0}
 .tw ul,.tw ol{padding:0;list-style:none}
 :where(.tw) a{color:var(--white)}
-:where(.tw) a:hover{color:var(--mint)}
+@media (hover:hover){:where(.tw) a:hover{color:var(--mint)}}
 .tw a{text-underline-offset:3px}
 .tw :focus-visible{outline:2px solid var(--mint);outline-offset:2px}
 .tw :focus:not(:focus-visible){outline:none}
@@ -40,22 +44,24 @@ const chrome = `
 .tag-plan::before{content:"";width:6px;height:6px;border:1px solid var(--line)}
 
 .btn{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 18px;background:var(--white);color:var(--ground);font-family:var(--sans);font-weight:600;font-size:15px;line-height:20px;text-decoration:none;border:0;border-radius:0;white-space:nowrap;transition:background-color 150ms ease,transform 160ms var(--eo)}
-.btn:hover{background:var(--text2);color:var(--ground)}
+@media (hover:hover){.btn:hover{background:var(--text2);color:var(--ground)}}
 .btn:active{transform:scale(.97)}
 .tl{display:inline-flex;align-items:center;justify-content:center;min-height:44px;min-width:44px;color:var(--white);font-size:14px;line-height:20px;font-weight:500;text-decoration:underline;text-decoration-color:var(--line)}
-.tl:hover{color:var(--mint);text-decoration-color:var(--mint)}
+@media (hover:hover){.tl:hover{color:var(--mint);text-decoration-color:var(--mint)}}
 
 .nav{border-bottom:1px solid var(--border)}
 .nav-in{display:flex;flex-wrap:wrap;align-items:center;column-gap:48px;min-height:64px}
 .wm{display:inline-flex;align-items:center;min-height:44px;font-weight:600;font-size:18px;line-height:24px;letter-spacing:-.01em;color:var(--white);text-decoration:none}
-.wm:hover{color:var(--white)}
+@media (hover:hover){.wm:hover{color:var(--white)}}
 .nav-links{display:flex;flex-wrap:wrap;column-gap:24px}
 .nav-links a{display:inline-flex;align-items:center;justify-content:center;min-height:44px;min-width:44px;font-size:14px;line-height:20px;font-weight:500;color:var(--text2);text-decoration:none}
-.nav-links a:hover{color:var(--white)}
-.nav-act{margin-left:auto;display:flex;align-items:center;gap:20px}
+@media (hover:hover){.nav-links a:hover{color:var(--white)}}
+.nav-act{margin-left:auto;display:flex;align-items:center;gap:8px}
+.nav-act .btn{margin-left:12px}
 @media (max-width:899px){.nav-in{column-gap:16px}.nav-links{order:3;width:100%;column-gap:20px;border-top:1px solid var(--border)}}
-@media (max-width:640px){.nav-links{display:none}.nav-act{gap:12px}.nav-act .btn{font-size:14px;padding:0 14px}}
-@media (max-width:359px){.nav-in{column-gap:8px}.nav-in:has(.btn)>.wm{font-size:16px}.nav-act{gap:8px}.nav-act .btn{font-size:13px;padding:0 10px}}
+@media (max-width:640px){.nav-in{flex-wrap:nowrap;column-gap:12px}.nav-links{display:none}.nav-act .tl{flex-shrink:0}.nav-act .btn{margin-left:4px;font-size:14px;padding:0 14px;white-space:normal;text-align:center;line-height:16px}}
+@media (max-width:420px){.nav-in{column-gap:8px}.nav-act .btn{padding:0 10px}}
+@media (max-width:359px){.nav-in{column-gap:8px}.nav-in:has(.btn)>.wm{font-size:16px}.nav-act .btn{margin-left:0;font-size:13px;padding:0 10px}}
 
 .ft{border-top:1px solid var(--border);padding-top:64px}
 .ft-inner{container-type:inline-size}
@@ -65,7 +71,7 @@ const chrome = `
 @media (max-width:1023px){.ft-c1{grid-column:1/-1}}
 .ft-by{font-size:14px;line-height:20px;color:var(--text2);max-width:420px}
 .ft-cn a{display:inline-flex;align-items:center;min-height:44px;min-width:44px;font-size:14px;line-height:20px;color:var(--text2);text-decoration:none}
-.ft-cn a:hover{color:var(--white);text-decoration:underline}
+@media (hover:hover){.ft-cn a:hover{color:var(--white);text-decoration:underline}}
 .ft-bot{margin-top:40px;display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px 24px;padding:24px 0 32px;font-family:var(--mono);font-size:12px;line-height:16px;color:var(--text3)}
 @media (max-width:640px){.ft-by,.ft-cn a,.ft-bot{font-size:16px;line-height:24px}}
 .tw .ft-word{--adv:3.959;--cap:0.72;--base:0.14;--pad:0.02em;display:flex;justify-content:space-between;align-items:flex-end;box-sizing:content-box;font-size:calc(98cqi / var(--adv));height:calc(var(--cap) * 1em);padding-top:var(--pad);overflow:clip;line-height:1;font-family:${theme.font.wordmark};font-weight:700;font-stretch:75%;letter-spacing:0;color:var(--white)}
@@ -137,7 +143,7 @@ const privacy = `
 @media (max-width:640px){.pg-privacy .hd{padding-block:32px 40px}}
 .pg-privacy .toc{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));column-gap:20px}
 .pg-privacy .toc a{display:inline-flex;align-items:center;min-height:44px;min-width:44px;font-size:14px;line-height:20px;color:var(--text2);text-decoration:none}
-.pg-privacy .toc a:hover{color:var(--white);text-decoration:underline}
+@media (hover:hover){.pg-privacy .toc a:hover{color:var(--white);text-decoration:underline}}
 @media (max-width:640px){.pg-privacy .toc{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:16px}}
 .pg-privacy .sec{border-top:1px solid var(--border);padding-block:56px}
 @media (max-width:640px){.pg-privacy .sec{padding-block:40px}}
@@ -146,7 +152,7 @@ const privacy = `
 .pg-privacy .prose p{text-wrap:pretty}
 .pg-privacy .prose strong{color:var(--white);font-weight:600}
 .pg-privacy .prose a{color:var(--white);text-decoration:underline;text-decoration-color:var(--line)}
-.pg-privacy .prose a:hover{color:var(--mint);text-decoration-color:var(--mint)}
+@media (hover:hover){.pg-privacy .prose a:hover{color:var(--mint);text-decoration-color:var(--mint)}}
 @media (max-width:640px){.pg-privacy .prose a{position:relative;z-index:1;padding-block:13px}}
 .pg-privacy .prose code,.pg-privacy .tbl code{font-family:var(--mono);font-size:13px;line-height:20px;color:var(--white);word-break:break-word}
 .pg-privacy .bul{display:grid;gap:12px}
@@ -185,7 +191,7 @@ const terms = `
 .pg-terms .toc ol{display:grid;margin-top:12px;border-top:1px solid var(--border)}
 .pg-terms .toc li{border-bottom:1px solid var(--border)}
 .pg-terms .toc a{display:flex;gap:12px;align-items:baseline;min-height:44px;padding:8px 0;font-size:14px;line-height:20px;color:var(--text2);text-decoration:none}
-.pg-terms .toc a:hover{color:var(--mint)}
+@media (hover:hover){.pg-terms .toc a:hover{color:var(--mint)}}
 .pg-terms .sn{font-family:var(--mono);font-size:12px;line-height:16px;color:var(--text3);font-weight:400;letter-spacing:0;min-width:24px;display:inline-block}
 .pg-terms .art{grid-column:4/13;min-width:0}
 .pg-terms .sec{max-width:68ch;padding:32px 0;border-top:1px solid var(--border);scroll-margin-top:16px}
@@ -193,7 +199,7 @@ const terms = `
 .pg-terms .sec .h3{display:flex;gap:12px;align-items:baseline;color:var(--white)}
 .pg-terms .prose{margin-top:16px;display:grid;gap:16px;color:var(--text2);text-wrap:pretty}
 .pg-terms .prose a{color:var(--white);text-decoration-color:var(--line)}
-.pg-terms .prose a:hover{color:var(--mint);text-decoration-color:var(--mint)}
+@media (hover:hover){.pg-terms .prose a:hover{color:var(--mint);text-decoration-color:var(--mint)}}
 @media (max-width:640px){.pg-terms .prose a{position:relative;z-index:1;padding-block:13px}}
 .pg-terms .bl{display:grid;gap:8px}
 .pg-terms .bl li{position:relative;padding-left:20px}

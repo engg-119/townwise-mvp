@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { theme } from '../../src/theme';
+import { colorVar, theme, type Palette } from '../../src/theme';
 
 const pub = join(__dirname, '../../public');
 const html = readFileSync(join(pub, 'index.html'), 'utf8');
@@ -24,15 +24,45 @@ test('the @font-face families are the first families theme.ts names', () => {
   expect(faces).toEqual([first(theme.font.sans), first(theme.font.mono)]);
 });
 
+// The custom properties one <style> block declares under `selector`, in order.
+function declared(selector: string): [string, string][] {
+  const at = html.indexOf(`${selector} {`);
+  expect(at).toBeGreaterThan(-1);
+  const body = html.slice(html.indexOf('{', at) + 1, html.indexOf('}', at));
+  return [...body.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map((match) => [match[1] ?? '', match[2] ?? '']);
+}
+
+function properties(palette: Palette): [string, string][] {
+  return (Object.keys(palette) as (keyof Palette)[]).map((token) => [colorVar(token), palette[token]]);
+}
+
+test('every color token is declared before the app paints: dark at :root, light under data-theme and for a light system', () => {
+  // Each with its color-scheme last, for the browser's own parts of a control (a date input's picker).
+  expect(declared(':root')).toEqual([...properties(theme.palette.dark), ['--tw-scheme', 'dark']]);
+  expect(declared('html[data-theme="light"]')).toEqual([...properties(theme.palette.light), ['--tw-scheme', 'light']]);
+  // A visitor who follows the system gets their palette from the first paint, before any script: the same light
+  // block for a system that asks for light, unless the app has named a dark pick (SiteTheme sets data-theme).
+  const media = '@media (prefers-color-scheme: light) {';
+  expect(html.indexOf(media)).toBeGreaterThan(html.indexOf('html[data-theme="light"] {'));
+  expect(html.slice(html.indexOf(media) + media.length).trimStart().startsWith(':root:not([data-theme="dark"]) {')).toBe(true);
+  expect(declared(':root:not([data-theme="dark"])')).toEqual(declared('html[data-theme="light"]'));
+  // In a <style> in the page itself, with no script: the CSP allows inline styles, never inline scripts.
+  expect(html.indexOf('<style id="theme">')).toBeGreaterThan(-1);
+  expect(html).not.toMatch(/<script\b/);
+});
+
+// Each color below is a var() of its token, so it follows the palette on the page.
+const ref = (name: string): string => `var\\(${name}\\)`;
+
 test('scrollbars are thin and quiet on every page: a theme border thumb on no track, for Safari too', () => {
-  expect(html).toMatch(new RegExp(`\\*\\s*\\{\\s*scrollbar-width:\\s*thin;\\s*scrollbar-color:\\s*${theme.color.border}\\s+transparent;\\s*\\}`));
-  expect(html).toMatch(new RegExp(`::-webkit-scrollbar-thumb\\s*\\{\\s*background:\\s*${theme.color.border};`));
-  expect(html).toMatch(new RegExp(`::-webkit-scrollbar-thumb:hover\\s*\\{\\s*background:\\s*${theme.color.line};`));
+  expect(html).toMatch(new RegExp(`\\*\\s*\\{\\s*scrollbar-width:\\s*thin;\\s*scrollbar-color:\\s*${ref(colorVar('border'))}\\s+transparent;\\s*\\}`));
+  expect(html).toMatch(new RegExp(`::-webkit-scrollbar-thumb\\s*\\{\\s*background:\\s*${ref(colorVar('border'))};`));
+  expect(html).toMatch(new RegExp(`::-webkit-scrollbar-thumb:hover\\s*\\{\\s*background:\\s*${ref(colorVar('line'))};`));
   expect(html).toMatch(/::-webkit-scrollbar-track\s*\{\s*background:\s*transparent;\s*\}/);
 });
 
 test('the page is the ground color before the app paints', () => {
-  expect(html).toMatch(new RegExp(`html,\\s*body\\s*\\{\\s*background:\\s*${theme.color.ground};\\s*\\}`));
+  expect(html).toMatch(new RegExp(`html,\\s*body\\s*\\{\\s*background:\\s*${ref(colorVar('ground'))};\\s*\\}`));
 });
 
 // Each <meta> or <link> tag's attributes; boolean attributes (crossorigin) are left out.
@@ -69,7 +99,6 @@ test('the share tags give the image, its size, type and alt text, and repeat the
     xDescription: meta('twitter:description'),
     xImage: meta('twitter:image'),
     xAlt: meta('twitter:image:alt'),
-    themeColor: meta('theme-color'),
     appTitle: meta('apple-mobile-web-app-title'),
   }).toEqual({
     locale: 'en_US',
@@ -83,12 +112,18 @@ test('the share tags give the image, its size, type and alt text, and repeat the
     xDescription: meta('og:description'),
     xImage: IMAGE,
     xAlt: IMAGE_ALT,
-    themeColor: theme.color.ground,
     appTitle: 'Townwise',
   });
   expect(meta('og:title')).toBe('Townwise');
   expect(meta('og:description')).toBe(meta('description'));
   expect(html).not.toContain('—');
+});
+
+test('theme-color is the ground of the system’s palette until the app sets the mode’s: light for a light system, else dark', () => {
+  expect(tags('meta').filter((tag) => tag.name === 'theme-color')).toEqual([
+    { name: 'theme-color', content: theme.palette.light.ground, media: '(prefers-color-scheme: light)' },
+    { name: 'theme-color', content: theme.palette.dark.ground },
+  ]);
 });
 
 test('the share image is in public/ at the size the tags give, under 300 KB', () => {

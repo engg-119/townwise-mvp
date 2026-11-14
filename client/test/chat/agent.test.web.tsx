@@ -11,6 +11,7 @@ import { resetVersionFocus } from '../../src/chat/ui/VersionNav';
 import { localToday } from '../../src/portal/locations/dates';
 import { resetProfiles } from '../../src/portal/profile/useProfile';
 import type { MeResponse } from '../../src/portal/schemas';
+import { theme } from '../../src/theme';
 import { appRoutes, seededRoot } from '../helpers/app';
 import {
   CONVERSATION, fakeChatApi, PROPOSAL, PROPOSAL_ID, refusal as chatRefusal, SALES_STEP, SUMMARY, type FakeChatApi, type LiveTurn,
@@ -21,19 +22,38 @@ import { itemOf } from '../portal/data/fakes';
 import { PUBLISHED, RUN, serveAbout } from './about-fakes';
 import { daily } from './visuals-fixtures';
 
-// P25 TownwiseAI on web (spec 16.3, D26): the greeting, the centered landing and the composer that docks under the
+// P25 TownwiseAI on web (spec 16.3, D26): no page header, the centered landing and the composer that docks under the
 // thread, the keyboard (Enter sends, Shift+Enter and an input method's Enter don't), History's Escape, the panel as a
 // column or a sheet, the next questions, the budget line, the live line and caret, reduced motion, the polite live
 // region, the one primary, phone width, links that open in a new tab, and view-as's aria-disabled controls with the
 // one read-only line.
 
+/** Every observer made, and what it watches, so a test can lay an element out as a browser would (`layout`). */
+const observers: ResizeObserverPolyfill[] = [];
 class ResizeObserverPolyfill {
-  observe(): void { return undefined; }
-  unobserve(): void { return undefined; }
-  disconnect(): void { return undefined; }
+  readonly callback: ResizeObserverCallback;
+  readonly targets = new Set<Element>();
+  constructor(callback: ResizeObserverCallback) {
+    this.callback = callback;
+    observers.push(this);
+  }
+  observe(target: Element): void { this.targets.add(target); }
+  unobserve(target: Element): void { this.targets.delete(target); }
+  disconnect(): void { this.targets.clear(); }
 }
 if (typeof globalThis.ResizeObserver !== 'function') {
   globalThis.ResizeObserver = ResizeObserverPolyfill;
+}
+
+/** `element` laid out `height` tall: its observers fire, and react-native-web measures it (in a timeout) for onLayout. */
+async function layout(element: Element, height: number): Promise<void> {
+  Object.defineProperty(element, 'offsetHeight', { configurable: true, get: () => height });
+  const watching = observers.filter((observer) => observer.targets.has(element));
+  expect(watching).not.toHaveLength(0);
+  await act(() => new Promise((resolve) => {
+    for (const observer of watching) observer.callback([{ target: element } as unknown as ResizeObserverEntry], observer);
+    setTimeout(resolve, 10);
+  }));
 }
 
 let width = 1280;
@@ -55,8 +75,8 @@ afterEach(() => {
 });
 
 const EMAIL = ['a', 'example.com'].join('@');
-/** The `white` (`cta`) fill of the page's one primary. */
-const WHITE = 'rgb(239, 242, 246)';
+/** The `cta` fill of the page's one primary (on web theme.color is var(--tw-<token>), which jsdom leaves unresolved). */
+const WHITE = theme.color.cta;
 const BUDGET_LINE = 'Most of November’s budget is used. TownwiseAI pauses when it runs out.';
 
 /** CONVERSATION with a second version of its reply: GET shows the first, and the second is read by its node. */
@@ -172,18 +192,21 @@ function expectReadOnly(control: HTMLElement): void {
   expect(control.getAttribute('aria-describedby')?.split(' ')).toContain('chat-ro');
 }
 
-test('the dashboard links to a location, whose TownwiseAI page greets the person, streams a reply with a card, and saves its note', async () => {
+test('the dashboard links to a location, whose Home greets the person and whose TownwiseAI page has no page header, streams a reply with a card, and saves its note', async () => {
   const api = fakeChatApi();
   api.profile = { displayName: 'Cam', askName: false };
   renderAt('/dashboard', api);
   fireEvent.click(await screen.findByText('Main Street Bar'));
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1'); });
+  expect(await screen.findByRole('heading', { level: 1, name: 'Welcome back, Cam.' })).toBeTruthy();
   fireEvent.click(await screen.findByRole('link', { name: 'TownwiseAI' }));
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/agent'); });
-  expect(await screen.findByText('Main Street Bar, Hanover, NH')).toBeTruthy();
-  await waitFor(() => {
-    expect(screen.getAllByRole('heading', { level: 1 }).map((heading) => heading.textContent)).toEqual(['Welcome back, Cam.']);
-  });
+  await screen.findByTestId('chat-landing');
+  // No page header: one visually hidden h1, and none of the location header's eyebrow, greeting or links.
+  expect(screen.getAllByRole('heading', { level: 1 }).map((heading) => heading.textContent)).toEqual(['TownwiseAI']);
+  expect(screen.queryByText(/^Welcome back/)).toBeNull();
+  expect(screen.queryByText('Main Street Bar, Hanover, NH')).toBeNull();
+  expect(screen.queryByRole('link', { name: 'Location settings' })).toBeNull();
 
   await send(api, 'Closed for the holidays');
   expect(screen.getByRole('log', { name: 'Conversation with TownwiseAI' })).toBeTruthy();
@@ -208,22 +231,18 @@ test('the dashboard links to a location, whose TownwiseAI page greets the person
 test('the old chat address opens TownwiseAI, so links and bookmarks keep working', async () => {
   renderAt('/locations/l1/chat', fakeChatApi());
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/agent'); });
-  expect(await screen.findByRole('heading', { level: 1, name: 'Welcome back.' })).toBeTruthy();
+  expect(await screen.findByRole('heading', { level: 1, name: 'TownwiseAI' })).toBeTruthy();
   expect(await screen.findByLabelText(COMPOSER_LABEL)).toBeTruthy();
 });
 
-test('asks for a name once, above the chat, and the greeting takes it', async () => {
+test('never asks for a name, even when the API would: the chat header is the first thing on the page', async () => {
   const api = fakeChatApi();
   api.profile = { displayName: null, askName: true };
   renderAt('/locations/l1/agent', api);
-  const ask = await screen.findByRole('heading', { level: 2, name: 'What should TownwiseAI call you?' });
-  expect(before(ask, screen.getByRole('button', { name: 'History' }))).toBe(true);
-  expect(screen.getByRole('heading', { level: 1, name: 'Welcome back.' })).toBeTruthy();
-  fireEvent.change(screen.getByRole('textbox', { name: 'First name' }), { target: { value: 'Cam' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
-  expect(await screen.findByRole('heading', { level: 1, name: 'Welcome back, Cam.' })).toBeTruthy();
+  await screen.findByRole('button', { name: 'History' });
   expect(screen.queryByText('What should TownwiseAI call you?')).toBeNull();
-  expect(api.writes).toEqual([{ method: 'PATCH', path: '/api/me/profile', body: { displayName: 'Cam' } }]);
+  expect(screen.queryByRole('textbox', { name: 'First name' })).toBeNull();
+  expect(api.writes).toEqual([]);
 });
 
 test('an empty conversation is the centered landing: heading, reads line, composer, then chips', async () => {
@@ -262,6 +281,68 @@ test('the first send docks the composer under the thread', async () => {
   expect(input.getAttribute('placeholder')).toBe('Which days last month were unusual?');
   // The messages sit in one centered column, at most 760px wide.
   expect(style(screen.getByTestId('chat-column')).maxWidth).toBe('760px');
+});
+
+describe('the docked composer', () => {
+  test('sits over the thread’s bottom edge, passing what it doesn’t draw to the thread, which keeps room at its end as tall as the dock', async () => {
+    const api = fakeChatApi();
+    renderAt('/locations/l1/agent', api);
+    await openEarlierChat();
+    const log = screen.getByRole('log', { name: 'Conversation with TownwiseAI' });
+    const dock = screen.getByTestId('chat-dock');
+    // Laid over the thread, not a row under it: the thread runs the full height and scrolls under the composer.
+    expect(dock.parentElement).toBe(log.parentElement);
+    expect(log.contains(dock)).toBe(false);
+    expect(before(log, dock)).toBe(true);
+    const placed = style(dock);
+    expect([placed.position, placed.left, placed.right, placed.bottom]).toEqual(['absolute', '0px', '0px', '0px']);
+    // Wheels, scrolls and clicks beside the composer reach the thread; the composer is still the 760px column.
+    expect(placed.pointerEvents).toBe('none');
+    const column = first(Array.from(dock.children));
+    expect(style(column).pointerEvents).toBe('none');
+    expect(style(column).maxWidth).toBe('760px');
+    // The skirt starts at the box's middle (12 above the box, and half its 56) and is drawn under the composer.
+    const skirt = screen.getByTestId('chat-dock-skirt');
+    expect([style(skirt).position, style(skirt).top, style(skirt).bottom, style(skirt).pointerEvents]).toEqual(['absolute', '40px', '0px', 'none']);
+    expect(before(skirt, screen.getByLabelText(COMPOSER_LABEL))).toBe(true);
+
+    // The thread's end keeps the dock's measured height, and a pinned thread goes to its new end.
+    const content = first(Array.from(log.children));
+    expect(style(content).paddingBottom).toBe('16px');
+    const scrolledTo = jest.fn();
+    Object.defineProperty(log, 'scroll', { configurable: true, value: scrolledTo });
+    await layout(dock, 120);
+    expect(style(content).paddingBottom).toBe('136px');
+    expect(scrolledTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'auto' }));
+    // Focus moved into the thread is scrolled into view above the dock.
+    expect(log.style.scrollPaddingBottom).toBe('120px');
+    await layout(dock, 200);
+    expect(style(content).paddingBottom).toBe('216px');
+  });
+
+  test('the skirt covers the whole dock while a line sits above the composer, so the line never sits on the thread’s text', async () => {
+    const api = fakeChatApi();
+    api.summary = { ...SUMMARY, budget: { ...SUMMARY.budget, usedUsd: 17 } };
+    renderAt('/locations/l1/agent', api);
+    await openEarlierChat();
+    expect(within(screen.getByTestId('chat-dock')).getByText(BUDGET_LINE)).toBeTruthy();
+    expect(style(screen.getByTestId('chat-dock-skirt')).top).toBe('0px');
+  });
+
+  test('stops short of a scrollbar that takes room, so the bar shows down to the bottom', async () => {
+    const api = fakeChatApi();
+    renderAt('/locations/l1/agent', api);
+    await openEarlierChat();
+    const log = screen.getByRole('log', { name: 'Conversation with TownwiseAI' });
+    Object.defineProperty(log, 'scroll', { configurable: true, value: jest.fn() });
+    // An overlay scrollbar takes no room.
+    expect(style(screen.getByTestId('chat-dock')).right).toBe('0px');
+    // A classic one, 11px wide, comes as the content passes the view (and the content narrows by its width).
+    Object.defineProperty(log, 'offsetWidth', { configurable: true, get: () => 760 });
+    Object.defineProperty(log, 'clientWidth', { configurable: true, get: () => 749 });
+    await layout(first(Array.from(log.children)), 1200);
+    expect(style(screen.getByTestId('chat-dock')).right).toBe('11px');
+  });
 });
 
 test('a first turn taken back brings the landing back, with the text and focus in its composer', async () => {
@@ -352,6 +433,17 @@ test('History closes on Escape and gives focus back to its button', async () => 
   expect(document.activeElement).toBe(button);
 });
 
+test('only the last message’s row always shows; the earlier ones appear on hover or focus, and every message has its time', async () => {
+  renderAt('/locations/l1/agent', fakeChatApi());
+  await openEarlierChat();
+  const rows = [...document.querySelectorAll('[data-msg] [data-actions]')];
+  expect(rows.map((row) => row.getAttribute('data-actions'))).toEqual(['hover', 'always']);
+  // Both are in the DOM and the tab order; the style sheet hides the first with opacity alone.
+  expect(within(rows[0] as HTMLElement).getByRole('button', { name: 'Edit' })).toBeTruthy();
+  expect(within(rows[1] as HTMLElement).getByRole('button', { name: 'Regenerate' })).toBeTruthy();
+  for (const row of rows) expect(row.textContent).toMatch(/Nov 2,( 2026,)? \d{1,2}:\d{2} (AM|PM)/);
+});
+
 test('deleting the open conversation shows the landing and gives focus to History, as any delete does', async () => {
   renderAt('/locations/l1/agent', fakeChatApi());
   await openEarlierChat();
@@ -365,34 +457,36 @@ test('deleting the open conversation shows the landing and gives focus to Histor
   await waitFor(() => { expect(document.activeElement).toBe(history); });
 });
 
-describe('on phones, where the header scrolls with the landing or the thread and is drawn anew when one replaces the other', () => {
-  test('opening a conversation from the landing, or New chat from the thread, leaves focus in the composer', async () => {
+describe('on phones, where the header stays put as the landing and the thread replace each other, so focus goes where it does on wider screens', () => {
+  test('opening a conversation gives focus to History, and New chat from the thread keeps it on New chat', async () => {
     setWidth(360);
     renderAt('/locations/l1/agent', fakeChatApi());
-    fireEvent.click(await screen.findByRole('button', { name: 'History' }));
+    const history = await screen.findByRole('button', { name: 'History' });
+    fireEvent.click(history);
     const row = screen.getByRole('button', { name: 'Earlier chat, Nov 2, 2026' });
     act(() => { row.focus(); });
     fireEvent.click(row);
     await screen.findByText('We close for the holidays.');
-    await waitFor(() => { expect(document.activeElement).toBe(screen.getByLabelText(COMPOSER_LABEL)); });
+    await waitFor(() => { expect(document.activeElement).toBe(history); });
     const fresh = screen.getByRole('button', { name: 'New chat' });
     act(() => { fresh.focus(); });
     fireEvent.click(fresh);
     expect(await screen.findByRole('heading', { level: 2, name: 'Ask TownwiseAI about Main Street Bar' })).toBeTruthy();
-    await waitFor(() => { expect(document.activeElement).toBe(screen.getByLabelText(COMPOSER_LABEL)); });
+    expect(document.activeElement).toBe(fresh);
   });
 
-  test('deleting the open conversation leaves focus in the landing’s composer', async () => {
+  test('deleting the open conversation gives focus to History', async () => {
     setWidth(360);
     renderAt('/locations/l1/agent', fakeChatApi());
     await openEarlierChat();
-    fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    const history = screen.getByRole('button', { name: 'History' });
+    fireEvent.click(history);
     const remove = screen.getByRole('button', { name: 'Delete Earlier chat' });
     act(() => { remove.focus(); });
     fireEvent.click(remove);
     fireEvent.click(within(await screen.findByRole('dialog', { name: 'Delete this conversation?' })).getByRole('button', { name: 'Delete' }));
     expect(await screen.findByRole('heading', { level: 2, name: 'Ask TownwiseAI about Main Street Bar' })).toBeTruthy();
-    await waitFor(() => { expect(document.activeElement).toBe(screen.getByLabelText(COMPOSER_LABEL)); });
+    await waitFor(() => { expect(document.activeElement).toBe(history); });
   });
 
   test('opening the page puts focus nowhere new', async () => {
@@ -588,12 +682,12 @@ describe('a tool card', () => {
     expect(faded(await running(fakeChatApi()))).toBe(false);
   });
 
-  test('a running tool shows as its row in the timeline instead of Thinking…, and the caret goes on done', async () => {
+  test('the counter alone shows it is working, a running tool shows as its row in the timeline, and the caret goes on done', async () => {
     const api = fakeChatApi();
     renderAt('/locations/l1/agent', api);
     await send(api, 'How was December?');
     expect(screen.getByText('Working for 0s')).toBeTruthy();
-    expect(screen.getByText('Thinking…')).toBeTruthy();
+    expect(screen.queryByText('Thinking…')).toBeNull();
     expect(screen.queryByText('TownwiseAI is thinking…')).toBeNull();
     await stream(() => { turn(api).emit('thinking', { delta: 'Weighing the weekend.' }); });
     expect(screen.getByText('Weighing the weekend.')).toBeTruthy();
@@ -768,17 +862,14 @@ test('a town profile card’s sources open in a new tab', async () => {
   expect(link.getAttribute('rel')).toContain('noopener');
 });
 
-test('under view-as every write is disabled in place, the name prompt never shows, and versions still switch by reading', async () => {
+test('under view-as every write is disabled in place and versions still switch by reading', async () => {
   const api = fakeChatApi();
-  // The server never asks under view-as; the page wouldn't either.
-  api.profile = { displayName: 'Pat', askName: true };
+  api.profile = { displayName: 'Pat', askName: false };
   api.conversation = TWO_REPLIES;
   api.versions = { a2: SECOND_REPLY };
   renderAt('/locations/l1/agent', api, viewAsMe(ACCESS.member));
   await waitFor(() => { expect(document.getElementById('chat-ro')).toBeTruthy(); });
-  // It greets with the target's name, as the target sees it.
-  expect(await screen.findByRole('heading', { level: 1, name: 'Welcome back, Pat.' })).toBeTruthy();
-  expect(screen.queryByText('What should TownwiseAI call you?')).toBeNull();
+  expect(screen.getAllByRole('heading', { level: 1 }).map((heading) => heading.textContent)).toEqual(['TownwiseAI']);
   const input = await screen.findByLabelText(COMPOSER_LABEL);
   expect(input.getAttribute('aria-readonly')).toBe('true');
   expect(input.getAttribute('aria-describedby')).toBe('chat-ro composer-help');
@@ -943,4 +1034,41 @@ test('nothing goes to browser storage', async () => {
   } finally {
     setItem.mockRestore();
   }
+});
+
+describe('the composer’s + (D28)', () => {
+  const FILES = '/api/org/locations/l1/files';
+
+  test('puts a chosen file on Your data as a reference upload', async () => {
+    const api = fakeChatApi();
+    renderAt('/locations/l1/agent', api);
+    const add = await screen.findByRole('button', { name: 'Add a file to Your data' });
+    expect(add.getAttribute('aria-disabled')).toBeNull();
+    fireEvent.click(add);
+    const picker = document.querySelector<HTMLInputElement>('[data-testid="composer-files"]');
+    if (picker === null) throw new Error('no file picker');
+    fireEvent.change(picker, { target: { files: [new File(['Closed Mondays in winter.'], 'winter-hours.txt', { type: 'text/plain' })] } });
+    await waitFor(() => {
+      const created = api.writes.find((write) => write.method === 'POST' && write.path === FILES);
+      expect((created?.body as { purpose?: string; name?: string } | undefined)).toMatchObject({ purpose: 'reference', name: 'winter-hours.txt' });
+    });
+  });
+
+  test('is absent while stored files are off, and off in place under view-as', async () => {
+    const off = fakeChatApi();
+    let asked = 0;
+    off.reads[FILES] = () => {
+      asked += 1;
+      return new ApiError('http', 'Stored files are off.', { status: 503, code: 'files_unavailable' });
+    };
+    renderAt('/locations/l1/agent', off);
+    await screen.findByLabelText(COMPOSER_LABEL);
+    // The + also waits for this answer, so let it arrive before saying the + is absent.
+    await waitFor(() => { expect(asked).toBeGreaterThan(0); });
+    await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 0); }); });
+    expect(screen.queryByRole('button', { name: 'Add a file to Your data' })).toBeNull();
+    cleanup();
+    renderAt('/locations/l1/agent', fakeChatApi(), viewAsMe(ACCESS.member));
+    expectReadOnly(await screen.findByRole('button', { name: 'Add a file to Your data' }));
+  });
 });

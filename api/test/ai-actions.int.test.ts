@@ -312,6 +312,20 @@ describe('notes from the events', () => {
     expect((await outcomeOf(second)).notes).toHaveLength(1);
   });
 
+  it('a buyout keeps its party’s size, which books the day (D30); a closure never has one', async () => {
+    const l1 = await newLocation();
+    const fileId = await seedStored(l1);
+    answers = [answer({ events: [
+      { ...EVENT, title: 'Buyout', detail: 'Whole room', effect: 'closed', expectedGuests: 60 },
+      { ...EVENT, title: 'Closed', detail: '', kind: 'closure', effect: 'closed', startDate: '2026-07-01', endDate: '2026-07-01', expectedGuests: 60 },
+    ] })];
+    await readAs(team.member, l1, fileId);
+    const notes = await notesOf(l1);
+    expect(notes.map(({ kind, effect, expectedGuests }) => [kind, effect, expectedGuests])).toEqual([
+      ['private_event', 'closed', 60], ['closure', 'closed', null],
+    ]);
+  });
+
   it('skips an event the notes route would refuse, and leaves out a guest count it would refuse', async () => {
     const l1 = await newLocation();
     const fileId = await seedStored(l1);

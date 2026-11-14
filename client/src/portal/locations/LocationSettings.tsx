@@ -22,6 +22,7 @@ import { Small } from '../ui/text';
 import { checkTown, TOWN_COPY, TownFields, townValueOf, type TownMessages, type TownValue } from '../ui/TownFields';
 import { theme } from '../../theme';
 import { deleteLocation, updateLocation } from './api';
+import { shownLocationName } from './naming';
 
 // P16 Location settings (spec 16.3, org admins; the route guard sends members to Locations): Name and Town with
 // “Save changes”, then Delete location, offered only while the location holds no sales day and no note, behind a
@@ -33,6 +34,8 @@ import { deleteLocation, updateLocation } from './api';
 // location on Google Maps; using a place sets it and its town (PATCH with `placeId`), and a town changed by hand
 // takes the place off (api/README.md, Organization and locations). The search takes focus when it opens; when it
 // closes (Use this place, Cancel, or Google failing) focus moves to the line that says whether the location is linked.
+// After Name and town, a static Business rules section links to P29 (it reads nothing). Beside Name and town, “Add
+// another location” opens P10.
 
 const READ_ONLY_ID = 'location-settings-ro';
 const PLACE_READ_ONLY_ID = 'location-place-ro';
@@ -50,6 +53,10 @@ interface Messages { name?: string; town?: TownMessages }
 
 export function LocationSettings(): React.JSX.Element {
   const { location, org } = useLocation();
+  // With one location, every line names the organization (D29); the Name field still holds the location's own name,
+  // which shows once there is a second location.
+  const shown = shownLocationName(location, org);
+  const several = org.locations.length > 1;
   const { api, reloadOrg, showNotice } = usePortal();
   const router = useRouter();
   const { readOnly, line } = useReadOnly();
@@ -119,10 +126,10 @@ export function LocationSettings(): React.JSX.Element {
       throw error;
     }
     // Locations, or the one location left, whose Home Locations opens.
-    showNotice({ text: `Deleted ${location.name}.` }, /^\/(dashboard|locations\/[^/]+)$/);
+    showNotice({ text: `Deleted ${shown}.` }, /^\/(dashboard|locations\/[^/]+)$/);
     reloadOrg();
     router.replace('/dashboard');
-  }, [api, location.id, location.name, reloadOrg, router, showNotice]));
+  }, [api, location.id, shown, reloadOrg, router, showNotice]));
 
   function submit(): void {
     if (readOnly) return;
@@ -149,6 +156,7 @@ export function LocationSettings(): React.JSX.Element {
                 onChangeText={setName}
                 autoCapitalize="words"
                 maxLength={80}
+                {...(several ? {} : { helper: `Shown only once ${org.org.name} has more than one location.` })}
                 messages={messages.name === undefined ? [] : [messages.name]}
                 {...ro}
               />
@@ -162,6 +170,32 @@ export function LocationSettings(): React.JSX.Element {
                   {...(readOnlyId === null ? {} : { describedBy: readOnlyId })}
                   onPress={submit}
                 />
+              </Actions>
+            </Stack>
+          )}
+          side={(
+            <Stack>
+              <Small>Another restaurant is its own location, with its own sales, notes and forecast.</Small>
+              {/* Straight to Add location: with one location, Locations opens this Home (P9). */}
+              <Actions>
+                <LinkButton
+                  variant="outline"
+                  href="/locations/new"
+                  label="Add another location"
+                  {...(readOnlyId === null ? {} : { disabled: true, describedBy: readOnlyId })}
+                />
+              </Actions>
+            </Stack>
+          )}
+        />
+      </Section>
+      <Section kicker="TownwiseAI" title="Business rules">
+        <Columns
+          main={(
+            <Stack>
+              <Small>{`The standing facts TownwiseAI keeps in mind for ${shown}. Only a rule with a schedule changes Townwise’s forecast.`}</Small>
+              <Actions>
+                <LinkButton variant="outline" href={locationHref(location.id, 'rules')} label="Edit business rules" />
               </Actions>
             </Stack>
           )}
@@ -186,7 +220,7 @@ export function LocationSettings(): React.JSX.Element {
                     pending={placeSave.pending}
                     note={(place) => (place.town === null || sameTownLabel(place.town, location.town)
                       ? null
-                      : `Using this place moves ${location.name} to ${townLabel(place.town)}.`)}
+                      : `Using this place moves ${shown} to ${townLabel(place.town)}.`)}
                     onConfirm={(place) => { placeSave.run(place); }}
                     manualLabel="Cancel"
                     onManual={stopFinding}
@@ -230,9 +264,9 @@ export function LocationSettings(): React.JSX.Element {
       </Section>
       <ConfirmDialog
         visible={confirming}
-        title={`Delete ${location.name}?`}
+        title={`Delete ${shown}?`}
         body={`This deletes the location from ${org.org.name}. This can’t be undone.`}
-        typedName={location.name}
+        typedName={shown}
         confirmLabel="Delete location"
         pendingLabel="Deleting…"
         pending={remove.pending}

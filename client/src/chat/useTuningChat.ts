@@ -97,6 +97,8 @@ export interface ChatMessage {
    */
   startedAt: number | null;
   endedAt: number | null;
+  /** The time shown under a message, in ms since the epoch: when the person sent it, or when a reply ended; null when not known. */
+  at: number | null;
 }
 
 /** The path a conversation shows: its messages, every node, and the path's leaf. */
@@ -174,6 +176,9 @@ export const TIMED_OUT = 'The reply took too long. Try asking something shorter.
 export const REGENERATE_FAILED = 'That reply didn’t finish, so your earlier reply is back.';
 export const VERSION_FAILED = 'Couldn’t show that version. Try again.';
 export const RATING_FAILED = 'Couldn’t save your rating. Try again.';
+/** Why a question card's message (Something else…) can't go, once the month's budget is used up. */
+export const TELL_BUDGET = 'This month’s budget is used up, so TownwiseAI can’t answer in the chat.';
+const TELL_WAIT = 'Wait for TownwiseAI’s reply to finish, then try again.';
 
 /** The `done` stop reasons of a turn the server saved; any other (a refusal) saved nothing. */
 const SAVED_STOP_REASONS: readonly string[] = ['end_turn', 'max_tokens', 'tool_limit', 'budget'];
@@ -332,7 +337,7 @@ function hasContent(message: ChatMessage): boolean {
 function blankMessage(key: string, role: ChatMessage['role']): ChatMessage {
   return {
     key, role, parts: [], state: 'complete', note: null, nodeId: null, parentId: null, feedback: null, ratingError: null, next: null, request: null,
-    startedAt: null, endedAt: null,
+    startedAt: null, endedAt: null, at: null,
   };
 }
 
@@ -340,7 +345,7 @@ function blankMessage(key: string, role: ChatMessage['role']): ChatMessage {
 function turnPair(action: { content: string; userKey: string; replyKey: string; request: TurnRequest }, now: number): ChatMessage[] {
   const parentId = 'parentId' in action.request ? action.request.parentId ?? null : null;
   return [
-    { ...blankMessage(action.userKey, 'user'), parentId, parts: [{ type: 'text', key: `${action.userKey}t`, text: action.content }] },
+    { ...blankMessage(action.userKey, 'user'), parentId, at: now, parts: [{ type: 'text', key: `${action.userKey}t`, text: action.content }] },
     { ...blankMessage(action.replyKey, 'assistant'), state: 'streaming', request: action.request, startedAt: now },
   ];
 }
@@ -560,7 +565,7 @@ function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: s
       const budget = event.stopReason === 'budget' && state.budget !== null ? { ...state.budget, exhausted: true } : state.budget;
       const saved = SAVED_STOP_REASONS.includes(event.stopReason);
       if (!saved && state.turn?.earlier) return putBack({ ...state, budget }, state.turn.earlier, REGENERATE_FAILED);
-      const complete = (message: ChatMessage): ChatMessage => settleCards({ ...message, state: 'complete', note: doneNote(event.stopReason), endedAt: now }, saved ? 'kept' : 'lost');
+      const complete = (message: ChatMessage): ChatMessage => settleCards({ ...message, state: 'complete', note: doneNote(event.stopReason), endedAt: now, at: now }, saved ? 'kept' : 'lost');
       if (saved) return savedTurn({ ...state, budget }, event, complete);
       return { ...state, budget, turn: null, messages: withLive(state, complete) };
     }
@@ -577,6 +582,12 @@ export interface TuningChat {
   send: () => void;
   /** Sends `text` as it is (an Ask suggestion). */
   ask: (text: string) => void;
+  /**
+   * Sends `text` as Ask does, for a question card's Something else… (spec P25). Try again under its reply sends it again
+   * the same way, and `telling.ended` hears each try's end. A turn taken back never puts the text in the composer; the
+   * card keeps it.
+   */
+  tell: (text: string, telling: Telling) => void;
   stop: () => void;
   /** While a reply streams: stops it (it saves nothing, as Stop), then sends the composer's text after the leaf. */
   stopAndSend: () => void;
@@ -618,6 +629,14 @@ export interface TuningChat {
   setItemAside: (card: ItemCard) => Promise<ItemProposal>;
   /** Reads the page again after it failed to load. */
   reload: () => void;
+}
+
+/** How a question card's message goes (TuningChat.tell). */
+export interface Telling {
+  /** Its turn started: the first event arrived (not on a Try again). */
+  started?: () => void;
+  /** A try ended: null once its turn is saved (`done` with a saved stop reason), else the chat's own words for why not. */
+  ended: (failure: string | null) => void;
 }
 
 export interface TuningChatOptions {
@@ -683,6 +702,8 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
   const opening = useRef(0);
   const acting = useRef(new Set<string>());
   const ratings = useRef(new Map<string, number>());
+  // A question card's turns, by reply key: Try again under one tells the card how it ended, as its first try did.
+  const told = useRef(new Map<string, Telling['ended']>());
   const keys = useRef(0);
   // The text (or thinking summary) that arrived since the last draw, and the timer that draws it.
   const buffer = useRef<{ text: string; kind: 'text' | 'thinking'; timer: ReturnType<typeof setTimeout> | null }>({ text: '', kind: 'text', timer: null });
@@ -755,16 +776,26 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     }
   }
 
-  /** Streams a turn: `action` puts it on the page, `request` goes to the server. */
-  function run(action: Extract<ChatAction, { type: 'send' | 'edit' | 'regenerate' }>, request: TurnRequest, retries = 0): void {
+  /**
+   * Streams a turn: `action` puts it on the page, `request` goes to the server. `telling`, for a question card, hears
+   * when it starts and how it ended.
+   */
+  function run(action: Extract<ChatAction, { type: 'send' | 'edit' | 'regenerate' }>, request: TurnRequest, retries = 0, telling?: Telling): void {
     const controller = new AbortController();
     live.current = controller;
     dispatch(action);
     // A first turn that saved nothing (an error, Stop, a cut-off stream or a refusal) left no conversation behind.
     let created: string | null = null;
     let saved = false;
+    let started = false;
+    // Why it saved nothing, in the words the chat shows for it.
+    let failure: string | null = null;
     const onEvent = (event: ChatEvent): void => {
       if (controller.signal.aborted) return;
+      if (!started) {
+        started = true;
+        telling?.started?.();
+      }
       if (event.type === 'text' || event.type === 'thinking') {
         // Text and thinking keep their order: a change from one to the other draws what the first had gathered.
         if (buffer.current.kind !== event.type) flush();
@@ -777,27 +808,35 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
       flush();
       if (event.type === 'conversation') created = event.id;
       if (event.type === 'done' && SAVED_STOP_REASONS.includes(event.stopReason)) saved = true;
+      else if (event.type === 'done') failure = doneNote(event.stopReason) ?? NOT_SAVED;
+      if (event.type === 'error') failure = streamErrorText(event.code);
       dispatch({ type: 'event', event, key: nextKey(), at: new Date().toISOString() });
     };
     turnEnd.current = stream(request, controller.signal, onEvent, retries).then(
       () => {
         flush();
         dispatch({ type: 'ended' });
+        failure ??= CUT_OFF;
       },
       (error: unknown) => {
         flush();
         if (error instanceof ApiError && error.kind === 'aborted') {
           dispatch({ type: 'stopped' });
+          failure ??= STOPPED;
           return;
         }
         const exhausted = error instanceof ApiError && error.code === 'chat_budget_exhausted';
-        dispatch({ type: 'failed', error: exhausted ? null : sendErrorText(error), content: 'content' in request ? request.content : '', exhausted });
+        failure ??= exhausted ? TELL_BUDGET : sendErrorText(error);
+        // A card's words stay in the card, never in the composer.
+        const content = telling === undefined && 'content' in request ? request.content : '';
+        dispatch({ type: 'failed', error: exhausted ? null : sendErrorText(error), content, exhausted });
       },
     ).finally(() => {
       if (live.current === controller) live.current = null;
       if (request.conversationId === null && created !== null && !saved) dispatch({ type: 'discard', id: created });
       // The list, the budget and the off switch may all have changed with this turn.
       refresh();
+      telling?.ended(saved ? null : failure ?? NOT_SAVED);
     });
   }
 
@@ -806,16 +845,22 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
    * tree known (the conversation didn't open, or the server keeps none) it names no parent, so the server adds it after
    * the leaf it has stored; a null parent would start a second first message.
    */
-  function start(content: string, retries = 0): void {
+  function start(content: string, retries = 0, telling?: Telling): void {
     const current = latest.current;
-    if (content === '' || !canStart(current) || live.current !== null) return;
+    if (content === '' || !canStart(current) || live.current !== null) {
+      telling?.ended(current.budget?.exhausted === true ? TELL_BUDGET : TELL_WAIT);
+      return;
+    }
     let request: TurnRequest = { conversationId: null, content };
     if (current.conversationId !== null) {
       request = current.tree.length === 0
         ? { conversationId: current.conversationId, content }
         : { conversationId: current.conversationId, content, parentId: current.leafId };
     }
-    run({ type: 'send', content, userKey: nextKey(), replyKey: nextKey(), request }, request, retries);
+    const userKey = nextKey();
+    const replyKey = nextKey();
+    if (telling !== undefined) told.current.set(replyKey, telling.ended);
+    run({ type: 'send', content, userKey, replyKey, request }, request, retries, telling);
   }
 
   function openConversation(id: string): void {
@@ -842,7 +887,7 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
 
   function toMessage(stored: StoredMessage, tree: readonly TreeNode[], asked: StoredMessage | undefined, conversationId: string): ChatMessage {
     const parentId = stored.nodeId === null ? null : tree.find((node) => node.id === stored.nodeId)?.parentId ?? null;
-    const message: ChatMessage = { ...blankMessage(nextKey(), stored.role), nodeId: stored.nodeId, parentId, feedback: stored.feedback, next: stored.next };
+    const message: ChatMessage = { ...blankMessage(nextKey(), stored.role), nodeId: stored.nodeId, parentId, feedback: stored.feedback, next: stored.next, at: stored.role === 'user' ? stored.at : stored.endedAt };
     if (stored.role === 'assistant') {
       // Time worked runs from the person's message to the reply's end. Only a message's first reply can say so: a
       // later version (a regenerate) started after the message was sent, at a time that was not stored.
@@ -1014,6 +1059,7 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     setDraft: (text) => { dispatch({ type: 'draft', text }); },
     send: () => { start(state.draft.trim()); },
     ask: (text) => { start(text.trim()); },
+    tell: (text, telling) => { start(text.trim(), 0, telling); },
     stop: () => { live.current?.abort(); },
     stopAndSend,
     newConversation: () => {
@@ -1054,8 +1100,12 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
       if (at < 1 || asked?.role !== 'user' || !canStart(state)) return;
       const request = state.messages[at]?.request ?? null;
       dispatch({ type: 'drop', replyKey });
+      // A question card's message goes again as the card sent it: its words never reach the composer, and once saved
+      // the card answers its question.
+      const ended = told.current.get(replyKey);
+      told.current.delete(replyKey);
       // Sent again from where the conversation is now: after the leaf, like any message.
-      start(request !== null && 'content' in request ? request.content : messageText(asked));
+      start(request !== null && 'content' in request ? request.content : messageText(asked), 0, ended === undefined ? undefined : { ended });
     },
     reload: () => {
       dispatch({ type: 'load' });

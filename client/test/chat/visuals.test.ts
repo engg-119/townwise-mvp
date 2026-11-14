@@ -9,8 +9,11 @@ test('titles and summarizes each kind in Townwise’s words, with years and a tr
   expect(visualTitle(down12)).toBe('Guests, Oct 1 to Oct 31, 2026');
   expect(visualTitle({ ...previous })).toBe('Net sales, Oct 1 to Oct 31, 2026');
   expect(visualSummary(daily)).toBe('4 days with data. Highest: 90 guests on Sat, Oct 3, 2026. Lowest: 20 guests on Sun, Oct 4, 2026.');
-  expect(visualSummary(dailyWithBand)).toContain('About 8 in 10 days land inside it.');
-  expect(visualSummary(dailyWithBand)).toContain('The shaded band is Townwise’s forecast range, made Sep 30, 2026, for 2 days.');
+  // The band is the range as the owner's notes leave it (spec 14.5), so the 8 in 10 claim is only for days without
+  // a note, as the Calendar says it only beside the model's own range.
+  expect(visualSummary(dailyWithBand)).toContain('The shaded band is Townwise’s forecast range, made Sep 30, 2026, for 2 days, plus guests from your notes on days that have them.');
+  expect(visualSummary(dailyWithBand)).toContain('On days without a note, about 8 in 10 land inside it.');
+  expect(visualSummary(dailyWithBand)).not.toContain('About 8 in 10 days land inside it.');
   expect(visualSummary(weekdays)).toBe('Highest: Saturday, 150 guests. Lowest: Sunday, 30 guests.');
   expect(visualSummary(daysTable)).toBe('2 days.');
   expect(metricCards(down12).at(-1)).toEqual({ label: 'Change from the same days last year', value: '−12%' });

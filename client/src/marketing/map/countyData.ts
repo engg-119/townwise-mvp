@@ -291,13 +291,3 @@ export const countySeries: readonly CountySeries[] = [
 // The largest absolute gap of the year, and the shared chart scale of each group.
 export const MAX_ABS_GAP = 93.49;
 export const GROUP_DOMAIN: Record<TownGroup, readonly [number, number]> = { college: [80, 115], seasonalEvent: [30, 200] };
-
-// The month (0 to 11) with the widest spread (largest minus smallest gap) across the counties: where the
-// map rests when no town or month is chosen. The first such month wins a tie.
-export function widestSpreadMonth(): number {
-  const spreads = northeastSeries.index.map((_, month) => {
-    const gaps = countySeries.map((county) => county.gap[month] ?? Number.NaN);
-    return Math.max(...gaps) - Math.min(...gaps);
-  });
-  return spreads.indexOf(Math.max(...spreads));
-}

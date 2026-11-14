@@ -7,13 +7,14 @@ import { describe, expect, it } from 'vitest';
 import type { TownwiseContext } from '../src/app.ts';
 import type { OrgScope } from '../src/access/policy.ts';
 import { inputViewOf, resultViewOf, toolNamed, type ToolContext } from '../src/chat/tools/registry.ts';
-import { createForecastReader, type ForecastReader } from '../src/forecasts/reader.ts';
+import { createForecastReader, MAX_FORECAST_RANGE_DAYS, type ForecastReader } from '../src/forecasts/reader.ts';
 import { createPeopleInTownReader } from '../src/people-in-town/reader.ts';
 import type { PeopleData } from '../src/people-in-town/sources.ts';
+import type { BusinessRuleRecord, BusinessRuleStore } from '../src/stores/business-rules.ts';
 import type { ForecastRow, ForecastRunRecord, ForecastStore } from '../src/stores/forecasts.ts';
 import type { LocationRecord } from '../src/stores/locations.ts';
 import type { NoteRecord, NoteStore } from '../src/stores/notes.ts';
-import type { SalesDayStore, SalesDayWithUpload } from '../src/stores/sales-days.ts';
+import type { SalesDay, SalesDayStore, SalesDayWithUpload } from '../src/stores/sales-days.ts';
 import type { Town } from '../src/towns.ts';
 
 const TODAY = '2026-11-05';
@@ -56,25 +57,50 @@ function dayRow(date: string, fields: Partial<ForecastRow> = {}): ForecastRow {
   };
 }
 
-function forecastStores(rows: readonly ForecastRow[], runs: readonly ForecastRunRecord[] = rows.length === 0 ? [] : [publishedRun()]) {
+const NO_NOTES = { overlapping: () => Promise.resolve([]) };
+const NO_RULES = { scheduled: () => Promise.resolve([]) };
+
+function forecastStores(
+  rows: readonly ForecastRow[], runs: readonly ForecastRunRecord[] = rows.length === 0 ? [] : [publishedRun()], saved: readonly NoteRecord[] = [],
+  rules: readonly BusinessRuleRecord[] = [],
+) {
   const forecasts = {
     published: () => Promise.resolve([...runs]),
     rows: () => Promise.resolve([...rows]),
   } as unknown as ForecastStore;
   const salesDays = { days: () => Promise.resolve([{ date: '2026-11-02', guests: 140, netSalesCents: 1 }]) } as unknown as SalesDayStore;
-  return { forecasts, salesDays };
+  return {
+    forecasts, salesDays, notes: saved.length === 0 ? NO_NOTES : { overlapping: () => Promise.resolve([...saved]) },
+    businessRules: { scheduled: () => Promise.resolve([...rules]) },
+  };
 }
 
-function context(opts: { data?: PeopleData; town?: Town; forecasts?: ForecastReader } = {}): ToolContext {
+const NOTE_DETAIL = 'Sentinel rehearsal dinner for the Smith party';
+const NOTE_ID = '0000000000000000000000aa';
+
+/** A saved note with synthetic content; its detail and id must never reach the model through get_forecast. */
+function savedNote(fields: Partial<NoteRecord> & Pick<NoteRecord, 'startDate'>): NoteRecord {
+  return {
+    id: NOTE_ID, kind: 'private_event', endDate: fields.startDate, weekdays: null, effect: 'more_guests', expectedGuests: 70,
+    detail: NOTE_DETAIL, startTime: '18:00', endTime: '21:00', createdBy: SENTINEL_USER, byStaff: false, source: null,
+    createdAt: new Date('2026-11-01T00:00:00Z'), updatedAt: new Date('2026-11-01T00:00:00Z'), ...fields,
+  };
+}
+
+function context(opts: {
+  data?: PeopleData; town?: Town; forecasts?: ForecastReader; days?: SalesDayWithUpload[]; rules?: readonly BusinessRuleRecord[];
+} = {}): ToolContext {
   const notes: NoteRecord[] = [{
     id: '000000000000000000000002', kind: 'private_event', startDate: '2026-10-10', endDate: '2026-10-10', weekdays: null,
     effect: 'more_guests', expectedGuests: null, detail: `Party booked by ${SENTINEL_EMAIL} from ${SENTINEL_FILE}`,
-    createdBy: SENTINEL_USER, byStaff: false, source: null, createdAt: new Date('2026-10-01T00:00:00Z'), updatedAt: new Date('2026-10-01T00:00:00Z'),
+    startTime: null, endTime: null, createdBy: SENTINEL_USER, byStaff: false, source: null, createdAt: new Date('2026-10-01T00:00:00Z'),
+    updatedAt: new Date('2026-10-01T00:00:00Z'),
   }];
-  const days = [...saturdays('2026-09-19', 8, 200), ...saturdays('2025-12-06', 3, 90)];
+  const days = opts.days ?? [...saturdays('2026-09-19', 8, 200), ...saturdays('2025-12-06', 3, 90)];
   const stores = {
     salesDays: { history: () => Promise.resolve(days.sort((a, b) => (a.date < b.date ? -1 : 1))) } as unknown as SalesDayStore,
     notes: { list: () => Promise.resolve(notes) } as unknown as NoteStore,
+    businessRules: { scheduled: () => Promise.resolve([...(opts.rules ?? [])]) } as unknown as BusinessRuleStore,
   };
   const reader = createPeopleInTownReader({ stores, data: opts.data ?? { sources: [], towns: [] } });
   const ctx = { ports: { peopleInTown: reader, forecasts: opts.forecasts ?? createForecastReader({ stores: forecastStores([]) }) } } as unknown as TownwiseContext;
@@ -179,6 +205,35 @@ describe('get_people_in_town', () => {
     ]);
   });
 
+  const inSession = async (days: SalesDayWithUpload[], rules: readonly BusinessRuleRecord[] = []) => {
+    const { parsed } = await run('get_people_in_town', { from: '2026-11-01', to: '2026-11-30' }, context({ days, rules }));
+    return (parsed.yourHistory as { cells: { state: string; weekday: string }[] }).cells.find((cell) => cell.state === 'in_session');
+  };
+  /** The fixture's Saturdays with one of them at 1 guest, against Saturdays of 200. */
+  const nearEmptyOn = (date: string): SalesDayWithUpload[] => [
+    ...saturdays('2026-09-19', 8, 200).map((day) => (day.date === date ? { ...day, guests: 1, netSalesCents: 2000 } : day)),
+    ...saturdays('2025-12-06', 3, 90),
+  ];
+
+  it('counts a near-empty day in that history only when a business rule’s schedule says it had fewer guests (D32, D31)', async () => {
+    // Oct 31 (before today, Nov 5) is likely closed, and left out, until a rule says the day was open.
+    const rule: BusinessRuleRecord = {
+      id: '0000000000000000000000bb', text: 'Sentinel rule text', addedVia: 'page', createdBy: SENTINEL_USER, byStaff: false,
+      createdAt: new Date('2026-11-01T00:00:00Z'), updatedAt: new Date('2026-11-01T00:00:00Z'),
+      schedule: {
+        kind: 'other', effect: 'fewer_guests', startDate: '2026-10-31', endDate: null, weekdays: null,
+        expectedGuests: null, startTime: null, endTime: null,
+      },
+    };
+    expect(await inSession(nearEmptyOn('2026-10-31'))).toEqual({ state: 'in_session', weekday: 'Sat', days: 3, mean: 200 });
+    expect(await inSession(nearEmptyOn('2026-10-31'), [rule])).toEqual({ state: 'in_session', weekday: 'Sat', days: 4, mean: 150 });
+  });
+
+  it('never calls a day on or after the town’s today likely closed in that history, since its upload may be partial (D32)', async () => {
+    // Nov 7 is after today (Nov 5): its 1 guest counts as recorded, not as a likely closure.
+    expect(await inSession(nearEmptyOn('2026-11-07'))).toEqual({ state: 'in_session', weekday: 'Sat', days: 4, mean: 150 });
+  });
+
   it('answers available false for a town outside the twelve, and visitors_unknown for a seasonal town', async () => {
     const outside = await run('get_people_in_town', { from: '2026-11-01', to: '2026-11-07' }, context({ town: { townId: null, name: 'Woodstock', state: 'VT' } }));
     expect(outside.parsed).toMatchObject({ available: false, reason: 'town_not_researched', season: [] });
@@ -217,9 +272,14 @@ describe('get_people_in_town', () => {
 
 describe('get_forecast (U13B)', () => {
   const parse = (input: unknown) => toolNamed('get_forecast')?.parse(input, TODAY) ?? null;
-  const withRows = (rows: readonly ForecastRow[], runs?: readonly ForecastRunRecord[]) => context({ forecasts: createForecastReader({ stores: forecastStores(rows, runs) }) });
+  const withRows = (
+    rows: readonly ForecastRow[], runs?: readonly ForecastRunRecord[], notes: readonly NoteRecord[] = [], rules: readonly BusinessRuleRecord[] = [],
+  ) => context({
+    forecasts: createForecastReader({ stores: forecastStores(rows, runs, notes, rules) }),
+  });
 
-  it('takes { from, to } of at most 31 days, starting at most 92 days back', () => {
+  it('takes { from, to } of at most 31 days, starting at most 92 days back, though the forecast route reads 42', () => {
+    expect(MAX_FORECAST_RANGE_DAYS).toBe(42);
     expect(parse({ from: '2026-11-01', to: '2026-12-01' })).toEqual({ from: '2026-11-01', to: '2026-12-01' });
     expect(parse({ from: '2026-11-01', to: '2026-12-02' })).toBeNull();
     expect(parse({ from: '2026-08-05', to: '2026-08-10' })).not.toBeNull();
@@ -245,13 +305,14 @@ describe('get_forecast (U13B)', () => {
         dataThrough: '2026-10-31', madeAt: '2026-11-01', frozen: true, rangesWidened: true,
         accuracy: { backtest: { weeks: 10, weeklyTypicalErrorPct: 10, weeksOver20Pct: 1 }, live: null },
       },
-      interval: { level: 0.8, meaning: 'About 8 in 10 days should land inside the range.' },
+      interval: { level: 0.8, meaning: 'About 8 in 10 days should land inside the model\'s own range: a day\'s modelRange when a note changed it, otherwise its low to high. A range that includes guests from notes is not the model\'s.' },
       notCovered: [{ from: '2026-11-04', to: '2026-11-04' }],
     });
     const days = parsed.days as Record<string, unknown>[];
     expect(days[0]).toEqual({
       date: '2026-11-02', weekday: 'Mon', status: 'open', low: 80, mid: 100, high: 120, vsBaselinePct: null,
-      reasons: [{ label: 'Monday', effectPct: null, sources: [] }], madeAt: '2026-11-01', madeAfterDay: false, actual: 140, inRange: false,
+      reasons: [{ label: 'Monday', effectPct: null, effect: null, sources: [], note: null, rule: null }], modelRange: null, noteGuests: 0,
+      moreNotes: 0, moreRules: 0, madeAt: '2026-11-01', madeAfterDay: false, actual: 140, inRange: false,
     });
     expect(days[1]).toMatchObject({ status: 'closed', low: null, mid: null, high: null, reasons: [{ label: 'Closed' }] });
     expect(resultViewOf('get_forecast', ok(content))).toEqual({
@@ -273,7 +334,7 @@ describe('get_forecast (U13B)', () => {
     ];
     const forecasts = { published: () => Promise.resolve(runs), rows: () => Promise.resolve(rows) } as unknown as ForecastStore;
     const salesDays = { days: () => Promise.resolve(olderDays.map((date) => ({ date, guests: date === '2026-10-30' ? 130 : 100, netSalesCents: 1 }))) } as unknown as SalesDayStore;
-    const reader = createForecastReader({ stores: { forecasts, salesDays } });
+    const reader = createForecastReader({ stores: { forecasts, salesDays, notes: NO_NOTES, businessRules: NO_RULES } });
     const { parsed } = await run('get_forecast', { from: '2026-10-27', to: '2026-11-05' }, context({ forecasts: reader }));
     expect(parsed.accuracy).toBeUndefined();
     expect(parsed.model).toMatchObject({ version: 'v10', madeAt: '2026-11-02', accuracy: { backtest: null, live: null } });
@@ -283,6 +344,35 @@ describe('get_forecast (U13B)', () => {
     })]);
     // The model card's read: the newest run, with none of the older run's days.
     expect(await reader.latest({ orgId: '000000000000000000000003' } as unknown as OrgScope, location().id, TODAY)).toMatchObject({ run: { id: NEWER }, live: null });
+  });
+
+  it('gives each reason’s effect: the model’s where the run recorded one, else from today on the location’s own history', async () => {
+    // Today is Thu, Nov 5, 2026. From Sep 11, 2025 (the 8 weeks before the history) to yesterday: Saturdays 170, other days 100.
+    const history: SalesDay[] = [];
+    for (let date = '2025-09-11'; date <= '2026-11-04'; date = new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10)) {
+      const guests = new Date(`${date}T00:00:00Z`).getUTCDay() === 6 ? 170 : 100;
+      history.push({ date, guests, netSalesCents: guests * 2000 });
+    }
+    const forecasts = {
+      published: () => Promise.resolve([publishedRun()]),
+      rows: () => Promise.resolve([
+        dayRow('2026-11-02'), dayRow('2026-11-07', { reasons: [{ kind: 'weekday', ref: null, effectPct: null }, { kind: 'event', ref: null, effectPct: 12 }] }),
+      ]),
+    } as unknown as ForecastStore;
+    const salesDays = { days: () => Promise.resolve(history) } as unknown as SalesDayStore;
+    const reader = createForecastReader({ stores: { forecasts, salesDays, notes: NO_NOTES, businessRules: NO_RULES } });
+    const days = (await run('get_forecast', { from: '2026-11-02', to: '2026-11-07' }, context({ forecasts: reader }))).parsed.days as {
+      date: string; reasons: { label: string; effectPct: number | null; effect: unknown }[];
+    }[];
+    // 52 Saturdays of 170 against 110 a day: usually 55% more. A past day's reasons carry none.
+    expect(days.find((day) => day.date === '2026-11-07')?.reasons.map((reason) => [reason.label, reason.effectPct, reason.effect])).toEqual([
+      ['Saturday', null, { direction: 'more', pct: 55, basis: 'history', days: 52 }],
+      ['Town event', 12, { direction: 'more', pct: 10, basis: 'model', days: null }],
+    ]);
+    expect(days.find((day) => day.date === '2026-11-02')?.reasons.map((reason) => reason.effect)).toEqual([null]);
+    const description = toolNamed('get_forecast')?.definition.description ?? '';
+    expect(description).toContain('Say "usually"');
+    expect(description).toContain('closed and likely-closed days left out');
   });
 
   it('gives a busier-or-quieter percentage only where the run recorded a usual level', async () => {
@@ -295,9 +385,200 @@ describe('get_forecast (U13B)', () => {
     const week: ForecastRow = { ...dayRow('2026-11-02'), span: 'week', to: '2026-11-08', status: null, low: 500.5, mid: 600.5, high: 700.5, openDays: 7, reasons: [] };
     const days = ['2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06', '2026-11-07', '2026-11-08'].map((date) => dayRow(date));
     const { parsed } = await run('get_forecast', { from: '2026-11-02', to: '2026-11-08' }, withRows([...days, week]));
-    expect(parsed.weeks).toEqual([{ from: '2026-11-02', to: '2026-11-08', openDays: 7, low: 500, mid: 601, high: 701, madeAt: '2026-11-01', actual: null, inRange: null }]);
+    expect(parsed.weeks).toEqual([{
+      from: '2026-11-02', to: '2026-11-08', openDays: 7, low: 500, mid: 601, high: 701, noteGuests: 0, madeAt: '2026-11-01', actual: null, inRange: null,
+    }]);
     const noWeek = await run('get_forecast', { from: '2026-11-02', to: '2026-11-08' }, withRows(days));
     expect(noWeek.parsed.weeks).toEqual([]);
+  });
+
+  // Spec 14.5: a week shifts by its days' note and rule changes from today on (today is Thu, Nov 5).
+  describe('a week a note or rule changed', () => {
+    const MONDAY = '2026-11-02';
+    const WEEK = ['2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06', '2026-11-07', '2026-11-08'];
+    const weekRow = (fields: Partial<ForecastRow> = {}): ForecastRow => ({
+      ...dayRow(MONDAY), span: 'week', to: '2026-11-08', status: null, low: 200.5, mid: 600.5, high: 700.5, openDays: 6, reasons: [], ...fields,
+    });
+    /** Six open days of 80.6 to 119.2 and a Sunday the model closed. */
+    const days = (sunday: Partial<ForecastRow> = { status: 'closed', low: null, mid: null, high: null }) => WEEK.map((date) => dayRow(date, date === '2026-11-08' ? sunday : {}));
+    const closedFridays = {
+      id: '0000000000000000000000dd', text: 'Closed Fridays', addedVia: 'page', createdBy: SENTINEL_USER, byStaff: false,
+      schedule: { kind: 'closure', startDate: '2026-10-01', endDate: null, weekdays: [5], effect: 'closed', expectedGuests: null, startTime: null, endTime: null },
+      createdAt: new Date('2026-10-01T00:00:00Z'), updatedAt: new Date('2026-10-01T00:00:00Z'),
+    } satisfies BusinessRuleRecord;
+    const weeksOf = async (rows: ForecastRow[], notes: NoteRecord[] = [], rules: BusinessRuleRecord[] = []) =>
+      (await run('get_forecast', { from: MONDAY, to: '2026-11-08' }, withRows(rows, undefined, notes, rules))).parsed.weeks;
+
+    it('takes a newly closed day’s model middle off and adds the guests notes add, shifting low, mid and high alike', async () => {
+      // Friday closed by the rule (-100.4), a party of 70 on Saturday (+70): -30.4.
+      expect(await weeksOf([...days(), weekRow()], [savedNote({ startDate: '2026-11-07' })], [closedFridays])).toEqual([{
+        from: MONDAY, to: '2026-11-08', openDays: 5, low: 170, mid: 570, high: 671, noteGuests: 70, madeAt: '2026-11-01', actual: null, inRange: null,
+      }]);
+      // A party on the Sunday the model closed opens it with its 70 guests, and they add too.
+      expect(await weeksOf([...days(), weekRow()], [savedNote({ startDate: '2026-11-07' }), savedNote({ startDate: '2026-11-08' })], [closedFridays]))
+        .toEqual([expect.objectContaining({ openDays: 6, low: 240, mid: 640, high: 741, noteGuests: 140 })]);
+    });
+
+    it('never goes below 0, and a day before today changes nothing', async () => {
+      // Closed Wednesday to Sunday: only Thursday, Friday and Saturday come off (-301.2); Wednesday is past.
+      const closed = savedNote({ startDate: '2026-11-04', endDate: '2026-11-08', kind: 'closure', effect: 'closed', expectedGuests: null });
+      expect(await weeksOf([...days(), weekRow()], [closed])).toEqual([expect.objectContaining({ openDays: 3, low: 0, mid: 299, high: 400, noteGuests: 0 })]);
+    });
+
+    it('is left out only when a changed day has no model middle to take off', async () => {
+      const noMid = days().map((row) => (row.from === '2026-11-06' ? { ...row, mid: null } : row));
+      expect(await weeksOf([...noMid, weekRow()], [], [closedFridays])).toEqual([]);
+      expect(await weeksOf([...noMid, weekRow()])).toEqual([expect.objectContaining({ mid: 601 })]);
+    });
+  });
+
+  it('leaves closed and likely-closed days out of live accuracy (spec D32): they are closures, not misses', async () => {
+    const OLDER = '000000000000000000000011';
+    const scoredDays = ['2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30', '2026-10-31', '2026-11-01', '2026-11-02', '2026-11-03', '2026-11-04'];
+    const rows = scoredDays.map((date) => dayRow(date, { runId: OLDER, low: 80, mid: 100, high: 120 }));
+    // From the 8 weeks before, 100 a day; Oct 28 near empty (likely closed), Oct 29 all zero, Oct 30 under a closure note,
+    // and Oct 31, a Saturday under a closure rule, with 130 real guests: the rule gives way to them and it is scored.
+    const guestsOn: Record<string, [number, number]> = { '2026-10-28': [2, 4000], '2026-10-29': [0, 0], '2026-10-31': [130, 260_000] };
+    const stored: SalesDay[] = [];
+    for (let date = '2026-09-01'; date <= '2026-11-04'; date = new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10)) {
+      const [guests, netSalesCents] = guestsOn[date] ?? [100, 200_000];
+      stored.push({ date, guests, netSalesCents });
+    }
+    const forecasts = {
+      published: () => Promise.resolve([publishedRun({ id: OLDER, dataThrough: '2026-10-25', madeAt: '2026-10-26' })]),
+      rows: () => Promise.resolve(rows),
+    } as unknown as ForecastStore;
+    const salesDays = { days: () => Promise.resolve(stored) } as unknown as SalesDayStore;
+    const notes = { overlapping: () => Promise.resolve([savedNote({ startDate: '2026-10-30', kind: 'closure', effect: 'closed', expectedGuests: null })]) };
+    const closedSaturdays = {
+      id: '0000000000000000000000ee', text: 'Closed Saturdays', addedVia: 'page', createdBy: SENTINEL_USER, byStaff: false,
+      schedule: { kind: 'closure', startDate: '2026-10-01', endDate: null, weekdays: [6], effect: 'closed', expectedGuests: null, startTime: null, endTime: null },
+      createdAt: new Date('2026-10-01T00:00:00Z'), updatedAt: new Date('2026-10-01T00:00:00Z'),
+    } satisfies BusinessRuleRecord;
+    const reader = createForecastReader({ stores: { forecasts, salesDays, notes, businessRules: { scheduled: () => Promise.resolve([closedSaturdays]) } } });
+    const live = { days: 6, inRange: 5, typicalErrorPct: 4.8, from: '2026-10-27', to: '2026-11-04' };
+    const { parsed } = await run('get_forecast', { from: '2026-10-27', to: '2026-11-04' }, context({ forecasts: reader }));
+    expect(parsed.model).toMatchObject({ accuracy: { live } });
+    // The model card's read leaves them out too.
+    expect(await reader.latest({ orgId: '000000000000000000000003' } as unknown as OrgScope, location().id, TODAY)).toMatchObject({ live });
+  });
+
+  it('get_forecast gives a noted day its modelRange, noteGuests and the note reason\'s guests and outcome, never the note\'s detail or id', async () => {
+    const notes = [
+      savedNote({ startDate: '2026-11-07' }),
+      savedNote({ startDate: '2026-11-07', kind: 'opening', effect: 'unknown', expectedGuests: 20, startTime: null, endTime: null }),
+    ];
+    const tc = withRows([dayRow('2026-11-06'), dayRow('2026-11-07')], undefined, notes);
+    const { parsed, content } = await run('get_forecast', { from: '2026-11-06', to: '2026-11-07' }, tc);
+    const days = parsed.days as Record<string, unknown>[];
+    expect(days[0]).toMatchObject({ date: '2026-11-06', low: 80, mid: 100, high: 120, modelRange: null, noteGuests: 0 });
+    expect(days[1]).toMatchObject({
+      date: '2026-11-07', status: 'open', low: 150, mid: 170, high: 190, noteGuests: 70,
+      modelRange: { status: 'open', low: 80, mid: 100, high: 120 },
+      reasons: [
+        { label: 'Your private event, 70 guests, 6 pm to 9 pm', effectPct: null, sources: [], note: { guests: 70, outcome: 'added' } },
+        { label: 'Saturday', effectPct: null, sources: [], note: null },
+        { label: 'Your opening, 20 guests', effectPct: null, sources: [], note: { guests: 20, outcome: 'not_counted' } },
+      ],
+    });
+    for (const sentinel of [NOTE_DETAIL, 'Smith', NOTE_ID, SENTINEL_USER]) expect(content).not.toContain(sentinel);
+    const description = toolNamed('get_forecast')?.definition.description ?? '';
+    expect(description).toContain('From today on, each day includes the owner\'s saved notes');
+  });
+
+  it('get_forecast applies a business rule\'s schedule with the notes, as a rule reason with its guests and outcome, never the rule\'s text or id', async () => {
+    const RULE_TEXT = 'Sentinel rule: the Smith family dinner every Saturday';
+    const rule = (id: string, schedule: BusinessRuleRecord['schedule']): BusinessRuleRecord => ({
+      id, text: RULE_TEXT, addedVia: 'page', createdBy: SENTINEL_USER, byStaff: false, schedule,
+      createdAt: new Date('2026-10-01T00:00:00Z'), updatedAt: new Date('2026-10-01T00:00:00Z'),
+    });
+    const RULE_ID = '0000000000000000000000bb';
+    const rules = [
+      rule(RULE_ID, { kind: 'private_event', startDate: '2026-10-03', endDate: null, weekdays: [6], effect: 'more_guests', expectedGuests: 40, startTime: '18:00', endTime: '21:00' }),
+      rule('0000000000000000000000cc', { kind: 'closure', startDate: '2026-11-02', endDate: '2026-11-02', weekdays: null, effect: 'closed', expectedGuests: null, startTime: null, endTime: null }),
+    ];
+    const tc = withRows([dayRow('2026-11-06'), dayRow('2026-11-07'), dayRow('2026-11-09')], undefined, [savedNote({ startDate: '2026-11-07' })], rules);
+    const { parsed, content } = await run('get_forecast', { from: '2026-11-06', to: '2026-11-09' }, tc);
+    const days = parsed.days as Record<string, unknown>[];
+    expect(days[0]).toMatchObject({ date: '2026-11-06', low: 80, mid: 100, high: 120, noteGuests: 0 });
+    expect(days[1]).toMatchObject({
+      date: '2026-11-07', status: 'open', low: 190, mid: 210, high: 230, noteGuests: 110,
+      modelRange: { status: 'open', low: 80, mid: 100, high: 120 },
+      reasons: [
+        { label: 'Your rule: adds 40 guests on Saturdays, 6 pm to 9 pm', effectPct: null, sources: [], note: null, rule: { guests: 40, outcome: 'added' } },
+        { label: 'Your private event, 70 guests, 6 pm to 9 pm', note: { guests: 70, outcome: 'added' }, rule: null },
+        { label: 'Saturday', note: null, rule: null },
+      ],
+    });
+    for (const sentinel of [RULE_TEXT, 'Smith', RULE_ID, SENTINEL_USER]) expect(content).not.toContain(sentinel);
+    const description = toolNamed('get_forecast')?.definition.description ?? '';
+    expect(description).toContain('business rules with a schedule');
+  });
+
+  it('get_forecast lists at most 6 rule reasons a day and counts the rest in moreRules; a note on the day beats a rule\'s closure', async () => {
+    const rule = (id: number, schedule: BusinessRuleRecord['schedule']): BusinessRuleRecord => ({
+      id: String(id).padStart(24, '0'), text: `Sentinel rule ${String(id)}`, addedVia: 'page', createdBy: SENTINEL_USER, byStaff: false, schedule,
+      createdAt: new Date('2026-10-01T00:00:00Z'), updatedAt: new Date('2026-10-01T00:00:00Z'),
+    });
+    const quiet = { kind: 'other', startDate: '2026-10-01', endDate: null, weekdays: null, effect: 'fewer_guests', expectedGuests: null, startTime: null, endTime: null } as const;
+    const many = [1, 2, 3, 4, 5, 6, 7, 8].map((id) => rule(id, quiet));
+    const busy = await run('get_forecast', { from: '2026-11-06', to: '2026-11-06' }, withRows([dayRow('2026-11-06')], undefined, [], many));
+    const [day] = busy.parsed.days as { reasons: { rule: unknown }[]; moreRules: number; moreNotes: number }[];
+    expect(day?.reasons.filter((reason) => reason.rule !== null)).toHaveLength(6);
+    expect(day).toMatchObject({ moreRules: 2, moreNotes: 0 });
+    // Closed on Fridays, but the owner opened this one with a one-day opening note.
+    const closedFridays = rule(9, { ...quiet, kind: 'closure', weekdays: [5], effect: 'closed' });
+    const opening = savedNote({ startDate: '2026-11-06', kind: 'opening', effect: 'unknown', expectedGuests: null, startTime: null, endTime: null });
+    const opened = await run('get_forecast', { from: '2026-11-06', to: '2026-11-06' }, withRows([dayRow('2026-11-06')], undefined, [opening], [closedFridays]));
+    expect((opened.parsed.days as Record<string, unknown>[])[0]).toMatchObject({ status: 'open', low: 80, mid: 100, high: 120 });
+    expect(JSON.stringify(opened.parsed)).toContain('"rule":{"guests":null,"outcome":"overridden"}');
+    const description = toolNamed('get_forecast')?.definition.description ?? '';
+    for (const words of ['overridden', 'moreRules', 'A week\'s range shifts']) expect(description).toContain(words);
+  });
+
+  it('get_forecast keeps a past day\'s figures and says the note came after it', async () => {
+    const tc = withRows([dayRow('2026-11-04')], undefined, [savedNote({ startDate: '2026-11-04' })]);
+    const days = (await run('get_forecast', { from: '2026-11-04', to: '2026-11-04' }, tc)).parsed.days as Record<string, unknown>[];
+    expect(days[0]).toMatchObject({ low: 80, mid: 100, high: 120, modelRange: null, noteGuests: 0 });
+    expect((days[0]?.reasons as { note: unknown }[]).find((reason) => reason.note !== null)).toEqual(expect.objectContaining({
+      note: { guests: 70, outcome: 'past_day' },
+    }));
+  });
+
+  it('get_forecast shifts a week by a booked or closed day\'s model middle and by the guests notes add', async () => {
+    const dates = ['2026-11-09', '2026-11-10', '2026-11-11', '2026-11-12', '2026-11-13', '2026-11-14', '2026-11-15'];
+    const week: ForecastRow = { ...dayRow('2026-11-09'), span: 'week', to: '2026-11-15', status: null, low: 500, mid: 600, high: 700, openDays: 7, reasons: [] };
+    const rows = [...dates.map((date) => dayRow(date)), week];
+    const weeksWith = async (notes: readonly NoteRecord[]) => (await run('get_forecast', { from: '2026-11-09', to: '2026-11-15' }, withRows(rows, undefined, notes))).parsed;
+    const buyout = await weeksWith([savedNote({ startDate: '2026-11-14', effect: 'closed', startTime: null, endTime: null })]);
+    // The booked Saturday's 100.4 comes off the week, and its party is no walk-in.
+    expect(buyout.weeks).toEqual([expect.objectContaining({ openDays: 6, low: 399, mid: 500, high: 600, noteGuests: 0 })]);
+    expect((buyout.days as Record<string, unknown>[])[5]).toMatchObject({
+      status: 'booked', low: null, mid: null, high: null, noteGuests: 70, modelRange: { status: 'open', low: 80, mid: 100, high: 120 },
+    });
+    const closure = await weeksWith([savedNote({ startDate: '2026-11-10', kind: 'closure', effect: 'closed', expectedGuests: null, startTime: null, endTime: null })]);
+    expect(closure.weeks).toEqual([expect.objectContaining({ openDays: 6, low: 399, mid: 500, high: 600, noteGuests: 0 })]);
+    const party = await weeksWith([savedNote({ startDate: '2026-11-14' })]);
+    expect(party.weeks).toEqual([expect.objectContaining({ low: 570, mid: 670, high: 770, noteGuests: 70 })]);
+  });
+
+  it('get_forecast: a party opens a day the model closed with only its guests; a note on a booked day is day_booked', async () => {
+    const closedRow = dayRow('2026-11-09', { status: 'closed', low: null, mid: null, high: null, reasons: [{ kind: 'closure', ref: null, effectPct: null }] });
+    const opened = await run('get_forecast', { from: '2026-11-09', to: '2026-11-09' }, withRows([closedRow], undefined, [savedNote({ startDate: '2026-11-09' })]));
+    expect((opened.parsed.days as Record<string, unknown>[])[0]).toMatchObject({
+      status: 'open', low: 70, mid: 70, high: 70, noteGuests: 70, modelRange: { status: 'closed', low: null, mid: null, high: null },
+      reasons: [{ note: { guests: 70, outcome: 'added' } }, { label: 'Closed', note: null }],
+    });
+    const booked = await run('get_forecast', { from: '2026-11-10', to: '2026-11-10' }, withRows([dayRow('2026-11-10')], undefined, [
+      savedNote({ startDate: '2026-11-10', effect: 'closed', expectedGuests: 50, startTime: null, endTime: null }),
+      savedNote({ id: 'f'.repeat(24), startDate: '2026-11-10' }),
+    ]));
+    expect(((booked.parsed.days as Record<string, unknown>[])[0]?.reasons as { note: unknown }[]).map((reason) => reason.note)).toEqual([
+      { guests: 50, outcome: 'booked' }, null, { guests: 70, outcome: 'day_booked' },
+    ]);
+    const description = toolNamed('get_forecast')?.definition.description ?? '';
+    expect(description).toContain('a buyout books it, even a day the model expects closed');
+    expect(description).toContain('day_booked');
   });
 
   it('cards show the model, dates and counts only, never a figure', async () => {

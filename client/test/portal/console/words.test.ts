@@ -46,6 +46,11 @@ test.each<[string, Record<string, string | number | boolean | null>, string]>([
   ['org.renamed', { from: 'A', to: 'B' }, ''],
   ['agent.question_answered', { locationId: 'l1', questionId: 'gap_2026-12-24_2026-12-26', answer: 'closed' }, 'Closed on those days'],
   ['agent.question_answered', { locationId: 'l1', questionId: 'weekday_1_2026-01-05_2026-12-28', answer: 'open' }, 'The data is missing'],
+  ['agent.question_answered', { locationId: 'l1', questionId: 'likely_closed_2026-03-14', answer: 'open' }, 'Open, with few guests'],
+  ['agent.question_answered', { locationId: 'l1', questionId: 'likely_closed_2026-03-14', answer: 'closed' }, 'Closed that day'],
+  ['agent.question_answered', { locationId: 'l1', questionId: 'likely_closed_2026-03-14', answer: 'not_sure' }, 'Not sure'],
+  ['agent.question_answered', { locationId: 'l1', questionId: 'likely_closed_2026-03-14', answer: 'other' }, 'Answered in the chat'],
+  ['agent.question_answered', { locationId: 'l1', questionId: 'gap_2026-12-24_2026-12-26', answer: 'other' }, 'Answered in the chat'],
   ['forecast.published', { locationId: 'l1', modelVersion: 'v9', from: '2026-05-01', to: '2026-05-14', dayCount: 14 }, 'Model v9, May 1, 2026 to May 14, 2026, 14 days'],
 ])('details for %s', (action, details, expected) => {
   expect(auditDetails({ action, details })).toBe(expected);

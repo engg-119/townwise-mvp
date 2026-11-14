@@ -3,6 +3,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { theme } from '../../theme';
 import { localToday } from '../locations/dates';
 import { canFocus, focusBounds, heatmapBlocks, initialFocus, moveFocus, type Cell, type YearBlock } from './cells';
+import type { Level } from './levels';
 import type { HeatmapProps } from './Heatmap';
 import { WEEKDAY_NAMES, WEEK_ORDER } from './words';
 
@@ -20,8 +21,13 @@ import { WEEKDAY_NAMES, WEEK_ORDER } from './words';
 // May...) and a very narrow one every third (Jan, Apr, Jul, Oct), by a container query on its own width.
 
 const C = theme.color;
-const MINT = '123, 210, 180';
-const LEVEL_ALPHA = [0, 0.25, 0.45, 0.7, 1] as const;
+const LEVEL_PERCENT = [0, 25, 45, 70, 100] as const;
+
+/** A heat level's fill: the palette's mint at that percent, so it follows the mode (the alpha it was in dark). */
+function heat(level: Level): string {
+  const percent = LEVEL_PERCENT[level];
+  return percent === 100 ? C.mint : `color-mix(in srgb, ${C.mint} ${String(percent)}%, transparent)`;
+}
 const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const GAP = 3;
 const HEAD = 40;
@@ -59,7 +65,7 @@ const mono = { fontFamily: theme.font.mono, fontSize: 12, lineHeight: '16px', co
 
 function fillOf(cell: Cell): React.CSSProperties {
   switch (cell.state) {
-    case 'value': return { background: `rgba(${MINT}, ${String(LEVEL_ALPHA[cell.level ?? 3])})` };
+    case 'value': return { background: heat(cell.level ?? 3) };
     case 'no_data': return { background: C.raised };
     case 'left_out': return { background: C.state };
     case 'closed': return { background: 'transparent', border: `1px solid ${C.line}` };
@@ -152,7 +158,7 @@ function Legend(): React.JSX.Element {
     <div style={{ ...mono, color: C.text2, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px 16px' }}>
       <span style={item}>
         Fewer
-        {[1, 2, 3, 4].map((level) => <Swatch key={level} style={{ background: `rgba(${MINT}, ${String(LEVEL_ALPHA[level as 1])})` }} />)}
+        {([1, 2, 3, 4] as const).map((level) => <Swatch key={level} style={{ background: heat(level) }} />)}
         More
       </span>
       <span style={item}><span style={{ position: 'relative', display: 'inline-block', width: 10, height: 10, background: C.raised }}><span aria-hidden="true" style={{ ...square, top: 0, right: 0, background: C.white }} /></span>Town event or holiday</span>

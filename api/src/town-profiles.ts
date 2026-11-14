@@ -458,7 +458,7 @@ export const TOWN_PROFILES: readonly TownProfileData[] = [
         ],
       },
       {
-        text: '2026 cruise season: a local news site, citing the Town of Bar Harbor, reports 67 scheduled ship visits and roughly 50,000 possible passengers (if no visits are cancelled and ships sail at lower-berth capacity); calls by two ships of one cruise line run Aug 26 to Oct 14 2026',
+        text: '2026 cruise season: a local news site, citing the Town of Bar Harbor, reports 67 scheduled ship visits and roughly 50,000 possible passengers (if no visits are canceled and ships sail at lower-berth capacity); calls by two ships of one cruise line run Aug 26 to Oct 14 2026',
         sourceUrls: [
           'https://barharborstory.com/2026/04/30/how-many-cruise-ships-are-actually-heading-to-bar-harbor-this-year/',
           'https://www.barharbormaine.gov/190/Cruise-Ship-Information',
@@ -577,7 +577,7 @@ export const TOWN_PROFILES: readonly TownProfileData[] = [
     },
     drivers: [
       {
-        text: '2025 local foliage reports: Kancamagus Highway and Pinkham/Crawford Notches nearing or at peak (report of Oct 3 2025); Pinkham Notch a bit past peak and Crawford Notch well past peak (Columbus Day weekend report, photos taken within 24 hours of Oct 8, labelled 10/9/25). The week-1 report described the North Conway area itself as predominantly green, so the color was in the notches and on the Kancamagus, not necessarily in town',
+        text: '2025 local foliage reports: Kancamagus Highway and Pinkham/Crawford Notches nearing or at peak (report of Oct 3 2025); Pinkham Notch a bit past peak and Crawford Notch well past peak (Columbus Day weekend report, photos taken within 24 hours of Oct 8, labeled 10/9/25). The week-1 report described the North Conway area itself as predominantly green, so the color was in the notches and on the Kancamagus, not necessarily in town',
         sourceUrls: [
           'https://northconwaynh.com/foliage-report-oct-week-1-2025/',
           'https://northconwaynh.com/foliage-report-oct-week2-2025/',

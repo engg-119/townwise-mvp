@@ -30,7 +30,8 @@ export async function getPeopleInTown(ctx: TownwiseContext, req: Request, res: R
   const { scope } = memberOf(principal);
   const range = parseInput(peopleQuery(utcDay(ctx.now(), MAX_DAYS_AHEAD)), req.query);
   const location = await loadLocation(ctx, scope, req.params.locationId);
-  res.status(200).json(await ctx.ports.peopleInTown.window({ scope, location, range }));
+  const today = localDay(ctx.now(), timeZoneOf(location.town).timeZone);
+  res.status(200).json(await ctx.ports.peopleInTown.window({ scope, location, range, today }));
 }
 
 /** GET /api/org/locations/:locationId/estimates/about: 200 EstimatesAbout. */
@@ -47,7 +48,7 @@ export async function getEstimatesAbout(ctx: TownwiseContext, req: Request, res:
 /** U13B: how far back a forecast read may start, from the server's UTC day. */
 const MAX_FORECAST_DAYS_BACK = 400;
 
-/** U13B: strict, as the people in town query, but at most 31 days and from at most 400 days back. */
+/** U13B: strict, as the people in town query, but at most 42 days (a six-week calendar grid) and from at most 400 days back. */
 function forecastQuery(earliest: string, latest: string) {
   return z.strictObject({ from: isoDate, to: isoDate }).refine((range) => range.from >= EARLIEST_DATE && range.from >= earliest
     && range.from <= range.to && daysBetween(range.from, range.to) < MAX_FORECAST_RANGE_DAYS && range.to <= latest);

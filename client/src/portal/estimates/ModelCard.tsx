@@ -4,7 +4,9 @@ import { StyleSheet, View } from 'react-native';
 import { theme } from '../../theme';
 import { formatDate } from '../format';
 import { useLoad } from '../hooks';
+import { shownLocationName } from '../locations/naming';
 import { usePortal } from '../PortalProvider';
+import { useShownOrg } from '../shell/LocationShell';
 import { DefinitionList } from '../ui/DataTable';
 import { ErrorNotice, LoadingLine, StatusTag } from '../ui/feedback';
 import { Panel, Stack } from '../ui/layout';
@@ -26,8 +28,9 @@ function Lines(props: { lines: readonly string[] }): React.JSX.Element {
   return <Stack gap={theme.space[1]}>{props.lines.map((line) => <Small key={line}>{line}</Small>)}</Stack>;
 }
 
-export function noForecastLine(about: Pick<EstimatesAbout, 'location'>): string {
-  return `Townwise has no forecast for ${about.location.name} yet. Home and TownwiseAI use your history and ${about.location.town.name}’s calendar until it does.`;
+/** `name` is the location as the page shows it: the organization's name with one location (D29). */
+export function noForecastLine(about: Pick<EstimatesAbout, 'location'>, name: string): string {
+  return `Townwise has no forecast for ${name} yet. Home and TownwiseAI use your history and ${about.location.town.name}’s calendar until it does.`;
 }
 
 /** U13B: a percentage with at most one decimal, "4.8%". */
@@ -72,6 +75,9 @@ export function peopleInputsLine(about: Pick<EstimatesAbout, 'location' | 'peopl
 
 function Card(props: { about: EstimatesAbout }): React.JSX.Element {
   const { about } = props;
+  // Inside a location's pages, the shown name (D29); rendered on its own, the API's.
+  const org = useShownOrg();
+  const name = org === null ? about.location.name : shownLocationName(about.location, org);
   const { card, today } = about;
   const noHeadcount = about.people.headcountInputs.length === 0;
   const { run } = about.forecast;
@@ -80,7 +86,7 @@ function Card(props: { about: EstimatesAbout }): React.JSX.Element {
       {run === null ? (
         <View style={styles.state}>
           <StatusTag kind="progress" label="In progress" />
-          <Small white>{noForecastLine(about)}</Small>
+          <Small white>{noForecastLine(about, name)}</Small>
         </View>
       ) : (
         // U13B: the published run, then how it has done.

@@ -28,7 +28,7 @@ export const homeCss = `
 .pg-home .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .pg-home .body{color:var(--text2);text-wrap:pretty}
 .pg-home .btn-o{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 18px;background:transparent;color:var(--white);font-family:var(--sans);font-weight:600;font-size:15px;line-height:20px;text-decoration:none;border:1px solid var(--line);border-radius:0;white-space:nowrap;transition:border-color 150ms ease,transform 160ms var(--eo)}
-.pg-home .btn-o:hover{color:var(--white);border-color:var(--white)}
+@media (hover:hover){.pg-home .btn-o:hover{color:var(--white);border-color:var(--white)}}
 .pg-home .btn-o:active{transform:scale(.97)}
 
 .pg-home .hero{padding-bottom:96px}
@@ -81,7 +81,7 @@ export const homeCss = `
 .pg-home .step-body .lbl{font-family:var(--mono);font-size:12px;color:var(--text3);text-transform:uppercase;letter-spacing:.04em}
 .pg-home .step-body .hw-src{display:flex;flex-wrap:wrap;align-items:center;column-gap:12px;font-family:var(--mono);font-size:12px;line-height:16px;color:var(--text3)}
 .pg-home .hw-src a{display:inline-flex;align-items:center;min-height:44px;color:var(--text2)}
-.pg-home .hw-src a:hover{color:var(--mint)}
+@media (hover:hover){.pg-home .hw-src a:hover{color:var(--mint)}}
 .pg-home .hw.is-pin{grid-template-columns:repeat(12,minmax(0,1fr));column-gap:20px}
 .pg-home .hw.is-pin .steps{grid-column:1/6;grid-template-columns:minmax(0,1fr);gap:0}
 .pg-home .hw.is-pin .hw-s{min-height:560px;align-content:center}
@@ -153,7 +153,7 @@ export const homeCss = `
 .pg-home .who-foot .big{font-size:22px;line-height:28px;font-weight:600;color:var(--white)}
 .pg-home .about .h3{color:var(--text2);font-weight:500}
 .pg-home .about h2 a{display:inline-flex;align-items:center;gap:8px;min-height:44px;color:var(--text3);text-decoration:none}
-.pg-home .about h2 a:hover{color:var(--mint)}
+@media (hover:hover){.pg-home .about h2 a:hover{color:var(--mint)}}
 .pg-home .faq{display:grid;border-top:1px solid var(--border)}
 .pg-home .faq-i{display:grid;grid-template-columns:minmax(0,4fr) minmax(0,5fr);gap:12px 20px;padding:28px 0;border-bottom:1px solid var(--border)}
 .pg-home .faq-i p{color:var(--text2);text-wrap:pretty}

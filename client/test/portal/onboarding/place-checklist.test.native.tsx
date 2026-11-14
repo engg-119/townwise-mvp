@@ -2,16 +2,17 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { useEffect } from 'react';
 
 import { CHECKLIST_COPY, outsideUsLine } from '../../../src/portal/onboarding/checklist';
+import type { PlaceSuggestion } from '../../../src/portal/onboarding/places';
 import { PlaceChecklist } from '../../../src/portal/onboarding/PlaceChecklist';
 import { usePlaceChecklist, type PlaceChecklistState } from '../../../src/portal/onboarding/usePlaceChecklist';
 import { PLACES_SOURCE } from '../../../src/portal/places/PlaceCard';
 import { ACCESS, fakePortalApi, meOf, refusal, type FakePortalApi } from '../../helpers/portal';
-import { DETAILS, installPlaces, manyPlaces, MAP_URL, SUGGESTIONS, type PlacesFake } from './places-fakes';
+import { DETAILS, installPlaces, manyPlaces, mapOf, SUGGESTIONS, type PlacesFake } from './places-fakes';
 
 // The places checklist on native (usePlaceChecklist over PlaceChecklist), over the Places proxy fake: each suggestion
 // is a checkbox named by place and town; checking one asks Google for its details (the first check of a search ends
 // that search's session with its token, later ones carry none) and adds the place below the field, in check order,
-// with its map, facts and Remove; a place outside a US town, a 503 or a 404 leaves it unchecked and says why; at 25
+// with its facts and Remove, under one map of every checked place; a place outside a US town, a 503 or a 404 leaves it unchecked and says why; at 25
 // the other boxes are disabled; and a search 503 hands the page its manual fields only while nothing is checked.
 
 afterEach(async () => {
@@ -40,7 +41,7 @@ function Harness(p: { api: FakePortalApi; onUnavailable: () => void }): React.JS
 }
 
 /** Toggles past the field: the hook refuses what the field shows disabled. */
-async function toggleDirectly(suggestion: { placeId: string; name: string; detail: string }): Promise<void> {
+async function toggleDirectly(suggestion: PlaceSuggestion): Promise<void> {
   await run(() => { rendered?.toggle(suggestion); });
 }
 
@@ -100,7 +101,7 @@ function group(name: string): ReturnType<typeof screen.getByLabelText> {
   return node;
 }
 
-test('each suggestion is a checkbox named by place and town; checking shows the loading row, then the place with its map, facts and Remove', async () => {
+test('each suggestion is a checkbox named by place and town; checking shows the loading row, then the place with its facts and Remove', async () => {
   const { places } = await setup();
   await search('Lou');
   expect(box(RESTAURANT).props.accessibilityState).toMatchObject({ checked: false, disabled: false });
@@ -118,7 +119,7 @@ test('each suggestion is a checkbox named by place and town; checking shows the 
   const row = group(RESTAURANT);
   expect(within(row).getByText('3 Main St, Hanover, NH 03755, USA')).toBeTruthy();
   expect(within(row).getByText('Hanover, NH, one of the twelve towns Townwise has researched.')).toBeTruthy();
-  expect(within(row).getByLabelText('Map of the area around Lou’s Restaurant').props.source).toEqual({ uri: MAP_URL });
+  expect(within(row).queryByLabelText(/^Map of/)).toBeNull();
   const remove = within(row).getByRole('button', { name: `Remove ${RESTAURANT}` });
   expect(within(remove).getByText('Remove')).toBeTruthy();
   expect(screen.getAllByText(PLACES_SOURCE)).toHaveLength(1);
@@ -133,10 +134,10 @@ test('one session per search: the first check ends it with its token, later chec
     { placeId: 'ChIJTestPlace0001', sessionToken: 'token-1' },
     { placeId: 'ChIJTestPlace0002', sessionToken: undefined },
   ]);
-  // A check without a token leaves it out of the body.
+  // A check without a token leaves it out of the body. Native always asks for the dark map.
   expect(api.calls.filter((call) => call.path === '/api/places/details').map((call) => call.body)).toStrictEqual([
-    { placeId: 'ChIJTestPlace0001', sessionToken: 'token-1' },
-    { placeId: 'ChIJTestPlace0002' },
+    { placeId: 'ChIJTestPlace0001', sessionToken: 'token-1', theme: 'dark' },
+    { placeId: 'ChIJTestPlace0002', theme: 'dark' },
   ]);
   await search('Lou’s');
   expect(places.autocompletes.at(-1)).toEqual({ input: 'Lou’s', sessionToken: undefined });
@@ -302,7 +303,7 @@ test('at 25 checked or loading the other boxes are disabled with “You can add 
   const next = 'Many Place 26, Hanover, NH, USA';
   expect(box(next).props.accessibilityState).toMatchObject({ checked: false, disabled: true });
   await press(next);
-  await toggleDirectly({ placeId: 'ChIJTestMany0026', name: 'Many Place 26', detail: 'Hanover, NH, USA' });
+  await toggleDirectly({ placeId: 'ChIJTestMany0026', name: 'Many Place 26', detail: 'Hanover, NH, USA', kind: 'business' });
   expect(places.detailCalls).toHaveLength(25);
   expect(screen.getByText(CHECKLIST_COPY.limit)).toBeTruthy();
   await fireEvent.press(screen.getByRole('button', { name: 'Remove Many Place 1, Hanover, NH, USA' }));
@@ -320,4 +321,43 @@ test('a place Google answers with the id of one already checked is not added twi
   await press('Lou’s Restaurant, Lebanon, NH, USA');
   expect(places.detailCalls.map((call) => call.placeId)).toEqual(['ChIJTestPlace0001', 'ChIJTestPlace0004']);
   expect(groupNames()).toEqual([RESTAURANT]);
+});
+
+test('one map above the checked places on native; none with nothing checked', async () => {
+  const { places } = await setup();
+  await search('Lou');
+  await wait(1000);
+  expect(screen.queryByLabelText(/^Map of/)).toBeNull();
+  expect(places.mapCalls).toEqual([]);
+  await press(RESTAURANT);
+  await press(BAKERY);
+  await wait(400);
+  expect(places.mapCalls).toEqual([['ChIJTestPlace0001', 'ChIJTestPlace0002']]);
+  const maps = screen.getAllByLabelText(/^Map of/);
+  expect(maps.map((node) => String(node.props['aria-label']))).toEqual(['Map of your 2 places']);
+  expect(maps[0]?.props.source).toEqual({ uri: mapOf(['ChIJTestPlace0001', 'ChIJTestPlace0002']).url });
+  // In tree order the map comes before the rows, and no row holds one.
+  const labeled = screen.queryAllByLabelText(/./);
+  const mapAt = labeled.findIndex((node) => node.props['aria-label'] === 'Map of your 2 places');
+  const firstRowAt = labeled.findIndex((node) => node.props.role === 'group');
+  expect(mapAt).toBeGreaterThan(-1);
+  expect(mapAt).toBeLessThan(firstRowAt);
+  for (const name of [RESTAURANT, BAKERY]) expect(within(group(name)).queryByLabelText(/^Map of/)).toBeNull();
+  await fireEvent.press(screen.getByRole('button', { name: `Remove ${RESTAURANT}` }));
+  await fireEvent.press(screen.getByRole('button', { name: `Remove ${BAKERY}` }));
+  await wait(1000);
+  expect(screen.queryByLabelText(/^Map of/)).toBeNull();
+  expect(places.mapCalls).toHaveLength(1);
+});
+
+test('a checked place keeps its suggestion’s kind, and an address’s box says Street address', async () => {
+  await setup();
+  await search('Lou');
+  await press(RESTAURANT);
+  await search('12 South');
+  const address = '12 South Main Street, Street address · Hanover, NH, USA';
+  expect(within(box(address)).getByText('Street address · Hanover, NH, USA')).toBeTruthy();
+  await press(address);
+  expect(rendered?.places.map((place) => [place.name, place.kind])).toEqual([['Lou’s Restaurant', 'business'], ['12 South Main Street', 'address']]);
+  expect(groupNames()).toEqual([RESTAURANT, address]);
 });

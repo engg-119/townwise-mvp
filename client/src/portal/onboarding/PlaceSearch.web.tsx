@@ -3,7 +3,7 @@ import { useId, useState } from 'react';
 import { theme } from '../../theme';
 import { useFocusOnMount } from '../places/focus';
 import { FieldFrame, useFieldIds } from '../ui/FormField';
-import { MAX_SEARCH_LENGTH, type PlaceSuggestion } from './places';
+import { MAX_SEARCH_LENGTH, suggestionLabel, suggestionLine, type PlaceSuggestion } from './places';
 import { fieldFocus, PlaceSearchShell, type PlaceFieldProps, type PlaceSearchProps } from './PlaceSearchParts';
 import { usePlaceSearch } from './usePlaceSearch';
 
@@ -103,33 +103,37 @@ function WebField({ props, state, statusId }: PlaceFieldProps): React.JSX.Elemen
           hidden={!open}
           style={{ listStyle: 'none', margin: 0, padding: 0, border: `1px solid ${c.border}`, borderTop: 'none', background: c.panel }}
         >
-          {suggestions.map((suggestion, index) => (
-            <li
-              key={suggestion.placeId}
-              id={`${listId}-${String(index)}`}
-              role="option"
-              aria-selected={index === active}
-              // Pressing keeps focus in the field, so the list stays a part of it.
-              onMouseDown={(event) => { event.preventDefault(); }}
-              onMouseEnter={() => { setActive(() => index); }}
-              onClick={() => { state.pick(suggestion); }}
-              style={{
-                minHeight: 44, boxSizing: 'border-box', padding: '10px 12px', cursor: 'pointer',
-                borderBottom: index === suggestions.length - 1 ? 'none' : `1px solid ${c.border}`,
-                background: index === active ? c.raised : 'transparent',
-                boxShadow: index === active ? `inset 3px 0 0 ${c.mint}` : 'none',
-              }}
-            >
-              <span style={{ display: 'block', color: c.white, fontFamily: theme.font.sans, fontSize: 16, lineHeight: '24px' }}>
-                {suggestion.name}
-              </span>
-              {suggestion.detail === '' ? null : (
-                <span style={{ display: 'block', color: c.text2, fontFamily: theme.font.sans, fontSize: 14, lineHeight: '20px' }}>
-                  {suggestion.detail}
+          {suggestions.map((suggestion, index) => {
+            const line = suggestionLine(suggestion);
+            return (
+              <li
+                key={suggestion.placeId}
+                id={`${listId}-${String(index)}`}
+                role="option"
+                aria-label={suggestionLabel(suggestion)}
+                aria-selected={index === active}
+                // Pressing keeps focus in the field, so the list stays a part of it.
+                onMouseDown={(event) => { event.preventDefault(); }}
+                onMouseEnter={() => { setActive(() => index); }}
+                onClick={() => { state.pick(suggestion); }}
+                style={{
+                  minHeight: 44, boxSizing: 'border-box', padding: '10px 12px', cursor: 'pointer',
+                  borderBottom: index === suggestions.length - 1 ? 'none' : `1px solid ${c.border}`,
+                  background: index === active ? c.raised : 'transparent',
+                  boxShadow: index === active ? `inset 3px 0 0 ${c.mint}` : 'none',
+                }}
+              >
+                <span style={{ display: 'block', color: c.white, fontFamily: theme.font.sans, fontSize: 16, lineHeight: '24px' }}>
+                  {suggestion.name}
                 </span>
-              )}
-            </li>
-          ))}
+                {line === '' ? null : (
+                  <span style={{ display: 'block', color: c.text2, fontFamily: theme.font.sans, fontSize: 14, lineHeight: '20px' }}>
+                    {line}
+                  </span>
+                )}
+              </li>
+            );
+          })}
         </ul>
       </div>
     </FieldFrame>

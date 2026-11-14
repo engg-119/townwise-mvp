@@ -59,7 +59,8 @@ test('no drop on a phone: the step says where to drop files, with what to drop i
   expect(await screen.findByText(STEP.nativeDrop)).toBeTruthy();
   expect(screen.getByRole('heading', { name: STEP.title })).toBeTruthy();
   expect(screen.getByText('Daily sales summaries')).toBeTruthy();
-  expect(screen.getByRole('heading', { name: 'Main Street Bar' })).toBeTruthy();
+  // One location: the card names the organization (D29).
+  expect(screen.getByRole('heading', { name: 'Test Group' })).toBeTruthy();
   expect(screen.queryByRole('button', { name: STEP.choose })).toBeNull();
   expect(screen.queryByRole('button', { name: STEP.read })).toBeNull();
   expect(api.calls.filter((call) => call.method !== 'GET')).toEqual([]);

@@ -84,8 +84,10 @@ function noteContentOf(event: AiReadEvent, today: string): NoteContent | null {
   const guests = event.expectedGuests;
   return readNoteContent({
     kind: event.kind, startDate: event.startDate, endDate: event.endDate, weekdays: null, effect,
-    // A count the notes route would refuse (0, or a crowd past a restaurant's) is left out rather than the event.
-    expectedGuests: effect === 'closed' || guests === null || guests < 1 || guests > MAX_EXPECTED_GUESTS ? null : guests,
+    // A count the notes route would refuse (0, a crowd past a restaurant's, or one on a closed note that is not a
+    // buyout) is left out rather than the event. A buyout keeps its party's size, which books the day (D30).
+    expectedGuests: (effect === 'closed' && event.kind !== 'private_event') || guests === null || guests < 1
+      || guests > MAX_EXPECTED_GUESTS ? null : guests,
     detail: noteDetailOf(event),
   }, today);
 }

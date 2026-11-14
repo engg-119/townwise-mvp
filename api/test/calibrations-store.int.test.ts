@@ -1,4 +1,4 @@
-// The forecast lab's data layer (stores/calibrations.ts and its neighbours): one live calibration per location, the
+// The forecast lab's data layer (stores/calibrations.ts and its neighbors): one live calibration per location, the
 // callback lookup and the result token that dies with the calibration, compare-and-set transitions, tenant scoping,
 // deletion before runs, lab runs in the forecast store, the forecasts switch and the audit wording. The fixture's
 // numbers are synthetic.

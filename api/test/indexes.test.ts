@@ -35,6 +35,8 @@ describe('indexes', () => {
       'tw_forecast_runs', 'tw_forecasts',
       // The forecast lab.
       'tw_calibrations',
+      // Business rules (spec 6.24).
+      'tw_business_rules',
     ].sort());
   });
 
@@ -75,6 +77,7 @@ describe('indexes', () => {
       'TwChatProposal', 'TwFile', 'TwImport', 'TwUploadDay', 'TwWelcome',
       // U13B.
       'TwForecastRun', 'TwForecast', 'TwCalibration',
+      'TwBusinessRule',
     ]) {
       for (const [fields] of indexesOf(connection, model)) {
         const keys = Object.keys(fields);
@@ -128,6 +131,14 @@ describe('indexes', () => {
     expect(indexesOf(registered(), 'TwWelcome')).toContainEqual([
       { orgId: 1, userId: 1 }, expect.objectContaining({ unique: true }),
     ]);
+  });
+
+  it('tw_business_rules has the unique orgId, locationId, key index', () => {
+    const connection = registered();
+    expect(indexesOf(connection, 'TwBusinessRule')).toContainEqual([
+      { orgId: 1, locationId: 1, key: 1 }, expect.objectContaining({ unique: true }),
+    ]);
+    expect(connection.models.TwBusinessRule?.schema.get('strict')).toBe(true);
   });
 
   it('keeps one profile per person', () => {

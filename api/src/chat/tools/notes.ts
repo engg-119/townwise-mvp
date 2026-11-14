@@ -9,7 +9,7 @@ const notesResult = z.object({ notes: z.array(z.unknown()) });
 export const notesTool: ChatTool<Record<string, never>> = {
   definition: {
     name: 'list_notes',
-    description: 'The notes already recorded for this location, by start date: kind, dates, weekdays, effect, expected guests and detail.',
+    description: 'The notes already recorded for this location, by start date: kind, dates, weekdays, hours, effect, expected guests and detail.',
     input_schema: NO_INPUT,
     eager_input_streaming: true,
   },
@@ -22,8 +22,8 @@ export const notesTool: ChatTool<Record<string, never>> = {
     return {
       content: JSON.stringify({
         notes: list.map((note) => ({
-          kind: note.kind, startDate: note.startDate, endDate: note.endDate, weekdays: note.weekdays, effect: note.effect,
-          expectedGuests: note.expectedGuests, detail: note.detail,
+          kind: note.kind, startDate: note.startDate, endDate: note.endDate, weekdays: note.weekdays, startTime: note.startTime,
+          endTime: note.endTime, effect: note.effect, expectedGuests: note.expectedGuests, detail: note.detail,
         })),
       }),
     };

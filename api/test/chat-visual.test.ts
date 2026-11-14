@@ -14,6 +14,10 @@ import {
 import { nodesOf } from '../src/chat/tree.ts';
 import { chatMessageViews } from '../src/chat/view.ts';
 import type { ForecastDayView, ForecastWindow, ForecastWindowRun } from '../src/forecasts/reader.ts';
+import type { Closure } from '../src/closed-days.ts';
+import { utcDay } from '../src/dates.ts';
+import type { BusinessRuleRecord } from '../src/stores/business-rules.ts';
+import type { NoteRecord } from '../src/stores/notes.ts';
 import type { SalesDay } from '../src/stores/sales-days.ts';
 import { weekdayOf } from '../src/time-zones.ts';
 
@@ -34,9 +38,11 @@ function day(date: string, guests: number | null, netSalesCents: number | null =
 }
 
 function fc(date: string, low: number | null, high: number | null): ForecastDayView {
+  const status = low === null ? 'closed' : 'open';
+  const mid = low === null || high === null ? null : (low + high) / 2;
   return {
-    date, weekday: weekdayOf(date), status: low === null ? 'closed' : 'open', low, mid: low === null || high === null ? null : (low + high) / 2,
-    high, baseline: null, reasons: [], runId: 'run-0001', madeAt: run.madeAt, madeAfterDay: false, actual: null, inRange: null,
+    date, weekday: weekdayOf(date), status, low, mid, high, baseline: null, reasons: [], runId: 'run-0001', madeAt: run.madeAt,
+    madeAfterDay: false, actual: null, inRange: null, model: { status, low, mid, high }, noteGuests: 0, moreNotes: 0, moreRules: 0,
   };
 }
 
@@ -58,6 +64,15 @@ describe('the figures of each kind', () => {
     const none = dailyVisual(req('daily', 'guests', '2026-10-01', '2026-10-01'), [day('2026-10-01', 40)], [fc('2026-10-01', null, null)], run);
     expect(none).toMatchObject({ forecast: null, days: [{ value: 40, low: null, high: null }] });
     expect(dailyVisual(req('daily', 'guests', '2026-10-01', '2026-10-01'), [day('2026-10-01', 40)], [], null)).toMatchObject({ forecast: null });
+  });
+
+  it('daily: the band is the day’s range with the owner’s notes, the low and high get_forecast and the Calendar give (spec 14.5)', () => {
+    const noted: ForecastDayView = { ...fc('2026-10-01', 45, 60), low: 115.4, mid: 122.5, high: 129.6, noteGuests: 70 };
+    const booked: ForecastDayView = { ...fc('2026-10-02', 45, 60), status: 'booked', low: null, mid: null, high: null, noteGuests: 50 };
+    // A day the model closed that a private event of 70 opened.
+    const opened: ForecastDayView = { ...fc('2026-10-03', null, null), status: 'open', low: 70, mid: 70, high: 70, noteGuests: 70 };
+    const v = dailyVisual(req('daily', 'guests', '2026-10-01', '2026-10-03'), [], [noted, booked, opened], run);
+    expect(v).toMatchObject({ days: [{ low: 115, high: 130 }, { low: null, high: null }, { low: 70, high: 70 }], forecast: run });
   });
 
   it('daily net sales never carries a band, and gives dollars', () => {
@@ -119,6 +134,29 @@ describe('the figures of each kind', () => {
     expect(metricsVisual(req('metrics', 'netSales', '2026-10-01', '2026-10-03'), [day('2026-10-01', 1, 10_000), day('2026-10-02', 1, 10_001)], null))
       .toMatchObject({ total: 200.01, dailyAverage: 100.01, dayCount: 2, compare: null });
   });
+
+  // Spec D32: closed and likely-closed days are closures, not slow days, as Analytics treats them.
+  const closures: Readonly<Record<string, Closure>> = { '2026-10-05': 'likely_closed', '2026-10-12': 'closed', '2025-10-03': 'likely_closed' };
+  const closureOn = (each: SalesDay): Closure | null => closures[each.date] ?? null;
+
+  it('breakdown and metrics average open days only: closed and likely-closed days are left out, as Analytics leaves them out', () => {
+    const days = [day('2026-10-05', 2), day('2026-10-12', 0, 0), day('2026-10-19', 90), day('2026-10-26', 110)];
+    const weekdays = breakdownVisual(req('breakdown', 'guests', '2026-10-05', '2026-10-26', { by: 'weekday' }), days, closureOn);
+    expect(weekdays.kind === 'breakdown' ? weekdays.bars[0] : null).toEqual({ key: '1', value: 100, days: 2 });
+    // The total keeps every recorded guest; the average and the day count are over open days.
+    const range = req('metrics', 'guests', '2026-10-05', '2026-10-26', { compare: 'last_year' });
+    expect(metricsVisual(range, days, [day('2025-10-03', 1), day('2025-10-10', 80)], closureOn)).toMatchObject({
+      total: 202, dailyAverage: 100, dayCount: 2, compare: { total: 81, dayCount: 1 },
+    });
+  });
+
+  it('days_table marks a likely-closed day’s row', () => {
+    expect(daysTableVisual(req('days_table', null, '2026-10-05', '2026-10-06'), [day('2026-10-05', 2), day('2026-10-06', 50)], closureOn)).toEqual({
+      kind: 'days_table', from: '2026-10-05', to: '2026-10-06',
+      rows: [{ date: '2026-10-05', guests: 2, netSales: null, likelyClosed: true }, { date: '2026-10-06', guests: 50, netSales: null }],
+    });
+    expect(showVisualTool.definition.description).toContain('likelyClosed');
+  });
 });
 
 describe('show_visual’s input', () => {
@@ -170,7 +208,10 @@ describe('show_visual’s run', () => {
   }) as unknown as ForecastWindowRun;
   const EMPTY: ForecastWindow = { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], notCovered: [] };
 
-  function context(days: SalesDay[], windowOf: (range: { from: string; to: string }) => ForecastWindow = () => EMPTY) {
+  function context(
+    days: SalesDay[], windowOf: (range: { from: string; to: string }) => ForecastWindow = () => EMPTY,
+    saved: { notes?: NoteRecord[]; rules?: Pick<BusinessRuleRecord, 'id' | 'schedule'>[] } = {},
+  ) {
     const dayReads: { from: string; to: string }[] = [];
     const windowReads: { from: string; to: string }[] = [];
     const ctx = {
@@ -181,6 +222,8 @@ describe('show_visual’s run', () => {
             return Promise.resolve(days.filter((d) => d.date >= range.from && d.date <= range.to));
           },
         },
+        notes: { list: () => Promise.resolve(saved.notes ?? []) },
+        businessRules: { scheduled: () => Promise.resolve(saved.rules ?? []) },
       },
       ports: {
         forecasts: {
@@ -215,20 +258,20 @@ describe('show_visual’s run', () => {
     return { visual: result.visual, content: JSON.parse(result.content) };
   }
 
-  it('daily guests read the published forecast in windows of at most 31 days, labelled with the newest run that supplied days', async () => {
+  it('daily guests read the published forecast in windows of at most 42 days, labeled with the newest run that supplied days', async () => {
     const older = runOf('v1', '2026-09-15', '2026-09-16');
     const newer = runOf('v2', '2026-10-25', '2026-10-26');
-    const { tc, dayReads, windowReads } = context([day('2026-10-01', 40), day('2026-11-02', 60)], (range) => (range.from === '2026-10-01'
+    const { tc, dayReads, windowReads } = context([day('2026-10-01', 40), day('2026-11-13', 60)], (range) => (range.from === '2026-10-01'
       ? { ...EMPTY, available: true, reason: null, runs: [older], days: [fc('2026-10-01', 30, 50)] }
-      : { ...EMPTY, available: true, reason: null, runs: [newer], days: [fc('2026-11-02', 50, 70)] }));
-    const { visual, content } = await shown(tc, { kind: 'daily', metric: 'guests', from: '2026-10-01', to: '2026-11-09', by: null, compare: null });
-    expect(dayReads).toEqual([{ from: '2026-10-01', to: '2026-11-09' }]);
-    expect(windowReads).toEqual([{ from: '2026-10-01', to: '2026-10-31' }, { from: '2026-11-01', to: '2026-11-09' }]);
+      : { ...EMPTY, available: true, reason: null, runs: [newer], days: [fc('2026-11-13', 50, 70)] }));
+    const { visual, content } = await shown(tc, { kind: 'daily', metric: 'guests', from: '2026-10-01', to: '2026-11-15', by: null, compare: null });
+    expect(dayReads).toEqual([{ from: '2026-10-01', to: '2026-11-15' }]);
+    expect(windowReads).toEqual([{ from: '2026-10-01', to: '2026-11-11' }, { from: '2026-11-12', to: '2026-11-15' }]);
     expect(visual).toMatchObject({ kind: 'daily', forecast: { model: 'Townwise demand model v2', madeAt: '2026-10-26' } });
     if (visual?.kind !== 'daily') throw new Error('not daily');
-    expect(visual.days).toHaveLength(40);
+    expect(visual.days).toHaveLength(46);
     expect(visual.days[0]).toEqual({ date: '2026-10-01', value: 40, low: 30, high: 50 });
-    expect(visual.days.find((d) => d.date === '2026-11-02')).toEqual({ date: '2026-11-02', value: 60, low: 50, high: 70 });
+    expect(visual.days.find((d) => d.date === '2026-11-13')).toEqual({ date: '2026-11-13', value: 60, low: 50, high: 70 });
     // The model reads the same figures, with what to do with them.
     expect(content).toEqual({ shown: SHOWN, visual });
   });
@@ -241,7 +284,8 @@ describe('show_visual’s run', () => {
 
     const totals = context([day('2026-10-01', 40), day('2025-10-02', 30)]);
     const { visual } = await shown(totals.tc, { kind: 'metrics', metric: 'guests', from: '2026-10-01', to: '2026-10-03', by: null, compare: 'last_year' });
-    expect(totals.dayReads).toEqual([{ from: '2026-10-01', to: '2026-10-03' }, { from: '2025-10-02', to: '2025-10-04' }]);
+    // Each range with the 8 weeks before it, whose same weekdays say which days were likely closed (spec D32).
+    expect(totals.dayReads).toEqual([{ from: '2026-08-06', to: '2026-10-03' }, { from: '2025-08-07', to: '2025-10-04' }]);
     expect(visual).toMatchObject({ total: 40, compare: { total: 30, dayCount: 1 } });
   });
 
@@ -258,6 +302,27 @@ describe('show_visual’s run', () => {
     expect(empty.dayReads).toHaveLength(4);
     expect((await shown(empty.tc, { kind: 'days_table', metric: null, from: '2026-10-01', to: '2026-10-02', by: null, compare: null })).visual)
       .toMatchObject({ rows: [{ guests: null, netSales: null }, { guests: null, netSales: 50 }] });
+  });
+
+  it('reads the notes, the rule schedules and the 8 weeks before the range to find closed and likely-closed days (spec D32)', async () => {
+    // Mondays of 100 from Aug 3; Oct 5 near empty (likely closed), Oct 12 under a closure note, Oct 19 under a closure rule
+    // with its 90 real guests (they beat the rule), Oct 26 the town's today in a later read.
+    const mondays: SalesDay[] = [];
+    for (let date = '2026-08-03'; date <= '2026-10-26'; date = utcDay(new Date(`${date}T00:00:00.000Z`), 7)) mondays.push(day(date, 100));
+    const changed = new Map([['2026-10-05', 2], ['2026-10-19', 90]]);
+    const days = mondays.map((each) => day(each.date, changed.get(each.date) ?? 100));
+    const closure = {
+      id: '0000000000000000000000aa', kind: 'closure', startDate: '2026-10-12', endDate: '2026-10-12', weekdays: null, effect: 'closed', expectedGuests: null,
+      detail: null, startTime: null, endTime: null, createdBy: 'u', byStaff: false, source: null, createdAt: new Date(0), updatedAt: new Date(0),
+    } satisfies NoteRecord;
+    const rule = {
+      id: 'r1', schedule: { kind: 'closure', startDate: '2026-10-19', endDate: null, weekdays: [1], effect: 'closed', expectedGuests: null, startTime: null, endTime: null },
+    } satisfies Pick<BusinessRuleRecord, 'id' | 'schedule'>;
+    const { tc } = context(days, undefined, { notes: [closure], rules: [rule] });
+    const breakdown = await shown(tc, { kind: 'breakdown', metric: 'guests', from: '2026-10-05', to: '2026-10-25', by: 'weekday', compare: null });
+    expect(breakdown.visual?.kind === 'breakdown' ? breakdown.visual.bars[0] : null).toEqual({ key: '1', value: 90, days: 1 });
+    const table = await shown(tc, { kind: 'days_table', metric: null, from: '2026-10-05', to: '2026-10-05', by: null, compare: null });
+    expect(table.visual).toMatchObject({ rows: [{ date: '2026-10-05', guests: 2, likelyClosed: true }] });
   });
 
   it('visualOf rebuilds a stored visual and drops one that does not parse', () => {

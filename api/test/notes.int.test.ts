@@ -1,11 +1,14 @@
 // Notes, the tuning step (spec 10.5, 12, P14): range, weekday, effect and kind rules; author-or-admin edits;
-// notes reachable only through their own location; the 1,000 cap; detail never in logs or audit events.
+// notes reachable only through their own location; the 1,000 cap; detail never in logs or audit events; hours and
+// buyout guests (the calendar change); the store's overlapping read.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import type { NoteView } from '../src/handlers/notes.ts';
+import type { OrgScope } from '../src/access/policy.ts';
+import { readNoteContent, sameNoteContent, type NoteView } from '../src/handlers/notes.ts';
+import { createNoteStore } from '../src/stores/notes.ts';
 import { addLocation, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { call, signIn, startTownwiseServer, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
 
@@ -73,13 +76,13 @@ describe('POST /api/org/locations/:locationId/notes', () => {
     });
     expect(note).toEqual({
       id: note.id, kind: 'private_event', startDate: '2026-08-14', endDate: '2026-08-16', weekdays: [5, 6], effect: 'more_guests',
-      expectedGuests: 180, detail, createdByEmail: author.email, createdAt: server.clock.now().toISOString(),
+      expectedGuests: 180, detail, startTime: null, endTime: null, createdByEmail: author.email, createdAt: server.clock.now().toISOString(),
       updatedAt: server.clock.now().toISOString(), canEdit: true, source: null,
     });
     const stored = await server.connection.collection('tw_notes').findOne({ _id: new Types.ObjectId(note.id) });
     expect(Object.keys(stored ?? {}).sort()).toEqual([
-      '_id', 'createdAt', 'createdBy', 'detail', 'effect', 'endDate', 'expectedGuests', 'kind', 'locationId', 'orgId', 'startDate',
-      'updatedAt', 'weekdays',
+      '_id', 'createdAt', 'createdBy', 'detail', 'effect', 'endDate', 'endTime', 'expectedGuests', 'kind', 'locationId', 'orgId', 'startDate',
+      'startTime', 'updatedAt', 'weekdays',
     ]);
     expect(stored).toMatchObject({ createdBy: author.session.userId, weekdays: [5, 6] });
 
@@ -195,5 +198,131 @@ describe('GET, PATCH and DELETE', () => {
     const listed = await (await call(server, notesPath(otherLocationId), { session: admin.session })).json() as { notes: NoteView[] };
     expect(listed.notes.map((n) => n.id)).not.toContain(note.id);
     expect(await errorOf(await call(server, `${notesPath()}/not-an-id`, { method: 'DELETE', session: admin.session }))).toEqual({ status: 400, error: 'invalid_request' });
+  });
+});
+
+// The calendar change: optional local hours on a note, and a buyout (private event, closed) may carry its party's size.
+describe('note hours and buyout guests', () => {
+  const EVENT = {
+    kind: 'private_event', startDate: '2026-08-21', endDate: '2026-08-21', weekdays: null, effect: 'more_guests', expectedGuests: 70, detail: null,
+  };
+
+  it('stores startTime and endTime, and reads a missing pair and an older note as null', async () => {
+    const location = await addLocation(server, { orgId, name: 'Hours Room' });
+    const note = await created({ ...EVENT, startTime: '18:30', endTime: '21:00' }, author, location);
+    expect(note).toMatchObject({ startTime: '18:30', endTime: '21:00', expectedGuests: 70 });
+    const stored = await server.connection.collection('tw_notes').findOne({ _id: new Types.ObjectId(note.id) });
+    expect(stored).toMatchObject({ startTime: '18:30', endTime: '21:00' });
+
+    const path = `${notesPath(location)}/${note.id}`;
+    const res = await call(server, path, { method: 'PATCH', session: author.session, json: EVENT });
+    expect(res.status).toBe(200);
+    expect((await res.json() as { note: NoteView }).note).toMatchObject({ startTime: null, endTime: null });
+    expect(await server.connection.collection('tw_notes').findOne({ _id: new Types.ObjectId(note.id) })).toMatchObject({ startTime: null, endTime: null });
+
+    const older = new Types.ObjectId();
+    const now = server.clock.now();
+    await server.connection.collection('tw_notes').insertOne({
+      _id: older, orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(location), kind: 'closure', startDate: '2026-09-01',
+      endDate: '2026-09-01', weekdays: null, effect: 'closed', expectedGuests: null, detail: null, createdBy: author.session.userId,
+      createdAt: now, updatedAt: now,
+    });
+    const listed = await (await call(server, notesPath(location), { session: author.session })).json() as { notes: NoteView[] };
+    expect(listed.notes.find((n) => n.id === older.toHexString())).toMatchObject({ startTime: null, endTime: null });
+
+    const content = readNoteContent({ ...EVENT, startTime: '18:30', endTime: '21:00' }, '2026-06-01');
+    expect(content).not.toBeNull();
+    if (content === null) return;
+    expect(sameNoteContent(content, content)).toBe(true);
+    expect(sameNoteContent(content, { ...content, startTime: '18:00' })).toBe(false);
+    expect(sameNoteContent(content, { ...content, endTime: '22:00' })).toBe(false);
+  });
+
+  it('holds the time rules: both or neither, HH:MM, start before end, none on a closure', async () => {
+    const refused: Record<string, unknown>[] = [
+      { startTime: '18:00' }, { endTime: '21:00' }, { startTime: '18:00', endTime: null },   // one without the other
+      { startTime: '6:00', endTime: '21:00' }, { startTime: '18:00', endTime: '24:00' },     // not HH:MM
+      { startTime: '18:60', endTime: '21:00' }, { startTime: '18:00:00', endTime: '21:00:00' },
+      { startTime: 1800, endTime: 2100 }, { startTime: '', endTime: '' },
+      { startTime: '21:00', endTime: '18:00' }, { startTime: '18:00', endTime: '18:00' },   // not start before end
+      { kind: 'closure', effect: 'closed', expectedGuests: null, startTime: '09:00', endTime: '12:00' },  // a closure
+    ];
+    const before = await server.connection.collection('tw_notes').countDocuments({});
+    for (const change of refused) {
+      expect({ change, ...(await errorOf(await post({ ...EVENT, ...change }))) }).toEqual({ change, status: 400, error: 'invalid_request' });
+    }
+    expect(await server.connection.collection('tw_notes').countDocuments({})).toBe(before);
+
+    const accepted: Record<string, unknown>[] = [
+      { startTime: '00:00', endTime: '23:59' }, { startTime: '18:00', endTime: '18:01' }, { startTime: null, endTime: null },
+      { effect: 'closed', startTime: '17:00', endTime: '23:00' },                              // a buyout's hours
+      { kind: 'opening', effect: 'unknown', expectedGuests: null, startTime: '11:00', endTime: '14:00' },
+    ];
+    for (const change of accepted) expect({ change, status: (await post({ ...EVENT, ...change })).status }).toEqual({ change, status: 201 });
+  });
+
+  it('a buyout may carry expected guests; any other closed note may not', async () => {
+    const buyout = await created({ ...EVENT, effect: 'closed', expectedGuests: 70 });
+    expect(buyout).toMatchObject({ kind: 'private_event', effect: 'closed', expectedGuests: 70 });
+    expect(await created({ ...EVENT, effect: 'closed', expectedGuests: null })).toMatchObject({ effect: 'closed', expectedGuests: null });
+
+    const refused: Record<string, unknown>[] = [
+      { kind: 'closure', effect: 'closed', expectedGuests: 70 },
+      { kind: 'opening', effect: 'closed', expectedGuests: 70 },
+      { kind: 'other', effect: 'closed', expectedGuests: 70, detail: 'Road closed for the parade' },
+    ];
+    for (const change of refused) {
+      expect({ change, ...(await errorOf(await post({ ...EVENT, ...change }))) }).toEqual({ change, status: 400, error: 'invalid_request' });
+    }
+  });
+
+  it('the audit event holds no time, guests or detail', async () => {
+    const note = await created({ ...EVENT, startTime: '18:30', endTime: '21:15', expectedGuests: 73, detail: 'Sentinel anniversary party' });
+    const path = `${notesPath()}/${note.id}`;
+    const change = { ...EVENT, effect: 'closed', startTime: '17:45', endTime: '22:10', expectedGuests: 91, detail: 'Sentinel buyout' };
+    expect((await call(server, path, { method: 'PATCH', session: author.session, json: change })).status).toBe(200);
+
+    const events = (await auditEvents(server)).filter((e) => (e.target as { id: string }).id === note.id);
+    expect(events.map((e) => e.action)).toEqual(['note.created', 'note.updated']);
+    // The details are the whole free-form part of an event (the rest is ids, the actor and the time).
+    for (const event of events) {
+      expect(event.details).toEqual({ locationId, kind: 'private_event', startDate: '2026-08-21', endDate: '2026-08-21' });
+    }
+    expect(JSON.stringify(events)).not.toContain('Sentinel');
+  });
+});
+
+describe('NoteStore.overlapping', () => {
+  it('overlapping returns this location’s notes that touch the range, never another’s', async () => {
+    const store = createNoteStore(server.connection);
+    const scope = { orgId } as unknown as OrgScope;
+    const location = await addLocation(server, { orgId, name: 'Overlap Room' });
+    const other = await addLocation(server, { orgId, name: 'Overlap Patio' });
+    const otherOrg = await createOrg(server, { name: 'Other Overlap Tavern' });
+    const make = async (where: string, startDate: string, endDate: string): Promise<string> => {
+      server.clock.advance(1000);
+      return (await created({ ...NOTE, startDate, endDate }, author, where)).id;
+    };
+
+    await make(location, '2026-10-01', '2026-10-31');                // ends the day before the range
+    const touchesStart = await make(location, '2026-10-15', '2026-11-01');
+    const spans = await make(location, '2026-10-20', '2026-12-10');
+    const inside = await make(location, '2026-11-12', '2026-11-12');
+    const insideLater = await make(location, '2026-11-12', '2026-11-13');
+    const touchesEnd = await make(location, '2026-11-30', '2026-12-05');
+    await make(location, '2026-12-01', '2026-12-02');                // starts the day after the range
+    await make(other, '2026-11-12', '2026-11-12');                    // another location
+    const now = server.clock.now();
+    await server.connection.collection('tw_notes').insertOne({        // another organization, the same location id
+      orgId: new Types.ObjectId(otherOrg), locationId: new Types.ObjectId(location), kind: 'closure', startDate: '2026-11-12',
+      endDate: '2026-11-12', weekdays: null, effect: 'closed', expectedGuests: null, detail: null, createdBy: 'fixture',
+      createdAt: now, updatedAt: now,
+    });
+
+    const found = await store.overlapping(scope, location, { from: '2026-11-01', to: '2026-11-30' });
+    expect(found.map((note) => note.id)).toEqual([touchesStart, spans, inside, insideLater, touchesEnd]);
+    expect(found.every((note) => note.startTime === null && note.endTime === null)).toBe(true);
+    expect(await store.overlapping(scope, location, { from: '2027-01-01', to: '2027-01-31' })).toEqual([]);
+    expect(await store.overlapping({ orgId: otherOrg } as unknown as OrgScope, other, { from: '2026-11-01', to: '2026-11-30' })).toEqual([]);
   });
 });

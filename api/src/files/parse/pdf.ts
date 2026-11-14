@@ -1,7 +1,7 @@
 // Tables from a PDF's text (spec 11A), inside the parse thread only. unpdf (a serverless build of Mozilla pdf.js) gives
 // each page's text items and positions; fonts are never loaded and nothing is rendered. A table starts at a header
 // line: a line whose items include a date header and a guests or net sales header, each its own item. The header
-// items' extents make the column bands; each following line's items fall into the band their centre is in; a line
+// items' extents make the column bands; each following line's items fall into the band their center is in; a line
 // with fewer than two filled bands, or one that starts with "total", ends the table. A header repeated on a later
 // page continues its table. The only file that imports unpdf (test/isolation.test.ts). readPdfText is the one way a
 // PDF's other text leaves this file: for a file the person let TownwiseAI read (spec 11A.9), through ai-text.ts.
@@ -40,7 +40,7 @@ function isHeaderLine(line: readonly PdfItem[]): boolean {
   return guessesFor('date', names).length > 0 && (guessesFor('guests', names).length > 0 || guessesFor('netSales', names).length > 0);
 }
 
-/** Band edges between neighbouring header items: the midpoints between one's end and the next one's start. */
+/** Band edges between neighboring header items: the midpoints between one's end and the next one's start. */
 function edgesOf(header: readonly PdfItem[]): number[] {
   const edges: number[] = [];
   for (let index = 0; index + 1 < header.length; index += 1) {
@@ -55,8 +55,8 @@ function edgesOf(header: readonly PdfItem[]): number[] {
 function cellsOf(line: readonly PdfItem[], edges: readonly number[]): string[] {
   const cells = Array.from({ length: edges.length + 1 }, () => '');
   for (const item of line) {
-    const centre = item.x + item.width / 2;
-    let band = edges.findIndex((edge) => centre < edge);
+    const center = item.x + item.width / 2;
+    let band = edges.findIndex((edge) => center < edge);
     if (band === -1) band = edges.length;
     const text = item.text.trim();
     cells[band] = cells[band] === '' ? text : `${cells[band] ?? ''} ${text}`;

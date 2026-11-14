@@ -349,9 +349,10 @@ describe('DELETE /api/org/locations/:locationId/sales', () => {
   it('also deletes its answers to TownwiseAI’s questions, so the same days uploaded again are asked about again', async () => {
     const locationId = await newLocation();
     const other = await newLocation();
-    // Four weeks with no sales on Tuesday 2026-04-14 and Wednesday 2026-04-15: TownwiseAI asks about that gap.
+    // Ten weeks with no sales on Tuesday 2026-04-14 and Wednesday 2026-04-15: TownwiseAI asks about that gap, as the
+    // weeks before it make those weekdays usually busy (spec 10.12).
     const GAP = 'gap_2026-04-14_2026-04-15';
-    const days = daysEnding('2026-04-28', 28, () => ({ guests: 10, netSalesCents: null }))
+    const days = daysEnding('2026-04-28', 70, () => ({ guests: 100, netSalesCents: null }))
       .filter((each) => each.date !== '2026-04-14' && each.date !== '2026-04-15');
     const asked = async (id: string): Promise<string[]> => {
       const res = await call(server, `/api/org/locations/${id}/agent`, { session: team.admin });

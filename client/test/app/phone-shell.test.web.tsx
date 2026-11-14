@@ -120,28 +120,29 @@ describe.each([
   ['a member', meOf(ACCESS.member)],
   ['staff viewing as a member', viewAsMe(ACCESS.member)],
 ])('TownwiseAI at 320px, for %s', (_who, me) => {
-  test('a compact greeting (the eyebrow, and the title on one line, no switcher) scrolls with the landing and the thread; the sections stay in the top bar; the composer docks under the thread', async () => {
+  test('there is no page header, so nothing scrolls above the chat header; the sections stay in the top bar; the composer docks under the thread', async () => {
     renderAt('/locations/l1/agent', me);
-    // While the chat loads, the header sits above the loading line; then it moves into the landing.
     const landing = await screen.findByTestId('chat-landing');
-    const title = screen.getByRole('heading', { level: 1, name: 'Welcome back.' });
+    const title = screen.getByRole('heading', { level: 1, name: 'TownwiseAI' });
     expect(screen.getAllByRole('heading', { level: 1 })).toEqual([title]);
-    expect(style(title).whiteSpace).toBe('nowrap');
-    expect(style(title).textOverflow).toBe('ellipsis');
+    expect(screen.queryByText(/^Welcome back/)).toBeNull();
+    expect(screen.queryByText('Main Street Bar, Hanover, NH')).toBeNull();
     expect(screen.queryByRole('combobox', { name: 'Location' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'All locations' })).toBeNull();
-    expect(landing.contains(title)).toBe(true);
-    expect(landing.contains(screen.getByText('Main Street Bar, Hanover, NH'))).toBe(true);
+    expect(screen.queryByRole('link', { name: 'Location settings' })).toBeNull();
+    // The chat header is outside what scrolls, so it is the first thing under the top bar.
+    const history = screen.getByRole('button', { name: 'History' });
+    expect(landing.contains(history)).toBe(false);
     const sections = screen.getByRole('region', { name: 'Sections' });
     expect(landing.contains(sections)).toBe(false);
     expect(within(sections).getByRole('link', { name: 'TownwiseAI' }).getAttribute('aria-current')).toBe('page');
     expect(landing.contains(screen.getByLabelText(COMPOSER_LABEL))).toBe(true);
-    // With messages, the header scrolls with the thread and the composer stays below it.
-    fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    // With messages, the header stays above the thread and the composer stays below it.
+    fireEvent.click(history);
     fireEvent.click(screen.getByRole('button', { name: 'Earlier chat, Nov 2, 2026' }));
     const thread = await screen.findByTestId('chat-thread');
     await within(thread).findByText('We close for the holidays.');
-    expect(thread.contains(screen.getByRole('heading', { level: 1, name: 'Welcome back.' }))).toBe(true);
+    expect(thread.contains(screen.getByRole('button', { name: 'History' }))).toBe(false);
     expect(thread.contains(screen.getByRole('region', { name: 'Sections' }))).toBe(false);
     expect(thread.contains(screen.getByLabelText(COMPOSER_LABEL))).toBe(false);
     expect(screen.getByRole('button', { name: 'Send' })).toBeTruthy();
@@ -160,7 +161,7 @@ describe.each([
     const box = parentOf(parentOf(input));
     expect(box.contains(send)).toBe(true);
     expect(style(box).flexDirection).toBe('row');
-    expect(style(box).borderTopLeftRadius).toBe('24px');
+    expect(style(box).borderTopLeftRadius).toBe('28px');
   });
 });
 

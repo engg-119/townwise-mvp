@@ -1,14 +1,17 @@
 // The forecast lab's input (schema townwise.lab-input/1): what the job fetches from the callback, built here from one
-// location's stored days, its notes, the town calendar and the current published run. Outputs only the facts the model
-// reads: guests per day, the term and week of term, town event groups, and three flags from the notes. Never a note's
-// detail, a calendar entry's title, a holiday (the lab computes holidays from the dates) or any name. labInputOf is
-// pure; buildLabInput reads the stores under the calibration's scope. Nothing here logs.
+// location's stored days, its notes and scheduled business rules, the town calendar and the current published run. Outputs
+// only the facts the model reads: guests per day, the term and week of term, town event groups, and three flags from the
+// notes and rules. Never a note's detail, a rule's text, a calendar entry's title, a holiday (the lab computes holidays
+// from the dates) or any name. labInputOf is pure; buildLabInput reads the stores under the calibration's scope. Nothing
+// here logs.
 import { z } from 'zod';
 
 import type { OrgScope } from '../access/policy.ts';
-import { isClosure, noteCovers } from '../agent/questions.ts';
+import { noteCovers } from '../agent/questions.ts';
 import type { TownwiseContext } from '../app.ts';
+import { closingRules, closureOf, isClosure, typicalByDate } from '../closed-days.ts';
 import { daysBetween, isoDate, utcDay } from '../dates.ts';
+import { scheduledRules, type ScheduledRule } from '../forecasts/adjust.ts';
 import { eachDay } from '../forecasts/file.ts';
 import { termEntries } from '../people-in-town/term.ts';
 import type { CalibrationRecord } from '../stores/calibrations.ts';
@@ -151,18 +154,52 @@ function championOf(champion: { run: ForecastRunRecord; rows: readonly ForecastR
   return { runId: champion.run.id, dataThrough: champion.run.dataThrough, days, weeks };
 }
 
+/** A note or a rule's schedule, as the flags read it. */
+type Flagged = Pick<NoteRecord, 'kind' | 'startDate' | 'weekdays' | 'effect' | 'expectedGuests'> & { readonly endDate: string | null };
+
+/** A counted party: a private event with more guests and a guest count, whose guests the forecast read adds (adjust.ts). */
+function isParty(note: Flagged): boolean {
+  return note.kind === 'private_event' && note.effect === 'more_guests' && note.expectedGuests !== null;
+}
+
+/** A private event the forecast read applies itself (adjust.ts): a buyout books the day, a counted party adds its guests. */
+function countedOnRead(note: Flagged): boolean {
+  return note.effect === 'closed' || isParty(note);
+}
+
 /**
  * The input for `calibration`, or null when the location has no day with guests by `today`. Days run from the first day
  * with guests to the last one on or before today (dataThrough) plus 182 days, with no gaps; guests are null after
  * dataThrough and on days with no row.
- * Notes: a private event sets privateEvent, and with effect closed also booked (a buyout); any other closure note, or
- * note with effect closed, sets closed.
+ * Notes, on history days (to dataThrough, for training): a private event sets privateEvent, and with effect closed also
+ * booked (a buyout); any other closure note, or note with effect closed, sets closed. A counted party (a private event
+ * with more guests and a guest count) is the exception: the forecast read adds its guests on every day it covers, so on
+ * a history day it sets no privateEvent and the day's guests go out less its guest count (never below 0). Training then
+ * sees the day's base demand and the read adds the party back, so a recurring party ("40 more guests every Friday") is
+ * never counted twice through a privateEvent flag collinear with its weekday. [CONFIRM: on a history day a counted
+ * party's guests are taken off the day's guests and set no privateEvent] After dataThrough the forecast read applies
+ * closures, buyouts and counted parties itself (forecasts/adjust.ts, spec 14.5), so closed and booked are false and
+ * those private events don't set privateEvent: a run never bakes in a status or a lift that editing or deleting the
+ * note could not undo, and never counts a party twice. Closures the model learns (weekdays, holidays) still come from
+ * the lab.
+ * A business rule's schedule (D31) sets the flags as a note with the same fields does, on history and future days
+ * alike, and its more or fewer guests say a near-empty day was open as a note's do, but its closure and buyout hold
+ * only as ../closed-days.ts says: never over a covering note that decides the day (a one-day opening or party note
+ * beats a standing rule), and on a history day before today a closure only when the day had no guests or guests under
+ * the likely-closed line, so real recorded guests are never dropped from training by a standing rule.
+ * A likely-closed history day (spec D32, ../closed-days.ts: before today, guests under a tenth of its weekday's typical
+ * guests, and no note or schedule saying more or fewer guests) is closed with null guests; today's row, which may be
+ * partial, never is. The lab trains only on days with guests that are not closed, and its closed_weekdays and
+ * closed_holidays read guests, not the flag, so a null count is what makes them treat the day as one without guests, as
+ * they already treat an all-zero day (guests 0).
  */
 export function labInputOf(args: {
   calibration: Pick<CalibrationRecord, 'id' | 'regimeStart'>;
   location: Pick<LocationRecord, 'town'>;
   days: readonly SalesDay[];
   notes: readonly NoteRecord[];
+  /** The location's business rules with a schedule. */
+  rules: readonly ScheduledRule[];
   today: string;
   champion: { run: ForecastRunRecord; rows: readonly ForecastRow[] } | null;
 }): LabInput | null {
@@ -171,23 +208,36 @@ export function labInputOf(args: {
   const last = plusDays(span.last, HORIZON_DAYS);
   const dates = eachDay(span.first, last);
   const { townId } = args.location.town;
-  const guests = new Map(args.days.map((day) => [day.date, day.guests]));
+  const rows = new Map(args.days.map((day) => [day.date, day]));
+  const typical = typicalByDate(args.days);
   const terms = termsOf(townId, dates);
   const events = eventsOf(townId, span.first, last);
-  const privateEvents = args.notes.filter((note) => note.kind === 'private_event');
-  const closures = args.notes.filter((note) => note.kind !== 'private_event' && isClosure(note));
+  const schedules: Flagged[] = args.rules.map((rule) => rule.schedule);
   const days = dates.map((date): LabDay => {
     const term = terms.get(date) ?? { term: 'interim', weekOfTerm: -1 };
-    const privates = privateEvents.filter((note) => noteCovers(note, date));
+    const history = date <= span.last;
+    const past = date < args.today;
+    const row = rows.get(date);
+    const typicalOn = typical.get(date) ?? null;
+    const notes: Flagged[] = args.notes.filter((note) => noteCovers(note, date));
+    const rules = schedules.filter((schedule) => noteCovers(schedule, date));
+    // A rule's closure or buyout only where it holds (closed-days.ts); its other fields always count.
+    const holding = closingRules(rules, notes, row, typicalOn, past);
+    const covering = [...notes, ...rules.filter((rule) => !isClosure(rule) || holding.includes(rule))];
+    const privates = covering.filter((entry) => entry.kind === 'private_event');
+    const lifted = privates.filter((entry) => (history ? !isParty(entry) : !countedOnRead(entry)));
+    const party = history ? privates.filter(isParty).reduce((sum, entry) => sum + (entry.expectedGuests ?? 0), 0) : 0;
+    const likelyClosed = history && closureOf(row, typicalOn, notes, { rules, past }) === 'likely_closed';
+    const guests = history && !likelyClosed ? row?.guests ?? null : null;
     return {
       date,
-      guests: date > span.last ? null : guests.get(date) ?? null,
+      guests: guests === null ? null : Math.max(0, guests - party),
       term: term.term,
       weekOfTerm: term.weekOfTerm,
       events: events.get(date) ?? [],
-      closed: closures.some((note) => noteCovers(note, date)),
-      privateEvent: privates.length > 0,
-      booked: privates.some((note) => note.effect === 'closed'),
+      closed: likelyClosed || (history && covering.some((entry) => entry.kind !== 'private_event' && isClosure(entry))),
+      privateEvent: lifted.length > 0,
+      booked: history && privates.some((entry) => entry.effect === 'closed'),
     };
   });
   return {
@@ -204,8 +254,9 @@ export function labInputOf(args: {
 }
 
 /**
- * The input for a live calibration, read under its organization's scope: the location's stored days and notes, the
- * town's local date, and the run that was current when it started. Null when the location or its history is gone.
+ * The input for a live calibration, read under its organization's scope: the location's stored days, notes and
+ * scheduled business rules, the town's local date, and the run that was current when it started. Null when the location
+ * or its history is gone.
  */
 export async function buildLabInput(ctx: TownwiseContext, scope: OrgScope, calibration: CalibrationRecord): Promise<LabInput | null> {
   const { stores } = ctx;
@@ -213,12 +264,13 @@ export async function buildLabInput(ctx: TownwiseContext, scope: OrgScope, calib
   if (location === null) return null;
   const coverage = await stores.salesDays.coverage(scope, location.id);
   if (coverage.firstDate === null || coverage.lastDate === null) return null;
-  const [days, notes] = await Promise.all([
+  const [days, notes, scheduled] = await Promise.all([
     stores.salesDays.days(scope, location.id, { from: coverage.firstDate, to: coverage.lastDate }),
     stores.notes.list(scope, location.id),
+    stores.businessRules.scheduled(scope, location.id),
   ]);
   const run = calibration.championRunId === null ? null : await stores.forecasts.find(scope, calibration.championRunId);
   const champion = run === null ? null : { run, rows: await stores.forecasts.rows(scope, location.id, [run.id]) };
   const today = localDay(ctx.now(), timeZoneOf(location.town).timeZone);
-  return labInputOf({ calibration, location, days, notes, today, champion });
+  return labInputOf({ calibration, location, days, notes, rules: scheduledRules(scheduled), today, champion });
 }

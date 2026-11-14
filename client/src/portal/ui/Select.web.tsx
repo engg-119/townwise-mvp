@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { theme } from '../../theme';
+import { useFocusOnMount } from '../places/focus';
 import { describedBy, FieldFrame, useFieldIds, type FieldChrome } from './FormField';
 import { isGroup, labelOf, type SelectOption, type SelectProps } from './selectTypes';
 
@@ -11,7 +12,7 @@ import { isGroup, labelOf, type SelectOption, type SelectProps } from './selectT
 // open the list at the current choice; Down, Up, Home, End, Page Up and Page Down move; Enter or Space picks;
 // Escape and Tab close it unchanged; typing jumps to the first choice whose label starts with the letters typed (or
 // whose value is exactly them, so "nh" finds New Hampshire). The mouse picks on press without taking focus from the
-// control. Groups are labelled in the list as the native sheet's are (Select.tsx). The list is drawn on the page's
+// control. Groups are labeled in the list as the native sheet's are (Select.tsx). The list is drawn on the page's
 // body at a fixed position under the control (above it when there is more room there), since every react-native-web
 // View is its own stacking context and would paint over a list nested inside it. Nothing animates. Under view-as it
 // carries aria-disabled, stays focusable, and does not open.
@@ -68,7 +69,7 @@ export function Select(props: SelectProps): React.JSX.Element {
   const fieldIds = useFieldIds();
   const listId = `${fieldIds.label}-list`;
   const optionId = (index: number): string => `${listId}-${String(index)}`;
-  const control = useRef<HTMLDivElement>(null);
+  const control = useFocusOnMount<HTMLDivElement>(props.autoFocus === true);
   const list = useRef<HTMLDivElement>(null);
   const typed = useRef({ text: '', at: 0 });
   const [focused, setFocused] = useState(false);
@@ -191,7 +192,8 @@ export function Select(props: SelectProps): React.JSX.Element {
       window.removeEventListener('scroll', follow, true);
       window.removeEventListener('resize', follow);
     };
-  }, [open]);
+    // `control` is one ref for the select's life (useFocusOnMount), listed only because a hook returned it.
+  }, [open, control]);
 
   // The list opens with the current choice in its middle, then scrolls only as far as the highlighted one needs.
   const opened = useRef(false);
@@ -259,7 +261,7 @@ export function Select(props: SelectProps): React.JSX.Element {
         position: 'fixed', zIndex: 10000, left: menu.spot.left, width: menu.spot.width, maxHeight: menu.spot.maxHeight,
         ...(menu.spot.up ? { bottom: menu.spot.edge } : { top: menu.spot.edge }),
         boxSizing: 'border-box', overflowY: 'auto', overscrollBehavior: 'contain', margin: 0, padding: '4px 0',
-        background: c.panel, border: `1px solid ${c.line}`, borderRadius: 0, boxShadow: '0 12px 32px rgba(0, 0, 0, 0.6)',
+        background: c.panel, border: `1px solid ${c.line}`, borderRadius: 0, boxShadow: `0 12px 32px ${c.shadow}`,
         WebkitFontSmoothing: 'antialiased',
       }}
     >
