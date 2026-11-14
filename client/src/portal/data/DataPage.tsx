@@ -12,7 +12,7 @@ import { ZipEntries } from '../files/ZipEntries';
 import { LoadFailure, UploadAction, useOrgRefreshOnLeave } from '../locations/parts';
 import { CAN_DROP } from '../onboarding/HistoryStepDrop';
 import { usePortal, useReadOnly } from '../PortalProvider';
-import { itemHref } from '../routing';
+import { itemHref, locationHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
 import { Actions, Button, LinkButton } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
@@ -41,7 +41,7 @@ import { PasteText } from './PasteText';
 // for reference is its original, so it has Delete and no Delete original. Org admins also get "Delete all originals
 // for this location" (one location shown, a sales file's original stored), which leaves reference items whole. A
 // download keeps its state in its row, as Your files' rows did: only that row's downloads wait, and its error shows
-// there.
+// there. Item sales, the ordering setup and counts are not listed here; one line points to Ordering setup.
 
 const READ_ONLY_ID = 'data-ro';
 const ALL = 'all';
@@ -226,6 +226,10 @@ function Data(): React.JSX.Element {
         {notice === null ? null : <Notice text={notice} />}
         {failure === null ? null : <Messages live="alert" takesFocus items={[dataError(failure)]} />}
         <Lead>{lead(all ? DATA.allLocations.toLowerCase() : location.name)}</Lead>
+        <View style={styles.ordering}>
+          <Small>{DATA.ordering}</Small>
+          <LinkButton href={locationHref(location.id, 'ordersSetup')} label={DATA.orderingLink} />
+        </View>
         {readOnly ? <ReadOnlyLine text={line} nativeID={READ_ONLY_ID} /> : null}
         {several ? (
           <Select
@@ -459,4 +463,5 @@ const styles = StyleSheet.create({
   value: { ...theme.type.mono, fontVariant: ['tabular-nums'], color: c.text2 },
   note: { ...theme.type.small, color: c.text2 },
   actions: { gap: theme.space[1], minWidth: 0 },
+  ordering: { gap: theme.space[1] },
 });
