@@ -97,6 +97,21 @@ describe('the location pages', () => {
     expect(window.getComputedStyle(screen.getByTestId('skeleton-calendar-label')).width).toBe('216px');
   });
 
+  test('P28 Calendar: the header row holds a 120px block for the view switch, after the label and before the import block', async () => {
+    renderPage('/locations/l1/calendar', hangLocal());
+    await expectSkeleton('calendar', 'Loading the calendar');
+    const label = screen.getByTestId('skeleton-calendar-label');
+    const views = screen.getByTestId('skeleton-calendar-views');
+    const block = views.firstElementChild;
+    expect(block === null ? null : window.getComputedStyle(block).width).toBe('120px');
+    expect(label.compareDocumentPosition(views) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // A header row item of its own, beside the import block that follows it.
+    const row = label.parentElement?.parentElement;
+    expect(views.parentElement).toBe(row);
+    const next = views.nextElementSibling;
+    expect(next === null ? null : window.getComputedStyle(next).width).toBe('200px');
+  });
+
   test('P28 Calendar at 375: the filters come after the month, and the label block is not fixed', async () => {
     setWidth(375);
     renderPage('/locations/l1/calendar', hangLocal());

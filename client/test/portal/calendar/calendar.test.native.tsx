@@ -111,3 +111,31 @@ test('adds a note from the day and reloads the forecast', async () => {
     },
   }]);
 });
+
+test('the Month and Week switch: Week shows the agenda of the selected day’s week, a row selects its day, Month the grid again', async () => {
+  const { api, fake } = setup();
+  await renderApp(`/locations/l1/calendar?day=${SATURDAY}`, api);
+  expect(await screen.findByLabelText('November 2026')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Month' }).props.accessibilityState).toMatchObject({ checked: true });
+  expect(screen.getByRole('button', { name: 'Week' }).props.accessibilityState).toMatchObject({ checked: false });
+  const reads = fake.paths.length;
+  await fireEvent.press(screen.getByRole('button', { name: 'Week' }));
+  const agenda = await screen.findByLabelText('Nov 16 to 22, 2026');
+  expect(screen.getByRole('button', { name: 'Week' }).props.accessibilityState).toMatchObject({ checked: true });
+  expect(screen.getByRole('button', { name: 'Month' }).props.accessibilityState).toMatchObject({ checked: false });
+  const rows = within(agenda).getAllByRole('button');
+  expect(rows).toHaveLength(7);
+  expect(rows[5]?.props.accessibilityLabel).toBe(LABEL);
+  expect(rows[5]?.props.accessibilityState).toMatchObject({ selected: true });
+  expect(within(agenda).getByText('Dartmouth home football')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Previous week' })).toBeTruthy();
+  const tuesday = rows[1];
+  if (tuesday === undefined) throw new Error('no Tuesday');
+  await fireEvent.press(tuesday);
+  expect(await within(panel()).findByText('Tue, Nov 17, 2026')).toBeTruthy();
+  expect(screen.getByLabelText('Nov 16 to 22, 2026')).toBeTruthy();
+  await fireEvent.press(screen.getByRole('button', { name: 'Month' }));
+  expect(await screen.findByLabelText('November 2026')).toBeTruthy();
+  expect(screen.queryByLabelText('Nov 16 to 22, 2026')).toBeNull();
+  expect(fake.paths.slice(reads)).toEqual([]);
+});

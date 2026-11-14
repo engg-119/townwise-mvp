@@ -20,22 +20,27 @@ afterEach(() => {
   if (width !== 1280) setWidth(1280);
 });
 
-function renderToolbar(fields: { canPrevious?: boolean; canNext?: boolean } = {}): { previous: jest.Mock; next: jest.Mock; today: jest.Mock } {
+function renderToolbar(fields: { canPrevious?: boolean; canNext?: boolean; view?: 'month' | 'week'; label?: string } = {}): {
+  previous: jest.Mock; next: jest.Mock; today: jest.Mock; onView: jest.Mock;
+} {
   const previous = jest.fn();
   const next = jest.fn();
   const today = jest.fn();
+  const onView = jest.fn();
   render(
     <Toolbar
-      label="November 2026"
+      label={fields.label ?? 'November 2026'}
       canPrevious={fields.canPrevious ?? true}
       canNext={fields.canNext ?? true}
       onPrevious={previous}
       onNext={next}
       onToday={today}
+      view={fields.view ?? 'month'}
+      onView={onView}
       trailing={<button type="button">Import a calendar file</button>}
     />,
   );
-  return { previous, next, today };
+  return { previous, next, today, onView };
 }
 
 function before(first: Element, second: Element): boolean {
@@ -98,6 +103,50 @@ test('from 1024px the trailing controls sit at the right, also on a wrapped line
     expect([at, window.getComputedStyle(row).justifyContent === 'flex-end']).toEqual([at, wide]);
     cleanup();
   }
+});
+
+test('the “Calendar view” switch: Month and Week with aria-pressed, the arrows named for the view, Month calls onView', () => {
+  const { onView } = renderToolbar();
+  const group = screen.getByRole('group', { name: 'Calendar view' });
+  const pressed = () => within(group).getAllByRole('button').map((button) => [button.textContent, button.getAttribute('aria-pressed')]);
+  expect(pressed()).toEqual([['Month', 'true'], ['Week', 'false']]);
+  fireEvent.click(within(group).getByRole('button', { name: 'Week' }));
+  expect(onView).toHaveBeenLastCalledWith('week');
+  cleanup();
+  const week = renderToolbar({ view: 'week', label: 'Dec 28, 2026 to Jan 3, 2027' });
+  const again = screen.getByRole('group', { name: 'Calendar view' });
+  expect(within(again).getAllByRole('button').map((button) => [button.textContent, button.getAttribute('aria-pressed')])).toEqual([['Month', 'false'], ['Week', 'true']]);
+  expect(screen.getByRole('button', { name: 'Previous week' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Next week' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Next month' })).toBeNull();
+  fireEvent.click(within(again).getByRole('button', { name: 'Month' }));
+  expect(week.onView).toHaveBeenLastCalledWith('month');
+});
+
+test('the switch sits after the label and before the trailing controls, in the header row, with no margin of its own', () => {
+  for (const at of [1280, 800]) {
+    setWidth(at);
+    renderToolbar();
+    const label = screen.getByText('November 2026');
+    const group = screen.getByRole('group', { name: 'Calendar view' });
+    const trailing = screen.getByRole('button', { name: 'Import a calendar file' });
+    expect(before(label, group)).toBe(true);
+    expect(before(group, trailing)).toBe(true);
+    // A row item beside the trailing controls, so below 1024px they start their line together.
+    expect(group.parentElement).toBe(trailing.parentElement);
+    // From 1024px the label's group already pushes it right; a second auto margin would split the free space.
+    expect(window.getComputedStyle(group).marginLeft).not.toBe('auto');
+    expect(window.getComputedStyle(group).flexBasis).not.toBe('100%');
+    cleanup();
+  }
+});
+
+test('the label stays 216px wide in both views', () => {
+  renderToolbar({ view: 'month' });
+  expect(window.getComputedStyle(screen.getByText('November 2026')).width).toBe('216px');
+  cleanup();
+  renderToolbar({ view: 'week', label: 'Dec 28, 2026 to Jan 3, 2027' });
+  expect(window.getComputedStyle(screen.getByText('Dec 28, 2026 to Jan 3, 2027')).width).toBe('216px');
 });
 
 test('CalendarFilters is the “Show on the calendar” group of pressed chips; Your calendar only after an import', () => {

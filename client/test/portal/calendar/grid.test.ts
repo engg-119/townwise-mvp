@@ -1,12 +1,16 @@
 import {
-  buildGrid, cellSize, entryLines, GRID_DAYS, gridDays, gridHeight, gridMonthFor, gridMove, gridRange, inGrid, pastRangeFor, shownFor, type DayCell,
-  type GridSlot,
+  buildGrid, buildWeek, cellSize, entryLines, GRID_DAYS, gridDays, gridHeight, gridMonthFor, gridMove, gridRange, inGrid, pastRangeFor, shownFor,
+  stepWeek, weekLabel, weekOf, type DayCell, type GridSlot, type WeekCard, type WeekDay, type WeekSlot,
 } from '../../../src/portal/calendar/grid';
-import { ALL_FILTERS, calendarMonth, dayCell, monthBounds, stepMonth, type CalendarInput } from '../../../src/portal/calendar/model';
+import {
+  ALL_FILTERS, calendarMonth, dayCell, dayView, monthBounds, stepMonth, tooltipLines, type CalendarInput, type ImportedEvent,
+} from '../../../src/portal/calendar/model';
 import type { ForecastWindow } from '../../../src/portal/estimates/api';
 import { addDays, daysBetween } from '../../../src/portal/locations/dates';
-import { note, townEvent } from '../analytics/fakes';
-import { forecastDay, forecastOf } from './fakes';
+import type { RuleSchedule } from '../../../src/portal/rules/api';
+import { holiday, note, townEvent } from '../analytics/fakes';
+import { ruleOf } from '../rules/fakes';
+import { forecastDay, forecastOf, NO_FORECAST } from './fakes';
 
 function windowOf(days: Parameters<typeof forecastOf>[0]): ForecastWindow {
   return forecastOf(days) as ForecastWindow;
@@ -286,5 +290,192 @@ describe('gridMove in the month grid', () => {
     expect(move('2026-11-18', 'Enter')).toBeNull();
     expect(move('2026-11-18', 'a')).toBeNull();
     expect(move('2026-11-18', 'Tab')).toBeNull();
+  });
+});
+
+test('weekOf is the selected day’s Monday to Sunday', () => {
+  expect(weekOf('2026-11-18')).toEqual(['2026-11-16', '2026-11-17', '2026-11-18', '2026-11-19', '2026-11-20', '2026-11-21', '2026-11-22']);
+  expect(weekOf('2026-11-16')[0]).toBe('2026-11-16');
+  expect(weekOf('2026-11-22')[0]).toBe('2026-11-16');
+  // Across a month and a year.
+  expect(weekOf('2027-01-01')).toEqual(['2026-12-28', '2026-12-29', '2026-12-30', '2026-12-31', '2027-01-01', '2027-01-02', '2027-01-03']);
+});
+
+test('weekLabel names the week with its year once, or twice across a new year', () => {
+  expect(weekLabel('2027-01-04')).toBe('Jan 4 to 10, 2027');
+  expect(weekLabel('2026-11-16')).toBe('Nov 16 to 22, 2026');
+  expect(weekLabel('2026-11-30')).toBe('Nov 30 to Dec 6, 2026');
+  expect(weekLabel('2026-12-28')).toBe('Dec 28, 2026 to Jan 3, 2027');
+});
+
+test('stepWeek moves the selected day a week, clamped to the 25 months, and null when that week is wholly past them', () => {
+  const bounds = monthBounds(TODAY);
+  expect(stepWeek('2026-11-18', 1, bounds)).toBe('2026-11-25');
+  expect(stepWeek('2026-11-18', -1, bounds)).toBe('2026-11-11');
+  // The week of Dec 2, 2027 (Nov 29 to Dec 5) still holds Nov 29 and 30.
+  expect(stepWeek('2027-11-25', 1, bounds)).toBe('2027-11-30');
+  expect(stepWeek('2027-11-30', 1, bounds)).toBeNull();
+  // The week of Oct 29, 2025 (Oct 27 to Nov 2) still holds Nov 1 and 2.
+  expect(stepWeek('2025-11-05', -1, bounds)).toBe('2025-11-01');
+  expect(stepWeek('2025-11-01', -1, bounds)).toBeNull();
+});
+
+describe('buildWeek', () => {
+  const bounds = monthBounds(TODAY);
+  const SATURDAY = '2026-11-21';
+  const imported = (fields: Partial<ImportedEvent> & Pick<ImportedEvent, 'title'>): ImportedEvent => ({
+    uid: fields.title, startDate: SATURDAY, endDate: SATURDAY, startTime: null, endTime: null, ...fields,
+  });
+  const schedule = (fields: Partial<RuleSchedule> = {}): RuleSchedule => ({
+    kind: 'closure', startDate: '2026-11-01', endDate: null, weekdays: null, effect: 'closed', expectedGuests: null, startTime: null, endTime: null, ...fields,
+  });
+  const week = (input: CalendarInput, selected = SATURDAY, month = '2026-11'): WeekSlot[] => buildWeek(selected, month, input, bounds);
+  const dayIn = (slots: readonly WeekSlot[], date: string): WeekDay => {
+    const slot = slots.find((each) => each.date === date);
+    if (slot?.kind !== 'day') throw new Error(`${date} is not a day`);
+    return slot;
+  };
+  const cards = (input: CalendarInput, date = SATURDAY): WeekCard[] => dayIn(week(input), date).cards;
+
+  test('the selected day’s week, Monday to Sunday, each day as the month grid’s cell', () => {
+    const input = reads({ events: [townEvent({ start: SATURDAY, title: 'Dartmouth home football' })] });
+    const slots = week(input);
+    expect(slots.map((slot) => slot.date)).toEqual(weekOf(SATURDAY));
+    const row = buildGrid('2026-11', input, bounds).find((each) => each.some((slot) => slot.date === SATURDAY)) ?? [];
+    slots.forEach((slot, index) => { expect(slot).toMatchObject(row[index] ?? {}); });
+  });
+
+  test('all-day cards first in their kinds’ order, then timed ones by start time; each with its hours and sub-line', () => {
+    const input = reads({
+      events: [
+        townEvent({ start: SATURDAY, title: 'Fall term', kind: 'term', end: '2026-11-24' }),
+        townEvent({ start: SATURDAY, title: 'Dartmouth home football' }),
+        holiday(SATURDAY, 'Made-up Day', 'us:madeup', 'Made-up Day'),
+      ],
+      notes: [
+        note({ startDate: SATURDAY, expectedGuests: 70, startTime: '18:00', endTime: '21:00' }),
+        note({ startDate: SATURDAY, kind: 'other' }),
+      ],
+      imported: [imported({ title: 'Wine delivery', startTime: '09:00', endTime: '10:00' })],
+    });
+    expect(cards(input).map((card) => [card.kind, card.hours, card.title, card.sub])).toEqual([
+      ['holiday', null, 'Made-up Day', 'Federal holiday'],
+      ['event', null, 'Dartmouth home football', 'Town event'],
+      ['note', null, 'Other', 'Your note'],
+      ['term', null, 'Fall term', 'Term, Nov 21 to 24'],
+      ['imported', '9 am to 10 am', 'Wine delivery', 'Your calendar'],
+      ['note', '6 pm to 9 pm', 'Private event, 70', 'Your note'],
+    ]);
+  });
+
+  test('Term dates off removes the term and season cards; a rule shows with every filter off, with its schedule summary', () => {
+    const rule = ruleOf('r1', 'Closed for the staff party', { schedule: schedule({ startDate: SATURDAY, endDate: SATURDAY }), scheduleSummary: 'Closed on Nov 21, 2026' });
+    const input = reads({
+      events: [townEvent({ start: SATURDAY, title: 'Fall term', kind: 'term' }), townEvent({ start: SATURDAY, title: 'Winter', kind: 'season' })],
+      rules: [rule],
+    });
+    expect(cards(input).map((card) => [card.kind, card.sub])).toEqual([['rule', 'Closed on Nov 21, 2026'], ['term', 'Term'], ['season', 'Season']]);
+    expect(cards({ ...input, filters: { ...ALL_FILTERS, terms: false } }).map((card) => card.kind)).toEqual(['rule']);
+    const off = { holidays: false, events: false, terms: false, notes: false, imported: false };
+    expect(cards({ ...input, filters: off })).toEqual([expect.objectContaining({ kind: 'rule', title: 'Closed for the staff party', hours: null })]);
+  });
+
+  test('a rule with no end date builds, and one with no summary reads “Your rule”; a timed rule has its hours', () => {
+    const open = ruleOf('r2', 'Trivia night', { schedule: schedule({ kind: 'other', effect: 'more_guests', weekdays: [6], startTime: '19:00', endTime: '22:00' }), scheduleSummary: null });
+    expect(cards(reads({ rules: [open] }))).toEqual([expect.objectContaining({ kind: 'rule', title: 'Trivia night', sub: 'Your rule', hours: '7 pm to 10 pm' })]);
+  });
+
+  test('a town event the day’s forecast names as a reason still gets a card', () => {
+    const named = forecastDay({ date: SATURDAY, reasons: [{ kind: 'event', label: 'Dartmouth home football', effectPct: null, sources: [], note: null }] });
+    const input = reads({ events: [townEvent({ start: SATURDAY, title: 'Dartmouth home football' })], forecast: windowOf([named]) });
+    // The panel leaves it out of On the calendar, since Why names it.
+    expect(dayView(SATURDAY, input).events).toEqual([]);
+    expect(cards(input).map((card) => card.title)).toEqual(['Dartmouth home football']);
+  });
+
+  test('multi-day items carry their span; a single day none', () => {
+    const input = reads({
+      events: [townEvent({ start: '2026-11-20', end: '2026-11-22', title: 'Winter carnival' })],
+      notes: [note({ startDate: '2026-11-21', endDate: '2026-11-23', kind: 'other' })],
+      imported: [imported({ title: 'Owner away', startDate: '2026-11-21', endDate: '2026-11-25' })],
+    });
+    expect(cards(input).map((card) => card.sub)).toEqual(['Town event, Nov 20 to 22', 'Your note, Nov 21 to 23', 'Your calendar, Nov 21 to 25']);
+  });
+
+  test('the head’s range equals the tooltip’s parenthesis, and “No forecast” only once the read answered without the day', () => {
+    const input = reads({ forecast: windowOf([forecastDay({ date: SATURDAY, low: 180.4, mid: 212, high: 239.2 })]) });
+    const saturday = dayIn(week(input), SATURDAY);
+    expect(saturday.range).toBe('180 to 240');
+    expect(tooltipLines(SATURDAY, input)?.lines[0]).toBe(`About 212 guests (${saturday.range ?? ''})`);
+    expect(saturday.noForecast).toBe(false);
+    // The read answered, but not for Sunday.
+    expect(dayIn(week(input), '2026-11-22')).toMatchObject({ range: null, noForecast: true });
+    // Loading or failed: nothing.
+    expect(dayIn(week(reads()), '2026-11-22')).toMatchObject({ range: null, noForecast: false });
+    // No published forecast at all is the banner's to say.
+    expect(dayIn(week(reads({ forecast: NO_FORECAST as ForecastWindow })), '2026-11-22')).toMatchObject({ noForecast: false });
+    // A past day has its guests, never a range.
+    const past = reads({ salesDays: [{ date: '2026-11-10', guests: 138, netSalesCents: 276_000 }], forecast: windowOf([]) });
+    expect(dayIn(week(past, '2026-11-10'), '2026-11-10')).toMatchObject({ range: null, noForecast: false, figure: { value: 138, kind: 'actual' } });
+  });
+
+  test('the last week of the 25 months has inert days with no cards', () => {
+    const input = reads({ month: '2027-11', events: [townEvent({ start: '2027-12-03', title: 'Tree lighting' })] });
+    const slots = week(input, '2027-11-30', '2027-11');
+    expect(slots.map((slot) => [slot.date, slot.kind])).toEqual([
+      ['2027-11-29', 'day'], ['2027-11-30', 'day'], ['2027-12-01', 'inert'], ['2027-12-02', 'inert'], ['2027-12-03', 'inert'], ['2027-12-04', 'inert'], ['2027-12-05', 'inert'],
+    ]);
+    expect(slots.find((slot) => slot.date === '2027-12-03')).toEqual({ kind: 'inert', date: '2027-12-03', label: 'Fri, Dec 3, 2027. Outside the months the calendar shows.' });
+  });
+
+  test('days the kept reads don’t cover are pending, with no cards', () => {
+    // November's reads cover Oct 26 to Dec 6; the week of Dec 7 is December's.
+    const input = reads({ events: [townEvent({ start: '2026-12-08', title: 'Craft fair' })] });
+    const slots = week(input, '2026-12-08', '2026-12');
+    for (const slot of slots) expect(slot).toMatchObject({ kind: 'day', pending: true, cards: [], range: null, noForecast: false });
+    expect(dayIn(slots, '2026-12-08').label).toBe('Tue, Dec 8, 2026. Loading.');
+  });
+});
+
+describe('gridMove in the week view’s columns and its agenda', () => {
+  const bounds = monthBounds(TODAY);
+  const move = (layout: 'week' | 'agenda', from: string, key: string, ctrl = false, month = '2026-11') => gridMove(from, key, ctrl, { layout, month, bounds });
+
+  test('in the columns Up and Down move a week; in the agenda, where each day is a row, a day', () => {
+    expect(move('week', '2026-11-18', 'ArrowDown')).toEqual({ date: '2026-11-25', month: null });
+    expect(move('week', '2026-11-18', 'ArrowUp')).toEqual({ date: '2026-11-11', month: null });
+    expect(move('agenda', '2026-11-18', 'ArrowDown')).toEqual({ date: '2026-11-19', month: null });
+    expect(move('agenda', '2026-11-18', 'ArrowUp')).toEqual({ date: '2026-11-17', month: null });
+    // Left and Right are a day in both, across weeks.
+    for (const layout of ['week', 'agenda'] as const) {
+      expect(move(layout, '2026-11-22', 'ArrowRight')).toEqual({ date: '2026-11-23', month: null });
+      expect(move(layout, '2026-11-16', 'ArrowLeft')).toEqual({ date: '2026-11-15', month: null });
+    }
+  });
+
+  test('Ctrl or Cmd with Home and End act as Home and End: the week’s Monday and Sunday', () => {
+    for (const layout of ['week', 'agenda'] as const) {
+      expect(move(layout, '2026-11-18', 'Home', true)).toEqual({ date: '2026-11-16', month: null });
+      expect(move(layout, '2026-11-18', 'End', true)).toEqual({ date: '2026-11-22', month: null });
+      expect(move(layout, '2026-11-18', 'Home')).toEqual({ date: '2026-11-16', month: null });
+      expect(move(layout, '2026-11-18', 'End')).toEqual({ date: '2026-11-22', month: null });
+    }
+  });
+
+  test('PageUp and PageDown step from the selected day’s own month, since the week view hides the grid’s', () => {
+    // The grid is on November, and Oct 28 is in its leading row.
+    expect(move('week', '2026-10-28', 'PageDown')).toEqual({ date: '2026-11-28', month: '2026-11' });
+    expect(move('week', '2026-10-28', 'PageUp')).toEqual({ date: '2026-09-28', month: '2026-09' });
+    expect(move('agenda', '2027-01-31', 'PageDown', false, '2027-01')).toEqual({ date: '2027-02-28', month: '2027-02' });
+    // The month view steps from the grid's month instead.
+    expect(gridMove('2026-10-28', 'PageDown', false, { layout: 'month', month: '2026-11', bounds })).toEqual({ date: '2026-12-28', month: '2026-12' });
+  });
+
+  test('at the 25 months’ ends a key is consumed, and Home and End clamp', () => {
+    expect(move('week', '2027-11-30', 'ArrowRight', false, '2027-11')).toEqual({ date: '2027-11-30', month: null });
+    expect(move('agenda', '2027-11-30', 'ArrowDown', false, '2027-11')).toEqual({ date: '2027-11-30', month: null });
+    expect(move('week', '2027-11-15', 'PageDown', false, '2027-11')).toEqual({ date: '2027-11-15', month: null });
+    expect(move('week', '2027-11-29', 'End', true, '2027-11')).toEqual({ date: '2027-11-30', month: null });
+    expect(move('agenda', '2025-11-02', 'Home', false, '2025-11')).toEqual({ date: '2025-11-01', month: null });
   });
 });

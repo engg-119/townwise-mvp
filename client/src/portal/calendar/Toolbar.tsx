@@ -1,19 +1,28 @@
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
 import { useBreakpoint } from '../hooks';
 import { ToggleGroup } from '../locations/parts';
+import { webAria } from '../ui/aria';
 import { Button } from '../ui/Button';
 import { FILTER_KEYS, FILTER_LABEL, type FilterKey, type Filters } from './model';
 
 // The Calendar's header row (P28, spec 16.3), one 44px row with its items centered, wrapping: Today, Previous month,
-// Next month, then the month in words (aria-live, so a change is announced while focus stays on the button). The
-// arrows sit before the label, so they never move under the pointer, and from 641px the label has a fixed width, so
-// nothing after it moves either. Then `trailing`: controls the page passes, as the row's own items, so a full-width
-// line among them (the import's help and messages) sits under the row. From 1024px they sit at the right of the row,
-// on a line they wrap to as well; below that they start their own line at the left. No item is taller than 44px.
+// Next month ("Previous week" and "Next week" in the week view), then the month or week in words (aria-live, so a
+// change is announced while focus stays on the button). The arrows sit before the label, so they never move under the
+// pointer, and from 641px the label has a fixed width that holds the longest week label, so nothing after it moves
+// either, in either view. Then the "Calendar view" switch, Month and Week as one segmented pair of `.tgl` buttons
+// (aria-pressed on web, a checked state on native, as ToggleGroup's), and `trailing`: controls the page passes, as the
+// row's own items, so a full-width line among them (the import's help and messages) sits under the row. From 1024px
+// the switch and the trailing controls sit at the right of the row (the arrows' group takes the free space), on a line
+// they wrap to as well; below that they start their own line at the left, together. No item is taller than 44px.
 // Previous and Next are disabled in place at the 25 months' ends. The filters are their own group (CalendarFilters),
 // which the page places by width.
+
+/** The month grid, or the selected day's week (`?view=week`). */
+export type CalendarView = 'month' | 'week';
+
+const VIEWS: readonly { value: CalendarView; label: string }[] = [{ value: 'month', label: 'Month' }, { value: 'week', label: 'Week' }];
 
 const LIVE = Platform.OS === 'web' ? { 'aria-live': 'polite' as const } : {};
 
@@ -28,17 +37,39 @@ export function Toolbar(props: {
   onPrevious: () => void;
   onNext: () => void;
   onToday: () => void;
-  /** After the label, as the row's own flex items: the import control on web, or the line that points to it on native. */
+  view: CalendarView;
+  onView: (view: CalendarView) => void;
+  /** After the switch, as the row's own flex items: the import control on web, or the line that points to it on native. */
   trailing: React.ReactNode;
 }): React.JSX.Element {
   const { desktop, phone } = useBreakpoint();
+  const unit = props.view === 'week' ? 'week' : 'month';
   return (
     <View style={[styles.row, desktop ? styles.rowWide : null]}>
       <View style={[styles.nav, desktop ? styles.navWide : styles.navNarrow, phone ? styles.navPhone : null]}>
         <Button variant="link" label="Today" onPress={props.onToday} />
-        <Button variant="outline" label="‹" accessibilityLabel="Previous month" disabled={!props.canPrevious} onPress={props.onPrevious} />
-        <Button variant="outline" label="›" accessibilityLabel="Next month" disabled={!props.canNext} onPress={props.onNext} />
+        <Button variant="outline" label="‹" accessibilityLabel={`Previous ${unit}`} disabled={!props.canPrevious} onPress={props.onPrevious} />
+        <Button variant="outline" label="›" accessibilityLabel={`Next ${unit}`} disabled={!props.canNext} onPress={props.onNext} />
         <Text {...LIVE} style={[styles.label, phone ? styles.labelPhone : styles.labelFixed]}>{props.label}</Text>
+      </View>
+      {/* No auto margin: from 1024px the arrows' group already takes the free space, and a second would split it. */}
+      <View role="group" aria-label="Calendar view" style={styles.views}>
+        {VIEWS.map((option, at) => {
+          const pressed = props.view === option.value;
+          return (
+            <Pressable
+              key={option.value}
+              role="button"
+              accessibilityLabel={option.label}
+              accessibilityState={{ checked: pressed }}
+              {...webAria({ 'aria-pressed': pressed })}
+              onPress={() => { props.onView(option.value); }}
+              style={[styles.tgl, at > 0 ? styles.tglNext : null, pressed ? styles.tglOn : null]}
+            >
+              <Text style={[styles.tglText, pressed ? styles.tglTextOn : null]}>{option.label}</Text>
+            </Pressable>
+          );
+        })}
       </View>
       {props.trailing}
     </View>
@@ -79,4 +110,14 @@ const styles = StyleSheet.create({
   label: { ...theme.type.ui, color: theme.color.white, fontVariant: ['tabular-nums'] },
   labelFixed: { width: LABEL_WIDTH },
   labelPhone: { flexShrink: 1, minWidth: 0 },
+  // The `.tgl` look (locations/parts.tsx ToggleGroup) as one segmented pair: the second shares the first's border.
+  views: { flexDirection: 'row' },
+  tgl: {
+    minHeight: 44, minWidth: 44, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1,
+    borderColor: theme.color.line, backgroundColor: 'transparent',
+  },
+  tglNext: { marginLeft: -1 },
+  tglOn: { backgroundColor: theme.color.mint, borderColor: theme.color.mint, zIndex: 1 },
+  tglText: { ...theme.type.ui, color: theme.color.white },
+  tglTextOn: { color: theme.color.onMint },
 });

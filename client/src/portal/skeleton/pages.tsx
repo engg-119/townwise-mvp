@@ -420,7 +420,7 @@ export function HomeSkeleton(props: LabelProps): React.JSX.Element {
 
 /**
  * P28 Calendar: the header row (Today, the two arrows, the label's 216px, flexible at 640px and below as the page's
- * is, and the import control), the filters' legend over four chips where the page puts them for the width (heading the
+ * is, the Month and Week switch's 120px, and the import control), the filters' legend over four chips where the page puts them for the width (heading the
  * grid's column from 641px, so from 1024px the panel beside it starts level with the legend; after the grid below),
  * then the month's grid, always six weeks of seven days, each cell as tall as the loaded grid's (grid.ts cellSize),
  * with the day panel beside it from 1024px and under it below.
@@ -447,6 +447,8 @@ export function CalendarSkeleton(props: LabelProps): React.JSX.Element {
               <SkeletonBlock height={theme.type.ui.fontSize} width={128} />
             </View>
           </View>
+          {/* The Month and Week switch, then the import button. */}
+          <View testID="skeleton-calendar-views"><SkeletonButton width={120} /></View>
           <SkeletonButton width={200} />
         </View>
         <View style={desktop ? styles.split : styles.stacked}>

@@ -4,12 +4,13 @@ import { Platform, StyleSheet, View, type ViewStyle } from 'react-native';
 
 import { theme } from '../../theme';
 import { fetchCalendar } from '../analytics/api';
+import { dayMonthRange, mondayOf } from '../analytics/week';
 import { MONTH_NAMES } from '../analytics/words';
 import { hasCode } from '../errors';
 import { fetchForecast } from '../estimates/api';
 import { useAction, useBreakpoint, useLoad } from '../hooks';
 import { createNote, deleteNote, fetchNotes, fetchSalesDays, updateNote, type Note, type NoteInput } from '../locations/api';
-import { localToday } from '../locations/dates';
+import { addDays, localToday } from '../locations/dates';
 import { shownLocationName } from '../locations/naming';
 import { NoteForm } from '../locations/NoteForm';
 import { draftOf, draftOfImported, emptyDraft, type NoteDraft } from '../locations/noteRules';
@@ -23,9 +24,10 @@ import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { ErrorNotice, Notice } from '../ui/feedback';
 import { CalendarDay, PANEL_ID } from './CalendarDay';
 import { CalendarGrid } from './CalendarGrid';
-import { buildGrid, gridMonthFor, gridRange, pastRangeFor, shownFor } from './grid';
+import { CalendarWeek } from './CalendarWeek';
+import { buildGrid, buildWeek, gridMonthFor, gridRange, pastRangeFor, shownFor, stepWeek, weekLabel } from './grid';
 import { IcsImport } from './IcsImport';
-import { CalendarFilters, Toolbar } from './Toolbar';
+import { CalendarFilters, Toolbar, type CalendarView } from './Toolbar';
 import {
   ALL_FILTERS, dayView, monthBounds, monthLabel, savedNotice, selectedDay, stepMonth, tooltipLines,
   type CalendarInput, type FilterKey, type Filters, type ImportedCalendar, type ImportedEvent,
@@ -34,9 +36,13 @@ import {
 // P28 Calendar (/locations/[locationId]/calendar, members; spec 16.3, D30): a month grid of 6 weeks (grid.ts), each
 // day with the published forecast's guests, what drives each day, and the location's notes, which a member adds,
 // edits and deletes from the day. `?day=YYYY-MM-DD` is the selected day (an invalid day, or one outside the 12 months
-// either side of today's, is today). The grid's month is this page's own state, not the URL's: a leading or trailing
-// day is selected in place, and the grid moves only on Previous, Next, Today, PageUp and PageDown, or when `?day=`
-// leaves its 42 days (a key past the first or last row, browser back or forward, a link). It reads five existing
+// either side of today's, is today). `?view=week` shows the selected day's week instead (CalendarWeek: day columns of
+// cards, an agenda on phones and native), any other value the month; the switch sets only the URL, and the week is
+// always a row of the shown grid, so it reads nothing of its own and Month, Week, Month returns to the same grid. Its
+// Previous and Next move the day a week (grid.ts stepWeek). The grid's month is this page's own state, not the URL's:
+// a leading or trailing day is selected in place, and the grid moves only on Previous, Next, Today, PageUp and
+// PageDown, or when `?day=` leaves its 42 days (a key past the first or last row, browser back or forward, a link).
+// It reads five existing
 // member routes: the notes with the business rules (D31; the day lists the rules whose schedule covers it, edited on
 // Rules), and over the grid's range (gridRange) its town calendar, its stored days (the past part only) and its
 // forecast (one read of at most 42 days). On a month change the new grid shows at once, dimmed, with the days the
@@ -99,11 +105,12 @@ function CalendarView(): React.JSX.Element {
   const { api } = usePortal();
   const { readOnly, line } = useReadOnly();
   const router = useRouter();
-  const params = useLocalSearchParams<{ day?: string }>();
+  const params = useLocalSearchParams<{ day?: string; view?: string }>();
   const { desktop, phone } = useBreakpoint();
   const markStale = useOrgRefreshOnLeave();
   const [today] = useState(localToday);
   const selected = selectedDay(typeof params.day === 'string' ? params.day : undefined, today);
+  const view: CalendarView = params.view === 'week' ? 'week' : 'month';
   const bounds = useMemo(() => monthBounds(today), [today]);
   // The month the grid shows, kept while the selected day is in its 42 days. `seen` is the selected day the page saw
   // last: only a render where it changed moves the grid (shownFor), so a render that sees a newly set month with the
@@ -172,11 +179,12 @@ function CalendarView(): React.JSX.Element {
     today, month: shown.month, forecast: forecastWindow, salesDays: shown.days, events: shown.calendar.events, notes: notes.data.list,
     rules: notes.data.rules, imported: imported?.events ?? [], filters,
   }), [today, shown, forecastWindow, notes.data, imported, filters]);
-  const rows = useMemo(() => (input === null ? [] : buildGrid(month, input, bounds)), [input, month, bounds]);
+  const rows = useMemo(() => (input === null || view === 'week' ? [] : buildGrid(month, input, bounds)), [input, view, month, bounds]);
+  const week = useMemo(() => (input === null || view !== 'week' ? [] : buildWeek(selected, month, input, bounds)), [input, view, selected, month, bounds]);
   // The days the kept reads cover: their own grid's, which lags the shown grid's while a month change reads.
   const covered = useMemo(() => (input === null ? null : gridRange(input.month, bounds)), [input, bounds]);
   const covers = useCallback((date: string) => covered !== null && date >= covered.from && date <= covered.to, [covered]);
-  const view = useMemo(() => (input !== null && covers(selected) ? dayView(selected, input) : null), [input, covers, selected]);
+  const dayPanel = useMemo(() => (input !== null && covers(selected) ? dayView(selected, input) : null), [input, covers, selected]);
 
   const { reload: reloadNotes } = notes;
   const { reload: reloadForecast } = forecast;
@@ -239,6 +247,11 @@ function CalendarView(): React.JSX.Element {
     select(next === today.slice(0, 7) ? today : `${next}-01`, true, next);
   }, [select, today]);
 
+  // The URL holds the view: Month takes `view` out (expo-router drops an undefined param), and `select` merges `day`.
+  const onView = useCallback((next: CalendarView) => {
+    if (next !== view) router.setParams({ view: next === 'week' ? 'week' : undefined });
+  }, [router, view]);
+
   const toggle = useCallback((key: FilterKey) => { setFilters((current) => ({ ...current, [key]: !current[key] })); }, []);
   const onImport = useCallback((next: ImportedCalendar) => {
     setImported(next);
@@ -262,6 +275,21 @@ function CalendarView(): React.JSX.Element {
   const noticeText = notice === null || typeof notice === 'string' ? notice
     : forecast.busy || input.month !== month ? 'Saved.' : savedNotice(selected, input, notice.savedId);
   const unpublished = forecastWindow !== null && !forecastWindow.available && forecastWindow.reason === 'no_published_forecast';
+  const monday = mondayOf(selected);
+  // The week view's Previous and Next move the day a week, disabled in place once that week is past the 25 months;
+  // the month view's step from the grid's month.
+  const back = stepWeek(selected, -1, bounds);
+  const on = stepWeek(selected, 1, bounds);
+  const nav = view === 'week'
+    ? {
+      label: weekLabel(monday), canPrevious: back !== null, canNext: on !== null,
+      onPrevious: () => { if (back !== null) select(back, true); }, onNext: () => { if (on !== null) select(on, true); },
+    }
+    : {
+      label: monthLabel(month), canPrevious: month > bounds.first, canNext: month < bounds.last,
+      onPrevious: () => { toMonth(stepMonth(month, -1)); }, onNext: () => { toMonth(stepMonth(month, 1)); },
+    };
+  const failedFor = view === 'week' ? dayMonthRange(monday, addDays(monday, 6)) : MONTH_NAMES[Number(month.slice(5, 7)) - 1] ?? '';
 
   const filtersNode = <CalendarFilters filters={filters} onFilter={toggle} imported={imported !== null} />;
   const formNode = form === null ? null : (
@@ -277,7 +305,7 @@ function CalendarView(): React.JSX.Element {
 
   const panel = (
     <CalendarDay
-      view={view}
+      view={dayPanel}
       locationName={locationName}
       rulesHref={locationHref(location.id, 'rules')}
       notice={noticeText}
@@ -305,32 +333,43 @@ function CalendarView(): React.JSX.Element {
         />
       ) : null}
       <Toolbar
-        label={monthLabel(month)}
-        canPrevious={month > bounds.first}
-        canNext={month < bounds.last}
-        onPrevious={() => { toMonth(stepMonth(month, -1)); }}
-        onNext={() => { toMonth(stepMonth(month, 1)); }}
+        {...nav}
         onToday={() => { select(today, false, today.slice(0, 7)); }}
+        view={view}
+        onView={onView}
         trailing={<IcsImport today={today} imported={imported} onImport={onImport} />}
       />
-      {forecastFailed ? (
-        <ErrorNotice message={`Couldn’t load the forecast for ${MONTH_NAMES[Number(month.slice(5, 7)) - 1] ?? ''}. Try again.`} onRetry={forecast.reload} />
-      ) : null}
+      {forecastFailed ? <ErrorNotice message={`Couldn’t load the forecast for ${failedFor}. Try again.`} onRetry={forecast.reload} /> : null}
       <View style={desktop ? styles.split : styles.stacked}>
         {/* From 641px the filters head the grid's column, so from 1024px the panel beside it starts level with them. */}
         <View style={[styles.column, desktop ? styles.wide : null]}>
           {phone ? null : filtersNode}
+          {/* Both views render in this slot, so the focus restore covers a switch of views too; the import control in
+              the header row is outside it, so a switch never remounts it and a shown result or refusal stays. */}
           <View nativeID={SLOT_ID}>
-            <CalendarGrid
-              rows={rows}
-              selected={selected}
-              month={month}
-              bounds={bounds}
-              onSelect={select}
-              busy={busy}
-              label={monthLabel(month)}
-              tooltip={tooltip}
-            />
+            {view === 'week' ? (
+              <CalendarWeek
+                days={week}
+                selected={selected}
+                month={month}
+                bounds={bounds}
+                onSelect={select}
+                busy={busy}
+                label={weekLabel(monday)}
+                tooltip={tooltip}
+              />
+            ) : (
+              <CalendarGrid
+                rows={rows}
+                selected={selected}
+                month={month}
+                bounds={bounds}
+                onSelect={select}
+                busy={busy}
+                label={monthLabel(month)}
+                tooltip={tooltip}
+              />
+            )}
           </View>
         </View>
         {phone ? filtersNode : null}

@@ -5,15 +5,17 @@ import { getMockContext } from 'expo-router/testing-library';
 
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
-import { ACCESS, EMAIL, fakePortalApi, meOf, orgOf, type FakePortalApi } from '../../helpers/portal';
+import { ACCESS, EMAIL, fakePortalApi, meOf, offline, orgOf, type FakePortalApi } from '../../helpers/portal';
 import { townEvent } from '../analytics/fakes';
 import { calendarFake, forecastDay, forecastOf, PATH, type CalendarFake } from './fakes';
 
-// P28 Calendar's month view on web (spec 16.3): the grid is always 6 weeks, a leading or trailing day is selected in
-// place, the grid moves only on Previous, Next, Today, PageUp and PageDown or when the selected day leaves it, a month
-// whose reads are in flight renders at once with its uncovered days pending, the cells are the same height every
-// month, the filters sit where the width puts them, and focus survives a change of grid. Today is Wed, Nov 11, 2026.
-// Synthetic figures and made-up titles only.
+// P28 Calendar's views on web (spec 16.3). The month view: the grid is always 6 weeks, a leading or trailing day is
+// selected in place, the grid moves only on Previous, Next, Today, PageUp and PageDown or when the selected day leaves
+// it, a month whose reads are in flight renders at once with its uncovered days pending, the cells are the same height
+// every month, the filters sit where the width puts them, and focus survives a change of grid. The week view: Month
+// and Week kept in `?view=`, no read on a switch, the grid's month kept across it, Previous and Next by weeks, its own
+// forecast notice, and focus that survives a switch from outside the page. Today is Wed, Nov 11, 2026. Synthetic
+// figures and made-up titles only.
 
 class ResizeObserverPolyfill {
   observe(): void { return undefined; }
@@ -55,11 +57,12 @@ function forecasts(): Record<string, unknown> {
   return { '2026-11': forecastOf(days(11, 30, '2026-11')), '2026-12': forecastOf(days(1, 31, '2026-12')) };
 }
 
-function setup(): { api: FakePortalApi; fake: CalendarFake } {
+function setup(init: Partial<Pick<CalendarFake, 'forecasts'>> = {}): { api: FakePortalApi; fake: CalendarFake } {
   const fake = calendarFake({
     events: [townEvent({ start: '2026-11-21', title: 'Dartmouth home football' }), townEvent({ start: '2026-12-03', title: 'Tree lighting' })],
     days: [{ date: '2026-11-07', guests: 138, netSalesCents: 276000 }],
     forecasts: forecasts(),
+    ...init,
   });
   return { api: fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: fake }), fake };
 }
@@ -87,6 +90,10 @@ function panel(): HTMLElement {
 
 function day(): string | null {
   return new URLSearchParams(window.location.search).get('day');
+}
+
+function query(): URLSearchParams {
+  return new URLSearchParams(window.location.search);
 }
 
 function forecastReads(fake: CalendarFake): string[] {
@@ -255,4 +262,131 @@ test('a ?day= change from elsewhere leaves focus on a toolbar button alone', asy
   act(() => { router.setParams({ day: '2026-09-15' }); });
   expect(await screen.findByRole('grid', { name: 'September 2026' })).toBeTruthy();
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Next month' }));
+});
+
+// The week view
+
+/** A file over 1 MB, which the import refuses unread. */
+function chooseLargeFile(): void {
+  const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+  if (input === null) throw new Error('no file input');
+  const file = new File(['BEGIN:VCALENDAR'], 'everything.ics', { type: 'text/calendar' });
+  Object.defineProperty(file, 'size', { value: 1024 * 1024 + 1 });
+  Object.defineProperty(file, 'text', { value: () => { throw new Error('read a file over 1 MB'); } });
+  fireEvent.change(input, { target: { files: [file] } });
+}
+
+const TOO_LARGE = 'This file is over 1 MB. Export a shorter range of your calendar.';
+
+function viewButton(name: 'Month' | 'Week'): HTMLElement {
+  return within(screen.getByRole('group', { name: 'Calendar view' })).getByRole('button', { name });
+}
+
+test('Week sets view=week and keeps the day, with no read; Month takes view out of the URL', async () => {
+  const { api, fake } = setup();
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  expect(viewButton('Month').getAttribute('aria-pressed')).toBe('true');
+  const reads = fake.paths.length;
+  fireEvent.click(viewButton('Week'));
+  expect(await screen.findByRole('grid', { name: 'Nov 16 to 22, 2026' })).toBeTruthy();
+  await waitFor(() => { expect(query().get('view')).toBe('week'); });
+  expect(query().get('day')).toBe('2026-11-21');
+  expect(viewButton('Week').getAttribute('aria-pressed')).toBe('true');
+  expect(viewButton('Month').getAttribute('aria-pressed')).toBe('false');
+  expect(cell('2026-11-21').getAttribute('aria-selected')).toBe('true');
+  fireEvent.click(viewButton('Month'));
+  expect(await screen.findByRole('grid', { name: 'November 2026' })).toBeTruthy();
+  await waitFor(() => { expect(query().has('view')).toBe(false); });
+  expect(window.location.search).not.toContain('undefined');
+  expect(query().get('day')).toBe('2026-11-21');
+  expect(fake.paths.slice(reads)).toEqual([]);
+});
+
+test('a load at ?view=week opens the selected day’s week; any other view opens the month', async () => {
+  await renderAt('/locations/l1/calendar?day=2026-11-21&view=week', setup().api, 'Nov 16 to 22, 2026');
+  expect(screen.getByText('Nov 16 to 22, 2026')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Previous week' })).toBeTruthy();
+  // The week's figures and cards, from the grid's reads.
+  expect(cell('2026-11-21').textContent).toContain('212');
+  expect(cell('2026-11-21').textContent).toContain('Dartmouth home football');
+  cleanup();
+  await renderAt('/locations/l1/calendar?day=2026-11-21&view=year', setup().api);
+  expect(viewButton('Month').getAttribute('aria-pressed')).toBe('true');
+});
+
+test('Next week and Previous week move a week; the grid’s month follows, so Month shows the new week’s grid', async () => {
+  const { api, fake } = setup();
+  await renderAt('/locations/l1/calendar?day=2026-11-21&view=week', api, 'Nov 16 to 22, 2026');
+  fireEvent.click(screen.getByRole('button', { name: 'Next week' }));
+  expect(await screen.findByRole('grid', { name: 'Nov 23 to 29, 2026' })).toBeTruthy();
+  expect(screen.getByText('Nov 23 to 29, 2026')).toBeTruthy();
+  await waitFor(() => { expect(day()).toBe('2026-11-28'); });
+  // Nov 30 to Dec 6 is still in November's grid: nothing new is read.
+  fireEvent.click(screen.getByRole('button', { name: 'Next week' }));
+  expect(await screen.findByRole('grid', { name: 'Nov 30 to Dec 6, 2026' })).toBeTruthy();
+  expect(forecastReads(fake)).toEqual([`${PATH}/forecast?from=2026-10-26&to=2026-12-06`]);
+  // Dec 12 leaves it, so December's grid is read.
+  fireEvent.click(screen.getByRole('button', { name: 'Next week' }));
+  expect(await screen.findByRole('grid', { name: 'Dec 7 to 13, 2026' })).toBeTruthy();
+  await waitFor(() => { expect(forecastReads(fake)).toContain(`${PATH}/forecast?from=2026-11-30&to=2027-01-10`); });
+  fireEvent.click(screen.getByRole('button', { name: 'Previous week' }));
+  expect(await screen.findByRole('grid', { name: 'Nov 30 to Dec 6, 2026' })).toBeTruthy();
+  fireEvent.click(viewButton('Month'));
+  // Dec 5 is in December's grid, which the page shows now.
+  expect(await screen.findByRole('grid', { name: 'December 2026' })).toBeTruthy();
+});
+
+test('Week then Month returns to the grid you left: a trailing day keeps November’s grid', async () => {
+  const { api } = setup();
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  fireEvent.click(cell('2026-12-03'));
+  await waitFor(() => { expect(day()).toBe('2026-12-03'); });
+  fireEvent.click(viewButton('Week'));
+  expect(await screen.findByRole('grid', { name: 'Nov 30 to Dec 6, 2026' })).toBeTruthy();
+  fireEvent.click(viewButton('Month'));
+  expect(await screen.findByRole('grid', { name: 'November 2026' })).toBeTruthy();
+  expect(cell('2026-12-03').getAttribute('aria-selected')).toBe('true');
+});
+
+test('an import refusal shown before a switch is still shown after it', async () => {
+  const { api } = setup();
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  chooseLargeFile();
+  expect(await screen.findByText(TOO_LARGE)).toBeTruthy();
+  fireEvent.click(viewButton('Week'));
+  expect(await screen.findByRole('grid', { name: 'Nov 16 to 22, 2026' })).toBeTruthy();
+  expect(screen.getByText(TOO_LARGE)).toBeTruthy();
+  fireEvent.click(viewButton('Month'));
+  expect(await screen.findByRole('grid', { name: 'November 2026' })).toBeTruthy();
+  expect(screen.getByText(TOO_LARGE)).toBeTruthy();
+});
+
+test('at 1280 the header label is 216px wide in both views', async () => {
+  const { api } = setup();
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  expect(window.getComputedStyle(screen.getByText('November 2026')).width).toBe('216px');
+  fireEvent.click(viewButton('Week'));
+  expect(await screen.findByRole('grid', { name: 'Nov 16 to 22, 2026' })).toBeTruthy();
+  expect(window.getComputedStyle(screen.getByText('Nov 16 to 22, 2026')).width).toBe('216px');
+});
+
+test('a failed forecast read in the week view names the week', async () => {
+  const { api } = setup({ forecasts: { '2026-11': offline() } });
+  await renderAt('/locations/l1/calendar?day=2026-11-21&view=week', api, 'Nov 16 to 22, 2026');
+  expect(await screen.findByText('Couldn’t load the forecast for Nov 16 to 22. Try again.')).toBeTruthy();
+  expect(cell('2026-11-21').textContent).not.toContain('212');
+  expect(cell('2026-11-21').textContent).not.toContain('180 to 240');
+  // A failed read is not an answer: no day says “No forecast”, and the range lines stay blank.
+  expect(screen.getByRole('grid', { name: 'Nov 16 to 22, 2026' }).textContent).not.toContain('No forecast');
+});
+
+test('with focus on a week column, ?view taken out from elsewhere leaves focus on the selected cell of the month grid', async () => {
+  const { api } = setup();
+  await renderAt('/locations/l1/calendar?day=2026-11-21&view=week', api, 'Nov 16 to 22, 2026');
+  cell('2026-11-21').focus();
+  expect(document.activeElement).toBe(cell('2026-11-21'));
+  act(() => { router.setParams({ view: undefined }); });
+  expect(await screen.findByRole('grid', { name: 'November 2026' })).toBeTruthy();
+  await waitFor(() => { expect(document.activeElement).toBe(cell('2026-11-21')); });
+  expect(document.activeElement).not.toBe(document.body);
 });
