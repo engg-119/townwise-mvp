@@ -49,6 +49,15 @@ export function tokensOf(usage: {
   };
 }
 
+/**
+ * The most `tokens` can cost on any model a call may run on (the most expensive row: a refusal fallback can move a
+ * call to a model priced above the one asked for), rounded up to a whole micro-dollar. A budget reserves this before a
+ * call whose cost it cannot know yet.
+ */
+export function ceilingCostMicroUsd(tokens: TokenCounts): number {
+  return Math.ceil((tokens.input * MOST_EXPENSIVE.input + tokens.output * MOST_EXPENSIVE.output) / 1000);
+}
+
 /** One call's cost, rounded up to a whole micro-dollar. */
 export function costMicroUsd(model: string, tokens: TokenCounts): number {
   return Math.ceil(nanoUsd(model, tokens) / 1000);

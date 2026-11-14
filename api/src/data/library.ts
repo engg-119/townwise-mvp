@@ -24,7 +24,10 @@ export function refString(ref: DataItemRef): string {
   return `${ref.type === 'upload' ? 'u' : 'f'}_${ref.id}`;
 }
 
-/** How an item arrived: a browser upload, a stored file, staff setup, or kept from a TownwiseAI conversation. */
+/**
+ * How an item arrived: a browser upload, a stored file, staff setup, or from TownwiseAI (kept from a conversation, or
+ * an upload or summary item a TownwiseAI read of a file made, spec 11A.9).
+ */
 export type DataVia = 'browser' | 'file' | 'staff' | 'townwise_ai';
 
 export type DataState = 'uploading' | 'reading' | 'waiting' | 'used' | 'kept' | 'failed' | 'not_finished';
@@ -71,7 +74,7 @@ function uploadItem(upload: UploadRecord, file: FileRecord | null, inUse: number
   return {
     ref: { type: 'upload', id: upload.id },
     locationId: upload.locationId,
-    via: upload.byStaff ? 'staff' : file === null ? 'browser' : 'file',
+    via: upload.source !== null ? 'townwise_ai' : upload.byStaff ? 'staff' : file === null ? 'browser' : 'file',
     kind: file?.kind ?? 'daily_totals',
     addedAt: upload.uploadedAt,
     addedBy: upload.uploadedBy,

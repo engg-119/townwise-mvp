@@ -65,7 +65,7 @@ export interface StartRequest {
   readonly id: string;
   readonly scope: OrgScope;
   readonly location: LocationRecord;
-  readonly requester: { readonly userId: string; readonly role: 'org_admin' | 'superadmin'; readonly via: 'chat' | 'console' };
+  readonly requester: { readonly userId: string; readonly role: 'org_admin' | 'superadmin'; readonly via: 'chat' | 'console' | 'file' };
   readonly regimeStart: string | null;
   /** The town's local date. */
   readonly today: string;

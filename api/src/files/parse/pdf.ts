@@ -3,7 +3,8 @@
 // line: a line whose items include a date header and a guests or net sales header, each its own item. The header
 // items' extents make the column bands; each following line's items fall into the band their center is in; a line
 // with fewer than two filled bands, or one that starts with "total", ends the table. A header repeated on a later
-// page continues its table. The only file that imports unpdf (test/isolation.test.ts).
+// page continues its table. The only file that imports unpdf (test/isolation.test.ts). readPdfText is the one way a
+// PDF's other text leaves this file: for a file the person let TownwiseAI read (spec 11A.9), through ai-text.ts.
 import { getDocumentProxy } from 'unpdf';
 
 import { PDF_MAX_ITEMS_PER_PAGE, PDF_MAX_PAGES } from '../limits.ts';
@@ -65,7 +66,7 @@ function cellsOf(line: readonly PdfItem[], edges: readonly number[]): string[] {
 
 /**
  * The tables on a document's pages (each a list of positioned items), in order. Text outside a table is dropped
- * here and never kept anywhere but the stored original.
+ * here and never kept anywhere but the stored original (readPdfText, for an opted-in file, is separate).
  */
 export function tablesOf(pages: readonly (readonly PdfItem[])[]): Sheet[] {
   const tables = new Map<string, Sheet>();
@@ -99,6 +100,61 @@ function isPasswordError(err: unknown): boolean {
   return err instanceof Error && err.name === 'PasswordException';
 }
 
+/** Fonts are never loaded or faked, and pdf.js logs nothing below errors (a warning can quote the file). */
+const PDF_OPTIONS = { disableFontFace: true, useSystemFonts: false, stopAtErrors: false, verbosity: 0, isOffscreenCanvasSupported: false } as const;
+
+export type PdfText =
+  | { readonly kind: 'text'; readonly text: string; readonly cut: boolean; readonly pages: number }
+  | { readonly kind: 'kept'; readonly outcome: 'encrypted' | 'not_readable' | 'too_complex' };
+
+/**
+ * A PDF's plain text for reading with TownwiseAI (spec 11A.9, a file the person opted in), inside the parse thread
+ * only: every page's lines (linesOf), each line's items joined by a space, pages apart by a blank line, stopping at
+ * `maxChars` (`cut`). Encrypted: kept `encrypted`; not readable as a PDF, or a damaged page: `not_readable`; more
+ * pages than PDF_MAX_PAGES or text items than PDF_MAX_ITEMS_PER_PAGE on a page: `too_complex`.
+ */
+export async function readPdfText(buffer: Buffer, maxChars: number): Promise<PdfText> {
+  let document;
+  try {
+    document = await getDocumentProxy(new Uint8Array(buffer), PDF_OPTIONS);
+  } catch (err) {
+    return { kind: 'kept', outcome: isPasswordError(err) ? 'encrypted' : 'not_readable' };
+  }
+  try {
+    const pages = document.numPages;
+    if (pages > PDF_MAX_PAGES) return { kind: 'kept', outcome: 'too_complex' };
+    const parts: string[] = [];
+    let length = 0;
+    for (let number = 1; number <= pages; number += 1) {
+      let content;
+      let page;
+      try {
+        page = await document.getPage(number);
+        content = await page.getTextContent();
+      } catch {
+        return { kind: 'kept', outcome: 'not_readable' };
+      }
+      if (content.items.length > PDF_MAX_ITEMS_PER_PAGE) return { kind: 'kept', outcome: 'too_complex' };
+      const items: PdfItem[] = [];
+      for (const item of content.items) {
+        if ('str' in item) items.push({ text: item.str, x: Number(item.transform[4] ?? 0), y: Number(item.transform[5] ?? 0), width: item.width });
+      }
+      page.cleanup();
+      const text = linesOf(items).map((line) => line.map((item) => item.text.trim()).join(' ')).join('\n');
+      const piece = parts.length === 0 ? text : `\n\n${text}`;
+      if (length + piece.length > maxChars) {
+        parts.push(piece.slice(0, maxChars - length));
+        return { kind: 'text', text: parts.join(''), cut: true, pages };
+      }
+      parts.push(piece);
+      length += piece.length;
+    }
+    return { kind: 'text', text: parts.join(''), cut: false, pages };
+  } finally {
+    await document.cleanup().catch(() => undefined);
+  }
+}
+
 /**
  * A PDF's tables. `onPage` reports pages read. Encrypted: kept `encrypted`; no text on any page: `pdf_scanned`; text but
  * no table: `pdf_no_table`; more pages than the reader takes: `too_complex`; not readable as a PDF, or a page that cannot be read: `not_a_table`.
@@ -106,10 +162,7 @@ function isPasswordError(err: unknown): boolean {
 export async function readPdf(buffer: Buffer, onPage: (done: number, total: number) => void = () => undefined): Promise<PdfTables> {
   let document;
   try {
-    // Fonts are never loaded or faked, and pdf.js logs nothing below errors (a warning can quote the file).
-    document = await getDocumentProxy(new Uint8Array(buffer), {
-      disableFontFace: true, useSystemFonts: false, stopAtErrors: false, verbosity: 0, isOffscreenCanvasSupported: false,
-    });
+    document = await getDocumentProxy(new Uint8Array(buffer), PDF_OPTIONS);
   } catch (err) {
     return { kind: 'kept', outcome: isPasswordError(err) ? 'encrypted' : 'not_a_table' };
   }

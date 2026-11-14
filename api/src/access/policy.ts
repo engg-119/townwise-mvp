@@ -5,7 +5,7 @@ import { AppError } from '@ckeith26/server-core';
 import type { Request } from 'express';
 
 import type { ListedBlob } from '../files/blobs.ts';
-import type { ClaimedCalendar, ClaimedImport, JoinedSeat, LabCallbackClaim, SweptFile, SweptImport } from '../stores/cross-tenant.ts';
+import type { ClaimedAiRead, ClaimedCalendar, ClaimedImport, JoinedSeat, LabCallbackClaim, SweptFile, SweptImport } from '../stores/cross-tenant.ts';
 import type { OrgRecord, OrgStore } from '../stores/orgs.ts';
 import type { OpenAsAdminGrantRecord } from '../stores/view-as-grants.ts';
 import type { Access, ResolvedSeat, Resolution, Role } from './resolve.ts';
@@ -35,6 +35,11 @@ export function scopeForJoinedInvite(seat: JoinedSeat): OrgScope {
 
 /** The file reader only (files/worker.ts), for the organization of the import it just claimed. */
 export function scopeForClaimedImport(claim: ClaimedImport): OrgScope {
+  return mint(claim.orgId);
+}
+
+/** The TownwiseAI reader only (files/ai-reader.ts), for the organization of the file whose read it just claimed. */
+export function scopeForClaimedAiRead(claim: ClaimedAiRead): OrgScope {
   return mint(claim.orgId);
 }
 

@@ -8,7 +8,7 @@ import {
   isStaffPrincipal, openAsAdminRefusal, policyRefusal, principalOf, scopeForOpenAsAdmin, viewAsRefusal, type Policy, type Principal,
 } from '../src/access/policy.ts';
 import type { Access, Resolution } from '../src/access/resolve.ts';
-import { assertRouteTable, TOWNWISE_ROUTES, type TownwiseRoute } from '../src/access/routes.ts';
+import { assertRouteTable, ROUTE_LIMITS, TOWNWISE_ROUTES, type TownwiseRoute } from '../src/access/routes.ts';
 import type { TownwiseContext } from '../src/app.ts';
 import { createLabCallbackRouter } from '../src/lab/callback.ts';
 
@@ -269,6 +269,15 @@ describe('route table', () => {
       },
       { id: 'org.data.remove', method: 'DELETE', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: 'none', limiter: undefined, openAsAdmin: true },
     ]);
+  });
+
+  it('spec 11A.9: letting TownwiseAI read an item is a member POST with a 2kb body, open as admin, behind its own limiter that denies while its store is down', () => {
+    const route = TOWNWISE_ROUTES.find((entry) => entry.id === 'org.data.ai_read');
+    expect(route).toMatchObject({
+      method: 'POST', path: '/org/locations/:locationId/data/:ref/ai', policy: 'member', bodyLimit: '2kb', openAsAdmin: true, limiter: 'ai_reads',
+    });
+    expect(ROUTE_LIMITS.ai_reads).toEqual({ name: 'townwise:ai-reads', limit: 30, windowSeconds: 3600, whenStoreDown: 'deny' });
+    expect(TOWNWISE_ROUTES.filter((entry) => entry.limiter === 'ai_reads').map((entry) => entry.id)).toEqual(['org.data.ai_read']);
   });
 
   it('business rules are member routes with 2kb bodies on writes and no route limiter, after the notes block', () => {

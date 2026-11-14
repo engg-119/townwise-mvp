@@ -218,6 +218,29 @@ test('Add a closure note opens the form; once the note is saved, the address dro
   expect(screen.queryByRole('heading', { name: 'Add a note' })).toBeNull();
 });
 
+test('Notes on web: a note TownwiseAI made from a file says so under its author, with no link, and its edit form warns (D34)', async () => {
+  const day = addDays(localToday(), 5);
+  const own = noteOf('n1', { startDate: day, endDate: day });
+  const fromFile = noteOf('n2', { kind: 'opening', startDate: day, endDate: day, effect: 'unknown', source: { via: 'ai_file', fileId: 'file-1' } });
+  renderAt('/locations/l1/notes', portal(meOf(ACCESS.admin), [own, fromFile]));
+  const coming = await screen.findByRole('region', { name: 'Notes coming up' });
+  const rows = within(coming).getAllByRole('row').slice(1);
+  const row = (kind: string): HTMLElement => {
+    const found = rows.find((candidate) => within(candidate).queryByText(kind) !== null);
+    if (found === undefined) throw new Error(`no ${kind} row`);
+    return found;
+  };
+  expect(within(row('Opening')).getByText('From a file TownwiseAI read')).toBeTruthy();
+  expect(within(row('Opening')).queryByRole('link')).toBeNull();
+  expect(within(row('Closure')).queryByText('From a file TownwiseAI read')).toBeNull();
+  fireEvent.click(within(row('Opening')).getByRole('button', { name: /^Edit Opening note/ }));
+  expect(await screen.findByText('Undoing that file’s read removes this note, even after an edit.')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  fireEvent.click(within(row('Closure')).getByRole('button', { name: /^Edit Closure note/ }));
+  expect(await screen.findByRole('heading', { name: 'Edit this note' })).toBeTruthy();
+  expect(screen.queryByText('Undoing that file’s read removes this note, even after an edit.')).toBeNull();
+});
+
 test('view-as on Notes and Location settings: every write is aria-disabled or read-only, with the line', async () => {
   const note = noteOf('n1', { startDate: addDays(localToday(), 5), endDate: addDays(localToday(), 5) });
   renderAt('/locations/l1/notes', portal(viewAsMe(ACCESS.admin), [note]));

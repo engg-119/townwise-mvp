@@ -197,6 +197,25 @@ test('an org admin’s upload: match, check, send one body of days, and the repl
   expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
 });
 
+test('the browser-only upload never offers TownwiseAI and never sends anything to it, on any step (D34)', async () => {
+  const api = adminApi();
+  api.answers[UPLOAD] = answerFor({ dayCount: 3, inserted: 2, replaced: 1, kept: 0 });
+  renderAt(api);
+  const noBox = (): void => {
+    expect(screen.queryByRole('checkbox')).toBeNull();
+    expect(pageText()).not.toContain('Let TownwiseAI read');
+  };
+  await screen.findByRole('heading', { name: 'Choose a file' });
+  noBox();
+  await toCheck(csvFile(FILE));
+  noBox();
+  await click('Send 3 days');
+  expect(await screen.findByText('Saved 3 days for Main Street Bar: 2 new, 1 replaced.')).toBeTruthy();
+  noBox();
+  expect(writes(api)).toEqual([{ method: 'POST', path: UPLOAD, body: { days: DAYS } }]);
+  expect(api.calls.some((call) => call.path.endsWith('/ai'))).toBe(false);
+});
+
 test('days held by a turned-off upload are named in the check, for an admin and for a member', async () => {
   const held = [locationOf('l1', 'Main Street Bar', { townId: 'hanover-nh', name: 'Hanover', state: 'NH' }, { offDayCount: 12 })];
   renderAt(fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin', held) }));

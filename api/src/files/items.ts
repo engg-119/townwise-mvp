@@ -9,7 +9,7 @@ import { Types } from 'mongoose';
 import type { OrgScope } from '../access/policy.ts';
 import type { Role } from '../access/resolve.ts';
 import { utcDay } from '../dates.ts';
-import type { FileKind, FileRecord } from '../stores/files.ts';
+import type { AiSource, FileKind, FileRecord } from '../stores/files.ts';
 import type { TownwiseStores } from '../stores/index.ts';
 import { BlobMissingError, type FileBlobs } from './blobs.ts';
 import { CHUNK_BYTES, DAILY_UPLOAD_BYTES, FILES_PER_LOCATION, MODEL_PICTURE_BYTES, MODEL_PICTURE_MAX_SIDE, STORED_BYTES_PER_ORG } from './limits.ts';
@@ -51,6 +51,8 @@ export interface TextItemInput {
   /** D25: staff kept it while open as admin, under this grant, so it reads “Townwise staff”. */
   readonly openAsAdminGrantId?: string;
   readonly addedVia: 'townwise_ai' | null;
+  /** A TownwiseAI read's summary item (spec 11A.9): the file it was read from. */
+  readonly source?: AiSource;
   readonly now: Date;
 }
 
@@ -111,6 +113,7 @@ export async function saveTextItem(
       ...(input.openAsAdminGrantId === undefined ? {} : { openAsAdminGrantId: input.openAsAdminGrantId }),
       name: textItemName(input.title), sizeBytes: bytes.length,
       fingerprint: fingerprintOf(CHUNK_BYTES, [createHash('sha256').update(bytes).digest('hex')]), addedVia: input.addedVia,
+      ...(input.source === undefined ? {} : { source: input.source }),
     });
   } catch (err) {
     await stores.uploadDays.refund(scope, day, bytes.length, input.now);

@@ -19,7 +19,7 @@ import { createNote, deleteNote, fetchNotes, updateNote, type Note, type NoteInp
 import { localToday } from './dates';
 import { NoteForm } from './NoteForm';
 import {
-  datesLine, draftOf, EFFECT_LABEL, emptyDraft, guestsLine, hoursLine, KIND_LABEL, sortNotes, splitNotes, weekdaysLine,
+  datesLine, draftOf, EFFECT_LABEL, emptyDraft, guestsLine, hoursLine, KIND_LABEL, NOTE_COPY, sortNotes, splitNotes, weekdaysLine,
 } from './noteRules';
 import { LoadFailure, useOrgRefreshOnLeave } from './parts';
 
@@ -28,7 +28,9 @@ import { LoadFailure, useOrgRefreshOnLeave } from './parts';
 // (`canEdit`). Under view-as, Add, Edit and Delete are disabled in place. From the town's today on, a private event
 // with a guest count, a buyout or a closure adjusts the published forecast on read (spec 14.5), and TownwiseAI reads
 // every note, so the intro says both instead of the spec's “Nothing reads them yet.” A row shows a note's hours when
-// it has them. Sales data's “Add a closure note.” opens the form as a closure (`?new=closure`).
+// it has them. Sales data's “Add a closure note.” opens the form as a closure (`?new=closure`). A note TownwiseAI made
+// from a file someone let it read (`source`, D34) says so under its author, and its edit form says undoing that read
+// removes it; there is no link, since the note knows only the file's id.
 // A 404 on a write means the note, or its location, was deleted in the meantime (spec 10.9): the form or dialog
 // closes, an edit or delete says “This note isn’t available.”, and the list loads again, which shows “This
 // location isn’t available.” if the location went too.
@@ -66,6 +68,22 @@ function TwoLines(props: { first: string; second: string | null }): React.JSX.El
   );
 }
 
+/** Who wrote it and when; a note TownwiseAI made from a file says so under them, with no link (D34). */
+function AddedCell(props: { note: Note }): React.JSX.Element {
+  const { note } = props;
+  return (
+    <View style={styles.cell}>
+      <Text style={styles.value}>{note.createdByEmail}</Text>
+      <Text style={styles.note}>{formatDate(note.createdAt)}</Text>
+      {fromAiFile(note) ? <Text style={styles.note}>{NOTE_COPY.fromAiFile}</Text> : null}
+    </View>
+  );
+}
+
+function fromAiFile(note: Note): boolean {
+  return note.source?.via === 'ai_file';
+}
+
 function NotesTable(props: {
   label: string;
   notes: readonly Note[];
@@ -95,7 +113,7 @@ function NotesTable(props: {
             note: <NoteCell note={note} selected={note.id === props.selectedId} />,
             dates: <TwoLines first={datesLine(note)} second={whenLine(note)} />,
             effect: <TwoLines first={EFFECT_LABEL[note.effect]} second={guestsLine(note.expectedGuests)} />,
-            added: <TwoLines first={note.createdByEmail} second={formatDate(note.createdAt)} />,
+            added: <AddedCell note={note} />,
             actions: note.canEdit ? (
               <Actions>
                 <Button variant="link" label="Edit" accessibilityLabel={`Edit ${name}`} {...ro} onPress={() => { props.onEdit(note); }} />
@@ -246,6 +264,7 @@ export function Notes(): React.JSX.Element {
                 key={editing?.id ?? 'new'}
                 initial={editing === null ? emptyDraft(form.mode === 'new' && form.kind !== null ? form.kind : undefined) : draftOf(editing)}
                 editing={editing !== null}
+                fromAiFile={editing !== null && fromAiFile(editing)}
                 save={save}
                 onSaved={onSaved}
                 onCancel={closeForm}

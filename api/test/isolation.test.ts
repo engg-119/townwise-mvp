@@ -12,7 +12,7 @@ function sourceFiles(): { path: string; text: string }[] {
 }
 
 describe('isolation (source)', () => {
-  it('only access/resolve.ts, the join and decline handlers, the staff handlers, the file reader, the sweeper, the lab callback and the calendar refresh loop import stores/cross-tenant.ts', () => {
+  it('only access/resolve.ts, the join and decline handlers, the staff handlers, the file reader, the TownwiseAI reader, the sweeper, the lab callback and the calendar refresh loop import stores/cross-tenant.ts', () => {
     // A type-only import grants no access to the operations, so it is not counted.
     const importers = sourceFiles()
       .filter((file) => /^import (?!type )[^;]*from '[./]+(stores\/)?cross-tenant\.ts';/m.test(file.text))
@@ -20,9 +20,12 @@ describe('isolation (source)', () => {
       .sort();
     // handlers/me.ts holds the join and decline handlers; handlers/admin.ts and handlers/deletion.ts hold the staff handlers.
     // lab/callback.ts holds the forecast lab job's callback, which finds its calibration by id and token before any
-    // organization is known. calendar/refresher.ts claims a due calendar link in any organization.
+    // organization is known. files/ai-reader.ts (spec 11A.9) claims the next file someone asked TownwiseAI to read,
+    // across organizations, as the file reader claims the next import. calendar/refresher.ts claims a due calendar link
+    // in any organization.
     expect(importers).toEqual([
-      'access/resolve.ts', 'calendar/refresher.ts', 'files/sweeper.ts', 'files/worker.ts', 'handlers/admin.ts', 'handlers/deletion.ts',
+      'access/resolve.ts', 'calendar/refresher.ts', 'files/ai-reader.ts', 'files/sweeper.ts', 'files/worker.ts', 'handlers/admin.ts',
+      'handlers/deletion.ts',
       'handlers/me.ts', 'lab/callback.ts',
     ]);
   });
@@ -52,7 +55,7 @@ describe('isolation (source)', () => {
     const importersOf = (target: string): string[] => sourceFiles().filter((file) => imports(file).includes(target)).map((file) => file.path).sort();
     const fileCode = (path: string): boolean => path.startsWith('files/')
       || ['handlers/files.ts', 'handlers/sales.ts', 'handlers/locations.ts', 'handlers/deletion.ts', 'stores/index.ts', 'stores/file-entries.ts', 'stores/cross-tenant.ts', 'main.ts'].includes(path);
-    for (const target of ['stores/files.ts', 'stores/file-entries.ts', 'files/blobs.ts', 'files/worker.ts']) {
+    for (const target of ['stores/files.ts', 'stores/file-entries.ts', 'files/blobs.ts', 'files/worker.ts', 'files/ai-reader.ts']) {
       expect(importersOf(target).filter((path) => !fileCode(path))).toEqual([]);
     }
     expect(importersOf('stores/files.ts')).toEqual(['stores/cross-tenant.ts', 'stores/file-entries.ts', 'stores/index.ts']);
@@ -86,6 +89,24 @@ describe('isolation (source)', () => {
   it('only access/policy.ts mints the reader’s scope, and only files/worker.ts asks for it', () => {
     const callers = sourceFiles().filter((file) => file.text.includes('scopeForClaimedImport(')).map((file) => file.path).sort();
     expect(callers).toEqual(['access/policy.ts', 'files/worker.ts']);
+  });
+
+  it('only access/policy.ts mints the TownwiseAI reader’s scope, and only files/ai-reader.ts asks for it', () => {
+    const callers = sourceFiles().filter((file) => file.text.includes('scopeForClaimedAiRead(')).map((file) => file.path).sort();
+    expect(callers).toEqual(['access/policy.ts', 'files/ai-reader.ts']);
+  });
+
+  it('a file’s own text leaves the parse code only for a file someone let TownwiseAI read (spec 11A.9)', () => {
+    // readPdfText and readWordText are the only ways a PDF's or Word document's text outside a table leaves the parse
+    // code; only the AI text thread calls them, and only the TownwiseAI reader (and that thread) imports its runner.
+    const imports = (file: { path: string; text: string }): string[] => [...file.text.matchAll(/^import (?!type )[^;]*from '(\.[^']+)';/gm)]
+      .map((match) => posix.normalize(posix.join(posix.dirname(file.path), match[1] ?? '')));
+    expect(sourceFiles().filter((file) => imports(file).includes('files/parse/ai-text.ts')).map((file) => file.path).sort())
+      .toEqual(['files/ai-reader.ts', 'files/parse/ai-text-thread.ts']);
+    for (const call of ['readPdfText(', 'readWordText(']) {
+      const callers = sourceFiles().filter((file) => file.text.includes(call)).map((file) => file.path).sort();
+      expect(callers.filter((path) => path !== 'files/parse/pdf.ts' && path !== 'files/parse/docx.ts')).toEqual(['files/parse/ai-text-thread.ts']);
+    }
   });
 
   it('only access/policy.ts mints the lab callback’s scope, and only lab/callback.ts asks for it', () => {
