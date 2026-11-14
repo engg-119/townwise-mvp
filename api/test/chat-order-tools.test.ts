@@ -58,14 +58,18 @@ interface Fakes {
   setup?: StoredSetup | null;
   decision?: DecisionRecord | null;
   rule?: RuleRecord | null;
+  /** Each item-sales read's range, as it is made. */
+  reads?: { from: string; to: string }[];
 }
 
 function context(fakes: Fakes = {}): ToolContext {
   const stores = {
     orderSetups: { get: () => Promise.resolve(fakes.setup === undefined ? SETUP : fakes.setup) },
     itemSales: {
-      days: (_scope: OrgScope, _location: string, range: { from: string; to: string }) =>
-        Promise.resolve(SALES.filter((day) => day.date >= range.from && day.date <= range.to)),
+      days: (_scope: OrgScope, _location: string, range: { from: string; to: string }) => {
+        fakes.reads?.push(range);
+        return Promise.resolve(SALES.filter((day) => day.date >= range.from && day.date <= range.to));
+      },
       coverage: () => Promise.resolve({ firstDate: '2026-09-29', lastDate: '2026-11-09', dayCount: SALES.length }),
     },
     orderCounts: { latest: () => Promise.resolve(new Map([[LAGER, { quantity: 1.5, date: '2026-11-08' }]])) },
@@ -197,6 +201,13 @@ describe('get_order_line', () => {
     // A covered day the item did not sell on counts as none.
     expect(days.find((day) => day.date === '2026-11-08')).toEqual({ date: '2026-11-08', weekday: 'Sun', servings: 0 });
     expect(days.map((day) => day.date)).toEqual([...days.map((day) => day.date)].sort());
+  });
+
+  it('reads item sales once: the recent days are the ones the board was built from (A10)', async () => {
+    const reads: { from: string; to: string }[] = [];
+    const answer = json(await run('get_order_line', { itemId: LAGER }, context({ reads })));
+    expect(answer).toMatchObject({ available: true });
+    expect(reads).toEqual([{ from: '2026-03-11', to: '2026-11-09' }]);
   });
 
   it('answers available false for an item not on an order, and the board’s answer without a setup', async () => {

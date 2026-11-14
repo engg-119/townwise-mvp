@@ -2,7 +2,9 @@
 // computed by engine.ts from the location's setup, item sales and counts (orders/live.ts reads them). The sample is a
 // labeled preview in the same shape, not that location's stock; rules and saved edits never change it.
 import { addDays, clockTime, lastsUntil, shortDate, weekdayName } from './dates.ts';
-import { targetFor, unitFor, type EngineLine, type OrderCategory, type OrderUnit, type SupplierOrderPlan } from './engine.ts';
+import {
+  MAX_QUANTITY, targetFor, unitFor, type EngineLine, type OrderCategory, type OrderUnit, type SupplierOrderPlan,
+} from './engine.ts';
 
 export type OrderConfidence = 'high' | 'medium' | 'low';
 
@@ -82,6 +84,8 @@ export interface StoredDecision {
   readonly itemId: string;
   readonly delivery: string;
   readonly quantity: number;
+  /** The line's unit when it was saved: an edit in another unit than the line's now is not shown. */
+  readonly unit: string;
   readonly reason: string;
 }
 
@@ -89,6 +93,8 @@ export interface StoredRule {
   readonly id: string;
   readonly itemId: string;
   readonly delta: number;
+  /** The unit its amount is in: a rule in another unit than the line's now does not apply. */
+  readonly unit: string;
   readonly situation: string;
   readonly off: boolean;
 }
@@ -123,9 +129,15 @@ export function liveBoard(plans: readonly SupplierOrderPlan[], missing: readonly
   };
 }
 
-/** The next Wednesday on or after `today`, the Thursday delivery, and the Monday that delivery covers through. */
-export function sampleSchedule(today: string): { cutoff: string; delivery: string; coversThrough: string } {
-  let cutoff = today;
+const SAMPLE_CUTOFF_TIME = '14:00';
+const SAMPLE_CUTOFF_MINUTES = 14 * 60;
+
+/**
+ * The next Wednesday order-by at 2:00pm not yet passed at `nowMinutes` (the town's), the Thursday delivery, and the
+ * Monday that delivery covers through.
+ */
+export function sampleSchedule(today: string, nowMinutes: number): { cutoff: string; delivery: string; coversThrough: string } {
+  let cutoff = nowMinutes >= SAMPLE_CUTOFF_MINUTES ? addDays(today, 1) : today;
   while (weekdayName(cutoff) !== 'Wednesday') cutoff = addDays(cutoff, 1);
   const delivery = addDays(cutoff, 1);
   return { cutoff, delivery, coversThrough: addDays(delivery, 4) };
@@ -140,29 +152,29 @@ interface SampleItem {
   readonly unit: OrderUnit;
   readonly neverRunOut: boolean;
   readonly par: number;
-  readonly alternative: number;
 }
 
 const SAMPLE_ITEMS: readonly SampleItem[] = [
   {
     itemId: 'sample-lager', name: 'Sample lager', supplierId: 'sample-distributor', supplier: 'Sample distributor', category: 'bottles_cans',
-    unit: 'cases', neverRunOut: true, par: 8, alternative: 6,
+    unit: 'cases', neverRunOut: true, par: 8,
   },
   {
     itemId: 'sample-seltzer', name: 'Sample seltzer', supplierId: 'sample-distributor', supplier: 'Sample distributor', category: 'bottles_cans',
-    unit: 'cases', neverRunOut: false, par: 3, alternative: 6,
+    unit: 'cases', neverRunOut: false, par: 3,
   },
   {
     itemId: 'sample-keg', name: 'Sample keg', supplierId: 'sample-brewery', supplier: 'Sample brewery', category: 'draft',
-    unit: 'kegs', neverRunOut: true, par: 2, alternative: 1,
+    unit: 'kegs', neverRunOut: true, par: 2,
   },
 ];
 
-const SAMPLE_CUTOFF_TIME = '14:00';
-
-/** The labeled preview: an order per sample supplier. Rules and saved edits do not change it, and nothing on it can be saved. */
-export function sampleBoard(today: string): OrderBoard {
-  const schedule = { ...sampleSchedule(today), cutoffTime: SAMPLE_CUTOFF_TIME };
+/**
+ * The labeled preview: an order per sample supplier, every line at the par with no deal size and so no other deal
+ * option. Rules and saved edits do not change it, and nothing on it can be saved.
+ */
+export function sampleBoard(today: string, nowMinutes: number): OrderBoard {
+  const schedule = { ...sampleSchedule(today, nowMinutes), cutoffTime: SAMPLE_CUTOFF_TIME };
   const why = `${lastsUntil(schedule.delivery, schedule.coversThrough)} No count, so this is the par.`;
   const suppliers = [...new Map(SAMPLE_ITEMS.map((item) => [item.supplierId, item.supplier])).entries()]
     .sort(([, a], [, b]) => a.localeCompare(b));
@@ -178,7 +190,7 @@ export function sampleBoard(today: string): OrderBoard {
       unit: item.unit,
       neverRunOut: item.neverRunOut,
       recommended: item.par,
-      alternative: item.alternative,
+      alternative: null,
       par: item.par,
       mu: null,
       sigma: null,
@@ -202,12 +214,12 @@ function sortLines(lines: readonly OrderLine[]): OrderLine[] {
   return [...lines].sort((a, b) => Number(b.neverRunOut) - Number(a.neverRunOut) || a.name.localeCompare(b.name));
 }
 
-/** The newest edit per item for this delivery; `decisions` come newest first. */
-function latestEdits(decisions: readonly StoredDecision[], delivery: string): Map<string, OrderEdit> {
-  const found = new Map<string, OrderEdit>();
+/** The newest edit per item for this delivery, with the unit it was saved in; `decisions` come newest first. */
+function latestEdits(decisions: readonly StoredDecision[], delivery: string): Map<string, StoredDecision> {
+  const found = new Map<string, StoredDecision>();
   for (const decision of decisions) {
     if (decision.delivery !== delivery || found.has(decision.itemId)) continue;
-    found.set(decision.itemId, { quantity: decision.quantity, reason: decision.reason });
+    found.set(decision.itemId, decision);
   }
   return found;
 }
@@ -223,19 +235,35 @@ function activeRules(rules: readonly StoredRule[]): Map<string, StoredRule[]> {
   return found;
 }
 
+function amountOf(size: number, unit: OrderUnit): string {
+  return `${String(size)} ${unitFor(size, unit)}`;
+}
+
 /** 'Includes 2 extra cases from your rule: a football weekend.' The situation is the owner's own words. */
 function ruleSentence(delta: number, unit: OrderUnit, situation: string): string {
   const size = Math.abs(delta);
   const words = situation.replace(/[.!?]+$/, '');
   return delta < 0
-    ? `Leaves out ${String(size)} ${unitFor(size, unit)} from your rule: ${words}.`
+    ? `Leaves out ${amountOf(size, unit)} from your rule: ${words}.`
     : `Includes ${String(size)} extra ${unitFor(size, unit)} from your rule: ${words}.`;
+}
+
+/** What the rules did: the quantity they leave, and, when 0 or 999 stopped them, the change they could make. */
+function rulesOutcome(before: number, after: number, delta: number, count: number, unit: OrderUnit): string {
+  const yours = count === 1 ? 'your rule' : 'your rules';
+  const order = `With ${yours}, the order is ${amountOf(after, unit)}`;
+  if (after === before + delta) return `${order}.`;
+  if (after === 0) return before === 0 ? `${order}: there was nothing to leave out.` : `${order}: only ${amountOf(before, unit)} could come off.`;
+  return `${order}: a line holds at most ${String(MAX_QUANTITY)}.`;
 }
 
 /**
  * Each order's lines with the latest edit saved for that order's delivery, and every active rule of the item (design
- * Decision 6): each rule is listed on its own, and together they move the recommended quantity, never below 0. A rule
- * applies to every order of its item until it is turned off. A sample is returned unchanged.
+ * Decision 6): each rule is listed on its own, and together they move the recommended quantity, never below 0 or past
+ * 999, and the why line ends with the quantity they leave. A line that a rule moves has no other deal option, which
+ * was priced for the quantity before the rule. A rule applies to every order of its item until it is turned off. An
+ * edit or a rule saved in another unit than the line's now (the setup changed the item's unit) is left out. A sample
+ * is returned unchanged.
  */
 export function withPreferences(board: OrderBoard, decisions: readonly StoredDecision[], rules: readonly StoredRule[]): OrderBoard {
   if (board.sample) return board;
@@ -243,14 +271,21 @@ export function withPreferences(board: OrderBoard, decisions: readonly StoredDec
   const orders = board.orders.map((order) => {
     const edits = latestEdits(decisions, order.delivery);
     const lines = order.lines.map((line): OrderLine => {
-      const applied = byItem.get(line.itemId) ?? [];
+      const applied = (byItem.get(line.itemId) ?? []).filter((rule) => rule.unit === line.unit);
+      const edit = edits.get(line.itemId);
+      const shown = edit?.unit === line.unit ? { quantity: edit.quantity, reason: edit.reason } : null;
+      const rules = applied.map((rule) => ({ id: rule.id, delta: rule.delta, situation: rule.situation }));
+      if (applied.length === 0) return { ...line, edit: shown, rules };
       const delta = applied.reduce((sum, rule) => sum + rule.delta, 0);
+      const recommended = Math.min(MAX_QUANTITY, Math.max(0, line.recommended + delta));
+      const sentences = applied.map((rule) => ruleSentence(rule.delta, line.unit, rule.situation));
       return {
         ...line,
-        recommended: Math.max(0, line.recommended + delta),
-        why: [line.why, ...applied.map((rule) => ruleSentence(rule.delta, line.unit, rule.situation))].join(' '),
-        edit: edits.get(line.itemId) ?? null,
-        rules: applied.map((rule) => ({ id: rule.id, delta: rule.delta, situation: rule.situation })),
+        recommended,
+        alternative: null,
+        why: [line.why, ...sentences, rulesOutcome(line.recommended, recommended, delta, applied.length, line.unit)].join(' '),
+        edit: shown,
+        rules,
       };
     });
     return { ...order, lines };

@@ -175,6 +175,10 @@ describe('indexes', () => {
       { orgId: 1, conversationId: 1, proposalId: 1 }, expect.objectContaining({ unique: true }),
     ]);
     expect(indexesOf(connection, 'TwOrderCard').map(([keys]) => keys)).toContainEqual({ orgId: 1, locationId: 1 });
+    // A9: the board reads its deliveries' edits, and a rule an item's latest edit, without scanning a location's edits.
+    const decisions = indexesOf(connection, 'TwOrderDecision').map(([keys]) => keys);
+    expect(decisions).toContainEqual({ orgId: 1, locationId: 1, delivery: 1 });
+    expect(decisions).toContainEqual({ orgId: 1, locationId: 1, itemId: 1, createdAt: -1 });
   });
 
   it('lists a ZIP’s entries once each, in archive order', () => {

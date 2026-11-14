@@ -3,7 +3,7 @@
 // what the setup page and TownwiseAI read beside the setup (loadSetupState). Reads: they write nothing and log nothing.
 import type { TownwiseContext } from '../app.ts';
 import type { OrgScope } from '../access/policy.ts';
-import type { ItemSalesCoverage } from '../stores/item-sales.ts';
+import type { ItemSalesCoverage, ItemSalesDay } from '../stores/item-sales.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { LatestCount } from '../stores/order-counts.ts';
 import type { StoredSetup } from '../stores/order-setups.ts';
@@ -12,12 +12,18 @@ import { liveBoard, unavailable, withPreferences, type OrderAnswer } from './boa
 import { addDays } from './dates.ts';
 import { computeOrders } from './engine.ts';
 
-/** Weekday means read 8 weeks back; past windows for the cushion add 26 weeks before that. */
-export const ITEM_SALES_DAYS = 238;
+/**
+ * The item-sales days the board reads: the cushion's oldest past window has its delivery 26 weeks (182 days) back and
+ * its cutoff up to 6 days before that, and its weekday means read the 8 weeks (56 days) before that cutoff.
+ */
+export const ITEM_SALES_DAYS = 182 + 6 + 56;
 /** The 8 weeks the weekday means, the coverage and the guest index read. */
 export const MEAN_DAYS = 56;
-/** Counts older than this are not read: the board would order the par for them anyway. */
-export const COUNT_DAYS = 90;
+/**
+ * How far back the latest count is read. A count older than 7 days still matters: the quantity is the par less what
+ * it counted, where no count at all orders the whole par. The bound only keeps the read small.
+ */
+export const COUNT_DAYS = 400;
 const FRESH_COUNT_DAYS = 7;
 /** The forecast window read: today and the 30 days after, the reader's 31-day limit. */
 const FORECAST_DAYS = 30;
@@ -29,22 +35,30 @@ export function townClock(ctx: TownwiseContext, location: LocationRecord): { tod
   return { today: localDay(now, timeZone), nowMinutes: localMinutes(now, timeZone) };
 }
 
+/** The board and the item-sales days it was built from (none when the setup cannot make one). */
+export interface LoadedBoard {
+  readonly answer: OrderAnswer;
+  readonly itemSales: readonly ItemSalesDay[];
+}
+
 /**
- * The location's board as of `today` and `nowMinutes` (the town's). Unavailable, naming what is missing, without a setup
- * or with a setup that has no supplier delivery or no item. `missing` on a board names 'item sales' when no day of the
- * last 8 weeks is covered, and 'a recent count' when no item of the setup was counted in the last 7 days.
+ * The location's board as of `today` and `nowMinutes` (the town's), with the item-sales days it read, so
+ * get_order_line shows the same days without a second read. Unavailable, naming what is missing, without a setup or
+ * with a setup that has no supplier delivery or no item. `missing` on a board names 'item sales' when no day of the
+ * last 8 weeks is covered, and 'a recent count' when no item of the setup was counted in the last 7 days. A forecast
+ * day marked closed expects no sales; a booked day (a private buyout) keeps the weekday mean, with no guest index.
  */
-export async function loadBoard(
+export async function loadBoardWithSales(
   ctx: TownwiseContext, scope: OrgScope, location: LocationRecord, today: string, nowMinutes: number,
-): Promise<OrderAnswer> {
+): Promise<LoadedBoard> {
   const { stores } = ctx;
   const setup = await stores.orderSetups.get(scope, location.id);
-  if (setup === null) return unavailable(['the supplier schedule', 'the items']);
+  if (setup === null) return { answer: unavailable(['the supplier schedule', 'the items']), itemSales: [] };
   const lacking = [
     ...(setup.suppliers.some((supplier) => supplier.deliveries.length > 0) ? [] : ['the supplier schedule']),
     ...(setup.items.length > 0 ? [] : ['the items']),
   ];
-  if (lacking.length > 0) return unavailable(lacking);
+  if (lacking.length > 0) return { answer: unavailable(lacking), itemSales: [] };
 
   const yesterday = addDays(today, -1);
   const [itemSales, counts, forecast, history, decisions, rules] = await Promise.all([
@@ -52,16 +66,20 @@ export async function loadBoard(
     stores.orderCounts.latest(scope, location.id, addDays(today, -COUNT_DAYS)),
     ctx.ports.forecasts.window(scope, location, { from: today, to: addDays(today, FORECAST_DAYS) }, today),
     stores.salesDays.days(scope, location.id, { from: addDays(today, -MEAN_DAYS), to: yesterday }),
-    stores.orders.listDecisions(scope, location.id),
+    // Every delivery on the board is today or later, so older edits are never shown.
+    stores.orders.listDecisions(scope, location.id, today),
     stores.orders.listRules(scope, location.id),
   ]);
-  const forecastGuests = new Map(forecast.days.flatMap((day) => (day.mid === null ? [] : [[day.date, day.mid] as const])));
+  const forecastGuests = new Map(forecast.days.flatMap((day) =>
+    (day.status === 'open' && day.mid !== null ? [[day.date, day.mid] as const] : [])));
+  const closedDays = new Set(forecast.days.flatMap((day) => (day.status === 'closed' ? [day.date] : [])));
   const plans = computeOrders({
     suppliers: setup.suppliers,
     items: setup.items,
     itemSales,
     counts,
     forecastGuests,
+    closedDays,
     historyGuests: history.map((day) => ({ date: day.date, guests: day.guests })),
     today,
     nowMinutes,
@@ -73,11 +91,19 @@ export async function loadBoard(
     ...(itemSales.some((day) => day.date >= recentSince) ? [] : ['item sales']),
     ...(setup.items.some((item) => (counts.get(item.id)?.date ?? '') >= freshSince) ? [] : ['a recent count']),
   ];
-  return withPreferences(
+  const answer = withPreferences(
     liveBoard(plans, missing),
-    decisions.map((row) => ({ itemId: row.itemId, delivery: row.delivery, quantity: row.quantity, reason: row.reason })),
-    rules.map((row) => ({ id: row.id, itemId: row.itemId, delta: row.delta, situation: row.situation, off: row.off })),
+    decisions.map((row) => ({ itemId: row.itemId, delivery: row.delivery, quantity: row.quantity, unit: row.unit, reason: row.reason })),
+    rules.map((row) => ({ id: row.id, itemId: row.itemId, delta: row.delta, unit: row.unit, situation: row.situation, off: row.off })),
   );
+  return { answer, itemSales };
+}
+
+/** The location's board as of `today` and `nowMinutes` (the town's); see loadBoardWithSales. */
+export async function loadBoard(
+  ctx: TownwiseContext, scope: OrgScope, location: LocationRecord, today: string, nowMinutes: number,
+): Promise<OrderAnswer> {
+  return (await loadBoardWithSales(ctx, scope, location, today, nowMinutes)).answer;
 }
 
 /** The board now, in the location's town. */
@@ -93,7 +119,7 @@ export interface SetupState {
   readonly coverage: ItemSalesCoverage | null;
   /** Per item id, its covered days with any servings in the 8 weeks before `today`. */
   readonly itemCoverage: Readonly<Record<string, number>>;
-  /** Per item id, its latest count in the 90 days before `today`; an item not counted then is left out. */
+  /** Per item id, its latest count in the 400 days before `today` (the board's read); an item not counted then is left out. */
   readonly counts: Readonly<Record<string, LatestCount>>;
 }
 

@@ -33,12 +33,18 @@ describe('order board', () => {
   });
 
   it('schedules the next Wednesday, Thursday delivery, and the Monday it covers through', () => {
-    expect(sampleSchedule('2026-11-11')).toEqual({ cutoff: '2026-11-11', delivery: '2026-11-12', coversThrough: '2026-11-16' });
-    expect(sampleSchedule('2026-11-12')).toEqual({ cutoff: '2026-11-18', delivery: '2026-11-19', coversThrough: '2026-11-23' });
+    expect(sampleSchedule('2026-11-11', 9 * 60)).toEqual({ cutoff: '2026-11-11', delivery: '2026-11-12', coversThrough: '2026-11-16' });
+    expect(sampleSchedule('2026-11-12', 9 * 60)).toEqual({ cutoff: '2026-11-18', delivery: '2026-11-19', coversThrough: '2026-11-23' });
   });
 
-  it('labels the preview: an order per sample supplier, every line at the par with low confidence', () => {
-    const board = sampleBoard('2026-11-11');
+  it('rolls the sample past Wednesday once its 2:00pm order-by has passed (E12)', () => {
+    expect(sampleSchedule('2026-11-11', 13 * 60 + 59).cutoff).toBe('2026-11-11');
+    expect(sampleSchedule('2026-11-11', 14 * 60)).toEqual({ cutoff: '2026-11-18', delivery: '2026-11-19', coversThrough: '2026-11-23' });
+    expect(sampleBoard('2026-11-11', 15 * 60).orders[0]?.cutoff).toBe('2026-11-18');
+  });
+
+  it('labels the preview: an order per sample supplier, every line at the par with low confidence and no other deal', () => {
+    const board = sampleBoard('2026-11-11', 9 * 60);
     expect(board.sample).toBe(true);
     expect(board.orders.map((order) => [order.supplier, order.lines.map((line) => line.name)])).toEqual([
       ['Sample brewery', ['Sample keg']],
@@ -48,7 +54,9 @@ describe('order board', () => {
       expect(order).toMatchObject({ cutoff: '2026-11-11', cutoffTime: '14:00', delivery: '2026-11-12', coversThrough: '2026-11-16' });
       expect(order.deadline).toBe('Order by Wed, Nov 11, 2:00pm. Thursday’s delivery lasts until Monday’s.');
       for (const line of order.lines) {
-        expect(line).toMatchObject({ sample: true, confidence: 'low', mu: null, sigma: null, orderUpTo: null, edit: null, rules: [] });
+        expect(line).toMatchObject({
+          sample: true, confidence: 'low', mu: null, sigma: null, orderUpTo: null, dealSize: null, alternative: null, edit: null, rules: [],
+        });
         expect(line.recommended).toBe(line.par);
         expect(line.supplier).toBe(order.supplier);
       }
@@ -74,11 +82,11 @@ describe('order board', () => {
   });
 
   it('leaves a sample unchanged by edits and rules', () => {
-    const sample = sampleBoard('2026-11-11');
+    const sample = sampleBoard('2026-11-11', 9 * 60);
     const touched = withPreferences(
       sample,
-      [{ itemId: 'sample-lager', delivery: '2026-11-12', quantity: 10, reason: 'a football weekend' }],
-      [{ id: 'r1', itemId: 'sample-lager', delta: 2, situation: 'a football weekend', off: false }],
+      [{ itemId: 'sample-lager', delivery: '2026-11-12', quantity: 10, unit: 'cases', reason: 'a football weekend' }],
+      [{ id: 'r1', itemId: 'sample-lager', delta: 2, unit: 'cases', situation: 'a football weekend', off: false }],
     );
     expect(touched).toBe(sample);
   });
@@ -86,9 +94,9 @@ describe('order board', () => {
   it('shows the latest edit for the order’s own delivery only, and the edit does not move the quantity', () => {
     const board = liveBoard([PLAN], []);
     const edited = withPreferences(board, [
-      { itemId: 'lager', delivery: '2026-11-19', quantity: 6, reason: 'newest' },
-      { itemId: 'lager', delivery: '2026-11-19', quantity: 5, reason: 'older' },
-      { itemId: 'seltzer', delivery: '2026-11-12', quantity: 4, reason: 'last week' },
+      { itemId: 'lager', delivery: '2026-11-19', quantity: 6, unit: 'cases', reason: 'newest' },
+      { itemId: 'lager', delivery: '2026-11-19', quantity: 5, unit: 'cases', reason: 'older' },
+      { itemId: 'seltzer', delivery: '2026-11-12', quantity: 4, unit: 'cases', reason: 'last week' },
     ], []);
     expect(lineOf(edited, 'lager')).toMatchObject({ recommended: 3, edit: { quantity: 6, reason: 'newest' }, rules: [] });
     expect(lineOf(edited, 'seltzer')).toMatchObject({ recommended: 1, edit: null });
@@ -97,10 +105,10 @@ describe('order board', () => {
   it('applies every active rule of an item, lists each with its own id, and never goes below 0', () => {
     const board = liveBoard([PLAN], []);
     const ruled = withPreferences(board, [], [
-      { id: 'r1', itemId: 'lager', delta: 2, situation: 'a football weekend', off: false },
-      { id: 'r2', itemId: 'lager', delta: -1, situation: 'the patio is closed.', off: false },
-      { id: 'r3', itemId: 'lager', delta: 5, situation: 'an old rule', off: true },
-      { id: 'r4', itemId: 'seltzer', delta: -3, situation: 'nobody drinks it', off: false },
+      { id: 'r1', itemId: 'lager', delta: 2, unit: 'cases', situation: 'a football weekend', off: false },
+      { id: 'r2', itemId: 'lager', delta: -1, unit: 'cases', situation: 'the patio is closed.', off: false },
+      { id: 'r3', itemId: 'lager', delta: 5, unit: 'cases', situation: 'an old rule', off: true },
+      { id: 'r4', itemId: 'seltzer', delta: -3, unit: 'cases', situation: 'nobody drinks it', off: false },
     ]);
     const lager = lineOf(ruled, 'lager');
     expect(lager?.recommended).toBe(4);
@@ -109,9 +117,41 @@ describe('order board', () => {
       { id: 'r2', delta: -1, situation: 'the patio is closed.' },
     ]);
     expect(lager?.why).toBe('Thursday’s delivery lasts until Monday’s. Includes 2 extra cases from your rule: a football weekend. '
-      + 'Leaves out 1 case from your rule: the patio is closed.');
+      + 'Leaves out 1 case from your rule: the patio is closed. With your rules, the order is 4 cases.');
     const seltzer = lineOf(ruled, 'seltzer');
     expect(seltzer).toMatchObject({ recommended: 0, rules: [{ id: 'r4', delta: -3, situation: 'nobody drinks it' }] });
+    expect(seltzer?.why).toBe('Thursday’s delivery lasts until Monday’s. Leaves out 3 cases from your rule: nobody drinks it. '
+      + 'With your rule, the order is 0 cases: only 1 case could come off.');
+  });
+
+  it('says what a rule did when 0 or 999 stopped it, and drops the other deal option a rule moved (E8, R6)', () => {
+    const dealt: SupplierOrderPlan = { ...PLAN, lines: [{ ...engineLine('lager', 'Lager', 3), alternative: 6, dealSize: 6 }, engineLine('big', 'Big', 997)] };
+    const ruled = withPreferences(liveBoard([dealt], []), [], [
+      { id: 'r1', itemId: 'lager', delta: -5, unit: 'cases', situation: 'slow week', off: false },
+      { id: 'r2', itemId: 'big', delta: 5, unit: 'cases', situation: 'a festival', off: false },
+    ]);
+    expect(lineOf(ruled, 'lager')).toMatchObject({ recommended: 0, alternative: null });
+    expect(lineOf(ruled, 'lager')?.why).toBe('Thursday’s delivery lasts until Monday’s. Leaves out 5 cases from your rule: slow week. '
+      + 'With your rule, the order is 0 cases: only 3 cases could come off.');
+    expect(lineOf(ruled, 'big')).toMatchObject({ recommended: 999, alternative: null });
+    expect(lineOf(ruled, 'big')?.why).toContain('Includes 5 extra cases from your rule: a festival. With your rule, the order is 999 cases: a line holds at most 999.');
+    // With no rule the other deal option stays.
+    expect(lineOf(withPreferences(liveBoard([dealt], []), [], []), 'lager')).toMatchObject({ recommended: 3, alternative: 6 });
+  });
+
+  it('leaves out an edit or a rule saved in another unit than the line’s now (A2)', () => {
+    // The setup changed the item from cases to bottles after the edit and the rule were saved.
+    const bottles: SupplierOrderPlan = { ...PLAN, lines: [{ ...engineLine('lager', 'Lager', 3), unit: 'bottles' }] };
+    const board = withPreferences(
+      liveBoard([bottles], []),
+      [{ itemId: 'lager', delivery: '2026-11-19', quantity: 6, unit: 'cases', reason: 'in cases' }],
+      [
+        { id: 'r1', itemId: 'lager', delta: 2, unit: 'cases', situation: 'in cases', off: false },
+        { id: 'r2', itemId: 'lager', delta: 12, unit: 'bottles', situation: 'in bottles', off: false },
+      ],
+    );
+    expect(lineOf(board, 'lager')).toMatchObject({ unit: 'bottles', recommended: 15, edit: null, rules: [{ id: 'r2', delta: 12, situation: 'in bottles' }] });
+    expect(lineOf(board, 'lager')?.why).not.toContain('in cases');
   });
 
   it('finds a line by delivery and item, and never invents one', () => {

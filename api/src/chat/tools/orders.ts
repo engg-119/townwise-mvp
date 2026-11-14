@@ -6,8 +6,8 @@ import { z } from 'zod';
 
 import { isoDate } from '../../dates.ts';
 import { findLine, type OrderBoard, type OrderLine, type SupplierOrder } from '../../orders/board.ts';
-import { addDays, clockTime, WEEKDAYS } from '../../orders/dates.ts';
-import { ITEM_SALES_DAYS, loadBoard, loadBoardNow, loadSetupState, townClock } from '../../orders/live.ts';
+import { clockTime, WEEKDAYS } from '../../orders/dates.ts';
+import { loadBoardNow, loadBoardWithSales, loadSetupState, townClock } from '../../orders/live.ts';
 import { weekdayOf } from '../../time-zones.ts';
 import type { ChatTool, ToolRun, ToolView } from './registry.ts';
 import { DATE, NO_INPUT, viewOf } from './shared.ts';
@@ -153,12 +153,12 @@ export const orderLineTool: ChatTool<OrderLineInput> = {
   async run(tc, input) {
     const { ctx, scope, location } = tc;
     const { today, nowMinutes } = townClock(ctx, location);
-    const board = await loadBoard(ctx, scope, location, today, nowMinutes);
+    // The days the board was built from, so the servings shown are the ones its line used, read once.
+    const { answer: board, itemSales: sales } = await loadBoardWithSales(ctx, scope, location, today, nowMinutes);
     if (!board.available) return { content: JSON.stringify(board) };
     const found = lineOf(board, input.itemId);
     if (found === null) return { content: JSON.stringify({ available: false, reason: NO_LINE }) };
     const { order, line } = found;
-    const sales = await ctx.stores.itemSales.days(scope, location.id, { from: addDays(today, -ITEM_SALES_DAYS), to: addDays(today, -1) });
     return {
       content: JSON.stringify({
         available: true, missing: board.missing, order: orderOf(order),

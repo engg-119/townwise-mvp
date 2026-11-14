@@ -94,7 +94,9 @@ function decisionSchema(): Schema<DecisionFields> {
     reason: { type: String, required: true },
     createdAt: { type: Date, required: true },
   }, { strict: true, versionKey: false, read: 'primary' });
-  schema.index({ orgId: 1, locationId: 1, createdAt: -1 });
+  // The board reads the edits of its deliveries (today or later); a rule reads an item's latest edit.
+  schema.index({ orgId: 1, locationId: 1, delivery: 1 });
+  schema.index({ orgId: 1, locationId: 1, itemId: 1, createdAt: -1 });
   return schema;
 }
 
@@ -202,8 +204,8 @@ export interface OrderCardKey {
 }
 
 export interface OrderStore {
-  /** Newest first. */
-  listDecisions(scope: OrgScope, locationId: string): Promise<DecisionRecord[]>;
+  /** The edits for deliveries on or after `since`, newest first. */
+  listDecisions(scope: OrgScope, locationId: string, since: string): Promise<DecisionRecord[]>;
   addDecision(scope: OrgScope, locationId: string, input: DecisionInput): Promise<DecisionRecord>;
   /** The newest decision for the item, or null. */
   latestDecision(scope: OrgScope, locationId: string, itemId: string): Promise<DecisionRecord | null>;
@@ -234,8 +236,8 @@ export function createOrderStore(connection: Connection): OrderStore {
   });
   const toCard = (doc: CardFields): OrderCardRecord => ({ proposalId: doc.proposalId, kind: doc.kind, status: doc.status });
   return {
-    async listDecisions(scope, locationId) {
-      const docs = await Decision.find(place(scope, locationId)).sort({ createdAt: -1, _id: -1 }).lean();
+    async listDecisions(scope, locationId, since) {
+      const docs = await Decision.find({ ...place(scope, locationId), delivery: trusted({ $gte: since }) }).sort({ createdAt: -1, _id: -1 }).lean();
       return docs.map(toDecision);
     },
     async addDecision(scope, locationId, input) {

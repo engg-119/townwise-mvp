@@ -12,7 +12,7 @@ import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, Principal } from '../access/policy.ts';
 import { findLine, sampleBoard } from '../orders/board.ts';
 import { addDays } from '../orders/dates.ts';
-import { loadBoardNow, townClock } from '../orders/live.ts';
+import { loadBoard, loadBoardNow, townClock } from '../orders/live.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { DecisionRecord } from '../stores/orders.ts';
 import { loadLocation, memberOf } from './locations.ts';
@@ -40,14 +40,15 @@ function notFound(): AppError {
   return new AppError(404, 'not_found', 'Not found');
 }
 
-/** GET .../orders. `?sample=true` is the labeled preview. */
+/** GET .../orders. `?sample=true` is the labeled preview. Every answer carries `today`, the town's date. */
 export async function getOrders(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
+  const { today, nowMinutes } = townClock(ctx, location);
   const board = req.query.sample === 'true'
-    ? sampleBoard(townClock(ctx, location).today)
-    : await loadBoardNow(ctx, caller.scope, location);
-  res.status(200).json(board);
+    ? sampleBoard(today, nowMinutes)
+    : await loadBoard(ctx, caller.scope, location, today, nowMinutes);
+  res.status(200).json({ ...board, today });
 }
 
 export interface DecisionInput {
