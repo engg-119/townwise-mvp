@@ -217,6 +217,19 @@ describe('the day columns at 1280', () => {
     expect(document.querySelectorAll('[role="grid"] [tabindex="0"]')).toHaveLength(1);
   });
 
+  test('PageDown from a leading day steps from the day’s own month, not the grid’s', () => {
+    // The week view hides the grid's month: Oct 28 in November's grid goes to Nov 28 (the month grid's keys give Dec 28).
+    const { onSelect } = renderWeek({ selected: '2026-10-28', month: '2026-11' });
+    fireEvent.keyDown(cell('2026-10-28'), { key: 'PageDown' });
+    expect(onSelect).toHaveBeenLastCalledWith('2026-11-28', true, '2026-11');
+  });
+
+  test('Ctrl+Home goes to the week’s Monday, not the month’s 1st', () => {
+    const { onSelect } = renderWeek({ selected: '2026-11-18' });
+    fireEvent.keyDown(cell('2026-11-18'), { key: 'Home', ctrlKey: true });
+    expect(onSelect).toHaveBeenLastCalledWith('2026-11-16', true, null);
+  });
+
   test('a click anywhere in a column, a card included, selects its day; Enter selects the focused one', () => {
     const { onSelect } = renderWeek();
     fireEvent.click(cell('2026-11-17'));

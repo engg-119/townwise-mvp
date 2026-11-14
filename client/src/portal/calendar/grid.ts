@@ -228,6 +228,17 @@ export function periodCard(card: Pick<WeekCard, 'kind'>): boolean {
   return card.kind === 'term' || card.kind === 'season';
 }
 
+/**
+ * A day's cards in short sentences, the words its web column's description reads: each card's hours when timed and
+ * its title, then its kind words (“6 pm to 9 pm, Private event, 70. Your note.”); null with no cards. A native agenda
+ * row is one accessible element, so its cards are heard only through this, as its hint.
+ */
+export function cardWords(cards: readonly WeekCard[]): string | null {
+  if (cards.length === 0) return null;
+  const sentence = (text: string): string => (/[.!?]$/.test(text) ? text : `${text}.`);
+  return cards.map((card) => `${sentence(card.hours === null ? card.title : `${card.hours}, ${card.title}`)} ${sentence(card.sub)}`).join(' ');
+}
+
 /** A day's head in the week view: “Mon 16”, or “Tue Dec 1” on a month's 1st. */
 export function weekHead(date: string): string {
   const day = Number(date.slice(8, 10));

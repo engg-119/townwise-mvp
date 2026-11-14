@@ -97,19 +97,28 @@ describe('the location pages', () => {
     expect(window.getComputedStyle(screen.getByTestId('skeleton-calendar-label')).width).toBe('216px');
   });
 
-  test('P28 Calendar: the header row holds a 120px block for the view switch, after the label and before the import block', async () => {
+  test('P28 Calendar: after the label the header row holds the view switch’s, the import button’s and the disclosure link’s blocks, in that order', async () => {
     renderPage('/locations/l1/calendar', hangLocal());
     await expectSkeleton('calendar', 'Loading the calendar');
     const label = screen.getByTestId('skeleton-calendar-label');
     const views = screen.getByTestId('skeleton-calendar-views');
     const block = views.firstElementChild;
-    expect(block === null ? null : window.getComputedStyle(block).width).toBe('120px');
+    expect(block === null ? null : window.getComputedStyle(block).width).toBe('130px');
     expect(label.compareDocumentPosition(views) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // A header row item of its own, beside the import block that follows it.
+    // Each a header row item of its own, as the switch, "Import a calendar file" and "How importing works" are in the
+    // page's row, at about their widths, so the skeleton wraps where the page does (at 375 the link takes a third line).
     const row = label.parentElement?.parentElement;
     expect(views.parentElement).toBe(row);
-    const next = views.nextElementSibling;
-    expect(next === null ? null : window.getComputedStyle(next).width).toBe('200px');
+    const importing = views.nextElementSibling;
+    expect(importing === null ? null : window.getComputedStyle(importing).width).toBe('175px');
+    expect(importing?.childElementCount).toBe(0);
+    // The link is its words alone (a 150px bar, no outline), and the row's last item.
+    const link = importing?.nextElementSibling ?? null;
+    const words = link?.firstElementChild ?? null;
+    expect(words === null ? null : window.getComputedStyle(words).width).toBe('150px');
+    expect(link?.nextElementSibling).toBeNull();
+    // As tall as the controls they stand for: 44px each.
+    for (const item of [block, importing, link]) expect(item === null ? null : window.getComputedStyle(item).minHeight).toBe('44px');
   });
 
   test('P28 Calendar at 375: the filters come after the month, and the label block is not fixed', async () => {

@@ -336,6 +336,18 @@ test('Next week and Previous week move a week; the grid’s month follows, so Mo
   expect(await screen.findByRole('grid', { name: 'December 2026' })).toBeTruthy();
 });
 
+test('at the 25 months’ ends Next week or Previous week is disabled in place, and only that one', async () => {
+  // The week after Nov 29 to Dec 5, 2027 lies wholly past the last month.
+  await renderAt('/locations/l1/calendar?day=2027-11-30&view=week', setup().api, 'Nov 29 to Dec 5, 2027');
+  expect(screen.getByRole('button', { name: 'Next week' }).getAttribute('aria-disabled')).toBe('true');
+  expect(screen.getByRole('button', { name: 'Previous week' }).getAttribute('aria-disabled')).not.toBe('true');
+  cleanup();
+  // The week before Oct 27 to Nov 2, 2025 lies wholly before the first.
+  await renderAt('/locations/l1/calendar?day=2025-11-01&view=week', setup().api, 'Oct 27 to Nov 2, 2025');
+  expect(screen.getByRole('button', { name: 'Previous week' }).getAttribute('aria-disabled')).toBe('true');
+  expect(screen.getByRole('button', { name: 'Next week' }).getAttribute('aria-disabled')).not.toBe('true');
+});
+
 test('Week then Month returns to the grid you left: a trailing day keeps November’s grid', async () => {
   const { api } = setup();
   await renderAt('/locations/l1/calendar?day=2026-11-21', api);

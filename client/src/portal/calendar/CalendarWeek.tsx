@@ -1,7 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
-import { CARD_MARK, headLine, periodCard, weekHead, type InertCell, type MonthBounds, type WeekCard, type WeekDay, type WeekSlot } from './grid';
+import { CARD_MARK, cardWords, headLine, periodCard, weekHead, type InertCell, type MonthBounds, type WeekCard, type WeekDay, type WeekSlot } from './grid';
 import { statusWord, type TooltipLines } from './model';
 
 // The Calendar's week view (P28, spec 16.3, step 2): the selected day's week, Monday to Sunday, always one of the shown
@@ -76,10 +76,13 @@ function Head(props: { day: WeekDay }): React.JSX.Element {
 
 function Row(props: { day: WeekDay; selected: boolean; onSelect: (date: string) => void }): React.JSX.Element {
   const { day } = props;
+  // One accessible element, so the cards inside it are heard through its hint (none on a day without cards).
+  const hint = cardWords(day.cards);
   return (
     <Pressable
       role="button"
       accessibilityLabel={day.label}
+      {...(hint === null ? {} : { accessibilityHint: hint })}
       accessibilityState={{ selected: props.selected }}
       onPress={() => { props.onSelect(day.date); }}
       style={[styles.row, props.selected ? styles.selected : null]}

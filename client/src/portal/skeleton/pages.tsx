@@ -420,10 +420,11 @@ export function HomeSkeleton(props: LabelProps): React.JSX.Element {
 
 /**
  * P28 Calendar: the header row (Today, the two arrows, the label's 216px, flexible at 640px and below as the page's
- * is, the Month and Week switch's 120px, and the import control), the filters' legend over four chips where the page puts them for the width (heading the
- * grid's column from 641px, so from 1024px the panel beside it starts level with the legend; after the grid below),
- * then the month's grid, always six weeks of seven days, each cell as tall as the loaded grid's (grid.ts cellSize),
- * with the day panel beside it from 1024px and under it below.
+ * is, the Month and Week switch's 130px, the import button's 175px and the "How importing works" link's 150px, as
+ * the row's own items, so it wraps where the page's does), the filters' legend over four chips where the page puts
+ * them for the width (heading the grid's column from 641px, so from 1024px the panel beside it starts level with the
+ * legend; after the grid below), then the month's grid, always six weeks of seven days, each cell as tall as the
+ * loaded grid's (grid.ts cellSize), with the day panel beside it from 1024px and under it below.
  */
 export function CalendarSkeleton(props: LabelProps): React.JSX.Element {
   const { desktop, phone, width } = useBreakpoint();
@@ -438,7 +439,7 @@ export function CalendarSkeleton(props: LabelProps): React.JSX.Element {
   return (
     <Skeleton name="calendar" label={props.label}>
       <View style={styles.calendar}>
-        <View style={[styles.calendarRow, desktop ? styles.calendarRowWide : null]}>
+        <View testID="skeleton-calendar-row" style={[styles.calendarRow, desktop ? styles.calendarRowWide : null]}>
           <View style={[styles.switcher, desktop ? styles.switcherWide : styles.switcherNarrow, phone ? styles.switcherPhone : null]}>
             <SkeletonButton link width={44} />
             <SkeletonButton width={44} />
@@ -447,9 +448,17 @@ export function CalendarSkeleton(props: LabelProps): React.JSX.Element {
               <SkeletonBlock height={theme.type.ui.fontSize} width={128} />
             </View>
           </View>
-          {/* The Month and Week switch, then the import button. */}
-          <View testID="skeleton-calendar-views"><SkeletonButton width={120} /></View>
-          <SkeletonButton width={200} />
+          {/* The Month and Week switch, then on web the import button and "How importing works", each about as wide as
+              the page's; native has no file picker, so its import is one full-width line (IcsImport.tsx). */}
+          <View testID="skeleton-calendar-views"><SkeletonButton width={130} /></View>
+          {Platform.OS === 'web' ? (
+            <>
+              <SkeletonButton width={175} />
+              <SkeletonButton link width={150} />
+            </>
+          ) : (
+            <View testID="skeleton-calendar-import-line" style={styles.calendarImportLine}><SkeletonText type="mono" width="80%" /></View>
+          )}
         </View>
         <View style={desktop ? styles.split : styles.stacked}>
           <View style={[styles.calendarColumn, desktop ? styles.wide : null]}>
@@ -688,6 +697,7 @@ const styles = StyleSheet.create({
   calendar: { gap: theme.space[6] },
   calendarRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space[3], rowGap: theme.space[4] },
   calendarRowWide: { justifyContent: 'flex-end' },
+  calendarImportLine: { flexBasis: '100%' },
   switcher: { flexDirection: 'row', alignItems: 'center', columnGap: theme.space[3], minHeight: 44 },
   switcherWide: { marginRight: 'auto' },
   switcherNarrow: { flexBasis: '100%' },

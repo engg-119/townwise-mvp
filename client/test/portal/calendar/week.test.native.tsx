@@ -67,6 +67,16 @@ test('pressing a row selects its day', async () => {
   expect(onSelect).toHaveBeenCalledWith('2026-11-17');
 });
 
+test('a row is one accessible element, so its hint reads its cards, a timed one’s hours included; a day with none has no hint', async () => {
+  await renderWeek(375);
+  const rows = screen.getAllByRole('button');
+  const hint = rows[5]?.props.accessibilityHint as unknown;
+  expect(typeof hint).toBe('string');
+  expect(hint).toContain('Dartmouth home football. Town event.');
+  expect(hint).toContain('6 pm to 9 pm, Private event, 70. Your note.');
+  expect(rows[0]?.props.accessibilityHint).toBeUndefined();
+});
+
 test('each row is its head line over the day’s full cards, all day first, then by time', async () => {
   await renderWeek(375);
   const saturday = screen.getAllByRole('button')[5];

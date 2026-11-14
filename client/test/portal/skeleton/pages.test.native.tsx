@@ -118,6 +118,15 @@ describe('the location pages', () => {
     expect(screen.getAllByTestId('skeleton-calendar-panel', { hidden: true })).toHaveLength(1);
   });
 
+  test('P28 Calendar: after the view switch the header row holds one full-width line, as native’s import line is', async () => {
+    await renderApp('/locations/l1/calendar', hangLocal());
+    await expectSkeleton('calendar', 'Loading the calendar');
+    // Native has no file picker, so IcsImport.tsx is a full-width text line, not web's button and disclosure link.
+    const row = screen.getByTestId('skeleton-calendar-row', { hidden: true });
+    const line = within(row).getByTestId('skeleton-calendar-import-line', { hidden: true });
+    expect(line.props.style).toEqual(expect.objectContaining({ flexBasis: '100%' }));
+  });
+
   test('P29 Business rules: the add form and a few rows', async () => {
     await renderApp('/locations/l1/rules', hangLocal());
     await expectSkeleton('rules', 'Loading business rules');

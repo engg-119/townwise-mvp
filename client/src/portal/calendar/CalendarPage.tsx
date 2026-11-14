@@ -42,18 +42,18 @@ import {
 // Previous and Next move the day a week (grid.ts stepWeek). The grid's month is this page's own state, not the URL's:
 // a leading or trailing day is selected in place, and the grid moves only on Previous, Next, Today, PageUp and
 // PageDown, or when `?day=` leaves its 42 days (a key past the first or last row, browser back or forward, a link).
-// It reads five existing
-// member routes: the notes with the business rules (D31; the day lists the rules whose schedule covers it, edited on
-// Rules), and over the grid's range (gridRange) its town calendar, its stored days (the past part only) and its
-// forecast (one read of at most 42 days). On a month change the new grid shows at once, dimmed, with the days the
-// kept reads cover and the rest pending until the new reads land. The forecast read stands alone: when it fails the page still shows, with Try again for it only. After a
-// note is saved or deleted the notes and the forecast read again, since the API adjusts the forecast from notes on
-// read (spec 14.5) and the client never adds a note's guests itself; meanwhile the old figures stay, dimmed and
-// aria-busy, and a save's notice says “Saved.” until the new read says what the note did to the day. Under view-as the page shows in full with its writes disabled in place. The owner's calendar file
-// (web only, spec 16.3 P28 and 17) is read in the browser and held in this page's state only, so it is gone on
-// reload or on leaving; importing one turns "Your calendar" on, and Make a note opens the form from one of its events
-// with its dates and hours but never its title. Importing is allowed under view-as, since it sends nothing; Make a
-// note is disabled there. "Today" is the device's date.
+// It reads five existing member routes: the notes with the business rules (D31; the day lists the rules whose
+// schedule covers it, edited on Rules), and over the grid's range (gridRange) its town calendar, its stored days (the
+// past part only) and its forecast (one read of at most 42 days). On a month change the new grid shows at once,
+// dimmed, with the days the kept reads cover and the rest pending until the new reads land. The forecast read stands
+// alone: when it fails the page still shows, with Try again for it only. After a note is saved or deleted the notes
+// and the forecast read again, since the API adjusts the forecast from notes on read (spec 14.5) and the client never
+// adds a note's guests itself; meanwhile the old figures stay, dimmed and aria-busy, and a save's notice says
+// “Saved.” until the new read says what the note did to the day. Under view-as the page shows in full with its writes
+// disabled in place. The owner's calendar file (web only, spec 16.3 P28 and 17) is read in the browser and held in
+// this page's state only, so it is gone on reload or on leaving; importing one turns "Your calendar" on, and Make a
+// note opens the form from one of its events with its dates and hours but never its title. Importing is allowed under
+// view-as, since it sends nothing; Make a note is disabled there. "Today" is the device's date.
 
 const READ_ONLY_ID = 'calendar-ro';
 /** The grid's slot: on web, focus that was on a cell the last render removed goes to the selected cell. */

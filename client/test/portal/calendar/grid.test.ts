@@ -1,5 +1,5 @@
 import {
-  buildGrid, buildWeek, cellSize, entryLines, GRID_DAYS, gridDays, gridHeight, gridMonthFor, gridMove, gridRange, inGrid, pastRangeFor, shownFor,
+  buildGrid, buildWeek, cardWords, cellSize, entryLines, GRID_DAYS, gridDays, gridHeight, gridMonthFor, gridMove, gridRange, inGrid, pastRangeFor, shownFor,
   stepWeek, weekLabel, weekOf, type DayCell, type GridSlot, type WeekCard, type WeekDay, type WeekSlot,
 } from '../../../src/portal/calendar/grid';
 import {
@@ -426,6 +426,19 @@ describe('buildWeek', () => {
       ['2027-11-29', 'day'], ['2027-11-30', 'day'], ['2027-12-01', 'inert'], ['2027-12-02', 'inert'], ['2027-12-03', 'inert'], ['2027-12-04', 'inert'], ['2027-12-05', 'inert'],
     ]);
     expect(slots.find((slot) => slot.date === '2027-12-03')).toEqual({ kind: 'inert', date: '2027-12-03', label: 'Fri, Dec 3, 2027. Outside the months the calendar shows.' });
+  });
+
+  test('cardWords: each card’s hours when timed, its title, then its kind words, as short sentences; null with no cards', () => {
+    const input = reads({
+      events: [townEvent({ start: SATURDAY, title: 'Fall term', kind: 'term', end: '2026-11-24' }), townEvent({ start: SATURDAY, title: 'Dartmouth home football' })],
+      notes: [note({ startDate: SATURDAY, expectedGuests: 70, startTime: '18:00', endTime: '21:00' })],
+      imported: [imported({ title: 'Open mic!', startTime: '09:00', endTime: '10:00' })],
+    });
+    expect(cardWords(cards(input))).toBe(
+      'Dartmouth home football. Town event. Fall term. Term, Nov 21 to 24. 9 am to 10 am, Open mic! Your calendar. 6 pm to 9 pm, Private event, 70. Your note.',
+    );
+    expect(cardWords(cards(reads()))).toBeNull();
+    expect(cardWords([])).toBeNull();
   });
 
   test('days the kept reads don’t cover are pending, with no cards', () => {

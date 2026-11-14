@@ -303,7 +303,7 @@ On web from 641px the week view SHALL show the selected day's week, Monday to Su
 - **THEN** the week view's box is at least 658px tall and the page height does not change for a week whose cards fit
 
 ### Requirement: The week view is an agenda on phones and on native
-At 640px and below on web, and at every width on native, the week view SHALL be an agenda of 7 rows, each the day's head line (date, figure, range or status) above full-width cards. On web it SHALL be a `role="grid"` named by the week label with 7 rows of one gridcell each, carrying the same label and description as a column, where Up and Down move one day. On native each row SHALL be a pressable element with the day's label and selected state, and pressing it SHALL select the day.
+At 640px and below on web, and at every width on native, the week view SHALL be an agenda of 7 rows, each the day's head line (date, figure, range or status) above full-width cards. On web it SHALL be a `role="grid"` named by the week label with 7 rows of one gridcell each, carrying the same label and description as a column, where Up and Down move one day. On native each row SHALL be a pressable element with the day's label and selected state, and with its cards' words (a timed card's hours, the title, the kind words) as its hint, none on a day without cards, and pressing it SHALL select the day.
 
 #### Scenario: Web at phone width
 - **WHEN** the week view shows at 600px
@@ -356,7 +356,7 @@ The header SHALL hold a group named "Calendar view" with "Month" and "Week" butt
 - **THEN** Week has a checked state and the agenda shows the 7 days of Nov 16 to 22, 2026
 
 ### Requirement: Loading keeps the loaded page's shape
-While the first reads load, the Calendar SHALL show its skeleton with "Loading the calendar": the header row's blocks (Today, the two arrows, a 216px label that is flexible at 640px and below, the view switch and the import button), the filters' legend and chips where the page puts them for the width (in the left column above the grid from 1024px), a month grid of exactly 6 rows of 7 cells whose fixed height is the loaded cell height for the width (104px, 64px or 52px), and the day panel, beside the grid from 1024px and under it below. Home's skeleton month SHALL look as it does today.
+While the first reads load, the Calendar SHALL show its skeleton with "Loading the calendar": the header row's blocks (Today, the two arrows, a 216px label that is flexible at 640px and below, the view switch, the import button and the "How importing works" link, each about as wide as the page's (on native, one full-width line in their place, as its import line is), so the skeleton's header wraps where the page's does), the filters' legend and chips where the page puts them for the width (in the left column above the grid from 1024px), a month grid of exactly 6 rows of 7 cells whose fixed height is the loaded cell height for the width (104px, 64px or 52px), and the day panel, beside the grid from 1024px and under it below. Home's skeleton month SHALL look as it does today.
 
 #### Scenario: Skeleton cells match the grid
 - **WHEN** the Calendar loads at 1280px
