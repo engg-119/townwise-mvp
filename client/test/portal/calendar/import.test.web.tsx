@@ -17,10 +17,10 @@ const ICS = [
   'END:VCALENDAR', '',
 ].join('\r\n');
 
-function renderPicker(pending = false): { onFile: jest.Mock; onRefusal: jest.Mock; input: HTMLInputElement } {
+function renderPicker(pending = false, readOnlyId: string | null = null): { onFile: jest.Mock; onRefusal: jest.Mock; input: HTMLInputElement } {
   const onFile = jest.fn();
   const onRefusal = jest.fn();
-  render(<IcsImport describedBy="p1-help" pending={pending} onFile={onFile} onRefusal={onRefusal} />);
+  render(<IcsImport describedBy="p1-help" pending={pending} readOnlyId={readOnlyId} onFile={onFile} onRefusal={onRefusal} />);
   const input = document.querySelector<HTMLInputElement>('input[type="file"]');
   if (input === null) throw new Error('no file input');
   return { onFile, onRefusal, input };
@@ -79,6 +79,16 @@ test('a file that can’t be read calls onRefusal with its words', async () => {
   fireEvent.change(input, { target: { files: [fileOf('kitchen.ics', () => Promise.reject(new Error('gone')))] } });
   await waitFor(() => { expect(onRefusal).toHaveBeenCalledWith(CALENDARS_COPY.unreadable); });
   expect(onFile).not.toHaveBeenCalled();
+});
+
+test('under view-as the button is disabled in place, described by the help and the read-only line, and opens nothing', () => {
+  const { input } = renderPicker(false, 'p1-ro');
+  const button = screen.getByRole('button', { name: 'Import a calendar file' });
+  expect(button.getAttribute('aria-disabled')).toBe('true');
+  expect(button.getAttribute('aria-describedby')).toBe('p1-help p1-ro');
+  const opened = jest.spyOn(input, 'click').mockImplementation(() => undefined);
+  fireEvent.click(button);
+  expect(opened).not.toHaveBeenCalled();
 });
 
 test('while the panel posts a file the button reads “Importing…”, disabled in place', () => {

@@ -1,5 +1,6 @@
 import { useRef } from 'react';
 
+import { ids } from '../ui/aria';
 import { Button } from '../ui/Button';
 import { CALENDARS_COPY } from './calendars';
 import type { IcsImportProps } from './IcsImport';
@@ -10,7 +11,8 @@ import type { IcsImportProps } from './IcsImport';
 // Apple Calendar, and the input is cleared after each choice so the same file can be chosen again. A file over 1 MB is
 // refused unread; anything else is read with File.text() and handed on as its name and text. The client parses
 // nothing: the API reads the file (api/src/calendar/ics.ts) and keeps its events. While the panel posts it the button
-// reads "Importing…", disabled in place. Native shows a line instead (IcsImport.tsx). The 1 MB awaits the team's
+// reads "Importing…", disabled in place; under view-as it is disabled in place too, described by the panel's read-only
+// line as well, since importing now writes. Native shows a line instead (IcsImport.tsx). The 1 MB awaits the team's
 // sign-off (the [CONFIRM] in api/src/calendar/ics.ts).
 
 const MAX_BYTES = 1024 * 1024;
@@ -50,8 +52,8 @@ export function IcsImport(props: IcsImportProps): React.JSX.Element {
       <Button
         variant="outline"
         label={props.pending ? 'Importing…' : 'Import a calendar file'}
-        disabled={props.pending}
-        describedBy={props.describedBy}
+        disabled={props.pending || props.readOnlyId !== null}
+        describedBy={ids(props.describedBy, props.readOnlyId) ?? props.describedBy}
         onPress={() => { input.current?.click(); }}
       />
     </>

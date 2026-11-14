@@ -120,15 +120,15 @@ export function SkeletonField(props: { helper?: boolean; height?: number; width?
 }
 
 /** A button (44px): an outline, or for a text link its words alone. */
-export function SkeletonButton(props: { width?: number; link?: boolean }): React.JSX.Element {
+export function SkeletonButton(props: { width?: number; link?: boolean; testID?: string }): React.JSX.Element {
   if (props.link === true) {
     return (
-      <View style={[styles.button, styles.line]}>
+      <View testID={props.testID} style={[styles.button, styles.line]}>
         <View style={[styles.fill, { height: theme.type.ui.fontSize, width: props.width ?? 120 }]} />
       </View>
     );
   }
-  return <View style={[styles.button, styles.outline, { width: props.width ?? 160 }]} />;
+  return <View testID={props.testID} style={[styles.button, styles.outline, { width: props.width ?? 160 }]} />;
 }
 
 export interface SkeletonColumn {

@@ -430,7 +430,10 @@ test('a calendar file is posted and kept, its events show once read again, and M
   fake.ownerEvents = [DINNER, AWAY];
   await act(async () => { answer.resolve({ calendar: KITCHEN }); await Promise.resolve(); });
   expect(await within(calendarsPanel()).findByText('Added kitchen: 2 events.')).toBeTruthy();
-  expect(within(calendarsPanel()).getByText('1 repeating event wasn’t imported. Add it as a note with weekdays.')).toBeTruthy();
+  // The messages line; the calendar's row says the same of its repeating event once the list is read again.
+  expect(within(calendarsPanel()).getAllByRole('status').map((line) => line.textContent)).toEqual([
+    'Added kitchen: 2 events.', '1 repeating event wasn’t imported. Add it as a note with weekdays.',
+  ]);
   await waitFor(() => { expect(screen.getByRole('button', { name: 'Your calendars (1)' })).toBeTruthy(); });
   await waitFor(() => { expect(cell('2026-11-21').textContent).toContain('Smith rehearsal dinner'); });
   // The list and the grid's stored events are read again; stored events never change the forecast, so neither it nor
@@ -610,13 +613,11 @@ test('a failed stored-events read leaves the grid showing with Try again for the
   expect(screen.queryByRole('grid')).toBeNull();
 });
 
-test('view-as: Add, Edit, Delete and Make a note are disabled with the read-only line', async () => {
+test('view-as: Add, Edit, Delete, Make a note and the calendars panel’s actions are disabled with the read-only line', async () => {
   const party = noteOf('n1', { kind: 'private_event', effect: 'more_guests', startDate: '2026-11-21', endDate: '2026-11-21', expectedGuests: 40 });
-  const { api } = setup(viewAsMe(ACCESS.admin), { notes: [party] });
+  const bookings = ownerCalendar({ id: 'c2', label: 'Bookings', kind: 'link', host: 'calendar.google.com', eventCount: 1 });
+  const { api } = setup(viewAsMe(ACCESS.admin), { notes: [party], calendars: [KITCHEN, bookings], ownerEvents: [DINNER, AWAY] });
   await renderAt('/locations/l1/calendar?day=2026-11-21', api);
-  // Importing reads a file in the staff member's own browser and sends nothing, so it is allowed.
-  chooseFile(icsFile(ICS));
-  expect(await screen.findByText('2 events from kitchen.ics.')).toBeTruthy();
   for (const name of ['Add an event', 'Edit Private event note, Nov 21, 2026', 'Delete Private event note, Nov 21, 2026', 'Make a note from Smith rehearsal dinner']) {
     const control = within(panel()).getByRole('button', { name });
     expect(control.getAttribute('aria-disabled')).toBe('true');
@@ -625,7 +626,33 @@ test('view-as: Add, Edit, Delete and Make a note are disabled with the read-only
   }
   expect(document.getElementById('calendar-ro')?.textContent).toBe('Read-only while viewing as gm@example.org.');
   expect(within(panel()).queryByRole('button', { name: 'Save note' })).toBeNull();
+
+  // The panel opens and lists the calendars; its writes stay in place, disabled, described by its own read-only line.
+  fireEvent.click(screen.getByRole('button', { name: 'Your calendars (2)' }));
+  const calendars = calendarsPanel();
+  expect(within(calendars).getByText('kitchen')).toBeTruthy();
+  expect(within(calendars).getByText('Link, calendar.google.com, 1 event')).toBeTruthy();
+  const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+  if (input === null) throw new Error('no file input');
+  const picked = jest.spyOn(input, 'click').mockImplementation(() => undefined);
+  const controls = ['Import a calendar file', 'Add a link', 'Refresh now: Bookings', 'Remove kitchen', 'Remove Bookings']
+    .map((name) => within(calendars).getByRole('button', { name }));
+  const line = within(calendars).getByText('Read-only while viewing as gm@example.org.');
+  expect(line.id).not.toBe('');
+  expect(line.id).not.toBe('calendar-ro');
+  for (const control of controls) {
+    expect(control.getAttribute('aria-disabled')).toBe('true');
+    expect(control.getAttribute('aria-describedby')?.split(' ')).toContain(line.id);
+    fireEvent.click(control);
+  }
+  expect(picked).not.toHaveBeenCalled();
+  expect(within(calendars).queryByLabelText('Calendar link')).toBeNull();
   expect(screen.queryByRole('dialog')).toBeNull();
+  // How importing works is no write: it still shows the help.
+  const toggle = within(calendars).getByRole('button', { name: 'How importing works' });
+  expect(toggle.getAttribute('aria-disabled')).toBeNull();
+  fireEvent.click(toggle);
+  expect(toggle.getAttribute('aria-expanded')).toBe('true');
   expect(writes(api)).toEqual([]);
 });
 

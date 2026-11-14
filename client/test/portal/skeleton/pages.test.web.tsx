@@ -93,11 +93,11 @@ describe('the location pages', () => {
     const panel = screen.getByTestId('skeleton-calendar-panel');
     expect(column?.contains(panel)).toBe(false);
     expect(column?.parentElement?.contains(panel)).toBe(true);
-    // The header row: a 216px label block between the arrows and the import block.
+    // The header row: a 216px label block between the arrows and the view switch's block.
     expect(window.getComputedStyle(screen.getByTestId('skeleton-calendar-label')).width).toBe('216px');
   });
 
-  test('P28 Calendar: after the label the header row holds the view switch’s, the import button’s and the disclosure link’s blocks, in that order', async () => {
+  test('P28 Calendar: after the label the header row holds the view switch’s 130px block and the Your calendars button’s 170px block, the row’s last item', async () => {
     renderPage('/locations/l1/calendar', hangLocal());
     await expectSkeleton('calendar', 'Loading the calendar');
     const label = screen.getByTestId('skeleton-calendar-label');
@@ -105,20 +105,18 @@ describe('the location pages', () => {
     const block = views.firstElementChild;
     expect(block === null ? null : window.getComputedStyle(block).width).toBe('130px');
     expect(label.compareDocumentPosition(views) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // Each a header row item of its own, as the switch, "Import a calendar file" and "How importing works" are in the
-    // page's row, at about their widths, so the skeleton wraps where the page does (at 375 the link takes a third line).
+    // Each a header row item of its own, as the switch and "Your calendars" are in the page's row, at about their
+    // widths, so the skeleton wraps where the page does (one line at 1024, two at 375). The panel is closed on load, so
+    // nothing stands for it.
     const row = label.parentElement?.parentElement;
     expect(views.parentElement).toBe(row);
-    const importing = views.nextElementSibling;
-    expect(importing === null ? null : window.getComputedStyle(importing).width).toBe('175px');
-    expect(importing?.childElementCount).toBe(0);
-    // The link is its words alone (a 150px bar, no outline), and the row's last item.
-    const link = importing?.nextElementSibling ?? null;
-    const words = link?.firstElementChild ?? null;
-    expect(words === null ? null : window.getComputedStyle(words).width).toBe('150px');
-    expect(link?.nextElementSibling).toBeNull();
+    const calendars = screen.getByTestId('skeleton-calendar-calendars');
+    expect(views.nextElementSibling).toBe(calendars);
+    expect(window.getComputedStyle(calendars).width).toBe('170px');
+    expect(calendars.childElementCount).toBe(0);
+    expect(calendars.nextElementSibling).toBeNull();
     // As tall as the controls they stand for: 44px each.
-    for (const item of [block, importing, link]) expect(item === null ? null : window.getComputedStyle(item).minHeight).toBe('44px');
+    for (const item of [block, calendars]) expect(item === null ? null : window.getComputedStyle(item).minHeight).toBe('44px');
   });
 
   test('P28 Calendar at 375: the filters come after the month, and the label block is not fixed', async () => {

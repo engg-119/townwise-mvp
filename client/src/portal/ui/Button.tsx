@@ -3,6 +3,7 @@ import { Link } from 'expo-router';
 import { Platform, Pressable, StyleSheet, Text, View, type PressableStateCallbackType } from 'react-native';
 
 import { theme } from '../../theme';
+import { useFocusOnMount } from '../places/focus';
 import { webAria } from './aria';
 import { useHover } from './hover';
 
@@ -35,6 +36,11 @@ export interface ButtonProps extends CommonProps {
   expanded?: boolean;
   /** The id (nativeID) of the region the button shows and hides, as aria-controls (web). */
   controls?: string;
+  /**
+   * Takes focus as it mounts (web; the screen reader on native, places/focus.ts), for a button that comes back in place
+   * of the part that had focus, as "Add a link" after its form's Cancel. Only the value at mount counts.
+   */
+  focusOnMount?: boolean;
 }
 
 // react-native-web reports hover in the press state; React Native's types do not declare it.
@@ -89,6 +95,7 @@ export function Button(props: ButtonProps): React.JSX.Element {
   const variant = props.variant ?? 'primary';
   const disabled = props.disabled === true;
   const ref = useWebAriaDisabled(disabled);
+  useFocusOnMount(props.focusOnMount === true, ref);
   return (
     <Pressable
       ref={ref}

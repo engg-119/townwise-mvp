@@ -51,7 +51,9 @@ import { YourCalendars } from './YourCalendars';
 // (one read of at most 42 days each). On a month change the new grid shows at once, dimmed, with the days the kept
 // reads cover and the rest pending until the new reads land. The forecast read stands alone, and the stored events'
 // failure is caught inside the grid's read: either failing leaves the page showing, without them, with Try again for
-// that read only. After a note is saved or deleted the notes and the forecast read again, since the API adjusts the
+// that read only. A failed list read shows its own notice, whose Try again reads the list and the stored events again,
+// and the stored events' notice shows only while the list answered with a calendar, so at most one of the two shows.
+// After a note is saved or deleted the notes and the forecast read again, since the API adjusts the
 // forecast from notes on read (spec 14.5) and the client never adds a note's guests itself; meanwhile the old figures
 // stay, dimmed and aria-busy, and a save's notice says “Saved.” until the new read says what the note did to the day.
 // Under view-as the page shows in full with its writes disabled in place. The location's own calendars (spec 16.3 P28
@@ -320,7 +322,10 @@ function CalendarView(): React.JSX.Element {
       onPrevious: () => { toMonth(stepMonth(month, -1)); }, onNext: () => { toMonth(stepMonth(month, 1)); },
     };
   const failedFor = view === 'week' ? dayMonthRange(monday, addDays(monday, 6)) : MONTH_NAMES[Number(month.slice(5, 7)) - 1] ?? '';
-  const storedFailed = shown.storedFailed && shown.month === month;
+  // One calendars notice at a time: a failed list read says so (the panel says it too, when open); a failed
+  // stored-events read only while the list answered with a calendar, since with none there are no events to miss.
+  const listFailed = calendars.error !== null;
+  const storedFailed = hasCalendars && shown.storedFailed && shown.month === month;
 
   const filtersNode = <CalendarFilters filters={filters} onFilter={toggle} imported={hasCalendars} />;
   const formNode = form === null ? null : (
@@ -372,12 +377,14 @@ function CalendarView(): React.JSX.Element {
           <YourCalendars
             calendars={calendars.data}
             failed={calendars.error !== null}
+            reading={calendars.busy}
             onRetry={readCalendarsAgain}
             onChanged={onCalendarsChanged}
           />
         )}
       />
       {forecastFailed ? <ErrorNotice message={`Couldn’t load the forecast for ${failedFor}. Try again.`} onRetry={forecast.reload} /> : null}
+      {listFailed ? <ErrorNotice message="Couldn’t load your calendars. Try again." onRetry={readCalendarsAgain} /> : null}
       {storedFailed ? <ErrorNotice message="Couldn’t load the events from your calendars. Try again." onRetry={monthData.reload} /> : null}
       <View style={desktop ? styles.split : styles.stacked}>
         {/* From 641px the filters head the grid's column, so from 1024px the panel beside it starts level with them. */}

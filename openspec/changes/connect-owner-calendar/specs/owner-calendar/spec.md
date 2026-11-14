@@ -98,6 +98,13 @@ The Calendar page (P28) SHALL show the stored events as "Your calendar" on web a
 #### Scenario: Remove
 - **WHEN** a member presses "Remove" on a calendar and confirms "Remove calendar"
 - **THEN** the page deletes it, says "Removed {name}.", and its events leave the Calendar after the list and the grid's stored events are read again
+- **AND** until the list read again answers, every row's "Refresh now" and "Remove" are disabled in place, so the removed calendar's row, still listed, can't be removed a second time
+
+#### Scenario: Focus follows the panel on web
+- **WHEN** on web a member presses "Add a link" and then the form's Cancel
+- **THEN** focus moves to the form's "Name" field, then back to "Add a link"
+- **AND** when a link is added, when "Remove calendar" removes a calendar, and when Refresh now or Remove answers 404, focus moves to the messages line that says so, since each takes away the control that had it; a refused link leaves focus on "Add link"
+- **AND** when a link add or a Refresh now answers after focus has left the panel, focus stays where it went
 
 #### Scenario: View-as is read-only
 - **WHEN** staff viewing as a member open the panel
@@ -117,8 +124,9 @@ The Calendar page (P28) SHALL show the stored events as "Your calendar" on web a
 - **AND** selecting a day or switching to the week view reads no stored events again, and Next month reads `from=2026-11-30&to=2027-01-10`
 
 #### Scenario: A failed calendars read leaves the calendar showing
-- **WHEN** the calendar list or the stored events cannot be read
-- **THEN** the grid shows its town events, notes and forecast without stored events, and a notice says the calendars could not be loaded, with Try again
+- **WHEN** the calendar list cannot be read
+- **THEN** the grid shows its town events, notes and forecast without stored events, the button reads "Your calendars", and a notice says "Couldn’t load your calendars. Try again.", whose Try again reads the list and the stored events again
+- **AND** when the list answers with at least one calendar but the stored events cannot be read, the notice says "Couldn’t load the events from your calendars. Try again." instead; when the list answers with none, a failed stored-events read shows no notice; one of the two notices shows at a time, the list's first
 
 ### Requirement: Stored calendars do not change the forecast by themselves
 A stored calendar event SHALL NOT change any forecast figure. Only notes and scheduled business rules SHALL change the forecast, as today.

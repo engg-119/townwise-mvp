@@ -21,7 +21,7 @@ import { forecastWords, type CalendarDayView, type ImportedEvent, type ReasonLin
 // it usually brings more or fewer guests in words after a direction mark screen readers skip, then a small inline
 // Source link, InlineSources, which Home's day detail shares); On the calendar (the holidays, town events and term dates Why doesn't already name, with their
 // sources, the day's notes with Edit and Delete where the API allows, the business rules whose schedule covers the day
-// with their summary and a link to Rules, where they are changed (D31), events from the owner's calendar file with
+// with their summary and a link to Rules, where they are changed (D31), events from the location's calendars (D33) with
 // Make a note); then
 // Add an event, or the note form open in its place. Under view-as the writes are disabled in place with the
 // read-only line. It reads and writes nothing itself: the page owns the reads, the form and the dialog.
@@ -112,7 +112,7 @@ export function CalendarDay(props: {
   onAdd: () => void;
   onEdit: (note: Note) => void;
   onDelete: (note: Note) => void;
-  /** Opens the note form from an event in the owner's calendar file. */
+  /** Opens the note form from an event in one of the location's calendars (D33). */
   onMakeNote: (event: ImportedEvent) => void;
 }): React.JSX.Element {
   const { view, readOnlyId } = props;

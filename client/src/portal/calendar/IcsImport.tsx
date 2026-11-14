@@ -11,6 +11,8 @@ export interface IcsImportProps {
   describedBy: string;
   /** While the panel posts the file chosen last: the button reads "Importing…", disabled (web). */
   pending: boolean;
+  /** Under view-as, the panel's read-only line: the button stays in place, disabled and described by it (web). */
+  readOnlyId: string | null;
   /** A file of at most 1 MB, read: its name and its text, which the API parses. */
   onFile: (file: { name: string; text: string }) => void;
   /** The words for a file refused before or as it is read. */

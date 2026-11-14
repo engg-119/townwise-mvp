@@ -9,14 +9,17 @@ jest.mock('expo-splash-screen', () => ({
 
 import { cleanup, fireEvent, screen, within } from 'expo-router/testing-library';
 
-import { ACCESS, fakePortalApi, meOf, orgOf, writes, type FakePortalApi } from '../../helpers/portal';
+import { ACCESS, fakePortalApi, meOf, orgOf, refusal, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { townEvent } from '../analytics/fakes';
-import { calendarFake, forecastDay, forecastOf, NOTES_PATH, ownerCalendar, ownerEvent, savedNote, type CalendarFake } from './fakes';
+import {
+  CALENDARS_PATH, calendarFake, forecastDay, forecastOf, NOTES_PATH, ownerCalendar, ownerEvent, savedNote, type CalendarFake,
+} from './fakes';
 
 // P28 Calendar on native (spec 16.3): the same reads and grid as on web, a Pressable grid with the day
-// panel under it, adding a note from the day, the location's stored calendar events, and no calendar file import (no
-// file picker is installed). Today is Wed, Nov 11, 2026. Synthetic figures and made-up titles only.
+// panel under it, adding a note from the day, the location's stored calendar events, and "Your calendars" with links
+// but no calendar file import (no file picker is installed). Today is Wed, Nov 11, 2026. Synthetic figures and made-up
+// titles and addresses only.
 
 beforeEach(() => {
   jest.useFakeTimers({
@@ -37,6 +40,8 @@ const GAME_REASON = {
   kind: 'event', label: 'Dartmouth home football', effectPct: null, effect: { direction: 'more', pct: 20, basis: 'history', days: 5 } as const, sources: [], note: null,
 };
 const SATURDAY = '2026-11-21';
+const NATIVE_LINE = 'To add events from your own calendar file, open Townwise on the web.';
+const URL = 'https://calendar.google.com/calendar/ical/sample/private-0a1b2c/basic.ics';
 const LABEL = 'Sat, Nov 21, 2026. Forecast about 212 guests, 180 to 240. Dartmouth home football.';
 
 function november(guests = 0): unknown {
@@ -55,9 +60,11 @@ function november(guests = 0): unknown {
   return forecastOf(days);
 }
 
-function setup(init: Partial<Pick<CalendarFake, 'calendars' | 'ownerEvents'>> = {}): { api: FakePortalApi; fake: CalendarFake } {
+function setup(
+  init: Partial<Pick<CalendarFake, 'calendars' | 'ownerEvents'>> = {}, me = meOf(ACCESS.member),
+): { api: FakePortalApi; fake: CalendarFake } {
   const fake = calendarFake({ events: [townEvent({ start: SATURDAY, title: 'Dartmouth home football' })], forecasts: { '2026-11': november() }, ...init });
-  return { api: fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: fake }), fake };
+  return { api: fakePortalApi({ me, org: orgOf(me.access.state === 'member' ? me.access.role : 'member'), fallback: fake }), fake };
 }
 
 function panel() {
@@ -79,12 +86,74 @@ test('tapping a day shows its forecast and reasons under the grid', async () => 
   expect(screen.getByLabelText(LABEL).props.accessibilityState).toMatchObject({ selected: true });
 });
 
-test('no import control; the line says to use the web', async () => {
-  const { api } = setup();
-  await renderApp('/locations/l1/calendar', api);
-  expect(await screen.findByText('To add events from your own calendar file, open Townwise on the web.')).toBeTruthy();
+test('Your calendars: no file import, the line points to the web, and a link can be added, refreshed and removed', async () => {
+  const { api, fake } = setup();
+  await renderApp(`/locations/l1/calendar?day=${SATURDAY}`, api);
+  const button = await screen.findByRole('button', { name: 'Your calendars' });
+  expect(button.props.accessibilityState).toMatchObject({ expanded: false });
+  expect(screen.queryByText(NATIVE_LINE)).toBeNull();
+  await fireEvent.press(button);
+  expect(screen.getByRole('button', { name: 'Your calendars' }).props.accessibilityState).toMatchObject({ expanded: true });
+  expect(screen.getByText(NATIVE_LINE)).toBeTruthy();
   expect(screen.queryByText('Import a calendar file')).toBeNull();
+  expect(screen.getByText('No calendars yet.')).toBeTruthy();
+  // "Your calendar" shows only with a calendar.
   expect(screen.queryByRole('button', { name: 'Your calendar' })).toBeNull();
+
+  await fireEvent.press(screen.getByRole('button', { name: 'Add a link' }));
+  await fireEvent.changeText(screen.getByLabelText('Name'), 'Bookings');
+  await fireEvent.changeText(screen.getByLabelText('Calendar link'), URL);
+  api.answers[CALENDARS_PATH] = () => refusal(503, 'calendar_links_unavailable');
+  await fireEvent.press(screen.getByRole('button', { name: 'Add link' }));
+  expect(await screen.findByText('Calendar links aren’t available right now. You can still import a calendar file on the web.')).toBeTruthy();
+  const bookings = ownerCalendar({ id: 'c2', label: 'Bookings', kind: 'link', host: 'calendar.google.com', eventCount: 1 });
+  api.answers[CALENDARS_PATH] = () => { fake.calendars = [bookings]; return { calendar: bookings }; };
+  await fireEvent.press(screen.getByRole('button', { name: 'Add link' }));
+  expect(await screen.findByText('Added Bookings: 1 event.')).toBeTruthy();
+  expect(await screen.findByText('Link, calendar.google.com, 1 event')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Your calendars (1)' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Your calendar' })).toBeTruthy();
+  expect(screen.queryByLabelText('Calendar link')).toBeNull();
+
+  api.answers[`${CALENDARS_PATH}/c2/refresh`] = () => ({ calendar: bookings });
+  await fireEvent.press(screen.getByRole('button', { name: 'Refresh now: Bookings' }));
+  expect(await screen.findByText('Refreshed Bookings.')).toBeTruthy();
+
+  await fireEvent.press(screen.getByRole('button', { name: 'Remove Bookings' }));
+  expect(await screen.findByText('Remove this calendar?')).toBeTruthy();
+  fake.calendars = [];
+  await fireEvent.press(screen.getByRole('button', { name: 'Remove calendar' }));
+  expect(await screen.findByText('Removed Bookings.')).toBeTruthy();
+  expect(await screen.findByText('No calendars yet.')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Your calendar' })).toBeNull();
+  expect(writes(api)).toEqual([
+    { method: 'POST', path: CALENDARS_PATH, body: { kind: 'link', label: 'Bookings', url: URL } },
+    { method: 'POST', path: CALENDARS_PATH, body: { kind: 'link', label: 'Bookings', url: URL } },
+    { method: 'POST', path: `${CALENDARS_PATH}/c2/refresh`, body: undefined },
+    { method: 'DELETE', path: `${CALENDARS_PATH}/c2`, body: undefined },
+  ]);
+});
+
+test('view-as on native: the panel lists the calendars, and Add a link, Refresh now and Remove are disabled in place and send nothing', async () => {
+  const kitchen = ownerCalendar({ id: 'c1', label: 'Kitchen', kind: 'file', eventCount: 12 });
+  const bookings = ownerCalendar({ id: 'c2', label: 'Bookings', kind: 'link', host: 'calendar.google.com', eventCount: 1 });
+  const { api } = setup({ calendars: [kitchen, bookings] }, viewAsMe(ACCESS.admin));
+  await renderApp(`/locations/l1/calendar?day=${SATURDAY}`, api);
+  await fireEvent.press(await screen.findByRole('button', { name: 'Your calendars (2)' }));
+  expect(screen.getByText('File, 12 events')).toBeTruthy();
+  expect(screen.getByText('Link, calendar.google.com, 1 event')).toBeTruthy();
+  expect(screen.getByText(NATIVE_LINE)).toBeTruthy();
+  for (const name of ['Add a link', 'Refresh now: Bookings', 'Remove Kitchen', 'Remove Bookings']) {
+    const control = screen.getByRole('button', { name });
+    expect(control.props.accessibilityState).toMatchObject({ disabled: true });
+    await fireEvent.press(control);
+  }
+  expect(screen.queryByLabelText('Calendar link')).toBeNull();
+  expect(screen.queryByText('Remove this calendar?')).toBeNull();
+  // The page's own read-only line, and the panel's.
+  expect(screen.getAllByText('Read-only while viewing as gm@example.org.')).toHaveLength(2);
+  expect(screen.getByRole('button', { name: 'How importing works' }).props.accessibilityState).toMatchObject({ disabled: false });
+  expect(writes(api)).toEqual([]);
 });
 
 test('stored events show on native: in the week’s agenda and the day panel', async () => {

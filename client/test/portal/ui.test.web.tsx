@@ -51,6 +51,17 @@ test('a disclosure button has aria-expanded and aria-controls, and a button with
   expect(plain.hasAttribute('aria-controls')).toBe(false);
 });
 
+test('a button with focusOnMount takes focus as it mounts, and one already showing never takes it back', () => {
+  const view = render(<Button variant="outline" label="Add a link" focusOnMount={false} onPress={() => undefined} />);
+  const button = screen.getByRole('button', { name: 'Add a link' });
+  expect(document.activeElement).not.toBe(button);
+  view.rerender(<Button variant="outline" label="Add a link" focusOnMount onPress={() => undefined} />);
+  expect(document.activeElement).not.toBe(button);
+  cleanup();
+  render(<Button variant="outline" label="Add a link" focusOnMount onPress={() => undefined} />);
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Add a link' }));
+});
+
 function dialog(props: Partial<ConfirmDialogProps> & Pick<ConfirmDialogProps, 'onCancel'>): React.JSX.Element {
   return (
     <ConfirmDialog visible title="Remove the invitation?" body="They can’t join with it anymore." confirmLabel="Remove" pendingLabel="Removing…" onConfirm={() => undefined} {...props} />
