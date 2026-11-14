@@ -1,7 +1,10 @@
 // tw_order_decisions and tw_order_rules (Orders): what an owner changed on a line, and a rule they confirmed.
 // A decision survives deleting the location's sales. It goes when the location or the organization goes.
 // A turned-off rule stays, so the same reason is not proposed again.
-import { Schema, Types, type Connection, type Model } from 'mongoose';
+// tw_order_cards: what the author did with each order change or rule TownwiseAI proposed in their conversation. A
+// card goes with its conversation, and with the person who owned it (stores/cross-tenant.ts deletePersonRecords).
+import { isDuplicateKeyError } from '@ckeith26/mongo';
+import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
 
@@ -135,7 +138,8 @@ function ruleModel(connection: Connection): Model<RuleFields> {
   return existing ?? connection.model<RuleFields>('TwOrderRule', ruleSchema(), ORDER_RULES_COLLECTION);
 }
 
-function cardModel(connection: Connection): Model<CardFields> {
+/** Registers TwOrderCard (tw_order_cards) on first call. */
+export function orderCardModel(connection: Connection): Model<CardFields> {
   const existing = connection.models.TwOrderCard as Model<CardFields> | undefined;
   return existing ?? connection.model<CardFields>('TwOrderCard', cardSchema(), ORDER_CARDS_COLLECTION);
 }
@@ -203,13 +207,15 @@ export interface OrderStore {
   latestDecision(scope: OrgScope, locationId: string, itemId: string): Promise<DecisionRecord | null>;
   listRules(scope: OrgScope, locationId: string): Promise<RuleRecord[]>;
   findRule(scope: OrgScope, locationId: string, itemId: string, situation: string): Promise<RuleRecord | null>;
-  /** Inserts the rule, or returns the one already stored for this item and situation. */
+  /** Inserts the rule, or returns the one already stored for this item and situation, one saved meanwhile included. */
   addRule(scope: OrgScope, locationId: string, input: RuleInput): Promise<RuleRecord>;
   /** Marks the rule off. False when it is not this location's. */
   turnOff(scope: OrgScope, locationId: string, ruleId: string, now: Date): Promise<boolean>;
   findCard(scope: OrgScope, key: OrderCardKey): Promise<OrderCardRecord | null>;
-  /** Records the card as saved or set aside. A saved card is not overwritten by dismiss. */
+  /** Records the card as saved or set aside. A saved card is never overwritten; it is returned as stored. */
   setCard(scope: OrgScope, locationId: string, key: OrderCardKey, input: { kind: OrderCardKind; status: OrderCardStatus; now: Date }): Promise<OrderCardRecord>;
+  /** The conversation's cards, when it is deleted. Resolves the number deleted. */
+  removeForConversation(scope: OrgScope, conversationId: string): Promise<number>;
   removeForLocation(scope: OrgScope, locationId: string): Promise<void>;
   removeForOrg(scope: OrgScope): Promise<void>;
 }
@@ -217,10 +223,14 @@ export interface OrderStore {
 export function createOrderStore(connection: Connection): OrderStore {
   const Decision = decisionModel(connection);
   const Rule = ruleModel(connection);
-  const Card = cardModel(connection);
+  const Card = orderCardModel(connection);
   const place = (scope: OrgScope, locationId: string) => ({
     orgId: new Types.ObjectId(scope.orgId), locationId: new Types.ObjectId(locationId),
   });
+  const cardKey = (scope: OrgScope, key: OrderCardKey) => ({
+    orgId: new Types.ObjectId(scope.orgId), conversationId: new Types.ObjectId(key.conversationId), proposalId: key.proposalId,
+  });
+  const toCard = (doc: CardFields): OrderCardRecord => ({ proposalId: doc.proposalId, kind: doc.kind, status: doc.status });
   return {
     async listDecisions(scope, locationId) {
       const docs = await Decision.find(place(scope, locationId)).sort({ createdAt: -1, _id: -1 }).lean();
@@ -243,10 +253,19 @@ export function createOrderStore(connection: Connection): OrderStore {
       return doc === null ? null : toRule(doc);
     },
     async addRule(scope, locationId, input) {
-      const existing = await Rule.findOne({ ...place(scope, locationId), itemId: input.itemId, situation: input.situation }).lean();
+      const where = { ...place(scope, locationId), itemId: input.itemId, situation: input.situation };
+      const existing = await Rule.findOne(where).lean();
       if (existing !== null) return toRule(existing);
-      const doc = await Rule.create({ ...place(scope, locationId), ...input, off: false, createdAt: input.now, updatedAt: input.now });
-      return toRule(doc);
+      try {
+        const doc = await Rule.create({ ...place(scope, locationId), ...input, off: false, createdAt: input.now, updatedAt: input.now });
+        return toRule(doc);
+      } catch (err) {
+        // A second save of the same rule inserted it first: the unique index refuses this one, and its rule is the answer.
+        if (!isDuplicateKeyError(err)) throw err;
+        const raced = await Rule.findOne(where).lean();
+        if (raced === null) throw err;
+        return toRule(raced);
+      }
     },
     async turnOff(scope, locationId, ruleId, now) {
       if (!Types.ObjectId.isValid(ruleId)) return false;
@@ -257,41 +276,37 @@ export function createOrderStore(connection: Connection): OrderStore {
       return doc !== null;
     },
     async findCard(scope, key) {
-      const doc = await Card.findOne({
-        orgId: new Types.ObjectId(scope.orgId),
-        conversationId: new Types.ObjectId(key.conversationId),
-        proposalId: key.proposalId,
-      }).lean();
-      if (doc === null) return null;
-      return { proposalId: doc.proposalId, kind: doc.kind, status: doc.status };
+      const doc = await Card.findOne(cardKey(scope, key)).lean();
+      return doc === null ? null : toCard(doc);
     },
     async setCard(scope, locationId, key, input) {
-      const existing = await Card.findOne({
-        orgId: new Types.ObjectId(scope.orgId),
-        conversationId: new Types.ObjectId(key.conversationId),
-        proposalId: key.proposalId,
-      }).lean();
-      if (existing?.status === 'saved') return { proposalId: existing.proposalId, kind: existing.kind, status: existing.status };
-      const doc = await Card.findOneAndUpdate(
-        {
-          orgId: new Types.ObjectId(scope.orgId),
-          conversationId: new Types.ObjectId(key.conversationId),
-          proposalId: key.proposalId,
-        },
-        {
-          $set: { status: input.status },
-          $setOnInsert: {
-            ...place(scope, locationId),
-            conversationId: new Types.ObjectId(key.conversationId),
-            proposalId: key.proposalId,
-            kind: input.kind,
-            createdAt: input.now,
-          },
-        },
-        { upsert: true, returnDocument: 'after' },
-      ).lean();
-      if (doc === null) throw new Error('order card was not stored');
-      return { proposalId: doc.proposalId, kind: doc.kind, status: doc.status };
+      // As stores/chat-proposals.ts does: the filter skips a saved card, so the upsert then fails on the unique index
+      // instead of overwriting it. The first of two concurrent inserts fails the same way, so a duplicate is tried once
+      // more, and then matches the row the other made. A second duplicate means the card is saved.
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const doc = await Card.findOneAndUpdate(
+            { ...cardKey(scope, key), status: trusted({ $ne: 'saved' }) },
+            {
+              $set: { status: input.status },
+              $setOnInsert: { locationId: new Types.ObjectId(locationId), kind: input.kind, createdAt: input.now },
+            },
+            { upsert: true, returnDocument: 'after' },
+          ).lean();
+          return toCard(doc);
+        } catch (err) {
+          if (!isDuplicateKeyError(err)) throw err;
+        }
+      }
+      const saved = await Card.findOne(cardKey(scope, key)).lean();
+      if (saved === null) throw new Error('a saved order card was not found');
+      return toCard(saved);
+    },
+    async removeForConversation(scope, conversationId) {
+      const result = await Card.deleteMany({
+        orgId: new Types.ObjectId(scope.orgId), conversationId: new Types.ObjectId(conversationId),
+      });
+      return result.deletedCount;
     },
     async removeForLocation(scope, locationId) {
       const where = place(scope, locationId);
