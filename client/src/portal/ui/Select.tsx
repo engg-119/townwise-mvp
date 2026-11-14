@@ -40,7 +40,7 @@ export function Select(props: SelectProps): React.JSX.Element {
     <FieldFrame {...chrome} ids={fieldIds}>
       <Pressable
         role="button"
-        accessibilityLabel={props.label}
+        accessibilityLabel={props.accessibilityLabel ?? props.label}
         accessibilityValue={{ text: current }}
         aria-disabled={readOnly}
         {...(props.helper === undefined ? {} : { accessibilityHint: props.helper })}

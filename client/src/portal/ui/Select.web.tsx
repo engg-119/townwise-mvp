@@ -77,6 +77,7 @@ export function Select(props: SelectProps): React.JSX.Element {
   const chrome: FieldChrome = props;
   const invalid = (props.messages?.length ?? 0) > 0;
   const sections = sectionsOf(props.items, props.placeholder);
+  const named = props.accessibilityLabel === undefined ? { 'aria-labelledby': fieldIds.label } : { 'aria-label': props.accessibilityLabel };
   const options = sections.flatMap((section) => section.rows.map((row) => row.option));
   const label = labelOf(props.items, props.value);
   const showsPlaceholder = label === null && props.value === '' && props.placeholder !== undefined;
@@ -250,7 +251,7 @@ export function Select(props: SelectProps): React.JSX.Element {
       ref={list}
       id={listId}
       role="listbox"
-      aria-labelledby={fieldIds.label}
+      {...named}
       // Pressing anywhere in the list, its scrollbar too, keeps focus on the control, so the list stays a part of it.
       // React bubbles a portal's events to the select's parents, so a press here never reaches them.
       onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
@@ -296,7 +297,7 @@ export function Select(props: SelectProps): React.JSX.Element {
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
         aria-activedescendant={active >= 0 ? optionId(active) : undefined}
-        aria-labelledby={fieldIds.label}
+        {...named}
         aria-describedby={describedBy(chrome, fieldIds)}
         aria-invalid={invalid ? true : undefined}
         aria-disabled={readOnly ? true : undefined}

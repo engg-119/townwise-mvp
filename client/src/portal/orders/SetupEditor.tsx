@@ -21,18 +21,19 @@ import {
   checkDraft, draftOf, fieldId, newItem, newSupplier, normalizeName, SETUP_LIMITS, type ItemDraft, type SetupDraft, type SetupProblems,
   type SupplierDraft,
 } from './setupDraft';
-import { ItemPanel, SupplierPanel } from './SetupRows';
+import { itemHasHistory, ItemPanel, SupplierPanel } from './SetupRows';
 
 // P31 Ordering setup (/locations/[id]/orders/setup, members; design Decisions 3, 4 and 8; the order-setup and
 // item-sales specs): the location's suppliers with their deliveries, its items, and the item sales coverage, read with
 // GET .../orders/setup and saved whole with PUT over the version it loaded. Someone else's save in between answers
 // 409 `setup_changed`: the page says so and offers their changes, which replace the draft after a confirm. Shared by
 // both platforms; the web adds the template, the sheet import and the item sales upload through the slots
-// (Setup.web.tsx). Under view-as every field and write is disabled in place, described by the read-only line.
+// (Setup.web.tsx). Removing an item with item sales or counts asks first, in the page. Under view-as every field and
+// write is disabled in place, described by the read-only line.
 
 const READ_ONLY_ID = 'setup-ro';
 
-type Status = Pick<OrderSetupAnswer, 'coverage' | 'itemCoverage' | 'counts'>;
+type Status = Pick<OrderSetupAnswer, 'today' | 'coverage' | 'itemCoverage' | 'counts'>;
 
 /** What the sheet tools (web) work on: the draft, before anything saves. */
 export interface SheetSlot {
@@ -48,10 +49,14 @@ export interface SalesSlot {
   readonly items: readonly ItemDraft[];
   /** The draft differs from the saved setup. */
   readonly dirty: boolean;
+  /** The town's today (GET .../orders/setup): uploads end the day before it. */
+  readonly today: string;
   /** Adds a point-of-sale name to an item of the draft; why it can't, or null once it is added. */
   readonly addPosName: (itemKey: string, name: string) => string | null;
   /** Reads the coverage and per-item status again, after an upload. */
   readonly onUploaded: () => void;
+  /** The server's setup no longer has an item the saved one has (400 `unknown_item`): someone else saved it. */
+  readonly onSetupChanged: () => void;
   readonly readOnly: boolean;
   readonly readOnlyId: string | null;
 }
@@ -97,6 +102,8 @@ function Editor(props: {
   const [confirm, setConfirm] = useState<'reload' | 'delete' | null>(null);
   const [confirmPending, setConfirmPending] = useState(false);
   const [confirmError, setConfirmError] = useState<unknown>(null);
+  /** The key of an item with item sales or counts that Remove this item asked about. */
+  const [removing, setRemoving] = useState<string | null>(null);
   const readOnlyId = readOnly ? READ_ONLY_ID : null;
   const locked = readOnly || saving;
   const lock = { locked, readOnlyId };
@@ -118,6 +125,9 @@ function Editor(props: {
   };
   const setItem = (key: string, next: ItemDraft): void => {
     edit({ ...draft, items: draft.items.map((item) => (item.key === key ? next : item)) });
+  };
+  const removeItem = (key: string): void => {
+    edit({ ...draft, items: draft.items.filter((item) => item.key !== key) });
   };
 
   function addPosName(itemKey: string, name: string): string | null {
@@ -191,6 +201,7 @@ function Editor(props: {
   }
 
   const { coverage } = status;
+  const removingItem = removing === null ? undefined : draft.items.find((item) => item.key === removing);
   const topMessages = [
     ...(problems[fieldId.setup] ?? []),
     ...(problemCount > 0 ? [`Fix the ${plural(problemCount, 'marked field', 'marked fields')} before saving.`] : []),
@@ -257,7 +268,7 @@ function Editor(props: {
             status={status}
             lock={lock}
             onChange={(next) => { setItem(item.key, next); }}
-            onRemove={() => { edit({ ...draft, items: draft.items.filter((other) => other.key !== item.key) }); }}
+            onRemove={() => { if (itemHasHistory(item, status)) setRemoving(item.key); else removeItem(item.key); }}
           />
         ))}
         <Actions>
@@ -291,7 +302,10 @@ function Editor(props: {
         </Actions>
       </View>
 
-      {props.sales?.({ saved, items: draft.items, dirty, addPosName, onUploaded: () => { void refreshStatus(); }, readOnly, readOnlyId }) ?? null}
+      {props.sales?.({
+        saved, items: draft.items, dirty, today: status.today, addPosName, onUploaded: () => { void refreshStatus(); },
+        onSetupChanged: () => { setConflict(true); }, readOnly, readOnlyId,
+      }) ?? null}
 
       <Actions>
         <LinkButton href={locationHref(location.id, 'orders')} label="Back to Orders" />
@@ -309,6 +323,17 @@ function Editor(props: {
         error={confirmError}
         onConfirm={() => { void runConfirm(); }}
         onCancel={() => { setConfirm(null); }}
+      />
+      <ConfirmDialog
+        visible={removingItem !== undefined}
+        title="Remove this item"
+        body={`${removingItem?.name.trim() ?? 'This item'} has item sales or counts. Its sales and counts stay with it only while it is in the setup: once the setup is saved without it, they no longer count toward any order, and adding it again later starts it with none. Nothing changes until you save.`}
+        confirmLabel="Remove the item"
+        onConfirm={() => {
+          if (removing !== null) removeItem(removing);
+          setRemoving(null);
+        }}
+        onCancel={() => { setRemoving(null); }}
       />
     </View>
   );

@@ -39,6 +39,7 @@ const ANSWER: OrderSetupAnswer = {
   coverage: null,
   itemCoverage: { [ITEM_ID]: 0 },
   counts: {},
+  today: '2026-11-13',
 };
 
 function portal(answer: unknown = ANSWER, me = meOf(ACCESS.member)): FakePortalApi {

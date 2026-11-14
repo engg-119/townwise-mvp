@@ -17,8 +17,9 @@ import {
 import { amount } from './words';
 
 // One supplier and one item of the Ordering setup page (Setup.tsx): every field of the draft, with the messages its
-// last Save found, and, for a stored item, its latest count and whether item sales matched it. Under view-as and
-// while a save runs, every field is read-only and every button disabled in place.
+// last Save found, and, for a stored item, its latest count and whether item sales matched it. A delivery's and a
+// point-of-sale name's fields are named with their number ("Delivery day 2"), as their Remove buttons are. Under
+// view-as and while a save runs, every field is read-only and every button disabled in place.
 
 export const SERVINGS_HINT = 'How many servings one unit holds: a case of 24 cans is 24; a half-barrel keg is about 124 sixteen-ounce pints.';
 
@@ -68,6 +69,7 @@ export function SupplierPanel(props: {
           <View style={styles.cell}>
             <Select
               label="Delivery day"
+              accessibilityLabel={`Delivery day ${String(at + 1)}`}
               placeholder="Choose a day"
               items={WEEKDAY_OPTIONS}
               value={delivery.deliveryWeekday}
@@ -78,6 +80,7 @@ export function SupplierPanel(props: {
           <View style={styles.cell}>
             <Select
               label="Order by day"
+              accessibilityLabel={`Order by day ${String(at + 1)}`}
               placeholder="Choose a day"
               items={WEEKDAY_OPTIONS}
               value={delivery.cutoffWeekday}
@@ -88,6 +91,7 @@ export function SupplierPanel(props: {
           <View style={styles.cell}>
             <FormField
               label="Order by time"
+              accessibilityLabel={`Order by time ${String(at + 1)}`}
               helper="24 hour, such as 14:00."
               numeric
               value={delivery.cutoffTime}
@@ -124,12 +128,18 @@ export function SupplierPanel(props: {
 
 type Status = Pick<OrderSetupAnswer, 'coverage' | 'itemCoverage' | 'counts'>;
 
+/** A stored item with item sales in the last 8 weeks or a count in the last 400 days, which a removal would leave behind. */
+export function itemHasHistory(item: ItemDraft, status: Status): boolean {
+  if (item.id === null) return false;
+  return (status.itemCoverage[item.id] ?? 0) > 0 || status.counts[item.id] !== undefined;
+}
+
 /** A stored item's latest count, and whether the stored item sales matched it in the last 8 weeks. */
 export function itemStatus(item: ItemDraft, status: Status): string[] {
   if (item.id === null) return [];
   const lines: string[] = [];
   const count = status.counts[item.id];
-  if (count === undefined) lines.push('No count in the last 90 days.');
+  if (count === undefined) lines.push('No count in the last 400 days.');
   else {
     const counted = item.unit === '' ? String(count.quantity) : amount(count.quantity, item.unit);
     lines.push(`Last count: ${counted} on ${formatDate(count.date)}.`);
@@ -249,6 +259,7 @@ export function ItemPanel(props: {
           <View style={styles.wide}>
             <FormField
               label="Point-of-sale name"
+              accessibilityLabel={`Point-of-sale name ${String(at + 1)}`}
               value={pos.name}
               onChangeText={(name) => { setPos(at, { name }); }}
               {...chrome(lock, problems, fieldId.pos(item.key, at, 'name'))}
@@ -257,6 +268,7 @@ export function ItemPanel(props: {
           <View style={styles.cell}>
             <FormField
               label="Servings per sale"
+              accessibilityLabel={`Servings per sale ${String(at + 1)}`}
               numeric
               keyboardType="decimal-pad"
               value={pos.perSale}
