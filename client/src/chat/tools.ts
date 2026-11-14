@@ -361,18 +361,38 @@ const TOOLS: Readonly<Record<string, ToolRow>> = {
     terms: { available: 'Available', status: 'Status', weeks: 'Held-out weeks', published: 'Published' },
     values: { status: CALIBRATION_STATUS },
   },
-  // Orders. Figures stay in the result the model reads. The card shows a count and a date.
+  // Orders (api/src/chat/tools/orders.ts): the live board, one line, and the setup, never the sample. Figures, names
+  // and quantities stay in the result the model reads; the card shows counts and dates.
   get_order_board: {
-    object: () => 'the order',
-    detail: (result) => (result.available === false ? 'No order yet' : result.sample === true ? 'A labeled sample' : null),
-    basedOn: (_input, _ctx, result) => (result?.sample === true ? 'a labeled sample order' : null),
-    terms: { available: 'Available', sample: 'Sample', delivery: 'Delivery', lineCount: 'Lines' },
+    object: () => 'your next orders',
+    detail: (result) => {
+      if (result.available === false) return 'Ordering isn’t set up yet';
+      const orders = count(result, 'orderCount');
+      const lines = count(result, 'lineCount');
+      if (orders === null || lines === null) return null;
+      return `${plural(orders, 'order', 'orders')}, ${plural(lines, 'item', 'items')}`;
+    },
+    basedOn: (_input, _ctx, result) => (result?.available === false ? 'whether ordering is set up' : 'your next orders'),
+    terms: { available: 'Set up', orderCount: 'Orders', lineCount: 'Items', cutoff: 'First order by' },
   },
   get_order_line: {
-    object: () => 'one line of the order',
-    detail: (result) => (result.available === false ? 'No order yet' : result.sample === true ? 'A labeled sample' : null),
-    basedOn: (_input, _ctx, result) => (result?.sample === true ? 'a labeled sample order' : null),
-    terms: { available: 'Available', sample: 'Sample', delivery: 'Delivery' },
+    object: () => 'one item on your next order',
+    detail: (result) => (result.available === false ? 'Not on an order' : null),
+    basedOn: (_input, _ctx, result) => (result?.available === false ? null : 'one item on your next order'),
+    terms: { available: 'On an order', delivery: 'Delivery' },
+  },
+  get_order_setup: {
+    object: () => 'the ordering setup',
+    detail: (result) => {
+      if (result.available === false) return 'Nothing set up yet';
+      const suppliers = count(result, 'supplierCount');
+      const items = count(result, 'itemCount');
+      if (suppliers === null || items === null) return null;
+      return `${plural(suppliers, 'supplier', 'suppliers')}, ${plural(items, 'item', 'items')}`;
+    },
+    terms: {
+      available: 'Set up', supplierCount: 'Suppliers', itemCount: 'Items', countedItemCount: 'Items counted', itemSalesDayCount: 'Days of item sales',
+    },
   },
   propose_order_change: {
     object: () => 'a change to one line',

@@ -811,6 +811,59 @@ test('under view-as every write is disabled in place, the name prompt never show
   expect(screen.getAllByText(/^Read-only while viewing as/)).toHaveLength(1);
 });
 
+describe('order cards (#68 review N6, design Decision 6)', () => {
+  const CHANGE_ID = 'toolu_order_0001';
+  const RULE_ID = 'toolu_order_0002';
+  const ITEM = 'a'.repeat(24);
+  const CHANGE = `/api/org/locations/l1/chat/c2/order-proposals/${CHANGE_ID}`;
+  const RULE = `/api/org/locations/l1/chat/c2/order-proposals/${RULE_ID}`;
+
+  async function proposed(api: FakeChatApi): Promise<void> {
+    renderAt('/locations/l1/agent', api);
+    fireEvent.change(await screen.findByLabelText(COMPOSER_LABEL), { target: { value: 'Order more lager this week' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => { expect(api.turns).toHaveLength(1); });
+    await stream(() => {
+      turn(api).emit('conversation', { id: 'c2', title: 'Lager' });
+      turn(api).emit('tool', { id: CHANGE_ID, name: 'propose_order_change', state: 'done', input: { itemId: ITEM, delivery: '2026-11-19' }, result: { shown: true } });
+      turn(api).emit('tool', { id: RULE_ID, name: 'propose_order_rule', state: 'done', input: { itemId: ITEM }, result: { shown: true } });
+      turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0 });
+      turn(api).end();
+    });
+  }
+
+  test('a change card sends a whole-number quantity and a reason, never an empty or non-numeric one', async () => {
+    const api = fakeChatApi();
+    const view = { kind: 'change', status: 'open', itemId: ITEM, delivery: '2026-11-19' };
+    api.reads[CHANGE] = () => ({ proposal: view });
+    api.reads[RULE] = () => ({ proposal: { kind: 'rule', status: 'open', itemId: ITEM, situation: 'a football weekend', delta: 2, unit: 'cases' } });
+    api.respond[CHANGE] = () => ({ proposal: { ...view, status: 'saved', quantity: 10, reason: 'Game day' } });
+    await proposed(api);
+    const quantity = await screen.findByLabelText('Quantity');
+    // The rule card says its change goes on every later order.
+    expect(screen.getByText('Adds 2 cases to every order: “a football weekend”')).toBeTruthy();
+    expect(screen.getByText('It applies to every later order of this item until you turn it off on Orders.')).toBeTruthy();
+    const save = (): void => { fireEvent.click(screen.getByRole('button', { name: 'Save' })); };
+    for (const text of ['', 'ten', '2.5']) {
+      fireEvent.change(quantity, { target: { value: text } });
+      fireEvent.change(screen.getByLabelText('Why'), { target: { value: 'Game day' } });
+      save();
+      expect(screen.getByText('Enter a whole number from 0 to 999.')).toBeTruthy();
+    }
+    fireEvent.change(quantity, { target: { value: '10' } });
+    fireEvent.change(screen.getByLabelText('Why'), { target: { value: '  ' } });
+    save();
+    expect(screen.getByText('Say why, in a few words.')).toBeTruthy();
+    expect(api.writes.filter((write) => write.path === CHANGE)).toEqual([]);
+    fireEvent.change(screen.getByLabelText('Why'), { target: { value: 'Game day' } });
+    save();
+    expect(await screen.findByText('Saved for this order.')).toBeTruthy();
+    expect(api.writes.filter((write) => write.path === CHANGE)).toEqual([
+      { method: 'POST', path: CHANGE, body: { action: 'save', quantity: 10, reason: 'Game day' } },
+    ]);
+  });
+});
+
 describe('a proposal to keep text (D28)', () => {
   const ITEM_ID = 'toolu_item_0001';
   const PATH = `/api/org/locations/l1/chat/c2/item-proposals/${ITEM_ID}`;

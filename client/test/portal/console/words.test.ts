@@ -27,6 +27,8 @@ test('the action filter covers every action the API records (api/src/stores/audi
     'file.uploaded', 'file.deleted', 'file.raw_deleted', 'files.raw_deleted_all', 'org.originals_deleted',
     'note.created', 'note.updated', 'note.deleted', 'chat.turn_completed', 'chat.conversation_deleted',
     'agent.question_answered',
+    'order.setup_saved', 'order.item_sales_uploaded', 'order.item_sales_deleted', 'order.count_saved', 'order.decision_saved',
+    'order.rule_saved', 'order.rule_turned_off', 'order.card_saved', 'order.card_dismissed',
     'forecast.imported', 'forecast.published', 'forecast.withdrawn', 'forecast.deleted',
     'view_as.started', 'view_as.ended', 'open_as_admin.started', 'open_as_admin.ended', 'people.signed_out_everywhere', 'person.deleted', 'staff_action.not_applied',
   ]);
@@ -53,6 +55,15 @@ test.each<[string, Record<string, string | number | boolean | null>, string]>([
 test('D28: renaming and editing an item have the API’s labels (api/src/audit.ts)', () => {
   expect(AUDIT_ACTIONS).toContainEqual({ value: 'data.renamed', label: 'Item renamed' });
   expect(AUDIT_ACTIONS).toContainEqual({ value: 'data.edited', label: 'Item edited' });
+});
+
+test('order actions have plain labels, and the server’s summary carries their counts and dates', () => {
+  expect(AUDIT_ACTIONS.filter((action) => action.value.startsWith('order.')).map((action) => action.label)).toEqual([
+    'Ordering setup saved', 'Item sales uploaded', 'Item sales deleted', 'Count saved', 'Order line changed', 'Order rule saved',
+    'Order rule turned off', 'TownwiseAI order card saved', 'TownwiseAI order card set aside',
+  ]);
+  expect(auditDetails({ action: 'order.count_saved', details: { locationId: 'l1', date: '2026-11-13', itemCount: 12 } })).toBe('');
+  expect(auditDetails({ action: 'order.card_saved', details: { locationId: 'l1', conversationId: 'c1', kind: 'rule' } })).toBe('');
 });
 
 test('open as admin has its audit labels and end reasons', () => {
