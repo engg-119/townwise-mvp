@@ -3,7 +3,12 @@
 # When a fix is installable under min-release-age=7, take it (directly or as an exact root `overrides` entry)
 # and delete the entry. If a removed id reappears, something moved backwards: fix it, do not re-list it.
 # Checked 2026-11-04. None of these packages is in the API release or the web bundle; all are build, lint or
-# test tooling (Expo CLI and config, Jest, ESLint).
+# test tooling (Expo CLI and config, Jest, ESLint), or notebook tooling for eda/ and modeling/ (checked 2026-11-13).
+
+[[IgnoredVulns]]
+id = "GHSA-5cjw-f85j-cv6r"
+ignoreUntil = 2026-11-17
+reason = "tornado 6.6 (eda/uv.lock and modeling/uv.lock, under ipykernel and jupyter-client for the notebooks only) is affected; the fix, tornado 6.6.1, was released 2026-11-09 and is inside the 7-day release-age gate until 2026-11-16."
 
 [[IgnoredVulns]]
 id = "GHSA-3g3m-2fjr-6pw4"
