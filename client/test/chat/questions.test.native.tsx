@@ -1,0 +1,145 @@
+jest.mock('@react-native-google-signin/google-signin', () => {
+  const mocked: unknown = jest.requireActual('../helpers/googleSigninMock');
+  return mocked;
+});
+jest.mock('expo-secure-store');
+jest.mock('expo-splash-screen', () => ({
+  preventAutoHideAsync: jest.fn(() => Promise.resolve()),
+  hideAsync: jest.fn(() => Promise.resolve()),
+}));
+
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+import * as SecureStore from 'expo-secure-store';
+import { Dimensions } from 'react-native';
+import { act, cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing-library';
+
+import { resetDrafts } from '../../src/chat/drafts';
+import { COMPOSER_LABEL } from '../../src/chat/ui/Composer';
+import { resetVersionFocus } from '../../src/chat/ui/VersionNav';
+import { resetProfiles } from '../../src/portal/profile/useProfile';
+import { fakeChatApi, type FakeChatApi, type LiveTurn } from '../helpers/chat';
+import { ACCESS, fakePortalApi, meOf, orgOf } from '../helpers/portal';
+import { renderApp } from '../helpers/renderApp';
+import { serveAbout } from './about-fakes';
+
+// TownwiseAI's questions on native (spec P25; contract section 7): ?panel=questions (Home's link) opens the sheet on
+// phones and the column from 1024px, the questions show inline on the landing, and Something else… sends its message to
+// the chat before answering `other`. Nothing goes to device storage.
+
+const fixture = JSON.parse(readFileSync(join(__dirname, 'agent-panel.json'), 'utf8')) as { panel: { questions: unknown[]; activity: unknown[] } };
+
+const GAP_HEADING = 'Were you closed May 12 to May 13, 2026?';
+const WORDS = 'A private party had the whole place.';
+const MESSAGE = `About May 12 to May 13, 2026 (no sales on these 2 days; those days of the week usually have about 100 guests): ${WORDS}`;
+
+afterEach(async () => {
+  await cleanup();
+  resetDrafts();
+  resetProfiles();
+  resetVersionFocus();
+  jest.restoreAllMocks();
+});
+
+const WINDOW = Dimensions.get('window');
+
+function at(width: number): void {
+  jest.spyOn(Dimensions, 'get').mockReturnValue({ ...WINDOW, width });
+}
+
+async function renderAgent(path = '/locations/l1/agent') {
+  const chat = fakeChatApi();
+  chat.panel = fixture.panel;
+  serveAbout(chat);
+  const portal = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: chat });
+  const rendered = await renderApp(path, portal);
+  await screen.findByRole('heading', { name: 'TownwiseAI' });
+  return { chat, ...rendered };
+}
+
+function turn(api: FakeChatApi): LiveTurn {
+  const live = api.turns.at(-1);
+  if (live === undefined) throw new Error('no turn');
+  return live;
+}
+
+test('?panel=questions opens the sheet on a phone, Questions for you first, and drops the parameter', async () => {
+  at(375);
+  const { router } = await renderAgent('/locations/l1/agent?panel=questions');
+  expect(await screen.findByRole('heading', { name: 'Questions and activity' })).toBeTruthy();
+  const side = screen.getByTestId('agent-side');
+  expect(within(side).getAllByRole('heading')[0]?.props.children).toBe('Questions for you');
+  await waitFor(() => { expect(router.getSearchParams().panel).toBeUndefined(); });
+  expect(router.getPathname()).toBe('/locations/l1/agent');
+});
+
+test('?panel=questions opens the column from 1024px', async () => {
+  at(1280);
+  await renderAgent('/locations/l1/agent?panel=questions');
+  expect(await screen.findByTestId('agent-side')).toBeTruthy();
+  expect(screen.queryByRole('heading', { name: 'Questions and activity' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Questions and activity (3)' }).props.accessibilityState).toMatchObject({ expanded: true });
+});
+
+test('Something else… from the sheet on a phone closes it once the turn starts, not before', async () => {
+  at(375);
+  const { chat } = await renderAgent('/locations/l1/agent?panel=questions');
+  expect(await screen.findByRole('heading', { name: 'Questions and activity' })).toBeTruthy();
+  const side = screen.getByTestId('agent-side');
+  const gapOther = within(side).getAllByRole('button', { name: 'Something else…' })[2];
+  if (gapOther === undefined) throw new Error('no Something else… on the gap');
+  await fireEvent.press(gapOther);
+  await fireEvent.changeText(within(side).getByLabelText('Tell TownwiseAI in your own words'), WORDS);
+  await fireEvent.press(within(side).getByRole('button', { name: 'Send to TownwiseAI' }));
+  await waitFor(() => { expect(chat.turns).toHaveLength(1); });
+  expect(screen.getByRole('heading', { name: 'Questions and activity' })).toBeTruthy();
+  await act(() => {
+    turn(chat).emit('conversation', { id: 'c9', title: 'A party', userNodeId: 'u9', replyNodeId: 'a9', parentId: null });
+  });
+  await waitFor(() => { expect(screen.queryByRole('heading', { name: 'Questions and activity' })).toBeNull(); });
+  expect(screen.getByText(MESSAGE)).toBeTruthy();
+  await act(() => {
+    turn(chat).emit('done', { stopReason: 'end_turn', leafId: 'a9' });
+    turn(chat).end();
+  });
+  await waitFor(() => { expect(chat.writes.map((write) => write.body)).toEqual([{ answer: 'other' }]); });
+});
+
+test('the landing shows the questions under the chips, and Something else… sends its message, then answers other', async () => {
+  at(375);
+  const { chat } = await renderAgent();
+  const landing = await screen.findByTestId('chat-landing');
+  expect(await within(landing).findByRole('heading', { name: 'Questions for you (3)' })).toBeTruthy();
+  expect(within(landing).getByText('Only 1 guest was recorded. Saturdays usually have about 100.')).toBeTruthy();
+  // The cards in the API's order: the weekday, the likely-closed day, then the gap.
+  expect(within(landing).getAllByRole('heading').map((heading) => heading.props.children as unknown).slice(-3)).toEqual([
+    'Are you closed on Mondays?', 'Were you open on Sat, May 23, 2026?', GAP_HEADING,
+  ]);
+  const gapOther = () => {
+    const button = within(landing).getAllByRole('button', { name: 'Something else…' })[2];
+    if (button === undefined) throw new Error('no Something else… on the gap');
+    return button;
+  };
+  expect(gapOther().props.accessibilityState).toMatchObject({ expanded: false });
+  await fireEvent.press(gapOther());
+  expect(gapOther().props.accessibilityState).toMatchObject({ expanded: true });
+  await fireEvent.changeText(within(landing).getByLabelText('Tell TownwiseAI in your own words'), WORDS);
+  await fireEvent.press(within(landing).getByRole('button', { name: 'Send to TownwiseAI' }));
+  await waitFor(() => { expect(chat.turns).toHaveLength(1); });
+  expect(turn(chat).body).toEqual({ content: MESSAGE });
+  expect(chat.writes).toEqual([]);
+  // The composer stays empty: the words were the card's.
+  expect(screen.getByLabelText(COMPOSER_LABEL).props.value).toBe('');
+  await act(() => {
+    turn(chat).emit('conversation', { id: 'c9', title: 'A party', userNodeId: 'u9', replyNodeId: 'a9', parentId: null });
+    turn(chat).emit('text', { delta: 'Thanks.' });
+    turn(chat).emit('done', { stopReason: 'end_turn', leafId: 'a9' });
+    turn(chat).end();
+  });
+  await waitFor(() => {
+    expect(chat.writes).toEqual([{ method: 'POST', path: '/api/org/locations/l1/agent/questions/gap_2026-05-12_2026-05-13', body: { answer: 'other' } }]);
+  });
+  expect(screen.getByRole('button', { name: 'Questions and activity (2)' })).toBeTruthy();
+  for (const name of ['setItemAsync', 'getItemAsync', 'deleteItemAsync'] as const) expect(jest.mocked(SecureStore[name])).not.toHaveBeenCalled();
+});

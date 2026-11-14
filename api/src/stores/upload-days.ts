@@ -36,7 +36,7 @@ export interface UploadDayStore {
   used(scope: OrgScope, day: string): Promise<number>;
   /** Reserves `bytes` unless the day would pass `cap`. False when it would. */
   reserve(scope: OrgScope, day: string, bytes: number, cap: number, now: Date): Promise<boolean>;
-  /** Gives back a cancelled upload's bytes (same UTC day only). */
+  /** Gives back a canceled upload's bytes (same UTC day only). */
   refund(scope: OrgScope, day: string, bytes: number, now: Date): Promise<void>;
   /** Organization deletion (spec 10.7). */
   removeForOrg(scope: OrgScope): Promise<number>;

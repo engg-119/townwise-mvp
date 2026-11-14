@@ -96,7 +96,8 @@ function sizeOf(element: Element, sizes: Record<string, number>): number {
 }
 
 beforeEach(() => {
-  jest.useFakeTimers();
+  // "Today" is Thu, Nov 5, 2026, so a picked town opens on November.
+  jest.useFakeTimers({ now: new Date(2026, 10, 5, 12, 0, 0) });
   layout.width = {};
   layout.height = {};
   jest.spyOn(Element.prototype, 'clientWidth', 'get').mockImplementation(function width(this: Element) { return sizeOf(this, layout.width); });
@@ -547,7 +548,7 @@ test('a town picked mid-story keeps its zoom while the scroll moves the month, a
   fireEvent.click(hanover, { detail: 1 });
   expect(frame.className).toContain('is-zoomed');
   expect(frame.className).not.toContain('is-sm');
-  expect(listHeader()).toBe('Gap in May 2024');
+  expect(listHeader()).toBe('Gap in Nov 2024');
   step(8);
   expect(listHeader()).toBe('Gap in Jun 2024');
   expect(frame.className).toContain('is-zoomed');

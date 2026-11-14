@@ -255,6 +255,8 @@ export async function removeLocation(ctx: TownwiseContext, scope: OrgScope, loca
   await ctx.stores.uploads.removeForLocation(scope, locationId);
   await ctx.stores.chatConversations.removeForLocation(scope, locationId);
   await ctx.stores.chatProposals.removeForLocation(scope, locationId);
+  // D31: its business rules, which never block deleting it.
+  await ctx.stores.businessRules.removeForLocation(scope, locationId);
   // U9: answers to TownwiseAI's questions about the location's days.
   await ctx.stores.agentAnswers.removeForLocation(scope, locationId);
   // An empty import left open goes too.

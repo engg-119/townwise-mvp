@@ -1,6 +1,7 @@
-// tw_notes (spec 6.7, 12): structured notes per location, the tuning step. Only the tuning chat reads them yet.
+// tw_notes (spec 6.7, 12): structured notes per location, the tuning step. The forecast reader and the tuning chat read
+// them. A note may carry local hours (`startTime`, `endTime`); a note stored before they existed reads as no hours.
 // `detail` is the owner's own words: no function here logs, and nothing copies it into an audit event.
-import { Schema, Types, type Connection, type Model } from 'mongoose';
+import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
 
@@ -20,6 +21,9 @@ export interface NoteContent {
   readonly effect: NoteEffect;
   readonly expectedGuests: number | null;
   readonly detail: string | null;
+  /** Local wall-clock 'HH:MM' (24-hour), with `endTime`, or null for all day; both or neither, start before end. */
+  readonly startTime: string | null;
+  readonly endTime: string | null;
 }
 
 interface NoteFields {
@@ -32,6 +36,9 @@ interface NoteFields {
   effect: NoteEffect;
   expectedGuests: number | null;
   detail: string | null;
+  /** Missing on a note stored before hours existed. */
+  startTime?: string | null;
+  endTime?: string | null;
   createdBy: string;
   byStaff?: boolean;
   createdAt: Date;
@@ -49,6 +56,8 @@ function noteSchema(): Schema<NoteFields> {
     effect: { type: String, required: true, enum: ['closed', 'more_guests', 'fewer_guests', 'unknown'] },
     expectedGuests: { type: Number, default: null },
     detail: { type: String, default: null, maxlength: 280 },
+    startTime: { type: String, default: null },
+    endTime: { type: String, default: null },
     createdBy: { type: String, required: true },
     byStaff: { type: Boolean },
     createdAt: { type: Date, required: true },
@@ -79,6 +88,8 @@ export interface NoteStore {
   countByLocation(scope: OrgScope): Promise<Map<string, number>>;
   /** Sorted by start date. */
   list(scope: OrgScope, locationId: string): Promise<NoteRecord[]>;
+  /** This location's notes whose dates touch the inclusive range (weekdays not applied), sorted by start date. */
+  overlapping(scope: OrgScope, locationId: string, range: { from: string; to: string }): Promise<NoteRecord[]>;
   /** One note of this location, else null (another location's or organization's id included). */
   find(scope: OrgScope, locationId: string, noteId: string): Promise<NoteRecord | null>;
   count(scope: OrgScope, locationId: string): Promise<number>;
@@ -102,6 +113,8 @@ function toNote(doc: NoteFields & { _id: Types.ObjectId }): NoteRecord {
     effect: doc.effect,
     expectedGuests: doc.expectedGuests,
     detail: doc.detail,
+    startTime: doc.startTime ?? null,
+    endTime: doc.endTime ?? null,
     createdBy: doc.createdBy,
     byStaff: doc.byStaff === true,
     createdAt: doc.createdAt,
@@ -110,7 +123,9 @@ function toNote(doc: NoteFields & { _id: Types.ObjectId }): NoteRecord {
 }
 
 /** The stored content, field by field. */
-function fieldsOf(content: NoteContent): Pick<NoteFields, 'kind' | 'startDate' | 'endDate' | 'weekdays' | 'effect' | 'expectedGuests' | 'detail'> {
+function fieldsOf(
+  content: NoteContent,
+): Pick<NoteFields, 'kind' | 'startDate' | 'endDate' | 'weekdays' | 'effect' | 'expectedGuests' | 'detail' | 'startTime' | 'endTime'> {
   return {
     kind: content.kind,
     startDate: content.startDate,
@@ -119,6 +134,8 @@ function fieldsOf(content: NoteContent): Pick<NoteFields, 'kind' | 'startDate' |
     effect: content.effect,
     expectedGuests: content.expectedGuests,
     detail: content.detail,
+    startTime: content.startTime,
+    endTime: content.endTime,
   };
 }
 
@@ -134,6 +151,11 @@ export function createNoteStore(connection: Connection): NoteStore {
     },
     async list(scope, locationId) {
       const docs = await Note.find({ orgId: scope.orgId, locationId }).sort({ startDate: 1, createdAt: 1, _id: 1 }).lean();
+      return docs.map(toNote);
+    },
+    async overlapping(scope, locationId, range) {
+      const docs = await Note.find({ orgId: scope.orgId, locationId, startDate: trusted({ $lte: range.to }), endDate: trusted({ $gte: range.from }) })
+        .sort({ startDate: 1, createdAt: 1, _id: 1 }).lean();
       return docs.map(toNote);
     },
     async find(scope, locationId, noteId) {

@@ -3,6 +3,7 @@ import type { Connection } from 'mongoose';
 import { createAccessRequestStore, type AccessRequestStore } from './access-requests.ts';
 import { createAgentAnswerStore, type AgentAnswerStore } from './agent-answers.ts';
 import { createAuditEventStore, type AuditEventStore } from './audit-events.ts';
+import { createBusinessRuleStore, type BusinessRuleStore } from './business-rules.ts';
 import { createCalibrationStore, type CalibrationStore } from './calibrations.ts';
 import { createChatConversationStore, type ChatConversationStore } from './chat-conversations.ts';
 import { createChatLiveTurnStore, type ChatLiveTurnStore } from './chat-live-turns.ts';
@@ -36,6 +37,8 @@ export interface TownwiseStores {
   readonly salesDays: SalesDayStore;
   readonly uploads: UploadStore;
   readonly notes: NoteStore;
+  /** Business rules TownwiseAI reads with every message (spec 6.24). */
+  readonly businessRules: BusinessRuleStore;
   readonly chatConversations: ChatConversationStore;
   readonly chatLiveTurns: ChatLiveTurnStore;
   readonly chatUsage: ChatUsageStore;
@@ -72,6 +75,7 @@ export function createTownwiseStores(connection: Connection): TownwiseStores {
     salesDays: createSalesDayStore(connection),
     uploads: createUploadStore(connection),
     notes: createNoteStore(connection),
+    businessRules: createBusinessRuleStore(connection),
     chatConversations: createChatConversationStore(connection),
     chatLiveTurns: createChatLiveTurnStore(connection),
     chatUsage: createChatUsageStore(connection),

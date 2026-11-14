@@ -19,8 +19,9 @@ import { formatCount, formatDate, plural, townLabel } from '../../../../../../sr
 import { useAction } from '../../../../../../src/portal/hooks';
 import { usePortal } from '../../../../../../src/portal/PortalProvider';
 import { Page } from '../../../../../../src/portal/shell/Page';
+import { OrgSkeleton } from '../../../../../../src/portal/skeleton';
 import {
-  Button, DataTable, EmptyState, ErrorNotice, FormField, LinkButton, LoadingLine, Section, Small, Stack, useFocusMessage,
+  Button, DataTable, EmptyState, ErrorNotice, FormField, LinkButton, Section, Small, Stack, useFocusMessage,
 } from '../../../../../../src/portal/ui';
 import { theme } from '../../../../../../src/theme';
 
@@ -307,7 +308,7 @@ export default function OrganizationPage(): React.JSX.Element {
     );
   }
   if (state.status === 'loading') {
-    return <Page eyebrow="Organization" title="Organization"><LoadingLine text="Loading the organization" minHeight={480} /></Page>;
+    return <Page eyebrow="Organization" title="Organization"><OrgSkeleton label="Loading the organization" /></Page>;
   }
   if (state.status === 'failed') {
     return <Page eyebrow="Organization" title="Organization"><ErrorNotice error={state.error} onRetry={reload} /></Page>;

@@ -39,7 +39,7 @@ const SENDING: ReadonlySet<QueuedUpload['state']> = new Set(['waiting', 'creatin
 /**
  * The screen's rows: each file the server lists, in upload order, shown as this screen's upload while it is still
  * sending, then every upload the server doesn't list yet. A finished upload whose import the server has not
- * re-read yet shows the file its complete answered. Cancelled uploads, and their files, leave the list.
+ * re-read yet shows the file its complete answered. Canceled uploads, and their files, leave the list.
  */
 export function mergeRows(view: ImportView | null, items: readonly QueuedUpload[]): Row[] {
   const byFile = new Map(items.filter((item) => item.fileId !== null).map((item) => [item.fileId, item]));

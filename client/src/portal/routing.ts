@@ -34,10 +34,11 @@ const ITEM_REF = '[uf]_[0-9a-f]{24}';
 const ITEM_REF_ONLY = new RegExp(`^${ITEM_REF}$`);
 /**
  * Client app pages any member may open (P9, P11 to P15, P18, P24 Analytics, P25 TownwiseAI, P26 Your data and P27 an
- * item of it). `chat` is the tuning chat's old address, which redirects to `agent`.
+ * item of it, P28 Calendar, P29 Business rules). `chat` is the tuning chat's old address, which redirects to `agent`.
+ * The Calendar's `?day=` is a query, so it never changes this.
  */
 const MEMBER_PAGES = new RegExp(
-  `^/(dashboard|settings|locations/${ID}(/(analytics|sales|sales/upload|data|data/${ITEM_REF}|notes|town|agent|chat))?)$`,
+  `^/(dashboard|settings|locations/${ID}(/(analytics|sales|sales/upload|data|data/${ITEM_REF}|notes|town|agent|chat|calendar|rules))?)$`,
 );
 /** Client app pages for org admins only (P10, P16, P17). Checked before MEMBER_PAGES: /locations/new is not an id. */
 const ADMIN_PAGES = new RegExp(`^/(team|locations/new|locations/${ID}/settings)$`);
@@ -93,22 +94,23 @@ function isItemPath(path: string, dataHref: string): boolean {
   return path.startsWith(`${dataHref}/`) && ITEM_REF_ONLY.test(path.slice(dataHref.length + 1));
 }
 
-export type TabKey = 'home' | 'analytics' | 'sales' | 'upload' | 'data' | 'notes' | 'town' | 'agent' | 'settings';
+export type TabKey = 'home' | 'calendar' | 'analytics' | 'sales' | 'upload' | 'data' | 'notes' | 'town' | 'agent' | 'rules' | 'settings';
 
 const TAB_SUFFIX: Readonly<Record<TabKey, string>> = {
-  home: '', analytics: '/analytics', sales: '/sales', upload: '/sales/upload', data: '/data', notes: '/notes', town: '/town', agent: '/agent',
-  settings: '/settings',
+  home: '', calendar: '/calendar', analytics: '/analytics', sales: '/sales', upload: '/sales/upload', data: '/data', notes: '/notes', town: '/town', agent: '/agent',
+  rules: '/rules', settings: '/settings',
 };
 
 /** The location's sections in the top bar, in order (15.3). Sales data and Location settings are reached from pages. */
 const SECTIONS: readonly (readonly [TabKey, string])[] = [
-  ['home', 'Home'], ['analytics', 'Analytics'], ['agent', 'TownwiseAI'], ['notes', 'Notes'], ['town', 'Town'], ['data', 'Your data'],
+  ['home', 'Home'], ['calendar', 'Calendar'], ['analytics', 'Analytics'], ['agent', 'TownwiseAI'], ['notes', 'Notes'], ['rules', 'Rules'],
+  ['town', 'Town'], ['data', 'Your data'],
 ];
 
 /**
- * The client app's top bar (15.3): the sections of `locationId` (Home, Analytics, TownwiseAI, Notes, Town, Your data),
- * then Team for org admins (not while staff open the organization as admin) and Settings. With no location (none yet, or not known yet) only Team and Settings.
- * Analytics also marks Sales data, which lives under it.
+ * The client app's top bar (15.3): the sections of `locationId` (Home, Calendar, Analytics, TownwiseAI, Notes, Rules, Town,
+ * Your data), then Team for org admins (not while staff open the organization as admin) and Settings. With no location (none yet, or not known yet) only Team and Settings.
+ * Analytics also marks Sales data, which lives under it. Rules opens Business rules (P29), for every member.
  */
 export function clientNav(role: Role, pathname: string, locationId: string | null, openAsAdmin = false): NavItem[] {
   const path = normalize(pathname);
@@ -165,6 +167,12 @@ export function locationHref(locationId: string, tab: TabKey = 'home'): string {
   return `/locations/${encodeURIComponent(locationId)}${TAB_SUFFIX[tab]}`;
 }
 
+/** The Calendar (P28), opened at `day` (YYYY-MM-DD) when given, as Home's This month does. */
+export function calendarHref(locationId: string, day?: string): string {
+  const href = locationHref(locationId, 'calendar');
+  return day === undefined ? href : `${href}?day=${encodeURIComponent(day)}`;
+}
+
 /** An item's page under Your data (P27); `ref` as the API gives it. */
 export function itemHref(locationId: string, ref: string): string {
   return `${locationHref(locationId, 'data')}/${encodeURIComponent(ref)}`;
@@ -194,6 +202,7 @@ function weekOf(today: Date): string {
 export function pageTitle(tab: TabKey, today: Date): string {
   switch (tab) {
     case 'home': return `Week of ${weekOf(today)}`;
+    case 'calendar': return 'Calendar';
     case 'analytics': return 'Analytics';
     case 'sales': return 'Sales data';
     case 'upload': return 'Upload';
@@ -201,6 +210,7 @@ export function pageTitle(tab: TabKey, today: Date): string {
     case 'notes': return 'Notes';
     case 'town': return 'Town';
     case 'agent': return 'TownwiseAI';
+    case 'rules': return 'Business rules';
     case 'settings': return 'Location settings';
   }
 }

@@ -31,18 +31,19 @@ async function failureOf(run: () => Promise<unknown>): Promise<PlacesUnavailable
 }
 
 describe('the route table', () => {
-  it('declares both Places routes for any signed-in person, with 2 KB bodies and the shared places limiter', () => {
+  it('declares the Places routes for any signed-in person, with the shared places limiter: 2 KB bodies, and 32 KB for the map (D29)', () => {
     const places = TOWNWISE_ROUTES.filter((route) => route.id.startsWith('places.'))
       .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));
     expect(places).toEqual([
       { id: 'places.autocomplete', method: 'POST', path: '/places/autocomplete', policy: 'signed_in', bodyLimit: '2kb', limiter: 'places' },
       { id: 'places.details', method: 'POST', path: '/places/details', policy: 'signed_in', bodyLimit: '2kb', limiter: 'places' },
+      { id: 'places.map', method: 'POST', path: '/places/map', policy: 'signed_in', bodyLimit: '32kb', limiter: 'places' },
     ]);
   });
 });
 
 describe('autocomplete', () => {
-  it('posts the input and session token to places:autocomplete for US results in English, with no type filter', async () => {
+  it('autocomplete asks Google with US results, English and a location bias over the Northeast', async () => {
     fake.script({ kind: 'json', body: {} });
     await client.autocomplete('Lou’s Rest', TOKEN);
     expect(fake.calls).toHaveLength(1);
@@ -50,12 +51,16 @@ describe('autocomplete', () => {
     expect(call?.url).toBe('https://places.googleapis.com/v1/places:autocomplete');
     expect(call?.method).toBe('POST');
     expect(call?.headers).toEqual({ 'content-type': 'application/json', 'x-goog-api-key': KEY });
-    // toEqual on the whole body: nothing else is sent, includedPrimaryTypes included.
-    expect(call?.body).toEqual({ input: 'Lou’s Rest', sessionToken: TOKEN, includedRegionCodes: ['us'], languageCode: 'en' });
+    // toEqual on the whole body: nothing else is sent, includedPrimaryTypes and locationRestriction included. The
+    // rectangle replaces Google's IP biasing toward the API's data center (D29).
+    expect(call?.body).toEqual({
+      input: 'Lou’s Rest', sessionToken: TOKEN, includedRegionCodes: ['us'], languageCode: 'en',
+      locationBias: { rectangle: { low: { latitude: 40.4, longitude: -80.6 }, high: { latitude: 47.5, longitude: -66.9 } } },
+    });
     expect(call?.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it('keeps place predictions only, at most five in Google’s order, as name and detail', async () => {
+  it('keeps place predictions only, at most five in Google’s order, as name, detail and kind', async () => {
     fake.script({
       kind: 'json',
       body: {
@@ -73,11 +78,67 @@ describe('autocomplete', () => {
       },
     });
     expect(await client.autocomplete('lou', TOKEN)).toEqual([
-      { placeId: 'ChIJTestPlace0001', name: 'Lou’s Restaurant', detail: 'South Main Street, Hanover, NH, USA' },
-      { placeId: 'ChIJTestPlace0002', name: 'Molly’s', detail: 'Hanover, NH, USA' },
-      { placeId: 'ChIJTestPlace0003', name: 'No Secondary Text', detail: '' },
-      { placeId: 'ChIJTestPlace0004', name: 'Four', detail: 'Ithaca, NY, USA' },
-      { placeId: 'ChIJTestPlace0005', name: 'Five', detail: 'Stowe, VT, USA' },
+      { placeId: 'ChIJTestPlace0001', name: 'Lou’s Restaurant', detail: 'South Main Street, Hanover, NH, USA', kind: 'business' },
+      { placeId: 'ChIJTestPlace0002', name: 'Molly’s', detail: 'Hanover, NH, USA', kind: 'business' },
+      { placeId: 'ChIJTestPlace0003', name: 'No Secondary Text', detail: '', kind: 'business' },
+      { placeId: 'ChIJTestPlace0004', name: 'Four', detail: 'Ithaca, NY, USA', kind: 'business' },
+      { placeId: 'ChIJTestPlace0005', name: 'Five', detail: 'Stowe, VT, USA', kind: 'business' },
+    ]);
+  });
+
+  it('a prediction with establishment is a business, with street_address or premise an address', async () => {
+    fake.script({
+      kind: 'json',
+      body: {
+        suggestions: [
+          placePrediction('ChIJTestPlace0001', 'Lou’s Restaurant', 'South Main Street, Hanover, NH, USA', ['establishment']),
+          placePrediction('ChIJTestPlace0002', 'Town Hall', 'Hanover, NH, USA', ['point_of_interest']),
+          placePrediction('ChIJTestPlace0003', '12 South Main Street', 'Hanover, NH, USA', ['street_address', 'geocode']),
+          placePrediction('ChIJTestPlace0004', 'The Nugget Building', 'Hanover, NH, USA', ['premise', 'geocode']),
+          placePrediction('ChIJTestPlace0005', '12 South Main Street Unit 2', 'Hanover, NH, USA', ['subpremise', 'geocode']),
+        ],
+      },
+    });
+    expect((await client.autocomplete('12 south main', TOKEN)).map(({ placeId, kind }) => ({ placeId, kind }))).toEqual([
+      { placeId: 'ChIJTestPlace0001', kind: 'business' },
+      { placeId: 'ChIJTestPlace0002', kind: 'business' },
+      { placeId: 'ChIJTestPlace0003', kind: 'address' },
+      { placeId: 'ChIJTestPlace0004', kind: 'address' },
+      { placeId: 'ChIJTestPlace0005', kind: 'address' },
+    ]);
+  });
+
+  it('a locality, route or postal code prediction is skipped', async () => {
+    fake.script({
+      kind: 'json',
+      body: {
+        suggestions: [
+          placePrediction('ChIJTestPlace0001', 'Hanover', 'NH, USA', ['locality', 'political', 'geocode']),
+          placePrediction('ChIJTestPlace0002', 'South Main Street', 'Hanover, NH, USA', ['route', 'geocode']),
+          placePrediction('ChIJTestPlace0003', '03755', 'Hanover, NH, USA', ['postal_code', 'geocode']),
+          placePrediction('ChIJTestPlace0004', 'Grafton County', 'NH, USA', ['administrative_area_level_2', 'political', 'geocode']),
+          placePrediction('ChIJTestPlace0005', 'Lou’s Restaurant', 'South Main Street, Hanover, NH, USA'),
+        ],
+      },
+    });
+    expect(await client.autocomplete('hanover', TOKEN)).toEqual([
+      { placeId: 'ChIJTestPlace0005', name: 'Lou’s Restaurant', detail: 'South Main Street, Hanover, NH, USA', kind: 'business' },
+    ]);
+  });
+
+  it('a prediction without types is a business', async () => {
+    fake.script({
+      kind: 'json',
+      body: {
+        suggestions: [
+          placePrediction('ChIJTestPlace0001', 'Lou’s Restaurant', 'Hanover, NH, USA', null),
+          placePrediction('ChIJTestPlace0002', 'Molly’s', 'Hanover, NH, USA', []),
+        ],
+      },
+    });
+    expect((await client.autocomplete('lou', TOKEN)).map(({ placeId, kind }) => ({ placeId, kind }))).toEqual([
+      { placeId: 'ChIJTestPlace0001', kind: 'business' },
+      { placeId: 'ChIJTestPlace0002', kind: 'business' },
     ]);
   });
 

@@ -33,7 +33,7 @@ export interface QueuedUpload {
 }
 
 export interface QueueOverall {
-  /** Files not refused, failed or cancelled. */
+  /** Files not refused, failed or canceled. */
   files: number;
   bytes: number;
   sentBytes: number;
@@ -335,7 +335,7 @@ export function createUploadQueue(deps: {
     entry.fileId = created.file.id;
     importId ??= created.import?.id ?? null;
     limits = created.limits;
-    // Create is never aborted, so a file cancelled meanwhile is deleted once the server has it.
+    // Create is never aborted, so a file canceled meanwhile is deleted once the server has it.
     if (FINISHED.has(entry.state)) {
       if (entry.state === 'cancelled') void removeFile(deps.api, deps.locationId, created.file.id).catch(() => undefined);
       throw new Stopped();

@@ -7,10 +7,13 @@ import { copyText } from '../copyText';
 import { messageText, type ChatMessage, type TuningChat } from '../useTuningChat';
 import { Announce, ChatButton, type ChatButtonHandle } from './controls';
 import { described } from './described';
+import { Check, CopyIcon, Regenerate, Thumb } from './icons';
+import { MessageTime, rowMark, type RowShow } from './MessageTime';
 
 // The actions under a finished reply (owner decision 3, "Message actions"): Copy (web only: native has no clipboard
-// module and keeps the text selectable), Regenerate on the newest reply only, and Helpful / Not helpful, ChatGPT's
-// way: once rated only the chosen one shows, pressed, in mint, and pressing it again clears the rating. After Not
+// module and keeps the text selectable), Regenerate on the newest reply only, and Helpful / Not helpful as a thumb up
+// and a thumb down named by those words, ChatGPT's way: once rated only the chosen one shows, pressed, in mint, and
+// pressing it again clears the rating. After Not
 // helpful, an optional reason from six fixed ones (never free text), or Skip. Every action is aria-disabled while
 // the chat can't act and under view-as, where staff see the author's rating in place.
 
@@ -29,6 +32,8 @@ export function ReplyActions(props: {
   message: ChatMessage;
   /** The newest reply of the path shown: the only one that can be regenerated. */
   newest: boolean;
+  /** Whether the row always shows (the newest message's) or only on hover and focus (web). */
+  show: RowShow;
   chat: TuningChat;
   /** False while a reply streams or a version or conversation loads. */
   canAct: boolean;
@@ -91,33 +96,54 @@ export function ReplyActions(props: {
   const describedBy = described(props.readOnlyId);
   return (
     <View style={styles.actions}>
-      <View style={styles.row}>
-        {canCopy ? <ChatButton variant="link" label={copyLabel} disabled={off} {...describedBy} onPress={onCopy} /> : null}
+      <View style={styles.row} {...rowMark(props.show)}>
+        {canCopy ? (
+          <ChatButton
+            variant="arrow"
+            label={copyLabel}
+            icon={(color) => (copy === 'copied' ? <Check color={color} /> : <CopyIcon color={color} />)}
+            disabled={off}
+            {...describedBy}
+            onPress={onCopy}
+          />
+        ) : null}
         {canRegenerate ? (
           // A regenerate is a turn, so it waits for next month's budget too.
           <ChatButton
-            variant="link"
+            variant="arrow"
             label="Regenerate"
+            icon={(color) => <Regenerate color={color} />}
             disabled={off || chat.state.budget?.exhausted === true}
             {...describedBy}
             onPress={() => { chat.regenerate(message.key); }}
           />
         ) : null}
         {canRate && rating !== 'down' ? (
-          <ChatButton key="up" variant="outline" label="Helpful" pressed={rating === 'up'} disabled={off} {...describedBy} onPress={() => { onRate('up'); }} />
+          <ChatButton
+            key="up"
+            variant="arrow"
+            label="Helpful"
+            icon={(color) => <Thumb color={color} />}
+            pressed={rating === 'up'}
+            disabled={off}
+            {...describedBy}
+            onPress={() => { onRate('up'); }}
+          />
         ) : null}
         {canRate && rating !== 'up' ? (
           <ChatButton
             key="down"
             focusRef={notHelpful}
-            variant="outline"
+            variant="arrow"
             label="Not helpful"
+            icon={(color) => <Thumb down color={color} />}
             pressed={rating === 'down'}
             disabled={off}
             {...describedBy}
             onPress={() => { onRate('down'); }}
           />
         ) : null}
+        <MessageTime at={message.at} />
         {props.children}
       </View>
       {asking && rating === 'down' ? (

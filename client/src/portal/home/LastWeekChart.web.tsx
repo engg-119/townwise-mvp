@@ -5,7 +5,7 @@ import type { LastWeekChartProps } from './LastWeekChart';
 
 // Last week against the same week last year (home.md 2.4), inline SVG with no chart library, as Analytics draws:
 // seven pairs, Monday to Sunday, last week a solid `mint` bar and last year an outlined `line` bar, so the two are
-// told apart by shape as well as colour, with the key and the scale printed. The SVG is aria-hidden: the card's
+// told apart by shape as well as color, with the key and the scale printed. The SVG is aria-hidden: the card's
 // summary and its table carry the same numbers. A day with no data draws no bar.
 
 const C = theme.color;

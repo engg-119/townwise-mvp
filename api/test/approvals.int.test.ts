@@ -163,6 +163,18 @@ describe('GET /api/admin/requests', () => {
     expect(rejected.requests[0]).toMatchObject({ id: decided.requestId, decidedBy: { email: STAFF_EMAIL }, decisionMessage: 'Sentinel decision' });
     expect(await errorOf(await call(server, '/api/admin/requests?status=everything', { session: staff }))).toEqual({ status: 400, error: 'invalid_request' });
   });
+
+  it('the admin request list carries each place’s kind', async () => {
+    await server.connection.collection('tw_access_requests').deleteMany({});
+    const placed = await requester('kinds', [PLACES3[0], { ...PLACES3[1], kind: 'address' }, { ...PLACES3[2], kind: 'business' }]);
+    const body = await (await call(server, '/api/admin/requests', { session: staff })).json() as { requests: AdminRequestView[] };
+    expect(body.requests.map((r) => r.id)).toEqual([placed.requestId]);
+    expect(body.requests[0]?.places.map(({ placeId, kind }) => ({ placeId, kind }))).toEqual([
+      { placeId: 'ChIJTestPlace0001', kind: 'business' },
+      { placeId: 'ChIJTestPlace0002', kind: 'address' },
+      { placeId: 'ChIJTestPlace0003', kind: 'business' },
+    ]);
+  });
 });
 
 describe('POST /api/admin/requests/:requestId/approve (F3)', () => {
@@ -218,7 +230,7 @@ describe('POST /api/admin/requests/:requestId/approve (F3)', () => {
   it('a request stored before places approves with one location name and gives the location its place id', async () => {
     const placeId = 'ChIJTestPlace0002';
     const placed = await storedBeforePlaces('placed', placeId);
-    const oldPlaces = [{ placeId, name: null, town: HANOVER }];
+    const oldPlaces = [{ placeId, name: null, kind: 'business', town: HANOVER }];
     expect((await me(placed.session)).access).toMatchObject({ state: 'pending', request: { places: oldPlaces } });
     const listed = await (await call(server, '/api/admin/requests', { session: staff })).json() as { requests: AdminRequestView[] };
     expect(listed.requests.find((r) => r.id === placed.requestId)?.places).toEqual(oldPlaces);

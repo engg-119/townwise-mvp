@@ -15,7 +15,7 @@ import { cleanup, fireEvent, screen, within } from 'expo-router/testing-library'
 import { MONTH_ROWS_LINE } from '../../../src/portal/analytics/cells';
 import { PANEL_EMPTY } from '../../../src/portal/analytics/panel';
 import type { MeResponse } from '../../../src/portal/schemas';
-import { ACCESS, fakePortalApi, meOf, orgOf, viewAsMe, type FakePortalApi } from '../../helpers/portal';
+import { ACCESS, EMAIL, fakePortalApi, meOf, orgOf, viewAsMe, type FakePortalApi } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { analyticsFake, calendarBody, day, historyBody, holiday, note, run, upload } from './fakes';
 
@@ -41,9 +41,11 @@ afterEach(async () => {
 const PATH = '/api/org/locations/l1';
 const DAYS = run('2025-09-01', '2026-11-04', (date) => 100 + (new Date(`${date}T00:00:00Z`).getUTCDay() === 6 ? 40 : 0));
 
-function portal(me: MeResponse, days = DAYS, uploads = [upload()], uploadsOff = false): FakePortalApi {
+/** `rules` answers GET .../rules; null leaves it unanswered (a 404), which Analytics reads as no rules. */
+function portal(me: MeResponse, days = DAYS, uploads = [upload()], uploadsOff = false, rules: unknown[] | null = null): FakePortalApi {
   const from = days[0]?.date.slice(0, 4) ?? '2026';
   const fake = analyticsFake({
+    ...(rules === null ? {} : { [`${PATH}/rules`]: { rules, limit: 30 } }),
     [`${PATH}/sales/history`]: { ...historyBody(days, uploads), uploadsOff },
     [`${PATH}/notes`]: { notes: [note({ startDate: '2026-10-10', detail: 'A rehearsal dinner.' })] },
     [`${PATH}/calendar?from=${from}-01-01&to=2026-12-31`]: calendarBody({ events: [holiday('2025-11-27', 'Thanksgiving Day', 'us:thanksgiving', 'Thanksgiving')] }),
@@ -162,4 +164,42 @@ test('F4 on native: the stored file by name and kind, and Your data, with no dow
   expect(screen.getByText('Download from a computer at townwise.tech.')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Download cleaned CSV' })).toBeNull();
   expect(screen.getByRole('link', { name: 'Open Your data' })).toBeTruthy();
+});
+
+test('a likely-closed day (spec D32) reads “Likely closed” in the month’s day list, not “Closed”', async () => {
+  // Saturdays at 100 guests, then Oct 31 with 1 guest: under a tenth of its weekday's typical, so likely closed.
+  const days = run('2026-09-05', '2026-11-04', (date) => (date === '2026-10-31' ? 1 : 100));
+  await renderApp('/locations/l1/analytics', portal(meOf(ACCESS.member), days));
+  await fireEvent.press(within(await screen.findByLabelText('Months, daily guests')).getByRole('button', { name: /^Oct 2026,/ }));
+  const list = screen.getByLabelText('Days in Oct 2026');
+  // The default filters leave closed days out of the numbers, so it is also Left out.
+  expect(within(list).getByText('1, Likely closed, Left out')).toBeTruthy();
+  expect(within(list).queryByText('1, Closed, Left out')).toBeNull();
+});
+
+test('today’s partial upload with 1 guest is not “Likely closed”, though the same day a week earlier would be', async () => {
+  // Today is Thu Nov 5, 2026 (fake clock). Thursdays run at 100 guests; today's row is a partial upload with 1 guest.
+  const days = run('2026-09-05', '2026-11-05', (date) => (date === '2026-11-05' || date === '2026-10-29' ? 1 : 100));
+  await renderApp('/locations/l1/analytics', portal(meOf(ACCESS.member), days));
+  await fireEvent.press(within(await screen.findByLabelText('Months, daily guests')).getByRole('button', { name: /^Oct 2026,/ }));
+  expect(within(screen.getByLabelText('Days in Oct 2026')).getByText('1, Likely closed, Left out')).toBeTruthy();
+  await fireEvent.press(screen.getByRole('button', { name: /^Nov 2026,/ }));
+  const nov = screen.getByLabelText('Days in Nov 2026');
+  expect(within(nov).getAllByText('1').length).toBeGreaterThan(0);
+  expect(within(nov).queryByText(/Likely closed/)).toBeNull();
+});
+
+test('a business rule whose schedule says more guests marks a near-empty day open (D31 with D32), as a note does', async () => {
+  const days = run('2026-09-05', '2026-11-04', (date) => (date === '2026-10-31' ? 1 : 100));
+  const rule = {
+    id: 'r1', text: 'Halloween party night', addedVia: 'page', createdByEmail: EMAIL, createdAt: '2026-10-01T12:00:00.000Z',
+    updatedAt: '2026-10-01T12:00:00.000Z', canEdit: true, scheduleSummary: 'More guests on Oct 31, 2026',
+    schedule: { kind: 'other', startDate: '2026-10-31', endDate: '2026-10-31', weekdays: null, effect: 'more_guests', expectedGuests: null, startTime: null, endTime: null },
+  };
+  await renderApp('/locations/l1/analytics', portal(meOf(ACCESS.member), days, [upload()], false, [rule]));
+  await fireEvent.press(within(await screen.findByLabelText('Months, daily guests')).getByRole('button', { name: /^Oct 2026,/ }));
+  const list = screen.getByLabelText('Days in Oct 2026');
+  // Open, so it is in the numbers: no Likely closed, and not Left out.
+  expect(await within(list).findByText('1')).toBeTruthy();
+  expect(within(list).queryByText(/Likely closed/)).toBeNull();
 });

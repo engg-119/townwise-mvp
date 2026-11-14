@@ -1,11 +1,12 @@
 import { dayContext, EMPTY_CONTEXT, type DayContext } from '../../../src/portal/analytics/days';
-import { byDate, type DayRecord } from '../../../src/portal/analytics/history';
+import { byDate, decodeHistory, type DayRecord } from '../../../src/portal/analytics/history';
 import {
   calendarCoverageLine, calendarWeekLine, dayMonthRange, eventLine, homeCalendarRange, lastWeekComparison, lastWeekLine,
-  lateWeekLine, lateWeekShare, leadLine, mondayOf, monthDay, monthFactLine, monthFacts, monthGrid, monthItems, monthMove, nextEvent, nextEventWhen,
-  pastDay, periodLine, sameWeekdayYearsAgo, summaryLabel, thisWeek, vsUsualLine, weekDates, type HomeInput,
+  lateWeekLine, lateWeekShare, leadLine, mondayOf, monthDay, monthFactLine, monthFacts, monthGrid, monthItems, monthMove, monthStatusWord, nextEvent,
+  nextEventWhen, pastDay, periodLine, sameWeekdayYearsAgo, summaryLabel, thisDayLine, thisWeek, vsUsualLine, weekDates, type HomeInput,
 } from '../../../src/portal/analytics/week';
-import { calendarBody, day, holiday, note, run, townEvent } from '../analytics/fakes';
+import { addDays } from '../../../src/portal/locations/dates';
+import { calendarBody, day, historyBody, holiday, note, run, townEvent } from '../analytics/fakes';
 
 // Home's computations (home.md 2, 5.6), on synthetic days only. Explainability: every comparison says how many days
 // it is over, and "last year" is the same weekday 52 weeks earlier. Honesty: no figure for a day after the last day
@@ -290,6 +291,53 @@ describe('the month card', () => {
     // A day after today still shows last year's same weekday: that is history.
     expect(later.lastYear).toMatchObject({ date: '2025-11-12', value: 100 });
     expect(monthDay('2026-11-06', home).notes.map((each) => each.detail)).toEqual(['A rehearsal dinner.']);
+  });
+
+  test('a likely-closed past day (spec D32) reads “Likely closed” in its cell, the day and past years, its count kept', () => {
+    // 100 guests a day, but 1 on Tue, Nov 3, 2026 and on Tue, Nov 4, 2025; decoded, so each day has its typical guests.
+    const days = decodeHistory(historyBody(run('2024-09-01', '2026-11-04', (date) => (date === '2026-11-03' || date === '2025-11-04' ? 1 : 100))));
+    const home = input(days, context);
+    const cellOn = (on: HomeInput, date: string) => monthGrid(TODAY, on.context, { input: on, forecast: new Map() }).flat().find((each) => each?.date === date);
+    const cell = cellOn(home, '2026-11-03');
+    expect(cell).toMatchObject({ status: 'closed', likelyClosed: true, figure: null, label: 'Tue, Nov 3, 2026. This week. Likely closed (1 guest recorded).' });
+    expect(cell === undefined || cell === null ? null : monthStatusWord(cell)).toBe('Likely closed');
+    expect(monthStatusWord({ status: 'closed', likelyClosed: false })).toBe('Closed');
+    expect(monthStatusWord({ status: 'booked', likelyClosed: false })).toBe('Booked');
+    expect(cellOn(home, '2026-11-02')).toMatchObject({ status: null, likelyClosed: false, figure: { value: 100, kind: 'actual' } });
+    const past = monthDay('2026-11-03', home);
+    expect(past).toMatchObject({ value: 1, likelyClosed: true });
+    expect(thisDayLine(past, 'guests')).toBe('Likely closed (1 guest recorded)');
+    expect(thisDayLine(monthDay('2026-11-02', home), 'guests')).toBe('100 guests');
+    expect(thisDayLine({ value: null, likelyClosed: false }, 'guests')).toBe('No sales stored for this day.');
+    expect(past.lastYear).toMatchObject({ date: '2025-11-04', value: 1, closed: true, likelyClosed: true });
+    // A note with fewer guests says the day was open: a real slow day.
+    const slow = input(days, dayContext([note({ startDate: '2026-11-03', kind: 'other', effect: 'fewer_guests' })], []));
+    expect(cellOn(slow, '2026-11-03')).toMatchObject({ status: null, likelyClosed: false, figure: { value: 1, kind: 'actual' } });
+    expect(monthDay('2026-11-03', slow)).toMatchObject({ likelyClosed: false });
+  });
+
+  test('this week’s own near-empty day (spec D32) is likely closed, in This month’s words', () => {
+    const days = decodeHistory(historyBody(run('2024-09-01', '2026-11-04', (date) => (date === '2026-11-03' ? 1 : 100))));
+    const week = thisWeek(input(days, context));
+    expect(week.rows[0]).toMatchObject({ date: '2026-11-02', value: 100, likelyClosed: false });
+    const tuesday = week.rows[1];
+    if (tuesday === undefined) throw new Error('no Tuesday');
+    expect(tuesday).toMatchObject({ date: '2026-11-03', value: 1, likelyClosed: true });
+    expect(thisDayLine(tuesday, 'guests')).toBe(thisDayLine(monthDay('2026-11-03', input(days, context)), 'guests'));
+    expect(thisDayLine(tuesday, 'guests')).toBe('Likely closed (1 guest recorded)');
+    // A business rule's schedule with fewer guests says the day was open (D31), as a note does.
+    const ruled = thisWeek(input(days, dayContext([], [], [{ startDate: '2026-11-01', endDate: null, weekdays: [2], effect: 'fewer_guests' }])));
+    expect(ruled.rows[1]).toMatchObject({ value: 1, likelyClosed: false });
+  });
+
+  test('two years ago reads the 8 same weekdays before it for its typical guests (spec D32), as the Calendar does', () => {
+    // Tue, Nov 5, 2024 had 1 guest. The 4 Tuesdays before it have no row; the 4 before those had 100 each. Home reads
+    // every stored day (GET .../sales/history), so the typical guests come from those 4 and the day is likely closed.
+    const twoYearsAgo = '2024-11-05';
+    const gap = new Set([1, 2, 3, 4].map((weeks) => addDays(twoYearsAgo, -7 * weeks)));
+    const days = decodeHistory(historyBody(run('2024-09-01', '2026-11-04', (date) => (date === twoYearsAgo ? 1 : gap.has(date) ? null : 100))));
+    const week = thisWeek(input(days, context));
+    expect(week.rows[1]?.twoYearsAgo).toMatchObject({ date: twoYearsAgo, value: 1, closed: true, likelyClosed: true });
   });
 
   test('the next event is the first holiday or town event from today, and says when', () => {

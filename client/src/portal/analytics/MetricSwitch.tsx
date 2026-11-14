@@ -5,7 +5,7 @@ import { theme } from '../../theme';
 import { webAria } from '../ui/aria';
 import type { Metric } from './words';
 
-// "Colour by" (home.md 4.2): Guests or Net sales as two pressed buttons in a radio group with one tab stop; the
+// "Color by" (home.md 4.2): Guests or Net sales as two pressed buttons in a radio group with one tab stop; the
 // arrow keys move the choice (web). The look of the note form's ChoiceGroup, written here so this folder does not
 // import upload/, which another session owns. A metric with no data is disabled, and its helper says why.
 
@@ -42,11 +42,11 @@ export function MetricSwitch(props: {
   return (
     <View
       role="radiogroup"
-      aria-label="Colour by"
+      aria-label="Color by"
       {...(Platform.OS === 'web' ? ({ onKeyDown } as object) : {})}
       style={styles.group}
     >
-      <Text style={styles.legend}>Colour by</Text>
+      <Text style={styles.legend}>Color by</Text>
       <View style={styles.row}>
         {OPTIONS.map((option, index) => {
           const on = option.value === props.value;

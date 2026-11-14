@@ -39,7 +39,7 @@ describe('the two reads', () => {
     const api = analyticsFake({ [path]: historyBody(days) });
     const body = await fetchSalesHistory(api, LOCATION_ID);
     expect(api.paths).toEqual([path]);
-    expect(decodeHistory(body)).toEqual(days);
+    expect(decodeHistory(body)).toEqual(days.map((each) => ({ ...each, typicalGuests: null })));
     expect(body.coverage.dayCount).toBe(2);
   });
 
@@ -106,6 +106,21 @@ describe('history', () => {
     expect(byDate(days).get('2026-11-04')).toEqual(days[1]);
     expect(byDate(days).get('2026-11-05')).toBeUndefined();
   });
+
+  test('decodeHistory gives each day its weekday’s typical guests from the 8 same weekdays before it (spec D32)', () => {
+    // Saturdays 2026-09-12 to 10-31 at 90 to 130 guests, then a near-empty Saturday; a busy Friday never counts.
+    const saturdays = [90, 100, 110, 120, 130, 100, 100, 100].map((guests, index) => day(addDays('2026-09-12', index * 7), guests));
+    const decoded = decodeHistory(historyBody([...saturdays, day('2026-11-06', 900), day('2026-11-07', 1)]));
+    const typical = new Map(decoded.map((each) => [each.date, each.typicalGuests]));
+    // Fewer than 3 open Saturdays before it: none.
+    expect(typical.get('2026-09-12')).toBeNull();
+    expect(typical.get('2026-09-26')).toBeNull();
+    expect(typical.get('2026-10-03')).toBe(100);
+    // An even count: the mean of the middle two.
+    expect(typical.get('2026-10-10')).toBe(105);
+    expect(typical.get('2026-11-07')).toBe(100);
+    expect(typical.get('2026-11-06')).toBeNull();
+  });
 });
 
 describe('day classification', () => {
@@ -151,8 +166,26 @@ describe('day classification', () => {
     expect(classOf(date, record, dayContext([], [thanksgiving, game]))).toBe('holiday');
     expect(classOf(date, record, dayContext([], [game, term]))).toBe('event');
     expect(classOf(date, record, dayContext([], [term]))).toBe('regular');
-    // A closure note that didn't close the day still marks it as noted.
-    expect(classOf(date, record, dayContext([note({ startDate: date, kind: 'closure', effect: 'fewer_guests' })], []))).toBe('noted');
+    // A closure note closes the day whatever its effect (isClosure, as the forecast and the lab read it).
+    expect(classOf(date, record, dayContext([note({ startDate: date, kind: 'closure', effect: 'fewer_guests' })], []))).toBe('closed');
+  });
+
+  test('a likely-closed day (spec D32) is closed, and the Closed days box covers it', () => {
+    // Saturdays at 100 guests, then one with 1 guest: likely closed.
+    const days = decodeHistory(historyBody([...run('2026-09-12', '2026-11-07', (date) => (date === '2026-11-07' ? 1 : 100))]));
+    const lookup = byDate(days);
+    const saturday = lookup.get('2026-11-07');
+    expect(isClosed('2026-11-07', saturday, EMPTY_CONTEXT)).toBe(true);
+    expect(isClosed('2026-11-06', lookup.get('2026-11-06'), EMPTY_CONTEXT)).toBe(false);
+    const filters = defaultFilters(days);
+    expect(includedFn(filters, lookup, EMPTY_CONTEXT)('2026-11-07')).toBe(false);
+    expect(includedFn({ ...filters, include: { ...filters.include, closed: true } }, lookup, EMPTY_CONTEXT)('2026-11-07')).toBe(true);
+    expect(basisOf(days, filters, EMPTY_CONTEXT).leftOut.closed).toBe(1);
+    expect(cellLabel('2026-11-07', saturday, { metric: 'guests', marks: ALL_ON, context: EMPTY_CONTEXT, included: () => false }, false))
+      .toBe('Sat, Nov 7, 2026. 1 guest, $20. Likely closed. Left out by your filters.');
+    // The owner's note with fewer guests says it was open: a slow day, in the numbers.
+    const slow = dayContext([note({ startDate: '2026-11-07', kind: 'other', effect: 'fewer_guests' })], []);
+    expect(isClosed('2026-11-07', saturday, slow)).toBe(false);
   });
 });
 
@@ -227,22 +260,22 @@ describe('levels', () => {
 });
 
 describe('usual', () => {
-  // 2026-11-07 is a Saturday; its neighbours are the Saturdays 1 to 4 weeks either side.
+  // 2026-11-07 is a Saturday; its neighbors are the Saturdays 1 to 4 weeks either side.
   const date = '2026-11-07';
-  const neighbours = [-28, -21, -14, -7, 7, 14, 21, 28].map((offset) => addDays(date, offset));
+  const neighbors = [-28, -21, -14, -7, 7, 14, 21, 28].map((offset) => addDays(date, offset));
 
   test('is the mean of the same weekday in the 4 weeks either side, leaving out the day itself', () => {
-    const days = [...neighbours.map((each, index) => day(each, 100 + index * 10)), day(date, 999)].sort((a, b) => a.date.localeCompare(b.date));
+    const days = [...neighbors.map((each, index) => day(each, 100 + index * 10)), day(date, 999)].sort((a, b) => a.date.localeCompare(b.date));
     const lookup = byDate(days);
     expect(usual(date, 'guests', lookup, EMPTY_CONTEXT, () => true)).toEqual({ mean: 135, days: 8 });
   });
 
   test('leaves out days that are not regular or that the filters leave out, and needs 3 days', () => {
-    const days = neighbours.slice(0, 4).map((each) => day(each, 100));
+    const days = neighbors.slice(0, 4).map((each) => day(each, 100));
     const lookup = byDate(days);
-    const party = note({ startDate: neighbours[0] ?? '' });
+    const party = note({ startDate: neighbors[0] ?? '' });
     expect(usual(date, 'guests', lookup, dayContext([party], []), () => true)).toEqual({ mean: 100, days: 3 });
-    expect(usual(date, 'guests', lookup, dayContext([party], []), (each) => each !== neighbours[1])).toBeNull();
+    expect(usual(date, 'guests', lookup, dayContext([party], []), (each) => each !== neighbors[1])).toBeNull();
     expect(usual(date, 'netSales', lookup, EMPTY_CONTEXT, () => true)).toEqual({ mean: 200_000, days: 4 });
   });
 });
@@ -680,6 +713,13 @@ describe('the day panel', () => {
     const panel = dayPanel('2026-11-23', { ...input, byDate: closedDays, included: () => false });
     expect(panel.status).toEqual(['Closed', 'Left out of the numbers by your filters']);
     expect(panel.numbers[2]).toEqual({ label: 'Usual for a Monday', value: 'Not enough similar days' });
+  });
+
+  test('a likely-closed day (spec D32) says so, and keeps its guest count', () => {
+    const likely = byDate([{ ...day('2026-11-23', 1), typicalGuests: 120 }]);
+    const panel = dayPanel('2026-11-23', { ...input, byDate: likely, included: () => false });
+    expect(panel.status).toEqual(['Likely closed', 'Left out of the numbers by your filters']);
+    expect(panel.numbers[0]).toEqual({ label: 'Guests', value: '1' });
   });
 
   test('the calendar note is honest about what the town research covers', () => {

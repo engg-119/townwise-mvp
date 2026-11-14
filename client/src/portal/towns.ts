@@ -1,3 +1,4 @@
+import type { TownInput } from './api';
 import { fmt0, fmtSigned } from '../marketing/format';
 import {
   CAVEATS, countySeries, DATA_YEAR, INDEX_DEFINITION, MONTHS, northeastSeries, SOURCES, type CountySeries, type Source,
@@ -106,6 +107,13 @@ export interface SelectGroup { label: string; options: readonly SelectOption[] }
 
 function option(town: (typeof towns)[number]): SelectOption {
   return { value: town.id, label: `${town.name}, ${town.state}` };
+}
+
+/** A TownInput's town name: one of the twelve's by its id, or another town's own. */
+export function townNameOf(input: TownInput): string {
+  if (input.townId === null) return input.name;
+  const { townId } = input;
+  return towns.find((town) => town.id === townId)?.name ?? townId;
 }
 
 /** “College towns” (six), then “Seasonal and event towns” (six), in the homepage's order (shell.md 7.5). */

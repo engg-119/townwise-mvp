@@ -48,11 +48,13 @@ export interface HeatmapProps {
 function dayWords(date: string, day: DayRecord | undefined, props: HeatmapProps): string {
   const value = day === undefined ? null : valueOf(day, props.metric);
   const events = eventsOf(props.context, date);
+  const flags = dayFlags(date, day, props.context);
   const marks = [
     props.marks.holidays && events.some((event) => event.kind === 'holiday') ? 'Holiday' : null,
     props.marks.townEvents && events.some((event) => event.kind === 'event') ? 'Town event' : null,
     props.marks.notes && notesOf(props.context, date).length > 0 ? 'Your note' : null,
-    props.marks.closures && dayFlags(date, day, props.context).closed ? 'Closed' : null,
+    // A near-empty day (spec D32) is closed for the filters but named for what it is, as cells.ts names it on web.
+    props.marks.closures && flags.closed ? (flags.likelyClosed ? 'Likely closed' : 'Closed') : null,
     value !== null && !props.included(date) ? 'Left out' : null,
   ].filter((part): part is string => part !== null);
   return [value === null ? 'No data' : metricNumber(value, props.metric), ...marks].join(', ');

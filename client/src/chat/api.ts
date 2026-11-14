@@ -415,8 +415,19 @@ const questionSchema = z.discriminatedUnion('kind', [
     id: z.string(), kind: z.literal('weekday'), weekday: z.number().int().min(0).max(6), from: dateSchema, to: dateSchema,
     noSalesCount: z.number().int(), weekdayCount: z.number().int(),
   }),
-  /** A run of `dayCount` days with no sales and no note. */
-  z.object({ id: z.string(), kind: z.literal('gap'), from: dateSchema, to: dateSchema, dayCount: z.number().int() }),
+  /**
+   * A run of `dayCount` days with no sales and no note, asked only when one of its days is usually busy; the typical
+   * guests (spec D32), lowest and highest, of those usually busy days. An API from before them sends neither, and the
+   * card then says only that there are no sales.
+   */
+  z.object({
+    id: z.string(), kind: z.literal('gap'), from: dateSchema, to: dateSchema, dayCount: z.number().int(),
+    typicalGuestsLow: z.number().int().optional(), typicalGuestsHigh: z.number().int().optional(),
+  }),
+  /** A usually busy day with almost no guests recorded (spec D32's likely closed): its `guests` and `typicalGuests`. */
+  z.object({
+    id: z.string(), kind: z.literal('likely_closed'), date: dateSchema, guests: z.number().int().min(0), typicalGuests: z.number().int(),
+  }),
 ]);
 export type Question = z.infer<typeof questionSchema>;
 
@@ -426,7 +437,7 @@ const activitySchema = z.discriminatedUnion('kind', [
     at: z.string(), kind: z.literal('note_saved'), via: z.enum(['chat', 'question']), noteId: z.string(),
     noteKind: noteProposalSchema.shape.kind, startDate: dateSchema, endDate: dateSchema,
   }),
-  z.object({ at: z.string(), kind: z.literal('question_answered'), questionId: z.string(), answer: z.enum(['open', 'not_sure']) }),
+  z.object({ at: z.string(), kind: z.literal('question_answered'), questionId: z.string(), answer: z.enum(['open', 'not_sure', 'other']) }),
   /** F3: a stored file Townwise read, and what it added. Never the file's name. */
   z.object({
     at: z.string(), kind: z.literal('file_processed'), fileId: z.string(), firstDate: dateSchema, lastDate: dateSchema, dayCount: z.number().int(),
@@ -452,15 +463,19 @@ export async function loadAgentPanel(api: ApiClient, locationId: string): Promis
   return { questions: known(panel.questions, questionSchema), activity: known(panel.activity, activitySchema) };
 }
 
-export type QuestionAnswer = 'closed' | 'open' | 'not_sure';
+export type QuestionAnswer = 'closed' | 'open' | 'not_sure' | 'other';
 
 const answerResultSchema = z.object({
-  question: z.object({ id: z.string(), answer: z.enum(['closed', 'open', 'not_sure']) }),
+  question: z.object({ id: z.string(), answer: z.enum(['closed', 'open', 'not_sure', 'other']) }),
   note: noteSchema.nullable(),
 });
 export type AnswerResult = z.infer<typeof answerResultSchema>;
 
-/** `closed` saves a closure note over the question's days; every answer stops the question being asked again. */
+/**
+ * `closed` saves a closure note over the question's days, and `open` on a likely-closed question the note that it was
+ * open with few guests; every answer stops the question being asked again. The body is the answer alone: `other`
+ * (Something else…) carries no words, which go to the chat as a message.
+ */
 export function answerQuestion(api: ApiClient, locationId: string, questionId: string, answer: QuestionAnswer): Promise<AnswerResult> {
   return api.json(`${locationPath(locationId)}/agent/questions/${encodeURIComponent(questionId)}`, answerResultSchema, {
     method: 'POST', body: { answer },

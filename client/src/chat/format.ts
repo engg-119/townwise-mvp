@@ -1,3 +1,4 @@
+import { formatTime } from '../portal/format';
 import type { NoteProposal } from './api';
 
 // Plain words for a note proposal and TownwiseAI's dates. The note copy follows the portal spec's notes list (P14):
@@ -85,7 +86,23 @@ export function dayText(date: string): string {
   return parts === null ? date : `${parts.weekday}, ${parts.month} ${String(parts.day)}, ${parts.year}`;
 }
 
+/** A calendar date with its weekday and no year: "Mon, Oct 19". */
+export function shortDayText(date: string): string {
+  const parts = partsOf(date);
+  return parts === null ? date : `${parts.weekday}, ${parts.month} ${String(parts.day)}`;
+}
+
 /** The plural weekday name ("Mondays"), 0 being Sunday. */
 export function weekdayName(weekday: number): string {
   return WEEKDAYS[weekday] ?? String(weekday);
+}
+
+/** A message's time as the viewer reads it: "8:59 PM" today, "Nov 9, 8:59 PM" another day, "Nov 9, 2025, 8:59 PM" another year. */
+export function formatMessageTime(at: number, now: number = Date.now()): string {
+  const time = new Date(at);
+  const today = new Date(now);
+  const clock = formatTime(time);
+  if (time.getFullYear() === today.getFullYear() && time.getMonth() === today.getMonth() && time.getDate() === today.getDate()) return clock;
+  const day = `${SHORT_MONTHS[time.getMonth()] ?? ''} ${String(time.getDate())}`;
+  return time.getFullYear() === today.getFullYear() ? `${day}, ${clock}` : `${day}, ${String(time.getFullYear())}, ${clock}`;
 }

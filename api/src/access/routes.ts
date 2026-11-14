@@ -29,9 +29,10 @@ import { declineInvite, getMe, joinInvite, recordWelcome } from '../handlers/me.
 import { createNote, deleteNote, listNotes, updateNote } from '../handlers/notes.ts';
 import { startOpenAsAdmin } from '../handlers/open-as-admin.ts';
 import { getStaffActivity, leaveOrg, renameOrg } from '../handlers/org.ts';
-import { placesAutocomplete, placesDetails } from '../handlers/places.ts';
+import { placesAutocomplete, placesDetails, placesMap } from '../handlers/places.ts';
 import { getProfile, updateProfile } from '../handlers/profile.ts';
 import { createAccessRequest } from '../handlers/requests.ts';
+import { createRule, deleteRule, listRules, updateRule } from '../handlers/rules.ts';
 import { deleteSales, getSales, getSalesDays, getSalesHistory, uploadSales } from '../handlers/sales.ts';
 import { createSetupLocation, deleteSetupLocation, deleteSetupSales, updateSetupLocation, uploadSetupSales } from '../handlers/staff-setup.ts';
 import { addMembers, changeRole, listMembers, removeMember } from '../handlers/team.ts';
@@ -49,8 +50,10 @@ export interface TownwiseRoute {
   readonly policy: Policy;
   /**
    * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer, a conversation's rename and a version switch;
-   * '2kb' on the Places, files and (D28) Your data JSON routes, the start of a calibration and the forecasts switch;
-   * '8kb' on a TownwiseAI proposal; '256kb' only on the upload routes (the member one and, D23, staff setup's) and
+   * '2kb' on the Places, files and (D28) Your data JSON routes, the start of a calibration, the forecasts switch and
+   * (D31) a business rule;
+   * '8kb' on a TownwiseAI proposal; '32kb' on the other JSON writes, among them (D29) the Places map, whose 25 place
+   * ids may reach 13 KB; '256kb' only on the upload routes (the member one and, D23, staff setup's) and
    * (U13B) the staff forecast import; 'stream' only on the chunk route, whose handler reads the raw body itself after
    * the policy has passed.
    */
@@ -97,6 +100,11 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'places.details', method: 'POST', path: '/places/details', policy: 'signed_in', bodyLimit: '2kb',
     limiter: 'places', openAsAdmin: true, handler: placesDetails,
+  },
+  // D29: the signed map of every checked place; signing is local, so it answers with the Places search off.
+  {
+    id: 'places.map', method: 'POST', path: '/places/map', policy: 'signed_in', bodyLimit: '32kb',
+    limiter: 'places', openAsAdmin: true, handler: placesMap,
   },
 
   { id: 'org.get', method: 'GET', path: '/org', policy: 'member', bodyLimit: 'none', openAsAdmin: true, handler: getOwnOrg },
@@ -158,6 +166,23 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.notes.remove', method: 'DELETE', path: '/org/locations/:locationId/notes/:noteId', policy: 'member',
     bodyLimit: 'none', openAsAdmin: true, handler: deleteNote,
+  },
+  // Business rules: standing facts about a location that TownwiseAI reads with every message (spec 10.16, D31).
+  {
+    id: 'org.rules.list', method: 'GET', path: '/org/locations/:locationId/rules', policy: 'member', bodyLimit: 'none',
+    openAsAdmin: true, handler: listRules,
+  },
+  {
+    id: 'org.rules.create', method: 'POST', path: '/org/locations/:locationId/rules', policy: 'member', bodyLimit: '2kb',
+    openAsAdmin: true, handler: createRule,
+  },
+  {
+    id: 'org.rules.update', method: 'PATCH', path: '/org/locations/:locationId/rules/:ruleId', policy: 'member',
+    bodyLimit: '2kb', openAsAdmin: true, handler: updateRule,
+  },
+  {
+    id: 'org.rules.remove', method: 'DELETE', path: '/org/locations/:locationId/rules/:ruleId', policy: 'member',
+    bodyLimit: 'none', openAsAdmin: true, handler: deleteRule,
   },
   // Stored files and imports (spec 10.11, 11A). imports/current is declared before imports/:importId.
   {

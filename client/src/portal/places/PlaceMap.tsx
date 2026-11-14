@@ -4,11 +4,11 @@ import { Image, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-n
 import { theme } from '../../theme';
 import type { PlaceMap as PlaceMapData } from './map';
 
-// The map at the top of the access request's confirm card, for the onboarding screens to mount. The image comes
+// The map at the top of the access request's confirm card, and the places checklist's one map of every checked place. The image comes
 // straight from Google (a signed Maps Static URL, see map.ts), at the 2:1 ratio of its logical size and never cropped
 // or covered, so Google's logo in its bottom-left corner stays visible. The address and town lines carry the
 // information: with no map, or when the image fails to load, nothing renders, never an empty box. `frame` sizes a
-// box around the image, such as a checklist row's 160 wide column, which goes with the image.
+// box around the image, such as the checklist's column up to 640 wide, which goes with the image.
 
 export function PlaceMap(props: { map: PlaceMapData; label: string; frame?: StyleProp<ViewStyle> }): React.JSX.Element | null {
   const { map } = props;

@@ -59,6 +59,8 @@ export function TownFields(props: {
   messages?: TownMessages;
   readOnly?: boolean;
   readOnlyId?: string;
+  /** Focus Town when the fields appear (P3's “Can’t find it?”). */
+  autoFocus?: boolean;
 }): React.JSX.Element {
   const { value, onChange, messages = {} } = props;
   const readOnly = props.readOnly === true;
@@ -72,6 +74,7 @@ export function TownFields(props: {
         value={value.choice}
         onChange={(choice) => { onChange({ ...value, choice }); }}
         messages={list(messages.choice)}
+        autoFocus={props.autoFocus === true}
         {...ro}
       />
       {value.choice === ANOTHER_TOWN ? (

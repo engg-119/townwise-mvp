@@ -4,7 +4,7 @@
 // opened, and checked by test/people-sources.test.ts.
 //
 // EMPTY ON PURPOSE. No headcount input is researched yet for any town (owner decision 3, 2026-11-05: Hanover's
-// calendar is seeded, headcount inputs stay empty and labelled). While a town has no entry, every surface says
+// calendar is seeded, headcount inputs stay empty and labeled). While a town has no entry, every surface says
 // Townwise can't put a number on how many people are in town, and shows the term, events, holidays and season it does
 // know. Never fill an entry without a source a teammate has opened, and never estimate a value.
 import type { TownId } from '../towns.ts';

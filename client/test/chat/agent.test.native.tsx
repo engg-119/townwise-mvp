@@ -9,7 +9,7 @@ jest.mock('expo-splash-screen', () => ({
 }));
 
 import * as SecureStore from 'expo-secure-store';
-import { Dimensions, StyleSheet } from 'react-native';
+import { Dimensions, ScrollView, StyleSheet } from 'react-native';
 import { act, cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing-library';
 
 import { aboutDraft } from '../../src/chat/about';
@@ -19,6 +19,7 @@ import { resetVersionFocus } from '../../src/chat/ui/VersionNav';
 import { localToday } from '../../src/portal/locations/dates';
 import { resetProfiles } from '../../src/portal/profile/useProfile';
 import type { MeResponse } from '../../src/portal/schemas';
+import { theme } from '../../src/theme';
 import { fakeChatApi, PROPOSAL, PROPOSAL_ID, refusal as chatRefusal, SALES_STEP, SUMMARY, type FakeChatApi, type LiveTurn } from '../helpers/chat';
 import { ACCESS, fakePortalApi, LOCATIONS, locationOf, meOf, orgOf, refusal, staffMe, viewAsMe } from '../helpers/portal';
 import { renderApp } from '../helpers/renderApp';
@@ -49,7 +50,7 @@ async function renderAgent(me: MeResponse, chat: FakeChatApi = fakeChatApi(), or
   if (!('about' in chat)) serveAbout(chat);
   const portal = fakePortalApi({ me, org, fallback: chat });
   const rendered = await renderApp(path, portal);
-  await screen.findByText('Main Street Bar, Hanover, NH');
+  await screen.findByRole('heading', { name: 'TownwiseAI' });
   return { chat, portal, ...rendered };
 }
 
@@ -145,12 +146,12 @@ describe('an empty conversation', () => {
 });
 
 describe('a reply', () => {
-  test('shows Working for and Thinking…, then a running card, then text; folds them under Worked for when done, with a Based on line from them', async () => {
+  test('shows Working for with no Thinking… line, then a running card, then text; folds them under Worked for when done, with a Based on line from them', async () => {
     const { chat } = await renderAgent(meOf(ACCESS.member));
     await send('How was December?');
     expect(screen.getByText('How was December?')).toBeTruthy();
     expect(screen.getByText('Working for 0s')).toBeTruthy();
-    expect(screen.getByText('Thinking…')).toBeTruthy();
+    expect(screen.queryByText('Thinking…')).toBeNull();
     expect(screen.queryByText('TownwiseAI is thinking…')).toBeNull();
     expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy();
     await act(() => { turn(chat).emit('thinking', { delta: 'Weighing the weekend.' }); });
@@ -348,7 +349,7 @@ describe('states', () => {
     chat.chatError = chatRefusal(503, 'unavailable');
     await renderAgent(meOf(ACCESS.member), chat);
     expect(await screen.findByRole('button', { name: 'Try again' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Welcome back.' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'TownwiseAI' })).toBeTruthy();
   });
 });
 
@@ -385,7 +386,7 @@ describe('the side panel', () => {
     expect(await within(side).findByText('2 open')).toBeTruthy();
     expect(within(side).getByRole('heading', { name: 'Are you closed on Mondays?' })).toBeTruthy();
     expect(within(side).getByText('Main Street Bar has no sales on 41 of the 52 Mondays in weeks with sales on other days.')).toBeTruthy();
-    expect(within(side).getByText('Yes saves a closure note for Mondays from Nov 3, 2025 to Nov 2, 2026. Any answer stops this question.')).toBeTruthy();
+    expect(within(side).getByText('Yes saves a closure note for Mondays from Nov 3, 2025 to Nov 2, 2026. Something else lets you tell TownwiseAI in the chat. Any answer stops this question.')).toBeTruthy();
     expect(within(side).getByRole('heading', { name: 'Were you closed Feb 1 to Feb 3, 2026?' })).toBeTruthy();
     expect(within(side).getByText('There are no sales for these 3 days.')).toBeTruthy();
     expect(within(side).getByText('TownwiseAI’s own research (unusual nights, town events it finds) is planned.')).toBeTruthy();
@@ -504,35 +505,189 @@ describe('the side panel', () => {
 });
 
 describe('phones', () => {
-  test('at 375px the compact greeting scrolls with the page, and the panel is a sheet; the chat keeps its state', async () => {
+  test('at 375px nothing scrolls above the chat header, and the panel is a sheet; the chat keeps its state', async () => {
     at(375);
     await renderAgent(meOf(ACCESS.member));
     const landing = await screen.findByTestId('chat-landing');
-    const title = within(landing).getByRole('heading', { name: 'Welcome back.' });
-    expect(title.props.numberOfLines).toBe(1);
-    expect(within(landing).getByText('Main Street Bar, Hanover, NH')).toBeTruthy();
+    expect(screen.queryByText(/^Welcome back/)).toBeNull();
+    expect(screen.queryByText('Main Street Bar, Hanover, NH')).toBeNull();
+    const questions = screen.getByRole('button', { name: 'Questions and activity (2)' });
+    expect(within(landing).queryByRole('button', { name: 'Questions and activity (2)' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Location' })).toBeNull();
     // The composer's label is the input's name, with nothing drawn.
     expect(screen.queryByText(COMPOSER_LABEL)).toBeNull();
     await fireEvent.changeText(screen.getByLabelText(COMPOSER_LABEL), 'Half typed');
-    await fireEvent.press(within(landing).getByRole('button', { name: 'Questions and activity (2)' }));
-    expect(await screen.findByText('Are you closed on Mondays?')).toBeTruthy();
+    await fireEvent.press(questions);
+    // In the sheet (the landing shows the same question under its chips).
+    expect(await within(await screen.findByTestId('agent-side')).findByText('Are you closed on Mondays?')).toBeTruthy();
     await fireEvent.press(screen.getByRole('button', { name: 'Close' }));
     expect(screen.getByLabelText(COMPOSER_LABEL).props.value).toBe('Half typed');
-    // After the first send the header scrolls with the thread, and the composer stays under it.
+    // After the first send the header stays above the thread, and the composer stays under it.
     await fireEvent.press(screen.getByRole('button', { name: 'Send' }));
     const thread = await screen.findByTestId('chat-thread');
-    expect(within(thread).getByRole('heading', { name: 'Welcome back.' })).toBeTruthy();
+    expect(within(thread).queryByRole('button', { name: 'Questions and activity (2)' })).toBeNull();
     expect(within(thread).queryByLabelText(COMPOSER_LABEL)).toBeNull();
   });
 
-  test('wider screens keep the full header above the chat', async () => {
+  test('wider screens have no page header either: one hidden h1, no switcher, the chat header on top', async () => {
     await renderAgent(meOf(ACCESS.member));
-    const landing = await screen.findByTestId('chat-landing');
-    expect(within(landing).queryByRole('heading', { name: 'Welcome back.' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Location' })).toBeTruthy();
-    expect(screen.getAllByRole('heading', { name: 'Welcome back.' })).toHaveLength(1);
+    await screen.findByTestId('chat-landing');
+    expect(screen.queryByRole('heading', { name: /^Welcome back/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Location' })).toBeNull();
+    expect(screen.getAllByRole('heading', { name: 'TownwiseAI' })).toHaveLength(1);
     expect(screen.getByRole('button', { name: 'Questions and activity (2)' })).toBeTruthy();
+  });
+});
+
+describe('the docked composer', () => {
+  // The thread runs the full height and scrolls under the composer, which is laid over its bottom edge; the room the
+  // thread keeps at its end follows the dock's measured height, and the dock growing or shrinking moves the end,
+  // never the pin. Heights below are the thread's content with that room, in a 600pt view.
+  const VIEW = 600;
+
+  async function dockAt(height: number): Promise<void> {
+    await fireEvent(screen.getByTestId('chat-dock'), 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 760, height } } });
+  }
+
+  async function scrolled(y: number, height: number): Promise<void> {
+    await fireEvent.scroll(screen.getByTestId('chat-thread'), {
+      nativeEvent: { contentOffset: { x: 0, y }, contentSize: { width: 760, height }, layoutMeasurement: { width: 760, height: VIEW } },
+    });
+  }
+
+  async function contentAt(height: number): Promise<void> {
+    await fireEvent(screen.getByTestId('chat-thread'), 'contentSizeChange', 760, height);
+  }
+
+  function expectThreadEnd(paddingBottom: number): void {
+    expect(StyleSheet.flatten(screen.getByTestId('chat-thread').props.contentContainerStyle)).toMatchObject({ paddingBottom });
+  }
+
+  test('sits over the thread’s bottom edge, and the thread keeps room at its end as tall as the dock', async () => {
+    await renderAgent(meOf(ACCESS.member));
+    await openEarlierChat();
+    const thread = screen.getByTestId('chat-thread');
+    const dock = screen.getByTestId('chat-dock');
+    // A sibling laid over the thread, not a row under it; what it doesn't draw passes touches to the thread.
+    expect(dock.parent).toBe(thread.parent);
+    expect(StyleSheet.flatten(dock.props.style)).toMatchObject({ position: 'absolute', left: 0, right: 0, bottom: 0, pointerEvents: 'box-none' });
+    expect(within(dock).getByLabelText(COMPOSER_LABEL)).toBeTruthy();
+    expectThreadEnd(16);
+    await dockAt(120);
+    expectThreadEnd(136);
+    expect(screen.getByTestId('chat-thread').props.scrollIndicatorInsets).toEqual({ bottom: 120 });
+    await dockAt(180);
+    expectThreadEnd(196);
+  });
+
+  test('hides what scrolls under it from the box’s middle down, and under the whole dock once a line sits above the composer', async () => {
+    await renderAgent(meOf(ACCESS.member));
+    await openEarlierChat();
+    const skirt = screen.getByTestId('chat-dock-skirt');
+    // 12 above the box, and half its 56: what passes shows above the box and at its top corners.
+    expect(StyleSheet.flatten(skirt.props.style)).toMatchObject({
+      position: 'absolute', left: 0, right: 0, top: 40, bottom: 0, backgroundColor: theme.color.ground, pointerEvents: 'none',
+    });
+    // Drawn first in the dock, so the composer is drawn over it.
+    expect(skirt.parent?.children[0]).toBe(skirt);
+    await cleanup();
+
+    const chat = fakeChatApi();
+    chat.summary = { ...SUMMARY, budget: { ...SUMMARY.budget, usedUsd: 17 } };
+    await renderAgent(meOf(ACCESS.member), chat);
+    await openEarlierChat();
+    expect(screen.getByText('Most of November’s budget is used. TownwiseAI pauses when it runs out.')).toBeTruthy();
+    expect(StyleSheet.flatten(screen.getByTestId('chat-dock-skirt').props.style)).toMatchObject({ top: 0 });
+  });
+
+  test('a pinned thread follows the dock to its end; an unpinned one stays put, and only a reply growing shows Latest, above the dock', async () => {
+    const toEnd = jest.spyOn(ScrollView.prototype, 'scrollToEnd');
+    await renderAgent(meOf(ACCESS.member));
+    await openEarlierChat();
+    await dockAt(120);
+    await contentAt(1136);
+    await scrolled(1136 - VIEW, 1136);
+    // A second line grows the dock: the pinned thread goes to its new end before it is drawn.
+    toEnd.mockClear();
+    await dockAt(180);
+    expect(toEnd).toHaveBeenCalledWith({ animated: false });
+    await contentAt(1196);
+    await scrolled(1196 - VIEW, 1196);
+
+    // The person scrolls up: unpinned, with nothing new below.
+    await scrolled(400, 1196);
+    toEnd.mockClear();
+    // The dock shrinks and grows: the thread stays where it is, and that is no reply growing.
+    await dockAt(120);
+    await contentAt(1136);
+    await dockAt(240);
+    await contentAt(1256);
+    expect(toEnd).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Latest' })).toBeNull();
+    // A reply grows below the view: Latest shows, 12 above the dock.
+    await contentAt(1456);
+    expect(screen.getByRole('button', { name: 'Latest' })).toBeTruthy();
+    expect(StyleSheet.flatten(screen.getByTestId('chat-latest').props.style)).toMatchObject({ position: 'absolute', right: 0, bottom: 252 });
+    await dockAt(120);
+    expect(StyleSheet.flatten(screen.getByTestId('chat-latest').props.style)).toMatchObject({ bottom: 132 });
+  });
+
+  test('the dock shrinking under a pinned thread keeps it pinned, so a reply growing is followed, not flagged', async () => {
+    await renderAgent(meOf(ACCESS.member));
+    await openEarlierChat();
+    await dockAt(180);
+    await contentAt(1196);
+    await scrolled(1196 - VIEW, 1196);
+    // The draft is sent and the box goes back to one line: the end moves up with the room, and the offset with it.
+    await dockAt(120);
+    await contentAt(1136);
+    await scrolled(1136 - VIEW, 1136);
+    await contentAt(1336);
+    expect(screen.queryByRole('button', { name: 'Latest' })).toBeNull();
+  });
+
+  test('the first reply to overflow a fresh thread is followed: its end is no scroll up, though the dock was measured after the pin last saw it', async () => {
+    const toEnd = jest.spyOn(ScrollView.prototype, 'scrollToEnd');
+    await renderAgent(meOf(ACCESS.member));
+    await send('How was last week?');
+    await screen.findByTestId('chat-thread');
+    await dockAt(120);
+    // The reply streams: not yet past the view, then just past it (the jump to its end lands 40 down).
+    await contentAt(500 + 120);
+    await contentAt(VIEW + 40);
+    await scrolled(40, VIEW + 40);
+    toEnd.mockClear();
+    // More arrives: the thread is still pinned, so it goes to its end and shows no Latest.
+    await contentAt(VIEW + 400);
+    expect(toEnd).toHaveBeenCalledWith({ animated: false });
+    expect(screen.queryByRole('button', { name: 'Latest' })).toBeNull();
+    // A scroll up from that end still unpins.
+    await scrolled(VIEW + 400 - VIEW, VIEW + 400);
+    await scrolled(300, VIEW + 400);
+    await contentAt(VIEW + 600);
+    expect(screen.getByRole('button', { name: 'Latest' })).toBeTruthy();
+  });
+
+  test('the dock shrinking under an unpinned thread leaves it unpinned: a small scroll up near the end is still a scroll up', async () => {
+    const toEnd = jest.spyOn(ScrollView.prototype, 'scrollToEnd');
+    await renderAgent(meOf(ACCESS.member));
+    await openEarlierChat();
+    await dockAt(180);
+    await contentAt(1196);
+    await scrolled(1196 - VIEW, 1196);
+    // The person scrolls up 60 from the end.
+    await scrolled(1196 - VIEW - 30, 1196);
+    await scrolled(1196 - VIEW - 60, 1196);
+    // They delete two lines of the draft: the dock and the room under the thread shrink by 60, and the offset, now at
+    // the end, stays put (no scroll event).
+    await dockAt(120);
+    await contentAt(1136);
+    // Another 10 up, then the reply grows: it is flagged, not followed.
+    await scrolled(1136 - VIEW - 10, 1136);
+    toEnd.mockClear();
+    await contentAt(1336);
+    expect(toEnd).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Latest' })).toBeTruthy();
   });
 });
 
@@ -564,11 +719,9 @@ describe('view-as', () => {
   test('everything reads, every write control stays in place and disabled, with one read-only line', async () => {
     at(1280);
     const api = fakeChatApi();
-    // The server never asks under view-as; the page wouldn't either.
-    api.profile = { displayName: null, askName: true };
+    api.profile = { displayName: null, askName: false };
     await renderAgent(viewAsMe(ACCESS.member), api);
     expect(await screen.findByText('Read-only while viewing as gm@example.org.')).toBeTruthy();
-    expect(screen.queryByText('What should TownwiseAI call you?')).toBeNull();
     const input = screen.getByLabelText(COMPOSER_LABEL);
     expect(input.props.editable).toBe(false);
     disabled('Send');

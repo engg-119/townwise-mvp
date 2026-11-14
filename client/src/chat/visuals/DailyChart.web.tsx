@@ -1,14 +1,17 @@
 import { scaleTop } from '../../portal/analytics/AnalyticsCharts.web';
+import { ChartTooltip, useChartHover } from '../../portal/analytics/ChartTooltip.web';
 import { metricNumber } from '../../portal/analytics/words';
 import { SERIES_TITLE } from '../../portal/locations/sales';
 import { theme } from '../../theme';
 import type { DailyChartProps } from './DailyChart';
+import { dailyTip, nearestIndex } from './hover';
 import { unitsOf } from './words';
 
 // The daily chart of a visual on web (D21), inline SVG like Sales data's: one mint 2px line with gaps at days with
 // no value, and the forecast's 80% range as a `raised` band with 1px `line` edges, only on days a published forecast
 // covers. The y scale runs from 0 to a round top and is printed. The SVG is aria-hidden: the summary and
-// "Show the numbers" carry the same numbers.
+// "Show the numbers" carry the same numbers. A mouse or pen over the chart (never a touch) draws a guide at the
+// nearest day with a dot on its value and its band range marked, and shows that day's tooltip (hover.ts).
 
 const C = theme.color;
 const HEIGHT = 196;
@@ -23,6 +26,8 @@ function r2(value: number): number {
 export function DailyChart(props: DailyChartProps): React.JSX.Element | null {
   const { visual } = props;
   const { metric, days } = visual;
+  const count = days.length;
+  const [hover, bind] = useChartHover((fraction) => nearestIndex(fraction, count));
   const top = scaleTop(Math.max(0, ...days.flatMap((day) => [day.value, day.high].flatMap((value) => (value === null ? [] : [unitsOf(value, metric)])))));
   if (!days.some((day) => day.value !== null)) return null;
   const span = Math.max(1, days.length - 1);
@@ -65,6 +70,8 @@ export function DailyChart(props: DailyChartProps): React.JSX.Element | null {
   closeBand();
 
   const tick = metricNumber(top, metric);
+  const at = hover.index === null ? undefined : days[hover.index];
+  const hx = hover.index === null ? 0 : x(hover.index);
   return (
     <div style={{ display: 'grid', gap: 8 }}>
       <div aria-hidden="true" style={{ ...mono, color: C.text2, display: 'flex', flexWrap: 'wrap', gap: '4px 16px' }}>
@@ -77,7 +84,9 @@ export function DailyChart(props: DailyChartProps): React.JSX.Element | null {
           </span>
         ) : null}
       </div>
+      <div style={{ position: 'relative' }}>
       <svg
+        {...bind}
         data-chart="daily"
         viewBox={`0 0 ${String(WIDTH)} ${String(HEIGHT)}`}
         preserveAspectRatio="none"
@@ -93,7 +102,23 @@ export function DailyChart(props: DailyChartProps): React.JSX.Element | null {
         {dots.map((d) => (
           <path key={d} d={d} stroke={C.mint} strokeWidth={4} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
         ))}
+        {at === undefined ? null : (
+          <g data-hover="day">
+            <path d={`M${String(hx)} ${String(INSET)} V${String(HEIGHT - INSET)}`} fill="none" stroke={C.line} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+            {at.low !== null && at.high !== null ? (
+              <path d={`M${String(hx)} ${String(y(at.high))} V${String(y(at.low))}`} fill="none" stroke={C.mint} strokeOpacity={0.4} strokeWidth={6} vectorEffect="non-scaling-stroke" />
+            ) : null}
+            {at.value === null ? null : (
+              <>
+                <path d={`M${String(hx)} ${String(y(at.value))} h0.01`} stroke={C.mint} strokeWidth={9} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+                <path d={`M${String(hx)} ${String(y(at.value))} h0.01`} stroke={C.ground} strokeWidth={4} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+              </>
+            )}
+          </g>
+        )}
       </svg>
+      {at === undefined ? null : <ChartTooltip tip={dailyTip(at, metric)} x={(hx / WIDTH) * hover.width} alignRight={hx > WIDTH / 2} />}
+      </div>
       <p style={{ ...mono, margin: 0 }}>{`Scale 0 to ${tick}${metric === 'guests' ? ' guests' : ''}. Scale fitted to this location.`}</p>
     </div>
   );

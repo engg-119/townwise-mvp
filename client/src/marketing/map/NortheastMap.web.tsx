@@ -320,7 +320,7 @@ export function NortheastMap(props: { head?: React.ReactNode; lead?: React.React
   // sits under the list, so it is brought into view, without animating for the keyboard.
   function select(townId: string, event: React.MouseEvent, fromMarker: boolean): void {
     const kb = event.detail === 0;
-    dispatch({ type: 'select', id: townId, kb });
+    dispatch({ type: 'select', id: townId, kb, month: new Date().getMonth() });
     if (fromMarker) rows.current.get(townId)?.focus({ preventScroll: true });
     if (typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 899px)').matches) {
       clearTimeout(scrollTimer.current);

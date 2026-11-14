@@ -55,7 +55,7 @@ export function PlaceCard(props: { place: FoundPlace; note?: string | null; chil
 }
 
 /**
- * The checked places in a form (P3's Step 2, and the one place of the console's setup Rename): each one's name,
+ * The checked places in a form (the one place of the console's setup Rename): each one's name,
  * address and town line, then where they came from (`source`, PLACES_SOURCE unless the caller keeps less, as the setup
  * Rename does). `focusOnMount` moves focus to it when it appears (the setup Rename, after Looks right).
  */
@@ -79,18 +79,14 @@ export function PlaceSummary(props: { places: readonly FoundPlace[]; source?: st
 
 /**
  * One row of the places checklist, a group named by `label`: while `place` is null, a line saying it is loading
- * (“Getting {label} from Google Maps…” unless `loadingText` says otherwise); then Google's map, 160 wide beside the
- * facts or above them on a phone, the name, the address and the town line. `children` follow (the row's Remove, and
- * what the page adds). It takes no focus: the search field keeps it.
+ * (“Getting {label} from Google Maps…” unless `loadingText` says otherwise); then the name, the address and the town
+ * line. No map: the checklist draws one map of every checked place above its rows. `children` follow (the row's
+ * Remove, and what the page adds). It takes no focus: the search field keeps it.
  */
 export function PlaceRow(props: { label: string; place: FoundPlace | null; loadingText?: string; children?: React.ReactNode }): React.JSX.Element {
   const { place } = props;
-  const { phone } = useBreakpoint();
   return (
-    <View role="group" aria-label={props.label} style={[styles.card, styles.row, phone ? styles.rowPhone : null]}>
-      {place === null ? null : (
-        <PlaceMap map={place.map} label={`Map of the area around ${place.name}`} frame={phone ? styles.rowMapPhone : styles.rowMap} />
-      )}
+    <View role="group" aria-label={props.label} style={[styles.card, styles.row]}>
       <View style={styles.rowBody}>
         {place === null ? <LoadingLine text={props.loadingText ?? `Getting ${props.label} from Google Maps…`} minHeight={44} /> : (
           <>
@@ -117,8 +113,5 @@ const styles = StyleSheet.create({
   facts: { gap: theme.space[1] },
   fact: { ...theme.type.sub, color: c.text2 },
   row: { flexDirection: 'row', padding: theme.space[4], gap: theme.space[4] },
-  rowPhone: { flexDirection: 'column' },
-  rowMap: { width: 160 },
-  rowMapPhone: { width: '100%' },
   rowBody: { flexGrow: 1, flexShrink: 1, gap: theme.space[1] },
 });

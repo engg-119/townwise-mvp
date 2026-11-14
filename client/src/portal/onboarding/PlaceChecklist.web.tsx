@@ -3,7 +3,7 @@ import { useId, useState } from 'react';
 import { theme } from '../../theme';
 import { useFocusOnMount } from '../places/focus';
 import { FieldFrame, useFieldIds } from '../ui/FormField';
-import { MAX_SEARCH_LENGTH, type PlaceSuggestion } from './places';
+import { MAX_SEARCH_LENGTH, suggestionLabel, suggestionLine, type PlaceSuggestion } from './places';
 import { PlaceChecklistShell, type ChecklistFieldProps, type PlaceChecklistProps } from './PlaceChecklistParts';
 
 // The places checklist on web (PlaceChecklist.tsx is native's): PlaceSearch.web's ARIA 1.2 combobox with a
@@ -11,7 +11,8 @@ import { PlaceChecklistShell, type ChecklistFieldProps, type PlaceChecklistProps
 // by highlight and aria-activedescendant. Down and Up move the active option; Enter, and Space while an option is
 // active, toggle it and leave the list open (with none active Space types); typing clears the active option and opens
 // the list again. A mouse press toggles without taking focus from the field. A refused or full option is
-// aria-disabled. Each option starts with a drawn 16px box, hidden from assistive technology, in Checkbox.web's colors.
+// aria-disabled. Each option is named “{name}, {line}” (suggestionLine: “Street address · ” marks an address) and
+// starts with a drawn 16px box, hidden from assistive technology, in Checkbox.web's colors.
 // Remove gives the field focus back. Escape closes the list, then clears the text. Focus never opens or closes the
 // list: it sits in the page's flow, so a list that closed on blur would move the buttons below it between a press and
 // its click, and the click would miss. Nothing animates.
@@ -124,11 +125,13 @@ function WebField({ props, state, statusId, input }: ChecklistFieldProps & { inp
           {suggestions.map((suggestion, index) => {
             const { checked } = state.optionOf(suggestion);
             const disabled = optionDisabled(suggestion);
+            const line = suggestionLine(suggestion);
             return (
               <li
                 key={suggestion.placeId}
                 id={`${listId}-${String(index)}`}
                 role="option"
+                aria-label={suggestionLabel(suggestion)}
                 aria-selected={checked}
                 aria-disabled={disabled ? true : undefined}
                 // Pressing keeps focus in the field, so the list stays a part of it.
@@ -161,9 +164,9 @@ function WebField({ props, state, statusId, input }: ChecklistFieldProps & { inp
                   <span style={{ display: 'block', color: disabled ? c.text3 : c.white, fontFamily: theme.font.sans, fontSize: 16, lineHeight: '24px' }}>
                     {suggestion.name}
                   </span>
-                  {suggestion.detail === '' ? null : (
+                  {line === '' ? null : (
                     <span style={{ display: 'block', color: c.text2, fontFamily: theme.font.sans, fontSize: 14, lineHeight: '20px' }}>
-                      {suggestion.detail}
+                      {line}
                     </span>
                   )}
                 </span>

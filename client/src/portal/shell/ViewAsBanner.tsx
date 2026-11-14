@@ -14,7 +14,7 @@ import { Wrap } from '../ui/layout';
 import { Eyebrow } from '../ui/text';
 
 // The view-as banner (spec 15.5, shell.md 5.6): first in the page above the top bar, at least 52px, a `raised`
-// fill with a 1px `line` rule below, and no mint, warning or error colour: the words carry the meaning. It cannot
+// fill with a 1px `line` rule below, and no mint, warning or error color: the words carry the meaning. It cannot
 // be dismissed. End view-as (POST /api/admin/view-as/end with this grant's id) is the way out; the answer is the staff member's own
 // access, so the portal layout opens /admin, where “View-as ended at {time}.” shows once. On phones it is two rows
 // (spec 15.5): the words as one paragraph, then End view-as at full width.

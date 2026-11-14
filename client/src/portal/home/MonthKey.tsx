@@ -2,7 +2,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
 
-// The month grid's key (spec P11), shared by web and native: colour never stands alone, so each mark sits in its
+// The month grid's key (spec P11), shared by web and native: color never stands alone, so each mark sits in its
 // own corner and is named here. Hidden from screen readers: each day's label says its marks in words.
 
 export const MARK = 4;
