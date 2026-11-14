@@ -22,15 +22,15 @@
 - [x] 3.2 Demand: weekday means over 8 weeks of covered days, guest index against the location's own weekday guests, mu in purchase units with loss rates; unit tests
 - [x] 3.3 Cushion: past window errors over 26 weeks, sample standard deviation, null under 2; unit tests
 - [x] 3.4 Quantity, deal pair and par swap, whole units, confidence, why line; unit tests including the spec 5g vector (18, alternative 12) and the never-counted par case
-- [ ] 3.5 `board.ts`: `orders[]` per supplier, the sample in the same shape, `rules[]` per line in `withPreferences`; `orders/live.ts` reads setup, item sales, counts, the forecast window and history guests and calls the engine; unit tests for `withPreferences` with two rules
+- [x] 3.5 `board.ts`: `orders[]` per supplier, the sample in the same shape, `rules[]` per line in `withPreferences`; `orders/live.ts` reads setup, item sales, counts, the forecast window and history guests and calls the engine; unit tests for `withPreferences` with two rules
 
 ## 4. Routes and handlers
 
-- [ ] 4.1 Routes and handlers for the setup (GET, PUT), item sales (POST upload, DELETE, GET coverage) and counts (POST), with audit actions and summaries from fixed allowlists
-- [ ] 4.2 Orders handlers on the live board (`getOrders`, decisions, rules, rule off) and the change card's save in `chat-order-proposals.ts`; remove the `liveBoard()` stub
-- [ ] 4.3 Integration tests: each new route, `setup_changed`, cross-tenant 404, view-as refused, member delete 403, exact audit details, and one end to end board (setup, item sales, count, then the expected quantity, edit, rule, turn off)
-- [ ] 4.4 `chain.int.test.ts` (a seeded shown `propose_order_change` call and a per-route proposal id) and `isolation.int.test.ts` (snapshot, B's order rows, bodies, covers list for every order route)
-- [ ] 4.5 Lint clean on every changed file (B1)
+- [x] 4.1 Routes and handlers for the setup (GET, PUT), item sales (POST upload, DELETE, GET coverage) and counts (POST), with audit actions and summaries from fixed allowlists
+- [x] 4.2 Orders handlers on the live board (`getOrders`, decisions, rules, rule off) and the change card's save in `chat-order-proposals.ts`; remove the `liveBoard()` stub
+- [x] 4.3 Integration tests: each new route, `setup_changed`, cross-tenant 404, view-as refused, member delete 403, exact audit details, and one end to end board (setup, item sales, count, then the expected quantity, edit, rule, turn off)
+- [x] 4.4 `chain.int.test.ts` (a seeded shown `propose_order_change` call and a per-route proposal id) and `isolation.int.test.ts` (snapshot, B's order rows, bodies, covers list for every order route)
+- [x] 4.5 Lint clean on every changed file (B1)
 
 ## 5. TownwiseAI
 

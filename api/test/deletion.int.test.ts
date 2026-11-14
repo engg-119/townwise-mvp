@@ -203,13 +203,13 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
     expect(await res?.json()).toEqual({
       deletedDays: 2, deletedUploads: 1, deletedNotes: 1, deletedLocations: 2, deletedSeats: 4, redactedEvents: 4,
     });
-    // The event is written before the effect; the organization row is deleted last, then sales days, chat usage and
-    // (U13B) forecasts swept again.
+    // The event is written before the effect; the organization row is deleted last, then sales days, item sales,
+    // counts, chat usage and (U13B) forecasts swept again.
     expect(writes[0]).toBe('insert tw_audit_events');
     // Stored files (none here) are swept again after the row too: imports first. Then (U13B) forecast rows, then runs.
-    expect(writes.slice(-7)).toEqual([
-      'delete tw_orgs', 'delete tw_imports', 'delete tw_sales_days', 'delete tw_chat_usage', 'delete tw_calibrations',
-      'delete tw_forecasts', 'delete tw_forecast_runs',
+    expect(writes.slice(-9)).toEqual([
+      'delete tw_orgs', 'delete tw_imports', 'delete tw_sales_days', 'delete tw_item_sales', 'delete tw_order_counts',
+      'delete tw_chat_usage', 'delete tw_calibrations', 'delete tw_forecasts', 'delete tw_forecast_runs',
     ]);
 
     const orgId = new Types.ObjectId(doomed.orgId);
