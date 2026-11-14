@@ -41,6 +41,13 @@ export function localDay(at: Date, timeZone: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(at);
 }
 
+/** Minutes since midnight of `at` in `timeZone`, 0 to 1439: the order board's "now" against an order-by time. */
+export function localMinutes(at: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(at);
+  const part = (type: 'hour' | 'minute'): number => Number(parts.find((candidate) => candidate.type === type)?.value ?? 0);
+  return part('hour') * 60 + part('minute');
+}
+
 export type Weekday = 'Sun' | 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat';
 
 const WEEKDAYS: readonly Weekday[] = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];

@@ -235,16 +235,20 @@ export async function checkedUpdate(
 }
 
 /**
- * DELETE's check, shared by the org admin route and staff setup (D23): only a location with no sales day, note or
- * stored file. Stored files are data too (spec 11A): deleting the sales data deletes them.
+ * DELETE's check, shared by the org admin route and staff setup (D23): only a location with no sales day, note,
+ * stored file or item-sales day. Stored files and item sales are data too (spec 11A, D35): deleting the sales data
+ * deletes them.
  */
 export async function assertNoLocationData(ctx: TownwiseContext, scope: OrgScope, locationId: string): Promise<void> {
-  const [hasDays, hasNotes, hasFiles] = await Promise.all([
+  const [hasDays, hasNotes, hasFiles, hasItemSales] = await Promise.all([
     ctx.stores.salesDays.hasAny(scope, locationId),
     ctx.stores.notes.hasAny(scope, locationId),
     ctx.stores.files.hasAny(scope, locationId),
+    ctx.stores.itemSales.hasAny(scope, locationId),
   ]);
-  if (hasDays || hasNotes || hasFiles) throw new AppError(409, 'location_has_data', 'Delete the location’s sales data and notes first');
+  if (hasDays || hasNotes || hasFiles || hasItemSales) {
+    throw new AppError(409, 'location_has_data', 'Delete the location’s sales data and notes first');
+  }
 }
 
 /** DELETE's effect, shared with staff setup (D23): the location, then what only it reached. False when it was already gone. */
@@ -265,6 +269,11 @@ export async function removeLocation(ctx: TownwiseContext, scope: OrgScope, loca
   await ctx.stores.calibrations.removeForLocation(scope, locationId);
   // U13B: forecasts staff imported for it, even with no sales data left.
   await ctx.stores.forecasts.removeForLocation(scope, locationId);
+  // Orders: saved edits, confirmed rules, the setup, item sales and counts go with the location.
+  await ctx.stores.orders.removeForLocation(scope, locationId);
+  await ctx.stores.orderSetups.removeForLocation(scope, locationId);
+  await ctx.stores.itemSales.removeForLocation(scope, locationId);
+  await ctx.stores.orderCounts.removeForLocation(scope, locationId);
   return true;
 }
 

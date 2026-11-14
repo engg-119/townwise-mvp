@@ -1,0 +1,99 @@
+# Sawtooth config for the reorder agent (matches the synthetic dataset; values marked TBD
+# are unknown for the real bar and must be confirmed with the owner).
+# Copied from data/synthetic/config/sawtooth.yaml. Sawtooth-specific values stay in this
+# file. Paths and nicknames below were added so the reorder module can find the dataset
+# without hard-coding them.
+bar:
+  name: Sawtooth Kitchen, Bar & Stage
+  location: Hanover, NH
+  state_rules: nh
+  time_zone: America/New_York
+  business_day_cutoff_hour: 4        # a night past midnight counts toward the day it opened
+  open_hours:                        # published hours (OpenTable listing)
+    Mon: "16:00-21:00"
+    Tue: "11:00-23:00"
+    Wed: "11:00-23:00"
+    Thu: "11:00-00:00"
+    Fri: "11:00-01:00"
+    Sat: "11:00-01:00"
+    Sun: closed
+  closed_weekdays: ["Sun"]
+  closed_holidays: ["Thanksgiving", "Christmas Day", "New Year's Day"]   # assumption
+
+modules:
+  bottle_service: false              # Sawtooth tried it once and won't again
+
+suppliers:                           # synthetic schedule; real cutoffs are TBD
+  SUP_A:
+    name: Beer Distributor A
+    deliveries:
+      - {day: Mon, cutoff_day: Sat, cutoff_time: "14:00"}
+      - {day: Tue, cutoff_day: Mon, cutoff_time: "14:00"}
+      - {day: Thu, cutoff_day: Wed, cutoff_time: "14:00"}
+    late_order_policy: moved_to_next_delivery
+  SUP_B:
+    name: Beer Distributor B (craft + cider)
+    deliveries:
+      - {day: Tue, cutoff_day: Mon, cutoff_time: "12:00"}
+      - {day: Thu, cutoff_day: Wed, cutoff_time: "12:00"}
+    late_order_policy: accepted_with_fee
+    late_fee_usd: 25
+  SUP_C:
+    name: Restaurant supply (mixers)
+    deliveries:
+      - {day: Tue, cutoff_day: Mon, cutoff_time: "17:00"}
+    late_order_policy: moved_to_next_delivery
+  SUP_NHLC:
+    name: NH Liquor & Wine Outlet (owner pickup)
+    deliveries: []                   # same- or next-day store runs
+    late_order_policy: not_applicable
+
+# Which legal channel each supplier is. Used by price suggestions. Not a place to
+# add a retail or warehouse-club source for beer.
+supplier_channels:
+  SUP_A: licensed_distributor
+  SUP_B: licensed_distributor
+  SUP_C: restaurant_supply
+  SUP_NHLC: state_liquor_commission
+
+current_par_rules:                   # the baseline the agent must beat
+  corona_min_cases_per_week: 10
+  kegs: "1 tapped + 1 backup per line"
+  deal_sizes:
+    P001: [6]                        # Corona
+    P005: [3, 9]                     # High Noon
+    P007: [3, 9]                     # Sun Cruiser
+    P006: [3]                        # White Claw
+
+storage:
+  cooler_capacity_cases: 70          # assumption, TBD
+  keg_cooler_slots: 9                # assumption, TBD
+
+targets:                             # default in-stock targets from the spec (owner-tunable)
+  never_run_out: 0.98
+  bottles_cans: 0.95
+  draft: 0.95
+  liquor: 0.92
+  cocktail_ingredient: 0.88
+never_run_out_items: [P001, P101, P005, P201, P202]
+
+reminders_hours_before_cutoff: [24, 2]
+loss_rate_defaults:                  # starting points; learn from counts vs. sales
+  bottles_cans: 0.01
+  draft: 0.12                        # foam + line loss (theoretical 124 pints per 1/2 bbl -> ~108)
+  liquor: 0.05                       # over-pours, spills
+
+# Nicknames from the manager's phone notes. Exact catalog names match without these.
+item_aliases:
+  corona: P001
+  "bud lt": P002
+  hn: P005
+  claw: P006
+  suncruiser: P007
+  "guinness backup": P101
+
+paths:
+  synthetic_root: data/synthetic
+  guest_forecast: modeling/forecasts/frozen_forecast_v3_guests_daily_2026-10-22_to_2026-12-31.csv
+  sales_forecast_events: modeling/forecasts/frozen_forecast_daily_2026-10-22_to_2026-12-31.csv
+  price_list: data/synthetic/reference/price_list_history.csv

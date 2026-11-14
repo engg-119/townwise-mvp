@@ -12,6 +12,8 @@ export interface SelectProps extends FieldChrome {
   placeholder?: string;
   /** The location switcher: at most 280px wide. */
   compact?: boolean;
+  /** The accessible name, when it says more than the label ("Delivery day 2"); it starts with the label's words. */
+  accessibilityLabel?: string;
   /** When it appears, focus the control (web) or move the screen reader to it (native): places/focus.ts. */
   autoFocus?: boolean;
 }

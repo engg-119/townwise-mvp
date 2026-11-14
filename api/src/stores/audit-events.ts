@@ -48,6 +48,17 @@ export const AUDIT_DETAIL_KEYS = {
   'chat.conversation_deleted': ['locationId', 'conversationId'],
   // U9, TownwiseAI's questions: the question's id holds only dates and a weekday number.
   'agent.question_answered': ['locationId', 'questionId', 'answer'],
+  // Orders: ids, dates, counts and a card's kind (change or rule), never an item or supplier name, a servings figure, a
+  // quantity, or the owner's reason or situation.
+  'order.setup_saved': ['locationId', 'supplierCount', 'itemCount'],
+  'order.item_sales_uploaded': ['locationId', 'dayCount', 'itemCount', 'firstDate', 'lastDate', 'removedCount', 'keptCount'],
+  'order.item_sales_deleted': ['locationId', 'dayCount'],
+  'order.count_saved': ['locationId', 'date', 'itemCount'],
+  'order.decision_saved': ['locationId', 'itemId', 'delivery'],
+  'order.rule_saved': ['locationId', 'itemId'],
+  'order.rule_turned_off': ['locationId', 'ruleId'],
+  'order.card_saved': ['locationId', 'conversationId', 'kind'],
+  'order.card_dismissed': ['locationId', 'conversationId', 'kind'],
   // U13B, forecast runs (spec 14.4): ids, the model version, the dates and the day count, never a figure.
   'forecast.imported': ['locationId', 'modelVersion', 'from', 'to', 'dayCount'],
   'forecast.published': ['locationId', 'modelVersion', 'from', 'to', 'dayCount', 'via', 'calibrationId'],

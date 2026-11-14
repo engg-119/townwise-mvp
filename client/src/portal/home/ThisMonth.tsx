@@ -13,7 +13,8 @@ import type { ForecastDay, ForecastWindow } from '../estimates/api';
 import type { Note } from '../locations/api';
 import type { Rule } from '../rules/api';
 import { weekdaysLine } from '../locations/noteRules';
-import { useBreakpoint } from '../hooks';
+import { useBreakpoint, type LoadState } from '../hooks';
+import type { OrderBoard } from '../orders/api';
 import { calendarHref } from '../routing';
 import { LinkButton } from '../ui/Button';
 import { Stack } from '../ui/layout';
@@ -38,7 +39,7 @@ const monthNameOf = (today: string): string => MONTH_NAMES[Number(today.slice(5,
 
 export function ThisMonth(props: {
   input: HomeInput; calendar: Calendar; notes: readonly Note[]; rules: readonly Rule[]; forecast: ForecastWindow | null; history: boolean;
-  locationId: string;
+  locationId: string; board: LoadState<OrderBoard>;
 }): React.JSX.Element {
   const { input, calendar, notes, rules, forecast, history, locationId } = props;
   const { today, context, metric } = input;
@@ -76,7 +77,7 @@ export function ThisMonth(props: {
           />
         </View>
         <View style={styles.detailSide}>
-          <DayDetail day={day} forecast={forecastDay} metric={metric} history={history} />
+          <DayDetail day={day} forecast={forecastDay} metric={metric} history={history} locationId={locationId} board={props.board} />
         </View>
       </View>
       <View style={styles.open}><LinkButton href={calendarHref(locationId)} label="Open the calendar" /></View>

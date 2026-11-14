@@ -9,13 +9,18 @@ import { InlineSources } from '../calendar/CalendarDay';
 import { reasonShortLines } from '../calendar/model';
 import { appliedOf, guestsFromWords, yoursDid, type ForecastDay, type ForecastReason } from '../estimates/api';
 import { formatCount, plural } from '../format';
+import type { LoadState } from '../hooks';
+import type { OrderBoard } from '../orders/api';
+import { locationHref } from '../routing';
 import { Heading, Mono, Small } from '../ui/text';
+import { orderCoverSentence, orderForDay, REORDER_OVERVIEW } from './beside';
 import { PastCell } from './ThisWeek';
 
 // The selected day of This month (spec P11), beside the grid from where they fit side by side, under it otherwise:
 // from today on, the published forecast's day when there is one (its figure and range, the guests your notes and
 // business rules add, and its top three reasons in the Calendar's order and short words, “Saturday: usually more
-// guests”, a rule's among them, each ending in the Calendar's small inline Source links; spec 16.3 P11, 14.4, D31), the
+// guests”, a rule's among them, each ending in the Calendar's small inline Source links; spec 16.3 P11, 14.4, D31), how
+// the next order relates to the day (P30, from Home's one read of the orders, with a link to the day on Orders), the
 // day's holidays and town events with their sources less those Why already names (as the Calendar's panel leaves
 // them out), your notes, then, with any history, the day's own figure (only for a past day with data; a day after today
 // gets none of its own, ever) and the same weekday last year and two years ago. Term and season periods are left to the
@@ -58,6 +63,13 @@ export function whyRows(day: Pick<ForecastDay, 'reasons'>, count: number): WhyRo
   });
 }
 
+/** The Reorder part's line: how the next order relates to `date`, or why Townwise can't say. */
+function orderCover(date: string, board: LoadState<OrderBoard>): string {
+  if (board.status === 'failed') return 'Townwise couldn’t check the next order.';
+  if (board.status !== 'ready') return 'Checking the next order.';
+  return board.data.available ? orderCoverSentence(date, orderForDay(date, board.data)) : board.data.reason;
+}
+
 function Part(props: { label: string; children: React.ReactNode }): React.JSX.Element {
   return (
     <View style={styles.part}>
@@ -67,8 +79,10 @@ function Part(props: { label: string; children: React.ReactNode }): React.JSX.El
   );
 }
 
-export function DayDetail(props: { day: MonthDay; forecast: ForecastDay | null; metric: Metric; history: boolean }): React.JSX.Element {
-  const { day, forecast, metric, history } = props;
+export function DayDetail(props: {
+  day: MonthDay; forecast: ForecastDay | null; metric: Metric; history: boolean; locationId: string; board: LoadState<OrderBoard>;
+}): React.JSX.Element {
+  const { day, forecast, metric, history, locationId, board } = props;
   const lines = forecast === null ? [] : forecastDayLines(forecast);
   // Home passes a forecast day only from today on.
   const why = forecast === null ? [] : whyRows(forecast, WHY_LINES);
@@ -91,6 +105,11 @@ export function DayDetail(props: { day: MonthDay; forecast: ForecastDay | null; 
           ))}
         </Part>
       )}
+      <Part label="Reorder">
+        <Small>{REORDER_OVERVIEW}</Small>
+        <Small white>{orderCover(day.date, board)}</Small>
+        <Link href={`${locationHref(locationId, 'orders')}?day=${day.date}` as Href} style={styles.source}>Open this day on Orders</Link>
+      </Part>
       <Part label="On the calendar">
         {nothing ? <Small>{events.length < day.events.length ? 'Nothing else on the calendar this day.' : 'Nothing on the calendar this day.'}</Small> : null}
         {events.map((event) => (
