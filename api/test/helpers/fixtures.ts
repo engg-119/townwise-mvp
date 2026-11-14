@@ -250,7 +250,7 @@ export async function addOrderRecords(
   });
   await db.collection('tw_order_cards').insertOne({
     ...where, conversationId: new Types.ObjectId(opts.conversationId), proposalId: 'toolu_order0001', kind: 'change', status: 'dismissed',
-    createdAt: at,
+    decisionId: new Types.ObjectId(), createdAt: at,
   });
   await db.collection('tw_order_setups').insertOne({
     ...where, version: 1, updatedAt: at,

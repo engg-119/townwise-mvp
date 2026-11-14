@@ -2,7 +2,9 @@
 // A decision survives deleting the location's sales. It goes when the location or the organization goes.
 // A turned-off rule stays, so the same reason is not proposed again.
 // tw_order_cards: what the author did with each order change or rule TownwiseAI proposed in their conversation. A
-// card goes with its conversation, and with the person who owned it (stores/cross-tenant.ts deletePersonRecords).
+// card goes with its conversation, and with the person who owned it (stores/cross-tenant.ts deletePersonRecords). A
+// change card is claimed (`saving`) before its edit is stored, with the id that edit takes, so two saves of one card
+// store one edit, and a retry after a failure in between completes it.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
@@ -36,12 +38,15 @@ export interface RuleRecord {
 }
 
 export type OrderCardKind = 'change' | 'rule';
-export type OrderCardStatus = 'saved' | 'dismissed';
+/** `saving`: a change card's save claimed it and its edit may not be stored yet; the card still reads as open. */
+export type OrderCardStatus = 'saving' | 'saved' | 'dismissed';
 
 export interface OrderCardRecord {
   readonly proposalId: string;
   readonly kind: OrderCardKind;
   readonly status: OrderCardStatus;
+  /** The id the change card's edit is stored under. */
+  readonly decisionId: string;
 }
 
 interface DecisionFields {
@@ -77,6 +82,7 @@ interface CardFields {
   proposalId: string;
   kind: OrderCardKind;
   status: OrderCardStatus;
+  decisionId: Types.ObjectId;
   createdAt: Date;
 }
 
@@ -123,7 +129,8 @@ function cardSchema(): Schema<CardFields> {
     conversationId: { type: Schema.Types.ObjectId, required: true },
     proposalId: { type: String, required: true },
     kind: { type: String, required: true, enum: ['change', 'rule'] },
-    status: { type: String, required: true, enum: ['saved', 'dismissed'] },
+    status: { type: String, required: true, enum: ['saving', 'saved', 'dismissed'] },
+    decisionId: { type: Schema.Types.ObjectId, required: true },
     createdAt: { type: Date, required: true },
   }, { strict: true, versionKey: false, read: 'primary' });
   schema.index({ orgId: 1, conversationId: 1, proposalId: 1 }, { unique: true });
@@ -179,6 +186,8 @@ function toRule(doc: RuleDoc): RuleRecord {
 }
 
 export interface DecisionInput {
+  /** The id to store it under (a change card's), so storing it twice stores it once. A new id when absent. */
+  readonly id?: string;
   readonly itemId: string;
   readonly delivery: string;
   readonly windowStart: string;
@@ -206,18 +215,32 @@ export interface OrderCardKey {
 export interface OrderStore {
   /** The edits for deliveries on or after `since`, newest first. */
   listDecisions(scope: OrgScope, locationId: string, since: string): Promise<DecisionRecord[]>;
+  /** With an `id` already stored (a change card saved twice), the stored decision. */
   addDecision(scope: OrgScope, locationId: string, input: DecisionInput): Promise<DecisionRecord>;
   /** The newest decision for the item, or null. */
   latestDecision(scope: OrgScope, locationId: string, itemId: string): Promise<DecisionRecord | null>;
   listRules(scope: OrgScope, locationId: string): Promise<RuleRecord[]>;
   findRule(scope: OrgScope, locationId: string, itemId: string, situation: string): Promise<RuleRecord | null>;
-  /** Inserts the rule, or returns the one already stored for this item and situation, one saved meanwhile included. */
-  addRule(scope: OrgScope, locationId: string, input: RuleInput): Promise<RuleRecord>;
+  /**
+   * Inserts the rule, or returns the one already stored for this item and situation, one saved meanwhile included.
+   * `created` is true only for the call that inserted it.
+   */
+  addRule(scope: OrgScope, locationId: string, input: RuleInput): Promise<{ rule: RuleRecord; created: boolean }>;
   /** Marks the rule off. False when it is not this location's. */
   turnOff(scope: OrgScope, locationId: string, ruleId: string, now: Date): Promise<boolean>;
   findCard(scope: OrgScope, key: OrderCardKey): Promise<OrderCardRecord | null>;
-  /** Records the card as saved or set aside. A saved card is never overwritten; it is returned as stored. */
-  setCard(scope: OrgScope, locationId: string, key: OrderCardKey, input: { kind: OrderCardKind; status: OrderCardStatus; now: Date }): Promise<OrderCardRecord>;
+  /**
+   * Records the card as saved or set aside. A saved card is never overwritten; it is returned as stored. `changed` is
+   * true only when this call moved the card to `status`.
+   */
+  setCard(
+    scope: OrgScope, locationId: string, key: OrderCardKey, input: { kind: OrderCardKind; status: 'saved' | 'dismissed'; now: Date },
+  ): Promise<{ card: OrderCardRecord; changed: boolean }>;
+  /**
+   * Claims a change card for a save: moves it to `saving` unless it is saved, and resolves the id its edit is stored
+   * under (the same for every claim of the card). Null when the card is saved.
+   */
+  claimChange(scope: OrgScope, locationId: string, key: OrderCardKey, now: Date): Promise<string | null>;
   /** The conversation's cards, when it is deleted. Resolves the number deleted. */
   removeForConversation(scope: OrgScope, conversationId: string): Promise<number>;
   removeForLocation(scope: OrgScope, locationId: string): Promise<void>;
@@ -234,15 +257,52 @@ export function createOrderStore(connection: Connection): OrderStore {
   const cardKey = (scope: OrgScope, key: OrderCardKey) => ({
     orgId: new Types.ObjectId(scope.orgId), conversationId: new Types.ObjectId(key.conversationId), proposalId: key.proposalId,
   });
-  const toCard = (doc: CardFields): OrderCardRecord => ({ proposalId: doc.proposalId, kind: doc.kind, status: doc.status });
+  const toCard = (doc: CardFields): OrderCardRecord => ({
+    proposalId: doc.proposalId, kind: doc.kind, status: doc.status, decisionId: doc.decisionId.toHexString(),
+  });
+  /**
+   * As stores/chat-proposals.ts does: moves a card that is not saved to `status`, inserting it with `decisionId` when
+   * there is none. The filter skips a saved card, so the upsert then fails on the unique index instead of overwriting
+   * it; the first of two concurrent inserts fails the same way, so a duplicate is tried once more, and then matches the
+   * row the other made. Resolves the card as it was before (null when this call inserted it), or 'saved'.
+   */
+  const moveUnlessSaved = async (
+    scope: OrgScope, locationId: string, key: OrderCardKey,
+    input: { kind: OrderCardKind; status: OrderCardStatus; now: Date }, decisionId: Types.ObjectId,
+  ): Promise<CardFields | null | 'saved'> => {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        return await Card.findOneAndUpdate(
+          { ...cardKey(scope, key), status: trusted({ $ne: 'saved' }) },
+          {
+            $set: { status: input.status },
+            $setOnInsert: { locationId: new Types.ObjectId(locationId), kind: input.kind, decisionId, createdAt: input.now },
+          },
+          { upsert: true, returnDocument: 'before' },
+        ).lean();
+      } catch (err) {
+        if (!isDuplicateKeyError(err)) throw err;
+      }
+    }
+    return 'saved';
+  };
   return {
     async listDecisions(scope, locationId, since) {
       const docs = await Decision.find({ ...place(scope, locationId), delivery: trusted({ $gte: since }) }).sort({ createdAt: -1, _id: -1 }).lean();
       return docs.map(toDecision);
     },
     async addDecision(scope, locationId, input) {
-      const doc = await Decision.create({ ...place(scope, locationId), ...input, createdAt: input.now });
-      return toDecision(doc);
+      const { id, now, ...fields } = input;
+      const _id = id === undefined ? new Types.ObjectId() : new Types.ObjectId(id);
+      try {
+        return toDecision(await Decision.create({ ...place(scope, locationId), ...fields, _id, createdAt: now }));
+      } catch (err) {
+        // Stored already under this id: a second save of the same card. Its first edit stands.
+        if (id === undefined || !isDuplicateKeyError(err)) throw err;
+        const stored = await Decision.findOne({ ...place(scope, locationId), _id }).lean();
+        if (stored === null) throw err;
+        return toDecision(stored);
+      }
     },
     async latestDecision(scope, locationId, itemId) {
       const doc = await Decision.findOne({ ...place(scope, locationId), itemId }).sort({ createdAt: -1, _id: -1 }).lean();
@@ -259,16 +319,16 @@ export function createOrderStore(connection: Connection): OrderStore {
     async addRule(scope, locationId, input) {
       const where = { ...place(scope, locationId), itemId: input.itemId, situation: input.situation };
       const existing = await Rule.findOne(where).lean();
-      if (existing !== null) return toRule(existing);
+      if (existing !== null) return { rule: toRule(existing), created: false };
       try {
         const doc = await Rule.create({ ...place(scope, locationId), ...input, off: false, createdAt: input.now, updatedAt: input.now });
-        return toRule(doc);
+        return { rule: toRule(doc), created: true };
       } catch (err) {
         // A second save of the same rule inserted it first: the unique index refuses this one, and its rule is the answer.
         if (!isDuplicateKeyError(err)) throw err;
         const raced = await Rule.findOne(where).lean();
         if (raced === null) throw err;
-        return toRule(raced);
+        return { rule: toRule(raced), created: false };
       }
     },
     async turnOff(scope, locationId, ruleId, now) {
@@ -284,27 +344,24 @@ export function createOrderStore(connection: Connection): OrderStore {
       return doc === null ? null : toCard(doc);
     },
     async setCard(scope, locationId, key, input) {
-      // As stores/chat-proposals.ts does: the filter skips a saved card, so the upsert then fails on the unique index
-      // instead of overwriting it. The first of two concurrent inserts fails the same way, so a duplicate is tried once
-      // more, and then matches the row the other made. A second duplicate means the card is saved.
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        try {
-          const doc = await Card.findOneAndUpdate(
-            { ...cardKey(scope, key), status: trusted({ $ne: 'saved' }) },
-            {
-              $set: { status: input.status },
-              $setOnInsert: { locationId: new Types.ObjectId(locationId), kind: input.kind, createdAt: input.now },
-            },
-            { upsert: true, returnDocument: 'after' },
-          ).lean();
-          return toCard(doc);
-        } catch (err) {
-          if (!isDuplicateKeyError(err)) throw err;
-        }
+      const minted = new Types.ObjectId();
+      const before = await moveUnlessSaved(scope, locationId, key, input, minted);
+      if (before === 'saved') {
+        const saved = await Card.findOne(cardKey(scope, key)).lean();
+        if (saved === null) throw new Error('a saved order card was not found');
+        return { card: toCard(saved), changed: false };
       }
-      const saved = await Card.findOne(cardKey(scope, key)).lean();
-      if (saved === null) throw new Error('a saved order card was not found');
-      return toCard(saved);
+      const decisionId = (before?.decisionId ?? minted).toHexString();
+      return {
+        card: { proposalId: key.proposalId, kind: before?.kind ?? input.kind, status: input.status, decisionId },
+        changed: before?.status !== input.status,
+      };
+    },
+    async claimChange(scope, locationId, key, now) {
+      const minted = new Types.ObjectId();
+      const before = await moveUnlessSaved(scope, locationId, key, { kind: 'change', status: 'saving', now }, minted);
+      // Every claim of the card gets the id its first insert minted.
+      return before === 'saved' ? null : (before?.decisionId ?? minted).toHexString();
     },
     async removeForConversation(scope, conversationId) {
       const result = await Card.deleteMany({

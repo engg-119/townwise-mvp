@@ -165,21 +165,54 @@ describe('order counts', () => {
 describe('order cards and rules under races', () => {
   const key = () => ({ conversationId: id(), proposalId: 'toolu_order0001' });
 
-  it('a dismiss after a save leaves the card saved; a save after a dismiss saves it', async () => {
+  it('a dismiss after a save leaves the card saved; a save after a dismiss saves it; only a move is a change', async () => {
     const t = tenant();
     const card = key();
     const now = server.clock.now();
-    expect(await orders.setCard(t.scope, t.locationId, card, { kind: 'change', status: 'saved', now }))
-      .toEqual({ proposalId: card.proposalId, kind: 'change', status: 'saved' });
+    const saved = await orders.setCard(t.scope, t.locationId, card, { kind: 'change', status: 'saved', now });
+    expect(saved).toEqual({ card: { proposalId: card.proposalId, kind: 'change', status: 'saved', decisionId: expect.stringMatching(HEX) as unknown }, changed: true });
     expect(await orders.setCard(t.scope, t.locationId, card, { kind: 'change', status: 'dismissed', now }))
-      .toEqual({ proposalId: card.proposalId, kind: 'change', status: 'saved' });
-    expect((await orders.findCard(t.scope, card))?.status).toBe('saved');
+      .toEqual({ card: saved.card, changed: false });
+    expect(await orders.findCard(t.scope, card)).toEqual(saved.card);
 
     const other = key();
-    expect((await orders.setCard(t.scope, t.locationId, other, { kind: 'rule', status: 'dismissed', now })).status).toBe('dismissed');
-    expect((await orders.setCard(t.scope, t.locationId, other, { kind: 'rule', status: 'saved', now })).status).toBe('saved');
+    expect(await orders.setCard(t.scope, t.locationId, other, { kind: 'rule', status: 'dismissed', now })).toMatchObject({ card: { status: 'dismissed' }, changed: true });
+    // Dismissed again: nothing moved.
+    expect(await orders.setCard(t.scope, t.locationId, other, { kind: 'rule', status: 'dismissed', now })).toMatchObject({ card: { status: 'dismissed' }, changed: false });
+    expect(await orders.setCard(t.scope, t.locationId, other, { kind: 'rule', status: 'saved', now })).toMatchObject({ card: { status: 'saved' }, changed: true });
     const stored = await server.connection.collection('tw_order_cards').findOne({ conversationId: new Types.ObjectId(other.conversationId) });
     expect(stored).toMatchObject({ locationId: new Types.ObjectId(t.locationId), kind: 'rule', status: 'saved' });
+  });
+
+  it('every claim of a change card gets one decision id, so racing saves store one edit; a saved card is not claimed (A3)', async () => {
+    const t = tenant();
+    const card = key();
+    const now = server.clock.now();
+    const ids = await Promise.all(Array.from({ length: 5 }, () => orders.claimChange(t.scope, t.locationId, card, now)));
+    expect(new Set(ids).size).toBe(1);
+    const [decisionId] = ids;
+    expect(decisionId).toMatch(HEX);
+    expect((await orders.findCard(t.scope, card))?.status).toBe('saving');
+    const input = {
+      itemId: id(), delivery: '2026-06-04', windowStart: '2026-06-03', windowEnd: '2026-06-10', recommended: 4, unit: 'cases', now,
+    };
+    const stored = await Promise.all([3, 5, 7].map((quantity) =>
+      orders.addDecision(t.scope, t.locationId, { ...input, id: decisionId ?? '', quantity, reason: `try ${String(quantity)}` })));
+    expect(new Set(stored.map((decision) => decision.id))).toEqual(new Set([decisionId]));
+    expect(new Set(stored.map((decision) => decision.quantity)).size).toBe(1);
+    expect(await server.connection.collection('tw_order_decisions').countDocuments({ itemId: input.itemId })).toBe(1);
+    const marks = await Promise.all(Array.from({ length: 3 }, () => orders.setCard(t.scope, t.locationId, card, { kind: 'change', status: 'saved', now })));
+    expect(marks.filter((mark) => mark.changed)).toHaveLength(1);
+    expect(await orders.claimChange(t.scope, t.locationId, card, now)).toBeNull();
+  });
+
+  it('lists the edits for deliveries from a date on, newest first (A9)', async () => {
+    const t = tenant();
+    const base = { itemId: id(), windowStart: '2026-05-27', windowEnd: '2026-06-03', recommended: 4, quantity: 5, unit: 'cases', reason: 'r' };
+    for (const [delivery, minute] of [['2026-05-28', 1], ['2026-06-04', 2], ['2026-06-11', 3]] as const) {
+      await orders.addDecision(t.scope, t.locationId, { ...base, delivery, now: new Date(Date.UTC(2026, 5, 1, 12, minute)) });
+    }
+    expect((await orders.listDecisions(t.scope, t.locationId, '2026-06-01')).map((decision) => decision.delivery)).toEqual(['2026-06-11', '2026-06-04']);
   });
 
   it('racing first inserts of one card never throw, and a saved one stays saved', async () => {
@@ -190,7 +223,7 @@ describe('order cards and rules under races', () => {
       orders.setCard(t.scope, t.locationId, card, { kind: 'change', status: 'saved', now }),
       ...Array.from({ length: 4 }, () => orders.setCard(t.scope, t.locationId, card, { kind: 'change', status: 'dismissed', now })),
     ]);
-    expect(results[0].status).toBe('saved');
+    expect(results[0].card.status).toBe('saved');
     expect((await orders.findCard(t.scope, card))?.status).toBe('saved');
     expect(await server.connection.collection('tw_order_cards').countDocuments({ conversationId: new Types.ObjectId(card.conversationId) })).toBe(1);
   });
@@ -208,11 +241,14 @@ describe('order cards and rules under races', () => {
     const t = tenant();
     const input = { itemId: id(), delta: 2, unit: 'cases', situation: 'a football weekend', now: server.clock.now() };
     const first = await orders.addRule(t.scope, t.locationId, input);
-    expect(await orders.addRule(t.scope, t.locationId, { ...input, delta: 5 })).toEqual(first);
+    expect(first.created).toBe(true);
+    expect(await orders.addRule(t.scope, t.locationId, { ...input, delta: 5 })).toEqual({ rule: first.rule, created: false });
 
     const raced = { ...input, itemId: id() };
     const results = await Promise.all(Array.from({ length: 5 }, () => orders.addRule(t.scope, t.locationId, raced)));
-    expect(new Set(results.map((rule) => rule.id)).size).toBe(1);
+    expect(new Set(results.map(({ rule }) => rule.id)).size).toBe(1);
+    // A4: only the save that stored it says so, so only it is audited.
+    expect(results.filter(({ created }) => created)).toHaveLength(1);
     expect(await server.connection.collection('tw_order_rules').countDocuments({ itemId: raced.itemId })).toBe(1);
   });
 });

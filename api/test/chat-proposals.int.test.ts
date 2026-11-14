@@ -333,8 +333,11 @@ describe('deletion and logs', () => {
     const cards = server.connection.collection('tw_order_cards');
     await cards.insertMany([id, keep].map((conversationId) => ({
       orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), conversationId: new Types.ObjectId(conversationId),
-      proposalId: 'toolu_order0001', kind: 'change', status: 'dismissed', createdAt: server.clock.now(),
+      proposalId: 'toolu_order0001', kind: 'change', status: 'dismissed', decisionId: new Types.ObjectId(), createdAt: server.clock.now(),
     })));
+    // A13: the cards go before the conversation, so a colleague's DELETE (404) must not reach them.
+    expect((await call(server, `/api/org/locations/${locationId}/chat/${id}`, { method: 'DELETE', session: colleague })).status).toBe(404);
+    expect(await cards.countDocuments({ conversationId: new Types.ObjectId(id) })).toBe(1);
     expect((await call(server, `/api/org/locations/${locationId}/chat/${id}`, { method: 'DELETE', session: author })).status).toBe(204);
     expect(await cards.countDocuments({ conversationId: new Types.ObjectId(id) })).toBe(0);
     expect(await cards.countDocuments({ conversationId: new Types.ObjectId(keep) })).toBe(1);

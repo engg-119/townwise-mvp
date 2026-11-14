@@ -12,9 +12,10 @@ import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, Principal } from '../access/policy.ts';
 import { findLine, sampleBoard } from '../orders/board.ts';
 import { addDays } from '../orders/dates.ts';
+import { MAX_QUANTITY } from '../orders/engine.ts';
 import { loadBoard, loadBoardNow, townClock } from '../orders/live.ts';
 import type { LocationRecord } from '../stores/locations.ts';
-import type { DecisionRecord } from '../stores/orders.ts';
+import type { DecisionInput as StoredDecisionInput, DecisionRecord } from '../stores/orders.ts';
 import { loadLocation, memberOf } from './locations.ts';
 import { actorOf } from './team.ts';
 
@@ -23,7 +24,7 @@ const REASON_MAX = 280;
 const decisionBody = z.strictObject({
   itemId: z.string().trim().min(1).max(80),
   delivery: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  quantity: z.number().int().min(0).max(999),
+  quantity: z.number().int().min(0).max(MAX_QUANTITY),
   reason: z.string().trim().min(1).max(REASON_MAX),
 });
 
@@ -59,19 +60,19 @@ export interface DecisionInput {
 }
 
 /**
- * Saves the owner's quantity for one line of its supplier's next order, read from the live board now: 409
- * `order_unavailable` without a board, 404 for an item or a delivery not on it. The recommended quantity is the
- * board's, never the caller's. Shared with the order change card (chat-order-proposals.ts).
+ * The edit to store for one line of its supplier's next order, read from the live board now: 409 `order_unavailable`
+ * without a board, 404 for an item or a delivery not on it. The recommended quantity is the board's, never the
+ * caller's. Writes nothing; shared with the order change card (chat-order-proposals.ts), which claims the card first.
  */
-export async function saveDecision(
+export async function decisionFor(
   ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord, input: DecisionInput,
-): Promise<DecisionRecord> {
+): Promise<StoredDecisionInput> {
   const board = await loadBoardNow(ctx, caller.scope, location);
   if (!board.available || board.sample) throw new AppError(409, 'order_unavailable', 'There is no order to change for this location.');
   const found = findLine(board, input.delivery, input.itemId);
   if (found === null) throw notFound();
   const { order, line } = found;
-  return ctx.stores.orders.addDecision(caller.scope, location.id, {
+  return {
     itemId: line.itemId,
     delivery: order.delivery,
     windowStart: order.cutoff,
@@ -81,7 +82,14 @@ export async function saveDecision(
     unit: line.unit,
     reason: input.reason,
     now: ctx.now(),
-  });
+  };
+}
+
+/** Saves the owner's quantity for one line (see decisionFor). */
+export async function saveDecision(
+  ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord, input: DecisionInput,
+): Promise<DecisionRecord> {
+  return ctx.stores.orders.addDecision(caller.scope, location.id, await decisionFor(ctx, caller, location, input));
 }
 
 /** POST .../orders/decisions. */
@@ -102,7 +110,7 @@ export async function saveOrderDecision(ctx: TownwiseContext, req: Request, res:
 
 /**
  * POST .../orders/rules. The amount is the latest saved edit's difference, and the situation is that edit's reason. A
- * rule already saved for the item and situation is the answer; one turned off is 409 `rule_off`.
+ * rule already saved for the item and situation is the answer, with no second event; one turned off is 409 `rule_off`.
  */
 export async function saveOrderRule(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
@@ -114,10 +122,13 @@ export async function saveOrderRule(ctx: TownwiseContext, req: Request, res: Res
   if (existing?.off === true) throw new AppError(409, 'rule_off', 'That rule is turned off.');
   const delta = decision.quantity - decision.recommended;
   if (delta === 0) throw new AppError(400, 'invalid_request', 'That edit does not change the quantity.');
-  const rule = existing ?? await ctx.stores.orders.addRule(caller.scope, location.id, {
-    itemId: decision.itemId, delta, unit: decision.unit, situation: decision.reason, now: ctx.now(),
-  });
-  if (existing === null) {
+  const { rule, created } = existing === null
+    ? await ctx.stores.orders.addRule(caller.scope, location.id, {
+      itemId: decision.itemId, delta, unit: decision.unit, situation: decision.reason, now: ctx.now(),
+    })
+    : { rule: existing, created: false };
+  // Only the save that stored the rule records it: a second save, or one that lost a race, adds no event.
+  if (created) {
     await recordAfter(ctx, {
       ...actorOf(caller), at: ctx.now(), orgId: caller.scope.orgId, action: 'order.rule_saved',
       target: { type: 'location', id: location.id },
