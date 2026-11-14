@@ -12,7 +12,7 @@ import type { TownwiseContext } from '../app.ts';
 import type { Principal } from '../access/policy.ts';
 import { daysBetween, EARLIEST_DATE, isoDate } from '../dates.ts';
 import { addDays } from '../orders/dates.ts';
-import { COUNT_DAYS, MEAN_DAYS, townClock } from '../orders/live.ts';
+import { loadSetupState, townClock } from '../orders/live.ts';
 import { checkSetup, mintIds, setupInput } from '../orders/setup.ts';
 import type { StoredSetup } from '../stores/order-setups.ts';
 import { loadLocation, memberOf } from './locations.ts';
@@ -71,20 +71,7 @@ function assertKnownItems(setup: StoredSetup | null, ids: readonly string[]): vo
 export async function getOrderSetup(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const { scope } = memberOf(principal);
   const location = await loadLocation(ctx, scope, req.params.locationId);
-  const { today } = townClock(ctx, location);
-  const [setup, coverage, recent, latest] = await Promise.all([
-    ctx.stores.orderSetups.get(scope, location.id),
-    ctx.stores.itemSales.coverage(scope, location.id),
-    ctx.stores.itemSales.days(scope, location.id, { from: addDays(today, -MEAN_DAYS), to: addDays(today, -1) }),
-    ctx.stores.orderCounts.latest(scope, location.id, addDays(today, -COUNT_DAYS)),
-  ]);
-  const items = setup?.items ?? [];
-  const itemCoverage = Object.fromEntries(items.map((item) => [item.id, recent.filter((day) => (day.items[item.id] ?? 0) > 0).length]));
-  const counts = Object.fromEntries(items.flatMap((item) => {
-    const count = latest.get(item.id);
-    return count === undefined ? [] : [[item.id, { quantity: count.quantity, date: count.date }]];
-  }));
-  res.status(200).json({ setup, coverage, itemCoverage, counts });
+  res.status(200).json(await loadSetupState(ctx, scope, location, townClock(ctx, location).today));
 }
 
 /** PUT .../orders/setup { expectedVersion, setup }: the whole setup, saved only over the version the editor loaded. */

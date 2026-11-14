@@ -1,16 +1,19 @@
 // The live order board for a location (design Decision 5): reads its ordering setup, item sales, latest counts, the
-// published guest forecast and its past guests, runs the engine, and applies the saved edits and active rules. A read:
-// it writes nothing and logs nothing.
+// published guest forecast and its past guests, runs the engine, and applies the saved edits and active rules. Also
+// what the setup page and TownwiseAI read beside the setup (loadSetupState). Reads: they write nothing and log nothing.
 import type { TownwiseContext } from '../app.ts';
 import type { OrgScope } from '../access/policy.ts';
+import type { ItemSalesCoverage } from '../stores/item-sales.ts';
 import type { LocationRecord } from '../stores/locations.ts';
+import type { LatestCount } from '../stores/order-counts.ts';
+import type { StoredSetup } from '../stores/order-setups.ts';
 import { localDay, localMinutes, timeZoneOf } from '../time-zones.ts';
 import { liveBoard, unavailable, withPreferences, type OrderAnswer } from './board.ts';
 import { addDays } from './dates.ts';
 import { computeOrders } from './engine.ts';
 
 /** Weekday means read 8 weeks back; past windows for the cushion add 26 weeks before that. */
-const ITEM_SALES_DAYS = 238;
+export const ITEM_SALES_DAYS = 238;
 /** The 8 weeks the weekday means, the coverage and the guest index read. */
 export const MEAN_DAYS = 56;
 /** Counts older than this are not read: the board would order the par for them anyway. */
@@ -81,4 +84,33 @@ export async function loadBoard(
 export function loadBoardNow(ctx: TownwiseContext, scope: OrgScope, location: LocationRecord): Promise<OrderAnswer> {
   const { today, nowMinutes } = townClock(ctx, location);
   return loadBoard(ctx, scope, location, today, nowMinutes);
+}
+
+/** The setup (null when none was saved) and what the setup page shows beside it. */
+export interface SetupState {
+  readonly setup: StoredSetup | null;
+  /** The first and last stored item-sales days and how many are stored; null when none is. */
+  readonly coverage: ItemSalesCoverage | null;
+  /** Per item id, its covered days with any servings in the 8 weeks before `today`. */
+  readonly itemCoverage: Readonly<Record<string, number>>;
+  /** Per item id, its latest count in the 90 days before `today`; an item not counted then is left out. */
+  readonly counts: Readonly<Record<string, LatestCount>>;
+}
+
+/** The setup and its item-sales coverage and counts as of `today` (the town's). GET .../orders/setup and get_order_setup. */
+export async function loadSetupState(ctx: TownwiseContext, scope: OrgScope, location: LocationRecord, today: string): Promise<SetupState> {
+  const { stores } = ctx;
+  const [setup, coverage, recent, latest] = await Promise.all([
+    stores.orderSetups.get(scope, location.id),
+    stores.itemSales.coverage(scope, location.id),
+    stores.itemSales.days(scope, location.id, { from: addDays(today, -MEAN_DAYS), to: addDays(today, -1) }),
+    stores.orderCounts.latest(scope, location.id, addDays(today, -COUNT_DAYS)),
+  ]);
+  const items = setup?.items ?? [];
+  const itemCoverage = Object.fromEntries(items.map((item) => [item.id, recent.filter((day) => (day.items[item.id] ?? 0) > 0).length]));
+  const counts = Object.fromEntries(items.flatMap((item) => {
+    const count = latest.get(item.id);
+    return count === undefined ? [] : [[item.id, { quantity: count.quantity, date: count.date }]];
+  }));
+  return { setup, coverage, itemCoverage, counts };
 }

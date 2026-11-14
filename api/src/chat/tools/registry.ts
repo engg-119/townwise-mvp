@@ -25,7 +25,7 @@ import { readDataTool } from './read-data.ts';
 import { salesDaysTool } from './sales-days.ts';
 import { townCalendarTool } from './town-calendar.ts';
 import { townProfileTool } from './town-profile.ts';
-import { orderBoardTool, orderLineTool, proposeOrderChangeTool, proposeOrderRuleTool } from './orders.ts';
+import { orderBoardTool, orderLineTool, orderSetupTool, proposeOrderChangeTool, proposeOrderRuleTool } from './orders.ts';
 import { showVisualTool, type Visual } from './visual.ts';
 
 export interface ToolContext {
@@ -121,9 +121,10 @@ export const TOOL_REGISTRY: readonly ChatTool<unknown>[] = [
   startCalibrationTool,
   getCalibrationTool,
   compareForecastModelsTool,
-  // Orders: the board, one line, and the two cards. A quantity is never the model's.
+  // Orders: the live board, one line, the setup, and the two cards. A quantity is never the model's.
   orderBoardTool,
   orderLineTool,
+  orderSetupTool,
   proposeOrderChangeTool,
   proposeOrderRuleTool,
 ];

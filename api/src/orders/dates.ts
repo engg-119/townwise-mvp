@@ -1,7 +1,8 @@
 // The order board's calendar words, shared by engine.ts and board.ts. Dates are 'YYYY-MM-DD' read as UTC, so a weekday
 // never depends on the server's zone. Pure.
 
-const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
+/** By weekday number, 0 = Sunday. */
+export const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
 const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
 
 function at(iso: string): Date {
