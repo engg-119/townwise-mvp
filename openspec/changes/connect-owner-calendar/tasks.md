@@ -39,26 +39,26 @@ Two phases (owner decision, 2026-11-12): phase 1 builds the server side on `orig
 
 - [x] 6.1 Add `chat/tools/owner-calendar.ts` (`get_owner_calendar`), append it to the registry, add the prompt line; update `test/chat-tools.test.ts` for the appended name and the unchanged order
 - [x] 6.2 Unit tests: range limits, `available: false` with no calendar, input and result views carry no title
-- [x] 6.3 Extend `readableByTownwiseAi` and the item reader to `pdf` and `docx`; PDF as a `document` block in the tool result (10 MB, 100 pages), `.docx` text through the parse thread (20,000 characters); saved conversation keeps reference and counts only
-- [x] 6.4 Tests: PDF and Word reads, turned-off item, `.doc` refused, PDF over the caps, saved shape holds no bytes or text
+- [x] 6.3 (withdrawn 2026-11-13: TownwiseAI reading PDF and Word moved to `read-files-with-townwise-ai`, PR #69; built and then removed from this branch) Extend `readableByTownwiseAi` and the item reader to `pdf` and `docx`; PDF as a `document` block in the tool result (10 MB, 100 pages), `.docx` text through the parse thread (20,000 characters); saved conversation keeps reference and counts only
+- [x] 6.4 (withdrawn with 6.3) Tests: PDF and Word reads, turned-off item, `.doc` refused, PDF over the caps, saved shape holds no bytes or text
 
 ## 7. Client (phase 2: after the calendar work lands)
 
 - [ ] 7.1 `IcsImport.web.tsx` posts the file text to the API instead of parsing it; remove `client/src/portal/calendar/ics.ts` and its client tests
 - [ ] 7.2 The Calendar page reads the month's stored events from the API on web and native, in parallel with its existing reads
 - [ ] 7.3 Add the "Your calendars" panel (list, Add a link, Import a file on web, Refresh now, Remove, statuses and failure messages), read-only under view-as
-- [ ] 7.4 Your data and the composer's file line say PDF and Word items can be read by TownwiseAI
+- [x] 7.4 (withdrawn with 6.3) Your data and the composer's file line say PDF and Word items can be read by TownwiseAI
 - [ ] 7.5 Client tests for the panel, the stored events, "Make a note" keeping the detail empty, and view-as; web and native projects
 
 ## 8. Docs, privacy and infra
 
 - [ ] 8.1 (phase 2) `docs/portal/spec.md`: new D entry (owner decision, 2026-11-12), resolve the two P27 `[DECISION NEEDED]` rows in 22.4 with it, rewrite P27 "Your own calendar" and the section 17 calendar bullet, add the routes section after 10.16, add the `[CONFIRM]` defaults from the design's open questions
-- [x] 8.2 `api/README.md` (endpoints, collections, env var, audit events, the `townwise:calendar-links` limit), `docs/portal/tuning-chat.md` (tool row appended, PDF and Word in `read_data_item`)
-- [x] 8.3 Public privacy page (`client/app/(marketing)/privacy.tsx`): calendars kept with titles, links fetched by Townwise, PDF and Word contents and calendar titles may go to Anthropic through TownwiseAI
+- [x] 8.2 `api/README.md` (endpoints, collections, env var, audit events, the `townwise:calendar-links` limit), `docs/portal/tuning-chat.md` (tool rows appended)
+- [x] 8.3 Public privacy page (`client/app/(marketing)/privacy.tsx`): calendars kept with titles, links fetched by Townwise, calendar titles may go to Anthropic through TownwiseAI
 - [x] 8.4 `infra/terraform/production/containerapp.tf`: add `TOWNWISE_CALENDAR_KEY` to `api_secrets`; `infra/README.md`: create-the-key runbook step and the never-rotate note; run the CI Terraform checks
 
 ## 9. Verify
 
 - [x] 9.1 `npm run verify` passes (66c1132: API 1,858 tests, client 2,875, kit modules, web export, expo-doctor)
-- [ ] 9.2 Run the API locally: import a file, add a public test `.ics` link, read the events, ask TownwiseAI about next week's bookings and save a proposed note, read a PDF from Your data (the Calendar page itself is phase 2). Partly done: the guarded fetcher and parser against Google's public holiday feed over the real network (65 events, `webcal:` too) and refusals for 169.254.169.254, a name resolving to 127.0.0.1, `http:`, user info and port 8443. Left: the signed-in run with TownwiseAI and a PDF, which needs `ANTHROPIC_API_KEY` and stored files on
+- [ ] 9.2 Run the API locally: import a file, add a public test `.ics` link, read the events, ask TownwiseAI about next week's bookings and save a proposed note (the Calendar page itself is phase 2). Partly done: the guarded fetcher and parser against Google's public holiday feed over the real network (65 events, `webcal:` too) and refusals for 169.254.169.254, a name resolving to 127.0.0.1, `http:`, user info and port 8443. Left: the signed-in run with TownwiseAI, which needs `ANTHROPIC_API_KEY`
 - [x] 9.3 Security review of `calendar/fetch.ts`, `calendar/secret.ts` and the new routes before the PR (three-lens audit until a round found nothing new: one high, a quadratic UID loop, fixed in 1e41462; address pinning and redirect checks read by hand)

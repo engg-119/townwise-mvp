@@ -176,17 +176,11 @@ export async function loadDataItem(
 }
 
 /**
- * The kinds of reference item TownwiseAI reads: text, and PDF and Word (.docx) files (openspec change
- * connect-owner-calendar, design decision 9). Never an older Word (.doc) file, a spreadsheet, a ZIP or an image.
- */
-export const TOWNWISE_AI_KINDS: ReadonlySet<FileKind> = new Set<FileKind>(['text', 'pdf', 'docx']);
-
-/**
- * Whether TownwiseAI may read the item (design calls 6 and 8): an item of one of those kinds kept for reference, turned
- * on, with its original still stored, while stored files are on. Never a sales file.
+ * Whether TownwiseAI may read the item's text (design calls 6 and 8): a text item kept for reference, turned on, with
+ * its original still stored, while stored files are on. Never a sales file.
  */
 export function readableByTownwiseAi(item: DataItemRecord, filesOn: boolean): boolean {
   const file = item.file;
-  return filesOn && item.ref.type === 'file' && file !== null && file.purpose === 'reference' && TOWNWISE_AI_KINDS.has(file.kind)
+  return filesOn && item.ref.type === 'file' && file !== null && file.purpose === 'reference' && file.kind === 'text'
     && item.state === 'kept' && item.enabled && file.rawDeletedAt === null;
 }

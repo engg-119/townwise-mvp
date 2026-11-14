@@ -7,7 +7,6 @@ import type { BetaTool, BetaToolResultBlockParam, BetaToolUseBlock } from '@anth
 
 import type { TownwiseContext } from '../../app.ts';
 import type { OrgScope } from '../../access/policy.ts';
-import type { PdfsSent } from '../../files/items.ts';
 import type { LocationRecord } from '../../stores/locations.ts';
 import type { NoteContent } from '../../stores/notes.ts';
 import type { Role } from '../../access/resolve.ts';
@@ -41,11 +40,6 @@ export interface ToolContext {
   readonly role: Role;
   /** The caller as chat.turn_completed records them, for the events a tool records. */
   readonly actor: Pick<AuditEventInput, 'actorUserId' | 'actorEmail' | 'actorRole' | 'viewAsGrantId'>;
-  /**
-   * The PDFs read_data_item has sent in this turn, which together stay within one PDF's caps (files/items.ts). runTurn
-   * starts each turn's at zero; absent, a read counts alone.
-   */
-  readonly pdfsSent?: PdfsSent;
 }
 
 export type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue };
@@ -63,12 +57,6 @@ export type ToolView = Readonly<Record<string, JsonValue>>;
  */
 export interface ToolRun {
   readonly content: string;
-  /**
-   * read_data_item: a PDF item, base64, that the model reads as a document block beside `content` (openspec change
-   * connect-owner-calendar, design decision 9). Never saved: the saved conversation keeps the tool's stub
-   * (savedResultOf).
-   */
-  readonly pdf?: string;
   readonly proposal?: NoteContent;
   readonly visual?: Visual;
   readonly prompts?: string[];
@@ -90,7 +78,7 @@ export interface ChatTool<I> {
   resultView(content: string): ToolView | null;
   /**
    * What the saved conversation keeps of a result that did not fail, when not the result itself: read_data_item keeps a
-   * stub, so later turns never resend an item's text or PDF (turn.ts, savedTurn). `resultView` reads the stub too.
+   * stub, so later turns never resend an item's text (turn.ts, savedTurn). `resultView` reads the stub too.
    */
   saved?(content: string): string;
 }
@@ -154,21 +142,10 @@ export async function runTool(tc: ToolContext, block: BetaToolUseBlock): Promise
   const input = tool.parse(block.input, tc.today);
   if (input === null) return { result: failed(block, tool.invalidInput), ...NOTHING_SHOWN };
   const run = await tool.run(tc, input);
-  const content: BetaToolResultBlockParam['content'] = run.pdf === undefined ? run.content : [
-    { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: run.pdf } },
-    { type: 'text', text: run.content },
-  ];
   return {
-    result: { type: 'tool_result', tool_use_id: block.id, content },
+    result: { type: 'tool_result', tool_use_id: block.id, content: run.content },
     proposal: run.proposal ?? null, visual: run.visual ?? null, prompts: run.prompts ?? null,
   };
-}
-
-/** A result's text: its content, or the text beside the document of a result that carries a PDF. Null for none. */
-function textOf(result: BetaToolResultBlockParam): string | null {
-  if (result.content === undefined) return null;
-  if (typeof result.content === 'string') return result.content;
-  return result.content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('');
 }
 
 function failed(block: BetaToolUseBlock, content: string): BetaToolResultBlockParam {
@@ -182,21 +159,17 @@ export function inputViewOf(name: string, raw: unknown, today: string): ToolView
   return tool === undefined || input === null ? null : tool.inputView(input);
 }
 
-/**
- * What the saved conversation keeps of one result: the tool's stub of a result that did not fail, else the same block.
- * A result that carries a document is always saved as text (the stub, or its own text), so no PDF is ever stored.
- */
+/** What the saved conversation keeps of one result: the tool's stub of a result that did not fail, else the same block. */
 export function savedResultOf(name: string, result: BetaToolResultBlockParam): BetaToolResultBlockParam {
-  const text = textOf(result);
-  if (result.is_error === true || text === null) return result;
-  const content = toolNamed(name)?.saved?.(text) ?? text;
+  const tool = toolNamed(name);
+  if (tool?.saved === undefined || result.is_error === true || typeof result.content !== 'string') return result;
+  const content = tool.saved(result.content);
   return content === result.content ? result : { ...result, content };
 }
 
 /** The result view of a call that did not fail; null for an unknown tool, an error result or an unreadable one. */
 export function resultViewOf(name: string, result: BetaToolResultBlockParam): ToolView | null {
   const tool = toolNamed(name);
-  const text = textOf(result);
-  if (tool === undefined || result.is_error === true || text === null) return null;
-  return tool.resultView(text);
+  if (tool === undefined || result.is_error === true || typeof result.content !== 'string') return null;
+  return tool.resultView(result.content);
 }
