@@ -1,7 +1,7 @@
 import { fmt1, fmtSigned, side } from '../format';
 import { DATA_YEAR, northeastSeries } from './countyData';
 import { VIEW_HEIGHT, VIEW_WIDTH, type LabelSide } from './geometry';
-import { mapTowns, markerScale, MONTH_NAMES, REST_MONTH, type MapTown } from './mapState';
+import { mapTowns, markerScale, MONTH_NAMES, type MapTown } from './mapState';
 
 // What the map story shows at each month (ConsoleV2.dc.html), derived from the bundled data with the mockup's
 // formulas. Pure, with no DOM: the homepage map renders it and the tests pin it.
@@ -86,12 +86,13 @@ export function railFill(month: number): number {
   return (month + 1) / 12;
 }
 
-// The final step: the widest-spread month, with the counties furthest above and below the Northeast.
-export function finale(): { title: string; line: string } {
-  const gapOf = (town: MapTown): number => town.series.gap[REST_MONTH] ?? 0;
+// The final step: the reader's month in the data year, with the counties furthest above and below the Northeast.
+// Every month of the data has a county on each side, so the line reads true for any month.
+export function finale(month: number): { title: string; line: string } {
+  const gapOf = (town: MapTown): number => town.series.gap[month] ?? 0;
   const hi = mapTowns.reduce<MapTown | null>((best, town) => (best === null || gapOf(town) > gapOf(best) ? town : best), null);
   const lo = mapTowns.reduce<MapTown | null>((best, town) => (best === null || gapOf(town) < gapOf(best) ? town : best), null);
-  const title = `${MONTH_NAMES[REST_MONTH] ?? ''}, the year’s widest spread.`;
+  const title = `${MONTH_NAMES[month] ?? ''}, this month in ${String(DATA_YEAR)}.`;
   if (hi === null || lo === null) return { title, line: '' };
   return {
     title,

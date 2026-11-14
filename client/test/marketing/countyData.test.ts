@@ -11,7 +11,6 @@ import {
   MONTHS,
   northeastSeries,
   SOURCES,
-  widestSpreadMonth,
 } from '../../src/marketing/map/countyData';
 
 const round2 = (v: number): number => Math.round(v * 100) / 100;
@@ -72,14 +71,14 @@ test('each chart scale holds its series in multiples of 5', () => {
   }
 });
 
-test('the month with the widest spread of county gaps is July 2024', () => {
-  const spreads = MONTHS.map((_, m) => {
+// The map story ends on the reader's month with the counties furthest above and below the Northeast, so every
+// month needs a county on each side.
+test('every month has a county above the Northeast and one below it', () => {
+  const sides = MONTHS.map((_, m) => {
     const gaps = countySeries.map((c) => c.gap[m] ?? Number.NaN);
-    return Math.max(...gaps) - Math.min(...gaps);
+    return [Math.max(...gaps) > 0, Math.min(...gaps) < 0];
   });
-  const widest = spreads.indexOf(Math.max(...spreads));
-  expect(`${MONTHS[widest] ?? ''} ${String(DATA_YEAR)}`).toBe('Jul 2024');
-  expect(widestSpreadMonth()).toBe(widest);
+  expect(sides).toEqual(MONTHS.map(() => [true, true]));
 });
 
 test('the July gaps for Nantucket and State College match the data', () => {

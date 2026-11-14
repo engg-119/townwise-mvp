@@ -45,7 +45,7 @@ import { YourCalendars } from './YourCalendars';
 // a leading or trailing day is selected in place, and the grid moves only on Previous, Next, Today, PageUp and
 // PageDown, or when `?day=` leaves its 42 days (a key past the first or last row, browser back or forward, a link).
 // It reads the notes with the business rules (D31; the day lists the rules whose schedule covers it, edited on Rules),
-// the location's calendars for "Your calendars" (spec 10.17, YourCalendars.tsx: part of the first load, so the button's
+// the location's calendars for "Your calendars" (spec 10.18, YourCalendars.tsx: part of the first load, so the button's
 // name never changes after the page shows, and its failure leaves the page showing), and over the grid's range
 // (gridRange) its town calendar, its stored days (the past part only), its calendars' stored events and its forecast
 // (one read of at most 42 days each). On a month change the new grid shows at once, dimmed, with the days the kept

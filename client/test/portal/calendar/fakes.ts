@@ -12,7 +12,7 @@ import { calendarBody } from '../analytics/fakes';
 import { noteOf } from '../locations/fakes';
 
 // The Calendar page's reads (spec 16.3 P28), for fakePortalApi's `fallback`: GET .../notes, .../rules,
-// .../calendar, .../sales/days and .../forecast for location l1, and the owner calendars' two (spec 10.17): the list,
+// .../calendar, .../sales/days and .../forecast for location l1, and the owner calendars' two (spec 10.18): the list,
 // GET .../owner-calendars, from `calendars`, and the stored events, GET .../owner-calendars/events, from `ownerEvents`
 // (either may be an ApiError instead). They answer from mutable fields so a test can change what the next read returns
 // (the forecast after a note is saved). Any range's calendar answers with `events`, its stored events with the

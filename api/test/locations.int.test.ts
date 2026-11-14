@@ -12,7 +12,8 @@ import { createLocation, type LocationSummary } from '../src/handlers/locations.
 import type { TownProfile } from '../src/handlers/towns.ts';
 import { createGooglePlacesClient } from '../src/places/google.ts';
 import {
-  addLocation, addNote, addOwnerCalendar, addRequest, addSalesDay, addSeat, addUpload, auditEvents, createOrg,
+  addLocation, addNote, addOrderRecords, addOwnerCalendar, addRequest, addSalesDay, addSeat, addUpload, auditEvents, createOrg,
+  ORDER_COLLECTIONS,
 } from './helpers/fixtures.ts';
 import { fakePlaces, placeDetails, usAddress } from './helpers/places-fetch.ts';
 import {
@@ -260,6 +261,22 @@ describe('DELETE /api/org/locations/:locationId', () => {
     for (const collection of ['tw_calendar_sources', 'tw_calendar_events']) {
       const of = (locationId: string) => server.connection.collection(collection).countDocuments({ locationId: new Types.ObjectId(locationId) });
       expect({ collection, doomed: await of(doomed), kept: await of(kept) }).toEqual({ collection, doomed: 0, kept: collection === 'tw_calendar_sources' ? 1 : 3 });
+    }
+  });
+
+  it('deletes the location’s ordering records with it (edits, rules, cards, setup, item sales, counts), and no other location’s', async () => {
+    const t = await team('Order Group');
+    const doomed = await addLocation(server, { orgId: t.orgId, name: 'Doomed' });
+    const kept = await addLocation(server, { orgId: t.orgId, name: 'Kept' });
+    for (const locationId of [doomed, kept]) await addOrderRecords(server, { orgId: t.orgId, locationId });
+    // A12: item sales are data, so the location is refused until they are deleted (with the sales data, or on their own).
+    expect(await errorOf(await remove(t.admin, doomed))).toEqual({ status: 409, error: 'location_has_data' });
+    expect((await call(server, `/api/org/locations/${doomed}/orders/item-sales`, { method: 'DELETE', session: t.admin })).status).toBe(200);
+    expect((await remove(t.admin, doomed)).status).toBe(204);
+    for (const name of ORDER_COLLECTIONS) {
+      const collection = server.connection.collection(name);
+      expect({ name, doomed: await collection.countDocuments({ locationId: new Types.ObjectId(doomed) }) }).toEqual({ name, doomed: 0 });
+      expect({ name, kept: await collection.countDocuments({ locationId: new Types.ObjectId(kept) }) }).toEqual({ name, kept: 1 });
     }
   });
 });

@@ -35,6 +35,8 @@ const FROZEN_NAMES = [
   'start_calibration', 'get_calibration', 'compare_forecast_models',
   // The owner's own calendars.
   'get_owner_calendar',
+  // Orders.
+  'get_order_board', 'get_order_line', 'get_order_setup', 'propose_order_change', 'propose_order_rule',
 ];
 
 describe('the tool registry', () => {

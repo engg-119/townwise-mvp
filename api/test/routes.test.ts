@@ -170,6 +170,23 @@ describe('route table', () => {
     }
   });
 
+  it('orders: the board, edits, rules, the setup, item sales and counts are member routes but deleting item sales', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id.startsWith('org.orders.'))
+      .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));
+    const base = '/org/locations/:locationId/orders';
+    expect(rows).toEqual([
+      { id: 'org.orders.get', method: 'GET', path: base, policy: 'member', bodyLimit: 'none', limiter: undefined },
+      { id: 'org.orders.decision', method: 'POST', path: `${base}/decisions`, policy: 'member', bodyLimit: '2kb', limiter: undefined },
+      { id: 'org.orders.rule', method: 'POST', path: `${base}/rules`, policy: 'member', bodyLimit: '2kb', limiter: undefined },
+      { id: 'org.orders.rule_off', method: 'POST', path: `${base}/rules/off`, policy: 'member', bodyLimit: '1kb', limiter: undefined },
+      { id: 'org.orders.setup.get', method: 'GET', path: `${base}/setup`, policy: 'member', bodyLimit: 'none', limiter: undefined },
+      { id: 'org.orders.setup.save', method: 'PUT', path: `${base}/setup`, policy: 'member', bodyLimit: '1mb', limiter: undefined },
+      { id: 'org.orders.item_sales.upload', method: 'POST', path: `${base}/item-sales`, policy: 'member', bodyLimit: '256kb', limiter: 'item_sales' },
+      { id: 'org.orders.item_sales.remove', method: 'DELETE', path: `${base}/item-sales`, policy: 'org_admin', bodyLimit: 'none', limiter: undefined },
+      { id: 'org.orders.counts.save', method: 'POST', path: `${base}/counts`, policy: 'member', bodyLimit: '32kb', limiter: undefined },
+    ]);
+  });
+
   it('D25: Open as admin is a staff POST with no body, sharing the view-as limiter', () => {
     expect(TOWNWISE_ROUTES.find((r) => r.id === 'admin.orgs.open_as_admin')).toMatchObject({
       method: 'POST', path: '/admin/orgs/:orgId/open-as-admin', policy: 'staff', bodyLimit: 'none', limiter: 'view-as',
@@ -194,9 +211,14 @@ describe('route table', () => {
     expect(() => { assertRouteTable([route({ method: 'GET', bodyLimit: '32kb' })]); }).toThrow(ConfigError);
   });
 
-  it('boot refuses a PUT without a streamed body, and a streamed body on any route but the chunk route', () => {
+  it('boot refuses a PUT without a streamed or 1 MB body, and a streamed body on any route but the chunk route', () => {
     expect(() => { assertRouteTable([route({ method: 'PUT', bodyLimit: '32kb' })]); }).toThrow(ConfigError);
     expect(() => { assertRouteTable([route({ method: 'PUT', bodyLimit: 'stream' })]); }).toThrow(ConfigError);
+    // The ordering setup is saved whole, as one JSON document of up to 1 MB, and no other route takes one.
+    expect(() => { assertRouteTable([route({ id: 'org.orders.setup.save', method: 'PUT', bodyLimit: '1mb' })]); }).not.toThrow();
+    expect(() => { assertRouteTable([route({ method: 'PUT', bodyLimit: '1mb' })]); }).toThrow(ConfigError);
+    expect(() => { assertRouteTable([route({ id: 'org.orders.setup.save', method: 'POST', bodyLimit: '1mb' })]); }).toThrow(ConfigError);
+    expect(TOWNWISE_ROUTES.filter((r) => r.bodyLimit === '1mb').map((r) => r.id)).toEqual(['org.orders.setup.save']);
     expect(() => { assertRouteTable([route({ id: 'org.files.chunk', method: 'POST', bodyLimit: 'stream' })]); }).toThrow(ConfigError);
     expect(() => { assertRouteTable([route({ id: 'org.files.chunk', method: 'PUT', bodyLimit: 'stream' })]); }).not.toThrow();
   });

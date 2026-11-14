@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import type { ApiClient } from '../../api/client';
 
-// The owner calendar routes (spec 10.17, api/src/handlers/owner-calendars.ts; connect-owner-calendar design decision
+// The owner calendar routes (spec 10.18, api/src/handlers/owner-calendars.ts; connect-owner-calendar design decision
 // 11), through the portal ApiClient: a location's own calendars, each an imported .ics file or a subscription link, and
 // their stored events. No answer carries a link's address, only its host. `z.object` strips unknown keys.
 

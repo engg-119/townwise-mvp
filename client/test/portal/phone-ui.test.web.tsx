@@ -93,7 +93,7 @@ test('on a phone the sections take one row in a focusable region that scrolls si
   expect(style(parentOf(nav)).paddingLeft).toBe('16px');
   expect(style(nav).flexWrap).toBe('nowrap');
   expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual([
-    'Home', 'Calendar', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Team', 'Settings',
+    'Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Team', 'Settings',
   ]);
   const notes = within(nav).getByRole('link', { name: 'Notes' });
   expect(notes.getAttribute('aria-current')).toBe('page');

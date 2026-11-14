@@ -228,7 +228,7 @@ test('the story starts at its title, with one band observer on the scroll contai
   for (const element of slots()) expect(element.closest('[aria-hidden="true"]')).toBeNull();
 });
 
-test('exactly one slot in the band sets the step: the region, the towns, then each month to the widest spread', () => {
+test('exactly one slot in the band sets the step: the region, the towns, then each month, then back to the reader’s month', () => {
   installObserver();
   media({ wide: true, reduce: false });
   const { frame, story } = renderStory();
@@ -270,10 +270,11 @@ test('exactly one slot in the band sets the step: the region, the towns, then ea
 
   step(15);
   expect(story.className).toBe('story is-on ss-15');
-  expect(listHeader()).toBe('Gap in Jul 2024');
-  expect(nantucketScale()).toBe(1);
-  expect(screen.getByRole('heading', { level: 2, name: finale().title })).toBeTruthy();
-  expect(screen.getByText(finale().line)).toBeTruthy();
+  // The last step rests on the reader's month: today is Nov 5, 2026, so November 2024 in the data.
+  expect(listHeader()).toBe('Gap in Nov 2024');
+  expect(nantucketScale()).toBeCloseTo(markerScale(NANTUCKET[10] ?? 0), 3);
+  expect(screen.getByRole('heading', { level: 2, name: 'November, this month in 2024.' })).toBeTruthy();
+  expect(screen.getByText(finale(10).line)).toBeTruthy();
 });
 
 test('scrolling back up runs the story backward to the region', () => {
@@ -301,7 +302,7 @@ test('a jump past the story ends it at the last step, and a jump back returns it
   place((index) => ({ top: -6000 + index * 300, bottom: -5700 + index * 300 }));
   band().report([{ target: slot(5), inBand: false, rect: { top: -4500, bottom: -4300 } }]);
   expect(story.className).toBe('story is-on ss-15');
-  expect(listHeader()).toBe('Gap in Jul 2024');
+  expect(listHeader()).toBe('Gap in Nov 2024');
 
   // Home: back to the top, where the title's slot is in the band.
   place((index) => rectFor(index, 0));
@@ -530,11 +531,12 @@ test('value tags mark the month’s biggest movers inside the pinned map, and cl
   expect(shown.sort()).toEqual(expected.sort());
   cleanup();
 
-  // Flat and wide (no observer), the title reaches over the July map's northwest corner.
+  // Flat and wide (no observer), the title reaches over the map's northwest corner, which rests on the reader's
+  // month (November).
   Reflect.deleteProperty(window, 'IntersectionObserver');
   renderStory();
   const title = titleBox(window.innerWidth, 1280, 732);
-  const flat = [...placeTags(6, 732, [title]).values()].map((tag) => tag.text).sort();
+  const flat = [...placeTags(10, 732, [title]).values()].map((tag) => tag.text).sort();
   expect([...document.querySelectorAll('.vtag')].map((tag) => tag.textContent).sort()).toEqual(flat);
 });
 
@@ -577,12 +579,12 @@ test('the month scrubber sets the month by hand, so the dots jump', () => {
   expect(frame.className).not.toContain('is-sm');
 });
 
-test('without an observer the map lies flat at the widest spread; a silent one lays it flat after a second, and a late report brings the story back', () => {
+test('without an observer the map lies flat at the reader’s month; a silent one lays it flat after a second, and a late report brings the story back', () => {
   media({ wide: true, reduce: false });
   const flat = renderStory();
   expect(flat.story.className).toBe('story is-flat ss-15');
   expect(flat.frame.className).toBe('app app-a is-local');
-  expect(listHeader()).toBe('Gap in Jul 2024');
+  expect(listHeader()).toBe('Gap in Nov 2024');
   flat.unmount();
   cleanup();
 

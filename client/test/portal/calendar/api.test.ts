@@ -5,7 +5,7 @@ import { ACCESS, fakePortalApi, meOf, refusal, writes } from '../../helpers/port
 import { noContent, withRoutes } from '../team/fixtures';
 import { calendarFake, ownerCalendar, ownerEvent } from './fakes';
 
-// The owner calendar routes (spec 10.17, api/src/handlers/owner-calendars.ts; connect-owner-calendar design decision
+// The owner calendar routes (spec 10.18, api/src/handlers/owner-calendars.ts; connect-owner-calendar design decision
 // 11) through a recording fake ApiClient. Made-up names, titles and addresses only.
 
 const BASE = '/api/org/locations/l1/owner-calendars';
@@ -19,7 +19,7 @@ function api() {
 const FILE = ownerCalendar({ id: 'c1', label: 'Kitchen', kind: 'file', host: null, eventCount: 12 });
 const LINK = ownerCalendar({ id: 'c2', label: 'Bookings', kind: 'link', host: 'calendar.google.com', eventCount: 1 });
 
-describe('owner calendar calls (spec 10.17)', () => {
+describe('owner calendar calls (spec 10.18)', () => {
   test('GET .../owner-calendars returns the calendars, a status the client has no words for included, stripping other keys', async () => {
     const { fake, routes } = api();
     const later = { ...LINK, id: 'c3', status: 'gone_quiet' };

@@ -26,6 +26,7 @@ import { readDataTool } from './read-data.ts';
 import { salesDaysTool } from './sales-days.ts';
 import { townCalendarTool } from './town-calendar.ts';
 import { townProfileTool } from './town-profile.ts';
+import { orderBoardTool, orderLineTool, orderSetupTool, proposeOrderChangeTool, proposeOrderRuleTool } from './orders.ts';
 import { showVisualTool, type Visual } from './visual.ts';
 
 export interface ToolContext {
@@ -123,6 +124,12 @@ export const TOOL_REGISTRY: readonly ChatTool<unknown>[] = [
   compareForecastModelsTool,
   // The owner's own calendars (openspec change connect-owner-calendar).
   ownerCalendarTool,
+  // Orders: the live board, one line, the setup, and the two cards. A quantity is never the model's.
+  orderBoardTool,
+  orderLineTool,
+  orderSetupTool,
+  proposeOrderChangeTool,
+  proposeOrderRuleTool,
 ];
 
 /** The tool definitions sent to the model, in registry order. */
