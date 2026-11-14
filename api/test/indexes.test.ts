@@ -36,6 +36,7 @@ describe('indexes', () => {
       // The forecast lab.
       'tw_calibrations',
       'tw_order_cards', 'tw_order_decisions', 'tw_order_rules',
+      'tw_order_setups', 'tw_item_sales', 'tw_order_counts',
     ].sort());
   });
 
@@ -76,7 +77,7 @@ describe('indexes', () => {
       'TwChatProposal', 'TwFile', 'TwImport', 'TwUploadDay', 'TwWelcome',
       // U13B.
       'TwForecastRun', 'TwForecast', 'TwCalibration',
-      'TwOrderCard', 'TwOrderDecision', 'TwOrderRule',
+      'TwOrderCard', 'TwOrderDecision', 'TwOrderRule', 'TwOrderSetup', 'TwItemSalesDay', 'TwOrderCount',
     ]) {
       for (const [fields] of indexesOf(connection, model)) {
         const keys = Object.keys(fields);
@@ -161,6 +162,18 @@ describe('indexes', () => {
 
   it('keeps the file reader’s AI spend apart from the chat’s, one counter per organization per month', () => {
     expect(indexesOf(registered(), 'TwFilesUsage')).toContainEqual([{ orgId: 1, month: 1 }, expect.objectContaining({ unique: true })]);
+  });
+
+  it('keeps one ordering setup per location, and one item sales day and one count per location per date, strict: throw', () => {
+    const connection = registered();
+    expect(indexesOf(connection, 'TwOrderSetup')).toContainEqual([{ orgId: 1, locationId: 1 }, expect.objectContaining({ unique: true })]);
+    for (const model of ['TwItemSalesDay', 'TwOrderCount']) {
+      expect(indexesOf(connection, model)).toContainEqual([{ orgId: 1, locationId: 1, date: 1 }, expect.objectContaining({ unique: true })]);
+    }
+    for (const model of ['TwOrderSetup', 'TwItemSalesDay', 'TwOrderCount']) expect(connection.models[model]?.schema.get('strict')).toBe('throw');
+    expect(indexesOf(connection, 'TwOrderCard')).toContainEqual([
+      { orgId: 1, conversationId: 1, proposalId: 1 }, expect.objectContaining({ unique: true }),
+    ]);
   });
 
   it('lists a ZIP’s entries once each, in archive order', () => {
