@@ -22,8 +22,9 @@ import { LineEditor } from './LineEditor';
 // P30 Orders (/locations/[id]/orders, members; design Decisions 2, 6 and 10): the location's next order from each
 // supplier, soonest order-by first, each with its deadline and a line per item; "Enter a count" one step from the
 // board; and links to the Ordering setup. With no setup the page says what is missing. Preview asks the server for
-// the labeled sample, on which nothing can be saved. Nothing is sent to a distributor. Under view-as every write is
-// disabled in place, described by the read-only line.
+// the labeled sample, on which nothing can be saved and nothing links to TownwiseAI, which explains only the
+// location's own board. Nothing is sent to a distributor. Under view-as every write is disabled in place, described
+// by the read-only line.
 
 const READ_ONLY_ID = 'orders-ro';
 
@@ -42,6 +43,7 @@ function otherDeal(line: OrderLine): string {
   return line.alternative === null ? '—' : `${String(line.alternative)} ${line.unit}`;
 }
 
+/** A line's row. A sample line has no Ask why: TownwiseAI explains only the location's own board. */
 function rows(order: SupplierOrder, locationId: string): Row[] {
   return order.lines.map((line) => ({
     key: line.itemId,
@@ -52,10 +54,12 @@ function rows(order: SupplierOrder, locationId: string): Row[] {
       why: (
         <View style={styles.why}>
           <Small>{line.sample ? `Sample. ${line.why}` : line.why}</Small>
-          <LinkButton
-            href={`${locationHref(locationId, 'agent')}?order=${order.delivery}&item=${encodeURIComponent(line.itemId)}`}
-            label={`Ask why ${line.name}`}
-          />
+          {line.sample ? null : (
+            <LinkButton
+              href={`${locationHref(locationId, 'agent')}?order=${order.delivery}&item=${encodeURIComponent(line.itemId)}`}
+              label={`Ask why ${line.name}`}
+            />
+          )}
         </View>
       ),
     },
@@ -160,6 +164,7 @@ function Board(props: {
       {counting && !data.sample ? (
         <CountForm
           orders={data.orders}
+          today={data.today}
           locationId={props.locationId}
           readOnly={props.readOnly}
           readOnlyId={props.readOnlyId}
@@ -172,13 +177,15 @@ function Board(props: {
           <Heading>{order.supplier}</Heading>
           <Small white>{order.deadline}</Small>
           <DataTable label={`${order.supplier} order`} columns={COLUMNS} rows={rows(order, props.locationId)} />
-          <Actions>
-            <LinkButton
-              href={`${locationHref(props.locationId, 'agent')}?order=${order.delivery}`}
-              label={`Explain the ${order.supplier} order`}
-              variant="outline"
-            />
-          </Actions>
+          {data.sample ? null : (
+            <Actions>
+              <LinkButton
+                href={`${locationHref(props.locationId, 'agent')}?order=${order.delivery}`}
+                label={`Explain the ${order.supplier} order`}
+                variant="outline"
+              />
+            </Actions>
+          )}
           {data.sample ? null : order.lines.map((line) => (
             <LineEditor
               key={line.itemId}

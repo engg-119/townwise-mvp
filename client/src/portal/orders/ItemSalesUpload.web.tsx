@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
+import { ApiError } from '../../api/client';
 import { theme } from '../../theme';
 import { errorCopy, hasCode } from '../errors';
-import { plural } from '../format';
-import { formatRange, localToday } from '../locations/dates';
+import { fetchEstimatesAbout } from '../estimates/api';
+import { formatDate, plural } from '../format';
+import { formatRange } from '../locations/dates';
 import { usePortal } from '../PortalProvider';
 import { useLocation } from '../shell/LocationShell';
 import { Actions, Button } from '../ui/Button';
@@ -12,9 +14,10 @@ import { LoadingLine, Messages, Notice } from '../ui/feedback';
 import { Section } from '../ui/layout';
 import { Select } from '../ui/Select';
 import { Small } from '../ui/text';
-import { uploadItemSales, type ItemSalesChunk } from './api';
+import { uploadItemSales, type ItemSalesChunk, type SetupItem } from './api';
 import {
-  chunksOf, ColumnSampler, proposeColumns, SalesMatcher, type ColumnProfile, type MatchOutcome, type PresetName, type SalesColumns,
+  chunksOf, ColumnSampler, ITEM_SALES_DAYS, proposeColumns, SalesMatcher, timeColumnOf, type ColumnProfile, type MatchOutcome, type PresetName,
+  type SalesColumns,
 } from './itemSales';
 import type { SalesSlot } from './SetupEditor';
 import { SETUP_LIMITS } from './setupDraft';
@@ -24,14 +27,23 @@ import { readSheetFile, SHEET_ACCEPT } from './sheetFile.web';
 // export (CSV or Excel), check the proposed date, item and quantity columns, see what matched the saved setup's
 // point-of-sale names, add unmatched names to items, and send. The browser reads the file again for each step and
 // keeps no cell but the unmatched names, which stay on this page. Only item ids, dates and servings are sent, in spans
-// of at most 31 days, in order; a failure stops and says which dates did not save, and sending again resends them (the
-// server replaces whole days, so a resend is safe). Under view-as the file control is disabled in place.
+// of at most 31 days and 250,000 bytes, in order, for the dates before the town's today (GET .../orders/setup) and in
+// the 244 days the board reads; the preview says what it left out and why. A time with a UTC offset is read in the
+// town's zone, from GET .../estimates/about, read only when the file has such times. A failure stops and says which
+// dates did not save, and sending again resends them (the server replaces whole days, so a resend is safe). Under
+// view-as the file control is disabled in place.
 
 /** Unmatched names listed with "Add to an item", most rows first. */
 const SHOWN_NAMES = 100;
 
-/** A file matched with these columns against the saved setup at `version`. */
-interface Matched { columns: ColumnProfile[]; choice: SalesColumns; outcome: MatchOutcome; version: number }
+/** The town's zone as GET .../estimates/about gives it; `approximate` for a state with more than one zone. */
+interface Zone { name: string; approximate: boolean }
+
+/**
+ * A file matched with these columns against the saved setup at `version`, its items, and the town's zone (null when
+ * the file had no time with an offset, or the zone could not be read).
+ */
+interface Matched { columns: ColumnProfile[]; choice: SalesColumns; outcome: MatchOutcome; version: number; items: readonly SetupItem[]; zone: Zone | null }
 
 type Step =
   | { kind: 'choose' }
@@ -54,7 +66,16 @@ function chosen(choice: SalesColumns): { date: number; item: number; quantity: n
 }
 
 function failureReason(error: unknown): string {
-  if (hasCode(error, 400, 'unknown_item')) return 'An item is no longer in the saved setup. Match the file again, then send.';
+  if (hasCode(error, 400, 'unknown_item')) {
+    return 'An item is no longer in the saved setup, so someone else changed it. Load their changes below, then match the file again.';
+  }
+  if (hasCode(error, 400, 'invalid_request')) {
+    return 'Townwise refused these dates. The day may have changed in town since this page opened: reload the page, then match the file again.';
+  }
+  if (error instanceof ApiError && error.kind === 'http' && error.status === 429) {
+    const minutes = error.retryAfterSeconds === null ? null : Math.max(1, Math.ceil(error.retryAfterSeconds / 60));
+    return `Too many item sales were sent in a short time. Wait ${minutes === null ? 'a few minutes' : plural(minutes, 'minute', 'minutes')}, then send the rest again.`;
+  }
   return errorCopy(error);
 }
 
@@ -105,6 +126,16 @@ export function ItemSalesUpload(props: SalesSlot): React.JSX.Element {
     setStep({ kind: 'columns', columns: finished, preset: proposal.preset, choice: proposal.columns });
   }
 
+  /** The town's zone, read only for a file whose times carry a UTC offset; null when it can't be read. */
+  async function townZone(): Promise<Zone | null> {
+    try {
+      const about = await fetchEstimatesAbout(api, location.id);
+      return { name: about.today.timeZone, approximate: about.today.approximate };
+    } catch {
+      return null;
+    }
+  }
+
   async function match(columns: ColumnProfile[], choice: SalesColumns): Promise<void> {
     const picked = chosen(choice);
     const current = file.current;
@@ -112,7 +143,11 @@ export function ItemSalesUpload(props: SalesSlot): React.JSX.Element {
     run.current += 1;
     const mine = run.current;
     setStep({ kind: 'reading' });
-    const matcher = new SalesMatcher(picked, saved.items, localToday());
+    const time = timeColumnOf(columns, picked);
+    const zoned = columns[picked.date]?.zoned === true || (time !== null && columns[time]?.zoned === true);
+    const zone = zoned ? await townZone() : null;
+    if (run.current !== mine) return;
+    const matcher = new SalesMatcher({ ...picked, time }, saved.items, { today: props.today, zone: zone?.name ?? null });
     const outcome = await readSheetFile(current, { header: () => undefined, row: (cells) => { matcher.add(cells); } }, () => run.current !== mine);
     if (outcome === 'cancelled' || run.current !== mine) return;
     if (outcome !== 'done') {
@@ -121,7 +156,7 @@ export function ItemSalesUpload(props: SalesSlot): React.JSX.Element {
       return;
     }
     setAdded({});
-    setStep({ kind: 'preview', columns, choice, outcome: matcher.finish(), version: saved.version });
+    setStep({ kind: 'preview', columns, choice, outcome: matcher.finish(), version: saved.version, items: saved.items, zone });
   }
 
   async function send(matched: Matched, chunks: ItemSalesChunk[], start: number): Promise<void> {
@@ -137,6 +172,7 @@ export function ItemSalesUpload(props: SalesSlot): React.JSX.Element {
       } catch (error) {
         if (run.current === mine) setStep({ kind: 'failed', matched, chunks, index, error });
         if (index > start) props.onUploaded();
+        if (hasCode(error, 400, 'unknown_item')) props.onSetupChanged();
         return;
       }
       if (run.current !== mine) return;
@@ -194,7 +230,8 @@ export function ItemSalesUpload(props: SalesSlot): React.JSX.Element {
         Upload an item sales export from your point-of-sale system, such as Toast’s Product Mix or Square’s item sales, as a
         CSV or Excel file, with one row per day or per sale. Your browser reads it and matches each item name to the
         point-of-sale names above. Only item ids, dates and servings are sent: never the file, its item names or anything
-        else in it. Sending replaces the item sales stored for those dates.
+        else in it. Sending replaces every item’s sales stored for those dates, so if your point of sale exports each area
+        or register separately, combine them into one file first. Orders read the last {String(ITEM_SALES_DAYS)} days before today.
       </Small>
       {problem === null ? null : <Messages live="alert" items={[problem]} />}
       {step.kind === 'reading' ? <LoadingLine text="Reading the file…" minHeight={44} /> : null}
@@ -216,6 +253,8 @@ export function ItemSalesUpload(props: SalesSlot): React.JSX.Element {
       {step.kind === 'preview' ? (
         <Preview
           outcome={step.outcome}
+          setupItems={step.items}
+          zone={step.zone}
           stale={step.version !== saved.version}
           dirty={props.dirty}
           items={props.items}
@@ -302,8 +341,47 @@ function ColumnStep(props: {
   );
 }
 
+/** What the preview says about a match: its counts, each setup item's matched rows, and every row or day left out. */
+function previewLines(outcome: MatchOutcome, setupItems: readonly SetupItem[], zone: Zone | null): { lines: string[]; items: string[]; warning: string | null } {
+  const lines: string[] = [];
+  if (outcome.firstDate !== null && outcome.lastDate !== null) {
+    lines.push(`Dates: ${formatRange(outcome.firstDate, outcome.lastDate)}, ${plural(outcome.days.length, 'day', 'days')} with rows.`);
+  }
+  lines.push(`Rows read: ${String(outcome.rowsRead)}. Rows matched to an item: ${String(outcome.matchedRows)}.`);
+  lines.push(`Items with sales: ${String(outcome.itemsWithSales)}.`);
+  const { skipped } = outcome;
+  if (skipped.date > 0) lines.push(`Left out ${plural(skipped.date, 'row', 'rows')} with no date Townwise can read.`);
+  if (skipped.zoned > 0) {
+    lines.push(`Left out ${plural(skipped.zoned, 'row', 'rows')} whose time carries a time zone (such as Z or -05:00): Townwise couldn’t read the town’s time zone to place them on a day. Try again, or export local times.`);
+  }
+  if (outcome.converted > 0 && zone !== null) {
+    lines.push(`Read ${plural(outcome.converted, 'time', 'times')} with a time zone in ${zone.name}${zone.approximate ? ', the state’s main time zone, which may not be yours' : ''}.`);
+  }
+  if (skipped.open > 0) {
+    lines.push(`Left out ${plural(skipped.open, 'row', 'rows')} from today, ${formatDate(outcome.today)}, or later: a day’s sales are sent once the day is over.`);
+  }
+  if (skipped.old > 0) {
+    lines.push(`Left out ${plural(skipped.old, 'row', 'rows')} before ${formatDate(outcome.earliest)}: orders use only the last ${String(ITEM_SALES_DAYS)} days.`);
+  }
+  if (outcome.cut !== null) {
+    lines.push(`Left out ${formatDate(outcome.cut)}, the file’s last day: no row is dated the day after it, so its sales after midnight may be missing. To send it, export through the next morning.`);
+  }
+  if (skipped.name > 0) lines.push(`Left out ${plural(skipped.name, 'row', 'rows')} with no item name.`);
+  if (skipped.quantity > 0) lines.push(`Left out ${plural(skipped.quantity, 'row', 'rows')} whose quantity is not a number of 0 or more.`);
+  const items = setupItems.map((item) => {
+    const rows = outcome.itemRows[item.id] ?? 0;
+    return rows === 0 ? `${item.name}: no sales matched.` : `${item.name}: ${plural(rows, 'row', 'rows')} matched.`;
+  });
+  const unsure = skipped.date + skipped.zoned + skipped.quantity;
+  const warning = unsure === 0 || outcome.firstDate === null || outcome.lastDate === null ? null
+    : `Sending replaces the item sales of every date from ${formatRange(outcome.firstDate, outcome.lastDate)}, so the ${plural(unsure, 'row', 'rows')} left out for a date or a quantity Townwise can’t read won’t count, and a date with only such rows is cleared. To count them, fix those rows in the file and choose it again.`;
+  return { lines, items, warning };
+}
+
 function Preview(props: {
   outcome: MatchOutcome;
+  setupItems: readonly SetupItem[];
+  zone: Zone | null;
   /** The setup was saved since the file was matched. */
   stale: boolean;
   dirty: boolean;
@@ -318,15 +396,7 @@ function Preview(props: {
   const { outcome } = props;
   const described = props.readOnlyId === null ? {} : { describedBy: props.readOnlyId };
   const itemOptions = props.items.map((item) => ({ value: item.key, label: item.name.trim() === '' ? 'Unnamed item' : item.name.trim() }));
-  const lines: string[] = [];
-  if (outcome.firstDate !== null && outcome.lastDate !== null) {
-    lines.push(`Dates: ${formatRange(outcome.firstDate, outcome.lastDate)}, ${plural(outcome.days.length, 'day', 'days')} with rows.`);
-  }
-  lines.push(`Rows read: ${String(outcome.rowsRead)}. Rows matched to an item: ${String(outcome.matchedRows)}.`);
-  lines.push(`Items with sales: ${String(outcome.itemsWithSales)}.`);
-  if (outcome.skipped.date > 0) lines.push(`Left out ${plural(outcome.skipped.date, 'row', 'rows')} with no date Townwise can use (unreadable, before 2010 or after today).`);
-  if (outcome.skipped.name > 0) lines.push(`Left out ${plural(outcome.skipped.name, 'row', 'rows')} with no item name.`);
-  if (outcome.skipped.quantity > 0) lines.push(`Left out ${plural(outcome.skipped.quantity, 'row', 'rows')} whose quantity is not a number of 0 or more.`);
+  const { lines, items, warning } = previewLines(outcome, props.setupItems, props.zone);
   const blocked = outcome.firstDate === null ? 'No row has a date Townwise can use, so there is nothing to send.'
     : outcome.overLimit > 0 ? `${plural(outcome.overLimit, 'item adds', 'items add')} up to more than 100,000 servings in a day. Check the quantity column.`
       : props.stale ? 'The setup changed since this file was matched. Match it again before sending.'
@@ -335,6 +405,10 @@ function Preview(props: {
   return (
     <View style={styles.stack}>
       <Messages live="status" items={lines} />
+      <View role="group" aria-label="Matched rows by item" style={styles.name}>
+        <Small white>Matched rows by item, on the dates sent:</Small>
+        <Messages items={items} />
+      </View>
       {outcome.unmatched.length === 0 ? null : (
         <View style={styles.stack}>
           <Small white>
@@ -361,6 +435,12 @@ function Preview(props: {
         </View>
       )}
       {props.dirty ? <Small white>Names you add count once the setup is saved and the file matched again.</Small> : null}
+      {warning === null ? null : <Messages live="alert" items={[warning]} />}
+      {outcome.firstDate === null || outcome.lastDate === null ? null : (
+        <Small>
+          {`Sending replaces every item’s sales from ${formatRange(outcome.firstDate, outcome.lastDate)}. If your point of sale exports each area or register separately, combine them into one file first.`}
+        </Small>
+      )}
       {blocked === null ? null : <Messages live="alert" items={[blocked]} />}
       <Actions>
         <Button variant="outline" label="Send item sales" disabled={props.readOnly || blocked !== null} {...described} onPress={props.onSend} />

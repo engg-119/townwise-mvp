@@ -64,11 +64,15 @@ export const supplierOrderSchema = z.object({
 });
 export type SupplierOrder = z.infer<typeof supplierOrderSchema>;
 
-/** The board, or what the ordering setup lacks ('the supplier schedule', 'the items'). */
+/**
+ * The board, or what the ordering setup lacks ('the supplier schedule', 'the items'). Either way `today` is the town's
+ * date (YYYY-MM-DD), which a count is dated by.
+ */
 export const orderBoardSchema = z.discriminatedUnion('available', [
-  z.object({ available: z.literal(false), reason: z.string(), missing: z.array(z.string()) }),
+  z.object({ available: z.literal(false), today: z.string(), reason: z.string(), missing: z.array(z.string()) }),
   z.object({
     available: z.literal(true),
+    today: z.string(),
     sample: z.boolean(),
     /** What the board lacks: 'item sales', 'a recent count'. */
     missing: z.array(z.string()),
@@ -139,10 +143,12 @@ export const itemSalesCoverageSchema = z.object({ firstDate: z.string(), lastDat
 export type ItemSalesCoverage = z.infer<typeof itemSalesCoverageSchema>;
 
 /**
- * GET .../orders/setup: the setup (null when none was saved), item-sales coverage (null with none stored), each item's
- * covered days with any servings in the last 8 weeks, and each item's latest count in the last 90 days.
+ * GET .../orders/setup: the town's today (YYYY-MM-DD), the setup (null when none was saved), item-sales coverage (null
+ * with none stored), each item's covered days with any servings in the last 8 weeks, and each item's latest count in
+ * the last 400 days (the window the board reads counts in).
  */
 export const orderSetupAnswerSchema = z.object({
+  today: z.string(),
   setup: orderSetupSchema.nullable(),
   coverage: itemSalesCoverageSchema.nullable(),
   itemCoverage: z.record(z.string(), z.number()),
@@ -201,16 +207,22 @@ export interface ItemSalesDay {
 }
 
 export interface ItemSalesChunk {
-  /** The range, at most 31 days, ending by the town's today: sent days replace stored ones, unsent ones are deleted. */
+  /**
+   * The range, at most 31 days, ending before the town's today (still open): sent days replace stored ones, unsent
+   * ones are deleted.
+   */
   readonly from: string;
   readonly to: string;
-  /** At most 31 days, each inside [from, to] and sent once, with at most 500 items. */
+  /** At most 31 days, each inside [from, to] and sent once, with at most 500 items; the body under 256 kb. */
   readonly days: readonly ItemSalesDay[];
 }
 
 const appliedSchema = z.object({ stored: z.number(), removed: z.number() });
 
-/** POST .../orders/item-sales. 400 `unknown_item` names an item no longer in the setup. */
+/**
+ * POST .../orders/item-sales. 400 `unknown_item` names an item no longer in the setup, 400 `invalid_request` a range
+ * the server refuses (one reaching the town's today), and 429 the item-sales limiter.
+ */
 export function uploadItemSales(api: ApiClient, locationId: string, chunk: ItemSalesChunk): Promise<z.infer<typeof appliedSchema>> {
   return api.json(`${locationPath(locationId)}/item-sales`, appliedSchema, { method: 'POST', body: chunk });
 }
@@ -221,7 +233,7 @@ export function deleteItemSales(api: ApiClient, locationId: string): Promise<{ r
 }
 
 export interface CountInput {
-  /** From 14 days before the town's today through today. */
+  /** From 14 days before the town's today through today: the board's `today`. */
   readonly date: string;
   /** 1 to 300 items, each 0 to 9,999 purchase units in steps of 0.5. */
   readonly items: Readonly<Record<string, number>>;

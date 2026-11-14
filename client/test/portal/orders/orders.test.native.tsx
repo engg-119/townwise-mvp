@@ -11,7 +11,7 @@ jest.mock('expo-splash-screen', () => ({
 import { cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing-library';
 
 import type { LiveBoard, OrderLine } from '../../../src/portal/orders/api';
-import { ACCESS, fakePortalApi, meOf, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
+import { ACCESS, fakePortalApi, meOf, refusal, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { analyticsFake } from '../analytics/fakes';
 import { noContent, withRoutes, type Routes } from '../team/fixtures';
@@ -53,7 +53,7 @@ const LAGER = line({
 const SELTZER = line({ itemId: 'seltzer', name: 'Sample seltzer', recommended: 6, edit: { quantity: 8, reason: 'A wedding party' } });
 
 const BOARD: LiveBoard = {
-  available: true, sample: false, missing: ['a recent count'],
+  available: true, today: '2026-11-13', sample: false, missing: ['a recent count'],
   orders: [
     {
       supplierId: 's1', supplier: 'Sample brewery', cutoff: '2026-11-16', cutoffTime: '12:00', delivery: '2026-11-17', coversThrough: '2026-11-19',
@@ -67,18 +67,24 @@ const BOARD: LiveBoard = {
 };
 
 /** GET .../orders/setup for a location that has saved none. */
-const NO_SETUP = { setup: null, coverage: null, itemCoverage: {}, counts: {} };
+const NO_SETUP = { today: '2026-11-13', setup: null, coverage: null, itemCoverage: {}, counts: {} };
 
 const UNAVAILABLE = {
   available: false,
+  today: '2026-11-13',
   reason: 'Townwise can’t build an order for this location until its ordering setup has a supplier schedule and items.',
   missing: ['the supplier schedule', 'the items'],
+};
+
+const SAMPLE: LiveBoard = {
+  ...BOARD, sample: true, missing: [],
+  orders: BOARD.orders.map((order) => ({ ...order, lines: order.lines.map((each) => ({ ...each, sample: true })) })),
 };
 
 function portal(board: unknown = BOARD, me = meOf(ACCESS.member)): { api: FakePortalApi; routes: Routes } {
   const api = fakePortalApi({
     me,
-    fallback: analyticsFake({ [PATH]: board, [`${PATH}?sample=true`]: { ...BOARD, sample: true }, [`${PATH}/setup`]: NO_SETUP }),
+    fallback: analyticsFake({ [PATH]: board, [`${PATH}?sample=true`]: SAMPLE, [`${PATH}/setup`]: NO_SETUP }),
   });
   const routes = withRoutes(api, { requests: { [`POST ${PATH}/counts`]: noContent, [`POST ${PATH}/rules/off`]: noContent } });
   return { api, routes };
@@ -189,6 +195,35 @@ test('Enter a count: a field per item by supplier, empty to start; only the fill
   expect(screen.queryByLabelText('Sample keg, in kegs')).toBeNull();
 });
 
+// #68 review C7 and C12: the count is dated by the town's today from the board, not the device's date (here a day
+// ahead of the town), each supplier's fields are a group named for it, and a refused date says to reload.
+test('a count is dated by the town’s today from the board; each supplier’s fields are a named group; a 400 says to reload', async () => {
+  const { api, routes } = portal({ ...BOARD, today: '2026-11-12' });
+  routes.requests[`POST ${PATH}/counts`] = () => refusal(400, 'invalid_request');
+  await renderApp('/locations/l1/orders', api);
+  await fireEvent.press(await screen.findByRole('button', { name: 'Enter a count' }));
+  expect(screen.getByText('Count what is on hand today, Nov 12, 2026, in each item’s unit. Leave an item empty to keep its last count.')).toBeTruthy();
+  // A group on native is not one accessibility element (that would hide its fields), so it is found by its label.
+  const distributor = screen.getByLabelText('Sample distributor count');
+  expect(distributor.props.role).toBe('group');
+  expect(within(distributor).getByLabelText('Sample lager, in cases')).toBeTruthy();
+  expect(within(distributor).queryByLabelText('Sample keg, in kegs')).toBeNull();
+  const brewery = screen.getByLabelText('Sample brewery count');
+  expect(brewery.props.role).toBe('group');
+  expect(within(brewery).getByLabelText('Sample keg, in kegs')).toBeTruthy();
+  await fireEvent.changeText(screen.getByLabelText('Sample lager, in cases'), '3');
+  await fireEvent.press(screen.getByRole('button', { name: 'Save the count' }));
+  expect(await screen.findByText(
+    'Townwise couldn’t save a count dated Nov 12, 2026: the day may have changed in town since this page opened. Reload the page and count again.',
+  )).toBeTruthy();
+  routes.requests[`POST ${PATH}/counts`] = noContent;
+  await fireEvent.press(screen.getByRole('button', { name: 'Save the count' }));
+  expect(await screen.findByText('Saved today’s count for 1 item.')).toBeTruthy();
+  expect(writes(api).map((call) => call.body)).toEqual([
+    { date: '2026-11-12', items: { lager: 3 } }, { date: '2026-11-12', items: { lager: 3 } },
+  ]);
+});
+
 test('no ordering setup: the reason, what is missing, Set up ordering, and the labeled sample with nothing to save', async () => {
   const { api } = portal(UNAVAILABLE);
   const { router } = await renderApp('/locations/l1/orders', api);
@@ -198,6 +233,10 @@ test('no ordering setup: the reason, what is missing, Set up ordering, and the l
   expect(await screen.findByText('Sample bar. These lines are not Main Street Bar’s stock, and nothing here can be saved.')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Save this line' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Enter a count' })).toBeNull();
+  // TownwiseAI explains only the location's own board, so a sample line asks nothing (#68 review C8).
+  expect(screen.getAllByText('Sample. Thursday’s delivery lasts until Monday’s.')).toHaveLength(3);
+  expect(screen.queryByRole('link', { name: /^Ask why / })).toBeNull();
+  expect(screen.queryByRole('link', { name: /^Explain the / })).toBeNull();
   await fireEvent.press(screen.getByRole('link', { name: 'Set up ordering' }));
   expect(router.getPathname()).toBe('/locations/l1/orders/setup');
   expect(await screen.findByRole('heading', { name: 'Ordering setup' })).toBeTruthy();
