@@ -58,9 +58,9 @@
 
 ## 8. Verify and land
 
-- [ ] 8.1 `npm run verify`, API integration tests, `uv run pytest` in `reorder/`
+- [x] 8.1 `npm run verify`, API integration tests, `uv run pytest` in `reorder/`
 - [ ] 8.2 Browser check with `/browse` on synthetic data: setup, import, item sales upload, count, board, edit, rule, turn off, Home card
-- [ ] 8.3 `/review` on the branch diff and fix what it finds
-- [ ] 8.4 Merge `develop` again (after #70 if it has landed), rerun 8.1
+- [x] 8.3 `/review` on the branch diff and fix what it finds
+- [x] 8.4 Merge `develop` again (after #70 if it has landed), rerun 8.1
 - [ ] 8.5 Push to `feat/inventory-management` and comment on #68 with what was added and the `[CONFIRM]` list
 - [ ] 8.6 After #68 merges, remove the scratch worktree
