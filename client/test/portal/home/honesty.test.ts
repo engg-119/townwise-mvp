@@ -157,9 +157,10 @@ function line(fields: Partial<OrderLine> & Pick<OrderLine, 'itemId' | 'recommend
   };
 }
 
-test('Home’s bar order card counts what the board orders and says what is missing, never a quantity', () => {
+// #68 review C5: the count and the deadline are the soonest order's, so the number is the one due by that deadline.
+test('Home’s bar order card counts the soonest order’s items with its deadline and says what is missing, never a quantity', () => {
   const board: LiveBoard = {
-    available: true, sample: false, missing: ['a recent count'],
+    available: true, today: '2026-11-13', sample: false, missing: ['a recent count'],
     orders: [
       {
         supplierId: 's1', supplier: 'Sample brewery', cutoff: '2026-11-16', cutoffTime: '12:00', delivery: '2026-11-17', coversThrough: '2026-11-19',
@@ -172,16 +173,25 @@ test('Home’s bar order card counts what the board orders and says what is miss
       },
     ],
   };
+  // The brewery's keg is due first and comes out at 0; the distributor's 2 items are a later order's.
   expect(barOrderWords(board)).toEqual({
-    title: '2 items to order',
+    title: '0 items to order from Sample brewery',
     lines: [
-      'Sample brewery: Order by Mon, Nov 16, 12:00pm. Tuesday’s delivery lasts until Thursday’s.',
-      'The soonest of 2 orders, one per supplier.',
+      'Order by Mon, Nov 16, 12:00pm. Tuesday’s delivery lasts until Thursday’s.',
+      'The soonest of 2 orders, one per supplier. Orders lists them all.',
       'Townwise still can’t see a recent count.',
     ],
     setUp: true,
   });
-  const unset = barOrderWords({ available: false, reason: 'No setup.', missing: ['the supplier schedule', 'the items'] });
+  const [brewery, distributor] = board.orders;
+  if (brewery === undefined || distributor === undefined) throw new Error('two orders');
+  expect(barOrderWords({ ...board, missing: [], orders: [distributor, brewery] })).toEqual({
+    title: '2 items to order from Sample distributor',
+    lines: ['Order by Wed, Nov 18, 2:00pm. Thursday’s delivery lasts until Monday’s.', 'The soonest of 2 orders, one per supplier. Orders lists them all.'],
+    setUp: true,
+  });
+  expect(barOrderWords({ ...board, orders: [{ ...distributor, lines: [line({ itemId: 'lager', recommended: 6 })] }] }).title).toBe('1 item to order from Sample distributor');
+  const unset = barOrderWords({ available: false, today: '2026-11-13', reason: 'No setup.', missing: ['the supplier schedule', 'the items'] });
   expect(unset).toEqual({
     title: 'Ordering isn’t set up yet', lines: ['Townwise still needs the supplier schedule and the items to build an order.'], setUp: false,
   });

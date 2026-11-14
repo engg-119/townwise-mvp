@@ -65,7 +65,7 @@ const ORDER_LINE = {
   sample: false, edit: null, rules: [],
 };
 const BOARD = {
-  available: true, sample: false, missing: ['a recent count'],
+  available: true, today: '2026-11-05', sample: false, missing: ['a recent count'],
   orders: [
     {
       supplierId: 's1', supplier: 'Sample brewery', cutoff: '2026-11-09', cutoffTime: '12:00', delivery: '2026-11-10', coversThrough: '2026-11-12',
@@ -108,7 +108,7 @@ function portal(options: {
     [PEOPLE]: options.people ?? NOVEMBER,
     [`${PATH}/orders`]: options.orders ?? BOARD,
     // The Ordering setup page, which the Bar order card links to, for a location that has saved none.
-    [`${PATH}/orders/setup`]: { setup: null, coverage: null, itemCoverage: {}, counts: {} },
+    [`${PATH}/orders/setup`]: { today: '2026-11-05', setup: null, coverage: null, itemCoverage: {}, counts: {} },
     // Stored files are off, as in production today.
     [`${PATH}/imports/current`]: refusal(503, 'files_unavailable'),
   });
@@ -152,11 +152,11 @@ test('with history: the lead, this week with the calendar and past years, bar or
   // This week's own days carry a figure only up to the last day of data.
   expect(screen.getAllByText('110 guests')).toHaveLength(3);
 
-  // Bar order: how many items the next orders hold, the soonest order's deadline, what the board lacks, no inputs, and
-  // one line of history.
-  expect(await screen.findByRole('heading', { name: '2 items to order' })).toBeTruthy();
-  expect(screen.getByText('Sample brewery: Order by Mon, Nov 9, 12:00pm. Tuesday’s delivery lasts until Thursday’s.')).toBeTruthy();
-  expect(screen.getByText('The soonest of 2 orders, one per supplier.')).toBeTruthy();
+  // Bar order: how many items the soonest order holds, its supplier and deadline, how many orders there are, what the
+  // board lacks, no inputs, and one line of history.
+  expect(await screen.findByRole('heading', { name: '0 items to order from Sample brewery' })).toBeTruthy();
+  expect(screen.getByText('Order by Mon, Nov 9, 12:00pm. Tuesday’s delivery lasts until Thursday’s.')).toBeTruthy();
+  expect(screen.getByText('The soonest of 2 orders, one per supplier. Orders lists them all.')).toBeTruthy();
   expect(screen.getByText('Townwise still can’t see a recent count.')).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Open Orders' })).toBeTruthy();
   expect(screen.getByText('Last year this week, Thursday to Sunday brought 59% of the week’s guests.')).toBeTruthy();
@@ -191,11 +191,11 @@ test('with history: the lead, this week with the calendar and past years, bar or
   expect(screen.getByRole('link', { name: 'See it in Analytics' })).toBeTruthy();
   expect(screen.getByText('Upload from a computer at townwise.tech.')).toBeTruthy();
 
-  // The location's reads, then the questions, people in town, the guest forecast and the next orders on their own (Bar
-  // order and beside the calendar each read them); no write, nothing stored.
+  // The location's reads, then the questions, people in town, the guest forecast and the next orders on their own: the
+  // board once, for Bar order and beside the calendar both (#68 review C6); no write, nothing stored.
   const reads = api.calls.filter((call) => call.path.startsWith(PATH)).map((call) => call.path);
   expect(reads.sort()).toEqual([
-    AGENT, CALENDAR, PEOPLE, `${PATH}/notes`, `${PATH}/sales/history`, `${PATH}/forecast?from=2026-11-01&to=2026-11-30`, `${PATH}/orders`, `${PATH}/orders`,
+    AGENT, CALENDAR, PEOPLE, `${PATH}/notes`, `${PATH}/sales/history`, `${PATH}/forecast?from=2026-11-01&to=2026-11-30`, `${PATH}/orders`,
   ].sort());
   expect(api.calls.filter((call) => call.method !== 'GET')).toEqual([]);
   for (const name of NO_STORE) expect(jest.mocked(SecureStore[name])).not.toHaveBeenCalled();
@@ -278,7 +278,7 @@ test('who’s in town: a headcount range with its sources when public counts sup
 
 test('bar order with no ordering setup says what is missing and links to Ordering setup; a failed read stays in its place', async () => {
   const { router } = await renderApp('/locations/l1', portal({
-    orders: { available: false, reason: 'Townwise can’t build an order for this location until its ordering setup has a supplier schedule and items.', missing: ['the supplier schedule', 'the items'] },
+    orders: { available: false, today: '2026-11-05', reason: 'Townwise can’t build an order for this location until its ordering setup has a supplier schedule and items.', missing: ['the supplier schedule', 'the items'] },
   }));
   expect(await screen.findByRole('heading', { name: 'Ordering isn’t set up yet' })).toBeTruthy();
   expect(screen.getByText('Townwise still needs the supplier schedule and the items to build an order.')).toBeTruthy();
@@ -289,9 +289,11 @@ test('bar order with no ordering setup says what is missing and links to Orderin
   expect(await screen.findByText('No items yet. Add each item you order.')).toBeTruthy();
   await cleanup();
 
-  await renderApp('/locations/l1', portal({ orders: offline() }));
-  // The card and the line beside the calendar each say so.
+  const failed = portal({ orders: offline() });
+  await renderApp('/locations/l1', failed);
+  // The card and the line beside the calendar each say so, from the one read.
   expect(await screen.findAllByText('Townwise couldn’t check the next order.')).toHaveLength(2);
+  expect(failed.calls.filter((call) => call.path === `${PATH}/orders`)).toHaveLength(1);
   expect(screen.getByRole('link', { name: 'Open Orders' })).toBeTruthy();
   // Only the card's read failed: the rest of Home shows, with no Try again of its own.
   expect(screen.getByRole('heading', { name: '795 days' })).toBeTruthy();
@@ -365,7 +367,7 @@ test('no days here but another location has some: the cards stay, each saying so
   await renderApp('/locations/l1', portal({ days: [] }));
   expect(await screen.findByText('No sales history yet for this location.')).toBeTruthy();
   expect(screen.getByText('No sales history yet, so there is nothing to compare.')).toBeTruthy();
-  expect(await screen.findByRole('heading', { name: '2 items to order' })).toBeTruthy();
+  expect(await screen.findByRole('heading', { name: '0 items to order from Sample brewery' })).toBeTruthy();
   expect(screen.queryByRole('heading', { name: 'Drop in everything you have' })).toBeNull();
 });
 

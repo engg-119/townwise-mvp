@@ -10,7 +10,8 @@ import { noteWords } from '../analytics/panel';
 import { eventLine, monthDay, monthFactLine, monthFactsHead, monthGrid, monthItems, type HomeInput, type MonthFact } from '../analytics/week';
 import { MONTH_NAMES, type Metric } from '../analytics/words';
 import { weekdaysLine } from '../locations/noteRules';
-import { useBreakpoint } from '../hooks';
+import { useBreakpoint, type LoadState } from '../hooks';
+import type { OrderBoard } from '../orders/api';
 import { PeopleInTownSummary } from '../estimates/PeopleInTownSummary';
 import { DATA_YEAR, SOURCES, townProfile } from '../towns';
 import { Stack } from '../ui/layout';
@@ -32,7 +33,9 @@ export const PEOPLE_HEAD = 'Who’s in town';
 
 const monthNameOf = (today: string): string => MONTH_NAMES[Number(today.slice(5, 7)) - 1] ?? '';
 
-export function ThisMonth(props: { input: HomeInput; calendar: Calendar; history: boolean; locationId: string }): React.JSX.Element {
+export function ThisMonth(props: {
+  input: HomeInput; calendar: Calendar; history: boolean; locationId: string; board: LoadState<OrderBoard>;
+}): React.JSX.Element {
   const { input, calendar, history } = props;
   const { today, context, metric } = input;
   const town = calendar.town;
@@ -51,7 +54,7 @@ export function ThisMonth(props: { input: HomeInput; calendar: Calendar; history
           <MonthGrid rows={rows} selected={selected} onSelect={(date) => { setPreview(null); setSelected(date); }} onPreview={setPreview} label={label} />
         </View>
         <View style={styles.detailSide}>
-          <DayDetail day={day} metric={metric} history={history} locationId={props.locationId} />
+          <DayDetail day={day} metric={metric} history={history} locationId={props.locationId} board={props.board} />
         </View>
       </View>
     </Block>

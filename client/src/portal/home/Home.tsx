@@ -13,6 +13,7 @@ import { fetchNotes, type Note } from '../locations/api';
 import { localToday } from '../locations/dates';
 import { formatCount } from '../format';
 import { LoadFailure, Loading } from '../locations/parts';
+import { fetchOrderBoard } from '../orders/api';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { locationHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
@@ -35,7 +36,8 @@ import { ThisWeek } from './ThisWeek';
 // shows only history and the calendar, never a guess: every figure is a sum, an average or a share of the
 // location's own stored days, of a past day. It reads three routes in parallel (sales history, notes, the town
 // calendar), then on their own TownwiseAI's questions (for the lead's count), the month's people in town (in Who's
-// in town) and the next orders (in Bar order and beside the calendar), and writes nothing, so view-as shows it unchanged with its upload links disabled. "Today" is the
+// in town) and the next orders (read once here, for Bar order and beside the calendar), and writes nothing, so
+// view-as shows it unchanged with its upload links disabled. "Today" is the
 // device's date; weeks run Monday to Sunday. While onboarding's needsHistory is true, its HistoryStep takes the
 // place of the blocks that need days, and when it has read the history Home loads again.
 
@@ -81,6 +83,9 @@ function HomeView(props: {
 }): React.JSX.Element {
   const { data, today, locationId, needs, readOnlyId } = props;
   const { history, notes, calendar } = data;
+  const { api } = usePortal();
+  // One read of the board for Bar order and the calendar's side; it fails on its own, in their places.
+  const { state: board } = useLoad(useCallback(() => fetchOrderBoard(api, locationId), [api, locationId]));
   const days = useMemo(() => decodeHistory(history), [history]);
   const context = useMemo(() => dayContext(notes, calendar.events), [notes, calendar.events]);
   const metric = metricsWithData(days).guests ? 'guests' : 'netSales';
@@ -123,7 +128,7 @@ function HomeView(props: {
       <ThisWeek week={week} calendar={calendar} metric={metric} history={hasDays} />
       <BlockRow
         items={[
-          { key: 'month', span: 8, node: <ThisMonth input={input} calendar={calendar} history={hasDays} locationId={locationId} /> },
+          { key: 'month', span: 8, node: <ThisMonth input={input} calendar={calendar} history={hasDays} locationId={locationId} board={board} /> },
           { key: 'last', span: 4, node: needs ? null : <LastWeek comparison={lastWeek} metric={metric} locationId={locationId} readOnlyId={readOnlyId} /> },
         ]}
       />
@@ -136,7 +141,7 @@ function HomeView(props: {
       <BlockRow
         items={[
           { key: 'years', span: 6, node: facts.length === 0 ? null : <PastYears today={today} facts={facts} metric={metric} /> },
-          { key: 'bar', span: 6, node: needs ? null : <BarOrder share={share} metric={metric} locationId={locationId} /> },
+          { key: 'bar', span: 6, node: needs ? null : <BarOrder share={share} metric={metric} locationId={locationId} board={board} /> },
         ]}
       />
       {needs ? null : (

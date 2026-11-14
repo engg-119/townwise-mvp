@@ -1,21 +1,19 @@
-import { useCallback } from 'react';
-
 import { lateWeekLine, type lateWeekShare } from '../analytics/week';
 import { listText, type Metric } from '../analytics/words';
 import { plural } from '../format';
-import { useLoad } from '../hooks';
-import { fetchOrderBoard, type OrderBoard } from '../orders/api';
+import type { LoadState } from '../hooks';
+import type { OrderBoard } from '../orders/api';
 import { itemsToOrder } from '../orders/words';
-import { usePortal } from '../PortalProvider';
 import { locationHref } from '../routing';
 import { LinkButton } from '../ui/Button';
 import { Small } from '../ui/text';
 import { Block } from './Block';
 
-// Bar order (home.md 2.3; design Decision 10): the location's own board (GET .../orders, never the sample), read on
-// its own so Home never waits for it or fails with it. With a board, how many items the next orders hold above 0 and
-// the soonest order's deadline, linked to Orders; with no setup, what is missing, linked to Ordering setup. Its one
-// history figure stays: last year's same week, Thursday to Sunday's share, only when all four days have data.
+// Bar order (home.md 2.3; design Decision 10): the location's own board (GET .../orders, never the sample), which Home
+// reads once on its own for this card and the calendar's side, so Home never waits for it or fails with it. With a
+// board, the soonest order: how many of its items to order above 0, from which supplier, and its deadline, with how
+// many orders there are, linked to Orders; with no setup, what is missing, linked to Ordering setup. Its one history
+// figure stays: last year's same week, Thursday to Sunday's share, only when all four days have data.
 
 export interface BarOrderWords {
   title: string;
@@ -32,16 +30,20 @@ export function barOrderWords(board: OrderBoard): BarOrderWords {
   }
   const lines: string[] = [];
   const [first] = board.orders;
-  if (first !== undefined) lines.push(`${first.supplier}: ${first.deadline}`);
-  if (board.orders.length > 1) lines.push(`The soonest of ${String(board.orders.length)} orders, one per supplier.`);
+  // The count and the deadline are the same order's, so the number is the one to place by that deadline.
+  if (first !== undefined) lines.push(first.deadline);
+  if (board.orders.length > 1) lines.push(`The soonest of ${String(board.orders.length)} orders, one per supplier. Orders lists them all.`);
   if (board.missing.length > 0) lines.push(`Townwise still can’t see ${listText(board.missing)}.`);
-  return { title: `${plural(itemsToOrder(board), 'item', 'items')} to order`, lines, setUp: true };
+  const title = first === undefined
+    ? `${plural(0, 'item', 'items')} to order`
+    : `${plural(itemsToOrder(first), 'item', 'items')} to order from ${first.supplier}`;
+  return { title, lines, setUp: true };
 }
 
-export function BarOrder(props: { share: ReturnType<typeof lateWeekShare>; metric: Metric; locationId: string }): React.JSX.Element {
-  const { api } = usePortal();
-  const { locationId } = props;
-  const { state } = useLoad(useCallback(() => fetchOrderBoard(api, locationId), [api, locationId]));
+export function BarOrder(props: {
+  share: ReturnType<typeof lateWeekShare>; metric: Metric; locationId: string; board: LoadState<OrderBoard>;
+}): React.JSX.Element {
+  const { locationId, board: state } = props;
   const words = state.status === 'ready' ? barOrderWords(state.data) : null;
   return (
     <Block label="Bar order" eyebrow="Bar order" {...(words === null ? {} : { title: words.title })}>

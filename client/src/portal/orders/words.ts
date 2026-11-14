@@ -1,5 +1,5 @@
 import { formatCount } from '../format';
-import type { LiveBoard, OrderRule, OrderUnit } from './api';
+import type { OrderRule, OrderUnit, SupplierOrder } from './api';
 
 // The Orders page's words and its input checks, pure. A quantity is checked here before it is sent, so an empty or
 // non-numeric field never becomes 0 or NaN (#68 review N6).
@@ -49,7 +49,7 @@ export function countItems(fields: Readonly<Record<string, string>>): { items: R
   return { items, invalid };
 }
 
-/** How many items the board orders more than 0 of, across its suppliers' orders. */
-export function itemsToOrder(board: LiveBoard): number {
-  return board.orders.reduce((sum, order) => sum + order.lines.filter((line) => line.recommended > 0).length, 0);
+/** How many items one supplier's order orders more than 0 of. */
+export function itemsToOrder(order: SupplierOrder): number {
+  return order.lines.filter((line) => line.recommended > 0).length;
 }

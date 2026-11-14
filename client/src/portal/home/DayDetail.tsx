@@ -5,6 +5,8 @@ import { theme } from '../../theme';
 import { noteWords } from '../analytics/panel';
 import { eventLine, type MonthDay } from '../analytics/week';
 import { metricText, shortDate, type Metric } from '../analytics/words';
+import type { LoadState } from '../hooks';
+import type { OrderBoard } from '../orders/api';
 import { locationHref } from '../routing';
 import { Heading, Mono, Small } from '../ui/text';
 import { BesideCalendar } from './BesideCalendar';
@@ -13,7 +15,8 @@ import { PastCell } from './ThisWeek';
 // The selected day of This month (spec P11), beside the grid from where they fit side by side, under it otherwise:
 // the day's holidays and town events with their sources, your notes, then, with any history, the day's own figure
 // (only for a past day with data; a day after today gets none, ever) and the same weekday last year and two years
-// ago. Term and season periods are left to the month's list, since they mark no day. Its own parts read nothing; BesideCalendar, mounted beside them, reads the month forecast and the orders.
+// ago. Term and season periods are left to the month's list, since they mark no day. Its own parts read nothing;
+// BesideCalendar, mounted beside them, reads the month forecast and shows Home's one read of the orders.
 
 export const DETAIL_ID = 'home-day-detail';
 
@@ -26,7 +29,9 @@ function Part(props: { label: string; children: React.ReactNode }): React.JSX.El
   );
 }
 
-export function DayDetail(props: { day: MonthDay; metric: Metric; history: boolean; locationId: string }): React.JSX.Element {
+export function DayDetail(props: {
+  day: MonthDay; metric: Metric; history: boolean; locationId: string; board: LoadState<OrderBoard>;
+}): React.JSX.Element {
   const { day, metric, history } = props;
   const nothing = day.events.length === 0 && day.notes.length === 0;
   const title = day.isToday ? `Today, ${shortDate(day.date)}` : shortDate(day.date);
@@ -35,7 +40,7 @@ export function DayDetail(props: { day: MonthDay; metric: Metric; history: boole
       <Heading level={3}>
         <Link href={`${locationHref(props.locationId, 'orders')}?day=${day.date}` as Href} style={styles.dateLink}>{title}</Link>
       </Heading>
-      <BesideCalendar locationId={props.locationId} date={day.date} />
+      <BesideCalendar locationId={props.locationId} date={day.date} board={props.board} />
       <Part label="On the calendar">
         {nothing ? <Small>Nothing on the calendar this day.</Small> : null}
         {day.events.map((event) => (

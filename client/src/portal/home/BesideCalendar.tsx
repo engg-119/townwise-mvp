@@ -3,41 +3,41 @@ import { StyleSheet, View } from 'react-native';
 
 import { theme } from '../../theme';
 
-import { useLoad } from '../hooks';
+import { useLoad, type LoadState } from '../hooks';
 import { fetchForecast, monthRange, type ForecastGlanceDay } from '../estimates/api';
-import { fetchOrderBoard } from '../orders/api';
+import type { OrderBoard } from '../orders/api';
 import { usePortal } from '../PortalProvider';
 import { Mono, Small } from '../ui/text';
 import { guestForecastSentence, orderCoverSentence, orderForDay, REORDER_OVERVIEW } from './beside';
 
 // Beside the month calendar: the selected day's published guest forecast, then how an order is built and whether
-// this day sits in the next one. Each read fails on its own, so Home still shows the calendar.
+// this day sits in the next one. It reads the month's forecast; the board is Home's one read, shared with Bar order.
+// Each fails on its own, so Home still shows the calendar.
 
 function dayOf(days: readonly ForecastGlanceDay[], date: string): ForecastGlanceDay | null {
   return days.find((day) => day.date === date) ?? null;
 }
 
-export function BesideCalendar(props: { locationId: string; date: string }): React.JSX.Element {
+export function BesideCalendar(props: { locationId: string; date: string; board: LoadState<OrderBoard> }): React.JSX.Element {
   const { api } = usePortal();
-  const { locationId, date } = props;
+  const { locationId, date, board: order } = props;
   const month = date.slice(0, 7);
   const forecast = useLoad(useCallback(
     () => fetchForecast(api, locationId, monthRange(month)),
     [api, locationId, month],
   ));
-  const order = useLoad(useCallback(() => fetchOrderBoard(api, locationId), [api, locationId]));
   const guests = forecast.state.status === 'ready'
     ? guestForecastSentence(forecast.state.data.available ? dayOf(forecast.state.data.days, date) : null)
     : forecast.state.status === 'failed'
       ? 'Townwise couldn’t check the guest forecast for this day.'
       : 'Checking the published guest forecast.';
-  const cover = order.state.status === 'failed'
+  const cover = order.status === 'failed'
     ? 'Townwise couldn’t check the next order.'
-    : order.state.status !== 'ready'
+    : order.status !== 'ready'
       ? 'Checking the next order.'
-      : order.state.data.available
-        ? orderCoverSentence(date, orderForDay(date, order.state.data))
-        : order.state.data.reason;
+      : order.data.available
+        ? orderCoverSentence(date, orderForDay(date, order.data))
+        : order.data.reason;
   return (
     <View style={styles.root}>
       <View style={styles.part}>
