@@ -288,7 +288,7 @@ test('Privacy says what TownwiseAI’s web searches send, find and keep, as spec
   const conversations = items.findIndex((item) => item.textContent.startsWith('TownwiseAI conversations.'));
   expect(items.indexOf(web)).toBe(conversations + 1);
   const anthropic = within(screen.getByRole('region', { name: 'Who else sees it' })).getAllByRole('listitem').find((item) => item.textContent.startsWith('Anthropic,'));
-  expect(anthropic?.textContent).toContain('Townwise never sends it your team’s names or email addresses. When TownwiseAI searches the web, Anthropic sends the search TownwiseAI wrote to its search provider (see Web searches by TownwiseAI, under Your organization and team). Separately,');
+  expect(anthropic?.textContent).toContain('Townwise never sends it your team’s names or email addresses, apart from any in a file you let it read. When TownwiseAI searches the web, Anthropic sends the search TownwiseAI wrote to its search provider (see Web searches by TownwiseAI, under Your organization and team). Separately,');
 });
 
 test('Privacy describes how forecasts are built and what Townwise keeps', () => {
