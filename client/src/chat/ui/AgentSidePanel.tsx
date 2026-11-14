@@ -205,7 +205,8 @@ function HowItWorks(props: {
       {open ? (
         <View style={styles.list}>
           <Text style={styles.body}>{`It reads ${readsLine(props.ctx)}, and shows you each thing it reads.`}</Text>
-          <Text style={styles.body}>It can’t see the weather, your staffing, your bookings unless you add them as notes, or guest names.</Text>
+          <Text style={styles.body}>It can search the web for public facts, such as the weather or an event in town, and links each page it used.</Text>
+          <Text style={styles.body}>It can’t see your staffing, your bookings unless you add them as notes, or guest names.</Text>
           <Text style={styles.body}>It suggests notes; it never saves one without you.</Text>
           {forecast === null ? null : <Text style={styles.body}>{forecast}</Text>}
           {props.about.status === 'failed' ? <Button variant="link" label="Try again" onPress={props.onRetryAbout} /> : null}

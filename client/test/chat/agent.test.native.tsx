@@ -447,7 +447,8 @@ describe('the side panel', () => {
     expect(await within(side).findByText('Townwise has no forecast for this location yet, so TownwiseAI answers from your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data.')).toBeTruthy();
     for (const text of [
       'It reads your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data, and shows you each thing it reads.',
-      'It can’t see the weather, your staffing, your bookings unless you add them as notes, or guest names.',
+      'It can search the web for public facts, such as the weather or an event in town, and links each page it used.',
+      'It can’t see your staffing, your bookings unless you add them as notes, or guest names.',
       'It suggests notes; it never saves one without you.',
     ]) expect(within(side).getByText(text)).toBeTruthy();
     expect(within(side).getByText(/Your messages and the data it reads go to Anthropic/)).toBeTruthy();

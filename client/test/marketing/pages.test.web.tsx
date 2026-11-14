@@ -296,6 +296,8 @@ test('Privacy says what letting TownwiseAI read a file sends, adds and keeps, an
   const anthropic = within(screen.getByRole('region', { name: 'Who else sees it' })).getAllByRole('listitem').find((item) => item.textContent.startsWith('Anthropic,'));
   expect(anthropic?.textContent).toContain('When you let TownwiseAI read a file, the whole file is sent to it.');
   expect(anthropic?.textContent).toContain('Townwise never sends it your team’s names or email addresses, apart from any in a file you let it read.');
+  // Web search (docs/portal/tuning-chat.md section 4): where a search's words go, and what TownwiseAI is told to put in them.
+  expect(anthropic?.textContent).toContain('apart from any in a file you let it read. TownwiseAI can also search the web for public facts, such as an event in town or the weather. Each search goes through Anthropic, which sends the search words to a search provider. TownwiseAI is told to write them only from public words, such as your town’s name: never your sales, notes or files, or a guest’s or staff member’s name, and your location’s name only when you ask it to search for it. Separately,');
   const text = screen.getByRole('main').textContent;
   expect(text).toContain('Notes and other text in your files are stored but never read, unless you let TownwiseAI read the file.');
   expect(text).not.toMatch(/TownwiseAI never reads the sales files you drop\./);
