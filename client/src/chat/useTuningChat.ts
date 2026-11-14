@@ -60,6 +60,14 @@ export interface ItemCard {
 
 /** The tool whose calls show as item cards. */
 export const ITEM_TOOL = 'propose_data_item';
+export const ORDER_CHANGE_TOOL = 'propose_order_change';
+export const ORDER_RULE_TOOL = 'propose_order_rule';
+
+export interface OrderCard {
+  id: string;
+  conversationId: string | null;
+  stored: 'pending' | 'kept' | 'lost';
+}
 
 export type MessagePart =
   /** The reply's thinking summary, as it streamed (or as it was stored): shown in the timeline and under "Worked for". */
@@ -69,7 +77,8 @@ export type MessagePart =
   | { type: 'proposal'; key: string; card: ProposalCard }
   /** A chart, table or totals Townwise drew from its own data (show_visual); `id` is the call's id. */
   | { type: 'visual'; key: string; id: string; visual: Visual }
-  | { type: 'item'; key: string; card: ItemCard };
+  | { type: 'item'; key: string; card: ItemCard }
+  | { type: 'order'; key: string; card: OrderCard };
 
 export interface ChatMessage {
   key: string;
@@ -287,6 +296,7 @@ function settleCards(message: ChatMessage, stored: 'kept' | 'lost'): ChatMessage
     parts: message.parts.map((part) => {
       if (part.type === 'proposal' && part.card.stored === 'pending') return { ...part, card: { ...part.card, stored } };
       if (part.type === 'item' && part.card.stored === 'pending') return { ...part, card: { ...part.card, stored } };
+      if (part.type === 'order' && part.card.stored === 'pending') return { ...part, card: { ...part.card, stored } };
       return part;
     }),
   };
@@ -296,6 +306,11 @@ function settleCards(message: ChatMessage, stored: 'kept' | 'lost'): ChatMessage
 function withItem(message: ChatMessage, card: ItemCard, key: string): ChatMessage {
   if (message.parts.some((part) => part.type === 'item' && part.card.id === card.id)) return message;
   return { ...message, parts: [...message.parts, { type: 'item', key, card }] };
+}
+
+function withOrder(message: ChatMessage, card: OrderCard, key: string): ChatMessage {
+  if (message.parts.some((part) => part.type === 'order' && part.card.id === card.id)) return message;
+  return { ...message, parts: [...message.parts, { type: 'order', key, card }] };
 }
 
 function endLive(state: TuningChatState, end: Pick<ChatMessage, 'state' | 'note'>, now: number): ChatMessage[] {
@@ -571,6 +586,11 @@ function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: s
       if (event.name === ITEM_TOOL) {
         return event.state === 'done' && event.result?.shown === true
           ? { ...state, messages: withLive(state, (message) => withItem(message, { id: event.id, conversationId: state.conversationId, stored: 'pending' }, key)) }
+          : state;
+      }
+      if (event.name === ORDER_CHANGE_TOOL || event.name === ORDER_RULE_TOOL) {
+        return event.state === 'done' && event.result?.shown === true
+          ? { ...state, messages: withLive(state, (message) => withOrder(message, { id: event.id, conversationId: state.conversationId, stored: 'pending' }, key)) }
           : state;
       }
       // propose_note, show_visual and suggest_next show as their card, visual and next questions.
@@ -956,6 +976,12 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
         if (part.name === ITEM_TOOL) {
           if (part.state === 'done' && part.result?.shown === true) {
             message.parts.push({ type: 'item', key: nextKey(), card: { id: part.id, conversationId, stored: 'kept' } });
+          }
+          continue;
+        }
+        if (part.name === ORDER_CHANGE_TOOL || part.name === ORDER_RULE_TOOL) {
+          if (part.state === 'done' && part.result?.shown === true) {
+            message.parts.push({ type: 'order', key: nextKey(), card: { id: part.id, conversationId, stored: 'kept' } });
           }
           continue;
         }

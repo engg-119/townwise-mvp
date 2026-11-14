@@ -15,9 +15,13 @@ import { createFileStore, type FileStore } from './files.ts';
 import { createFilesUsageStore, type FilesUsageStore } from './files-usage.ts';
 import { createForecastStore, type ForecastStore } from './forecasts.ts';
 import { createImportStore, type ImportStore } from './imports.ts';
+import { createItemSalesStore, type ItemSalesStore } from './item-sales.ts';
 import { createLocationStore, type LocationStore } from './locations.ts';
 import { createMemberStore, type MemberStore } from './members.ts';
 import { createNoteStore, type NoteStore } from './notes.ts';
+import { createOrderCountStore, type OrderCountStore } from './order-counts.ts';
+import { createOrderSetupStore, type OrderSetupStore } from './order-setups.ts';
+import { createOrderStore, type OrderStore } from './orders.ts';
 import { createOrgStore, type OrgStore } from './orgs.ts';
 import { createProfileStore, type ProfileStore } from './profiles.ts';
 import { createSalesDayStore, type SalesDayStore } from './sales-days.ts';
@@ -37,6 +41,11 @@ export interface TownwiseStores {
   readonly salesDays: SalesDayStore;
   readonly uploads: UploadStore;
   readonly notes: NoteStore;
+  readonly orders: OrderStore;
+  /** Orders: a location's setup, item sales by day and counts by day. */
+  readonly orderSetups: OrderSetupStore;
+  readonly itemSales: ItemSalesStore;
+  readonly orderCounts: OrderCountStore;
   /** Business rules TownwiseAI reads with every message (spec 6.24). */
   readonly businessRules: BusinessRuleStore;
   readonly chatConversations: ChatConversationStore;
@@ -75,6 +84,10 @@ export function createTownwiseStores(connection: Connection): TownwiseStores {
     salesDays: createSalesDayStore(connection),
     uploads: createUploadStore(connection),
     notes: createNoteStore(connection),
+    orders: createOrderStore(connection),
+    orderSetups: createOrderSetupStore(connection),
+    itemSales: createItemSalesStore(connection),
+    orderCounts: createOrderCountStore(connection),
     businessRules: createBusinessRuleStore(connection),
     chatConversations: createChatConversationStore(connection),
     chatLiveTurns: createChatLiveTurnStore(connection),

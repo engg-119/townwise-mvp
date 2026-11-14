@@ -905,6 +905,153 @@ test('under view-as every write is disabled in place and versions still switch b
   expect(screen.getAllByText(/^Read-only while viewing as/)).toHaveLength(1);
 });
 
+describe('order cards (#68 review N6, design Decision 6)', () => {
+  const CHANGE_ID = 'toolu_order_0001';
+  const RULE_ID = 'toolu_order_0002';
+  const ITEM = 'a'.repeat(24);
+  const CHANGE = `/api/org/locations/l1/chat/c2/order-proposals/${CHANGE_ID}`;
+  const RULE = `/api/org/locations/l1/chat/c2/order-proposals/${RULE_ID}`;
+
+  async function proposed(api: FakeChatApi): Promise<void> {
+    renderAt('/locations/l1/agent', api);
+    fireEvent.change(await screen.findByLabelText(COMPOSER_LABEL), { target: { value: 'Order more lager this week' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => { expect(api.turns).toHaveLength(1); });
+    await stream(() => {
+      turn(api).emit('conversation', { id: 'c2', title: 'Lager' });
+      turn(api).emit('tool', { id: CHANGE_ID, name: 'propose_order_change', state: 'done', input: { itemId: ITEM, delivery: '2026-11-19' }, result: { shown: true } });
+      turn(api).emit('tool', { id: RULE_ID, name: 'propose_order_rule', state: 'done', input: { itemId: ITEM }, result: { shown: true } });
+      turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0 });
+      turn(api).end();
+    });
+  }
+
+  test('a change card sends a whole-number quantity and a reason, never an empty or non-numeric one', async () => {
+    const api = fakeChatApi();
+    const view = { kind: 'change', status: 'open', itemId: ITEM, delivery: '2026-11-19' };
+    api.reads[CHANGE] = () => ({ proposal: view });
+    api.reads[RULE] = () => ({ proposal: { kind: 'rule', status: 'open', itemId: ITEM, situation: 'a football weekend', delta: 2, unit: 'cases' } });
+    api.respond[CHANGE] = () => ({ proposal: { ...view, status: 'saved', quantity: 10, unit: 'cases', reason: 'Game day' } });
+    await proposed(api);
+    const quantity = await screen.findByLabelText('Quantity');
+    // The rule card says its change goes on every later order.
+    expect(screen.getByText('Adds 2 cases to every order: “a football weekend”')).toBeTruthy();
+    expect(screen.getByText('It applies to every later order of this item until you turn it off on Orders.')).toBeTruthy();
+    const save = (): void => { fireEvent.click(screen.getByRole('button', { name: 'Save' })); };
+    for (const text of ['', 'ten', '2.5']) {
+      fireEvent.change(quantity, { target: { value: text } });
+      fireEvent.change(screen.getByLabelText('Why'), { target: { value: 'Game day' } });
+      save();
+      expect(screen.getByText('Enter a whole number from 0 to 999.')).toBeTruthy();
+    }
+    fireEvent.change(quantity, { target: { value: '10' } });
+    fireEvent.change(screen.getByLabelText('Why'), { target: { value: '  ' } });
+    save();
+    expect(screen.getByText('Say why, in a few words.')).toBeTruthy();
+    expect(api.writes.filter((write) => write.path === CHANGE)).toEqual([]);
+    fireEvent.change(screen.getByLabelText('Why'), { target: { value: 'Game day' } });
+    save();
+    expect(await screen.findByText('Saved for this order: 10 cases, “Game day”.')).toBeTruthy();
+    expect(api.writes.filter((write) => write.path === CHANGE)).toEqual([
+      { method: 'POST', path: CHANGE, body: { action: 'save', quantity: 10, reason: 'Game day' } },
+    ]);
+  });
+
+  // #68 second review N3: a saved card shows the edit stored under its id, and a save of another one shows that edit.
+  test('a saved change card shows its stored edit; 409 card_saved shows the edit that was kept, not the one sent', async () => {
+    const api = fakeChatApi();
+    const view = { kind: 'change', status: 'open', itemId: ITEM, delivery: '2026-11-19' };
+    const stored = { ...view, status: 'saved', quantity: 1, unit: 'kegs', reason: 'First try' };
+    api.reads[CHANGE] = () => ({ proposal: view });
+    api.reads[RULE] = () => ({ proposal: { kind: 'rule', status: 'saved', itemId: ITEM } });
+    api.respond[CHANGE] = () => new ApiError('http', 'The request was refused.', { status: 409, code: 'card_saved', detail: { proposal: stored } });
+    await proposed(api);
+    fireEvent.change(await screen.findByLabelText('Quantity'), { target: { value: '8' } });
+    fireEvent.change(screen.getByLabelText('Why'), { target: { value: 'Second try' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('Saved for this order: 1 keg, “First try”.')).toBeTruthy();
+    expect(screen.getByText(/^This card was already saved with another quantity or reason, so the one you just sent wasn’t saved\./)).toBeTruthy();
+    expect(screen.queryByLabelText('Quantity')).toBeNull();
+    expect(screen.queryByText(/Second try/)).toBeNull();
+  });
+
+  test('a change card read as saved shows its stored edit', async () => {
+    const api = fakeChatApi();
+    api.reads[CHANGE] = () => ({ proposal: { kind: 'change', status: 'saved', itemId: ITEM, delivery: '2026-11-19', quantity: 0, unit: 'cases', reason: 'Closed for a wedding' } });
+    api.reads[RULE] = () => ({ proposal: { kind: 'rule', status: 'saved', itemId: ITEM } });
+    await proposed(api);
+    expect(await screen.findByText('Saved for this order: 0 cases, “Closed for a wedding”.')).toBeTruthy();
+    expect(screen.queryByText(/already saved/)).toBeNull();
+  });
+
+  // #68 review A5: Remember sends the situation the card showed; a later edit to the item answers 409 rule_changed.
+  test('a rule card sends the situation it showed; 409 rule_changed asks to look at Orders again', async () => {
+    const api = fakeChatApi();
+    api.reads[CHANGE] = () => ({ proposal: { kind: 'change', status: 'open', itemId: ITEM, delivery: '2026-11-19' } });
+    api.reads[RULE] = () => ({ proposal: { kind: 'rule', status: 'open', itemId: ITEM, situation: 'a football weekend', delta: 2, unit: 'cases' } });
+    let answer: unknown = chatRefusal(409, 'rule_changed');
+    api.respond[RULE] = () => answer;
+    await proposed(api);
+    await screen.findByText('Adds 2 cases to every order: “a football weekend”');
+    fireEvent.click(screen.getByRole('button', { name: 'Remember' }));
+    expect(await screen.findByText('This item’s latest edit changed since this card was shown, so nothing was remembered. Look at Orders again for the edit it has now.')).toBeTruthy();
+    answer = { proposal: { kind: 'rule', status: 'saved', itemId: ITEM, situation: 'a football weekend', delta: 2, unit: 'cases' } };
+    fireEvent.click(screen.getByRole('button', { name: 'Remember' }));
+    expect(await screen.findByText('Remembered.')).toBeTruthy();
+    expect(api.writes.filter((write) => write.path === RULE).map((write) => write.body)).toEqual([
+      { action: 'save', situation: 'a football weekend' }, { action: 'save', situation: 'a football weekend' },
+    ]);
+  });
+});
+
+// #68 review C8: an order link from Orders fills the composer only from the location's own live board.
+describe('an order link (?order=, &item=)', () => {
+  const BOARD_PATH = '/api/org/locations/l1/orders';
+  const LINE = {
+    itemId: 'lager', name: 'Sample lager', supplier: 'Sample distributor', unit: 'cases', neverRunOut: false, recommended: 6, alternative: null,
+    par: 2, mu: null, sigma: null, orderUpTo: null, target: 0.95, onHand: null, countAgeDays: null, confidence: 'low', dealSize: null,
+    coveredDays: 0, why: 'No count, so this is the par.', sample: false, edit: null, rules: [],
+  };
+  const BOARD = {
+    available: true, today: '2026-11-13', sample: false, missing: [],
+    orders: [{
+      supplierId: 's1', supplier: 'Sample distributor', cutoff: '2026-11-18', cutoffTime: '14:00', delivery: '2026-11-19', coversThrough: '2026-11-23',
+      deadline: 'Order by Wed, Nov 18, 2:00pm. Thursday’s delivery lasts until Monday’s.', lines: [LINE],
+    }],
+  };
+
+  async function composerAfter(path: string, api: FakeChatApi): Promise<HTMLTextAreaElement> {
+    renderAt(path, api);
+    const composer = await screen.findByLabelText(COMPOSER_LABEL);
+    await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 0); }); });
+    return composer as HTMLTextAreaElement;
+  }
+
+  test('the live board drafts the question; an unavailable board drafts nothing and never reads the sample', async () => {
+    const live = fakeChatApi();
+    live.reads[BOARD_PATH] = () => BOARD;
+    const composer = await composerAfter('/locations/l1/agent?order=2026-11-19&item=lager', live);
+    await waitFor(() => { expect(composer.value).toBe('Why Sample lager for the Thu, Nov 19 delivery?'); });
+    // Drafts are kept in memory per person and location, so each render starts from none.
+    cleanup();
+    resetDrafts();
+
+    const unset = fakeChatApi();
+    let sampleReads = 0;
+    unset.reads[BOARD_PATH] = () => ({ available: false, today: '2026-11-13', reason: 'No setup.', missing: ['the items'] });
+    unset.reads[`${BOARD_PATH}?sample=true`] = () => { sampleReads += 1; return { ...BOARD, sample: true }; };
+    expect((await composerAfter('/locations/l1/agent?order=2026-11-19&item=lager', unset)).value).toBe('');
+    expect(sampleReads).toBe(0);
+    cleanup();
+    resetDrafts();
+
+    // A sample board, should one come back, drafts nothing either.
+    const sample = fakeChatApi();
+    sample.reads[BOARD_PATH] = () => ({ ...BOARD, sample: true });
+    expect((await composerAfter('/locations/l1/agent?order=2026-11-19', sample)).value).toBe('');
+  });
+});
+
 describe('a proposal to keep text (D28)', () => {
   const ITEM_ID = 'toolu_item_0001';
   const PATH = `/api/org/locations/l1/chat/c2/item-proposals/${ITEM_ID}`;

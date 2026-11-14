@@ -35,6 +35,8 @@ describe('indexes', () => {
       'tw_forecast_runs', 'tw_forecasts',
       // The forecast lab.
       'tw_calibrations',
+      'tw_order_cards', 'tw_order_decisions', 'tw_order_rules',
+      'tw_order_setups', 'tw_item_sales', 'tw_order_counts',
       // Business rules (spec 6.24).
       'tw_business_rules',
     ].sort());
@@ -77,6 +79,7 @@ describe('indexes', () => {
       'TwChatProposal', 'TwFile', 'TwImport', 'TwUploadDay', 'TwWelcome',
       // U13B.
       'TwForecastRun', 'TwForecast', 'TwCalibration',
+      'TwOrderCard', 'TwOrderDecision', 'TwOrderRule', 'TwOrderSetup', 'TwItemSalesDay', 'TwOrderCount',
       'TwBusinessRule',
     ]) {
       for (const [fields] of indexesOf(connection, model)) {
@@ -170,6 +173,23 @@ describe('indexes', () => {
 
   it('keeps the file reader’s AI spend apart from the chat’s, one counter per organization per month', () => {
     expect(indexesOf(registered(), 'TwFilesUsage')).toContainEqual([{ orgId: 1, month: 1 }, expect.objectContaining({ unique: true })]);
+  });
+
+  it('keeps one ordering setup per location, and one item sales day and one count per location per date, strict: throw', () => {
+    const connection = registered();
+    expect(indexesOf(connection, 'TwOrderSetup')).toContainEqual([{ orgId: 1, locationId: 1 }, expect.objectContaining({ unique: true })]);
+    for (const model of ['TwItemSalesDay', 'TwOrderCount']) {
+      expect(indexesOf(connection, model)).toContainEqual([{ orgId: 1, locationId: 1, date: 1 }, expect.objectContaining({ unique: true })]);
+    }
+    for (const model of ['TwOrderSetup', 'TwItemSalesDay', 'TwOrderCount']) expect(connection.models[model]?.schema.get('strict')).toBe('throw');
+    expect(indexesOf(connection, 'TwOrderCard')).toContainEqual([
+      { orgId: 1, conversationId: 1, proposalId: 1 }, expect.objectContaining({ unique: true }),
+    ]);
+    expect(indexesOf(connection, 'TwOrderCard').map(([keys]) => keys)).toContainEqual({ orgId: 1, locationId: 1 });
+    // A9: the board reads its deliveries' edits, and a rule an item's latest edit, without scanning a location's edits.
+    const decisions = indexesOf(connection, 'TwOrderDecision').map(([keys]) => keys);
+    expect(decisions).toContainEqual({ orgId: 1, locationId: 1, delivery: 1 });
+    expect(decisions).toContainEqual({ orgId: 1, locationId: 1, itemId: 1, createdAt: -1 });
   });
 
   it('lists a ZIP’s entries once each, in archive order', () => {

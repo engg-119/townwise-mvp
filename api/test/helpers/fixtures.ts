@@ -222,3 +222,44 @@ export async function addChatUsage(server: Server, opts: { orgId: string; month:
     orgId: new Types.ObjectId(opts.orgId), month: opts.month, costMicroUsd: opts.costMicroUsd, updatedAt: server.clock.now(),
   });
 }
+
+/** Ordering's six collections that hold a location's records. */
+export const ORDER_COLLECTIONS = [
+  'tw_order_decisions', 'tw_order_rules', 'tw_order_cards', 'tw_order_setups', 'tw_item_sales', 'tw_order_counts',
+] as const;
+
+/**
+ * One record in each of ordering's collections for the location: an edit, a rule, a card in `conversationId` (a new id
+ * when none is given), the setup, a day of item sales and a count. Synthetic figures.
+ */
+export async function addOrderRecords(
+  server: Server,
+  opts: { orgId: string; locationId: string; conversationId?: string },
+): Promise<void> {
+  const at = server.clock.now();
+  const where = { orgId: new Types.ObjectId(opts.orgId), locationId: new Types.ObjectId(opts.locationId) };
+  const supplierId = new Types.ObjectId().toHexString();
+  const itemId = new Types.ObjectId().toHexString();
+  const db = server.connection;
+  await db.collection('tw_order_decisions').insertOne({
+    ...where, itemId, delivery: '2026-06-03', windowStart: '2026-06-01', windowEnd: '2026-06-07', recommended: 4, quantity: 6,
+    unit: 'cases', reason: 'Fixture reason', createdAt: at,
+  });
+  await db.collection('tw_order_rules').insertOne({
+    ...where, itemId, delta: 2, unit: 'cases', situation: 'Fixture reason', off: false, createdAt: at, updatedAt: at,
+  });
+  await db.collection('tw_order_cards').insertOne({
+    ...where, conversationId: new Types.ObjectId(opts.conversationId), proposalId: 'toolu_order0001', kind: 'change', status: 'dismissed',
+    decisionId: new Types.ObjectId(), createdAt: at,
+  });
+  await db.collection('tw_order_setups').insertOne({
+    ...where, version: 1, updatedAt: at,
+    suppliers: [{ id: supplierId, name: 'Fixture Supplier', deliveries: [{ deliveryWeekday: 3, cutoffWeekday: 1, cutoffTime: '14:00' }] }],
+    items: [{
+      id: itemId, name: 'Fixture Lager', supplierId, category: 'bottles_cans', unit: 'cases', servingsPerUnit: 24, par: 4, dealSize: null,
+      neverRunOut: true, posNames: [{ name: 'Fixture Lager 12oz', perSale: 1 }],
+    }],
+  });
+  await db.collection('tw_item_sales').insertOne({ ...where, date: '2026-05-01', items: { [itemId]: 30 }, uploadedAt: at });
+  await db.collection('tw_order_counts').insertOne({ ...where, date: '2026-05-02', items: { [itemId]: 3 }, updatedAt: at });
+}
