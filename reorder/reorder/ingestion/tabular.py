@@ -6,6 +6,9 @@ import csv
 import zipfile
 from datetime import date, datetime
 from pathlib import Path
+# ElementTree never resolves external entities or fetches DTDs, and the expat behind Python 3.12 (2.4.1 or newer)
+# refuses entity-expansion bombs, so the XXE and billion-laughs cases this rule guards against do not apply.
+# nosemgrep: python.lang.security.use-defused-xml.use-defused-xml
 from xml.etree import ElementTree as ET
 
 from reorder.paths import reject_ground_truth
