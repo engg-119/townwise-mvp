@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: A location keeps one ordering setup
-The system SHALL keep, per location, one ordering setup holding up to 20 suppliers and up to 300 items. A supplier has a name (1 to 60 characters) and 1 to 7 deliveries, each a delivery weekday, an order-by weekday and an order-by time (HH:MM, 24 hour, the town's zone). An item has a name (1 to 80 characters), a supplier from the same setup, a category (`bottles_cans`, `draft`, `liquor` or `cocktail_ingredient`), a unit (`cases`, `kegs`, `bottles` or `units`), servings per unit (greater than 0, at most 2,000), a par (0 to 999), a deal size (1 to 999, or none), a never-run-out flag, and up to 10 point-of-sale names, each with servings per sale (greater than 0, at most 50; default 1).
+The system SHALL keep, per location, one ordering setup holding up to 20 suppliers and up to 300 items. A supplier has a name (1 to 60 characters) and 1 to 7 deliveries, each a delivery weekday, an order-by weekday and an order-by time (HH:MM, 24 hour, the town's zone). An item has a name (1 to 80 characters), a supplier from the same setup, a category (`bottles_cans`, `draft`, `liquor` or `cocktail_ingredient`), a unit (`cases`, `kegs`, `bottles` or `units`), servings per unit (0.1 to 2,000) [CONFIRM: at least 0.1 servings per unit, so one sale never orders thousands of units], a par (0 to 999), a deal size (1 to 999, or none), a never-run-out flag, and up to 10 point-of-sale names, each with servings per sale (greater than 0, at most 50; default 1).
 
 #### Scenario: First save
 - **WHEN** a member puts a setup with `expectedVersion: 0` for a location with none

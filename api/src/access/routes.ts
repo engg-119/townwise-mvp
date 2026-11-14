@@ -62,7 +62,7 @@ export interface TownwiseRoute {
    */
   readonly bodyLimit: 'none' | '1kb' | '2kb' | '8kb' | '32kb' | '256kb' | '1mb' | 'stream';
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
-  readonly limiter?: 'uploads' | 'requests' | 'view-as' | 'chat' | 'places' | 'files' | 'file_chunks' | 'downloads';
+  readonly limiter?: 'uploads' | 'item_sales' | 'requests' | 'view-as' | 'chat' | 'places' | 'files' | 'file_chunks' | 'downloads';
   /**
    * Runs while staff have the organization open as its admin (D25), as the grant organization's org admin. Without it
    * the route is refused then (403 `open_as_admin_refused`; staff routes 409 `open_as_admin_active`), so a new route
@@ -350,7 +350,7 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   },
   {
     id: 'org.orders.item_sales.upload', method: 'POST', path: '/org/locations/:locationId/orders/item-sales', policy: 'member',
-    bodyLimit: '256kb', limiter: 'uploads', openAsAdmin: true, handler: uploadItemSales,
+    bodyLimit: '256kb', limiter: 'item_sales', openAsAdmin: true, handler: uploadItemSales,
   },
   {
     id: 'org.orders.item_sales.remove', method: 'DELETE', path: '/org/locations/:locationId/orders/item-sales', policy: 'org_admin',
@@ -503,6 +503,9 @@ const VIEW_AS_END = { method: 'POST', path: '/admin/view-as/end' } as const;
 const WRITES_LIMIT = { name: 'townwise:writes', limit: 300, windowSeconds: 600 } as const;
 const ROUTE_LIMITS = {
   uploads: { name: 'townwise:uploads', limit: 30, windowSeconds: 3600, whenStoreDown: 'allow' },
+  // The browser sends an item sales file in chunks of up to 31 days (244 days is 8 chunks, more when a chunk is split
+  // by size), so it has its own count instead of spending the sales uploads'. The kit's names take no underscore.
+  item_sales: { name: 'townwise:item-sales', limit: 60, windowSeconds: 3600, whenStoreDown: 'allow' },
   requests: { name: 'townwise:requests', limit: 5, windowSeconds: 86400, whenStoreDown: 'deny' },
   'view-as': { name: 'townwise:view-as', limit: 20, windowSeconds: 3600, whenStoreDown: 'deny' },
   // docs/portal/tuning-chat.md section 2: every turn costs money, so a store outage denies.
@@ -518,10 +521,13 @@ const ROUTE_LIMITS = {
 
 /** The only route that may stream its body. */
 const STREAM_ROUTE = 'org.files.chunk';
+/** The only route that may take a 1 MB body: the ordering setup, saved whole. */
+const ONE_MB_ROUTE = 'org.orders.setup.save';
 
 /**
  * Boot refuses a duplicate method and path, a GET with a body limit, staff_self on any other route, a PUT without a
- * streamed or 1 MB body, a streamed body on any route but the chunk route, and `openAsAdmin` on a staff or staff_self route.
+ * streamed or 1 MB body, a streamed body on any route but the chunk route, a 1 MB body on any route but the ordering
+ * setup's save, and `openAsAdmin` on a staff or staff_self route.
  */
 export function assertRouteTable(routes: readonly TownwiseRoute[]): void {
   const seen = new Set<string>();
@@ -540,6 +546,9 @@ export function assertRouteTable(routes: readonly TownwiseRoute[]): void {
     }
     if (route.bodyLimit === 'stream' && (route.id !== STREAM_ROUTE || route.method !== 'PUT')) {
       throw new ConfigError('routes', `${route.id} streams its body, which only ${STREAM_ROUTE} may`);
+    }
+    if (route.bodyLimit === '1mb' && (route.id !== ONE_MB_ROUTE || route.method !== 'PUT')) {
+      throw new ConfigError('routes', `${route.id} takes a 1 MB body, which only ${ONE_MB_ROUTE} may`);
     }
     if (route.openAsAdmin === true && (route.policy === 'staff' || route.policy === 'staff_self')) {
       throw new ConfigError('routes', `${route.id} is a staff route marked openAsAdmin`);

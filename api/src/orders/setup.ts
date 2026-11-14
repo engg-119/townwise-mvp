@@ -80,7 +80,8 @@ const itemInput = z.strictObject({
   supplierId: z.string().trim().min(1).max(40),
   category: z.enum(ORDER_CATEGORIES),
   unit: z.enum(ORDER_UNITS),
-  servingsPerUnit: z.number().positive().max(2000),
+  /** At least 0.1: a smaller figure makes a unit hold almost nothing, so any sale would order thousands. */
+  servingsPerUnit: z.number().min(0.1).max(2000),
   par: z.number().int().min(0).max(999),
   dealSize: z.number().int().min(1).max(999).nullable(),
   neverRunOut: z.boolean(),

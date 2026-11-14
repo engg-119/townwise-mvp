@@ -173,7 +173,7 @@ describe('route table', () => {
       { id: 'org.orders.rule_off', method: 'POST', path: `${base}/rules/off`, policy: 'member', bodyLimit: '1kb', limiter: undefined },
       { id: 'org.orders.setup.get', method: 'GET', path: `${base}/setup`, policy: 'member', bodyLimit: 'none', limiter: undefined },
       { id: 'org.orders.setup.save', method: 'PUT', path: `${base}/setup`, policy: 'member', bodyLimit: '1mb', limiter: undefined },
-      { id: 'org.orders.item_sales.upload', method: 'POST', path: `${base}/item-sales`, policy: 'member', bodyLimit: '256kb', limiter: 'uploads' },
+      { id: 'org.orders.item_sales.upload', method: 'POST', path: `${base}/item-sales`, policy: 'member', bodyLimit: '256kb', limiter: 'item_sales' },
       { id: 'org.orders.item_sales.remove', method: 'DELETE', path: `${base}/item-sales`, policy: 'org_admin', bodyLimit: 'none', limiter: undefined },
       { id: 'org.orders.counts.save', method: 'POST', path: `${base}/counts`, policy: 'member', bodyLimit: '32kb', limiter: undefined },
     ]);
@@ -206,8 +206,11 @@ describe('route table', () => {
   it('boot refuses a PUT without a streamed or 1 MB body, and a streamed body on any route but the chunk route', () => {
     expect(() => { assertRouteTable([route({ method: 'PUT', bodyLimit: '32kb' })]); }).toThrow(ConfigError);
     expect(() => { assertRouteTable([route({ method: 'PUT', bodyLimit: 'stream' })]); }).toThrow(ConfigError);
-    // The ordering setup is saved whole, as one JSON document of up to 1 MB.
-    expect(() => { assertRouteTable([route({ method: 'PUT', bodyLimit: '1mb' })]); }).not.toThrow();
+    // The ordering setup is saved whole, as one JSON document of up to 1 MB, and no other route takes one.
+    expect(() => { assertRouteTable([route({ id: 'org.orders.setup.save', method: 'PUT', bodyLimit: '1mb' })]); }).not.toThrow();
+    expect(() => { assertRouteTable([route({ method: 'PUT', bodyLimit: '1mb' })]); }).toThrow(ConfigError);
+    expect(() => { assertRouteTable([route({ id: 'org.orders.setup.save', method: 'POST', bodyLimit: '1mb' })]); }).toThrow(ConfigError);
+    expect(TOWNWISE_ROUTES.filter((r) => r.bodyLimit === '1mb').map((r) => r.id)).toEqual(['org.orders.setup.save']);
     expect(() => { assertRouteTable([route({ id: 'org.files.chunk', method: 'POST', bodyLimit: 'stream' })]); }).toThrow(ConfigError);
     expect(() => { assertRouteTable([route({ id: 'org.files.chunk', method: 'PUT', bodyLimit: 'stream' })]); }).not.toThrow();
   });

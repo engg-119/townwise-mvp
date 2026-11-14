@@ -12,7 +12,11 @@ The upload SHALL read a CSV or Excel file in the browser, propose the date, item
 - **THEN** the page says the export needs one row per day or per sale and sends nothing
 
 ### Requirement: Item sales are stored per day and replaced by range
-The system SHALL accept `{ from, to, days: [{ date, items: { itemId: servings } }] }` with at most 31 days, each date inside `[from, to]` and unique, at most 500 items per day, servings from 0 to 100,000, and SHALL store one record per location and date. It SHALL upsert every sent day and then delete stored days inside `[from, to]` that were not sent. A stored day means every item absent from it sold zero that day.
+The system SHALL accept `{ from, to, days: [{ date, items: { itemId: servings } }] }` with at most 31 days, `to` before the town's today (today is still open), each date inside `[from, to]` and unique, at most 500 items per day, servings from 0 to 100,000, and SHALL store one record per location and date. It SHALL upsert every sent day and then delete stored days inside `[from, to]` that were not sent. A stored day means every item absent from it sold zero that day. Two uploads over overlapping ranges at once SHALL leave each day as whichever wrote it last.
+
+#### Scenario: Today is still open
+- **WHEN** an upload's range ends on the town's today
+- **THEN** the system answers 400 `invalid_request` and stores nothing
 
 #### Scenario: Re-upload a range
 - **WHEN** a range of 7 days was stored and a new upload for the same range sends 6 of them
@@ -23,14 +27,14 @@ The system SHALL accept `{ from, to, days: [{ date, items: { itemId: servings } 
 - **THEN** the second request completes it with the same result as one success
 
 ### Requirement: Who may upload and delete item sales
-Every member SHALL be able to upload item sales; only an org admin (staff opened as admin included) SHALL delete a location's item sales. Writes SHALL be refused under view-as. Uploads SHALL use the `uploads` limiter. [CONFIRM: members upload, org admins delete]
+Every member SHALL be able to upload item sales; only an org admin (staff opened as admin included) SHALL delete a location's item sales. Writes SHALL be refused under view-as. Uploads SHALL use their own `item_sales` limiter (`townwise:item-sales`, 60 an hour per account), apart from the sales uploads' `uploads`. [CONFIRM: members upload, org admins delete; 60 item sales uploads an hour]
 
 #### Scenario: Member deletes
 - **WHEN** a member who is not an org admin deletes item sales
 - **THEN** the system answers 403
 
 ### Requirement: Item sales go with the location's sales data
-Deleting the location's sales data, the location or the organization SHALL delete its item sales. Each upload SHALL write `order.item_sales_uploaded` with day count, item count, first and last date only, and each delete `order.item_sales_deleted` with the day count.
+Deleting the location's sales data, the location or the organization SHALL delete its item sales. Each upload SHALL write `order.item_sales_uploaded` with day count, item count, first and last date and the count of stored days it deleted only, and each delete `order.item_sales_deleted` with the day count. A location with item sales SHALL not be deleted (409 `location_has_data`) until they are.
 
 #### Scenario: Sales data deleted
 - **WHEN** an org admin deletes the location's sales data

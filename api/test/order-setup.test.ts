@@ -53,6 +53,8 @@ describe('setupInput', () => {
       body({ items: [item({ category: 'wine' })] }),
       body({ items: [item({ unit: 'pallets' })] }),
       body({ items: [item({ servingsPerUnit: 0 })] }),
+      // A11: under 0.1 servings a unit, any sale orders thousands of units.
+      body({ items: [item({ servingsPerUnit: 0.09 })] }),
       body({ items: [item({ servingsPerUnit: 2001 })] }),
       body({ items: [item({ par: 1000 })] }),
       body({ items: [item({ par: 1.5 })] }),
@@ -65,6 +67,7 @@ describe('setupInput', () => {
     ];
     for (const input of bad) expect(setupInput.safeParse(input).success).toBe(false);
     expect(setupInput.safeParse(body({ items: [item({ dealSize: null, par: 0, servingsPerUnit: 2000 })] })).success).toBe(true);
+    expect(setupInput.safeParse(body({ items: [item({ servingsPerUnit: 0.1 })] })).success).toBe(true);
   });
 });
 

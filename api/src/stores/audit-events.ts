@@ -47,7 +47,7 @@ export const AUDIT_DETAIL_KEYS = {
   // Orders: ids, dates, counts and a card's kind (change or rule), never an item or supplier name, a servings figure, a
   // quantity, or the owner's reason or situation.
   'order.setup_saved': ['locationId', 'supplierCount', 'itemCount'],
-  'order.item_sales_uploaded': ['locationId', 'dayCount', 'itemCount', 'firstDate', 'lastDate'],
+  'order.item_sales_uploaded': ['locationId', 'dayCount', 'itemCount', 'firstDate', 'lastDate', 'removedCount'],
   'order.item_sales_deleted': ['locationId', 'dayCount'],
   'order.count_saved': ['locationId', 'date', 'itemCount'],
   'order.decision_saved': ['locationId', 'itemId', 'delivery'],

@@ -2,6 +2,7 @@
 // the setup under compare-and-set, item sales by range, counts, who may do what, isolation, view-as, the exact audit
 // details of every order write, and one live board end to end against the engine. Synthetic figures throughout.
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -10,11 +11,11 @@ import { ORDER_UNAVAILABLE, liveBoard, type OrderBoard, type OrderLine } from '.
 import { addDays } from '../src/orders/dates.ts';
 import { computeOrders, type ItemSalesDay } from '../src/orders/engine.ts';
 import type { StoredSetup } from '../src/stores/order-setups.ts';
-import { ORDER_CHANGE_RESULT } from '../src/chat/tools/orders.ts';
-import { localMinutes } from '../src/time-zones.ts';
-import { addConversation, addGrant, addLocation, addSeat, auditEvents, createOrg, ORDER_COLLECTIONS } from './helpers/fixtures.ts';
+import { ORDER_CHANGE_RESULT, ORDER_RULE_RESULT } from '../src/chat/tools/orders.ts';
+import { localDay, localMinutes } from '../src/time-zones.ts';
+import { addConversation, addGrant, addLocation, addSalesDay, addSeat, auditEvents, createOrg, ORDER_COLLECTIONS } from './helpers/fixtures.ts';
 import {
-  call, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
+  call, limiterKey, refresh, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
 
 let server: TownwiseTestServer;
@@ -97,12 +98,25 @@ async function orderRows(locationId: string): Promise<string> {
   return JSON.stringify(docs);
 }
 
-async function board(locationId: string, who: Person = member): Promise<OrderBoard> {
+async function board(locationId: string, who: Person = member): Promise<OrderBoard & { today: string }> {
   const res = await call(server, base(locationId), { session: who.session });
   expect(res.status).toBe(200);
-  const body = await res.json() as OrderBoard;
+  const body = await res.json() as OrderBoard & { today: string };
   expect(body.available).toBe(true);
   return body;
+}
+
+/** Shows a TownwiseAI order card in the conversation: the stored call and the result that says it was shown. */
+async function showCards(conversationId: string, calls: { id: string; name: string; input: unknown; result: string }[]): Promise<void> {
+  const at = server.clock.now();
+  const params = [
+    { role: 'assistant', content: calls.map(({ id, name, input }) => ({ type: 'tool_use', id, name, input })) },
+    { role: 'user', content: calls.map(({ id, result }) => ({ type: 'tool_result', tool_use_id: id, content: result })) },
+  ];
+  await server.connection.collection('tw_chat_conversations').updateOne(
+    { _id: new Types.ObjectId(conversationId) },
+    { $push: { messages: { $each: params.map((param) => ({ at, param: JSON.stringify(param) })) } } } as Record<string, unknown>,
+  );
 }
 
 function lineOf(answer: OrderBoard, itemId: string): OrderLine {
@@ -116,16 +130,17 @@ describe('ordering setup', () => {
     const locationId = await addLocation(server, { orgId, name: 'Empty Bar' });
     const res = await call(server, `${base(locationId)}/setup`, { session: member.session });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ setup: null, coverage: null, itemCoverage: {}, counts: {} });
+    // Every setup and board answer carries the town's date (A7, C7).
+    expect(await res.json()).toEqual({ setup: null, coverage: null, itemCoverage: {}, counts: {}, today: TODAY });
     const orders = await call(server, base(locationId), { session: member.session });
-    expect(await orders.json()).toEqual({ available: false, reason: ORDER_UNAVAILABLE, missing: ['the supplier schedule', 'the items'] });
+    expect(await orders.json()).toEqual({ available: false, reason: ORDER_UNAVAILABLE, missing: ['the supplier schedule', 'the items'], today: TODAY });
     const decision = await call(server, `${base(locationId)}/decisions`, {
       session: member.session, json: { itemId: 'a'.repeat(24), delivery: '2026-06-04', quantity: 2, reason: 'Busy week' },
     });
     expect(await errorOf(decision)).toEqual({ status: 409, error: 'order_unavailable' });
     // The labeled sample still answers.
     const sample = await (await call(server, `${base(locationId)}?sample=true`, { session: member.session })).json() as OrderBoard;
-    expect(sample).toMatchObject({ available: true, sample: true });
+    expect(sample).toMatchObject({ available: true, sample: true, today: TODAY });
   });
 
   it('a member saves the setup as version 1 with minted ids; the audit event carries the counts only', async () => {
@@ -191,10 +206,10 @@ describe('ordering setup', () => {
     const locationId = await addLocation(server, { orgId, name: 'Half Bar' });
     expect((await putSetup(locationId, { expectedVersion: 0, setup: { suppliers: SETUP.suppliers, items: [] } })).status).toBe(200);
     expect(await (await call(server, base(locationId), { session: member.session })).json())
-      .toEqual({ available: false, reason: ORDER_UNAVAILABLE, missing: ['the items'] });
+      .toEqual({ available: false, reason: ORDER_UNAVAILABLE, missing: ['the items'], today: TODAY });
     expect((await putSetup(locationId, { expectedVersion: 1, setup: { suppliers: [], items: [] } })).status).toBe(200);
     expect(await (await call(server, base(locationId), { session: member.session })).json())
-      .toEqual({ available: false, reason: ORDER_UNAVAILABLE, missing: ['the supplier schedule', 'the items'] });
+      .toEqual({ available: false, reason: ORDER_UNAVAILABLE, missing: ['the supplier schedule', 'the items'], today: TODAY });
   });
 });
 
@@ -222,8 +237,8 @@ describe('item sales', () => {
 
     const events = await eventsOf('order.item_sales_uploaded', locationId);
     expect(events.map((event) => event.details)).toEqual([
-      { locationId, dayCount: 7, itemCount: 2, firstDate: '2026-05-01', lastDate: '2026-05-07' },
-      { locationId, dayCount: 6, itemCount: 2, firstDate: '2026-05-01', lastDate: '2026-05-07' },
+      { locationId, dayCount: 7, itemCount: 2, firstDate: '2026-05-01', lastDate: '2026-05-07', removedCount: 0 },
+      { locationId, dayCount: 6, itemCount: 2, firstDate: '2026-05-01', lastDate: '2026-05-07', removedCount: 1 },
     ]);
     expect(events[0]).toMatchObject({ actorUserId: member.session.userId, actorRole: 'member' });
 
@@ -245,6 +260,7 @@ describe('item sales', () => {
       { from: MAY[0], to: MAY[1], days: [day('2026-05-03')] },
       { from: MAY[1], to: MAY[0], days: [] },
       { from: '2026-06-01', to: '2026-06-02', days: [] },                       // ends after the town's today
+      { from: '2026-05-31', to: TODAY, days: [] },                              // ends on today, which is still open (A7)
       { from: '2009-12-31', to: '2010-01-01', days: [] },
       { from: MAY[0], to: MAY[0], days: [day('2026-05-01', { [lager]: -1 })] },
       { from: MAY[0], to: MAY[0], days: [day('2026-05-01', { [lager]: 100_001 })] },
@@ -256,6 +272,14 @@ describe('item sales', () => {
     ];
     for (const body of refused) expect({ body, ...(await errorOf(await upload(body))) }).toEqual({ body, status: 400, error: 'invalid_request' });
     expect(await orderRows(locationId)).toBe(before);
+  });
+
+  it('counts against its own limiter, 60 an hour, not the sales uploads’ (R7)', async () => {
+    const one = { from: MAY[0], to: MAY[0], days: [{ date: MAY[0], items: { [lager]: 10 } }] };
+    await server.redis.set(limiterKey('townwise:uploads', member.session.userId), '30', 'EX', 3600);
+    expect((await upload(one)).status).toBe(200);
+    await server.redis.set(limiterKey('townwise:item-sales', member.session.userId), '60', 'EX', 3600);
+    expect(await errorOf(await upload(one))).toEqual({ status: 429, error: 'rate_limited' });
   });
 
   it('only an org admin deletes item sales: a member gets 403, and the event carries the day count', async () => {
@@ -410,9 +434,10 @@ describe('the live board, end to end', () => {
     const answer = await board(locationId);
     const plans = computeOrders({
       suppliers: setup.suppliers, items: setup.items, itemSales: sent, counts: new Map([[lager, { quantity: 3, date: TODAY }]]),
-      forecastGuests: new Map(), historyGuests: [], today: TODAY, nowMinutes: localMinutes(server.clock.now(), 'America/New_York'),
+      forecastGuests: new Map(), closedDays: new Set(), historyGuests: [], today: TODAY,
+      nowMinutes: localMinutes(server.clock.now(), 'America/New_York'),
     });
-    expect(answer).toEqual({ ...liveBoard(plans, []), missing: [] });
+    expect(answer).toEqual({ ...liveBoard(plans, []), missing: [], today: TODAY });
     const [order] = answer.orders;
     expect(order).toMatchObject({
       supplier: 'North Distributing', cutoff: '2026-06-03', cutoffTime: '14:00', delivery: '2026-06-04', coversThrough: '2026-06-11',
@@ -507,5 +532,125 @@ describe('the live board, end to end', () => {
     expect(dismissed.map((event) => event.details)).toEqual([{ locationId, conversationId, kind: 'change' }]);
     expect(dismissed[0]).toMatchObject({ target: { type: 'conversation', id: conversationId } });
     expect(JSON.stringify(await auditEvents(server))).not.toContain('Cider tasting');
+  });
+
+  it('the rule card saves only the situation it showed: a newer edit since is 409 rule_changed, and a second press adds nothing (A4, A5)', async () => {
+    const conversationId = await addConversation(server, { orgId, locationId, userId: member.session.userId, text: 'Remember that' });
+    await showCards(conversationId, [{ id: 'toolu_order_rule1', name: 'propose_order_rule', input: { itemId: cider }, result: ORDER_RULE_RESULT }]);
+    const cardPath = `/api/org/locations/${locationId}/chat/${conversationId}/order-proposals/toolu_order_rule1`;
+    const act = (json: unknown): Promise<Response> => call(server, cardPath, { session: member.session, json });
+    const shown = await (await call(server, cardPath, { session: member.session })).json() as { proposal: { situation: string; delta: number } };
+    expect(shown.proposal).toMatchObject({ kind: 'rule', status: 'open', itemId: cider, situation: 'Cider tasting', delta: 3, unit: 'cases' });
+
+    const before = await orderRows(locationId);
+    const events = (await auditEvents(server)).length;
+    expect(await errorOf(await act({ action: 'save', situation: 'A reason the card never showed' }))).toEqual({ status: 409, error: 'rule_changed' });
+    expect(await errorOf(await act({ action: 'save' }))).toEqual({ status: 400, error: 'invalid_request' });
+    expect(await orderRows(locationId)).toBe(before);
+    expect((await auditEvents(server)).length).toBe(events);
+
+    const saved = await (await act({ action: 'save', situation: shown.proposal.situation })).json() as { proposal: { ruleId: string } };
+    expect(saved.proposal).toMatchObject({ kind: 'rule', status: 'saved', itemId: cider, situation: 'Cider tasting', delta: 3, unit: 'cases' });
+    expect(await (await act({ action: 'save', situation: shown.proposal.situation })).json())
+      .toEqual({ proposal: { kind: 'rule', status: 'saved', itemId: cider } });
+    expect(await (await act({ action: 'dismiss' })).json()).toEqual({ proposal: { kind: 'rule', status: 'saved', itemId: cider } });
+    const ruleEvents = (await eventsOf('order.card_saved', locationId)).filter((event) => (event.details as { kind: string }).kind === 'rule');
+    expect(ruleEvents.map((event) => event.details)).toEqual([{ locationId, conversationId, kind: 'rule' }]);
+    expect(await eventsOf('order.card_dismissed', locationId)).toHaveLength(1);
+    expect(await server.connection.collection('tw_order_rules').countDocuments({ locationId: new Types.ObjectId(locationId), itemId: cider })).toBe(1);
+  });
+
+  it('two saves of one change card at once store one edit and one order.card_saved (A3)', async () => {
+    const conversationId = await addConversation(server, { orgId, locationId, userId: member.session.userId, text: 'Change it' });
+    await showCards(conversationId, [{
+      id: 'toolu_order_change9', name: 'propose_order_change', input: { itemId: lager, delivery: '2026-06-04' }, result: ORDER_CHANGE_RESULT,
+    }]);
+    const cardPath = `/api/org/locations/${locationId}/chat/${conversationId}/order-proposals/toolu_order_change9`;
+    const decisions = server.connection.collection('tw_order_decisions');
+    const where = { locationId: new Types.ObjectId(locationId), itemId: lager };
+    const stored = await decisions.countDocuments(where);
+    const answers = await Promise.all([5, 7].map(async (quantity) => {
+      const res = await call(server, cardPath, { session: member.session, json: { action: 'save', quantity, reason: `Busy ${String(quantity)}` } });
+      return await res.json() as { proposal: { status: string } };
+    }));
+    expect(answers.map((answer) => answer.proposal.status)).toEqual(['saved', 'saved']);
+    expect(await decisions.countDocuments(where)).toBe(stored + 1);
+    const cardEvents = (await eventsOf('order.card_saved', locationId))
+      .filter((event) => (event.details as { conversationId: string }).conversationId === conversationId);
+    expect(cardEvents).toHaveLength(1);
+    expect(await (await call(server, cardPath, { session: member.session })).json())
+      .toEqual({ proposal: { kind: 'change', status: 'saved', itemId: lager, delivery: '2026-06-04' } });
+  });
+});
+
+describe('a count older than 90 days still counts (E3)', () => {
+  it('orders the par less what was counted 100 days ago, not the whole par', async () => {
+    const { locationId, lager } = await locationWithSetup('Old Count Bar');
+    await server.connection.collection('tw_order_counts').insertOne({
+      orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), date: addDays(TODAY, -100), items: { [lager]: 2 },
+      updatedAt: server.clock.now(),
+    });
+    const line = lineOf(await board(locationId), lager);
+    expect(line).toMatchObject({ onHand: 2, countAgeDays: 100, recommended: 1, par: 3, confidence: 'low' });
+    expect(line.why).toContain('The last count was 100 days ago, so this follows the par.');
+  });
+});
+
+// Last: it moves the clock 15.5 hours on, to 03:30Z, when the town's date (still Monday) is not the UTC date.
+describe('the live board scaled to a published forecast, read at 03:30Z (E13)', () => {
+  const RUN = JSON.parse(readFileSync(new URL('fixtures/forecast-run.json', import.meta.url), 'utf8')) as Record<string, unknown>;
+
+  it('scales each window day by the forecast’s guests over the location’s own, on the town’s date', async () => {
+    const forecastOrgId = await createOrg(server, { name: 'Forecast Tavern', forecastsOn: true });
+    const owner = await person(forecastOrgId, 'forecast-member', 'member');
+    const locationId = await addLocation(server, { orgId: forecastOrgId, name: 'Forecast Bar' });
+    const setupRes = await call(server, `${base(locationId)}/setup`, { method: 'PUT', session: owner.session, json: { expectedVersion: 0, setup: SETUP } });
+    const { setup } = await setupRes.json() as { setup: StoredSetup };
+    const lager = setup.items[0]?.id ?? '';
+    // Eight weeks of item sales and guests through yesterday, 100 guests a day.
+    const sent = Array.from({ length: 56 }, (_, i) => ({ date: addDays('2026-04-06', i), items: { [lager]: 20 } }));
+    for (const chunk of [sent.slice(0, 31), sent.slice(31)]) {
+      const res = await call(server, `${base(locationId)}/item-sales`, {
+        session: owner.session, json: { from: chunk[0]?.date, to: chunk.at(-1)?.date, days: chunk },
+      });
+      expect(res.status).toBe(200);
+    }
+    for (const day of sent) await addSalesDay(server, { orgId: forecastOrgId, locationId, date: day.date, guests: 100, netSalesCents: null });
+    expect((await call(server, `${base(locationId)}/counts`, { session: owner.session, json: { date: TODAY, items: { [lager]: 1 } } })).status).toBe(204);
+
+    // A published forecast of 150 guests a day for the two weeks from today.
+    const days = Array.from({ length: 14 }, (_, i) => ({
+      date: addDays(TODAY, i), status: 'open', low: 120, mid: 150, high: 180, baseline: null, reasons: [{ kind: 'weekday', ref: null, effectPct: null }],
+    }));
+    const weeks = [0, 7].map((offset) => ({ from: addDays(TODAY, offset), to: addDays(TODAY, offset + 6), openDays: 7, low: 840, mid: 1050, high: 1260 }));
+    const staff = await signInStaff(server);
+    try {
+      const imported = await call(server, `/api/admin/orgs/${forecastOrgId}/locations/${locationId}/forecast-runs`, {
+        session: staff, json: { ...RUN, dataThrough: '2026-05-31', madeAt: TODAY, days, weeks },
+      });
+      expect(imported.status).toBe(201);
+      const { run } = await imported.json() as { run: { id: string } };
+      expect((await call(server, `/api/admin/orgs/${forecastOrgId}/forecast-runs/${run.id}/publish`, { session: staff, json: {} })).status).toBe(200);
+    } finally {
+      await removeStaffFactor(server);
+    }
+
+    server.clock.advance(15.5 * 3_600_000);
+    expect(server.clock.now().toISOString()).toBe('2026-06-02T03:30:00.000Z');
+    expect(localDay(server.clock.now(), 'America/New_York')).toBe(TODAY);
+    await refresh(server, owner.session);
+    const answer = await board(locationId, owner);
+    expect(answer.today).toBe(TODAY);
+    const line = lineOf(answer, lager);
+    // Still Monday in Hanover at 11:30pm: order by Wednesday, the window Wednesday through the next Wednesday.
+    expect(answer.orders[0]).toMatchObject({ cutoff: '2026-06-03', delivery: '2026-06-04', coversThrough: '2026-06-11' });
+    // 8 window days x 20 servings x 150 / 100 guests, over 24 servings a case less 1%.
+    expect(line.mu).toBeCloseTo((8 * 20 * 1.5) / (24 * 0.99), 9);
+    expect(line.why).toContain('from the last 8 weeks of sales, scaled to the guest forecast.');
+    const plain = computeOrders({
+      suppliers: setup.suppliers, items: setup.items, itemSales: sent, counts: new Map([[lager, { quantity: 1, date: TODAY }]]),
+      forecastGuests: new Map(), closedDays: new Set(), historyGuests: [], today: TODAY, nowMinutes: 23 * 60 + 30,
+    })[0]?.lines.find((planned) => planned.itemId === lager);
+    expect(line.mu).toBeCloseTo((plain?.mu ?? 0) * 1.5, 9);
   });
 });

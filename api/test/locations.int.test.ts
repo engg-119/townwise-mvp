@@ -256,6 +256,9 @@ describe('DELETE /api/org/locations/:locationId', () => {
     const doomed = await addLocation(server, { orgId: t.orgId, name: 'Doomed' });
     const kept = await addLocation(server, { orgId: t.orgId, name: 'Kept' });
     for (const locationId of [doomed, kept]) await addOrderRecords(server, { orgId: t.orgId, locationId });
+    // A12: item sales are data, so the location is refused until they are deleted (with the sales data, or on their own).
+    expect(await errorOf(await remove(t.admin, doomed))).toEqual({ status: 409, error: 'location_has_data' });
+    expect((await call(server, `/api/org/locations/${doomed}/orders/item-sales`, { method: 'DELETE', session: t.admin })).status).toBe(200);
     expect((await remove(t.admin, doomed)).status).toBe(204);
     for (const name of ORDER_COLLECTIONS) {
       const collection = server.connection.collection(name);

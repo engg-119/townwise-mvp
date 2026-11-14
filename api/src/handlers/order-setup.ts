@@ -29,8 +29,9 @@ const MAX_UPLOAD_DAYS = 31;
 const MAX_ITEMS_PER_DAY = 500;
 
 /**
- * Item sales for the range [from, to], at most 31 days long and ending by `today` (the town's): the sent days replace
- * the stored ones, and stored days of the range that were not sent are deleted.
+ * Item sales for the range [from, to], at most 31 days long and ending before `today` (the town's): today is still
+ * open, so its sales are not all in yet. The sent days replace the stored ones, and stored days of the range that were
+ * not sent are deleted.
  */
 function itemSalesBody(today: string) {
   const day = z.strictObject({
@@ -39,7 +40,7 @@ function itemSalesBody(today: string) {
       .refine((items) => Object.keys(items).length <= MAX_ITEMS_PER_DAY),
   });
   return z.strictObject({ from: isoDate, to: isoDate, days: z.array(day).max(MAX_UPLOAD_DAYS) }).refine(({ from, to, days }) =>
-    from >= EARLIEST_DATE && from <= to && to <= today && daysBetween(from, to) < MAX_UPLOAD_DAYS
+    from >= EARLIEST_DATE && from <= to && to < today && daysBetween(from, to) < MAX_UPLOAD_DAYS
     && new Set(days.map((sent) => sent.date)).size === days.length && days.every((sent) => sent.date >= from && sent.date <= to));
 }
 
@@ -66,12 +67,13 @@ function assertKnownItems(setup: StoredSetup | null, ids: readonly string[]): vo
 
 /**
  * GET .../orders/setup: the setup (null when none was saved), item-sales coverage, each item's covered days with any
- * servings in the last 8 weeks, and each item's latest count in the last 90 days.
+ * servings in the last 8 weeks, each item's latest count in the last 400 days, and `today`, the town's date.
  */
 export async function getOrderSetup(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const { scope } = memberOf(principal);
   const location = await loadLocation(ctx, scope, req.params.locationId);
-  res.status(200).json(await loadSetupState(ctx, scope, location, townClock(ctx, location).today));
+  const { today } = townClock(ctx, location);
+  res.status(200).json({ ...(await loadSetupState(ctx, scope, location, today)), today });
 }
 
 /** PUT .../orders/setup { expectedVersion, setup }: the whole setup, saved only over the version the editor loaded. */
@@ -108,7 +110,10 @@ export async function uploadItemSales(ctx: TownwiseContext, req: Request, res: R
   await recordAfter(ctx, {
     ...actorOf(caller), at: now, orgId: scope.orgId, action: 'order.item_sales_uploaded',
     target: { type: 'location', id: location.id },
-    details: { locationId: location.id, dayCount: body.days.length, itemCount: itemIds.length, firstDate: body.from, lastDate: body.to },
+    details: {
+      locationId: location.id, dayCount: body.days.length, itemCount: itemIds.length, firstDate: body.from, lastDate: body.to,
+      removedCount: result.removed,
+    },
   });
   res.status(200).json(result);
 }

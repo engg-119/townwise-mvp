@@ -79,7 +79,7 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     // stored files are swept again, and the daily sweep's orphan check catches anything later still.
     const late = await removeStoredFiles(stores, ctx.files, scope, null);
     logFiles(ctx, scope.orgId, files, late === 'files_unavailable' ? { deletedFiles: 0, deletedBlobs: 0 } : late);
-    // With the row gone no new request starts, so this second sweep catches sales days, item sales, counts and chat
+    // With the row gone no new request starts, so this second sweep catches sales days, ordering's records and chat
     // usage that requests already running wrote after the first. It narrows the gap, not closes it: a tuning chat turn
     // started before the suspension can still add chat usage for up to 150 seconds (its time limit), an upload still
     // running can write days after this sweep, and its tw_uploads row, if written after the first sweep, is never
@@ -87,6 +87,9 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     const lateDays = await stores.salesDays.removeForOrg(scope);
     await stores.itemSales.removeForOrg(scope);
     await stores.orderCounts.removeForOrg(scope);
+    // A setup save, an edit, a rule or a card already past its location check can still write after the first sweep.
+    await stores.orderSetups.removeForOrg(scope);
+    await stores.orders.removeForOrg(scope);
     await stores.chatUsage.removeForOrg(scope);
     await stores.calibrations.removeForOrg(scope);
     // U13B: a staff forecast import already past its organization check can still write a run and rows.

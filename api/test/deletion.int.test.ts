@@ -56,7 +56,7 @@ async function addProposal(opts: { orgId: string; locationId: string; userId: st
 async function addOrderCard(opts: { orgId: string; locationId: string; conversationId: string }): Promise<void> {
   await server.connection.collection('tw_order_cards').insertOne({
     orgId: new Types.ObjectId(opts.orgId), locationId: new Types.ObjectId(opts.locationId), conversationId: new Types.ObjectId(opts.conversationId),
-    proposalId: 'toolu_order0001', kind: 'change', status: 'dismissed', createdAt: server.clock.now(),
+    proposalId: 'toolu_order0001', kind: 'change', status: 'dismissed', decisionId: new Types.ObjectId(), createdAt: server.clock.now(),
   });
 }
 
@@ -203,12 +203,13 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
     expect(await res?.json()).toEqual({
       deletedDays: 2, deletedUploads: 1, deletedNotes: 1, deletedLocations: 2, deletedSeats: 4, redactedEvents: 4,
     });
-    // The event is written before the effect; the organization row is deleted last, then sales days, item sales,
-    // counts, chat usage and (U13B) forecasts swept again.
+    // The event is written before the effect; the organization row is deleted last, then sales days, ordering's
+    // records, chat usage and (U13B) forecasts swept again.
     expect(writes[0]).toBe('insert tw_audit_events');
     // Stored files (none here) are swept again after the row too: imports first. Then (U13B) forecast rows, then runs.
-    expect(writes.slice(-9)).toEqual([
+    expect(writes.slice(-13)).toEqual([
       'delete tw_orgs', 'delete tw_imports', 'delete tw_sales_days', 'delete tw_item_sales', 'delete tw_order_counts',
+      'delete tw_order_setups', 'delete tw_order_decisions', 'delete tw_order_rules', 'delete tw_order_cards',
       'delete tw_chat_usage', 'delete tw_calibrations', 'delete tw_forecasts', 'delete tw_forecast_runs',
     ]);
 
@@ -296,7 +297,7 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
     expect(await count('tw_orgs', { _id: orgId })).toBe(0);
   });
 
-  it('sales days, item sales, counts and chat usage written after the first sweep, by requests in flight, are swept too', async () => {
+  it('sales days, ordering’s records and chat usage written after the first sweep, by requests in flight, are swept too', async () => {
     const org = await populatedOrg('Late Writes Grill', 'suspended');
     const model = server.connection.models.TwOrg as unknown as { deleteOne: (...args: unknown[]) => Promise<unknown> };
     const deleteOne = model.deleteOne.bind(model);
@@ -305,11 +306,8 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
       const removed = await deleteOne(...args);
       await addSalesDay(server, { orgId: org.orgId, locationId, date: '2026-05-03', guests: 77, netSalesCents: 199_900 });
       await addChatUsage(server, { orgId: org.orgId, month: '2026-07', costMicroUsd: 40_000 });
-      // An item sales upload and a count still running.
-      const where = { orgId: new Types.ObjectId(org.orgId), locationId: new Types.ObjectId(locationId) };
-      const itemId = new Types.ObjectId().toHexString();
-      await server.connection.collection('tw_item_sales').insertOne({ ...where, date: '2026-05-03', items: { [itemId]: 12 }, uploadedAt: server.clock.now() });
-      await server.connection.collection('tw_order_counts').insertOne({ ...where, date: '2026-05-03', items: { [itemId]: 2 }, updatedAt: server.clock.now() });
+      // A setup save, an item sales upload, a count, an edit, a rule and a card save still running (A14).
+      await addOrderRecords(server, { orgId: org.orgId, locationId });
       return removed;
     });
     let res: Response;

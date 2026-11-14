@@ -59,7 +59,9 @@ export function assertItemIds(items: Readonly<Record<string, number>>): void {
 export interface ItemSalesStore {
   /**
    * Stores every sent day, replacing its items, then deletes the stored days from `from` to `to` (inclusive) that were
-   * not sent, so a retry gives the same result. The sent dates lie in the range (the handler checks).
+   * not sent, so a retry gives the same result. The sent dates lie in the range (the handler checks). Two uploads over
+   * overlapping ranges at once are not merged: each day holds whichever upload wrote it last, and a day one sent and
+   * the other left out may be deleted by the other's sweep. Last writer wins per day, as uploading again would give.
    */
   apply(scope: OrgScope, locationId: string, input: {
     from: string; to: string; days: readonly ItemSalesDay[]; now: Date;
@@ -68,6 +70,8 @@ export interface ItemSalesStore {
   days(scope: OrgScope, locationId: string, range: { from: string; to: string }): Promise<ItemSalesDay[]>;
   /** Null when no day is stored. */
   coverage(scope: OrgScope, locationId: string): Promise<ItemSalesCoverage | null>;
+  /** True when the location has any item-sales day (the location delete's data check). */
+  hasAny(scope: OrgScope, locationId: string): Promise<boolean>;
   /** The location's item sales, with its sales data or with the location. Resolves the number of days deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
   /** Organization deletion (spec 10.7). */
@@ -119,6 +123,9 @@ export function createItemSalesStore(connection: Connection): ItemSalesStore {
         { $group: { _id: null, first: { $min: '$date' }, last: { $max: '$date' }, days: { $sum: 1 } } },
       ]);
       return row === undefined ? null : { firstDate: row.first, lastDate: row.last, dayCount: row.days };
+    },
+    async hasAny(scope, locationId) {
+      return (await ItemSales.exists(place(scope, locationId))) !== null;
     },
     async removeForLocation(scope, locationId) {
       return (await ItemSales.deleteMany(place(scope, locationId))).deletedCount;
