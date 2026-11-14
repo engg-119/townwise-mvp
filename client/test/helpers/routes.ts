@@ -11,7 +11,7 @@ export const ROUTES = [
   '/request-access', '/waiting', '/no-access', '/joining', '/staff/sign-in-again', '/settings/security',
   '/dashboard', '/locations/new', '/locations/[locationId]', '/locations/[locationId]/analytics', '/locations/[locationId]/sales',
   '/locations/[locationId]/sales/upload', '/locations/[locationId]/data', '/locations/[locationId]/data/[ref]', '/locations/[locationId]/notes', '/locations/[locationId]/town',
-  '/locations/[locationId]/orders', '/locations/[locationId]/agent', '/locations/[locationId]/settings', '/locations/[locationId]/chat', '/team', '/settings',
+  '/locations/[locationId]/orders', '/locations/[locationId]/orders/setup', '/locations/[locationId]/agent', '/locations/[locationId]/settings', '/locations/[locationId]/chat', '/team', '/settings',
   '/admin', '/admin/orgs', '/admin/orgs/[orgId]', '/admin/people', '/admin/audit',
 ];
 

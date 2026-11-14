@@ -13,20 +13,28 @@ test('a day this year reads with its weekday, and another year adds the year', (
   expect(aboutDraft('2027-12-11', TODAY)).toBe('Tell me about Sat, Dec 11, 2027');
 });
 
+// One next order per supplier: the brewery's delivers Tuesday, the distributor's Thursday.
 const BOARD: OrderDraftBoard = {
-  delivery: '2026-11-12',
-  lines: [{ itemId: 'sample-lager', name: 'Sample lager' }],
+  orders: [
+    { delivery: '2026-11-10', lines: [{ itemId: 'sample-keg', name: 'Sample keg' }] },
+    { delivery: '2026-11-12', lines: [{ itemId: 'sample-lager', name: 'Sample lager' }] },
+  ],
 };
 
 test('an order link names the item and the delivery, and never a quantity', () => {
   expect(orderDraft('2026-11-12', 'sample-lager', BOARD)).toBe('Why Sample lager for the Thu, Nov 12 delivery?');
   expect(orderDraft('2026-11-12', undefined, BOARD)).toBe('Explain the order for the Thu, Nov 12 delivery');
   expect(orderDraft('2026-11-12', '', BOARD)).toBe('Explain the order for the Thu, Nov 12 delivery');
+  // Each supplier's order is found by its own delivery.
+  expect(orderDraft('2026-11-10', 'sample-keg', BOARD)).toBe('Why Sample keg for the Tue, Nov 10 delivery?');
 });
 
 test('a date or item the board does not have leaves the composer alone', () => {
   expect(orderDraft('2026-11-13', 'sample-lager', BOARD)).toBeNull();
   expect(orderDraft('2026-11-12', 'missing', BOARD)).toBeNull();
+  // An item on another supplier's order is not on this delivery.
+  expect(orderDraft('2026-11-12', 'sample-keg', BOARD)).toBeNull();
+  expect(orderDraft('2026-11-12', undefined, { orders: [] })).toBeNull();
   expect(orderDraft('2026-11-12', 'sample-lager', null)).toBeNull();
   expect(orderDraft(undefined, undefined, BOARD)).toBeNull();
 });

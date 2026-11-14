@@ -120,8 +120,8 @@ test('the fixed copy names what is not built yet and promises nothing', () => {
     guestForecastSentence({ date: '2026-11-12', status: 'open', low: 150.2, mid: 180.4, high: 210.8 }),
     guestForecastSentence({ date: '2026-11-12', status: 'closed', low: null, mid: null, high: null }),
     orderCoverSentence('2026-11-12', null),
-    orderCoverSentence('2026-11-12', { sample: false, cutoff: '2026-11-11', delivery: '2026-11-12', coversThrough: '2026-11-16' }),
-    orderCoverSentence('2026-11-20', { sample: true, cutoff: '2026-11-11', delivery: '2026-11-12', coversThrough: '2026-11-16' }),
+    orderCoverSentence('2026-11-12', { sample: false, supplier: 'Sample distributor', cutoff: '2026-11-11', delivery: '2026-11-12', coversThrough: '2026-11-16' }),
+    orderCoverSentence('2026-11-20', { sample: true, supplier: 'Sample distributor', cutoff: '2026-11-11', delivery: '2026-11-12', coversThrough: '2026-11-16' }),
   ];
   for (const line of glance) expect(line).not.toMatch(FORECAST_WORDING);
   expect(guestForecastSentence({ date: '2026-11-12', status: 'open', low: 150.2, mid: 180.4, high: 210.8 }))
@@ -131,4 +131,19 @@ test('the fixed copy names what is not built yet and promises nothing', () => {
   expect(questionsLabel(5)).toBe('5 questions from TownwiseAI');
   expect(questionsLabel(1200)).toBe('1,200 questions from TownwiseAI');
   expect(questionsLabel(2)).not.toMatch(FORECAST_WORDING);
+});
+
+// #68 review S2: the reorder copy beside the calendar and on Orders describes the method the board runs
+// (api/src/orders/engine.ts), and claims nothing it does not do: no prices, no promise never to run out, no sight of
+// stock beyond the counts, and nothing sent or placed for the owner.
+test('the reorder copy says how the board works and promises nothing it doesn’t do', () => {
+  expect(REORDER_OVERVIEW).not.toMatch(FORECAST_WORDING);
+  for (const word of [/price|cost|cheap|margin/i, /never run|guarantee|always/i, /\bstock\b|on hand|inventory/i, /automatic|for you\b/i]) {
+    expect(REORDER_OVERVIEW).not.toMatch(word);
+  }
+  expect(REORDER_OVERVIEW).toMatch(/weekday over the last 8 weeks/);
+  expect(REORDER_OVERVIEW).toMatch(/guest forecast when one is published/);
+  expect(REORDER_OVERVIEW).toMatch(/minus your last count/);
+  expect(REORDER_OVERVIEW).toMatch(/You place every order yourself; nothing is sent to a distributor\.$/);
+  expect(REORDER_OVERVIEW).not.toMatch(/—/);
 });

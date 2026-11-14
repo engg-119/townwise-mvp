@@ -8,7 +8,7 @@ import { fetchForecast, monthRange, type ForecastGlanceDay } from '../estimates/
 import { fetchOrderBoard } from '../orders/api';
 import { usePortal } from '../PortalProvider';
 import { Mono, Small } from '../ui/text';
-import { guestForecastSentence, orderCoverSentence, REORDER_OVERVIEW, type OrderWindow } from './beside';
+import { guestForecastSentence, orderCoverSentence, orderForDay, REORDER_OVERVIEW } from './beside';
 
 // Beside the month calendar: the selected day's published guest forecast, then how an order is built and whether
 // this day sits in the next one. Each read fails on its own, so Home still shows the calendar.
@@ -31,15 +31,12 @@ export function BesideCalendar(props: { locationId: string; date: string }): Rea
     : forecast.state.status === 'failed'
       ? 'Townwise couldn’t check the guest forecast for this day.'
       : 'Checking the published guest forecast.';
-  const window: OrderWindow | null = order.state.status === 'ready' && order.state.data.available
-    ? order.state.data
-    : null;
   const cover = order.state.status === 'failed'
     ? 'Townwise couldn’t check the next order.'
     : order.state.status !== 'ready'
       ? 'Checking the next order.'
       : order.state.data.available
-        ? orderCoverSentence(date, window)
+        ? orderCoverSentence(date, orderForDay(date, order.state.data))
         : order.state.data.reason;
   return (
     <View style={styles.root}>

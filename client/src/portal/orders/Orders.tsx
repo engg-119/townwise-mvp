@@ -3,22 +3,29 @@ import { useCallback, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { theme } from '../../theme';
+import { listText } from '../analytics/words';
+import { plural } from '../format';
 import { useLoad } from '../hooks';
 import { LoadFailure, Loading } from '../locations/parts';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { locationHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
 import { Actions, Button, LinkButton } from '../ui/Button';
+import { Notice, ReadOnlyLine } from '../ui/feedback';
 import { DataTable, type Row } from '../ui/DataTable';
-import { ErrorNotice, ReadOnlyLine } from '../ui/feedback';
-import { FormField } from '../ui/FormField';
-import { Small } from '../ui/text';
-import { dayInOrder, REORDER_OVERVIEW, orderCoverSentence } from '../home/beside';
-import { fetchOrderBoard, saveOrderDecision, saveOrderRule, turnOffOrderRule, type OrderBoard, type OrderLine } from './api';
+import { Heading, Small } from '../ui/text';
+import { dayInOrder, orderCoverSentence, orderForDay, REORDER_OVERVIEW } from '../home/beside';
+import { fetchOrderBoard, type LiveBoard, type OrderBoard, type OrderLine, type SupplierOrder } from './api';
+import { CountForm } from './CountForm';
+import { LineEditor } from './LineEditor';
 
-// Orders (/locations/[id]/orders). The live board is empty until item sales, a count, and a supplier schedule
-// exist. Preview asks the server for the labeled sample. Nothing on a sample can be saved, and nothing is sent
-// to a distributor.
+// P30 Orders (/locations/[id]/orders, members; design Decisions 2, 6 and 10): the location's next order from each
+// supplier, soonest order-by first, each with its deadline and a line per item; "Enter a count" one step from the
+// board; and links to the Ordering setup. With no setup the page says what is missing. Preview asks the server for
+// the labeled sample, on which nothing can be saved. Nothing is sent to a distributor. Under view-as every write is
+// disabled in place, described by the read-only line.
+
+const READ_ONLY_ID = 'orders-ro';
 
 const COLUMNS = [
   { key: 'item', label: 'Item', flex: 2 },
@@ -35,8 +42,8 @@ function otherDeal(line: OrderLine): string {
   return line.alternative === null ? '—' : `${String(line.alternative)} ${line.unit}`;
 }
 
-function rows(lines: readonly OrderLine[], locationId: string, delivery: string): Row[] {
-  return lines.map((line) => ({
+function rows(order: SupplierOrder, locationId: string): Row[] {
+  return order.lines.map((line) => ({
     key: line.itemId,
     cells: {
       item: line.neverRunOut ? `${line.name} · Never run out` : line.name,
@@ -46,7 +53,7 @@ function rows(lines: readonly OrderLine[], locationId: string, delivery: string)
         <View style={styles.why}>
           <Small>{line.sample ? `Sample. ${line.why}` : line.why}</Small>
           <LinkButton
-            href={`${locationHref(locationId, 'agent')}?order=${delivery}&item=${encodeURIComponent(line.itemId)}`}
+            href={`${locationHref(locationId, 'agent')}?order=${order.delivery}&item=${encodeURIComponent(line.itemId)}`}
             label={`Ask why ${line.name}`}
           />
         </View>
@@ -55,17 +62,13 @@ function rows(lines: readonly OrderLine[], locationId: string, delivery: string)
   }));
 }
 
-function suppliers(lines: readonly OrderLine[]): string[] {
-  const names: string[] = [];
-  for (const line of lines) if (!names.includes(line.supplier)) names.push(line.supplier);
-  return names;
-}
-
 export function Orders(): React.JSX.Element {
   const { api } = usePortal();
   const { location } = useLocation();
   const { readOnly, line: readOnlyLine } = useReadOnly();
   const [preview, setPreview] = useState(false);
+  // Held here, so the line outlives the board's reload after the count.
+  const [counted, setCounted] = useState<number | null>(null);
   const load = useCallback(
     () => fetchOrderBoard(api, location.id, preview),
     [api, location.id, preview],
@@ -76,82 +79,111 @@ export function Orders(): React.JSX.Element {
   const day = typeof rawDay === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(rawDay) ? rawDay : null;
   if (board.state.status === 'loading') return <Loading text={`Loading orders for ${location.name}`} />;
   if (board.state.status === 'failed') return <LoadFailure error={board.state.error} onRetry={board.reload} />;
+  const readOnlyId = readOnly ? READ_ONLY_ID : null;
   return (
     <View style={styles.page}>
-      {readOnly ? <ReadOnlyLine text={readOnlyLine} nativeID="orders-ro" /> : null}
+      {readOnly ? <ReadOnlyLine text={readOnlyLine} nativeID={READ_ONLY_ID} /> : null}
       {day === null ? null : <DayReason day={day} data={board.state.data} />}
-      <Board
-        data={board.state.data}
-        locationId={location.id}
-        locationName={location.name}
-        preview={preview}
-        readOnly={readOnly}
-        readOnlyId={readOnly ? 'orders-ro' : null}
-        onPreview={() => { setPreview(true); }}
-        onSaved={board.reload}
-      />
+      {board.state.data.available ? (
+        <Board
+          data={board.state.data}
+          locationId={location.id}
+          locationName={location.name}
+          preview={preview}
+          readOnly={readOnly}
+          readOnlyId={readOnlyId}
+          counted={counted}
+          onPreview={() => { setPreview(true); }}
+          onSaved={() => { setCounted(null); board.reload(); }}
+          onCounted={(itemCount) => { setCounted(itemCount); board.reload(); }}
+        />
+      ) : (
+        <View style={styles.stack}>
+          <Small>{board.state.data.reason}</Small>
+          {board.state.data.missing.length > 0 ? <Small>Townwise still needs {listText(board.state.data.missing)}.</Small> : null}
+          <Actions>
+            <LinkButton variant="primary" href={locationHref(location.id, 'ordersSetup')} label="Set up ordering" />
+            <Button variant="outline" label="Preview with a sample bar" onPress={() => { setPreview(true); }} />
+          </Actions>
+        </View>
+      )}
     </View>
   );
 }
 
 function DayReason(props: { day: string; data: OrderBoard }): React.JSX.Element {
-  const order = props.data.available ? props.data : null;
+  const order = props.data.available ? orderForDay(props.day, props.data) : null;
   return (
     <View style={styles.stack}>
       <Small>{REORDER_OVERVIEW}</Small>
       <Small white>{orderCoverSentence(props.day, order)}</Small>
       {order !== null && dayInOrder(props.day, order) ? (
-        <Small>Each line below is that order, with why it came out that way.</Small>
+        <Small>Each line of the {order.supplier} order below is what to order, with why it came out that way.</Small>
       ) : null}
     </View>
   );
 }
 
 function Board(props: {
-  data: OrderBoard;
+  data: LiveBoard;
   locationId: string;
   locationName: string;
   preview: boolean;
   readOnly: boolean;
   readOnlyId: string | null;
+  counted: number | null;
   onPreview: () => void;
   onSaved: () => void;
+  onCounted: (itemCount: number) => void;
 }): React.JSX.Element {
-  const { data } = props;
-  if (!data.available) {
-    return (
-      <View style={styles.stack}>
-        <Small>{data.reason}</Small>
-        <Actions>
-          <Button variant="primary" label="Preview with a sample bar" onPress={props.onPreview} />
-        </Actions>
-      </View>
-    );
-  }
+  const { data, counted } = props;
+  const [counting, setCounting] = useState(false);
+  const described = props.readOnlyId === null ? {} : { describedBy: props.readOnlyId };
   return (
     <View style={styles.stack}>
-      <Small>{data.deadline}</Small>
+      {counted === null ? null : <Notice text={`Saved today’s count for ${plural(counted, 'item', 'items')}.`} />}
       {data.sample ? (
         <Small>Sample bar. These lines are not {props.locationName}’s stock, and nothing here can be saved.</Small>
       ) : null}
-      {data.missing.length > 0 ? <Small>Townwise still can’t see {data.missing.join(', ')}.</Small> : null}
+      {data.missing.length > 0 ? <Small>Townwise still can’t see {listText(data.missing)}.</Small> : null}
       <Actions>
-        <LinkButton href={`${locationHref(props.locationId, 'agent')}?order=${data.delivery}`} label="Explain this order" variant="outline" />
+        {data.sample || counting ? null : (
+          <Button variant="outline" label="Enter a count" disabled={props.readOnly} {...described} onPress={() => { setCounting(true); }} />
+        )}
+        <LinkButton
+          variant="outline"
+          href={locationHref(props.locationId, 'ordersSetup')}
+          label={data.sample ? 'Set up ordering' : 'Edit ordering setup'}
+        />
         {props.preview ? null : <Button variant="outline" label="Preview with a sample bar" onPress={props.onPreview} />}
       </Actions>
-      {suppliers(data.lines).map((supplier) => (
-        <View key={supplier} style={styles.stack}>
-          <Small>{supplier}</Small>
-          <DataTable
-            label={`${supplier} order`}
-            columns={COLUMNS}
-            rows={rows(data.lines.filter((line) => line.supplier === supplier), props.locationId, data.delivery)}
-          />
-          {data.sample ? null : data.lines.filter((line) => line.supplier === supplier).map((line) => (
+      {counting && !data.sample ? (
+        <CountForm
+          orders={data.orders}
+          locationId={props.locationId}
+          readOnly={props.readOnly}
+          readOnlyId={props.readOnlyId}
+          onCancel={() => { setCounting(false); }}
+          onSaved={(itemCount) => { setCounting(false); props.onCounted(itemCount); }}
+        />
+      ) : null}
+      {data.orders.map((order) => (
+        <View key={order.supplierId} style={styles.stack}>
+          <Heading>{order.supplier}</Heading>
+          <Small white>{order.deadline}</Small>
+          <DataTable label={`${order.supplier} order`} columns={COLUMNS} rows={rows(order, props.locationId)} />
+          <Actions>
+            <LinkButton
+              href={`${locationHref(props.locationId, 'agent')}?order=${order.delivery}`}
+              label={`Explain the ${order.supplier} order`}
+              variant="outline"
+            />
+          </Actions>
+          {data.sample ? null : order.lines.map((line) => (
             <LineEditor
               key={line.itemId}
               line={line}
-              delivery={data.delivery}
+              delivery={order.delivery}
               locationId={props.locationId}
               readOnly={props.readOnly}
               readOnlyId={props.readOnlyId}
@@ -160,68 +192,6 @@ function Board(props: {
           ))}
         </View>
       ))}
-    </View>
-  );
-}
-
-function LineEditor(props: {
-  line: OrderLine;
-  delivery: string;
-  locationId: string;
-  readOnly: boolean;
-  readOnlyId: string | null;
-  onSaved: () => void;
-}): React.JSX.Element {
-  const { api } = usePortal();
-  const [quantity, setQuantity] = useState(String(props.line.edit?.quantity ?? props.line.recommended));
-  const [reason, setReason] = useState(props.line.edit?.reason ?? '');
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
-  const locked = props.readOnly || pending;
-  const field = props.readOnlyId === null ? {} : { readOnlyId: props.readOnlyId };
-
-  async function run(work: () => Promise<unknown>): Promise<void> {
-    setPending(true);
-    setError(null);
-    try {
-      await work();
-      props.onSaved();
-    } catch {
-      setError('That didn’t save. Try again.');
-    } finally {
-      setPending(false);
-    }
-  }
-
-  const rule = props.line.rule;
-  return (
-    <View style={styles.stack}>
-      <FormField label={`Quantity for ${props.line.name}`} numeric value={quantity} onChangeText={setQuantity} readOnly={props.readOnly} {...field} />
-      <FormField label="Why" value={reason} onChangeText={setReason} readOnly={props.readOnly} {...field} />
-      {error === null ? null : <ErrorNotice message={error} />}
-      <Actions>
-        <Button
-          variant="primary"
-          label="Save this line"
-          disabled={locked}
-          onPress={() => {
-            void run(() => saveOrderDecision(api, props.locationId, {
-              itemId: props.line.itemId, delivery: props.delivery, quantity: Number(quantity), reason,
-            }));
-          }}
-        />
-        {props.line.edit === null || rule !== null ? null : (
-          <Button
-            variant="outline"
-            label="Remember this"
-            disabled={locked}
-            onPress={() => { void run(() => saveOrderRule(api, props.locationId, { itemId: props.line.itemId, situation: props.line.edit?.reason ?? reason })); }}
-          />
-        )}
-        {rule === null ? null : (
-          <Button variant="outline" label="Turn this rule off" disabled={locked} onPress={() => { void run(() => turnOffOrderRule(api, props.locationId, rule.id)); }} />
-        )}
-      </Actions>
     </View>
   );
 }
