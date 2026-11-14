@@ -16,8 +16,10 @@ import { ErrorNotice, LoadingLine, Messages, Notice } from '../ui/feedback';
 import { Section, Stack } from '../ui/layout';
 import { MessageFocus, useFocusMessage } from '../ui/messageFocus';
 import { Small } from '../ui/text';
+import { AI } from './aiCopy';
 import { getItem, type DataItem } from './api';
 import { DATA, dataError, itemName, shownName } from './copy';
+import { AiSection } from './item/AiSection';
 import { addedByLine, EDIT, editedLine, ITEM, itemDaysLine, kindLine, renamedLine, statusLine, tooBigToEditLine } from './item/copy';
 import type { Editable, Saved } from './item/edit';
 import { ItemContent } from './item/ItemContent';
@@ -35,6 +37,9 @@ import { RenameForm } from './item/RenameForm';
 // saved edit lands on the edited item's new ref, or on the copy, with `?saved=` in the address; the page reads that
 // once into its own state, says “Saved.” there and drops it from the address, so a reload doesn't say it again.
 // Focus moves to the line that says how an action ended (MessageFocus), since each one takes its opener away.
+//
+// TownwiseAI (D34, item/AiSection): an item with a stored file offers a TownwiseAI read, shows it while it runs and
+// what it found and added once done, with Undo; an upload or a summary TownwiseAI made links to its file.
 
 /** One action in the item's header. */
 interface ItemAction {
@@ -83,6 +88,11 @@ function ItemOfPath(): React.JSX.Element {
     const href = itemHref(location.id, next);
     router.replace(how === undefined ? href : `${href}?saved=${how}`);
   }, [router, location.id]);
+  // An action's answer, shown while the item is read again.
+  const showItem = useCallback((next: DataItem) => {
+    setShown(next);
+    reload();
+  }, [reload]);
   const dataHref = locationHref(location.id, 'data');
   const back = <LinkButton variant="link" href={dataHref} label={ITEM.back} />;
 
@@ -95,7 +105,7 @@ function ItemOfPath(): React.JSX.Element {
     );
   }
   if (item === null) return <Section><LoadingLine text={ITEM.loading} /></Section>;
-  return <Item item={item} viewAs={readOnly} back={back} reload={reload} openRef={openRef} saved={saved} />;
+  return <Item item={item} viewAs={readOnly} back={back} reload={reload} showItem={showItem} openRef={openRef} saved={saved} />;
 }
 
 function Item(props: {
@@ -103,6 +113,8 @@ function Item(props: {
   viewAs: boolean;
   back: React.ReactNode;
   reload: () => void;
+  /** Shows an action's answer, then reads the item again. */
+  showItem: (item: DataItem) => void;
   openRef: (ref: string, saved?: Saved) => void;
   /** “Saved.” when a save opened this page. */
   saved: string | null;
@@ -176,6 +188,7 @@ function Item(props: {
           <Small>{statusLine(item)}</Small>
           {days === null ? null : <Small>{days}</Small>}
         </View>
+        {item.fromAiRead === null ? null : <LinkButton href={itemHref(item.locationId, item.fromAiRead)} label={AI.madeBy} />}
         {(canRaw || canClean) && !CAN_SAVE_FILES ? <Small>{DATA.nativeDownload}</Small> : null}
         {actions.length === 0 ? null : (
           <Actions>
@@ -206,6 +219,7 @@ function Item(props: {
             onClose={() => { setMode(null); }}
           />
         ) : null}
+        {mode === 'edit' ? null : <AiSection item={item} showItem={props.showItem} reload={props.reload} />}
         <ItemContent
           item={item}
           viewAs={props.viewAs}

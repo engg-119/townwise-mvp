@@ -41,6 +41,14 @@ export interface ToolContext {
   readonly role: Role;
   /** The caller as chat.turn_completed records them, for the events a tool records. */
   readonly actor: Pick<AuditEventInput, 'actorUserId' | 'actorEmail' | 'actorRole' | 'viewAsGrantId'>;
+  /**
+   * What this turn has read so far, shared by its tool calls (D36). `readUntrusted` is set from the start when the
+   * turn's requests carry the content of files attached to the person's message, and by read_data_item once it hands
+   * back an item's text in this turn. While it is set, start_calibration (the one tool that acts at once) refuses, so
+   * words from a file of Your data can never start it. A read from an earlier turn is sent again only as a stub
+   * (savedTurn), so it never sets it.
+   */
+  readonly turn: { readUntrusted: boolean };
 }
 
 export type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue };

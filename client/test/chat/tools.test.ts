@@ -243,38 +243,6 @@ test('the lab tools read counts and codes: whether a calibration started, its st
   expect(basedOnLine([start, step('get_calibration', 'done', null, read)], CTX)).toBe('Based on your latest forecast calibration.');
 });
 
-test('get_owner_calendar says how many events it read from how many calendars, never a title or a calendar’s name', () => {
-  const range = { from: '2026-11-16', to: '2026-11-22' };
-  // The result views exactly as api/src/chat/tools/owner-calendar.ts builds them.
-  const read = { available: true, calendars: 2, eventCount: 2, truncated: false, skippedRepeating: 3 };
-  const none = { available: false, calendars: 0, eventCount: 0, truncated: false, skippedRepeating: 0 };
-  expect(toolLine(step('get_owner_calendar', 'running', range), CTX).sentence).toBe('Reading your calendars for Nov 16 to Nov 22, 2026');
-  expect(toolLine(step('get_owner_calendar', 'done', range, read), CTX)).toMatchObject({
-    sentence: 'Read your calendars for Nov 16 to Nov 22, 2026', detail: '2 events from 2 calendars', sources: [],
-  });
-  expect(toolLine(step('get_owner_calendar', 'done', range, { ...read, calendars: 1, eventCount: 1 }), CTX).detail).toBe('1 event from 1 calendar');
-  expect(toolLine(step('get_owner_calendar', 'done', range, { ...read, eventCount: 0 }), CTX).detail).toBe('No events in this range');
-  expect(toolLine(step('get_owner_calendar', 'done', range, { ...read, calendars: 5, eventCount: 100, truncated: true }), CTX).detail)
-    .toBe('The first 100 events from 5 calendars');
-  expect(toolLine(step('get_owner_calendar', 'done', range, none), CTX).detail).toBe('No calendar connected');
-  expect(toolLine(step('get_owner_calendar', 'error', range), CTX).sentence).toBe('Couldn’t read your calendars for Nov 16 to Nov 22, 2026');
-
-  expect(basedOnLine([step('get_owner_calendar', 'done', range, read)], CTX)).toBe('Based on your calendars for Nov 16 to Nov 22, 2026.');
-  expect(basedOnLine([step('get_owner_calendar', 'done', range, none)], CTX)).toBe('Based on your calendars for Nov 16 to Nov 22, 2026 (none connected).');
-  // Its own words for `available` (a calendar is connected, not "researched") and for its counts.
-  expect(viewRows(range, read, 'get_owner_calendar')).toEqual([
-    { term: 'From', value: 'Nov 16, 2026' }, { term: 'To', value: 'Nov 22, 2026' }, { term: 'Calendar connected', value: 'Yes' },
-    { term: 'Calendars', value: '2' }, { term: 'Events', value: '2' }, { term: 'Cut short', value: 'No' },
-    { term: 'Repeating events not imported', value: '3' },
-  ]);
-
-  // What TownwiseAI reads names the owner's calendars only once the page knows the location has one.
-  expect(readsLine(CTX)).not.toMatch(/your calendars/);
-  expect(readsLine({ ...CTX, hasCalendar: false })).not.toMatch(/your calendars/);
-  expect(readsLine({ ...CTX, hasCalendar: true }))
-    .toBe('your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover, what your team added on Your data and your calendars');
-});
-
 test('the order tools: the board, one line and the setup in counts and dates; the two cards show as cards', () => {
   const board = { available: true, orderCount: 3, lineCount: 24, cutoff: '2026-11-18' };
   expect(toolLine(step('get_order_board', 'done', null, board), CTX)).toMatchObject({ sentence: 'Read your next orders', detail: '3 orders, 24 items' });
@@ -307,6 +275,38 @@ test('the order tools: the board, one line and the setup in counts and dates; th
   expect(basedOnLine([step('get_order_line', 'done', null, { available: false })], CTX)).toBe('Based on this conversation only.');
   expect(basedOnLine([step('propose_order_change', 'done', { itemId: 'a'.repeat(24), delivery: '2026-11-19' }, { shown: true })], CTX))
     .toBe('Based on this conversation only.');
+});
+
+test('get_owner_calendar says how many events it read from how many calendars, never a title or a calendar’s name', () => {
+  const range = { from: '2026-11-16', to: '2026-11-22' };
+  // The result views exactly as api/src/chat/tools/owner-calendar.ts builds them.
+  const read = { available: true, calendars: 2, eventCount: 2, truncated: false, skippedRepeating: 3 };
+  const none = { available: false, calendars: 0, eventCount: 0, truncated: false, skippedRepeating: 0 };
+  expect(toolLine(step('get_owner_calendar', 'running', range), CTX).sentence).toBe('Reading your calendars for Nov 16 to Nov 22, 2026');
+  expect(toolLine(step('get_owner_calendar', 'done', range, read), CTX)).toMatchObject({
+    sentence: 'Read your calendars for Nov 16 to Nov 22, 2026', detail: '2 events from 2 calendars', sources: [],
+  });
+  expect(toolLine(step('get_owner_calendar', 'done', range, { ...read, calendars: 1, eventCount: 1 }), CTX).detail).toBe('1 event from 1 calendar');
+  expect(toolLine(step('get_owner_calendar', 'done', range, { ...read, eventCount: 0 }), CTX).detail).toBe('No events in this range');
+  expect(toolLine(step('get_owner_calendar', 'done', range, { ...read, calendars: 5, eventCount: 100, truncated: true }), CTX).detail)
+    .toBe('The first 100 events from 5 calendars');
+  expect(toolLine(step('get_owner_calendar', 'done', range, none), CTX).detail).toBe('No calendar connected');
+  expect(toolLine(step('get_owner_calendar', 'error', range), CTX).sentence).toBe('Couldn’t read your calendars for Nov 16 to Nov 22, 2026');
+
+  expect(basedOnLine([step('get_owner_calendar', 'done', range, read)], CTX)).toBe('Based on your calendars for Nov 16 to Nov 22, 2026.');
+  expect(basedOnLine([step('get_owner_calendar', 'done', range, none)], CTX)).toBe('Based on your calendars for Nov 16 to Nov 22, 2026 (none connected).');
+  // Its own words for `available` (a calendar is connected, not "researched") and for its counts.
+  expect(viewRows(range, read, 'get_owner_calendar')).toEqual([
+    { term: 'From', value: 'Nov 16, 2026' }, { term: 'To', value: 'Nov 22, 2026' }, { term: 'Calendar connected', value: 'Yes' },
+    { term: 'Calendars', value: '2' }, { term: 'Events', value: '2' }, { term: 'Cut short', value: 'No' },
+    { term: 'Repeating events not imported', value: '3' },
+  ]);
+
+  // What TownwiseAI reads names the owner's calendars only once the page knows the location has one.
+  expect(readsLine(CTX)).not.toMatch(/your calendars/);
+  expect(readsLine({ ...CTX, hasCalendar: false })).not.toMatch(/your calendars/);
+  expect(readsLine({ ...CTX, hasCalendar: true }))
+    .toBe('your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover, what your team added on Your data and your calendars');
 });
 
 test('a tool this table doesn’t know yet still gets a card, in general words', () => {

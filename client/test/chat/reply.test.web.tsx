@@ -69,7 +69,7 @@ function text(key: string, value: string): MessagePart {
 function msg(key: string, role: ChatMessage['role'], parts: MessagePart[], over: Partial<ChatMessage> = {}): ChatMessage {
   return {
     key, role, parts, state: 'complete', note: null, nodeId: null, parentId: null, feedback: null, ratingError: null, next: null,
-    request: null, startedAt: null, endedAt: null, at: null, ...over,
+    request: null, startedAt: null, endedAt: null, at: null, attachments: [], ...over,
   };
 }
 
@@ -88,7 +88,7 @@ function replyProps(over: Partial<ReplyProps> = {}): ReplyProps {
 }
 
 function userProps(over: Partial<UserProps> = {}): UserProps {
-  return { message: ASKED, tree: TREE, chat: fakeChat(), readOnlyId: null, busy: false, actions: 'always', onAnnounce: jest.fn(), ...over };
+  return { message: ASKED, tree: TREE, chat: fakeChat(), locationId: 'l1', readOnlyId: null, busy: false, actions: 'always', onAnnounce: jest.fn(), ...over };
 }
 
 function button(name: string): HTMLElement {

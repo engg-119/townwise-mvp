@@ -21,7 +21,7 @@ function note(fields: Partial<NoteContent> = {}): NoteRecord {
   ids += 1;
   return {
     id: String(ids).padStart(24, '0'), kind: 'private_event', startDate: DAY, endDate: DAY, weekdays: null, effect: 'more_guests',
-    expectedGuests: 70, detail: null, startTime: null, endTime: null, createdBy: 'author', byStaff: false,
+    expectedGuests: 70, detail: null, startTime: null, endTime: null, createdBy: 'author', byStaff: false, source: null,
     createdAt: new Date('2026-05-01T00:00:00Z'), updatedAt: new Date('2026-05-01T00:00:00Z'), ...fields,
   };
 }

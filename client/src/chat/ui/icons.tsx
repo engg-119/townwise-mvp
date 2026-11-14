@@ -3,7 +3,8 @@ import Svg, { Path } from 'react-native-svg';
 // TownwiseAI's icons, stroked or filled in the color their control's label would have, and decorative: each control
 // is named by its words. The thumbs on Helpful and Not helpful and the composer's up arrow are Lucide's thumbs-up,
 // thumbs-down and arrow-up (ISC license, lucide.dev), as are the message rows' Copy, Check, Pencil and Regenerate
-// (Lucide's copy, check, pencil and rotate-cw) and the composer's Add a file (Lucide's plus); Stop is a filled square.
+// (Lucide's copy, check, pencil and rotate-cw), the composer's Attach files (Lucide's plus) and a file chip's Remove
+// (Lucide's x); Stop is a filled square.
 
 const UP = 'M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z';
 const DOWN = 'M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z';
@@ -88,6 +89,16 @@ export function Plus(props: { color: string }): React.JSX.Element {
     <Stroked color={props.color} size={20}>
       <Path d="M5 12h14" />
       <Path d="M12 5v14" />
+    </Stroked>
+  );
+}
+
+/** Lucide's x: a file chip's Remove. */
+export function Close(props: { color: string }): React.JSX.Element {
+  return (
+    <Stroked color={props.color} size={16}>
+      <Path d="M18 6 6 18" />
+      <Path d="m6 6 12 12" />
     </Stroked>
   );
 }

@@ -222,6 +222,24 @@ test('Edit opens the note in the form and replaces it in full', async () => {
   expect(screen.queryByRole('heading', { name: 'Edit this note' })).toBeNull();
 });
 
+test('a note TownwiseAI made from a file says so under its author, and its edit form says undoing the read removes it (D34)', async () => {
+  const fromFile = noteOf('n4', { kind: 'private_event', startDate: day(30), endDate: day(30), effect: 'more_guests', source: { via: 'ai_file', fileId: 'file-1' } });
+  const { api } = setup(meOf(ACCESS.member), [...NOTES, fromFile]);
+  await renderApp('/locations/l1/notes', api);
+  const coming = await screen.findByLabelText('Notes coming up');
+  // Only the note with the file source carries the line, and it links nowhere.
+  expect(within(coming).getAllByText('From a file TownwiseAI read')).toHaveLength(1);
+  expect(within(coming).queryByRole('link')).toBeNull();
+  await fireEvent.press(within(coming).getByRole('button', { name: `Edit Private event note, ${formatDate(day(30))}` }));
+  expect(screen.getByRole('heading', { name: 'Edit this note' })).toBeTruthy();
+  expect(screen.getByText('Undoing that file’s read removes this note, even after an edit.')).toBeTruthy();
+  await fireEvent.press(screen.getByRole('button', { name: 'Cancel' }));
+  // A note of the person's own has no such line in its form.
+  await fireEvent.press(within(coming).getByRole('button', { name: `Edit Closure note, ${formatDate(day(10))} to ${formatDate(day(12))}` }));
+  expect(screen.getByRole('heading', { name: 'Edit this note' })).toBeTruthy();
+  expect(screen.queryByText('Undoing that file’s read removes this note, even after an edit.')).toBeNull();
+});
+
 test('Delete asks first, then removes the note', async () => {
   const { api } = setup();
   await renderApp('/locations/l1/notes', api);

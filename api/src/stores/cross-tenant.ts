@@ -1,10 +1,12 @@
 // Operations keyed by a person, or spanning organizations (spec 6.10 rule 8). The list is closed:
 // findActiveSeat, findOpenInvites, claimInvite, declineInvite, latestRemovedSeat, adminOrgStats, peopleRecords,
-// deletePersonRecords, the forecast lab's findLabCallback, the file reader's claimNextImport, the daily file sweep's claimFileSweep, finishFileSweep,
-// sweepCandidates, removeOldUploadDays and existingFileIds, and the calendar refresh loop's claimDueCalendar.
+// deletePersonRecords, the forecast lab's findLabCallback, the file reader's claimNextImport, the TownwiseAI reader's
+// claimNextAiRead, the daily file sweep's claimFileSweep, finishFileSweep, sweepCandidates, removeOldUploadDays and
+// existingFileIds, and the calendar refresh loop's claimDueCalendar.
 // Only access/resolve.ts, the join and decline handlers, the staff handlers (admin.ts, deletion.ts), the file reader
-// (files/worker.ts), the file sweeper (files/sweeper.ts), the lab job's callback (lab/callback.ts) and the calendar
-// refresh loop (calendar/refresher.ts) import this file (test/isolation.test.ts enforces the list).
+// (files/worker.ts), the TownwiseAI reader (files/ai-reader.ts), the file sweeper (files/sweeper.ts), the lab job's
+// callback (lab/callback.ts) and the calendar refresh loop (calendar/refresher.ts) import this file (test/isolation.test.ts
+// enforces the list).
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { trusted, Types, type Connection } from 'mongoose';
 
@@ -370,6 +372,52 @@ export async function claimNextImport(
   ).lean();
   if (doc === null) return null;
   return { id: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString() };
+}
+
+/**
+ * A file the TownwiseAI reader claimed (spec 11A.9). Only access/policy.ts's scopeForClaimedAiRead turns it into an
+ * OrgScope. `attempt` is the claim's token: the attempt count it set, which every later write under it matches.
+ */
+export interface ClaimedAiRead {
+  readonly id: string;
+  readonly orgId: string;
+  readonly locationId: string;
+  readonly attempt: number;
+}
+
+/**
+ * The TownwiseAI reader's claim (spec 11A.9), across organizations: the file whose read was asked for first that is
+ * `queued` (and past its `notBefore`, when an attempt put it back), or `reading` under a lease that ran out (its replica
+ * stopped), leaving out a suspended organization's (they wait until it is active again), files being deleted, and every
+ * read of an organization that has one `reading` under a live lease, so one organization never holds two replicas'
+ * readers at once. The claim sets `reading`, the lease for `leaseMs`, the start, and counts the attempt.
+ */
+export async function claimNextAiRead(
+  connection: Connection, input: { readonly now: Date; readonly leaseMs: number },
+): Promise<ClaimedAiRead | null> {
+  const File = fileModel(connection);
+  const [held, busy] = await Promise.all([
+    orgModel(connection).find({ status: trusted({ $ne: 'active' }) }, { _id: 1 }).lean(),
+    File.distinct('orgId', { 'ai.status': 'reading', 'ai.leaseUntil': trusted({ $gte: input.now }) }),
+  ]);
+  const skipped = [...held.map((org) => org._id), ...busy];
+  const doc = await File.findOneAndUpdate(
+    {
+      $or: [
+        { 'ai.status': 'queued', 'ai.notBefore': trusted({ $not: { $gt: input.now } }) },
+        { 'ai.status': 'reading', 'ai.leaseUntil': trusted({ $lt: input.now }) },
+      ],
+      status: trusted({ $ne: 'deleting' }),
+      ...(skipped.length === 0 ? {} : { orgId: trusted({ $nin: skipped }) }),
+    },
+    {
+      $set: { 'ai.status': 'reading', 'ai.leaseUntil': new Date(input.now.getTime() + input.leaseMs), 'ai.startedAt': input.now },
+      $inc: { 'ai.attempts': 1 },
+    },
+    { sort: { 'ai.requestedAt': 1, _id: 1 }, returnDocument: 'after' },
+  ).lean();
+  if (doc?.ai === undefined) return null;
+  return { id: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString(), attempt: doc.ai.attempts };
 }
 
 const SWEEP_ID = 'sweeper';

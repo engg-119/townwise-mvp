@@ -117,6 +117,8 @@ const START_REFUSAL: Readonly<Record<string, string>> = {
   in_progress: 'One is already running for this location',
   rate_limited: 'Today’s calibrations are used up',
   start_failed: 'It couldn’t start',
+  // D36 (api/src/chat/tools/calibration.ts FILE_TURN): a file's words can't start one, attached or read by ref.
+  file_turn: 'It can’t start in a reply that read a file from Your data',
 };
 
 function wordsFor(words: Readonly<Record<string, string>>, code: string | null): string | null {

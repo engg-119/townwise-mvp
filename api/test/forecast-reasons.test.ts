@@ -20,7 +20,7 @@ const ID = '0000000000000000000000aa';
 function note(fields: Partial<NoteContent> = {}): NoteRecord {
   return {
     id: ID, kind: 'private_event', startDate: '2026-06-06', endDate: '2026-06-06', weekdays: null, effect: 'more_guests',
-    expectedGuests: 70, detail: SENTINEL, startTime: null, endTime: null, createdBy: 'author', byStaff: false,
+    expectedGuests: 70, detail: SENTINEL, startTime: null, endTime: null, createdBy: 'author', byStaff: false, source: null,
     createdAt: new Date('2026-05-01T00:00:00Z'), updatedAt: new Date('2026-05-01T00:00:00Z'), ...fields,
   };
 }

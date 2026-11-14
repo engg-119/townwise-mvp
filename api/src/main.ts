@@ -8,7 +8,7 @@ import { configSchema as mongoSchema, connectMongo, ensureIndexes } from '@ckeit
 import { configSchema as redisSchema, createRedis } from '@ckeith26/redis';
 import { createRateLimiter, ipKey, rateLimit } from '@ckeith26/rate-limit';
 import { configSchema as authSchema, createAuth, createMongoAuthStores } from '@ckeith26/auth';
-import { createTownwiseApi, createTownwiseLab } from './app.ts';
+import { createTownwiseApi, createTownwiseContext, createTownwiseLab } from './app.ts';
 import {
   createAzureCliTokenSource, createManagedIdentityTokenSource, resolveManagedIdentity, usesAzureCli, type AzureTokenSource,
 } from './azure-identity.ts';
@@ -18,7 +18,9 @@ import { createAnthropicChatModel } from './chat/model.ts';
 import { configSchema as townwiseSchema, filesBackendOf, labRunnerOf, resolveTownwiseConfig, type FilesBackend } from './config.ts';
 import { createSendMagicLink } from './email.ts';
 import { createAzureFileBlobs, createAzuriteFileBlobs, storageCredential, type FileBlobs } from './files/blobs.ts';
-import { createAnthropicExtractModel } from './files/extract/model.ts';
+import { createAiReadActions } from './files/ai-actions.ts';
+import { createAiReader } from './files/ai-reader.ts';
+import { createAnthropicExtractModel, createAnthropicFileReaderModel } from './files/extract/model.ts';
 import { createFileSweeper } from './files/sweeper.ts';
 import { createFileWorker } from './files/worker.ts';
 import { createEntraLabCaller, createLocalLabCaller, type LabCaller } from './lab/caller.ts';
@@ -28,8 +30,8 @@ import { createMailer, OFF_MAILER } from './mail/mailer.ts';
 import { createGooglePlacesClient } from './places/google.ts';
 import { createStaticMapSigner, signingSecretSchema } from './places/static-map.ts';
 
-// ANTHROPIC_API_KEY and GOOGLE_PLACES_API_KEY are optional: absent, the tuning chat and the file reader's AI column
-// step, or the Places proxy, are off. Each goes no further than the clients built here. IDENTITY_ENDPOINT and IDENTITY_HEADER are set by Container Apps for the
+// ANTHROPIC_API_KEY and GOOGLE_PLACES_API_KEY are optional: absent, the tuning chat, the file reader's AI column
+// step and reading with TownwiseAI, or the Places proxy, are off. Each goes no further than the clients built here. IDENTITY_ENDPOINT and IDENTITY_HEADER are set by Container Apps for the
 // managed identity, and AZURE_CLIENT_ID by containerapp.tf; they are read only when email, stored files or the lab's Azure runner are on. The confirm card's
 // map needs both GOOGLE_MAPS_STATIC_KEY and GOOGLE_MAPS_SIGNING_SECRET: without either there is no map, never an
 // unsigned one. A malformed secret refuses boot. PATH and HOME go only to a local lab job (TOWNWISE_LAB_RUNNER=local).
@@ -134,14 +136,24 @@ function labFor(): { labRunner?: LabRunner; labCaller?: LabCaller } {
     labCaller: createLocalLabCaller(secret),
   };
 }
-const deps = {
+const baseDeps = {
   config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now, chat, places, placesMap, mailer,
   files, fileWorker, calendarKey: TOWNWISE_CALENDAR_KEY, ...labFor(),
 };
+// Reading with TownwiseAI (files/ai-reader.ts): a file a person opted in is read whole by Claude, with the same
+// ANTHROPIC_API_KEY and within the same TOWNWISE_FILES_MONTHLY_BUDGET_USD as the AI column step, whose 0 turns it off
+// too. Only while stored files are on; off, its route answers 503 ai_unavailable. What it finds is acted on through
+// the same stores, blobs and lab as the routes (files/ai-actions.ts).
+const aiReader = files === undefined || ANTHROPIC_API_KEY === undefined || filesMonthlyBudgetUsd <= 0 ? undefined : createAiReader({
+  connection: mongo.connection, stores: createTownwiseStores(mongo.connection), authStores, blobs: files, logger, now,
+  model: createAnthropicFileReaderModel(ANTHROPIC_API_KEY), filesMonthlyBudgetUsd, onRead: createAiReadActions(createTownwiseContext(baseDeps)),
+});
+const deps = { ...baseDeps, aiReader };
 const api = createTownwiseApi(deps);
 const labRouter = createTownwiseLab(deps);
 await ensureIndexes(mongo.connection, { logger });   // after every store has registered its models
 fileWorker?.start();
+aiReader?.start();
 fileSweeper?.start();
 calendarRefresher?.start();
 await redis.ready(3000);                             // bounded; logs and continues on false
@@ -151,12 +163,13 @@ const server = createServer({
   // /lab holds the lab job's two callback routes, the only routes outside /auth and /api (test/routes.test.ts).
   routes: [{ path: '/auth', router: auth.router }, { path: '/api', router: api }, { path: '/lab', router: labRouter }],
   middleware: [rateLimit({ limiter: ceiling, key: ipKey, whenStoreDown: 'allow', logger })],
-  // The mail drain first, after the HTTP drain: a send still in flight when its 2 seconds end is lost. The reader, the
+  // The mail drain first, after the HTTP drain: a send still in flight when its 2 seconds end is lost. The readers, the
   // sweeper and the calendar refresh loop stop next (each waits for its work in flight, but the refresh loop drops a fetch
   // rather than wait out its 10 seconds), while the database is still open.
   onShutdown: [
     { name: 'mail', close: () => mailer.idle() }, ...(fileWorker === undefined ? [] : [fileWorker]),
-    ...(fileSweeper === undefined ? [] : [fileSweeper]), ...(calendarRefresher === undefined ? [] : [calendarRefresher]), redis, mongo,
+    ...(aiReader === undefined ? [] : [aiReader]), ...(fileSweeper === undefined ? [] : [fileSweeper]),
+    ...(calendarRefresher === undefined ? [] : [calendarRefresher]), redis, mongo,
   ],
 });
 await server.listen();

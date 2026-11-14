@@ -4,7 +4,8 @@
 // too_complex; the API process is untouched. The time limit covers the file's reads from storage too: a stalled read
 // is aborted, so it never holds the replica's reader or the import's lease. A ZIP is not fed: the thread asks for the
 // byte ranges it needs (its directory, then each entry), and this side answers each from storage, continuing one open
-// download while the reads are in order.
+// download while the reads are in order. The thread runs only while it holds the process's one parse-thread slot
+// (thread-slot.ts), shared with the TownwiseAI reader's text thread, so the two never hold their heaps at once.
 import { Worker, type ResourceLimits } from 'node:worker_threads';
 
 import type { FileAnswers } from '../../stores/files.ts';
@@ -16,6 +17,7 @@ import { READ_TIME_MS, THREAD_CHUNK_BYTES, THREAD_LIMITS } from '../limits.ts';
 import type { SalesDay } from './days.ts';
 import type { KeptOutcome, QuestionDraft } from './mapping.ts';
 import type { TableReport } from './table.ts';
+import { inThreadSlot } from './thread-slot.ts';
 
 /** A file's report (spec 11A): the primary table's, totals over every used sheet, and each sheet's fate. */
 export type FileReport = TableReport & {
@@ -180,8 +182,15 @@ function isTooComplex(err: unknown): boolean {
   return err instanceof Error && 'code' in err && (err as { code?: unknown }).code === 'ERR_WORKER_OUT_OF_MEMORY';
 }
 
-/** One file through the parse thread. Any other thread failure rejects (the worker counts it as an attempt). */
-export async function runParse(input: ParseInput): Promise<FileOutcome> {
+/**
+ * One file through the parse thread, once the parse-thread slot is free. Any other thread failure rejects (the worker
+ * counts it as an attempt).
+ */
+export function runParse(input: ParseInput): Promise<FileOutcome> {
+  return inThreadSlot(() => parse(input));
+}
+
+async function parse(input: ParseInput): Promise<FileOutcome> {
   const worker = new Worker(THREAD_URL, { resourceLimits: input.resourceLimits ?? THREAD_LIMITS });
   const messages = inbox(worker);
   const stop = new AbortController();

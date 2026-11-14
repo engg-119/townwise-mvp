@@ -82,7 +82,7 @@ const NOTE_ID = '0000000000000000000000aa';
 function savedNote(fields: Partial<NoteRecord> & Pick<NoteRecord, 'startDate'>): NoteRecord {
   return {
     id: NOTE_ID, kind: 'private_event', endDate: fields.startDate, weekdays: null, effect: 'more_guests', expectedGuests: 70,
-    detail: NOTE_DETAIL, startTime: '18:00', endTime: '21:00', createdBy: SENTINEL_USER, byStaff: false,
+    detail: NOTE_DETAIL, startTime: '18:00', endTime: '21:00', createdBy: SENTINEL_USER, byStaff: false, source: null,
     createdAt: new Date('2026-11-01T00:00:00Z'), updatedAt: new Date('2026-11-01T00:00:00Z'), ...fields,
   };
 }
@@ -93,7 +93,7 @@ function context(opts: {
   const notes: NoteRecord[] = [{
     id: '000000000000000000000002', kind: 'private_event', startDate: '2026-10-10', endDate: '2026-10-10', weekdays: null,
     effect: 'more_guests', expectedGuests: null, detail: `Party booked by ${SENTINEL_EMAIL} from ${SENTINEL_FILE}`,
-    startTime: null, endTime: null, createdBy: SENTINEL_USER, byStaff: false, createdAt: new Date('2026-10-01T00:00:00Z'),
+    startTime: null, endTime: null, createdBy: SENTINEL_USER, byStaff: false, source: null, createdAt: new Date('2026-10-01T00:00:00Z'),
     updatedAt: new Date('2026-10-01T00:00:00Z'),
   }];
   const days = opts.days ?? [...saturdays('2026-09-19', 8, 200), ...saturdays('2025-12-06', 3, 90)];
@@ -106,7 +106,7 @@ function context(opts: {
   const ctx = { ports: { peopleInTown: reader, forecasts: opts.forecasts ?? createForecastReader({ stores: forecastStores([]) }) } } as unknown as TownwiseContext;
   const scope = { orgId: '000000000000000000000003' } as unknown as OrgScope;
   return { ctx, scope, location: location(opts.town), today: TODAY, timeZone: 'America/New_York', role: 'member',
-    actor: { actorUserId: SENTINEL_USER, actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null } };
+    actor: { actorUserId: SENTINEL_USER, actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null }, turn: { readUntrusted: false } };
 }
 
 async function run(name: string, input: unknown, tc: ToolContext = context()): Promise<{ content: string; parsed: Record<string, unknown> }> {

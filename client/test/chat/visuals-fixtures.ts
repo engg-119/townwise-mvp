@@ -3,7 +3,7 @@ import type { Visual } from '../../src/chat/visuals/schema';
 type Daily = Extract<Visual, { kind: 'daily' }>;
 type Metrics = Extract<Visual, { kind: 'metrics' }>;
 
-const empty = { low: null, high: null } as const;
+const empty = { low: null, mid: null, high: null, status: null } as const;
 
 export const daily: Daily = {
   kind: 'daily', metric: 'guests', from: '2026-10-01', to: '2026-10-05', forecast: null,
@@ -16,16 +16,53 @@ export const daily: Daily = {
   ],
 };
 
+/** A band with no middle: a visual stored before the API sent the forecast's middle. */
 export const dailyWithBand: Daily = {
   ...daily,
   forecast: { model: 'Townwise', madeAt: '2026-09-30T12:00:00.000Z' },
   days: [
     { date: '2026-10-01', value: 40, ...empty },
     { date: '2026-10-02', value: null, ...empty },
-    { date: '2026-10-03', value: 90, low: 70, high: 110 },
-    { date: '2026-10-04', value: 20, low: 15, high: 35 },
+    { date: '2026-10-03', value: 90, low: 70, mid: null, high: 110, status: null },
+    { date: '2026-10-04', value: 20, low: 15, mid: null, high: 35, status: null },
     { date: '2026-10-05', value: 55, ...empty },
   ],
+};
+
+const MADE = { model: 'Townwise demand model v0', madeAt: '2026-11-12' };
+const band = (low: number, mid: number, high: number) => ({ low, mid, high, status: null });
+
+/** Next week with no sales yet (the 2026-11-13 incident): the forecast alone, with a closed and a booked day. */
+export const forecastOnly: Daily = {
+  kind: 'daily', metric: 'guests', from: '2026-11-16', to: '2026-11-22', forecast: MADE,
+  days: [
+    { date: '2026-11-16', value: null, ...band(117, 180, 256) },
+    { date: '2026-11-17', value: null, ...band(90, 130, 170) },
+    { date: '2026-11-18', value: null, ...empty, status: 'closed' },
+    { date: '2026-11-19', value: null, ...band(100, 140, 190) },
+    { date: '2026-11-20', value: null, ...band(150, 210, 280) },
+    { date: '2026-11-21', value: null, ...empty, status: 'booked' },
+    { date: '2026-11-22', value: null, ...band(80, 120, 160) },
+  ],
+};
+
+/** Sales through yesterday, then the forecast from today, Nov 13, on. */
+export const mixed: Daily = {
+  kind: 'daily', metric: 'guests', from: '2026-11-10', to: '2026-11-15', forecast: MADE,
+  days: [
+    { date: '2026-11-10', value: 120, ...empty },
+    { date: '2026-11-11', value: 95, ...empty },
+    { date: '2026-11-12', value: 140, ...empty },
+    { date: '2026-11-13', value: null, ...band(117, 180, 256) },
+    { date: '2026-11-14', value: null, ...band(150, 210, 280) },
+    { date: '2026-11-15', value: null, ...band(80, 120, 160) },
+  ],
+};
+
+/** A daily visual as the API stored it before it sent `mid` and `status`, unparsed. */
+export const storedBeforeMid: unknown = {
+  kind: 'daily', metric: 'guests', from: '2026-10-01', to: '2026-10-03', forecast: { model: 'Townwise demand model v0', madeAt: '2026-09-30' },
+  days: [{ date: '2026-10-01', value: 40, low: null, high: null }, { date: '2026-10-02', value: 52, low: 45, high: 60 }, { date: '2026-10-03', value: null, low: 50, high: 70 }],
 };
 
 export const weekdays: Extract<Visual, { kind: 'breakdown' }> = {

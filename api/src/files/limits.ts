@@ -91,10 +91,54 @@ export const DOCX_READ_BYTES = 10 * MIB;
 /** word/document.xml, uncompressed. */
 export const DOCX_MAX_DOCUMENT_BYTES = 50 * MIB;
 
+/**
+ * TownwiseAI attachments (spec D36): the largest picture sent to the model, 3.75 MB, so its base64 (4 characters for
+ * every 3 bytes) stays within the API's 5 MB an image. [CONFIRM: at most 5 a message, 20,000 characters, 3.75 MB a
+ * picture, about 150k tokens in all]
+ */
+export const MODEL_PICTURE_BYTES = 3_750_000;
+/** The most pixels on a side of a picture sent to the model: the API refuses a larger one, and the turn would fail. */
+export const MODEL_PICTURE_MAX_SIDE = 8_000;
+
 /** The AI column step (spec 11A): calls per file, per ZIP (at most one a family of its tables) and per import. */
 export const MODEL_CALLS_PER_FILE = 2;
 export const MODEL_CALLS_PER_ZIP = 5;
 export const MODEL_CALLS_PER_IMPORT = 20;
+
+/**
+ * Reading with TownwiseAI (spec 11A.9, D34), a file the person opted in: a PDF is sent whole as a document up to 10 MiB
+ * and 600 pages (the API's limit), a PNG, JPEG, GIF or WebP picture up to 3,750,000 bytes (so its base64 stays within
+ * the API's 5 MB), and any other file the reader reads as text, cut at 300,000 characters (marked partial, and the
+ * prompt says so). A text file is read from storage only as far as that many characters can take (4 bytes a character
+ * at most). A PDF's own text, kept in memory to check figures against and never stored, stops at 400,000 characters.
+ * Making text takes a thread of its own with a smaller heap than the sales parse thread's (it stops once it has the
+ * characters it needs), at most 2 minutes, and a Word document whose word/document.xml is over 8 MiB is skipped
+ * `too_large`; past the heap or the time the read is skipped `too_complex`.
+ */
+export const AI_PDF_BYTES = 10 * MIB;
+export const AI_PDF_PAGES = 600;
+export const AI_IMAGE_BYTES = 3_750_000;
+export const AI_TEXT_CHARS = 300_000;
+export const AI_TEXT_READ_BYTES = AI_TEXT_CHARS * 4;
+export const AI_SOURCE_CHARS = 400_000;
+export const AI_TEXT_TIME_MS = 2 * 60 * 1000;
+export const AI_DOCX_DOCUMENT_BYTES = 8 * MIB;
+/** The AI text thread's memory (MiB): smaller than THREAD_LIMITS, since it keeps at most AI_SOURCE_CHARS of text. */
+export const AI_THREAD_LIMITS = { maxOldGenerationSizeMb: 128, maxYoungGenerationSizeMb: 16, stackSizeMb: 4 } as const;
+/**
+ * A read whose attempt stopped (a failed call, an error) waits before it is claimed again: 1 minute after the first
+ * attempt, then 2, then 4 (doubling).
+ */
+export const AI_RETRY_BASE_MS = 60 * 1000;
+/** Reads one organization may have queued or reading at once; one more is refused 429 `ai_read_queue_full`. */
+export const AI_READS_IN_FLIGHT = 10;
+/**
+ * A ZIP is read whole into the AI text thread up to 25 MiB, behind the archive guards; at most its first 20 entries
+ * that are text, CSV or TSV, workbooks, Word documents or PDFs become text (within 300,000 characters together), each
+ * within the reader's caps for its kind. Pictures and other kinds inside are counted and skipped.
+ */
+export const AI_ZIP_BYTES = 25 * MIB;
+export const AI_ZIP_ENTRIES = 20;
 
 /**
  * Originals are deleted this long after upload by the daily sweep (FileView.rawExpiresAt); the storage lifecycle rule is

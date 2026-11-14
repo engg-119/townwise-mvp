@@ -13,16 +13,24 @@ import { z } from 'zod';
 import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
+import {
+  ATTACHMENT_BYTES_IN_FLIGHT, ATTACHMENT_REF, attachedOnPath, attachedTo, bytesToRead, checkAttachments, createByteGate, expandedMessage,
+  MAX_ATTACHMENTS, readAttachments, refusalOf, turnAttachments, type Attached, type AttachmentRefusal, type TurnAttachments,
+} from '../chat/attachments.ts';
 import { runTurn, type TurnEvent, type TurnInput } from '../chat/turn.ts';
 import { newestLeafUnder, newNodeId, nodeIdSchema, nodesOf, pathTo, type ChatNode, type TreeNodeView } from '../chat/tree.ts';
 import { historyForModel, userMessageOf } from '../chat/user-message.ts';
-import { chatMessageViews, OPEN, type ChatMessageView, type FeedbackView, type ProposalState, type ShownProposal } from '../chat/view.ts';
+import {
+  chatMessageViews, OPEN, type AttachmentFile, type ChatMessageView, type FeedbackView, type ProposalState, type ShownProposal,
+} from '../chat/view.ts';
+import { loadDataItem, parseRef } from '../data/library.ts';
 import { scheduleSummary } from '../forecasts/reasons.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import type { ConversationOwner, ConversationRecord, ConversationSummary } from '../stores/chat-conversations.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import { loadLocation, memberOf } from './locations.ts';
 import { sameNoteContent } from './notes.ts';
+import { filesUnavailable } from './sales.ts';
 import { actorOf } from './team.ts';
 
 /** Section 2. */
@@ -42,15 +50,21 @@ const STALE_TURN_MS = 3 * 60 * 1000;
 /** Keeps the Container Apps ingress from closing an idle stream. */
 const PING_MS = 15_000;
 const TITLE_CHARS = 60;
+/** D36: the bytes of attached files this replica holds for its turns, from a send's checks to the end of its turn. */
+export const attachmentBytes = createByteGate(ATTACHMENT_BYTES_IN_FLIGHT);
 
 /**
  * A send, or a regenerate. A send's `parentId` makes it an edit: the node the new message hangs under, null for a new
- * first message; omitted, the stored active leaf (an older client's append). Only in an existing conversation.
+ * first message; omitted, the stored active leaf (an older client's append). Only in an existing conversation. Its
+ * `attachments` (D36) are 1 to 5 distinct files of Your data at this location, by `f_` ref; a message with attachments
+ * still needs text. [CONFIRM: a message with attachments still needs text]
  */
 const sendBody = z.strictObject({
   conversationId: objectId.optional(),
   content: z.string().trim().min(1).max(4000),
   parentId: nodeIdSchema.nullable().optional(),
+  attachments: z.array(z.string().regex(ATTACHMENT_REF)).min(1).max(MAX_ATTACHMENTS)
+    .refine((refs) => new Set(refs).size === refs.length).optional(),
 }).refine((body) => body.parentId === undefined || body.conversationId !== undefined);
 /** A regenerate: a new reply to the person's message `replyTo`, with no new message. */
 const regenerateBody = z.strictObject({ conversationId: objectId, replyTo: nodeIdSchema });
@@ -122,15 +136,33 @@ export async function getChat(ctx: TownwiseContext, req: Request, res: Response,
   res.status(200).json(body);
 }
 
+/**
+ * D36: what each file the shown messages carry is on Your data now: its name (none under view-as) and whether it is on,
+ * turned off, or gone (deleted, its original deleted, or stored files off, when Your data lists no stored file).
+ */
+async function attachedFiles(
+  ctx: TownwiseContext, caller: MemberPrincipal, locationId: string, refs: readonly string[],
+): Promise<Map<string, AttachmentFile>> {
+  const items = await Promise.all(refs.map((ref) => loadDataItem(ctx, caller.scope, locationId, parseRef(ref), caller.userId)));
+  return new Map(refs.map((ref, index): [string, AttachmentFile] => {
+    const file = items[index]?.file ?? null;
+    if (file === null) return [ref, { name: null, state: 'gone' }];
+    const name = caller.viewAs === null ? file.name : null;
+    if (file.rawDeletedAt !== null) return [ref, { name, state: 'gone' }];
+    return [ref, { name, state: file.disabledAt === null ? 'on' : 'off' }];
+  }));
+}
+
 /** The conversation showing the path to `leafId` (null or unknown: the last node), its visible messages. */
 async function conversationView(
   ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord, conversation: ConversationRecord, nodes: readonly ChatNode[],
   leafId: string | null,
 ): Promise<ConversationView> {
   const path = pathTo(nodes, leafId);
-  const [rows, notes] = await Promise.all([
+  const [rows, notes, files] = await Promise.all([
     ctx.stores.chatProposals.list(caller.scope, conversation.id),
     ctx.stores.notes.list(caller.scope, location.id),
+    attachedFiles(ctx, caller, location.id, attachedOnPath(path)),
   ]);
   const byId = new Map(rows.map((row) => [row.proposalId, row]));
   const stateOf = (proposal: ShownProposal): ProposalState => {
@@ -152,7 +184,10 @@ async function conversationView(
     activeLeafId: path.at(-1)?.id ?? null,
     tree: nodes.map(({ id, parentId, role }) => ({ id, parentId, role })),
     // U13A: input views re-read their dates against the town's local day, as the tools ran them.
-    messages: chatMessageViews(path, localDay(ctx.now(), timeZoneOf(location.town).timeZone), stateOf, feedbackOf),
+    messages: chatMessageViews(
+      path, localDay(ctx.now(), timeZoneOf(location.town).timeZone), stateOf, feedbackOf,
+      (ref) => files.get(ref) ?? { name: null, state: 'gone' },
+    ),
   };
 }
 
@@ -282,6 +317,25 @@ async function claimTurn(
   return { conversationId: claimed.id, title: claimed.title, history: historyTo(nodes, parentId), nodes: sendNodes(parentId) };
 }
 
+/** D36: a send's answer for a file it can't attach. */
+function attachmentRefused(refusal: AttachmentRefusal): AppError {
+  switch (refusal) {
+    case 'files_off': return filesUnavailable();
+    case 'not_found': return notFound();
+    case 'not_reference': return new AppError(400, 'invalid_request', 'Only files kept on Your data can be attached');
+    case 'not_ready': return new AppError(409, 'attachment_not_ready', 'That file is still uploading. Send it when it’s ready.');
+    // The right to download the original (handlers/files.ts isUploaderOrAdmin). Not `forbidden`, which makes the client
+    // re-read GET /api/me and route again (spec 4.3): nothing about the caller's access changed.
+    case 'not_allowed': return new AppError(403, 'attachment_not_allowed', 'Only the person who added a file or an org admin can attach it');
+  }
+}
+
+/** The files a regenerate's message (the person's node `nodeId`) carries, from its stored attachments block. */
+function attachedToNode(nodes: readonly ChatNode[], nodeId: string): Attached[] {
+  const stored = nodes.find((node) => node.id === nodeId)?.messages[0];
+  return stored === undefined ? [] : attachedTo(JSON.parse(stored.param) as BetaMessageParam);
+}
+
 /**
  * POST /api/org/locations/:locationId/chat/turns (sections 2 and 3). Every refusal is a JSON error before the stream
  * starts; after that the answer is text/event-stream and ends with `done` or `error`. A person has at most one live
@@ -297,26 +351,57 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   if (model === null) throw new AppError(503, 'chat_unavailable', 'TownwiseAI isn’t turned on yet');
   const owner = ownerOf(caller, location.id);
   const { timeZone } = timeZoneOf(location.town);
+  // D36: a send's files are its body's; a regenerate's are those its stored message carries.
+  let files: readonly { ref: string; kind: Attached['kind'] | null }[] = 'replyTo' in body
+    ? [] : (body.attachments ?? []).map((ref) => ({ ref, kind: null }));
   if (body.conversationId !== undefined) {
     const existing = await ctx.stores.chatConversations.find(scope, owner, body.conversationId);
     if (existing === null) throw notFound();
+    const nodes = nodesOf(existing.messages);
     // Before any claim: an edit's parent, or a regenerate's message, must be in the conversation.
-    if (!namesKnownNode(nodesOf(existing.messages), body)) throw notFound();
+    if (!namesKnownNode(nodes, body)) throw notFound();
     // Every branch counts toward the caps.
     if (isFull(existing)) throw new AppError(409, 'conversation_full', 'This conversation is full. Start a new one.');
+    if ('replyTo' in body) files = attachedToNode(nodes, body.replyTo);
   }
   if ((await budgetOf(ctx, scope)).exhausted) {
     throw new AppError(409, 'chat_budget_exhausted', 'Your organization’s TownwiseAI budget for this month is used up');
   }
-  // Before any claim, so a store failure has nothing to release. A regenerate resends its stored message as it was.
-  const [rules, toolLocation] = await Promise.all([
+  if (!('replyTo' in body) && files.length > 0 && !ctx.items.on) throw filesUnavailable();
+  // Before any claim, so a store failure has nothing to release. A regenerate resends its stored message as it was,
+  // its files checked again as they are now. Only each file's record and first bytes are read here.
+  const [rules, toolLocation, checks] = await Promise.all([
     'replyTo' in body ? [] : ctx.stores.businessRules.list(scope, location.id),
     locationForTools(ctx, scope, location),
+    files.length === 0 ? [] : checkAttachments(ctx.items, scope, location.id, { userId: caller.userId, role: caller.role }, files),
   ]);
+  // A send refuses a file that isn't on Your data here, a sales file, one not kept yet, or one the caller may not
+  // attach; one turned off, or whose original is gone, is listed as not read instead. A regenerate refuses none: its
+  // message was sent.
+  const refusal = 'replyTo' in body ? null : refusalOf(checks);
+  if (refusal !== null) throw attachmentRefused(refusal);
+  // The bytes the turn will read are held from here until it ends; every exit gives them back once.
+  let heldBytes = bytesToRead(checks);
+  if (!attachmentBytes.reserve(heldBytes)) {
+    ctx.logger.info({ orgId: scope.orgId, locationId: location.id, held: attachmentBytes.held }, 'townwise.chat_attachments_busy');
+    throw new AppError(503, 'attachments_busy', 'TownwiseAI is reading a lot of files right now. Try again in a moment.', { retryAfterSeconds: 2 });
+  }
+  const releaseBytes = (): void => {
+    attachmentBytes.release(heldBytes);
+    heldBytes = 0;
+  };
   const now = ctx.now();
   const claim: TurnClaim = { turnId: randomUUID(), now, staleBefore: new Date(now.getTime() - STALE_TURN_MS) };
   const { turnId } = claim;
-  if (!(await ctx.stores.chatLiveTurns.claim(scope, caller.userId, claim))) {
+  let live: boolean;
+  try {
+    live = await ctx.stores.chatLiveTurns.claim(scope, caller.userId, claim);
+  } catch (err) {
+    releaseBytes();
+    throw err;
+  }
+  if (!live) {
+    releaseBytes();
     throw new AppError(409, 'chat_turn_in_progress', 'You already have a reply in progress. Wait for it, or stop it first.');
   }
   // Every exit from here on releases the person's claim, by this turn's id.
@@ -334,11 +419,23 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   try {
     claimed = await claimTurn(ctx, scope, owner, body, claim);
   } catch (err) {
+    releaseBytes();
     await releaseLiveTurn();
     throw err;
   }
   const { conversationId, title, history, nodes } = claimed;
-  const ids = { orgId: scope.orgId, locationId: location.id, conversationId };
+  // D36: the files' bytes, read only now that the turn holds its claims. A failure gives everything back before the stream.
+  let attached: TurnAttachments | null = null;
+  try {
+    if (checks.length > 0) attached = turnAttachments(await readAttachments(checks));
+  } catch (err) {
+    releaseBytes();
+    await ctx.stores.chatConversations.release(scope, conversationId, turnId).catch(() => undefined);
+    await releaseLiveTurn();
+    throw err;
+  }
+  // D36: a turn's log lines count its message's files by kind, never a name or anything from a file.
+  const ids = { orgId: scope.orgId, locationId: location.id, conversationId, ...(attached === null ? {} : { attachments: attached.counts }) };
 
   res.status(200);
   res.setHeader('Content-Type', 'text/event-stream');
@@ -361,7 +458,14 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   try {
     // Spec 10.16: the location's business rules go before the person's text when they differ from the path's last list.
     const blockRules = rules.map((rule) => ({ text: rule.text, summary: rule.schedule === null ? null : scheduleSummary(rule.schedule) }));
-    const userMessage = 'replyTo' in body ? null : userMessageOf(history, { rules: blockRules }, body.content);
+    // D36: the attachments block goes after the rules block, and the files' content only into this turn's requests.
+    const userMessage = 'replyTo' in body
+      ? null : userMessageOf(history, { rules: blockRules, attachments: attached?.block ?? null }, body.content);
+    // Only the newest business_rules block on the path is sent in full; the stored messages keep theirs.
+    const modelHistory = historyForModel(history, userMessage);
+    const person = userMessage ?? modelHistory.at(-1);
+    // Sent in place of the stored message only when it differs: content was read, or a regenerate's files changed.
+    const expanded = attached === null || person === undefined ? null : expandedMessage(person, attached);
     // `parentId` is where the turn's first new node hangs: the person's message, or a regenerate's reply.
     send('conversation', {
       id: conversationId, title, userNodeId: nodes.user?.id ?? null, replyNodeId: nodes.reply.id,
@@ -370,10 +474,14 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
     const result = await runTurn({
       model,
       // U13A: today is the town's local date, so an evening turn is not already tomorrow.
-      tools: { ctx, scope, location: toolLocation, today: localDay(ctx.now(), timeZone), timeZone, role: caller.role, actor: actorOf(caller) },
-      // Only the newest business_rules block on the path is sent in full; the stored messages keep theirs.
-      history: historyForModel(history, userMessage),
+      tools: {
+        ctx, scope, location: toolLocation, today: localDay(ctx.now(), timeZone), timeZone, role: caller.role, actor: actorOf(caller),
+        // read_data_item sets it too, once it hands back an item's text.
+        turn: { readUntrusted: (attached?.content.length ?? 0) > 0 },
+      },
+      history: modelHistory,
       userMessage,
+      expanded,
       nodes,
       signal,
       now: ctx.now,
@@ -421,6 +529,7 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
       details: {
         locationId: location.id, conversationId, model: result.model, calls: result.calls,
         inputTokens: result.inputTokens, outputTokens: result.outputTokens, stopReason: result.stopReason,
+        ...(attached === null ? {} : { attachments: checks.length }),
       },
     });
     ctx.logger.info({
@@ -434,6 +543,7 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
     send('error', { code: 'internal' });
   } finally {
     clearInterval(ping);
+    releaseBytes();
     // Before the stream ends, so the client's next turn never finds this one still live.
     await releaseLiveTurn();
     if (!res.writableEnded) res.end();

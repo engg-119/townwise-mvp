@@ -51,6 +51,9 @@ export const NOTE_COPY = {
   time: 'Enter a time as HH:MM, for example 18:30.',
   timeOrder: 'The end time is before the start time.',
   timePair: 'Enter both times, or neither.',
+  /** A note TownwiseAI made from a file (D34): under its author on Notes, and in its edit form. */
+  fromAiFile: 'From a file TownwiseAI read',
+  fromAiFileEdit: 'Undoing that file’s read removes this note, even after an edit.',
 } as const;
 
 /** “Pick a start date from Jan 1, 2010 to {today plus two years}.” */

@@ -25,6 +25,7 @@ import { MessageFocus, useFocusMessage } from '../ui/messageFocus';
 import { Select } from '../ui/Select';
 import { Lead, Small } from '../ui/text';
 import { AddFile } from './AddFile';
+import { rowAiLine } from './aiCopy';
 import { listData, removeItem, setEnabled, type DataItem } from './api';
 import {
   addedLine, COLUMNS, DATA, dataError, daysLine, deletedFileLine, deletedUploadLine, deleteFileBody, deleteUploadBody, empty, itemName,
@@ -250,13 +251,16 @@ function Data(): React.JSX.Element {
         </Actions>
         {CAN_DROP && filesOn ? (
           <Stack>
+            {/* Not in a row with Paste text: the opt-in under Add a file is taller, and would push it out of line. */}
+            <AddFile
+              locationId={location.id}
+              enabled={!readOnly}
+              {...(readOnlyId === null ? {} : { describedBy: readOnlyId })}
+              onStored={fresh}
+              onAsked={fresh}
+            />
+            <Small>{DATA.addFileHelp}</Small>
             <Actions>
-              <AddFile
-                locationId={location.id}
-                enabled={!readOnly}
-                {...(readOnlyId === null ? {} : { describedBy: readOnlyId })}
-                onStored={fresh}
-              />
               <Button
                 variant="outline"
                 label={DATA.pasteText}
@@ -265,7 +269,6 @@ function Data(): React.JSX.Element {
                 onPress={() => { setAdding(true); }}
               />
             </Actions>
-            <Small>{DATA.addFileHelp}</Small>
             {adding && !readOnly ? (
               <PasteText
                 locationId={location.id}
@@ -450,12 +453,14 @@ function ItemCell(props: { item: DataItem }): React.JSX.Element {
   );
 }
 
+/** On or Off, then what Townwise did and, once someone let TownwiseAI read the file, what TownwiseAI did (D34). */
 function StatusCell(props: { item: DataItem }): React.JSX.Element {
   const { item } = props;
+  const ai = rowAiLine(item.ai);
   return (
     <View style={styles.cell}>
       <Text style={styles.value}>{item.enabled ? DATA.on : DATA.off}</Text>
-      <Text style={styles.note}>{stateLine(item)}</Text>
+      <Text style={styles.note}>{ai === null ? stateLine(item) : `${stateLine(item)} · ${ai}`}</Text>
     </View>
   );
 }

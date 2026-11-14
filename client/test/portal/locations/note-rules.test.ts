@@ -71,6 +71,14 @@ describe('checkNote: hours and buyouts', () => {
     expect(noteSchema.parse({ ...old, startTime: '18:00', endTime: '21:00' })).toMatchObject({ startTime: '18:00', endTime: '21:00' });
   });
 
+  test('the note schema reads a missing source, from an API before it, and keeps a TownwiseAI file source (D34)', () => {
+    const old: Record<string, unknown> = { ...noteOf('n1') };
+    delete old.source;
+    expect(noteSchema.parse(old).source ?? null).toBeNull();
+    expect(noteSchema.parse({ ...old, source: null }).source).toBeNull();
+    expect(noteSchema.parse({ ...old, source: { via: 'ai_file', fileId: 'file-1' } }).source).toEqual({ via: 'ai_file', fileId: 'file-1' });
+  });
+
   test('draftOfImported: a private event with the calendar event’s dates and hours, and never its title', () => {
     const dinner = { uid: 'i1', title: 'Smith rehearsal dinner', startDate: '2026-12-24', endDate: '2026-12-24', startTime: '18:00', endTime: '21:00' };
     expect(draftOfImported(dinner)).toEqual({
