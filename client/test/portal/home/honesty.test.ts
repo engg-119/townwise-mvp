@@ -7,7 +7,8 @@ import {
 } from '../../../src/portal/analytics/week';
 import { addDays, monthRange } from '../../../src/portal/locations/dates';
 import { guestForecastSentence, orderCoverSentence, REORDER_OVERVIEW } from '../../../src/portal/home/beside';
-import { BAR_ORDER_BODY } from '../../../src/portal/home/BarOrder';
+import { barOrderWords } from '../../../src/portal/home/BarOrder';
+import type { LiveBoard, OrderLine } from '../../../src/portal/orders/api';
 import { lastWeekGlance } from '../../../src/portal/home/Glance';
 import { FORECAST_LINE, questionsLabel } from '../../../src/portal/home/Home';
 import { PEOPLE_HEAD } from '../../../src/portal/home/ThisMonth';
@@ -108,7 +109,7 @@ test('no history at all: no figure anywhere', () => {
 });
 
 test('the fixed copy names what is not built yet and promises nothing', () => {
-  for (const line of [FORECAST_LINE, BAR_ORDER_BODY, PEOPLE_HEAD]) {
+  for (const line of [FORECAST_LINE, PEOPLE_HEAD]) {
     expect(line).not.toMatch(FORECAST_WORDING);
     expect(line).not.toMatch(/\d/);
   }
@@ -146,4 +147,48 @@ test('the reorder copy says how the board works and promises nothing it doesn’
   expect(REORDER_OVERVIEW).toMatch(/minus your last count/);
   expect(REORDER_OVERVIEW).toMatch(/You place every order yourself; nothing is sent to a distributor\.$/);
   expect(REORDER_OVERVIEW).not.toMatch(/—/);
+});
+
+function line(fields: Partial<OrderLine> & Pick<OrderLine, 'itemId' | 'recommended'>): OrderLine {
+  return {
+    name: fields.itemId, supplier: 'Sample distributor', unit: 'cases', neverRunOut: false, alternative: null, par: 2, mu: null, sigma: null,
+    orderUpTo: null, target: 0.95, onHand: null, countAgeDays: null, confidence: 'low', dealSize: null, coveredDays: 0, why: '', sample: false,
+    edit: null, rules: [], ...fields,
+  };
+}
+
+test('Home’s bar order card counts what the board orders and says what is missing, never a quantity', () => {
+  const board: LiveBoard = {
+    available: true, sample: false, missing: ['a recent count'],
+    orders: [
+      {
+        supplierId: 's1', supplier: 'Sample brewery', cutoff: '2026-11-16', cutoffTime: '12:00', delivery: '2026-11-17', coversThrough: '2026-11-19',
+        deadline: 'Order by Mon, Nov 16, 12:00pm. Tuesday’s delivery lasts until Thursday’s.', lines: [line({ itemId: 'keg', recommended: 0 })],
+      },
+      {
+        supplierId: 's2', supplier: 'Sample distributor', cutoff: '2026-11-18', cutoffTime: '14:00', delivery: '2026-11-19', coversThrough: '2026-11-23',
+        deadline: 'Order by Wed, Nov 18, 2:00pm. Thursday’s delivery lasts until Monday’s.',
+        lines: [line({ itemId: 'lager', recommended: 6 }), line({ itemId: 'seltzer', recommended: 3 })],
+      },
+    ],
+  };
+  expect(barOrderWords(board)).toEqual({
+    title: '2 items to order',
+    lines: [
+      'Sample brewery: Order by Mon, Nov 16, 12:00pm. Tuesday’s delivery lasts until Thursday’s.',
+      'The soonest of 2 orders, one per supplier.',
+      'Townwise still can’t see a recent count.',
+    ],
+    setUp: true,
+  });
+  const unset = barOrderWords({ available: false, reason: 'No setup.', missing: ['the supplier schedule', 'the items'] });
+  expect(unset).toEqual({
+    title: 'Ordering isn’t set up yet', lines: ['Townwise still needs the supplier schedule and the items to build an order.'], setUp: false,
+  });
+  for (const words of [barOrderWords(board), unset]) {
+    for (const text of [words.title, ...words.lines]) {
+      expect(text).not.toMatch(FORECAST_WORDING);
+      expect(text).not.toMatch(/Planned|can’t see your stock/);
+    }
+  }
 });

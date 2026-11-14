@@ -31,11 +31,11 @@ import { ThisWeek } from './ThisWeek';
 // P11 Home (/locations/[id], members; spec 16.3), a dashboard built around the Monday decisions. Under the lead, a
 // grid of blocks (Block.tsx), most practical first: At a glance (this week last year, last week, the next event);
 // This week in {Town}, day by day; This month, a calendar you can open a day of, beside Last week; the month's
-// events beside Who's in town; this month in past years beside the bar order (Planned); and the location's history. Until forecasts exist, Home
+// events beside Who's in town; this month in past years beside the bar order; and the location's history. Until forecasts exist, Home
 // shows only history and the calendar, never a guess: every figure is a sum, an average or a share of the
 // location's own stored days, of a past day. It reads three routes in parallel (sales history, notes, the town
-// calendar), then on their own TownwiseAI's questions (for the lead's count) and the month's people in town (in Who's
-// in town), and writes nothing, so view-as shows it unchanged with its upload links disabled. "Today" is the
+// calendar), then on their own TownwiseAI's questions (for the lead's count), the month's people in town (in Who's
+// in town) and the next orders (in Bar order and beside the calendar), and writes nothing, so view-as shows it unchanged with its upload links disabled. "Today" is the
 // device's date; weeks run Monday to Sunday. While onboarding's needsHistory is true, its HistoryStep takes the
 // place of the blocks that need days, and when it has read the history Home loads again.
 
