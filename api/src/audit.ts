@@ -197,6 +197,7 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'order.setup_saved': return `Saved the ordering setup: ${text(d.supplierCount)} suppliers and ${text(d.itemCount)} items`;
     case 'order.item_sales_uploaded':
       return `Uploaded ${text(d.dayCount)} days of item sales for ${text(d.itemCount)} items, ${text(d.firstDate)} to ${text(d.lastDate)}`
+        + (typeof d.removedCount === 'number' && d.removedCount > 0 ? `; removed ${text(d.removedCount)} days the file left out` : '')
         + (typeof d.keptCount === 'number' && d.keptCount > 0 ? `; kept ${text(d.keptCount)} already saved` : '');
     case 'order.item_sales_deleted': return `Deleted ${text(d.dayCount)} days of item sales`;
     case 'order.count_saved': return `Counted ${text(d.itemCount)} items for ${text(d.date)}`;

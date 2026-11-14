@@ -292,6 +292,8 @@ describe('item sales', () => {
       .toBe('Uploaded 2 days of item sales for 1 items, 2026-05-01 to 2026-05-08; kept 1 already saved');
     expect(summaryOf('order.item_sales_uploaded', events[0]?.details as Record<string, number | string>))
       .toBe('Uploaded 7 days of item sales for 2 items, 2026-05-01 to 2026-05-07');
+    expect(summaryOf('order.item_sales_uploaded', { dayCount: 0, itemCount: 0, firstDate: '2026-05-01', lastDate: '2026-05-07', removedCount: 7, keptCount: 0 }))
+      .toBe('Uploaded 0 days of item sales for 0 items, 2026-05-01 to 2026-05-07; removed 7 days the file left out');
 
     // The org admin's upload still replaces what the member could not.
     expect(await (await send({ from: MAY[0], to: MAY[6], days: [] }, admin)).json()).toEqual({ stored: 0, removed: 7, kept: 0 });
