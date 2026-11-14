@@ -51,10 +51,10 @@
 
 ## 7. Docs
 
-- [ ] 7.1 `api/README.md`: every new and changed route, the three collections, deletion, audit actions
-- [ ] 7.2 `docs/portal/tuning-chat.md`: the five tools, views and prompt lines
-- [ ] 7.3 `docs/portal/spec.md`: P30 Orders, P31 Ordering setup, D35 with the `[CONFIRM]` defaults, 15.3, P11's Bar order
-- [ ] 7.4 `client/src/portal/README.md` page rows; `reorder/README.md` points to the product port and its deviations
+- [x] 7.1 `api/README.md`: every new and changed route, the three collections, deletion, audit actions
+- [x] 7.2 `docs/portal/tuning-chat.md`: the five tools, views and prompt lines
+- [x] 7.3 `docs/portal/spec.md`: P30 Orders, P31 Ordering setup, D35 with the `[CONFIRM]` defaults, 15.3, P11's Bar order
+- [x] 7.4 `client/src/portal/README.md` page rows; `reorder/README.md` points to the product port and its deviations
 
 ## 8. Verify and land
 
