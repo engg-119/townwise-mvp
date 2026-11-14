@@ -16,7 +16,7 @@ The system SHALL store, per location, up to 5 calendars, each either an imported
 - **THEN** the system answers 400 `not_calendar` and stores nothing
 
 ### Requirement: Only an event's title, dates and hours are stored
-For each single event within 400 days of the town's today, the system SHALL store its UID, title (cut to 200 characters), start and end dates and, when it has them, its hours, and SHALL NOT store its description, location, attendees or organizer. It SHALL keep at most 2,000 events per calendar, the first by start, count repeating events without importing them, and leave canceled events out, following the parsing rules the Calendar page uses today (P27).
+For each single event within 400 days of the town's today, the system SHALL store its UID, title (cut to 200 characters), start and end dates and, when it has them, its hours, and SHALL NOT store its description, location, attendees or organizer. It SHALL keep at most 2,000 events per calendar, the first by start, count repeating events without importing them, and leave canceled events out, following the parsing rules of the Calendar page's in-browser parser that it replaces (P28).
 
 #### Scenario: Description is dropped
 - **WHEN** an imported event has a DESCRIPTION and a LOCATION
@@ -63,15 +63,62 @@ The system SHALL return a location's stored events overlapping a range of at mos
 - **THEN** the system answers 400 `bad_range`
 
 ### Requirement: The Calendar page shows and manages stored calendars
-The Calendar page (P27) SHALL show the stored events as "Your calendar" on web and native, and a "Your calendars" panel listing each calendar's name, kind, host for a link, event count, repeating events not imported, last refresh and status, with Add a link, Import a file (web), Refresh now (a link) and Remove. "Make a note" from an event SHALL open the note form as today, with the note's detail empty.
+The Calendar page (P28) SHALL show the stored events as "Your calendar" on web and native, read once per grid over the grid's range (`gridRange`), and SHALL hold one control in its header row's trailing slot on web and native: a "Your calendars" disclosure button reading "Your calendars (N)" with N the location's calendar count, or "Your calendars" with none, with `aria-expanded` and `aria-controls` on web and an expanded state on native, closed on every load. It replaces the header row's "Import a calendar file" button and "How importing works" link. The button SHALL open and close a full-width panel under the header row that lists each calendar's name, kind ("File" or "Link"), host for a link, event count, repeating events not imported, and for a link its status in words and its last refresh time, with "Refresh now" (a link) and "Remove" per calendar, and under the list "Import a calendar file" (web), "Add a link" (an inline form with a name of at most 60 characters and the address) and "How importing works". A file import SHALL be named after the file. Every failure code SHALL show plain words and store nothing. Under view-as the panel SHALL be read-only. "Make a note" from a stored event SHALL open the note form as today, with the note's detail empty.
 
-#### Scenario: Events survive a reload
-- **WHEN** a member imports a calendar file and reloads the page
-- **THEN** the imported events still show on the Calendar
+#### Scenario: The button with calendars
+- **WHEN** the Calendar opens for a location with 2 calendars
+- **THEN** the header row's last control reads "Your calendars (2)" with `aria-expanded="false"`, its `aria-controls` names the panel, and the panel is hidden, so the grid sits where it would with no panel
+
+#### Scenario: The button with none
+- **WHEN** the Calendar opens for a location with no calendar
+- **THEN** the button reads "Your calendars" and no "Your calendar" filter chip shows
+
+#### Scenario: Opening the panel
+- **WHEN** a member presses "Your calendars (2)"
+- **THEN** it has `aria-expanded="true"` and the panel shows under the header row, listing a file as "File, 12 events" and a link as "Link, calendar.google.com, 3 events" with its "Updated" time, then "Import a calendar file", "Add a link" and "How importing works"
+
+#### Scenario: Importing a file
+- **WHEN** on web a member imports "Kitchen bookings.ics" from the panel
+- **THEN** the page posts `{ kind: 'file', label: 'Kitchen bookings', ics }` with the file's text, says "Added Kitchen bookings: {n} events.", reads the calendar list and the grid's stored events again (not the forecast), and the file's events show on the Calendar with "Your calendar" on
+- **AND** after a reload they still show
+
+#### Scenario: Adding a link
+- **WHEN** a member adds a link named "Bookings" with a Google Calendar iCal address
+- **THEN** the page posts `{ kind: 'link', label: 'Bookings', url }`, shows "Adding…" until the answer, then closes and clears the form, lists "Bookings" as "Link, calendar.google.com", and its events show on the Calendar
+
+#### Scenario: A refused link shows its words and stores nothing
+- **WHEN** the API answers an added link with 400 `blocked_address`
+- **THEN** the form stays open with what was typed and shows "Townwise doesn’t read calendars from that address. Use the link from your calendar’s settings.", the list and the button's count are unchanged, and nothing is read again
+
+#### Scenario: Refresh now
+- **WHEN** a member presses "Refresh now" on a link and the API answers 200 with status `ok`
+- **THEN** the panel says "Refreshed {name}." and the list and the grid's stored events are read again
+- **AND** when it answers 200 with status `timeout`, the row shows "Couldn’t refresh: the link took too long to answer." above its "Updated" time, and when it answers 429 the panel says "This calendar was refreshed a few minutes ago. Try again in {n} minutes."
+
+#### Scenario: Remove
+- **WHEN** a member presses "Remove" on a calendar and confirms "Remove calendar"
+- **THEN** the page deletes it, says "Removed {name}.", and its events leave the Calendar after the list and the grid's stored events are read again
+
+#### Scenario: View-as is read-only
+- **WHEN** staff viewing as a member open the panel
+- **THEN** the list shows, "Import a calendar file", "Add a link", "Refresh now" and "Remove" do nothing and are described by the read-only line, and no write is sent
+
+#### Scenario: Native
+- **WHEN** a member opens the panel on native
+- **THEN** there is no "Import a calendar file"; the line "To add events from your own calendar file, open Townwise on the web." shows in its place, and Add a link, Refresh now and Remove work
 
 #### Scenario: Note from an event
 - **WHEN** a member chooses "Make a note" on a stored event
-- **THEN** the note form opens as a private event, more guests, with the event's dates and hours and an empty detail
+- **THEN** the note form opens as a private event, more guests, with the event's dates and hours and an empty detail, and no write carries the event's title
+
+#### Scenario: One stored-events read per grid
+- **WHEN** a member opens November 2026 (with today Nov 11, 2026)
+- **THEN** the page reads the stored events once, `from=2026-10-26&to=2026-12-06`, in parallel with the grid's other reads
+- **AND** selecting a day or switching to the week view reads no stored events again, and Next month reads `from=2026-11-30&to=2027-01-10`
+
+#### Scenario: A failed calendars read leaves the calendar showing
+- **WHEN** the calendar list or the stored events cannot be read
+- **THEN** the grid shows its town events, notes and forecast without stored events, and a notice says the calendars could not be loaded, with Try again
 
 ### Requirement: Stored calendars do not change the forecast by themselves
 A stored calendar event SHALL NOT change any forecast figure. Only notes and scheduled business rules SHALL change the forecast, as today.
