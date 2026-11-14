@@ -1,0 +1,48 @@
+# New Hampshire purchasing rules for price suggestions.
+# This file is not legal advice. Confirm it with the owner before relying on it.
+# Sources named in docs/REORDER_SPEC.md section 7a:
+#   RSA 179:32 (beer and cider from licensees; liquor from the Commission)
+#   RSA 180:9 (one distributor per brand in a territory)
+#   RSA 178:28 (state liquor stores)
+
+state: NH
+not_legal_advice: true
+stale_after_days: 30
+dismissal_hide_days: 30
+
+channel_labels:
+  licensed_distributor: Current beer distributor
+  manufacturer: Licensed manufacturer
+  brew_pub: Brew pub
+  state_liquor_commission: New Hampshire Liquor Commission
+  restaurant_supply: Current restaurant supplier
+  retail: Retail store
+  warehouse_club: Warehouse club
+
+# allowed: channels a suggestion may name.
+# forbidden: channels that must never be suggested for that category.
+categories:
+  bottles_cans:
+    allowed: [licensed_distributor, manufacturer, brew_pub]
+    forbidden: [retail, warehouse_club]
+    same_brand_one_distributor: true
+  draft:
+    allowed: [licensed_distributor, manufacturer, brew_pub]
+    forbidden: [retail, warehouse_club]
+    same_brand_one_distributor: true
+  liquor:
+    allowed: [state_liquor_commission]
+    forbidden: [retail, warehouse_club, licensed_distributor]
+    same_brand_one_distributor: true
+  wine:
+    allowed: [state_liquor_commission]
+    forbidden: [retail, warehouse_club, licensed_distributor]
+    same_brand_one_distributor: true
+  cocktail_ingredient:
+    allowed: [state_liquor_commission, restaurant_supply]
+    forbidden: [retail, warehouse_club]
+    same_brand_one_distributor: false
+  bottle_service:
+    allowed: [state_liquor_commission]
+    forbidden: [retail, warehouse_club]
+    same_brand_one_distributor: true

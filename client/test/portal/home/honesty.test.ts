@@ -7,8 +7,10 @@ import {
 } from '../../../src/portal/analytics/week';
 import type { ForecastDay } from '../../../src/portal/estimates/api';
 import { addDays, monthRange } from '../../../src/portal/locations/dates';
-import { BAR_ORDER_BODY } from '../../../src/portal/home/BarOrder';
+import { orderCoverSentence, REORDER_OVERVIEW } from '../../../src/portal/home/beside';
+import { barOrderWords } from '../../../src/portal/home/BarOrder';
 import { forecastDayLines } from '../../../src/portal/home/DayDetail';
+import type { LiveBoard, OrderLine } from '../../../src/portal/orders/api';
 import { lastWeekGlance } from '../../../src/portal/home/Glance';
 import { forecastLine, questionsLabel } from '../../../src/portal/home/Home';
 import { PEOPLE_HEAD } from '../../../src/portal/home/ThisMonth';
@@ -152,15 +154,91 @@ test('no history at all: no figure anywhere', () => {
 });
 
 test('the fixed copy names what is not built yet and promises nothing', () => {
-  for (const line of [forecastLine('Main Street Bar'), BAR_ORDER_BODY, PEOPLE_HEAD]) {
+  for (const line of [forecastLine('Main Street Bar'), PEOPLE_HEAD]) {
     expect(line).not.toMatch(FORECAST_WORDING);
     expect(line).not.toMatch(/\d/);
   }
   expect(LAST_YEAR_FOOTNOTE).not.toMatch(FORECAST_WORDING);
   expect(forecastLine('Main Street Bar')).toBe('Townwise hasn’t published a forecast for Main Street Bar yet. Until then, Home shows your history and the calendar, never a guess.');
+  const glance = [
+    REORDER_OVERVIEW,
+    orderCoverSentence('2026-11-12', null),
+    orderCoverSentence('2026-11-12', { sample: false, supplier: 'Sample distributor', cutoff: '2026-11-11', delivery: '2026-11-12', coversThrough: '2026-11-16' }),
+    orderCoverSentence('2026-11-20', { sample: true, supplier: 'Sample distributor', cutoff: '2026-11-11', delivery: '2026-11-12', coversThrough: '2026-11-16' }),
+  ];
+  for (const line of glance) expect(line).not.toMatch(FORECAST_WORDING);
   // The questions link is a count of what GET .../agent asks, and nothing more.
   expect(questionsLabel(1)).toBe('1 question from TownwiseAI');
   expect(questionsLabel(5)).toBe('5 questions from TownwiseAI');
   expect(questionsLabel(1200)).toBe('1,200 questions from TownwiseAI');
   expect(questionsLabel(2)).not.toMatch(FORECAST_WORDING);
+});
+
+// #68 review S2: the reorder copy on Home's selected day and on Orders describes the method the board runs
+// (api/src/orders/engine.ts), and claims nothing it does not do: no prices, no promise never to run out, no sight of
+// stock beyond the counts, and nothing sent or placed for the owner.
+test('the reorder copy says how the board works and promises nothing it doesn’t do', () => {
+  expect(REORDER_OVERVIEW).not.toMatch(FORECAST_WORDING);
+  for (const word of [/price|cost|cheap|margin/i, /never run|guarantee|always/i, /\bstock\b|on hand|inventory/i, /automatic|for you\b/i]) {
+    expect(REORDER_OVERVIEW).not.toMatch(word);
+  }
+  expect(REORDER_OVERVIEW).toMatch(/weekday over the last 8 weeks/);
+  expect(REORDER_OVERVIEW).toMatch(/guest forecast when one is published/);
+  expect(REORDER_OVERVIEW).toMatch(/minus your last count/);
+  expect(REORDER_OVERVIEW).toMatch(/You place every order yourself; nothing is sent to a distributor\.$/);
+  expect(REORDER_OVERVIEW).not.toMatch(/—/);
+});
+
+function line(fields: Partial<OrderLine> & Pick<OrderLine, 'itemId' | 'recommended'>): OrderLine {
+  return {
+    name: fields.itemId, supplier: 'Sample distributor', unit: 'cases', neverRunOut: false, alternative: null, par: 2, mu: null, sigma: null,
+    orderUpTo: null, target: 0.95, onHand: null, countAgeDays: null, confidence: 'low', dealSize: null, coveredDays: 0, why: '', sample: false,
+    edit: null, rules: [], ...fields,
+  };
+}
+
+// #68 review C5: the count and the deadline are the soonest order's, so the number is the one due by that deadline.
+test('Home’s bar order card counts the soonest order’s items with its deadline and says what is missing, never a quantity', () => {
+  const board: LiveBoard = {
+    available: true, today: '2026-11-13', sample: false, missing: ['a recent count'],
+    orders: [
+      {
+        supplierId: 's1', supplier: 'Sample brewery', cutoff: '2026-11-16', cutoffTime: '12:00', delivery: '2026-11-17', coversThrough: '2026-11-19',
+        deadline: 'Order by Mon, Nov 16, 12:00pm. Tuesday’s delivery lasts until Thursday’s.', lines: [line({ itemId: 'keg', recommended: 0 })],
+      },
+      {
+        supplierId: 's2', supplier: 'Sample distributor', cutoff: '2026-11-18', cutoffTime: '14:00', delivery: '2026-11-19', coversThrough: '2026-11-23',
+        deadline: 'Order by Wed, Nov 18, 2:00pm. Thursday’s delivery lasts until Monday’s.',
+        lines: [line({ itemId: 'lager', recommended: 6 }), line({ itemId: 'seltzer', recommended: 3 })],
+      },
+    ],
+  };
+  // The brewery's keg is due first and comes out at 0; the distributor's 2 items are a later order's.
+  expect(barOrderWords(board)).toEqual({
+    title: '0 items to order from Sample brewery',
+    lines: [
+      'Order by Mon, Nov 16, 12:00pm. Tuesday’s delivery lasts until Thursday’s.',
+      'The soonest of 2 orders, one per supplier. Orders lists them all.',
+      'Townwise still can’t see a recent count.',
+    ],
+    setUp: true,
+  });
+  const [brewery, distributor] = board.orders;
+  if (brewery === undefined || distributor === undefined) throw new Error('two orders');
+  expect(barOrderWords({ ...board, missing: [], orders: [distributor, brewery] })).toEqual({
+    title: '2 items to order from Sample distributor',
+    lines: ['Order by Wed, Nov 18, 2:00pm. Thursday’s delivery lasts until Monday’s.', 'The soonest of 2 orders, one per supplier. Orders lists them all.'],
+    setUp: true,
+  });
+  expect(barOrderWords({ ...board, orders: [{ ...distributor, lines: [line({ itemId: 'lager', recommended: 6 })] }] }).title).toBe('1 item to order from Sample distributor');
+  const unset = barOrderWords({ available: false, today: '2026-11-13', reason: 'No setup.', missing: ['the supplier schedule', 'the items'] });
+  expect(unset).toEqual({
+    title: 'Ordering isn’t set up yet', lines: ['Townwise still needs the supplier schedule and the items to build an order.'], setUp: false,
+  });
+  for (const words of [barOrderWords(board), unset]) {
+    for (const text of [words.title, ...words.lines]) {
+      expect(text).not.toMatch(FORECAST_WORDING);
+      expect(text).not.toMatch(/Planned|can’t see your stock/);
+    }
+  }
 });

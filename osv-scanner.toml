@@ -3,7 +3,12 @@
 # When a fix is installable under min-release-age=7, take it (directly or as an exact root `overrides` entry)
 # and delete the entry. If a removed id reappears, something moved backwards: fix it, do not re-list it.
 # Checked 2026-11-04. None of these packages is in the API release or the web bundle; all are build, lint or
-# test tooling (Expo CLI and config, Jest, ESLint).
+# test tooling (Expo CLI and config, Jest, ESLint), or notebook tooling for eda/ and modeling/ (checked 2026-11-13).
+
+[[IgnoredVulns]]
+id = "GHSA-5cjw-f85j-cv6r"
+ignoreUntil = 2026-11-17
+reason = "tornado 6.6 (eda/uv.lock and modeling/uv.lock, under ipykernel and jupyter-client for the notebooks only) is affected; the fix, tornado 6.6.1, was released 2026-11-09 and is inside the 7-day release-age gate until 2026-11-16."
 
 [[IgnoredVulns]]
 id = "GHSA-3g3m-2fjr-6pw4"
@@ -19,11 +24,6 @@ reason = "minimatch 10.2.6 (eslint, typescript-estree, glob 13) and 9.0.9 (under
 id = "GHSA-gcqx-w48m-w2h4"
 ignoreUntil = 2026-12-04
 reason = "deepmerge 4.3.1 (@expo/config, jest-config) has no fixed release; @expo/config drops it in 58.0.10 (2026-10-31, inside the 7-day release-age gate) and jest-config 30.5.2, the newest Jest, still requires it."
-
-[[IgnoredVulns]]
-id = "GHSA-5cjw-f85j-cv6r"
-ignoreUntil = 2026-11-20
-reason = "tornado 6.6 (low, an open redirect, published 2026-11-13) is in eda/uv.lock and modeling/uv.lock only, as Jupyter's local notebook server, never in the API release or the web bundle; the fix, tornado 6.6.1 (2026-11-09), is inside the 7-day release-age gate until 2026-11-16, after which the locks take it and this entry goes. Owner approved the suppression on 2026-11-13."
 
 [[IgnoredVulns]]
 id = "GHSA-mrhx-c7xc-m3w5"

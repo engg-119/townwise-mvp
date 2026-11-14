@@ -33,6 +33,8 @@ import Data from '../../app/(gate)/(app)/(client)/locations/[locationId]/data/in
 import DataItem from '../../app/(gate)/(app)/(client)/locations/[locationId]/data/[ref]';
 import Notes from '../../app/(gate)/(app)/(client)/locations/[locationId]/notes';
 import Town from '../../app/(gate)/(app)/(client)/locations/[locationId]/town';
+import Orders from '../../app/(gate)/(app)/(client)/locations/[locationId]/orders/index';
+import OrdersSetup from '../../app/(gate)/(app)/(client)/locations/[locationId]/orders/setup';
 import LocationSettings from '../../app/(gate)/(app)/(client)/locations/[locationId]/settings';
 import Agent from '../../app/(gate)/(app)/(client)/locations/[locationId]/agent';
 import Rules from '../../app/(gate)/(app)/(client)/locations/[locationId]/rules';
@@ -97,6 +99,8 @@ export function appRoutes(root: React.ComponentType, overrides?: Record<string, 
     '(gate)/(app)/(client)/locations/[locationId]/data/[ref]': DataItem,
     '(gate)/(app)/(client)/locations/[locationId]/notes': Notes,
     '(gate)/(app)/(client)/locations/[locationId]/town': Town,
+    '(gate)/(app)/(client)/locations/[locationId]/orders/index': Orders,
+    '(gate)/(app)/(client)/locations/[locationId]/orders/setup': OrdersSetup,
     '(gate)/(app)/(client)/locations/[locationId]/settings': LocationSettings,
     '(gate)/(app)/(client)/locations/[locationId]/agent': Agent,
     '(gate)/(app)/(client)/locations/[locationId]/rules': Rules,

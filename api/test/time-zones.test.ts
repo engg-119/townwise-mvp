@@ -2,7 +2,7 @@
 // state's zone (approximate in split states), and the local day turns at local midnight across both DST changes.
 import { describe, expect, it } from 'vitest';
 
-import { localDay, timeZoneOf, weekdayOf } from '../src/time-zones.ts';
+import { localDay, localMinutes, timeZoneOf, weekdayOf } from '../src/time-zones.ts';
 import { TOWNS, US_STATE_CODES } from '../src/towns.ts';
 
 describe('timeZoneOf', () => {
@@ -23,6 +23,17 @@ describe('timeZoneOf', () => {
     expect(timeZoneOf({ townId: null, name: 'Woodstock', state: 'VT' }).timeZone).toBe('America/New_York');
     expect(timeZoneOf({ townId: null, name: 'Bend', state: 'OR' })).toEqual({ timeZone: 'America/Los_Angeles', approximate: true });
     expect(timeZoneOf({ townId: null, name: 'Hilo', state: 'HI' })).toEqual({ timeZone: 'Pacific/Honolulu', approximate: false });
+  });
+});
+
+describe('localMinutes', () => {
+  it('counts minutes since the town’s midnight, 0 at midnight and across a DST change', () => {
+    const eastern = 'America/New_York';
+    expect(localMinutes(new Date('2026-06-01T12:00:00.000Z'), eastern)).toBe(8 * 60);
+    expect(localMinutes(new Date('2026-01-15T04:30:00.000Z'), eastern)).toBe(23 * 60 + 30);
+    expect(localMinutes(new Date('2026-06-01T04:00:00.000Z'), eastern)).toBe(0);
+    expect(localMinutes(new Date('2026-11-01T18:59:00.000Z'), eastern)).toBe(13 * 60 + 59);
+    expect(localMinutes(new Date('2026-06-01T12:00:00.000Z'), 'America/Los_Angeles')).toBe(5 * 60);
   });
 });
 

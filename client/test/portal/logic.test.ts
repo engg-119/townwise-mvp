@@ -20,8 +20,9 @@ const GATE = ['/request-access', '/waiting', '/no-access', '/joining', '/staff/s
 const UPLOAD_ITEM = '/locations/l1/data/u_0123456789abcdef01234567';
 const FILE_ITEM = '/locations/l1/data/f_89abcdef0123456789abcdef';
 const MEMBER = [
-  '/dashboard', '/settings', '/locations/l1', '/locations/l1/calendar', '/locations/l1/analytics', '/locations/l1/sales', '/locations/l1/sales/upload', '/locations/l1/data',
-  UPLOAD_ITEM, FILE_ITEM, '/locations/l1/notes', '/locations/l1/town', '/locations/l1/agent', '/locations/l1/chat', '/locations/l1/rules',
+  '/dashboard', '/settings', '/locations/l1', '/locations/l1/calendar', '/locations/l1/analytics', '/locations/l1/sales', '/locations/l1/sales/upload',
+  '/locations/l1/data', UPLOAD_ITEM, FILE_ITEM, '/locations/l1/notes', '/locations/l1/town', '/locations/l1/orders', '/locations/l1/orders/setup',
+  '/locations/l1/agent', '/locations/l1/chat', '/locations/l1/rules',
 ];
 const ADMIN_ONLY = ['/team', '/locations/new', '/locations/l1/settings'];
 const CONSOLE = ['/admin', '/admin/orgs', '/admin/orgs/o1', '/admin/people', '/admin/audit'];
@@ -82,6 +83,8 @@ describe('access routing (spec 4.3)', () => {
     expect(isAllowed(meOf(ACCESS.member), '/dashboard/')).toBe(true);
     expect(isAllowed(meOf(ACCESS.member), '/dashboard?x=1')).toBe(true);
     expect(isAllowed(meOf(ACCESS.member), '/locations/l1/nope')).toBe(false);
+    expect(isAllowed(meOf(ACCESS.member), '/locations/l1/orders/setup/')).toBe(true);
+    expect(isAllowed(meOf(ACCESS.member), '/locations/l1/orders/nope')).toBe(false);
   });
 
   test('isAllowed lets members open /locations/x/calendar, with or without ?day=', () => {
@@ -123,7 +126,8 @@ describe('navigation per role (spec 15.3)', () => {
 
   test('members: the location’s sections, then Settings as the right-hand group', () => {
     expect(rows(clientNav('member', '/locations/l1', 'l1'))).toEqual([
-      ['Home', '/locations/l1', 'page', false], ['Calendar', '/locations/l1/calendar', null, false], ['Analytics', '/locations/l1/analytics', null, false],
+      ['Home', '/locations/l1', 'page', false], ['Calendar', '/locations/l1/calendar', null, false], ['Orders', '/locations/l1/orders', null, false],
+      ['Analytics', '/locations/l1/analytics', null, false],
       ['TownwiseAI', '/locations/l1/agent', null, false], ['Notes', '/locations/l1/notes', null, false],
       ['Rules', '/locations/l1/rules', null, false],
       ['Town', '/locations/l1/town', null, false], ['Your data', '/locations/l1/data', null, false],
@@ -133,7 +137,7 @@ describe('navigation per role (spec 15.3)', () => {
 
   test('clientNav lists Calendar right after Home', () => {
     expect(clientNav('org_admin', '/locations/l1/calendar', 'l1').map((item) => item.label)).toEqual([
-      'Home', 'Calendar', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Team', 'Settings',
+      'Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Team', 'Settings',
     ]);
   });
 
@@ -161,11 +165,13 @@ describe('navigation per role (spec 15.3)', () => {
     expect(clientNav('org_admin', '/dashboard', null).map((item) => item.label)).toEqual(['Team', 'Settings']);
   });
 
-  test('current: each section on its own page; Analytics also on Sales data, which lives under it; Your data on Upload', () => {
+  test('current: each section on its own page; Analytics also on Sales data, which lives under it; Orders on Ordering setup; Your data on Upload', () => {
     const current = (path: string): [string, string | null][] =>
       clientNav('org_admin', path, 'l1').filter((item) => item.current !== null).map((item) => [item.label, item.current]);
     expect(current('/locations/l1/analytics')).toEqual([['Analytics', 'page']]);
     expect(current('/locations/l1/sales')).toEqual([['Analytics', 'true']]);
+    expect(current('/locations/l1/orders')).toEqual([['Orders', 'page']]);
+    expect(current('/locations/l1/orders/setup')).toEqual([['Orders', 'true']]);
     expect(current('/locations/l1/sales/upload')).toEqual([['Your data', 'true']]);
     expect(current('/locations/l1/data')).toEqual([['Your data', 'page']]);
     expect(current(FILE_ITEM)).toEqual([['Your data', 'true']]);
@@ -213,6 +219,8 @@ describe('navigation per role (spec 15.3)', () => {
     const pages: [string, TabKey, string][] = [
       ['/locations/l1', 'home', 'Week of Nov 2, 2026'],
       ['/locations/l1/calendar', 'calendar', 'Calendar'],
+      ['/locations/l1/orders', 'orders', 'Orders'],
+      ['/locations/l1/orders/setup', 'ordersSetup', 'Ordering setup'],
       ['/locations/l1/analytics', 'analytics', 'Analytics'],
       ['/locations/l1/sales', 'sales', 'Sales data'],
       ['/locations/l1/sales/upload', 'upload', 'Upload'],

@@ -115,6 +115,9 @@ test('lists every item as a table row: item, added, kind, size, status and days'
   expect(await screen.findByRole('heading', { level: 2, name: 'Your data' })).toBeTruthy();
   expect(screen.getByText('Everything your team added')).toBeTruthy();
   expect(screen.getByText(/^Sales uploads, files and text your team added for Main Street Bar, newest first\./)).toBeTruthy();
+  // Item sales, the ordering setup and counts are not listed here: one line points to where they live.
+  expect(screen.getByText('Item sales, the ordering setup and counts live in Orders, under Ordering setup.')).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Open Ordering setup' }).getAttribute('href')).toBe('/locations/l1/orders/setup');
   const rows = rowsOf(await table());
   expect(rows).toHaveLength(3);
   const head = within(screen.getByRole('table')).getAllByRole('columnheader').map((cell) => cell.textContent);
