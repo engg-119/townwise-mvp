@@ -15,7 +15,10 @@ export interface Sheet {
   readonly rows: string[][];
 }
 
-export type Workbook = { readonly kind: 'sheets'; readonly sheets: Sheet[] } | { readonly kind: 'kept'; readonly outcome: 'not_a_workbook' | 'too_complex' };
+/** `omitted` counts the sheets past MAX_SHEETS, which are not read. */
+export type Workbook =
+  | { readonly kind: 'sheets'; readonly sheets: Sheet[]; readonly omitted: number }
+  | { readonly kind: 'kept'; readonly outcome: 'not_a_workbook' | 'too_complex' };
 
 /**
  * The archive guards: entry count, declared sizes, ratio, and the parts every package of this kind has (a workbook's
@@ -62,6 +65,7 @@ export async function readWorkbook(buffer: Buffer): Promise<Workbook> {
   }
   return {
     kind: 'sheets',
+    omitted: Math.max(0, sheets.length - MAX_SHEETS),
     sheets: sheets.slice(0, MAX_SHEETS).map((sheet) => ({
       name: sheet.sheet,
       rows: sheet.data.map((row) => row.map(cellText)),

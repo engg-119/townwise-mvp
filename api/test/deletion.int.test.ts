@@ -9,8 +9,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { MeResponse } from '../src/handlers/me.ts';
 import { AUDIT_DETAIL_KEYS, type AuditAction } from '../src/stores/audit-events.ts';
 import {
-  addAuditEvent, addChatUsage, addConversation, addGrant, addInvite, addLiveTurn, addLocation, addNote, addOrderRecords, addRemovedSeat,
-  addRequest, addSalesDay, addSeat, addUpload, auditEvents, createOrg, ORDER_COLLECTIONS,
+  addAuditEvent, addChatUsage, addConversation, addGrant, addInvite, addLiveTurn, addLocation, addNote, addOrderRecords, addOwnerCalendar,
+  addRemovedSeat, addRequest, addSalesDay, addSeat, addUpload, auditEvents, createOrg, ORDER_COLLECTIONS,
 } from './helpers/fixtures.ts';
 import {
   call, makeStaff, MINUTE, signIn, signInStaff, startTownwiseServer, STAFF_EMAIL, writesDuring,
@@ -38,6 +38,10 @@ const TENANT_COLLECTIONS = [
   'tw_forecast_runs', 'tw_forecasts',
   // The forecast lab.
   'tw_calibrations',
+  // Business rules (spec 6.24).
+  'tw_business_rules',
+  // The owner's own calendars and their events.
+  'tw_calendar_sources', 'tw_calendar_events',
   // Orders: edits, rules, cards, setups, item sales and counts.
   ...ORDER_COLLECTIONS,
 ] as const;
@@ -141,6 +145,7 @@ async function populatedOrg(name: string, status: 'active' | 'suspended'): Promi
   await addSalesDay(server, { orgId, locationId, date: '2026-05-02', guests: 98, netSalesCents: 287_100 });
   await addUpload(server, { orgId, locationId, uploadedAt: server.clock.now(), status: 'applied' });
   await addNote(server, { orgId, locationId, detail: `${name} note detail`, createdBy: member.session.userId });
+  await addOwnerCalendar(server, { orgId, locationId });
   const conversationId = await addConversation(server, { orgId, locationId, userId: member.session.userId, text: `${name} chat` });
   await addProposal({ orgId, locationId, userId: member.session.userId });
   // Orders: a record in each of its collections, the card in the member's conversation.

@@ -1,6 +1,6 @@
 // Townwise test harness (spec Section 20). The kit's helpers are not exported, so this composes the
 // public kit API: server-core's createServer with /auth (createAuth) and /api (createTownwiseApi).
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, type KeyObject } from 'node:crypto';
 
 import {
   configSchema as authSchema, createAuth, createMongoAuthStores,
@@ -16,10 +16,14 @@ import { inject } from 'vitest';
 import { z } from 'zod';
 
 import type { TownwiseRoute } from '../../src/access/routes.ts';
-import { createTownwiseApi, createTownwiseLab } from '../../src/app.ts';
+import { createTownwiseApi, createTownwiseContext, createTownwiseLab } from '../../src/app.ts';
+import type { CalendarFetcher } from '../../src/calendar/fetch.ts';
 import type { ChatModel } from '../../src/chat/model.ts';
 import { configSchema as townwiseSchema } from '../../src/config.ts';
+import { createAiReadActions } from '../../src/files/ai-actions.ts';
+import { createAiReader, type AiReader, type AiReaderDeps, type OnAiRead } from '../../src/files/ai-reader.ts';
 import type { FileBlobs } from '../../src/files/blobs.ts';
+import type { FileReaderModel } from '../../src/files/extract/reader.ts';
 import { createFileWorker, type FileWorker, type FileWorkerDeps } from '../../src/files/worker.ts';
 import type { LabCaller } from '../../src/lab/caller.ts';
 import type { LabRunner } from '../../src/lab/runner.ts';
@@ -61,6 +65,8 @@ export interface TownwiseTestServer {
   readonly mailer: Mailer;
   /** The file reader, when the server was started with `reader`. */
   readonly reader: FileWorker | null;
+  /** Reading with TownwiseAI, when the server was started with `aiReader`; tests drive it with nudge() and settled(). */
+  readonly aiReader: AiReader | null;
   close(): Promise<void>;
 }
 
@@ -105,6 +111,14 @@ export async function startTownwiseServer(opts?: {
   files?: FileBlobs;
   /** Runs the file reader on `files`; tests drive it with nudge() and settled(). */
   reader?: Partial<Pick<FileWorkerDeps, 'parse' | 'leaseMs' | 'extract' | 'filesMonthlyBudgetUsd'>>;
+  /**
+   * Reading with TownwiseAI on `files`, over a scripted model (no call leaves the test); absent, it is off and its route
+   * answers 503 ai_unavailable. The budget defaults to 5 dollars, as in production. `onRead` defaults to production's
+   * actions (files/ai-actions.ts) on this server's stores, blobs and lab; `aroundOnRead` wraps those (to fail or delete
+   * something around them).
+   */
+  aiReader?: { model: FileReaderModel; aroundOnRead?: (actions: OnAiRead) => OnAiRead }
+    & Partial<Pick<AiReaderDeps, 'leaseMs' | 'extractText' | 'onRead' | 'filesMonthlyBudgetUsd'>>;
   /** U13A: synthetic headcount inputs for people in town; absent, the committed (empty) sources. */
   peopleData?: PeopleData;
   /** The forecast lab's runner (helpers/lab.ts has a fake); absent, calibrations are off. /lab is mounted either way. */
@@ -114,6 +128,10 @@ export async function startTownwiseServer(opts?: {
    * there is a runner, and nobody (/lab answers 404) when there is none, as main.ts builds both or neither.
    */
   labCaller?: LabCaller;
+  /** Seals owner calendar links; absent, links are off (503 calendar_links_unavailable). */
+  calendarKey?: KeyObject;
+  /** Fetches owner calendar links (helpers over a local server); absent, the guarded fetcher over the network. */
+  calendarFetcher?: CalendarFetcher;
 }): Promise<TownwiseTestServer> {
   const env: Record<string, string> = {
     NODE_ENV: 'test',
@@ -177,12 +195,20 @@ export async function startTownwiseServer(opts?: {
       connection: mongo.connection, stores: createTownwiseStores(mongo.connection), authStores, blobs: files, logger, now: clock.now,
       replicaId: 'test-reader', pollMs: 60_000, ...opts.reader,
     });
-    const deps = {
+    const baseDeps = {
       config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now: clock.now, chat: opts?.chat,
       chatTurnTimeLimitMs: opts?.chatTurnTimeLimitMs, places: opts?.places, mailer, placesMap: opts?.placesMap,
       files, fileWorker: reader ?? undefined, peopleData: opts?.peopleData, labRunner: opts?.labRunner,
       labCaller: opts?.labCaller ?? (opts?.labRunner === undefined ? undefined : testLabCaller(clock.now)),
+      calendarKey: opts?.calendarKey, calendarFetcher: opts?.calendarFetcher,
     };
+    const { aroundOnRead = (actions: OnAiRead) => actions, ...readerOpts } = opts?.aiReader ?? { model: undefined };
+    const aiReader = files === undefined || readerOpts.model === undefined ? null : createAiReader({
+      connection: mongo.connection, stores: createTownwiseStores(mongo.connection), authStores, blobs: files, logger, now: clock.now,
+      pollMs: 60_000, filesMonthlyBudgetUsd: 5, onRead: aroundOnRead(createAiReadActions(createTownwiseContext(baseDeps))), ...readerOpts,
+      model: readerOpts.model,
+    });
+    const deps = { ...baseDeps, aiReader: aiReader ?? undefined };
     const apiRouter = createTownwiseApi(deps);
     // As main.ts mounts them.
     const routes: RouteMount[] = [
@@ -190,7 +216,8 @@ export async function startTownwiseServer(opts?: {
     ];
     if (opts?.probe !== undefined) routes.push({ path: '/probe', router: createTownwiseApi(deps, opts.probe) });
     await ensureIndexes(mongo.connection, { logger, buildAtBoot: () => true });
-    const server = createServer({ config, logger, routes, onShutdown: reader === null ? [redis, mongo] : [reader, redis, mongo], exit: () => undefined });
+    const readers = [reader, aiReader].filter((each): each is FileWorker | AiReader => each !== null);
+    const server = createServer({ config, logger, routes, onShutdown: [...readers, redis, mongo], exit: () => undefined });
     const listened = await server.listen();
     return {
       url: `http://127.0.0.1:${String(listened.port)}`,
@@ -205,6 +232,7 @@ export async function startTownwiseServer(opts?: {
       mail,
       mailer,
       reader,
+      aiReader,
       close: () => server.shutdown('test'),
     };
   } catch (err) {

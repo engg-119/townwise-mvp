@@ -1,13 +1,15 @@
 import type { z } from 'zod';
 
 import type { ApiClient, RequestOptions } from '../../../src/api/client';
-import type { DataItem } from '../../../src/portal/data/api';
+import type { AiRead, DataItem } from '../../../src/portal/data/api';
 import { ADMIN_EMAIL, refusal } from '../../helpers/portal';
 import { fileViewOf, filesFake, type FilesFake } from '../files/fakes';
 
 // Your data in the API's shapes (api/src/handlers/data.ts) and a fake ApiClient for its routes. The list and GET of
 // one item answer from `items` (the list filtered by locationId, `pageSize` a page, the cursor an offset); PATCH
 // (on or off, or a rename keeping the extension), DELETE, POST text and POST replace change `items` and are recorded.
+// POST and DELETE .../data/:ref/ai (reading with TownwiseAI) are recorded in `ai`, answer from `answers['POST ai']` and
+// `answers['DELETE ai']`, and by default queue a read or mark it undone.
 // GET .../sales/history answers from `history` (the item page's days). Anything else goes to the stored-files fake,
 // which sits over the location pages' fake.
 
@@ -19,7 +21,16 @@ export function itemOf(ref: string, extra?: Partial<DataItem>): DataItem {
       id: ref.replace(/^[uf]_/, 'file-'), hasClean: false, rawAvailable: true, rawExpiresAt: '2027-11-05T15:00:00.000Z', entries: null,
       canDownloadRaw: true, canDownloadClean: false, canDeleteRaw: true,
     },
-    canTurnOff: true, canDelete: true, canEdit: false, editedAt: null, editedByEmail: null,
+    canTurnOff: true, canDelete: true, canEdit: false, editedAt: null, editedByEmail: null, canAiRead: false, ai: null, fromAiRead: null,
+    ...extra,
+  };
+}
+
+/** A TownwiseAI read as the API shows it: done by default, having made nothing. */
+export function aiOf(extra?: Partial<AiRead>): AiRead {
+  return {
+    status: 'done', reason: null, partial: false, kind: 'other', summary: null, facts: null, daysCut: false, notes: [], notesSkipped: null,
+    daysWritten: 0, daysAlreadyHad: 0, uploadRef: null, itemRef: null, daysReason: null, itemReason: null, calibration: null, canUndo: false,
     ...extra,
   };
 }
@@ -43,6 +54,8 @@ export interface DataFake extends ApiClient {
   texts: { locationId: string; body: unknown }[];
   /** POST .../data/:ref/replace requests, in order. */
   replaces: { ref: string; body: unknown }[];
+  /** POST and DELETE .../data/:ref/ai requests, in order. */
+  ai: { method: string; ref: string; body: unknown }[];
   /** GET .../sales/history bodies (or an ApiError) by location id. */
   history: Record<string, unknown>;
   /** Answers by "METHOD path": a body, an ApiError or a promise of either. */
@@ -67,6 +80,7 @@ export function dataFake(init: { inner: ApiClient; items?: DataItem[] }): DataFa
     removed: [],
     texts: [],
     replaces: [],
+    ai: [],
     history: {},
     answers: {},
     files,
@@ -129,6 +143,23 @@ export function dataFake(init: { inner: ApiClient; items?: DataItem[] }): DataFa
         };
         fake.items = fake.items.map((candidate) => (candidate.ref === ref ? item : candidate));
         return settle({ item }, schema);
+      }
+      const ai = /^\/api\/org\/locations\/([^/]+)\/data\/([^/]+)\/ai$/.exec(path);
+      if ((method === 'POST' || method === 'DELETE') && ai?.[2] !== undefined) {
+        const ref = ai[2];
+        fake.ai.push({ method, ref, body: opts?.body });
+        const answered = fake.answers[`${method} ai`]?.(opts?.body);
+        if (answered !== undefined) return settle(answered, schema);
+        const item = fake.items.find((candidate) => candidate.ref === ref);
+        if (item === undefined) return Promise.reject(refusal(404, 'not_found'));
+        if (method === 'POST') {
+          item.canAiRead = false;
+          item.ai = aiOf({ status: 'queued', kind: null });
+          return settle({ item: { ...item } }, schema);
+        }
+        item.canAiRead = true;
+        item.ai = aiOf({ status: 'undone', kind: null });
+        return settle({ item: { ...item }, calibrationKept: null }, schema);
       }
       const history = /^\/api\/org\/locations\/([^/]+)\/sales\/history$/.exec(path);
       if (method === 'GET' && history?.[1] !== undefined) {

@@ -80,6 +80,18 @@ export function importToStart(view: ImportView | null, queueImportId: string | n
   return queueImportId;
 }
 
+const SALES_READ_DONE: ReadonlySet<FileView['status']> = new Set(['read', 'kept', 'failed']);
+
+/**
+ * The Your data item to ask TownwiseAI to read a dropped file through (D34, 11A.9), once the sales reader is done
+ * with it: `u_<uploadId>` when it wrote days (that file's `f_` ref answers 404), else `f_<id>`. Null while it is
+ * still uploading, waiting or being read for sales, when asking would answer 400.
+ */
+export function aiRefOf(file: Pick<FileView, 'id' | 'status' | 'result'>): string | null {
+  if (!SALES_READ_DONE.has(file.status)) return null;
+  return file.result === null ? `f_${file.id}` : `u_${file.result.uploadId}`;
+}
+
 /** A row's share sent or read, 0 to 1; null when there is no total to measure against. */
 export function rowProgress(row: Row): number | null {
   if (row.kind === 'upload') {
@@ -201,7 +213,7 @@ export const SUGGESTIONS: readonly { title: string; body: string }[] = [
   },
   {
     title: 'Closures and events',
-    body: 'Add them on the Notes page. Townwise doesn’t read notes inside files yet.',
+    body: 'Add them on the Notes page. Townwise reads only the daily totals in your files, unless you let TownwiseAI read them: then it adds the dated events it finds as notes.',
   },
 ];
 
@@ -239,6 +251,7 @@ export const STEP = {
   keeps: [
     'Your files, stored privately for your organization in a storage account with no public internet address. Each original is deleted after 365 days, or sooner when you delete it.',
     'From each file, the date, guest count and net sales for each day, and a cleaned copy with only those three columns.',
+    'From a file you let TownwiseAI read, what it found and adds to your account, until you undo it on the file’s page.',
   ],
   keepsFiles: 'Download or delete your files on Sales data at any time.',
   salesData: 'Sales data',

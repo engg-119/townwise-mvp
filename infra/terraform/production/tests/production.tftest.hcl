@@ -408,6 +408,15 @@ run "key_vault" {
 
   assert {
     condition = (
+      !var.enable_calendar_links &&
+      !contains([for secret in azurerm_container_app.api.secret : secret.name], "townwise-calendar-key") &&
+      !contains([for env in azurerm_container_app.api.template[0].container[0].env : env.name], "TOWNWISE_CALENDAR_KEY")
+    )
+    error_message = "By default calendar links are off: no calendar key secret, no TOWNWISE_CALENDAR_KEY, no role on it."
+  }
+
+  assert {
+    condition = (
       !var.enable_chat &&
       !contains([for secret in azurerm_container_app.api.secret : secret.name], "anthropic-api-key") &&
       !contains([for env in azurerm_container_app.api.template[0].container[0].env : env.name], "ANTHROPIC_API_KEY")
@@ -485,6 +494,38 @@ run "chat_enabled" {
       alltrue([for secret in azurerm_container_app.api.secret : secret.value == null])
     )
     error_message = "With the chat on, ANTHROPIC_API_KEY is a Key Vault reference to anthropic-api-key, with no value in Terraform."
+  }
+}
+
+run "calendar_links_enabled" {
+  command = plan
+
+  variables {
+    enable_calendar_links = true
+  }
+
+  assert {
+    condition = toset([for key, assignment in azurerm_role_assignment.api_secret_read : assignment.scope]) == toset([
+      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/mongodb-uri",
+      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/auth-jwt-keys",
+      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/auth-encryption-keys",
+      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/townwise-calendar-key",
+      ]) && alltrue([
+      for key, assignment in azurerm_role_assignment.api_secret_read :
+      assignment.role_definition_name == "Key Vault Secrets User" && assignment.principal_id == "00000000-0000-0000-0000-0000000000ee"
+    ])
+    error_message = "With calendar links on, the app's identity reads the calendar key by one more secret-scoped assignment, and nothing wider."
+  }
+
+  assert {
+    condition = (
+      toset([for env in azurerm_container_app.api.template[0].container[0].env : "${env.name}=${coalesce(env.secret_name, "-")}" if env.secret_name != null]) == toset([
+        "MONGODB_URI=mongodb-uri", "AUTH_JWT_KEYS=auth-jwt-keys", "AUTH_ENCRYPTION_KEYS=auth-encryption-keys", "TOWNWISE_CALENDAR_KEY=townwise-calendar-key",
+      ]) &&
+      contains([for secret in azurerm_container_app.api.secret : secret.key_vault_secret_id], "https://kv-townwise-2d2c15bf.vault.azure.net/secrets/townwise-calendar-key") &&
+      alltrue([for secret in azurerm_container_app.api.secret : secret.value == null])
+    )
+    error_message = "With calendar links on, TOWNWISE_CALENDAR_KEY is a Key Vault reference to townwise-calendar-key, with no value in Terraform."
   }
 }
 

@@ -71,6 +71,25 @@ const feedbackSchema = z.object({ rating: z.enum(['up', 'down']), reason: feedba
 
 const treeNodeSchema = z.object({ id: z.string(), parentId: z.string().nullable(), role: z.enum(['user', 'assistant']) });
 
+/** What a file attached to a message is (D36), in the server's words; a kind this client doesn't know reads as `file`. */
+export const ATTACHMENT_KINDS = ['text', 'picture', 'pdf', 'word', 'excel', 'zip', 'file'] as const;
+export type AttachmentKind = (typeof ATTACHMENT_KINDS)[number];
+
+/**
+ * A file a person's message carries (D36): its Your data ref and kind, its name (null under view-as and once the file
+ * is gone), and whether it is on, turned off or gone from Your data now.
+ */
+export interface MessageAttachment { ref: string; kind: AttachmentKind; name: string | null; state: 'on' | 'off' | 'gone' }
+
+// Read one by one (as the panel's items): an entry without a ref is left out, an unknown kind is a file, and an
+// unknown state is gone, so the chip never links to a page that may not be there.
+const attachmentSchema = z.object({
+  ref: z.string(),
+  kind: z.enum(ATTACHMENT_KINDS).catch('file'),
+  name: z.string().nullable().catch(null),
+  state: z.enum(['on', 'off', 'gone']).catch('gone'),
+});
+
 const budgetSchema = z.object({ month: z.string(), usedUsd: z.number(), limitUsd: z.number(), exhausted: z.boolean() });
 const conversationSummarySchema = z.object({ id: z.string(), title: z.string(), updatedAt: z.string(), turnCount: z.number() });
 const chatSummarySchema = z.object({
@@ -96,6 +115,7 @@ const conversationSchema = z.object({
     endedAt: z.string().optional(),
     feedback: feedbackSchema.nullable().default(null),
     next: z.array(z.string()).nullable().default(null),
+    attachments: z.array(z.unknown()).default([]),
   })),
 });
 
@@ -130,6 +150,8 @@ export interface StoredMessage {
   feedback: Feedback | null;
   /** The three questions suggested after a reply; null for none and for the person's messages. */
   next: string[] | null;
+  /** The files the person's message carries, in order (D36); [] for a reply. */
+  attachments: MessageAttachment[];
 }
 
 /** A conversation as the server shows it: the messages of one path, every node, and that path's leaf. */
@@ -262,6 +284,7 @@ function conversationOf(conversation: z.infer<typeof conversationSchema>): Conve
       nodeId: message.nodeId,
       feedback: message.feedback,
       next: message.next,
+      attachments: message.role === 'user' ? known(message.attachments, attachmentSchema) : [],
     })),
   };
 }
@@ -307,15 +330,19 @@ export async function deleteConversation(api: ApiClient, locationId: string, con
 /**
  * A turn: a message, or a regenerate of the reply to the person's message `replyTo`. A message's `parentId` is the
  * node it hangs under (an edit names the edited message's parent; null starts a second root); left out, the server
- * appends to the leaf it has stored. No `conversationId` starts a new conversation, with no `parentId`.
+ * appends to the leaf it has stored. No `conversationId` starts a new conversation, with no `parentId`. A message's
+ * `attachments` (D36) are 1 to 5 `f_` refs of Your data, sent only when there are any; a regenerate never carries
+ * them (the server reads its stored message's files again).
  */
-export type TurnRequest = { conversationId: string | null; content: string; parentId?: string | null } | { conversationId: string; replyTo: string };
+export type TurnRequest =
+  | { conversationId: string | null; content: string; parentId?: string | null; attachments?: readonly string[] }
+  | { conversationId: string; replyTo: string };
 
 function turnBody(turn: TurnRequest): Record<string, unknown> {
   if ('replyTo' in turn) return { conversationId: turn.conversationId, replyTo: turn.replyTo };
-  if (turn.conversationId === null) return { content: turn.content };
-  const body: Record<string, unknown> = { conversationId: turn.conversationId, content: turn.content };
-  if (turn.parentId !== undefined) body.parentId = turn.parentId;
+  const body: Record<string, unknown> = turn.conversationId === null ? { content: turn.content } : { conversationId: turn.conversationId, content: turn.content };
+  if (turn.conversationId !== null && turn.parentId !== undefined) body.parentId = turn.parentId;
+  if (turn.attachments !== undefined && turn.attachments.length > 0) body.attachments = [...turn.attachments];
   return body;
 }
 

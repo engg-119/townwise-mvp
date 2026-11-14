@@ -97,10 +97,14 @@ function CalibrateDialog(props: {
 
 function Row(props: { calibration: Calibration; location: string }): React.JSX.Element {
   const { calibration, location } = props;
-  // Staff can start one from TownwiseAI while they have the organization open as admin (D25).
+  // Staff can start one from TownwiseAI, or by letting it read a file (D34), while they have the organization open as
+  // admin (D25).
+  const staff = calibration.requestedByRole === 'superadmin';
   const by = calibration.via === 'console'
     ? 'Started by Townwise staff'
-    : calibration.requestedByRole === 'superadmin' ? 'Started by Townwise staff in TownwiseAI' : 'Started by an org admin in TownwiseAI';
+    : calibration.via === 'file'
+      ? (staff ? 'Started by Townwise staff from a file TownwiseAI read' : 'Started by an org admin from a file TownwiseAI read')
+      : (staff ? 'Started by Townwise staff in TownwiseAI' : 'Started by an org admin in TownwiseAI');
   return (
     <Stack gap={4}>
       <Small white>{`${location}, ${formatDate(calibration.requestedAt)}`}</Small>

@@ -7,7 +7,7 @@ import { Actions, Button } from '../ui/Button';
 import { ErrorNotice } from '../ui/feedback';
 import { FormField } from '../ui/FormField';
 import { Panel, Stack } from '../ui/layout';
-import { Eyebrow, Heading } from '../ui/text';
+import { Eyebrow, Heading, Small } from '../ui/text';
 import type { Note, NoteInput } from './api';
 import { NoteFields } from './NoteFields';
 import { checkNote, MAX_DETAIL, NOTE_COPY, type NoteDraft, type NoteMessages } from './noteRules';
@@ -38,6 +38,8 @@ export function NoteForm(props: {
   onCancel: () => void;
   /** Save note's look: the page's primary (Notes), or an outline where the page has another primary (TownwiseAI). */
   submitVariant?: 'primary' | 'outline';
+  /** The note was made by TownwiseAI from a file (D34): the form says undoing that read removes it. */
+  fromAiFile?: boolean;
 }): React.JSX.Element {
   const { save, onSaved } = props;
   const [draft, setDraft] = useState<NoteDraft>(props.initial);
@@ -65,6 +67,7 @@ export function NoteForm(props: {
       <Stack gap={8}>
         <Eyebrow>{props.editing ? 'Edit note' : 'New note'}</Eyebrow>
         <Heading>{title}</Heading>
+        {props.fromAiFile === true ? <Small>{NOTE_COPY.fromAiFileEdit}</Small> : null}
       </Stack>
       <Stack gap={20}>
         <NoteFields draft={draft} set={set} messages={messages} idPrefix="note" endHelper="Leave it empty for one day." noun="note" />

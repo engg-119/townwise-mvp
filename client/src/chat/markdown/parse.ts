@@ -2,7 +2,9 @@ import MarkdownIt from 'markdown-it';
 
 // TownwiseAI's replies are Markdown (spec P25). markdown-it parses them into a small typed tree that both platforms
 // draw with React Native primitives. Raw HTML is never rendered (html: false turns it into text), a link is a link
-// only for an absolute http(s) URL, and an image is its alt text (it is never fetched).
+// only for an absolute http(s) URL, with the host it leads to written after it as text, "words (example.com)", so its
+// words can never hide where it goes (D36: a reply may draw on a file), and an image is its alt text (it is never
+// fetched).
 
 export type MdInline =
   | { t: 'text'; text: string } | { t: 'code'; text: string } | { t: 'break' }
@@ -21,9 +23,14 @@ const md = new MarkdownIt('commonmark', { html: false, linkify: false }).enable(
 
 /** An absolute http: or https: URL, as the URL parser reads it; anything else (javascript:, data:, mailto:, relative) is null. */
 export function safeHref(raw: string): string | null {
+  return hostOf(raw) === null ? null : raw;
+}
+
+/** The host an absolute http(s) URL leads to, as the URL parser reads it (an international name in its xn-- form), else null. */
+export function hostOf(raw: string): string | null {
   try {
     const url = new URL(raw);
-    return url.protocol === 'http:' || url.protocol === 'https:' ? raw : null;
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.host : null;
   } catch {
     return null;
   }
@@ -74,7 +81,11 @@ function inlineRun(tokens: readonly Token[], start: number, closeType: string | 
       }
       case 'link_open': {
         const [children, next] = inlineRun(tokens, i + 1, 'link_close');
-        out.push({ t: 'link', href: safeHref(token.attrGet('href') ?? ''), children });
+        const raw = token.attrGet('href') ?? '';
+        const host = hostOf(raw);
+        out.push({ t: 'link', href: host === null ? null : raw, children });
+        // Outside the link, so it reads as where the link goes.
+        if (host !== null) pushText(out, ` (${host})`);
         i = next;
         break;
       }

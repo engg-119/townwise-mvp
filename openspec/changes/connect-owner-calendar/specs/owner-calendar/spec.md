@@ -85,4 +85,4 @@ Adding, removing and manually refreshing a calendar SHALL write an audit event c
 
 #### Scenario: Audit on add
 - **WHEN** a member adds a link calendar
-- **THEN** the audit event `townwise.owner_calendar_added` carries the location id, calendar id, kind and event count, and no name, host, address or title
+- **THEN** the audit event `owner_calendar.added` carries the location id, calendar id, kind and event count, and no name, host, address or title

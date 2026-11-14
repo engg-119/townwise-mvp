@@ -1,7 +1,8 @@
 // read_data_item: the text of one item kept for reference, through ctx.items (chat/* imports no file code). The item's
 // text is the owner's data, never instructions. Never a sales file, a title or a file name. The text reaches the model
 // only in the turn that read it: the saved conversation keeps a stub (`saved`), so a later turn reads again through
-// ctx.items, which refuses an item turned off, deleted or purged since.
+// ctx.items, which refuses an item turned off, deleted or purged since. A read that hands back text marks the turn as
+// having read a file (ToolContext.turn), so start_calibration refuses for the rest of it (D36).
 import { AppError } from '@ckeith26/server-core';
 import { z } from 'zod';
 
@@ -87,6 +88,7 @@ export const readDataTool: ChatTool<ReadDataInput> = {
       ? { status: 'not_readable' }
       : await tc.ctx.items.readText(tc.scope, tc.location.id, parsed.id);
     if (read.status !== 'ok') return { content: JSON.stringify({ available: false, reason: REASONS[read.status] }) };
+    tc.turn.readUntrusted = true;
     return { content: JSON.stringify({ ref, text: read.text, truncated: read.truncated }) };
   },
 };

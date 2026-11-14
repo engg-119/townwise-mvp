@@ -94,6 +94,11 @@ export const noteSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   canEdit: z.boolean(),
+  /**
+   * A note TownwiseAI made from a file someone let it read (D34, 11A.9); undoing that read deletes it, even after an
+   * edit. Optional: an API from before it sends none.
+   */
+  source: z.object({ via: z.literal('ai_file'), fileId: z.string() }).nullish(),
 });
 export type Note = z.infer<typeof noteSchema>;
 

@@ -29,16 +29,27 @@ function isPdf(head: Uint8Array): boolean {
 
 const ZIP = [[0x50, 0x4b, 0x03, 0x04], [0x50, 0x4b, 0x05, 0x06]] as const;
 const OLE = [0xd0, 0xcf, 0x11, 0xe0] as const;
-const IMAGES: readonly (readonly number[])[] = [
-  [0x89, 0x50, 0x4e, 0x47], // PNG
-  [0xff, 0xd8, 0xff], // JPEG
-  [0x47, 0x49, 0x46, 0x38], // GIF
+
+/** A picture TownwiseAI's model can read (spec D36). */
+export type PictureType = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+
+const PICTURES: readonly (readonly [readonly number[], PictureType])[] = [
+  [[0x89, 0x50, 0x4e, 0x47], 'image/png'],
+  [[0xff, 0xd8, 0xff], 'image/jpeg'],
+  [[0x47, 0x49, 0x46, 0x38], 'image/gif'],
 ];
 
+/** The picture type of a file whose first bytes are `head` (12 are enough): PNG, JPEG, GIF or WebP, else null. */
+export function pictureType(head: Uint8Array): PictureType | null {
+  const found = PICTURES.find(([signature]) => startsWith(head, signature));
+  if (found !== undefined) return found[1];
+  // WebP: RIFF....WEBP.
+  return startsWith(head, [0x52, 0x49, 0x46, 0x46]) && startsWith(head, [0x57, 0x45, 0x42, 0x50], 8) ? 'image/webp' : null;
+}
+
 function isImage(head: Uint8Array): boolean {
-  if (IMAGES.some((signature) => startsWith(head, signature))) return true;
-  // WebP: RIFF....WEBP. HEIC: ....ftypheic (or mif1, heix).
-  if (startsWith(head, [0x52, 0x49, 0x46, 0x46]) && startsWith(head, [0x57, 0x45, 0x42, 0x50], 8)) return true;
+  if (pictureType(head) !== null) return true;
+  // HEIC: ....ftypheic (or mif1, heix).
   const brand = Buffer.from(head.subarray(4, 12)).toString('latin1');
   return brand === 'ftypheic' || brand === 'ftypheix' || brand === 'ftypmif1';
 }

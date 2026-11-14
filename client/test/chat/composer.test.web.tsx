@@ -1,10 +1,10 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 
-import { Composer, COMPOSER_LABEL, type ComposerProps } from '../../src/chat/ui/Composer';
+import { ATTACHED_PLACEHOLDER, Composer, COMPOSER_LABEL, type ComposerProps } from '../../src/chat/ui/Composer';
 import { PortalStyles } from '../../src/portal/shell/PortalStyles';
 
-// The rounded composer on web: the button's three readings, rotating examples, the radii, the leading slot, growth
-// and the counter.
+// The rounded composer on web: the button's three readings, rotating examples, the radii, the leading slot, the
+// attachments slot, growth and the counter.
 
 const observers: (() => void)[] = [];
 
@@ -153,6 +153,57 @@ test('renders the leading slot first inside the box only when given', () => {
   rerender(<Composer {...props({ leading: <span>Add data</span> })} />);
   const box = boxOf(screen.getByLabelText(COMPOSER_LABEL));
   expect(box.firstElementChild?.textContent).toBe('Add data');
+});
+
+describe('the attachments slot (D36)', () => {
+  const chips = <span>menu.pdf</span>;
+
+  test('is the box’s first row, a whole line in normal flow, and asks about the file in place of the examples', () => {
+    const onChange = jest.fn();
+    const { rerender } = render(<Composer {...props({ examples: EXAMPLES, onChange })} />);
+    const field = screen.getByLabelText(COMPOSER_LABEL);
+    expect(field.getAttribute('placeholder')).toBe(EXAMPLES[0]);
+    expect(screen.queryByTestId('composer-attachments')).toBeNull();
+    rerender(<Composer {...props({ examples: EXAMPLES, onChange, attachments: chips, attached: true })} />);
+    const slot = screen.getByTestId('composer-attachments');
+    expect(boxOf(field).firstElementChild).toBe(slot);
+    expect(getComputedStyle(slot).flexBasis).toBe('100%');
+    expect(getComputedStyle(slot).position).not.toBe('absolute');
+    expect(getComputedStyle(boxOf(field)).flexWrap).toBe('wrap');
+    expect(field.getAttribute('placeholder')).toBe(ATTACHED_PLACEHOLDER);
+    // No example shows, so Tab has none to take.
+    expect(fireEvent.keyDown(field, { key: 'Tab' })).toBe(true);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  test('a chip appearing or going never remounts the field or takes its focus, in either layout', () => {
+    const { rerender } = render(<Composer {...props({ leading: <span>+</span> })} />);
+    const field = screen.getByLabelText(COMPOSER_LABEL);
+    act(() => { field.focus(); });
+    rerender(<Composer {...props({ leading: <span>+</span>, attachments: chips, attached: true })} />);
+    expect(screen.getByLabelText(COMPOSER_LABEL)).toBe(field);
+    expect(document.activeElement).toBe(field);
+    // The + and the field stay on the line under the chips.
+    expect(boxOf(field).children[1]?.textContent).toBe('+');
+    Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', { configurable: true, get: () => 72 });
+    rerender(<Composer {...props({ draft: 'a long question', leading: <span>+</span>, attachments: chips, attached: true })} />);
+    act(() => { observers.forEach((callback) => { callback(); }); });
+    expect(screen.getByLabelText(COMPOSER_LABEL)).toBe(field);
+    expect(document.activeElement).toBe(field);
+    expect(boxOf(field).firstElementChild).toBe(screen.getByTestId('composer-attachments'));
+    rerender(<Composer {...props({ draft: 'a long question', leading: <span>+</span> })} />);
+    expect(screen.getByLabelText(COMPOSER_LABEL)).toBe(field);
+    expect(document.activeElement).toBe(field);
+  });
+
+  test('Send is described by the line saying why it waits, with the read-only line under view-as', () => {
+    const { rerender } = render(<Composer {...props({ draft: 'hi', sendDescribedBy: 'composer-files-wait' })} />);
+    expect(screen.getByRole('button', { name: 'Send' }).getAttribute('aria-describedby')).toBe('composer-files-wait');
+    rerender(<Composer {...props({ draft: 'hi', readOnlyId: 'ro', sendDescribedBy: 'composer-files-wait' })} />);
+    expect(screen.getByRole('button', { name: 'Send' }).getAttribute('aria-describedby')).toBe('ro composer-files-wait');
+    rerender(<Composer {...props({ draft: 'hi', canSend: true })} />);
+    expect(screen.getByRole('button', { name: 'Send' }).getAttribute('aria-describedby')).toBeNull();
+  });
 });
 
 test('grows to 200px and then scrolls; the counter shows from 3,600 characters', () => {

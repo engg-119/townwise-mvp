@@ -126,6 +126,11 @@ export interface SalesDayStore {
     uploadId: string; days: readonly SalesDay[]; replace: boolean; now: Date;
   }): Promise<{ inserted: number; matched: number }>;
   hasAny(scope: OrgScope, locationId: string): Promise<boolean>;
+  /**
+   * Which of `dates` the location already has a day for, whichever upload wrote it (turned off or not), leaving out
+   * the days `exceptUploadId` wrote (a retry of the upload that wrote them).
+   */
+  existingDates(scope: OrgScope, locationId: string, dates: readonly string[], exceptUploadId: string): Promise<Set<string>>;
   /** Whether any location of the organization has a day with a value (the welcome's “ready to set up”). */
   hasAnyForOrg(scope: OrgScope): Promise<boolean>;
   /**
@@ -281,6 +286,14 @@ export function createSalesDayStore(connection: Connection): SalesDayStore {
     },
     async hasAny(scope, locationId) {
       return (await SalesDay.exists(ofLocation(scope, locationId))) !== null;
+    },
+    async existingDates(scope, locationId, dates, exceptUploadId) {
+      if (dates.length === 0) return new Set();
+      const docs = await SalesDay.find(
+        { ...ofLocation(scope, locationId), date: trusted({ $in: [...dates] }), uploadId: trusted({ $ne: new Types.ObjectId(exceptUploadId) }) },
+        { _id: 0, date: 1 },
+      ).lean();
+      return new Set(docs.map((doc) => doc.date));
     },
     async hasAnyForOrg(scope) {
       return (await SalesDay.exists({ orgId: new Types.ObjectId(scope.orgId), ...HAS_VALUE_FILTER })) !== null;

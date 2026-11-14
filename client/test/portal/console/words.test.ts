@@ -24,7 +24,8 @@ test('the action filter covers every action the API records (api/src/stores/audi
     'member.invited', 'member.declined', 'member.joined', 'member.role_changed', 'member.removed', 'member.left',
     'location.created', 'location.updated', 'location.deleted', 'sales.uploaded', 'sales.deleted',
     'sales.upload_deleted', 'data.turned_off', 'data.turned_on', 'data.renamed', 'data.edited',
-    'file.uploaded', 'file.deleted', 'file.raw_deleted', 'files.raw_deleted_all', 'org.originals_deleted',
+    'file.uploaded', 'file.deleted', 'file.raw_deleted', 'files.raw_deleted_all',
+    'file.ai_read_requested', 'file.ai_read', 'file.ai_undone', 'org.originals_deleted',
     'note.created', 'note.updated', 'note.deleted', 'chat.turn_completed', 'chat.conversation_deleted',
     'agent.question_answered',
     'order.setup_saved', 'order.item_sales_uploaded', 'order.item_sales_deleted', 'order.count_saved', 'order.decision_saved',
@@ -60,6 +61,12 @@ test.each<[string, Record<string, string | number | boolean | null>, string]>([
 test('D28: renaming and editing an item have the API’s labels (api/src/audit.ts)', () => {
   expect(AUDIT_ACTIONS).toContainEqual({ value: 'data.renamed', label: 'Item renamed' });
   expect(AUDIT_ACTIONS).toContainEqual({ value: 'data.edited', label: 'Item edited' });
+});
+
+test('D34: reading a file with TownwiseAI has the API’s actions, in plain words (api/src/stores/audit-events.ts)', () => {
+  expect(AUDIT_ACTIONS).toContainEqual({ value: 'file.ai_read_requested', label: 'TownwiseAI read asked' });
+  expect(AUDIT_ACTIONS).toContainEqual({ value: 'file.ai_read', label: 'File read by TownwiseAI' });
+  expect(AUDIT_ACTIONS).toContainEqual({ value: 'file.ai_undone', label: 'TownwiseAI read undone' });
 });
 
 test('order actions have plain labels, and the server’s summary carries their counts and dates', () => {

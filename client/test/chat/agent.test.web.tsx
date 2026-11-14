@@ -3,10 +3,11 @@ import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
-import { ApiError } from '../../src/api/client';
+import { ApiError, type ApiClient } from '../../src/api/client';
 import { aboutDraft } from '../../src/chat/about';
 import { resetDrafts } from '../../src/chat/drafts';
 import { COMPOSER_LABEL } from '../../src/chat/ui/Composer';
+import { ATTACH_FILES, WAIT_ID } from '../../src/chat/ui/ComposerFiles.web';
 import { resetVersionFocus } from '../../src/chat/ui/VersionNav';
 import { localToday } from '../../src/portal/locations/dates';
 import { resetProfiles } from '../../src/portal/profile/useProfile';
@@ -19,6 +20,7 @@ import {
 import { fakeAuth } from '../helpers/fakes';
 import { ACCESS, fakePortalApi, meOf, orgOf, viewAsMe } from '../helpers/portal';
 import { itemOf } from '../portal/data/fakes';
+import { filesFake, type FilesFake } from '../portal/files/fakes';
 import { PUBLISHED, RUN, serveAbout } from './about-fakes';
 import { daily } from './visuals-fixtures';
 
@@ -93,10 +95,11 @@ const SECOND_REPLY = {
   ],
 };
 
-function renderAt(path: string, api: FakeChatApi, me: MeResponse = meOf(ACCESS.member)): void {
+/** `fallback`: what answers after the portal's routes, the chat fake unless a test puts stored files over it. */
+function renderAt(path: string, api: FakeChatApi, me: MeResponse = meOf(ACCESS.member), fallback: ApiClient = api): void {
   // F10: GET .../estimates/about, with no forecast unless the test served another answer.
   if (!('about' in api)) serveAbout(api);
-  const portal = fakePortalApi({ me, org: orgOf('member'), fallback: api });
+  const portal = fakePortalApi({ me, org: orgOf('member'), fallback });
   const auth = fakeAuth({ status: 'signedIn', user: { id: 'u1', email: EMAIL } }, { api: portal });
   window.history.replaceState(null, '', path);
   render(
@@ -1183,13 +1186,13 @@ test('nothing goes to browser storage', async () => {
   }
 });
 
-describe('the composer’s + (D28)', () => {
+describe('the composer’s + (D28, D36)', () => {
   const FILES = '/api/org/locations/l1/files';
 
-  test('puts a chosen file on Your data as a reference upload', async () => {
+  test('attaches a chosen file to the message, uploading it to Your data as a reference file', async () => {
     const api = fakeChatApi();
     renderAt('/locations/l1/agent', api);
-    const add = await screen.findByRole('button', { name: 'Add a file to Your data' });
+    const add = await screen.findByRole('button', { name: ATTACH_FILES });
     expect(add.getAttribute('aria-disabled')).toBeNull();
     fireEvent.click(add);
     const picker = document.querySelector<HTMLInputElement>('[data-testid="composer-files"]');
@@ -1213,9 +1216,166 @@ describe('the composer’s + (D28)', () => {
     // The + also waits for this answer, so let it arrive before saying the + is absent.
     await waitFor(() => { expect(asked).toBeGreaterThan(0); });
     await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 0); }); });
-    expect(screen.queryByRole('button', { name: 'Add a file to Your data' })).toBeNull();
+    expect(screen.queryByRole('button', { name: ATTACH_FILES })).toBeNull();
     cleanup();
     renderAt('/locations/l1/agent', fakeChatApi(), viewAsMe(ACCESS.member));
-    expectReadOnly(await screen.findByRole('button', { name: 'Add a file to Your data' }));
+    expectReadOnly(await screen.findByRole('button', { name: ATTACH_FILES }));
+  });
+});
+
+describe('files on the message (D36)', () => {
+  const REF = 'f_0123456789abcdef01234567';
+  const GONE = 'f_76543210fedcba9876543210';
+
+  /** The chat over stored files: chunk PUTs wait for the test, and a finished file is `f1` on Your data. */
+  function withFiles(api: FakeChatApi = fakeChatApi()): { api: FakeChatApi; files: FilesFake } {
+    const files = filesFake({ inner: api, chunkSize: 1024 });
+    files.lists[''] = [];
+    return { api, files };
+  }
+
+  function pick(...names: string[]): void {
+    const picker = document.querySelector<HTMLInputElement>('[data-testid="composer-files"]');
+    if (picker === null) throw new Error('no file picker');
+    fireEvent.change(picker, { target: { files: names.map((name) => new File(['Closed Mondays in winter.'], name)) } });
+  }
+
+  function chips(): HTMLElement | null {
+    return screen.queryByRole('list', { name: 'Files attached to your message' });
+  }
+
+  /** Every chunk sent and kept: the chips read ready. */
+  async function finish(files: FilesFake): Promise<void> {
+    await waitFor(() => { expect(files.puts.length).toBeGreaterThan(0); });
+    await act(async () => {
+      for (const put of files.puts) put.ok();
+      await new Promise((resolve) => { setTimeout(resolve, 10); });
+    });
+    await waitFor(() => { expect(screen.queryByText(/^Uploading/)).toBeNull(); });
+  }
+
+  test('chips sit inside the docked composer’s box, in normal flow, so the dock grows and the thread’s end padding follows', async () => {
+    const { api, files } = withFiles();
+    renderAt('/locations/l1/agent', api, meOf(ACCESS.member), files);
+    await openEarlierChat();
+    await screen.findByRole('button', { name: ATTACH_FILES });
+    pick('hours.txt');
+    await waitFor(() => { expect(chips()).not.toBeNull(); });
+    const dock = screen.getByTestId('chat-dock');
+    const slot = screen.getByTestId('composer-attachments');
+    expect(dock.contains(slot)).toBe(true);
+    expect(style(slot).position).not.toBe('absolute');
+    expect(style(screen.getByTestId('chat-dock-skirt')).top).toBe('40px');
+    const log = screen.getByRole('log', { name: 'Conversation with TownwiseAI' });
+    Object.defineProperty(log, 'scroll', { configurable: true, value: jest.fn() });
+    await layout(dock, 120);
+    const content = first(Array.from(log.children));
+    expect(style(content).paddingBottom).toBe('136px');
+    // The chip row makes the dock taller: its measured height is the thread's room at the end.
+    await layout(dock, 184);
+    expect(style(content).paddingBottom).toBe('200px');
+    expect(log.style.scrollPaddingBottom).toBe('184px');
+  });
+
+  test('Send waits while a file uploads, then carries the ready file’s ref; the chips leave the composer for the bubble', async () => {
+    const { api, files } = withFiles();
+    renderAt('/locations/l1/agent', api, meOf(ACCESS.member), files);
+    await screen.findByRole('button', { name: ATTACH_FILES });
+    pick('hours.txt');
+    await waitFor(() => { expect(chips()).not.toBeNull(); });
+    const input = screen.getByLabelText(COMPOSER_LABEL);
+    expect(input.getAttribute('placeholder')).toBe('Ask about the attached file');
+    fireEvent.change(input, { target: { value: 'What does this say about Mondays?' } });
+    const waiting = screen.getByRole('button', { name: 'Send' });
+    expect(waiting.getAttribute('aria-disabled')).toBe('true');
+    expect(waiting.getAttribute('aria-describedby')).toBe(WAIT_ID);
+    fireEvent.click(waiting);
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(api.turns).toHaveLength(0);
+    await finish(files);
+    // Ready: said once, politely.
+    await waitFor(() => { expect(liveRegion().textContent).toBe('hours.txt is attached.'); });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => { expect(api.turns).toHaveLength(1); });
+    expect(turn(api).body).toEqual({ content: 'What does this say about Mondays?', attachments: ['f_f1'] });
+    expect(chips()).toBeNull();
+    const log = screen.getByRole('log', { name: 'Conversation with TownwiseAI' });
+    const bubbleFiles = within(log).getByRole('list', { name: 'Files attached' });
+    // The fake's file ids are no real file refs, so the chip is no link (attachments.test.web.tsx links a real one).
+    expect(within(bubbleFiles).getByRole('listitem', { name: 'hours.txt, Text file' })).toBeTruthy();
+    await stream(() => {
+      turn(api).emit('conversation', { id: 'c2', title: 'What does this say', userNodeId: 'u9', replyNodeId: 'a9', parentId: null });
+      turn(api).emit('text', { delta: 'It says you close Mondays.' });
+      turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0, leafId: 'a9' });
+      turn(api).end();
+    });
+    expect(chips()).toBeNull();
+  });
+
+  test('a send refused before the reply starts keeps the chips, with the reason in plain words', async () => {
+    const { api, files } = withFiles();
+    renderAt('/locations/l1/agent', api, meOf(ACCESS.member), files);
+    await screen.findByRole('button', { name: ATTACH_FILES });
+    pick('hours.txt');
+    await finish(files);
+    const refusals: [ApiError, string][] = [
+      [chatRefusal(409, 'attachment_not_ready'), 'An attached file is still uploading. Send your message once it’s ready.'],
+      [chatRefusal(404, 'not_found'), 'An attached file isn’t on Your data for this location anymore, or this conversation was deleted.'],
+      [chatRefusal(400, 'invalid_request'), 'That message couldn’t be sent with these files. Only files kept on Your data can be attached.'],
+      [chatRefusal(503, 'files_unavailable'), 'File storage is off right now, so files can’t be attached. Remove them to send your message.'],
+      // A teammate's file (here, one already on Your data that the upload found again).
+      [chatRefusal(403, 'attachment_not_allowed'), 'Only the person who added a file to Your data, or an org admin, can attach it. Remove the files a teammate added to send your message.'],
+      [chatRefusal(503, 'attachments_busy'), 'TownwiseAI is reading a lot of files right now. Try again in a moment.'],
+    ];
+    for (const [error, words] of refusals) {
+      api.refuse = error;
+      fireEvent.change(screen.getByLabelText(COMPOSER_LABEL), { target: { value: 'Read this' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+      expect(await screen.findByText(words)).toBeTruthy();
+      expect(within(chips() ?? document.body).getByText('hours.txt')).toBeTruthy();
+      expect(screen.getByLabelText<HTMLTextAreaElement>(COMPOSER_LABEL).value).toBe('Read this');
+    }
+  });
+
+  test('a regenerate carries no files, and the composer keeps its chips', async () => {
+    const { api, files } = withFiles();
+    renderAt('/locations/l1/agent', api, meOf(ACCESS.member), files);
+    await openEarlierChat();
+    await screen.findByRole('button', { name: ATTACH_FILES });
+    pick('hours.txt');
+    await finish(files);
+    fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
+    await waitFor(() => { expect(api.turns).toHaveLength(1); });
+    expect(turn(api).body).toEqual({ conversationId: 'c1', replyTo: 'u1' });
+    expect(within(chips() ?? document.body).getByText('hours.txt')).toBeTruthy();
+  });
+
+  test('an edit sends the message’s files again, all but one gone from Your data', async () => {
+    const api = fakeChatApi();
+    api.conversation = {
+      ...CONVERSATION,
+      messages: [
+        {
+          ...CONVERSATION.messages[0],
+          attachments: [
+            { ref: REF, kind: 'pdf', name: 'menu.pdf', state: 'on' },
+            { ref: GONE, kind: 'text', name: null, state: 'gone' },
+          ],
+        },
+        CONVERSATION.messages[1],
+      ],
+    };
+    renderAt('/locations/l1/agent', api);
+    await openEarlierChat();
+    const bubbleFiles = screen.getByRole('list', { name: 'Files attached' });
+    expect(within(bubbleFiles).getByRole('link', { name: 'menu.pdf, PDF. Open on Your data' })).toBeTruthy();
+    // A file gone from Your data has no page to open.
+    expect(within(bubbleFiles).queryByRole('link', { name: /Text file/ })).toBeNull();
+    expect(within(bubbleFiles).getByText('No longer on Your data')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByLabelText('Edit your message'), { target: { value: 'We close for the holidays, all week.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save and send' }));
+    await waitFor(() => { expect(api.turns).toHaveLength(1); });
+    expect(turn(api).body).toEqual({ conversationId: 'c1', content: 'We close for the holidays, all week.', parentId: null, attachments: [REF] });
   });
 });
