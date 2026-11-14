@@ -412,6 +412,21 @@ describe('the system prompt, keeping pasted text', () => {
   });
 });
 
+describe('the system prompt, orders', () => {
+  it('reads the board before an order and the setup for what is missing, states only returned quantities, and never says an order was placed', () => {
+    for (const rule of [
+      '- Before discussing an order, call get_order_board.',
+      '- For what is set up or missing for orders (suppliers and their days, items, counts, item sales), call get_order_setup, and point the owner to Ordering setup on the Orders page to add or change it.',
+      'Never state a quantity no tool returned.',
+      'A remembered change applies to every later order of that item until the owner turns it off',
+      'Never say an order was placed or sent, or that a change or rule was saved.',
+    ]) expect(SYSTEM_PROMPT).toContain(rule);
+    // The labeled sample is the Orders page's alone; no tool returns it.
+    expect(SYSTEM_PROMPT).not.toMatch(/sample/i);
+    expect(SYSTEM_PROMPT).not.toMatch(/\d/);
+  });
+});
+
 describe('the saved turn, an item’s text (D28)', () => {
   const REF = `f_${'a'.repeat(24)}`;
 
