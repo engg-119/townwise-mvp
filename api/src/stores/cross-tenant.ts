@@ -21,6 +21,7 @@ import { forecastRunModel } from './forecasts.ts';
 import { importModel } from './imports.ts';
 import { locationModel } from './locations.ts';
 import { memberModel } from './members.ts';
+import { orderCardModel } from './orders.ts';
 import { orgModel } from './orgs.ts';
 import { profileModel } from './profiles.ts';
 import { HAS_VALUE, SALES_DAYS_COLLECTION } from './sales-days.ts';
@@ -266,7 +267,7 @@ export interface DeletedPersonRecords {
 
 /**
  * Person deletion (spec 10.7 step 3): their access requests, their open invitations in every organization, their
- * removed seats, their tuning chat conversations, live turns and proposal records, and their welcome markers, in every
+ * removed seats, their tuning chat conversations, live turns, proposal records and order cards, and their welcome markers, in every
  * organization, and their display name (the notes they saved from proposals stay with the organization, as every note does). Their staff id
  * is cleared from the forecast runs they imported or published (U13B), and their id from the calibrations they started
  * and from the forecasts switch they last set (the forecast lab). Never an active
@@ -293,6 +294,16 @@ export async function deletePersonRecords(
     await orgModel(connection).updateOne({ _id: row._id, firstJoinedAt: trusted({ $exists: false }) }, { $set: { firstJoinedAt: row.first } });
   }
   const removed = (await Member.deleteMany({ userId, status: 'removed' })).deletedCount;
+  // Order cards hold no person id, so they go by the person's conversations, before those, so a retry still finds
+  // them. Not counted, so the audit details are unchanged.
+  const owned = await chatConversationModel(connection).find({ userId }, { _id: 1, orgId: 1 }).lean();
+  if (owned.length > 0) {
+    await orderCardModel(connection).deleteMany({
+      // The organization too, so the delete uses the cards' index, which leads with it.
+      orgId: trusted({ $in: owned.map((doc) => doc.orgId) }),
+      conversationId: trusted({ $in: owned.map((doc) => doc._id) }),
+    });
+  }
   const conversations = (await chatConversationModel(connection).deleteMany({ userId })).deletedCount;
   const liveTurns = (await chatLiveTurnModel(connection).deleteMany({ userId })).deletedCount;
   await chatProposalModel(connection).deleteMany({ userId });

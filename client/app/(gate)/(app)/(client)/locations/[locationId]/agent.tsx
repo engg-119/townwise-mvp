@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
 
-import { aboutDraft } from '../../../../../../src/chat/about';
+import { aboutDraft, orderDraft } from '../../../../../../src/chat/about';
 import { openQuestions, useAgentPanel, type SendToChat } from '../../../../../../src/chat/useAgentPanel';
 import { useTuningChat } from '../../../../../../src/chat/useTuningChat';
 import { AgentChat, type AgentChatContext, type AgentChatHandle } from '../../../../../../src/chat/ui/AgentChat';
@@ -10,6 +10,7 @@ import { AgentSidePanel } from '../../../../../../src/chat/ui/AgentSidePanel';
 import { PanelSheet } from '../../../../../../src/chat/ui/PanelSheet';
 import { questionChatOf } from '../../../../../../src/chat/ui/QuestionCard';
 import { fetchEstimatesAbout } from '../../../../../../src/portal/estimates/api';
+import { fetchOrderBoard } from '../../../../../../src/portal/orders/api';
 import { useBreakpoint, useLoad } from '../../../../../../src/portal/hooks';
 import { localToday } from '../../../../../../src/portal/locations/dates';
 import { useOrgRefreshOnLeave } from '../../../../../../src/portal/locations/parts';
@@ -32,7 +33,9 @@ import { allUploadsOff } from '../../../../../../src/portal/locations/sales';
 // read-only line. The logic is in src/chat; this file only lays it out.
 // F7: `?about=YYYY-MM-DD` (from Analytics' day panel) fills an empty composer with "Tell me about Sat, Nov 21" and
 // sends nothing; a date that isn't valid is ignored. F10: GET .../estimates/about says whether a forecast is published,
-// for what TownwiseAI says it reads and How TownwiseAI works' forecast line. `?panel=questions` (Home's "N questions
+// for what TownwiseAI says it reads and How TownwiseAI works' forecast line. `?order=YYYY-MM-DD` (and `&item=`, from
+// Orders) fills it with a question about that order, drafted only from the location's own live board (GET .../orders,
+// never the sample); an order or item the board doesn't have fills nothing. `?panel=questions` (Home's "N questions
 // from TownwiseAI") opens the panel on load, Questions for you first, and the address drops it.
 // A question's Something else… sends its message through the chat drawn here. From the column the panel stays open;
 // from the sheet the sheet closes once the turn starts (its first event), so the thread shows the message and the
@@ -54,8 +57,23 @@ export default function TownwiseAIScreen(): React.JSX.Element {
   const chat = useTuningChat(api, location.id, { userId: me.user.id, readOnly, onNoteAdded: markOrgStale });
   const panel = useAgentPanel(api, location.id, markOrgStale);
   const about = useLoad(useCallback(() => fetchEstimatesAbout(api, location.id), [api, location.id]));
-  const params = useLocalSearchParams<{ about?: string | string[]; panel?: string | string[] }>();
-  const draft = aboutDraft(params.about, localToday());
+  const params = useLocalSearchParams<{
+    about?: string | string[]; order?: string | string[]; item?: string | string[]; panel?: string | string[];
+  }>();
+  const orderParam = Array.isArray(params.order) ? params.order[0] : params.order;
+  const itemParam = Array.isArray(params.item) ? params.item[0] : params.item;
+  const [orderText, setOrderText] = useState<string | null>(null);
+  useEffect(() => {
+    if (orderParam === undefined) return undefined;
+    let live = true;
+    // The location's own board only: the sample is never explained in chat, so a sample's link fills nothing.
+    fetchOrderBoard(api, location.id).then(
+      (board) => { if (live) setOrderText(orderDraft(orderParam, itemParam, board.available && !board.sample ? board : null)); },
+      () => { if (live) setOrderText(null); },
+    );
+    return () => { live = false; };
+  }, [api, itemParam, location.id, orderParam]);
+  const draft = orderText ?? aboutDraft(params.about, localToday());
   const filled = useRef<string | null>(null);
   const { setDraft } = chat;
   const empty = chat.state.draft === '';

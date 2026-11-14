@@ -43,7 +43,7 @@ export function Select(props: SelectProps): React.JSX.Element {
       <Pressable
         ref={control}
         role="button"
-        accessibilityLabel={props.label}
+        accessibilityLabel={props.accessibilityLabel ?? props.label}
         accessibilityValue={{ text: current }}
         aria-disabled={readOnly}
         {...(props.helper === undefined ? {} : { accessibilityHint: props.helper })}

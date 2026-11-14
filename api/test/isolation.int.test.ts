@@ -7,11 +7,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { OrgScope } from '../src/access/policy.ts';
 import { TOWNWISE_ROUTES, type TownwiseRoute } from '../src/access/routes.ts';
+import { ORDER_CHANGE_RESULT } from '../src/chat/tools/orders.ts';
 import { createItemReader } from '../src/files/items.ts';
 import { createMemoryFileBlobs, type MemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import { createTownwiseStores } from '../src/stores/index.ts';
 import {
-  addConversation, addInvite, addLocation, addNote, addOpenAsAdminGrant, addRequest, addSalesDay, addSeat, addUpload, createOrg,
+  addConversation, addInvite, addLocation, addNote, addOpenAsAdminGrant, addOrderRecords, addRequest, addSalesDay, addSeat, addUpload,
+  createOrg, ORDER_COLLECTIONS,
 } from './helpers/fixtures.ts';
 import { seedReadFile } from './helpers/files.ts';
 import { PROBE_ROUTES } from './helpers/probe.ts';
@@ -31,8 +33,9 @@ interface Tenant {
   seatIds: string[];
   /**
    * A location with a sales day, an upload record, a note and a tuning chat conversation, both the member's. The
-   * conversation also holds a note proposal, `toolu_proposal0001`, and a proposal to keep text, `toolu_item0001`
-   * (D28), both shown to the member and not yet acted on.
+   * conversation also holds a note proposal, `toolu_proposal0001`, a proposal to keep text, `toolu_item0001` (D28),
+   * and an order change, `toolu_order0001`, all shown to the member. The location has a row in each of ordering's six
+   * collections: an edit, a rule, the order change's card (set aside), the setup, a day of item sales and a count.
    */
   locationId: string;
   locationName: string;
@@ -101,6 +104,7 @@ async function tenant(name: string): Promise<Tenant> {
   const refFileId = await addReferenceItem(orgId, locationId, member.session.userId, name);
   const ruleId = await addRuleRow(orgId, locationId, member.session.userId, name);
   await withProposal(conversationId, name);
+  await addOrderRecords(server, { orgId, locationId, conversationId });
   // U9: an answer to a TownwiseAI question.
   await server.connection.collection('tw_agent_answers').insertOne({
     orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), questionId: 'gap_2026-05-02_2026-05-03',
@@ -159,8 +163,8 @@ async function addReferenceItem(orgId: string, locationId: string, uploadedBy: s
 }
 
 /**
- * Appends a turn in which TownwiseAI proposed a note, `toolu_proposal0001`, and keeping the tenant's private text,
- * `toolu_item0001`, both shown to the owner.
+ * Appends a turn in which TownwiseAI proposed a note, `toolu_proposal0001`, keeping the tenant's private text,
+ * `toolu_item0001`, and an order change, `toolu_order0001`, all shown to the owner.
  */
 async function withProposal(conversationId: string, name: string): Promise<void> {
   const at = server.clock.now();
@@ -171,10 +175,12 @@ async function withProposal(conversationId: string, name: string): Promise<void>
     { role: 'assistant', content: [
       { type: 'tool_use', id: 'toolu_proposal0001', name: 'propose_note', input: note },
       { type: 'tool_use', id: 'toolu_item0001', name: 'propose_data_item', input: item },
+      { type: 'tool_use', id: 'toolu_order0001', name: 'propose_order_change', input: { itemId: 'a'.repeat(24), delivery: '2026-06-03' } },
     ] },
     { role: 'user', content: [
       { type: 'tool_result', tool_use_id: 'toolu_proposal0001', content: 'Shown to the owner as a proposal.' },
       { type: 'tool_result', tool_use_id: 'toolu_item0001', content: 'Shown to the owner as a proposal. They decide whether to keep it.' },
+      { type: 'tool_result', tool_use_id: 'toolu_order0001', content: ORDER_CHANGE_RESULT },
     ] },
     { role: 'assistant', content: [{ type: 'text', text: 'Proposed.' }] },
   ];
@@ -196,6 +202,8 @@ async function snapshotOf(org: Tenant): Promise<string> {
     'tw_welcomes',
     // U9, TownwiseAI's questions.
     'tw_agent_answers',
+    // Orders: edits, rules, cards, setups, item sales and counts.
+    ...ORDER_COLLECTIONS,
     // Business rules (spec 6.24).
     'tw_business_rules',
   ]) {
@@ -296,6 +304,14 @@ const BODY: Record<string, unknown> = {
   // D28.
   'org.data.update': { enabled: false },
   'org.data.replace': { fileId: new Types.ObjectId().toHexString() },
+  // Orders.
+  'org.orders.decision': { itemId: 'a'.repeat(24), delivery: '2026-06-03', quantity: 1, reason: 'Order from A' },
+  'org.orders.rule': { itemId: 'a'.repeat(24), situation: 'Order from A' },
+  'org.orders.rule_off': { ruleId: new Types.ObjectId().toHexString() },
+  'org.orders.setup.save': { expectedVersion: 1, setup: { suppliers: [], items: [] } },
+  'org.orders.item_sales.upload': { from: '2026-05-01', to: '2026-05-01', days: [] },
+  'org.orders.counts.save': { date: '2026-05-31', items: { ['a'.repeat(24)]: 1 } },
+  'org.chat.order_proposal': { action: 'dismiss' },
   // Business rules.
   'org.rules.create': { text: 'Closed Mondays' },
   'org.rules.update': { text: 'Closed Tuesdays' },
@@ -349,8 +365,9 @@ function ownIds(
   return {
     memberId: org.inviteId, locationId: org.locationId, noteId: org.noteId, conversationId: org.conversationId, fileId: org.fileId,
     importId: org.importId, index: '0', questionId: 'gap_2026-05-02_2026-05-03',
-    // D28: a proposal to keep text is its own call.
-    proposalId: route.id.startsWith('org.chat.item_proposal') ? 'toolu_item0001' : 'toolu_proposal0001',
+    // D28: a proposal to keep text is its own call, and so is an order change.
+    proposalId: route.id.startsWith('org.chat.item_proposal') ? 'toolu_item0001'
+      : route.id.startsWith('org.chat.order_proposal') ? 'toolu_order0001' : 'toolu_proposal0001',
     ref: `u_${org.uploadId}`, ruleId: org.ruleId,
     // The reply of the organization's conversation (its stored messages have no tree, so their nodes are legacy-{index}).
     nodeId: 'legacy-1',
@@ -358,7 +375,7 @@ function ownIds(
 }
 
 describe('isolation of id-bearing tenant routes, generated from the route table', () => {
-  it('covers the team, location, sales, note, business rule, tuning chat and proposal routes', () => {
+  it('covers the team, location, sales, note, business rule, tuning chat, proposal and order routes', () => {
     expect(tenantRoutesWithIds.map((route) => route.id)).toEqual(expect.arrayContaining([
       'org.members.update', 'org.members.remove', 'org.locations.update', 'org.locations.remove', 'org.sales.get',
       'org.sales.days', 'org.sales.upload', 'org.sales.remove', 'org.notes.list', 'org.notes.create', 'org.notes.update',
@@ -374,6 +391,10 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
       'org.forecast.get',
       // D28, Your data.
       'org.data.update', 'org.data.remove', 'org.chat.item_proposal.get', 'org.chat.item_proposal', 'org.data.replace', 'org.data.get',
+      // Orders.
+      'org.orders.get', 'org.orders.decision', 'org.orders.rule', 'org.orders.rule_off', 'org.orders.setup.get', 'org.orders.setup.save',
+      'org.orders.item_sales.upload', 'org.orders.item_sales.remove', 'org.orders.counts.save', 'org.chat.order_proposal.get',
+      'org.chat.order_proposal',
       // Business rules.
       'org.rules.list', 'org.rules.create', 'org.rules.update', 'org.rules.remove',
     ]));

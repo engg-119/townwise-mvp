@@ -20,6 +20,8 @@ export const DATA = {
   addFile: 'Add a file',
   pasteText: 'Paste text',
   addFileHelp: 'Any kind of file up to 200 MB, kept as it is for your team. Townwise doesn’t read it for sales; use Upload sales history for that. With the box above off, TownwiseAI reads a file only when you ask, in a chat or on the file’s page. With it on, TownwiseAI reads each file you add and uses what it finds.',
+  ordering: 'Item sales, the ordering setup and counts live in Orders, under Ordering setup.',
+  orderingLink: 'Open Ordering setup',
   pasteHeading: 'Paste text',
   titleLabel: 'Title',
   titleHelp: 'A few words your team will recognize. Leave out guests’ and staff names.',

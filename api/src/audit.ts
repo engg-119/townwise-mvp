@@ -220,6 +220,21 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
         return `Answered TownwiseAI’s question about a day with almost no guests: ${LIKELY_CLOSED_ANSWER_WORDS[text(d.answer)] ?? text(d.answer)}`;
       }
       return `Answered TownwiseAI’s question about days with no sales: ${QUESTION_ANSWER_WORDS[text(d.answer)] ?? text(d.answer)}`;
+    // Orders.
+    case 'order.setup_saved': return `Saved the ordering setup: ${text(d.supplierCount)} suppliers and ${text(d.itemCount)} items`;
+    case 'order.item_sales_uploaded':
+      return `Uploaded ${text(d.dayCount)} days of item sales for ${text(d.itemCount)} items, ${text(d.firstDate)} to ${text(d.lastDate)}`
+        + (typeof d.removedCount === 'number' && d.removedCount > 0 ? `; removed ${text(d.removedCount)} days the file left out` : '')
+        + (typeof d.keptCount === 'number' && d.keptCount > 0 ? `; kept ${text(d.keptCount)} already saved` : '');
+    case 'order.item_sales_deleted': return `Deleted ${text(d.dayCount)} days of item sales`;
+    case 'order.count_saved': return `Counted ${text(d.itemCount)} items for ${text(d.date)}`;
+    case 'order.decision_saved': return `Changed an order line for the ${text(d.delivery)} delivery`;
+    case 'order.rule_saved': return 'Saved an order rule';
+    case 'order.rule_turned_off': return 'Turned off an order rule';
+    case 'order.card_saved':
+      return d.kind === 'rule' ? 'Saved an order rule TownwiseAI proposed' : 'Saved an order change TownwiseAI proposed';
+    case 'order.card_dismissed':
+      return d.kind === 'rule' ? 'Set aside an order rule TownwiseAI proposed' : 'Set aside an order change TownwiseAI proposed';
     // U13B.
     case 'forecast.imported': return `Imported a forecast (model ${text(d.modelVersion)}) for ${text(d.from)} to ${text(d.to)}`;
     case 'forecast.published':

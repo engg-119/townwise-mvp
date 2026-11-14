@@ -95,6 +95,16 @@ export const AUDIT_ACTIONS: readonly { value: string; label: string }[] = [
   { value: 'chat.conversation_deleted', label: 'Tuning chat deleted' },
   // U9, TownwiseAI's questions.
   { value: 'agent.question_answered', label: 'TownwiseAI question answered' },
+  // Orders: the ordering setup, item sales, counts, a line's edit, rules, and TownwiseAI's order cards.
+  { value: 'order.setup_saved', label: 'Ordering setup saved' },
+  { value: 'order.item_sales_uploaded', label: 'Item sales uploaded' },
+  { value: 'order.item_sales_deleted', label: 'Item sales deleted' },
+  { value: 'order.count_saved', label: 'Count saved' },
+  { value: 'order.decision_saved', label: 'Order line changed' },
+  { value: 'order.rule_saved', label: 'Order rule saved' },
+  { value: 'order.rule_turned_off', label: 'Order rule turned off' },
+  { value: 'order.card_saved', label: 'TownwiseAI order card saved' },
+  { value: 'order.card_dismissed', label: 'TownwiseAI order card set aside' },
   // U13B, forecast runs.
   { value: 'forecast.imported', label: 'Forecast imported' },
   { value: 'forecast.published', label: 'Forecast published' },
