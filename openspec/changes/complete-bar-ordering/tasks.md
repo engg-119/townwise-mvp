@@ -34,9 +34,9 @@
 
 ## 5. TownwiseAI
 
-- [ ] 5.1 `chat/tools/orders.ts`: `get_order_board {}`, `get_order_line {itemId}`, new `get_order_setup {}`, `propose_order_change {itemId}` on the live board, `propose_order_rule {itemId}`; registry order; `chat-tools.test.ts`
+- [ ] 5.1 `chat/tools/orders.ts`: `get_order_board {}`, `get_order_line {itemId}`, new `get_order_setup {}`, `propose_order_change {itemId, delivery}` on the live board, `propose_order_rule {itemId}`; registry order; `chat-tools.test.ts`
 - [ ] 5.2 Prompt lines (static, no digits); `chat.test.ts`
-- [ ] 5.3 Unit tests: unavailable answers, the sample only without setup, views carry ids, dates and counts only
+- [ ] 5.3 Unit tests: unavailable answers, never the sample, views carry ids, dates and counts only
 
 ## 6. Client
 
