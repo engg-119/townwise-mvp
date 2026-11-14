@@ -74,6 +74,7 @@ function prefersReducedMotion(reduce: boolean): void {
 
 afterEach(() => {
   cleanup();
+  jest.useRealTimers();
   FakeObserver.instances = [];
   Reflect.deleteProperty(window, 'IntersectionObserver');
   Reflect.deleteProperty(window, 'matchMedia');
@@ -115,6 +116,14 @@ function follows(first: Element, second: Element): boolean {
 }
 
 test('the first screen is the map story’s title with both actions; the lead follows the story, then the list', () => {
+  // Only Date is faked, so "today" is Thu, Nov 5, 2026 and the story ends on November.
+  jest.useFakeTimers({
+    now: new Date(2026, 10, 5, 12, 0, 0),
+    doNotFake: [
+      'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'setImmediate', 'clearImmediate', 'nextTick', 'queueMicrotask',
+      'requestAnimationFrame', 'cancelAnimationFrame', 'requestIdleCallback', 'cancelIdleCallback', 'hrtime', 'performance',
+    ],
+  });
   const main = renderHome();
   const hero = section(TITLE);
   expect(main.querySelector('section')).toBe(hero);
@@ -141,7 +150,7 @@ test('the first screen is the map story’s title with both actions; the lead fo
   const [early, earlyAgain] = within(hero).getAllByRole('link', { name: 'Request early access' });
   const [signIn, signInAgain] = within(hero).getAllByRole('link', { name: 'Sign in' });
   const map = within(hero).getByRole('img', { name: /^Map of the nine Northeast states/ });
-  const steps = ['The Northeast, as one pattern.', 'Now the towns.', 'July, the year’s widest spread.'].map((name) => within(hero).getByRole('heading', { level: 2, name }));
+  const steps = ['The Northeast, as one pattern.', 'Now the towns.', 'November, this month in 2024.'].map((name) => within(hero).getByRole('heading', { level: 2, name }));
   const pick = within(hero).getByRole('heading', { level: 2, name: 'Pick a town to compare it with the Northeast' });
   const list = within(hero).getByRole('button', { name: /^Hanover, NH/ });
   if (early === undefined || earlyAgain === undefined || signIn === undefined || signInAgain === undefined) throw new Error('missing actions');

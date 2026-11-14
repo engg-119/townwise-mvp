@@ -15,18 +15,19 @@ import type { z } from 'zod';
 import { ApiError } from '../../src/api/client';
 import { resetProfiles } from '../../src/portal/profile/useProfile';
 import { usePortal } from '../../src/portal/PortalProvider';
-import { useLocation, useScrollingHead } from '../../src/portal/shell/LocationShell';
+import { useLocation } from '../../src/portal/shell/LocationShell';
 import { appRoutes, seededRoot } from '../helpers/app';
 import { fakeAuth } from '../helpers/fakes';
 import {
-  ACCESS, deferred, EMAIL, fakePortalApi, LOCATIONS, meOf, offline, orgOf, type FakePortalApi,
+  ACCESS, deferred, EMAIL, fakePortalApi, LOCATIONS, locationOf, meOf, offline, orgOf, type FakePortalApi,
 } from '../helpers/portal';
 
 // The location layout (spec 15.2) around stand-in pages: the first load, a reload of the organization
 // (reloadOrg, after a write), a reload whose answer lacks the location, a failed reload, and a new GET /api/me,
 // after which cached organization data is cleared (4.3). When the layout puts its loading line or error in place
 // of the page, expo-router moves the address to the location's first page, so those tests open the page again
-// from the top bar's sections. TownwiseAI's title greets the person by the name they gave Townwise (P25, D26).
+// from the top bar's sections. Home's title greets the person by the name they gave Townwise (P11); TownwiseAI has
+// no page header (P25, D26).
 
 afterEach(async () => {
   await cleanup();
@@ -36,11 +37,11 @@ afterEach(async () => {
 
 const TAB = '(gate)/(app)/(client)/locations/[locationId]/town';
 const AGENT = '(gate)/(app)/(client)/locations/[locationId]/agent';
+const HOME = '(gate)/(app)/(client)/locations/[locationId]/index';
 
-/** TownwiseAI's stand-in: on phones it draws the compact header the layout hands it, as the real page does. */
+/** TownwiseAI's stand-in: the layout draws no header around it. */
 function AgentProbe(): React.JSX.Element {
-  const head = useScrollingHead();
-  return <View>{head}<Text>Agent probe</Text></View>;
+  return <View><Text>Agent probe</Text></View>;
 }
 
 /** Answers GET /api/me/profile with `answer` (a body, an ApiError to throw, or a promise of either), and counts reads. */
@@ -91,7 +92,7 @@ function holdOrg(api: FakePortalApi): { release: () => Promise<void> } {
 async function renderTab(api: FakePortalApi, path = '/locations/l1/town') {
   mounts = 0;
   const auth = fakeAuth({ status: 'signedIn', user: { id: 'u1', email: EMAIL } }, { api });
-  return renderRouter(appRoutes(seededRoot(auth), { [TAB]: Probe, [AGENT]: AgentProbe }), { initialUrl: path });
+  return renderRouter(appRoutes(seededRoot(auth), { [TAB]: Probe, [AGENT]: AgentProbe, [HOME]: Probe }), { initialUrl: path });
 }
 
 function adminApi(): FakePortalApi {
@@ -102,7 +103,7 @@ test('the first load says “Loading this location”, then shows the header and
   const api = adminApi();
   const held = holdOrg(api);
   await renderTab(api);
-  expect(await screen.findByText('Loading this location')).toBeTruthy();
+  expect(within(await screen.findByTestId('skeleton-location')).getByText('Loading this location')).toBeTruthy();
   expect(screen.queryByText(/^Probe:/)).toBeNull();
   await held.release();
   expect(await screen.findByText('Probe: Main Street Bar, org_admin')).toBeTruthy();
@@ -118,16 +119,16 @@ test('on a phone the top bar’s sections scroll, without animating, to keep the
     const router = await renderTab(adminApi());
     await screen.findByText('Probe: Main Street Bar, org_admin');
     const sections = screen.getByLabelText('Sections');
-    // A 320px region, and nine links 90px wide and 4px apart in a nav that starts at the 16px margin: Town, the
-    // sixth, ends at 16 + 560 = 576px, and keeps 16px after it in view.
+    // A 320px region, and eleven links 90px wide and 4px apart in a nav that starts at the 16px margin: Town, the
+    // eighth, ends at 16 + 748 = 764px, and keeps 16px after it in view.
     await fireEvent(sections, 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 320, height: 45 } } });
     const links = within(sections).getAllByRole('link');
-    expect(links).toHaveLength(9);
+    expect(links).toHaveLength(11);
     expect(within(sections).getByRole('link', { name: 'Town' }).props.accessibilityState).toMatchObject({ selected: true });
     for (const [index, link] of links.entries()) {
       await fireEvent(link, 'layout', { nativeEvent: { layout: { x: index * 94, y: 0, width: 90, height: 44 } } });
     }
-    expect(scrollTo).toHaveBeenLastCalledWith({ x: 576 + 16 - 320, animated: false });
+    expect(scrollTo).toHaveBeenLastCalledWith({ x: 764 + 16 - 320, animated: false });
     await fireEvent.press(within(sections).getByRole('link', { name: 'Home' }));
     expect(router.getPathname()).toBe('/locations/l1');
     expect(scrollTo).toHaveBeenLastCalledWith({ x: 0, animated: false });
@@ -163,8 +164,8 @@ test('a reload whose answer lacks the location says it isn’t available, with a
   expect(await screen.findByText('This location isn’t available.')).toBeTruthy();
   expect(screen.queryByText(/^Probe:/)).toBeNull();
   await fireEvent.press(screen.getByRole('link', { name: 'Locations' }));
-  // Locations opens the organization’s one remaining location, never the missing one.
-  expect(await screen.findByText('River Grill, Norwich, VT')).toBeTruthy();
+  // Locations opens the organization’s one remaining location, never the missing one; with one, the eyebrow is its town.
+  expect(await screen.findByText('Norwich, VT')).toBeTruthy();
   expect(router.getPathname()).toBe('/locations/l2');
 });
 
@@ -193,7 +194,7 @@ test('after a new GET /api/me the answer before it is cleared, so the page never
   api.org = orgOf('member');
   const held = holdOrg(api);
   await fireEvent.press(screen.getByRole('button', { name: 'Read access again' }));
-  expect(await screen.findByText('Loading this location')).toBeTruthy();
+  expect(within(await screen.findByTestId('skeleton-location')).getByText('Loading this location')).toBeTruthy();
   expect(screen.queryByText('Probe: Main Street Bar, org_admin')).toBeNull();
   await held.release();
   await screen.findByText('Main Street Bar, Hanover, NH');
@@ -202,48 +203,82 @@ test('after a new GET /api/me the answer before it is cleared, so the page never
   expect(await screen.findByText('Probe: Main Street Bar, member')).toBeTruthy();
 });
 
-describe('TownwiseAI’s title', () => {
-  it('greets by name as the page’s h1, top left, and the eyebrow still names the location', async () => {
+describe('the eyebrow (spec 15.2, D29)', () => {
+  const HANOVER = { townId: 'hanover-nh', name: 'Hanover', state: 'NH' } as const;
+
+  it('with one location the eyebrow is the town only', async () => {
+    const only = locationOf('l1', 'Main Street Bar', HANOVER);
+    await renderTab(fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin', [only]) }));
+    await screen.findByText('Probe: Main Street Bar, org_admin');
+    expect(screen.getByText('Hanover, NH')).toBeTruthy();
+    expect(screen.queryByText('Main Street Bar, Hanover, NH')).toBeNull();
+  });
+
+  it('with several, a name ending in its town reads “Sawtooth Kitchen, Hanover, NH”', async () => {
+    const sawtooth = locationOf('l1', 'Sawtooth Kitchen, Hanover', HANOVER);
+    const second = LOCATIONS[1];
+    if (second === undefined) throw new Error('LOCATIONS needs two');
+    await renderTab(fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin', [sawtooth, second]) }));
+    await screen.findByText('Probe: Sawtooth Kitchen, Hanover, org_admin');
+    expect(screen.getByText('Sawtooth Kitchen, Hanover, NH')).toBeTruthy();
+    expect(screen.queryByText('Sawtooth Kitchen, Hanover, Hanover, NH')).toBeNull();
+  });
+});
+
+describe('Home’s title and TownwiseAI’s missing header', () => {
+  it('Home greets by name as the page’s h1, top left, and the eyebrow still names the location', async () => {
     const api = adminApi();
     const held = deferred<unknown>();
     serveProfile(api, () => held.promise);
-    await renderTab(api, '/locations/l1/agent');
-    await screen.findByText('Agent probe');
+    await renderTab(api, '/locations/l1');
+    await screen.findByText('Probe: Main Street Bar, org_admin');
     // While the name loads, the greeting has none.
     expect(screen.getByRole('heading', { name: 'Welcome back.' })).toBeTruthy();
     await act(async () => { held.resolve({ displayName: 'Cam', askName: false }); await held.promise; });
     const title = await screen.findByRole('heading', { name: 'Welcome back, Cam.' });
-    expect(screen.queryByRole('heading', { name: 'TownwiseAI' })).toBeNull();
     // Top left: the eyebrow over the title, in the header's left column, before the location's links.
     const eyebrow = screen.getByText('Main Street Bar, Hanover, NH');
     expect(title.parent).toBe(eyebrow.parent);
-    expect(within(screen.getByLabelText('Main')).getByRole('link', { name: 'TownwiseAI' }).props.accessibilityState).toMatchObject({ selected: true });
+    expect(screen.getByRole('link', { name: 'Location settings' })).toBeTruthy();
     // Every other tab keeps its own title.
     await fireEvent.press(within(screen.getByLabelText('Main')).getByRole('link', { name: 'Town' }));
     expect(await screen.findByRole('heading', { name: 'Town' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: /^Welcome back/ })).toBeNull();
   });
 
-  it('on a phone the compact header greets the same way, on one line, with no doubled full stop', async () => {
+  it('on a phone Home greets the same way, with no doubled full stop', async () => {
     jest.spyOn(Dimensions, 'get').mockReturnValue({ ...Dimensions.get('window'), width: 320 });
     const api = adminApi();
     serveProfile(api, () => ({ displayName: 'St.', askName: false }));
-    await renderTab(api, '/locations/l1/agent');
-    const title = await screen.findByRole('heading', { name: 'Welcome back, St.' });
-    expect(title.props.numberOfLines).toBe(1);
-    expect(screen.getByText('Main Street Bar, Hanover, NH')).toBeTruthy();
-    expect(screen.queryByRole('link', { name: 'Location settings' })).toBeNull();
+    await renderTab(api, '/locations/l1');
+    expect(await screen.findByRole('heading', { name: 'Welcome back, St.' })).toBeTruthy();
   });
 
-  it('a name that can’t be read greets without one, and no other tab reads it', async () => {
+  it('a name that can’t be read greets without one, and only Home reads it', async () => {
     const api = adminApi();
     const profile = serveProfile(api, () => offline());
     await renderTab(api);
     await screen.findByText('Probe: Main Street Bar, org_admin');
     expect(profile.reads).toBe(0);
-    await fireEvent.press(within(screen.getByLabelText('Main')).getByRole('link', { name: 'TownwiseAI' }));
-    await screen.findByText('Agent probe');
+    await fireEvent.press(within(screen.getByLabelText('Main')).getByRole('link', { name: 'Home' }));
     await waitFor(() => { expect(profile.reads).toBe(1); });
-    expect(screen.getByRole('heading', { name: 'Welcome back.' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Welcome back.' })).toBeTruthy();
+  });
+
+  it('TownwiseAI has no page header at any width: no eyebrow, no greeting, no h1, no switcher or links, and no profile read', async () => {
+    const api = adminApi();
+    const profile = serveProfile(api, () => ({ displayName: 'Cam', askName: false }));
+    for (const width of [320, 1280]) {
+      jest.spyOn(Dimensions, 'get').mockReturnValue({ ...Dimensions.get('window'), width });
+      await renderTab(api, '/locations/l1/agent');
+      await screen.findByText('Agent probe');
+      expect(screen.queryByText('Main Street Bar, Hanover, NH')).toBeNull();
+      expect(screen.queryByRole('heading')).toBeNull();
+      expect(screen.queryByRole('link', { name: 'Location settings' })).toBeNull();
+      expect(screen.queryByRole('link', { name: 'All locations' })).toBeNull();
+      expect(within(screen.getByLabelText('Main')).getByRole('link', { name: 'TownwiseAI' }).props.accessibilityState).toMatchObject({ selected: true });
+      await cleanup();
+    }
+    expect(profile.reads).toBe(0);
   });
 });

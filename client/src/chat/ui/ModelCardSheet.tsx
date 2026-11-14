@@ -31,7 +31,7 @@ export function ModelCardSheet(props: { visible: boolean; locationId: string; on
 const c = theme.color;
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: 'rgba(8, 10, 13, 0.8)', alignItems: 'center', justifyContent: 'center', padding: theme.space[4] },
+  backdrop: { flex: 1, backgroundColor: c.scrim, alignItems: 'center', justifyContent: 'center', padding: theme.space[4] },
   sheet: { width: '100%', maxWidth: 720, maxHeight: '100%', backgroundColor: c.ground, borderWidth: 1, borderColor: c.border },
   scroll: { flexGrow: 0, flexShrink: 1 },
   content: { padding: theme.space[2] },

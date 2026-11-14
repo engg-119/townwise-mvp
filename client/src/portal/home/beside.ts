@@ -1,22 +1,9 @@
-import { rangeText } from '../estimates/format';
-import type { ForecastGlanceDay } from '../estimates/api';
-import { formatCount } from '../format';
 import { shortDate } from '../analytics/words';
 
-// What sits beside the month calendar: a published guest forecast for the selected day, and how an order is built.
-// A missing forecast or a missing order is said as missing. No figure is filled in.
+// How an order is built and how the next one relates to a calendar day, for Home's selected day and Orders. A missing
+// order is said as missing. No figure is filled in.
 
 export const REORDER_OVERVIEW = 'Each supplier’s order has to last until that supplier’s next delivery. For each item, Townwise averages its sales on each weekday over the last 8 weeks, scales those averages to the guest forecast when one is published, adds a cushion for how far sales strayed from them in past order periods, and orders up to that level, or the par if that is higher, minus your last count, rounded to a deal. Without a recent count it goes by the par. You place every order yourself; nothing is sent to a distributor.';
-
-/** The published guest forecast for one day, in one sentence. `day` null means this day was not in a published run. */
-export function guestForecastSentence(day: ForecastGlanceDay | null): string {
-  if (day === null) return 'No published guest forecast for this day.';
-  if (day.status === 'closed') return 'The published forecast marks this day closed.';
-  if (day.status === 'booked') return 'This day is booked, so the published forecast has no walk-in guests.';
-  if (day.mid === null || day.low === null || day.high === null) return 'No published guest forecast for this day.';
-  const mid = formatCount(Math.round(day.mid));
-  return `About ${mid} guests, usually ${rangeText(day.low, day.high)}. About 8 in 10 days fall between those two.`;
-}
 
 export interface OrderWindow {
   readonly sample: boolean;

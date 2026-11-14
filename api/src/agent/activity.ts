@@ -3,7 +3,8 @@
 // them newest first. Items carry dates, counts and ids, never a file name, a note's detail or a figure.
 //
 // Sources now: applied sales uploads, notes the caller saved from their own TownwiseAI proposals, answers to
-// TownwiseAI's questions (a `closed` answer shows as the closure note it saved), and (F3) stored files Townwise read,
+// TownwiseAI's questions (an answer that saved a note shows as that note: a closure note, or a likely-closed day's
+// open-day note), and (F3) stored files Townwise read,
 // as `file_processed { fileId, firstDate, lastDate, dayCount }`: the upload record a read file writes is then left out,
 // so one read shows once. Never the file's name: names stay in the files list, and this panel is read under view-as
 // too. A later source appends itself to ACTIVITY_SOURCES (forecasts add `forecast_made`). The client renders a kind it
@@ -12,6 +13,7 @@ import type { TownwiseContext } from '../app.ts';
 import type { OrgScope } from '../access/policy.ts';
 import type { NoteKind, NoteRecord } from '../stores/notes.ts';
 import type { AnswerRecord } from '../stores/agent-answers.ts';
+import { noteFor, parseQuestionId } from './questions.ts';
 
 /** At most this many items. */
 export const MAX_ACTIVITY = 20;
@@ -23,7 +25,7 @@ const FILES_READ = 10;
 export type ActivityItem =
   | { at: string; kind: 'upload_applied'; firstDate: string; lastDate: string; dayCount: number }
   | { at: string; kind: 'note_saved'; via: 'chat' | 'question'; noteId: string; noteKind: NoteKind; startDate: string; endDate: string }
-  | { at: string; kind: 'question_answered'; questionId: string; answer: 'open' | 'not_sure' }
+  | { at: string; kind: 'question_answered'; questionId: string; answer: 'open' | 'not_sure' | 'other' }
   | { at: string; kind: 'file_processed'; fileId: string; firstDate: string; lastDate: string; dayCount: number };
 
 export interface ActivityInput {
@@ -73,8 +75,11 @@ const savedProposals: ActivitySource = async ({ ctx, scope, locationId, userId, 
 const answers: ActivitySource = ({ notes, answers: rows }) => {
   const byId = new Map(notes.map((note) => [note.id, note]));
   return Promise.resolve(rows.filter((row) => row.status === 'done').flatMap((row): ActivityItem[] => {
-    if (row.answer !== 'closed') {
-      return [{ at: row.updatedAt.toISOString(), kind: 'question_answered', questionId: row.questionId, answer: row.answer }];
+    const { answer } = row;
+    const asked = parseQuestionId(row.questionId);
+    // `closed` always saves a note; `open` saves one on a likely-closed question.
+    if (answer !== 'closed' && (asked === null || noteFor(asked, answer) === null)) {
+      return [{ at: row.updatedAt.toISOString(), kind: 'question_answered', questionId: row.questionId, answer }];
     }
     const note = byId.get(row.noteId);
     return note === undefined ? [] : [savedNote(note, 'question')];

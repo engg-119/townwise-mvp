@@ -10,11 +10,11 @@ import { ErrorNotice, LoadingLine, StatusTag } from '../../portal/ui/feedback';
 import { Eyebrow, Heading } from '../../portal/ui/text';
 import { theme } from '../../theme';
 import type { ActivityItem, Budget } from '../api';
-import { formatCount, KIND_LABEL, rangeText, weekdayName } from '../format';
+import { dayText, formatCount, KIND_LABEL, rangeText, weekdayName } from '../format';
 import { readsLine, type ToolContext } from '../tools';
-import type { AgentPanelState } from '../useAgentPanel';
+import { openQuestions, type AgentPanelState, type SendToChat } from '../useAgentPanel';
 import { ModelCardSheet } from './ModelCardSheet';
-import { QuestionCard } from './QuestionCard';
+import { QuestionCard, type QuestionChat } from './QuestionCard';
 
 // The side panel (spec P25): Questions for you, What it's been doing, this month's budget, and How TownwiseAI
 // works. Every activity item is a real, dated event the server read from the location's own records; a kind this
@@ -33,10 +33,15 @@ function whenText(iso: string): string {
   return `${WEEKDAYS[date.getDay()] ?? ''}, ${SHORT_MONTHS[date.getMonth()] ?? ''} ${String(date.getDate())}`;
 }
 
-/** What a question id names: "Dec 24 to Dec 26, 2026", or "Mondays". Ids hold dates and a weekday number only. */
+/**
+ * What a question id names: "Dec 24 to Dec 26, 2026", "Sat, May 23, 2026" or "Mondays". Ids hold dates and a weekday
+ * number only.
+ */
 function questionSubject(questionId: string): string | null {
   const gap = /^gap_(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})$/.exec(questionId);
   if (gap?.[1] !== undefined && gap[2] !== undefined) return rangeText(gap[1], gap[2]);
+  const likely = /^likely_closed_(\d{4}-\d{2}-\d{2})$/.exec(questionId);
+  if (likely?.[1] !== undefined) return dayText(likely[1]);
   const weekday = /^weekday_([0-6])_/.exec(questionId);
   if (weekday?.[1] !== undefined) return weekdayName(Number(weekday[1]));
   return null;
@@ -52,6 +57,7 @@ export function activityLine(item: ActivityItem): string {
     }
     case 'question_answered': {
       const subject = questionSubject(item.questionId);
+      if (item.answer === 'other') return subject === null ? 'You answered a question in the chat.' : `You told TownwiseAI about ${subject} in the chat.`;
       if (subject === null) return item.answer === 'open' ? 'You said the data is missing.' : 'You weren’t sure about a question.';
       return item.answer === 'open' ? `You said the data is missing for ${subject}.` : `You weren’t sure about ${subject}.`;
     }
@@ -65,6 +71,8 @@ function QuestionsSection(props: {
   panel: AgentPanelState;
   locationName: string;
   readOnlyId: string | null;
+  chat: QuestionChat | null;
+  send: SendToChat;
 }): React.JSX.Element {
   const { panel } = props;
   const { state } = panel;
@@ -77,17 +85,16 @@ function QuestionsSection(props: {
       <QuestionCard
         key={question.id}
         question={question}
+        panel={panel}
         locationName={props.locationName}
-        answered={panel.answered[question.id]}
-        answering={panel.answering === question.id}
-        busy={panel.answering !== null && panel.answering !== question.id}
-        error={panel.errors[question.id]}
         readOnlyId={props.readOnlyId}
-        onAnswer={(answer) => { panel.answer(question.id, answer); }}
+        chat={props.chat}
+        send={props.send}
+        place="panel"
       />
     ));
   }
-  const open = state.status === 'ready' ? state.data.questions.filter((question) => panel.answered[question.id] === undefined).length : null;
+  const open = openQuestions(panel);
   return (
     <View style={styles.section}>
       <View style={styles.head}>
@@ -221,12 +228,16 @@ export function AgentSidePanel(props: {
   locationId: string;
   locationName: string;
   readOnlyId: string | null;
+  /** The chat as a question's Something else… sees it; null while TownwiseAI's chat is off. */
+  chat: QuestionChat | null;
+  /** Sends Something else…'s message through the chat. */
+  send: SendToChat;
   about: LoadState<EstimatesAbout>;
   onRetryAbout: () => void;
 }): React.JSX.Element {
   return (
     <View style={styles.panel}>
-      <QuestionsSection panel={props.panel} locationName={props.locationName} readOnlyId={props.readOnlyId} />
+      <QuestionsSection panel={props.panel} locationName={props.locationName} readOnlyId={props.readOnlyId} chat={props.chat} send={props.send} />
       <ActivitySection panel={props.panel} />
       <BudgetSection budget={props.budget} />
       <HowItWorks ctx={props.ctx} locationId={props.locationId} about={props.about} onRetryAbout={props.onRetryAbout} />

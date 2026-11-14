@@ -42,7 +42,7 @@ function describedText(element: HTMLElement): string[] {
   return (element.getAttribute('aria-describedby') ?? '').split(' ').map((id) => document.getElementById(id)?.textContent ?? `missing ${id}`);
 }
 
-test('the add form: labelled fields with their helpers, a real select, and the results as a status list', async () => {
+test('the add form: labeled fields with their helpers, a real select, and the results as a status list', async () => {
   const api = fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin') });
   withRoutes(api, { gets: { '/api/org/members': () => ({ members: TEAM }) } });
   api.answers['/api/org/members'] = () => ({ results: [{ email: 'cook@example.com', outcome: 'invited' }], members: TEAM });

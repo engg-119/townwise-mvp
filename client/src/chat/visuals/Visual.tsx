@@ -2,13 +2,15 @@ import { Platform, StyleSheet, Text, View } from 'react-native';
 
 import { BarChart } from '../../portal/analytics/AnalyticsCharts';
 import { ShowNumbers } from '../../portal/locations/parts';
+import type { TipBar } from '../../portal/analytics/barTips';
 import { DataTable } from '../../portal/ui/DataTable';
 import { Small } from '../../portal/ui/text';
 import { theme } from '../../theme';
 import { DailyChart } from './DailyChart';
 import { MetricCards } from './MetricCards';
 import type { Visual } from './schema';
-import { barShortLabel, NATIVE_CHART, unitsOf, visualRows, visualSummary, visualTitle } from './words';
+import { barTip } from './hover';
+import { barLabel, barShortLabel, NATIVE_CHART, unitsOf, visualRows, visualSummary, visualTitle } from './words';
 
 // One visual under a reply (tuning-chat.md, show_visual): a square block with its title, the chart (web; native says
 // where it is), the summary in words and "Show the numbers". A days table is the table itself; metrics are cards.
@@ -21,10 +23,10 @@ function Chart(props: { visual: Visual }): React.JSX.Element | null {
   if (visual.kind !== 'breakdown') return null;
   if (Platform.OS !== 'web') return <Small>{NATIVE_CHART}</Small>;
   const manyYears = new Set(visual.bars.map((bar) => bar.key.slice(0, 4))).size > 1;
-  const bars = visual.bars.map((bar) => ({
-    label: barShortLabel(bar.key, visual.by === 'month' && manyYears),
-    value: bar.value === null ? null : unitsOf(bar.value, visual.metric),
-  }));
+  const bars = visual.bars.map((bar): TipBar => {
+    const value = bar.value === null ? null : unitsOf(bar.value, visual.metric);
+    return { label: barShortLabel(bar.key, visual.by === 'month' && manyYears), value, tip: barTip(barLabel(bar.key), value, bar.days, visual.metric) };
+  });
   return <BarChart bars={bars} metric={visual.metric} />;
 }
 

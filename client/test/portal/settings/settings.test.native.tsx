@@ -14,7 +14,7 @@ import { resetProfiles } from '../../../src/portal/profile/useProfile';
 import { formatDate, formatTime } from '../../../src/portal/format';
 import type { StaffActivity } from '../../../src/portal/settings/api';
 import {
-  ACCESS, deferred, EMAIL, fakePortalApi, meOf, offline, orgOf, refusal, STAFF_EMAIL, viewAsMe, writes, type FakePortalApi,
+  ACCESS, deferred, EMAIL, fakePortalApi, LOCATIONS, meOf, offline, orgOf, refusal, STAFF_EMAIL, viewAsMe, writes, type FakePortalApi,
 } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { ADD_EVENT, noContent, REFUSED_EVENT, VIEW_AS_EVENT, withRoutes, type Routes } from '../team/fixtures';
@@ -64,6 +64,9 @@ describe('P18 Settings: a member', () => {
     expect(screen.getByText('Recommended for admins.')).toBeTruthy();
     expect(screen.queryByRole('heading', { name: 'Organization name' })).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Townwise staff activity' })).toBeNull();
+    // Members add no locations.
+    expect(screen.queryByRole('link', { name: 'Add location' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add location' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Leave Test Group' })).toBeTruthy();
     expect(screen.getByText(`Sign out on every device ends every Townwise sign-in for ${EMAIL} right away, this one included.`)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Sign out on every device' })).toBeTruthy();
@@ -167,15 +170,21 @@ describe('P18 Settings: an org admin', () => {
 
   test('the account says Admin; the name form and the side help are there', async () => {
     const { api } = adminApi();
-    const { router } = await renderApp('/settings', api);
+    await renderApp('/settings', api);
     expect(await screen.findByRole('heading', { name: 'Organization name' })).toBeTruthy();
     expect(screen.getByText('Admin')).toBeTruthy();
     expect(screen.getByLabelText('Name').props.value).toBe('Test Group');
     expect(screen.getByText('Your team sees this name at the top of every page. Townwise staff see it in the staff console.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Save name' })).toBeTruthy();
     expect(screen.getByText(/Rename one or change its town from Location settings on that location’s page\./)).toBeTruthy();
-    await fireEvent.press(screen.getByRole('link', { name: 'Locations' }));
-    expect(router.getPathname()).toBe('/dashboard');
+  });
+
+  test('with one location, Add location opens Add location, since Locations opens that location’s Home', async () => {
+    const { api } = adminApi();
+    api.org = orgOf('org_admin', LOCATIONS.slice(0, 1));
+    const { router } = await renderApp('/settings', api);
+    await fireEvent.press(await screen.findByRole('link', { name: 'Add location' }));
+    await waitFor(() => { expect(router.getPathname()).toBe('/locations/new'); });
   });
 
   test('staff activity: when, the staff email, the server’s summary, and reason and until for view-as', async () => {
@@ -297,6 +306,7 @@ describe('P18 Settings: view-as (spec 15.5)', () => {
     expect(screen.getByLabelText('Name').props.editable).toBe(false);
     const controls = [
       screen.getByRole('button', { name: 'Save name' }),
+      screen.getByRole('button', { name: 'Add location' }),
       screen.getByRole('button', { name: 'Two-step sign-in settings' }),
       screen.getByRole('button', { name: 'Leave Test Group' }),
       screen.getByRole('button', { name: 'Sign out on every device' }),

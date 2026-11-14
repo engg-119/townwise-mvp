@@ -44,7 +44,10 @@ function SkipLink(props: { target: MainRef }): React.JSX.Element | null {
   );
 }
 
-/** The root of every portal screen: the safe-area top, the skip link, the view-as banner, then the frame. */
+/**
+ * The root of every portal screen: the safe-area top, the skip link, the view-as banner, then the frame. On web it
+ * also holds the portal's style sheet.
+ */
 export function Shell(props: { banner?: React.ReactNode; children: React.ReactNode }): React.JSX.Element {
   const insets = useSafeAreaInsets();
   const main = useRef<React.ComponentRef<typeof View>>(null);

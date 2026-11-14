@@ -19,6 +19,7 @@ import {
 } from '../helpers/portal';
 import { renderApp } from '../helpers/renderApp';
 import { analyticsFake, calendarBody, day, historyBody } from '../portal/analytics/fakes';
+import { ruleOf, rulesFake } from '../portal/rules/fakes';
 
 const WINDOW = Dimensions.get('window');
 
@@ -34,7 +35,7 @@ function linkNames(region: string, names: readonly string[]): string[] {
   return found;
 }
 
-const NAV = ['Home', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Town', 'Your data', 'Team', 'Settings'];
+const NAV = ['Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Team', 'Settings'];
 
 function navLabels(): string[] {
   return linkNames('Main', NAV);
@@ -49,7 +50,7 @@ describe('the client app top bar (spec 15.2, 15.3)', () => {
     const signOut = jest.fn(() => Promise.resolve());
     const { router } = await renderApp('/dashboard', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') }), { signOut });
     await screen.findByText('Main Street Bar');
-    expect(navLabels()).toEqual(['Home', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Town', 'Your data', 'Settings']);
+    expect(navLabels()).toEqual(['Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Settings']);
     // Off a location page no section is current.
     for (const name of navLabels()) expect(navLink(name).props.accessibilityState).toMatchObject({ selected: false });
     expect(screen.getAllByText('Test Group').length).toBeGreaterThan(0);
@@ -101,7 +102,7 @@ describe('the client app top bar (spec 15.2, 15.3)', () => {
       await renderApp('/dashboard', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') }));
       await screen.findAllByText('Main Street Bar');
       expect(screen.queryByText(EMAIL)).toBeNull();
-      expect(navLabels()).toEqual(['Home', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Town', 'Your data', 'Settings']);
+      expect(navLabels()).toEqual(['Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Settings']);
       expect(within(screen.getByLabelText('Sections')).getByLabelText('Main')).toBeTruthy();
       // The table stacks into label and value pairs.
       const table = screen.getByLabelText('Locations');
@@ -116,7 +117,7 @@ describe('location pages (spec 15.2)', () => {
   test('members: the eyebrow names the location, the h1 the page; Home is current; no Location settings link', async () => {
     const { router } = await renderApp('/locations/l1', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') }));
     expect(await screen.findByText('Main Street Bar, Hanover, NH')).toBeTruthy();
-    expect(screen.getByRole('heading', { name: /^Week of [A-Z][a-z]{2} \d{1,2}, \d{4}$/ })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: /^Welcome back/ })).toBeTruthy();
     expect(navLink('Home').props.accessibilityState).toMatchObject({ selected: true });
     expect(screen.getByRole('link', { name: 'All locations' })).toBeTruthy();
     expect(screen.queryByRole('link', { name: 'Location settings' })).toBeNull();
@@ -125,6 +126,28 @@ describe('location pages (spec 15.2)', () => {
     expect(screen.getByRole('heading', { name: 'Notes' })).toBeTruthy();
     expect(navLink('Notes').props.accessibilityState).toMatchObject({ selected: true });
     expect(navLink('Home').props.accessibilityState).toMatchObject({ selected: false });
+  });
+
+  test('Calendar opens under its own title, right after Home, and is marked', async () => {
+    const { router } = await renderApp('/locations/l1', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') }));
+    await screen.findByText('Main Street Bar, Hanover, NH');
+    await fireEvent.press(navLink('Calendar'));
+    expect(router.getPathname()).toBe('/locations/l1/calendar');
+    expect(await screen.findByRole('heading', { name: 'Calendar' })).toBeTruthy();
+    expect(navLink('Calendar').props.accessibilityState).toMatchObject({ selected: true });
+    expect(navLink('Home').props.accessibilityState).toMatchObject({ selected: false });
+  });
+
+  test('a member opens Business rules from Rules, right after Notes, and Rules is marked (P29)', async () => {
+    const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: rulesFake([ruleOf('r1', 'Closed Mondays')]) });
+    const { router } = await renderApp('/locations/l1', api);
+    await screen.findByText('Main Street Bar, Hanover, NH');
+    await fireEvent.press(navLink('Rules'));
+    expect(router.getPathname()).toBe('/locations/l1/rules');
+    expect(await screen.findByRole('heading', { name: 'Business rules' })).toBeTruthy();
+    expect(await screen.findByText('Closed Mondays')).toBeTruthy();
+    expect(navLink('Rules').props.accessibilityState).toMatchObject({ selected: true });
+    expect(navLink('TownwiseAI').props.accessibilityState).toMatchObject({ selected: false });
   });
 
   // U7: Analytics replaced U5's In progress stub (spec P24); its own suites are under test/portal/analytics/.
@@ -164,7 +187,8 @@ describe('location pages (spec 15.2)', () => {
 
   test('one location has no switcher and no All locations', async () => {
     await renderApp('/locations/l1', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member', orgOf('member').locations.slice(0, 1)) }));
-    await screen.findByText('Main Street Bar, Hanover, NH');
+    // With one location the eyebrow is its town alone (D29).
+    await screen.findByText('Hanover, NH');
     expect(screen.queryByRole('button', { name: 'Location' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'All locations' })).toBeNull();
   });

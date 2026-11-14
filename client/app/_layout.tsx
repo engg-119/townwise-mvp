@@ -7,6 +7,7 @@ import { Platform } from 'react-native';
 import { AuthProvider } from '../src/auth/AuthProvider';
 import { createAuth } from '../src/auth/auth';
 import { createSession } from '../src/auth/session';
+import { SiteTheme } from '../src/portal/shell/PortalStyles';
 import { createApiClient } from '../src/api/client';
 import { parseConfig } from '../src/config';
 import { env } from '../src/env';
@@ -45,10 +46,12 @@ function createAppAuth(): Auth {
 
 // On web the public pages and sign-in name themselves in the document title (MarketingShell.web). This
 // default is the title of every other screen, so a page's title never outlives it (sign-in, then the app).
+// SiteTheme puts the one light or dark mode on every page (web only; the apps stay dark).
 export function RootStack(): React.JSX.Element {
   return (
     <>
       {Platform.OS === 'web' ? <Head><title>Townwise</title></Head> : null}
+      <SiteTheme />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: theme.color.ground } }}>
         <Stack.Screen name="(marketing)" />
         <Stack.Screen name="(gate)" />

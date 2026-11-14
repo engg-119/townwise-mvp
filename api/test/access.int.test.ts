@@ -6,7 +6,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import type { MeResponse } from '../src/handlers/me.ts';
 import { addInvite, addRemovedSeat, addRequest, addSeat, createOrg } from './helpers/fixtures.ts';
 import {
-  call, makeStaff, MINUTE, removeStaffFactor, signIn, signInStaff, STAFF_EMAIL, startTownwiseServer,
+  call, makeStaff, MINUTE, refresh, removeStaffFactor, signIn, signInStaff, STAFF_EMAIL, startTownwiseServer,
   type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
 
@@ -188,6 +188,22 @@ describe('staff branch (4.2 step 2)', () => {
       user: { id: session.userId, email: STAFF_EMAIL }, access: { state: 'staff' }, viewAs: null, openAsAdmin: null,
       staff: { verifiedUntil: new Date(start.getTime() + 60 * MINUTE).toISOString() }, welcome: null,
     });
+  });
+
+  it('with TOWNWISE_STAFF_TWO_STEP=off (development), staff need no codes and are verified for 60 minutes from each request', async () => {
+    const open = await startTownwiseServer({ env: { TOWNWISE_STAFF_TWO_STEP: 'off' } });
+    try {
+      const session = await signIn(open, STAFF_EMAIL);
+      open.clock.advance(2 * 60 * MINUTE);
+      await refresh(open, session);
+      const res = await call(open, '/api/me', { session });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        access: { state: 'staff' }, staff: { verifiedUntil: new Date(open.clock.now().getTime() + 60 * MINUTE).toISOString() },
+      });
+    } finally {
+      await open.close();
+    }
   });
 
   it('a staff email that is also invited, or holds a seat, resolves as staff, never as member', async () => {

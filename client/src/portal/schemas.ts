@@ -11,8 +11,17 @@ export type Role = z.infer<typeof roleSchema>;
 export const townSchema = z.object({ townId: z.string().nullable(), name: z.string(), state: z.string() });
 export type Town = z.infer<typeof townSchema>;
 
-/** One checked Google place on a request; `name` is null for a request stored before places. */
-export const requestPlaceSchema = z.object({ placeId: z.string(), name: z.string().nullable(), town: townSchema });
+/** What a Google place is: a business, or a street address for one Google doesn't list (api/README.md, Places search). */
+export const placeKindSchema = z.enum(['business', 'address']);
+export type PlaceKind = z.infer<typeof placeKindSchema>;
+
+/**
+ * One checked Google place on a request; `name` is null for a request stored before places, and `kind` reads as a
+ * business when absent (a request stored before kinds, or an API from before them).
+ */
+export const requestPlaceSchema = z.object({
+  placeId: z.string(), name: z.string().nullable(), kind: placeKindSchema.default('business'), town: townSchema,
+});
 export type RequestPlace = z.infer<typeof requestPlaceSchema>;
 
 export const accessRequestSchema = z.object({

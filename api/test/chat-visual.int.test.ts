@@ -1,8 +1,9 @@
 // TownwiseAI's visuals and next questions (docs/portal/tuning-chat.md sections 2 to 4) against a scripted model
 // (helpers/chat-model.ts): show_visual streams a `visual` event drawn from the location's stored days and its published
 // forecast, and a reload replays it as a part; suggest_next streams a `suggestions` event and replays as the reply's
-// `next`, and a message that calls only it ends the turn without another model call; and neither a visual's figures
-// nor a suggestion's text reaches a log or an audit event. Synthetic data only.
+// `next`, and a message that calls only it ends the turn without another model call once text was written (before, its
+// result asks for the answer); and neither a visual's figures nor a suggestion's text reaches a log or an audit event.
+// Synthetic data only.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
@@ -19,6 +20,7 @@ import { call, signIn, signInStaff, startTownwiseServer, type TestSession, type 
 const FORECAST = JSON.parse(readFileSync(new URL('fixtures/forecast-run.json', import.meta.url), 'utf8')) as Record<string, unknown>;
 const SHOWN = 'Shown to the owner under your reply. Describe it in a sentence or two; don’t repeat every figure.';
 const SUGGESTED = 'Shown to the owner as three buttons.';
+const UNANSWERED = 'Shown to the owner as three buttons. The owner has not seen an answer yet: they see only text you write, never your thinking. Write your answer to the owner now, as text.';
 const THREE = ['Sentinel-next-one: how did Monday go?', 'Sentinel-next-two: any events soon?', 'Sentinel-next-three: show May'];
 
 let server: TownwiseTestServer;
@@ -190,6 +192,44 @@ describe('suggest_next', () => {
     expect(messages.at(-1)?.next).toEqual(THREE);
     expect(messages.at(0)?.next).toBeNull();
     expect(messages.at(-1)?.parts.map((p) => p.type)).toEqual(['text', 'tool', 'text']);
+  });
+
+  it('suggest_next alone before the turn wrote any text asks for the answer and the loop continues until it is written', async () => {
+    // Call 1: get_sales_days; call 2: thinking and suggest_next only, no text; call 3: the answer.
+    model.script(
+      { kind: 'message', message: message([toolUse('toolu_u1', 'get_sales_days', { from: '2026-05-01', to: '2026-05-05' })]) },
+      { kind: 'message', message: message([thinking('May started strong.'), toolUse('toolu_n8', 'suggest_next', { prompts: THREE })]) },
+      { kind: 'message', message: message([text('May started strong.')]) },
+    );
+    const events = await turn({ content: 'How did May start?' });
+    expect(model.calls).toHaveLength(3);
+    expect(toolResults(messagesOf(model.calls[2]).at(-1))).toEqual([{ type: 'tool_result', tool_use_id: 'toolu_n8', content: UNANSWERED }]);
+    expect(eventData(events, 'suggestions')).toEqual([{ id: 'toolu_n8', prompts: THREE }]);
+    expect(events.at(-1)).toMatchObject({ event: 'done', data: { stopReason: 'end_turn' } });
+
+    const id = conversationIdOf(events);
+    const stored = await storedParams(id);
+    expect(stored).toHaveLength(6);
+    expect(stored[5]).toEqual({ role: 'assistant', content: [text('May started strong.')] });
+    const { messages } = await view(id);
+    expect(messages.at(-1)?.next).toEqual(THREE);
+    expect(messages.at(-1)?.parts.at(-1)).toMatchObject({ type: 'text', text: 'May started strong.' });
+  });
+
+  it('suggest_next alone after tools, with text only before them, still asks for the answer: an aside is no answer', async () => {
+    // Call 1: an aside and get_sales_days; call 2: the answer as thinking and suggest_next only; call 3: the answer.
+    // Opus 5.5 returns text written before a tool call in the same message as thinking, so the owner never saw it.
+    model.script(
+      { kind: 'message', message: message([text('Next week, presumably. '), toolUse('toolu_a1', 'get_sales_days', { from: '2026-05-01', to: '2026-05-05' })]) },
+      { kind: 'message', message: message([thinking('May started strong.'), toolUse('toolu_n9', 'suggest_next', { prompts: THREE })]) },
+      { kind: 'message', message: message([text('May started strong.')]) },
+    );
+    const events = await turn({ content: 'How did May start?' });
+    expect(model.calls).toHaveLength(3);
+    expect(toolResults(messagesOf(model.calls[2]).at(-1))).toEqual([{ type: 'tool_result', tool_use_id: 'toolu_n9', content: UNANSWERED }]);
+    expect(events.at(-1)).toMatchObject({ event: 'done', data: { stopReason: 'end_turn' } });
+    const { messages } = await view(conversationIdOf(events));
+    expect(messages.at(-1)?.parts.at(-1)).toMatchObject({ type: 'text', text: 'May started strong.' });
   });
 
   it('suggest_next beside another tool runs both and the loop continues; an invalid suggest_next is an is_error result and no event', async () => {

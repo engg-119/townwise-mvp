@@ -145,7 +145,7 @@ function ignore(): void {
  * Inflates `input`, which must produce exactly `size` bytes; stops after `limit` (at most `size`) bytes. The input goes
  * in INFLATE_SLICE bytes at a time, each written only once the last write settled: a stream takes a slice only after
  * the reader has read what the slice before it made (its backpressure), so at most one slice's output waits unread.
- * Once the output passes the limit, the reader is cancelled, the writer aborted and the feeding awaited, so no slice
+ * Once the output passes the limit, the reader is canceled, the writer aborted and the feeding awaited, so no slice
  * after that one is inflated.
  */
 async function inflateRaw(input: Uint8Array, size: number, limit: number): Promise<{ data: Uint8Array; complete: boolean }> {

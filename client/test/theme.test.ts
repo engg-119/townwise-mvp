@@ -17,12 +17,16 @@ function contrast(a: string, b: string): number {
   return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
 }
 
+// The key colors are the dark palette's: on web theme.color holds var(--tw-<token>) references to it
+// (test/portal/theme-palette.test.ts).
+const dark = theme.palette.dark;
+
 test('pins the key colors', () => {
-  expect(theme.color.mint).toBe('#7bd2b4');
-  expect(theme.color.cta).toBe('#eff2f6');
-  expect(theme.color.ctaHover).toBe('#b5bbc2');
-  expect(theme.color.ground).toBe('#080a0d');
-  expect(theme.color.onCta).toBe(theme.color.ground);
+  expect(dark.mint).toBe('#7bd2b4');
+  expect(dark.cta).toBe('#eff2f6');
+  expect(dark.ctaHover).toBe('#b5bbc2');
+  expect(dark.ground).toBe('#080a0d');
+  expect(dark.onCta).toBe(dark.ground);
 });
 
 test('the contrast helper matches the WCAG extremes', () => {
@@ -30,9 +34,10 @@ test('the contrast helper matches the WCAG extremes', () => {
   expect(contrast('#7bd2b4', '#7bd2b4')).toBe(1);
 });
 
-test('the primary button label meets 4.5:1 at rest and on hover', () => {
-  expect(contrast(theme.color.onCta, theme.color.cta)).toBeGreaterThanOrEqual(4.5);
-  expect(contrast(theme.color.onCta, theme.color.ctaHover)).toBeGreaterThanOrEqual(4.5);
+test.each(['dark', 'light'] as const)('the primary button label meets 4.5:1 at rest and on hover, %s', (mode) => {
+  const palette = theme.palette[mode];
+  expect(contrast(palette.onCta, palette.cta)).toBeGreaterThanOrEqual(4.5);
+  expect(contrast(palette.onCta, palette.ctaHover)).toBeGreaterThanOrEqual(4.5);
 });
 
 test('motion uses the agreed curves and interface durations under 300ms', () => {

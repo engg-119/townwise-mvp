@@ -37,6 +37,8 @@ describe('indexes', () => {
       'tw_calibrations',
       'tw_order_cards', 'tw_order_decisions', 'tw_order_rules',
       'tw_order_setups', 'tw_item_sales', 'tw_order_counts',
+      // Business rules (spec 6.24).
+      'tw_business_rules',
     ].sort());
   });
 
@@ -78,6 +80,7 @@ describe('indexes', () => {
       // U13B.
       'TwForecastRun', 'TwForecast', 'TwCalibration',
       'TwOrderCard', 'TwOrderDecision', 'TwOrderRule', 'TwOrderSetup', 'TwItemSalesDay', 'TwOrderCount',
+      'TwBusinessRule',
     ]) {
       for (const [fields] of indexesOf(connection, model)) {
         const keys = Object.keys(fields);
@@ -129,6 +132,14 @@ describe('indexes', () => {
     expect(indexesOf(registered(), 'TwWelcome')).toContainEqual([
       { orgId: 1, userId: 1 }, expect.objectContaining({ unique: true }),
     ]);
+  });
+
+  it('tw_business_rules has the unique orgId, locationId, key index', () => {
+    const connection = registered();
+    expect(indexesOf(connection, 'TwBusinessRule')).toContainEqual([
+      { orgId: 1, locationId: 1, key: 1 }, expect.objectContaining({ unique: true }),
+    ]);
+    expect(connection.models.TwBusinessRule?.schema.get('strict')).toBe(true);
   });
 
   it('keeps one profile per person', () => {

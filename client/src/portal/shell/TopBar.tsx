@@ -12,6 +12,7 @@ import { webAria } from '../ui/aria';
 import { Button } from '../ui/Button';
 import { StatusTag } from '../ui/feedback';
 import { Wrap } from '../ui/layout';
+import { ThemeToggle } from './ThemeToggle';
 
 // The top bars of spec 15.1 to 15.4 (shell.md 5.1 to 5.4). At least 64px with a 1px `border` rule below:
 // - gate: `ground`; wordmark; “Signed in as {email}” and Sign out;
@@ -19,10 +20,12 @@ import { Wrap } from '../ui/layout';
 //   Team and Settings as a group on the right), the email and Sign out;
 // - staff console: `panel`; wordmark and the “Staff console” kind tag, the nav with “Requests {n}”, then
 //   “Verified until {time}”, the staff email and Sign out.
+// On web every bar has the light and dark switch (ThemeToggle, a 44px square) just before Sign out; native has none.
 // Nav links never hide: below 900px (1024px in the console, 1280px when the client app's bar carries a
 // location's sections, which need the room) they take a second row under a rule. At 640px and
-// below the email hides and the organization name truncates; the console puts “Verified until” under the wordmark,
-// beside Sign out, so its bar is one band and the nav. The client app's second row is then one line in a
+// below the email hides and the organization name truncates; the console's bar is one band of two 44px rows and the
+// nav: the wordmark, kind tag and switch, then “Verified until” and Sign out (the wordmark, kind tag, switch and Sign
+// out are too wide for one 320px row). The client app's second row is then one line in a
 // focusable region that scrolls sideways, kept on the current section.
 
 export interface TopBarProps {
@@ -163,10 +166,16 @@ export function TopBar(props: TopBarProps): React.JSX.Element {
   const verified = props.verifiedUntil === undefined || props.verifiedUntil === null ? null : (
     <Text style={styles.mail}>{`Verified until ${formatTime(props.verifiedUntil)}`}</Text>
   );
+  const stackedConsole = consoleBar && phone;
+  // The switch and Sign out, held together at their own widths.
+  const end = <View style={styles.end}><ThemeToggle />{signOut}</View>;
   let me: React.JSX.Element;
-  if (phone) {
-    // Only Sign out, which never shrinks.
-    me = <View style={[styles.me, styles.hold]}>{signOut}</View>;
+  if (stackedConsole) {
+    // The switch on the wordmark's row and Sign out under it, on the row of “Verified until”; neither shrinks.
+    me = <View style={[styles.me, styles.hold, styles.meStacked]}><ThemeToggle />{signOut}</View>;
+  } else if (phone) {
+    // Only the switch and Sign out, which never shrink.
+    me = <View style={[styles.me, styles.hold]}>{end}</View>;
   } else if (consoleBar) {
     me = (
       <View style={styles.me}>
@@ -174,7 +183,7 @@ export function TopBar(props: TopBarProps): React.JSX.Element {
           {verified}
           <Text numberOfLines={1} style={styles.mail}>{props.email}</Text>
         </View>
-        {signOut}
+        {end}
       </View>
     );
   } else {
@@ -183,7 +192,7 @@ export function TopBar(props: TopBarProps): React.JSX.Element {
         <Text numberOfLines={1} style={[styles.mail, styles.shrink]}>
           {props.kind === 'gate' ? `Signed in as ${props.email}` : props.email}
         </Text>
-        {signOut}
+        {end}
       </View>
     );
   }
@@ -196,7 +205,7 @@ export function TopBar(props: TopBarProps): React.JSX.Element {
     <View role="banner" style={[styles.bar, consoleBar ? styles.panel : null]}>
       <Wrap>
         <View style={[styles.row, tight]}>
-          {consoleBar && phone ? <View style={styles.stacked}>{identity}{verified}</View> : identity}
+          {stackedConsole ? <View style={styles.stacked}>{identity}<View style={styles.verifiedRow}>{verified}</View></View> : identity}
           {nav !== null && !wrapped ? <Nav items={nav} wrapped={false} /> : null}
           {me}
         </View>
@@ -250,9 +259,16 @@ const styles = StyleSheet.create({
   count: { fontFamily: theme.type.mono.fontFamily, fontVariant: ['tabular-nums'] },
   me: { marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', columnGap: 20, flexShrink: 1, minWidth: 0 },
   hold: { flexShrink: 0 },
+  // 8px between the switch's square and Sign out, so the icon sits 20px from the words, as the email does.
+  end: { flexDirection: 'row', alignItems: 'center', columnGap: 8, flexShrink: 0 },
+  // The console on phones: the switch over Sign out, at the right edge.
+  meStacked: { flexDirection: 'column', alignItems: 'flex-end' },
   status: { alignItems: 'flex-end', minWidth: 0, flexShrink: 1 },
-  // The console on phones: the wordmark and kind tag, “Verified until” under them, and 12px below it.
-  stacked: { flexShrink: 1, minWidth: 0, paddingBottom: 12 },
+  // The console on phones: the wordmark and kind tag, then “Verified until” in a 44px row level with Sign out. The
+  // row holds its 44px with no time too: Sign out needs the second row anyway, and the band centers its two sides,
+  // so without it the wordmark would sit halfway between the switch and Sign out.
+  stacked: { flexShrink: 1, minWidth: 0 },
+  verifiedRow: { minHeight: 44, justifyContent: 'center' },
   mail: { ...theme.type.mono, color: c.text3 },
   shrink: { flexShrink: 1 },
   tight: { columnGap: 12 },

@@ -12,6 +12,7 @@ import { LinkButton } from '../../src/portal/ui/Button';
 import { DataTable, MIN_FLEX_WIDTH, type Column } from '../../src/portal/ui/DataTable';
 import { Notice } from '../../src/portal/ui/feedback';
 import { Select } from '../../src/portal/ui/Select';
+import { theme } from '../../src/theme';
 
 // The shared pieces as a phone and a tablet draw them on web, through the real expo-router <Link asChild>
 // (src/portal/ui/hover.ts): the styles that reach the DOM, which is what the browser lays out.
@@ -54,9 +55,10 @@ function hover(element: Element): void {
   fireEvent.mouseEnter(element);
 }
 
-const RAISED = 'rgb(24, 28, 33)';
-const LINE = 'rgb(123, 129, 135)';
-const WHITE = 'rgb(239, 242, 246)';
+// On web theme.color is var(--tw-<token>), which jsdom leaves unresolved, so a computed color names its token.
+const RAISED = theme.color.raised;
+const LINE = theme.color.line;
+const WHITE = theme.color.white;
 
 test('LinkButton keeps its box through Link asChild: 44px tall, the outline’s 1px line, white on hover', () => {
   renderLinked(
@@ -91,7 +93,7 @@ test('on a phone the sections take one row in a focusable region that scrolls si
   expect(style(parentOf(nav)).paddingLeft).toBe('16px');
   expect(style(nav).flexWrap).toBe('nowrap');
   expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual([
-    'Home', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Town', 'Your data', 'Team', 'Settings',
+    'Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Team', 'Settings',
   ]);
   const notes = within(nav).getByRole('link', { name: 'Notes' });
   expect(notes.getAttribute('aria-current')).toBe('page');

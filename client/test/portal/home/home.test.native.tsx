@@ -15,12 +15,13 @@ import { cleanup, fireEvent, screen } from 'expo-router/testing-library';
 import type { Calendar } from '../../../src/portal/analytics/api';
 import type { DayRecord } from '../../../src/portal/analytics/history';
 import { LAST_YEAR_FOOTNOTE } from '../../../src/portal/analytics/week';
-import { FORECAST_LINE } from '../../../src/portal/home/Home';
+import { forecastLine } from '../../../src/portal/home/Home';
 import { PEOPLE_HEAD } from '../../../src/portal/home/ThisMonth';
 import type { LocationSummary, MeResponse } from '../../../src/portal/schemas';
-import { ACCESS, deferred, fakePortalApi, locationOf, meOf, offline, orgOf, refusal, viewAsMe, type FakePortalApi } from '../../helpers/portal';
+import { ACCESS, deferred, fakePortalApi, LOCATIONS, locationOf, meOf, offline, orgOf, refusal, viewAsMe, type FakePortalApi } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { analyticsFake, calendarBody, historyBody, holiday, note, run, townEvent } from '../analytics/fakes';
+import { forecastDay, forecastOf, NO_FORECAST } from '../calendar/fakes';
 import { NOVEMBER } from '../estimates/fakes';
 
 // P11 Home on native (home.md 2, D21): no SVG and no heatmap, so every section keeps its words and its table.
@@ -57,6 +58,8 @@ const EVENTS = [
 const NOTES = [note({ startDate: '2026-11-06', detail: 'A rehearsal dinner.' })];
 const AGENT = `${PATH}/agent`;
 const PEOPLE = `${PATH}/people-in-town?from=2026-11-01&to=2026-11-30`;
+const FORECAST = `${PATH}/forecast?from=2026-11-01&to=2026-11-30`;
+const FORECAST_LINE = forecastLine('Main Street Bar');
 const GAP = (from: string, to: string, dayCount: number) => ({ id: `gap_${from}_${to}`, kind: 'gap', from, to, dayCount });
 /** GET .../orders: one next order per supplier, soonest first (api/src/orders/board.ts). */
 const ORDER_LINE = {
@@ -98,6 +101,8 @@ function portal(options: {
   people?: unknown;
   /** GET .../orders's body, or an error; the board above by default. */
   orders?: unknown;
+  /** GET .../forecast's body for November, or an error; no published forecast by default. */
+  forecast?: unknown;
 } = {}): FakePortalApi {
   const me = options.me ?? meOf(ACCESS.member);
   const fake = analyticsFake({
@@ -109,6 +114,7 @@ function portal(options: {
     [`${PATH}/orders`]: options.orders ?? BOARD,
     // The Ordering setup page, which the Bar order card links to, for a location that has saved none.
     [`${PATH}/orders/setup`]: { today: '2026-11-05', setup: null, coverage: null, itemCoverage: {}, counts: {}, itemsWithHistory: [] },
+    [FORECAST]: options.forecast ?? NO_FORECAST,
     // Stored files are off, as in production today.
     [`${PATH}/imports/current`]: refusal(503, 'files_unavailable'),
   });
@@ -123,7 +129,7 @@ const NO_STORE = ['setItemAsync', 'getItemAsync', 'deleteItemAsync'] as const;
 test('with history: the lead, this week with the calendar and past years, bar order, last week, this month and the history', async () => {
   const api = portal();
   await renderApp('/locations/l1', api);
-  expect(await screen.findByRole('heading', { name: 'Week of Nov 2, 2026' })).toBeTruthy();
+  expect(await screen.findByRole('heading', { name: /^Welcome back/ })).toBeTruthy();
   expect(screen.getByText('From your sales through Wed, Nov 4, 2026 and Hanover’s researched calendar.')).toBeTruthy();
   expect(screen.getByText(FORECAST_LINE)).toBeTruthy();
   expect(screen.getByText('In progress')).toBeTruthy();
@@ -170,17 +176,31 @@ test('with history: the lead, this week with the calendar and past years, bar or
   // This month in Hanover.
   expect(screen.getByRole('heading', { name: 'This month in Hanover' })).toBeTruthy();
   expect(screen.getByText('Veterans Day. Federal holiday.')).toBeTruthy();
-  expect(screen.getByText('Food-service jobs in Grafton County, November 2024: 97.4 (2024 average = 100).')).toBeTruthy();
+  // The county's jobs under their own heading, more or fewer said in words, the unit named.
+  expect(screen.getByRole('heading', { name: 'Food-service jobs in Grafton County' })).toBeTruthy();
+  expect(screen.getByText('2.6% fewer jobs in November 2024 than in an average month that year.')).toBeTruthy();
   expect(screen.getByText('County, not town. Employment is a stand-in for demand.')).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Source: U.S. Bureau of Labor Statistics, QCEW' })).toBeTruthy();
+  expect(screen.queryByText(/average = 100/)).toBeNull();
   expect(screen.getByText('Your November in past years')).toBeTruthy();
   expect(screen.getByText(/^\d+ guests a day over 30 days in 2025, /)).toBeTruthy();
   expect(screen.getByText(/^\d+ guests a day over 30 days in 2024, /)).toBeTruthy();
-  // Who's in town: the people in town summary in place of the old Planned line, with its honest no-number line.
+  // Who's in town: the honest no-number line with its Planned tag, then the term by time under headings, past days
+  // left out, one row per run of days, and the term's source once, by name.
   expect(screen.getByText(PEOPLE_HEAD)).toBeTruthy();
   expect(await screen.findByText('Fall term classes until Tue, Nov 17.')).toBeTruthy();
   expect(screen.getByText('Townwise can’t put a number on how many people are in Hanover yet.')).toBeTruthy();
-  expect(screen.getByText('A headcount from public counts is planned.')).toBeTruthy();
+  expect(screen.queryByText('A headcount from public counts is planned.')).toBeNull();
   expect(screen.queryByText('An estimate of how many people are in town each day is planned.')).toBeNull();
+  expect(screen.getByRole('heading', { name: 'This week' })).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Later in November' })).toBeTruthy();
+  expect(screen.getByText('Nov 20 to 25')).toBeTruthy();
+  expect(screen.getByText('Fall term finals')).toBeTruthy();
+  expect(screen.getByText('From Nov 26')).toBeTruthy();
+  expect(screen.getAllByText('Townwise has no term dates')).toHaveLength(2);
+  expect(screen.getByRole('link', { name: 'Source: Dartmouth Registrar' })).toBeTruthy();
+  expect(screen.queryByText('registrar.dartmouth.edu')).toBeNull();
+  expect(screen.queryByText(/County jobs are/)).toBeNull();
   // The headcount; Bar order and TownwiseAI's questions are no longer Planned.
   expect(screen.getAllByText('Planned')).toHaveLength(1);
   expect(screen.queryByText(/can’t see your stock/)).toBeNull();
@@ -191,27 +211,36 @@ test('with history: the lead, this week with the calendar and past years, bar or
   expect(screen.getByRole('link', { name: 'See it in Analytics' })).toBeTruthy();
   expect(screen.getByText('Upload from a computer at townwise.tech.')).toBeTruthy();
 
-  // The location's reads, then the questions, people in town, the guest forecast and the next orders on their own: the
-  // board once, for Bar order and beside the calendar both (#68 review C6); no write, nothing stored.
+  // Three reads in parallel, then the questions, the business rules, the month's forecast, its people in town and the
+  // next orders on their own: the board once, for Bar order and the selected day's Reorder part (#68 review C6); no
+  // write, nothing stored.
   const reads = api.calls.filter((call) => call.path.startsWith(PATH)).map((call) => call.path);
   expect(reads.sort()).toEqual([
-    AGENT, CALENDAR, PEOPLE, `${PATH}/notes`, `${PATH}/sales/history`, `${PATH}/forecast?from=2026-11-01&to=2026-11-30`, `${PATH}/orders`,
+    AGENT, CALENDAR, FORECAST, PEOPLE, `${PATH}/notes`, `${PATH}/rules`, `${PATH}/sales/history`, `${PATH}/orders`,
   ].sort());
   expect(api.calls.filter((call) => call.method !== 'GET')).toEqual([]);
   for (const name of NO_STORE) expect(jest.mocked(SecureStore[name])).not.toHaveBeenCalled();
 });
 
-test('the month calendar opens a day when it is pressed', async () => {
-  await renderApp('/locations/l1', portal());
+test('tapping a day opens the calendar at that day', async () => {
+  const { router } = await renderApp('/locations/l1', portal());
   expect(await screen.findByRole('heading', { name: 'Today, Thu, Nov 5, 2026' })).toBeTruthy();
-  const veterans = screen.getByLabelText('Wed, Nov 11, 2026. Veterans Day.');
-  await fireEvent.press(veterans);
-  expect(screen.getByRole('heading', { name: 'Wed, Nov 11, 2026' })).toBeTruthy();
-  expect(screen.getAllByText('Veterans Day. Federal holiday.')).toHaveLength(2);
-  expect(screen.getByText('Wed, Nov 12, 2025: 100 guests')).toBeTruthy();
-  // A day after today has no figure of its own.
-  expect(screen.queryByText('This day')).toBeNull();
-  expect(screen.getByLabelText('Wed, Nov 11, 2026. Veterans Day.').props.accessibilityState).toMatchObject({ selected: true });
+  expect(screen.getByText('Tap a day to open it in the Calendar.')).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Open the calendar' })).toBeTruthy();
+  await fireEvent.press(screen.getByLabelText('Wed, Nov 11, 2026. Veterans Day.'));
+  expect(router.getPathname()).toBe('/locations/l1/calendar');
+  expect(router.getSearchParams()).toMatchObject({ day: '2026-11-11' });
+});
+
+test('with a published forecast, each day from today shows its figure and the lead has no tagline', async () => {
+  const days = [];
+  for (let day = 5; day <= 30; day += 1) days.push(forecastDay({ date: `2026-11-${String(day).padStart(2, '0')}` }));
+  await renderApp('/locations/l1', portal({ forecast: forecastOf(days) }));
+  expect(await screen.findByLabelText('Wed, Nov 11, 2026. Forecast about 212 guests, 180 to 240. Veterans Day.')).toBeTruthy();
+  expect(screen.queryByText(FORECAST_LINE)).toBeNull();
+  expect(screen.queryByText('In progress')).toBeNull();
+  // The selected day (today) gives its forecast.
+  expect(screen.getByText('About 212 guests, likely 180 to 240.')).toBeTruthy();
 });
 
 test('a term period shows once with its span and source; the one-day event takes the headline', async () => {
@@ -232,7 +261,8 @@ test('a term period shows once with its span and source; the one-day event takes
 
 test('the questions link counts what GET .../agent asks, and shows nothing with none or when the read fails', async () => {
   await renderApp('/locations/l1', portal({ agent: { questions: [GAP('2026-05-12', '2026-05-13', 2)], activity: [] } }));
-  expect(await screen.findByRole('link', { name: '1 question from TownwiseAI' })).toBeTruthy();
+  // It opens TownwiseAI with the questions showing (?panel=questions).
+  expect((await screen.findByRole('link', { name: '1 question from TownwiseAI' })).props.href).toBe('/locations/l1/agent?panel=questions');
   await cleanup();
 
   // A question kind this client doesn't know is not counted.
@@ -255,17 +285,31 @@ test('the questions link counts what GET .../agent asks, and shows nothing with 
   }
 });
 
-test('who’s in town: a headcount range with its sources when public counts support one; a failed read stays in its place', async () => {
+test('who’s in town: a headcount leads as one figure with its unit, later days say when they have none; a failed read stays in its place', async () => {
   const range = { low: 9500, high: 10_500, sourceIds: ['census-test', 'cal-1'], excludes: [] };
   const counted = {
     ...NOVEMBER,
     periods: NOVEMBER.periods.map((each) => (each.termState === 'in_session' ? { ...each, headcount: range, headcountWhy: null } : each)),
     sources: [...NOVEMBER.sources, { id: 'census-test', label: 'Synthetic census', url: 'https://census.example.test/p1', confidence: 'high' }],
+    yourHistory: {
+      metric: 'guests',
+      cells: [{ state: 'in_session', weekday: 'Sat', days: 18, mean: 250 }, { state: 'between_terms', weekday: 'Sat', days: 6, mean: 140 }],
+      first: '2025-01-04', last: '2026-10-31',
+    },
   };
   await renderApp('/locations/l1', portal({ people: counted }));
-  expect(await screen.findByText('Fall term classes until Tue, Nov 17. About 9,500 to 10,500 people in town, from 2 sources.')).toBeTruthy();
-  expect(screen.getByText('census.example.test')).toBeTruthy();
-  expect(screen.queryByText('A headcount from public counts is planned.')).toBeNull();
+  // The number first, read as one phrase with its unit, then the term in words.
+  expect(await screen.findByText('9,500 to 10,500 people in town')).toBeTruthy();
+  expect(screen.getByText('Fall term classes until Tue, Nov 17.')).toBeTruthy();
+  expect(screen.getAllByText('No headcount')).toHaveLength(3);
+  expect(screen.getByRole('link', { name: 'Source: Synthetic census' })).toBeTruthy();
+  expect(screen.queryByText('census.example.test')).toBeNull();
+  expect(screen.queryByText('Townwise can’t put a number on how many people are in Hanover yet.')).toBeNull();
+  // Bar order only.
+  expect(screen.getAllByText('Planned')).toHaveLength(1);
+  // The location's own days by term, under their own heading.
+  expect(screen.getByRole('heading', { name: 'Your sales by term' })).toBeTruthy();
+  expect(screen.getByText('Your Saturdays averaged 250 guests in term and 140 between terms (18 and 6 Saturdays).')).toBeTruthy();
   await cleanup();
 
   await renderApp('/locations/l1', portal({ people: offline() }));
@@ -318,7 +362,7 @@ test('the coverage line for Nantucket and for a town outside the twelve, with no
   expect(await screen.findByText('Townwise’s Nantucket calendar has no researched town events yet. Only US federal holidays and your notes show here.')).toBeTruthy();
   expect(screen.getByText('From your sales through Wed, Nov 4, 2026 and US federal holidays.')).toBeTruthy();
   expect(screen.getByText('Nothing on the calendar this week.')).toBeTruthy();
-  expect(screen.getByText(/^Food-service jobs in Nantucket County, November 2024: /)).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Food-service jobs in Nantucket County' })).toBeTruthy();
   await cleanup();
 
   const norwich = [locationOf('l1', 'Main Street Bar', { townId: null, name: 'Norwich', state: 'VT' }, { coverage: HAS_DAYS })];
@@ -403,4 +447,10 @@ test('loading names the location, and a failed read offers Try again', async () 
 
   await renderApp('/locations/l1', portal({ history: offline() }));
   expect(await screen.findByRole('button', { name: 'Try again' })).toBeTruthy();
+});
+
+test('with one location the loading line names the organization (D29)', async () => {
+  await renderApp('/locations/l1', portal({ pending: true, locations: LOCATIONS.slice(0, 1) }));
+  expect(await screen.findByText('Loading Test Group')).toBeTruthy();
+  expect(screen.queryByText('Loading Main Street Bar')).toBeNull();
 });

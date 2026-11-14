@@ -47,6 +47,24 @@ describe('config', () => {
     expect(resolved.superadminEmails.has('staff@townwise.test')).toBe(true);
   });
 
+  it('staff two-step sign-in is off by default in development only, and production refuses off', () => {
+    const base = {
+      TOWNWISE_SUPERADMIN_EMAILS: ['staff@townwise.test'], TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20, TOWNWISE_WEB_URL: 'http://localhost:8081',
+      FILES_BLOB_ACCOUNT_URL: undefined, FILES_AZURITE_CONNECTION_STRING: undefined, TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5,
+    };
+    const twoStep = (nodeEnv: 'development' | 'test' | 'production', value?: string): boolean => resolveTownwiseConfig({
+      NODE_ENV: nodeEnv, ...base, TOWNWISE_STAFF_TWO_STEP: loadEnv(configSchema, { TOWNWISE_STAFF_TWO_STEP: value }).TOWNWISE_STAFF_TWO_STEP,
+    }).staffTwoStep;
+    expect(twoStep('development')).toBe(false);
+    expect(twoStep('development', '')).toBe(false);
+    expect(twoStep('development', 'required')).toBe(true);
+    expect(twoStep('test')).toBe(true);
+    expect(twoStep('test', 'off')).toBe(false);
+    expect(twoStep('production')).toBe(true);
+    expect(() => twoStep('production', 'off')).toThrow(ConfigError);
+    expect(() => loadEnv(configSchema, { TOWNWISE_STAFF_TWO_STEP: 'maybe' })).toThrow(ConfigError);
+  });
+
   it('reads the tuning chat budget in dollars, 20 by default, and refuses a value that is not a number from 0 to 10,000', () => {
     const budget = (value: string | undefined): number =>
       loadEnv(configSchema, { TOWNWISE_CHAT_MONTHLY_BUDGET_USD: value }).TOWNWISE_CHAT_MONTHLY_BUDGET_USD;

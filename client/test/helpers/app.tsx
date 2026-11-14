@@ -25,6 +25,7 @@ import Settings from '../../app/(gate)/(app)/(client)/settings';
 import AddLocation from '../../app/(gate)/(app)/(client)/locations/new';
 import LocationLayout from '../../app/(gate)/(app)/(client)/locations/[locationId]/_layout';
 import Forecast from '../../app/(gate)/(app)/(client)/locations/[locationId]/index';
+import Calendar from '../../app/(gate)/(app)/(client)/locations/[locationId]/calendar';
 import Analytics from '../../app/(gate)/(app)/(client)/locations/[locationId]/analytics';
 import Sales from '../../app/(gate)/(app)/(client)/locations/[locationId]/sales/index';
 import Upload from '../../app/(gate)/(app)/(client)/locations/[locationId]/sales/upload';
@@ -36,6 +37,7 @@ import Orders from '../../app/(gate)/(app)/(client)/locations/[locationId]/order
 import OrdersSetup from '../../app/(gate)/(app)/(client)/locations/[locationId]/orders/setup';
 import LocationSettings from '../../app/(gate)/(app)/(client)/locations/[locationId]/settings';
 import Agent from '../../app/(gate)/(app)/(client)/locations/[locationId]/agent';
+import Rules from '../../app/(gate)/(app)/(client)/locations/[locationId]/rules';
 import Chat from '../../app/(gate)/(app)/(client)/locations/[locationId]/chat';
 import ConsoleLayout from '../../app/(gate)/(app)/(console)/_layout';
 import Requests from '../../app/(gate)/(app)/(console)/admin/index';
@@ -89,6 +91,7 @@ export function appRoutes(root: React.ComponentType, overrides?: Record<string, 
     '(gate)/(app)/(client)/locations/new': AddLocation,
     '(gate)/(app)/(client)/locations/[locationId]/_layout': LocationLayout,
     '(gate)/(app)/(client)/locations/[locationId]/index': Forecast,
+    '(gate)/(app)/(client)/locations/[locationId]/calendar': Calendar,
     '(gate)/(app)/(client)/locations/[locationId]/analytics': Analytics,
     '(gate)/(app)/(client)/locations/[locationId]/sales/index': Sales,
     '(gate)/(app)/(client)/locations/[locationId]/sales/upload': Upload,
@@ -100,6 +103,7 @@ export function appRoutes(root: React.ComponentType, overrides?: Record<string, 
     '(gate)/(app)/(client)/locations/[locationId]/orders/setup': OrdersSetup,
     '(gate)/(app)/(client)/locations/[locationId]/settings': LocationSettings,
     '(gate)/(app)/(client)/locations/[locationId]/agent': Agent,
+    '(gate)/(app)/(client)/locations/[locationId]/rules': Rules,
     '(gate)/(app)/(client)/locations/[locationId]/chat': Chat,
     '(gate)/(app)/(console)/_layout': ConsoleLayout,
     '(gate)/(app)/(console)/admin/index': Requests,

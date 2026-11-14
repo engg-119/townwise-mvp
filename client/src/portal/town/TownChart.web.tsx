@@ -9,8 +9,8 @@ import { MonthScrubber } from './MonthScrubber.web';
 // The town's 2024 food-service employment curve against the Northeast, with the monthly gap as bars (the design
 // system's DeltaChart, as on the homepage panel and the Waiting board), and its MonthScrubber. Inline SVG,
 // aria-hidden: the text summary and “Show the numbers” carry the data. The county is mint and solid, the Northeast
-// dashed, the scale fitted to the town. The scrubber picks a month, starting at the year's biggest gap: a white
-// cursor marks it on the chart, and the readout above prints its gap and both index values, as the homepage panel
+// dashed, the scale fitted to the town. The scrubber picks a month, starting at the viewer's current calendar month:
+// a white cursor marks it on the chart, and the readout above prints its gap and both index values, as the homepage panel
 // does. Nothing animates. Path coordinates round to 0.01 and are never printed.
 
 const C = theme.color;
@@ -37,7 +37,7 @@ function line(values: readonly number[], y: (value: number) => number): string {
 export function TownChart(props: { profile: TownProfileData }): React.JSX.Element {
   const { series, county } = props.profile;
   const { phone } = useBreakpoint();
-  const [chosen, setChosen] = useState(series.largestGap.monthIndex);
+  const [chosen, setChosen] = useState(() => new Date().getMonth());
   const chosenGap = series.gap[chosen] ?? 0;
   const [lo, hi] = series.domain;
   const y = (value: number): number => TOP + ((hi - value) / (hi - lo)) * (BOTTOM - TOP);
@@ -68,10 +68,10 @@ export function TownChart(props: { profile: TownProfileData }): React.JSX.Elemen
       </div>
       <div aria-hidden="true" style={{ ...mono, color: C.text2, display: 'flex', flexWrap: 'wrap', gap: '4px 16px' }}>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ display: 'inline-block', width: 16, borderTop: `2px solid ${C.mint}` }} />{county}
+          <span style={{ display: 'inline-block', width: 16, borderTop: `2px solid ${C.seriesCounty}` }} />{county}
         </span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ display: 'inline-block', width: 16, borderTop: `2px dashed ${C.text3}` }} />Northeast
+          <span style={{ display: 'inline-block', width: 16, borderTop: `2px dashed ${C.seriesNortheast}` }} />Northeast
         </span>
       </div>
       <div style={{ position: 'relative', height: HEIGHT, marginLeft: 44 }}>
@@ -89,8 +89,8 @@ export function TownChart(props: { profile: TownProfileData }): React.JSX.Elemen
             d={series.gap.flatMap((gap, month) => (gap < 0 ? [bar(gap, month)] : [])).join(' ')}
             fill="none" stroke={C.line} strokeWidth={1} vectorEffect="non-scaling-stroke"
           />
-          <path d={line(northeastSeries.index, y)} fill="none" stroke={C.text3} strokeWidth={1.5} strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />
-          <path d={line(series.index, y)} fill="none" stroke={C.mint} strokeWidth={2} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+          <path d={line(northeastSeries.index, y)} fill="none" stroke={C.seriesNortheast} strokeWidth={1.5} strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />
+          <path d={line(series.index, y)} fill="none" stroke={C.seriesCounty} strokeWidth={2} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
           <path d={`M${String(r2(x(chosen)))} 0 V${String(HEIGHT)}`} fill="none" stroke={C.white} strokeWidth={1} vectorEffect="non-scaling-stroke" />
         </svg>
         {ticks.map((tick) => (

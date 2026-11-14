@@ -283,6 +283,12 @@ test('Privacy describes how forecasts are built and what Townwise keeps', () => 
   expect(text).toContain('Forecasts. Townwise builds your forecasts from your sales history and notes on Townwise’s own servers, in a job that sees only that location’s days. The model it fits learns only from your restaurant and is used only for your restaurant; Townwise keeps the results (a range of guests per day, the dates the model learned from, and how accurate it has been) and not the model. When Townwise staff import a forecast instead, it was built on the team’s own computers from sales exports you sent us; that model and those exports stay with Townwise staff, are used only for your restaurant, and are deleted when your organization is deleted or when you ask. You and TownwiseAI see the results. Deleting your sales data or your organization deletes them.');
 });
 
+test('Privacy says notes hold optional hours and change the published forecast (spec 17, D30)', () => {
+  renderAt('/privacy');
+  const text = screen.getByRole('main').textContent;
+  expect(text).toContain('Notes. Notes about unusual days: the kind, the dates and weekdays, the hours if you give them, the expected effect and number of guests, a detail of up to 280 characters, and who wrote it. Everyone on your organization’s team can see them. Home, the Calendar and Analytics show them beside your days, and TownwiseAI reads them. From today on, a private event with a number of guests, a buyout or a closure changes your location’s published forecast for its days; a note’s detail never goes into the forecast.');
+});
+
 test('Privacy makes the three commitments and no longer says the app has no upload', () => {
   renderAt('/privacy');
   const text = screen.getByRole('main').textContent;
@@ -292,7 +298,7 @@ test('Privacy makes the three commitments and no longer says the app has no uplo
   expect(text).toContain('The operator responsible for your data is the Townwise team, a group of students in ENGG 119, AI in the Real World, at Dartmouth’s Thayer School of Engineering in Hanover, NH. Townwise is not an official Dartmouth product.');
   expect(text).toContain('we will delete your account and its data within 30 days');
   expect(text).toContain('sends us only the date, guest count and net sales for each day');
-  expect(text).toContain('Effective November 5, 2026. Last updated November 9, 2026.');
+  expect(text).toContain('Effective November 5, 2026. Last updated November 12, 2026.');
   // D25: open as admin before anyone joins, then view-as only.
   expect(text).toContain('Before anyone from your organization has joined Townwise, staff setting it up for you, with your consent, can open it as its admin: they see and change what an admin can, except your team, until the first person joins. Each time, and every change they make, is recorded and shown to your organization’s admins.');
   expect(text).toContain('Once anyone has joined, Townwise staff can see the sales figures and your location notes only through view-as');
@@ -362,8 +368,19 @@ test('sign-in fills the window under the header, centered, so the footer starts 
   expect(css).toContain('.nav{border-bottom:1px solid var(--border)}');
 });
 
+test('the light and dark switch sits 8px before Sign in, as in the portal’s bar, and the button 20px after it', () => {
+  expect(css).toContain('.nav-act{margin-left:auto;display:flex;align-items:center;gap:8px}\n.nav-act .btn{margin-left:12px}');
+});
+
+test('on phones the header stays one row: the early-access label wraps inside its 44px before the row would', () => {
+  // Up to 420px the gap after the wordmark and the button's padding tighten, which keeps the label on one line down
+  // to 388px (the common 390px phones). Under that the wordmark, the switch, Sign in and the one-line button do not
+  // fit side by side. The row does not wrap; Sign in and the switch keep their size and the label takes two lines.
+  expect(css).toContain('@media (max-width:640px){.nav-in{flex-wrap:nowrap;column-gap:12px}.nav-links{display:none}.nav-act .tl{flex-shrink:0}.nav-act .btn{margin-left:4px;font-size:14px;padding:0 14px;white-space:normal;text-align:center;line-height:16px}}\n@media (max-width:420px){.nav-in{column-gap:8px}.nav-act .btn{padding:0 10px}}');
+});
+
 test('below 360px the header tightens, shrinking the wordmark only beside the early-access button', () => {
-  expect(css).toContain('@media (max-width:359px){.nav-in{column-gap:8px}.nav-in:has(.btn)>.wm{font-size:16px}.nav-act{gap:8px}.nav-act .btn{font-size:13px;padding:0 10px}}');
+  expect(css).toContain('@media (max-width:359px){.nav-in{column-gap:8px}.nav-in:has(.btn)>.wm{font-size:16px}.nav-act .btn{margin-left:0;font-size:13px;padding:0 10px}}');
 });
 
 test('on phones a link in running text gets a 44px-tall tap target', () => {

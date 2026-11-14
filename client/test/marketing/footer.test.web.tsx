@@ -165,7 +165,7 @@ test('without a reduced-motion preference the letters wait for the observer', ()
   expect(FakeObserver.instances).toHaveLength(1);
 });
 
-test('the letters rise from the centre out, 50ms apart, on the entering curve, under 900ms in all', () => {
+test('the letters rise from the center out, 50ms apart, on the entering curve, under 900ms in all', () => {
   const footer = renderFooter();
   const delays = [...footer.querySelectorAll<HTMLElement>('.ft-word span')].map((span) => span.style.transitionDelay);
   expect(delays).toEqual(['150ms', '100ms', '50ms', '0ms', '0ms', '50ms', '100ms', '150ms']);

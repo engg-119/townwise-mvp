@@ -68,8 +68,14 @@ export function fakePlaces(): FakePlaces {
   };
 }
 
-/** One placePrediction, shaped like Google's (text, structuredFormat with matches, types). */
-export function placePrediction(placeId: string, main: string, secondary?: string): unknown {
+/** A restaurant's types, as Google answers them. */
+const BUSINESS_TYPES: readonly string[] = ['restaurant', 'food', 'point_of_interest', 'establishment'];
+
+/**
+ * One placePrediction, shaped like Google's (text, structuredFormat with matches, types). `types` defaults to a
+ * restaurant's; null leaves the field out.
+ */
+export function placePrediction(placeId: string, main: string, secondary?: string, types: readonly string[] | null = BUSINESS_TYPES): unknown {
   return {
     placePrediction: {
       place: `places/${placeId}`,
@@ -79,7 +85,7 @@ export function placePrediction(placeId: string, main: string, secondary?: strin
         mainText: { text: main, matches: [{ endOffset: 3 }] },
         ...(secondary === undefined ? {} : { secondaryText: { text: secondary } }),
       },
-      types: ['restaurant', 'food', 'point_of_interest', 'establishment'],
+      ...(types === null ? {} : { types }),
     },
   };
 }

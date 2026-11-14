@@ -41,9 +41,9 @@ export function signedPercent(change: number): string {
   return `${whole > 0 ? '+' : '−'}${formatCount(Math.abs(whole))}%`;
 }
 
-/** "241 guests" or "$5,210". Averages round to whole guests or dollars. */
+/** "241 guests", "1 guest" or "$5,210". Averages round to whole guests or dollars. */
 export function metricText(value: number, metric: Metric): string {
-  return metric === 'guests' ? `${formatCount(value)} guests` : formatDollars(value);
+  return metric === 'guests' ? `${formatCount(value)} ${value === 1 ? 'guest' : 'guests'}` : formatDollars(value);
 }
 
 /** "241" or "$5,210": the number without its noun, for tables and charts. */

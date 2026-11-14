@@ -1,7 +1,9 @@
 // How published forecasts compared with what happened (spec 14.4): live accuracy over the days that have passed,
 // misses included. A day counts when it was forecast open, has a stored guest count and is before today; booked days
-// are left out (the booking rule: a private buyout has no walk-in forecast). The measure is the notebook's, WAPE:
-// the sum of |actual - mid| over the sum of actuals. Under 5 scored days there is no figure. Pure.
+// are left out (the booking rule: a private buyout has no walk-in forecast), and so are days that were closed or likely
+// closed (spec D32: a closure, not a forecast miss). [CONFIRM: live accuracy leaves out closed and likely-closed days]
+// The measure is the notebook's, WAPE: the sum of |actual - mid| over the sum of actuals. Under 5 scored days there is
+// no figure. Pure.
 
 /** Fewer scored days than this give no live accuracy. */
 export const MIN_SCORED_DAYS = 5;
@@ -14,6 +16,8 @@ export interface ScoredDay {
   readonly high: number | null;
   /** The day's stored guests, null when there is none. */
   readonly actual: number | null;
+  /** The day was closed or likely closed (spec D32, closed-days.ts): left out of live accuracy. */
+  readonly closed?: boolean;
 }
 
 export interface LiveAccuracy {
@@ -40,7 +44,7 @@ export function inRangeOf(actual: number | null, low: number | null, high: numbe
 /** Live accuracy over the given days (oldest first or not); null under 5 scored days. */
 export function liveAccuracy(days: readonly ScoredDay[]): LiveAccuracy | null {
   const scored = days
-    .filter((day): day is ScoredDay & { mid: number; actual: number } => day.status === 'open' && day.mid !== null && day.actual !== null)
+    .filter((day): day is ScoredDay & { mid: number; actual: number } => day.status === 'open' && day.closed !== true && day.mid !== null && day.actual !== null)
     .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   const first = scored[0];
   const last = scored.at(-1);

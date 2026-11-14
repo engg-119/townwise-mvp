@@ -1,23 +1,26 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
 import type { DayRecord } from '../../../src/portal/analytics/history';
 import { dayMonth, weekDates } from '../../../src/portal/analytics/week';
-import { FORECAST_LINE } from '../../../src/portal/home/Home';
+import { forecastLine } from '../../../src/portal/home/Home';
 import type { LocationSummary, MeResponse } from '../../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
-import { ACCESS, EMAIL, fakePortalApi, locationOf, meOf, orgOf, refusal, viewAsMe, type FakePortalApi } from '../../helpers/portal';
-import { analyticsFake, calendarBody, historyBody, holiday, note, run, townEvent } from '../analytics/fakes';
+import { ACCESS, EMAIL, fakePortalApi, locationOf, meOf, offline, orgOf, refusal, viewAsMe, type FakePortalApi } from '../../helpers/portal';
+import { analyticsFake, calendarBody, day, historyBody, holiday, note, run, townEvent } from '../analytics/fakes';
+import { forecastDay, forecastOf, NO_FORECAST } from '../calendar/fakes';
+import { ruleOf } from '../rules/fakes';
 import { NOVEMBER } from '../estimates/fakes';
 
 // P11 Home on web (home.md 2, spec 16.3): the last week chart with its key and scale, the history card's heatmap
 // that takes no focus, the upload links, and the honesty rule in the page as rendered. Synthetic days only.
-// Pillars: no figure for a day after the last day of data and no forecast wording anywhere (T, honesty); the chart
-// prints its scale and the summary says how many days it compares (E); the page writes nothing, keeps nothing in
-// browser storage and is the same under view-as (P).
+// Pillars: with no published forecast, no figure for a day after the last day of data and no forecast wording
+// anywhere (T, honesty); with one, This month shows only the published forecast's figures from today on, and a day
+// opens in the Calendar (spec 16.3 P11); the chart prints its scale and the summary says how many days it
+// compares (E); the page writes nothing, keeps nothing in browser storage and is the same under view-as (P).
 
 class ResizeObserverPolyfill {
   observe(): void { return undefined; }
@@ -50,6 +53,8 @@ afterEach(() => {
 
 const PATH = '/api/org/locations/l1';
 const CALENDAR = `${PATH}/calendar?from=2024-10-07&to=2026-11-30`;
+const FORECAST = `${PATH}/forecast?from=2026-11-01&to=2026-11-30`;
+const NOT_PUBLISHED = forecastLine('Main Street Bar');
 const SATURDAY = (date: string): boolean => new Date(`${date}T00:00:00Z`).getUTCDay() === 6;
 const DAYS = run('2024-09-01', '2026-11-04', (date) => Math.round((SATURDAY(date) ? 140 : 100) * (date >= '2026-10-26' ? 1.1 : 1)));
 const EVENTS = [holiday('2026-11-11', 'Veterans Day', 'us:veterans', 'Veterans Day'), townEvent({ start: '2026-11-07', title: 'Sample game' })];
@@ -59,8 +64,11 @@ const QUESTIONS = [
   { id: 'gap_2026-04-02_2026-04-03', kind: 'gap', from: '2026-04-02', to: '2026-04-03', dayCount: 2 },
 ];
 
-function portal(me: MeResponse, days: readonly DayRecord[] = DAYS, locations?: LocationSummary[]): FakePortalApi {
+/** `rules`: GET .../rules' body; without it the read is refused (404), which Home reads as no rules. */
+function portal(me: MeResponse, days: readonly DayRecord[] = DAYS, locations?: LocationSummary[], forecast: unknown = NO_FORECAST, rules?: unknown): FakePortalApi {
   const fake = analyticsFake({
+    ...(rules === undefined ? {} : { [`${PATH}/rules`]: rules }),
+    [FORECAST]: forecast,
     [`${PATH}/sales/history`]: historyBody(days),
     [`${PATH}/notes`]: { notes: [note({ startDate: '2026-11-06', detail: 'A rehearsal dinner.' })] },
     [CALENDAR]: calendarBody({ events: EVENTS }),
@@ -72,7 +80,7 @@ function portal(me: MeResponse, days: readonly DayRecord[] = DAYS, locations?: L
   return fakePortalApi({ me, org: orgOf(me.access.state === 'member' ? me.access.role : 'member', locations), fallback: fake });
 }
 
-async function renderAt(api: FakePortalApi): Promise<void> {
+async function renderAt(api: FakePortalApi, ready: string = NOT_PUBLISHED): Promise<void> {
   const path = '/locations/l1';
   const auth = fakeAuth({ status: 'signedIn', user: { id: 'u1', email: EMAIL } }, { api });
   window.history.replaceState(null, '', path);
@@ -81,7 +89,7 @@ async function renderAt(api: FakePortalApi): Promise<void> {
       <ExpoRoot context={getMockContext(appRoutes(seededRoot(auth), { '(marketing)/index': () => null }))} location={path} />
     </Head.Provider>,
   );
-  await screen.findByText(FORECAST_LINE);
+  await screen.findByText(ready);
 }
 
 function pageText(): string {
@@ -100,12 +108,27 @@ test('the last week chart prints its key and scale; the history heatmap is one p
   expect(within(history).getByRole('link', { name: 'See it in Analytics' }).getAttribute('href')).toBe('/locations/l1/analytics');
   expect(within(history).getByRole('link', { name: 'Upload sales history' }).getAttribute('href')).toBe('/locations/l1/sales/upload');
   expect(screen.getByRole('link', { name: 'Ask TownwiseAI' }).getAttribute('href')).toBe('/locations/l1/agent');
-  // The count of TownwiseAI's questions links to its page.
-  expect((await screen.findByRole('link', { name: '2 questions from TownwiseAI' })).getAttribute('href')).toBe('/locations/l1/agent');
-  // Who's in town is its own block, its sources linked.
+  // The count of TownwiseAI's questions links to its page, with the questions showing (?panel=questions).
+  expect((await screen.findByRole('link', { name: '2 questions from TownwiseAI' })).getAttribute('href')).toBe('/locations/l1/agent?panel=questions');
+  // Who's in town is its own block, read top to bottom: the honest no-number line, this week, later in the month (one
+  // row per run of days, past days left out), the term's source once by name, then the county's jobs. Each group has
+  // an h3, so a screen reader can move between them.
   const people = screen.getByRole('region', { name: 'Who’s in town' });
   expect(await within(people).findByText('Fall term classes until Tue, Nov 17.')).toBeTruthy();
-  expect(within(people).getByRole('link', { name: 'registrar.dartmouth.edu' }).getAttribute('href')).toBe('https://registrar.dartmouth.edu/calendars/test');
+  for (const name of ['This week', 'Later in November', 'Food-service jobs in Grafton County']) {
+    expect(within(people).getByRole('heading', { name, level: 3 })).toBeTruthy();
+  }
+  const order = [
+    'Townwise can’t put a number on how many people are in Hanover yet.', 'This week', 'Fall term classes until Tue, Nov 17.',
+    'Later in November', 'Nov 18 to 19', 'Nov 20 to 25', 'Fall term finals', 'From Nov 26', 'Source: Dartmouth Registrar',
+    'Food-service jobs in Grafton County', '2.6% fewer jobs in November 2024 than in an average month that year.',
+  ].map((text) => people.textContent.indexOf(text));
+  expect(order.every((at) => at >= 0)).toBe(true);
+  expect([...order].sort((a, b) => a - b)).toEqual(order);
+  expect(within(people).getByRole('link', { name: 'Source: Dartmouth Registrar' }).getAttribute('href')).toBe('https://registrar.dartmouth.edu/calendars/test');
+  // No bare hosts, and no source the block doesn't use (the holiday's is the calendar block's).
+  expect(within(people).queryByRole('link', { name: 'registrar.dartmouth.edu' })).toBeNull();
+  expect(people.textContent).not.toMatch(/opm\.gov|Office of Personnel|County jobs are/);
   // Source links on the calendar open the source.
   expect(screen.getAllByRole('link', { name: 'Source: U.S. Office of Personnel Management' })[0]?.getAttribute('href'))
     .toBe('https://www.opm.gov/policy-data-oversight/pay-leave/federal-holidays/');
@@ -138,6 +161,39 @@ test('with this week partly in, only its past days carry a figure', async () => 
   expect(pageText()).not.toMatch(FORECAST_WORDING);
 });
 
+// Tue, Nov 3, 2026 had 1 guest: a tenth of its Tuesdays' typical guests or fewer (spec D32).
+const NEAR_EMPTY = DAYS.map((day) => (day.date === '2026-11-03' ? { ...day, guests: 1, netSalesCents: 2000 } : day));
+
+test('this week’s own near-empty day reads Likely closed (spec D32), in This month’s words', async () => {
+  await renderAt(portal(meOf(ACCESS.member), NEAR_EMPTY));
+  const tuesday = screen.getByTestId('home-day-2026-11-03');
+  expect(within(tuesday).getByText('Likely closed (1 guest recorded)')).toBeTruthy();
+  expect(within(tuesday).queryByText(/^1 guests?$/)).toBeNull();
+  expect(cellOf('2026-11-03').getAttribute('aria-label')).toBe('Tue, Nov 3, 2026. This week. Likely closed (1 guest recorded).');
+});
+
+test('today’s partial upload is never likely closed (D32): only a day before the town’s today can be', async () => {
+  await renderAt(portal(meOf(ACCESS.member), [...DAYS, day('2026-11-05', 1)]), 'This month in Hanover');
+  expect(within(screen.getByTestId('home-day-2026-11-05')).queryByText(/Likely closed/)).toBeNull();
+  expect(cellOf('2026-11-05').getAttribute('aria-label')).not.toMatch(/Likely closed/);
+});
+
+test('a business rule’s schedule with fewer guests (D31) says a near-empty day was open, on Home as on the Calendar', async () => {
+  const slowTuesdays = ruleOf('r1', 'Slow Tuesdays', {
+    schedule: { kind: 'other', startDate: '2026-10-01', endDate: null, weekdays: [2], effect: 'fewer_guests', expectedGuests: null, startTime: null, endTime: null },
+    scheduleSummary: 'Fewer guests on Tuesdays from Oct 1, 2026',
+  });
+  const api = portal(meOf(ACCESS.member), NEAR_EMPTY, undefined, NO_FORECAST, { rules: [slowTuesdays], limit: 30 });
+  await renderAt(api);
+  await waitFor(() => { expect(cellOf('2026-11-03').getAttribute('aria-label')).not.toMatch(/Likely closed/); });
+  expect(cellOf('2026-11-03').textContent).toBe('31');
+  expect(within(screen.getByTestId('home-day-2026-11-03')).queryByText(/Likely closed/)).toBeNull();
+  expect(api.calls.filter((call) => call.path === `${PATH}/rules`)).toHaveLength(1);
+  // The hover tooltip reads the same rules, so it agrees with the cell.
+  fireEvent(cellOf('2026-11-03'), pointer('pointerover', 'mouse'));
+  expect(screen.getByTestId('calendar-tooltip').textContent).not.toMatch(/Likely closed/);
+});
+
 test('at a glance: last year’s same week, last week against it, and the next event, each from history or the calendar', async () => {
   await renderAt(portal(meOf(ACCESS.member)));
   const glance = screen.getByRole('region', { name: 'At a glance' });
@@ -159,7 +215,7 @@ test('this week is a strip of seven days from 1024px, today’s column raised, l
   expect(screen.getByText('Bars show last year’s days, scaled to the busiest of them.')).toBeTruthy();
 });
 
-test('the month calendar opens any day: a click, the arrow keys, and a pointer preview', async () => {
+test('the month calendar: the arrow keys and a pointer preview the days beside the grid', async () => {
   await renderAt(portal(meOf(ACCESS.member)));
   const grid = screen.getByRole('grid', { name: 'November 2026' });
   const detail = screen.getByRole('region', { name: 'Selected day' });
@@ -170,27 +226,34 @@ test('the month calendar opens any day: a click, the arrow keys, and a pointer p
   };
   // Today is selected at first, and is the grid's one tab stop.
   expect(within(detail).getByRole('heading', { name: 'Today, Thu, Nov 5, 2026' })).toBeTruthy();
-  expect(within(detail).getByRole('link', { name: 'Today, Thu, Nov 5, 2026' }).getAttribute('href')).toBe('/locations/l1/orders?day=2026-11-05');
+  expect(within(detail).getByRole('link', { name: 'Open this day on Orders' }).getAttribute('href')).toBe('/locations/l1/orders?day=2026-11-05');
   expect(cell('2026-11-05').getAttribute('aria-selected')).toBe('true');
   expect(grid.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
   expect(cell('2026-11-11').getAttribute('aria-label')).toBe('Wed, Nov 11, 2026. Veterans Day.');
+  // A past day says its stored figure; a later one, with no published forecast, has none.
+  expect(cell('2026-11-03').getAttribute('aria-label')).toBe('Tue, Nov 3, 2026. This week. 110 guests.');
+  expect(cell('2026-11-03').textContent).toBe('3110');
+  expect(cell('2026-11-11').textContent).toBe('11');
 
-  // A click opens a later day: its holiday and sources, last year's same weekday, and no figure of its own.
-  fireEvent.click(cell('2026-11-11'));
+  // The keys move the selection, and focus with it.
+  cell('2026-11-05').focus();
+  fireEvent.keyDown(cell('2026-11-05'), { key: 'ArrowRight' });
+  expect(document.activeElement?.getAttribute('data-date')).toBe('2026-11-06');
+  fireEvent.keyDown(cell('2026-11-06'), { key: 'ArrowDown' });
+  expect(document.activeElement?.getAttribute('data-date')).toBe('2026-11-13');
+  fireEvent.keyDown(cell('2026-11-13'), { key: 'ArrowLeft' });
+  fireEvent.keyDown(cell('2026-11-12'), { key: 'ArrowLeft' });
   expect(within(detail).getByRole('heading', { name: 'Wed, Nov 11, 2026' })).toBeTruthy();
-  expect(within(detail).getByRole('link', { name: 'Wed, Nov 11, 2026' }).getAttribute('href')).toBe('/locations/l1/orders?day=2026-11-11');
+  expect(within(detail).getByRole('link', { name: 'Open this day on Orders' }).getAttribute('href')).toBe('/locations/l1/orders?day=2026-11-11');
+  // A later day: its holiday and sources, last year's same weekday, and no figure of its own.
   expect(within(detail).getByText('Veterans Day. Federal holiday.')).toBeTruthy();
   expect(within(detail).getByRole('link', { name: 'Source: U.S. Office of Personnel Management' })).toBeTruthy();
   expect(within(detail).getByText('Wed, Nov 12, 2025: 100 guests')).toBeTruthy();
   expect(within(detail).queryByText('This day')).toBeNull();
+  expect(within(detail).queryByText('Forecast')).toBeNull();
   expect(cell('2026-11-11').getAttribute('tabindex')).toBe('0');
-
-  // The keys move the selection, and focus with it.
-  cell('2026-11-11').focus();
-  fireEvent.keyDown(cell('2026-11-11'), { key: 'ArrowLeft' });
-  expect(document.activeElement?.getAttribute('data-date')).toBe('2026-11-10');
-  fireEvent.keyDown(cell('2026-11-10'), { key: 'ArrowUp' });
-  expect(document.activeElement?.getAttribute('data-date')).toBe('2026-11-03');
+  fireEvent.keyDown(cell('2026-11-11'), { key: 'ArrowUp' });
+  fireEvent.keyDown(cell('2026-11-04'), { key: 'ArrowLeft' });
   expect(within(detail).getByRole('heading', { name: 'Tue, Nov 3, 2026' })).toBeTruthy();
   // A past day with data has its own figure.
   expect(within(detail).getByText('This day')).toBeTruthy();
@@ -203,6 +266,151 @@ test('the month calendar opens any day: a click, the arrow keys, and a pointer p
   fireEvent.pointerLeave(grid);
   expect(within(detail).getByRole('heading', { name: 'Tue, Nov 3, 2026' })).toBeTruthy();
   expect(pageText()).not.toMatch(FORECAST_WORDING);
+  // The month card links to the Calendar.
+  expect(screen.getByRole('link', { name: 'Open the calendar' }).getAttribute('href')).toBe('/locations/l1/calendar');
+  expect(screen.getByText('Point at a day to see what’s on it. Choose one to open it in the Calendar.')).toBeTruthy();
+});
+
+const GAME_SOURCE = { label: 'home.dartmouth.edu', url: 'https://home.dartmouth.edu/' };
+
+/**
+ * November from today on, published: 180 to 240 around 212 each day, a private event of 70 on Saturday the 7th.
+ * `gameSources`: the game's reason carries its source, as the API's does for a researched event.
+ */
+function published(gameSources = false): unknown {
+  const days = [];
+  for (let day = 5; day <= 30; day += 1) {
+    const date = `2026-11-${String(day).padStart(2, '0')}`;
+    days.push(date !== '2026-11-07' ? forecastDay({ date }) : forecastDay({
+      date, low: 250, mid: 282, high: 310, model: { status: 'open', low: 180, mid: 212, high: 240 }, noteGuests: 70,
+      reasons: [
+        { kind: 'note', label: 'Your private event, 70 guests, 6 pm to 9 pm', effectPct: null, sources: [], note: { id: 'n1', guests: 70, outcome: 'added' } },
+        { kind: 'event', label: 'Sample game', effectPct: 12, effect: { direction: 'more', pct: 10, basis: 'model', days: null }, sources: gameSources ? [GAME_SOURCE] : [], note: null },
+        { kind: 'weekday', label: 'Saturday', effectPct: null, effect: { direction: 'more', pct: 35, basis: 'history', days: 52 }, sources: [], note: null },
+        { kind: 'term', label: 'Fall term', effectPct: null, effect: null, sources: [], note: null },
+      ],
+    }));
+  }
+  return forecastOf(days);
+}
+
+/** jsdom has no PointerEvent, so `pointerType` is set on a plain one. */
+function pointer(type: string, pointerType: 'mouse' | 'touch'): Event {
+  const event = new MouseEvent(type, { bubbles: true });
+  Object.defineProperty(event, 'pointerType', { value: pointerType });
+  return event;
+}
+
+function cellOf(date: string): HTMLElement {
+  const found = screen.getByRole('grid', { name: 'November 2026' }).querySelector<HTMLElement>(`[data-date="${date}"]`);
+  if (found === null) throw new Error(`no cell for ${date}`);
+  return found;
+}
+
+test('with a published forecast, This month shows each future day’s guests and no tagline', async () => {
+  await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, published()), 'This month in Hanover');
+  await waitFor(() => { expect(cellOf('2026-11-05').textContent).toBe('5212'); });
+  expect(screen.queryByText(NOT_PUBLISHED)).toBeNull();
+  expect(screen.queryByText('In progress')).toBeNull();
+  // Saturday: the published figure with the notes' guests under it, and both in its label with the range.
+  expect(cellOf('2026-11-07').textContent).toBe('7282+70');
+  expect(cellOf('2026-11-07').getAttribute('aria-label'))
+    .toBe('Sat, Nov 7, 2026. This week. Forecast about 282 guests, 250 to 310. Includes 70 guests from your notes. Sample game.');
+  // Before today, the stored figure; never a forecast.
+  expect(cellOf('2026-11-04').textContent).toBe('4110');
+  // The day beside the grid gives the forecast and its top three reasons: your notes first, then the biggest effects,
+  // each with which way it usually moves guests.
+  fireEvent.pointerOver(cellOf('2026-11-07'));
+  const detail = screen.getByRole('region', { name: 'Selected day' });
+  expect(within(detail).getByText('Forecast')).toBeTruthy();
+  expect(within(detail).getByText('About 282 guests, likely 250 to 310. Includes 70 guests from your notes.')).toBeTruthy();
+  expect(within(detail).getByText('Your private event, 70 guests, 6 pm to 9 pm')).toBeTruthy();
+  expect(within(detail).getByText('Saturday: usually more guests')).toBeTruthy();
+  expect(within(detail).getByText('Sample game: more guests in Townwise’s model')).toBeTruthy();
+  expect(within(detail).queryByText(/^Fall term/)).toBeNull();
+});
+
+test('the day detail’s Why rows end in a small Source link, and On the calendar leaves out what Why names, as the Calendar does', async () => {
+  await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, published(true)), 'This month in Hanover');
+  await waitFor(() => { expect(cellOf('2026-11-07').textContent).toBe('7282+70'); });
+  fireEvent.pointerOver(cellOf('2026-11-07'));
+  const detail = screen.getByRole('region', { name: 'Selected day' });
+  const source = within(detail).getByRole('link', { name: 'Source: home.dartmouth.edu' });
+  expect(source.textContent).toBe('Source');
+  expect(source.getAttribute('href')).toBe('https://home.dartmouth.edu/');
+  expect(source.parentElement?.textContent).toBe('Sample game: more guests in Townwise’s model Source');
+  // The game is in Why with its source, so On the calendar doesn't list it again.
+  expect(within(detail).queryByText('Sample game. Town event.')).toBeNull();
+  expect(within(detail).getByText('Nothing else on the calendar this day.')).toBeTruthy();
+  // A day whose events Why doesn't name keeps them, with their sources.
+  fireEvent.pointerOver(cellOf('2026-11-11'));
+  expect(within(screen.getByRole('region', { name: 'Selected day' })).getByText('Veterans Day. Federal holiday.')).toBeTruthy();
+});
+
+test('hovering a day shows its top reasons; touch does not', async () => {
+  await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, published()), 'This month in Hanover');
+  await waitFor(() => { expect(cellOf('2026-11-05').textContent).toBe('5212'); });
+  fireEvent(cellOf('2026-11-07'), pointer('pointerover', 'touch'));
+  expect(screen.queryByTestId('calendar-tooltip')).toBeNull();
+  fireEvent(cellOf('2026-11-07'), pointer('pointerover', 'mouse'));
+  const tip = screen.getByTestId('calendar-tooltip');
+  expect(tip.getAttribute('aria-hidden')).toBe('true');
+  expect(Array.from(tip.children, (line) => line.textContent)).toEqual([
+    'Sat, Nov 7, 2026', 'About 282 guests (250 to 310)', 'Includes 70 guests from your notes',
+    'Your private event, 70 guests, 6 pm to 9 pm', 'Saturday: usually more guests', 'Sample game: more guests in Townwise’s model',
+  ]);
+  fireEvent.pointerLeave(screen.getByRole('grid', { name: 'November 2026' }));
+  expect(screen.queryByTestId('calendar-tooltip')).toBeNull();
+});
+
+test('a business rule’s reason (D31) shows in the day detail and the tooltip, and its guests are named as the rule’s', async () => {
+  const ruled = forecastOf([forecastDay({ date: '2026-11-05' }), forecastDay({
+    date: '2026-11-06', low: 220, mid: 252, high: 280, model: { status: 'open', low: 180, mid: 212, high: 240 }, noteGuests: 40,
+    reasons: [
+      { kind: 'rule', label: 'Your rule: adds 40 guests on Fridays', effectPct: null, sources: [], note: null, rule: { id: 'r1', guests: 40, outcome: 'added' } },
+      { kind: 'weekday', label: 'Friday', effectPct: null, sources: [], note: null },
+    ],
+  })]);
+  await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, ruled), 'This month in Hanover');
+  await waitFor(() => { expect(cellOf('2026-11-06').textContent).toBe('6252+40'); });
+  expect(cellOf('2026-11-06').getAttribute('aria-label'))
+    .toBe('Fri, Nov 6, 2026. This week. Forecast about 252 guests, 220 to 280. Includes 40 guests from your rules. 1 note.');
+  fireEvent(cellOf('2026-11-06'), pointer('pointerover', 'mouse'));
+  const detail = screen.getByRole('region', { name: 'Selected day' });
+  expect(within(detail).getByText('About 252 guests, likely 220 to 280. Includes 40 guests from your rules.')).toBeTruthy();
+  expect(within(detail).getByText('Your rule: adds 40 guests on Fridays')).toBeTruthy();
+  expect(Array.from(screen.getByTestId('calendar-tooltip').children, (line) => line.textContent)).toEqual([
+    'Fri, Nov 6, 2026', 'About 252 guests (220 to 280)', 'Includes 40 guests from your rules', 'Your rule: adds 40 guests on Fridays', 'Friday',
+  ]);
+});
+
+test('clicking a day opens /locations/x/calendar?day=that day, and so does Enter', async () => {
+  await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, published()), 'This month in Hanover');
+  fireEvent.click(cellOf('2026-11-21'));
+  await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/calendar'); });
+  expect(window.location.search).toBe('?day=2026-11-21');
+  cleanup();
+
+  await renderAt(portal(meOf(ACCESS.member)));
+  cellOf('2026-11-05').focus();
+  fireEvent.keyDown(cellOf('2026-11-05'), { key: 'Enter' });
+  await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/calendar'); });
+  expect(window.location.search).toBe('?day=2026-11-05');
+});
+
+test('without a published forecast, the lead says Townwise hasn’t published one yet', async () => {
+  const api = portal(meOf(ACCESS.member));
+  await renderAt(api);
+  expect(screen.getByText('In progress')).toBeTruthy();
+  // One read of this month's forecast, on its own.
+  expect(api.calls.filter((call) => call.path.startsWith(`${PATH}/forecast`)).map((call) => call.path)).toEqual([FORECAST]);
+});
+
+test('a failed forecast read never fails Home', async () => {
+  await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, offline()));
+  expect(screen.getByRole('heading', { name: 'This month in Hanover' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+  expect(cellOf('2026-11-11').textContent).toBe('11');
 });
 
 test('show the numbers opens the last week table', async () => {
@@ -229,7 +437,8 @@ test('view-as: the same page, the upload links disabled with the read-only line,
 test('while needsHistory is true the history step shows in place of the cards that need days', async () => {
   const empty = [locationOf('l1', 'Main Street Bar', { townId: 'hanover-nh', name: 'Hanover', state: 'NH' })];
   // Stored files off: the step offers the browser upload (onboarding's own tests cover the drop).
-  await renderAt(portal(meOf(ACCESS.admin), [], empty));
+  // One location: the lead names the organization (D29).
+  await renderAt(portal(meOf(ACCESS.admin), [], empty), forecastLine('Test Group'));
   const step = screen.getByRole('region', { name: 'Drop in everything you have' });
   expect((await within(step).findByRole('link', { name: 'Upload sales history' })).getAttribute('href')).toBe('/locations/l1/sales/upload');
   expect(document.getElementById('home-history')).toBeNull();

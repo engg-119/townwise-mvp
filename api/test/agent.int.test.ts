@@ -1,7 +1,8 @@
-// TownwiseAI's side panel (spec 10.12, docs/portal/tuning-chat.md section 8): the questions and the activity, read from
-// the location's own records; an answer recorded once however often or from however many tabs it is sent, finished
-// after a crash, `closed` saving one closure note through the notes rules, read-only under view-as, and logged with
-// ids and the answer only. Synthetic days only.
+// TownwiseAI's side panel (spec 10.12, docs/portal/tuning-chat.md section 8): the questions with their evidence and the
+// activity, read from the location's own records; an answer recorded once however often or from however many tabs it is
+// sent, finished after a crash, `closed` saving one closure note and `open` on a likely-closed day one open-day note
+// through the notes rules, `other` saving nothing and never taking the person's words, read-only under view-as, and
+// logged with ids and the answer only. Synthetic days only.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
@@ -27,6 +28,19 @@ const FROM = '2026-03-01';
 const TO = '2026-05-31';
 const WEEKDAY_ID = `weekday_1_${FROM}_${TO}`;
 const GAP_ID = 'gap_2026-05-12_2026-05-13';
+const LIKELY_ID = 'likely_closed_2026-05-23';
+const WEEKDAY = { id: WEEKDAY_ID, kind: 'weekday', weekday: 1, from: FROM, to: TO, noSalesCount: 13, weekdayCount: 13 };
+const GAP = { id: GAP_ID, kind: 'gap', from: '2026-05-12', to: '2026-05-13', dayCount: 2, typicalGuestsLow: 100, typicalGuestsHigh: 100 };
+const LIKELY = { id: LIKELY_ID, kind: 'likely_closed', date: '2026-05-23', guests: 1, typicalGuests: 100 };
+/** The note "Yes, it was just slow" saves on LIKELY_ID. */
+const OPEN_DAY = {
+  kind: 'other', startDate: '2026-05-23', endDate: '2026-05-23', weekdays: null, effect: 'fewer_guests', expectedGuests: null,
+  detail: 'Open, with very few guests (your answer to TownwiseAI).', startTime: null, endTime: null,
+};
+const LIKELY_CLOSURE = {
+  kind: 'closure', startDate: '2026-05-23', endDate: '2026-05-23', weekdays: null, effect: 'closed', expectedGuests: null,
+  detail: null, startTime: null, endTime: null,
+};
 
 function plus(day: string, days: number): string {
   return new Date(Date.parse(`${day}T00:00:00.000Z`) + days * DAY_MS).toISOString().slice(0, 10);
@@ -44,21 +58,40 @@ async function person(): Promise<TestSession> {
 }
 
 /**
- * A new location whose days run FROM to TO with no sales on Mondays and on Tuesday 2026-05-12 and Wednesday
- * 2026-05-13: it is asked WEEKDAY_ID and GAP_ID.
+ * A new location whose days run FROM to TO with 100 guests a day and no sales on Mondays and on Tuesday 2026-05-12 and
+ * Wednesday 2026-05-13: it is asked WEEKDAY_ID and GAP_ID. With `nearEmpty`, Saturday 2026-05-23 has 1 guest, and it
+ * is asked LIKELY_ID too. `netSalesCents` is every row's net sales (none unless given).
  */
-async function askedLocation(): Promise<string> {
+async function askedLocation(opts: { nearEmpty?: boolean; netSalesCents?: number } = {}): Promise<string> {
   const locationId = await addLocation(server, { orgId, name: `Counter ${randomUUID().slice(0, 8)}` });
   const rows = [];
   for (let date = FROM; date <= TO; date = plus(date, 1)) {
     if (isMonday(date) || date === '2026-05-12' || date === '2026-05-13') continue;
     rows.push({
-      orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), date, guests: 10, netSalesCents: null,
+      orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), date,
+      guests: opts.nearEmpty === true && date === '2026-05-23' ? 1 : 100, netSalesCents: opts.netSalesCents ?? null,
       uploadId: new Types.ObjectId(), updatedAt: server.clock.now(),
     });
   }
   await server.connection.collection('tw_sales_days').insertMany(rows);
   return locationId;
+}
+
+/** D31: a rule's schedule, closed on 2026-05-12 to 2026-05-13 unless `over` says otherwise. */
+function ruleSchedule(over: Record<string, unknown>): Record<string, unknown> {
+  return {
+    kind: 'closure', startDate: '2026-05-12', endDate: '2026-05-13', weekdays: null, effect: 'closed', expectedGuests: null,
+    startTime: null, endTime: null, ...over,
+  };
+}
+
+/** D31: one business rule at the location per schedule given (null: a rule with no schedule), each text a sentinel. */
+async function addRules(locationId: string, schedules: readonly (Record<string, unknown> | null)[]): Promise<void> {
+  await server.connection.collection('tw_business_rules').insertMany(schedules.map((schedule, i) => ({
+    orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), text: `Sentinel-rule-text ${i}`,
+    key: `sentinel-rule-text ${i}`, addedVia: 'page', createdBy: member.userId, createdAt: server.clock.now(),
+    updatedAt: server.clock.now(), ...(schedule === null ? {} : { schedule }),
+  })));
 }
 
 async function panel(locationId: string, session = member): Promise<{ status: number; body: AgentPanel }> {
@@ -79,22 +112,38 @@ function answerRows(locationId: string): Promise<Record<string, unknown>[]> {
   return server.connection.collection('tw_agent_answers').find({ locationId: new Types.ObjectId(locationId) }).toArray();
 }
 
-/** A claim that stopped before `done`, as a try that failed after it leaves it; with its closure note written, or not. */
-async function stoppedClaim(locationId: string, answer: string, written: boolean): Promise<Types.ObjectId> {
+/**
+ * A claim that stopped before `done`, as a try that failed after it leaves it; with its note written, or not. The
+ * question is GAP_ID with its closure note unless `opts` names another.
+ */
+async function stoppedClaim(locationId: string, answer: string, written: boolean, opts: {
+  questionId?: string; note?: Record<string, unknown>;
+} = {}): Promise<Types.ObjectId> {
   const noteId = new Types.ObjectId();
   const at = server.clock.now();
   await server.connection.collection('tw_agent_answers').insertOne({
-    orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), questionId: GAP_ID, answer,
+    orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), questionId: opts.questionId ?? GAP_ID, answer,
     noteId, status: 'saving', createdAt: at, updatedAt: at,
   });
   if (written) {
     await server.connection.collection('tw_notes').insertOne({
-      _id: noteId, orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), kind: 'closure',
-      startDate: '2026-05-12', endDate: '2026-05-13', weekdays: null, effect: 'closed', expectedGuests: null, detail: null,
+      _id: noteId, orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId),
+      ...(opts.note ?? {
+        kind: 'closure', startDate: '2026-05-12', endDate: '2026-05-13', weekdays: null, effect: 'closed', expectedGuests: null, detail: null,
+      }),
       createdBy: member.userId, createdAt: at, updatedAt: at,
     });
   }
   return noteId;
+}
+
+/** Every document of every tw_ collection, as text. */
+async function everyTownwiseDocument(): Promise<string> {
+  const db = server.connection.db;
+  if (db === undefined) throw new Error('not connected');
+  const names = (await db.listCollections().toArray()).map((c) => c.name).filter((name) => name.startsWith('tw_'));
+  const docs = await Promise.all(names.map((name) => db.collection(name).find({}).toArray()));
+  return JSON.stringify(docs);
 }
 
 /**
@@ -140,13 +189,62 @@ describe('GET /api/org/locations/:locationId/agent', () => {
     expect(await panel(locationId)).toEqual({
       status: 200,
       body: {
-        questions: [
-          { id: WEEKDAY_ID, kind: 'weekday', weekday: 1, from: FROM, to: TO, noSalesCount: 13, weekdayCount: 13 },
-          { id: GAP_ID, kind: 'gap', from: '2026-05-12', to: '2026-05-13', dayCount: 2 },
-        ],
+        questions: [WEEKDAY, GAP],
         activity: [{ at: at.toISOString(), kind: 'upload_applied', firstDate: FROM, lastDate: TO, dayCount: 78 }],
       },
     });
+  });
+
+  it('asks about a usually busy day with almost no guests, between the weekday and the gap (newest first)', async () => {
+    const locationId = await askedLocation({ nearEmpty: true });
+    expect(await panel(locationId)).toEqual({ status: 200, body: { questions: [WEEKDAY, LIKELY, GAP], activity: [] } });
+  });
+
+  it('reads the 56 days before the window for typical guests, and never asks about a day before it', async () => {
+    // Coverage from 2025-04-01 to 2026-05-31: the window starts on Sunday 2025-06-01, and Monday 2025-06-02 follows 8
+    // Mondays before it. Monday 2025-05-26, before the window, has no sales too.
+    const locationId = await addLocation(server, { orgId, name: `Long Counter ${randomUUID().slice(0, 8)}` });
+    const rows = [];
+    for (let date = '2025-04-01'; date <= TO; date = plus(date, 1)) {
+      if (date === '2025-05-26' || date === '2025-06-02') continue;
+      rows.push({
+        orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), date, guests: 100, netSalesCents: null,
+        uploadId: new Types.ObjectId(), updatedAt: server.clock.now(),
+      });
+    }
+    await server.connection.collection('tw_sales_days').insertMany(rows);
+    expect((await panel(locationId)).body.questions).toEqual([{
+      id: 'gap_2025-06-02_2025-06-02', kind: 'gap', from: '2025-06-02', to: '2025-06-02', dayCount: 1, typicalGuestsLow: 100, typicalGuestsHigh: 100,
+    }]);
+  });
+
+  it('a business rule’s closure schedule explains the days with no sales it covers; one with more guests does not (D31)', async () => {
+    const locationId = await askedLocation({ nearEmpty: true });
+    await addRules(locationId, [ruleSchedule({})]);
+    const { body } = await panel(locationId);
+    expect(body.questions).toEqual([WEEKDAY, LIKELY]);
+    expect(JSON.stringify(body)).not.toContain('Sentinel-rule-text');
+    // More guests on 2026-05-12 to 2026-05-13: days with no sales under it are more suspicious, not less.
+    const busy = await askedLocation({ nearEmpty: true });
+    await addRules(busy, [ruleSchedule({ kind: 'other', effect: 'more_guests' })]);
+    expect((await panel(busy)).body.questions).toEqual([WEEKDAY, LIKELY, GAP]);
+  });
+
+  it('a business rule’s schedule with fewer guests says a likely-closed day was open; a rule with no schedule changes nothing (D31)', async () => {
+    const slow = await askedLocation({ nearEmpty: true });
+    await addRules(slow, [ruleSchedule({ kind: 'other', effect: 'fewer_guests', startDate: '2026-05-23', endDate: '2026-05-23' })]);
+    expect((await panel(slow)).body.questions).toEqual([WEEKDAY, GAP]);
+    const plain = await askedLocation({ nearEmpty: true });
+    await addRules(plain, [null]);
+    expect((await panel(plain)).body.questions).toEqual([WEEKDAY, LIKELY, GAP]);
+  });
+
+  it('carries guest counts and never net sales', async () => {
+    const locationId = await askedLocation({ nearEmpty: true, netSalesCents: 987_654 });
+    const { status, body } = await panel(locationId);
+    expect({ status, questions: body.questions }).toEqual({ status: 200, questions: [WEEKDAY, LIKELY, GAP] });
+    expect(JSON.stringify(body)).not.toContain('987654');
+    expect(JSON.stringify(body)).not.toContain('netSales');
   });
 
   it('asks nothing and lists nothing for a location with no records', async () => {
@@ -219,7 +317,7 @@ describe('answering closed', () => {
   });
 
   it('after a closed answer that stopped with its note written, a different answer finishes it as closed', async () => {
-    for (const next of ['open', 'not_sure']) {
+    for (const next of ['open', 'not_sure', 'other']) {
       const locationId = await askedLocation();
       const noteId = await stoppedClaim(locationId, 'closed', true);
       const { status, body } = await answer(locationId, GAP_ID, { answer: next }, colleague);
@@ -250,7 +348,7 @@ describe('answering closed', () => {
     }
   });
 
-  it('two members answering differently at once end with a row, a last audit event and notes that agree', async () => {
+  it('two members answering differently at once end with a row, audit events and notes that agree', async () => {
     for (let round = 0; round < 6; round += 1) {
       const locationId = await askedLocation();
       const [first, second] = round % 2 === 0 ? [member, colleague] : [colleague, member];
@@ -261,8 +359,12 @@ describe('answering closed', () => {
       const rows = await answerRows(locationId);
       expect(rows).toEqual([expect.objectContaining({ status: 'done' })]);
       const stored = rows[0]?.answer;
-      const events = await eventsAt(locationId, 'agent.question_answered');
-      expect((events.at(-1)?.details as { answer?: string }).answer).toBe(stored);
+      // One event for the stored answer; two only when `closed`, its note written, overruled an `open` finished in the
+      // same moment. The two can share a time, so their order says nothing.
+      const recorded = (await eventsAt(locationId, 'agent.question_answered'))
+        .map((e) => (e.details as { answer?: string }).answer).sort();
+      if (recorded.length === 1) expect(recorded).toEqual([stored]);
+      else expect({ stored, recorded }).toEqual({ stored: 'closed', recorded: ['closed', 'open'] });
       const notes = await notesOf(locationId);
       expect(notes.map((n) => (n._id as Types.ObjectId).toHexString()))
         .toEqual(stored === 'closed' ? [(rows[0]?.noteId as Types.ObjectId).toHexString()] : []);
@@ -270,13 +372,14 @@ describe('answering closed', () => {
     }
   });
 
-  it('marking done: a different answer that took the row loses it, and a closed answer whose note is written overrules it', async () => {
+  it('marking done: a different answer that took the row loses it, and an answer whose note is written overrules it', async () => {
     // The orders the handler cannot pin over HTTP: a claim, another tab's different claim, then each one's markDone.
     const staff = { kind: 'staff', actor: { userId: 'staff-0000', email: 'staff@example.test', sessionId: 'session-0000', verifiedUntil: '' } } as const;
     const scope = scopeForNewOrg(staff, orgId);
     const store = createAgentAnswerStore(server.connection);
     const now = server.clock.now();
-    // [first claim, second claim, first's markDone, second's markDone, the answer stored]
+    // [first claim, second claim, first's markDone, second's markDone, the answer stored]; on a gap only `closed` writes
+    // a note.
     const orders = [
       ['open', 'not_sure', false, true, 'not_sure'],
       ['closed', 'open', true, false, 'closed'],
@@ -286,18 +389,24 @@ describe('answering closed', () => {
       const key = { locationId: await askedLocation(), questionId: GAP_ID };
       const claimed = await store.claim(scope, key, { answer: first, now });
       expect(await store.claim(scope, key, { answer: second, now })).toMatchObject({ answer: second, noteId: claimed?.noteId });
-      const done = [await store.markDone(scope, key, { answer: first, now }), await store.markDone(scope, key, { answer: second, now })];
+      const done = [
+        await store.markDone(scope, key, { answer: first, now, noteWritten: first === 'closed' }),
+        await store.markDone(scope, key, { answer: second, now, noteWritten: second === 'closed' }),
+      ];
       expect({ first, second, done, row: await store.find(scope, key) })
         .toMatchObject({ first, second, done: [firstDone, secondDone], row: { answer: stored, status: 'done' } });
     }
-    // A closed answer whose note is written also takes back a row a different answer finished first.
-    const key = { locationId: await askedLocation(), questionId: GAP_ID };
-    await store.claim(scope, key, { answer: 'closed', now });
-    await store.claim(scope, key, { answer: 'open', now });
-    expect(await store.markDone(scope, key, { answer: 'open', now })).toBe(true);
-    expect(await store.markDone(scope, key, { answer: 'closed', now })).toBe(true);
-    expect(await store.markDone(scope, key, { answer: 'closed', now })).toBe(false);
-    expect(await store.find(scope, key)).toMatchObject({ answer: 'closed', status: 'done' });
+    // An answer whose note is written also takes back a row a different answer finished first: `closed` on a gap, and
+    // `open` on a likely-closed day.
+    for (const [questionId, noted, other] of [[GAP_ID, 'closed', 'open'], [LIKELY_ID, 'open', 'not_sure']] as const) {
+      const key = { locationId: await askedLocation({ nearEmpty: true }), questionId };
+      await store.claim(scope, key, { answer: noted, now });
+      await store.claim(scope, key, { answer: other, now });
+      expect(await store.markDone(scope, key, { answer: other, now, noteWritten: false })).toBe(true);
+      expect(await store.markDone(scope, key, { answer: noted, now, noteWritten: true })).toBe(true);
+      expect(await store.markDone(scope, key, { answer: noted, now, noteWritten: true })).toBe(false);
+      expect({ questionId, row: await store.find(scope, key) }).toMatchObject({ questionId, row: { answer: noted, status: 'done' } });
+    }
   });
 
   it('at a location with 1,000 notes is 409 note_limit; the question stays, and another answer then works', async () => {
@@ -334,14 +443,174 @@ describe('answering open or not sure', () => {
   });
 });
 
+describe('answering a likely-closed day', () => {
+  it('open (it was just slow) saves the open-day note once, records it, and the question is gone', async () => {
+    const locationId = await askedLocation({ nearEmpty: true });
+    const { status, body } = await answer(locationId, LIKELY_ID, { answer: 'open' });
+    expect(status).toBe(200);
+    expect(body).toEqual({
+      question: { id: LIKELY_ID, answer: 'open' },
+      note: {
+        ...OPEN_DAY, id: expect.any(String) as string, createdByEmail: expect.any(String) as string,
+        createdAt: server.clock.now().toISOString(), updatedAt: server.clock.now().toISOString(), canEdit: true,
+      },
+    });
+    const notes = await notesOf(locationId);
+    expect(notes).toEqual([expect.objectContaining({ ...OPEN_DAY, createdBy: member.userId })]);
+    expect((notes[0]?._id as Types.ObjectId).toHexString()).toBe(body.note?.id);
+    expect(await eventsAt(locationId, 'note.created')).toHaveLength(1);
+    expect((await eventsAt(locationId, 'agent.question_answered')).map((e) => e.details))
+      .toEqual([{ locationId, questionId: LIKELY_ID, answer: 'open' }]);
+
+    const after = await panel(locationId);
+    expect(after.body.questions).toEqual([WEEKDAY, GAP]);
+    expect(after.body.activity).toEqual([{
+      at: server.clock.now().toISOString(), kind: 'note_saved', via: 'question', noteId: body.note?.id,
+      noteKind: 'other', startDate: '2026-05-23', endDate: '2026-05-23',
+    }]);
+  });
+
+  it('closed saves one closure note for that day', async () => {
+    const locationId = await askedLocation({ nearEmpty: true });
+    const { status, body } = await answer(locationId, LIKELY_ID, { answer: 'closed' });
+    expect({ status, answer: body.question.answer }).toEqual({ status: 200, answer: 'closed' });
+    expect(body.note).toMatchObject(LIKELY_CLOSURE);
+    expect(await notesOf(locationId)).toEqual([expect.objectContaining(LIKELY_CLOSURE)]);
+    expect((await panel(locationId)).body.questions).toEqual([WEEKDAY, GAP]);
+  });
+
+  it('closed and open at once end with one note, and a row and a last audit event that agree with it', async () => {
+    for (let round = 0; round < 6; round += 1) {
+      const locationId = await askedLocation({ nearEmpty: true });
+      const [first, second] = round % 2 === 0 ? [member, colleague] : [colleague, member];
+      const results = await Promise.all([
+        answer(locationId, LIKELY_ID, { answer: 'closed' }, first), answer(locationId, LIKELY_ID, { answer: 'open' }, second),
+      ]);
+      expect(results.map((r) => r.status)).toEqual([200, 200]);
+      const rows = await answerRows(locationId);
+      expect(rows).toEqual([expect.objectContaining({ status: 'done' })]);
+      const stored = rows[0]?.answer;
+      const notes = await notesOf(locationId);
+      expect(notes).toEqual([expect.objectContaining(stored === 'closed' ? LIKELY_CLOSURE : OPEN_DAY)]);
+      expect((notes[0]?._id as Types.ObjectId).toHexString()).toBe((rows[0]?.noteId as Types.ObjectId).toHexString());
+      expect(results.map((r) => r.body.question.answer)).toEqual([stored, stored]);
+      const events = await eventsAt(locationId, 'agent.question_answered');
+      expect((events.at(-1)?.details as { answer?: string }).answer).toBe(stored);
+      expect(await eventsAt(locationId, 'note.created')).toHaveLength(1);
+      expect((await answer(locationId, LIKELY_ID, { answer: 'not_sure' })).body.question.answer).toBe(stored);
+    }
+  });
+
+  it('a stopped open claim whose open-day note is written is finished as open by any later answer', async () => {
+    for (const next of ['not_sure', 'closed', 'other']) {
+      const locationId = await askedLocation({ nearEmpty: true });
+      const noteId = await stoppedClaim(locationId, 'open', true, { questionId: LIKELY_ID, note: OPEN_DAY });
+      // The note explains the day, so it is no longer asked, and the answer still finishes.
+      expect((await panel(locationId)).body.questions).toEqual([WEEKDAY, GAP]);
+      const { status, body } = await answer(locationId, LIKELY_ID, { answer: next }, colleague);
+      expect({ next, status, answer: body.question.answer, noteId: body.note?.id })
+        .toEqual({ next, status: 200, answer: 'open', noteId: noteId.toHexString() });
+      expect(await answerRows(locationId)).toEqual([expect.objectContaining({ answer: 'open', status: 'done', noteId })]);
+      expect((await eventsAt(locationId, 'agent.question_answered')).map((e) => e.details))
+        .toEqual([{ locationId, questionId: LIKELY_ID, answer: 'open' }]);
+      expect(await notesOf(locationId)).toHaveLength(1);
+      expect(await eventsAt(locationId, 'note.created')).toHaveLength(0);
+    }
+  });
+});
+
+describe('answering something else', () => {
+  it('saves nothing but the answer, stops the question, and is recorded with ids and the answer only', async () => {
+    const locationId = await askedLocation();
+    server.logs.length = 0;
+    expect(await answer(locationId, GAP_ID, { answer: 'other' }))
+      .toEqual({ status: 200, body: { question: { id: GAP_ID, answer: 'other' }, note: null } });
+    expect(await notesOf(locationId)).toHaveLength(0);
+    const rows = await answerRows(locationId);
+    expect(rows).toEqual([expect.objectContaining({ questionId: GAP_ID, answer: 'other', status: 'done' })]);
+    expect(Object.keys(rows[0] ?? {}).sort())
+      .toEqual(['_id', 'answer', 'createdAt', 'locationId', 'noteId', 'orgId', 'questionId', 'status', 'updatedAt']);
+    expect((await eventsAt(locationId, 'agent.question_answered')).map((e) => e.details))
+      .toEqual([{ locationId, questionId: GAP_ID, answer: 'other' }]);
+    const lines = logLines(server).filter((line) => line.msg === 'townwise.agent_answer');
+    expect(lines).toEqual([expect.objectContaining({ orgId, locationId, answer: 'other' })]);
+    expect(Object.keys(lines[0] ?? {})).not.toContain('questionId');
+
+    const { body } = await panel(locationId);
+    expect(body.questions).toEqual([WEEKDAY]);
+    expect(body.activity).toEqual([{ at: server.clock.now().toISOString(), kind: 'question_answered', questionId: GAP_ID, answer: 'other' }]);
+  });
+
+  it('works at a location with 1,000 notes, as it saves none', async () => {
+    const locationId = await askedLocation({ nearEmpty: true });
+    const at = server.clock.now();
+    await server.connection.collection('tw_notes').insertMany(Array.from({ length: 1000 }, () => ({
+      orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), kind: 'opening', startDate: '2026-01-01',
+      endDate: '2026-01-01', weekdays: null, effect: 'unknown', expectedGuests: null, detail: null, createdBy: 'fixture',
+      createdAt: at, updatedAt: at,
+    })));
+    expect(await answer(locationId, LIKELY_ID, { answer: 'open' })).toMatchObject({ status: 409, body: { error: 'note_limit' } });
+    expect(await answer(locationId, LIKELY_ID, { answer: 'other' }))
+      .toEqual({ status: 200, body: { question: { id: LIKELY_ID, answer: 'other' }, note: null } });
+    expect(await notesOf(locationId)).toHaveLength(1000);
+  });
+
+  it('never takes the person’s words: any other key is 400, a body over 1 KB is 413, and nothing is written or logged', async () => {
+    const locationId = await askedLocation();
+    server.logs.length = 0;
+    const words = 'Sentinel-typed-text';
+    for (const json of [
+      { answer: 'other', text: words }, { answer: 'other', message: words }, { answer: 'closed', detail: words },
+      { answer: 'other', note: { kind: 'other', detail: words } },
+    ]) {
+      expect({ json, ...(await answer(locationId, GAP_ID, json)) }).toMatchObject({ json, status: 400, body: { error: 'invalid_request' } });
+    }
+    const big = await call(server, `/api/org/locations/${locationId}/agent/questions/${GAP_ID}`, {
+      session: member, rawBody: JSON.stringify({ answer: 'other', text: `${words} ${'x'.repeat(2048)}` }),
+    });
+    expect({ status: big.status, body: await big.json() as unknown }).toMatchObject({ status: 413, body: { error: 'payload_too_large' } });
+    // An id carrying text is not an id.
+    for (const questionId of ['other_hello', 'likely_closed_soon']) {
+      expect({ questionId, ...(await answer(locationId, questionId, { answer: 'other' })) })
+        .toMatchObject({ questionId, status: 400, body: { error: 'invalid_request' } });
+    }
+    expect(await answerRows(locationId)).toHaveLength(0);
+    expect(await notesOf(locationId)).toHaveLength(0);
+    expect(server.logs.join('\n')).not.toContain(words);
+    expect(JSON.stringify(await auditEvents(server))).not.toContain(words);
+    expect(await everyTownwiseDocument()).not.toContain(words);
+  });
+
+  it('a member of another organization gets 404 and writes nothing, in either organization', async () => {
+    const locationId = await askedLocation({ nearEmpty: true });
+    const otherOrg = await createOrg(server, { name: `Other Diner ${randomUUID().slice(0, 6)}` });
+    const email = `outsider-${randomUUID().slice(0, 8)}@example.test`;
+    const outsider = await signIn(server, email);
+    await addSeat(server, { orgId: otherOrg, userId: outsider.userId, email });
+    for (const [questionId, json] of [[GAP_ID, { answer: 'other' }], [LIKELY_ID, { answer: 'open' }]] as const) {
+      expect({ questionId, ...(await answer(locationId, questionId, json, outsider)) })
+        .toMatchObject({ questionId, status: 404, body: { error: 'not_found' } });
+    }
+    expect((await panel(locationId, outsider)).status).toBe(404);
+    /** Answers and notes matching `filter`. */
+    const written = (filter: Record<string, Types.ObjectId>) => Promise.all(['tw_agent_answers', 'tw_notes'].map((name) =>
+      server.connection.collection(name).countDocuments(filter)));
+    expect(await written({ locationId: new Types.ObjectId(locationId) })).toEqual([0, 0]);
+    expect(await written({ orgId: new Types.ObjectId(otherOrg) })).toEqual([0, 0]);
+    expect((await panel(locationId)).body.questions).toEqual([WEEKDAY, LIKELY, GAP]);
+  });
+});
+
 describe('what an answer may name', () => {
   it('a question not asked now is 404; a malformed id or body is 400; nothing is written', async () => {
     const locationId = await askedLocation();
-    for (const questionId of ['gap_2026-04-01_2026-04-02', 'gap_2026-02-30_2026-03-01', `weekday_2_${FROM}_${TO}`]) {
+    for (const questionId of [
+      'gap_2026-04-01_2026-04-02', 'gap_2026-02-30_2026-03-01', `weekday_2_${FROM}_${TO}`, 'likely_closed_2026-05-24', LIKELY_ID,
+    ]) {
       expect(await answer(locationId, questionId, { answer: 'closed' })).toMatchObject({ status: 404, body: { error: 'not_found' } });
     }
     expect(await answer(locationId, 'gap_soon', { answer: 'closed' })).toMatchObject({ status: 400, body: { error: 'invalid_request' } });
-    for (const json of [{}, { answer: 'maybe' }, { answer: ['closed'] }]) {
+    for (const json of [{}, { answer: 'maybe' }, { answer: ['closed'] }, { answer: 'other', extra: 1 }]) {
       expect(await answer(locationId, GAP_ID, json)).toMatchObject({ status: 400, body: { error: 'invalid_request' } });
     }
     expect(await answer(new Types.ObjectId().toHexString(), GAP_ID, { answer: 'closed' })).toMatchObject({ status: 404 });
@@ -355,7 +624,10 @@ describe('what an answer may name', () => {
     try {
       await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: member.userId, orgId });
       expect(await panel(locationId, staff)).toEqual(await panel(locationId));
-      expect(await answer(locationId, GAP_ID, { answer: 'closed' }, staff)).toMatchObject({ status: 403, body: { error: 'view_as_read_only' } });
+      for (const json of [{ answer: 'closed' }, { answer: 'other' }]) {
+        expect({ json, ...(await answer(locationId, GAP_ID, json, staff)) })
+          .toMatchObject({ json, status: 403, body: { error: 'view_as_read_only' } });
+      }
       expect(await answerRows(locationId)).toHaveLength(0);
       expect(await notesOf(locationId)).toHaveLength(0);
     } finally {
@@ -483,7 +755,7 @@ describe('the answers the client reads (fixtures/agent-panel.json)', () => {
   });
 
   it('GET answers every question kind and activity kind exactly as the fixture holds them, and POST answers as it does', async () => {
-    const locationId = await askedLocation();
+    const locationId = await askedLocation({ nearEmpty: true });
     const org = new Types.ObjectId(orgId);
     const location = new Types.ObjectId(locationId);
     const noteId = new Types.ObjectId('0000000000000000000000a1');
@@ -500,6 +772,10 @@ describe('the answers the client reads (fixtures/agent-panel.json)', () => {
       {
         orgId: org, locationId: location, questionId: 'gap_2026-02-10_2026-02-11', answer: 'closed', noteId,
         status: 'done', createdAt: new Date('2026-06-01T11:00:00.000Z'), updatedAt: new Date('2026-06-01T11:00:00.000Z'),
+      },
+      {
+        orgId: org, locationId: location, questionId: 'gap_2026-01-20_2026-01-21', answer: 'other', noteId: new Types.ObjectId(),
+        status: 'done', createdAt: new Date('2026-06-01T07:00:00.000Z'), updatedAt: new Date('2026-06-01T07:00:00.000Z'),
       },
     ]);
     await server.connection.collection('tw_notes').insertOne({

@@ -8,6 +8,7 @@ import { useAction, useLoad } from '../hooks';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { locationHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
+import { SalesSkeleton } from '../skeleton';
 import { Actions, Button, LinkButton } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { EmptyState, Notice, ReadOnlyLine } from '../ui/feedback';
@@ -15,7 +16,8 @@ import { Columns, Section, Stack } from '../ui/layout';
 import { Lead, Small } from '../ui/text';
 import { deleteSales, fetchSales, fetchSalesDays } from './api';
 import { DaysTable, MonthsTable } from './MonthsTable';
-import { LoadFailure, Loading, ShowNumbers, UploadAction, useOrgRefreshOnLeave } from './parts';
+import { shownLocationName } from './naming';
+import { LoadFailure, ShowNumbers, UploadAction, useOrgRefreshOnLeave } from './parts';
 import { chartRange, chartSummary, SERIES_TITLE, seriesOf, UPLOADS_OFF_LINE } from './sales';
 import { SalesChart } from './SalesChart';
 
@@ -41,6 +43,8 @@ function DataLink(props: { locationName: string; locationId: string }): React.JS
 
 export function SalesData(): React.JSX.Element {
   const { location, org } = useLocation();
+  // The name every line here shows: the organization's with one location (D29).
+  const shown = shownLocationName(location, org);
   const { api, reloadOrg } = usePortal();
   const { readOnly, line } = useReadOnly();
   const markStale = useOrgRefreshOnLeave();
@@ -73,7 +77,7 @@ export function SalesData(): React.JSX.Element {
   }, [api, location.id, markStale, reload, reloadOrg]));
 
   const notice = deleted === null ? null : <View style={styles.notice}><Notice text={`Deleted ${plural(deleted, 'day', 'days')}.`} /></View>;
-  if (state.status === 'loading') return <>{notice}<Loading text="Loading sales data" /></>;
+  if (state.status === 'loading') return <>{notice}<SalesSkeleton label="Loading sales data" /></>;
   if (state.status === 'failed') return <>{notice}<LoadFailure error={state.error} onRetry={reload} /></>;
 
   const { sales, days } = state.data;
@@ -90,13 +94,13 @@ export function SalesData(): React.JSX.Element {
             <EmptyState text={UPLOADS_OFF_LINE} />
           ) : (
             <EmptyState
-              text={`No sales history yet for ${location.name}. Upload a CSV export from your point-of-sale system. The upload sends Townwise only the date, guest count and net sales for each day.`}
+              text={`No sales history yet for ${shown}. Upload a CSV export from your point-of-sale system. The upload sends Townwise only the date, guest count and net sales for each day.`}
             >
               <UploadAction locationId={location.id} variant="primary" readOnlyId={readOnlyId} />
             </EmptyState>
           )}
         </Stack>
-        <DataLink locationName={location.name} locationId={location.id} />
+        <DataLink locationName={shown} locationId={location.id} />
       </View>
     );
   }
@@ -155,7 +159,7 @@ export function SalesData(): React.JSX.Element {
           )}
         />
       </Section>
-      <DataLink locationName={location.name} locationId={location.id} />
+      <DataLink locationName={shown} locationId={location.id} />
       {admin ? (
         <Section kicker="Admins only" title="Delete sales data">
           <Actions>
@@ -169,8 +173,8 @@ export function SalesData(): React.JSX.Element {
         visible={confirming}
         title="Delete all sales data"
         // The count leaves out turned-off days (coverage does, D28), but the delete takes them too, so the words name them.
-        body={`This deletes ${plural(coverage.dayCount, 'day', 'days')} of sales data for ${location.name}, any days turned off on its Your data page, and every file on that page. Notes stay. This can’t be undone.`}
-        typedName={location.name}
+        body={`This deletes ${plural(coverage.dayCount, 'day', 'days')} of sales data for ${shown}, any days turned off on its Your data page, and every file on that page. Notes stay. This can’t be undone.`}
+        typedName={shown}
         confirmLabel="Delete all sales data"
         pendingLabel="Deleting…"
         pending={remove.pending}

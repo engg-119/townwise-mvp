@@ -27,6 +27,7 @@ function Harness(props: Partial<SelectProps> & { onPick?: (value: string) => voi
       placeholder="Choose a town"
       items={props.items ?? ITEMS}
       {...(props.readOnly === undefined ? {} : { readOnly: props.readOnly })}
+      {...(props.autoFocus === undefined ? {} : { autoFocus: props.autoFocus })}
       value={value}
       onChange={(next) => { setValue(next); props.onPick?.(next); }}
     />
@@ -151,4 +152,12 @@ test('read-only (view-as): focusable with aria-disabled, and neither the mouse n
   expect(box.getAttribute('aria-expanded')).toBe('false');
   expect(screen.queryByRole('listbox')).toBeNull();
   expect(onPick).not.toHaveBeenCalled();
+});
+
+test('autoFocus focuses the control when it appears, and only then (P3’s “Can’t find it?” to Town)', () => {
+  render(<Harness autoFocus />);
+  expect(document.activeElement).toBe(town());
+  cleanup();
+  render(<Harness />);
+  expect(document.activeElement).not.toBe(town());
 });

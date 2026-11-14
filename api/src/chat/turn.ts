@@ -14,6 +14,7 @@ import type { StoredMessage } from '../stores/chat-conversations.ts';
 import type { ChatModel } from './model.ts';
 import { costMicroUsd, messageCostMicroUsd, tokensOf, type TokenCounts } from './pricing.ts';
 import { SYSTEM_PROMPT } from './prompt.ts';
+import { UNANSWERED_RESULT } from './tools/next.ts';
 import { inputViewOf, resultViewOf, runTool, savedResultOf, toolNamed, TOOLS, type ToolContext, type ToolView } from './tools/registry.ts';
 import type { Visual } from './tools/visual.ts';
 
@@ -208,6 +209,27 @@ function tooMany(block: BetaToolUseBlock): BetaToolResultBlockParam {
 }
 
 /**
+ * Whether the turn wrote text the owner sees after its last tool call other than suggest_next: the answer. Text before
+ * that call is an aside written ahead of the work ("Next week, presumably."), not an answer to it, and Opus 5.5
+ * returns text written before a tool call in the same message as thinking, which the owner never sees as a reply.
+ */
+function wroteText(turn: readonly BetaMessageParam[]): boolean {
+  for (let index = turn.length - 1; index >= 0; index -= 1) {
+    const param = turn[index];
+    if (param?.role !== 'assistant' || typeof param.content === 'string') continue;
+    // A message that calls a tool other than suggest_next did work after any text it holds: that text came first.
+    if (param.content.some((block) => block.type === 'tool_use' && block.name !== 'suggest_next')) return false;
+    if (param.content.some((block) => block.type === 'text' && block.text.trim() !== '')) return true;
+  }
+  return false;
+}
+
+/** A suggest_next result that also asks for the answer the turn has not written; an error result stays as it is. */
+function askForAnswer(result: BetaToolResultBlockParam): BetaToolResultBlockParam {
+  return result.is_error === true ? result : { ...result, content: UNANSWERED_RESULT };
+}
+
+/**
  * The blocks of a reply that are sent back and acted on. After a server-side fallback in the middle of a reply, the
  * declined model's blocks before the last `fallback` block are echoed back only as text: its thinking, redacted
  * thinking, tool calls and any other model-internal blocks are dropped, and its tool calls never run. The `fallback`
@@ -358,10 +380,14 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
           input.emit({ type: 'tool', data: { id, name, state, input: view, result: resultViewOf(name, outcome.result) } });
         }
       }
-      append({ role: 'user', content: results });
       // suggest_next is a reply's last step: a message that called only it is answered and ends the turn without
       // another model call, valid or not (the client then picks its own three). The saved reply ends with its results.
-      if (toolUses.every((block) => block.name === 'suggest_next')) return done('end_turn');
+      // The model often calls it right after thinking out its answer, having written no text: the owner sees none of
+      // its thinking, so then its result asks for the answer and the loop goes on.
+      const onlyNext = toolUses.every((block) => block.name === 'suggest_next');
+      const unanswered = onlyNext && !wroteText(turn);
+      append({ role: 'user', content: unanswered ? results.map(askForAnswer) : results });
+      if (onlyNext && !unanswered) return done('end_turn');
     }
   } catch (err) {
     if (aborted()) return { kind: 'aborted', calls, costMicroUsd: spent };

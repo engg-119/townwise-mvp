@@ -54,8 +54,31 @@ describe('autocomplete', () => {
     fake.script({ kind: 'json', body: { suggestions: [queryPrediction('diners'), placePrediction(PLACE_ID, NAME, 'Hanover, NH, USA')] } });
     const res = await autocomplete({ input: `  ${INPUT}  `, sessionToken });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ suggestions: [{ placeId: PLACE_ID, name: NAME, detail: 'Hanover, NH, USA' }], sessionToken });
-    expect(fake.calls.map((sent) => sent.body)).toEqual([{ input: INPUT, sessionToken, includedRegionCodes: ['us'], languageCode: 'en' }]);
+    expect(await res.json()).toEqual({ suggestions: [{ placeId: PLACE_ID, name: NAME, detail: 'Hanover, NH, USA', kind: 'business' }], sessionToken });
+    expect(fake.calls.map((sent) => sent.body)).toEqual([{
+      input: INPUT, sessionToken, includedRegionCodes: ['us'], languageCode: 'en',
+      locationBias: { rectangle: { low: { latitude: 40.4, longitude: -80.6 }, high: { latitude: 47.5, longitude: -66.9 } } },
+    }]);
+  });
+
+  it('autocomplete answers each suggestion’s kind', async () => {
+    fake.script({
+      kind: 'json',
+      body: {
+        suggestions: [
+          placePrediction(PLACE_ID, NAME, 'South Main Street, Hanover, NH, USA'),
+          placePrediction('ChIJSentinelAddress01', '8 Sentinel Street', 'Hanover, NH, USA', ['street_address', 'geocode']),
+          placePrediction('ChIJSentinelTown00001', 'Hanover', 'NH, USA', ['locality', 'political', 'geocode']),
+        ],
+      },
+    });
+    const res = await autocomplete({ input: INPUT });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { suggestions: unknown[] };
+    expect(body.suggestions).toEqual([
+      { placeId: PLACE_ID, name: NAME, detail: 'South Main Street, Hanover, NH, USA', kind: 'business' },
+      { placeId: 'ChIJSentinelAddress01', name: '8 Sentinel Street', detail: 'Hanover, NH, USA', kind: 'address' },
+    ]);
   });
 
   it('without a session token the server makes a version 4 UUID, sends it to Google and returns it', async () => {
@@ -78,10 +101,10 @@ describe('autocomplete', () => {
 });
 
 describe('details', () => {
-  it('answers the place with its address and its researched town, as a TownInput', async () => {
+  it('answers the place with its address and its researched town, as a TownInput (map null while the map is off, in either theme)', async () => {
     const sessionToken = randomUUID();
     fake.script({ kind: 'json', body: placeDetails(PLACE_ID, ADDRESS, usAddress({ locality: 'Hanover', state: 'NH' })) });
-    const res = await details({ placeId: PLACE_ID, sessionToken });
+    const res = await details({ placeId: PLACE_ID, sessionToken, theme: 'light' });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       place: { placeId: PLACE_ID, address: ADDRESS, town: { townId: 'hanover-nh', name: 'Hanover', state: 'NH' }, map: null },
@@ -142,12 +165,13 @@ describe('validation: 400 invalid_request, and Google is not called', () => {
     expect(fake.calls).toHaveLength(2);
   });
 
-  it('details: a place id of 10 to 512 letters, digits, _ or -, and an optional version 4 UUID', async () => {
+  it('details: a place id of 10 to 512 letters, digits, _ or -, an optional version 4 UUID and an optional theme', async () => {
     const sessionToken = randomUUID();
     const bad: unknown[] = [
       {}, { sessionToken }, { placeId: 'ChIJshort', sessionToken }, { placeId: 'x'.repeat(513), sessionToken },
       { placeId: '../../places/ChIJabc', sessionToken }, { placeId: 'ChIJ abcdefgh', sessionToken }, { placeId: 'ChIJabcdefgh?x=1', sessionToken },
       { placeId: PLACE_ID, sessionToken: 'not-a-uuid' }, { placeId: PLACE_ID, sessionToken: null },
+      { placeId: PLACE_ID, sessionToken, theme: 'Dark' }, { placeId: PLACE_ID, sessionToken, theme: 'system' }, { placeId: PLACE_ID, sessionToken, theme: null },
     ];
     for (const json of bad) expect({ json, ...(await errorOf(await details(json))) }).toEqual({ json, status: 400, error: 'invalid_request' });
     expect(fake.calls).toHaveLength(0);
