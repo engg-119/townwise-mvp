@@ -6,7 +6,7 @@ import { getMockContext } from 'expo-router/testing-library';
 import type { MeResponse } from '../../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
-import { ACCESS, EMAIL, fakePortalApi, meOf, orgOf, refusal, viewAsMe } from '../../helpers/portal';
+import { ACCESS, deferred, EMAIL, fakePortalApi, meOf, orgOf, refusal, viewAsMe } from '../../helpers/portal';
 import { fileViewOf } from '../files/fakes';
 import { locationsFake } from '../locations/fakes';
 import { aiOf, dataFake, itemOf, type DataFake } from './fakes';
@@ -86,6 +86,31 @@ test('checked, each finished file is sent once to be read, and the line beside i
   await waitFor(() => {
     expect(within(files).getAllByText('Added. TownwiseAI is reading it; open it on Your data to see what it finds.')).toHaveLength(2);
   });
+});
+
+test('once TownwiseAI takes a file, the list loads again, so the file’s row says it is reading it', async () => {
+  const fake = setup();
+  const answer = deferred<unknown>();
+  fake.answers['POST ai'] = () => answer.promise;
+  await optIn();
+  await add(fake, ['menu.pdf']);
+  await waitFor(() => { expect(fake.ai).toHaveLength(1); });
+  // The upload's own reload ran before TownwiseAI answered.
+  await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 20); }); });
+  const before = fake.lists.length;
+  const read = itemOf('f_f1', { name: 'menu.pdf', kind: 'pdf', state: 'kept', outcome: 'reference', ai: aiOf({ status: 'queued', kind: null }) });
+  fake.items = [read];
+  await act(async () => { answer.resolve({ item: read }); await Promise.resolve(); });
+  await waitFor(() => { expect(fake.lists.length).toBeGreaterThan(before); });
+  expect(await screen.findByText('Kept for reference · TownwiseAI is reading it')).toBeTruthy();
+});
+
+test('the opt-in sits under Add a file, out of Paste text’s row', async () => {
+  setup();
+  const box = await screen.findByRole('checkbox', { name: OPT_IN });
+  const paste = screen.getByRole('button', { name: 'Paste text' });
+  expect(paste.parentElement?.contains(box)).toBe(false);
+  expect(paste.parentElement?.contains(screen.getByRole('button', { name: 'Add a file' }))).toBe(false);
 });
 
 test('a kind TownwiseAI can’t read is not sent, and says why beside the file', async () => {

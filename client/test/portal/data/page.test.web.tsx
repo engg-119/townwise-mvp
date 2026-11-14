@@ -10,7 +10,7 @@ import { fakeAuth } from '../../helpers/fakes';
 import { ACCESS, EMAIL, fakePortalApi, LOCATIONS, meOf, orgOf, refusal, viewAsMe, type FakePortalApi } from '../../helpers/portal';
 import { daysOf, locationsFake, salesOf, uploadOf } from '../locations/fakes';
 import { choicesOf, choose, shownChoice } from '../../helpers/select';
-import { dailyTotalsOf, dataFake, itemOf, type DataFake } from './fakes';
+import { aiOf, dailyTotalsOf, dataFake, itemOf, type DataFake } from './fakes';
 
 // Your data (P26, D28) on web: the table of everything a location received, Turn off and on at once, the deletes
 // with what each keeps, the downloads, All locations, Add a file and Paste text, and view-as and files-off.
@@ -134,6 +134,36 @@ test('lists every item as a table row: item, added, kind, size, status and days'
   expect(within(at(rows, 2)).getByText('Used')).toBeTruthy();
   expect(within(at(rows, 2)).getByText('On')).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Upload sales history' }).getAttribute('href')).toBe('/locations/l1/sales/upload');
+});
+
+test('Status says what TownwiseAI did with a row’s file after what Townwise did, and nothing with no read or once undone (D34)', async () => {
+  const reference = { kind: 'pdf', state: 'kept', outcome: 'reference' } as const;
+  setup(meOf(ACCESS.admin), [
+    itemOf('f_queued', { ...reference, name: 'queued.pdf', ai: aiOf({ status: 'queued', kind: null }) }),
+    itemOf('f_reading', { ...reference, name: 'reading.pdf', ai: aiOf({ status: 'reading', kind: null }) }),
+    itemOf('f_done', { ...reference, name: 'done.pdf', ai: aiOf({ status: 'done' }) }),
+    itemOf('f_failed', { ...reference, name: 'failed.pdf', ai: aiOf({ status: 'failed', reason: 'internal', kind: null }) }),
+    itemOf('f_skipped', { ...reference, name: 'skipped.pdf', ai: aiOf({ status: 'skipped', reason: 'too_large', kind: null }) }),
+    itemOf('f_undone', { ...reference, name: 'undone.pdf', ai: aiOf({ status: 'undone', kind: null }) }),
+    itemOf('f_none', { ...reference, name: 'none.pdf' }),
+    itemOf('f_later', { ...reference, name: 'later.pdf', ai: aiOf({ status: 'a_status_from_later', kind: null }) }),
+    // A sales file that wrote days is its upload, and the read shows there.
+    itemOf('u_sales', { state: 'used', name: 'sales.csv', ai: aiOf({ status: 'done' }) }),
+  ]);
+  const rows = rowsOf(await table());
+  // Item, Added, Kind, Size, Status.
+  const status = rows.map((row) => within(row).getAllByRole('cell')[4]?.textContent);
+  expect(status).toEqual([
+    'OnKept for reference · TownwiseAI is reading it',
+    'OnKept for reference · TownwiseAI is reading it',
+    'OnKept for reference · Read by TownwiseAI',
+    'OnKept for reference · TownwiseAI couldn’t read it',
+    'OnKept for reference · TownwiseAI didn’t read it',
+    'OnKept for reference',
+    'OnKept for reference',
+    'OnKept for reference',
+    'OnUsed · Read by TownwiseAI',
+  ]);
 });
 
 test('Open is each row’s first action and opens the item’s page; an item still uploading has none', async () => {
@@ -335,7 +365,7 @@ test('stored files on: Add a file and Paste text, with the helper', async () => 
   expect(await screen.findByRole('button', { name: 'Add a file' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Paste text' })).toBeTruthy();
   expect(screen.getByText(
-    'Any kind of file up to 200 MB, kept as it is for your team. Townwise doesn’t read it for sales; use Upload sales history for that. TownwiseAI can read text files when you ask.',
+    'Any kind of file up to 200 MB, kept as it is for your team. Townwise doesn’t read it for sales; use Upload sales history for that. With the box above off, TownwiseAI reads a file only when you ask, in a chat or on the file’s page. With it on, TownwiseAI reads each file you add and uses what it finds.',
   )).toBeTruthy();
 });
 

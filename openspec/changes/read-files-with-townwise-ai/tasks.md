@@ -24,11 +24,11 @@
 
 ## 4. S3b: client, after session 64's PR lands
 
-- [ ] 4.1 Upload page and onboarding history step opt-in
-- [ ] 4.2 Your data row state (reading, done, undone, failed reasons)
-- [ ] 4.3 Notes label for a note TownwiseAI made from a file
-- [ ] 4.4 Privacy page: the opt-in, the whole file going to Anthropic, no names sent
-- [ ] 4.5 Client tests for each
+- [x] 4.1 Upload page and onboarding history step opt-in (P13 has no stored-files path, so only onboarding's drop gains it, asking once the sales read is done; P13 is pinned never to offer it)
+- [x] 4.2 Your data row state (reading, done, undone, failed reasons): the Status cell's TownwiseAI words; the reasons stay on the item page
+- [x] 4.3 Notes label for a note TownwiseAI made from a file
+- [x] 4.4 Privacy page: the opt-in, the whole file going to Anthropic, no names sent
+- [x] 4.5 Client tests for each
 
 ## 5. Reviews
 

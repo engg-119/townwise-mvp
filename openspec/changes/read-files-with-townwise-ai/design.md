@@ -81,3 +81,4 @@ That change makes TownwiseAI read PDF and Word files in chat (D33). This change 
 - The queue cap is a count read before the write, so two presses at the same moment can pass it by one; two replicas claiming at the same instant could each take one read of the same organization.
 - Names in a file are kept out of the answer only by the prompt; email addresses and phone numbers are also redacted in code, and a phone number written in an unusual form can slip through.
 - A calibration a read started is never undone.
+- Onboarding's opt-in is sent by the step itself once each file's sales read is done, so a checked file still being read when the person leaves the step is never sent; it can be let in later from its page on Your data.

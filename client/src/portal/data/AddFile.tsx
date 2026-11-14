@@ -33,10 +33,12 @@ export function AddFile(props: {
   describedBy?: string;
   /** A file finished uploading: the list reloads. */
   onStored: () => void;
+  /** TownwiseAI took a finished file to read (or was already reading it): the list reloads, so its row says so. */
+  onAsked?: () => void;
 }): React.JSX.Element {
   const { api } = usePortal();
   const queue = useUploadQueue(props.locationId, { purpose: 'reference' });
-  const { onStored, locationId } = props;
+  const { onStored, onAsked, locationId } = props;
   const finished = queue.items.filter((item) => item.state === 'done').length;
   // Told once per finished file, whatever `onStored` is by then.
   const told = useRef(0);
@@ -88,6 +90,13 @@ export function AddFile(props: {
       );
     }
   }, [asked, api, locationId]);
+  // Told once per file TownwiseAI took, whatever `onAsked` is by then: `onStored` reloaded the list before it answered.
+  const taken = Object.values(asked).filter((entry) => entry?.ai.state === 'asked').length;
+  const toldTaken = useRef(0);
+  useEffect(() => {
+    if (taken > toldTaken.current) onAsked?.();
+    toldTaken.current = taken;
+  }, [taken, onAsked]);
 
   const helpId = `${useId().replace(/:/g, '')}-ai-help`;
   const shown = queue.items.filter((item) => item.state !== 'cancelled' && (item.state !== 'done' || (asked[item.key] ?? null) !== null));

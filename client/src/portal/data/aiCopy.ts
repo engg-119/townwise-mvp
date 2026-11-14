@@ -3,10 +3,11 @@ import { formatDate, plural } from '../format';
 import type { AiRead, DataItem } from './api';
 import { dataError } from './copy';
 
-// Every word of reading a file with TownwiseAI (D34, spec 11A.9): the item page's TownwiseAI section (P27) and the
-// opt-in under Your data's Add a file (P26). Codes are read as strings, so a code the server adds later gets the
-// general line for its place. Nothing here prints a name, a figure or the file's content beyond what the API sends
-// (under view-as it sends no summary, facts or note titles).
+// Every word of reading a file with TownwiseAI (D34, spec 11A.9): the item page's TownwiseAI section (P27), the
+// opt-in under Your data's Add a file and its rows' Status (P26), and the opt-in under onboarding's drop (P11 step 3).
+// Codes are read as strings, so a code the server adds later gets the general line for its place. Nothing here prints
+// a name, a figure or the file's content beyond what the API sends (under view-as it sends no summary, facts or note
+// titles).
 
 export const AI = {
   heading: 'TownwiseAI',
@@ -71,6 +72,26 @@ const FAILED: Readonly<Record<string, string>> = {
   answer_too_long: 'TownwiseAI couldn’t finish reading this file: what it found was too long to write down. A shorter file, such as one year of sales, will work.',
   internal: 'TownwiseAI couldn’t read this file because something went wrong on Townwise’s side.',
 };
+
+/**
+ * What TownwiseAI did with a row's file, said after what Townwise did in Your data's Status cell (P26): null with no
+ * read, once it was undone, and for a status the client doesn't know.
+ */
+export function rowAiLine(ai: Pick<AiRead, 'status'> | null): string | null {
+  switch (ai?.status) {
+    case 'queued':
+    case 'reading':
+      return 'TownwiseAI is reading it';
+    case 'done':
+      return 'Read by TownwiseAI';
+    case 'failed':
+      return 'TownwiseAI couldn’t read it';
+    case 'skipped':
+      return 'TownwiseAI didn’t read it';
+    default:
+      return null;
+  }
+}
 
 /** The line for a read that ended without an answer, or null for any other status. */
 export function settledLine(ai: Pick<AiRead, 'status' | 'reason'>): string | null {
