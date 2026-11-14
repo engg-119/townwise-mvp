@@ -31,3 +31,9 @@ export function clockTime(hhmm: string): string {
   const hour = Number(hours);
   return `${String(hour % 12 === 0 ? 12 : hour % 12)}:${minutes}${hour < 12 ? 'am' : 'pm'}`;
 }
+
+/** 'Thursday’s delivery lasts until Monday’s.', or 'until next Thursday’s.' for a supplier who comes once a week. */
+export function lastsUntil(delivery: string, next: string): string {
+  const same = weekdayName(delivery) === weekdayName(next);
+  return `${weekdayName(delivery)}’s delivery lasts until ${same ? 'next ' : ''}${weekdayName(next)}’s.`;
+}

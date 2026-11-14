@@ -416,7 +416,7 @@ describe('the live board, end to end', () => {
     const [order] = answer.orders;
     expect(order).toMatchObject({
       supplier: 'North Distributing', cutoff: '2026-06-03', cutoffTime: '14:00', delivery: '2026-06-04', coversThrough: '2026-06-11',
-      deadline: 'Order by Wed, Jun 3, 2:00pm. Thursday’s delivery covers through Thursday.',
+      deadline: 'Order by Wed, Jun 3, 2:00pm. Thursday’s delivery lasts until next Thursday’s.',
     });
     const line = lineOf(answer, lager);
     expect(line.recommended).toBe(plans[0]?.lines.find((planned) => planned.itemId === lager)?.recommended);

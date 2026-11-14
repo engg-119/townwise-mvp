@@ -284,7 +284,7 @@ describe('cushion', () => {
     expect(line).toMatchObject({ sigma: null, recommended: 6, confidence: 'medium', coveredDays: 20 });
     expect(line.orderUpTo).toBe(line.mu);
     expect(line.why).toBe(
-      'Thursday’s delivery covers through Thursday. Expected use about 8 cases over these 8 days, from the last 8 weeks of sales. '
+      'Thursday’s delivery lasts until next Thursday’s. Expected use about 8 cases over these 8 days, from the last 8 weeks of sales. '
       + 'You counted 2 on Tue, Nov 10. Count it before you send the order. '
       + 'Too little history for a safety cushion, so this covers the expected use.',
     );
@@ -384,7 +384,7 @@ describe('why line', () => {
 
   it('names the target chance and the deals when sigma exists', () => {
     expect(whyLine(base)).toBe(
-      'Thursday’s delivery covers through Monday. Expected use about 14 cases over these 5 days, from the last 8 weeks of sales. '
+      'Thursday’s delivery lasts until Monday’s. Expected use about 14 cases over these 5 days, from the last 8 weeks of sales. '
       + 'You counted 5 on Tue, Nov 10. Ordering 18 (three deals of 6) aims for a 98% chance of not running out.',
     );
     expect(whyLine({ ...base, recommended: 6 })).toContain('Ordering 6 (one deal of 6) aims');
@@ -393,7 +393,7 @@ describe('why line', () => {
 
   it('says there is no cushion yet without sigma', () => {
     expect(whyLine({ ...base, sigma: null })).toBe(
-      'Thursday’s delivery covers through Monday. Expected use about 14 cases over these 5 days, from the last 8 weeks of sales. '
+      'Thursday’s delivery lasts until Monday’s. Expected use about 14 cases over these 5 days, from the last 8 weeks of sales. '
       + 'You counted 5 on Tue, Nov 10. Too little history for a safety cushion, so this covers the expected use.',
     );
   });
@@ -405,7 +405,7 @@ describe('why line', () => {
 
   it('never claims a chance for a quantity that follows the par', () => {
     const noCount = whyLine({ ...base, mu: null, count: null, countAgeDays: null, confidence: 'low' });
-    expect(noCount).toBe('Thursday’s delivery covers through Monday. No item sales yet, so this follows the par. No count yet, so this is the par.');
+    expect(noCount).toBe('Thursday’s delivery lasts until Monday’s. No item sales yet, so this follows the par. No count yet, so this is the par.');
     const old = whyLine({ ...base, count: { quantity: 5, date: '2026-11-01' }, countAgeDays: 9, confidence: 'low' });
     expect(old).toContain('The last count was 9 days ago, so this follows the par.');
     expect(old).not.toContain('chance');

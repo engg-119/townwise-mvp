@@ -1,7 +1,7 @@
 // The order board the Orders page and TownwiseAI both read: one next order per supplier (design Decision 2), each line
 // computed by engine.ts from the location's setup, item sales and counts (orders/live.ts reads them). The sample is a
 // labeled preview in the same shape, not that location's stock; rules and saved edits never change it.
-import { addDays, clockTime, shortDate, weekdayName } from './dates.ts';
+import { addDays, clockTime, lastsUntil, shortDate, weekdayName } from './dates.ts';
 import { targetFor, unitFor, type EngineLine, type OrderCategory, type OrderUnit, type SupplierOrderPlan } from './engine.ts';
 
 export type OrderConfidence = 'high' | 'medium' | 'low';
@@ -99,9 +99,9 @@ export function unavailable(missing: readonly string[]): OrderUnavailable {
   return { available: false, reason: ORDER_UNAVAILABLE, missing: [...missing] };
 }
 
-/** 'Order by Wed, Nov 18, 2:00pm. Thursday’s delivery covers through Monday.' */
+/** 'Order by Wed, Nov 18, 2:00pm. Thursday’s delivery lasts until Monday’s.' */
 export function deadline(order: Pick<SupplierOrder, 'cutoff' | 'cutoffTime' | 'delivery' | 'coversThrough'>): string {
-  return `Order by ${shortDate(order.cutoff)}, ${clockTime(order.cutoffTime)}. ${weekdayName(order.delivery)}’s delivery covers through ${weekdayName(order.coversThrough)}.`;
+  return `Order by ${shortDate(order.cutoff)}, ${clockTime(order.cutoffTime)}. ${lastsUntil(order.delivery, order.coversThrough)}`;
 }
 
 /** The engine's plans as the board: a line per item, no edits and no rules yet (withPreferences adds them). */
@@ -163,7 +163,7 @@ const SAMPLE_CUTOFF_TIME = '14:00';
 /** The labeled preview: an order per sample supplier. Rules and saved edits do not change it, and nothing on it can be saved. */
 export function sampleBoard(today: string): OrderBoard {
   const schedule = { ...sampleSchedule(today), cutoffTime: SAMPLE_CUTOFF_TIME };
-  const why = `${weekdayName(schedule.delivery)}’s delivery covers through ${weekdayName(schedule.coversThrough)}. No count, so this is the par.`;
+  const why = `${lastsUntil(schedule.delivery, schedule.coversThrough)} No count, so this is the par.`;
   const suppliers = [...new Map(SAMPLE_ITEMS.map((item) => [item.supplierId, item.supplier])).entries()]
     .sort(([, a], [, b]) => a.localeCompare(b));
   const orders = suppliers.map(([supplierId, supplier]): SupplierOrder => ({

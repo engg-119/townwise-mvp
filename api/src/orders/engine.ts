@@ -6,7 +6,7 @@
 // window's error uses only its covered days; with no sigma the why line says there is no cushion yet; lines at 0 stay.
 
 import type { OrderConfidence } from './board.ts';
-import { shortDate, weekdayName } from './dates.ts';
+import { lastsUntil, shortDate } from './dates.ts';
 
 export type OrderCategory = 'bottles_cans' | 'draft' | 'liquor' | 'cocktail_ingredient';
 export type OrderUnit = 'cases' | 'kegs' | 'bottles' | 'units';
@@ -349,7 +349,7 @@ export interface WhyInput {
 /** The delivery, the expected use and its basis, the count, and the target chance only when sigma exists. */
 export function whyLine(input: WhyInput): string {
   const { count, countAgeDays, mu } = input;
-  const parts = [`${weekdayName(input.delivery)}’s delivery covers through ${weekdayName(input.coversThrough)}.`];
+  const parts = [lastsUntil(input.delivery, input.coversThrough)];
   if (mu === null) {
     parts.push('No item sales yet, so this follows the par.');
   } else {
