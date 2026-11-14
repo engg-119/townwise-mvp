@@ -111,6 +111,8 @@ export async function saveOrderDecision(ctx: TownwiseContext, req: Request, res:
 /**
  * POST .../orders/rules. The amount is the latest saved edit's difference, and the situation is that edit's reason. A
  * rule already saved for the item and situation is the answer, with no second event; one turned off is 409 `rule_off`.
+ * One saved in another unit than the edit's (the setup changed the item's unit) applies to no line, so it takes the
+ * edit's amount and unit, recorded as a new save.
  */
 export async function saveOrderRule(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
@@ -122,12 +124,12 @@ export async function saveOrderRule(ctx: TownwiseContext, req: Request, res: Res
   if (existing?.off === true) throw new AppError(409, 'rule_off', 'That rule is turned off.');
   const delta = decision.quantity - decision.recommended;
   if (delta === 0) throw new AppError(400, 'invalid_request', 'That edit does not change the quantity.');
-  const { rule, created } = existing === null
-    ? await ctx.stores.orders.addRule(caller.scope, location.id, {
+  const { rule, created } = existing !== null && existing.unit === decision.unit
+    ? { rule: existing, created: false }
+    : await ctx.stores.orders.addRule(caller.scope, location.id, {
       itemId: decision.itemId, delta, unit: decision.unit, situation: decision.reason, now: ctx.now(),
-    })
-    : { rule: existing, created: false };
-  // Only the save that stored the rule records it: a second save, or one that lost a race, adds no event.
+    });
+  // Only the save that stored or moved the rule records it: a second save, or one that lost a race, adds no event.
   if (created) {
     await recordAfter(ctx, {
       ...actorOf(caller), at: ctx.now(), orgId: caller.scope.orgId, action: 'order.rule_saved',

@@ -56,10 +56,15 @@ function orderOf(order: SupplierOrder) {
   };
 }
 
+/**
+ * A line as the model reads it. `par` is the par the line used; `setupPar`, the owner's par as get_order_setup gives
+ * it, is there only when they differ (a draft item whose window uses more than one unit has one more).
+ */
 function boardLine(line: OrderLine) {
   return {
     itemId: line.itemId, name: line.name, unit: line.unit, neverRunOut: line.neverRunOut, recommended: line.recommended,
-    alternative: line.alternative, par: line.par, onHand: line.onHand, countAgeDays: line.countAgeDays, confidence: line.confidence,
+    alternative: line.alternative, par: line.par, ...(line.setupPar === line.par ? {} : { setupPar: line.setupPar }),
+    onHand: line.onHand, countAgeDays: line.countAgeDays, confidence: line.confidence,
     why: line.why, edit: line.edit, rules: line.rules.map((rule) => ({ delta: rule.delta, situation: rule.situation })),
   };
 }
@@ -110,7 +115,7 @@ function shownView(content: string, shown: string): ToolView | null {
 export const orderBoardTool: ChatTool<NoOrderInput> = {
   definition: {
     name: 'get_order_board',
-    description: 'This location’s next order from each supplier, as its Orders page shows it: the order-by date and time, the delivery, the supplier’s following delivery it lasts until, and a line per item with the recommended quantity in the unit the bar orders, the other deal size, the par, what is on hand and how many days ago it was counted, how sure Townwise is, why, the owner’s saved edit and every rule they confirmed. Returns available false, with what the ordering setup lacks, when this location has no order.',
+    description: 'This location’s next order from each supplier, as its Orders page shows it: the order-by date and time, the delivery, the supplier’s following delivery it lasts until, and a line per item with the recommended quantity in the unit the bar orders, the other deal size, the par the line used (setupPar, the owner’s par from the setup, only when it differs: a draft item’s par is one more when the window uses more than one unit), what is on hand and how many days ago it was counted, how sure Townwise is, why, the owner’s saved edit and every rule they confirmed. Returns available false, with what the ordering setup lacks, when this location has no order.',
     input_schema: NO_INPUT,
     eager_input_streaming: true,
   },
@@ -132,7 +137,7 @@ export const orderBoardTool: ChatTool<NoOrderInput> = {
 export const orderLineTool: ChatTool<OrderLineInput> = {
   definition: {
     name: 'get_order_line',
-    description: 'One item’s line on its supplier’s next order, with the math behind it: mu (expected use over the window, in purchase units), sigma (the spread of past windows’ misses), orderUpTo (S, mu plus the cushion), the target chance of not running out, the deal size, the covered item-sales days used, what is on hand and the count’s age, how sure Townwise is, why, the saved edit and rules; the order’s dates; and the item’s servings on its latest covered item-sales days. Returns available false for an item not on an order.',
+    description: 'One item’s line on its supplier’s next order, with the math behind it: par is the par the line used and setupPar the owner’s par from the setup, only when it differs (a draft item’s par is one more when the window uses more than one unit); mu (expected use over the window, in purchase units), sigma (the spread of past windows’ misses), orderUpTo (S, mu plus the cushion), the target chance of not running out, the deal size, the covered item-sales days used, what is on hand and the count’s age, how sure Townwise is, why, the saved edit and rules; the order’s dates; and the item’s servings on its latest covered item-sales days. Returns available false for an item not on an order.',
     input_schema: {
       type: 'object',
       properties: { itemId: ITEM_ID },
@@ -177,7 +182,7 @@ export const orderLineTool: ChatTool<OrderLineInput> = {
 export const orderSetupTool: ChatTool<NoOrderInput> = {
   definition: {
     name: 'get_order_setup',
-    description: 'What this location’s ordering setup holds: each supplier with its delivery days and the day and time to order by, and each item with its id, supplier, category, unit, servings per unit, par, deal size, whether it must never run out, its latest count and that count’s date, and how many covered days in the last eight weeks had any of its sales; and which days item sales cover. Returns available false when nothing is set up.',
+    description: 'What this location’s ordering setup holds: each supplier with its delivery days and the day and time to order by, and each item with its id, supplier, category, unit, servings per unit, par (the owner’s, which a draft item’s order line may raise by one), deal size, whether it must never run out, its latest count and that count’s date, and how many covered days in the last eight weeks had any of its sales; and which days item sales cover. Returns available false when nothing is set up.',
     input_schema: NO_INPUT,
     eager_input_streaming: true,
   },
@@ -268,7 +273,10 @@ export const proposeOrderRuleTool: ChatTool<OrderRuleInput> = {
     const decision = await orders.latestDecision(tc.scope, tc.location.id, input.itemId);
     if (decision === null || decision.quantity === decision.recommended) return notShown(RULE_NO_CHANGE);
     const existing = await orders.findRule(tc.scope, tc.location.id, input.itemId, decision.reason);
-    if (existing !== null) return notShown(existing.off ? RULE_OFF : RULE_EXISTS);
+    if (existing?.off === true) return notShown(RULE_OFF);
+    // A rule in another unit than the change's (the setup changed the item's unit) no longer applies: saving the card
+    // moves it to the change's unit and amount, so it is proposed as if there were none.
+    if (existing !== null && existing.unit === decision.unit) return notShown(RULE_EXISTS);
     return { content: ORDER_RULE_RESULT };
   },
 };

@@ -10,6 +10,8 @@ import type { OrgScope } from '../access/policy.ts';
 import { assertItemIds } from './item-sales.ts';
 
 export const ORDER_COUNTS_COLLECTION = 'tw_order_counts';
+/** Count dates latest() reads per query, newest first. */
+const LATEST_BATCH = 30;
 
 interface CountFields {
   orgId: Types.ObjectId;
@@ -47,8 +49,11 @@ export interface LatestCount {
 export interface OrderCountStore {
   /** Sets each sent item's quantity on `date`, keeping the items already counted that day. */
   save(scope: OrgScope, locationId: string, date: string, items: Readonly<Record<string, number>>, now: Date): Promise<void>;
-  /** Per item id, the quantity from the newest count dated `since` or later. */
-  latest(scope: OrgScope, locationId: string, since: string): Promise<Map<string, LatestCount>>;
+  /**
+   * Per item id of `itemIds`, the quantity from the newest count dated `since` or later; an item not counted then is
+   * left out. Reads newest first, in batches, and stops once every item has a count.
+   */
+  latest(scope: OrgScope, locationId: string, since: string, itemIds: readonly string[]): Promise<Map<string, LatestCount>>;
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
   /** Organization deletion (spec 10.7). */
   removeForOrg(scope: OrgScope): Promise<number>;
@@ -73,16 +78,26 @@ export function createOrderCountStore(connection: Connection): OrderCountStore {
         }
       }
     },
-    async latest(scope, locationId, since) {
-      const docs = await Count
-        .find({ ...place(scope, locationId), date: trusted({ $gte: since }) }, { _id: 0, date: 1, items: 1 })
-        .sort({ date: -1 })
-        .lean<{ date: string; items: Record<string, number> }[]>();
+    async latest(scope, locationId, since, itemIds) {
+      const wanted = new Set(itemIds);
       const latest = new Map<string, LatestCount>();
-      for (const doc of docs) {
-        for (const [id, quantity] of Object.entries(doc.items)) {
-          if (!latest.has(id)) latest.set(id, { quantity, date: doc.date });
+      // A location's dates are unique (the index), so each batch starts strictly before the last one's oldest date.
+      let before: string | null = null;
+      while (latest.size < wanted.size) {
+        const range = before === null ? { $gte: since } : { $gte: since, $lt: before };
+        const docs: { date: string; items: Record<string, number> }[] = await Count
+          .find({ ...place(scope, locationId), date: trusted(range) }, { _id: 0, date: 1, items: 1 })
+          .sort({ date: -1 })
+          .limit(LATEST_BATCH)
+          .lean<{ date: string; items: Record<string, number> }[]>();
+        for (const doc of docs) {
+          for (const [id, quantity] of Object.entries(doc.items)) {
+            if (wanted.has(id) && !latest.has(id)) latest.set(id, { quantity, date: doc.date });
+          }
         }
+        const oldest: { date: string } | undefined = docs.at(-1);
+        if (docs.length < LATEST_BATCH || oldest === undefined) break;
+        before = oldest.date;
       }
       return latest;
     },

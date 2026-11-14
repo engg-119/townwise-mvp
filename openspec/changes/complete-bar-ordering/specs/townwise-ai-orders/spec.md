@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: TownwiseAI reads the live board
-`get_order_board` SHALL take no input and return the location's board as the Orders page computes it (the live board, or `{ available: false, reason, missing }`); it SHALL never return the labeled sample, which only the Orders page shows. `get_order_line` SHALL take `{ itemId }` and return that item's line on its supplier's next order with mu, sigma, S, the target, the count and its age, the deal size, the covered days used, and its servings on the last 28 covered days.
+`get_order_board` SHALL take no input and return the location's board as the Orders page computes it (the live board, or `{ available: false, reason, missing }`); it SHALL never return the labeled sample, which only the Orders page shows. `get_order_line` SHALL take `{ itemId }` and return that item's line on its supplier's next order with mu, sigma, S, the target, the count and its age, the deal size, the covered days used, and its servings on the last 28 covered days. A line in either tool SHALL give `par` as the par it used and, only when it differs, `setupPar` as the owner's par from the setup. `propose_order_rule` SHALL treat a rule in another unit than the latest edit's as absent, unless the owner turned it off.
 
 #### Scenario: Unknown item
 - **WHEN** `get_order_line` is called with an item id not in the setup

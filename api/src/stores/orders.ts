@@ -1,6 +1,7 @@
 // tw_order_decisions and tw_order_rules (Orders): what an owner changed on a line, and a rule they confirmed.
 // A decision survives deleting the location's sales. It goes when the location or the organization goes.
-// A turned-off rule stays, so the same reason is not proposed again.
+// A turned-off rule stays, so the same reason is not proposed again. A rule saved in another unit than the item's now
+// (the setup changed it) applies to no line, so saving that reason again moves it to the new change's amount and unit.
 // tw_order_cards: what the author did with each order change or rule TownwiseAI proposed in their conversation. A
 // card goes with its conversation, and with the person who owned it (stores/cross-tenant.ts deletePersonRecords). A
 // change card is claimed (`saving`) before its edit is stored, with the id that edit takes, so two saves of one card
@@ -219,11 +220,16 @@ export interface OrderStore {
   addDecision(scope: OrgScope, locationId: string, input: DecisionInput): Promise<DecisionRecord>;
   /** The newest decision for the item, or null. */
   latestDecision(scope: OrgScope, locationId: string, itemId: string): Promise<DecisionRecord | null>;
+  /** The decision stored under `id` (a change card's), or null. */
+  findDecision(scope: OrgScope, locationId: string, id: string): Promise<DecisionRecord | null>;
+  /** The ids among `itemIds` with any saved decision or rule, a turned-off rule included. */
+  itemsWithEdits(scope: OrgScope, locationId: string, itemIds: readonly string[]): Promise<Set<string>>;
   listRules(scope: OrgScope, locationId: string): Promise<RuleRecord[]>;
   findRule(scope: OrgScope, locationId: string, itemId: string, situation: string): Promise<RuleRecord | null>;
   /**
-   * Inserts the rule, or returns the one already stored for this item and situation, one saved meanwhile included.
-   * `created` is true only for the call that inserted it.
+   * Inserts the rule, or returns the one already stored for this item and situation, one saved meanwhile included. A
+   * stored rule that is on but in another unit than `input`'s is moved to `input`'s delta and unit, compare-and-set on
+   * its old unit, so of two saves at once one moves it. `created` is true only for the call that inserted or moved it.
    */
   addRule(scope: OrgScope, locationId: string, input: RuleInput): Promise<{ rule: RuleRecord; created: boolean }>;
   /** Marks the rule off. False when it is not this location's. */
@@ -308,6 +314,19 @@ export function createOrderStore(connection: Connection): OrderStore {
       const doc = await Decision.findOne({ ...place(scope, locationId), itemId }).sort({ createdAt: -1, _id: -1 }).lean();
       return doc === null ? null : toDecision(doc);
     },
+    async findDecision(scope, locationId, id) {
+      if (!Types.ObjectId.isValid(id)) return null;
+      const doc = await Decision.findOne({ ...place(scope, locationId), _id: new Types.ObjectId(id) }).lean();
+      return doc === null ? null : toDecision(doc);
+    },
+    async itemsWithEdits(scope, locationId, itemIds) {
+      if (itemIds.length === 0) return new Set();
+      // Bounded by the ids asked for (the setup's, at most 300), each read through the item's index.
+      const where = { ...place(scope, locationId), itemId: trusted({ $in: [...itemIds] }) };
+      const decided = await Decision.distinct('itemId', where);
+      const ruled = await Rule.distinct('itemId', where);
+      return new Set([...decided, ...ruled].map(String));
+    },
     async listRules(scope, locationId) {
       const docs = await Rule.find(place(scope, locationId)).sort({ createdAt: -1, _id: -1 }).lean();
       return docs.map(toRule);
@@ -319,7 +338,19 @@ export function createOrderStore(connection: Connection): OrderStore {
     async addRule(scope, locationId, input) {
       const where = { ...place(scope, locationId), itemId: input.itemId, situation: input.situation };
       const existing = await Rule.findOne(where).lean();
-      if (existing !== null) return { rule: toRule(existing), created: false };
+      if (existing !== null && (existing.off || existing.unit === input.unit)) return { rule: toRule(existing), created: false };
+      if (existing !== null) {
+        const moved = await Rule.findOneAndUpdate(
+          { ...where, unit: existing.unit, off: false },
+          { $set: { delta: input.delta, unit: input.unit, updatedAt: input.now } },
+          { returnDocument: 'after' },
+        ).lean();
+        if (moved !== null) return { rule: toRule(moved), created: true };
+        // Another save moved it first (or it was turned off meanwhile): the rule as it is now is the answer.
+        const now = await Rule.findOne(where).lean();
+        if (now === null) throw new Error('an order rule was not found');
+        return { rule: toRule(now), created: false };
+      }
       try {
         const doc = await Rule.create({ ...place(scope, locationId), ...input, off: false, createdAt: input.now, updatedAt: input.now });
         return { rule: toRule(doc), created: true };

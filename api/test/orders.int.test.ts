@@ -134,7 +134,7 @@ describe('ordering setup', () => {
     const res = await call(server, `${base(locationId)}/setup`, { session: member.session });
     expect(res.status).toBe(200);
     // Every setup and board answer carries the town's date (A7, C7).
-    expect(await res.json()).toEqual({ setup: null, coverage: null, itemCoverage: {}, counts: {}, today: TODAY });
+    expect(await res.json()).toEqual({ setup: null, coverage: null, itemCoverage: {}, counts: {}, itemsWithHistory: [], today: TODAY });
     const orders = await call(server, base(locationId), { session: member.session });
     expect(await orders.json()).toEqual({ available: false, reason: ORDER_UNAVAILABLE, missing: ['the supplier schedule', 'the items'], today: TODAY });
     const decision = await call(server, `${base(locationId)}/decisions`, {
@@ -203,6 +203,37 @@ describe('ordering setup', () => {
     ];
     for (const body of refused) expect({ body, ...(await errorOf(await putSetup(locationId, body))) }).toEqual({ body, status: 400, error: 'invalid_request' });
     expect(await orderRows(locationId)).toBe(JSON.stringify(ORDER_COLLECTIONS.map(() => [])));
+  });
+
+  // #68 second review R4: the remove-item confirm reads what the board reads, plus every saved edit and rule.
+  it('names the items with history: item sales in the board’s 244 days, a count in its 400, or any edit or rule', async () => {
+    const { locationId, lager, cider } = await locationWithSetup('History Bar');
+    const where = { orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId) };
+    const history = async (): Promise<unknown> =>
+      (await (await call(server, `${base(locationId)}/setup`, { session: member.session })).json() as { itemsWithHistory: unknown }).itemsWithHistory;
+    const sales = (date: string, items: Record<string, number>) =>
+      server.connection.collection('tw_item_sales').insertOne({ ...where, date, items, uploadedAt: server.clock.now() });
+    const count = (date: string, items: Record<string, number>) =>
+      server.connection.collection('tw_order_counts').insertOne({ ...where, date, items, updatedAt: server.clock.now() });
+    expect(await history()).toEqual([]);
+    // Older than the board reads, or sold none: no history.
+    await sales(addDays(TODAY, -245), { [lager]: 5 });
+    await sales(addDays(TODAY, -100), { [cider]: 0 });
+    await count(addDays(TODAY, -401), { [cider]: 2 });
+    expect(await history()).toEqual([]);
+    await sales(addDays(TODAY, -244), { [lager]: 5 });
+    expect(await history()).toEqual([lager]);
+    await count(addDays(TODAY, -400), { [cider]: 2 });
+    expect(await history()).toEqual([lager, cider]);
+
+    const other = await locationWithSetup('Edited Bar');
+    const read = async (): Promise<unknown> =>
+      (await (await call(server, `${base(other.locationId)}/setup`, { session: member.session })).json() as { itemsWithHistory: unknown }).itemsWithHistory;
+    const decide = (itemId: string, reason: string) => call(server, `${base(other.locationId)}/decisions`, {
+      session: member.session, json: { itemId, delivery: '2026-06-04', quantity: 5, reason },
+    });
+    expect((await decide(other.cider, 'Tasting')).status).toBe(200);
+    expect(await read()).toEqual([other.cider]);
   });
 
   it('a setup with no items, or no supplier, says so on the board', async () => {
@@ -591,11 +622,18 @@ describe('the live board, end to end', () => {
     expect(await errorOf(await act('toolu_order_change1', { action: 'save', quantity: 1.5, reason: 'Cider tasting' })))
       .toEqual({ status: 400, error: 'invalid_request' });
     const saved = await act('toolu_order_change1', { action: 'save', quantity: 4, reason: 'Cider tasting' });
-    expect(await saved.json()).toEqual({ proposal: { ...view, status: 'saved', quantity: 4, reason: 'Cider tasting' } });
+    const kept = { ...view, status: 'saved', quantity: 4, unit: 'cases', reason: 'Cider tasting' };
+    expect(await saved.json()).toEqual({ proposal: kept });
     expect(lineOf(await board(locationId), cider).edit).toEqual({ quantity: 4, reason: 'Cider tasting' });
-    expect(await (await act('toolu_order_change1', { action: 'save', quantity: 5, reason: 'Again' })).json())
-      .toEqual({ proposal: { ...view, status: 'saved' } });
-    expect(await (await act('toolu_order_change1', { action: 'dismiss' })).json()).toEqual({ proposal: { ...view, status: 'saved' } });
+    // #68 second review N3: a saved card shows its stored edit; a save of another one is 409 card_saved with it.
+    expect(await (await call(server, cardPath('toolu_order_change1'), { session: member.session })).json()).toEqual({ proposal: kept });
+    const other = await act('toolu_order_change1', { action: 'save', quantity: 5, reason: 'Again' });
+    expect(other.status).toBe(409);
+    expect(await other.json()).toEqual({ error: 'card_saved', message: expect.any(String) as unknown, proposal: kept });
+    const same = await act('toolu_order_change1', { action: 'save', quantity: 4, reason: ' Cider tasting ' });
+    expect(same.status).toBe(200);
+    expect(await same.json()).toEqual({ proposal: kept });
+    expect(await (await act('toolu_order_change1', { action: 'dismiss' })).json()).toEqual({ proposal: kept });
     expect(await server.connection.collection('tw_order_decisions').countDocuments({ locationId: new Types.ObjectId(locationId), itemId: cider }))
       .toBe(1);
     expect(await (await act('toolu_order_change2', { action: 'dismiss' })).json()).toEqual({ proposal: { ...view, status: 'dismissed' } });
@@ -644,15 +682,97 @@ describe('the live board, end to end', () => {
     const stored = await decisions.countDocuments(where);
     const answers = await Promise.all([5, 7].map(async (quantity) => {
       const res = await call(server, cardPath, { session: member.session, json: { action: 'save', quantity, reason: `Busy ${String(quantity)}` } });
-      return await res.json() as { proposal: { status: string } };
+      return { status: res.status, body: await res.json() as { proposal: { status: string; quantity: number; reason: string } } };
     }));
-    expect(answers.map((answer) => answer.proposal.status)).toEqual(['saved', 'saved']);
+    expect(answers.map((answer) => answer.body.proposal.status)).toEqual(['saved', 'saved']);
+    // One stored edit, and both answers show it: the save it was is 200, the other 409 card_saved (N3).
+    const [kept] = answers.filter((answer) => answer.status === 200);
+    expect(answers.map((answer) => answer.status).sort()).toEqual([200, 409]);
+    for (const answer of answers) expect(answer.body.proposal).toEqual(kept?.body.proposal);
+    expect(kept?.body.proposal.reason).toBe(`Busy ${String(kept?.body.proposal.quantity)}`);
     expect(await decisions.countDocuments(where)).toBe(stored + 1);
     const cardEvents = (await eventsOf('order.card_saved', locationId))
       .filter((event) => (event.details as { conversationId: string }).conversationId === conversationId);
     expect(cardEvents).toHaveLength(1);
+    expect(kept?.body.proposal).toMatchObject({ kind: 'change', itemId: lager, delivery: '2026-06-04', unit: 'cases' });
+    expect(await (await call(server, cardPath, { session: member.session })).json()).toEqual({ proposal: kept?.body.proposal });
+  });
+
+  // #68 second review N3: the edit was stored, then the card's save failed; a retry with another quantity says so.
+  it('a retry after the edit was stored is 409 card_saved with that edit, and completes the card once', async () => {
+    const conversationId = await addConversation(server, { orgId, locationId, userId: member.session.userId, text: 'Retry it' });
+    await showCards(conversationId, [{
+      id: 'toolu_order_change7', name: 'propose_order_change', input: { itemId: lager, delivery: '2026-06-04' }, result: ORDER_CHANGE_RESULT,
+    }]);
+    // What a failure between storing the edit and marking the card saved leaves: a claimed card and its edit.
+    const decisionId = new Types.ObjectId();
+    const now = server.clock.now();
+    await server.connection.collection('tw_order_cards').insertOne({
+      orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), conversationId: new Types.ObjectId(conversationId),
+      proposalId: 'toolu_order_change7', kind: 'change', status: 'saving', decisionId, createdAt: now,
+    });
+    await server.connection.collection('tw_order_decisions').insertOne({
+      _id: decisionId, orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), itemId: lager, delivery: '2026-06-04',
+      windowStart: '2026-06-03', windowEnd: '2026-06-10', recommended, quantity: 6, unit: 'cases', reason: 'First try', createdAt: now,
+    });
+    const cardPath = `/api/org/locations/${locationId}/chat/${conversationId}/order-proposals/toolu_order_change7`;
+    const kept = { kind: 'change', status: 'saved', itemId: lager, delivery: '2026-06-04', quantity: 6, unit: 'cases', reason: 'First try' };
     expect(await (await call(server, cardPath, { session: member.session })).json())
-      .toEqual({ proposal: { kind: 'change', status: 'saved', itemId: lager, delivery: '2026-06-04' } });
+      .toEqual({ proposal: { kind: 'change', status: 'open', itemId: lager, delivery: '2026-06-04' } });
+    const retry = await call(server, cardPath, { session: member.session, json: { action: 'save', quantity: 8, reason: 'Second try' } });
+    expect(retry.status).toBe(409);
+    expect(await retry.json()).toEqual({ error: 'card_saved', message: expect.any(String) as unknown, proposal: kept });
+    expect(await (await call(server, cardPath, { session: member.session })).json()).toEqual({ proposal: kept });
+    expect(await server.connection.collection('tw_order_decisions').countDocuments({ _id: decisionId })).toBe(1);
+    expect(await server.connection.collection('tw_order_decisions').countDocuments({ reason: 'Second try' })).toBe(0);
+    const cardEvents = (await eventsOf('order.card_saved', locationId))
+      .filter((event) => (event.details as { conversationId: string }).conversationId === conversationId);
+    expect(cardEvents).toHaveLength(1);
+  });
+});
+
+// #68 second review N1: a rule saved before the item's unit changed applies to no line; remembering the reason again
+// moves it to the new edit's amount and unit, through the rules route and through a TownwiseAI rule card.
+describe('a rule saved in an old unit', () => {
+  it('takes the new edit’s amount and unit, audited as a new save, and applies again', async () => {
+    const { locationId, setup, lager, cider } = await locationWithSetup('Unit Change Bar');
+    const path = base(locationId);
+    const decide = (itemId: string, quantity: number, reason: string): Promise<Response> =>
+      call(server, `${path}/decisions`, { session: member.session, json: { itemId, delivery: '2026-06-04', quantity, reason } });
+    const remember = (itemId: string, situation: string): Promise<Response> =>
+      call(server, `${path}/rules`, { session: member.session, json: { itemId, situation } });
+    // No count and no item sales: each line is its par, lager 3 and cider 1.
+    expect((await decide(lager, 5, 'Game night')).status).toBe(200);
+    expect((await decide(cider, 2, 'Cider fest')).status).toBe(200);
+    const first = await (await remember(lager, 'Game night')).json() as { rule: { id: string } };
+    expect((await remember(cider, 'Cider fest')).status).toBe(200);
+    expect(lineOf(await board(locationId), lager)).toMatchObject({ recommended: 5, rules: [{ id: first.rule.id, delta: 2 }] });
+
+    const bottles = { suppliers: setup.suppliers, items: setup.items.map((item) => ({ ...item, unit: 'bottles' })) };
+    expect((await putSetup(locationId, { expectedVersion: 1, setup: bottles })).status).toBe(200);
+    expect(lineOf(await board(locationId), lager)).toMatchObject({ unit: 'bottles', recommended: 3, rules: [] });
+    // The old rule held the item and situation, so the tool said one exists; now it shows the card again.
+    expect((await decide(lager, 9, 'Game night')).status).toBe(200);
+    const moved = await remember(lager, 'Game night');
+    expect(moved.status).toBe(200);
+    expect(await moved.json()).toEqual({ rule: { id: first.rule.id, itemId: lager, delta: 6, situation: 'Game night', off: false } });
+    expect((await eventsOf('order.rule_saved', locationId)).map((event) => event.details)).toEqual([
+      { locationId, itemId: lager }, { locationId, itemId: cider }, { locationId, itemId: lager },
+    ]);
+    // Again: the rule is in the edit's unit now, so it is the answer, with no new event.
+    expect((await remember(lager, 'Game night')).status).toBe(200);
+    expect(await eventsOf('order.rule_saved', locationId)).toHaveLength(3);
+    expect(lineOf(await board(locationId), lager)).toMatchObject({ recommended: 9, rules: [{ id: first.rule.id, delta: 6 }] });
+
+    // The rule card moves cider's the same way.
+    expect((await decide(cider, 13, 'Cider fest')).status).toBe(200);
+    const conversationId = await addConversation(server, { orgId, locationId, userId: member.session.userId, text: 'Remember the fest' });
+    await showCards(conversationId, [{ id: 'toolu_order_rule5', name: 'propose_order_rule', input: { itemId: cider }, result: ORDER_RULE_RESULT }]);
+    const cardPath = `/api/org/locations/${locationId}/chat/${conversationId}/order-proposals/toolu_order_rule5`;
+    const card = await call(server, cardPath, { session: member.session, json: { action: 'save', situation: 'Cider fest' } });
+    expect(await card.json()).toMatchObject({ proposal: { kind: 'rule', status: 'saved', itemId: cider, delta: 12, unit: 'bottles' } });
+    expect(lineOf(await board(locationId), cider)).toMatchObject({ recommended: 13, rules: [{ delta: 12, situation: 'Cider fest' }] });
+    expect(await server.connection.collection('tw_order_rules').countDocuments({ locationId: new Types.ObjectId(locationId) })).toBe(2);
   });
 });
 

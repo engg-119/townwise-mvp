@@ -530,7 +530,28 @@ describe('review fixes', () => {
     const line = onlyLine(computeOrders(input({ items: [item({ servingsPerUnit: 0.1, dealSize: 6 })], itemSales: heavy, counts: fresh(0) })));
     expect(line).toMatchObject({ recommended: 999, alternative: null });
     expect(line.mu).toBeCloseTo(8000, 6);
-    expect(line.why).toMatch(/A line holds at most 999 cases, so this is 999\.$/);
+    // #68 second review N6: no chance or coverage for a quantity the cap cut short.
+    expect(line.why).toMatch(/999 cases is the most one line can order, so this is 999 and may fall short\.$/);
+    expect(line.why).not.toMatch(/chance|covers|cushion|brings your stock/);
+    for (const fields of [{ sigma: null, byPar: false }, { sigma: 3, byPar: true }, { sigma: 3, byPar: false }]) {
+      const why = whyLine({
+        delivery: '2026-11-19', coversThrough: '2026-11-23', windowDays: 5, unit: 'cases', mu: 1400, scaled: false, closedDays: 0, sold: true,
+        coveredDays: 56, count: { quantity: 0, date: TUESDAY }, countAgeDays: 0, confidence: 'high', recommended: 1500, dealSize: null,
+        target: 0.95, par: 7, setupPar: 7, ...fields,
+      });
+      expect(why).not.toMatch(/chance|covers|falls short of|cushion|brings your stock/);
+      expect(why).toContain('999 cases is the most one line can order, so this is 999 and may fall short.');
+    }
+  });
+
+  it('caps a draft item’s backup par at 999 (N7)', () => {
+    const heavy = covered('2026-10-13', '2026-11-09', () => ({ i1: 100 }));
+    const draft = item({ category: 'draft', unit: 'kegs', par: 999, servingsPerUnit: 124 });
+    const line = onlyLine(computeOrders(input({ items: [draft], itemSales: heavy, counts: new Map() })));
+    expect(line).toMatchObject({ par: 999, setupPar: 999, recommended: 999 });
+    expect(line.why).not.toContain('one more than yours');
+    const raised = onlyLine(computeOrders(input({ items: [{ ...draft, par: 4 }], itemSales: heavy, counts: new Map() })));
+    expect(raised).toMatchObject({ par: 5, setupPar: 4 });
   });
 
   it('treats a deal size of 1 as no deal size (R6)', () => {

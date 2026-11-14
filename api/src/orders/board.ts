@@ -27,7 +27,10 @@ export interface OrderLine {
   readonly neverRunOut: boolean;
   readonly recommended: number;
   readonly alternative: number | null;
+  /** The par the quantity used: for a draft item one more than the owner's when the window uses more than one unit. */
   readonly par: number;
+  /** The owner's par, as the setup holds it. */
+  readonly setupPar: number;
   /** Window demand in purchase units; null without item sales for the window's weekdays. */
   readonly mu: number | null;
   /** Spread of past window errors in purchase units; null under 2 past windows. */
@@ -192,6 +195,7 @@ export function sampleBoard(today: string, nowMinutes: number): OrderBoard {
       recommended: item.par,
       alternative: null,
       par: item.par,
+      setupPar: item.par,
       mu: null,
       sigma: null,
       orderUpTo: null,

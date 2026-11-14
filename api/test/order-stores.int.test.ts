@@ -1,12 +1,12 @@
 // The ordering data layer (design Decisions 3 and 7): the setup under compare-and-set, item sales replaced by range,
 // counts merged per day, order cards and rules under races, and tenant scoping. Every figure is synthetic.
 import { Types } from 'mongoose';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { scopeForNewOrg, type OrgScope } from '../src/access/policy.ts';
 import { mintIds, setupInput } from '../src/orders/setup.ts';
 import { createItemSalesStore, type ItemSalesStore } from '../src/stores/item-sales.ts';
-import { createOrderCountStore, type OrderCountStore } from '../src/stores/order-counts.ts';
+import { createOrderCountStore, orderCountModel, type OrderCountStore } from '../src/stores/order-counts.ts';
 import { createOrderSetupStore, type OrderSetupStore } from '../src/stores/order-setups.ts';
 import { createOrderStore, type OrderStore } from '../src/stores/orders.ts';
 import { startTownwiseServer, type TownwiseTestServer } from './helpers/server.ts';
@@ -163,13 +163,46 @@ describe('order counts', () => {
     expect(doc?.items).toEqual({ [a]: 2, [b]: 5, [c]: 0 });
     await counts.save(t.scope, t.locationId, '2026-05-10', { [a]: 9 }, now);
 
-    expect(await counts.latest(t.scope, t.locationId, '2026-05-01')).toEqual(new Map([
+    expect(await counts.latest(t.scope, t.locationId, '2026-05-01', [a, b, c])).toEqual(new Map([
       [a, { quantity: 2, date: '2026-05-28' }], [b, { quantity: 5, date: '2026-05-28' }], [c, { quantity: 0, date: '2026-05-28' }],
     ]));
+    // Only the items asked for.
+    expect(await counts.latest(t.scope, t.locationId, '2026-05-01', [a])).toEqual(new Map([[a, { quantity: 2, date: '2026-05-28' }]]));
     const older = id();
     await counts.save(t.scope, t.locationId, '2026-05-21', { [older]: 7 }, now);
-    expect((await counts.latest(t.scope, t.locationId, '2026-05-01')).get(older)).toEqual({ quantity: 7, date: '2026-05-21' });
-    expect((await counts.latest(t.scope, t.locationId, '2026-05-22')).has(older)).toBe(false);
+    expect((await counts.latest(t.scope, t.locationId, '2026-05-01', [a, older])).get(older)).toEqual({ quantity: 7, date: '2026-05-21' });
+    expect((await counts.latest(t.scope, t.locationId, '2026-05-22', [a, older])).has(older)).toBe(false);
+  });
+
+  // #68 second review N4: newest first, in batches, stopping once every item asked for has a count; still bounded by `since`.
+  it('reads newest first in batches and stops once every item has a count, with the same results', async () => {
+    const t = tenant();
+    const [often, rare, never] = [id(), id(), id()];
+    const now = server.clock.now();
+    // 70 daily counts of one item, and one count of another on the oldest day: three batches of 30 reach it.
+    const dates = Array.from({ length: 70 }, (_, i) => new Date(Date.UTC(2026, 2, 1 + i)).toISOString().slice(0, 10));
+    for (const [i, date] of dates.entries()) await counts.save(t.scope, t.locationId, date, { [often]: i }, now);
+    await counts.save(t.scope, t.locationId, dates[0] ?? '', { [rare]: 4 }, now);
+    const newest = { quantity: 69, date: dates[69] };
+    const find = vi.spyOn(orderCountModel(server.connection), 'find');
+    try {
+      expect(await counts.latest(t.scope, t.locationId, '2026-01-01', [often])).toEqual(new Map([[often, newest]]));
+      // The newest batch held a count of the only item asked for.
+      expect(find).toHaveBeenCalledTimes(1);
+      find.mockClear();
+      expect(await counts.latest(t.scope, t.locationId, '2026-01-01', [often, rare])).toEqual(new Map([
+        [often, newest], [rare, { quantity: 4, date: dates[0] }],
+      ]));
+      expect(find).toHaveBeenCalledTimes(3);
+      find.mockClear();
+      // An item never counted reads every batch since the bound, and is left out.
+      expect([...(await counts.latest(t.scope, t.locationId, '2026-01-01', [often, never])).keys()]).toEqual([often]);
+      expect(find).toHaveBeenCalledTimes(3);
+      expect((await counts.latest(t.scope, t.locationId, dates[1] ?? '', [rare])).size).toBe(0);
+      expect((await counts.latest(t.scope, t.locationId, '2026-01-01', [])).size).toBe(0);
+    } finally {
+      find.mockRestore();
+    }
   });
 
   it('two first counts of one day both land', async () => {
@@ -179,7 +212,7 @@ describe('order counts', () => {
       counts.save(t.scope, t.locationId, '2026-05-28', { [a]: 1 }, server.clock.now()),
       counts.save(t.scope, t.locationId, '2026-05-28', { [b]: 2 }, server.clock.now()),
     ]);
-    expect([...(await counts.latest(t.scope, t.locationId, '2026-05-28')).keys()].sort()).toEqual([a, b].sort());
+    expect([...(await counts.latest(t.scope, t.locationId, '2026-05-28', [a, b])).keys()].sort()).toEqual([a, b].sort());
   });
 });
 
@@ -272,6 +305,46 @@ describe('order cards and rules under races', () => {
     expect(results.filter(({ created }) => created)).toHaveLength(1);
     expect(await server.connection.collection('tw_order_rules').countDocuments({ itemId: raced.itemId })).toBe(1);
   });
+
+  // #68 second review N1: a rule in another unit applies to no line, so saving its reason again moves it, once.
+  it('moves an active rule saved in another unit to the new amount and unit, compare-and-set, and leaves a turned-off one', async () => {
+    const t = tenant();
+    const input = { itemId: id(), delta: 2, unit: 'cases', situation: 'a football weekend', now: server.clock.now() };
+    const first = await orders.addRule(t.scope, t.locationId, input);
+    const results = await Promise.all(Array.from({ length: 4 }, () => orders.addRule(t.scope, t.locationId, { ...input, delta: 48, unit: 'bottles' })));
+    expect(results.filter(({ created }) => created)).toHaveLength(1);
+    for (const { rule } of results) expect(rule).toMatchObject({ id: first.rule.id, delta: 48, unit: 'bottles', off: false });
+    expect(await orders.findRule(t.scope, t.locationId, input.itemId, input.situation)).toMatchObject({ delta: 48, unit: 'bottles' });
+    expect(await server.connection.collection('tw_order_rules').countDocuments({ itemId: input.itemId })).toBe(1);
+
+    const off = { ...input, itemId: id() };
+    const stored = await orders.addRule(t.scope, t.locationId, off);
+    expect(await orders.turnOff(t.scope, t.locationId, stored.rule.id, server.clock.now())).toBe(true);
+    expect(await orders.addRule(t.scope, t.locationId, { ...off, delta: 48, unit: 'bottles' }))
+      .toEqual({ rule: { ...stored.rule, off: true }, created: false });
+  });
+
+  // #68 second review N3 and R4.
+  it('finds a decision by its id, and names the items with any edit or rule', async () => {
+    const t = tenant();
+    const [edited, ruled, plain] = [id(), id(), id()];
+    const now = server.clock.now();
+    const decision = await orders.addDecision(t.scope, t.locationId, {
+      itemId: edited, delivery: '2026-01-08', windowStart: '2026-01-07', windowEnd: '2026-01-14', recommended: 4, quantity: 6, unit: 'cases',
+      reason: 'r', now,
+    });
+    expect(await orders.findDecision(t.scope, t.locationId, decision.id)).toEqual(decision);
+    expect(await orders.findDecision(t.scope, t.locationId, id())).toBeNull();
+    expect(await orders.findDecision(t.scope, t.locationId, 'not-an-id')).toBeNull();
+    const rule = await orders.addRule(t.scope, t.locationId, { itemId: ruled, delta: 1, unit: 'cases', situation: 's', now });
+    await orders.turnOff(t.scope, t.locationId, rule.rule.id, now);
+    expect(await orders.itemsWithEdits(t.scope, t.locationId, [edited, ruled, plain])).toEqual(new Set([edited, ruled]));
+    expect(await orders.itemsWithEdits(t.scope, t.locationId, [plain])).toEqual(new Set());
+    expect(await orders.itemsWithEdits(t.scope, t.locationId, [])).toEqual(new Set());
+    const other = tenant();
+    expect(await orders.findDecision(other.scope, t.locationId, decision.id)).toBeNull();
+    expect(await orders.itemsWithEdits(other.scope, t.locationId, [edited, ruled])).toEqual(new Set());
+  });
 });
 
 describe('scoping', () => {
@@ -292,7 +365,7 @@ describe('scoping', () => {
     expect(await setups.save(b.scope, b.locationId, 1, newSetup('Intruder'), now)).toBe('changed');
     expect(await itemSales.days(b.scope, b.locationId, { from: '2026-05-01', to: '2026-05-31' })).toEqual([]);
     expect(await itemSales.coverage(b.scope, b.locationId)).toBeNull();
-    expect((await counts.latest(b.scope, b.locationId, '2026-01-01')).size).toBe(0);
+    expect((await counts.latest(b.scope, b.locationId, '2026-01-01', [item])).size).toBe(0);
     expect(await orders.findCard(b.scope, card)).toBeNull();
     // B's range replace and deletes reach nothing of A's.
     expect(await itemSales.apply(b.scope, b.locationId, { from: '2026-05-01', to: '2026-05-31', days: [], now, replace: true }))
@@ -304,7 +377,7 @@ describe('scoping', () => {
 
     expect(await setups.get(a.scope, a.locationId)).toEqual(stored);
     expect(await itemSales.coverage(a.scope, a.locationId)).toEqual({ firstDate: '2026-05-01', lastDate: '2026-05-01', dayCount: 1 });
-    expect((await counts.latest(a.scope, a.locationId, '2026-01-01')).get(item)).toEqual({ quantity: 4, date: '2026-05-01' });
+    expect((await counts.latest(a.scope, a.locationId, '2026-01-01', [item])).get(item)).toEqual({ quantity: 4, date: '2026-05-01' });
     expect((await orders.findCard(a.scope, card))?.status).toBe('saved');
   });
 });

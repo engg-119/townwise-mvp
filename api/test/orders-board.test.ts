@@ -8,8 +8,8 @@ import type { EngineLine, SupplierOrderPlan } from '../src/orders/engine.ts';
 
 function engineLine(itemId: string, name: string, recommended: number): EngineLine {
   return {
-    itemId, name, supplier: 'North Distributing', unit: 'cases', neverRunOut: false, recommended, alternative: null, par: 2, mu: 3.5,
-    sigma: null, orderUpTo: 3.5, target: 0.95, onHand: 1, countAgeDays: 0, confidence: 'high', dealSize: null, coveredDays: 56,
+    itemId, name, supplier: 'North Distributing', unit: 'cases', neverRunOut: false, recommended, alternative: null, par: 2, setupPar: 2,
+    mu: 3.5, sigma: null, orderUpTo: 3.5, target: 0.95, onHand: 1, countAgeDays: 0, confidence: 'high', dealSize: null, coveredDays: 56,
     why: 'Thursday’s delivery lasts until Monday’s.',
   };
 }

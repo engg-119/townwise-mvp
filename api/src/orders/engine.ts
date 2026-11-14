@@ -90,8 +90,13 @@ export interface EngineLine {
   readonly neverRunOut: boolean;
   readonly recommended: number;
   readonly alternative: number | null;
-  /** The par the quantity uses: the setup's, one higher for a draft item whose window uses more than one unit. */
+  /**
+   * The par the quantity uses: the setup's, one higher for a draft item whose window uses more than one unit, at most
+   * 999.
+   */
   readonly par: number;
+  /** The owner's par, as the setup holds it. */
+  readonly setupPar: number;
   /** Window demand in purchase units, null with no weekday mean for any window day. */
   readonly mu: number | null;
   /** Spread of past window errors in purchase units, null under 2 windows. */
@@ -476,7 +481,8 @@ function useSentence(input: WhyInput): string {
 
 /**
  * The delivery, the expected use and its basis, the count, and how the quantity was reached: up to the par, the
- * target chance only when sigma exists, and the 999 cap.
+ * target chance only when sigma exists, and the 999 cap. A capped line claims no chance and no coverage: 999 is less
+ * than it needed, so it may fall short.
  */
 export function whyLine(input: WhyInput): string {
   const { count, countAgeDays, mu } = input;
@@ -499,7 +505,8 @@ export function whyLine(input: WhyInput): string {
       ? 'Count it before you send the order.'
       : `Item sales cover only ${days(input.coveredDays)} of the last 8 weeks, so the history is short.`);
   }
-  if (fromForecast && mu !== null && count !== null) {
+  const capped = input.recommended > MAX_QUANTITY;
+  if (fromForecast && !capped && mu !== null && count !== null) {
     const ordered = `${number(input.recommended)}${dealPhrase(input.recommended, input.dealSize)}`;
     if (input.byPar) {
       parts.push(`Ordering ${ordered} brings your stock up to the par of ${number(input.par)}.`);
@@ -513,7 +520,9 @@ export function whyLine(input: WhyInput): string {
       parts.push(`Ordering ${ordered} aims for ${chance} of not running out.`);
     }
   }
-  if (input.recommended > MAX_QUANTITY) parts.push(`A line holds at most ${String(MAX_QUANTITY)} ${input.unit}, so this is ${String(MAX_QUANTITY)}.`);
+  if (capped) {
+    parts.push(`${String(MAX_QUANTITY)} ${input.unit} is the most one line can order, so this is ${String(MAX_QUANTITY)} and may fall short.`);
+  }
   return parts.join(' ');
 }
 
@@ -546,7 +555,7 @@ function lineFor(item: SetupItem, context: SupplierContext, input: EngineInput, 
   const sigma = sigmaServings === null ? null : sigmaServings / usable;
   const { target, z } = targetFor(item);
   const orderUpTo = mu === null ? null : mu + z * (sigma ?? 0);
-  const par = item.category === 'draft' ? draftBackupPar(mu, item.par) : item.par;
+  const par = Math.min(MAX_QUANTITY, item.category === 'draft' ? draftBackupPar(mu, item.par) : item.par);
   const latest = input.counts.get(item.id) ?? null;
   const count = latest === null ? null : { quantity: latest.quantity, ageDays: today - dayNumber(latest.date) };
   const countAgeDays = count?.ageDays ?? null;
@@ -555,12 +564,13 @@ function lineFor(item: SetupItem, context: SupplierContext, input: EngineInput, 
   const confidence = confidenceFor(countAgeDays, coveredDays, mu);
   const line = {
     itemId: item.id, name: item.name, supplier: context.supplier.name, unit: item.unit, neverRunOut: item.neverRunOut,
-    recommended: capped ? MAX_QUANTITY : quantity.recommended, alternative: capped ? null : quantity.alternative, par, mu, sigma,
-    orderUpTo, target, onHand: latest?.quantity ?? null, countAgeDays, confidence, dealSize: item.dealSize, coveredDays,
+    recommended: capped ? MAX_QUANTITY : quantity.recommended, alternative: capped ? null : quantity.alternative, par,
+    setupPar: item.par, mu, sigma, orderUpTo, target, onHand: latest?.quantity ?? null, countAgeDays, confidence,
+    dealSize: item.dealSize, coveredDays,
   };
   const why = whyLine({
     ...line, delivery: context.window.delivery, coversThrough: context.window.coversThrough, windowDays: context.days.length, scaled,
-    closedDays, sold, count: latest, recommended: quantity.recommended, setupPar: item.par, byPar: quantity.byPar,
+    closedDays, sold, count: latest, recommended: quantity.recommended, byPar: quantity.byPar,
   });
   return { ...line, why };
 }

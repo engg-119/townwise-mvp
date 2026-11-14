@@ -79,6 +79,7 @@ function context(fakes: Fakes = {}): ToolContext {
       listRules: () => Promise.resolve([]),
       latestDecision: () => Promise.resolve(fakes.decision ?? null),
       findRule: () => Promise.resolve(fakes.rule ?? null),
+      itemsWithEdits: () => Promise.resolve(new Set<string>()),
     },
   };
   return {
@@ -167,6 +168,26 @@ describe('get_order_board', () => {
     ]);
     expect(lines[0]).toMatchObject({ name: 'Sentinel Lager', unit: 'cases', par: 3, onHand: 1.5, countAgeDays: 2, edit: null, rules: [] });
     expect(typeof lines[0]?.recommended).toBe('number');
+  });
+
+  // #68 second review N7: the line's par is the one it used; the owner's, as get_order_setup gives it, is named apart.
+  it('names the owner’s par setupPar when a draft line’s par differs from it, and caps the line’s par at 999', async () => {
+    const draft = (par: number): StoredSetup => ({
+      ...SETUP, items: SETUP.items.map((item) => (item.id === LAGER ? { ...item, category: 'draft' as const, unit: 'kegs' as const, par } : item)),
+    });
+    const lineIn = (board: Record<string, unknown>, id: string): Record<string, unknown> | undefined =>
+      (board.orders as { lines: Record<string, unknown>[] }[])[0]?.lines.find((row) => row.itemId === id);
+    const board = json(await run('get_order_board', {}, context({ setup: draft(3) })));
+    // About 12 servings a day over 8 days is more than one 24-serving keg: one more than the owner's par.
+    expect(lineIn(board, LAGER)).toMatchObject({ par: 4, setupPar: 3 });
+    expect(lineIn(board, CIDER)).not.toHaveProperty('setupPar');
+    const line = json(await run('get_order_line', { itemId: LAGER }, context({ setup: draft(3) })));
+    expect(line.line).toMatchObject({ par: 4, setupPar: 3 });
+    const setup = json(await run('get_order_setup', {}, context({ setup: draft(3) })));
+    expect((setup.items as Record<string, unknown>[])[0]).toMatchObject({ id: LAGER, par: 3 });
+    const capped = lineIn(json(await run('get_order_board', {}, context({ setup: draft(999) }))), LAGER);
+    expect(capped).toMatchObject({ par: 999 });
+    expect(capped).not.toHaveProperty('setupPar');
   });
 
   it('never returns the labeled sample: with no setup it says what is missing', async () => {
@@ -283,6 +304,14 @@ describe('propose_order_rule', () => {
       expect(answer.reason).toContain('every later order of the item');
       expect(answer.reason).not.toContain('Sentinel game weekend');
     }
+  });
+
+  // #68 second review N1: a rule saved in another unit applies to no line, so its reason is proposed again.
+  it('shows a card when the change’s rule is in another unit, unless the owner turned it off', async () => {
+    expect(await run('propose_order_rule', { itemId: LAGER }, context({ decision: decision({}), rule: rule({ unit: 'bottles' }) })))
+      .toBe(ORDER_RULE_RESULT);
+    const off = json(await run('propose_order_rule', { itemId: LAGER }, context({ decision: decision({}), rule: rule({ unit: 'bottles', off: true }) })));
+    expect(off).toMatchObject({ shown: false, reason: expect.stringContaining('turned off') as unknown });
   });
 });
 

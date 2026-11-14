@@ -21,7 +21,8 @@ export const ITEM_SALES_DAYS = 182 + 6 + 56;
 export const MEAN_DAYS = 56;
 /**
  * How far back the latest count is read. A count older than 7 days still matters: the quantity is the par less what
- * it counted, where no count at all orders the whole par. The bound only keeps the read small.
+ * it counted, where no count at all orders the whole par. The read goes newest first and stops once every setup item
+ * has a count; the bound keeps it small when one never was.
  */
 export const COUNT_DAYS = 400;
 const FRESH_COUNT_DAYS = 7;
@@ -63,7 +64,7 @@ export async function loadBoardWithSales(
   const yesterday = addDays(today, -1);
   const [itemSales, counts, forecast, history, decisions, rules] = await Promise.all([
     stores.itemSales.days(scope, location.id, { from: addDays(today, -ITEM_SALES_DAYS), to: yesterday }),
-    stores.orderCounts.latest(scope, location.id, addDays(today, -COUNT_DAYS)),
+    stores.orderCounts.latest(scope, location.id, addDays(today, -COUNT_DAYS), setup.items.map((item) => item.id)),
     ctx.ports.forecasts.window(scope, location, { from: today, to: addDays(today, FORECAST_DAYS) }, today),
     stores.salesDays.days(scope, location.id, { from: addDays(today, -MEAN_DAYS), to: yesterday }),
     // Every delivery on the board is today or later, so older edits are never shown.
@@ -121,22 +122,36 @@ export interface SetupState {
   readonly itemCoverage: Readonly<Record<string, number>>;
   /** Per item id, its latest count in the 400 days before `today` (the board's read); an item not counted then is left out. */
   readonly counts: Readonly<Record<string, LatestCount>>;
+  /**
+   * The setup's item ids with history that removing the item would leave behind: any servings in the 244 days of item
+   * sales the board reads, a count in its 400 days, or any saved edit or rule.
+   */
+  readonly itemsWithHistory: readonly string[];
 }
 
-/** The setup and its item-sales coverage and counts as of `today` (the town's). GET .../orders/setup and get_order_setup. */
+/**
+ * The setup and its item-sales coverage, counts and history as of `today` (the town's). GET .../orders/setup and
+ * get_order_setup. Reads only what the board reads, and the setup items' edits and rules.
+ */
 export async function loadSetupState(ctx: TownwiseContext, scope: OrgScope, location: LocationRecord, today: string): Promise<SetupState> {
   const { stores } = ctx;
-  const [setup, coverage, recent, latest] = await Promise.all([
-    stores.orderSetups.get(scope, location.id),
-    stores.itemSales.coverage(scope, location.id),
-    stores.itemSales.days(scope, location.id, { from: addDays(today, -MEAN_DAYS), to: addDays(today, -1) }),
-    stores.orderCounts.latest(scope, location.id, addDays(today, -COUNT_DAYS)),
-  ]);
+  const setup = await stores.orderSetups.get(scope, location.id);
   const items = setup?.items ?? [];
+  const ids = items.map((item) => item.id);
+  const [coverage, days, latest, edited] = await Promise.all([
+    stores.itemSales.coverage(scope, location.id),
+    ids.length === 0 ? [] : stores.itemSales.days(scope, location.id, { from: addDays(today, -ITEM_SALES_DAYS), to: addDays(today, -1) }),
+    stores.orderCounts.latest(scope, location.id, addDays(today, -COUNT_DAYS), ids),
+    stores.orders.itemsWithEdits(scope, location.id, ids),
+  ]);
+  const recentSince = addDays(today, -MEAN_DAYS);
+  const recent = days.filter((day) => day.date >= recentSince);
   const itemCoverage = Object.fromEntries(items.map((item) => [item.id, recent.filter((day) => (day.items[item.id] ?? 0) > 0).length]));
   const counts = Object.fromEntries(items.flatMap((item) => {
     const count = latest.get(item.id);
     return count === undefined ? [] : [[item.id, { quantity: count.quantity, date: count.date }]];
   }));
-  return { setup, coverage, itemCoverage, counts };
+  const itemsWithHistory = ids.filter((id) =>
+    latest.has(id) || edited.has(id) || days.some((day) => (day.items[id] ?? 0) > 0));
+  return { setup, coverage, itemCoverage, counts, itemsWithHistory };
 }
