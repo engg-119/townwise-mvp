@@ -9,6 +9,8 @@ import { ReplyView } from '../../src/chat/ui/ReplyView';
 import { UserMessage } from '../../src/chat/ui/UserMessage';
 import { resetVersionFocus } from '../../src/chat/ui/VersionNav';
 import { visualTitle } from '../../src/chat/visuals/words';
+import { PortalStyles } from '../../src/portal/shell/PortalStyles.web';
+import { theme } from '../../src/theme';
 import { SALES_STEP } from '../helpers/chat';
 import { daily } from './visuals-fixtures';
 
@@ -40,7 +42,8 @@ afterEach(() => {
 });
 
 const CTX: ToolContext = { town: 'Hanover', hasTownProfile: true };
-const MINT = 'rgb(123, 210, 180)';
+// On web theme.color is var(--tw-<token>), which jsdom leaves unresolved, so a computed color names its token.
+const MINT = theme.color.mint;
 
 function fakeChat(over: Partial<TuningChat> = {}, state: Partial<TuningChatState> = {}): TuningChat {
   return {
@@ -48,7 +51,7 @@ function fakeChat(over: Partial<TuningChat> = {}, state: Partial<TuningChatState
       ...initialChatState(), status: 'ready', enabled: true, conversationId: 'c1',
       budget: { month: '2026-11', usedUsd: 1, limitUsd: 20, exhausted: false }, ...state,
     },
-    setDraft: jest.fn(), send: jest.fn(), ask: jest.fn(), stop: jest.fn(), stopAndSend: jest.fn(), newConversation: jest.fn(),
+    setDraft: jest.fn(), send: jest.fn(), ask: jest.fn(), tell: jest.fn(), stop: jest.fn(), stopAndSend: jest.fn(), newConversation: jest.fn(),
     openConversation: jest.fn(), deleteConversation: jest.fn(() => Promise.resolve()), rename: jest.fn(() => Promise.resolve()),
     save: jest.fn(), saveEdited: jest.fn(() => Promise.resolve()), edit: jest.fn(), cancelEdit: jest.fn(), dismiss: jest.fn(),
     reopen: jest.fn(), editMessage: jest.fn(), regenerate: jest.fn(), showVersion: jest.fn(), rate: jest.fn(), retry: jest.fn(),
@@ -66,7 +69,7 @@ function text(key: string, value: string): MessagePart {
 function msg(key: string, role: ChatMessage['role'], parts: MessagePart[], over: Partial<ChatMessage> = {}): ChatMessage {
   return {
     key, role, parts, state: 'complete', note: null, nodeId: null, parentId: null, feedback: null, ratingError: null, next: null,
-    request: null, startedAt: null, endedAt: null, ...over,
+    request: null, startedAt: null, endedAt: null, at: null, attachments: [], ...over,
   };
 }
 
@@ -79,13 +82,13 @@ type UserProps = React.ComponentProps<typeof UserMessage>;
 
 function replyProps(over: Partial<ReplyProps> = {}): ReplyProps {
   return {
-    message: SAVED, ctx: CTX, tree: TREE, newest: true, chat: fakeChat(), locationId: 'l1', readOnlyId: null, canAct: true,
+    message: SAVED, ctx: CTX, tree: TREE, newest: true, actions: 'always', chat: fakeChat(), locationId: 'l1', readOnlyId: null, canAct: true,
     onRetry: jest.fn(), onAnnounce: jest.fn(), ...over,
   };
 }
 
 function userProps(over: Partial<UserProps> = {}): UserProps {
-  return { message: ASKED, tree: TREE, chat: fakeChat(), readOnlyId: null, busy: false, onAnnounce: jest.fn(), ...over };
+  return { message: ASKED, tree: TREE, chat: fakeChat(), locationId: 'l1', readOnlyId: null, busy: false, actions: 'always', onAnnounce: jest.fn(), ...over };
 }
 
 function button(name: string): HTMLElement {
@@ -122,14 +125,15 @@ it('shows the caret only while the reply streams, and removes it on done, stop a
   expect(screen.getByText('your sales for Dec 1 to Dec 31, 2025')).toBeTruthy();
 });
 
-it('while it streams, Thinking… shows in small text2 until the thinking summary or a step arrives', () => {
+it('while it streams, only the counter shows until the thinking summary, in small text2, or a step arrives', () => {
   const running: ToolStep = { id: SALES_STEP.id, name: SALES_STEP.name, state: 'running', input: { ...SALES_STEP.input }, result: null };
   const view = render(<ReplyView {...replyProps({ message: msg('m2', 'assistant', [], { state: 'streaming' }) })} />);
-  expect(window.getComputedStyle(screen.getByText('Thinking…')).color).toBe('rgb(181, 187, 194)');
+  expect(screen.getByText('Working for 0s')).toBeTruthy();
+  expect(screen.queryByText('Thinking…')).toBeNull();
   expect(screen.queryByText('TownwiseAI is thinking…')).toBeNull();
   view.rerender(<ReplyView {...replyProps({ message: msg('m2', 'assistant', [{ type: 'thinking', key: 't', text: 'Weighing the weekend.' }], { state: 'streaming' }) })} />);
   expect(screen.queryByText('Thinking…')).toBeNull();
-  expect(window.getComputedStyle(screen.getByText('Weighing the weekend.')).color).toBe('rgb(181, 187, 194)');
+  expect(window.getComputedStyle(screen.getByText('Weighing the weekend.')).color).toBe(theme.color.text2);
   view.rerender(<ReplyView {...replyProps({ message: msg('m2', 'assistant', [{ type: 'tools', key: 'b', steps: [running] }], { state: 'streaming' }) })} />);
   expect(screen.queryByText('Thinking…')).toBeNull();
   expect(screen.getByText('your sales for Dec 1 to Dec 31, 2025')).toBeTruthy();
@@ -218,6 +222,17 @@ function RatedReply(props: { rate: jest.Mock }): React.JSX.Element {
   });
   return <ReplyView {...replyProps({ message, chat })} />;
 }
+
+it('Helpful and Not helpful are a thumb up and a thumb down, named by their words, dark on mint once chosen', () => {
+  render(<RatedReply rate={jest.fn()} />);
+  for (const name of ['Helpful', 'Not helpful']) {
+    const control = button(name);
+    expect(control.textContent).toBe('');
+    expect(control.querySelector('svg')?.getAttribute('stroke')).toBe(theme.color.white);
+  }
+  fireEvent.click(button('Helpful'));
+  expect(button('Helpful').querySelector('svg')?.getAttribute('stroke')).toBe(theme.color.onMint);
+});
 
 it('Helpful shows alone and pressed once chosen; pressing it again shows both; Not helpful asks the optional reason', () => {
   const rate = jest.fn();
@@ -588,7 +603,7 @@ it('Regenerate moves focus to the new reply’s version navigator once it is sav
   const regenerate = button('Regenerate');
   act(() => { regenerate.focus(); });
   fireEvent.click(regenerate);
-  expect(screen.getByText('Thinking…')).toBeTruthy();
+  expect(screen.getByText(/^Working for \d+s$/)).toBeTruthy();
   expect(await screen.findByText('Version 2 of 2')).toBeTruthy();
   expect(document.activeElement).toBe(button('Previous version'));
 });
@@ -622,8 +637,8 @@ it('the bubble is a rounded panel, right-aligned, at most 70% wide from 641px an
   const bubble = screen.getByTestId('user-bubble');
   const style = window.getComputedStyle(bubble);
   expect(style.borderTopLeftRadius).toBe('16px');
-  expect(style.backgroundColor).toBe('rgb(16, 19, 23)');
-  expect(style.borderTopColor).toBe('rgb(52, 56, 62)');
+  expect(style.backgroundColor).toBe(theme.color.panel);
+  expect(style.borderTopColor).toBe(theme.color.border);
   expect(bubble.style.maxWidth).toBe('70%');
   setWidth(360);
   expect(screen.getByTestId('user-bubble').style.maxWidth).toBe('85%');
@@ -680,4 +695,77 @@ it('next chips draw three chips when the model repeats a prompt', () => {
   } finally {
     error.mockRestore();
   }
+});
+
+it('the actions are icon buttons: an svg and no visible text, with the same names', () => {
+  render(<ReplyView {...replyProps()} />);
+  for (const name of ['Copy', 'Helpful', 'Not helpful']) {
+    const control = button(name);
+    expect(control.textContent).toBe('');
+    expect(control.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+  }
+  cleanup();
+  render(<ReplyView {...replyProps({ message: { ...SAVED, parentId: 'u1' } })} />);
+  expect(button('Regenerate').textContent).toBe('');
+  expect(button('Regenerate').querySelector('svg')).not.toBeNull();
+});
+
+it('Copy shows a check while it reads Copied', async () => {
+  render(<ReplyView {...replyProps()} />);
+  const before = button('Copy').querySelector('svg')?.innerHTML;
+  fireEvent.click(button('Copy'));
+  const copied = await screen.findByRole('button', { name: 'Copied' });
+  expect(copied.querySelector('svg')?.innerHTML).not.toBe(before);
+  expect(copied.querySelector('path')?.getAttribute('d')).toBe('M20 6 9 17l-5-5');
+});
+
+it('a reply’s row ends with its time: the clock today, the day on another day, none when unknown', () => {
+  const today = new Date(); today.setHours(20, 59, 0, 0);
+  const view = render(<ReplyView {...replyProps({ message: { ...SAVED, at: today.getTime() } })} />);
+  expect(screen.getByText('8:59 PM')).toBeTruthy();
+  const old = new Date(2020, 10, 9, 8, 5).getTime();
+  view.rerender(<ReplyView {...replyProps({ message: { ...SAVED, at: old } })} />);
+  expect(screen.getByText('Nov 9, 2020, 8:05 AM')).toBeTruthy();
+  view.rerender(<ReplyView {...replyProps({ message: { ...SAVED, at: null } })} />);
+  expect(document.querySelector('[data-actions]')?.textContent).toBe('');
+  view.rerender(<ReplyView {...replyProps({ message: { ...SAVED, at: old, state: 'streaming' } })} />);
+  expect(screen.queryByText('Nov 9, 2020, 8:05 AM')).toBeNull();
+});
+
+it('the person’s row is the time, Edit and Copy icons; Copy copies the message', async () => {
+  const old = new Date(2020, 10, 9, 8, 5).getTime();
+  render(<UserMessage {...userProps({ message: { ...ASKED, at: old } })} />);
+  const edit = button('Edit');
+  expect(edit.textContent).toBe('');
+  expect(edit.querySelector('svg')).not.toBeNull();
+  const time = screen.getByText('Nov 9, 2020, 8:05 AM');
+  expect(before(time, edit)).toBe(true);
+  expect(before(edit, button('Copy'))).toBe(true);
+  fireEvent.click(button('Copy'));
+  expect(writeText).toHaveBeenCalledWith('How was December?');
+  expect(await screen.findByRole('button', { name: 'Copied' })).toBeTruthy();
+});
+
+it('each message is marked data-msg and its row data-actions always or hover; the rows hide with opacity only', () => {
+  const { container } = render(
+    <>
+      <PortalStyles />
+      <div id="tw-portal">
+        <UserMessage {...userProps({ actions: 'hover' })} />
+        <ReplyView {...replyProps({ actions: 'always' })} />
+      </div>
+    </>,
+  );
+  expect(container.querySelectorAll('[data-msg]')).toHaveLength(2);
+  expect([...container.querySelectorAll('[data-actions]')].map((row) => row.getAttribute('data-actions'))).toEqual(['hover', 'always']);
+  const css = [...document.querySelectorAll('style')].map((element) => element.textContent).find((text) => text.includes('data-actions')) ?? '';
+  expect(css).toContain('#tw-portal [data-actions="hover"]{opacity:0}');
+  expect(css).toContain('#tw-portal [data-msg]:hover [data-actions="hover"]');
+  expect(css).toContain('#tw-portal [data-msg]:focus-within [data-actions="hover"]');
+  expect(css).toContain('@media (hover:none){#tw-portal [data-actions="hover"]{opacity:1}}');
+  expect(css).not.toContain('display:none');
+  // Hidden rows stay in the tab order: the controls are still there.
+  cleanup();
+  render(<UserMessage {...userProps({ actions: 'hover' })} />);
+  expect(button('Edit')).toBeTruthy();
 });

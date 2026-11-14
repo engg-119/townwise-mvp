@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How it's doing</title>
+<style>
+body { font-family: Georgia, serif; margin: 2rem; max-width: 46rem; color: #1c1c1c; }
+.banner { background: #f4efe6; border: 1px solid #d8d0c4; padding: 0.8rem 1rem; }
+table { border-collapse: collapse; width: 100%; margin: 1rem 0 2rem; }
+th, td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid #e4e0d8; }
+</style>
+</head>
+<body>
+<p>Built from the synthetic dataset in data/synthetic, not a real bar's sales.</p>
+<p class="banner">For the owner only. Do not send this to staff.</p>
+<h1>How it's doing</h1>
+<p>Purchase units. Known waste is comps plus voids marked as waste. Unexplained is the rest of the gap between the estimate and the count.</p>
+<table>
+<thead><tr><th>Item</th><th>Counted</th><th>Estimated</th><th>Known waste</th><th>Unexplained</th></tr></thead>
+<tbody>
+<tr><td>P001</td><td>1.67</td><td>2.29</td><td>1.38</td><td>0.62</td></tr><tr><td>P002</td><td>3.00</td><td>1.92</td><td>0.42</td><td>-1.08</td></tr><tr><td>P003</td><td>3.00</td><td>2.33</td><td>0.37</td><td>-0.67</td></tr><tr><td>P004</td><td>3.00</td><td>3.13</td><td>0.25</td><td>0.13</td></tr><tr><td>P005</td><td>2.17</td><td>-0.54</td><td>0.38</td><td>-2.71</td></tr><tr><td>P006</td><td>2.12</td><td>3.95</td><td>0.42</td><td>1.83</td></tr><tr><td>P007</td><td>3.00</td><td>3.46</td><td>0.08</td><td>0.46</td></tr><tr><td>P008</td><td>0.58</td><td>-0.38</td><td>0.21</td><td>-0.96</td></tr><tr><td>P101</td><td>0.00</td><td>1.13</td><td>0.16</td><td>1.13</td></tr><tr><td>P102</td><td>1.50</td><td>0.98</td><td>0.06</td><td>-0.52</td></tr><tr><td>P103</td><td>1.75</td><td>1.66</td><td>0.15</td><td>-0.09</td></tr><tr><td>P104</td><td>1.75</td><td>3.04</td><td>0.02</td><td>1.29</td></tr><tr><td>P201</td><td>9.10</td><td>10.40</td><td>0.51</td><td>1.30</td></tr><tr><td>P202</td><td>5.80</td><td>5.55</td><td>0.43</td><td>-0.25</td></tr><tr><td>P203</td><td>5.70</td><td>0.78</td><td>0.10</td><td>-4.92</td></tr><tr><td>P204</td><td>2.40</td><td>4.54</td><td>0.08</td><td>2.14</td></tr><tr><td>P205</td><td>3.80</td><td>5.00</td><td>0.13</td><td>1.20</td></tr><tr><td>P206</td><td>6.70</td><td>4.77</td><td>0.05</td><td>-1.93</td></tr><tr><td>P207</td><td>4.20</td><td>9.39</td><td>0.12</td><td>5.19</td></tr><tr><td>P208</td><td>5.10</td><td>2.14</td><td>0.10</td><td>-2.96</td></tr><tr><td>P209</td><td>5.40</td><td>3.01</td><td>0.00</td><td>-2.39</td></tr><tr><td>P210</td><td>4.70</td><td>6.35</td><td>0.29</td><td>1.65</td></tr><tr><td>P211</td><td>3.50</td><td>3.26</td><td>0.28</td><td>-0.24</td></tr><tr><td>P301</td><td>4.21</td><td>3.25</td><td>0.33</td><td>-0.96</td></tr>
+</tbody>
+</table>
+<h1>Void review</h1>
+<p>Patterns to review. Not an accusation, and not for staff.</p>
+<p>Pattern to review: BT-04 has more voids that were not marked as waste on Friday and Saturday nights, in the last few hours before close, from 2026-02-06 to 2026-06-27 (73 voids). This is a pattern to review, not a conclusion about what happened.</p><ul><li>Friday and Saturday are the busiest nights, so there are more rings to correct.</li><li>A new button or a changed menu layout can cause a run of wrong-item voids.</li><li>A closing manager may void several tickets at once while checking tabs.</li><li>Training shifts cluster mistakes late, when the bar is loud.</li></ul>
+<table>
+<thead><tr><th>Slice</th><th>Group</th><th>Voids</th><th>Share</th></tr></thead>
+<tbody>
+<tr><td>employee</td><td>BT-04</td><td>290</td><td>16.6%</td></tr><tr><td>employee</td><td>BT-01</td><td>284</td><td>16.2%</td></tr><tr><td>employee</td><td>BT-02</td><td>245</td><td>14.0%</td></tr><tr><td>employee</td><td>BT-03</td><td>242</td><td>13.8%</td></tr><tr><td>employee</td><td>BT-05</td><td>205</td><td>11.7%</td></tr><tr><td>employee</td><td>BT-06</td><td>196</td><td>11.2%</td></tr><tr><td>employee</td><td>BT-07</td><td>155</td><td>8.8%</td></tr><tr><td>employee</td><td>BT-08</td><td>135</td><td>7.7%</td></tr><tr><td>weekday</td><td>Sat</td><td>553</td><td>31.6%</td></tr><tr><td>weekday</td><td>Fri</td><td>490</td><td>28.0%</td></tr><tr><td>weekday</td><td>Thu</td><td>274</td><td>15.6%</td></tr><tr><td>weekday</td><td>Wed</td><td>202</td><td>11.5%</td></tr><tr><td>weekday</td><td>Tue</td><td>151</td><td>8.6%</td></tr><tr><td>weekday</td><td>Mon</td><td>82</td><td>4.7%</td></tr><tr><td>hour</td><td>22</td><td>221</td><td>12.6%</td></tr><tr><td>hour</td><td>20</td><td>220</td><td>12.6%</td></tr><tr><td>hour</td><td>21</td><td>220</td><td>12.6%</td></tr><tr><td>hour</td><td>19</td><td>175</td><td>10.0%</td></tr><tr><td>hour</td><td>23</td><td>169</td><td>9.6%</td></tr><tr><td>hour</td><td>18</td><td>165</td><td>9.4%</td></tr><tr><td>hour</td><td>17</td><td>135</td><td>7.7%</td></tr><tr><td>hour</td><td>00</td><td>129</td><td>7.4%</td></tr><tr><td>hour</td><td>16</td><td>110</td><td>6.3%</td></tr><tr><td>hour</td><td>15</td><td>86</td><td>4.9%</td></tr><tr><td>hour</td><td>14</td><td>66</td><td>3.8%</td></tr><tr><td>hour</td><td>13</td><td>36</td><td>2.1%</td></tr><tr><td>hour</td><td>12</td><td>16</td><td>0.9%</td></tr><tr><td>hour</td><td>11</td><td>4</td><td>0.2%</td></tr><tr><td>reason</td><td>Rang in wrong item</td><td>678</td><td>38.7%</td></tr><tr><td>reason</td><td>Guest changed mind</td><td>365</td><td>20.8%</td></tr><tr><td>reason</td><td>Made wrong / remake</td><td>237</td><td>13.5%</td></tr><tr><td>reason</td><td>Duplicate ring</td><td>167</td><td>9.5%</td></tr><tr><td>reason</td><td>Spilled / dropped</td><td>132</td><td>7.5%</td></tr><tr><td>reason</td><td>Walkout / unpaid tab</td><td>98</td><td>5.6%</td></tr><tr><td>reason</td><td>Quality issue (flat keg, wrong temp)</td><td>75</td><td>4.3%</td></tr>
+</tbody>
+</table>
+</body>
+</html>

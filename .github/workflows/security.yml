@@ -13,11 +13,14 @@ concurrency:
   group: security-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Every job runs where the CI_RUNS_ON repository variable (JSON) points, else on ubuntu-24.04: set to
+# ["self-hosted","townwise-laptop"] while GitHub-hosted runners are unavailable (infra/README.md, "CI on the
+# laptop runner"). deploy.yml never reads it: id-token-guard requires literal ubuntu-24.04 there.
 jobs:
   osv-scanner:
     # Stable check name (infra/README.md lists it); keep it if branch protection is added later.
     name: osv-scanner
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -26,10 +29,16 @@ jobs:
       - name: Install osv-scanner 2.6.0 (checksum verified)
         run: |
           set -euo pipefail
+          # SHA-256 from the release's osv-scanner_SHA256SUMS (github.com/google/osv-scanner/releases/tag/v2.6.0).
+          if [ "$RUNNER_ARCH" = ARM64 ]; then
+            asset=osv-scanner_linux_arm64 sum=2c71403eb443d05891c4f268c3ad771cf4f16e5443463fd7851ef8f454d3c7e4
+          else
+            asset=osv-scanner_linux_amd64 sum=ca69b3d3cd08f889a49dc0a383122f71cc528b83803671df5fd874d97485b108
+          fi
           mkdir -p "$RUNNER_TEMP/bin"
           curl -fsSL -o "$RUNNER_TEMP/bin/osv-scanner" \
-            https://github.com/google/osv-scanner/releases/download/v2.6.0/osv-scanner_linux_amd64
-          echo "ca69b3d3cd08f889a49dc0a383122f71cc528b83803671df5fd874d97485b108  $RUNNER_TEMP/bin/osv-scanner" | sha256sum -c -
+            "https://github.com/google/osv-scanner/releases/download/v2.6.0/$asset"
+          echo "$sum  $RUNNER_TEMP/bin/osv-scanner" | sha256sum -c -
           chmod +x "$RUNNER_TEMP/bin/osv-scanner"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Dependencies (any finding fails; exit 128 = no lockfile found, also fails)
@@ -38,7 +47,7 @@ jobs:
   semgrep:
     # Stable check name (infra/README.md lists it); keep it if branch protection is added later.
     name: semgrep
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -54,7 +63,7 @@ jobs:
   checkov:
     # Stable check name (infra/README.md lists it); keep it if branch protection is added later.
     name: checkov
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

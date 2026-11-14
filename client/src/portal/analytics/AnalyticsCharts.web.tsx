@@ -1,13 +1,18 @@
 import { theme } from '../../theme';
 import { formatCount } from '../format';
 import type { BarChartProps, EffectBarProps, LineChartProps } from './AnalyticsCharts';
-import { MONTH_NAMES, metricNumber, type Metric } from './words';
+import type { TipBar } from './barTips';
+import { slotIndex } from './hoverMath';
+import { ChartTooltip, useChartHover } from './ChartTooltip.web';
+import { MONTH_NAMES, metricNumber, metricText, type Metric } from './words';
 
 // Analytics' charts on web (home.md 4.6, spec 15.6, D21), inline SVG with no chart library, as the Sales data
-// chart is drawn: mint bars and lines, solid, 2px, square ends, on recessive `border` rules, with the scale printed
-// and "Scale fitted to this location." Every SVG is aria-hidden: the section's summary, basis line and table carry
-// the same numbers. With more than one year, the newest is mint and the others `line` grey, each labelled with its
-// year at its end and in the key, so a year is never told by colour alone.
+// chart is drawn: mint bars and lines, solid, 2px, square ends, on recessive `border` rules at 0, the middle and the
+// top of the scale, each with its count up the side, and the scale printed with "Scale fitted to this location."
+// Every SVG and count is aria-hidden: the section's summary, basis line and table carry
+// the same numbers. With more than one year, the newest is mint and the others `line` gray, each labeled with its
+// year at its end and in the key, so a year is never told by color alone. A mouse or pen over a vertical bar
+// highlights it and shows its tooltip (ChartTooltip.web.tsx); a bar may bring its own words (TipBar).
 
 const C = theme.color;
 const mono = { fontFamily: theme.font.mono, fontSize: 12, lineHeight: '16px', color: C.text3, fontVariantNumeric: 'tabular-nums' } as const;
@@ -30,32 +35,82 @@ function Scale(props: { top: number; metric: Metric }): React.JSX.Element {
   );
 }
 
+/** Room at the left for the counts up the side, as the Sales data chart has. */
+const GUTTER = 72;
+
+/**
+ * The top of the scale, its middle and 0. `scaleTop` makes the middle a round number, except under 2.5 times a
+ * power of ten, where it is a half (12.5 guests): that middle is left out rather than printed rounded off its rule.
+ */
+function ticks(top: number, metric: Metric): number[] {
+  const middle = top / 2;
+  const whole = metric === 'guests' ? Number.isInteger(middle) : middle % 100 === 0;
+  return whole ? [top, middle, 0] : [top, 0];
+}
+
+function rulesPath(values: readonly number[], y: (value: number) => number, width: number): string {
+  return values.map((value) => `M0 ${String(y(value))} H${String(width)}`).join(' ');
+}
+
+/** Each tick's count, centered on its rule at the left of a `position: relative` box with a GUTTER margin. */
+function Counts(props: { values: readonly number[]; metric: Metric; y: (value: number) => number }): React.JSX.Element {
+  return (
+    <>
+      {props.values.map((value) => (
+        <span
+          key={value}
+          data-count=""
+          aria-hidden="true"
+          style={{ ...mono, position: 'absolute', left: -GUTTER, width: GUTTER - 8, textAlign: 'right', top: props.y(value), transform: 'translateY(-50%)' }}
+        >
+          {metricNumber(value, props.metric)}
+        </span>
+      ))}
+    </>
+  );
+}
+
 function maxOf(values: readonly (number | null)[]): number {
   return values.reduce<number>((max, value) => (value !== null && value > max ? value : max), 0);
 }
 
 const HEIGHT = 160;
 
-/** Vertical bars, one per label (weekdays, months). */
+/** Vertical bars, one per label (weekdays, months). Hovering a bar highlights it and shows its label and value. */
 export function BarChart(props: BarChartProps): React.JSX.Element | null {
-  const top = scaleTop(maxOf(props.bars.map((bar) => bar.value)));
-  if (props.bars.every((bar) => bar.value === null)) return null;
-  const n = props.bars.length;
+  const bars: readonly TipBar[] = props.bars;
+  const top = scaleTop(maxOf(bars.map((bar) => bar.value)));
+  const n = bars.length;
+  const [hover, bind] = useChartHover((fraction) => {
+    const index = slotIndex(fraction, n);
+    return index === null || bars[index]?.value === null ? null : index;
+  });
+  if (bars.every((bar) => bar.value === null)) return null;
   const width = 300;
   const slot = width / n;
   const bar = Math.min(28, slot * 0.6);
+  const y = (value: number): number => HEIGHT - 0.5 - (value / top) * (HEIGHT - 1);
+  const values = ticks(top, props.metric);
+  const hovered = hover.index === null ? undefined : bars[hover.index];
+  const tip = hovered === undefined || hovered.value === null ? null
+    : hovered.tip === undefined ? { title: hovered.label, lines: [metricText(hovered.value, props.metric)] } : hovered.tip;
   return (
     <div style={{ display: 'grid', gap: 8 }}>
-      <svg viewBox={`0 0 ${String(width)} ${String(HEIGHT)}`} preserveAspectRatio="none" aria-hidden="true" focusable="false" style={{ width: '100%', height: HEIGHT, display: 'block' }}>
-        <path d={`M0 0.5 H${String(width)} M0 ${String(HEIGHT - 0.5)} H${String(width)}`} stroke={C.border} strokeWidth={1} vectorEffect="non-scaling-stroke" />
-        {props.bars.map((each, index) => {
-          if (each.value === null) return null;
-          const h = (each.value / top) * (HEIGHT - 1);
-          return <rect key={each.label} x={index * slot + (slot - bar) / 2} y={HEIGHT - h} width={bar} height={h} fill={C.mint} />;
-        })}
-      </svg>
-      <div aria-hidden="true" style={{ ...mono, display: 'grid', gridTemplateColumns: `repeat(${String(n)}, minmax(0, 1fr))`, textAlign: 'center' }}>
-        {props.bars.map((each) => <span key={each.label} style={{ overflow: 'hidden', whiteSpace: 'nowrap' }}>{each.label}</span>)}
+      <div style={{ position: 'relative', height: HEIGHT, marginLeft: GUTTER }}>
+        <svg {...bind} viewBox={`0 0 ${String(width)} ${String(HEIGHT)}`} preserveAspectRatio="none" aria-hidden="true" focusable="false" style={{ width: '100%', height: HEIGHT, display: 'block' }}>
+          <path d={rulesPath(values, y, width)} stroke={C.border} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+          {hover.index !== null && tip !== null ? <rect data-hover="bar" x={hover.index * slot} y={0} width={slot} height={HEIGHT} fill={C.white} fillOpacity={0.1} /> : null}
+          {bars.map((each, index) => {
+            if (each.value === null) return null;
+            const h = (each.value / top) * (HEIGHT - 1);
+            return <rect key={each.label} x={index * slot + (slot - bar) / 2} y={HEIGHT - h} width={bar} height={h} fill={C.mint} />;
+          })}
+        </svg>
+        <Counts values={values} metric={props.metric} y={y} />
+        {hover.index !== null && tip !== null ? <ChartTooltip tip={tip} x={((hover.index + 0.5) / n) * hover.width} alignRight={hover.index + 0.5 > n / 2} /> : null}
+      </div>
+      <div aria-hidden="true" style={{ ...mono, display: 'grid', gridTemplateColumns: `repeat(${String(n)}, minmax(0, 1fr))`, textAlign: 'center', marginLeft: GUTTER }}>
+        {bars.map((each) => <span key={each.label} style={{ overflow: 'hidden', whiteSpace: 'nowrap' }}>{each.label}</span>)}
       </div>
       <Scale top={top} metric={props.metric} />
     </div>
@@ -107,22 +162,23 @@ export function LineChart(props: LineChartProps): React.JSX.Element | null {
   const x = (month: number): number => inset + ((month - 1) / 11) * (width - 2 * inset);
   const y = (value: number): number => inset + (1 - value / top) * (HEIGHT - 2 * inset);
   const newest = Math.max(...props.lines.map((line) => line.year));
-  const colour = (year: number): string => (year === newest ? C.mint : C.line);
+  const color = (year: number): string => (year === newest ? C.mint : C.line);
+  const ticked = ticks(top, props.metric);
   return (
     <div style={{ display: 'grid', gap: 8 }}>
       <div aria-hidden="true" style={{ ...mono, color: C.text2, display: 'flex', flexWrap: 'wrap', gap: '4px 16px' }}>
         {props.lines.map((line) => (
           <span key={line.year} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ display: 'inline-block', width: 16, borderTop: `2px solid ${colour(line.year)}` }} />{line.year}
+            <span style={{ display: 'inline-block', width: 16, borderTop: `2px solid ${color(line.year)}` }} />{line.year}
           </span>
         ))}
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <span style={{ display: 'inline-block', width: 8, height: 8, boxSizing: 'border-box', border: `2px solid ${C.line}`, borderRadius: 4 }} />Month not complete
         </span>
       </div>
-      <div style={{ position: 'relative', height: HEIGHT }}>
+      <div style={{ position: 'relative', height: HEIGHT, marginLeft: GUTTER }}>
         <svg viewBox={`0 0 ${String(width)} ${String(HEIGHT)}`} preserveAspectRatio="none" aria-hidden="true" focusable="false" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', overflow: 'visible' }}>
-          <path d={`M0 0.5 H${String(width)} M0 ${String(HEIGHT - 0.5)} H${String(width)}`} stroke={C.border} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+          <path d={rulesPath(ticked, y, width)} stroke={C.border} strokeWidth={1} vectorEffect="non-scaling-stroke" />
           {[...props.lines].sort((a, b) => a.year - b.year).map((line) => {
             const parts: string[] = [];
             let open = false;
@@ -133,13 +189,13 @@ export function LineChart(props: LineChartProps): React.JSX.Element | null {
             });
             return (
               <g key={line.year}>
-                <path d={parts.join(' ')} fill="none" stroke={colour(line.year)} strokeWidth={2} strokeLinecap="square" strokeLinejoin="miter" vectorEffect="non-scaling-stroke" />
+                <path d={parts.join(' ')} fill="none" stroke={color(line.year)} strokeWidth={2} strokeLinecap="square" strokeLinejoin="miter" vectorEffect="non-scaling-stroke" />
                 {line.points.map((point, index) => {
                   if (point === null || point.complete) return null;
                   const d = `M${x(index + 1).toFixed(2)} ${y(point.value).toFixed(2)} h0.01`;
                   return (
                     <g key={index}>
-                      <path d={d} stroke={colour(line.year)} strokeWidth={9} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+                      <path d={d} stroke={color(line.year)} strokeWidth={9} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
                       <path d={d} stroke={C.ground} strokeWidth={5} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
                     </g>
                   );
@@ -157,8 +213,9 @@ export function LineChart(props: LineChartProps): React.JSX.Element | null {
             {label.year}
           </span>
         ))}
+        <Counts values={ticked} metric={props.metric} y={y} />
       </div>
-      <div aria-hidden="true" style={{ ...mono, position: 'relative', height: 16 }}>
+      <div aria-hidden="true" style={{ ...mono, position: 'relative', height: 16, marginLeft: GUTTER }}>
         {MONTH_NAMES.map((name, index) => (
           <span key={name} style={{ position: 'absolute', left: `${String((x(index + 1) / width) * 100)}%`, transform: 'translateX(-50%)' }}>
             {name.slice(0, 1)}

@@ -4,7 +4,8 @@
 // too_complex; the API process is untouched. The time limit covers the file's reads from storage too: a stalled read
 // is aborted, so it never holds the replica's reader or the import's lease. A ZIP is not fed: the thread asks for the
 // byte ranges it needs (its directory, then each entry), and this side answers each from storage, continuing one open
-// download while the reads are in order.
+// download while the reads are in order. The thread runs only while it holds the process's one parse-thread slot
+// (thread-slot.ts), shared with the TownwiseAI reader's text thread, so the two never hold their heaps at once.
 import { Worker, type ResourceLimits } from 'node:worker_threads';
 
 import type { FileAnswers } from '../../stores/files.ts';
@@ -16,6 +17,7 @@ import { READ_TIME_MS, THREAD_CHUNK_BYTES, THREAD_LIMITS } from '../limits.ts';
 import type { SalesDay } from './days.ts';
 import type { KeptOutcome, QuestionDraft } from './mapping.ts';
 import type { TableReport } from './table.ts';
+import { inThreadSlot } from './thread-slot.ts';
 
 /** A file's report (spec 11A): the primary table's, totals over every used sheet, and each sheet's fate. */
 export type FileReport = TableReport & {
@@ -82,8 +84,27 @@ export interface ParseInput {
 
 const THREAD_URL = new URL('./thread.ts', import.meta.url);
 
-/** A queue of the thread's messages, read one at a time. */
-function inbox(worker: Worker): { next(): Promise<ThreadOut> } {
+const THREAD_OUT_TYPES: ReadonlySet<string> = new Set<ThreadOut['type']>(['ack', 'again', 'progress', 'read', 'model', 'result']);
+
+/**
+ * True for the parse thread's own messages. Node can post others on a worker's port: under `node --watch` (the api's
+ * `npm run dev`) each module the thread loads arrives as `{ 'watch:import': [...] }`, some mid-file, since the thread
+ * loads its PDF and archive readers on demand.
+ */
+export function isThreadOut(message: unknown): message is ThreadOut {
+  return typeof message === 'object' && message !== null && 'type' in message
+    && typeof message.type === 'string' && THREAD_OUT_TYPES.has(message.type);
+}
+
+/** The worker events the inbox listens to. */
+export interface InboxSource {
+  on(event: 'message', listener: (message: unknown) => void): unknown;
+  on(event: 'error', listener: (err: Error) => void): unknown;
+  on(event: 'exit', listener: (code: number) => void): unknown;
+}
+
+/** A queue of the thread's messages, read one at a time; any other message on the port is dropped. */
+export function inbox(worker: InboxSource): { next(): Promise<ThreadOut> } {
   const waiting: ((message: ThreadOut | Error) => void)[] = [];
   const queued: (ThreadOut | Error)[] = [];
   const deliver = (message: ThreadOut | Error): void => {
@@ -91,7 +112,9 @@ function inbox(worker: Worker): { next(): Promise<ThreadOut> } {
     if (take === undefined) queued.push(message);
     else take(message);
   };
-  worker.on('message', deliver);
+  worker.on('message', (message: unknown) => {
+    if (isThreadOut(message)) deliver(message);
+  });
   worker.on('error', (err: Error) => { deliver(err); });
   worker.on('exit', (code) => { deliver(new Error(`parse thread exited (${String(code)})`)); });
   return {
@@ -159,8 +182,15 @@ function isTooComplex(err: unknown): boolean {
   return err instanceof Error && 'code' in err && (err as { code?: unknown }).code === 'ERR_WORKER_OUT_OF_MEMORY';
 }
 
-/** One file through the parse thread. Any other thread failure rejects (the worker counts it as an attempt). */
-export async function runParse(input: ParseInput): Promise<FileOutcome> {
+/**
+ * One file through the parse thread, once the parse-thread slot is free. Any other thread failure rejects (the worker
+ * counts it as an attempt).
+ */
+export function runParse(input: ParseInput): Promise<FileOutcome> {
+  return inThreadSlot(() => parse(input));
+}
+
+async function parse(input: ParseInput): Promise<FileOutcome> {
   const worker = new Worker(THREAD_URL, { resourceLimits: input.resourceLimits ?? THREAD_LIMITS });
   const messages = inbox(worker);
   const stop = new AbortController();

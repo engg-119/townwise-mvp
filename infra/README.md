@@ -9,7 +9,7 @@ Everything runs in the Azure Sponsorship subscription `2d2c15bf-1b72-4e0c-a4cb-5
 - **Web:** Static Web Apps (Free) serving the Expo web export. `infra/web/staticwebapp.config.json` sets the headers from `client/MODULE.md` and the `/index.html` fallback. Domains `townwise.tech` and `www`.
 - **DNS:** Azure DNS for `townwise.tech`.
 - **Email:** Azure Communication Services, from `no-reply@townwise.tech`, sent with the app's managed identity. Access keys are disabled. DMARC is `p=reject`.
-- **CI:** GitHub Actions reaches Azure only through an OIDC federated credential on a managed identity, for `deploy.yml` on `main` only. No CI identity is an app registration, and there is no client secret.
+- **CI:** GitHub Actions reaches Azure only through an OIDC federated credential on a managed identity, for `deploy.yml` on `main` only. No CI identity is an app registration, and there is no client secret. While GitHub-hosted runners are blocked, the checks (never `deploy.yml`) can run on the owner's laptop (CI on the laptop runner).
 - **Lab callback audience:** one app registration, `townwise-lab-callback` (`terraform/bootstrap/lab.tf`), is the audience the forecast lab job's managed identity signs in to the API with (step 20). It holds no secret, certificate or federated credential, no app role and no permission.
 
 | Stack | Applied by | Holds |
@@ -101,6 +101,7 @@ cd "$(git rev-parse --show-toplevel)"
 V=kv-townwise-2d2c15bf
 printf 'k1:%s' "$(openssl rand -base64 32)" | infra/scripts/set-secret.sh "$V" auth-jwt-keys
 printf 'e1:%s' "$(openssl rand -base64 32)" | infra/scripts/set-secret.sh "$V" auth-encryption-keys
+openssl rand -base64 32 | infra/scripts/set-secret.sh "$V" townwise-calendar-key    # seals calendar links (step 21)
 
 # The database users' connection strings. The cluster host comes from its connection string, which ARM
 # returns with <user> and <password> placeholders. Options from Microsoft's Node.js quickstart; DocumentDB
@@ -115,7 +116,7 @@ printf 'mongodb+srv://townwise-backup:%s@%s/townwise?%s' "$(pw)" "$host" "$O" | 
 printf 'none' | infra/scripts/set-secret.sh "$V" mongodb-restore-uri     # no restore user until a restore (step 14)
 ```
 
-**Rotation.** JWT and encryption rings: run the same command, then `az containerapp revision restart`; key order is in `api/kit/auth/MODULE.md`. Database users: write a new `mongodb-uri` or `mongodb-backup-uri` as above (same user name, new password), run the db-users job (step 7), then restart the API revision; between the job and the restart, new pool connections fail, so do it at a quiet time. Admin password: bump `db_admin_password_version` and apply. Container Apps picks up new secret versions within about 30 minutes on its own; a job started sooner can still see the old value, so wait, or check what the db-users job reports.
+**Rotation.** JWT and encryption rings: run the same command, then `az containerapp revision restart`; key order is in `api/kit/auth/MODULE.md`. Database users: write a new `mongodb-uri` or `mongodb-backup-uri` as above (same user name, new password), run the db-users job (step 7), then restart the API revision; between the job and the restart, new pool connections fail, so do it at a quiet time. Admin password: bump `db_admin_password_version` and apply. The calendar key is never rotated (step 21). Container Apps picks up new secret versions within about 30 minutes on its own; a job started sooner can still see the old value, so wait, or check what the db-users job reports.
 
 ### 6. Images
 
@@ -230,7 +231,9 @@ On GitHub Free a private repository has no environments, environment variables o
 
 - **Member privileges:** base permissions **Read**, and **Allow forking of private repositories** on.
 - **Collaborators:** Read on `engg-119-mvp`. Only the owner has write or admin.
-- **Actions, General, private repository fork pull requests:** **Run workflows from fork pull requests** on. **Send write tokens to workflows from fork pull requests** off. **Send secrets and variables to workflows from fork pull requests** off.
+- **Actions, General, private repository fork pull requests:** **Run workflows from fork pull requests** on, and **Require approval for fork pull request workflows** on, always: the laptop runner (CI on the laptop runner) can be started at any time. **Send write tokens to workflows from fork pull requests** off. **Send secrets and variables to workflows from fork pull requests** off.
+
+Approving a fork pull request's workflows while the laptop runner is in use runs its code on the owner's Mac, with everything that section's Security list says a job can reach. Read the whole diff before approving, not only the workflows.
 
 CI and Security run on those pull requests with read-only tokens. Nothing enforces them, so check them before merging. CI's `id-token-guard` parses every workflow and fails unless `jobs.deploy` in `deploy.yml` is the only job that can request an OIDC token; it is a check, not a gate.
 
@@ -461,6 +464,106 @@ The lab retrains a location's forecast model in Azure, from the sales the API ha
      | while read -r d; do az acr manifest delete -r crtownwise2d2c15bf -n "townwise-lab@$d" --yes; done
    ```
 
+### 21. Calendar links
+
+A location keeps its own calendars, each an imported file or a link (`api/README.md`, Owner calendars). Links are off until the API has `TOWNWISE_CALENDAR_KEY`, the AES-256-GCM key that seals each link's address in the database; off, adding a link answers 503 `calendar_links_unavailable` and no refresh runs, while calendar files still import. With it, the API fetches the addresses owners paste, from its own egress, which reaches the virtual network: the guards against request forgery are in code (`api/src/calendar/fetch.ts`).
+
+`townwise-calendar-key` joins `api_secrets` only when `enable_calendar_links` is true (default false), so a release that carries this code deploys with links off. Seed the secret before turning it on: a Key Vault reference to a missing secret fails the new revision. A fresh build seeds it in step 5.
+
+1. **Create and seed the key**, without it reaching argv, history or the terminal (`openssl` writes it to the pipe, and `set-secret.sh` hands it to `az keyvault secret set` on stdin):
+
+   ```sh
+   cd "$(git rev-parse --show-toplevel)"
+   openssl rand -base64 32 | infra/scripts/set-secret.sh kv-townwise-2d2c15bf townwise-calendar-key
+   ```
+
+2. **Turn it on.** Add `enable_calendar_links = true` to `infra/terraform/production/terraform.tfvars`, then `terraform plan` and `terraform apply` from `infra/terraform/production`. The plan adds one role assignment (the app's identity reads `townwise-calendar-key` only) and changes the Container App (the `townwise-calendar-key` Key Vault reference and the `TOWNWISE_CALENDAR_KEY` env var), which starts a new revision. A value that is not 32 bytes of base64 stops the revision at boot with a `ConfigError` naming `TOWNWISE_CALENDAR_KEY`: seed it again and restart.
+3. **Check.** Signed in as a member of a test organization, add a public test calendar's `.ics` link to a location (`POST /api/org/locations/<id>/owner-calendars` with `kind: 'link'`): it answers 201 with the link's host and event count, and no answer shows the address. About 6 hours later, `ContainerAppConsoleLogs | where Log has "townwise.calendar_refreshed"` shows its refresh, with the calendar id, the status code, counts and the duration only.
+
+**Never change the key.** A link sealed under one key opens under no other, so a new key makes every stored calendar link unreadable: each fails its next refresh with status `key_mismatch` until its owner adds it again (the events already stored stay). Change it only if it leaks: seed a new one with the same command, run `az containerapp revision restart`, and ask the owners to add their links again.
+
+## Releases
+
+A release is a release PR merging `develop` into `main`. The merge deploys through `deploy.yml`; while hosted Actions is blocked, the release is deployed by hand instead (as `v2026.11.11` was). Once the new revision is confirmed live, the release gets an annotated tag and a GitHub Release (owner decision, 2026-11-12; every release since `v2026.11.04` has one).
+
+- **Name:** `v` plus the merge commit's date in Hanover (America/New_York), `vYYYY.MM.DD`. A second release that day ends in `.2`, then `.3` (2026-11-05 ran from `v2026.11.05` to `v2026.11.05.9`).
+- **Target:** the release PR's merge commit on `main`.
+- **Notes:** the release PR and how it deployed (a link to the deploy run, or "deployed by hand"), then GitHub's generated list of the PRs since the previous release.
+
+```sh
+git fetch origin --tags
+sha=$(git rev-parse origin/main)    # the release PR's merge commit
+day=v$(TZ=America/New_York git show -s --format=%cd --date=format-local:%Y.%m.%d "$sha")
+n=$(git ls-remote --tags --refs origin "$day" "$day.*" | wc -l | tr -d ' ')
+tag=$day; [ "$n" -gt 0 ] && tag="$day.$((n + 1))"
+prev=$(gh release view --json tagName --jq .tagName)    # the latest release
+git tag -a "$tag" "$sha" -m "$tag: <release PR title> (#<PR>)"
+git push origin "refs/tags/$tag"
+gh release create "$tag" --verify-tag --title "$tag: <what shipped>" --notes-start-tag "$prev" \
+  --notes "Release PR: #<PR>. Deployed by the [deploy workflow](<run URL>)." --generate-notes
+```
+
+A tag push starts no workflow: `ci.yml` and `deploy.yml` run on branch pushes only.
+
+## CI on the laptop runner
+
+GitHub-hosted runners are blocked for this private repository: every job fails at once with "The job was not started because recent account payments have failed or your spending limit needs to be increased". Self-hosted runners are free, so the owner decided (2026-11-11) to run the checks on the owner's Mac (Apple Silicon, Docker Desktop) until hosted runners are back. The pieces are in `infra/ci-runner/`.
+
+**What runs there:** every job of `ci.yml` (verify, terraform, id-token-guard, lab), `security.yml` (osv-scanner, semgrep, checkov) and `gitleaks.yml` (gitleaks), while the `CI_RUNS_ON` repository variable points there. On an ARM64 runner the workflows download the arm64 builds of tflint, osv-scanner and gitleaks, each checked against its release's published SHA-256.
+
+**What never runs there: `deploy.yml`.** Its build jobs run npm and repository code with no id-token, and its deploy job holds the OIDC token. On fresh GitHub-hosted VMs they cannot reach each other; on one Docker host a build job could reach the deploy job's container. `deploy.yml` keeps a literal `runs-on: ubuntu-24.04` and never reads `CI_RUNS_ON`, and `id-token-guard` fails unless every job in it has exactly `runs-on: ubuntu-24.04` (an allowlist: no expression, no `self-hosted`, no list, no other `ubuntu-*` name). Never give a self-hosted runner an `ubuntu-*` label: GitHub does not document whether a job asking for a hosted label can land on a self-hosted runner that carries it. `run-runners.sh` registers only `self-hosted` and `townwise-laptop`. While hosted runners are blocked, `deploy.yml` cannot run, so deploys stay manual.
+
+**How it works.** `infra/ci-runner/run-runners.sh` keeps N slots (default 2). Each slot asks GitHub for a just-in-time runner config (`generate-jitconfig`, labels `self-hosted` and `townwise-laptop`, runner group 1, named `townwise-laptop-<session>-<slot>-<n>`) and starts a fresh container from the image built from `infra/ci-runner/Dockerfile` (Ubuntu 24.04 for arm64, the Actions runner, the Docker CLI and buildx, and what the jobs call), by the image ID the session resolved at start, so a job that retags `townwise-ci-runner:local` does not change what later runners run. Each container gets:
+
+- the config in an environment variable: never on a command line, in the terminal or in a file the script writes;
+- the Docker socket, for testcontainers, the lab job's `docker build`, and semgrep and checkov (`docker run`);
+- a fresh folder under `~/.townwise-ci/jobs` (`~/.townwise-ci` is mode 700: the folders hold checkouts and runner credentials), mounted at the same path. The runner runs from there, so `GITHUB_WORKSPACE` is a real Mac path. That matters because the Docker daemon resolves `docker run -v "$GITHUB_WORKSPACE:/src"` (semgrep, checkov) on the Mac, not inside the runner's container; a path that exists only in the container is refused ("mounts denied");
+- `TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal`, so the integration tests reach Mongo and Valkey on their mapped ports.
+
+The runner takes one job and exits, and GitHub removes its registration. The script then removes the container and the folder and starts the slot's next runner.
+
+**Start** it in a terminal. You need Docker Desktop running with File sharing set to `~/.townwise-ci` only (see Security), and `gh` signed in as a repository admin (`generate-jitconfig` requires admin):
+
+```sh
+infra/ci-runner/run-runners.sh                              # builds townwise-ci-runner:local, 2 slots
+infra/ci-runner/run-runners.sh -n 1                         # one job at a time
+infra/ci-runner/run-runners.sh -i townwise-ci-runner:local  # skip the build
+caffeinate -i infra/ci-runner/run-runners.sh                # keep the Mac awake while it runs
+```
+
+One session runs at a time: a second start refuses while one is running (a lock in `~/.townwise-ci`). At start the script removes what earlier sessions left behind (job folders, runner containers, offline `townwise-laptop-*` registrations), which only a second Ctrl-C, a crash or a reboot leaves. It warns when 127.0.0.1 answers on 27017, 6379, 10000 or 8080 (see Security). Then it prints a line when each runner starts waiting, the runner's own console lines (the job it took and the result), and a line when each finishes. Job logs stay on GitHub.
+
+**Point CI at it, and switch back:**
+
+```sh
+gh variable set CI_RUNS_ON -R engg-119/engg-119-mvp --body '["self-hosted","townwise-laptop"]'
+gh variable delete CI_RUNS_ON -R engg-119/engg-119-mvp    # back to ubuntu-24.04
+```
+
+Every job in the three workflows has `runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}` (GitHub allows the `vars` context in `runs-on`), so the value must be JSON: a list of labels or a quoted string. A change applies to workflow runs started after it. A job waiting for a laptop runner that never comes is canceled after 24 hours in the queue.
+
+**Stop** with Ctrl-C. It removes every runner container (a job still running fails; re-run it), the job folders, and every registration of the session still on GitHub, then exits with status 130. A second Ctrl-C exits at once, and the next start removes what is left. Delete `CI_RUNS_ON` too if the runner stays off, or new runs queue for it. To check nothing is left:
+
+```sh
+gh api repos/engg-119/engg-119-mvp/actions/runners --jq '.runners[] | "\(.id) \(.name) \(.status)"'
+docker ps -a --filter label=townwise-ci-session
+```
+
+Remove a leftover registration with `gh api -X DELETE repos/engg-119/engg-119-mvp/actions/runners/<id>`.
+
+**Security:**
+
+- The repository is private and only the owner has write access, so only the owner's pushes and pull requests run here. Pull requests from forks are the exception. Variables are not sent to them (step 12 keeps "Send secrets and variables to workflows from fork pull requests" off), so their jobs fall back to `ubuntu-24.04`; but a fork's pull request runs its own copy of the workflows and can set `runs-on` to the laptop's labels. Step 12 keeps "Require approval for fork pull request workflows" on, so a fork's workflows run only once the owner approves them. Approving one while the runner is in use runs its code on this Mac with the reach described below: read the whole diff, not only the workflows, first.
+- Each job gets a fresh container from the image, a fresh folder, and a just-in-time registration that takes exactly one job. A job can read its own runner's config and credentials (they are in its container and folder, as on any self-hosted runner); they register only that one runner.
+- **The Docker socket is root on Docker Desktop's VM, and Docker Desktop shares `/Users` with that VM** (by default also `/Volumes`, `/private`, `/tmp` and `/var/folders`). So any job can start a privileged container, read every container's environment and files (the other slot's runner config included), and read and write your home folder: SSH keys, Azure CLI and other tokens, other checkouts. That is the trust you give a branch when you run its tests on the Mac, except that here it runs without you starting it. So `run-runners.sh` refuses to start unless Docker Desktop shares only `~/.townwise-ci` (Settings, Resources, File sharing, then Apply & restart; the checks need nothing else). It reads the saved list (`FilesharingDirectories` in `~/Library/Group Containers/group.com.docker/settings-store.json`; unset means the defaults), then checks with throwaway containers that the change is applied: one that mounts `~/.townwise-ci` must see the job folders, and one that mounts the home folder must be refused. While the list is narrowed, `docker run -v` of any other Mac folder is refused too (the dev stack's `compose.yaml` uses named volumes only, so it is unaffected); restore the defaults when the runner is off for good.
+- What Docker keeps outlives the job: pulled images, build cache, and containers a job leaves running (CI turns testcontainers' Ryuk off, so a canceled run can leave Mongo or Valkey up: `docker ps --filter label=org.testcontainers=true`). One job can tamper with what later jobs on the laptop see, so a result from the laptop is only as trustworthy as every job that ran there before it. The same holds for anything else built on this Docker Desktop: it shares the image store and build cache with every job, and a job is root in the VM that holds them. That includes a release image built here by hand, as step 6's laptop fallback does, while the runner is or has been in use; such an image is only as trustworthy as every job that ran on the laptop. [DECISION NEEDED: where release images are built while the laptop runner is or has been in use.] Each session runs its runner image by ID, so retagging `townwise-ci-runner:local` does not reach later runners, but root in the VM could still change the image itself.
+- Every job reaches every service listening on the Mac's loopback through `host.docker.internal` (testcontainers needs that name, and a job holding the socket can pick any network): the dev stack's Mongo on 27017 (no authentication), Valkey on 6379 and Azurite on 10000, the local API on 8080, and anything else running. Stop the dev stack (`docker compose down`), the local API and other local services while the runner runs; `run-runners.sh` warns at start when 27017, 6379, 10000 or 8080 answers on 127.0.0.1.
+- Testcontainers publish their ports on all of the Mac's interfaces (0.0.0.0), so while a job runs, and after a canceled one, its test Mongo and Valkey (no authentication, test data only) are reachable from the local network unless the macOS firewall blocks incoming connections. Keep the firewall on (System Settings, Network, Firewall) while the runner runs.
+- The script creates and deletes registrations with your `gh` session; that token never enters a container.
+- `deploy.yml` never runs here (above), and the deploy identity trusts only `deploy.yml` on `main` (step 12).
+
+**Resources.** Each slot gets its own four of the VM's CPUs, so Jest and Vitest start as many workers as on a 4-vCPU runner (with all 16, one verify job peaked near 14 GiB and the VM killed a Jest worker). Measured on 2026-11-11 with two verify jobs at once, the heaviest case: about 10.5 minutes each, up to 6.3 GiB each plus their Mongo and Valkey, 12.4 GiB together of the VM's 15.6 GiB. A verify job's folder holds about 1 GB (mostly `node_modules`) until the job ends. The other jobs take under two minutes each. If Docker Desktop runs other containers, or the Mac needs its memory, use `-n 1` or give Docker Desktop more memory. The image is about 1.2 GB. Docker keeps the images the jobs pull (semgrep 1.6 GB, Mongo 1.3 GB, checkov 0.8 GB, Azurite 0.6 GB, and smaller ones) and the lab job's build cache; `docker image prune` and `docker builder prune` reclaim space.
+
 ## Logs
 
 Container Apps and Key Vault `AuditEvent` logs go to `log-townwise`, capped at 0.1 GB a day to stay inside the 5 GB monthly free ingestion. `AuditEvent` also goes to `sttwaudit2d2c15bf`, which has no cap, keeps it for a year, and admits only Azure Monitor, so spending the cap cannot blind the audit trail. When the cap is reached, ingestion stops until the daily reset, and the alert `townwise-log-daily-cap-reached` emails `alert_email`. A flood of rate-limited requests logs one line per `429`, which can spend the cap; excluding 429s from the request log is an upstream suggestion for the kit's `server-core`, not changed here.
@@ -517,6 +620,7 @@ If the free tier refuses private access (step 3), M10 adds $0.0191 an hour ($13.
 - **`TRUST_PROXY=uniquelocal,100.64.0.0/10`:** Microsoft does not publish the ingress proxy's source range. The client-IP check in step 13 confirms real addresses.
 - **The API's own init container** (`valkey-tls`) can still obtain the API identity's token: the app is an azurerm resource, which has no `identitySettings`. It runs the pinned Valkey image with a fixed script.
 - **`id-token-guard` is a check, not a gate** (GitHub Free has no required checks). The `job_workflow_ref` subject is the enforced control; it cannot tell jobs inside `deploy.yml` apart.
+- **The laptop runner** (CI on the laptop runner): while `CI_RUNS_ON` points at it, code a CI job runs has root on Docker Desktop's VM and, through Docker's file sharing, the owner's home folder. Only the owner's code runs there, unless the owner approves a fork pull request's workflows (step 12 requires approval).
 - **Client files behind a private endpoint.** With public network access disabled, any provider call that touched the files account's data plane from a laptop or runner would fail. azurerm 5.11 manages the containers and the lifecycle rule through Resource Manager (`data_plane_available = false`), but CI's mocked plan cannot prove it; the first real apply in step 18 does.
 - **Platform-managed group.** `rg-townwise-prod-infra` holds the environment's load balancer and public IPs. Do not edit it; it goes with the environment.
 - **The lab identity's token is not tied to one calibration** (step 20). It lives about 24 hours, and the callback accepts it for any live calibration. The input is fetched once, and a result needs the result token the input answer hands whoever fetched it. So code running as the lab identity (a compromised lab image, or anyone who can start or update the job) that fetches a sibling calibration's input first, in its unfetched window before that calibration's own job does, can read that input and post a forged result for it: the result is stored as a draft run for that calibration's location, in whichever organization it belongs to, and becomes a published forecast if its scorecard passes the gate and that organization's forecasts are switched on. The calibration's own job then finds its fetch refused (`not_live` in the log, see Logs). It cannot fetch an input twice, or post a result for a calibration whose input it did not fetch. The exposure is no worse than before this change: a compromised lab image already runs every calibration and can forge any result it computes. Binding each fetch to its Container Apps execution (the job sends `CONTAINER_APP_JOB_EXECUTION_NAME`, and the API checks that execution through Resource Manager, which needs `Microsoft.App/jobs/executions/read` for the API identity) is deferred: the owner decided so on 2026-11-10 and re-confirmed it on 2026-11-11. Revoke with step 20.6.

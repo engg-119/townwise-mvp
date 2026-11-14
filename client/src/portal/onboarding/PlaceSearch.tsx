@@ -4,12 +4,12 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { theme } from '../../theme';
 import { useFocusOnMount } from '../places/focus';
 import { FieldFrame, fieldStyles, useFieldIds } from '../ui/FormField';
-import { MAX_SEARCH_LENGTH } from './places';
+import { MAX_SEARCH_LENGTH, suggestionLabel, suggestionLine } from './places';
 import { fieldFocus, PlaceSearchShell, type PlaceFieldProps, type PlaceSearchProps } from './PlaceSearchParts';
 import { usePlaceSearch } from './usePlaceSearch';
 
 // The Google Places search on iOS and Android (PlaceSearch.web.tsx is the web's combobox): a search field, and under
-// it each suggestion as a button named by the place and its town, then the confirm card (PlaceSearchParts.tsx). The
+// it each suggestion as a button named by the place and its line (suggestionLine), then the confirm card (PlaceSearchParts.tsx). The
 // status line under the field says how many places match the text searched, once per answer. The screen reader moves
 // to the field when it comes back after a pick (Search again) or when the page opened the search from a button.
 // Nothing animates.
@@ -46,18 +46,21 @@ function NativeField({ props, state }: PlaceFieldProps): React.JSX.Element {
       />
       {state.suggestions.length === 0 ? null : (
         <View style={styles.list}>
-          {state.suggestions.map((suggestion) => (
-            <Pressable
-              key={suggestion.placeId}
-              role="button"
-              accessibilityLabel={suggestion.detail === '' ? suggestion.name : `${suggestion.name}, ${suggestion.detail}`}
-              onPress={() => { state.pick(suggestion); }}
-              style={(pressed) => [styles.option, pressed.pressed ? styles.optionOn : null]}
-            >
-              <Text style={styles.name}>{suggestion.name}</Text>
-              {suggestion.detail === '' ? null : <Text style={styles.detail}>{suggestion.detail}</Text>}
-            </Pressable>
-          ))}
+          {state.suggestions.map((suggestion) => {
+            const line = suggestionLine(suggestion);
+            return (
+              <Pressable
+                key={suggestion.placeId}
+                role="button"
+                accessibilityLabel={suggestionLabel(suggestion)}
+                onPress={() => { state.pick(suggestion); }}
+                style={(pressed) => [styles.option, pressed.pressed ? styles.optionOn : null]}
+              >
+                <Text style={styles.name}>{suggestion.name}</Text>
+                {line === '' ? null : <Text style={styles.detail}>{line}</Text>}
+              </Pressable>
+            );
+          })}
         </View>
       )}
     </FieldFrame>

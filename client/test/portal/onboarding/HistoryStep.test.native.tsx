@@ -59,10 +59,19 @@ test('no drop on a phone: the step says where to drop files, with what to drop i
   expect(await screen.findByText(STEP.nativeDrop)).toBeTruthy();
   expect(screen.getByRole('heading', { name: STEP.title })).toBeTruthy();
   expect(screen.getByText('Daily sales summaries')).toBeTruthy();
-  expect(screen.getByRole('heading', { name: 'Main Street Bar' })).toBeTruthy();
+  // One location: the card names the organization (D29).
+  expect(screen.getByRole('heading', { name: 'Test Group' })).toBeTruthy();
   expect(screen.queryByRole('button', { name: STEP.choose })).toBeNull();
   expect(screen.queryByRole('button', { name: STEP.read })).toBeNull();
   expect(api.calls.filter((call) => call.method !== 'GET')).toEqual([]);
+});
+
+test('no drop on a phone, so no TownwiseAI opt-in either (D34)', async () => {
+  const api = portal(meOf(ACCESS.admin), { import: null });
+  await renderApp('/locations/l1', api);
+  expect(await screen.findByText(STEP.nativeDrop)).toBeTruthy();
+  expect(screen.queryByRole('checkbox', { name: 'Let TownwiseAI read these files and use what it finds' })).toBeNull();
+  expect(screen.queryByText('Let TownwiseAI read these files and use what it finds')).toBeNull();
 });
 
 test('a running import shows in words: each file’s line, the reasons, and found so far', async () => {

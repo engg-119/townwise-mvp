@@ -1,3 +1,5 @@
+import { createSecretKey, type KeyObject } from 'node:crypto';
+
 import { ConfigError, type ServerConfig } from '@ckeith26/server-core';
 import { z } from 'zod';
 
@@ -6,6 +8,17 @@ import { normalizeEmail } from './normalize-email.ts';
 const MAX_STAFF = 20;
 const ACS_HOST = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.communication\.azure\.com$/;
 const LAB_JOB_ID = /^\/subscriptions\/[0-9a-f-]{36}\/resourceGroups\/[\w.()-]{1,90}\/providers\/Microsoft\.App\/jobs\/[a-z0-9-]{2,32}$/i;
+const CALENDAR_KEY_BYTES = 32;
+
+/** Canonical base64 of exactly 32 bytes, as a secret key (calendar/secret.ts). The message never holds the value. */
+const calendarKeySchema = z.string().transform((raw, ctx): KeyObject => {
+  const bytes = Buffer.from(raw, 'base64');
+  if (bytes.length !== CALENDAR_KEY_BYTES || bytes.toString('base64') !== raw) {
+    ctx.addIssue({ code: 'custom', message: 'expected 32 random bytes in base64 (openssl rand -base64 32)' });
+    return z.NEVER;
+  }
+  return createSecretKey(bytes);
+}).meta({ secret: true });
 
 /** Spread into the one loadEnv call in main.ts. Messages never include the values. */
 export const configSchema = z.object({
@@ -26,6 +39,12 @@ export const configSchema = z.object({
     }
     return [...emails];
   }),
+  /**
+   * Whether staff must pass two-step sign-in (spec Section 2, steps 2.1 to 2.3): `required`, or `off` to let a staff
+   * address in with no authenticator. Absent, it is `off` in development and `required` otherwise; production refuses
+   * `off`.
+   */
+  TOWNWISE_STAFF_TWO_STEP: z.preprocess((value) => (value === '' ? undefined : value), z.enum(['required', 'off']).optional()),
   /** The tuning chat's monthly spend limit per organization, in US dollars (docs/portal/tuning-chat.md section 5). */
   TOWNWISE_CHAT_MONTHLY_BUDGET_USD: z.coerce.number().min(0).max(10_000).default(20),
   /** The Communication Services endpoint, https://<resource>.communication.azure.com. Absent turns email off (spec D14). */
@@ -62,12 +81,20 @@ export const configSchema = z.object({
   TOWNWISE_LAB_CALLER_ID: z.guid({ message: 'expected a GUID' }).optional(),
   /** `azure` only: the Entra tenant the lab job's token comes from. */
   TOWNWISE_LAB_TENANT_ID: z.guid({ message: 'expected a GUID' }).optional(),
+  /**
+   * Seals owner calendar links (openspec change connect-owner-calendar, design decision 4). Absent turns calendar links
+   * off (503 calendar_links_unavailable) while calendar files still import; anything but 32 bytes of base64 refuses
+   * boot. main.ts takes it out of the config it passes around and hands it only to what reads links.
+   */
+  TOWNWISE_CALENDAR_KEY: calendarKeySchema.optional(),
 });
 
 export type TownwiseConfig = z.infer<typeof configSchema>;
 
 export interface ResolvedTownwiseConfig {
   readonly superadminEmails: ReadonlySet<string>;
+  /** False only outside production with TOWNWISE_STAFF_TWO_STEP off: staff then need no codes. */
+  readonly staffTwoStep: boolean;
   readonly chatMonthlyBudgetUsd: number;
   readonly filesMonthlyBudgetUsd: number;
   /** Null while email is off. `endpoint` is a bare origin. */
@@ -151,14 +178,18 @@ export function labRunnerOf(config: Pick<TownwiseConfig, LabKeys> & Partial<Pick
 }
 
 /**
- * Production refuses an empty staff list, email with an http web URL, and Azurite for stored files; email needs both
- * its variables (spec Section 18). The lab's variables are labRunnerOf's.
+ * Production refuses an empty staff list, staff without two-step sign-in, email with an http web URL, and Azurite for
+ * stored files; email needs both its variables (spec Section 18). The lab's variables are labRunnerOf's.
  */
 export function resolveTownwiseConfig(
   config: Omit<TownwiseConfig, LabKeys> & Pick<ServerConfig, 'NODE_ENV'>,
 ): ResolvedTownwiseConfig {
   if (config.NODE_ENV === 'production' && config.TOWNWISE_SUPERADMIN_EMAILS.length === 0) {
     throw new ConfigError('TOWNWISE_SUPERADMIN_EMAILS', 'production requires at least one staff address');
+  }
+  const staffTwoStep = config.TOWNWISE_STAFF_TWO_STEP ?? (config.NODE_ENV === 'development' ? 'off' : 'required');
+  if (config.NODE_ENV === 'production' && staffTwoStep === 'off') {
+    throw new ConfigError('TOWNWISE_STAFF_TWO_STEP', 'production requires two-step sign-in for staff');
   }
   if ((config.EMAIL_ENDPOINT === undefined) !== (config.EMAIL_SENDER === undefined)) {
     throw new ConfigError(config.EMAIL_ENDPOINT === undefined ? 'EMAIL_ENDPOINT' : 'EMAIL_SENDER', 'set EMAIL_ENDPOINT and EMAIL_SENDER together');
@@ -175,6 +206,7 @@ export function resolveTownwiseConfig(
   filesBackendOf(config);
   return {
     superadminEmails: new Set(config.TOWNWISE_SUPERADMIN_EMAILS),
+    staffTwoStep: staffTwoStep === 'required',
     chatMonthlyBudgetUsd: config.TOWNWISE_CHAT_MONTHLY_BUDGET_USD,
     filesMonthlyBudgetUsd: config.TOWNWISE_FILES_MONTHLY_BUDGET_USD,
     email: endpoint === null || config.EMAIL_SENDER === undefined ? null : { endpoint, sender: config.EMAIL_SENDER },

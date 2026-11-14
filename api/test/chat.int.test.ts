@@ -182,6 +182,8 @@ describe('a plain answer', () => {
       'get_location_overview', 'get_sales_days', 'list_notes', 'get_town_profile', 'propose_note',
       'get_town_calendar', 'get_people_in_town', 'get_forecast', 'get_day', 'show_visual', 'suggest_next',
       'list_data_items', 'read_data_item', 'propose_data_item', 'start_calibration', 'get_calibration', 'compare_forecast_models',
+      'get_owner_calendar',
+      'get_order_board', 'get_order_line', 'get_order_setup', 'propose_order_change', 'propose_order_rule',
       'web_search',
     ]);
     // The registry's tools stream their inputs; Claude's web search, a server tool, comes last as it is.
@@ -209,10 +211,11 @@ describe('a plain answer', () => {
         { id: replyNodeId, parentId: userNodeId, role: 'assistant' },
       ],
       messages: [
-        { nodeId: userNodeId, role: 'user', text: 'What changed in May?', proposals: [], parts: [], feedback: null, next: null, sources: [], at, endedAt: at },
+        { nodeId: userNodeId, role: 'user', text: 'What changed in May?', proposals: [], parts: [], feedback: null, next: null, sources: [], at, endedAt: at, attachments: [] },
         {
           nodeId: replyNodeId, role: 'assistant', text: 'May was steady, with two busy Fridays.', proposals: [],
           parts: [{ type: 'text', text: 'May was steady, with two busy Fridays.' }], feedback: null, next: null, sources: [], at, endedAt: at,
+          attachments: [],
         },
       ],
     });
@@ -308,8 +311,8 @@ describe('tools', () => {
       days: [{ date: '2026-05-01', guests: 140, netSalesUsd: 5123.45 }, { date: '2026-05-02', guests: 90, netSalesUsd: null }],
     });
     expect(content(2)).toEqual({ notes: [{
-      kind: 'closure', startDate: '2026-05-10', endDate: '2026-05-10', weekdays: null, effect: 'closed', expectedGuests: null,
-      detail: 'Closed for the floor refinish',
+      kind: 'closure', startDate: '2026-05-10', endDate: '2026-05-10', weekdays: null, startTime: null, endTime: null, effect: 'closed',
+      expectedGuests: null, detail: 'Closed for the floor refinish',
     }] });
     expect(content(3)).toMatchObject({ profile: { townId: 'hanover-nh', name: 'Hanover', county: expect.any(String) as unknown } });
 
@@ -329,6 +332,23 @@ describe('tools', () => {
     ]);
   });
 
+  it('with one location get_location_overview names it by the organization\'s name, never its stored name (D29)', async () => {
+    const soloOrgId = await createOrg(server, { name: 'Solo Tavern Group' });
+    const soloLocationId = await addLocation(server, { orgId: soloOrgId, name: 'Solo Tavern Group, Hanover' });
+    const email = `solo-${randomUUID().slice(0, 8)}@example.test`;
+    const session = await signIn(server, email);
+    await addSeat(server, { orgId: soloOrgId, userId: session.userId, email, role: 'member' });
+    model.script(
+      { kind: 'message', message: message([toolUse('t1', 'get_location_overview', {})]) },
+      { kind: 'message', message: message([text('Steady so far.')]) },
+    );
+    const { events } = await turn({ content: 'How are we doing?' }, { session, email }, soloLocationId);
+    expect(events.at(-1)?.event).toBe('done');
+    const [result] = toolResults(messagesOf(model.calls[1])[2]);
+    expect(JSON.parse(result?.content as string)).toMatchObject({ location: { name: 'Solo Tavern Group', town: { name: 'Hanover', state: 'NH' } } });
+    expect(JSON.stringify(model.calls[1]?.params.messages)).not.toContain('Solo Tavern Group, Hanover');
+  });
+
   it('a valid propose_note streams a proposal, writes no note, and the proposal posts unchanged to the notes route', async () => {
     const notesBefore = await server.connection.collection('tw_notes').countDocuments({});
     model.script(
@@ -337,7 +357,7 @@ describe('tools', () => {
     );
     const { events } = await turn({ content: 'We have a rehearsal dinner on June 20.' });
     expect(shape(events)).toEqual(['conversation', 'tool', 'proposal', 'tool', 'text', 'done']);
-    const proposal = { ...PROPOSAL, weekdays: [5, 6] };
+    const proposal = { ...PROPOSAL, weekdays: [5, 6], startTime: null, endTime: null };
     expect(eventData(events, 'proposal')).toEqual([{ id: 'p1', proposal }]);
     expect(eventData(events, 'tool')).toEqual([
       { id: 'p1', name: 'propose_note', state: 'running', input: null, result: null },

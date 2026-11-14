@@ -10,7 +10,7 @@ import { listText, metricNumber, shortDate, weekdayOf, type Metric } from './wor
 
 // The heatmap as data (home.md 4.4): one block per shown year, newest first, laid out as week columns by weekday
 // rows (Monday first), each cell with its state, fill level, marks and full text label; the keyboard moves; and the
-// summary under the grid. Heatmap.web.tsx and Heatmap.tsx draw this and add nothing to it. Colour never stands
+// summary under the grid. Heatmap.web.tsx and Heatmap.tsx draw this and add nothing to it. Color never stands
 // alone: every focusable cell's label says everything its fill and marks show.
 
 export type CellState =
@@ -115,7 +115,7 @@ export function cellLabel(
     input.marks.holidays ? titled('Holiday', 'Holidays', events.filter((event) => event.kind === 'holiday').map((event) => event.title)) : null,
     input.marks.townEvents ? titled('Town event', 'Town events', events.filter((event) => event.kind === 'event').map((event) => event.title)) : null,
     input.marks.notes && notes.length > 0 ? `${plural(notes.length, 'note', 'notes')}.` : null,
-    input.marks.closures && flags.closed ? 'Closed.' : null,
+    input.marks.closures && flags.closed ? (flags.likelyClosed ? 'Likely closed.' : 'Closed.') : null,
     hasValue && !input.included(date) ? 'Left out by your filters.' : null,
   ];
   return parts.filter((part): part is string => part !== null).join(' ');

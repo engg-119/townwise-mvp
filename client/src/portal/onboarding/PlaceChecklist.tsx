@@ -5,11 +5,12 @@ import { theme } from '../../theme';
 import { useFocusOnMount } from '../places/focus';
 import { CheckMark } from '../ui/Checkbox';
 import { FieldFrame, fieldStyles, useFieldIds } from '../ui/FormField';
-import { MAX_SEARCH_LENGTH } from './places';
+import { MAX_SEARCH_LENGTH, suggestionLabel, suggestionLine } from './places';
 import { PlaceChecklistShell, type ChecklistFieldProps, type PlaceChecklistProps } from './PlaceChecklistParts';
 
 // The places checklist on iOS and Android (PlaceChecklist.web.tsx is the web's): PlaceSearch's field, with each
-// suggestion a checkbox named by the place and its town, its drawn box before the name; then the checked places
+// suggestion a checkbox named by the place and its line (suggestionLine: its town, after “Street address · ” for an
+// address), its drawn box before the name; then the checked places
 // (PlaceChecklistParts.tsx). Checking keeps the field and its focus, so the person can check several from one answer
 // and search again. Nothing animates.
 
@@ -50,11 +51,12 @@ function NativeField({ props, state }: ChecklistFieldProps): React.JSX.Element {
           {search.suggestions.map((suggestion) => {
             const option = state.optionOf(suggestion);
             const disabled = off || option.disabled;
+            const line = suggestionLine(suggestion);
             return (
               <Pressable
                 key={suggestion.placeId}
                 accessibilityRole="checkbox"
-                accessibilityLabel={suggestion.detail === '' ? suggestion.name : `${suggestion.name}, ${suggestion.detail}`}
+                accessibilityLabel={suggestionLabel(suggestion)}
                 accessibilityState={{ checked: option.checked, disabled }}
                 disabled={disabled}
                 onPress={() => { state.toggle(suggestion); }}
@@ -63,7 +65,7 @@ function NativeField({ props, state }: ChecklistFieldProps): React.JSX.Element {
                 <CheckMark checked={option.checked} disabled={disabled} />
                 <View style={styles.text}>
                   <Text style={[styles.name, disabled ? styles.nameOff : null]}>{suggestion.name}</Text>
-                  {suggestion.detail === '' ? null : <Text style={styles.detail}>{suggestion.detail}</Text>}
+                  {line === '' ? null : <Text style={styles.detail}>{line}</Text>}
                 </View>
               </Pressable>
             );

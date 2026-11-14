@@ -3,14 +3,16 @@ import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
-import { ApiError } from '../../src/api/client';
+import { ApiError, type ApiClient } from '../../src/api/client';
 import { aboutDraft } from '../../src/chat/about';
 import { resetDrafts } from '../../src/chat/drafts';
 import { COMPOSER_LABEL } from '../../src/chat/ui/Composer';
+import { ATTACH_FILES, WAIT_ID } from '../../src/chat/ui/ComposerFiles.web';
 import { resetVersionFocus } from '../../src/chat/ui/VersionNav';
 import { localToday } from '../../src/portal/locations/dates';
 import { resetProfiles } from '../../src/portal/profile/useProfile';
 import type { MeResponse } from '../../src/portal/schemas';
+import { theme } from '../../src/theme';
 import { appRoutes, seededRoot } from '../helpers/app';
 import {
   CONVERSATION, fakeChatApi, PROPOSAL, PROPOSAL_ID, refusal as chatRefusal, SALES_STEP, SUMMARY, type FakeChatApi, type LiveTurn,
@@ -18,22 +20,42 @@ import {
 import { fakeAuth } from '../helpers/fakes';
 import { ACCESS, fakePortalApi, meOf, orgOf, viewAsMe } from '../helpers/portal';
 import { itemOf } from '../portal/data/fakes';
+import { filesFake, type FilesFake } from '../portal/files/fakes';
 import { PUBLISHED, RUN, serveAbout } from './about-fakes';
 import { daily } from './visuals-fixtures';
 
-// P25 TownwiseAI on web (spec 16.3, D26): the greeting, the centered landing and the composer that docks under the
+// P25 TownwiseAI on web (spec 16.3, D26): no page header, the centered landing and the composer that docks under the
 // thread, the keyboard (Enter sends, Shift+Enter and an input method's Enter don't), History's Escape, the panel as a
 // column or a sheet, the next questions, the budget line, the live line and caret, reduced motion, the polite live
 // region, the one primary, phone width, links that open in a new tab, and view-as's aria-disabled controls with the
 // one read-only line.
 
+/** Every observer made, and what it watches, so a test can lay an element out as a browser would (`layout`). */
+const observers: ResizeObserverPolyfill[] = [];
 class ResizeObserverPolyfill {
-  observe(): void { return undefined; }
-  unobserve(): void { return undefined; }
-  disconnect(): void { return undefined; }
+  readonly callback: ResizeObserverCallback;
+  readonly targets = new Set<Element>();
+  constructor(callback: ResizeObserverCallback) {
+    this.callback = callback;
+    observers.push(this);
+  }
+  observe(target: Element): void { this.targets.add(target); }
+  unobserve(target: Element): void { this.targets.delete(target); }
+  disconnect(): void { this.targets.clear(); }
 }
 if (typeof globalThis.ResizeObserver !== 'function') {
   globalThis.ResizeObserver = ResizeObserverPolyfill;
+}
+
+/** `element` laid out `height` tall: its observers fire, and react-native-web measures it (in a timeout) for onLayout. */
+async function layout(element: Element, height: number): Promise<void> {
+  Object.defineProperty(element, 'offsetHeight', { configurable: true, get: () => height });
+  const watching = observers.filter((observer) => observer.targets.has(element));
+  expect(watching).not.toHaveLength(0);
+  await act(() => new Promise((resolve) => {
+    for (const observer of watching) observer.callback([{ target: element } as unknown as ResizeObserverEntry], observer);
+    setTimeout(resolve, 10);
+  }));
 }
 
 let width = 1280;
@@ -55,8 +77,8 @@ afterEach(() => {
 });
 
 const EMAIL = ['a', 'example.com'].join('@');
-/** The `white` (`cta`) fill of the page's one primary. */
-const WHITE = 'rgb(239, 242, 246)';
+/** The `cta` fill of the page's one primary (on web theme.color is var(--tw-<token>), which jsdom leaves unresolved). */
+const WHITE = theme.color.cta;
 const BUDGET_LINE = 'Most of November’s budget is used. TownwiseAI pauses when it runs out.';
 
 /** CONVERSATION with a second version of its reply: GET shows the first, and the second is read by its node. */
@@ -73,10 +95,11 @@ const SECOND_REPLY = {
   ],
 };
 
-function renderAt(path: string, api: FakeChatApi, me: MeResponse = meOf(ACCESS.member)): void {
+/** `fallback`: what answers after the portal's routes, the chat fake unless a test puts stored files over it. */
+function renderAt(path: string, api: FakeChatApi, me: MeResponse = meOf(ACCESS.member), fallback: ApiClient = api): void {
   // F10: GET .../estimates/about, with no forecast unless the test served another answer.
   if (!('about' in api)) serveAbout(api);
-  const portal = fakePortalApi({ me, org: orgOf('member'), fallback: api });
+  const portal = fakePortalApi({ me, org: orgOf('member'), fallback });
   const auth = fakeAuth({ status: 'signedIn', user: { id: 'u1', email: EMAIL } }, { api: portal });
   window.history.replaceState(null, '', path);
   render(
@@ -172,18 +195,21 @@ function expectReadOnly(control: HTMLElement): void {
   expect(control.getAttribute('aria-describedby')?.split(' ')).toContain('chat-ro');
 }
 
-test('the dashboard links to a location, whose TownwiseAI page greets the person, streams a reply with a card, and saves its note', async () => {
+test('the dashboard links to a location, whose Home greets the person and whose TownwiseAI page has no page header, streams a reply with a card, and saves its note', async () => {
   const api = fakeChatApi();
   api.profile = { displayName: 'Cam', askName: false };
   renderAt('/dashboard', api);
   fireEvent.click(await screen.findByText('Main Street Bar'));
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1'); });
+  expect(await screen.findByRole('heading', { level: 1, name: 'Welcome back, Cam.' })).toBeTruthy();
   fireEvent.click(await screen.findByRole('link', { name: 'TownwiseAI' }));
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/agent'); });
-  expect(await screen.findByText('Main Street Bar, Hanover, NH')).toBeTruthy();
-  await waitFor(() => {
-    expect(screen.getAllByRole('heading', { level: 1 }).map((heading) => heading.textContent)).toEqual(['Welcome back, Cam.']);
-  });
+  await screen.findByTestId('chat-landing');
+  // No page header: one visually hidden h1, and none of the location header's eyebrow, greeting or links.
+  expect(screen.getAllByRole('heading', { level: 1 }).map((heading) => heading.textContent)).toEqual(['TownwiseAI']);
+  expect(screen.queryByText(/^Welcome back/)).toBeNull();
+  expect(screen.queryByText('Main Street Bar, Hanover, NH')).toBeNull();
+  expect(screen.queryByRole('link', { name: 'Location settings' })).toBeNull();
 
   await send(api, 'Closed for the holidays');
   expect(screen.getByRole('log', { name: 'Conversation with TownwiseAI' })).toBeTruthy();
@@ -208,22 +234,18 @@ test('the dashboard links to a location, whose TownwiseAI page greets the person
 test('the old chat address opens TownwiseAI, so links and bookmarks keep working', async () => {
   renderAt('/locations/l1/chat', fakeChatApi());
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/agent'); });
-  expect(await screen.findByRole('heading', { level: 1, name: 'Welcome back.' })).toBeTruthy();
+  expect(await screen.findByRole('heading', { level: 1, name: 'TownwiseAI' })).toBeTruthy();
   expect(await screen.findByLabelText(COMPOSER_LABEL)).toBeTruthy();
 });
 
-test('asks for a name once, above the chat, and the greeting takes it', async () => {
+test('never asks for a name, even when the API would: the chat header is the first thing on the page', async () => {
   const api = fakeChatApi();
   api.profile = { displayName: null, askName: true };
   renderAt('/locations/l1/agent', api);
-  const ask = await screen.findByRole('heading', { level: 2, name: 'What should TownwiseAI call you?' });
-  expect(before(ask, screen.getByRole('button', { name: 'History' }))).toBe(true);
-  expect(screen.getByRole('heading', { level: 1, name: 'Welcome back.' })).toBeTruthy();
-  fireEvent.change(screen.getByRole('textbox', { name: 'First name' }), { target: { value: 'Cam' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
-  expect(await screen.findByRole('heading', { level: 1, name: 'Welcome back, Cam.' })).toBeTruthy();
+  await screen.findByRole('button', { name: 'History' });
   expect(screen.queryByText('What should TownwiseAI call you?')).toBeNull();
-  expect(api.writes).toEqual([{ method: 'PATCH', path: '/api/me/profile', body: { displayName: 'Cam' } }]);
+  expect(screen.queryByRole('textbox', { name: 'First name' })).toBeNull();
+  expect(api.writes).toEqual([]);
 });
 
 test('an empty conversation is the centered landing: heading, reads line, composer, then chips', async () => {
@@ -262,6 +284,68 @@ test('the first send docks the composer under the thread', async () => {
   expect(input.getAttribute('placeholder')).toBe('Which days last month were unusual?');
   // The messages sit in one centered column, at most 760px wide.
   expect(style(screen.getByTestId('chat-column')).maxWidth).toBe('760px');
+});
+
+describe('the docked composer', () => {
+  test('sits over the thread’s bottom edge, passing what it doesn’t draw to the thread, which keeps room at its end as tall as the dock', async () => {
+    const api = fakeChatApi();
+    renderAt('/locations/l1/agent', api);
+    await openEarlierChat();
+    const log = screen.getByRole('log', { name: 'Conversation with TownwiseAI' });
+    const dock = screen.getByTestId('chat-dock');
+    // Laid over the thread, not a row under it: the thread runs the full height and scrolls under the composer.
+    expect(dock.parentElement).toBe(log.parentElement);
+    expect(log.contains(dock)).toBe(false);
+    expect(before(log, dock)).toBe(true);
+    const placed = style(dock);
+    expect([placed.position, placed.left, placed.right, placed.bottom]).toEqual(['absolute', '0px', '0px', '0px']);
+    // Wheels, scrolls and clicks beside the composer reach the thread; the composer is still the 760px column.
+    expect(placed.pointerEvents).toBe('none');
+    const column = first(Array.from(dock.children));
+    expect(style(column).pointerEvents).toBe('none');
+    expect(style(column).maxWidth).toBe('760px');
+    // The skirt starts at the box's middle (12 above the box, and half its 56) and is drawn under the composer.
+    const skirt = screen.getByTestId('chat-dock-skirt');
+    expect([style(skirt).position, style(skirt).top, style(skirt).bottom, style(skirt).pointerEvents]).toEqual(['absolute', '40px', '0px', 'none']);
+    expect(before(skirt, screen.getByLabelText(COMPOSER_LABEL))).toBe(true);
+
+    // The thread's end keeps the dock's measured height, and a pinned thread goes to its new end.
+    const content = first(Array.from(log.children));
+    expect(style(content).paddingBottom).toBe('16px');
+    const scrolledTo = jest.fn();
+    Object.defineProperty(log, 'scroll', { configurable: true, value: scrolledTo });
+    await layout(dock, 120);
+    expect(style(content).paddingBottom).toBe('136px');
+    expect(scrolledTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'auto' }));
+    // Focus moved into the thread is scrolled into view above the dock.
+    expect(log.style.scrollPaddingBottom).toBe('120px');
+    await layout(dock, 200);
+    expect(style(content).paddingBottom).toBe('216px');
+  });
+
+  test('the skirt covers the whole dock while a line sits above the composer, so the line never sits on the thread’s text', async () => {
+    const api = fakeChatApi();
+    api.summary = { ...SUMMARY, budget: { ...SUMMARY.budget, usedUsd: 17 } };
+    renderAt('/locations/l1/agent', api);
+    await openEarlierChat();
+    expect(within(screen.getByTestId('chat-dock')).getByText(BUDGET_LINE)).toBeTruthy();
+    expect(style(screen.getByTestId('chat-dock-skirt')).top).toBe('0px');
+  });
+
+  test('stops short of a scrollbar that takes room, so the bar shows down to the bottom', async () => {
+    const api = fakeChatApi();
+    renderAt('/locations/l1/agent', api);
+    await openEarlierChat();
+    const log = screen.getByRole('log', { name: 'Conversation with TownwiseAI' });
+    Object.defineProperty(log, 'scroll', { configurable: true, value: jest.fn() });
+    // An overlay scrollbar takes no room.
+    expect(style(screen.getByTestId('chat-dock')).right).toBe('0px');
+    // A classic one, 11px wide, comes as the content passes the view (and the content narrows by its width).
+    Object.defineProperty(log, 'offsetWidth', { configurable: true, get: () => 760 });
+    Object.defineProperty(log, 'clientWidth', { configurable: true, get: () => 749 });
+    await layout(first(Array.from(log.children)), 1200);
+    expect(style(screen.getByTestId('chat-dock')).right).toBe('11px');
+  });
 });
 
 test('a first turn taken back brings the landing back, with the text and focus in its composer', async () => {
@@ -352,6 +436,17 @@ test('History closes on Escape and gives focus back to its button', async () => 
   expect(document.activeElement).toBe(button);
 });
 
+test('only the last message’s row always shows; the earlier ones appear on hover or focus, and every message has its time', async () => {
+  renderAt('/locations/l1/agent', fakeChatApi());
+  await openEarlierChat();
+  const rows = [...document.querySelectorAll('[data-msg] [data-actions]')];
+  expect(rows.map((row) => row.getAttribute('data-actions'))).toEqual(['hover', 'always']);
+  // Both are in the DOM and the tab order; the style sheet hides the first with opacity alone.
+  expect(within(rows[0] as HTMLElement).getByRole('button', { name: 'Edit' })).toBeTruthy();
+  expect(within(rows[1] as HTMLElement).getByRole('button', { name: 'Regenerate' })).toBeTruthy();
+  for (const row of rows) expect(row.textContent).toMatch(/Nov 2,( 2026,)? \d{1,2}:\d{2} (AM|PM)/);
+});
+
 test('deleting the open conversation shows the landing and gives focus to History, as any delete does', async () => {
   renderAt('/locations/l1/agent', fakeChatApi());
   await openEarlierChat();
@@ -365,34 +460,36 @@ test('deleting the open conversation shows the landing and gives focus to Histor
   await waitFor(() => { expect(document.activeElement).toBe(history); });
 });
 
-describe('on phones, where the header scrolls with the landing or the thread and is drawn anew when one replaces the other', () => {
-  test('opening a conversation from the landing, or New chat from the thread, leaves focus in the composer', async () => {
+describe('on phones, where the header stays put as the landing and the thread replace each other, so focus goes where it does on wider screens', () => {
+  test('opening a conversation gives focus to History, and New chat from the thread keeps it on New chat', async () => {
     setWidth(360);
     renderAt('/locations/l1/agent', fakeChatApi());
-    fireEvent.click(await screen.findByRole('button', { name: 'History' }));
+    const history = await screen.findByRole('button', { name: 'History' });
+    fireEvent.click(history);
     const row = screen.getByRole('button', { name: 'Earlier chat, Nov 2, 2026' });
     act(() => { row.focus(); });
     fireEvent.click(row);
     await screen.findByText('We close for the holidays.');
-    await waitFor(() => { expect(document.activeElement).toBe(screen.getByLabelText(COMPOSER_LABEL)); });
+    await waitFor(() => { expect(document.activeElement).toBe(history); });
     const fresh = screen.getByRole('button', { name: 'New chat' });
     act(() => { fresh.focus(); });
     fireEvent.click(fresh);
     expect(await screen.findByRole('heading', { level: 2, name: 'Ask TownwiseAI about Main Street Bar' })).toBeTruthy();
-    await waitFor(() => { expect(document.activeElement).toBe(screen.getByLabelText(COMPOSER_LABEL)); });
+    expect(document.activeElement).toBe(fresh);
   });
 
-  test('deleting the open conversation leaves focus in the landing’s composer', async () => {
+  test('deleting the open conversation gives focus to History', async () => {
     setWidth(360);
     renderAt('/locations/l1/agent', fakeChatApi());
     await openEarlierChat();
-    fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    const history = screen.getByRole('button', { name: 'History' });
+    fireEvent.click(history);
     const remove = screen.getByRole('button', { name: 'Delete Earlier chat' });
     act(() => { remove.focus(); });
     fireEvent.click(remove);
     fireEvent.click(within(await screen.findByRole('dialog', { name: 'Delete this conversation?' })).getByRole('button', { name: 'Delete' }));
     expect(await screen.findByRole('heading', { level: 2, name: 'Ask TownwiseAI about Main Street Bar' })).toBeTruthy();
-    await waitFor(() => { expect(document.activeElement).toBe(screen.getByLabelText(COMPOSER_LABEL)); });
+    await waitFor(() => { expect(document.activeElement).toBe(history); });
   });
 
   test('opening the page puts focus nowhere new', async () => {
@@ -588,12 +685,12 @@ describe('a tool card', () => {
     expect(faded(await running(fakeChatApi()))).toBe(false);
   });
 
-  test('a running tool shows as its row in the timeline instead of Thinking…, and the caret goes on done', async () => {
+  test('the counter alone shows it is working, a running tool shows as its row in the timeline, and the caret goes on done', async () => {
     const api = fakeChatApi();
     renderAt('/locations/l1/agent', api);
     await send(api, 'How was December?');
     expect(screen.getByText('Working for 0s')).toBeTruthy();
-    expect(screen.getByText('Thinking…')).toBeTruthy();
+    expect(screen.queryByText('Thinking…')).toBeNull();
     expect(screen.queryByText('TownwiseAI is thinking…')).toBeNull();
     await stream(() => { turn(api).emit('thinking', { delta: 'Weighing the weekend.' }); });
     expect(screen.getByText('Weighing the weekend.')).toBeTruthy();
@@ -768,17 +865,14 @@ test('a town profile card’s sources open in a new tab', async () => {
   expect(link.getAttribute('rel')).toContain('noopener');
 });
 
-test('under view-as every write is disabled in place, the name prompt never shows, and versions still switch by reading', async () => {
+test('under view-as every write is disabled in place and versions still switch by reading', async () => {
   const api = fakeChatApi();
-  // The server never asks under view-as; the page wouldn't either.
-  api.profile = { displayName: 'Pat', askName: true };
+  api.profile = { displayName: 'Pat', askName: false };
   api.conversation = TWO_REPLIES;
   api.versions = { a2: SECOND_REPLY };
   renderAt('/locations/l1/agent', api, viewAsMe(ACCESS.member));
   await waitFor(() => { expect(document.getElementById('chat-ro')).toBeTruthy(); });
-  // It greets with the target's name, as the target sees it.
-  expect(await screen.findByRole('heading', { level: 1, name: 'Welcome back, Pat.' })).toBeTruthy();
-  expect(screen.queryByText('What should TownwiseAI call you?')).toBeNull();
+  expect(screen.getAllByRole('heading', { level: 1 }).map((heading) => heading.textContent)).toEqual(['TownwiseAI']);
   const input = await screen.findByLabelText(COMPOSER_LABEL);
   expect(input.getAttribute('aria-readonly')).toBe('true');
   expect(input.getAttribute('aria-describedby')).toBe('chat-ro composer-help');
@@ -809,6 +903,153 @@ test('under view-as every write is disabled in place, the name prompt never show
   expect(api.turns).toHaveLength(0);
   expect(api.writes).toHaveLength(0);
   expect(screen.getAllByText(/^Read-only while viewing as/)).toHaveLength(1);
+});
+
+describe('order cards (#68 review N6, design Decision 6)', () => {
+  const CHANGE_ID = 'toolu_order_0001';
+  const RULE_ID = 'toolu_order_0002';
+  const ITEM = 'a'.repeat(24);
+  const CHANGE = `/api/org/locations/l1/chat/c2/order-proposals/${CHANGE_ID}`;
+  const RULE = `/api/org/locations/l1/chat/c2/order-proposals/${RULE_ID}`;
+
+  async function proposed(api: FakeChatApi): Promise<void> {
+    renderAt('/locations/l1/agent', api);
+    fireEvent.change(await screen.findByLabelText(COMPOSER_LABEL), { target: { value: 'Order more lager this week' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => { expect(api.turns).toHaveLength(1); });
+    await stream(() => {
+      turn(api).emit('conversation', { id: 'c2', title: 'Lager' });
+      turn(api).emit('tool', { id: CHANGE_ID, name: 'propose_order_change', state: 'done', input: { itemId: ITEM, delivery: '2026-11-19' }, result: { shown: true } });
+      turn(api).emit('tool', { id: RULE_ID, name: 'propose_order_rule', state: 'done', input: { itemId: ITEM }, result: { shown: true } });
+      turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0 });
+      turn(api).end();
+    });
+  }
+
+  test('a change card sends a whole-number quantity and a reason, never an empty or non-numeric one', async () => {
+    const api = fakeChatApi();
+    const view = { kind: 'change', status: 'open', itemId: ITEM, delivery: '2026-11-19' };
+    api.reads[CHANGE] = () => ({ proposal: view });
+    api.reads[RULE] = () => ({ proposal: { kind: 'rule', status: 'open', itemId: ITEM, situation: 'a football weekend', delta: 2, unit: 'cases' } });
+    api.respond[CHANGE] = () => ({ proposal: { ...view, status: 'saved', quantity: 10, unit: 'cases', reason: 'Game day' } });
+    await proposed(api);
+    const quantity = await screen.findByLabelText('Quantity');
+    // The rule card says its change goes on every later order.
+    expect(screen.getByText('Adds 2 cases to every order: “a football weekend”')).toBeTruthy();
+    expect(screen.getByText('It applies to every later order of this item until you turn it off on Orders.')).toBeTruthy();
+    const save = (): void => { fireEvent.click(screen.getByRole('button', { name: 'Save' })); };
+    for (const text of ['', 'ten', '2.5']) {
+      fireEvent.change(quantity, { target: { value: text } });
+      fireEvent.change(screen.getByLabelText('Why'), { target: { value: 'Game day' } });
+      save();
+      expect(screen.getByText('Enter a whole number from 0 to 999.')).toBeTruthy();
+    }
+    fireEvent.change(quantity, { target: { value: '10' } });
+    fireEvent.change(screen.getByLabelText('Why'), { target: { value: '  ' } });
+    save();
+    expect(screen.getByText('Say why, in a few words.')).toBeTruthy();
+    expect(api.writes.filter((write) => write.path === CHANGE)).toEqual([]);
+    fireEvent.change(screen.getByLabelText('Why'), { target: { value: 'Game day' } });
+    save();
+    expect(await screen.findByText('Saved for this order: 10 cases, “Game day”.')).toBeTruthy();
+    expect(api.writes.filter((write) => write.path === CHANGE)).toEqual([
+      { method: 'POST', path: CHANGE, body: { action: 'save', quantity: 10, reason: 'Game day' } },
+    ]);
+  });
+
+  // #68 second review N3: a saved card shows the edit stored under its id, and a save of another one shows that edit.
+  test('a saved change card shows its stored edit; 409 card_saved shows the edit that was kept, not the one sent', async () => {
+    const api = fakeChatApi();
+    const view = { kind: 'change', status: 'open', itemId: ITEM, delivery: '2026-11-19' };
+    const stored = { ...view, status: 'saved', quantity: 1, unit: 'kegs', reason: 'First try' };
+    api.reads[CHANGE] = () => ({ proposal: view });
+    api.reads[RULE] = () => ({ proposal: { kind: 'rule', status: 'saved', itemId: ITEM } });
+    api.respond[CHANGE] = () => new ApiError('http', 'The request was refused.', { status: 409, code: 'card_saved', detail: { proposal: stored } });
+    await proposed(api);
+    fireEvent.change(await screen.findByLabelText('Quantity'), { target: { value: '8' } });
+    fireEvent.change(screen.getByLabelText('Why'), { target: { value: 'Second try' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('Saved for this order: 1 keg, “First try”.')).toBeTruthy();
+    expect(screen.getByText(/^This card was already saved with another quantity or reason, so the one you just sent wasn’t saved\./)).toBeTruthy();
+    expect(screen.queryByLabelText('Quantity')).toBeNull();
+    expect(screen.queryByText(/Second try/)).toBeNull();
+  });
+
+  test('a change card read as saved shows its stored edit', async () => {
+    const api = fakeChatApi();
+    api.reads[CHANGE] = () => ({ proposal: { kind: 'change', status: 'saved', itemId: ITEM, delivery: '2026-11-19', quantity: 0, unit: 'cases', reason: 'Closed for a wedding' } });
+    api.reads[RULE] = () => ({ proposal: { kind: 'rule', status: 'saved', itemId: ITEM } });
+    await proposed(api);
+    expect(await screen.findByText('Saved for this order: 0 cases, “Closed for a wedding”.')).toBeTruthy();
+    expect(screen.queryByText(/already saved/)).toBeNull();
+  });
+
+  // #68 review A5: Remember sends the situation the card showed; a later edit to the item answers 409 rule_changed.
+  test('a rule card sends the situation it showed; 409 rule_changed asks to look at Orders again', async () => {
+    const api = fakeChatApi();
+    api.reads[CHANGE] = () => ({ proposal: { kind: 'change', status: 'open', itemId: ITEM, delivery: '2026-11-19' } });
+    api.reads[RULE] = () => ({ proposal: { kind: 'rule', status: 'open', itemId: ITEM, situation: 'a football weekend', delta: 2, unit: 'cases' } });
+    let answer: unknown = chatRefusal(409, 'rule_changed');
+    api.respond[RULE] = () => answer;
+    await proposed(api);
+    await screen.findByText('Adds 2 cases to every order: “a football weekend”');
+    fireEvent.click(screen.getByRole('button', { name: 'Remember' }));
+    expect(await screen.findByText('This item’s latest edit changed since this card was shown, so nothing was remembered. Look at Orders again for the edit it has now.')).toBeTruthy();
+    answer = { proposal: { kind: 'rule', status: 'saved', itemId: ITEM, situation: 'a football weekend', delta: 2, unit: 'cases' } };
+    fireEvent.click(screen.getByRole('button', { name: 'Remember' }));
+    expect(await screen.findByText('Remembered.')).toBeTruthy();
+    expect(api.writes.filter((write) => write.path === RULE).map((write) => write.body)).toEqual([
+      { action: 'save', situation: 'a football weekend' }, { action: 'save', situation: 'a football weekend' },
+    ]);
+  });
+});
+
+// #68 review C8: an order link from Orders fills the composer only from the location's own live board.
+describe('an order link (?order=, &item=)', () => {
+  const BOARD_PATH = '/api/org/locations/l1/orders';
+  const LINE = {
+    itemId: 'lager', name: 'Sample lager', supplier: 'Sample distributor', unit: 'cases', neverRunOut: false, recommended: 6, alternative: null,
+    par: 2, mu: null, sigma: null, orderUpTo: null, target: 0.95, onHand: null, countAgeDays: null, confidence: 'low', dealSize: null,
+    coveredDays: 0, why: 'No count, so this is the par.', sample: false, edit: null, rules: [],
+  };
+  const BOARD = {
+    available: true, today: '2026-11-13', sample: false, missing: [],
+    orders: [{
+      supplierId: 's1', supplier: 'Sample distributor', cutoff: '2026-11-18', cutoffTime: '14:00', delivery: '2026-11-19', coversThrough: '2026-11-23',
+      deadline: 'Order by Wed, Nov 18, 2:00pm. Thursday’s delivery lasts until Monday’s.', lines: [LINE],
+    }],
+  };
+
+  async function composerAfter(path: string, api: FakeChatApi): Promise<HTMLTextAreaElement> {
+    renderAt(path, api);
+    const composer = await screen.findByLabelText(COMPOSER_LABEL);
+    await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 0); }); });
+    return composer as HTMLTextAreaElement;
+  }
+
+  test('the live board drafts the question; an unavailable board drafts nothing and never reads the sample', async () => {
+    const live = fakeChatApi();
+    live.reads[BOARD_PATH] = () => BOARD;
+    const composer = await composerAfter('/locations/l1/agent?order=2026-11-19&item=lager', live);
+    await waitFor(() => { expect(composer.value).toBe('Why Sample lager for the Thu, Nov 19 delivery?'); });
+    // Drafts are kept in memory per person and location, so each render starts from none.
+    cleanup();
+    resetDrafts();
+
+    const unset = fakeChatApi();
+    let sampleReads = 0;
+    unset.reads[BOARD_PATH] = () => ({ available: false, today: '2026-11-13', reason: 'No setup.', missing: ['the items'] });
+    unset.reads[`${BOARD_PATH}?sample=true`] = () => { sampleReads += 1; return { ...BOARD, sample: true }; };
+    expect((await composerAfter('/locations/l1/agent?order=2026-11-19&item=lager', unset)).value).toBe('');
+    expect(sampleReads).toBe(0);
+    cleanup();
+    resetDrafts();
+
+    // A sample board, should one come back, drafts nothing either.
+    const sample = fakeChatApi();
+    sample.reads[BOARD_PATH] = () => ({ ...BOARD, sample: true });
+    expect((await composerAfter('/locations/l1/agent?order=2026-11-19', sample)).value).toBe('');
+  });
 });
 
 describe('a proposal to keep text (D28)', () => {
@@ -943,4 +1184,198 @@ test('nothing goes to browser storage', async () => {
   } finally {
     setItem.mockRestore();
   }
+});
+
+describe('the composer’s + (D28, D36)', () => {
+  const FILES = '/api/org/locations/l1/files';
+
+  test('attaches a chosen file to the message, uploading it to Your data as a reference file', async () => {
+    const api = fakeChatApi();
+    renderAt('/locations/l1/agent', api);
+    const add = await screen.findByRole('button', { name: ATTACH_FILES });
+    expect(add.getAttribute('aria-disabled')).toBeNull();
+    fireEvent.click(add);
+    const picker = document.querySelector<HTMLInputElement>('[data-testid="composer-files"]');
+    if (picker === null) throw new Error('no file picker');
+    fireEvent.change(picker, { target: { files: [new File(['Closed Mondays in winter.'], 'winter-hours.txt', { type: 'text/plain' })] } });
+    await waitFor(() => {
+      const created = api.writes.find((write) => write.method === 'POST' && write.path === FILES);
+      expect((created?.body as { purpose?: string; name?: string } | undefined)).toMatchObject({ purpose: 'reference', name: 'winter-hours.txt' });
+    });
+  });
+
+  test('is absent while stored files are off, and off in place under view-as', async () => {
+    const off = fakeChatApi();
+    let asked = 0;
+    off.reads[FILES] = () => {
+      asked += 1;
+      return new ApiError('http', 'Stored files are off.', { status: 503, code: 'files_unavailable' });
+    };
+    renderAt('/locations/l1/agent', off);
+    await screen.findByLabelText(COMPOSER_LABEL);
+    // The + also waits for this answer, so let it arrive before saying the + is absent.
+    await waitFor(() => { expect(asked).toBeGreaterThan(0); });
+    await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 0); }); });
+    expect(screen.queryByRole('button', { name: ATTACH_FILES })).toBeNull();
+    cleanup();
+    renderAt('/locations/l1/agent', fakeChatApi(), viewAsMe(ACCESS.member));
+    expectReadOnly(await screen.findByRole('button', { name: ATTACH_FILES }));
+  });
+});
+
+describe('files on the message (D36)', () => {
+  const REF = 'f_0123456789abcdef01234567';
+  const GONE = 'f_76543210fedcba9876543210';
+
+  /** The chat over stored files: chunk PUTs wait for the test, and a finished file is `f1` on Your data. */
+  function withFiles(api: FakeChatApi = fakeChatApi()): { api: FakeChatApi; files: FilesFake } {
+    const files = filesFake({ inner: api, chunkSize: 1024 });
+    files.lists[''] = [];
+    return { api, files };
+  }
+
+  function pick(...names: string[]): void {
+    const picker = document.querySelector<HTMLInputElement>('[data-testid="composer-files"]');
+    if (picker === null) throw new Error('no file picker');
+    fireEvent.change(picker, { target: { files: names.map((name) => new File(['Closed Mondays in winter.'], name)) } });
+  }
+
+  function chips(): HTMLElement | null {
+    return screen.queryByRole('list', { name: 'Files attached to your message' });
+  }
+
+  /** Every chunk sent and kept: the chips read ready. */
+  async function finish(files: FilesFake): Promise<void> {
+    await waitFor(() => { expect(files.puts.length).toBeGreaterThan(0); });
+    await act(async () => {
+      for (const put of files.puts) put.ok();
+      await new Promise((resolve) => { setTimeout(resolve, 10); });
+    });
+    await waitFor(() => { expect(screen.queryByText(/^Uploading/)).toBeNull(); });
+  }
+
+  test('chips sit inside the docked composer’s box, in normal flow, so the dock grows and the thread’s end padding follows', async () => {
+    const { api, files } = withFiles();
+    renderAt('/locations/l1/agent', api, meOf(ACCESS.member), files);
+    await openEarlierChat();
+    await screen.findByRole('button', { name: ATTACH_FILES });
+    pick('hours.txt');
+    await waitFor(() => { expect(chips()).not.toBeNull(); });
+    const dock = screen.getByTestId('chat-dock');
+    const slot = screen.getByTestId('composer-attachments');
+    expect(dock.contains(slot)).toBe(true);
+    expect(style(slot).position).not.toBe('absolute');
+    expect(style(screen.getByTestId('chat-dock-skirt')).top).toBe('40px');
+    const log = screen.getByRole('log', { name: 'Conversation with TownwiseAI' });
+    Object.defineProperty(log, 'scroll', { configurable: true, value: jest.fn() });
+    await layout(dock, 120);
+    const content = first(Array.from(log.children));
+    expect(style(content).paddingBottom).toBe('136px');
+    // The chip row makes the dock taller: its measured height is the thread's room at the end.
+    await layout(dock, 184);
+    expect(style(content).paddingBottom).toBe('200px');
+    expect(log.style.scrollPaddingBottom).toBe('184px');
+  });
+
+  test('Send waits while a file uploads, then carries the ready file’s ref; the chips leave the composer for the bubble', async () => {
+    const { api, files } = withFiles();
+    renderAt('/locations/l1/agent', api, meOf(ACCESS.member), files);
+    await screen.findByRole('button', { name: ATTACH_FILES });
+    pick('hours.txt');
+    await waitFor(() => { expect(chips()).not.toBeNull(); });
+    const input = screen.getByLabelText(COMPOSER_LABEL);
+    expect(input.getAttribute('placeholder')).toBe('Ask about the attached file');
+    fireEvent.change(input, { target: { value: 'What does this say about Mondays?' } });
+    const waiting = screen.getByRole('button', { name: 'Send' });
+    expect(waiting.getAttribute('aria-disabled')).toBe('true');
+    expect(waiting.getAttribute('aria-describedby')).toBe(WAIT_ID);
+    fireEvent.click(waiting);
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(api.turns).toHaveLength(0);
+    await finish(files);
+    // Ready: said once, politely.
+    await waitFor(() => { expect(liveRegion().textContent).toBe('hours.txt is attached.'); });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => { expect(api.turns).toHaveLength(1); });
+    expect(turn(api).body).toEqual({ content: 'What does this say about Mondays?', attachments: ['f_f1'] });
+    expect(chips()).toBeNull();
+    const log = screen.getByRole('log', { name: 'Conversation with TownwiseAI' });
+    const bubbleFiles = within(log).getByRole('list', { name: 'Files attached' });
+    // The fake's file ids are no real file refs, so the chip is no link (attachments.test.web.tsx links a real one).
+    expect(within(bubbleFiles).getByRole('listitem', { name: 'hours.txt, Text file' })).toBeTruthy();
+    await stream(() => {
+      turn(api).emit('conversation', { id: 'c2', title: 'What does this say', userNodeId: 'u9', replyNodeId: 'a9', parentId: null });
+      turn(api).emit('text', { delta: 'It says you close Mondays.' });
+      turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0, leafId: 'a9' });
+      turn(api).end();
+    });
+    expect(chips()).toBeNull();
+  });
+
+  test('a send refused before the reply starts keeps the chips, with the reason in plain words', async () => {
+    const { api, files } = withFiles();
+    renderAt('/locations/l1/agent', api, meOf(ACCESS.member), files);
+    await screen.findByRole('button', { name: ATTACH_FILES });
+    pick('hours.txt');
+    await finish(files);
+    const refusals: [ApiError, string][] = [
+      [chatRefusal(409, 'attachment_not_ready'), 'An attached file is still uploading. Send your message once it’s ready.'],
+      [chatRefusal(404, 'not_found'), 'An attached file isn’t on Your data for this location anymore, or this conversation was deleted.'],
+      [chatRefusal(400, 'invalid_request'), 'That message couldn’t be sent with these files. Only files kept on Your data can be attached.'],
+      [chatRefusal(503, 'files_unavailable'), 'File storage is off right now, so files can’t be attached. Remove them to send your message.'],
+      // A teammate's file (here, one already on Your data that the upload found again).
+      [chatRefusal(403, 'attachment_not_allowed'), 'Only the person who added a file to Your data, or an org admin, can attach it. Remove the files a teammate added to send your message.'],
+      [chatRefusal(503, 'attachments_busy'), 'TownwiseAI is reading a lot of files right now. Try again in a moment.'],
+    ];
+    for (const [error, words] of refusals) {
+      api.refuse = error;
+      fireEvent.change(screen.getByLabelText(COMPOSER_LABEL), { target: { value: 'Read this' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+      expect(await screen.findByText(words)).toBeTruthy();
+      expect(within(chips() ?? document.body).getByText('hours.txt')).toBeTruthy();
+      expect(screen.getByLabelText<HTMLTextAreaElement>(COMPOSER_LABEL).value).toBe('Read this');
+    }
+  });
+
+  test('a regenerate carries no files, and the composer keeps its chips', async () => {
+    const { api, files } = withFiles();
+    renderAt('/locations/l1/agent', api, meOf(ACCESS.member), files);
+    await openEarlierChat();
+    await screen.findByRole('button', { name: ATTACH_FILES });
+    pick('hours.txt');
+    await finish(files);
+    fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
+    await waitFor(() => { expect(api.turns).toHaveLength(1); });
+    expect(turn(api).body).toEqual({ conversationId: 'c1', replyTo: 'u1' });
+    expect(within(chips() ?? document.body).getByText('hours.txt')).toBeTruthy();
+  });
+
+  test('an edit sends the message’s files again, all but one gone from Your data', async () => {
+    const api = fakeChatApi();
+    api.conversation = {
+      ...CONVERSATION,
+      messages: [
+        {
+          ...CONVERSATION.messages[0],
+          attachments: [
+            { ref: REF, kind: 'pdf', name: 'menu.pdf', state: 'on' },
+            { ref: GONE, kind: 'text', name: null, state: 'gone' },
+          ],
+        },
+        CONVERSATION.messages[1],
+      ],
+    };
+    renderAt('/locations/l1/agent', api);
+    await openEarlierChat();
+    const bubbleFiles = screen.getByRole('list', { name: 'Files attached' });
+    expect(within(bubbleFiles).getByRole('link', { name: 'menu.pdf, PDF. Open on Your data' })).toBeTruthy();
+    // A file gone from Your data has no page to open.
+    expect(within(bubbleFiles).queryByRole('link', { name: /Text file/ })).toBeNull();
+    expect(within(bubbleFiles).getByText('No longer on Your data')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByLabelText('Edit your message'), { target: { value: 'We close for the holidays, all week.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save and send' }));
+    await waitFor(() => { expect(api.turns).toHaveLength(1); });
+    expect(turn(api).body).toEqual({ conversationId: 'c1', content: 'We close for the holidays, all week.', parentId: null, attachments: [REF] });
+  });
 });

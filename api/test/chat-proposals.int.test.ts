@@ -130,7 +130,7 @@ describe('saving a proposal', () => {
 
   it('edited first: the note holds the edit and the proposal says it was edited; a note that breaks a rule is 400', async () => {
     const id = await conversationWithProposal();
-    const broken = await act(id, { action: 'save', note: { ...PROPOSAL, effect: 'closed' } });
+    const broken = await act(id, { action: 'save', note: { ...PROPOSAL, kind: 'opening', effect: 'closed' } });
     expect(broken).toMatchObject({ status: 400, body: { error: 'invalid_request' } });
     expect(await notesOf()).toHaveLength(0);
     expect(await proposalRows(id)).toHaveLength(0);
@@ -325,6 +325,22 @@ describe('deletion and logs', () => {
     expect(await proposalRows(id)).toHaveLength(0);
     expect(await proposalRows(keep)).toHaveLength(1);
     expect(await notesOf()).toHaveLength(1);
+  });
+
+  it('deleting the conversation deletes its order cards, and no other conversation’s', async () => {
+    const id = await conversationWithProposal();
+    const keep = await conversationWithProposal();
+    const cards = server.connection.collection('tw_order_cards');
+    await cards.insertMany([id, keep].map((conversationId) => ({
+      orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), conversationId: new Types.ObjectId(conversationId),
+      proposalId: 'toolu_order0001', kind: 'change', status: 'dismissed', decisionId: new Types.ObjectId(), createdAt: server.clock.now(),
+    })));
+    // A13: the cards go before the conversation, so a colleague's DELETE (404) must not reach them.
+    expect((await call(server, `/api/org/locations/${locationId}/chat/${id}`, { method: 'DELETE', session: colleague })).status).toBe(404);
+    expect(await cards.countDocuments({ conversationId: new Types.ObjectId(id) })).toBe(1);
+    expect((await call(server, `/api/org/locations/${locationId}/chat/${id}`, { method: 'DELETE', session: author })).status).toBe(204);
+    expect(await cards.countDocuments({ conversationId: new Types.ObjectId(id) })).toBe(0);
+    expect(await cards.countDocuments({ conversationId: new Types.ObjectId(keep) })).toBe(1);
   });
 
   it('logs the outcome with ids only, and no log line or event holds the note’s text', async () => {

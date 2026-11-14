@@ -21,7 +21,7 @@ async function turnOf(...steps: Step[]): Promise<{ result: TurnResult; events: T
   const events: TurnEvent[] = [];
   const costs: number[] = [];
   const result = await runTurn({
-    model, tools: noTools, history: [], userMessage: { role: 'user', content: 'Is anything on in town this weekend?' },
+    model, tools: noTools, history: [], userMessage: { role: 'user', content: 'Is anything on in town this weekend?' }, expanded: null,
     nodes: { user: { id: 'u1', parentId: null }, reply: { id: 'a1', parentId: 'u1' } }, signal: new AbortController().signal,
     now: () => at, emit: (event) => { events.push(event); },
     charge: (cost) => {
@@ -41,6 +41,7 @@ describe('the request', () => {
       { type: 'web_search_20260318', name: 'web_search', max_uses: 5, allowed_callers: ['direct'] },
     ]);
   });
+
 });
 
 describe('its cost', () => {

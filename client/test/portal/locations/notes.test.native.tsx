@@ -55,8 +55,10 @@ test('loading shows one line under the intro', async () => {
   const { api } = setup(meOf(ACCESS.member), deferred<unknown>().promise);
   await renderApp('/locations/l1/notes', api);
   expect(await screen.findByText('Loading notes')).toBeTruthy();
-  // TownwiseAI (the tuning chat) reads notes (api/src/handlers/notes.ts), so the intro doesn't say nothing does.
-  expect(screen.getByText(/^Notes record what your sales can’t show.*Only TownwiseAI reads them yet\.$/)).toBeTruthy();
+  // Notes adjust the published forecast on read (spec 14.5) and TownwiseAI reads them, so the intro says both.
+  expect(screen.getByText(
+    /^Notes record what your sales can’t show.* From today on, a private event with a guest count, a buyout or a closure changes Townwise’s forecast for its days\. TownwiseAI reads every note\.$/,
+  )).toBeTruthy();
   expect(screen.getByText('Talking to your model is planned.')).toBeTruthy();
 });
 
@@ -146,13 +148,54 @@ test('the form checks the API’s rules before it sends, then saves the note, se
   expect(await screen.findByText('Saved.')).toBeTruthy();
   expect(writes(api)).toEqual([{
     method: 'POST', path: PATH,
-    body: { kind: 'private_event', startDate: day(5), endDate: day(5), weekdays: [5, 6], effect: 'more_guests', expectedGuests: 1200, detail: 'Alumni weekend dinner.' },
+    body: { kind: 'private_event', startDate: day(5), endDate: day(5), weekdays: [5, 6], effect: 'more_guests', expectedGuests: 1200, detail: 'Alumni weekend dinner.',
+      startTime: null, endTime: null,
+    },
   }]);
   expect(screen.queryByRole('button', { name: 'Save note' })).toBeNull();
   const coming = screen.getByLabelText('Notes coming up');
   expect(within(coming).getByText('Alumni weekend dinner.')).toBeTruthy();
   expect(within(coming).getByText('Fridays and Saturdays only')).toBeTruthy();
   expect(within(coming).getByText('About 1,200 guests')).toBeTruthy();
+});
+
+test('an event takes hours and a closure none; a buyout takes its guests; the list shows the hours', async () => {
+  const { api } = setup();
+  api.answers[PATH] = (body) => saved('n9', body);
+  await renderApp('/locations/l1/notes', api);
+  await fireEvent.press(await screen.findByRole('button', { name: 'Add a note' }));
+  // A closure is all day, so it has no hours.
+  expect(screen.queryByLabelText('Starts at')).toBeNull();
+  expect(screen.queryByLabelText('Ends at')).toBeNull();
+
+  await fireEvent.press(screen.getByRole('button', { name: 'Private event' }));
+  expect(screen.getByText('24-hour, like 18:30. Leave empty for all day.')).toBeTruthy();
+  // For a private event, Closed is a buyout, and its guests are the party's size.
+  await fireEvent.press(screen.getByRole('button', { name: 'Buyout, closed to walk-ins all day' }));
+  expect(screen.queryByLabelText('Expected guests (optional)')).toBeNull();
+  await fireEvent.changeText(screen.getByLabelText('Guests at the buyout (optional)'), '70');
+  await fireEvent.changeText(screen.getByLabelText('Starts'), day(6));
+  await fireEvent.changeText(screen.getByLabelText('Starts at'), '18:00');
+  await fireEvent.press(screen.getByRole('button', { name: 'Save note' }));
+  expect(screen.getByText('Enter both times, or neither.')).toBeTruthy();
+  await fireEvent.changeText(screen.getByLabelText('Ends at'), '17:00');
+  await fireEvent.press(screen.getByRole('button', { name: 'Save note' }));
+  expect(screen.getByText('The end time is before the start time.')).toBeTruthy();
+  await fireEvent.changeText(screen.getByLabelText('Ends at'), '9pm');
+  await fireEvent.press(screen.getByRole('button', { name: 'Save note' }));
+  expect(screen.getByText('Enter a time as HH:MM, for example 18:30.')).toBeTruthy();
+  expect(writes(api)).toEqual([]);
+  await fireEvent.changeText(screen.getByLabelText('Ends at'), '21:00');
+  await fireEvent.press(screen.getByRole('button', { name: 'Save note' }));
+
+  expect(await screen.findByText('Saved.')).toBeTruthy();
+  expect(writes(api)).toEqual([{
+    method: 'POST', path: PATH,
+    body: { kind: 'private_event', startDate: day(6), endDate: day(6), weekdays: null, effect: 'closed', expectedGuests: 70, detail: null, startTime: '18:00', endTime: '21:00' },
+  }]);
+  const coming = screen.getByLabelText('Notes coming up');
+  expect(within(coming).getByText('6 pm to 9 pm')).toBeTruthy();
+  expect(within(coming).getByText('About 70 guests')).toBeTruthy();
 });
 
 test('Edit opens the note in the form and replaces it in full', async () => {
@@ -169,12 +212,32 @@ test('Edit opens the note in the form and replaces it in full', async () => {
   expect(await screen.findByText('Saved.')).toBeTruthy();
   expect(writes(api)).toEqual([{
     method: 'PATCH', path: `${PATH}/n1`,
-    body: { kind: 'closure', startDate: day(10), endDate: day(12), weekdays: [1], effect: 'closed', expectedGuests: null, detail: 'Closed for the off-season.' },
+    body: { kind: 'closure', startDate: day(10), endDate: day(12), weekdays: [1], effect: 'closed', expectedGuests: null, detail: 'Closed for the off-season.',
+      startTime: null, endTime: null,
+    },
   }]);
   expect(screen.getByText('Closed for the off-season.')).toBeTruthy();
   await fireEvent.press(screen.getByRole('button', { name: `Edit Closure note, ${formatDate(day(10))} to ${formatDate(day(12))}` }));
   await fireEvent.press(screen.getByRole('button', { name: 'Cancel' }));
   expect(screen.queryByRole('heading', { name: 'Edit this note' })).toBeNull();
+});
+
+test('a note TownwiseAI made from a file says so under its author, and its edit form says undoing the read removes it (D34)', async () => {
+  const fromFile = noteOf('n4', { kind: 'private_event', startDate: day(30), endDate: day(30), effect: 'more_guests', source: { via: 'ai_file', fileId: 'file-1' } });
+  const { api } = setup(meOf(ACCESS.member), [...NOTES, fromFile]);
+  await renderApp('/locations/l1/notes', api);
+  const coming = await screen.findByLabelText('Notes coming up');
+  // Only the note with the file source carries the line, and it links nowhere.
+  expect(within(coming).getAllByText('From a file TownwiseAI read')).toHaveLength(1);
+  expect(within(coming).queryByRole('link')).toBeNull();
+  await fireEvent.press(within(coming).getByRole('button', { name: `Edit Private event note, ${formatDate(day(30))}` }));
+  expect(screen.getByRole('heading', { name: 'Edit this note' })).toBeTruthy();
+  expect(screen.getByText('Undoing that file’s read removes this note, even after an edit.')).toBeTruthy();
+  await fireEvent.press(screen.getByRole('button', { name: 'Cancel' }));
+  // A note of the person's own has no such line in its form.
+  await fireEvent.press(within(coming).getByRole('button', { name: `Edit Closure note, ${formatDate(day(10))} to ${formatDate(day(12))}` }));
+  expect(screen.getByRole('heading', { name: 'Edit this note' })).toBeTruthy();
+  expect(screen.queryByText('Undoing that file’s read removes this note, even after an edit.')).toBeNull();
 });
 
 test('Delete asks first, then removes the note', async () => {

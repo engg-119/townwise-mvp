@@ -8,14 +8,17 @@ import type {
   BetaContentBlockParam, BetaMessageParam, BetaToolResultBlockParam, BetaToolUseBlockParam,
 } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 
+import type { AttachmentKind } from '../files/items.ts';
 import { readNoteContent } from '../handlers/notes.ts';
 import type { FeedbackReason } from '../stores/chat-conversations.ts';
 import type { NoteContent } from '../stores/notes.ts';
+import { attachedTo } from './attachments.ts';
 import { nextOf } from './tools/next.ts';
 import { inputViewOf, resultViewOf, toolNamed, type ToolView } from './tools/registry.ts';
 import { visualOf, type Visual } from './tools/visual.ts';
 import type { ChatNode } from './tree.ts';
 import { NOT_RUN } from './turn.ts';
+import { isContextBlock } from './user-message.ts';
 import { citedSources, searchResultView, WEB_SEARCH, type SourceLink } from './web-search.ts';
 
 /** What the author did with a proposal (tw_chat_proposals). `noteId` is the saved note's id, else null. */
@@ -35,6 +38,17 @@ export type ProposalView = ShownProposal & ProposalState;
 
 /** A reply's rating as the author sees it. */
 export interface FeedbackView { rating: 'up' | 'down'; reason: FeedbackReason | null }
+
+/**
+ * A file on Your data now, as a person's message shows it (D36): its name (null under view-as, and once the file is
+ * gone), and `on`, `off` (turned off) or `gone` (deleted, its original deleted, or stored files off).
+ */
+export interface AttachmentFile { name: string | null; state: 'on' | 'off' | 'gone' }
+
+/** A file a person's message carries: its ref and kind from the stored block, joined with Your data at read time. */
+export interface AttachmentView extends AttachmentFile { ref: string; kind: AttachmentKind }
+
+const UNKNOWN_FILE: AttachmentFile = { name: null, state: 'gone' };
 
 export type ChatPart =
   | { type: 'thinking'; text: string }
@@ -66,6 +80,8 @@ export interface ChatMessageView {
   next: string[] | null;
   /** The pages the reply's text cites from its web searches, shown with it; empty for none and for the person's own message. */
   sources: SourceLink[];
+  /** The files the person's message carries, in order (D36); empty for a reply. */
+  attachments: AttachmentView[];
 }
 
 function blocksOf(param: BetaMessageParam): readonly BetaContentBlockParam[] {
@@ -103,6 +119,7 @@ function partOf(
 function entry(
   nodeId: string, role: 'user' | 'assistant', at: Date, endedAt: Date, parts: ChatPart[], feedback: FeedbackView | null, next: string[] | null,
   sources: SourceLink[] = [],
+  attachments: AttachmentView[] = [],
 ): ChatMessageView {
   const texts = parts.flatMap((part) => (part.type === 'text' ? [part.text] : []));
   return {
@@ -112,17 +129,20 @@ function entry(
     feedback: role === 'user' ? null : feedback,
     next: role === 'user' ? null : next,
     sources: role === 'user' ? [] : sources,
+    attachments: role === 'user' ? attachments : [],
   };
 }
 
 /**
  * `path` is the nodes shown, root to leaf. `today` (the day the caller's tools read dates against) re-reads each call's
  * input, which was valid when it ran, through the same rules. `stateOf` says what became of each proposal; without it
- * every proposal reads as open. `feedbackOf` says how the author rated a reply (default: unrated). A node with nothing visible has no entry.
+ * every proposal reads as open. `feedbackOf` says how the author rated a reply (default: unrated). `fileOf` says what
+ * an attached file is on Your data now (default: gone, with no name). A node with nothing visible has no entry.
  */
 export function chatMessageViews(
   path: readonly ChatNode[], today: string, stateOf: (proposal: ShownProposal) => ProposalState = () => OPEN,
   feedbackOf: (nodeId: string) => FeedbackView | null = () => null,
+  fileOf: (ref: string) => AttachmentFile = () => UNKNOWN_FILE,
 ): ChatMessageView[] {
   const messages = path.map((node) => ({
     node, items: node.messages.map((message) => ({ at: message.at, param: JSON.parse(message.param) as BetaMessageParam })),
@@ -143,8 +163,12 @@ export function chatMessageViews(
     const first = items[0];
     if (first === undefined) continue;
     if (node.role === 'user') {
-      const text = blocksOf(first.param).flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('');
-      if (text !== '') views.push(entry(node.id, 'user', first.at, first.at, [{ type: 'text', text }], null, null));
+      // Only what the person typed: a business_rules or attachments block Townwise added before it is never shown back;
+      // the attachments block's refs and kinds are, joined with Your data.
+      const blocks = blocksOf(first.param);
+      const text = blocks.flatMap((block, index) => (block.type === 'text' && !isContextBlock(blocks, index) ? [block.text] : [])).join('');
+      const attachments = attachedTo(first.param).map(({ ref, kind }) => ({ ref, kind, ...fileOf(ref) }));
+      if (text !== '') views.push(entry(node.id, 'user', first.at, first.at, [{ type: 'text', text }], null, null, [], attachments));
       continue;
     }
     const parts: ChatPart[] = [];

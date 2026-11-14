@@ -83,6 +83,25 @@ const feedbackSchema = z.object({ rating: z.enum(['up', 'down']), reason: feedba
 
 const treeNodeSchema = z.object({ id: z.string(), parentId: z.string().nullable(), role: z.enum(['user', 'assistant']) });
 
+/** What a file attached to a message is (D36), in the server's words; a kind this client doesn't know reads as `file`. */
+export const ATTACHMENT_KINDS = ['text', 'picture', 'pdf', 'word', 'excel', 'zip', 'file'] as const;
+export type AttachmentKind = (typeof ATTACHMENT_KINDS)[number];
+
+/**
+ * A file a person's message carries (D36): its Your data ref and kind, its name (null under view-as and once the file
+ * is gone), and whether it is on, turned off or gone from Your data now.
+ */
+export interface MessageAttachment { ref: string; kind: AttachmentKind; name: string | null; state: 'on' | 'off' | 'gone' }
+
+// Read one by one (as the panel's items): an entry without a ref is left out, an unknown kind is a file, and an
+// unknown state is gone, so the chip never links to a page that may not be there.
+const attachmentSchema = z.object({
+  ref: z.string(),
+  kind: z.enum(ATTACHMENT_KINDS).catch('file'),
+  name: z.string().nullable().catch(null),
+  state: z.enum(['on', 'off', 'gone']).catch('gone'),
+});
+
 const budgetSchema = z.object({ month: z.string(), usedUsd: z.number(), limitUsd: z.number(), exhausted: z.boolean() });
 const conversationSummarySchema = z.object({ id: z.string(), title: z.string(), updatedAt: z.string(), turnCount: z.number() });
 const chatSummarySchema = z.object({
@@ -109,6 +128,7 @@ const conversationSchema = z.object({
     feedback: feedbackSchema.nullable().default(null),
     next: z.array(z.string()).nullable().default(null),
     sources: sourcesSchema,
+    attachments: z.array(z.unknown()).default([]),
   })),
 });
 
@@ -145,6 +165,8 @@ export interface StoredMessage {
   next: string[] | null;
   /** The pages a reply cites from the web; empty for none and for the person's messages. */
   sources: SourceLink[];
+  /** The files the person's message carries, in order (D36); [] for a reply. */
+  attachments: MessageAttachment[];
 }
 
 /** A conversation as the server shows it: the messages of one path, every node, and that path's leaf. */
@@ -278,6 +300,7 @@ function conversationOf(conversation: z.infer<typeof conversationSchema>): Conve
       feedback: message.feedback,
       next: message.next,
       sources: linksOf(message.sources),
+      attachments: message.role === 'user' ? known(message.attachments, attachmentSchema) : [],
     })),
   };
 }
@@ -323,15 +346,19 @@ export async function deleteConversation(api: ApiClient, locationId: string, con
 /**
  * A turn: a message, or a regenerate of the reply to the person's message `replyTo`. A message's `parentId` is the
  * node it hangs under (an edit names the edited message's parent; null starts a second root); left out, the server
- * appends to the leaf it has stored. No `conversationId` starts a new conversation, with no `parentId`.
+ * appends to the leaf it has stored. No `conversationId` starts a new conversation, with no `parentId`. A message's
+ * `attachments` (D36) are 1 to 5 `f_` refs of Your data, sent only when there are any; a regenerate never carries
+ * them (the server reads its stored message's files again).
  */
-export type TurnRequest = { conversationId: string | null; content: string; parentId?: string | null } | { conversationId: string; replyTo: string };
+export type TurnRequest =
+  | { conversationId: string | null; content: string; parentId?: string | null; attachments?: readonly string[] }
+  | { conversationId: string; replyTo: string };
 
 function turnBody(turn: TurnRequest): Record<string, unknown> {
   if ('replyTo' in turn) return { conversationId: turn.conversationId, replyTo: turn.replyTo };
-  if (turn.conversationId === null) return { content: turn.content };
-  const body: Record<string, unknown> = { conversationId: turn.conversationId, content: turn.content };
-  if (turn.parentId !== undefined) body.parentId = turn.parentId;
+  const body: Record<string, unknown> = turn.conversationId === null ? { content: turn.content } : { conversationId: turn.conversationId, content: turn.content };
+  if (turn.conversationId !== null && turn.parentId !== undefined) body.parentId = turn.parentId;
+  if (turn.attachments !== undefined && turn.attachments.length > 0) body.attachments = [...turn.attachments];
   return body;
 }
 
@@ -431,8 +458,19 @@ const questionSchema = z.discriminatedUnion('kind', [
     id: z.string(), kind: z.literal('weekday'), weekday: z.number().int().min(0).max(6), from: dateSchema, to: dateSchema,
     noSalesCount: z.number().int(), weekdayCount: z.number().int(),
   }),
-  /** A run of `dayCount` days with no sales and no note. */
-  z.object({ id: z.string(), kind: z.literal('gap'), from: dateSchema, to: dateSchema, dayCount: z.number().int() }),
+  /**
+   * A run of `dayCount` days with no sales and no note, asked only when one of its days is usually busy; the typical
+   * guests (spec D32), lowest and highest, of those usually busy days. An API from before them sends neither, and the
+   * card then says only that there are no sales.
+   */
+  z.object({
+    id: z.string(), kind: z.literal('gap'), from: dateSchema, to: dateSchema, dayCount: z.number().int(),
+    typicalGuestsLow: z.number().int().optional(), typicalGuestsHigh: z.number().int().optional(),
+  }),
+  /** A usually busy day with almost no guests recorded (spec D32's likely closed): its `guests` and `typicalGuests`. */
+  z.object({
+    id: z.string(), kind: z.literal('likely_closed'), date: dateSchema, guests: z.number().int().min(0), typicalGuests: z.number().int(),
+  }),
 ]);
 export type Question = z.infer<typeof questionSchema>;
 
@@ -442,7 +480,7 @@ const activitySchema = z.discriminatedUnion('kind', [
     at: z.string(), kind: z.literal('note_saved'), via: z.enum(['chat', 'question']), noteId: z.string(),
     noteKind: noteProposalSchema.shape.kind, startDate: dateSchema, endDate: dateSchema,
   }),
-  z.object({ at: z.string(), kind: z.literal('question_answered'), questionId: z.string(), answer: z.enum(['open', 'not_sure']) }),
+  z.object({ at: z.string(), kind: z.literal('question_answered'), questionId: z.string(), answer: z.enum(['open', 'not_sure', 'other']) }),
   /** F3: a stored file Townwise read, and what it added. Never the file's name. */
   z.object({
     at: z.string(), kind: z.literal('file_processed'), fileId: z.string(), firstDate: dateSchema, lastDate: dateSchema, dayCount: z.number().int(),
@@ -468,15 +506,19 @@ export async function loadAgentPanel(api: ApiClient, locationId: string): Promis
   return { questions: known(panel.questions, questionSchema), activity: known(panel.activity, activitySchema) };
 }
 
-export type QuestionAnswer = 'closed' | 'open' | 'not_sure';
+export type QuestionAnswer = 'closed' | 'open' | 'not_sure' | 'other';
 
 const answerResultSchema = z.object({
-  question: z.object({ id: z.string(), answer: z.enum(['closed', 'open', 'not_sure']) }),
+  question: z.object({ id: z.string(), answer: z.enum(['closed', 'open', 'not_sure', 'other']) }),
   note: noteSchema.nullable(),
 });
 export type AnswerResult = z.infer<typeof answerResultSchema>;
 
-/** `closed` saves a closure note over the question's days; every answer stops the question being asked again. */
+/**
+ * `closed` saves a closure note over the question's days, and `open` on a likely-closed question the note that it was
+ * open with few guests; every answer stops the question being asked again. The body is the answer alone: `other`
+ * (Something else…) carries no words, which go to the chat as a message.
+ */
 export function answerQuestion(api: ApiClient, locationId: string, questionId: string, answer: QuestionAnswer): Promise<AnswerResult> {
   return api.json(`${locationPath(locationId)}/agent/questions/${encodeURIComponent(questionId)}`, answerResultSchema, {
     method: 'POST', body: { answer },

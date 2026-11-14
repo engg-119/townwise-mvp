@@ -8,7 +8,7 @@ import {
   isStaffPrincipal, openAsAdminRefusal, policyRefusal, principalOf, scopeForOpenAsAdmin, viewAsRefusal, type Policy, type Principal,
 } from '../src/access/policy.ts';
 import type { Access, Resolution } from '../src/access/resolve.ts';
-import { assertRouteTable, TOWNWISE_ROUTES, type TownwiseRoute } from '../src/access/routes.ts';
+import { assertRouteTable, ROUTE_LIMITS, TOWNWISE_ROUTES, type TownwiseRoute } from '../src/access/routes.ts';
 import type { TownwiseContext } from '../src/app.ts';
 import { createLabCallbackRouter } from '../src/lab/callback.ts';
 
@@ -66,6 +66,14 @@ function codeOf(policy: Policy, name: string): string | null {
 describe('route table', () => {
   it('TOWNWISE_ROUTES passes the boot checks', () => {
     expect(() => { assertRouteTable(TOWNWISE_ROUTES); }).not.toThrow();
+  });
+
+  it('places.map is a signed_in POST with a 32kb body and the places limiter, open as admin', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id === 'places.map')
+      .map(({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }) => ({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }));
+    expect(rows).toEqual([
+      { id: 'places.map', method: 'POST', path: '/places/map', policy: 'signed_in', bodyLimit: '32kb', limiter: 'places', openAsAdmin: true },
+    ]);
   });
 
   it('serves sales history and the town calendar as member GETs with no body and no route limiter (spec 10.10)', () => {
@@ -162,6 +170,23 @@ describe('route table', () => {
     }
   });
 
+  it('orders: the board, edits, rules, the setup, item sales and counts are member routes but deleting item sales', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id.startsWith('org.orders.'))
+      .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));
+    const base = '/org/locations/:locationId/orders';
+    expect(rows).toEqual([
+      { id: 'org.orders.get', method: 'GET', path: base, policy: 'member', bodyLimit: 'none', limiter: undefined },
+      { id: 'org.orders.decision', method: 'POST', path: `${base}/decisions`, policy: 'member', bodyLimit: '2kb', limiter: undefined },
+      { id: 'org.orders.rule', method: 'POST', path: `${base}/rules`, policy: 'member', bodyLimit: '2kb', limiter: undefined },
+      { id: 'org.orders.rule_off', method: 'POST', path: `${base}/rules/off`, policy: 'member', bodyLimit: '1kb', limiter: undefined },
+      { id: 'org.orders.setup.get', method: 'GET', path: `${base}/setup`, policy: 'member', bodyLimit: 'none', limiter: undefined },
+      { id: 'org.orders.setup.save', method: 'PUT', path: `${base}/setup`, policy: 'member', bodyLimit: '1mb', limiter: undefined },
+      { id: 'org.orders.item_sales.upload', method: 'POST', path: `${base}/item-sales`, policy: 'member', bodyLimit: '256kb', limiter: 'item_sales' },
+      { id: 'org.orders.item_sales.remove', method: 'DELETE', path: `${base}/item-sales`, policy: 'org_admin', bodyLimit: 'none', limiter: undefined },
+      { id: 'org.orders.counts.save', method: 'POST', path: `${base}/counts`, policy: 'member', bodyLimit: '32kb', limiter: undefined },
+    ]);
+  });
+
   it('D25: Open as admin is a staff POST with no body, sharing the view-as limiter', () => {
     expect(TOWNWISE_ROUTES.find((r) => r.id === 'admin.orgs.open_as_admin')).toMatchObject({
       method: 'POST', path: '/admin/orgs/:orgId/open-as-admin', policy: 'staff', bodyLimit: 'none', limiter: 'view-as',
@@ -186,9 +211,14 @@ describe('route table', () => {
     expect(() => { assertRouteTable([route({ method: 'GET', bodyLimit: '32kb' })]); }).toThrow(ConfigError);
   });
 
-  it('boot refuses a PUT without a streamed body, and a streamed body on any route but the chunk route', () => {
+  it('boot refuses a PUT without a streamed or 1 MB body, and a streamed body on any route but the chunk route', () => {
     expect(() => { assertRouteTable([route({ method: 'PUT', bodyLimit: '32kb' })]); }).toThrow(ConfigError);
     expect(() => { assertRouteTable([route({ method: 'PUT', bodyLimit: 'stream' })]); }).toThrow(ConfigError);
+    // The ordering setup is saved whole, as one JSON document of up to 1 MB, and no other route takes one.
+    expect(() => { assertRouteTable([route({ id: 'org.orders.setup.save', method: 'PUT', bodyLimit: '1mb' })]); }).not.toThrow();
+    expect(() => { assertRouteTable([route({ method: 'PUT', bodyLimit: '1mb' })]); }).toThrow(ConfigError);
+    expect(() => { assertRouteTable([route({ id: 'org.orders.setup.save', method: 'POST', bodyLimit: '1mb' })]); }).toThrow(ConfigError);
+    expect(TOWNWISE_ROUTES.filter((r) => r.bodyLimit === '1mb').map((r) => r.id)).toEqual(['org.orders.setup.save']);
     expect(() => { assertRouteTable([route({ id: 'org.files.chunk', method: 'POST', bodyLimit: 'stream' })]); }).toThrow(ConfigError);
     expect(() => { assertRouteTable([route({ id: 'org.files.chunk', method: 'PUT', bodyLimit: 'stream' })]); }).not.toThrow();
   });
@@ -225,14 +255,58 @@ describe('route table', () => {
     expect(ids.indexOf('org.imports.current')).toBeLessThan(ids.indexOf('org.imports.get'));
   });
 
-  it('D28: Your data is a member GET of the organization, and a member PATCH and DELETE of one item, with no route limiter', () => {
-    const rows = TOWNWISE_ROUTES.filter((r) => ['org.data.list', 'org.data.update', 'org.data.remove'].includes(r.id))
-      .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));
+  it('D28: Your data is a member GET of the organization, and a member GET, PATCH, replace POST and DELETE of one item, with no route limiter', () => {
+    const ids = ['org.data.list', 'org.data.get', 'org.data.update', 'org.data.replace', 'org.data.remove'];
+    const rows = TOWNWISE_ROUTES.filter((r) => ids.includes(r.id))
+      .map(({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }) => ({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }));
     expect(rows).toEqual([
-      { id: 'org.data.list', method: 'GET', path: '/org/data', policy: 'member', bodyLimit: 'none', limiter: undefined },
-      { id: 'org.data.update', method: 'PATCH', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: '2kb', limiter: undefined },
-      { id: 'org.data.remove', method: 'DELETE', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: 'none', limiter: undefined },
+      { id: 'org.data.list', method: 'GET', path: '/org/data', policy: 'member', bodyLimit: 'none', limiter: undefined, openAsAdmin: true },
+      { id: 'org.data.get', method: 'GET', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: 'none', limiter: undefined, openAsAdmin: true },
+      { id: 'org.data.update', method: 'PATCH', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: '2kb', limiter: undefined, openAsAdmin: true },
+      {
+        id: 'org.data.replace', method: 'POST', path: '/org/locations/:locationId/data/:ref/replace', policy: 'member', bodyLimit: '2kb',
+        limiter: undefined, openAsAdmin: true,
+      },
+      { id: 'org.data.remove', method: 'DELETE', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: 'none', limiter: undefined, openAsAdmin: true },
     ]);
+  });
+
+  it('spec 11A.9: letting TownwiseAI read an item is a member POST with a 2kb body, open as admin, behind its own limiter that denies while its store is down', () => {
+    const route = TOWNWISE_ROUTES.find((entry) => entry.id === 'org.data.ai_read');
+    expect(route).toMatchObject({
+      method: 'POST', path: '/org/locations/:locationId/data/:ref/ai', policy: 'member', bodyLimit: '2kb', openAsAdmin: true, limiter: 'ai_reads',
+    });
+    expect(ROUTE_LIMITS.ai_reads).toEqual({ name: 'townwise:ai-reads', limit: 30, windowSeconds: 3600, whenStoreDown: 'deny' });
+    expect(TOWNWISE_ROUTES.filter((entry) => entry.limiter === 'ai_reads').map((entry) => entry.id)).toEqual(['org.data.ai_read']);
+  });
+
+  it('business rules are member routes with 2kb bodies on writes and no route limiter, after the notes block', () => {
+    const base = '/org/locations/:locationId/rules';
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id.startsWith('org.rules.'))
+      .map(({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }) => ({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }));
+    expect(rows).toEqual([
+      { id: 'org.rules.list', method: 'GET', path: base, policy: 'member', bodyLimit: 'none', limiter: undefined, openAsAdmin: true },
+      { id: 'org.rules.create', method: 'POST', path: base, policy: 'member', bodyLimit: '2kb', limiter: undefined, openAsAdmin: true },
+      { id: 'org.rules.update', method: 'PATCH', path: `${base}/:ruleId`, policy: 'member', bodyLimit: '2kb', limiter: undefined, openAsAdmin: true },
+      { id: 'org.rules.remove', method: 'DELETE', path: `${base}/:ruleId`, policy: 'member', bodyLimit: 'none', limiter: undefined, openAsAdmin: true },
+    ]);
+    const ids = TOWNWISE_ROUTES.map((entry) => entry.id);
+    expect(ids.indexOf('org.rules.list')).toBe(ids.indexOf('org.notes.remove') + 1);
+  });
+
+  it('owner calendars are member routes open as admin, with no route limiter, events before the :calendarId routes, and the only 2mb body', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id.startsWith('org.owner_calendars.'))
+      .map(({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }) => ({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }));
+    const base = '/org/locations/:locationId/owner-calendars';
+    const row = { policy: 'member', limiter: undefined, openAsAdmin: true };
+    expect(rows).toEqual([
+      { id: 'org.owner_calendars.list', method: 'GET', path: base, bodyLimit: 'none', ...row },
+      { id: 'org.owner_calendars.events', method: 'GET', path: `${base}/events`, bodyLimit: 'none', ...row },
+      { id: 'org.owner_calendars.create', method: 'POST', path: base, bodyLimit: '2mb', ...row },
+      { id: 'org.owner_calendars.refresh', method: 'POST', path: `${base}/:calendarId/refresh`, bodyLimit: 'none', ...row },
+      { id: 'org.owner_calendars.remove', method: 'DELETE', path: `${base}/:calendarId`, bodyLimit: 'none', ...row },
+    ]);
+    expect(TOWNWISE_ROUTES.filter((r) => r.bodyLimit === '2mb').map((r) => r.id)).toEqual(['org.owner_calendars.create']);
   });
 
   it('saving or setting aside a TownwiseAI proposal is a member POST with an 8kb body and no route limiter', () => {

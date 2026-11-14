@@ -83,7 +83,7 @@ export function chartSummary(days: readonly SalesDay[], series: Series): string 
 export interface ChartGeometry {
   /** The SVG path of the line, in a 0 to 300 by 0 to `height` box; a gap starts a new segment. */
   path: string;
-  /** Lone days (no neighbour with a value) are drawn as dots so they don't vanish. */
+  /** Lone days (no neighbor with a value) are drawn as dots so they don't vanish. */
   dots: { x: number; y: number }[];
   min: number;
   max: number;

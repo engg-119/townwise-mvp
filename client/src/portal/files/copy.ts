@@ -16,7 +16,7 @@ export const COPY = {
   starting: 'Starting…',
   finishing: 'Finishing…',
   uploaded: 'Uploaded',
-  cancelled: 'Cancelled',
+  cancelled: 'Canceled',
   interrupted: 'Upload interrupted. Drop it again.',
   failed: 'Something went wrong reading this file. It’s stored, and we’ll look into it.',
   /** Section 13: the browser path, for owners who send only daily totals. */

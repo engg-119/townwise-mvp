@@ -197,6 +197,25 @@ test('an org admin’s upload: match, check, send one body of days, and the repl
   expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
 });
 
+test('the browser-only upload never offers TownwiseAI and never sends anything to it, on any step (D34)', async () => {
+  const api = adminApi();
+  api.answers[UPLOAD] = answerFor({ dayCount: 3, inserted: 2, replaced: 1, kept: 0 });
+  renderAt(api);
+  const noBox = (): void => {
+    expect(screen.queryByRole('checkbox')).toBeNull();
+    expect(pageText()).not.toContain('Let TownwiseAI read');
+  };
+  await screen.findByRole('heading', { name: 'Choose a file' });
+  noBox();
+  await toCheck(csvFile(FILE));
+  noBox();
+  await click('Send 3 days');
+  expect(await screen.findByText('Saved 3 days for Main Street Bar: 2 new, 1 replaced.')).toBeTruthy();
+  noBox();
+  expect(writes(api)).toEqual([{ method: 'POST', path: UPLOAD, body: { days: DAYS } }]);
+  expect(api.calls.some((call) => call.path.endsWith('/ai'))).toBe(false);
+});
+
 test('days held by a turned-off upload are named in the check, for an admin and for a member', async () => {
   const held = [locationOf('l1', 'Main Street Bar', { townId: 'hanover-nh', name: 'Hanover', state: 'NH' }, { offDayCount: 12 })];
   renderAt(fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin', held) }));
@@ -316,6 +335,26 @@ test('a location column lists its values, the only cells shown, and other locati
   await click('Send 2 days');
   await screen.findByText('Saved 2 days for Main Street Bar: 2 new, 0 replaced.');
   expect(writes(api)[0]?.body).toEqual({ days: [{ date: '2025-03-04', guests: 10, netSalesCents: null }, { date: '2025-03-05', guests: 11, netSalesCents: null }] });
+});
+
+test('with one location the value question and the result name the organization, and the column still matches the location’s own name (D29)', async () => {
+  const text = [
+    'Date,Store,Guests',
+    '2025-03-04,Main Street Bar,10',
+    '2025-03-04,Elm Street Cafe,20',
+    '2025-03-05,Main Street Bar,11',
+  ].join('\n');
+  const api = fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin', LOCATIONS.slice(0, 1)) });
+  api.answers[UPLOAD] = answerFor({ dayCount: 2, inserted: 2, replaced: 0, kept: 0 });
+  renderAt(api);
+  await toMatch(csvFile(text));
+  pick(select('Location column (optional)'), 'Store: text');
+  await settle(() => undefined);
+  const values = await screen.findByRole('combobox', { name: 'Which value is Test Group?' });
+  await waitFor(() => { expect(shownChoice(values)).toBe('Main Street Bar'); });
+  await click('Check the totals');
+  await click('Send 2 days');
+  expect(await screen.findByText('Saved 2 days for Test Group: 2 new, 0 replaced.')).toBeTruthy();
 });
 
 test('a location column whose values don’t include the location’s name waits for a choice', async () => {

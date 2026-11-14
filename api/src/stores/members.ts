@@ -96,6 +96,8 @@ export interface MemberStore {
   /** Which of these addresses this organization already has an open invitation for. */
   openInviteEmails(scope: OrgScope, emails: readonly string[]): Promise<Set<string>>;
   hasActiveSeat(scope: OrgScope, userId: string): Promise<boolean>;
+  /** The role of this person's active seat in the organization, or null when they have none. */
+  activeRole(scope: OrgScope, userId: string): Promise<Role | null>;
   /** An open invitation; null when this organization already has one for the address (the unique index). */
   insertInvite(scope: OrgScope, input: InviteInput): Promise<string | null>;
   /**
@@ -194,6 +196,9 @@ export function createMemberStore(connection: Connection): MemberStore {
     },
     async hasActiveSeat(scope, userId) {
       return (await Member.exists({ orgId: scope.orgId, activeUserId: userId })) !== null;
+    },
+    async activeRole(scope, userId) {
+      return (await Member.findOne({ orgId: scope.orgId, activeUserId: userId }, { role: 1 }).lean())?.role ?? null;
     },
     async insertInvite(scope, input) {
       try {

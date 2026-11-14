@@ -1,9 +1,20 @@
+jest.mock('@react-native-google-signin/google-signin', () => {
+  const mocked: unknown = jest.requireActual('../../helpers/googleSigninMock');
+  return mocked;
+});
+jest.mock('expo-splash-screen', () => ({
+  preventAutoHideAsync: jest.fn(() => Promise.resolve()),
+  hideAsync: jest.fn(() => Promise.resolve()),
+}));
+
 import { fireEvent, render, screen } from '@testing-library/react-native';
+import { cleanup as cleanupApp, screen as appScreen } from 'expo-router/testing-library';
 
 import { ApiError } from '../../../src/api/client';
 import { ModelCard } from '../../../src/portal/estimates/ModelCard';
-import { ACCESS, meOf } from '../../helpers/portal';
-import { analyticsFake } from '../analytics/fakes';
+import { ACCESS, fakePortalApi, LOCATIONS, meOf, orgOf } from '../../helpers/portal';
+import { renderApp } from '../../helpers/renderApp';
+import { analyticsFake, calendarBody, historyBody, run } from '../analytics/fakes';
 import { portalWrapper } from '../files/harness';
 import { ABOUT, ABOUT_PATH, LOCATION_ID } from './fakes';
 
@@ -87,4 +98,33 @@ test('a failed read shows the error with Try again, which reads again', async ()
   await fireEvent.press(retry);
   expect(await screen.findByText('In progress')).toBeTruthy();
   expect(api.paths).toEqual([ABOUT_PATH, ABOUT_PATH]);
+});
+
+describe('the no-forecast line on a location page (D29)', () => {
+  const PATH = '/api/org/locations/l1';
+
+  afterEach(async () => {
+    await cleanupApp();
+  });
+
+  async function onAnalytics(locations = LOCATIONS): Promise<void> {
+    const days = run('2026-10-01', '2026-10-31', () => 100);
+    const fake = analyticsFake({
+      [`${PATH}/sales/history`]: historyBody(days),
+      [`${PATH}/notes`]: { notes: [] },
+      [`${PATH}/calendar?from=2026-01-01&to=2026-12-31`]: calendarBody(),
+      [`${PATH}/estimates/about`]: ABOUT,
+    });
+    await renderApp('/locations/l1/analytics', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member', locations), fallback: fake }));
+  }
+
+  test('with one location it names the organization', async () => {
+    await onAnalytics(LOCATIONS.slice(0, 1));
+    expect(await appScreen.findByText('Townwise has no forecast for Test Group yet. Home and TownwiseAI use your history and Hanover’s calendar until it does.')).toBeTruthy();
+  });
+
+  test('with several it names the location, as the API does', async () => {
+    await onAnalytics();
+    expect(await appScreen.findByText('Townwise has no forecast for Test Taproom yet. Home and TownwiseAI use your history and Hanover’s calendar until it does.')).toBeTruthy();
+  });
 });

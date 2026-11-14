@@ -154,15 +154,19 @@ describe('the months', () => {
     expect(railFill(11)).toBe(1);
   });
 
-  test('the final step is the widest-spread month, from the data', () => {
-    expect(finale()).toEqual({
-      title: 'July, the year’s widest spread.',
+  test('the final step is the reader’s month, with the counties furthest above and below, from the data', () => {
+    expect(finale(10)).toEqual({
+      title: 'November, this month in 2024.',
+      line: 'Centre County sat 7.2 index points above the Northeast; Nantucket County, 32.7 below.',
+    });
+    expect(finale(6)).toEqual({
+      title: 'July, this month in 2024.',
       line: 'Nantucket County sat 93.5 index points above the Northeast; Centre County, 15.4 below.',
     });
   });
 
   test('no generated sentence has an en or em dash, or says curve', () => {
-    const text = [...MONTH_NAMES.map((_, month) => moveSentence(month)), finale().title, finale().line,
+    const text = [...MONTH_NAMES.map((_, month) => moveSentence(month)), ...MONTH_NAMES.flatMap((_, month) => [finale(month).title, finale(month).line]),
       ...MONTH_NAMES.flatMap((_, month) => [...placeTags(month, 732).values()].map((tag) => tag.text))].join(' ');
     expect(text).not.toMatch(/[–—]/);
     expect(text).not.toMatch(/curve/i);

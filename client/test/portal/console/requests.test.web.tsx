@@ -110,7 +110,7 @@ test('Approve (C3): prefilled names, the town, field checks, then the notice and
   const orgName = within(dialog).getByRole('textbox', { name: 'Organization name' });
   const locationName = within(dialog).getByRole('textbox', { name: 'First location name' });
   expect((orgName as HTMLInputElement).value).toBe('Sample Mountain Tavern');
-  expect((locationName as HTMLInputElement).value).toBe('Sample Mountain Tavern');
+  expect((locationName as HTMLInputElement).value).toBe('Sample Mountain Tavern, Stowe');
   expect(within(dialog).getByText('Stowe, VT')).toBeTruthy();
   expect(within(dialog).getByText(`This creates the organization and its first location in Stowe, VT, and makes ${REQUESTER_EMAIL} its admin. We email them that they’re in, and they get access the next time they open Townwise.`)).toBeTruthy();
 
@@ -135,12 +135,13 @@ test('Approve (C3): prefilled names, the town, field checks, then the notice and
 });
 
 const STOWE = { townId: 'stowe-vt', name: 'Stowe', state: 'VT' };
+const ONE_LOCATION = 'Shown to them only once they have more than one location.';
 const HANOVER = { townId: 'hanover-nh', name: 'Hanover', state: 'NH' };
 const NORWICH = { townId: null, name: 'Norwich', state: 'VT' };
 const TWO_PLACES = adminRequest({
   places: [
-    { placeId: 'ChIJTestPlace0001', name: 'Lou’s Restaurant', town: HANOVER },
-    { placeId: 'ChIJTestPlace0002', name: 'Lou’s Bakery', town: NORWICH },
+    { placeId: 'ChIJTestPlace0001', name: 'Lou’s Restaurant', kind: 'business', town: HANOVER },
+    { placeId: 'ChIJTestPlace0002', name: 'Lou’s Bakery', kind: 'business', town: NORWICH },
   ],
 });
 
@@ -154,15 +155,44 @@ async function openApprove(request: unknown): Promise<{ api: ConsoleApi; dialog:
   return { api, dialog: screen.getByRole('dialog', { name: 'Approve Sample Mountain Tavern' }) };
 }
 
-test('Approve (C3) with places: a Location name per place, prefilled from Google, each with its town; the body carries locationNames in order', async () => {
+test('Approve without places starts First location name as “{organization}, {Town}”, with the helper for one location', async () => {
+  const { dialog } = await openApprove(adminRequest({ town: NORWICH }));
+  const field = within(dialog).getByRole<HTMLInputElement>('textbox', { name: 'First location name' });
+  expect(field.value).toBe('Sample Mountain Tavern, Norwich');
+  expect(within(dialog).getByText(ONE_LOCATION)).toBeTruthy();
+});
+
+test('Approve starts each Location name as “{Google name}, {Town}”, an address’s as “{organization}, {Town}”', async () => {
+  const { api, dialog } = await openApprove(adminRequest({
+    places: [
+      { placeId: 'ChIJTestPlace0001', name: 'Lou’s Restaurant', kind: 'business', town: HANOVER },
+      { placeId: 'ChIJTestPlace0006', name: '12 South Main Street', kind: 'address', town: NORWICH },
+    ],
+  }));
+  const first = within(within(dialog).getByRole('group', { name: 'Place 1 of 2' }));
+  const second = within(within(dialog).getByRole('group', { name: 'Place 2 of 2' }));
+  expect(first.getByRole<HTMLInputElement>('textbox', { name: 'Location name' }).value).toBe('Lou’s Restaurant, Hanover');
+  expect(second.getByRole<HTMLInputElement>('textbox', { name: 'Location name' }).value).toBe('Sample Mountain Tavern, Norwich');
+  // The place's line says which is a street address; with two, no helper.
+  expect(first.getByText('Lou’s Restaurant, Hanover, NH')).toBeTruthy();
+  expect(second.getByText('12 South Main Street (street address), Norwich, VT')).toBeTruthy();
+  expect(within(dialog).queryByText(ONE_LOCATION)).toBeNull();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Approve' }));
+  expect(await screen.findByText('No requests are waiting.')).toBeTruthy();
+  expect(writes(api)).toEqual([
+    { method: 'POST', path: '/api/admin/requests/r1/approve', body: { orgName: 'Sample Mountain Tavern', locationNames: ['Lou’s Restaurant, Hanover', 'Sample Mountain Tavern, Norwich'] } },
+  ]);
+});
+
+test('Approve (C3) with places: a Location name per place, prefilled, each with its town; the body carries locationNames in order', async () => {
   const { api, dialog } = await openApprove(TWO_PLACES);
   const first = within(within(dialog).getByRole('group', { name: 'Place 1 of 2' }));
   const second = within(within(dialog).getByRole('group', { name: 'Place 2 of 2' }));
   expect(first.getByText('Lou’s Restaurant, Hanover, NH')).toBeTruthy();
   expect(second.getByText('Lou’s Bakery, Norwich, VT')).toBeTruthy();
-  expect(first.getByRole<HTMLInputElement>('textbox', { name: 'Location name' }).value).toBe('Lou’s Restaurant');
+  expect(first.getByRole<HTMLInputElement>('textbox', { name: 'Location name' }).value).toBe('Lou’s Restaurant, Hanover');
   const other = second.getByRole<HTMLInputElement>('textbox', { name: 'Location name' });
-  expect(other.value).toBe('Lou’s Bakery');
+  expect(other.value).toBe('Lou’s Bakery, Norwich');
   expect(within(dialog).queryByRole('textbox', { name: 'First location name' })).toBeNull();
   expect(within(dialog).getByText(`This creates the organization and its 2 locations, and makes ${REQUESTER_EMAIL} its admin. We email them that they’re in, and they get access the next time they open Townwise.`)).toBeTruthy();
 
@@ -170,7 +200,7 @@ test('Approve (C3) with places: a Location name per place, prefilled from Google
   fireEvent.click(within(dialog).getByRole('button', { name: 'Approve' }));
   expect(await screen.findByText('No requests are waiting.')).toBeTruthy();
   expect(writes(api)).toEqual([
-    { method: 'POST', path: '/api/admin/requests/r1/approve', body: { orgName: 'Sample Mountain Tavern', locationNames: ['Lou’s Restaurant', 'Elm Street'] } },
+    { method: 'POST', path: '/api/admin/requests/r1/approve', body: { orgName: 'Sample Mountain Tavern', locationNames: ['Lou’s Restaurant, Hanover', 'Elm Street'] } },
   ]);
 });
 
@@ -180,15 +210,15 @@ test('Enter in a place’s Location name approves, as it does in the dialog with
   fireEvent.keyDown(field, { key: 'Enter' });
   expect(await screen.findByText('No requests are waiting.')).toBeTruthy();
   expect(writes(api)).toEqual([
-    { method: 'POST', path: '/api/admin/requests/r1/approve', body: { orgName: 'Sample Mountain Tavern', locationNames: ['Lou’s Restaurant', 'Lou’s Bakery'] } },
+    { method: 'POST', path: '/api/admin/requests/r1/approve', body: { orgName: 'Sample Mountain Tavern', locationNames: ['Lou’s Restaurant, Hanover', 'Lou’s Bakery, Norwich'] } },
   ]);
 });
 
-test('Each location needs its own name: empty, or the same ignoring case and spaces, stops the approve', async () => {
+test('Each location needs its own name: two defaults alike (one name in one town), the same ignoring case and spaces, or empty stop the approve', async () => {
   const { api, dialog } = await openApprove(adminRequest({
     places: [
-      { placeId: 'ChIJTestPlace0001', name: 'Lou’s Restaurant', town: HANOVER },
-      { placeId: 'ChIJTestPlace0003', name: 'Lou’s Restaurant', town: NORWICH },
+      { placeId: 'ChIJTestPlace0001', name: 'Lou’s Restaurant', kind: 'business', town: HANOVER },
+      { placeId: 'ChIJTestPlace0003', name: 'Lou’s Restaurant', kind: 'business', town: HANOVER },
     ],
   }));
   const approve = (): void => { fireEvent.click(within(dialog).getByRole('button', { name: 'Approve' })); };
@@ -198,7 +228,7 @@ test('Each location needs its own name: empty, or the same ignoring case and spa
   for (const group of groups()) expect(within(group).getByText('Each location needs its own name.')).toBeTruthy();
   expect(writes(api)).toEqual([]);
 
-  fireEvent.change(second(), { target: { value: ' lou’s  restaurant ' } });
+  fireEvent.change(second(), { target: { value: ' lou’s  restaurant,  hanover ' } });
   approve();
   for (const group of groups()) expect(within(group).getByText('Each location needs its own name.')).toBeTruthy();
   expect(writes(api)).toEqual([]);
@@ -212,17 +242,19 @@ test('Each location needs its own name: empty, or the same ignoring case and spa
   approve();
   expect(await screen.findByText('No requests are waiting.')).toBeTruthy();
   expect(writes(api)).toEqual([
-    { method: 'POST', path: '/api/admin/requests/r1/approve', body: { orgName: 'Sample Mountain Tavern', locationNames: ['Lou’s Restaurant', 'Lebanon'] } },
+    { method: 'POST', path: '/api/admin/requests/r1/approve', body: { orgName: 'Sample Mountain Tavern', locationNames: ['Lou’s Restaurant, Hanover', 'Lebanon'] } },
   ]);
 });
 
-test('a legacy place has an empty Location name; the text names the request’s town', async () => {
-  const { api, dialog } = await openApprove(adminRequest({ places: [{ placeId: 'ChIJTestPlace0009', name: null, town: STOWE }] }));
+test('a legacy place’s Location name starts as “{organization}, {Town}”, with the helper for one location; the text names the request’s town', async () => {
+  const { api, dialog } = await openApprove(adminRequest({ places: [{ placeId: 'ChIJTestPlace0009', name: null, kind: 'business', town: STOWE }] }));
   const group = within(within(dialog).getByRole('group', { name: 'Place 1 of 1' }));
   const field = group.getByRole<HTMLInputElement>('textbox', { name: 'Location name' });
-  expect(field.value).toBe('');
+  expect(field.value).toBe('Sample Mountain Tavern, Stowe');
+  expect(group.getByText(ONE_LOCATION)).toBeTruthy();
   expect(group.getByText('Stowe, VT')).toBeTruthy();
   expect(within(dialog).getByText(`This creates the organization and its first location in Stowe, VT, and makes ${REQUESTER_EMAIL} its admin. We email them that they’re in, and they get access the next time they open Townwise.`)).toBeTruthy();
+  fireEvent.change(field, { target: { value: '' } });
   fireEvent.click(within(dialog).getByRole('button', { name: 'Approve' }));
   expect(group.getByText('Each location needs its own name.')).toBeTruthy();
   expect(writes(api)).toEqual([]);

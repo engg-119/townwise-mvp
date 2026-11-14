@@ -13,6 +13,7 @@ describe('workbooks (spec 11A)', () => {
     const workbook = await readWorkbook(book);
     expect(workbook).toEqual({
       kind: 'sheets',
+      omitted: 0,
       sheets: [
         { name: 'Daily', rows: [['Business Date', 'Guests', 'Net Sales'], ['2025-01-01', '120', '3456.5'], ['2025-01-02', '98', '2890']] },
         { name: 'Notes', rows: [['Date', 'Note'], ['2025-01-01', 'Closed early']] },

@@ -10,7 +10,7 @@ import { fakeAuth } from '../../helpers/fakes';
 import { ACCESS, EMAIL, fakePortalApi, LOCATIONS, meOf, orgOf, refusal, viewAsMe, type FakePortalApi } from '../../helpers/portal';
 import { daysOf, locationsFake, salesOf, uploadOf } from '../locations/fakes';
 import { choicesOf, choose, shownChoice } from '../../helpers/select';
-import { dailyTotalsOf, dataFake, itemOf, type DataFake } from './fakes';
+import { aiOf, dailyTotalsOf, dataFake, itemOf, type DataFake } from './fakes';
 
 // Your data (P26, D28) on web: the table of everything a location received, Turn off and on at once, the deletes
 // with what each keeps, the downloads, All locations, Add a file and Paste text, and view-as and files-off.
@@ -115,6 +115,9 @@ test('lists every item as a table row: item, added, kind, size, status and days'
   expect(await screen.findByRole('heading', { level: 2, name: 'Your data' })).toBeTruthy();
   expect(screen.getByText('Everything your team added')).toBeTruthy();
   expect(screen.getByText(/^Sales uploads, files and text your team added for Main Street Bar, newest first\./)).toBeTruthy();
+  // Item sales, the ordering setup and counts are not listed here: one line points to where they live.
+  expect(screen.getByText('Item sales, the ordering setup and counts live in Orders, under Ordering setup.')).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Open Ordering setup' }).getAttribute('href')).toBe('/locations/l1/orders/setup');
   const rows = rowsOf(await table());
   expect(rows).toHaveLength(3);
   const head = within(screen.getByRole('table')).getAllByRole('columnheader').map((cell) => cell.textContent);
@@ -134,6 +137,56 @@ test('lists every item as a table row: item, added, kind, size, status and days'
   expect(within(at(rows, 2)).getByText('Used')).toBeTruthy();
   expect(within(at(rows, 2)).getByText('On')).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Upload sales history' }).getAttribute('href')).toBe('/locations/l1/sales/upload');
+});
+
+test('Status says what TownwiseAI did with a row’s file after what Townwise did, and nothing with no read or once undone (D34)', async () => {
+  const reference = { kind: 'pdf', state: 'kept', outcome: 'reference' } as const;
+  setup(meOf(ACCESS.admin), [
+    itemOf('f_queued', { ...reference, name: 'queued.pdf', ai: aiOf({ status: 'queued', kind: null }) }),
+    itemOf('f_reading', { ...reference, name: 'reading.pdf', ai: aiOf({ status: 'reading', kind: null }) }),
+    itemOf('f_done', { ...reference, name: 'done.pdf', ai: aiOf({ status: 'done' }) }),
+    itemOf('f_failed', { ...reference, name: 'failed.pdf', ai: aiOf({ status: 'failed', reason: 'internal', kind: null }) }),
+    itemOf('f_skipped', { ...reference, name: 'skipped.pdf', ai: aiOf({ status: 'skipped', reason: 'too_large', kind: null }) }),
+    itemOf('f_undone', { ...reference, name: 'undone.pdf', ai: aiOf({ status: 'undone', kind: null }) }),
+    itemOf('f_none', { ...reference, name: 'none.pdf' }),
+    itemOf('f_later', { ...reference, name: 'later.pdf', ai: aiOf({ status: 'a_status_from_later', kind: null }) }),
+    // A sales file that wrote days is its upload, and the read shows there.
+    itemOf('u_sales', { state: 'used', name: 'sales.csv', ai: aiOf({ status: 'done' }) }),
+  ]);
+  const rows = rowsOf(await table());
+  // Item, Added, Kind, Size, Status.
+  const status = rows.map((row) => within(row).getAllByRole('cell')[4]?.textContent);
+  expect(status).toEqual([
+    'OnKept for reference · TownwiseAI is reading it',
+    'OnKept for reference · TownwiseAI is reading it',
+    'OnKept for reference · Read by TownwiseAI',
+    'OnKept for reference · TownwiseAI couldn’t read it',
+    'OnKept for reference · TownwiseAI didn’t read it',
+    'OnKept for reference',
+    'OnKept for reference',
+    'OnKept for reference',
+    'OnUsed · Read by TownwiseAI',
+  ]);
+});
+
+test('Open is each row’s first action and opens the item’s page; an item still uploading has none', async () => {
+  const ref = 'f_00000000000000000000000c';
+  setup(meOf(ACCESS.admin), [
+    itemOf(ref, { name: 'menu-notes.txt', state: 'kept', outcome: 'reference' }),
+    itemOf('f_up', { name: 'arriving.txt', state: 'uploading', canTurnOff: false }),
+    dailyTotalsOf('u_1'),
+  ]);
+  const rows = rowsOf(await table());
+  const open = within(at(rows, 0)).getByRole('link', { name: 'Open: menu-notes.txt' });
+  expect(open.getAttribute('href')).toBe(`/locations/l1/data/${ref}`);
+  expect(open.textContent).toBe('Open');
+  // First among the row's actions.
+  expect(within(at(rows, 0)).getAllByRole('cell').at(-1)?.textContent).toMatch(/^OpenTurn off/);
+  expect(within(at(rows, 1)).queryByRole('link', { name: /^Open/ })).toBeNull();
+  expect(within(at(rows, 2)).getByRole('link', { name: 'Open: Daily totals, May 1, 2026 to May 10, 2026' }).getAttribute('href')).toBe('/locations/l1/data/u_1');
+  await settle(() => { fireEvent.click(open); });
+  await waitFor(() => { expect(window.location.pathname).toBe(`/locations/l1/data/${ref}`); });
+  expect(await screen.findByRole('heading', { level: 2, name: 'menu-notes.txt' })).toBeTruthy();
 });
 
 test('Turn off sends enabled false at once, the row reads Off, and the notice takes focus', async () => {
@@ -234,6 +287,9 @@ test('view-as: names hidden, every action disabled in place with the read-only l
   expect([all.getAttribute('aria-disabled'), all.getAttribute('aria-describedby')]).toEqual(['true', 'data-ro']);
   // With no name, each row's actions name it by its kind and its days, or when it was added.
   expect(within(at(rows, 1)).getByRole('button', { name: 'Turn off: Excel file, Jan 1, 2024 to Dec 31, 2025' })).toBeTruthy();
+  // Opening is a read: Open stays a working link under view-as.
+  const open = within(at(rows, 0)).getByRole('link', { name: 'Open: CSV or text file, added Nov 5, 2026' });
+  expect([open.getAttribute('href'), open.getAttribute('aria-disabled')]).toEqual(['/locations/l1/data/f_ref', null]);
   expect(within(at(rows, 0)).getByRole('button', { name: 'Turn off: CSV or text file, added Nov 5, 2026' })).toBeTruthy();
 });
 
@@ -259,8 +315,42 @@ test('a single-location organization has no Show select', async () => {
   const [first] = LOCATIONS;
   if (first === undefined) throw new Error('no location');
   setup(meOf(ACCESS.admin), ITEMS, { org: orgOf('org_admin', [first]) });
-  await table();
+  await table('Your data for Test Group');
   expect(screen.queryByLabelText('Show')).toBeNull();
+});
+
+test('with one location the lead, the table and the empty line name the organization (D29)', async () => {
+  const one = { org: orgOf('org_admin', LOCATIONS.slice(0, 1)) };
+  setup(meOf(ACCESS.admin), ITEMS, one);
+  expect(await table('Your data for Test Group')).toBeTruthy();
+  expect(screen.getByText(/^Sales uploads, files and text your team added for Test Group, newest first\./)).toBeTruthy();
+  cleanup();
+  setup(meOf(ACCESS.admin), [], one);
+  expect(await screen.findByText('Nothing here yet. What your team uploads or adds for Test Group shows here.')).toBeTruthy();
+  expect(screen.queryByText(/Main Street Bar/)).toBeNull();
+});
+
+test('with one location the Turned off notice and the delete dialogs name the organization (D29)', async () => {
+  const one = { org: orgOf('org_admin', LOCATIONS.slice(0, 1)) };
+  setup(meOf(ACCESS.admin), ITEMS, one);
+  await table('Your data for Test Group');
+  fireEvent.click(screen.getByRole('button', { name: 'Turn off: Daily totals, May 1, 2026 to May 10, 2026' }));
+  expect((await screen.findByText(/^Turned off Daily totals/)).textContent).toBe(
+    'Turned off Daily totals, May 1, 2026 to May 10, 2026. Test Group’s numbers, forecasts and TownwiseAI leave it out until it’s turned on.',
+  );
+  cleanup();
+  setup(meOf(ACCESS.admin), ITEMS, one);
+  await table('Your data for Test Group');
+  fireEvent.click(screen.getByRole('button', { name: 'Delete: Daily totals, May 1, 2026 to May 10, 2026' }));
+  const upload = await screen.findByRole('dialog', { name: 'Delete this upload' });
+  expect(within(upload).getByText(/^This deletes the 5 days this upload still holds for Test Group, May 1, 2026 to May 10, 2026,/)).toBeTruthy();
+  cleanup();
+  setup(meOf(ACCESS.admin), ITEMS, one);
+  await table('Your data for Test Group');
+  fireEvent.click(screen.getByRole('button', { name: 'Delete all originals for this location' }));
+  const originals = await screen.findByRole('dialog', { name: 'Delete all originals for this location' });
+  expect(within(originals).getByText(/^This deletes the original of every sales file for Test Group\./)).toBeTruthy();
+  expect(screen.queryByText(/Main Street Bar/)).toBeNull();
 });
 
 test('stored files off: no Add a file or Paste text, and the list still shows uploads', async () => {
@@ -278,7 +368,7 @@ test('stored files on: Add a file and Paste text, with the helper', async () => 
   expect(await screen.findByRole('button', { name: 'Add a file' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Paste text' })).toBeTruthy();
   expect(screen.getByText(
-    'Any kind of file up to 200 MB, kept as it is for your team. Townwise doesn’t read it for sales; use Upload sales history for that. TownwiseAI can read text files when you ask.',
+    'Any kind of file up to 200 MB, kept as it is for your team. Townwise doesn’t read it for sales; use Upload sales history for that. With the box above off, TownwiseAI reads a file only when you ask, in a chat or on the file’s page. With it on, TownwiseAI reads each file you add and uses what it finds.',
   )).toBeTruthy();
 });
 

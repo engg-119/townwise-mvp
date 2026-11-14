@@ -83,7 +83,7 @@ function DialogBody(props: ConfirmDialogProps): React.JSX.Element {
 const c = theme.color;
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: 'rgba(8, 10, 13, 0.8)', alignItems: 'center', justifyContent: 'center', padding: theme.space[4] },
+  backdrop: { flex: 1, backgroundColor: c.scrim, alignItems: 'center', justifyContent: 'center', padding: theme.space[4] },
   dialog: { width: '100%', maxWidth: 560, backgroundColor: c.panel, borderWidth: 1, borderColor: c.border, gap: theme.space[4] },
   body: { ...theme.type.small, color: c.text2 },
 });

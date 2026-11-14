@@ -15,7 +15,7 @@ const SOURCES = [{ host: 'hanover.org', url: 'https://www.hanover.org/fair' }, {
 function reply(over: Partial<ChatMessage> = {}): ChatMessage {
   return {
     key: 'm2', role: 'assistant', parts: [{ type: 'text', key: 'm2t', text: 'The fair is on Saturday.' }], state: 'complete', note: null,
-    nodeId: 'a1', parentId: 'u1', feedback: null, ratingError: null, next: null, request: null, startedAt: null, endedAt: null, ...over,
+    nodeId: 'a1', parentId: 'u1', feedback: null, ratingError: null, next: null, request: null, startedAt: null, endedAt: null, at: null, attachments: [], ...over,
   };
 }
 
@@ -23,7 +23,7 @@ function shown(message: ChatMessage): void {
   const chat = { state: { ...initialChatState(), status: 'ready', enabled: true, conversationId: 'c1' } } as unknown as TuningChat;
   render(
     <ReplyView
-      message={message} ctx={{ town: 'Hanover', hasTownProfile: true }} tree={TREE} newest chat={chat} locationId="l1"
+      message={message} ctx={{ town: 'Hanover', hasTownProfile: true }} tree={TREE} newest actions="always" chat={chat} locationId="l1"
       readOnlyId={null} canAct onRetry={jest.fn()} onAnnounce={jest.fn()}
     />,
   );

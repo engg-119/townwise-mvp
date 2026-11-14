@@ -1,6 +1,6 @@
 import { fmtSigned } from '../format';
 import { pickStep, type Side } from './band';
-import { countySeries, MAX_ABS_GAP, MONTHS, widestSpreadMonth, type CountySeries } from './countyData';
+import { countySeries, MAX_ABS_GAP, MONTHS, type CountySeries } from './countyData';
 import { countyShapes, townShapes, type TownShape } from './geometry';
 import { towns, type Town } from './towns';
 
@@ -84,19 +84,15 @@ export function markerScale(gap: number): number {
   return 0.35 + 0.65 * Math.sqrt(Math.min(1, Math.abs(gap) / MAX_ABS_GAP));
 }
 
-// The month with the widest spread of gaps across the twelve counties: the month shown with nothing chosen,
-// the flat map's month and the story's last step.
-export const REST_MONTH = widestSpreadMonth();
-
 // The map story's steps (ConsoleV2.dc.html): 0 the title over the outlines, 1 the region, 2 the towns appear,
-// 3 to 14 January to December, 15 back to the rest month. Scroll is the only clock.
+// 3 to 14 January to December, 15 back to the reader's month (thisMonth). Scroll is the only clock.
 export const STORY_STEPS = 16;
 export const FINAL_STEP = STORY_STEPS - 1;
 
-export function stepMonth(step: number): number | null {
+export function stepMonth(step: number, thisMonth: number): number | null {
   if (step < 2) return null;
   if (step === 2) return 0;
-  return step < FINAL_STEP ? step - 3 : REST_MONTH;
+  return step < FINAL_STEP ? step - 3 : thisMonth;
 }
 
 export type Phase = 'region' | 'local';
@@ -116,9 +112,12 @@ export interface MapState {
   hover: string | null;
   // The hover came from a pointer, which also scales the marker.
   pointer: boolean;
-  // The month set by the story, the scrubber or a selection; null shows REST_MONTH.
+  // The month set by the story, the scrubber or a selection; null shows thisMonth.
   month: number | null;
-  // Story mode: the scroll sets the step (on), or the map lies flat at the rest month (no working observer).
+  // The reader's current calendar month (0 to 11), read once when the map mounts: where the map rests with
+  // nothing chosen, the story's last step, and the month a picked town opens on.
+  thisMonth: number;
+  // Story mode: the scroll sets the step (on), or the map lies flat at thisMonth (no working observer).
   story: boolean;
   // The story's step, and a tick bumped on each change so its particle burst replays.
   ss: number;
@@ -145,20 +144,21 @@ export type MapAction =
   | { type: 'month'; month: number; kb: boolean }
   | { type: 'hover'; id: string | null; pointer: boolean };
 
-const START: MapState = {
+const START: Omit<MapState, 'thisMonth'> = {
   seen: false, draw: 'pre', phase: 'region', sel: null, hover: null, pointer: false, month: null,
   story: true, ss: 0, ssTick: 0, mby: 'user', back: false, kb: false, monthTick: 0, cardTick: 0,
 };
 
 // The story starts at its title, outlines hidden until the map is in view (drawn at once with reduced motion).
-// Without an observer the map lies flat: towns at the rest month, nothing to wait for.
-export function initialMapState(options: { reduced: boolean; story: boolean }): MapState {
-  if (!options.story) return { ...START, story: false, ss: FINAL_STEP, phase: 'local', draw: 'done', seen: true };
-  return options.reduced ? { ...START, draw: 'done' } : START;
+// Without an observer the map lies flat: towns at thisMonth, nothing to wait for.
+export function initialMapState(options: { reduced: boolean; story: boolean; thisMonth: number }): MapState {
+  const start: MapState = { ...START, thisMonth: options.thisMonth };
+  if (!options.story) return { ...start, story: false, ss: FINAL_STEP, phase: 'local', draw: 'done', seen: true };
+  return options.reduced ? { ...start, draw: 'done' } : start;
 }
 
 export function shownMonth(state: MapState): number {
-  return state.month ?? REST_MONTH;
+  return state.month ?? state.thisMonth;
 }
 
 function storyOn(state: MapState): MapState {
@@ -170,7 +170,7 @@ function storyOn(state: MapState): MapState {
 // The scroll owns the month while the story runs; a selected town keeps its zoom and follows the months.
 function toStep(state: MapState, step: number): MapState {
   if (!state.story || step === state.ss) return state;
-  const month = stepMonth(step);
+  const month = stepMonth(step, state.thisMonth);
   const next: MapState = { ...state, ss: step, kb: false, ssTick: state.ssTick + 1 };
   if (state.sel === null) next.phase = stepPhase(step);
   return month === state.month ? next : { ...next, month, monthTick: state.monthTick + 1, mby: 'scroll' };
@@ -200,14 +200,11 @@ export function mapReducer(state: MapState, action: MapAction): MapState {
       const on = storyOn(state);
       return toStep(on, pickStep(action.sides, on.ss));
     }
-    case 'select': {
-      const town = mapTowns.find((candidate) => candidate.id === action.id);
-      const month = town === undefined ? null : town.series.largestGap.monthIndex;
-      return halt(state, { sel: action.id, month, phase: 'local', back: false, cardTick: state.cardTick + 1 }, action.kb);
-    }
+    case 'select':
+      return halt(state, { sel: action.id, month: state.thisMonth, phase: 'local', back: false, cardTick: state.cardTick + 1 }, action.kb);
     case 'reset': {
       // During the story, Back returns to the step's own month and, before the towns, to the region.
-      const story = state.story ? { month: stepMonth(state.ss), phase: stepPhase(state.ss) } : { month: null };
+      const story = state.story ? { month: stepMonth(state.ss, state.thisMonth), phase: stepPhase(state.ss) } : { month: null };
       return halt(state, { sel: null, back: true, cardTick: state.cardTick + 1, ...story }, action.kb);
     }
     case 'month':

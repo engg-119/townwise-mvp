@@ -4,13 +4,15 @@ import { StyleSheet, Text, View } from 'react-native';
 import { ApiError } from '../../api/client';
 import { theme } from '../../theme';
 import { hasCode } from '../errors';
+import { shownLocationName } from '../locations/naming';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { locationHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
+import { UploadReadingSkeleton, UploadSendingSkeleton } from '../skeleton';
 import { ids } from '../ui/aria';
 import { Actions, Button, LinkButton } from '../ui/Button';
 import { DataTable } from '../ui/DataTable';
-import { LoadingLine, Messages, ReadOnlyLine } from '../ui/feedback';
+import { Messages, ReadOnlyLine } from '../ui/feedback';
 import { Columns, Panel, Stack } from '../ui/layout';
 import { Body, Eyebrow, Heading, Mono, Small } from '../ui/text';
 import { sendUpload, type UploadResponse } from './api';
@@ -132,7 +134,9 @@ export function UploadPage(): React.JSX.Element {
   const { location, org } = useLocation();
   const { api, reloadOrg } = usePortal();
   const { readOnly, line } = useReadOnly();
+  // The column value is matched by the stored name; every line shows the organization's name with one location (D29).
   const sales = useSalesFile(location.name);
+  const shown = shownLocationName(location, org);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<unknown>(null);
   const [result, setResult] = useState<UploadResponse | null>(null);
@@ -208,16 +212,16 @@ export function UploadPage(): React.JSX.Element {
   const stepNumber = step === 'choose' ? 1 : step === 'match' ? 2 : step === 'check' ? 3 : 4;
   let content: React.ReactNode;
   if (sales.reading !== null) {
-    content = <LoadingLine text={readingLine(sales.reading)} minHeight={240} />;
+    content = <UploadReadingSkeleton label={readingLine(sales.reading)} />;
   } else if (sending && check?.kind === 'days') {
-    content = <LoadingLine text={sendingLine(check.days.length)} minHeight={240} />;
+    content = <UploadSendingSkeleton label={sendingLine(check.days.length)} />;
   } else if (step === 'match' && opened !== null) {
     content = (
       <MatchStep
         columns={opened.columns}
         mapping={sales.mapping}
         onChange={sales.changeMapping}
-        locationName={location.name}
+        locationName={shown}
         locationValues={sales.values}
         readingLine={readingLine(opened.size)}
         onCheck={checkTotals}
@@ -240,7 +244,7 @@ export function UploadPage(): React.JSX.Element {
       />
     );
   } else if (step === 'done' && result !== null) {
-    content = <ResultStep result={result} role={org.role} locationId={location.id} locationName={location.name} />;
+    content = <ResultStep result={result} role={org.role} locationId={location.id} locationName={shown} />;
   } else {
     content = <ChooseStep readOnly={readOnly} line={line} error={sales.error} onFile={openFile} cancelHref={salesHref} />;
   }

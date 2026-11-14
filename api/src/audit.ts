@@ -140,7 +140,17 @@ const ORIGINALS_BASIS: Readonly<Record<string, string>> = {
 
 /** U9: what an answer to TownwiseAI's question about days with no sales said. */
 const QUESTION_ANSWER_WORDS: Readonly<Record<string, string>> = {
-  closed: 'closed on those days', open: 'the data is missing', not_sure: 'not sure',
+  closed: 'closed on those days', open: 'the data is missing', not_sure: 'not sure', other: 'answered in the chat',
+};
+
+/** What an answer to TownwiseAI's question about a day with almost no guests (D32, likely closed) said. */
+const LIKELY_CLOSED_ANSWER_WORDS: Readonly<Record<string, string>> = {
+  closed: 'closed that day', open: 'open, with few guests', not_sure: 'not sure', other: 'answered in the chat',
+};
+
+/** What TownwiseAI found a file it read to be (spec 11A.9). */
+const AI_KIND_WORDS: Readonly<Record<string, string>> = {
+  sales: 'sales', calendar: 'a calendar', inventory: 'inventory', menu: 'a menu', staffing: 'staffing', other: 'other',
 };
 
 const NOTE_KINDS: Readonly<Record<string, string>> = {
@@ -149,6 +159,11 @@ const NOTE_KINDS: Readonly<Record<string, string>> = {
 
 function noteSummary(verb: string, d: AuditDetails): string {
   return `${verb} a note (${NOTE_KINDS[text(d.kind)] ?? text(d.kind)}), ${text(d.startDate)} to ${text(d.endDate)}`;
+}
+
+/** An owner calendar by its kind only: its label, host and address are never in the record. */
+function calendarWords(d: AuditDetails): string {
+  return d.kind === 'link' ? 'a calendar link' : 'a calendar file';
 }
 
 /** The plain-words summary for an event, from its action and allowlisted details only. */
@@ -172,25 +187,63 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'location.created': return `Added the location ${text(d.name)}`;
     case 'location.updated': return `Updated the location ${text(d.name)}`;
     case 'location.deleted': return `Deleted the location ${text(d.name)}`;
-    case 'sales.uploaded': return `Uploaded ${text(d.dayCount)} days of sales data, ${text(d.firstDate)} to ${text(d.lastDate)}`;
+    case 'sales.uploaded':
+      if (d.via === 'townwise_ai') return `TownwiseAI added ${text(d.dayCount)} days of sales data from a file, ${text(d.firstDate)} to ${text(d.lastDate)}`;
+      return `Uploaded ${text(d.dayCount)} days of sales data, ${text(d.firstDate)} to ${text(d.lastDate)}`;
     case 'sales.deleted': return `Deleted ${text(d.deletedDays)} days of sales data`;
     // D28, Your data.
     case 'sales.upload_deleted': return `Deleted an upload and ${text(d.deletedDays)} days`;
     case 'data.turned_off': return d.item === 'file' ? 'Turned off a file' : 'Turned off an upload';
     case 'data.turned_on': return d.item === 'file' ? 'Turned on a file' : 'Turned on an upload';
+    case 'data.renamed': return 'Renamed a file';
+    case 'data.edited': return 'Edited a file';
     case 'file.uploaded': return 'Uploaded a file';
     case 'file.deleted': return 'Deleted a file';
     case 'file.raw_deleted': return 'Deleted a file’s original';
     case 'files.raw_deleted_all': return `Deleted ${text(d.count)} original files of a location`;
+    case 'file.ai_read_requested': return 'Asked TownwiseAI to read a file';
+    case 'file.ai_read': {
+      const read = `TownwiseAI read a file (${AI_KIND_WORDS[text(d.kind)] ?? 'other'}): ${text(d.events)} dated events, ${text(d.days)} days`;
+      // Events from before the actions stage carry no counts of what the read wrote.
+      if (d.notes === undefined) return read;
+      return `${read}; it added ${text(d.notes)} notes and ${text(d.daysWritten)} days${d.item === true ? ' and kept its notes on the file' : ''}`;
+    }
+    case 'file.ai_undone': return `Undid what TownwiseAI made from a file: ${text(d.notes)} notes, ${text(d.days)} days and ${text(d.items)} items`;
     case 'org.originals_deleted':
       return `Purged ${text(d.count)} original files, for ${ORIGINALS_BASIS[text(d.basis)] ?? 'another reason'}: each deleted at once, or as soon as Townwise finishes uploading or reading it`;
     case 'note.created': return noteSummary('Added', d);
     case 'note.updated': return noteSummary('Edited', d);
     case 'note.deleted': return noteSummary('Deleted', d);
+    // D31: never the rule's text.
+    case 'rule.created': return d.via === 'townwise_ai' ? 'Added a business rule, from TownwiseAI' : 'Added a business rule';
+    case 'rule.updated': return 'Edited a business rule';
+    case 'rule.deleted': return 'Deleted a business rule';
+    case 'owner_calendar.added': return `Added ${calendarWords(d)} with ${text(d.eventCount)} events`;
+    case 'owner_calendar.removed': return `Removed ${calendarWords(d)}`;
+    case 'owner_calendar.refreshed':
+      return d.status === 'ok' ? `Refreshed ${calendarWords(d)}: ${text(d.eventCount)} events` : `Refreshing ${calendarWords(d)} failed (${text(d.status)})`;
     case 'chat.turn_completed': return 'Asked the tuning chat about a location';
     case 'chat.conversation_deleted': return 'Deleted a tuning chat conversation';
     case 'agent.question_answered':
+      if (text(d.questionId).startsWith('likely_closed_')) {
+        return `Answered TownwiseAI’s question about a day with almost no guests: ${LIKELY_CLOSED_ANSWER_WORDS[text(d.answer)] ?? text(d.answer)}`;
+      }
       return `Answered TownwiseAI’s question about days with no sales: ${QUESTION_ANSWER_WORDS[text(d.answer)] ?? text(d.answer)}`;
+    // Orders.
+    case 'order.setup_saved': return `Saved the ordering setup: ${text(d.supplierCount)} suppliers and ${text(d.itemCount)} items`;
+    case 'order.item_sales_uploaded':
+      return `Uploaded ${text(d.dayCount)} days of item sales for ${text(d.itemCount)} items, ${text(d.firstDate)} to ${text(d.lastDate)}`
+        + (typeof d.removedCount === 'number' && d.removedCount > 0 ? `; removed ${text(d.removedCount)} days the file left out` : '')
+        + (typeof d.keptCount === 'number' && d.keptCount > 0 ? `; kept ${text(d.keptCount)} already saved` : '');
+    case 'order.item_sales_deleted': return `Deleted ${text(d.dayCount)} days of item sales`;
+    case 'order.count_saved': return `Counted ${text(d.itemCount)} items for ${text(d.date)}`;
+    case 'order.decision_saved': return `Changed an order line for the ${text(d.delivery)} delivery`;
+    case 'order.rule_saved': return 'Saved an order rule';
+    case 'order.rule_turned_off': return 'Turned off an order rule';
+    case 'order.card_saved':
+      return d.kind === 'rule' ? 'Saved an order rule TownwiseAI proposed' : 'Saved an order change TownwiseAI proposed';
+    case 'order.card_dismissed':
+      return d.kind === 'rule' ? 'Set aside an order rule TownwiseAI proposed' : 'Set aside an order change TownwiseAI proposed';
     // U13B.
     case 'forecast.imported': return `Imported a forecast (model ${text(d.modelVersion)}) for ${text(d.from)} to ${text(d.to)}`;
     case 'forecast.published':
@@ -199,6 +252,7 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'forecast.withdrawn': return `Withdrew a forecast (model ${text(d.modelVersion)}) for ${text(d.from)} to ${text(d.to)}`;
     case 'forecast.deleted': return `Deleted a forecast (model ${text(d.modelVersion)}) for ${text(d.from)} to ${text(d.to)}`;
     case 'calibration.requested':
+      if (d.via === 'file') return 'Started a calibration after TownwiseAI read a file';
       return d.hasRegime === true ? 'Started a calibration, with a weekly pattern change' : 'Started a calibration';
     case 'calibration.finished':
       if (d.status === 'failed') return 'A calibration failed';

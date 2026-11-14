@@ -10,7 +10,7 @@ import { toolLine, viewRows, type SourceLink, type ToolContext, type ToolStep } 
 // The tool calls of a reply (spec P25): one row per call, each fading in as it starts while the reply streams; the
 // "Worked for" disclosure (Worked.tsx) holds them once it is done. A done row opens to
 // what it read, as dates, counts and source links (never rows of figures or raw data). No icons: the mono status
-// word ("Reading", "Read", "Couldn’t read") carries the state, in `text2`, `text3` or the error colour.
+// word ("Reading", "Read", "Couldn’t read") carries the state, in `text2`, `text3` or the error color.
 
 /** Fades its child in over `duration` (easeOut), or shows it at once under reduced motion or until that is known. */
 export function FadeIn(props: { children: React.ReactNode; duration?: number }): React.JSX.Element {

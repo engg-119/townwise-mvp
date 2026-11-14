@@ -210,7 +210,7 @@ test('a reply that ends early says why', () => {
   ];
   for (const [stopReason, note] of rows) {
     let state: TuningChatState = { ...initialChatState(), status: 'ready', enabled: true };
-    state = chatReducer(state, { type: 'send', content: 'x', userKey: 'u', replyKey: 'r', request: { conversationId: null, content: 'x' } }, 0);
+    state = chatReducer(state, { type: 'send', content: 'x', attachments: [], userKey: 'u', replyKey: 'r', request: { conversationId: null, content: 'x' } }, 0);
     state = chatReducer(state, { type: 'event', event: { type: 'proposal', id: 'p1', proposal: PROPOSAL }, key: 'k', at: '' }, 0);
     state = chatReducer(state, { type: 'event', event: { type: 'done', stopReason, leafId: null, sources: [] }, key: 'k', at: '' }, 0);
     expect(state.messages.at(-1)).toMatchObject({ state: 'complete', note });
@@ -238,7 +238,7 @@ test('an error event marks the reply failed and unsaved, and says why', async ()
 
 test('a turn past the server’s time limit is marked unsaved and asks for something shorter', () => {
   let state: TuningChatState = { ...initialChatState(), status: 'ready', enabled: true };
-  state = chatReducer(state, { type: 'send', content: 'x', userKey: 'u', replyKey: 'r', request: { conversationId: null, content: 'x' } }, 0);
+  state = chatReducer(state, { type: 'send', content: 'x', attachments: [], userKey: 'u', replyKey: 'r', request: { conversationId: null, content: 'x' } }, 0);
   state = chatReducer(state, { type: 'event', event: { type: 'text', delta: 'Partly' }, key: 'k1', at: '' }, 0);
   state = chatReducer(state, { type: 'event', event: { type: 'error', code: 'timeout' }, key: 'k2', at: '' }, 0);
   expect(state.messages.at(-1)).toMatchObject({ state: 'failed', note: NOT_SAVED });
@@ -1163,4 +1163,129 @@ test('keeps text batching at FLUSH_MS: a burst of deltas draws within 32ms, with
   } finally {
     jest.useRealTimers();
   }
+});
+
+// Files on a message (D36): the composer hands them to send; a turn taken back gives them back with its text (and only
+// then); an edit and Try again send the message's again, all but one gone from Your data; a regenerate sends none.
+describe('attachments', () => {
+  const MENU = { ref: 'f_1111111111111111aaaaaaaa', kind: 'pdf', name: 'menu.pdf', state: 'on' } as const;
+  const OLD = { ref: 'f_2222222222222222bbbbbbbb', kind: 'text', name: null, state: 'gone' } as const;
+  const PATIO = { ref: 'f_3333333333333333cccccccc', kind: 'picture', name: 'patio.png', state: 'off' } as const;
+
+  test('a send carries the files’ refs, and its message shows them', async () => {
+    const api = fakeChatApi();
+    const chat = await ready(api);
+    const returned = jest.fn();
+    await act(() => { chat.current.setDraft('What does the menu say?'); });
+    await act(() => { chat.current.send([MENU], returned); });
+    expect(turn(api).body).toEqual({ content: 'What does the menu say?', attachments: [MENU.ref] });
+    expect(at(chat, 0).attachments).toEqual([MENU]);
+    expect(at(chat, 1).attachments).toEqual([]);
+    await act(() => {
+      turn(api).emit('conversation', { id: 'c2', title: 'What does the menu say?', userNodeId: 'u1', replyNodeId: 'a1', parentId: null });
+      turn(api).emit('text', { delta: 'It lists brunch.' });
+      turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0, leafId: 'a1' });
+      turn(api).end();
+    });
+    await waitFor(() => { expect(chat.current.state.streaming).toBe(false); });
+    expect(returned).not.toHaveBeenCalled();
+  });
+
+  test('a turn taken back gives the files back with the text, and says why in words about the files', async () => {
+    const api = fakeChatApi();
+    const chat = await ready(api);
+    const returned = jest.fn();
+    api.refuse = refusal(409, 'attachment_not_ready');
+    await act(() => { chat.current.setDraft('Read this'); });
+    await act(() => { chat.current.send([MENU], returned); });
+    await waitFor(() => { expect(chat.current.state.streaming).toBe(false); });
+    expect(returned).toHaveBeenCalledTimes(1);
+    expect(chat.current.state).toMatchObject({ messages: [], draft: 'Read this', error: 'An attached file is still uploading. Send your message once it’s ready.' });
+
+    // A send that can't go at all gives them back at once.
+    const busy = jest.fn();
+    api.refuse = null;
+    await act(() => { chat.current.send([MENU]); });
+    await act(() => { chat.current.send([PATIO], busy); });
+    expect(busy).toHaveBeenCalledTimes(1);
+    expect(api.turns).toHaveLength(1);
+  });
+
+  test('a turn taken back while the person typed something new keeps their text and gives no files back', async () => {
+    const api = fakeChatApi();
+    const chat = await ready(api);
+    const returned = jest.fn();
+    await act(() => { chat.current.setDraft('Read this'); });
+    await act(() => { chat.current.send([MENU], returned); });
+    await act(() => { chat.current.setDraft('Something else'); });
+    await act(() => { turn(api).fail(refusal(409, 'attachment_not_ready')); });
+    await waitFor(() => { expect(chat.current.state.streaming).toBe(false); });
+    expect(chat.current.state).toMatchObject({ messages: [], draft: 'Something else' });
+    expect(returned).not.toHaveBeenCalled();
+  });
+
+  test('Try again sends its message’s files again, but not one gone from Your data', async () => {
+    const api = fakeChatApi();
+    const chat = await ready(api);
+    await act(() => { chat.current.setDraft('Read these'); });
+    await act(() => { chat.current.send([MENU, OLD, PATIO]); });
+    await act(() => {
+      turn(api).emit('text', { delta: 'Partly' });
+      turn(api).emit('error', { code: 'provider_overloaded' });
+      turn(api).end();
+    });
+    await waitFor(() => { expect(chat.current.state.streaming).toBe(false); });
+    await act(() => { chat.current.retry(at(chat, 1).key); });
+    expect(turn(api, 1).body).toEqual({ content: 'Read these', attachments: [MENU.ref, PATIO.ref] });
+  });
+
+  test('a reply that fails after it started keeps the message, and Try again sends its files again', async () => {
+    const api = fakeChatApi();
+    const chat = await ready(api);
+    const returned = jest.fn();
+    await act(() => { chat.current.setDraft('Read this'); });
+    await act(() => { chat.current.send([MENU], returned); });
+    await act(() => {
+      turn(api).emit('text', { delta: 'Partly' });
+      turn(api).emit('error', { code: 'provider_overloaded' });
+      turn(api).end();
+    });
+    await waitFor(() => { expect(chat.current.state.streaming).toBe(false); });
+    expect(returned).not.toHaveBeenCalled();
+    await act(() => { chat.current.retry(at(chat, 1).key); });
+    expect(turn(api, 1).body).toEqual({ content: 'Read this', attachments: [MENU.ref] });
+    expect(at(chat, 0).attachments).toEqual([MENU]);
+  });
+
+  test('an edit sends the message’s files again, but not one gone from Your data; a regenerate sends none', async () => {
+    const api = fakeChatApi();
+    api.conversation = { ...PATH, messages: [U1, A1, { ...U2, attachments: [MENU, OLD, PATIO] }, A2] };
+    const chat = await ready(api);
+    await opened(chat);
+    expect(at(chat, 2).attachments).toEqual([MENU, OLD, PATIO]);
+    await act(() => { chat.current.regenerate(at(chat, 3).key); });
+    expect(turn(api).body).toEqual({ conversationId: 'c1', replyTo: 'u2' });
+    await act(() => { chat.current.stop(); });
+    await waitFor(() => { expect(chat.current.state.streaming).toBe(false); });
+    await act(() => { chat.current.editMessage(at(chat, 2).key, 'second, edited'); });
+    expect(turn(api, 1).body).toEqual({ conversationId: 'c1', content: 'second, edited', parentId: 'a1', attachments: [MENU.ref, PATIO.ref] });
+    expect(at(chat, 2).attachments).toEqual([MENU, PATIO]);
+  });
+
+  test('Stop and send carries the files, and a second press gives the first one’s back', async () => {
+    const api = fakeChatApi();
+    const chat = await ready(api);
+    await send(chat, 'First');
+    await act(() => { chat.current.setDraft('Now read this'); });
+    const first = jest.fn();
+    const second = jest.fn();
+    await act(() => {
+      chat.current.stopAndSend([MENU], first);
+      chat.current.stopAndSend([PATIO], second);
+    });
+    expect(first).toHaveBeenCalledTimes(1);
+    await waitFor(() => { expect(api.turns).toHaveLength(2); });
+    expect(turn(api, 1).body).toEqual({ content: 'Now read this', attachments: [PATIO.ref] });
+    expect(second).not.toHaveBeenCalled();
+  });
 });

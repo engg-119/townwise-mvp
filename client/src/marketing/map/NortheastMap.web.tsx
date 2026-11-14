@@ -22,7 +22,6 @@ const TITLE_MS = 450;
 const DRAW_MS = 900;
 const WATCHDOG_MS = 1000;
 const WIDE = '(min-width: 1024px)';
-const FINALE = finale();
 
 function round(value: number, places: number): number {
   const scale = 10 ** places;
@@ -169,7 +168,7 @@ function sameFit(a: Fit, b: Fit): boolean {
 }
 
 // The homepage map (ConsoleV2.dc.html) as a scroll-driven story: the title over the state outlines, the region,
-// then the twelve towns month by month, January to December, and back to the month of the widest spread. The
+// then the twelve towns month by month, January to December, and back to the reader's current month. The
 // scroll is the only clock; nothing moves on its own. Under the story come the lead (`lead`), the town list (the
 // keyboard and screen-reader control; markers are aria-hidden and out of the tab order) and the chosen town's panel.
 // Without IntersectionObserver the map lies flat at that month, the step texts in a row under it.
@@ -178,7 +177,7 @@ export function NortheastMap(props: { head?: React.ReactNode; lead?: React.React
   const reduced = useReducedMotion();
   const wide = useMediaQuery(WIDE);
   const [observable] = useState(() => typeof IntersectionObserver === 'function');
-  const [state, dispatch] = useReducer(mapReducer, null, () => initialMapState({ reduced, story: observable }));
+  const [state, dispatch] = useReducer(mapReducer, null, () => initialMapState({ reduced, story: observable, thisMonth: new Date().getMonth() }));
   const [fit, setFit] = useState<Fit | null>(null);
   const id = useId();
   const storyRef = useRef<HTMLDivElement>(null);
@@ -293,6 +292,7 @@ export function NortheastMap(props: { head?: React.ReactNode; lead?: React.React
   }, [observable, root, bandTop, bandBottom, bandUnit]);
 
   const month = shownMonth(state);
+  const ending = finale(state.thisMonth);
   const local = state.phase === 'local';
   const selected: MapTown | null = mapTowns.find((town) => town.id === state.sel) ?? null;
   const camera = selected === null ? REGION : cameraFor(selected.shape.bbox);
@@ -489,8 +489,8 @@ export function NortheastMap(props: { head?: React.ReactNode; lead?: React.React
             ))}
             <div className="st-s st-t st-f" data-ss={FINAL_STEP} style={row(FINAL_STEP + 1)}>
               <div className="st-c">
-                <h2 className="h3">{FINALE.title}</h2>
-                <p>{FINALE.line}</p>
+                <h2 className="h3">{ending.title}</h2>
+                <p>{ending.line}</p>
                 <p>A regional forecast averages your town away.</p>
               </div>
             </div>

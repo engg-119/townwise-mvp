@@ -1,0 +1,10 @@
+schema: spec-driven
+
+context: |
+  Townwise: daily guest and sales forecasts for small-town restaurants. CLAUDE.md is the engineering guide.
+  The product docs are the spec and must change with the code: docs/portal/spec.md (the build spec),
+  api/README.md (routes, flows, collections, env vars), docs/portal/tuning-chat.md (TownwiseAI tools),
+  client/MODULE.md and api/kit/*/MODULE.md (contracts and local changes).
+  [CONFIRM: ...] marks a shipped default awaiting the team's sign-off; [DECISION NEEDED: ...] marks an open gap.
+  Never resolve or delete either without a team decision.
+  Conventional Commits. PRs target develop; main deploys.

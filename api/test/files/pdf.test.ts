@@ -49,7 +49,7 @@ describe('PDF tables', () => {
     expect(JSON.stringify(found)).not.toContain('2025-12-31');
   });
 
-  it('puts each item in the band its centre lies in', () => {
+  it('puts each item in the band its center lies in', () => {
     const tables = tablesOf([[
       { text: 'Date', x: 10, y: 100, width: 20 }, { text: 'Guests', x: 100, y: 100, width: 30 },
       { text: '2025-01-01', x: 5, y: 90, width: 50 }, { text: '7', x: 110, y: 91, width: 5 },

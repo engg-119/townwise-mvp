@@ -3,7 +3,8 @@ import { mapTowns } from '../../src/marketing/map/mapState';
 import { errorCopy, needsRecheck, tooManyAttempts } from '../../src/portal/errors';
 import { formatCount, formatDate, formatTime, plural } from '../../src/portal/format';
 import {
-  clientNav, consoleNav, HOME, homeFor, isAllowed, isFillRoute, locationHref, navLocationId, pageTitle, tabOf, type TabKey,
+  calendarHref, clientNav, consoleNav, HOME, homeFor, isAllowed, isFillRoute, itemHref, locationHref, navLocationId, pageTitle, tabOf,
+  type TabKey,
 } from '../../src/portal/routing';
 import { meResponseSchema, orgResponseSchema, type Access } from '../../src/portal/schemas';
 import {
@@ -15,9 +16,13 @@ import { ACCESS, meOf, openAsAdminMe, orgOf, refusal, staffMe, viewAsMe } from '
 const ALL: [string, Access][] = Object.entries(ACCESS);
 
 const GATE = ['/request-access', '/waiting', '/no-access', '/joining', '/staff/sign-in-again'];
+/** An upload's and a stored file's item page (P27). */
+const UPLOAD_ITEM = '/locations/l1/data/u_0123456789abcdef01234567';
+const FILE_ITEM = '/locations/l1/data/f_89abcdef0123456789abcdef';
 const MEMBER = [
-  '/dashboard', '/settings', '/locations/l1', '/locations/l1/analytics', '/locations/l1/sales', '/locations/l1/sales/upload', '/locations/l1/data',
-  '/locations/l1/notes', '/locations/l1/town', '/locations/l1/agent', '/locations/l1/chat',
+  '/dashboard', '/settings', '/locations/l1', '/locations/l1/calendar', '/locations/l1/analytics', '/locations/l1/sales', '/locations/l1/sales/upload',
+  '/locations/l1/data', UPLOAD_ITEM, FILE_ITEM, '/locations/l1/notes', '/locations/l1/town', '/locations/l1/orders', '/locations/l1/orders/setup',
+  '/locations/l1/agent', '/locations/l1/chat', '/locations/l1/rules',
 ];
 const ADMIN_ONLY = ['/team', '/locations/new', '/locations/l1/settings'];
 const CONSOLE = ['/admin', '/admin/orgs', '/admin/orgs/o1', '/admin/people', '/admin/audit'];
@@ -78,6 +83,40 @@ describe('access routing (spec 4.3)', () => {
     expect(isAllowed(meOf(ACCESS.member), '/dashboard/')).toBe(true);
     expect(isAllowed(meOf(ACCESS.member), '/dashboard?x=1')).toBe(true);
     expect(isAllowed(meOf(ACCESS.member), '/locations/l1/nope')).toBe(false);
+    expect(isAllowed(meOf(ACCESS.member), '/locations/l1/orders/setup/')).toBe(true);
+    expect(isAllowed(meOf(ACCESS.member), '/locations/l1/orders/nope')).toBe(false);
+  });
+
+  test('isAllowed lets members open /locations/x/calendar, with or without ?day=', () => {
+    for (const me of [meOf(ACCESS.member), meOf(ACCESS.admin), viewAsMe(ACCESS.member), openAsAdminMe()]) {
+      expect(isAllowed(me, '/locations/x/calendar')).toBe(true);
+      expect(isAllowed(me, '/locations/x/calendar?day=2026-11-21')).toBe(true);
+      expect(isAllowed(me, calendarHref('x', '2026-11-21'))).toBe(true);
+    }
+    expect(isAllowed(meOf(ACCESS.pending), '/locations/x/calendar')).toBe(false);
+    expect(isAllowed(staffMe(), '/locations/x/calendar')).toBe(false);
+    expect(isAllowed(meOf(ACCESS.member), '/locations/x/calendar/2026-11')).toBe(false);
+  });
+
+  test('/locations/l1/rules is a member page, allowed under view-as and open as admin', () => {
+    for (const me of [meOf(ACCESS.member), meOf(ACCESS.admin), viewAsMe(ACCESS.member), viewAsMe(ACCESS.admin), openAsAdminMe()]) {
+      expect(isAllowed(me, '/locations/l1/rules')).toBe(true);
+    }
+    expect(isAllowed(meOf(ACCESS.pending), '/locations/l1/rules')).toBe(false);
+    expect(isAllowed(staffMe(), '/locations/l1/rules')).toBe(false);
+    expect(isAllowed(meOf(ACCESS.member), '/locations/l1/rules/r1')).toBe(false);
+  });
+
+  test('an item’s page needs u_ or f_ and exactly 24 lower-case hex digits (P27); anything looser redirects', () => {
+    const hex = '0123456789abcdef01234567';
+    expect(isAllowed(meOf(ACCESS.member), `/locations/l1/data/u_${hex}/`)).toBe(true);
+    for (const path of [
+      `/locations/l1/data/x_${hex}`, `/locations/l1/data/F_${hex}`, `/locations/l1/data/f_${hex.toUpperCase()}`, `/locations/l1/data/f_${hex.slice(1)}`,
+      `/locations/l1/data/f_${hex}0`, `/locations/l1/data/${hex}`, `/locations/l1/data/f_${hex}/edit`, '/locations/l1/data/text', '/locations/l1/data/u_',
+      `/locations/l1/data/f_${hex.slice(0, 23)}g`, `/locations/l1/data//f_${hex}`,
+    ]) {
+      expect({ path, allowed: isAllowed(meOf(ACCESS.admin), path) }).toEqual({ path, allowed: false });
+    }
   });
 });
 
@@ -87,11 +126,27 @@ describe('navigation per role (spec 15.3)', () => {
 
   test('members: the location’s sections, then Settings as the right-hand group', () => {
     expect(rows(clientNav('member', '/locations/l1', 'l1'))).toEqual([
-      ['Home', '/locations/l1', 'page', false], ['Analytics', '/locations/l1/analytics', null, false],
+      ['Home', '/locations/l1', 'page', false], ['Calendar', '/locations/l1/calendar', null, false], ['Orders', '/locations/l1/orders', null, false],
+      ['Analytics', '/locations/l1/analytics', null, false],
       ['TownwiseAI', '/locations/l1/agent', null, false], ['Notes', '/locations/l1/notes', null, false],
+      ['Rules', '/locations/l1/rules', null, false],
       ['Town', '/locations/l1/town', null, false], ['Your data', '/locations/l1/data', null, false],
       ['Settings', '/settings', null, true],
     ]);
+  });
+
+  test('clientNav lists Calendar right after Home', () => {
+    expect(clientNav('org_admin', '/locations/l1/calendar', 'l1').map((item) => item.label)).toEqual([
+      'Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Team', 'Settings',
+    ]);
+  });
+
+  test('clientNav lists Rules (P29) right after Notes, for members as for org admins', () => {
+    for (const role of ['member', 'org_admin'] as const) {
+      const labels = clientNav(role, '/locations/l1', 'l1').map((item) => item.label);
+      expect(labels.indexOf('Rules')).toBe(labels.indexOf('Notes') + 1);
+    }
+    expect(clientNav('member', '/locations/l1', 'l1').find((item) => item.label === 'Rules')?.href).toBe('/locations/l1/rules');
   });
 
   test('org admins add Team, which starts the right-hand group', () => {
@@ -110,14 +165,23 @@ describe('navigation per role (spec 15.3)', () => {
     expect(clientNav('org_admin', '/dashboard', null).map((item) => item.label)).toEqual(['Team', 'Settings']);
   });
 
-  test('current: each section on its own page; Analytics also on Sales data, which lives under it; Your data on Upload', () => {
+  test('current: each section on its own page; Analytics also on Sales data, which lives under it; Orders on Ordering setup; Your data on Upload', () => {
     const current = (path: string): [string, string | null][] =>
       clientNav('org_admin', path, 'l1').filter((item) => item.current !== null).map((item) => [item.label, item.current]);
     expect(current('/locations/l1/analytics')).toEqual([['Analytics', 'page']]);
     expect(current('/locations/l1/sales')).toEqual([['Analytics', 'true']]);
+    expect(current('/locations/l1/orders')).toEqual([['Orders', 'page']]);
+    expect(current('/locations/l1/orders/setup')).toEqual([['Orders', 'true']]);
     expect(current('/locations/l1/sales/upload')).toEqual([['Your data', 'true']]);
     expect(current('/locations/l1/data')).toEqual([['Your data', 'page']]);
+    expect(current(FILE_ITEM)).toEqual([['Your data', 'true']]);
+    expect(current(UPLOAD_ITEM)).toEqual([['Your data', 'true']]);
+    // Another location's item marks nothing here.
+    expect(current('/locations/l2/data/f_89abcdef0123456789abcdef')).toEqual([]);
     expect(current('/locations/l1/agent')).toEqual([['TownwiseAI', 'page']]);
+    // Business rules (P29) has its own section, Rules.
+    expect(current('/locations/l1/rules')).toEqual([['Rules', 'page']]);
+    expect(current('/locations/l1/calendar')).toEqual([['Calendar', 'page']]);
     expect(current('/locations/l1/notes/')).toEqual([['Notes', 'page']]);
     expect(current('/locations/l1/town')).toEqual([['Town', 'page']]);
     // Location settings is the header's link, not a top bar item; Settings is the account page.
@@ -154,6 +218,9 @@ describe('navigation per role (spec 15.3)', () => {
     const today = new Date(2026, 10, 5);
     const pages: [string, TabKey, string][] = [
       ['/locations/l1', 'home', 'Week of Nov 2, 2026'],
+      ['/locations/l1/calendar', 'calendar', 'Calendar'],
+      ['/locations/l1/orders', 'orders', 'Orders'],
+      ['/locations/l1/orders/setup', 'ordersSetup', 'Ordering setup'],
       ['/locations/l1/analytics', 'analytics', 'Analytics'],
       ['/locations/l1/sales', 'sales', 'Sales data'],
       ['/locations/l1/sales/upload', 'upload', 'Upload'],
@@ -161,6 +228,7 @@ describe('navigation per role (spec 15.3)', () => {
       ['/locations/l1/notes', 'notes', 'Notes'],
       ['/locations/l1/town', 'town', 'Town'],
       ['/locations/l1/agent', 'agent', 'TownwiseAI'],
+      ['/locations/l1/rules', 'rules', 'Business rules'],
       ['/locations/l1/settings', 'settings', 'Location settings'],
     ];
     for (const [path, key, title] of pages) {
@@ -168,9 +236,16 @@ describe('navigation per role (spec 15.3)', () => {
       expect(locationHref('l1', key)).toBe(path);
       expect(pageTitle(key, today)).toBe(title);
     }
-    // The old chat address belongs to TownwiseAI, where it redirects.
+    // The old chat address belongs to TownwiseAI, where it redirects, and an item's page to Your data.
     expect(tabOf('/locations/l1/chat')).toBe('agent');
+    expect(tabOf(FILE_ITEM)).toBe('data');
+    expect(tabOf(UPLOAD_ITEM)).toBe('data');
+    expect(itemHref('l1', 'f_89abcdef0123456789abcdef')).toBe(FILE_ITEM);
     expect(locationHref('a b')).toBe('/locations/a%20b');
+    // Home's days open the Calendar at a day (?day=).
+    expect(calendarHref('l1')).toBe('/locations/l1/calendar');
+    expect(calendarHref('a b', '2026-11-21')).toBe('/locations/a%20b/calendar?day=2026-11-21');
+    expect(tabOf(calendarHref('l1', '2026-11-21'))).toBe('calendar');
   });
 
   test('Home’s title is the Monday of this week on the device’s calendar, across a month and a year', () => {

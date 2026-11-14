@@ -94,9 +94,10 @@ export interface DayPanelData {
   source: PanelSource | null;
 }
 
-/** "Private event, more guests than usual"; "Closure" for a closure that closed the day. */
+/** "Private event, more guests than usual"; "Closure" for a closure that closed the day; "Private buyout" for a private event that did. */
 export function noteWords(note: Pick<Note, 'kind' | 'effect'>): string {
   if (note.kind === 'closure' && note.effect === 'closed') return KIND_LABEL.closure;
+  if (note.kind === 'private_event' && note.effect === 'closed') return 'Private buyout';
   if (note.effect === 'unknown') return `${KIND_LABEL[note.kind]}, effect not known`;
   const effect = EFFECT_LABEL[note.effect];
   return `${KIND_LABEL[note.kind]}, ${effect.charAt(0).toLowerCase()}${effect.slice(1)}`;
@@ -139,7 +140,7 @@ export function dayPanel(date: string, input: PanelInput): DayPanelData {
   const hasValue = day !== undefined && (day.guests !== null || day.netSalesCents !== null);
   const metricValue = day === undefined ? null : valueOf(day, input.metric);
   const status = [
-    flags.closed ? 'Closed' : null,
+    flags.likelyClosed ? 'Likely closed' : flags.closed ? 'Closed' : null,
     hasValue ? null : 'No data for this day',
     metricValue !== null && !input.included(date) ? 'Left out of the numbers by your filters' : null,
     date === input.today ? 'Today' : null,

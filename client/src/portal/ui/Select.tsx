@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
+import { useFocusOnMount } from '../places/focus';
 import { FieldFrame, fieldStyles, useFieldIds, type FieldChrome } from './FormField';
 import { isGroup, labelOf, type SelectOption, type SelectProps } from './selectTypes';
 import { Button } from './Button';
@@ -11,6 +12,7 @@ import { Button } from './Button';
 
 export function Select(props: SelectProps): React.JSX.Element {
   const fieldIds = useFieldIds();
+  const control = useFocusOnMount<React.ComponentRef<typeof Pressable>>(props.autoFocus === true);
   const [open, setOpen] = useState(false);
   const readOnly = props.readOnly === true;
   const current = labelOf(props.items, props.value) ?? props.placeholder ?? '';
@@ -39,8 +41,9 @@ export function Select(props: SelectProps): React.JSX.Element {
   return (
     <FieldFrame {...chrome} ids={fieldIds}>
       <Pressable
+        ref={control}
         role="button"
-        accessibilityLabel={props.label}
+        accessibilityLabel={props.accessibilityLabel ?? props.label}
         accessibilityValue={{ text: current }}
         aria-disabled={readOnly}
         {...(props.helper === undefined ? {} : { accessibilityHint: props.helper })}
@@ -82,7 +85,7 @@ const styles = StyleSheet.create({
     width: 7, height: 7, borderRightWidth: 1.5, borderBottomWidth: 1.5, borderColor: c.text2, transform: [{ rotate: '45deg' }],
     marginLeft: 12, marginTop: -4,
   },
-  backdrop: { flex: 1, backgroundColor: 'rgba(8, 10, 13, 0.8)', justifyContent: 'center', padding: theme.space[4] },
+  backdrop: { flex: 1, backgroundColor: c.scrim, justifyContent: 'center', padding: theme.space[4] },
   sheet: {
     maxHeight: '80%', backgroundColor: c.panel, borderWidth: 1, borderColor: c.border, padding: theme.space[4], gap: theme.space[3],
   },

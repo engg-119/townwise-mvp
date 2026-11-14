@@ -10,6 +10,7 @@ import { plural } from '../../../../../src/portal/format';
 import { useBreakpoint } from '../../../../../src/portal/hooks';
 import { useOptionalPortal } from '../../../../../src/portal/PortalProvider';
 import { Page } from '../../../../../src/portal/shell/Page';
+import { SecuritySkeleton } from '../../../../../src/portal/skeleton';
 import { Actions, Button, LinkButton } from '../../../../../src/portal/ui/Button';
 import { ErrorNotice, Notice } from '../../../../../src/portal/ui/feedback';
 import { FormField } from '../../../../../src/portal/ui/FormField';
@@ -244,6 +245,9 @@ export default function SecurityScreen(): React.JSX.Element {
     );
   } else if (me?.totp.enabled === true) {
     steps = <Body>{`Two-step sign-in is on. ${plural(me.totp.recoveryCodesRemaining, 'recovery code', 'recovery codes')} left.`}</Body>;
+  } else if (me === null && message === null) {
+    // Until the account is read: the Before you start panel's skeleton (spec 15.7).
+    steps = <SecuritySkeleton label="Loading two-step sign-in" />;
   }
 
   return (

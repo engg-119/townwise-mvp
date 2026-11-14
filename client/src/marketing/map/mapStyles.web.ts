@@ -90,7 +90,7 @@ const map = `
 .twmap .zbar{position:absolute;left:12px;top:12px;z-index:4;display:flex;flex-wrap:wrap;gap:8px;max-width:calc(100% - 24px);opacity:0;visibility:hidden;transition:opacity 150ms var(--eo),visibility 150ms}
 .twmap .app.is-zoomed .zbar{opacity:1;visibility:visible;transition:opacity ${m.fade}ms var(--eo) ${m.zoom}ms,visibility 0s}
 .twmap .zb{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 12px;background:var(--panel);color:var(--white);border:1px solid var(--line);border-radius:0;font-family:var(--sans);font-size:14px;line-height:20px;font-weight:500;text-decoration:none;cursor:pointer;transition:border-color ${m.select}ms ease}
-.twmap .zb:hover{color:var(--white);border-color:var(--white)}
+@media (hover:hover){.twmap .zb:hover{color:var(--white);border-color:var(--white)}}
 `;
 
 // The town list, the card and the notes row under the panes. On phones the card's sentences are body size and
@@ -108,7 +108,8 @@ const panel = `
 @media (max-width:899px){.twmap .rows{grid-template-columns:repeat(2,minmax(0,1fr));gap:4px}}
 @media (max-width:379px){.twmap .rows{grid-template-columns:minmax(0,1fr)}}
 .twmap .row{display:grid;gap:4px;width:100%;min-height:44px;margin:0;padding:6px 10px;text-align:left;background:transparent;color:var(--white);border:1px solid transparent;border-radius:0;cursor:pointer;transition:background-color ${m.select}ms ease,border-color ${m.select}ms ease}
-.twmap .row:hover,.twmap .row.is-hov{background:var(--raised)}
+@media (hover:hover){.twmap .row:hover{background:var(--raised)}}
+.twmap .row.is-hov{background:var(--raised)}
 .twmap .row.is-sel{background:var(--raised);border-color:var(--border)}
 .twmap .row-n{display:flex;align-items:center;gap:6px;min-width:0;font-size:14px;line-height:20px;font-weight:500}
 .twmap .row-sq{flex:none;width:6px;height:6px;background:transparent;transition:background-color ${m.select}ms ease}
@@ -120,7 +121,7 @@ const panel = `
 @media (max-width:899px){.twmap .row-d{padding-left:0}}
 .twmap .sp{flex:0 1 64px;min-width:40px;height:20px;overflow:visible}
 .twmap .sp path{vector-effect:non-scaling-stroke}
-.twmap .sp-ne{fill:none;stroke:var(--text3);stroke-width:${s.hairline};stroke-dasharray:2 2}
+.twmap .sp-ne{fill:none;stroke:${c.seriesNortheast};stroke-width:${s.hairline};stroke-dasharray:2 2}
 .twmap .sp-tw{fill:none;stroke:var(--mint);stroke-width:${s.emph};stroke-linejoin:round}
 .twmap .row-v{margin-left:auto;min-width:9ch;text-align:right;font-family:var(--mono);font-weight:500;font-size:12px;line-height:16px;font-variant-numeric:tabular-nums;color:var(--text2);white-space:pre}
 .twmap .cb{display:grid;gap:16px;align-content:start}
@@ -145,13 +146,13 @@ const panel = `
 .twmap .ck{display:inline-flex;align-items:center;gap:6px}
 .twmap .ln-tw,.twmap .ln-ne{display:inline-block;width:16px;height:0;border-top:${s.series}px solid var(--mint)}
 .twmap .ln-tw.is-empty{border-top:${s.hairline}px solid var(--line)}
-.twmap .ln-ne{border-top:${s.series}px dashed var(--text3)}
+.twmap .ln-ne{border-top:${s.series}px dashed ${c.seriesNortheast}}
 .twmap .ch{position:relative;margin:4px 0 0 44px}
 .twmap .ch-svg{position:absolute;inset:0;width:100%;height:100%;display:block;overflow:visible}
 .twmap .ch-svg path,.twmap .ch-svg line{vector-effect:non-scaling-stroke}
 .twmap .ch-grid{fill:none;stroke:var(--border);stroke-width:${s.hairline}px}
 .twmap .ch-zero{fill:none;stroke:var(--line);stroke-width:${s.hairline}px}
-.twmap .ch-ne{fill:none;stroke:var(--text3);stroke-width:${s.emph}px;stroke-dasharray:4 3}
+.twmap .ch-ne{fill:none;stroke:${c.seriesNortheast};stroke-width:${s.emph}px;stroke-dasharray:4 3}
 .twmap .ch-town{fill:none;stroke:var(--mint);stroke-width:${s.series}px;stroke-linejoin:round}
 .twmap .ch-up{fill:var(--mint)}
 .twmap .ch-down{fill:none;stroke:var(--line);stroke-width:${s.hairline}px}
@@ -161,7 +162,7 @@ const panel = `
 .twmap .ch-cap{font-family:var(--mono);font-size:12px;line-height:16px;color:var(--text3)}
 .twmap .scrub{display:grid;grid-template-columns:repeat(6,44px);gap:4px}
 .twmap .sb{width:44px;min-height:44px;margin:0;padding:0;font-family:var(--mono);font-size:12px;line-height:16px;color:var(--text2);background:var(--raised);border:1px solid var(--line);border-radius:0;cursor:pointer;transition:background-color ${m.select}ms ease,color ${m.select}ms ease}
-.twmap .sb:hover{color:var(--white)}
+@media (hover:hover){.twmap .sb:hover{color:var(--white)}}
 .twmap .sb[aria-checked="true"]{background:var(--mint);border-color:var(--mint);color:var(--ground)}
 @container card (max-width:283px){.twmap .scrub{grid-template-columns:repeat(4,44px)}}
 .twmap .tx{display:grid;gap:8px;align-content:start;min-width:0;font-size:14px;line-height:20px;color:var(--text2)}
@@ -170,16 +171,16 @@ const panel = `
 .twmap .nums summary::before{content:"+";flex:none;display:grid;place-items:center;width:16px;height:16px;border:1px solid var(--line);font-family:var(--mono);font-size:12px;line-height:1;font-weight:400;color:var(--text2)}
 .twmap .nums[open] summary::before{content:"\\2212"}
 .twmap .nums summary span{text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:3px}
-.twmap .nums summary:hover{color:var(--mint)}
-.twmap .nums summary:hover span{text-decoration-color:var(--mint)}
-.twmap .nums summary:hover::before{border-color:var(--mint);color:var(--mint)}
+@media (hover:hover){.twmap .nums summary:hover{color:var(--mint)}}
+@media (hover:hover){.twmap .nums summary:hover span{text-decoration-color:var(--mint)}}
+@media (hover:hover){.twmap .nums summary:hover::before{border-color:var(--mint);color:var(--mint)}}
 .twmap .tbl{margin-top:4px;overflow-x:auto}
 .twmap .nums table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px;line-height:16px;font-variant-numeric:tabular-nums;color:var(--text2)}
 .twmap .nums th,.twmap .nums td{text-align:right;padding:4px 0 4px 8px;border-bottom:1px solid var(--border);font-weight:400}
 .twmap .nums thead th{color:var(--text3);vertical-align:bottom}
 .twmap .nums th:first-child,.twmap .nums td:first-child{text-align:left;padding-left:0}
 .twmap .back{justify-self:start;min-height:44px;padding:0 14px;background:transparent;color:var(--white);border:1px solid var(--line);border-radius:0;font-size:14px;line-height:20px;font-weight:500;cursor:pointer;transition:border-color ${m.select}ms ease}
-.twmap .back:hover{border-color:var(--white)}
+@media (hover:hover){.twmap .back:hover{border-color:var(--white)}}
 .twmap .nt{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr));gap:24px;align-items:start;padding:16px;border-top:1px solid var(--border)}
 .twmap .nt-c{display:grid;gap:12px;align-content:start;min-width:0}
 .twmap .why{display:grid;gap:6px;align-content:start;min-width:0}
@@ -187,12 +188,12 @@ const panel = `
 .twmap .why li+li{margin-top:4px}
 .twmap .lk{display:block}
 .twmap .lk a{display:inline-flex;align-items:center;min-height:44px;margin-right:12px;font-family:var(--mono);font-size:12px;line-height:16px;color:var(--text2)}
-.twmap .lk a:hover{color:var(--mint)}
+@media (hover:hover){.twmap .lk a:hover{color:var(--mint)}}
 .twmap .cav li+li{margin-top:4px}
 .twmap .cav li,.twmap .fine{font-family:var(--mono);font-size:12px;line-height:16px;color:var(--text3)}
 .twmap .srcs{display:grid}
 .twmap .srcs a{display:inline-flex;align-items:center;min-height:44px;color:var(--text3)}
-.twmap .srcs a:hover{color:var(--mint)}
+@media (hover:hover){.twmap .srcs a:hover{color:var(--mint)}}
 @media (max-width:640px){.twmap .cp,.twmap .pat,.twmap .tx,.twmap .why li{font-size:16px;line-height:24px}.twmap .cav li,.twmap .fine,.twmap .srcs a{font-size:14px;line-height:20px}}
 `;
 

@@ -11,12 +11,20 @@ import { formatDay } from '../format';
 import { ChatButton, focusLost, type ChatButtonHandle } from './controls';
 import { described } from './described';
 
-// The History dropdown: a square `panel` under the header's History button, at most 60% of the window tall and
-// scrolling inside. Each row opens its conversation and has Rename and Delete. Rename turns the title into a field
-// (Enter saves, Escape cancels); Delete asks first. The open conversation carries a mint 6px square and
-// aria-current. Escape closes the list (the header returns focus to History) unless a field or the dialog has it.
-// On web, focus never falls to the page: a closed field gives it back to its row's Rename, and after a delete (its
-// row, Delete and all, is gone) the header gives it to History.
+// The History dropdown: a square `panel` under the header's History button, at most 360px and 60% of the window tall
+// and scrolling inside (on web the header floats it over the thread). Each row opens its conversation and has Rename
+// and Delete. Rename turns the title into a field (Enter saves, Escape cancels); Delete asks first. The open
+// conversation carries a mint 6px square and aria-current. Escape closes the list (the header returns focus to
+// History) unless a field or the dialog has it; on web so does a press outside it and History, which leaves focus
+// where that press put it. On web, focus never falls to the page: a closed field gives it back to its row's Rename,
+// and after a delete (its row, Delete and all, is gone) the header gives it to History.
+
+type Host = React.ComponentRef<typeof View>;
+
+/** The list's tallest: 360px, or 60% of the window when that is less. A small dropdown, not a sheet. */
+export function historyMaxHeight(windowHeight: number): number {
+  return Math.min(360, Math.round(windowHeight * 0.6));
+}
 
 const DELETE_BODY = 'TownwiseAI’s replies and your messages in it are deleted. Notes you saved from it stay.';
 const NAME_MESSAGE = 'Use 1 to 60 characters.';
@@ -30,6 +38,10 @@ export function HistoryMenu(props: {
   readOnlyId: string | null;
   onOpen: (id: string) => void;
   onClose: () => void;
+  /** Web: a press outside the list and `anchor` closes it without moving focus. */
+  onDismiss: () => void;
+  /** The History button, whose own press opens and closes the list. */
+  anchor: React.RefObject<Host | null>;
   onDelete: (id: string) => Promise<void>;
   /** A delete went through and its dialog has gone (web: where focus goes now). */
   onDeleted: () => void;
@@ -39,7 +51,8 @@ export function HistoryMenu(props: {
   const [deleting, setDeleting] = useState<ConversationSummary | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const busy = deleting !== null || renaming !== null;
-  const { onClose } = props;
+  const { onClose, onDismiss, anchor } = props;
+  const root = useRef<Host>(null);
   // Each row's Rename, by conversation id, for focus when its field closes.
   const renameButtons = useRef(new Map<string, ChatButtonHandle>());
   const wasRenaming = useRef<string | null>(null);
@@ -67,8 +80,21 @@ export function HistoryMenu(props: {
     return () => { document.removeEventListener('keydown', onKey); };
   }, [onClose, busy]);
 
+  // Not while a field or the delete dialog is open: the dialog is drawn outside the list, and a press in it must not
+  // close the list under it.
+  useEffect(() => {
+    if (Platform.OS !== 'web') return undefined;
+    const onDown = (event: Event): void => {
+      const target = event.target as Node | null;
+      const inside = (host: Host | null): boolean => target !== null && (host as unknown as Node | null)?.contains(target) === true;
+      if (!busy && !inside(root.current) && !inside(anchor.current)) onDismiss();
+    };
+    document.addEventListener('pointerdown', onDown);
+    return () => { document.removeEventListener('pointerdown', onDown); };
+  }, [onDismiss, anchor, busy]);
+
   return (
-    <View nativeID={props.id} role="region" aria-label="History" style={[styles.list, { maxHeight: Math.round(height * 0.6) }]}>
+    <View ref={root} nativeID={props.id} role="region" aria-label="History" style={[styles.list, { maxHeight: historyMaxHeight(height) }]}>
       <ScrollView>
         {props.conversations.length === 0 ? <Text style={styles.muted}>No conversations yet.</Text> : null}
         {props.conversations.map((conversation) => {

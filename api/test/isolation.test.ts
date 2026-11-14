@@ -12,7 +12,7 @@ function sourceFiles(): { path: string; text: string }[] {
 }
 
 describe('isolation (source)', () => {
-  it('only access/resolve.ts, the join and decline handlers, the staff handlers, the file reader, the sweeper and the lab callback import stores/cross-tenant.ts', () => {
+  it('only access/resolve.ts, the join and decline handlers, the staff handlers, the file reader, the TownwiseAI reader, the sweeper, the lab callback and the calendar refresh loop import stores/cross-tenant.ts', () => {
     // A type-only import grants no access to the operations, so it is not counted.
     const importers = sourceFiles()
       .filter((file) => /^import (?!type )[^;]*from '[./]+(stores\/)?cross-tenant\.ts';/m.test(file.text))
@@ -20,10 +20,13 @@ describe('isolation (source)', () => {
       .sort();
     // handlers/me.ts holds the join and decline handlers; handlers/admin.ts and handlers/deletion.ts hold the staff handlers.
     // lab/callback.ts holds the forecast lab job's callback, which finds its calibration by id and token before any
-    // organization is known.
+    // organization is known. files/ai-reader.ts (spec 11A.9) claims the next file someone asked TownwiseAI to read,
+    // across organizations, as the file reader claims the next import. calendar/refresher.ts claims a due calendar link
+    // in any organization.
     expect(importers).toEqual([
-      'access/resolve.ts', 'files/sweeper.ts', 'files/worker.ts', 'handlers/admin.ts', 'handlers/deletion.ts', 'handlers/me.ts',
-      'lab/callback.ts',
+      'access/resolve.ts', 'calendar/refresher.ts', 'files/ai-reader.ts', 'files/sweeper.ts', 'files/worker.ts', 'handlers/admin.ts',
+      'handlers/deletion.ts',
+      'handlers/me.ts', 'lab/callback.ts',
     ]);
   });
 
@@ -52,7 +55,7 @@ describe('isolation (source)', () => {
     const importersOf = (target: string): string[] => sourceFiles().filter((file) => imports(file).includes(target)).map((file) => file.path).sort();
     const fileCode = (path: string): boolean => path.startsWith('files/')
       || ['handlers/files.ts', 'handlers/sales.ts', 'handlers/locations.ts', 'handlers/deletion.ts', 'stores/index.ts', 'stores/file-entries.ts', 'stores/cross-tenant.ts', 'main.ts'].includes(path);
-    for (const target of ['stores/files.ts', 'stores/file-entries.ts', 'files/blobs.ts', 'files/worker.ts']) {
+    for (const target of ['stores/files.ts', 'stores/file-entries.ts', 'files/blobs.ts', 'files/worker.ts', 'files/ai-reader.ts']) {
       expect(importersOf(target).filter((path) => !fileCode(path))).toEqual([]);
     }
     expect(importersOf('stores/files.ts')).toEqual(['stores/cross-tenant.ts', 'stores/file-entries.ts', 'stores/index.ts']);
@@ -88,6 +91,24 @@ describe('isolation (source)', () => {
     expect(callers).toEqual(['access/policy.ts', 'files/worker.ts']);
   });
 
+  it('only access/policy.ts mints the TownwiseAI reader’s scope, and only files/ai-reader.ts asks for it', () => {
+    const callers = sourceFiles().filter((file) => file.text.includes('scopeForClaimedAiRead(')).map((file) => file.path).sort();
+    expect(callers).toEqual(['access/policy.ts', 'files/ai-reader.ts']);
+  });
+
+  it('a file’s own text leaves the parse code only for a file someone let TownwiseAI read (spec 11A.9)', () => {
+    // readPdfText and readWordText are the only ways a PDF's or Word document's text outside a table leaves the parse
+    // code; only the AI text thread calls them, and only the TownwiseAI reader (and that thread) imports its runner.
+    const imports = (file: { path: string; text: string }): string[] => [...file.text.matchAll(/^import (?!type )[^;]*from '(\.[^']+)';/gm)]
+      .map((match) => posix.normalize(posix.join(posix.dirname(file.path), match[1] ?? '')));
+    expect(sourceFiles().filter((file) => imports(file).includes('files/parse/ai-text.ts')).map((file) => file.path).sort())
+      .toEqual(['files/ai-reader.ts', 'files/parse/ai-text-thread.ts']);
+    for (const call of ['readPdfText(', 'readWordText(']) {
+      const callers = sourceFiles().filter((file) => file.text.includes(call)).map((file) => file.path).sort();
+      expect(callers.filter((path) => path !== 'files/parse/pdf.ts' && path !== 'files/parse/docx.ts')).toEqual(['files/parse/ai-text-thread.ts']);
+    }
+  });
+
   it('only access/policy.ts mints the lab callback’s scope, and only lab/callback.ts asks for it', () => {
     const callers = sourceFiles().filter((file) => file.text.includes('scopeForLabCallback(')).map((file) => file.path).sort();
     expect(callers).toEqual(['access/policy.ts', 'lab/callback.ts']);
@@ -96,6 +117,48 @@ describe('isolation (source)', () => {
   it('only access/policy.ts mints the sweep’s scope, and only files/sweeper.ts asks for it', () => {
     const callers = sourceFiles().filter((file) => file.text.includes('scopeForSweep(')).map((file) => file.path).sort();
     expect(callers).toEqual(['access/policy.ts', 'files/sweeper.ts']);
+  });
+
+  it('only access/policy.ts mints the calendar refresh’s scope, and only calendar/refresher.ts asks for it', () => {
+    const callers = sourceFiles().filter((file) => file.text.includes('scopeForCalendarRefresh(')).map((file) => file.path).sort();
+    expect(callers).toEqual(['access/policy.ts', 'calendar/refresher.ts']);
+  });
+
+  it('only the calendar routes and the refresh loop open a calendar link’s address or read one back from the store, and only the routes seal one', () => {
+    const importers = sourceFiles()
+      .filter((file) => [...file.text.matchAll(/^import (?!type )[^;]*from '(\.[^']+)';/gm)]
+        .some((match) => posix.normalize(posix.join(posix.dirname(file.path), match[1] ?? '')) === 'calendar/secret.ts'))
+      .map((file) => file.path)
+      .sort();
+    expect(importers).toEqual(['calendar/refresher.ts', 'handlers/owner-calendars.ts']);
+    expect(sourceFiles().filter((file) => file.path !== 'calendar/secret.ts' && /\bseal\(/.test(file.text)).map((file) => file.path))
+      .toEqual(['handlers/owner-calendars.ts']);
+    expect(sourceFiles().filter((file) => file.text.includes('.sealedAddress(')).map((file) => file.path).sort())
+      .toEqual(['calendar/refresher.ts', 'handlers/owner-calendars.ts']);
+  });
+
+  it('handlers reach a calendar link only through ctx.calendarFetcher: only app.ts and the refresh loop build one, and only calendar/fetch.ts opens a connection', () => {
+    const importers = sourceFiles()
+      .filter((file) => [...file.text.matchAll(/^import (?!type )[^;]*from '(\.[^']+)';/gm)]
+        .some((match) => posix.normalize(posix.join(posix.dirname(file.path), match[1] ?? '')) === 'calendar/fetch.ts'))
+      .map((file) => file.path)
+      .sort();
+    expect(importers).toEqual(['app.ts', 'calendar/refresher.ts']);
+    const sockets = sourceFiles().filter((file) => /from 'node:(?:https?|http2|net|tls|dgram)'/.test(file.text)).map((file) => file.path);
+    expect(sockets).toEqual(['calendar/fetch.ts']);
+  });
+
+  it('only the calendar routes, the refresh loop, TownwiseAI’s calendar tool and the deletions reach stored calendars, so no forecast code reads them', () => {
+    // A value import of the store, a read of stores.ownerCalendars (dotted, destructured or bracketed) or a collection by name.
+    const reaches = (file: { path: string; text: string }): boolean => /\bownerCalendars\b|\btw_calendar_/.test(file.text)
+      || [...file.text.matchAll(/^import (?!type )[^;]*from '(\.[^']+)';/gm)]
+        .some((match) => posix.normalize(posix.join(posix.dirname(file.path), match[1] ?? '')) === 'stores/owner-calendars.ts');
+    // The owner-calendar spec: a stored event changes no forecast figure, so forecasts/*, lab/*, people-in-town/* and the
+    // estimates and forecast-run handlers stay off this list.
+    expect(sourceFiles().filter(reaches).map((file) => file.path).sort()).toEqual([
+      'calendar/refresher.ts', 'chat/tools/owner-calendar.ts', 'handlers/deletion.ts', 'handlers/locations.ts', 'handlers/owner-calendars.ts',
+      'stores/cross-tenant.ts', 'stores/index.ts', 'stores/owner-calendars.ts',
+    ]);
   });
 
   it('only access/policy.ts mints the open-as-admin scope, and only access/resolve.ts asks for it', () => {

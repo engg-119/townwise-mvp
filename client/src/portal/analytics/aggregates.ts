@@ -113,7 +113,10 @@ export interface YearMonthStat {
   n: number;
   daysInMonth: number;
   meanPerDay: number | null;
-  /** Every day of the month has a value the filters keep. Charts draw the rest as hollow points. */
+  /**
+   * The location's history for the metric runs from on or before the month's first day to on or after its last, so
+   * a closed day or a gap inside it does not count against it. Charts draw the rest as hollow points.
+   */
   complete: boolean;
 }
 
@@ -177,12 +180,17 @@ export function yearOverYear(input: AnalyticsInput): YearOverYear {
     if (list === undefined) values.set(key, [point.value]);
     else list.push(point.value);
   }
+  const withMetric = input.days.filter((day) => valueOf(day, input.filters.metric) !== null);
+  const first = withMetric[0]?.date;
+  const last = withMetric.at(-1)?.date;
   const years = [...input.filters.years].sort((a, b) => a - b);
   const cells = years.flatMap((year) => MONTH_NAMES.map((_, index) => {
     const month = index + 1;
-    const list = values.get(`${String(year)}-${String(month).padStart(2, '0')}`) ?? [];
+    const key = `${String(year)}-${String(month).padStart(2, '0')}`;
+    const list = values.get(key) ?? [];
     const total = daysInMonth(year, month);
-    return { year, month, n: list.length, daysInMonth: total, meanPerDay: mean(list), complete: list.length === total };
+    const complete = first !== undefined && last !== undefined && first <= `${key}-01` && last >= `${key}-${String(total)}`;
+    return { year, month, n: list.length, daysInMonth: total, meanPerDay: mean(list), complete };
   }));
   const withData = years.filter((year) => cells.some((cell) => cell.year === year && cell.n > 0));
   let summary: YearOverYearSummary | null = null;
@@ -195,7 +203,6 @@ export function yearOverYear(input: AnalyticsInput): YearOverYear {
     ? { year: newest, against: before }
     : null;
   const checked = new Set(years);
-  const withMetric = input.days.filter((day) => valueOf(day, input.filters.metric) !== null);
   const unchecked = withMetric.some((day) => !checked.has(Number(day.date.slice(0, 4))));
   const gap = summary !== null ? null : unchecked ? 'checked' : 'history';
   const monthsWithData = new Set(

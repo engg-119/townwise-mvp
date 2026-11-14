@@ -4,7 +4,9 @@ import { basedOnLine, isHiddenTool, isKnownTool, readsLine, toolLine, viewRows, 
 // registry's (FROZEN_NAMES), in its order: the client can't import the API, so a PR that appends a tool updates both
 // lists. get_town_calendar and get_people_in_town are U13A's, get_forecast U13B's; their views below are copied from
 // api/test/chat-estimate-tools.test.ts. get_day is F2's; its views are copied from api/test/chat-tools.test.ts.
-// show_visual and suggest_next are the chat redesign's (tuning-chat.md 4): hidden, with null views.
+// show_visual and suggest_next are the chat redesign's (tuning-chat.md 4): hidden, with null views. get_owner_calendar
+// reads the owner's own calendars; its views are copied from api/test/chat-owner-calendar.test.ts. The order tools'
+// views are copied from api/src/chat/tools/orders.ts.
 
 const REGISTERED = [
   'get_location_overview', 'get_sales_days', 'list_notes', 'get_town_profile', 'propose_note',
@@ -15,6 +17,10 @@ const REGISTERED = [
   'list_data_items', 'read_data_item', 'propose_data_item',
   // The forecast lab.
   'start_calibration', 'get_calibration', 'compare_forecast_models',
+  // The owner's own calendars.
+  'get_owner_calendar',
+  // Orders.
+  'get_order_board', 'get_order_line', 'get_order_setup', 'propose_order_change', 'propose_order_rule',
 ];
 const CTX = { town: 'Hanover', hasTownProfile: true };
 
@@ -31,7 +37,7 @@ test('every registered tool has words for each state; propose_note, propose_data
       .toEqual(name === 'start_calibration' ? ['Starting', 'Asked to start', 'Couldn’t start'] : ['Reading', 'Read', 'Couldn’t read']);
     for (const line of lines) expect(line.object).not.toBe('');
   }
-  expect(REGISTERED.filter(isHiddenTool)).toEqual(['propose_note', 'show_visual', 'suggest_next', 'propose_data_item']);
+  expect(REGISTERED.filter(isHiddenTool)).toEqual(['propose_note', 'show_visual', 'suggest_next', 'propose_data_item', 'propose_order_change', 'propose_order_rule']);
 });
 
 test('the rows read the views: dates, counts and source links only', () => {
@@ -235,6 +241,72 @@ test('the lab tools read counts and codes: whether a calibration started, its st
   const start = step('start_calibration', 'done', null, started);
   expect(basedOnLine([start], CTX)).toBe('Based on this conversation only.');
   expect(basedOnLine([start, step('get_calibration', 'done', null, read)], CTX)).toBe('Based on your latest forecast calibration.');
+});
+
+test('the order tools: the board, one line and the setup in counts and dates; the two cards show as cards', () => {
+  const board = { available: true, orderCount: 3, lineCount: 24, cutoff: '2026-11-18' };
+  expect(toolLine(step('get_order_board', 'done', null, board), CTX)).toMatchObject({ sentence: 'Read your next orders', detail: '3 orders, 24 items' });
+  expect(toolLine(step('get_order_board', 'done', null, { available: false }), CTX).detail).toBe('Ordering isn’t set up yet');
+  expect(toolLine(step('get_order_board', 'running'), CTX).sentence).toBe('Reading your next orders');
+  expect(viewRows(null, board, 'get_order_board')).toEqual([
+    { term: 'Set up', value: 'Yes' }, { term: 'Orders', value: '3' }, { term: 'Items', value: '24' }, { term: 'First order by', value: 'Nov 18, 2026' },
+  ]);
+
+  const line = { available: true, itemId: 'a'.repeat(24), delivery: '2026-11-19' };
+  expect(toolLine(step('get_order_line', 'done', { itemId: 'a'.repeat(24) }, line), CTX)).toMatchObject({
+    sentence: 'Read one item on your next order', detail: null,
+  });
+  expect(toolLine(step('get_order_line', 'done', { itemId: 'a'.repeat(24) }, { available: false }), CTX).detail).toBe('Not on an order');
+  // The item's id is left out of the opened card.
+  expect(viewRows({ itemId: 'a'.repeat(24) }, line, 'get_order_line')).toEqual([{ term: 'On an order', value: 'Yes' }, { term: 'Delivery', value: 'Nov 19, 2026' }]);
+
+  const setup = { available: true, supplierCount: 3, itemCount: 40, countedItemCount: 12, itemSalesDayCount: 56 };
+  expect(toolLine(step('get_order_setup', 'done', null, setup), CTX)).toMatchObject({ sentence: 'Read the ordering setup', detail: '3 suppliers, 40 items' });
+  expect(toolLine(step('get_order_setup', 'done', null, { available: false }), CTX).detail).toBe('Nothing set up yet');
+  expect(viewRows(null, setup, 'get_order_setup')).toEqual([
+    { term: 'Set up', value: 'Yes' }, { term: 'Suppliers', value: '3' }, { term: 'Items', value: '40' }, { term: 'Items counted', value: '12' },
+    { term: 'Days of item sales', value: '56' },
+  ]);
+
+  expect(basedOnLine([step('get_order_board', 'done', null, board), step('get_order_setup', 'done', null, setup)], CTX))
+    .toBe('Based on your next orders and the ordering setup.');
+  // With no setup the reply rests on that, not on an order; a line not on an order read nothing.
+  expect(basedOnLine([step('get_order_board', 'done', null, { available: false })], CTX)).toBe('Based on whether ordering is set up.');
+  expect(basedOnLine([step('get_order_line', 'done', null, { available: false })], CTX)).toBe('Based on this conversation only.');
+  expect(basedOnLine([step('propose_order_change', 'done', { itemId: 'a'.repeat(24), delivery: '2026-11-19' }, { shown: true })], CTX))
+    .toBe('Based on this conversation only.');
+});
+
+test('get_owner_calendar says how many events it read from how many calendars, never a title or a calendar’s name', () => {
+  const range = { from: '2026-11-16', to: '2026-11-22' };
+  // The result views exactly as api/src/chat/tools/owner-calendar.ts builds them.
+  const read = { available: true, calendars: 2, eventCount: 2, truncated: false, skippedRepeating: 3 };
+  const none = { available: false, calendars: 0, eventCount: 0, truncated: false, skippedRepeating: 0 };
+  expect(toolLine(step('get_owner_calendar', 'running', range), CTX).sentence).toBe('Reading your calendars for Nov 16 to Nov 22, 2026');
+  expect(toolLine(step('get_owner_calendar', 'done', range, read), CTX)).toMatchObject({
+    sentence: 'Read your calendars for Nov 16 to Nov 22, 2026', detail: '2 events from 2 calendars', sources: [],
+  });
+  expect(toolLine(step('get_owner_calendar', 'done', range, { ...read, calendars: 1, eventCount: 1 }), CTX).detail).toBe('1 event from 1 calendar');
+  expect(toolLine(step('get_owner_calendar', 'done', range, { ...read, eventCount: 0 }), CTX).detail).toBe('No events in this range');
+  expect(toolLine(step('get_owner_calendar', 'done', range, { ...read, calendars: 5, eventCount: 100, truncated: true }), CTX).detail)
+    .toBe('The first 100 events from 5 calendars');
+  expect(toolLine(step('get_owner_calendar', 'done', range, none), CTX).detail).toBe('No calendar connected');
+  expect(toolLine(step('get_owner_calendar', 'error', range), CTX).sentence).toBe('Couldn’t read your calendars for Nov 16 to Nov 22, 2026');
+
+  expect(basedOnLine([step('get_owner_calendar', 'done', range, read)], CTX)).toBe('Based on your calendars for Nov 16 to Nov 22, 2026.');
+  expect(basedOnLine([step('get_owner_calendar', 'done', range, none)], CTX)).toBe('Based on your calendars for Nov 16 to Nov 22, 2026 (none connected).');
+  // Its own words for `available` (a calendar is connected, not "researched") and for its counts.
+  expect(viewRows(range, read, 'get_owner_calendar')).toEqual([
+    { term: 'From', value: 'Nov 16, 2026' }, { term: 'To', value: 'Nov 22, 2026' }, { term: 'Calendar connected', value: 'Yes' },
+    { term: 'Calendars', value: '2' }, { term: 'Events', value: '2' }, { term: 'Cut short', value: 'No' },
+    { term: 'Repeating events not imported', value: '3' },
+  ]);
+
+  // What TownwiseAI reads names the owner's calendars only once the page knows the location has one.
+  expect(readsLine(CTX)).not.toMatch(/your calendars/);
+  expect(readsLine({ ...CTX, hasCalendar: false })).not.toMatch(/your calendars/);
+  expect(readsLine({ ...CTX, hasCalendar: true }))
+    .toBe('your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover, what your team added on Your data and your calendars');
 });
 
 test('a tool this table doesn’t know yet still gets a card, in general words', () => {

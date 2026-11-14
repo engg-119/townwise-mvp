@@ -35,6 +35,12 @@ describe('indexes', () => {
       'tw_forecast_runs', 'tw_forecasts',
       // The forecast lab.
       'tw_calibrations',
+      'tw_order_cards', 'tw_order_decisions', 'tw_order_rules',
+      'tw_order_setups', 'tw_item_sales', 'tw_order_counts',
+      // Business rules (spec 6.24).
+      'tw_business_rules',
+      // The owner's own calendars.
+      'tw_calendar_sources', 'tw_calendar_events',
     ].sort());
   });
 
@@ -75,6 +81,10 @@ describe('indexes', () => {
       'TwChatProposal', 'TwFile', 'TwImport', 'TwUploadDay', 'TwWelcome',
       // U13B.
       'TwForecastRun', 'TwForecast', 'TwCalibration',
+      'TwOrderCard', 'TwOrderDecision', 'TwOrderRule', 'TwOrderSetup', 'TwItemSalesDay', 'TwOrderCount',
+      'TwBusinessRule',
+      // The owner's own calendars.
+      'TwCalendarSource', 'TwCalendarEvent',
     ]) {
       for (const [fields] of indexesOf(connection, model)) {
         const keys = Object.keys(fields);
@@ -82,6 +92,8 @@ describe('indexes', () => {
         if (model === 'TwMember' && keys[0] === 'userId') continue;
         // The sweeper's index spans organizations (stores/cross-tenant.ts); the reader's claim index is single-key.
         if (model === 'TwFile' && keys[0] === 'status') continue;
+        // The TownwiseAI reader's claim (spec 11A.9) spans organizations too: the oldest read asked for, in any.
+        if (model === 'TwFile' && keys[0] === 'ai.status') continue;
         if (model === 'TwImport' && keys[0] === 'status') continue;
         // The lab callback finds a calibration by its id and token hash, before any organization is known.
         if (model === 'TwCalibration' && keys[0] === '_id') continue;
@@ -128,6 +140,14 @@ describe('indexes', () => {
     ]);
   });
 
+  it('tw_business_rules has the unique orgId, locationId, key index', () => {
+    const connection = registered();
+    expect(indexesOf(connection, 'TwBusinessRule')).toContainEqual([
+      { orgId: 1, locationId: 1, key: 1 }, expect.objectContaining({ unique: true }),
+    ]);
+    expect(connection.models.TwBusinessRule?.schema.get('strict')).toBe(true);
+  });
+
   it('keeps one profile per person', () => {
     expect(indexesOf(registered(), 'TwProfile')).toContainEqual([{ userId: 1 }, expect.objectContaining({ unique: true })]);
   });
@@ -159,6 +179,35 @@ describe('indexes', () => {
 
   it('keeps the file reader’s AI spend apart from the chat’s, one counter per organization per month', () => {
     expect(indexesOf(registered(), 'TwFilesUsage')).toContainEqual([{ orgId: 1, month: 1 }, expect.objectContaining({ unique: true })]);
+  });
+
+  it('holds a location’s calendars in 5 unique slots, finds due links for the refresh loop, and reads a calendar’s events by generation and date', () => {
+    const connection = registered();
+    expect(indexesOf(connection, 'TwCalendarSource')).toContainEqual([
+      { orgId: 1, locationId: 1, slot: 1 }, expect.objectContaining({ unique: true }),
+    ]);
+    // The refresh loop's claim spans organizations (stores/cross-tenant.ts claimDueCalendar).
+    expect(indexesOf(connection, 'TwCalendarSource')).toContainEqual([{ nextRefreshAt: 1 }, expect.anything()]);
+    expect(connection.models.TwCalendarSource?.schema.path('slot')).toMatchObject({ options: { min: 0, max: 4 } });
+    expect(indexesOf(connection, 'TwCalendarEvent')).toContainEqual([{ orgId: 1, sourceId: 1, generation: 1, startDate: 1 }, expect.anything()]);
+    for (const model of ['TwCalendarSource', 'TwCalendarEvent']) expect(connection.models[model]?.schema.get('strict')).toBe('throw');
+  });
+
+  it('keeps one ordering setup per location, and one item sales day and one count per location per date, strict: throw', () => {
+    const connection = registered();
+    expect(indexesOf(connection, 'TwOrderSetup')).toContainEqual([{ orgId: 1, locationId: 1 }, expect.objectContaining({ unique: true })]);
+    for (const model of ['TwItemSalesDay', 'TwOrderCount']) {
+      expect(indexesOf(connection, model)).toContainEqual([{ orgId: 1, locationId: 1, date: 1 }, expect.objectContaining({ unique: true })]);
+    }
+    for (const model of ['TwOrderSetup', 'TwItemSalesDay', 'TwOrderCount']) expect(connection.models[model]?.schema.get('strict')).toBe('throw');
+    expect(indexesOf(connection, 'TwOrderCard')).toContainEqual([
+      { orgId: 1, conversationId: 1, proposalId: 1 }, expect.objectContaining({ unique: true }),
+    ]);
+    expect(indexesOf(connection, 'TwOrderCard').map(([keys]) => keys)).toContainEqual({ orgId: 1, locationId: 1 });
+    // A9: the board reads its deliveries' edits, and a rule an item's latest edit, without scanning a location's edits.
+    const decisions = indexesOf(connection, 'TwOrderDecision').map(([keys]) => keys);
+    expect(decisions).toContainEqual({ orgId: 1, locationId: 1, delivery: 1 });
+    expect(decisions).toContainEqual({ orgId: 1, locationId: 1, itemId: 1, createdAt: -1 });
   });
 
   it('lists a ZIP’s entries once each, in archive order', () => {

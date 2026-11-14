@@ -23,24 +23,55 @@ export const AUDIT_DETAIL_KEYS = {
   'location.deleted': ['name', 'townId'],
   'sales.uploaded': ['locationId', 'dayCount', 'inserted', 'replaced', 'firstDate', 'lastDate', 'fileId', 'via'],
   'sales.deleted': ['locationId', 'deletedDays', 'deletedFiles'],
-  // D28, Your data: `item` is 'upload' or 'file' and `kind` an item kind; never a file name or title.
+  // D28, Your data: `item` is 'upload' or 'file' and `kind` an item kind; `replaces` is the id of the file an edit took
+  // the place of. Never a file name or title.
   'sales.upload_deleted': ['locationId', 'deletedDays', 'deletedFiles'],
   'data.turned_off': ['locationId', 'item', 'kind'],
   'data.turned_on': ['locationId', 'item', 'kind'],
+  'data.renamed': ['locationId', 'item', 'kind'],
+  'data.edited': ['locationId', 'item', 'kind', 'replaces'],
   // Stored files (spec 11A): never a file name or anything from a file.
   'file.uploaded': ['locationId', 'kind', 'sizeBytes', 'purpose', 'via'],
   'file.deleted': ['locationId', 'kind', 'reason'],
   'file.raw_deleted': ['locationId', 'kind'],
   'files.raw_deleted_all': ['locationId', 'count'],
+  // Reading with TownwiseAI (spec 11A.9): asked for (the file's kind); done (the kind TownwiseAI found, how many dated
+  // events and days it read, how many notes and days it wrote, whether it kept a summary item, and the model update's
+  // status); and undone (how many notes, days and items that removed). Never a name, the summary, a fact, an event's
+  // title or a figure.
+  'file.ai_read_requested': ['locationId', 'kind'],
+  'file.ai_read': ['locationId', 'kind', 'events', 'days', 'notes', 'daysWritten', 'item', 'calibration'],
+  'file.ai_undone': ['locationId', 'notes', 'days', 'items'],
   // Staff: an organization's originals purged for a deletion request. The basis is an enum, never free text.
   'org.originals_deleted': ['count', 'basis'],
   'note.created': ['locationId', 'kind', 'startDate', 'endDate'],
   'note.updated': ['locationId', 'kind', 'startDate', 'endDate'],
   'note.deleted': ['locationId', 'kind', 'startDate', 'endDate'],
-  'chat.turn_completed': ['locationId', 'conversationId', 'model', 'calls', 'inputTokens', 'outputTokens', 'stopReason'],
+  // Business rules (D31): ids, how the rule was added and whether it has a schedule, never its text or the schedule.
+  'rule.created': ['locationId', 'via', 'scheduled'],
+  'rule.updated': ['locationId', 'scheduled'],
+  'rule.deleted': ['locationId'],
+  // Owner calendars (openspec change connect-owner-calendar, design decision 10): ids, the kind ('file' or 'link'), the
+  // event count and the status code only. Never the calendar's label, host or address, or an event's title.
+  'owner_calendar.added': ['locationId', 'calendarId', 'kind', 'eventCount', 'status'],
+  'owner_calendar.removed': ['locationId', 'calendarId', 'kind', 'eventCount'],
+  'owner_calendar.refreshed': ['locationId', 'calendarId', 'kind', 'eventCount', 'status'],
+  // `attachments` (D36): how many files the person's message carried, only on a turn whose message carried any.
+  'chat.turn_completed': ['locationId', 'conversationId', 'model', 'calls', 'inputTokens', 'outputTokens', 'stopReason', 'attachments'],
   'chat.conversation_deleted': ['locationId', 'conversationId'],
   // U9, TownwiseAI's questions: the question's id holds only dates and a weekday number.
   'agent.question_answered': ['locationId', 'questionId', 'answer'],
+  // Orders: ids, dates, counts and a card's kind (change or rule), never an item or supplier name, a servings figure, a
+  // quantity, or the owner's reason or situation.
+  'order.setup_saved': ['locationId', 'supplierCount', 'itemCount'],
+  'order.item_sales_uploaded': ['locationId', 'dayCount', 'itemCount', 'firstDate', 'lastDate', 'removedCount', 'keptCount'],
+  'order.item_sales_deleted': ['locationId', 'dayCount'],
+  'order.count_saved': ['locationId', 'date', 'itemCount'],
+  'order.decision_saved': ['locationId', 'itemId', 'delivery'],
+  'order.rule_saved': ['locationId', 'itemId'],
+  'order.rule_turned_off': ['locationId', 'ruleId'],
+  'order.card_saved': ['locationId', 'conversationId', 'kind'],
+  'order.card_dismissed': ['locationId', 'conversationId', 'kind'],
   // U13B, forecast runs (spec 14.4): ids, the model version, the dates and the day count, never a figure.
   'forecast.imported': ['locationId', 'modelVersion', 'from', 'to', 'dayCount'],
   'forecast.published': ['locationId', 'modelVersion', 'from', 'to', 'dayCount', 'via', 'calibrationId'],
@@ -67,7 +98,11 @@ export type AuditTargetType =
   // U13B.
   | 'forecast_run'
   // The forecast lab.
-  | 'calibration';
+  | 'calibration'
+  // Business rules (D31).
+  | 'rule'
+  // Owner calendars.
+  | 'owner_calendar';
 export type AuditDetails = Record<string, string | number | boolean | null>;
 
 export interface AuditEventFields {

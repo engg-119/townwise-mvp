@@ -9,6 +9,7 @@ import { EMPTY_CONTEXT } from '../analytics/days';
 import { metricsWithData } from '../analytics/filters';
 import { Heatmap } from '../analytics/Heatmap';
 import { decodeHistory, type DayRecord } from '../analytics/history';
+import { AI } from '../data/aiCopy';
 import { hasCode } from '../errors';
 import { removeFile, startImport, type FileView, type ImportView } from '../files/api';
 import {
@@ -21,6 +22,7 @@ import { useUploadQueue, type QueuedUpload } from '../files/uploadQueue';
 import { townLabel } from '../format';
 import { useAction, useBreakpoint } from '../hooks';
 import { localToday } from '../locations/dates';
+import { shownLocationName } from '../locations/naming';
 import { UploadAction } from '../locations/parts';
 import { useMoment } from '../moments';
 import { usePortal, useReadOnly } from '../PortalProvider';
@@ -30,6 +32,7 @@ import { useLocation } from '../shell/LocationShell';
 import { KIND_LABEL as TOWN_KIND, townProfile } from '../towns';
 import { ids } from '../ui/aria';
 import { Actions, Button, LinkButton } from '../ui/Button';
+import { Checkbox } from '../ui/Checkbox';
 import { ErrorNotice, LoadingLine, Messages, ReadOnlyLine, StatusTag } from '../ui/feedback';
 import { Panel, Stack } from '../ui/layout';
 import { Body, Eyebrow, Heading, Mono, Small } from '../ui/text';
@@ -39,6 +42,7 @@ import {
 } from './history';
 import { arriveAtHome, boxOf } from './historyMotion';
 import { CAN_DROP, DropArea, FilePicker } from './HistoryStepDrop';
+import { useHistoryAi } from './useHistoryAi';
 
 // Onboarding step 3 on Home (spec P11, 11A; storage2 2.1, 2.2 and 15.3; the Home2-Drop and Home2-Reading boards).
 // While the organization has no history, Home mounts this in place of the cards that need days. The location card
@@ -54,9 +58,14 @@ import { CAN_DROP, DropArea, FilePicker } from './HistoryStepDrop';
 // totals (spec 10.11, storage2 13). Under view-as there is no drop and no upload: the queue is never created, the
 // controls are disabled with the read-only line, and only the status reads run. Native has no upload (D20): it
 // says where to drop files and shows the reading status in words. Nothing is kept in browser storage.
+//
+// Under the drop (web, stored files on) sits the TownwiseAI opt-in (D34, 11A.9; useHistoryAi), off by default: a file
+// that finishes uploading while it is checked is sent to TownwiseAI to read once Townwise has read it for sales, and
+// its row says how that went. The browser upload never sends anything to TownwiseAI.
 
 const RO_ID = 'history-step-ro';
 const READ_HELP_ID = 'history-step-read-help';
+const AI_HELP_ID = 'history-step-ai-help';
 const CALENDAR_ID = 'history-step-calendar';
 const AUTO_HOME_MS = 2500;
 const MARKS = { townEvents: false, holidays: false, notes: false, closures: true } as const;
@@ -140,14 +149,15 @@ function Bar(props: { value: number; label: string }): React.JSX.Element {
   );
 }
 
-function LocationCard(props: { location: LocationSummary }): React.JSX.Element {
+/** `name` is the location as member pages show it: the organization's name with one location (D29). */
+function LocationCard(props: { location: LocationSummary; name: string }): React.JSX.Element {
   const { location } = props;
   const profile = townProfile(location.town.townId);
   return (
     <Panel label={STEP.cardEyebrow}>
       <Stack gap={theme.space[2]}>
         <Eyebrow>{STEP.cardEyebrow}</Eyebrow>
-        <Heading level={3}>{location.name}</Heading>
+        <Heading level={3}>{props.name}</Heading>
       </Stack>
       <View style={styles.town}>
         <Small>{townLabel(location.town)}</Small>
@@ -235,6 +245,8 @@ function RowView(props: {
   readOnly: boolean;
   /** This screen's upload of the file, when it has one: it leaves the queue once the file is deleted. */
   queued: QueuedUpload | undefined;
+  /** How asking TownwiseAI to read the file went, when it was dropped with the opt-in checked (useHistoryAi). */
+  aiLine: string | null;
   cancel: (key: string) => void;
   forget: (key: string) => void;
   onRemoved: () => void;
@@ -272,6 +284,7 @@ function RowView(props: {
       <Mono>{formatSize(file.sizeBytes)}</Mono>
       {progress === null ? null : <Bar value={progress} label={`${fileName(file)}, read`} />}
       <Small white>{`${fileLine(file)}${eta}`}</Small>
+      {props.aiLine === null ? null : <Small>{props.aiLine}</Small>}
       {file.entries === null ? null : <ZipEntries locationId={props.locationId} file={file} entries={file.entries} />}
       {removable ? (
         <Actions>
@@ -345,7 +358,8 @@ function ReadCalendar(props: { locationId: string; view: ImportView; reading: bo
 
 export function HistoryStep(props: { onDone?: () => void }): React.JSX.Element {
   const { onDone } = props;
-  const { location } = useLocation();
+  const { location, org } = useLocation();
+  const shown = shownLocationName(location, org);
   const { api, reloadOrg } = usePortal();
   const { readOnly, line } = useReadOnly();
   const reduced = useReducedMotion();
@@ -377,6 +391,7 @@ export function HistoryStep(props: { onDone?: () => void }): React.JSX.Element {
   const sending = sendingCount(queue.items);
   const refused = queue.items.some((item) => item.state === 'refused' || item.state === 'failed');
   const byFile = useMemo(() => new Map(queue.items.filter((item) => item.fileId !== null).map((item) => [item.fileId, item])), [queue.items]);
+  const ai = useHistoryAi(location.id, queue.items, view?.files ?? []);
 
   // The server's list follows this screen's uploads: once the first joins an import, and as each one finishes.
   const finished = queue.items.filter((item) => item.state === 'done').length;
@@ -434,6 +449,19 @@ export function HistoryStep(props: { onDone?: () => void }): React.JSX.Element {
           {...(readOnly ? { describedBy: RO_ID } : {})}
         />
       </Actions>
+      {ai.off ? null : (
+        <View style={styles.optIn}>
+          <Checkbox
+            label={AI.optIn}
+            checked={ai.optIn}
+            disabled={!dropping}
+            describedBy={ids(AI_HELP_ID, readOnly && RO_ID) ?? AI_HELP_ID}
+            onChange={ai.setOptIn}
+          />
+          <Small nativeID={AI_HELP_ID}>{AI.optInHelp}</Small>
+          <LinkButton href={AI.privacyHref} label={AI.privacy} />
+        </View>
+      )}
     </View>
   ) : <Small>{STEP.nativeDrop}</Small>;
 
@@ -448,6 +476,7 @@ export function HistoryStep(props: { onDone?: () => void }): React.JSX.Element {
             locationId={location.id}
             readOnly={readOnly}
             queued={row.kind === 'file' ? byFile.get(row.file.id) : undefined}
+            aiLine={row.kind === 'file' ? ai.lines.get(row.file.id) ?? null : null}
             cancel={queue.cancel}
             forget={queue.forget}
             onRemoved={refresh}
@@ -507,7 +536,7 @@ export function HistoryStep(props: { onDone?: () => void }): React.JSX.Element {
             locationId={location.id}
             importId={view.id}
             question={view.question}
-            locationName={location.name}
+            locationName={shown}
             onAnswered={push}
           />
         )}
@@ -545,7 +574,7 @@ export function HistoryStep(props: { onDone?: () => void }): React.JSX.Element {
 
   const side = (
     <Stack gap={theme.space[8]}>
-      <Animated.View style={{ opacity: motion.cardOpacity, transform: [{ translateX: motion.x }] }}><LocationCard location={location} /></Animated.View>
+      <Animated.View style={{ opacity: motion.cardOpacity, transform: [{ translateX: motion.x }] }}><LocationCard location={location} name={shown} /></Animated.View>
       {filesOff ? null : <Keeps locationId={location.id} />}
     </Stack>
   );
@@ -590,6 +619,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   zoneOver: { borderStyle: 'solid', borderColor: c.white, backgroundColor: c.raised },
+  optIn: { gap: theme.space[1], maxWidth: 560 },
   list: { borderTopWidth: 1, borderTopColor: c.border },
   row: { gap: theme.space[2], paddingVertical: theme.space[4], borderBottomWidth: 1, borderBottomColor: c.border, minWidth: 0 },
   name: { ...theme.type.ui, color: c.white, flexShrink: 1 },

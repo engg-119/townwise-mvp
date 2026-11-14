@@ -42,14 +42,13 @@ function Timeline(props: { parts: readonly ProcessPart[]; live: boolean; ctx: To
   );
 }
 
-/** The streaming reply's top: the counter, then the timeline and `line` ("Thinking…") under it. */
-export function Working(props: { startedAt: number; parts: readonly ProcessPart[]; line: string | null; ctx: ToolContext }): React.JSX.Element {
+/** The streaming reply's top: the counter, then the timeline under it. The counter alone says it is working. */
+export function Working(props: { startedAt: number; parts: readonly ProcessPart[]; ctx: ToolContext }): React.JSX.Element {
   const seconds = useElapsed(props.startedAt);
   return (
     <View style={styles.block}>
       <Text style={styles.counter}>{`Working for ${String(seconds)}s`}</Text>
       {props.parts.length === 0 ? null : <Timeline parts={props.parts} live ctx={props.ctx} />}
-      {props.line === null ? null : <Text style={styles.thinking}>{props.line}</Text>}
     </View>
   );
 }

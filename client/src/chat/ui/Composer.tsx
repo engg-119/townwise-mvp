@@ -1,22 +1,27 @@
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import {
-  Platform, Pressable, StyleSheet, Text, TextInput, View,
+  Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View,
   type TextInputContentSizeChangeEvent, type TextInputKeyPressEvent,
 } from 'react-native';
 
 import { useReducedMotion } from '../../motion';
 import { formatCount } from '../../portal/format';
 import { useBreakpoint } from '../../portal/hooks';
-import { webAria } from '../../portal/ui/aria';
+import { ids, webAria } from '../../portal/ui/aria';
 import { theme } from '../../theme';
 import { composerKey, EXAMPLE_MS, nextExample } from '../composerKeys';
+import { ChatButton } from './controls';
+import { ArrowUp, Expand, Shrink, StopSquare } from './icons';
 
-// The TownwiseAI composer: one rounded box (spec 15.6's chat-page exception), a row of [leading] [input] [button]
-// that becomes the input above [leading] ... [button] once the text needs a second line. The input grows to 200px,
+// The TownwiseAI composer: one rounded box (spec 15.6's chat-page exception) with 5px inside its border, a row of
+// [leading] [input] [button], the button a 44px circle drawn as an icon (an up arrow to send, a square to stop),
+// that becomes the input above [leading] ... [button] once the text needs a second line. Then Expand, at the box's
+// top right, makes the input 60% of the window tall until Shrink or until the draft is sent (emptied). The input grows to 200px,
 // then scrolls; from 3,600 characters a counter shows; the help line sits under the box. The input's name is the
 // label (nothing visible). On web Enter sends (not while a reply streams, not while an input method composes),
 // Shift+Enter is a new line, and Tab in an empty composer accepts the shown example; on native Return is a new
-// line and the button sends. The examples rotate on web from 641px, never under reduced motion.
+// line and the button sends. The examples rotate on web from 641px, never under reduced motion. Files attached to the
+// message (web, D36) show as a first row inside the box, above the input, and the placeholder then asks about them.
 
 export const MAX_MESSAGE = 4000;
 const COUNTER_FROM = 3600;
@@ -25,6 +30,7 @@ const ONE_LINE_BOX = 44;
 const INPUT_PADDING = 20;
 export const COMPOSER_LABEL = 'Ask about your sales, or tell TownwiseAI what it can’t see';
 const STATIC_PLACEHOLDER = 'Ask about a closure, an event or an unusual day';
+export const ATTACHED_PLACEHOLDER = 'Ask about the attached file';
 
 export interface ComposerHandle { focus: () => void }
 
@@ -46,10 +52,19 @@ export interface ComposerProps {
   /** 'landing': centered in an empty conversation; 'dock': under the thread. Same box either way. */
   placement: 'landing' | 'dock';
   /**
-   * Reserved: a leading slot inside the pill, before the input (where feat/data-library's "Add data" button will
-   * sit). Rendered only when given; nothing passes it in this plan.
+   * A leading slot inside the pill, before the input: the + that attaches files (ComposerFiles), on web while stored
+   * files are on. Rendered only when given.
    */
   leading?: React.ReactNode;
+  /**
+   * The attachments slot: the message's file chips (ComposerFiles), a first row inside the box, in normal flow above
+   * the input. Rendered only when given.
+   */
+  attachments?: React.ReactNode;
+  /** Files are on the message: the placeholder asks about them, and no example shows. */
+  attached?: boolean;
+  /** Another line Send is described by: why it waits (a file still uploading). */
+  sendDescribedBy?: string | null;
 }
 
 interface KeyEvent {
@@ -61,8 +76,16 @@ interface KeyEvent {
 
 const web = Platform.OS === 'web';
 
-function ActionButton(props: { label: string; disabled: boolean; describedBy: string | null; onPress: () => void }): React.JSX.Element {
+function ActionButton(props: {
+  /** The button's name: Send, Stop or Stop and send. */
+  label: string;
+  icon: 'send' | 'stop';
+  disabled: boolean;
+  describedBy: string | null;
+  onPress: () => void;
+}): React.JSX.Element {
   const { disabled } = props;
+  const color = disabled ? c.text3 : c.onCta;
   // On web the same element carries aria-disabled (react-native-web would turn `disabled` into the attribute and
   // drop focus); the press handler is simply absent.
   const ref = useRef<React.ComponentRef<typeof Pressable>>(null);
@@ -76,13 +99,14 @@ function ActionButton(props: { label: string; disabled: boolean; describedBy: st
     <Pressable
       ref={ref}
       role="button"
+      accessibilityLabel={props.label}
       {...(Platform.OS === 'web' ? {} : { disabled })}
       accessibilityState={{ disabled }}
       {...webAria({ 'aria-describedby': props.describedBy ?? undefined })}
       {...(disabled ? {} : { onPress: props.onPress })}
       style={[styles.button, disabled ? styles.buttonDisabled : null]}
     >
-      <Text style={[styles.buttonLabel, disabled ? styles.buttonLabelDisabled : null]}>{props.label}</Text>
+      {props.icon === 'send' ? <ArrowUp color={color} /> : <StopSquare color={color} />}
     </Pressable>
   );
 }
@@ -93,10 +117,16 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   const input = useRef<React.ComponentRef<typeof TextInput>>(null);
   const [focused, setFocused] = useState(false);
   const [grown, setGrown] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [index, setIndex] = useState(0);
+  // Never under the usual maximum, so an unknown (0) window height changes nothing.
+  const tall = Math.max(MAX_HEIGHT, Math.round(useWindowDimensions().height * 0.6));
   const readOnly = props.readOnlyId !== null;
   const empty = props.draft === '';
-  const rotating = web && !phone && props.examples.length > 0;
+  // Sending empties the draft, and the box goes back to its size.
+  if (empty && expanded) setExpanded(false);
+  const attached = props.attached === true;
+  const rotating = web && !phone && !attached && props.examples.length > 0;
   const example = rotating ? (props.examples[index % props.examples.length] ?? null) : null;
   useImperativeHandle(props.focusRef, () => ({ focus: () => { input.current?.focus(); } }), []);
 
@@ -155,12 +185,14 @@ export function Composer(props: ComposerProps): React.JSX.Element {
 
   const helpId = 'composer-help';
   const hasText = props.draft.trim() !== '';
+  const sendDescribedBy = ids(props.readOnlyId, props.sendDescribedBy) ?? null;
   let button: React.JSX.Element;
-  if (props.streaming && hasText) button = <ActionButton label="Stop and send" disabled={readOnly || !props.canSend} describedBy={props.readOnlyId} onPress={props.onStopAndSend} />;
-  else if (props.streaming) button = <ActionButton label="Stop" disabled={readOnly} describedBy={props.readOnlyId} onPress={props.onStop} />;
-  else button = <ActionButton label="Send" disabled={readOnly || !props.canSend} describedBy={props.readOnlyId} onPress={props.onSend} />;
+  if (props.streaming && hasText) button = <ActionButton label="Stop and send" icon="send" disabled={readOnly || !props.canSend} describedBy={sendDescribedBy} onPress={props.onStopAndSend} />;
+  else if (props.streaming) button = <ActionButton label="Stop" icon="stop" disabled={readOnly} describedBy={props.readOnlyId} onPress={props.onStop} />;
+  else button = <ActionButton label="Send" icon="send" disabled={readOnly || !props.canSend} describedBy={sendDescribedBy} onPress={props.onSend} />;
 
-  const placeholder = phone ? 'Ask TownwiseAI' : (example ?? STATIC_PLACEHOLDER);
+  let placeholder = phone ? 'Ask TownwiseAI' : (example ?? STATIC_PLACEHOLDER);
+  if (attached) placeholder = ATTACHED_PLACEHOLDER;
   const field = (
     <TextInput
       ref={input}
@@ -174,25 +206,43 @@ export function Composer(props: ComposerProps): React.JSX.Element {
       editable={!readOnly}
       {...webAria({ 'aria-readonly': readOnly ? true : undefined, 'aria-describedby': readOnly ? `${props.readOnlyId ?? ''} ${helpId}` : helpId })}
       multiline
-      {...(web ? { rows: 1 } : {})}
+      // The box draws the focus ring (boxFocused), so the portal's square one is left off this field.
+      {...(web ? { rows: 1, dataSet: { ring: 'box' } } : {})}
       maxLength={MAX_MESSAGE}
       placeholder={placeholder}
       placeholderTextColor={theme.color.text3}
-      style={[styles.input, readOnly ? styles.inputReadOnly : null]}
+      style={[styles.input, grown ? styles.inputGrown : null, expanded ? { minHeight: tall, maxHeight: tall } : null, readOnly ? styles.inputReadOnly : null]}
     />
   );
   const counter = props.draft.length >= COUNTER_FROM
     ? <Text style={styles.counter}>{`${formatCount(props.draft.length)} of ${formatCount(MAX_MESSAGE)}`}</Text>
     : null;
-  // One flat row of keyed children so the input is never remounted (and never loses focus) when the box grows;
-  // grown, the input takes the whole first line and the rest wraps beneath it.
+  // One flat row of keyed children so the input is never remounted (and never loses focus) when the box grows or a
+  // file is attached; grown, the input takes the whole first line and the rest wraps beneath it. The attachments come
+  // first, a whole line of their own (leaving Expand its corner).
   const leading = props.leading === undefined || props.leading === null
     ? null
     : <View key="leading" style={styles.leading}>{props.leading}</View>;
+  const files = props.attachments === undefined || props.attachments === null
+    ? null
+    : <View key="attachments" testID="composer-attachments" style={[styles.attachments, grown ? styles.attachmentsGrown : null]}>{props.attachments}</View>;
   const fieldKeyed = <View key="field" style={grown ? styles.fieldGrown : styles.fieldRow}>{field}</View>;
+  const size = grown ? (
+    <View key="size" style={styles.size}>
+      <ChatButton
+        variant="arrow"
+        round
+        label={expanded ? 'Shrink the message box' : 'Expand the message box'}
+        icon={(color) => (expanded ? <Shrink color={color} /> : <Expand color={color} />)}
+        onPress={() => { setExpanded((value) => !value); }}
+      />
+    </View>
+  ) : null;
   const box = (
-    <View style={[styles.box, grown ? styles.boxGrown : null, focused ? styles.boxFocused : null]}>
-      {grown ? [fieldKeyed, leading, <View key="button" style={styles.buttonEnd}>{button}</View>] : [leading, fieldKeyed, <View key="button" style={styles.buttonEnd}>{button}</View>]}
+    <View style={[styles.box, grown || files !== null ? styles.boxGrown : null, focused ? styles.boxFocused : null]}>
+      {grown
+        ? [files, fieldKeyed, leading, <View key="button" style={styles.buttonEnd}>{button}</View>, size]
+        : [files, leading, fieldKeyed, <View key="button" style={styles.buttonEnd}>{button}</View>]}
     </View>
   );
   return (
@@ -207,11 +257,14 @@ export function Composer(props: ComposerProps): React.JSX.Element {
 const c = theme.color;
 
 const styles = StyleSheet.create({
-  composer: { gap: theme.space[2], paddingTop: theme.space[3], alignSelf: 'stretch' },
+  // box-none: the transparent top padding and the gaps pass wheel, touch and click through to the thread behind the dock;
+  // the box, the counter and the help line (children) still take them. A click in a gap can reach thread content
+  // under the dock skirt; accepted trade-off.
+  composer: { gap: theme.space[2], paddingTop: theme.space[3], alignSelf: 'stretch', pointerEvents: 'box-none' },
   landing: { width: '100%' },
   box: {
-    minHeight: 48, borderRadius: 24, borderWidth: 1, borderColor: c.line, backgroundColor: c.ground,
-    paddingHorizontal: 6, paddingVertical: 1, flexDirection: 'row', alignItems: 'flex-end', columnGap: theme.space[2],
+    minHeight: 56, borderRadius: 28, borderWidth: 1, borderColor: c.line, backgroundColor: c.ground,
+    padding: 5, flexDirection: 'row', alignItems: 'flex-end', columnGap: theme.space[2],
   },
   boxGrown: { flexWrap: 'wrap' },
   boxFocused: { borderColor: c.mint, outlineWidth: 2, outlineColor: c.mintRing, outlineStyle: 'solid' },
@@ -220,17 +273,18 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent', borderWidth: 0, borderRadius: 0, textAlignVertical: 'top', outlineWidth: 0,
   },
   fieldRow: { flex: 1, minWidth: 0 },
+  // Grown, the input leaves room at its top right for Expand, which sits over it.
+  inputGrown: { paddingRight: 52 },
+  size: { position: 'absolute', top: 5, right: 5 },
   fieldGrown: { width: '100%' },
+  attachments: { flexBasis: '100%', minWidth: 0 },
+  // Grown, Expand sits at the box's top right, over this row: the chips leave it room.
+  attachmentsGrown: { paddingRight: 48 },
   buttonEnd: { marginLeft: 'auto' },
   inputReadOnly: { color: c.text3 },
   leading: { alignSelf: 'flex-end', justifyContent: 'center', minHeight: 44 },
-  button: {
-    minHeight: 44, borderRadius: 22, paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: c.cta,
-  },
-  buttonDisabled: { backgroundColor: c.raised, borderWidth: 1, borderColor: c.border, paddingHorizontal: 17 },
-  buttonLabel: { ...theme.type.button, color: c.onCta },
-  buttonLabelDisabled: { color: c.text3 },
+  button: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: c.cta },
+  buttonDisabled: { backgroundColor: c.raised, borderWidth: 1, borderColor: c.border },
   counter: { ...theme.type.mono, color: c.text2 },
   help: { ...theme.type.small, color: c.text2, paddingHorizontal: theme.space[2] },
 });
