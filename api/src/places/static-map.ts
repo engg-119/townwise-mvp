@@ -1,5 +1,6 @@
-// The map on the access request's confirm card: a Google Maps Static API URL, signed here and loaded by the browser
-// (and the native Image) straight from maps.googleapis.com. The API never fetches, relays or stores the image.
+// The map of the places someone checks (and of one place on the confirm card): a Google Maps Static API URL, signed
+// here and loaded by the browser (and the native Image) straight from maps.googleapis.com. The API never fetches,
+// relays or stores the image.
 // main.ts builds the signer when GOOGLE_MAPS_STATIC_KEY and GOOGLE_MAPS_SIGNING_SECRET are both set; without either
 // there is no map, and a map URL is never made unsigned.
 // The URL carries the static key and a signature, so nothing here logs, and the handler returns it only in the answer
@@ -16,30 +17,69 @@ export const STATIC_MAP_PATH = '/maps/api/staticmap';
 export const STATIC_MAP_WIDTH = 640;
 export const STATIC_MAP_HEIGHT = 320;
 
-/** The dark Townwise map (palette from the Confirm board and client/src/theme.ts). Later rules override earlier ones. */
-export const STATIC_MAP_STYLES: readonly string[] = [
-  'feature:all|element:geometry|color:0x0e1216',
-  'feature:all|element:labels.icon|visibility:off',
-  'feature:all|element:labels.text.fill|color:0x7b8187',
-  'feature:all|element:labels.text.stroke|color:0x080a0d',
-  'feature:administrative|element:geometry|visibility:off',
-  'feature:administrative.locality|element:labels.text.fill|color:0x9a9fa6',
-  'feature:poi|visibility:off',
-  'feature:poi.park|element:geometry|visibility:on|color:0x121a17',
-  'feature:road|element:geometry.stroke|visibility:off',
-  'feature:road.local|element:geometry.fill|color:0x1e2329',
-  'feature:road.arterial|element:geometry.fill|color:0x2a3037',
-  'feature:road.highway|element:geometry.fill|color:0x2a3037',
-  'feature:transit|visibility:off',
-  'feature:water|element:geometry|color:0x0b1820',
-  'feature:water|element:labels.text.fill|color:0x34383e',
-];
+/** The portal's two modes (client/src/portal/shell/themeMode.ts). A request that names none gets the dark map. */
+export const MAP_THEMES = ['dark', 'light'] as const;
+export type MapTheme = (typeof MAP_THEMES)[number];
+/** Exactly 'dark' or 'light': any other value, case or type is refused. */
+export const mapThemeSchema = z.enum(MAP_THEMES);
+
+/**
+ * Each mode's map style (palettes from the Confirm board and client/src/theme.ts), the same 15 rules in the same
+ * order, only the colors differ. Later rules override earlier ones. Dark: the ground just above the palette's ground,
+ * roads a step lighter, labels in the line gray. Light: land in the light palette's raised gray, local roads its
+ * ground and larger roads its white panel, labels in its line gray with text3 for towns, water a light gray-blue.
+ * Both hide icons, points of interest (parks stay, as a tint) and transit.
+ */
+export const STATIC_MAP_STYLES: Readonly<Record<MapTheme, readonly string[]>> = {
+  dark: [
+    'feature:all|element:geometry|color:0x0e1216',
+    'feature:all|element:labels.icon|visibility:off',
+    'feature:all|element:labels.text.fill|color:0x7b8187',
+    'feature:all|element:labels.text.stroke|color:0x080a0d',
+    'feature:administrative|element:geometry|visibility:off',
+    'feature:administrative.locality|element:labels.text.fill|color:0x9a9fa6',
+    'feature:poi|visibility:off',
+    'feature:poi.park|element:geometry|visibility:on|color:0x121a17',
+    'feature:road|element:geometry.stroke|visibility:off',
+    'feature:road.local|element:geometry.fill|color:0x1e2329',
+    'feature:road.arterial|element:geometry.fill|color:0x2a3037',
+    'feature:road.highway|element:geometry.fill|color:0x2a3037',
+    'feature:transit|visibility:off',
+    'feature:water|element:geometry|color:0x0b1820',
+    'feature:water|element:labels.text.fill|color:0x34383e',
+  ],
+  light: [
+    'feature:all|element:geometry|color:0xe9ecef',
+    'feature:all|element:labels.icon|visibility:off',
+    'feature:all|element:labels.text.fill|color:0x7a8088',
+    'feature:all|element:labels.text.stroke|color:0xf5f6f8',
+    'feature:administrative|element:geometry|visibility:off',
+    'feature:administrative.locality|element:labels.text.fill|color:0x5d636b',
+    'feature:poi|visibility:off',
+    'feature:poi.park|element:geometry|visibility:on|color:0xdce8e1',
+    'feature:road|element:geometry.stroke|visibility:off',
+    'feature:road.local|element:geometry.fill|color:0xf5f6f8',
+    'feature:road.arterial|element:geometry.fill|color:0xffffff',
+    'feature:road.highway|element:geometry.fill|color:0xffffff',
+    'feature:transit|visibility:off',
+    'feature:water|element:geometry|color:0xd0dbe5',
+    'feature:water|element:labels.text.fill|color:0x8d98a3',
+  ],
+};
+
+/** The pin: each palette's mint (theme.palette.dark.mint, theme.palette.light.mint). */
+export const STATIC_MAP_PIN: Readonly<Record<MapTheme, string>> = { dark: '0x7bd2b4', light: '0x136a53' };
 
 export interface PlaceMap { url: string; width: typeof STATIC_MAP_WIDTH; height: typeof STATIC_MAP_HEIGHT }
 
 export interface StaticMapSigner {
-  /** The signed map of the place, centred on it with the mint pin. Pure: no network, no clock, nothing stored. */
-  mapOf(placeId: string): PlaceMap;
+  /** The signed map of the place in the mode, centered on it with the mint pin. Pure: no network, no clock, nothing stored. */
+  mapOf(placeId: string, theme: MapTheme): PlaceMap;
+  /**
+   * D29: the signed map of every place in the mode, a mint pin each: one place is exactly `mapOf`; several leave the
+   * center and zoom to Google, which fits every pin. Throws on an empty list. Pure, as mapOf.
+   */
+  mapOfPlaces(placeIds: readonly string[], theme: MapTheme): PlaceMap;
 }
 
 /** URL-safe base64 of 16 to 64 bytes, as Google issues it (28 characters today). Boot refuses anything else. */
@@ -54,8 +94,11 @@ export function signPath(pathAndQuery: string, secret: string): string {
   return createHmac('sha1', key).update(pathAndQuery).digest('base64').replaceAll('+', '-').replaceAll('/', '_');
 }
 
-/** The path and query, unsigned, in a fixed order. URLSearchParams encodes `:` as %3A, `|` as %7C. */
-export function staticMapPath(placeId: string, apiKey: string): string {
+/**
+ * The path and query, unsigned, in a fixed order whatever the mode: the mode changes only the pin's color and the
+ * style rules' colors. URLSearchParams encodes `:` as %3A, `|` as %7C.
+ */
+export function staticMapPath(placeId: string, apiKey: string, theme: MapTheme): string {
   const pairs: [string, string][] = [
     ['center', `place_id:${placeId}`],
     ['zoom', '15'],
@@ -65,8 +108,32 @@ export function staticMapPath(placeId: string, apiKey: string): string {
     ['maptype', 'roadmap'],
     ['language', 'en'],
     ['region', 'us'],
-    ['markers', `color:0x7bd2b4|place_id:${placeId}`],
-    ...STATIC_MAP_STYLES.map((rule): [string, string] => ['style', rule]),
+    ['markers', `color:${STATIC_MAP_PIN[theme]}|place_id:${placeId}`],
+    ...STATIC_MAP_STYLES[theme].map((rule): [string, string] => ['style', rule]),
+    ['key', apiKey],
+  ];
+  return `${STATIC_MAP_PATH}?${new URLSearchParams(pairs).toString()}`;
+}
+
+/**
+ * The path and query for every place: one place is `staticMapPath` unchanged; several send no `center` and no `zoom`
+ * (Google then fits every marker) and one `markers` parameter with each id in the order given. 25 ids at the
+ * 512-character maximum stay under Google's 16,384-character URL cap in either mode (both modes' rules are the same
+ * length).
+ */
+export function staticMapPathOf(placeIds: readonly string[], apiKey: string, theme: MapTheme): string {
+  const [first, ...rest] = placeIds;
+  if (first === undefined) throw new Error('staticMapPathOf needs at least one place id');
+  if (rest.length === 0) return staticMapPath(first, apiKey, theme);
+  const pairs: [string, string][] = [
+    ['size', `${String(STATIC_MAP_WIDTH)}x${String(STATIC_MAP_HEIGHT)}`],
+    ['scale', '2'],
+    ['format', 'jpg-baseline'],
+    ['maptype', 'roadmap'],
+    ['language', 'en'],
+    ['region', 'us'],
+    ['markers', [`color:${STATIC_MAP_PIN[theme]}`, ...placeIds.map((id) => `place_id:${id}`)].join('|')],
+    ...STATIC_MAP_STYLES[theme].map((rule): [string, string] => ['style', rule]),
     ['key', apiKey],
   ];
   return `${STATIC_MAP_PATH}?${new URLSearchParams(pairs).toString()}`;
@@ -74,14 +141,13 @@ export function staticMapPath(placeId: string, apiKey: string): string {
 
 /** The string signed is exactly the string sent: built once, never re-encoded. */
 export function createStaticMapSigner(apiKey: string, signingSecret: string): StaticMapSigner {
+  const signed = (path: string): PlaceMap => ({
+    url: `${STATIC_MAP_ORIGIN}${path}&signature=${signPath(path, signingSecret)}`,
+    width: STATIC_MAP_WIDTH,
+    height: STATIC_MAP_HEIGHT,
+  });
   return {
-    mapOf(placeId) {
-      const path = staticMapPath(placeId, apiKey);
-      return {
-        url: `${STATIC_MAP_ORIGIN}${path}&signature=${signPath(path, signingSecret)}`,
-        width: STATIC_MAP_WIDTH,
-        height: STATIC_MAP_HEIGHT,
-      };
-    },
+    mapOf: (placeId, theme) => signed(staticMapPath(placeId, apiKey, theme)),
+    mapOfPlaces: (placeIds, theme) => signed(staticMapPathOf(placeIds, apiKey, theme)),
   };
 }

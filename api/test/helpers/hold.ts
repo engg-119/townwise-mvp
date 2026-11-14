@@ -6,7 +6,7 @@ import { vi } from 'vitest';
 
 import type { TownwiseTestServer } from './server.ts';
 
-type HeldMethod = 'countDocuments' | 'findOneAndUpdate' | 'bulkWrite' | 'updateOne';
+type HeldMethod = 'countDocuments' | 'findOneAndUpdate' | 'bulkWrite' | 'updateOne' | 'deleteOne' | 'create' | 'deleteMany';
 
 export interface Hold {
   /** Resolves when the nth call (from 1, in arrival order) has arrived and is waiting. */

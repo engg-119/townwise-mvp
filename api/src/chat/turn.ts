@@ -1,8 +1,9 @@
 // One tuning chat turn (docs/portal/tuning-chat.md sections 3 and 4): a manual streaming loop. Stream a model call,
 // take its finalMessage(), run its tool calls, append, repeat, for at most 8 calls. Every assistant message is kept
 // exactly as received, thinking blocks included, except what a mid-reply fallback requires dropping (echoable). The
-// turn's messages are returned for one save (savedTurn: an item's text is kept only as a stub); a failed, aborted or
-// refused turn returns nothing to save, only its cost, which is charged after every call either way.
+// turn's messages are returned for one save (savedTurn: an item's text is kept only as a stub, and an attached file's
+// content is sent but never saved); a failed, aborted or refused turn returns nothing to save, only its cost, which is
+// charged after every call either way.
 import { AnthropicError, APIConnectionError, APIError, InternalServerError, RateLimitError } from '@anthropic-ai/sdk';
 import type {
   BetaContentBlock, BetaMessage, BetaMessageParam, BetaMessageStreamParams, BetaRawContentBlockDelta, BetaRawMessageStreamEvent,
@@ -14,6 +15,7 @@ import type { StoredMessage } from '../stores/chat-conversations.ts';
 import type { ChatModel } from './model.ts';
 import { costMicroUsd, messageCostMicroUsd, tokensOf, type TokenCounts } from './pricing.ts';
 import { SYSTEM_PROMPT } from './prompt.ts';
+import { UNANSWERED_RESULT } from './tools/next.ts';
 import { inputViewOf, resultViewOf, runTool, savedResultOf, toolNamed, TOOLS, type ToolContext, type ToolView } from './tools/registry.ts';
 import type { Visual } from './tools/visual.ts';
 
@@ -77,6 +79,13 @@ export interface TurnInput {
   readonly history: readonly BetaMessageParam[];
   /** Null for a regenerate: the history already ends with the person's message. */
   readonly userMessage: BetaMessageParam | null;
+  /**
+   * The person's message as every request of this turn sends it, when that differs from the stored one
+   * (chat/attachments.ts expandedMessage): with its files' content, which is never saved, or a regenerate's block
+   * written again. It stands in for `userMessage`, or for a regenerate for the history's last message. Null when the
+   * message is sent as stored; then the turn's thinking is saved as usual.
+   */
+  readonly expanded: BetaMessageParam | null;
   /** The nodes the turn's messages are stored under: `user` is null for a regenerate, and `reply.parentId` is the user node. */
   readonly nodes: { readonly user: TurnNode | null; readonly reply: { readonly id: string; readonly parentId: string } };
   readonly signal: AbortSignal;
@@ -208,6 +217,27 @@ function tooMany(block: BetaToolUseBlock): BetaToolResultBlockParam {
 }
 
 /**
+ * Whether the turn wrote text the owner sees after its last tool call other than suggest_next: the answer. Text before
+ * that call is an aside written ahead of the work ("Next week, presumably."), not an answer to it, and Opus 5.5
+ * returns text written before a tool call in the same message as thinking, which the owner never sees as a reply.
+ */
+function wroteText(turn: readonly BetaMessageParam[]): boolean {
+  for (let index = turn.length - 1; index >= 0; index -= 1) {
+    const param = turn[index];
+    if (param?.role !== 'assistant' || typeof param.content === 'string') continue;
+    // A message that calls a tool other than suggest_next did work after any text it holds: that text came first.
+    if (param.content.some((block) => block.type === 'tool_use' && block.name !== 'suggest_next')) return false;
+    if (param.content.some((block) => block.type === 'text' && block.text.trim() !== '')) return true;
+  }
+  return false;
+}
+
+/** A suggest_next result that also asks for the answer the turn has not written; an error result stays as it is. */
+function askForAnswer(result: BetaToolResultBlockParam): BetaToolResultBlockParam {
+  return result.is_error === true ? result : { ...result, content: UNANSWERED_RESULT };
+}
+
+/**
  * The blocks of a reply that are sent back and acted on. After a server-side fallback in the middle of a reply, the
  * declined model's blocks before the last `fallback` block are echoed back only as text: its thinking, redacted
  * thinking, tool calls and any other model-internal blocks are dropped, and its tool calls never run. The `fallback`
@@ -225,10 +255,12 @@ export function echoable(content: readonly BetaContentBlock[]): BetaContentBlock
  * purged. A thinking block's signature binds everything before it (preserved thinking), so every thinking block after
  * the first stubbed result is dropped too; blocks before it stay valid, and an assistant message left with nothing is
  * dropped. The turn's own later calls already read the whole result. The saved history is append-only from then on.
+ * `expanded` (the turn sent the person's message other than as stored, D36): every thinking block of the turn comes
+ * after content that is never saved, so none is.
  */
-export function savedTurn(turn: readonly TurnMessage[]): StoredMessage[] {
+export function savedTurn(turn: readonly TurnMessage[], expanded = false): StoredMessage[] {
   const names = new Map<string, string>();
-  let stubbed = false;
+  let stubbed = expanded;
   const saved: StoredMessage[] = [];
   for (const { param, ...placed } of turn) {
     let kept = param;
@@ -273,7 +305,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     await input.charge(cost);
   };
   const done = (stopReason: DoneReason): TurnResult => {
-    const messages = savedTurn(timed);
+    const messages = savedTurn(timed, input.expanded !== null);
     return {
       kind: 'done', stopReason, messages, calls, model, inputTokens, outputTokens, costMicroUsd: spent,
       // A reply's messages start with an assistant message, so the last one stored names the deepest node written.
@@ -283,6 +315,15 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
 
   // A function, not a property read: the signal changes under the loop, which narrowing cannot see.
   const aborted = (): boolean => input.signal.aborted;
+
+  // Every request: the history and the turn so far, with the person's message (a regenerate's is the history's last)
+  // sent as `expanded` when it carries attachments. What is saved is `turn`, which holds the stored form.
+  const personAt = input.userMessage === null ? input.history.length - 1 : input.history.length;
+  const requestMessages = (): BetaMessageParam[] => {
+    const messages = [...input.history, ...turn];
+    if (input.expanded !== null) messages[personAt] = input.expanded;
+    return messages;
+  };
 
   if (input.userMessage !== null && user !== null) append(input.userMessage, user);
   try {
@@ -297,7 +338,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       const usage = usageTracker(input.now);
       let message: BetaMessage;
       try {
-        const stream = input.model.stream(requestParams([...input.history, ...turn]), { signal: input.signal });
+        const stream = input.model.stream(requestParams(requestMessages()), { signal: input.signal });
         for await (const event of stream) {
           usage.observe(event);
           if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
@@ -358,10 +399,14 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
           input.emit({ type: 'tool', data: { id, name, state, input: view, result: resultViewOf(name, outcome.result) } });
         }
       }
-      append({ role: 'user', content: results });
       // suggest_next is a reply's last step: a message that called only it is answered and ends the turn without
       // another model call, valid or not (the client then picks its own three). The saved reply ends with its results.
-      if (toolUses.every((block) => block.name === 'suggest_next')) return done('end_turn');
+      // The model often calls it right after thinking out its answer, having written no text: the owner sees none of
+      // its thinking, so then its result asks for the answer and the loop goes on.
+      const onlyNext = toolUses.every((block) => block.name === 'suggest_next');
+      const unanswered = onlyNext && !wroteText(turn);
+      append({ role: 'user', content: unanswered ? results.map(askForAnswer) : results });
+      if (onlyNext && !unanswered) return done('end_turn');
     }
   } catch (err) {
     if (aborted()) return { kind: 'aborted', calls, costMicroUsd: spent };

@@ -347,6 +347,8 @@ export function SetupPanel(props: SetupPanelProps): React.JSX.Element {
     },
     placeSearch: search === 'on',
     limitLine: `${org.name} has 25 locations, the most an organization can have.`,
+    orgName: org.name,
+    locationCount: locations.length,
   };
 
   const close = (): void => { setActing(null); };

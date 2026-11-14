@@ -13,8 +13,9 @@ import { formatCount, formatDate } from '../../../../../../src/portal/format';
 import { useAction, useBreakpoint, useLoad } from '../../../../../../src/portal/hooks';
 import { usePortal } from '../../../../../../src/portal/PortalProvider';
 import { Page } from '../../../../../../src/portal/shell/Page';
+import { OrgsSkeleton } from '../../../../../../src/portal/skeleton';
 import {
-  Button, DataTable, EmptyState, ErrorNotice, FormField, LinkButton, LoadingLine, Select, Small, Stack,
+  Button, DataTable, EmptyState, ErrorNotice, FormField, LinkButton, Select, Small, Stack,
 } from '../../../../../../src/portal/ui';
 
 // P20. Organizations (/admin/orgs, staff): docs/portal/spec.md 16.4, F10; the AdminOrgs board. Every
@@ -131,7 +132,7 @@ export default function OrganizationsPage(): React.JSX.Element {
 
   let body: React.ReactNode;
   if (state.status === 'loading') {
-    body = <LoadingLine text="Loading organizations" minHeight={320} />;
+    body = <OrgsSkeleton label="Loading organizations" />;
   } else if (state.status === 'failed') {
     body = <ErrorNotice error={state.error} onRetry={reload} />;
   } else if (state.data.length === 0) {

@@ -273,7 +273,7 @@ describe('POST /api/admin/view-as/end', () => {
     expect(again.status).toBe(200);
     expect(await eventsOfGrant(grantId)).toHaveLength(2);
 
-    // The audit log shows both, labelled with the person viewed.
+    // The audit log shows both, labeled with the person viewed.
     const audit = await (await call(server, `/api/admin/audit?orgId=${target.orgId}`, { session: staff })).json() as { events: AuditEventView[] };
     expect(audit.events.slice(0, 2).map((event) => [event.summary, event.viewAs])).toEqual([
       ['Ended view-as', { targetEmail: target.email }],

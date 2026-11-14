@@ -11,7 +11,7 @@
 //   period; season one of fall, winter, spring, summer.
 //
 // Headcount inputs (residents, students in college housing, enrollment, whether dorms close between terms) are not
-// part of this calendar. They are not researched yet for any town and stay empty, labelled as such, in the people
+// part of this calendar. They are not researched yet for any town and stay empty, labeled as such, in the people
 // in town sources (spec 13.2), until a teammate researches them with a source for each number.
 import type { TownId } from './towns.ts';
 

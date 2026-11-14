@@ -4,18 +4,23 @@ import { Platform, StyleSheet, View } from 'react-native';
 import { loadAgentPanel } from '../../chat/api';
 import { theme } from '../../theme';
 import { fetchCalendar, fetchSalesHistory, type Calendar, type SalesHistory } from '../analytics/api';
-import { dayContext } from '../analytics/days';
+import { dayContext, ruleSchedules } from '../analytics/days';
 import { metricsWithData } from '../analytics/filters';
 import { byDate, decodeHistory } from '../analytics/history';
 import { homeCalendarRange, lastWeekComparison, lateWeekShare, leadLine, monthFacts, nextEvent, thisWeek, type HomeInput } from '../analytics/week';
+import { fetchForecast } from '../estimates/api';
 import { useBreakpoint, useLoad } from '../hooks';
 import { fetchNotes, type Note } from '../locations/api';
-import { localToday } from '../locations/dates';
+import { localToday, monthRange } from '../locations/dates';
+import { shownLocationName } from '../locations/naming';
 import { formatCount } from '../format';
-import { LoadFailure, Loading } from '../locations/parts';
+import { LoadFailure } from '../locations/parts';
+import { fetchOrderBoard } from '../orders/api';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { locationHref } from '../routing';
+import { fetchRules, type Rule } from '../rules/api';
 import { useLocation } from '../shell/LocationShell';
+import { HomeSkeleton } from '../skeleton';
 import { Actions, LinkButton } from '../ui/Button';
 import { ReadOnlyLine, StatusTag } from '../ui/feedback';
 import { Mono, Small } from '../ui/text';
@@ -30,18 +35,27 @@ import { ThisWeek } from './ThisWeek';
 
 // P11 Home (/locations/[id], members; spec 16.3), a dashboard built around the Monday decisions. Under the lead, a
 // grid of blocks (Block.tsx), most practical first: At a glance (this week last year, last week, the next event);
-// This week in {Town}, day by day; This month, a calendar you can open a day of, beside Last week; the month's
-// events beside Who's in town; this month in past years beside the bar order (Planned); and the location's history. Until forecasts exist, Home
-// shows only history and the calendar, never a guess: every figure is a sum, an average or a share of the
-// location's own stored days, of a past day. It reads three routes in parallel (sales history, notes, the town
-// calendar), then on their own TownwiseAI's questions (for the lead's count) and the month's people in town (in Who's
-// in town), and writes nothing, so view-as shows it unchanged with its upload links disabled. "Today" is the
-// device's date; weeks run Monday to Sunday. While onboarding's needsHistory is true, its HistoryStep takes the
-// place of the blocks that need days, and when it has read the history Home loads again.
+// This week in {Town}, day by day; This month, a calendar whose days open in the Calendar (P28), beside Last week; the
+// month's events beside Who's in town; this month in past years beside the bar order; and the location's
+// history. Every figure is a sum, an average or a share of the location's own stored days, of a past day, except This
+// month's days from today on, which show the published forecast's own figures (spec 16.3 P11, 14.5,
+// D30), never a guess of Home's: with no published forecast the lead says so and those days show none. It reads three
+// routes in parallel (sales history, notes, the town calendar), then on their own TownwiseAI's questions (for the
+// lead's count), the location's business rules (a schedule with more or fewer guests says a near-empty day was open,
+// D31 and D32, as on the Calendar and Analytics; none while they load or if the read fails), this month's forecast
+// (GET .../forecast; Home never waits for it or fails with it), the month's people in town (in Who's in town) and the
+// next orders (GET .../orders, read once here for Bar order and the selected day's Reorder part), and writes nothing,
+// so view-as shows it unchanged with its upload links disabled.
+// "Today" is the device's date; weeks run Monday to Sunday. While onboarding's needsHistory is true, its HistoryStep
+// takes the place of the blocks that need days, and when it has read the history Home loads again.
 
 const READ_ONLY_ID = 'home-ro';
+const NO_RULES: readonly Rule[] = [];
 
-export const FORECAST_LINE = 'Forecasts are in development. Until then, Home shows your history and the calendar, never a guess.';
+/** The lead's In progress line while no forecast is published. `locationName` is the shown name (shownLocationName). */
+export function forecastLine(locationName: string): string {
+  return `Townwise hasn’t published a forecast for ${locationName} yet. Until then, Home shows your history and the calendar, never a guess.`;
+}
 
 /** "2 questions from TownwiseAI": the lead's link to its page (spec P11). */
 export function questionsLabel(count: number): string {
@@ -73,16 +87,28 @@ function QuestionsLink(props: { locationId: string }): React.JSX.Element | null 
   const { locationId } = props;
   const { state } = useLoad(useCallback(() => loadAgentPanel(api, locationId), [api, locationId]));
   if (state.status !== 'ready' || state.data.questions.length === 0) return null;
-  return <LinkButton href={locationHref(locationId, 'agent')} label={questionsLabel(state.data.questions.length)} />;
+  // ?panel=questions: the page opens with its questions showing.
+  return <LinkButton href={`${locationHref(locationId, 'agent')}?panel=questions`} label={questionsLabel(state.data.questions.length)} />;
 }
 
 function HomeView(props: {
-  data: Data; today: string; locationId: string; needs: boolean; readOnlyId: string | null; readOnlyText: string; onHistory: () => void;
+  data: Data; rules: readonly Rule[]; today: string; locationId: string; locationName: string; needs: boolean; readOnlyId: string | null;
+  readOnlyText: string; onHistory: () => void;
 }): React.JSX.Element {
-  const { data, today, locationId, needs, readOnlyId } = props;
+  const { data, rules, today, locationId, needs, readOnlyId } = props;
+  const { api } = usePortal();
+  // This month's published forecast, on its own: while it loads or when it fails, Home shows no forecast figure and
+  // the lead keeps the not-published line.
+  const forecastRead = useLoad(useCallback(() => fetchForecast(api, locationId, monthRange(today.slice(0, 7))), [api, locationId, today])).state;
+  const forecast = forecastRead.status === 'ready' ? forecastRead.data : null;
+  // A published run that doesn't cover this month is still published, so the line would be wrong there.
+  const notPublished = forecast === null || (!forecast.available && forecast.reason === 'no_published_forecast');
   const { history, notes, calendar } = data;
+  // One read of the board for Bar order and the selected day's Reorder part; it fails on its own, in their places.
+  const { state: board } = useLoad(useCallback(() => fetchOrderBoard(api, locationId), [api, locationId]));
   const days = useMemo(() => decodeHistory(history), [history]);
-  const context = useMemo(() => dayContext(notes, calendar.events), [notes, calendar.events]);
+  // With the town's today, so only a day before it can be likely closed (D32): today's upload may be partial.
+  const context = useMemo(() => dayContext(notes, calendar.events, ruleSchedules(rules), today), [notes, calendar.events, rules, today]);
   const metric = metricsWithData(days).guests ? 'guests' : 'netSales';
   const input = useMemo<HomeInput>(
     () => ({ today, byDate: byDate(days), context, metric, lastDate: history.coverage.lastDate, uploadsOff: history.uploadsOff === true }),
@@ -102,7 +128,7 @@ function HomeView(props: {
       <View style={[styles.lead, desktop ? styles.leadWide : null]}>
         <View style={styles.leadText}>
           <Mono>{leadLine(history.coverage.lastDate, calendar, history.uploadsOff === true)}</Mono>
-          <Tagline kind="progress" text={FORECAST_LINE} />
+          {notPublished ? <Tagline kind="progress" text={forecastLine(props.locationName)} /> : null}
           <QuestionsLink locationId={locationId} />
         </View>
         <Actions><LinkButton variant="outline" href={locationHref(locationId, 'agent')} label="Ask TownwiseAI" /></Actions>
@@ -123,7 +149,15 @@ function HomeView(props: {
       <ThisWeek week={week} calendar={calendar} metric={metric} history={hasDays} />
       <BlockRow
         items={[
-          { key: 'month', span: 8, node: <ThisMonth input={input} calendar={calendar} history={hasDays} /> },
+          {
+            key: 'month', span: 8,
+            node: (
+              <ThisMonth
+                input={input} calendar={calendar} notes={notes} rules={rules} forecast={forecast} history={hasDays} locationId={locationId}
+                board={board}
+              />
+            ),
+          },
           { key: 'last', span: 4, node: needs ? null : <LastWeek comparison={lastWeek} metric={metric} locationId={locationId} readOnlyId={readOnlyId} /> },
         ]}
       />
@@ -136,7 +170,7 @@ function HomeView(props: {
       <BlockRow
         items={[
           { key: 'years', span: 6, node: facts.length === 0 ? null : <PastYears today={today} facts={facts} metric={metric} /> },
-          { key: 'bar', span: 6, node: needs ? null : <BarOrder share={share} metric={metric} /> },
+          { key: 'bar', span: 6, node: needs ? null : <BarOrder share={share} metric={metric} locationId={locationId} board={board} /> },
         ]}
       />
       {needs ? null : (
@@ -168,7 +202,10 @@ export function Home(): React.JSX.Element {
     ]);
     return { history, notes, calendar };
   }, [api, location.id, today]));
-  if (state.status === 'loading') return <Loading text={`Loading ${location.name}`} minHeight={480} />;
+  // On their own and never in the way: until they load, or if they can't, Home reads as if there were none.
+  const { state: rulesState } = useLoad(useCallback(() => fetchRules(api, location.id), [api, location.id]));
+  const rules = rulesState.status === 'ready' ? rulesState.data.rules : NO_RULES;
+  if (state.status === 'loading') return <HomeSkeleton label={`Loading ${shownLocationName(location, org)}`} />;
   if (state.status === 'failed') return <LoadFailure error={state.error} onRetry={reload} />;
   // Native has no upload (D20), so nothing on this page writes there.
   const readOnlyId = readOnly && Platform.OS === 'web' ? READ_ONLY_ID : null;
@@ -176,8 +213,10 @@ export function Home(): React.JSX.Element {
     <HomeView
       key={location.id}
       data={state.data}
+      rules={rules}
       today={today}
       locationId={location.id}
+      locationName={shownLocationName(location, org)}
       // The step also leaves once Home's own fresh history has days, whichever of the two reloads answers first.
       needs={needsHistory(org, org.locations) && state.data.history.coverage.dayCount === 0 && state.data.history.uploadsOff !== true}
       onHistory={reload}

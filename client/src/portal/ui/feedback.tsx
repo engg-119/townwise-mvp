@@ -10,7 +10,7 @@ import { useMessageTarget } from './messageFocus';
 import { inlineTarget, Mono } from './text';
 
 // Messages, notices, errors, loading lines, empty states and status tags (spec 15.6, 15.7; shell.md 7.3, 7.8).
-// No colour carries meaning: messages print in white in the numbered, ruled list, with no toast and no
+// No color carries meaning: messages print in white in the numbered, ruled list, with no toast and no
 // auto-dismiss. Loading is one line of text that keeps the content's height. Nothing spins or shimmers.
 
 export interface MessageLink { label: string; href: string }

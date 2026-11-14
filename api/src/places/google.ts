@@ -12,8 +12,19 @@ export const PLACES_TIMEOUT_MS = 5000;
 const MAX_SUGGESTIONS = 5;
 /** Place Details Essentials: no displayName (the client keeps the name from the suggestion it picked). */
 const DETAILS_FIELD_MASK = 'id,formattedAddress,addressComponents';
+/**
+ * A bias toward where Townwise works, State College, PA to Bar Harbor, ME with margin (D29). Without one Google biases
+ * by the caller's IP, which is the API's data center, not the person. A bias, not a restriction: a business elsewhere
+ * in the US is still found by its name.
+ */
+const SEARCH_BIAS = { rectangle: { low: { latitude: 40.4, longitude: -80.6 }, high: { latitude: 47.5, longitude: -66.9 } } };
+/** Google's types that make a prediction a business, and those that make it an exact street address. */
+const BUSINESS_TYPES: ReadonlySet<string> = new Set(['establishment', 'point_of_interest']);
+const ADDRESS_TYPES: ReadonlySet<string> = new Set(['street_address', 'premise', 'subpremise']);
 
-export interface PlaceSuggestion { placeId: string; name: string; detail: string }
+/** `address`: a street address, for a business Google does not list. */
+export type PlaceKind = 'business' | 'address';
+export interface PlaceSuggestion { placeId: string; name: string; detail: string; kind: PlaceKind }
 export interface AddressComponent { longText: string; shortText: string; types: readonly string[] }
 export interface PlaceDetails { placeId: string; formattedAddress: string; addressComponents: AddressComponent[] }
 
@@ -37,7 +48,7 @@ export class PlacesUnavailableError extends Error {
 }
 
 export interface PlacesClient {
-  /** At most five place predictions, in Google's order. Throws PlacesUnavailableError. */
+  /** At most five business or address predictions, in Google's order. Throws PlacesUnavailableError. */
   autocomplete(input: string, sessionToken: string): Promise<PlaceSuggestion[]>;
   /** Null when Google has no place with this id. Throws PlacesUnavailableError. */
   details(placeId: string, sessionToken: string): Promise<PlaceDetails | null>;
@@ -50,6 +61,7 @@ const placePredictionSchema = z.object({
   placePrediction: z.object({
     placeId: z.string(),
     structuredFormat: z.object({ mainText: textSchema, secondaryText: textSchema.optional() }),
+    types: z.array(z.string()).optional(),
   }),
 });
 const autocompleteSchema = z.object({ suggestions: z.array(z.unknown()).optional() });
@@ -100,15 +112,26 @@ function isUnknownPlaceId(body: unknown): boolean {
   return !(parsed.data.error.details ?? []).some((detail) => detail.reason?.startsWith('API_KEY') === true);
 }
 
+/**
+ * A prediction's kind from Google's types, or null for anything else (a town, county, street without a number, postal
+ * code, neighborhood or plus code), which is not offered. Without types it is a business, so a result that cannot be
+ * classified is never lost.
+ */
+function kindOf(types: readonly string[] | undefined): PlaceKind | null {
+  if (types === undefined || types.length === 0 || types.some((type) => BUSINESS_TYPES.has(type))) return 'business';
+  return types.some((type) => ADDRESS_TYPES.has(type)) ? 'address' : null;
+}
+
 function suggestionsOf(raw: readonly unknown[]): PlaceSuggestion[] {
   const suggestions: PlaceSuggestion[] = [];
   for (const item of raw) {
     // A query prediction, or anything else without a place, is skipped.
     const parsed = placePredictionSchema.safeParse(item);
     if (!parsed.success) continue;
-    const { placeId, structuredFormat } = parsed.data.placePrediction;
-    if (!PLACE_ID_PATTERN.test(placeId) || structuredFormat.mainText.text === '') continue;
-    suggestions.push({ placeId, name: structuredFormat.mainText.text, detail: structuredFormat.secondaryText?.text ?? '' });
+    const { placeId, structuredFormat, types } = parsed.data.placePrediction;
+    const kind = kindOf(types);
+    if (!PLACE_ID_PATTERN.test(placeId) || structuredFormat.mainText.text === '' || kind === null) continue;
+    suggestions.push({ placeId, name: structuredFormat.mainText.text, detail: structuredFormat.secondaryText?.text ?? '', kind });
     if (suggestions.length === MAX_SUGGESTIONS) break;
   }
   return suggestions;
@@ -135,8 +158,8 @@ export function createGooglePlacesClient(
       const res = await send(`${PLACES_API}/places:autocomplete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': apiKey },
-        // Any US business: no includedPrimaryTypes.
-        body: JSON.stringify({ input, sessionToken, includedRegionCodes: ['us'], languageCode: 'en' }),
+        // Any US business or address: no includedPrimaryTypes; suggestionsOf drops the other kinds.
+        body: JSON.stringify({ input, sessionToken, includedRegionCodes: ['us'], languageCode: 'en', locationBias: SEARCH_BIAS }),
       });
       if (!res.ok) {
         await discard(res);

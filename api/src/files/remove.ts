@@ -4,7 +4,7 @@
 // otherwise wait 7 days in Azure), every blob under the prefix is deleted, and the entry lists and rows follow. Each
 // step deletes by filter, so a retry completes the work. Results carry counts only.
 import type { OrgScope } from '../access/policy.ts';
-import type { FileRecord } from '../stores/files.ts';
+import type { FileRecord, FileStatus } from '../stores/files.ts';
 import type { TownwiseStores } from '../stores/index.ts';
 import { utcDay } from '../dates.ts';
 import { BlobMissingError, type FileBlobs } from './blobs.ts';
@@ -147,13 +147,17 @@ async function deleteOneOriginal(
 /**
  * One file removed whole: its claim (`deleting`), the blobs (an unfinished upload is discarded and its bytes given back),
  * the entry list, the row, and the import's question and emptiness. No audit. `busy` while the reader has it, or when
- * another call claimed it.
+ * another call claimed it. With `resume` (D28: the item a replace put another file in place of, handlers/data.ts), a
+ * file already `deleting` is claimed again, so a retry finishes a removal that stopped part way; each later step can
+ * run twice.
  */
 export async function removeFile(
   stores: Pick<TownwiseStores, 'files' | 'fileEntries' | 'imports' | 'uploadDays'>, blobs: FileBlobs, scope: OrgScope, file: FileRecord, now: Date,
+  opts: { resume?: boolean } = {},
 ): Promise<'removed' | 'busy'> {
   if (file.status === 'reading') return 'busy';
-  const claimed = await stores.files.move(scope, file.id, ['uploading', 'stored', 'queued', 'waiting', 'read', 'kept', 'failed'], 'deleting');
+  const from: FileStatus[] = ['uploading', 'stored', 'queued', 'waiting', 'read', 'kept', 'failed'];
+  const claimed = await stores.files.move(scope, file.id, opts.resume === true ? [...from, 'deleting'] : from, 'deleting');
   if (claimed === null) return 'busy';
   const ref = { locationId: file.locationId, fileId: file.id };
   const missingOk = async (run: () => Promise<void>): Promise<void> => {

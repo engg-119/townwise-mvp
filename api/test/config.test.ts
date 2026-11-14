@@ -1,3 +1,6 @@
+import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+
 import { ConfigError, loadEnv } from '@ckeith26/server-core';
 import { describe, expect, it } from 'vitest';
 
@@ -45,6 +48,24 @@ describe('config', () => {
     expect(resolveTownwiseConfig({ NODE_ENV: 'development', TOWNWISE_SUPERADMIN_EMAILS: [], ...budget }).superadminEmails.size).toBe(0);
     const resolved = resolveTownwiseConfig({ NODE_ENV: 'production', TOWNWISE_SUPERADMIN_EMAILS: ['staff@townwise.test'], ...budget });
     expect(resolved.superadminEmails.has('staff@townwise.test')).toBe(true);
+  });
+
+  it('staff two-step sign-in is off by default in development only, and production refuses off', () => {
+    const base = {
+      TOWNWISE_SUPERADMIN_EMAILS: ['staff@townwise.test'], TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20, TOWNWISE_WEB_URL: 'http://localhost:8081',
+      FILES_BLOB_ACCOUNT_URL: undefined, FILES_AZURITE_CONNECTION_STRING: undefined, TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5,
+    };
+    const twoStep = (nodeEnv: 'development' | 'test' | 'production', value?: string): boolean => resolveTownwiseConfig({
+      NODE_ENV: nodeEnv, ...base, TOWNWISE_STAFF_TWO_STEP: loadEnv(configSchema, { TOWNWISE_STAFF_TWO_STEP: value }).TOWNWISE_STAFF_TWO_STEP,
+    }).staffTwoStep;
+    expect(twoStep('development')).toBe(false);
+    expect(twoStep('development', '')).toBe(false);
+    expect(twoStep('development', 'required')).toBe(true);
+    expect(twoStep('test')).toBe(true);
+    expect(twoStep('test', 'off')).toBe(false);
+    expect(twoStep('production')).toBe(true);
+    expect(() => twoStep('production', 'off')).toThrow(ConfigError);
+    expect(() => loadEnv(configSchema, { TOWNWISE_STAFF_TWO_STEP: 'maybe' })).toThrow(ConfigError);
   });
 
   it('reads the tuning chat budget in dollars, 20 by default, and refuses a value that is not a number from 0 to 10,000', () => {
@@ -160,6 +181,61 @@ describe('config', () => {
       TOWNWISE_WEB_URL: 'http://localhost:8081', TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5, ...azurite,
     })).toThrow(ConfigError);
     expect(() => loadEnv(configSchema, { FILES_BLOB_ACCOUNT_URL: 'not a url' })).toThrow(ConfigError);
+  });
+
+  describe('the calendar key', () => {
+    const key = (value: string | undefined) => loadEnv(configSchema, { TOWNWISE_CALENDAR_KEY: value }).TOWNWISE_CALENDAR_KEY;
+
+    it('is optional: unset or empty turns calendar links off', () => {
+      expect(key(undefined)).toBeUndefined();
+      expect(key('')).toBeUndefined();
+    });
+
+    it('main.ts builds the refresh loop only when it is set, starts it, and drains it at shutdown before Redis and Mongo close', () => {
+      // The calendar-subscription spec: without the key no refresh runs (tasks 5.2).
+      const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
+      expect(main.match(/\bcreateCalendarRefresher\(/g)).toHaveLength(1);
+      expect(main).toMatch(/^const calendarRefresher = TOWNWISE_CALENDAR_KEY === undefined \? undefined : createCalendarRefresher\(\{$/m);
+      expect(main).toMatch(/^calendarRefresher\?\.start\(\);/m);
+      const shutdown = main.slice(main.indexOf('onShutdown: ['));
+      const drained = shutdown.indexOf('...(calendarRefresher === undefined ? [] : [calendarRefresher])');
+      expect(drained).toBeGreaterThan(0);
+      expect(drained).toBeLessThan(shutdown.indexOf('redis, mongo,'));
+    });
+
+    it('reads 32 bytes of base64, as openssl rand -base64 32 writes them, into a secret key', () => {
+      const bytes = randomBytes(32);
+      const parsed = key(bytes.toString('base64'));
+      expect(parsed?.type).toBe('secret');
+      expect(parsed?.symmetricKeySize).toBe(32);
+      expect(parsed?.export().equals(bytes)).toBe(true);
+    });
+
+    it('refuses boot for anything else, naming the variable and how to make one, never the value', () => {
+      const bytes = Buffer.alloc(32, 0xfb);   // base64 '+/', base64url '-_'
+      for (const bad of [
+        randomBytes(16).toString('base64'),
+        randomBytes(33).toString('base64'),
+        randomBytes(64).toString('base64'),
+        bytes.toString('base64url'),
+        bytes.toString('base64').replace(/=$/, ''),
+        `${bytes.toString('base64')}\n`,
+        ` ${bytes.toString('base64')}`,
+        bytes.toString('hex'),
+        'sentinel-not-a-key',
+      ]) {
+        try {
+          key(bad);
+          expect.unreachable(bad);
+        } catch (err) {
+          expect(err).toBeInstanceOf(ConfigError);
+          expect((err as ConfigError).problems).toEqual([
+            { variable: 'TOWNWISE_CALENDAR_KEY', problem: 'expected 32 random bytes in base64 (openssl rand -base64 32)' },
+          ]);
+          expect(String(err)).not.toContain(bad.trim());
+        }
+      }
+    });
   });
 
   describe('the forecast lab runner', () => {

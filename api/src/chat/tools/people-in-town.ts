@@ -53,7 +53,7 @@ export const peopleInTownTool: ChatTool<PeopleRange> = {
     sources: sourceLinks(sources.map((source) => source.url)),
   })),
   async run(tc, range) {
-    const window = await tc.ctx.ports.peopleInTown.window({ scope: tc.scope, location: tc.location, range });
+    const window = await tc.ctx.ports.peopleInTown.window({ scope: tc.scope, location: tc.location, range, today: tc.today });
     return { content: JSON.stringify(window) };
   },
 };

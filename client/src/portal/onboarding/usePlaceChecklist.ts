@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ApiClient } from '../../api/client';
 import { hasCode } from '../errors';
+import type { PlaceMap } from '../places/map';
+import { usePlacesMap } from '../places/usePlacesMap';
 import { CHECKLIST_COPY, MAX_CHECKED_PLACES, outsideUsLine } from './checklist';
 import { placeDetails, placesUnavailable, type PlaceSuggestion, type UsablePlace } from './places';
 import { usePlaceSearch, type PlaceSearchState } from './usePlaceSearch';
@@ -13,6 +15,7 @@ import { usePlaceSearch, type PlaceSearchState } from './usePlaceSearch';
 // its own and the next autocomplete starts a new session. Each check holds a ticket: unchecking it, or checking it
 // again, retires the ticket, and a late answer whose ticket is gone is dropped. A place outside a US town, a 503 or a
 // 404 leaves the place unchecked with a line saying why; at MAX_CHECKED_PLACES checked or loading, the rest wait.
+// `map` is one map of every checked place (places/usePlacesMap.ts): a loading row is not on it.
 
 export type ChecklistRow =
   | { readonly key: string; readonly status: 'loading'; readonly suggestion: PlaceSuggestion }
@@ -26,6 +29,8 @@ export interface PlaceChecklistState {
   rows: readonly ChecklistRow[];
   /** The checked rows' places, in order. */
   places: readonly UsablePlace[];
+  /** The signed map with a pin for each checked place; null with none, while the map is off, or after a failure. */
+  map: PlaceMap;
   /** A row is loading. */
   loading: boolean;
   /** `rows.length >= MAX_CHECKED_PLACES`. */
@@ -110,7 +115,7 @@ export function usePlaceChecklist(api: ApiClient, unavailableLine: string): Plac
           drop(key);
           return;
         }
-        const place: UsablePlace = { ...answer, town, name: suggestion.name };
+        const place: UsablePlace = { ...answer, town, name: suggestion.name, kind: suggestion.kind };
         commit(rowsNow.current.map((row) => (row.key === key ? { key, status: 'checked', suggestion, place } : row)));
       },
       (caught: unknown) => {
@@ -130,6 +135,7 @@ export function usePlaceChecklist(api: ApiClient, unavailableLine: string): Plac
   }, [searchFor]);
 
   const places = useMemo(() => rows.flatMap((row) => (row.status === 'checked' ? [row.place] : [])), [rows]);
+  const map = usePlacesMap(api, places.map((place) => place.placeId));
   const full = rows.length >= MAX_CHECKED_PLACES;
   const optionOf = useCallback((suggestion: PlaceSuggestion): { checked: boolean; disabled: boolean } => {
     const checked = rows.some((row) => row.key === suggestion.placeId);
@@ -140,6 +146,7 @@ export function usePlaceChecklist(api: ApiClient, unavailableLine: string): Plac
     search: { ...search, setQuery },
     rows,
     places,
+    map,
     loading: rows.some((row) => row.status === 'loading'),
     full,
     optionOf,

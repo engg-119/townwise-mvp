@@ -136,6 +136,51 @@ describe('POST /api/access-requests', () => {
     }
   });
 
+  it('a request keeps each place’s kind, and a place sent without one is a business', async () => {
+    const { session } = await person('kinds');
+    server.logs.length = 0;
+    const places = [{ ...PLACES[0], kind: 'address' }, PLACES[1]];
+    const res = await send(session, { ...VALID, places });
+    expect(res.status).toBe(201);
+    const body = await res.json() as MeResponse;
+    const expected = [{ placeId: 'ChIJTestPlace0001', kind: 'address' }, { placeId: 'ChIJTestPlace0002', kind: 'business' }];
+    expect(body.access).toMatchObject({ state: 'pending', request: { places: expected } });
+    expect(await requestsOf(session.userId)).toMatchObject([{ places: expected }]);
+    const requestId = body.access.state === 'pending' ? body.access.request.id : '';
+    const events = (await auditEvents(server)).filter((event) => (event.target as { id: string }).id === requestId);
+    // Never a kind per place in the audit event.
+    expect(events.map((event) => event.details)).toEqual([{ orgName: 'Lou’s Diner Group', townId: 'hanover-nh', townName: 'Hanover', hasPlace: true, placeCount: 2 }]);
+  });
+
+  it('a kind other than business or address is 400 invalid_request', async () => {
+    const { session } = await person('badkind');
+    for (const kind of ['town', 'Business', '', null, 1]) {
+      await resetRequestLimit(session);
+      expect(await errorOf(await send(session, { ...VALID, places: [{ ...PLACES[0], kind }] }))).toEqual({ status: 400, error: 'invalid_request' });
+    }
+    expect(await requestsOf(session.userId)).toEqual([]);
+  });
+
+  it('a request stored before kinds reads each place as a business', async () => {
+    const old = await person('before-kinds');
+    const requestId = await addRequest(server, { userId: old.session.userId, email: old.email, status: 'pending' });
+    const town = { townId: 'hanover-nh', name: 'Hanover', state: 'NH' };
+    await server.connection.collection('tw_access_requests').updateOne(
+      { _id: new Types.ObjectId(requestId) },
+      { $set: { places: [{ placeId: 'ChIJTestPlace0001', name: 'Lou’s Restaurant', town }, { placeId: 'ChIJTestPlace0002', name: 'Lou’s Bakery', town }] } },
+    );
+    const body = await (await call(server, '/api/me', { session: old.session })).json() as MeResponse;
+    expect(body.access).toMatchObject({
+      state: 'pending',
+      request: {
+        places: [
+          { placeId: 'ChIJTestPlace0001', name: 'Lou’s Restaurant', kind: 'business', town },
+          { placeId: 'ChIJTestPlace0002', name: 'Lou’s Bakery', kind: 'business', town },
+        ],
+      },
+    });
+  });
+
   it('a stale client’s single placeId is ignored: 201, no places, hasPlace false', async () => {
     const { session } = await person('stale');
     const res = await send(session, { ...VALID, placeId: PLACE_ID });
@@ -197,7 +242,7 @@ describe('POST /api/access-requests', () => {
     const body = await res.json() as MeResponse;
     expect(body.access).toMatchObject({
       state: 'pending',
-      request: { places: [{ placeId: PLACE_ID, name: null, town: { townId: 'hanover-nh', name: 'Hanover', state: 'NH' } }] },
+      request: { places: [{ placeId: PLACE_ID, name: null, kind: 'business', town: { townId: 'hanover-nh', name: 'Hanover', state: 'NH' } }] },
     });
 
     const none = await person('older');

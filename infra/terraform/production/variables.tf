@@ -99,6 +99,12 @@ variable "enable_places" {
   default     = false
 }
 
+variable "enable_calendar_links" {
+  description = "Turn on owner calendar links: the API gets TOWNWISE_CALENDAR_KEY from the Key Vault secret townwise-calendar-key, which must be seeded first (infra/README.md, Calendar links). False leaves links off; calendar files still import."
+  type        = bool
+  default     = false
+}
+
 variable "enable_lab" {
   description = "Turn on the forecast lab: the lab job, its identity, the API identity's right to start it, and the API's TOWNWISE_LAB_ variables (infra/README.md, step 20). Needs lab_image and lab_callback_client_id. False leaves calibrations off."
   type        = bool

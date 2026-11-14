@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 
 import { cameraFor, cameraTransform, REGION } from '../../src/marketing/map/camera';
 import { countySeries } from '../../src/marketing/map/countyData';
-import { mapTowns, markerScale, REST_MONTH } from '../../src/marketing/map/mapState';
+import { mapTowns, markerScale } from '../../src/marketing/map/mapState';
 import { mapCss } from '../../src/marketing/map/mapStyles.web';
 import { NortheastMap } from '../../src/marketing/map/NortheastMap.web';
 import { storyCss } from '../../src/marketing/map/storyStyles.web';
@@ -66,8 +66,9 @@ function prefersReducedMotion(reduce: boolean): void {
 }
 
 beforeEach(() => {
-  // Every test drives the clock itself, so no intro timer fires unless a test asks for it.
-  jest.useFakeTimers();
+  // Every test drives the clock itself, so no intro timer fires unless a test asks for it. "Today" is Thu,
+  // Nov 5, 2026, so a picked town opens on November.
+  jest.useFakeTimers({ now: new Date(2026, 10, 5, 12, 0, 0) });
 });
 
 afterEach(() => {
@@ -166,20 +167,19 @@ test('the outlines draw in once the map is in view, and the towns wait for the s
   expect(scale()).toBeCloseTo(markerScale(NANTUCKET_GAPS[1] ?? 0), 3);
   wait(10_000);
   expect(listHeader()).toBe('Gap in Feb 2024');
-  // The last step rests on the month with the widest spread of gaps, computed from the data: July 2024.
+  // The last step rests on the reader's month: today is Nov 5, 2026, so November 2024 in the data.
   band.reportStep(15);
-  expect(REST_MONTH).toBe(6);
-  expect(listHeader()).toBe('Gap in Jul 2024');
-  expect(scale()).toBe(1);
+  expect(listHeader()).toBe('Gap in Nov 2024');
+  expect(scale()).toBeCloseTo(markerScale(NANTUCKET_GAPS[10] ?? 0), 3);
 });
 
 test.each([
-  ['a town in the list', () => { fireEvent.click(row('Hanover, NH')); }, 'May'],
-  ['a marker', () => { fireEvent.click(markerButton('Stowe, VT'), { detail: 1 }); }, 'May'],
+  ['a town in the list', () => { fireEvent.click(row('Hanover, NH')); }, 'Nov'],
+  ['a marker', () => { fireEvent.click(markerButton('Stowe, VT'), { detail: 1 }); }, 'Nov'],
   ['the month scrubber', () => { fireEvent.click(screen.getByRole('radio', { name: 'Oct' })); }, 'Oct'],
 ])('%s sets the month by hand, and nothing changes it on its own', (_name, use, month) => {
   const { mapFrame } = renderMap();
-  expect(listHeader()).toBe('Gap in Jul 2024');
+  expect(listHeader()).toBe('Gap in Nov 2024');
   use();
   // A month picked by hand jumps: the dots do not ease.
   expect(mapFrame.className).not.toContain('is-sm');
@@ -195,8 +195,8 @@ test('without an observer the map lies flat at the resting month: no draw-in and
   expect(document.querySelector('.m-draw')).toBeNull();
   expect(screen.queryByRole('button', { name: /the year$/ })).toBeNull();
   wait(20_000);
-  expect(listHeader()).toBe('Gap in Jul 2024');
-  expect(Number(marker('Nantucket, MA').style.getPropertyValue('--k'))).toBe(1);
+  expect(listHeader()).toBe('Gap in Nov 2024');
+  expect(Number(marker('Nantucket, MA').style.getPropertyValue('--k'))).toBeCloseTo(markerScale(NANTUCKET_GAPS[10] ?? 0), 3);
 });
 
 test('with reduced motion and an observer, the outlines show at once and the story still sets the towns and months', () => {
@@ -239,13 +239,14 @@ test('choosing a town from the list zooms the map and opens its panel, with focu
   expect(within(card).getByRole('heading', { name: 'Hanover, NH' })).toBeTruthy();
   expect(card.textContent).toContain('College town');
   expect(card.textContent).toContain('Moves with the region; biggest gap with the region in May, −7.3 index points.');
-  // The gap for the month, the county against the Northeast, and both curves drawn.
-  expect(card.querySelector('.bv-v')?.textContent).toBe('−7.3');
-  expect(card.querySelector('.bv-l')?.textContent).toBe('below the Northeast, index points, May 2024');
-  expect(card.querySelector('.bv-s')?.textContent).toBe('Grafton County 95.0 · Northeast 102.2');
+  // The gap for this month (November, not the biggest gap's May), the county against the Northeast, and both
+  // curves drawn.
+  expect(card.querySelector('.bv-v')?.textContent).toBe('−1.7');
+  expect(card.querySelector('.bv-l')?.textContent).toBe('below the Northeast, index points, Nov 2024');
+  expect(card.querySelector('.bv-s')?.textContent).toBe('Grafton County 97.4 · Northeast 99.2');
   expect(card.querySelector('.ch-town')?.getAttribute('d')).toMatch(/^M12 /);
   expect(card.querySelector('.ch-ne')?.getAttribute('d')).toMatch(/^M12 /);
-  expect(within(screen.getByRole('radiogroup', { name: 'Month' })).getByRole('radio', { checked: true }).textContent).toBe('May');
+  expect(within(screen.getByRole('radiogroup', { name: 'Month' })).getByRole('radio', { checked: true }).textContent).toBe('Nov');
   expect(document.querySelector('[aria-live="polite"]')?.textContent)
     .toBe('Hanover, NH: Moves with the region; biggest gap with the region in May, −7.3 index points.');
   // Its drivers and dates link their sources: public institutions by host, other sites as "Source".
@@ -262,7 +263,8 @@ test('a marker click zooms the same way and moves focus to the town’s list but
   expect(world.style.transform).toBe(cameraTransform(cameraFor(town('nantucket-ma').shape.bbox)));
   expect(document.activeElement).toBe(row('Nantucket, MA'));
   expect(within(panel()).getByRole('heading', { name: 'Nantucket, MA' })).toBeTruthy();
-  expect(panel().querySelector('.bv-v')?.textContent).toBe('+93.5');
+  // November's gap, not July's +93.5 peak.
+  expect(panel().querySelector('.bv-v')?.textContent).toBe('−32.7');
 });
 
 test('a pointer click goes to the town whose dot is nearest it, even on a neighbor’s overlapping button', () => {
@@ -334,8 +336,9 @@ test('the month scrubber is a radiogroup with one tab stop that follows the arro
   expect(radios.map((radio) => radio.textContent)).toEqual(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']);
   const checked = (): number => radios.findIndex((radio) => radio.getAttribute('aria-checked') === 'true');
   const tabStops = (): number[] => radios.flatMap((radio, index) => (radio.tabIndex === 0 ? [index] : []));
-  expect(checked()).toBe(6);
-  expect(tabStops()).toEqual([6]);
+  // It starts at the reader's month: today is Nov 5, 2026.
+  expect(checked()).toBe(10);
+  expect(tabStops()).toEqual([10]);
 
   const press = (key: string, expected: number): void => {
     fireEvent.keyDown(document.activeElement ?? document.body, { key });
@@ -343,13 +346,13 @@ test('the month scrubber is a radiogroup with one tab stop that follows the arro
     expect(document.activeElement).toBe(radios[expected]);
     expect(tabStops()).toEqual([expected]);
   };
-  act(() => { radios[6]?.focus(); });
-  press('ArrowRight', 7);
-  expect(listHeader()).toBe('Gap in Aug 2024');
-  expect(panel().querySelector('.bv-l')?.textContent).toBe('Northeast, Aug 2024');
-  press('ArrowDown', 8);
-  press('ArrowLeft', 7);
-  press('ArrowUp', 6);
+  act(() => { radios[10]?.focus(); });
+  press('ArrowRight', 11);
+  expect(listHeader()).toBe('Gap in Dec 2024');
+  expect(panel().querySelector('.bv-l')?.textContent).toBe('Northeast, Dec 2024');
+  press('ArrowDown', 0);
+  press('ArrowLeft', 11);
+  press('ArrowUp', 10);
   press('Home', 0);
   press('ArrowLeft', 11);
   press('ArrowRight', 0);
@@ -371,9 +374,9 @@ test('Escape inside the map resets a zoomed town and returns focus to its list b
   expect(world.style.transform).toBe(zoomed);
 
   // Anywhere inside it, Escape returns to the region.
-  const may = within(screen.getByRole('radiogroup', { name: 'Month' })).getByRole('radio', { checked: true });
-  act(() => { may.focus(); });
-  fireEvent.keyDown(may, { key: 'Escape' });
+  const nov = within(screen.getByRole('radiogroup', { name: 'Month' })).getByRole('radio', { checked: true });
+  act(() => { nov.focus(); });
+  fireEvent.keyDown(nov, { key: 'Escape' });
   expect(world.style.transform).toBe(cameraTransform(REGION));
   expect(document.activeElement).toBe(row('Bar Harbor, ME'));
   expect(row('Bar Harbor, ME').getAttribute('aria-pressed')).toBe('false');

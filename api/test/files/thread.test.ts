@@ -1,10 +1,11 @@
 // The parse thread's limits (spec 11A): a file that runs out of time or memory is kept as too_complex, and the test
 // process (the API, in production) carries on.
+import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
 
 import { describe, expect, it } from 'vitest';
 
-import { runParse } from '../../src/files/parse/run.ts';
+import { inbox, isThreadOut, runParse } from '../../src/files/parse/run.ts';
 import { xlsxOf } from '../helpers/zip.ts';
 
 function* repeated(piece: Buffer, times: number): Generator<Buffer> {
@@ -80,5 +81,34 @@ describe('parse thread limits', () => {
       },
     });
     expect(await read(false)).toMatchObject({ kind: 'days', days: [{ guests: 1 }, { guests: 2 }, { guests: 30 }] });
+  });
+});
+
+describe('parse thread inbox', () => {
+  it('drops messages Node posts on the port, such as node --watch’s module reports, and keeps the thread’s in order', async () => {
+    const port = new EventEmitter();
+    const messages = inbox(port);
+    port.emit('message', { 'watch:import': ['file:///api/src/files/parse/thread.ts'] });
+    port.emit('message', { type: 'ack' });
+    port.emit('message', { 'watch:import': ['file:///api/src/files/parse/pdf.ts'] });
+    port.emit('message', { type: 'progress', done: 1, total: 2 });
+    expect(await messages.next()).toEqual({ type: 'ack' });
+    expect(await messages.next()).toEqual({ type: 'progress', done: 1, total: 2 });
+    const later = messages.next();
+    port.emit('message', { 'watch:require': ['node:fs'] });
+    port.emit('message', { type: 'again' });
+    expect(await later).toEqual({ type: 'again' });
+  });
+
+  it('still rejects on a thread error or exit', async () => {
+    const port = new EventEmitter();
+    const messages = inbox(port);
+    port.emit('exit', 1);
+    await expect(messages.next()).rejects.toThrow('parse thread exited (1)');
+  });
+
+  it('knows the thread’s message types only', () => {
+    for (const type of ['ack', 'again', 'progress', 'read', 'model', 'result']) expect(isThreadOut({ type })).toBe(true);
+    for (const other of [{ 'watch:import': [] }, { type: 'begin' }, { type: 1 }, 'ack', null, undefined]) expect(isThreadOut(other)).toBe(false);
   });
 });

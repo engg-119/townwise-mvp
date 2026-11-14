@@ -95,7 +95,7 @@ test('one location opens its Forecast tab', async () => {
   const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member', [LOCATIONS[0] ?? locationOf('l1', 'x', { townId: null, name: 'x', state: 'VT' })]) });
   const { router } = await renderApp('/dashboard', api);
   await waitFor(() => { expect(router.getPathname()).toBe('/locations/l1'); });
-  expect(await screen.findByText('Main Street Bar, Hanover, NH')).toBeTruthy();
+  expect(await screen.findByText('Hanover, NH')).toBeTruthy();
 });
 
 test('empty, member: says the admin hasn’t added a location yet', async () => {
@@ -105,9 +105,9 @@ test('empty, member: says the admin hasn’t added a location yet', async () => 
   expect(screen.queryByLabelText('Name')).toBeNull();
 });
 
-test('empty, org admin: the Add location form inline adds the first location and opens it', async () => {
+test('empty, org admin: the Add location form inline adds the first location, named “{organization}, {Town}” with no Name field, and opens it', async () => {
   const api = fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin', []) });
-  const added = locationOf('l9', 'Harbor Room', { townId: 'stowe-vt', name: 'Stowe', state: 'VT' });
+  const added = locationOf('l9', 'Test Group, Stowe', { townId: 'stowe-vt', name: 'Stowe', state: 'VT' });
   api.answers['/api/org/locations'] = () => {
     api.org = orgOf('org_admin', [added]);
     return { location: added };
@@ -115,32 +115,32 @@ test('empty, org admin: the Add location form inline adds the first location and
   const { router } = await renderApp('/dashboard', api);
   expect(await screen.findByRole('heading', { name: 'Add your first location' })).toBeTruthy();
   expect(screen.getByText('Pick its town. For the twelve towns Townwise profiles, you’ll see public data on what moves demand there.')).toBeTruthy();
+  expect(screen.queryByLabelText('Name')).toBeNull();
   await fireEvent.press(screen.getByRole('button', { name: 'Add location' }));
-  expect(screen.getByText('Enter the location’s name.')).toBeTruthy();
+  expect(screen.queryByText('Enter the location’s name.')).toBeNull();
   expect(screen.getByText('Pick a town, or choose Another town.')).toBeTruthy();
   expect(writes(api)).toEqual([]);
-  await fireEvent.changeText(screen.getByLabelText('Name'), 'Harbor Room');
   await fireEvent.press(screen.getByLabelText('Town'));
   await fireEvent.press(screen.getByRole('radio', { name: 'Stowe, VT' }));
   await fireEvent.press(screen.getByRole('button', { name: 'Add location' }));
   await waitFor(() => { expect(router.getPathname()).toBe('/locations/l9'); });
-  expect(writes(api)).toEqual([{ method: 'POST', path: '/api/org/locations', body: { name: 'Harbor Room', town: { townId: 'stowe-vt' } } }]);
-  expect(await screen.findByText('Harbor Room, Stowe, VT')).toBeTruthy();
+  expect(writes(api)).toEqual([{ method: 'POST', path: '/api/org/locations', body: { name: 'Test Group, Stowe', town: { townId: 'stowe-vt' } } }]);
 });
 
-test('Add location says when the name is taken or the limit is reached', async () => {
+test('Add location says when the name is taken, with the Name it sent, or the limit is reached', async () => {
   const api = fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin', []) });
   api.answers['/api/org/locations'] = () => refusal(409, 'location_name_taken');
   await renderApp('/dashboard', api);
-  await fireEvent.changeText(await screen.findByLabelText('Name'), 'Main Street Bar');
-  await fireEvent.press(screen.getByLabelText('Town'));
+  await fireEvent.press(await screen.findByLabelText('Town'));
   await fireEvent.press(screen.getByRole('radio', { name: 'Another town' }));
   await fireEvent.changeText(screen.getByLabelText('Town name'), 'Norwich');
   await fireEvent.press(screen.getByLabelText('State'));
   await fireEvent.press(screen.getByRole('radio', { name: 'Vermont' }));
   await fireEvent.press(screen.getByRole('button', { name: 'Add location' }));
+  // Someone added a location of that name meanwhile: Name shows, with the name the form sent.
   expect(await screen.findByText('Another location already uses that name.')).toBeTruthy();
-  expect(writes(api)[0]?.body).toEqual({ name: 'Main Street Bar', town: { townId: null, name: 'Norwich', state: 'VT' } });
+  expect(screen.getByLabelText('Name').props.value).toBe('Test Group, Norwich');
+  expect(writes(api)[0]?.body).toEqual({ name: 'Test Group, Norwich', town: { townId: null, name: 'Norwich', state: 'VT' } });
   api.answers['/api/org/locations'] = () => refusal(409, 'location_limit');
   await fireEvent.press(screen.getByRole('button', { name: 'Add location' }));
   expect(await screen.findByText('You’ve reached 25 locations. Write to hello@townwise.tech for more.')).toBeTruthy();

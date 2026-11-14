@@ -181,6 +181,12 @@ test('a calibration staff started in TownwiseAI while open as admin reads as sta
   expect(screen.queryByText('Started by an org admin in TownwiseAI')).toBeNull();
 });
 
+test('a calibration a file TownwiseAI read started says so, for an org admin and for staff open as admin (D34)', async () => {
+  await show({ calibrations: [calibration({ via: 'file', requestedByRole: 'org_admin' }), calibration({ id: 'c2', via: 'file', requestedByRole: 'superadmin' })] });
+  expect(screen.getByText('Started by an org admin from a file TownwiseAI read')).toBeTruthy();
+  expect(screen.getByText('Started by Townwise staff from a file TownwiseAI read')).toBeTruthy();
+});
+
 test('a summary with nothing to compare reads without the current forecast', async () => {
   await show({ calibrations: [calibration({ summary: { weeks: 12, weeklyWapePct: 8.4, championWeeklyWapePct: null, coverage: { inside: 10, weeks: 12 }, weekdayBiasPct: 3.2, championWeekdayBiasPct: null } })] });
   expect(screen.getByText('Weekly error 8.4% on 12 held-out weeks.')).toBeTruthy();

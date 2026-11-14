@@ -26,7 +26,7 @@ export interface CalibrationView {
   status: CalibrationStatus;
   failure: CalibrationFailure | null;
   failureWords: string | null;
-  via: 'chat' | 'console';
+  via: 'chat' | 'console' | 'file';
   requestedByRole: 'org_admin' | 'superadmin';
   regimeStart: string | null;
   requestedAt: string;

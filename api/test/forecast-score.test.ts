@@ -26,6 +26,13 @@ describe('live accuracy', () => {
     expect(liveAccuracy([...days, open('2026-05-08', 120)])).toMatchObject({ days: MIN_SCORED_DAYS, inRange: 5 });
   });
 
+  it('leaves out a day that was closed or likely closed (spec D32): a closure, not a forecast miss', () => {
+    const days = [open('2026-05-01', 100), open('2026-05-02', 100), open('2026-05-03', 100), open('2026-05-04', 100), open('2026-05-05', 110)];
+    const likelyClosed: ScoredDay = { ...open('2026-05-06', 1), closed: true };
+    expect(liveAccuracy([...days, likelyClosed])).toEqual({ days: 5, inRange: 5, typicalErrorPct: 2, from: '2026-05-01', to: '2026-05-05' });
+    expect(liveAccuracy([...days, { ...likelyClosed, closed: false }])).toMatchObject({ days: 6, inRange: 5 });
+  });
+
   it('rounds to one decimal, and has no typical miss when no guests came', () => {
     expect(liveAccuracy([open('a1', 99), open('a2', 100), open('a3', 100), open('a4', 100), open('a5', 100)])?.typicalErrorPct).toBe(0.2);
     expect(liveAccuracy([open('a1', 0), open('a2', 0), open('a3', 0), open('a4', 0), open('a5', 0)])?.typicalErrorPct).toBeNull();

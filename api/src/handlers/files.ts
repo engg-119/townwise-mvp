@@ -671,11 +671,13 @@ export async function deleteRaw(ctx: TownwiseContext, req: Request, res: Respons
 
 /**
  * removeFile for a route, shared with Your data (handlers/data.ts): a blob failure answers 503 storage_unavailable and a
- * file the reader has 409 file_busy. A cancelled upload is logged, and a file that was waiting on a question nudges the
- * reader. No audit.
+ * file the reader has 409 file_busy. A canceled upload is logged, and a file that was waiting on a question nudges the
+ * reader. No audit. `resume` is removeFile's (a replace's own removal).
  */
-export async function removeWholeFile(ctx: TownwiseContext, blobs: FileBlobs, scope: OrgScope, file: FileRecord): Promise<void> {
-  const removed = await removeFile(ctx.stores, blobs, scope, file, ctx.now()).catch((err: unknown) => {
+export async function removeWholeFile(
+  ctx: TownwiseContext, blobs: FileBlobs, scope: OrgScope, file: FileRecord, opts: { resume?: boolean } = {},
+): Promise<void> {
+  const removed = await removeFile(ctx.stores, blobs, scope, file, ctx.now(), opts).catch((err: unknown) => {
     if (err instanceof BlobUnavailableError) throw storageUnavailable(ctx, 'delete_file', err);
     throw err;
   });
@@ -689,7 +691,7 @@ export async function removeWholeFile(ctx: TownwiseContext, blobs: FileBlobs, sc
 
 /**
  * DELETE /files/:fileId: the original, the cleaned copy and the report; the days it added stay. An unfinished upload
- * is cancelled and its bytes given back. A file waiting on a question takes the question with it.
+ * is canceled and its bytes given back. A file waiting on a question takes the question with it.
  */
 export async function deleteFile(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const blobs = filesOn(ctx);

@@ -155,6 +155,36 @@ export async function addUpload(
   return _id.toHexString();
 }
 
+/**
+ * A file calendar in tw_calendar_sources (stores/owner-calendars.ts) at generation 1, with one event a day from
+ * 2026-11-02 in tw_calendar_events. Resolves its id.
+ */
+export async function addOwnerCalendar(
+  server: Server,
+  opts: { orgId: string; locationId: string; eventCount?: number; label?: string; title?: string },
+): Promise<string> {
+  const _id = new Types.ObjectId();
+  const orgId = new Types.ObjectId(opts.orgId);
+  const locationId = new Types.ObjectId(opts.locationId);
+  const eventCount = opts.eventCount ?? 2;
+  const at = server.clock.now();
+  await server.connection.collection('tw_calendar_sources').insertOne({
+    _id, orgId, locationId, slot: 0, kind: 'file', label: opts.label ?? 'Bookings', sealedAddress: null, host: null,
+    generation: 1, reservedGeneration: 1, eventCount, skippedRepeating: 0, status: 'ok', lastSuccessAt: at, lastAttemptAt: at,
+    nextRefreshAt: null, leaseUntil: null, consecutiveFailures: 0, lastManualRefreshAt: null, createdBy: 'fixture', createdAt: at,
+  });
+  if (eventCount > 0) {
+    await server.connection.collection('tw_calendar_events').insertMany(Array.from({ length: eventCount }, (_, index) => {
+      const date = `2026-11-${String(index + 2).padStart(2, '0')}`;
+      return {
+        orgId, locationId, sourceId: _id, generation: 1, uid: `fixture-${String(index)}@example.test`, title: opts.title ?? 'Private dinner',
+        startDate: date, endDate: date, startTime: '18:00', endTime: '21:00',
+      };
+    }));
+  }
+  return _id.toHexString();
+}
+
 /** A tw_notes record in the shape of spec 12. */
 export async function addNote(
   server: Server,
@@ -221,4 +251,45 @@ export async function addChatUsage(server: Server, opts: { orgId: string; month:
   await server.connection.collection('tw_chat_usage').insertOne({
     orgId: new Types.ObjectId(opts.orgId), month: opts.month, costMicroUsd: opts.costMicroUsd, updatedAt: server.clock.now(),
   });
+}
+
+/** Ordering's six collections that hold a location's records. */
+export const ORDER_COLLECTIONS = [
+  'tw_order_decisions', 'tw_order_rules', 'tw_order_cards', 'tw_order_setups', 'tw_item_sales', 'tw_order_counts',
+] as const;
+
+/**
+ * One record in each of ordering's collections for the location: an edit, a rule, a card in `conversationId` (a new id
+ * when none is given), the setup, a day of item sales and a count. Synthetic figures.
+ */
+export async function addOrderRecords(
+  server: Server,
+  opts: { orgId: string; locationId: string; conversationId?: string },
+): Promise<void> {
+  const at = server.clock.now();
+  const where = { orgId: new Types.ObjectId(opts.orgId), locationId: new Types.ObjectId(opts.locationId) };
+  const supplierId = new Types.ObjectId().toHexString();
+  const itemId = new Types.ObjectId().toHexString();
+  const db = server.connection;
+  await db.collection('tw_order_decisions').insertOne({
+    ...where, itemId, delivery: '2026-06-03', windowStart: '2026-06-01', windowEnd: '2026-06-07', recommended: 4, quantity: 6,
+    unit: 'cases', reason: 'Fixture reason', createdAt: at,
+  });
+  await db.collection('tw_order_rules').insertOne({
+    ...where, itemId, delta: 2, unit: 'cases', situation: 'Fixture reason', off: false, createdAt: at, updatedAt: at,
+  });
+  await db.collection('tw_order_cards').insertOne({
+    ...where, conversationId: new Types.ObjectId(opts.conversationId), proposalId: 'toolu_order0001', kind: 'change', status: 'dismissed',
+    decisionId: new Types.ObjectId(), createdAt: at,
+  });
+  await db.collection('tw_order_setups').insertOne({
+    ...where, version: 1, updatedAt: at,
+    suppliers: [{ id: supplierId, name: 'Fixture Supplier', deliveries: [{ deliveryWeekday: 3, cutoffWeekday: 1, cutoffTime: '14:00' }] }],
+    items: [{
+      id: itemId, name: 'Fixture Lager', supplierId, category: 'bottles_cans', unit: 'cases', servingsPerUnit: 24, par: 4, dealSize: null,
+      neverRunOut: true, posNames: [{ name: 'Fixture Lager 12oz', perSale: 1 }],
+    }],
+  });
+  await db.collection('tw_item_sales').insertOne({ ...where, date: '2026-05-01', items: { [itemId]: 30 }, uploadedAt: at });
+  await db.collection('tw_order_counts').insertOne({ ...where, date: '2026-05-02', items: { [itemId]: 3 }, updatedAt: at });
 }

@@ -1,7 +1,7 @@
 // A staff session's grant (tw_view_as_grants): view-as (D8), or open as admin (D25). A grant holds its session while
 // `activeSessionId` is set, and the unique index on it allows one live grant per session across both kinds.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
-import { Schema, trusted, type Connection, type Model, type Types } from 'mongoose';
+import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 export type GrantEndReason = 'ended' | 'replaced' | 'expired';
 
@@ -82,6 +82,8 @@ export type GrantRecord = ViewAsGrantRecord | OpenAsAdminGrantRecord;
 export interface ViewAsGrantStore {
   /** The grant still holding this session (`activeSessionId`), live or expired, of either kind. */
   findBySession(sessionId: string): Promise<GrantRecord | null>;
+  /** A grant by its id, ended or not, of either kind; null for an unknown id. */
+  findById(grantId: string): Promise<GrantRecord | null>;
   /** Inserts a view-as grant holding this session; false when the session already holds one (the unique index). */
   insert(input: {
     id: string; actorUserId: string; sessionId: string; targetUserId: string; orgId: string | null;
@@ -162,6 +164,11 @@ export function createViewAsGrantStore(connection: Connection): ViewAsGrantStore
     },
     async findBySession(sessionId) {
       const doc = await Grant.findOne({ activeSessionId: sessionId }).lean();
+      return doc === null ? null : toGrant(doc);
+    },
+    async findById(grantId) {
+      if (!Types.ObjectId.isValid(grantId)) return null;
+      const doc = await Grant.findOne({ _id: new Types.ObjectId(grantId) }).lean();
       return doc === null ? null : toGrant(doc);
     },
     async findExpiredOpenAsAdminElsewhere(actorUserId, sessionId, now) {

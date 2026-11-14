@@ -192,7 +192,7 @@ export function usePlaceSearch(api: ApiClient): PlaceSearchState {
       (place) => {
         if (!live.current) return;
         setPicking(null);
-        setFound({ ...place, name: suggestion.name });
+        setFound({ ...place, name: suggestion.name, kind: suggestion.kind });
       },
       (caught: unknown) => {
         if (!live.current) return;

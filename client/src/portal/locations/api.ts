@@ -58,7 +58,11 @@ export const NOTE_EFFECTS = ['closed', 'more_guests', 'fewer_guests', 'unknown']
 export type NoteKind = (typeof NOTE_KINDS)[number];
 export type NoteEffect = (typeof NOTE_EFFECTS)[number];
 
-/** Spec 12 NoteInput: a full replace on PATCH. */
+/**
+ * Spec 12 NoteInput: a full replace on PATCH. A buyout (a private event, closed) may carry its party's size in
+ * `expectedGuests`. The hours are optional here because a TownwiseAI proposal has none and the API reads a missing
+ * pair as all day; the note form always sends both.
+ */
 export interface NoteInput {
   kind: NoteKind;
   startDate: string;
@@ -68,6 +72,9 @@ export interface NoteInput {
   effect: NoteEffect;
   expectedGuests: number | null;
   detail: string | null;
+  /** Local 'HH:MM', 24-hour, before endTime on the same day; both null (all day), and always null on a closure. */
+  startTime?: string | null | undefined;
+  endTime?: string | null | undefined;
 }
 
 /** Spec 12 Note. `canEdit`: the author, or an org admin. */
@@ -80,10 +87,18 @@ export const noteSchema = z.object({
   effect: z.enum(NOTE_EFFECTS),
   expectedGuests: z.number().nullable(),
   detail: z.string().nullable(),
+  // Optional: an API from before hours sends neither, which reads as all day (read them with `?? null`).
+  startTime: z.string().nullish(),
+  endTime: z.string().nullish(),
   createdByEmail: z.string(),
   createdAt: z.string(),
   updatedAt: z.string(),
   canEdit: z.boolean(),
+  /**
+   * A note TownwiseAI made from a file someone let it read (D34, 11A.9); undoing that read deletes it, even after an
+   * edit. Optional: an API from before it sends none.
+   */
+  source: z.object({ via: z.literal('ai_file'), fileId: z.string() }).nullish(),
 });
 export type Note = z.infer<typeof noteSchema>;
 

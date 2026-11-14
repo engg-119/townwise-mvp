@@ -11,7 +11,7 @@ import { UserMessage } from '../../src/chat/ui/UserMessage';
 function fakeChat(): TuningChat {
   return {
     state: { ...initialChatState(), status: 'ready', enabled: true, conversationId: 'c1' },
-    setDraft: jest.fn(), send: jest.fn(), ask: jest.fn(), stop: jest.fn(), stopAndSend: jest.fn(), newConversation: jest.fn(),
+    setDraft: jest.fn(), send: jest.fn(), ask: jest.fn(), tell: jest.fn(), stop: jest.fn(), stopAndSend: jest.fn(), newConversation: jest.fn(),
     openConversation: jest.fn(), deleteConversation: jest.fn(() => Promise.resolve()), rename: jest.fn(() => Promise.resolve()),
     save: jest.fn(), saveEdited: jest.fn(() => Promise.resolve()), edit: jest.fn(), cancelEdit: jest.fn(), dismiss: jest.fn(),
     reopen: jest.fn(), editMessage: jest.fn(), regenerate: jest.fn(), showVersion: jest.fn(), rate: jest.fn(), retry: jest.fn(),
@@ -27,7 +27,7 @@ const TREE: TreeNode[] = [{ id: 'u1', parentId: null, role: 'user' }, { id: 'a1'
 function msg(key: string, role: ChatMessage['role'], words: string, nodeId: string, parentId: string | null): ChatMessage {
   return {
     key, role, parts: [{ type: 'text', key: `${key}t`, text: words }], state: 'complete', note: null, nodeId, parentId, feedback: null,
-    ratingError: null, next: null, request: null, startedAt: null, endedAt: null,
+    ratingError: null, next: null, request: null, startedAt: null, endedAt: null, at: null, attachments: [],
   };
 }
 
@@ -45,12 +45,13 @@ it('hides Copy on native and keeps the reply text selectable', async () => {
   const chat = fakeChat();
   await render(
     <>
-      <UserMessage message={msg('m1', 'user', 'How was December?', 'u1', null)} tree={TREE} chat={chat} readOnlyId={null} busy={false} onAnnounce={jest.fn()} />
+      <UserMessage message={msg('m1', 'user', 'How was December?', 'u1', null)} tree={TREE} chat={chat} locationId="l1" readOnlyId={null} busy={false} actions="hover" onAnnounce={jest.fn()} />
       <ReplyView
         message={msg('m2', 'assistant', 'December was busy.', 'a1', 'u1')}
         ctx={{ town: 'Hanover', hasTownProfile: true }}
         tree={TREE}
         newest
+        actions="hover"
         chat={chat}
         locationId="l1"
         readOnlyId={null}
@@ -69,4 +70,29 @@ it('hides Copy on native and keeps the reply text selectable', async () => {
   expect(selectableText('How was December?')).toBe(true);
   expect(screen.getByText('You said')).toBeTruthy();
   expect(screen.getByText('TownwiseAI said')).toBeTruthy();
+});
+
+it('shows every row on native, whatever the message’s place', async () => {
+  const chat = fakeChat();
+  await render(
+    <>
+      <UserMessage message={{ ...msg('m1', 'user', 'How was December?', 'u1', null), at: Date.now() }} tree={TREE} chat={chat} locationId="l1" readOnlyId={null} busy={false} actions="hover" onAnnounce={jest.fn()} />
+      <ReplyView
+        message={{ ...msg('m2', 'assistant', 'December was busy.', 'a1', 'u1'), at: Date.now() }}
+        ctx={{ town: 'Hanover', hasTownProfile: true }}
+        tree={TREE}
+        newest={false}
+        actions="hover"
+        chat={chat}
+        locationId="l1"
+        readOnlyId={null}
+        canAct
+        onRetry={jest.fn()}
+        onAnnounce={jest.fn()}
+      />
+    </>,
+  );
+  expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Helpful' })).toBeTruthy();
+  expect(screen.getAllByText(/^\d{1,2}:\d{2} (AM|PM)$/)).toHaveLength(2);
 });

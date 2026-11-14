@@ -9,7 +9,7 @@ import { PlaceMap } from '../../../src/portal/places/PlaceMap';
 const URL = 'https://maps.googleapis.com/maps/api/staticmap?center=place_id%3AChIJTestPlace0001&key=test-static-key&signature=yLf7UY5VigCJ9Tc0GyjJzgV7Dbs=';
 const LABEL = 'Map of the area around Lou’s Restaurant';
 
-test('a map renders one labelled image of the signed URL, full width at 2:1', async () => {
+test('a map renders one labeled image of the signed URL, full width at 2:1', async () => {
   await render(<PlaceMap map={{ url: URL, width: 640, height: 320 }} label={LABEL} />);
   const image = screen.getByLabelText(LABEL);
   expect(image.props.source).toEqual({ uri: URL });

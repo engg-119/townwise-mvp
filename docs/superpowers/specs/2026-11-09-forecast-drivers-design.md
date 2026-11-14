@@ -62,7 +62,7 @@ Each piece ships and is reviewed separately. Pieces 2 and 3 depend on one team d
 - **Client hosts**: no page shows forecast days yet. The Home rework is on develop (`83672df`); its `home/ThisWeek.tsx` (next 7 days, already lists events and "Your note:" lines) and `home/DayDetail.tsx` (a selected day in This month) are the hosts. `estimates/format.ts:18-37` (`reasonLine`, `dayText`) already formats reasons and is unused. Spec 14.2's build note says Home shows no forecast "until a later change"; this work is that change, and updates the note.
 - **Publishing gates**: nothing is published in production yet. Spec 14.4's owner decision allows publishing Sawtooth's v3 only once Sawtooth is an organization and Kieran consents, and `docs/portal/estimates.md` lists further steps before any run is published. This work doesn't change or bypass those gates; every "publishes" below means on a local stack.
 - **Copy pinned by tests**: "Weather." in the model card's cannot-see list (`api/src/estimates/about.ts:34`), "Weather as a driver." in Analytics (`client/src/portal/analytics/Analytics.tsx:338`), "It can't see the weather" in the chat side panel (`client/src/chat/ui/AgentSidePanel.tsx:205`).
-- **Weather data**: Open-Meteo's free API is non-commercial only (fine for a student project; a paid plan if Townwise charges), data CC BY 4.0, attribution "Weather data by Open-Meteo.com" with a link wherever weather is shown. Previous Runs API: hourly variables at lead offsets of 1 to 7 days, archived from January 2024 for most models. Historical Weather API (ERA5) for actual weather. Sources: https://open-meteo.com/en/terms, https://open-meteo.com/en/licence, https://open-meteo.com/en/docs/previous-runs-api.
+- **Weather data**: Open-Meteo's free API is non-commercial only (fine for a student project; a paid plan if Townwise charges), data CC BY 4.0, attribution "Weather data by Open-Meteo.com" with a link wherever weather is shown. Previous Runs API: hourly variables at lead offsets of 1 to 7 days, archived from January 2024 for most models. Historical Weather API (ERA5) for actual weather. Sources: https://open-meteo.com/en/terms, https://open-meteo.com/en/license, https://open-meteo.com/en/docs/previous-runs-api.
 - **Privacy and data**: Sawtooth's exports stay in `data/` (gitignored); never copy them out; notebook outputs stay stripped; route any item name through `redact()`.
 - **Working tree**: `docs/portal/spec.md` and several client files have uncommitted edits from other work. Don't overwrite them; fold doc changes in on top.
 
@@ -94,7 +94,7 @@ Each piece ships and is reviewed separately. Pieces 2 and 3 depend on one team d
 
 Booked guests mostly don't appear in Toast's guest count (party nights: sales 1.34x, guests 0.98x), and walk-ins tend to drop. Reunions (3 nights, 0.37x) and grad parties (4 nights, 0.61x) push walk-ins out; plain parties (33 nights, 0.98x) usually run alongside normal service. The list is partial and the subgroups are tiny, but the direction matches the notebook's booking rule (section 9d).
 
-**Behaviour (decided with the user, from that data):**
+**Behavior (decided with the user, from that data):**
 - Booked guests are never added to the walk-in forecast. They show on their own line: "Booked: about 80 guests."
 - TownwiseAI asks, when it isn't clear, whether the restaurant is open to walk-ins that night. Not open: the day is `booked` (no walk-in range), as the booking rule does today. Open, or unknown: the walk-in range stays, with its low end lowered to reflect that walk-ins often drop.
 - For staffing, "how busy" is walk-ins plus booked guests, and the day's rationale says so.
@@ -109,7 +109,7 @@ Booked guests mostly don't appear in Toast's guest count (party nights: sales 1.
 | `private_event`, walk-ins closed | status booked; booked-guests line if `expectedGuests` |
 | `private_event`, walk-ins open or unknown | model range kept, low end lowered; booked-guests line if `expectedGuests` |
 | `other`/`opening`, `more_guests` or `fewer_guests` with `expectedGuests` | middle moves to the owner's number; range stretched to cover both it and the model's middle |
-| same, without a number | middle shifted by a default effect, range widened, labelled rough |
+| same, without a number | middle shifted by a default effect, range widened, labeled rough |
 | effect `unknown` | numbers unchanged; the note still shows as a reason |
 
 `expectedGuests` is the day's total, not a change: the app already shows it as "About N guests" (`client/src/portal/locations/noteRules.ts:141`). On a private event it is the booked headcount; on other notes it is the owner's expected walk-in total for the day. The `propose_note` description and the prompt say so explicitly.
@@ -139,12 +139,12 @@ When several notes cover one day: closed beats booked beats shifts. The exact lo
 
 **Honest backtest.**
 - Days 1 to 7: features from Open-Meteo's Previous Runs API at the matching lead (the forecast as it stood N days before), aggregated from hourly. Rolling backtest in the style of section 8, on guests.
-- Shown side by side: no weather, weather as forecast, and actual weather (the oracle, labelled as an upper bound, never a result).
+- Shown side by side: no weather, weather as forecast, and actual weather (the oracle, labeled as an upper bound, never a result).
 - Decision rule written before running, as section 9f does: weather is adopted for a lead band only if it lowers both daily and weekly WAPE on the held-out window.
 - Days 8 to 30: try the NOAA GEFS 35-day ensemble mean archive (dynamical.org catalog; its old endpoint was due to end 2026-09-30, so confirm the current one) at the same leads, under the same rule. Published skill says precipitation is near climatology past about 10 days, so a null result is the expected outcome and gets reported as such. If extracting it takes more than about a day, stop, document, and skip.
 
 **Outputs.**
-- A new notebook section with the result, an honest summary in the notebook's "Answer", and a small committed weather CSV (public data, with source and licence) so the backtest reproduces.
+- A new notebook section with the result, an honest summary in the notebook's "Answer", and a small committed weather CSV (public data, with source and license) so the backtest reproduces.
 - If weather is adopted: per-band weather effects in the run file, the model card's "Weather." moved from cannot-see to inputs, the Analytics "Planned" line and the chat panel copy updated (each pinned by a test), and Open-Meteo attribution wherever a weather reason shows.
 - How fresh weather reaches the owner depends on D1.
 
@@ -167,7 +167,7 @@ When several notes cover one day: closed beats booked beats shifts. The exact lo
 - C5. Twelve-month ranges by horizon band, with the single-fold limit stated.
 - C6. The 2027 level carries the latest level forward.
 - C7. A walk-ins field on private-event notes, rather than inferring buyouts from kind or weekday.
-- C8. For things happening in town, TownwiseAI asks for a rough size; without one, a default effect with a wider range, labelled rough.
+- C8. For things happening in town, TownwiseAI asks for a rough size; without one, a default effect with a wider range, labeled rough.
 - C9. Twelve months are reachable through TownwiseAI and the read route; the app shows days in This week and This month only. A year view is a follow-up.
 - C10. Accuracy scores the model's own numbers only, leaving out days a closure or walk-ins-closed note covered before they began.
 - C11. v6 starts Jan 1, 2027, so v5's November to December test keeps its live score.

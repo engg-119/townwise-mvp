@@ -17,8 +17,9 @@ import { formatDate } from '../../../../../src/portal/format';
 import { useAction, useBreakpoint } from '../../../../../src/portal/hooks';
 import { usePortal } from '../../../../../src/portal/PortalProvider';
 import { Page } from '../../../../../src/portal/shell/Page';
+import { PeopleSkeleton } from '../../../../../src/portal/skeleton';
 import {
-  Actions, Button, DataTable, EMAIL_FLEX, EmptyState, ErrorNotice, FormField, Heading, LoadingLine, Messages, Panel, Select, Small,
+  Actions, Button, DataTable, EMAIL_FLEX, EmptyState, ErrorNotice, FormField, Heading, Messages, Panel, Select, Small,
   Stack, useFocusMessage,
 } from '../../../../../src/portal/ui';
 
@@ -309,7 +310,7 @@ export default function PeoplePage(): React.JSX.Element {
 
   let body: React.ReactNode;
   if (state.status === 'loading') {
-    body = <LoadingLine text="Loading people" minHeight={320} />;
+    body = <PeopleSkeleton label="Loading people" />;
   } else if (state.status === 'failed') {
     body = <ErrorNotice error={state.error} onRetry={reload} />;
   } else {

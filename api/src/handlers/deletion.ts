@@ -17,6 +17,7 @@ import { normalizeEmail } from '../normalize-email.ts';
 import type { AuditEventInput } from '../stores/audit-events.ts';
 import { deletePersonRecords, findActiveSeat, peopleRecords } from '../stores/cross-tenant.ts';
 import { actorOf, notFound, staffOf } from './admin.ts';
+import { removeWholeFile } from './files.ts';
 
 function personHasSeat(): AppError {
   return new AppError(409, 'person_has_seat', 'Remove this person from their organization first');
@@ -53,6 +54,10 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     const firstDays = await stores.salesDays.removeForOrg(scope);
     const deletedUploads = await stores.uploads.removeForOrg(scope);
     const deletedNotes = await stores.notes.removeForOrg(scope);
+    // D31, business rules.
+    await stores.businessRules.removeForOrg(scope);
+    // The owner's calendars: their events, then the calendars.
+    await stores.ownerCalendars.removeForOrg(scope);
     await stores.chatConversations.removeForOrg(scope);
     await stores.chatLiveTurns.removeForOrg(scope);
     await stores.chatUsage.removeForOrg(scope);
@@ -60,6 +65,11 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     await stores.chatProposals.removeForOrg(scope);
     // U9, TownwiseAI's questions.
     await stores.agentAnswers.removeForOrg(scope);
+    // Orders: edits, rules, setups, item sales and counts are the locations', so they go with the organization.
+    await stores.orders.removeForOrg(scope);
+    await stores.orderSetups.removeForOrg(scope);
+    await stores.itemSales.removeForOrg(scope);
+    await stores.orderCounts.removeForOrg(scope);
     // The forecast lab: calibrations, before the runs.
     await stores.calibrations.removeForOrg(scope);
     // U13B: forecast runs and their rows.
@@ -74,12 +84,17 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     // stored files are swept again, and the daily sweep's orphan check catches anything later still.
     const late = await removeStoredFiles(stores, ctx.files, scope, null);
     logFiles(ctx, scope.orgId, files, late === 'files_unavailable' ? { deletedFiles: 0, deletedBlobs: 0 } : late);
-    // With the row gone no new request starts, so this second sweep catches sales days and chat usage that requests
-    // already running wrote after the first. It narrows the gap, not closes it: a tuning chat turn started before the
-    // suspension can still add chat usage for up to 150 seconds (its time limit), an upload still running can write
-    // days after this sweep, and its tw_uploads row, if written after the first sweep, is never swept. Those rows
-    // carry only the deleted organization's id.
+    // With the row gone no new request starts, so this second sweep catches sales days, ordering's records and chat
+    // usage that requests already running wrote after the first. It narrows the gap, not closes it: a tuning chat turn
+    // started before the suspension can still add chat usage for up to 150 seconds (its time limit), an upload still
+    // running can write days after this sweep, and its tw_uploads row, if written after the first sweep, is never
+    // swept. Those rows carry only the deleted organization's id.
     const lateDays = await stores.salesDays.removeForOrg(scope);
+    await stores.itemSales.removeForOrg(scope);
+    await stores.orderCounts.removeForOrg(scope);
+    // A setup save, an edit, a rule or a card already past its location check can still write after the first sweep.
+    await stores.orderSetups.removeForOrg(scope);
+    await stores.orders.removeForOrg(scope);
     await stores.chatUsage.removeForOrg(scope);
     await stores.calibrations.removeForOrg(scope);
     // U13B: a staff forecast import already past its organization check can still write a run and rows.
@@ -111,7 +126,10 @@ const purgeBody = z.strictObject({ basis: z.enum(['data_subject_request', 'org_r
  * person's deletion request (a diner, a server or anyone named in an export), without anyone reading the files.
  * Recorded before the effect by the staff rule; the cleaned copies, reports and days stay, since they hold dates and
  * numbers only. A file not read yet is kept unread (`raw_deleted`) and its original deleted now; one still uploading or
- * being read is flagged, and its original goes as soon as that ends (files/remove.ts purgeOriginal).
+ * being read is flagged, and its original goes as soon as that ends (files/remove.ts purgeOriginal). What TownwiseAI
+ * read in each file goes with its original (spec 11A.9): the answer's summary, facts, events and days on the file, and
+ * the summary items its reads kept on Your data, removed whole (their text came from the file); the notes and days it
+ * wrote stay, as days a file wrote do.
  */
 export async function purgeOriginals(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const staff = staffOf(principal);
@@ -126,12 +144,20 @@ export async function purgeOriginals(ctx: TownwiseContext, req: Request, res: Re
     details: { count: originals.length, basis },
   };
   const eventId = await recordBefore(ctx, event);
+  let deletedSummaries = 0;
   const result = blobs === null
     ? { deletedOriginals: 0, skippedBusy: 0 }
-    : await applyRecorded(ctx, event, eventId, () => purgeEveryOriginal(ctx.stores, blobs, scope, originals, ctx.now()));
+    : await applyRecorded(ctx, event, eventId, async () => {
+      const purged = await purgeEveryOriginal(ctx.stores, blobs, scope, originals, ctx.now());
+      for (const summary of await ctx.stores.files.fromAiReads(scope, originals.map((file) => file.id))) {
+        await removeWholeFile(ctx, blobs, scope, summary, { resume: true });
+        deletedSummaries += 1;
+      }
+      return purged;
+    });
   // A waiting file's question was dropped: its import is queued again, for the reader to finish.
   ctx.nudgeFiles();
-  ctx.logger.info({ orgId: scope.orgId, count: result.deletedOriginals, skippedBusy: result.skippedBusy, by: 'staff' }, 'townwise.originals_deleted');
+  ctx.logger.info({ orgId: scope.orgId, count: result.deletedOriginals, skippedBusy: result.skippedBusy, deletedSummaries, by: 'staff' }, 'townwise.originals_deleted');
   res.status(200).json(result);
 }
 

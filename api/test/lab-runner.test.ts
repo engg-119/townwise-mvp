@@ -162,13 +162,13 @@ class FakeChild extends EventEmitter implements SpawnedJob {
   unref(): void { this.unrefed = true; }
 }
 
-function fakeSpawn(behaviour: 'spawn' | 'error'): { spawn: Spawner; calls: { command: string; args: string[]; options: Parameters<Spawner>[2] }[]; child: FakeChild } {
+function fakeSpawn(behavior: 'spawn' | 'error'): { spawn: Spawner; calls: { command: string; args: string[]; options: Parameters<Spawner>[2] }[]; child: FakeChild } {
   const child = new FakeChild();
   const calls: { command: string; args: string[]; options: Parameters<Spawner>[2] }[] = [];
   const spawn: Spawner = (command, args, options) => {
     calls.push({ command, args, options });
     setImmediate(() => {
-      if (behaviour === 'spawn') child.emit('spawn');
+      if (behavior === 'spawn') child.emit('spawn');
       else child.emit('error', Object.assign(new Error('spawn uv ENOENT'), { code: 'ENOENT' }));
     });
     return child;

@@ -9,7 +9,7 @@ import { theme } from '../../theme';
 // a check that focus went with a control taken off the page; and a polite live region. Like Button, a disabled
 // control keeps its place and its focus: aria-disabled on the same element on web (never the disabled attribute), no
 // press handler, a `text3` label. Square, except `chip`, the chat page's pill (spec 15.6's TownwiseAI exception:
-// radius 22 at 44px).
+// radius 22 at 44px), and an `arrow` marked `round`, the circle of a control inside the composer's rounded box.
 
 export interface ChatButtonHandle { focus: () => void }
 
@@ -27,10 +27,19 @@ export function ChatButton(props: {
   label: string;
   /** The accessible name when the label is a glyph ("‹" is "Previous version"). */
   accessibilityLabel?: string;
+  /** Drawn instead of the label, in the label's color (a thumb); the label is then the accessible name. */
+  icon?: (color: string) => React.ReactNode;
   variant: Variant;
+  /**
+   * Arrow only. An `arrow` inside a rounded box (the composer's Expand and Shrink): a 44px circle, so the hover fill stays inside
+   * the box's corner. The other arrows sit in open space and stay square.
+   */
+  round?: boolean;
   disabled?: boolean;
   /** A toggle (Helpful, Not helpful): aria-pressed on web, checked on native, and the mint fill when pressed. */
   pressed?: boolean;
+  /** A disclosure (a question's Something else…): aria-expanded on web, expanded on native. */
+  expanded?: boolean;
   /** The read-only line's id under view-as. */
   describedBy?: string | null;
   onPress: () => void;
@@ -39,6 +48,7 @@ export function ChatButton(props: {
   const { variant } = props;
   const disabled = props.disabled === true;
   const pressed = props.pressed === true;
+  const name = props.accessibilityLabel ?? (props.icon === undefined ? undefined : props.label);
   const ref = useRef<Host>(null);
   useImperativeHandle(props.focusRef, () => ({ focus: () => { ref.current?.focus(); } }), []);
   useLayoutEffect(() => {
@@ -51,19 +61,26 @@ export function ChatButton(props: {
     <Pressable
       ref={ref}
       role="button"
-      {...(web ? {} : { disabled, accessibilityState: { disabled, ...(props.pressed === undefined ? {} : { checked: pressed }) } })}
-      {...(props.accessibilityLabel === undefined ? {} : { accessibilityLabel: props.accessibilityLabel })}
+      {...(web ? {} : {
+        disabled,
+        accessibilityState: {
+          disabled, ...(props.pressed === undefined ? {} : { checked: pressed }), ...(props.expanded === undefined ? {} : { expanded: props.expanded }),
+        },
+      })}
+      {...(web && props.expanded !== undefined ? { 'aria-expanded': props.expanded } : {})}
+      {...(name === undefined ? {} : { accessibilityLabel: name })}
       {...webAria({ 'aria-pressed': props.pressed, 'aria-describedby': props.describedBy ?? undefined })}
       {...(disabled ? {} : { onPress: props.onPress })}
       style={(state) => [
         boxes[variant],
+        variant === 'arrow' && props.round === true ? styles.round : null,
         !disabled && hovered(state) ? boxHover[variant] : null,
         disabled && !pressed ? boxOff[variant] : null,
         pressed ? styles.pressed : null,
         disabled ? styles.inert : null,
       ]}
     >
-      {(state) => (
+      {(state) => (props.icon !== undefined ? props.icon(pressed ? c.onMint : disabled ? c.text3 : c.white) : (
         <Text
           style={[
             labels[variant],
@@ -74,7 +91,7 @@ export function ChatButton(props: {
         >
           {props.label}
         </Text>
-      )}
+      ))}
     </Pressable>
   );
 }
@@ -153,6 +170,7 @@ const labelOff = StyleSheet.create({
 const styles = StyleSheet.create({
   // The chosen rating: mint, as a pressed control (the `.tgl` pressed state, spec P14 C6).
   pressed: { backgroundColor: c.mint, borderColor: c.mint },
+  round: { width: 44, height: 44, borderRadius: 22 },
   pressedLabel: { color: c.onMint },
   /** No pointer cursor on a control that does nothing. */
   inert: { cursor: 'auto' },

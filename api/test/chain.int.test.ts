@@ -5,6 +5,7 @@ import { Types } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { TOWNWISE_ROUTES, type TownwiseRoute } from '../src/access/routes.ts';
+import { ORDER_CHANGE_RESULT } from '../src/chat/tools/orders.ts';
 import { createMemoryFileBlobs, type MemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import {
   addConversation, addGrant, addInvite, addLocation, addNote, addOpenAsAdminGrant, addRequest, addSalesDay, addSeat, addUpload, createOrg,
@@ -91,7 +92,7 @@ describe('GET is side-effect free (7.3)', () => {
     // organization and its location, and the people lookup asks for the member's address.
     const locationId = await addLocation(server, { orgId, name: 'Main Street' });
     await addSalesDay(server, { orgId, locationId, date: '2026-05-01', guests: 120, netSalesCents: 345_600 });
-    await addUpload(server, { orgId, locationId, uploadedAt: server.clock.now(), status: 'applied' });
+    const uploadId = await addUpload(server, { orgId, locationId, uploadedAt: server.clock.now(), status: 'applied' });
     await addNote(server, { orgId, locationId, detail: 'Closed for a staff day' });
     const fileId = await seedReadFile(server, blobs, {
       orgId, locationId, uploadedBy: admin.userId, name: 'sales.csv', raw: Buffer.from('Date\n'), clean: 'date,guests,net_sales\r\n',
@@ -99,18 +100,33 @@ describe('GET is side-effect free (7.3)', () => {
     // A ZIP's, so its entries route answers too (with no entries).
     await server.connection.collection('tw_files').updateOne({ _id: new Types.ObjectId(fileId) }, { $set: { kind: 'zip' } });
     const importId = String((await server.connection.collection('tw_files').findOne({}, { sort: { _id: -1 } }))?.importId);
-    // The org admin's conversation, in which TownwiseAI proposed keeping text (D28), so its card's GET answers too.
+    // The org admin's conversation, in which TownwiseAI proposed keeping text (D28) and an order change, each shown, so
+    // each card's GET answers too. Each card route reads its own call, by its own proposal id.
     const conversationId = await addConversation(server, { orgId, locationId, userId: admin.userId, text: 'Keep our catering list' });
     const proposalId = 'toolu_item0001';
+    const orderProposalId = 'toolu_order0001';
     const proposed = [
-      { role: 'assistant', content: [{ type: 'tool_use', id: proposalId, name: 'propose_data_item', input: { title: 'Catering list', text: 'Party of 40' } }] },
-      { role: 'user', content: [{ type: 'tool_result', tool_use_id: proposalId, content: 'Shown to the owner as a proposal. They decide whether to keep it.' }] },
+      {
+        role: 'assistant', content: [
+          { type: 'tool_use', id: proposalId, name: 'propose_data_item', input: { title: 'Catering list', text: 'Party of 40' } },
+          { type: 'tool_use', id: orderProposalId, name: 'propose_order_change', input: { itemId: 'a'.repeat(24), delivery: '2026-06-04' } },
+        ],
+      },
+      {
+        role: 'user', content: [
+          { type: 'tool_result', tool_use_id: proposalId, content: 'Shown to the owner as a proposal. They decide whether to keep it.' },
+          { type: 'tool_result', tool_use_id: orderProposalId, content: ORDER_CHANGE_RESULT },
+        ],
+      },
     ];
+    const routeIds: Record<string, Record<string, string>> = { 'org.chat.order_proposal.get': { proposalId: orderProposalId } };
     await server.connection.collection('tw_chat_conversations').updateOne(
       { _id: new Types.ObjectId(conversationId) },
       { $push: { messages: { $each: proposed.map((param) => ({ at: server.clock.now(), param: JSON.stringify(param) })) } } } as Record<string, unknown>,
     );
-    const ids: Record<string, string> = { orgId, locationId, townId: 'hanover-nh', fileId, importId, conversationId, proposalId };
+    // D28: one item of Your data, the upload's.
+    const ref = `u_${uploadId}`;
+    const ids: Record<string, string> = { orgId, locationId, townId: 'hanover-nh', fileId, importId, conversationId, proposalId, ref };
     const query: Record<string, string> = {
       'admin.people.lookup': `?q=${encodeURIComponent(memberEmail)}`,
       'org.sales.days': '?from=2026-01-01&to=2026-05-31',
@@ -119,10 +135,13 @@ describe('GET is side-effect free (7.3)', () => {
       'org.people.get': '?from=2026-05-01&to=2026-05-31',
       // U13B.
       'org.forecast.get': '?from=2026-05-01&to=2026-05-31',
+      'org.owner_calendars.events': '?from=2026-05-01&to=2026-05-31',
     };
     const getRoutes = TOWNWISE_ROUTES.filter((route) => route.method === 'GET');
-    const pathOf = (route: TownwiseRoute, values: Record<string, string>): string =>
-      `/api${route.path.replace(/:([A-Za-z]+)/g, (_m, name: string) => values[name] ?? '')}${query[route.id] ?? ''}`;
+    const pathOf = (route: TownwiseRoute, values: Record<string, string>): string => {
+      const own = { ...values, ...routeIds[route.id] };
+      return `/api${route.path.replace(/:([A-Za-z]+)/g, (_m, name: string) => own[name] ?? '')}${query[route.id] ?? ''}`;
+    };
     const gets = getRoutes.map((route) => pathOf(route, ids));
     const answered = new Set<string>();
     for (const session of [admin, member, invited, staff, viewing]) {
@@ -140,7 +159,7 @@ describe('GET is side-effect free (7.3)', () => {
     await addInvite(server, { orgId: setupOrgId, email: uniqueEmail('first-admin'), invitedBy: staff.userId, role: 'org_admin', addedByStaff: true });
     const setupLocationId = await addLocation(server, { orgId: setupOrgId, name: 'Setup Street' });
     await addSalesDay(server, { orgId: setupOrgId, locationId: setupLocationId, date: '2026-05-01', guests: 90, netSalesCents: 210_000 });
-    await addUpload(server, { orgId: setupOrgId, locationId: setupLocationId, uploadedAt: server.clock.now(), status: 'applied' });
+    const setupUploadId = await addUpload(server, { orgId: setupOrgId, locationId: setupLocationId, uploadedAt: server.clock.now(), status: 'applied' });
     await addNote(server, { orgId: setupOrgId, locationId: setupLocationId, detail: 'Closed for setup', createdBy: staff.userId });
     const setupFileId = await seedReadFile(server, blobs, {
       orgId: setupOrgId, locationId: setupLocationId, uploadedBy: staff.userId, name: 'setup.csv', raw: Buffer.from('Date\n'),
@@ -159,6 +178,7 @@ describe('GET is side-effect free (7.3)', () => {
     await addOpenAsAdminGrant(server, { actorUserId: opened.userId, sessionId: opened.sessionId, orgId: setupOrgId });
     const setupIds = {
       ...ids, orgId: setupOrgId, locationId: setupLocationId, fileId: setupFileId, importId: setupImportId, conversationId: setupConversationId,
+      ref: `u_${setupUploadId}`,
     };
     const openedAnswered: string[] = [];
     for (const route of getRoutes) {

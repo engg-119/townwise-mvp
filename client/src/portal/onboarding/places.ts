@@ -3,8 +3,10 @@ import { z } from 'zod';
 import type { ApiClient } from '../../api/client';
 import { withOrgId, type AccessRequestInput, type TownInput } from '../api';
 import { hasCode } from '../errors';
-import { placeMapSchema } from '../places/map';
-import { createdLocationSchema, meResponseSchema, townSchema, type LocationSummary, type MeResponse, type Town } from '../schemas';
+import { mapThemeNow, placeMapSchema, type PlaceMap } from '../places/map';
+import {
+  createdLocationSchema, meResponseSchema, placeKindSchema, townSchema, type LocationSummary, type MeResponse, type PlaceKind, type Town,
+} from '../schemas';
 
 // The Google Places search's /api calls (api/README.md, Places search; spec 10.2a) and the three writes that carry the
 // place a person confirmed: the access request (P3), a new location (P10) and a location's place (P16). The API asks
@@ -16,8 +18,26 @@ export const MIN_SEARCH_LENGTH = 2;
 /** The most it takes. */
 export const MAX_SEARCH_LENGTH = 120;
 
-export const placeSuggestionSchema = z.object({ placeId: z.string(), name: z.string(), detail: z.string() });
+/** `kind` reads as a business when absent, for an API from before kinds. */
+export const placeSuggestionSchema = z.object({
+  placeId: z.string(), name: z.string(), detail: z.string(), kind: placeKindSchema.default('business'),
+});
 export type PlaceSuggestion = z.infer<typeof placeSuggestionSchema>;
+
+/**
+ * The line under a suggestion's name: Google's secondary text for a business; for a street address, “Street address · ”
+ * before it (“Street address” alone with none), so the person sees which is which.
+ */
+export function suggestionLine(suggestion: Pick<PlaceSuggestion, 'detail' | 'kind'>): string {
+  if (suggestion.kind === 'address') return suggestion.detail === '' ? 'Street address' : `Street address · ${suggestion.detail}`;
+  return suggestion.detail;
+}
+
+/** What names a suggestion's box or option, and its checked row and Remove: “{name}, {line}”, or the name with no line. */
+export function suggestionLabel(suggestion: Pick<PlaceSuggestion, 'name' | 'detail' | 'kind'>): string {
+  const line = suggestionLine(suggestion);
+  return line === '' ? suggestion.name : `${suggestion.name}, ${line}`;
+}
 
 const autocompleteSchema = z.object({ suggestions: z.array(placeSuggestionSchema), sessionToken: z.string() });
 
@@ -32,9 +52,10 @@ const detailsSchema = z.object({
 });
 export type PlaceDetails = z.infer<typeof detailsSchema>['place'];
 
-/** A place the person picked: the suggestion's name (details doesn't ask Google for one) and the details answer. */
+/** A place the person picked: the suggestion's name (details doesn't ask Google for one) and kind, and the details answer. */
 export interface FoundPlace extends PlaceDetails {
   name: string;
+  kind: PlaceKind;
 }
 
 /** A found place in a US town, which a request or a location can take. */
@@ -75,10 +96,22 @@ export function autocompletePlaces(
  * the first in one list, whose search's session the first check ended.
  */
 export async function placeDetails(api: ApiClient, placeId: string, sessionToken: string | null): Promise<PlaceDetails> {
+  // The mode shown (dark on native), so the confirm card's map is signed to match, as POST /api/places/map is.
   const body = await api.json('/api/places/details', detailsSchema, {
-    method: 'POST', body: { placeId, ...(sessionToken === null ? {} : { sessionToken }) },
+    method: 'POST', body: { placeId, ...(sessionToken === null ? {} : { sessionToken }), theme: mapThemeNow() },
   });
   return body.place;
+}
+
+const mapAnswerSchema = z.object({ map: placeMapSchema });
+
+/**
+ * POST /api/places/map: the signed map of every place (a pin each), or null while the map is off. Signing is the
+ * API's own work, so Google is not called and the search need not be on.
+ */
+export async function placesMapFor(api: ApiClient, placeIds: readonly string[]): Promise<PlaceMap> {
+  const body = await api.json('/api/places/map', mapAnswerSchema, { method: 'POST', body: { placeIds } });
+  return body.map;
 }
 
 /** The TownInput for a place's town, as the request and the location routes take it. */
@@ -96,11 +129,11 @@ export function placeName(place: { name: string }): string {
   return place.name.trim().slice(0, 80);
 }
 
-/** POST /api/access-requests, as sendAccessRequest (../api.ts) with the checked places. 201 answers the new access. */
+/** POST /api/access-requests, as sendAccessRequest (../api.ts) with the checked places, each with its kind. 201 answers the new access. */
 export function sendAccessRequestAt(api: ApiClient, input: AccessRequestInput, places: readonly UsablePlace[]): Promise<MeResponse> {
   return api.json('/api/access-requests', meResponseSchema, {
     method: 'POST',
-    body: { ...input, places: places.map((p) => ({ placeId: p.placeId, name: placeName(p), town: townInputOf(p.town) })) },
+    body: { ...input, places: places.map((p) => ({ placeId: p.placeId, name: placeName(p), kind: p.kind, town: townInputOf(p.town) })) },
   });
 }
 

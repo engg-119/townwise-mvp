@@ -12,6 +12,7 @@ import { errorCopy, hasCode } from '../../../../../src/portal/errors';
 import { useAction, useBreakpoint, useLoad } from '../../../../../src/portal/hooks';
 import { usePortal } from '../../../../../src/portal/PortalProvider';
 import { Page } from '../../../../../src/portal/shell/Page';
+import { AuditSkeleton } from '../../../../../src/portal/skeleton';
 import {
   Actions, Button, EmptyState, ErrorNotice, FormField, Heading, LoadingLine, Panel, Select, Small, Stack,
 } from '../../../../../src/portal/ui';
@@ -101,7 +102,7 @@ export default function AuditLogPage(): React.JSX.Element {
 
   let body: React.ReactNode;
   if (state.status === 'loading') {
-    body = <LoadingLine text="Loading the audit log" minHeight={320} />;
+    body = <AuditSkeleton label="Loading the audit log" />;
   } else if (state.status === 'failed') {
     body = <ErrorNotice error={state.error} onRetry={reload} />;
   } else if (state.data.actor === 'invalid') {

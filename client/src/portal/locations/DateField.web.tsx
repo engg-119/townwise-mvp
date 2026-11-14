@@ -34,7 +34,7 @@ export function DateField(props: DateFieldProps): React.JSX.Element {
         style={{
           boxSizing: 'border-box', width: '100%', minHeight: 44, margin: 0, padding: '0 12px', background: c.ground, color: c.white,
           border: `1px solid ${focused ? c.mint : c.line}`, borderRadius: 0, fontFamily: theme.font.mono, fontSize: 16,
-          lineHeight: '24px', fontVariantNumeric: 'tabular-nums', colorScheme: 'dark',
+          lineHeight: '24px', fontVariantNumeric: 'tabular-nums', colorScheme: 'var(--tw-scheme)',
         }}
       />
     </FieldFrame>

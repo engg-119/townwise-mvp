@@ -7,11 +7,13 @@ import { formatCount, formatDate, plural } from '../format';
 import { useBreakpoint, useLoad } from '../hooks';
 import { addDays, formatMonth, localToday, monthRange } from '../locations/dates';
 import { fetchNotes, type Note } from '../locations/api';
-import { LoadFailure, Loading, ShowNumbers, UploadAction } from '../locations/parts';
+import { LoadFailure, ShowNumbers, UploadAction } from '../locations/parts';
 import { UPLOADS_OFF_LINE } from '../locations/sales';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { locationHref } from '../routing';
+import { fetchRules, type Rule } from '../rules/api';
 import { useLocation } from '../shell/LocationShell';
+import { AnalyticsSkeleton } from '../skeleton';
 import { Actions, Button, LinkButton } from '../ui/Button';
 import { DataTable } from '../ui/DataTable';
 import { EmptyState, ReadOnlyLine, StatusTag } from '../ui/feedback';
@@ -25,7 +27,7 @@ import { BarChart, EffectBar, HorizontalBars, LineChart } from './AnalyticsChart
 import { calendarRange, fetchCalendar, fetchSalesHistory, type Calendar, type SalesHistory } from './api';
 import { canFocus, focusBounds, heatmapMonths, heatmapSummary, MONTH_ROWS_LINE } from './cells';
 import { DayPanel } from './DayPanel';
-import { dayContext } from './days';
+import { dayContext, ruleSchedules } from './days';
 import { basisLine, defaultFilters, metricsWithData, toggleYear, yearsWithData, type Filters as FilterState } from './filters';
 import { FilterPanel } from './FilterPanel';
 import { Heatmap } from './Heatmap';
@@ -51,6 +53,9 @@ interface Data {
   calendar: Calendar;
 }
 
+/** One empty list, so the day context isn't rebuilt on every render while the rules load. */
+const NO_RULES: readonly Rule[] = [];
+
 /** A section whose content keeps to the reading column from 1024px (columns 1 to 7), as Sales data's chart does. */
 function ChartSection(props: { title: string; children: React.ReactNode }): React.JSX.Element {
   return <Section title={props.title}><Columns main={<View style={styles.column}>{props.children}</View>} /></Section>;
@@ -63,13 +68,21 @@ function Basis(props: { line: string }): React.JSX.Element {
 /** The Every day section's row on desktop: heatmap in columns 1 to 8, the panel in 9 to 12, sticky. */
 const sticky = (Platform.OS === 'web' ? { position: 'sticky', top: 16 } : {}) as unknown as ViewStyle;
 
-function AnalyticsView(props: { data: Data; today: string; locationId: string; readOnlyId: string | null; readOnlyText: string }): React.JSX.Element {
-  const { data, today, locationId, readOnlyId } = props;
+function AnalyticsView(props: {
+  data: Data;
+  /** The location's business rules; a scheduled one counts as a note does (D31 with D32). [] until they load. */
+  rules: readonly Rule[];
+  today: string;
+  locationId: string;
+  readOnlyId: string | null;
+  readOnlyText: string;
+}): React.JSX.Element {
+  const { data, rules, today, locationId, readOnlyId } = props;
   const { history, notes, calendar } = data;
   const { desktop } = useBreakpoint();
   const days = useMemo(() => decodeHistory(history), [history]);
   const index = useMemo(() => byDate(days), [days]);
-  const context = useMemo(() => dayContext(notes, calendar.events), [notes, calendar.events]);
+  const context = useMemo(() => dayContext(notes, calendar.events, ruleSchedules(rules), today), [notes, calendar.events, rules, today]);
   const allYears = useMemo(() => yearsWithData(days), [days]);
   const metrics = useMemo(() => metricsWithData(days), [days]);
   const [filters, setFilters] = useState<FilterState>(() => defaultFilters(days));
@@ -151,7 +164,7 @@ function AnalyticsView(props: { data: Data; today: string; locationId: string; r
    * list, so there a step into a month with no row jumps to the nearest listed month's edge (a seasonal closure),
    * and stops at the first and last listed months.
    */
-  const neighbour = (from: string, by: -1 | 1): string | null => {
+  const neighbor = (from: string, by: -1 | 1): string | null => {
     const next = addDays(from, by);
     if (!native || months.some((row) => row.month === next.slice(0, 7))) return next;
     const month = next.slice(0, 7);
@@ -162,7 +175,7 @@ function AnalyticsView(props: { data: Data; today: string; locationId: string; r
   };
   const step = (by: -1 | 1): (() => void) | null => {
     if (base === null || bounds === null) return null;
-    const next = neighbour(base, by);
+    const next = neighbor(base, by);
     if (next === null || !canFocus(next, bounds)) return null;
     return () => { setSelected(next); setPreview(null); setFocusKey((key) => key + 1); };
   };
@@ -365,12 +378,16 @@ export function Analytics(): React.JSX.Element {
     const calendar = await fetchCalendar(api, location.id, calendarRange(history.coverage.firstDate, today));
     return { history, notes, calendar };
   }, [api, location.id, today]));
-  if (state.status === 'loading') return <Loading text="Loading analytics" />;
+  // On their own and never in the way: until they load, or if they can't, the page reads as if there were none.
+  const { state: rulesState } = useLoad(useCallback(() => fetchRules(api, location.id), [api, location.id]));
+  const rules = rulesState.status === 'ready' ? rulesState.data.rules : NO_RULES;
+  if (state.status === 'loading') return <AnalyticsSkeleton label="Loading analytics" />;
   if (state.status === 'failed') return <LoadFailure error={state.error} onRetry={reload} />;
   return (
     <AnalyticsView
       key={location.id}
       data={state.data}
+      rules={rules}
       today={today}
       locationId={location.id}
       readOnlyId={readOnly ? READ_ONLY_ID : null}

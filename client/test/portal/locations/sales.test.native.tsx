@@ -31,9 +31,9 @@ const DAYS = daysOf('2025-01-01', 400, (index) => (index >= 10 && index <= 12
 const SALES = salesOf(DAYS, [uploadOf('u2', { status: 'applying', uploadedByEmail: 'gm@example.org', kept: 0 }), uploadOf('u1')]);
 const EMPTY_LINE = 'No sales history yet for Main Street Bar. Upload a CSV export from your point-of-sale system. The upload sends Townwise only the date, guest count and net sales for each day.';
 
-function setup(me: MeResponse, sales: unknown = SALES): { api: FakePortalApi; fake: LocationsFake } {
+function setup(me: MeResponse, sales: unknown = SALES, locations = LOCATIONS): { api: FakePortalApi; fake: LocationsFake } {
   const fake = locationsFake({ sales: { l1: sales }, days: { l1: DAYS }, notes: { l1: [] } });
-  return { api: fakePortalApi({ me, org: orgOf(me.access.state === 'member' ? me.access.role : 'member'), fallback: fake }), fake };
+  return { api: fakePortalApi({ me, org: orgOf(me.access.state === 'member' ? me.access.role : 'member', locations), fallback: fake }), fake };
 }
 
 test('loading shows one line', async () => {
@@ -139,6 +139,20 @@ test('empty: says what is missing and where to upload; no delete, even for an or
   expect(screen.getByText('Upload from a computer at townwise.tech.')).toBeTruthy();
   expect(screen.queryByRole('heading', { name: 'Delete sales data' })).toBeNull();
   expect(screen.queryByLabelText('Sales by month')).toBeNull();
+});
+
+test('with one location the empty line, the Your data line and the delete dialog with its typed name name the organization (D29)', async () => {
+  const one = LOCATIONS.slice(0, 1);
+  await renderApp('/locations/l1/sales', setup(meOf(ACCESS.admin), salesOf([]), one).api);
+  expect(await screen.findByText(EMPTY_LINE.replace('Main Street Bar', 'Test Group'))).toBeTruthy();
+  expect(screen.getByText('Every upload and file for Test Group is on Your data, where your team can download it, turn it off or delete it.')).toBeTruthy();
+  await cleanup();
+
+  await renderApp('/locations/l1/sales', setup(meOf(ACCESS.admin), SALES, one).api);
+  await fireEvent.press(await screen.findByRole('button', { name: 'Delete all sales data' }));
+  expect(screen.getByText('This deletes 397 days of sales data for Test Group, any days turned off on its Your data page, and every file on that page. Notes stay. This can’t be undone.')).toBeTruthy();
+  expect(screen.getByLabelText('Type Test Group to confirm.')).toBeTruthy();
+  expect(screen.queryByText(/Main Street Bar/)).toBeNull();
 });
 
 test('every upload turned off: says so and the Your data link stays, with no upload prompt', async () => {

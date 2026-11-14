@@ -77,10 +77,16 @@ export const AUDIT_ACTIONS: readonly { value: string; label: string }[] = [
   { value: 'sales.upload_deleted', label: 'Upload deleted' },
   { value: 'data.turned_off', label: 'Item turned off' },
   { value: 'data.turned_on', label: 'Item turned on' },
+  { value: 'data.renamed', label: 'Item renamed' },
+  { value: 'data.edited', label: 'Item edited' },
   { value: 'file.uploaded', label: 'File uploaded' },
   { value: 'file.deleted', label: 'File deleted' },
   { value: 'file.raw_deleted', label: 'Original deleted' },
   { value: 'files.raw_deleted_all', label: 'Originals deleted' },
+  // D34, reading a file with TownwiseAI.
+  { value: 'file.ai_read_requested', label: 'TownwiseAI read asked' },
+  { value: 'file.ai_read', label: 'File read by TownwiseAI' },
+  { value: 'file.ai_undone', label: 'TownwiseAI read undone' },
   { value: 'org.originals_deleted', label: 'Originals purged' },
   { value: 'note.created', label: 'Note added' },
   { value: 'note.updated', label: 'Note changed' },
@@ -89,6 +95,16 @@ export const AUDIT_ACTIONS: readonly { value: string; label: string }[] = [
   { value: 'chat.conversation_deleted', label: 'Tuning chat deleted' },
   // U9, TownwiseAI's questions.
   { value: 'agent.question_answered', label: 'TownwiseAI question answered' },
+  // Orders: the ordering setup, item sales, counts, a line's edit, rules, and TownwiseAI's order cards.
+  { value: 'order.setup_saved', label: 'Ordering setup saved' },
+  { value: 'order.item_sales_uploaded', label: 'Item sales uploaded' },
+  { value: 'order.item_sales_deleted', label: 'Item sales deleted' },
+  { value: 'order.count_saved', label: 'Count saved' },
+  { value: 'order.decision_saved', label: 'Order line changed' },
+  { value: 'order.rule_saved', label: 'Order rule saved' },
+  { value: 'order.rule_turned_off', label: 'Order rule turned off' },
+  { value: 'order.card_saved', label: 'TownwiseAI order card saved' },
+  { value: 'order.card_dismissed', label: 'TownwiseAI order card set aside' },
   // U13B, forecast runs.
   { value: 'forecast.imported', label: 'Forecast imported' },
   { value: 'forecast.published', label: 'Forecast published' },
@@ -110,8 +126,18 @@ const NOTE_KIND: Readonly<Record<string, string>> = {
 
 /** U9: the answer to a TownwiseAI question about days with no sales. */
 const QUESTION_ANSWER: Readonly<Record<string, string>> = {
-  closed: 'Closed on those days', open: 'The data is missing', not_sure: 'Not sure',
+  closed: 'Closed on those days', open: 'The data is missing', not_sure: 'Not sure', other: 'Answered in the chat',
 };
+
+/** D32: a likely-closed question is about one day with few guests, so its answers read for that day. */
+const LIKELY_CLOSED_ANSWER: Readonly<Record<string, string>> = {
+  ...QUESTION_ANSWER, closed: 'Closed that day', open: 'Open, with few guests',
+};
+
+/** The words for a question's answer, by the kind of question its id names (weekday_, gap_ or likely_closed_). */
+function questionAnswer(questionId: string, answer: string): string {
+  return (questionId.startsWith('likely_closed_') ? LIKELY_CLOSED_ANSWER : QUESTION_ANSWER)[answer] ?? '';
+}
 
 const END_REASON: Readonly<Record<string, string>> = {
   ended: 'Ended by staff', expired: 'Ran out', replaced: 'Replaced by a new view-as',
@@ -166,7 +192,7 @@ export function auditDetails(event: Pick<AuditEvent, 'action' | 'details'>): str
     case 'open_as_admin.ended':
       return OPEN_AS_END_REASON[text(d.endReason)] ?? '';
     case 'agent.question_answered':
-      return QUESTION_ANSWER[text(d.answer)] ?? '';
+      return questionAnswer(text(d.questionId), text(d.answer));
     // U13B: the model version, the dates and the day count, never a figure.
     case 'forecast.imported':
     case 'forecast.published':

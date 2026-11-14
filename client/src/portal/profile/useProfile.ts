@@ -4,7 +4,7 @@ import type { ApiClient } from '../../api/client';
 import { usePortal } from '../PortalProvider';
 import { fetchProfile, saveProfile, type Profile } from './api';
 
-// One read of the profile per person, shared by every caller (the TownwiseAI page's greeting and prompt, Settings).
+// One read of the profile per person, shared by every caller (Home's greeting, Settings).
 // Kept in memory only, keyed by the person whose name it is: under view-as that is the target, so a staff member's
 // own name is never shown as theirs.
 

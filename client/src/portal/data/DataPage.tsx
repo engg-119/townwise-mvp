@@ -9,19 +9,23 @@ import { downloadClean, downloadRaw, listFiles, removeOriginals, removeRaw } fro
 import { cleanName, COPY as FILE_COPY, deleteAllRawBody, deletedOriginalsLine, deleteRawBody, formatSize } from '../files/copy';
 import { CAN_SAVE_FILES, saveFile } from '../files/download';
 import { ZipEntries } from '../files/ZipEntries';
+import { shownLocationName } from '../locations/naming';
 import { LoadFailure, UploadAction, useOrgRefreshOnLeave } from '../locations/parts';
 import { CAN_DROP } from '../onboarding/HistoryStepDrop';
 import { usePortal, useReadOnly } from '../PortalProvider';
+import { itemHref, locationHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
-import { Actions, Button } from '../ui/Button';
+import { TableSkeleton } from '../skeleton';
+import { Actions, Button, LinkButton } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { DataTable, type Column } from '../ui/DataTable';
-import { EmptyState, LoadingLine, Messages, Notice, ReadOnlyLine } from '../ui/feedback';
+import { EmptyState, Messages, Notice, ReadOnlyLine } from '../ui/feedback';
 import { Section, Stack } from '../ui/layout';
 import { MessageFocus, useFocusMessage } from '../ui/messageFocus';
 import { Select } from '../ui/Select';
 import { Lead, Small } from '../ui/text';
 import { AddFile } from './AddFile';
+import { rowAiLine } from './aiCopy';
 import { listData, removeItem, setEnabled, type DataItem } from './api';
 import {
   addedLine, COLUMNS, DATA, dataError, daysLine, deletedFileLine, deletedUploadLine, deleteFileBody, deleteUploadBody, empty, itemName,
@@ -30,17 +34,17 @@ import {
 import { PasteText } from './PasteText';
 
 // P26 Your data (D28), /locations/[locationId]/data: every upload and stored file a location received, newest
-// first, with what Townwise did with it and the actions the person may take: Turn off or on (acts at once), the
-// downloads (web), and the deletes, each of which says in words what goes and what stays. “Show” widens the list to
-// every location. Under view-as the API sends no names and no rights: the rows show kinds and dates, and every
-// action is disabled in place under the read-only line. Stored files off (503) hides Add a file, Paste text and
+// first, with what Townwise did with it and the actions the person may take: Open (its own page, P27, ItemPage.tsx),
+// Turn off or on (acts at once), the downloads (web), and the deletes, each of which says in words what goes and what
+// stays. “Show” widens the list to every location. Under view-as the API sends no names and no rights: the rows show
+// kinds and dates, and every action but Open is disabled in place under the read-only line. Stored files off (503) hides Add a file, Paste text and
 // the file actions; uploads still list, turn off and delete. A delete takes its opener away, so focus moves to the
 // line that says how it ended (MessageFocus, as Your files did). Turning an item off or on and deleting one change
 // the location's day counts, so the organization (GET /api/org) is read again when the page closes. An item kept
 // for reference is its original, so it has Delete and no Delete original. Org admins also get "Delete all originals
 // for this location" (one location shown, a sales file's original stored), which leaves reference items whole. A
 // download keeps its state in its row, as Your files' rows did: only that row's downloads wait, and its error shows
-// there.
+// there. Item sales, the ordering setup and counts are not listed here; one line points to Ordering setup.
 
 const READ_ONLY_ID = 'data-ro';
 const ALL = 'all';
@@ -68,6 +72,8 @@ function Data(): React.JSX.Element {
   const readOnlyId = readOnly ? READ_ONLY_ID : null;
   const admin = org.role === 'org_admin';
   const several = org.locations.length > 1;
+  // The lead, the empty line and the table name it as member pages do: the organization's name with one location (D29).
+  const locationName = shownLocationName(location, org);
   const focusMessage = useFocusMessage();
   // Asked one update after a dialog closes: in that update its focus trap still holds focus.
   const [ended, setEnded] = useState(0);
@@ -76,7 +82,8 @@ function Data(): React.JSX.Element {
   const [showAll, setShowAll] = useState(false);
   const all = several && showAll;
   const scope = all ? ALL : location.id;
-  const nameOf = (locationId: string): string => org.locations.find((candidate) => candidate.id === locationId)?.name ?? location.name;
+  // The notices and dialogs name a location by its shown name too: the organization's with one location (D29).
+  const nameOf = (locationId: string): string => shownLocationName(org.locations.find((candidate) => candidate.id === locationId) ?? location, org);
 
   const { state, reload } = useLoad(useCallback(
     () => listData(api, scope === ALL ? {} : { locationId: scope }).then((page) => ({ scope, page })),
@@ -224,7 +231,11 @@ function Data(): React.JSX.Element {
       <Stack>
         {notice === null ? null : <Notice text={notice} />}
         {failure === null ? null : <Messages live="alert" takesFocus items={[dataError(failure)]} />}
-        <Lead>{lead(all ? DATA.allLocations.toLowerCase() : location.name)}</Lead>
+        <Lead>{lead(all ? DATA.allLocations.toLowerCase() : locationName)}</Lead>
+        <View style={styles.ordering}>
+          <Small>{DATA.ordering}</Small>
+          <LinkButton href={locationHref(location.id, 'ordersSetup')} label={DATA.orderingLink} />
+        </View>
         {readOnly ? <ReadOnlyLine text={line} nativeID={READ_ONLY_ID} /> : null}
         {several ? (
           <Select
@@ -240,13 +251,16 @@ function Data(): React.JSX.Element {
         </Actions>
         {CAN_DROP && filesOn ? (
           <Stack>
+            {/* Not in a row with Paste text: the opt-in under Add a file is taller, and would push it out of line. */}
+            <AddFile
+              locationId={location.id}
+              enabled={!readOnly}
+              {...(readOnlyId === null ? {} : { describedBy: readOnlyId })}
+              onStored={fresh}
+              onAsked={fresh}
+            />
+            <Small>{DATA.addFileHelp}</Small>
             <Actions>
-              <AddFile
-                locationId={location.id}
-                enabled={!readOnly}
-                {...(readOnlyId === null ? {} : { describedBy: readOnlyId })}
-                onStored={fresh}
-              />
               <Button
                 variant="outline"
                 label={DATA.pasteText}
@@ -255,7 +269,6 @@ function Data(): React.JSX.Element {
                 onPress={() => { setAdding(true); }}
               />
             </Actions>
-            <Small>{DATA.addFileHelp}</Small>
             {adding && !readOnly ? (
               <PasteText
                 locationId={location.id}
@@ -276,10 +289,10 @@ function Data(): React.JSX.Element {
             />
           </Actions>
         ) : null}
-        {loadError !== null ? <LoadFailure error={loadError} onRetry={reload} /> : items === null ? <LoadingLine text={DATA.loading} /> : items.length === 0 ? (
-          <EmptyState text={empty(all ? DATA.allLocations.toLowerCase() : location.name)} />
+        {loadError !== null ? <LoadFailure error={loadError} onRetry={reload} /> : items === null ? <TableSkeleton name="data" label={DATA.loading} columns={columns} rowHeight={56} /> : items.length === 0 ? (
+          <EmptyState text={empty(all ? DATA.allLocations.toLowerCase() : locationName)} />
         ) : (
-          <DataTable label={tableLabel(all ? null : location.name)} columns={columns} rows={rows} />
+          <DataTable label={tableLabel(all ? null : locationName)} columns={columns} rows={rows} />
         )}
         {older.error === null ? null : <Messages live="alert" items={[dataError(older.error)]} />}
         {next === null || items === null || items.length === 0 ? null : (
@@ -339,9 +352,14 @@ function RowActions(props: {
   const name = itemName(item);
   const named = (action: string): string => `${action}: ${name}`;
   const action = item.enabled ? DATA.turnOff : DATA.turnOn;
+  // Opening is a read, so it stays under view-as. An item still uploading has nothing to open yet.
+  const open = item.state === 'uploading' ? null : (
+    <LinkButton variant="link" href={itemHref(item.locationId, item.ref)} label={DATA.open} accessibilityLabel={named(DATA.open)} />
+  );
   if (props.readOnly) {
     return (
       <Actions>
+        {open}
         <Button variant="link" label={action} accessibilityLabel={named(action)} disabled describedBy={READ_ONLY_ID} />
         <Button variant="link" label={DATA.delete} accessibilityLabel={named(DATA.delete)} disabled describedBy={READ_ONLY_ID} />
       </Actions>
@@ -369,6 +387,7 @@ function RowActions(props: {
     <View style={styles.actions}>
       {(canRaw || canClean) && !CAN_SAVE_FILES ? <Small>{DATA.nativeDownload}</Small> : null}
       <Actions>
+        {open}
         {item.canTurnOff ? (
           <Button variant="link" label={action} accessibilityLabel={named(action)} disabled={props.toggling} onPress={() => { props.onToggle(item); }} />
         ) : null}
@@ -434,12 +453,14 @@ function ItemCell(props: { item: DataItem }): React.JSX.Element {
   );
 }
 
+/** On or Off, then what Townwise did and, once someone let TownwiseAI read the file, what TownwiseAI did (D34). */
 function StatusCell(props: { item: DataItem }): React.JSX.Element {
   const { item } = props;
+  const ai = rowAiLine(item.ai);
   return (
     <View style={styles.cell}>
       <Text style={styles.value}>{item.enabled ? DATA.on : DATA.off}</Text>
-      <Text style={styles.note}>{stateLine(item)}</Text>
+      <Text style={styles.note}>{ai === null ? stateLine(item) : `${stateLine(item)} · ${ai}`}</Text>
     </View>
   );
 }
@@ -452,4 +473,5 @@ const styles = StyleSheet.create({
   value: { ...theme.type.mono, fontVariant: ['tabular-nums'], color: c.text2 },
   note: { ...theme.type.small, color: c.text2 },
   actions: { gap: theme.space[1], minWidth: 0 },
+  ordering: { gap: theme.space[1] },
 });

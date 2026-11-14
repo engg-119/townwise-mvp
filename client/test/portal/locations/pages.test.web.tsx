@@ -34,6 +34,7 @@ Object.defineProperty(document.documentElement, 'clientWidth', { configurable: t
 
 afterEach(() => {
   cleanup();
+  jest.useRealTimers();
 });
 
 const DAYS = daysOf('2025-01-01', 400, (index) => (index >= 10 && index <= 12 ? null : { guests: 50 + (index % 30), netSalesCents: 150_000 }));
@@ -67,8 +68,9 @@ function expectReadOnly(control: HTMLElement, lineId: string): void {
 test('Sales data draws the daily chart as aria-hidden SVG, with its scale, ticks, summary and numbers', async () => {
   renderAt('/locations/l1/sales', portal(meOf(ACCESS.member)));
   expect(await screen.findByRole('heading', { name: 'Daily guests' })).toBeTruthy();
-  // The page's one SVG; its frame holds the y scale.
-  const svg = document.querySelector('svg');
+  // The chart's SVG, found in the chart's own box (the one that ends with its scale line), not by page order: the top
+  // bar draws icons too. The SVG's frame holds the y scale.
+  const svg = screen.getByText('Scale fitted to this location.').parentElement?.querySelector('svg') ?? null;
   const chart = svg?.parentElement;
   if (svg === null || chart === null || chart === undefined) throw new Error('no chart');
   expect(svg.getAttribute('aria-hidden')).toBe('true');
@@ -91,7 +93,15 @@ test('Sales data draws the daily chart as aria-hidden SVG, with its scale, ticks
   expect(screen.getByRole('link', { name: 'Add a closure note.' }).getAttribute('href')).toBe('/locations/l1/notes?new=closure');
 });
 
-test('Town on web: the month scrubber starts at the biggest gap and moves the chart’s cursor and readout, by click and key', async () => {
+test('Town on web: the month scrubber starts at this month and moves the chart’s cursor and readout, by click and key', async () => {
+  // Only Date is faked, so "today" is Thu, Nov 5, 2026 and every timer stays real.
+  jest.useFakeTimers({
+    now: new Date(2026, 10, 5, 12, 0, 0),
+    doNotFake: [
+      'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'setImmediate', 'clearImmediate', 'nextTick', 'queueMicrotask',
+      'requestAnimationFrame', 'cancelAnimationFrame', 'requestIdleCallback', 'cancelIdleCallback', 'hrtime', 'performance',
+    ],
+  });
   const profile = townProfile('hanover-nh');
   if (profile === null) throw new Error('no profile');
   const { index, gap } = profile.series;
@@ -105,7 +115,11 @@ test('Town on web: the month scrubber starts at the biggest gap and moves the ch
   };
   expect(radios.map((item) => item.textContent)).toEqual([...MONTHS]);
   const checked = (): (string | null)[] => radios.filter((item) => item.getAttribute('aria-checked') === 'true').map((item) => item.textContent);
-  const cursor = (): string | null | undefined => [...(document.querySelector('svg')?.querySelectorAll('path') ?? [])]
+  // The chart's SVG, found in the chart's own box (the one that ends with its scale line), not by page order: the top
+  // bar draws icons too.
+  const svg = screen.getByText('Scale fitted to this town. Index: 100 = an average month').parentElement?.querySelector('svg') ?? null;
+  if (svg === null) throw new Error('no chart');
+  const cursor = (): string | null | undefined => [...svg.querySelectorAll('path')]
     .find((path) => path.getAttribute('stroke') === theme.color.white)?.getAttribute('d');
   // The readout above the chart, a polite live region: the month's gap, its label, and both index values.
   const readout = (month: number): void => {
@@ -115,9 +129,9 @@ test('Town on web: the month scrubber starts at the biggest gap and moves the ch
     expect(box?.firstElementChild?.textContent).toBe(fmtSigned(value));
     expect(box?.lastElementChild?.textContent).toBe(`Grafton County ${fmt1(index[month] ?? 0)} · Northeast ${fmt1(northeastSeries.index[month] ?? 0)}`);
   };
-  // It starts at the year's biggest gap, the one tab stop.
-  const start = profile.series.largestGap.monthIndex;
-  expect(start).not.toBe(0);
+  // It starts at this month (November), not the year's biggest gap (May), the one tab stop.
+  const start = 10;
+  expect(profile.series.largestGap.monthIndex).not.toBe(start);
   expect(checked()).toEqual([MONTHS[start]]);
   expect(radios.filter((item) => item.tabIndex === 0)).toEqual([radio(start)]);
   readout(start);
@@ -186,7 +200,7 @@ test('the note form on web: date inputs, pressed buttons, and the note it sends'
   expect(await screen.findByText('Saved.')).toBeTruthy();
   expect(writes(api)).toEqual([{
     method: 'POST', path: '/api/org/locations/l1/notes',
-    body: { kind: 'opening', startDate: start, endDate: start, weekdays: [1], effect: 'unknown', expectedGuests: null, detail: 'The patio opens.' },
+    body: { kind: 'opening', startDate: start, endDate: start, weekdays: [1], effect: 'unknown', expectedGuests: null, detail: 'The patio opens.', startTime: null, endTime: null },
   }]);
 });
 
@@ -202,6 +216,29 @@ test('Add a closure note opens the form; once the note is saved, the address dro
   await waitFor(() => { expect(window.location.search).toBe(''); });
   expect(window.location.pathname).toBe('/locations/l1/notes');
   expect(screen.queryByRole('heading', { name: 'Add a note' })).toBeNull();
+});
+
+test('Notes on web: a note TownwiseAI made from a file says so under its author, with no link, and its edit form warns (D34)', async () => {
+  const day = addDays(localToday(), 5);
+  const own = noteOf('n1', { startDate: day, endDate: day });
+  const fromFile = noteOf('n2', { kind: 'opening', startDate: day, endDate: day, effect: 'unknown', source: { via: 'ai_file', fileId: 'file-1' } });
+  renderAt('/locations/l1/notes', portal(meOf(ACCESS.admin), [own, fromFile]));
+  const coming = await screen.findByRole('region', { name: 'Notes coming up' });
+  const rows = within(coming).getAllByRole('row').slice(1);
+  const row = (kind: string): HTMLElement => {
+    const found = rows.find((candidate) => within(candidate).queryByText(kind) !== null);
+    if (found === undefined) throw new Error(`no ${kind} row`);
+    return found;
+  };
+  expect(within(row('Opening')).getByText('From a file TownwiseAI read')).toBeTruthy();
+  expect(within(row('Opening')).queryByRole('link')).toBeNull();
+  expect(within(row('Closure')).queryByText('From a file TownwiseAI read')).toBeNull();
+  fireEvent.click(within(row('Opening')).getByRole('button', { name: /^Edit Opening note/ }));
+  expect(await screen.findByText('Undoing that file’s read removes this note, even after an edit.')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  fireEvent.click(within(row('Closure')).getByRole('button', { name: /^Edit Closure note/ }));
+  expect(await screen.findByRole('heading', { name: 'Edit this note' })).toBeTruthy();
+  expect(screen.queryByText('Undoing that file’s read removes this note, even after an edit.')).toBeNull();
 });
 
 test('view-as on Notes and Location settings: every write is aria-disabled or read-only, with the line', async () => {

@@ -78,7 +78,10 @@ test('one Continue with Google button, links to the terms and privacy pages, and
   expect(within(page).queryByRole('link', { name: 'Request early access' })).toBeNull();
   expect(within(page).getByText('New to Townwise? Continue with Google, then tell us about your restaurant. Joining your team? Use the email address your admin added.')).toBeTruthy();
   expect(document.querySelector('input, textarea')).toBeNull();
-  expect(screen.queryByRole('button')).toBeNull();
+  // The only button is the header's light/dark switch.
+  const buttons = screen.getAllByRole('button');
+  expect(buttons).toHaveLength(1);
+  expect(buttons[0]?.getAttribute('aria-label') ?? buttons[0]?.textContent).toMatch(/^Switch to (light|dark) mode$/);
   expect(screen.queryByText(/sign up/i)).toBeNull();
 });
 

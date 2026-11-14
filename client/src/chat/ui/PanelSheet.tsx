@@ -8,7 +8,8 @@ import { theme } from '../../theme';
 
 // The "Questions and activity" panel below 1024px (spec P25, chat redesign): a full-screen `ground` layer with the
 // heading, which takes focus on open, and Close. Focus stays inside (the Modal traps it); Escape, Android's back
-// button and Close shut it and focus goes back to the button that opened it. Escape is the Modal's own, which shuts
+// button and Close shut it and focus goes back to the button that opened it (a question's message sent from inside
+// shuts it too, and focus goes where the page says: the composer). Escape is the Modal's own, which shuts
 // only the top-most modal, so a dialog opened inside the sheet (the model card) closes alone. From 1024px the panel
 // is a column beside the chat, so this renders nothing there. Nothing animates.
 
@@ -23,13 +24,15 @@ export function PanelSheet(props: {
   onClose: () => void;
   /** The header button that opened the sheet; focus returns to it on close (web). */
   openerRef?: React.RefObject<Host | null>;
+  /** Where focus goes on close instead (web): the composer, after a question's message closed the sheet. */
+  restoreFocus?: () => void;
   children: React.ReactNode;
 }): React.JSX.Element | null {
   const { desktop } = useBreakpoint();
   const shown = props.open && !desktop;
   const heading = useRef<TextHost>(null);
   const wasShown = useRef(false);
-  const { onClose, openerRef } = props;
+  const { onClose, openerRef, restoreFocus } = props;
 
   function close(): void {
     onClose();
@@ -44,10 +47,12 @@ export function PanelSheet(props: {
     }
     if (wasShown.current) {
       wasShown.current = false;
-      if (Platform.OS === 'web') (openerRef?.current as unknown as Focusable | null | undefined)?.focus();
+      if (Platform.OS !== 'web') return undefined;
+      if (restoreFocus === undefined) (openerRef?.current as unknown as Focusable | null | undefined)?.focus();
+      else restoreFocus();
     }
     return undefined;
-  }, [shown, openerRef]);
+  }, [shown, openerRef, restoreFocus]);
 
   if (!shown) return null;
   return (

@@ -1,15 +1,23 @@
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, type Connection, type Model, type Types } from 'mongoose';
 
+import type { PlaceKind } from '../places/google.ts';
 import type { Town } from '../towns.ts';
 import { townFieldSchema } from './locations.ts';
 
-/** One checked Google place on a request. `name` is null only for a request stored before places. */
+/**
+ * One checked Google place on a request. `name` is null only for a request stored before places; `kind` reads as
+ * `business` for a request stored before kinds (D29).
+ */
 export interface RequestPlace {
   readonly placeId: string;
   readonly name: string | null;
+  readonly kind: PlaceKind;
   readonly town: Town;
 }
+
+/** A place as stored. `kind` is absent from requests stored before kinds. */
+interface StoredRequestPlace { placeId: string; name: string; kind?: PlaceKind; town: Town }
 
 export type AccessRequestStatus = 'pending' | 'approved' | 'rejected' | 'withdrawn';
 
@@ -25,7 +33,7 @@ export interface AccessRequestFields {
   /** Written only by requests stored before places. */
   placeId?: string | null;
   /** Absent from requests stored before places. */
-  places?: { placeId: string; name: string; town: Town }[];
+  places?: StoredRequestPlace[];
   status: AccessRequestStatus;
   createdAt: Date;
   decidedAt: Date | null;
@@ -35,10 +43,11 @@ export interface AccessRequestFields {
   withdrawnReason: 'joined_org' | null;
 }
 
-function requestPlaceSchema(): Schema<{ placeId: string; name: string; town: Town }> {
+function requestPlaceSchema(): Schema<StoredRequestPlace> {
   return new Schema({
     placeId: { type: String, required: true, maxlength: 512 },
     name: { type: String, required: true, minlength: 1, maxlength: 80 },
+    kind: { type: String, required: true, enum: ['business', 'address'], default: 'business' },
     town: { type: townFieldSchema(), required: true },
   }, { _id: false, strict: true });
 }
@@ -104,7 +113,7 @@ export interface NewAccessRequest {
   readonly town: Town;
   readonly locationCount: number;
   readonly note: string | null;
-  readonly places: readonly { placeId: string; name: string; town: Town }[];
+  readonly places: readonly { placeId: string; name: string; kind: PlaceKind; town: Town }[];
   readonly createdAt: Date;
 }
 
@@ -128,15 +137,19 @@ export interface AccessRequestStore {
   remove(id: string): Promise<number>;
 }
 
-/** A request stored before places has at most a single placeId: it reads as one place with no name, in the request's town. */
+/**
+ * A request stored before places has at most a single placeId: it reads as one business with no name, in the request's
+ * town. A place stored before kinds reads as a business.
+ */
 function placesOf(doc: AccessRequestFields): RequestPlace[] {
   if (doc.places !== undefined && doc.places.length > 0) {
     return doc.places.map((place) => ({
-      placeId: place.placeId, name: place.name, town: { townId: place.town.townId, name: place.town.name, state: place.town.state },
+      placeId: place.placeId, name: place.name, kind: place.kind ?? 'business',
+      town: { townId: place.town.townId, name: place.town.name, state: place.town.state },
     }));
   }
   if (doc.placeId === undefined || doc.placeId === null) return [];
-  return [{ placeId: doc.placeId, name: null, town: { townId: doc.town.townId, name: doc.town.name, state: doc.town.state } }];
+  return [{ placeId: doc.placeId, name: null, kind: 'business', town: { townId: doc.town.townId, name: doc.town.name, state: doc.town.state } }];
 }
 
 function toRecord(doc: AccessRequestFields & { _id: Types.ObjectId }): AccessRequestRecord {
@@ -191,7 +204,7 @@ export function createAccessRequestStore(connection: Connection): AccessRequestS
           locationCount: input.locationCount,
           note: input.note,
           places: input.places.map((place) => ({
-            placeId: place.placeId, name: place.name,
+            placeId: place.placeId, name: place.name, kind: place.kind,
             town: { townId: place.town.townId, name: place.town.name, state: place.town.state },
           })),
           status: 'pending',

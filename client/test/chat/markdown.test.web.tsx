@@ -15,11 +15,14 @@ function show(source: string, caret?: boolean): void {
 
 afterEach(cleanup);
 
-it('opens http(s) links in a new tab with noopener, and draws an unsafe one as text', async () => {
+it('opens http(s) links in a new tab with noopener, the host after each, and draws an unsafe one as text', async () => {
   show('[BLS](https://example.com/x) and [bad](mailto:a@example.com) [worse](javascript:alert(1))');
   const link = await screen.findByRole('link');
   expect(link.getAttribute('target')).toBe('_blank');
   expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+  // The host is written after the link, not inside it (D36).
+  expect(link.textContent).toBe('BLS');
+  expect(link.parentElement?.textContent).toContain('BLS (example.com) and bad');
   expect(screen.getAllByRole('link')).toHaveLength(1);
   expect(screen.getByText('bad')).toBeTruthy();
   expect(screen.getByText(/\[worse\]\(javascript:alert\(1\)\)/)).toBeTruthy();

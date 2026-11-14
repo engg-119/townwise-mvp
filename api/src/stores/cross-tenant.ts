@@ -1,10 +1,12 @@
 // Operations keyed by a person, or spanning organizations (spec 6.10 rule 8). The list is closed:
 // findActiveSeat, findOpenInvites, claimInvite, declineInvite, latestRemovedSeat, adminOrgStats, peopleRecords,
-// deletePersonRecords, the forecast lab's findLabCallback, the file reader's claimNextImport, and the daily file sweep's claimFileSweep, finishFileSweep,
-// sweepCandidates, removeOldUploadDays and existingFileIds.
+// deletePersonRecords, the forecast lab's findLabCallback, the file reader's claimNextImport, the TownwiseAI reader's
+// claimNextAiRead, the daily file sweep's claimFileSweep, finishFileSweep, sweepCandidates, removeOldUploadDays and
+// existingFileIds, and the calendar refresh loop's claimDueCalendar.
 // Only access/resolve.ts, the join and decline handlers, the staff handlers (admin.ts, deletion.ts), the file reader
-// (files/worker.ts), the file sweeper (files/sweeper.ts) and the lab job's callback (lab/callback.ts) import this file
-// (test/isolation.test.ts enforces the list).
+// (files/worker.ts), the TownwiseAI reader (files/ai-reader.ts), the file sweeper (files/sweeper.ts), the lab job's
+// callback (lab/callback.ts) and the calendar refresh loop (calendar/refresher.ts) import this file (test/isolation.test.ts
+// enforces the list).
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { trusted, Types, type Connection } from 'mongoose';
 
@@ -20,7 +22,9 @@ import { forecastRunModel } from './forecasts.ts';
 import { importModel } from './imports.ts';
 import { locationModel } from './locations.ts';
 import { memberModel } from './members.ts';
+import { orderCardModel } from './orders.ts';
 import { orgModel } from './orgs.ts';
+import { calendarSourceModel } from './owner-calendars.ts';
 import { profileModel } from './profiles.ts';
 import { HAS_VALUE, SALES_DAYS_COLLECTION } from './sales-days.ts';
 import { uploadDayModel } from './upload-days.ts';
@@ -265,7 +269,7 @@ export interface DeletedPersonRecords {
 
 /**
  * Person deletion (spec 10.7 step 3): their access requests, their open invitations in every organization, their
- * removed seats, their tuning chat conversations, live turns and proposal records, and their welcome markers, in every
+ * removed seats, their tuning chat conversations, live turns, proposal records and order cards, and their welcome markers, in every
  * organization, and their display name (the notes they saved from proposals stay with the organization, as every note does). Their staff id
  * is cleared from the forecast runs they imported or published (U13B), and their id from the calibrations they started
  * and from the forecasts switch they last set (the forecast lab). Never an active
@@ -292,6 +296,16 @@ export async function deletePersonRecords(
     await orgModel(connection).updateOne({ _id: row._id, firstJoinedAt: trusted({ $exists: false }) }, { $set: { firstJoinedAt: row.first } });
   }
   const removed = (await Member.deleteMany({ userId, status: 'removed' })).deletedCount;
+  // Order cards hold no person id, so they go by the person's conversations, before those, so a retry still finds
+  // them. Not counted, so the audit details are unchanged.
+  const owned = await chatConversationModel(connection).find({ userId }, { _id: 1, orgId: 1 }).lean();
+  if (owned.length > 0) {
+    await orderCardModel(connection).deleteMany({
+      // The organization too, so the delete uses the cards' index, which leads with it.
+      orgId: trusted({ $in: owned.map((doc) => doc.orgId) }),
+      conversationId: trusted({ $in: owned.map((doc) => doc._id) }),
+    });
+  }
   const conversations = (await chatConversationModel(connection).deleteMany({ userId })).deletedCount;
   const liveTurns = (await chatLiveTurnModel(connection).deleteMany({ userId })).deletedCount;
   await chatProposalModel(connection).deleteMany({ userId });
@@ -358,6 +372,52 @@ export async function claimNextImport(
   ).lean();
   if (doc === null) return null;
   return { id: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString() };
+}
+
+/**
+ * A file the TownwiseAI reader claimed (spec 11A.9). Only access/policy.ts's scopeForClaimedAiRead turns it into an
+ * OrgScope. `attempt` is the claim's token: the attempt count it set, which every later write under it matches.
+ */
+export interface ClaimedAiRead {
+  readonly id: string;
+  readonly orgId: string;
+  readonly locationId: string;
+  readonly attempt: number;
+}
+
+/**
+ * The TownwiseAI reader's claim (spec 11A.9), across organizations: the file whose read was asked for first that is
+ * `queued` (and past its `notBefore`, when an attempt put it back), or `reading` under a lease that ran out (its replica
+ * stopped), leaving out a suspended organization's (they wait until it is active again), files being deleted, and every
+ * read of an organization that has one `reading` under a live lease, so one organization never holds two replicas'
+ * readers at once. The claim sets `reading`, the lease for `leaseMs`, the start, and counts the attempt.
+ */
+export async function claimNextAiRead(
+  connection: Connection, input: { readonly now: Date; readonly leaseMs: number },
+): Promise<ClaimedAiRead | null> {
+  const File = fileModel(connection);
+  const [held, busy] = await Promise.all([
+    orgModel(connection).find({ status: trusted({ $ne: 'active' }) }, { _id: 1 }).lean(),
+    File.distinct('orgId', { 'ai.status': 'reading', 'ai.leaseUntil': trusted({ $gte: input.now }) }),
+  ]);
+  const skipped = [...held.map((org) => org._id), ...busy];
+  const doc = await File.findOneAndUpdate(
+    {
+      $or: [
+        { 'ai.status': 'queued', 'ai.notBefore': trusted({ $not: { $gt: input.now } }) },
+        { 'ai.status': 'reading', 'ai.leaseUntil': trusted({ $lt: input.now }) },
+      ],
+      status: trusted({ $ne: 'deleting' }),
+      ...(skipped.length === 0 ? {} : { orgId: trusted({ $nin: skipped }) }),
+    },
+    {
+      $set: { 'ai.status': 'reading', 'ai.leaseUntil': new Date(input.now.getTime() + input.leaseMs), 'ai.startedAt': input.now },
+      $inc: { 'ai.attempts': 1 },
+    },
+    { sort: { 'ai.requestedAt': 1, _id: 1 }, returnDocument: 'after' },
+  ).lean();
+  if (doc?.ai === undefined) return null;
+  return { id: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString(), attempt: doc.ai.attempts };
 }
 
 const SWEEP_ID = 'sweeper';
@@ -453,4 +513,29 @@ export async function existingFileIds(connection: Connection, ids: readonly stri
   if (ids.length === 0) return new Set();
   const docs = await fileModel(connection).find({ _id: trusted({ $in: ids.map((id) => new Types.ObjectId(id)) }) }, { _id: 1 }).lean();
   return new Set(docs.map((doc) => doc._id.toHexString()));
+}
+
+/** A link calendar the refresh loop claimed. Only access/policy.ts's scopeForCalendarRefresh turns it into an OrgScope. */
+export interface ClaimedCalendar {
+  readonly calendarId: string;
+  readonly orgId: string;
+  readonly locationId: string;
+}
+
+/**
+ * The calendar refresh loop's claim (openspec change connect-owner-calendar, design decision 6), across organizations:
+ * one link calendar that is due (`nextRefreshAt` at or before `now`) and under no live lease, the longest due first. One
+ * compare-and-set takes it and sets its lease to `leaseUntil`, so of replicas claiming at once only one gets each
+ * calendar. Ids only: the address, host, label and events stay in the tenant store.
+ */
+export async function claimDueCalendar(
+  connection: Connection, input: { readonly now: Date; readonly leaseUntil: Date },
+): Promise<ClaimedCalendar | null> {
+  const doc = await calendarSourceModel(connection).findOneAndUpdate(
+    { kind: 'link', nextRefreshAt: trusted({ $lte: input.now }), $or: [{ leaseUntil: null }, { leaseUntil: trusted({ $lt: input.now }) }] },
+    { $set: { leaseUntil: input.leaseUntil } },
+    { sort: { nextRefreshAt: 1, _id: 1 }, returnDocument: 'after', projection: { orgId: 1, locationId: 1 } },
+  ).lean();
+  if (doc === null) return null;
+  return { calendarId: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString() };
 }

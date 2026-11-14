@@ -6,7 +6,7 @@ import {
   actOnItemProposal, addNote as postNote, deleteConversation as removeConversation, dismissProposal, loadChat, loadConversation,
   loadItemProposal, rateReply, renameConversation, saveProposal, sendTurn, setActiveVersion,
   type Budget, type ChatEvent, type ChatSummary, type ConversationLoad, type ConversationSummary, type Feedback, type FeedbackReason,
-  type ItemProposal, type NoteProposal, type ProposalResult, type StoredMessage, type TurnRequest,
+  type ItemProposal, type MessageAttachment, type NoteProposal, type ProposalResult, type StoredMessage, type TurnRequest,
 } from './api';
 import { draftKey, readDraft, writeDraft } from './drafts';
 import { isHiddenTool, type ToolStep } from './tools';
@@ -27,6 +27,10 @@ import type { Visual } from './visuals/schema';
 // node, where the next message goes. An edit sends the edited message again under its parent; a regenerate asks
 // for a sibling of the newest reply; either one's new nodes join `tree` only once the turn is saved. A version
 // switch reads the path through another sibling (and stores it as the one shown, except under view-as).
+//
+// A message may carry files of Your data (D36): the composer hands them to `send` with a callback for a turn taken
+// back (the files go back to the composer, as the text does); an edit sends the edited message's files again (all
+// but those gone from Your data), Try again sends its message's, and a regenerate sends none.
 
 export type CardStatus = 'open' | 'editing' | 'saving' | 'saved' | 'dismissed';
 
@@ -56,6 +60,14 @@ export interface ItemCard {
 
 /** The tool whose calls show as item cards. */
 export const ITEM_TOOL = 'propose_data_item';
+export const ORDER_CHANGE_TOOL = 'propose_order_change';
+export const ORDER_RULE_TOOL = 'propose_order_rule';
+
+export interface OrderCard {
+  id: string;
+  conversationId: string | null;
+  stored: 'pending' | 'kept' | 'lost';
+}
 
 export type MessagePart =
   /** The reply's thinking summary, as it streamed (or as it was stored): shown in the timeline and under "Worked for". */
@@ -65,7 +77,8 @@ export type MessagePart =
   | { type: 'proposal'; key: string; card: ProposalCard }
   /** A chart, table or totals Townwise drew from its own data (show_visual); `id` is the call's id. */
   | { type: 'visual'; key: string; id: string; visual: Visual }
-  | { type: 'item'; key: string; card: ItemCard };
+  | { type: 'item'; key: string; card: ItemCard }
+  | { type: 'order'; key: string; card: OrderCard };
 
 export interface ChatMessage {
   key: string;
@@ -97,6 +110,10 @@ export interface ChatMessage {
    */
   startedAt: number | null;
   endedAt: number | null;
+  /** The time shown under a message, in ms since the epoch: when the person sent it, or when a reply ended; null when not known. */
+  at: number | null;
+  /** The files the person's message carries (D36): as sent, or as the server shows them now; [] for a reply. */
+  attachments: MessageAttachment[];
 }
 
 /** The path a conversation shows: its messages, every node, and the path's leaf. */
@@ -148,8 +165,8 @@ export type ChatAction =
   | { type: 'open'; id: string; draft: string }
   | { type: 'opened'; id: string; shown: ShownPath }
   | { type: 'openFailed'; id: string; error: string }
-  | { type: 'send'; content: string; userKey: string; replyKey: string; request: TurnRequest }
-  | { type: 'edit'; messageKey: string; content: string; userKey: string; replyKey: string; request: TurnRequest }
+  | { type: 'send'; content: string; attachments: MessageAttachment[]; userKey: string; replyKey: string; request: TurnRequest }
+  | { type: 'edit'; messageKey: string; content: string; attachments: MessageAttachment[]; userKey: string; replyKey: string; request: TurnRequest }
   | { type: 'regenerate'; replyKey: string; newKey: string; request: TurnRequest }
   | { type: 'event'; event: ChatEvent; key: string; at: string }
   | { type: 'ended' }
@@ -174,6 +191,9 @@ export const TIMED_OUT = 'The reply took too long. Try asking something shorter.
 export const REGENERATE_FAILED = 'That reply didn’t finish, so your earlier reply is back.';
 export const VERSION_FAILED = 'Couldn’t show that version. Try again.';
 export const RATING_FAILED = 'Couldn’t save your rating. Try again.';
+/** Why a question card's message (Something else…) can't go, once the month's budget is used up. */
+export const TELL_BUDGET = 'This month’s budget is used up, so TownwiseAI can’t answer in the chat.';
+const TELL_WAIT = 'Wait for TownwiseAI’s reply to finish, then try again.';
 
 /** The `done` stop reasons of a turn the server saved; any other (a refusal) saved nothing. */
 const SAVED_STOP_REASONS: readonly string[] = ['end_turn', 'max_tokens', 'tool_limit', 'budget'];
@@ -218,13 +238,26 @@ function minutes(seconds: number): string {
   return count === 1 ? '1 minute' : `${String(count)} minutes`;
 }
 
-/** Copy for a turn the server refused or a stream that failed before it finished. */
-export function sendErrorText(error: unknown): string {
+/**
+ * Copy for a turn the server refused or a stream that failed before it finished. `attached`: the message carried files
+ * (D36), so a 404 or a 400 may be about one of them.
+ */
+export function sendErrorText(error: unknown, attached = false): string {
   if (error instanceof ApiError && error.kind === 'http') {
     if (error.code === 'chat_turn_in_progress') return 'You already have a reply in progress, maybe in another tab or location. Wait for it to finish, then try again.';
     if (error.code === 'conversation_full') return 'This conversation is full. Start a new chat.';
     if (error.code === 'view_as_read_only') return 'View-as is read-only, so you can’t send messages.';
+    if (error.code === 'files_unavailable') return 'File storage is off right now, so files can’t be attached. Remove them to send your message.';
+    if (error.code === 'attachment_not_ready') return 'An attached file is still uploading. Send your message once it’s ready.';
+    // D36: attaching takes the right to download the original, so a teammate's file (one already on Your data that a
+    // chip found again, among them) is theirs or an org admin's to attach.
+    if (error.code === 'attachment_not_allowed') {
+      return 'Only the person who added a file to Your data, or an org admin, can attach it. Remove the files a teammate added to send your message.';
+    }
+    if (error.code === 'attachments_busy') return 'TownwiseAI is reading a lot of files right now. Try again in a moment.';
+    if (error.status === 404 && attached) return 'An attached file isn’t on Your data for this location anymore, or this conversation was deleted.';
     if (error.status === 404) return 'This conversation or location wasn’t found.';
+    if (error.status === 400 && attached) return 'That message couldn’t be sent with these files. Only files kept on Your data can be attached.';
     if (error.status === 400) return 'That message couldn’t be sent.';
     if (error.status === 429) {
       return error.retryAfterSeconds === null
@@ -263,6 +296,7 @@ function settleCards(message: ChatMessage, stored: 'kept' | 'lost'): ChatMessage
     parts: message.parts.map((part) => {
       if (part.type === 'proposal' && part.card.stored === 'pending') return { ...part, card: { ...part.card, stored } };
       if (part.type === 'item' && part.card.stored === 'pending') return { ...part, card: { ...part.card, stored } };
+      if (part.type === 'order' && part.card.stored === 'pending') return { ...part, card: { ...part.card, stored } };
       return part;
     }),
   };
@@ -272,6 +306,11 @@ function settleCards(message: ChatMessage, stored: 'kept' | 'lost'): ChatMessage
 function withItem(message: ChatMessage, card: ItemCard, key: string): ChatMessage {
   if (message.parts.some((part) => part.type === 'item' && part.card.id === card.id)) return message;
   return { ...message, parts: [...message.parts, { type: 'item', key, card }] };
+}
+
+function withOrder(message: ChatMessage, card: OrderCard, key: string): ChatMessage {
+  if (message.parts.some((part) => part.type === 'order' && part.card.id === card.id)) return message;
+  return { ...message, parts: [...message.parts, { type: 'order', key, card }] };
 }
 
 function endLive(state: TuningChatState, end: Pick<ChatMessage, 'state' | 'note'>, now: number): ChatMessage[] {
@@ -332,15 +371,20 @@ function hasContent(message: ChatMessage): boolean {
 function blankMessage(key: string, role: ChatMessage['role']): ChatMessage {
   return {
     key, role, parts: [], state: 'complete', note: null, nodeId: null, parentId: null, feedback: null, ratingError: null, next: null, request: null,
-    startedAt: null, endedAt: null,
+    startedAt: null, endedAt: null, at: null, attachments: [],
   };
 }
 
 /** A turn's new pair: the person's message under the node the request names, and the reply that streams. */
-function turnPair(action: { content: string; userKey: string; replyKey: string; request: TurnRequest }, now: number): ChatMessage[] {
+function turnPair(
+  action: { content: string; attachments: MessageAttachment[]; userKey: string; replyKey: string; request: TurnRequest }, now: number,
+): ChatMessage[] {
   const parentId = 'parentId' in action.request ? action.request.parentId ?? null : null;
   return [
-    { ...blankMessage(action.userKey, 'user'), parentId, parts: [{ type: 'text', key: `${action.userKey}t`, text: action.content }] },
+    {
+      ...blankMessage(action.userKey, 'user'), parentId, at: now, attachments: action.attachments,
+      parts: [{ type: 'text', key: `${action.userKey}t`, text: action.content }],
+    },
     { ...blankMessage(action.replyKey, 'assistant'), state: 'streaming', request: action.request, startedAt: now },
   ];
 }
@@ -544,6 +588,11 @@ function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: s
           ? { ...state, messages: withLive(state, (message) => withItem(message, { id: event.id, conversationId: state.conversationId, stored: 'pending' }, key)) }
           : state;
       }
+      if (event.name === ORDER_CHANGE_TOOL || event.name === ORDER_RULE_TOOL) {
+        return event.state === 'done' && event.result?.shown === true
+          ? { ...state, messages: withLive(state, (message) => withOrder(message, { id: event.id, conversationId: state.conversationId, stored: 'pending' }, key)) }
+          : state;
+      }
       // propose_note, show_visual and suggest_next show as their card, visual and next questions.
       if (isHiddenTool(event.name)) return state;
       return { ...state, messages: withLive(state, (message) => withTool(message, event, key)) };
@@ -560,7 +609,7 @@ function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: s
       const budget = event.stopReason === 'budget' && state.budget !== null ? { ...state.budget, exhausted: true } : state.budget;
       const saved = SAVED_STOP_REASONS.includes(event.stopReason);
       if (!saved && state.turn?.earlier) return putBack({ ...state, budget }, state.turn.earlier, REGENERATE_FAILED);
-      const complete = (message: ChatMessage): ChatMessage => settleCards({ ...message, state: 'complete', note: doneNote(event.stopReason), endedAt: now }, saved ? 'kept' : 'lost');
+      const complete = (message: ChatMessage): ChatMessage => settleCards({ ...message, state: 'complete', note: doneNote(event.stopReason), endedAt: now, at: now }, saved ? 'kept' : 'lost');
       if (saved) return savedTurn({ ...state, budget }, event, complete);
       return { ...state, budget, turn: null, messages: withLive(state, complete) };
     }
@@ -573,13 +622,25 @@ function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: s
 export interface TuningChat {
   state: TuningChatState;
   setDraft: (text: string) => void;
-  /** Sends the composer's text. */
-  send: () => void;
+  /**
+   * Sends the composer's text, with the files attached to it (D36). `returned` runs if the turn is taken back (it never
+   * went, or the server refused it before anything arrived), so the page can put the files back with the text.
+   */
+  send: (attachments?: readonly MessageAttachment[], returned?: () => void) => void;
   /** Sends `text` as it is (an Ask suggestion). */
   ask: (text: string) => void;
+  /**
+   * Sends `text` as Ask does, for a question card's Something else… (spec P25). Try again under its reply sends it again
+   * the same way, and `telling.ended` hears each try's end. A turn taken back never puts the text in the composer; the
+   * card keeps it.
+   */
+  tell: (text: string, telling: Telling) => void;
   stop: () => void;
-  /** While a reply streams: stops it (it saves nothing, as Stop), then sends the composer's text after the leaf. */
-  stopAndSend: () => void;
+  /**
+   * While a reply streams: stops it (it saves nothing, as Stop), then sends the composer's text after the leaf, with
+   * its files, as `send` does.
+   */
+  stopAndSend: (attachments?: readonly MessageAttachment[], returned?: () => void) => void;
   newConversation: () => void;
   openConversation: (id: string) => void;
   /** Deletes a conversation; rejects with the API's error, for the confirm dialog. */
@@ -618,6 +679,14 @@ export interface TuningChat {
   setItemAside: (card: ItemCard) => Promise<ItemProposal>;
   /** Reads the page again after it failed to load. */
   reload: () => void;
+}
+
+/** How a question card's message goes (TuningChat.tell). */
+export interface Telling {
+  /** Its turn started: the first event arrived (not on a Try again). */
+  started?: () => void;
+  /** A try ended: null once its turn is saved (`done` with a saved stop reason), else the chat's own words for why not. */
+  ended: (failure: string | null) => void;
 }
 
 export interface TuningChatOptions {
@@ -679,10 +748,12 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
   const live = useRef<AbortController | null>(null);
   // The live turn's end, for Stop and send; and the send waiting for it.
   const turnEnd = useRef<Promise<void> | null>(null);
-  const waiting = useRef<{ content: string } | null>(null);
+  const waiting = useRef<{ content: string; returned: (() => void) | undefined } | null>(null);
   const opening = useRef(0);
   const acting = useRef(new Set<string>());
   const ratings = useRef(new Map<string, number>());
+  // A question card's turns, by reply key: Try again under one tells the card how it ended, as its first try did.
+  const told = useRef(new Map<string, Telling['ended']>());
   const keys = useRef(0);
   // The text (or thinking summary) that arrived since the last draw, and the timer that draws it.
   const buffer = useRef<{ text: string; kind: 'text' | 'thinking'; timer: ReturnType<typeof setTimeout> | null }>({ text: '', kind: 'text', timer: null });
@@ -755,16 +826,29 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     }
   }
 
-  /** Streams a turn: `action` puts it on the page, `request` goes to the server. */
-  function run(action: Extract<ChatAction, { type: 'send' | 'edit' | 'regenerate' }>, request: TurnRequest, retries = 0): void {
+  /**
+   * Streams a turn: `action` puts it on the page, `request` goes to the server. `telling`, for a question card, hears
+   * when it starts and how it ended; `returned`, for the composer's files, runs if a send is taken back.
+   */
+  function run(
+    action: Extract<ChatAction, { type: 'send' | 'edit' | 'regenerate' }>, request: TurnRequest, retries = 0, telling?: Telling, returned?: () => void,
+  ): void {
+    const attached = 'attachments' in request && request.attachments.length > 0;
     const controller = new AbortController();
     live.current = controller;
     dispatch(action);
     // A first turn that saved nothing (an error, Stop, a cut-off stream or a refusal) left no conversation behind.
     let created: string | null = null;
     let saved = false;
+    let started = false;
+    // Why it saved nothing, in the words the chat shows for it.
+    let failure: string | null = null;
     const onEvent = (event: ChatEvent): void => {
       if (controller.signal.aborted) return;
+      if (!started) {
+        started = true;
+        telling?.started?.();
+      }
       if (event.type === 'text' || event.type === 'thinking') {
         // Text and thinking keep their order: a change from one to the other draws what the first had gathered.
         if (buffer.current.kind !== event.type) flush();
@@ -777,45 +861,68 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
       flush();
       if (event.type === 'conversation') created = event.id;
       if (event.type === 'done' && SAVED_STOP_REASONS.includes(event.stopReason)) saved = true;
+      else if (event.type === 'done') failure = doneNote(event.stopReason) ?? NOT_SAVED;
+      if (event.type === 'error') failure = streamErrorText(event.code);
       dispatch({ type: 'event', event, key: nextKey(), at: new Date().toISOString() });
     };
     turnEnd.current = stream(request, controller.signal, onEvent, retries).then(
       () => {
         flush();
         dispatch({ type: 'ended' });
+        failure ??= CUT_OFF;
       },
       (error: unknown) => {
         flush();
         if (error instanceof ApiError && error.kind === 'aborted') {
           dispatch({ type: 'stopped' });
+          failure ??= STOPPED;
           return;
         }
         const exhausted = error instanceof ApiError && error.code === 'chat_budget_exhausted';
-        dispatch({ type: 'failed', error: exhausted ? null : sendErrorText(error), content: 'content' in request ? request.content : '', exhausted });
+        failure ??= exhausted ? TELL_BUDGET : sendErrorText(error, attached);
+        // A card's words stay in the card, never in the composer.
+        const content = telling === undefined && 'content' in request ? request.content : '';
+        const draftBefore = latest.current.draft;
+        dispatch({ type: 'failed', error: exhausted ? null : sendErrorText(error, attached), content, exhausted });
+        // The turn was taken back (its message left the page) and its text went back to the composer, so its files go
+        // back with it. Text typed meanwhile stays, and so do the composer's files as the person left them.
+        const takenBack = action.type === 'send' && !latest.current.messages.some((message) => message.key === action.userKey);
+        if (takenBack && draftBefore === '' && content !== '') returned?.();
       },
     ).finally(() => {
       if (live.current === controller) live.current = null;
       if (request.conversationId === null && created !== null && !saved) dispatch({ type: 'discard', id: created });
       // The list, the budget and the off switch may all have changed with this turn.
       refresh();
+      telling?.ended(saved ? null : failure ?? NOT_SAVED);
     });
   }
 
   /**
    * A message after the path shown: a new conversation's first one names neither a conversation nor a parent. With no
    * tree known (the conversation didn't open, or the server keeps none) it names no parent, so the server adds it after
-   * the leaf it has stored; a null parent would start a second first message.
+   * the leaf it has stored; a null parent would start a second first message. `attachments` go with it (D36); if it
+   * can't go, `returned` runs at once.
    */
-  function start(content: string, retries = 0): void {
+  function start(content: string, retries = 0, telling?: Telling, attachments: readonly MessageAttachment[] = [], returned?: () => void): void {
     const current = latest.current;
-    if (content === '' || !canStart(current) || live.current !== null) return;
+    if (content === '' || !canStart(current) || live.current !== null) {
+      telling?.ended(current.budget?.exhausted === true ? TELL_BUDGET : TELL_WAIT);
+      returned?.();
+      return;
+    }
+    const refs = attachments.map((attachment) => attachment.ref);
     let request: TurnRequest = { conversationId: null, content };
     if (current.conversationId !== null) {
       request = current.tree.length === 0
         ? { conversationId: current.conversationId, content }
         : { conversationId: current.conversationId, content, parentId: current.leafId };
     }
-    run({ type: 'send', content, userKey: nextKey(), replyKey: nextKey(), request }, request, retries);
+    if (refs.length > 0) request = { ...request, attachments: refs };
+    const userKey = nextKey();
+    const replyKey = nextKey();
+    if (telling !== undefined) told.current.set(replyKey, telling.ended);
+    run({ type: 'send', content, attachments: [...attachments], userKey, replyKey, request }, request, retries, telling, returned);
   }
 
   function openConversation(id: string): void {
@@ -842,7 +949,10 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
 
   function toMessage(stored: StoredMessage, tree: readonly TreeNode[], asked: StoredMessage | undefined, conversationId: string): ChatMessage {
     const parentId = stored.nodeId === null ? null : tree.find((node) => node.id === stored.nodeId)?.parentId ?? null;
-    const message: ChatMessage = { ...blankMessage(nextKey(), stored.role), nodeId: stored.nodeId, parentId, feedback: stored.feedback, next: stored.next };
+    const message: ChatMessage = {
+      ...blankMessage(nextKey(), stored.role), nodeId: stored.nodeId, parentId, feedback: stored.feedback, next: stored.next,
+      at: stored.role === 'user' ? stored.at : stored.endedAt, attachments: stored.role === 'user' ? stored.attachments : [],
+    };
     if (stored.role === 'assistant') {
       // Time worked runs from the person's message to the reply's end. Only a message's first reply can say so: a
       // later version (a regenerate) started after the message was sent, at a time that was not stored.
@@ -866,6 +976,12 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
         if (part.name === ITEM_TOOL) {
           if (part.state === 'done' && part.result?.shown === true) {
             message.parts.push({ type: 'item', key: nextKey(), card: { id: part.id, conversationId, stored: 'kept' } });
+          }
+          continue;
+        }
+        if (part.name === ORDER_CHANGE_TOOL || part.name === ORDER_RULE_TOOL) {
+          if (part.state === 'done' && part.result?.shown === true) {
+            message.parts.push({ type: 'order', key: nextKey(), card: { id: part.id, conversationId, stored: 'kept' } });
           }
           continue;
         }
@@ -942,8 +1058,13 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     // Only a saved message of the person's, with something in it.
     if (content === '' || message?.role !== 'user' || message.nodeId === null || current.conversationId === null) return;
     if (!canStart(current) || live.current !== null) return;
-    const request: TurnRequest = { conversationId: current.conversationId, content, parentId: message.parentId };
-    run({ type: 'edit', messageKey, content, userKey: nextKey(), replyKey: nextKey(), request }, request);
+    // The edit carries the message's files again (D36), but not one gone from Your data: the server would refuse it.
+    const attachments = message.attachments.filter((attachment) => attachment.state !== 'gone');
+    const refs = attachments.map((attachment) => attachment.ref);
+    const request: TurnRequest = {
+      conversationId: current.conversationId, content, parentId: message.parentId, ...(refs.length > 0 ? { attachments: refs } : {}),
+    };
+    run({ type: 'edit', messageKey, content, attachments, userKey: nextKey(), replyKey: nextKey(), request }, request);
   }
 
   function regenerate(replyKey: string): void {
@@ -990,30 +1111,36 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     );
   }
 
-  function stopAndSend(): void {
+  function stopAndSend(attachments: readonly MessageAttachment[] = [], returned?: () => void): void {
     const content = latest.current.draft.trim();
     const ending = turnEnd.current;
-    if (content === '') return;
-    if (live.current === null || ending === null) {
-      start(content);
+    if (content === '') {
+      returned?.();
       return;
     }
-    // The send waits for the stopped turn to end, so it goes after the leaf as the stop left it.
-    const queued = { content };
+    if (live.current === null || ending === null) {
+      start(content, 0, undefined, attachments, returned);
+      return;
+    }
+    // The send waits for the stopped turn to end, so it goes after the leaf as the stop left it. A second press
+    // meanwhile takes its place, and the first one's files go back.
+    const queued = { content, returned };
+    waiting.current?.returned?.();
     waiting.current = queued;
     live.current.abort();
     void ending.then(() => {
       if (waiting.current !== queued) return;
       waiting.current = null;
-      start(content, CLAIM_RETRIES);
+      start(content, CLAIM_RETRIES, undefined, attachments, returned);
     });
   }
 
   return {
     state,
     setDraft: (text) => { dispatch({ type: 'draft', text }); },
-    send: () => { start(state.draft.trim()); },
+    send: (attachments = [], returned) => { start(state.draft.trim(), 0, undefined, attachments, returned); },
     ask: (text) => { start(text.trim()); },
+    tell: (text, telling) => { start(text.trim(), 0, telling); },
     stop: () => { live.current?.abort(); },
     stopAndSend,
     newConversation: () => {
@@ -1054,8 +1181,14 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
       if (at < 1 || asked?.role !== 'user' || !canStart(state)) return;
       const request = state.messages[at]?.request ?? null;
       dispatch({ type: 'drop', replyKey });
-      // Sent again from where the conversation is now: after the leaf, like any message.
-      start(request !== null && 'content' in request ? request.content : messageText(asked));
+      // A question card's message goes again as the card sent it: its words never reach the composer, and once saved
+      // the card answers its question.
+      const ended = told.current.get(replyKey);
+      told.current.delete(replyKey);
+      // Sent again from where the conversation is now: after the leaf, like any message, with the files it carried,
+      // except one gone from Your data, as an edit sends them (the server would refuse it).
+      const attachments = asked.attachments.filter((attachment) => attachment.state !== 'gone');
+      start(request !== null && 'content' in request ? request.content : messageText(asked), 0, ended === undefined ? undefined : { ended }, attachments);
     },
     reload: () => {
       dispatch({ type: 'load' });

@@ -1,10 +1,11 @@
 // tw_agent_answers (spec 6.17, docs/portal/tuning-chat.md section 8): the answers to TownwiseAI's questions about a
-// location's days with no sales, keyed by the question's id (dates and a weekday number only). An answer claims its row
-// (`saving`), writes the closure note a `closed` answer makes with the row's `noteId`, then marks it `done`, so a retry
-// or a second tab finishes the same note instead of making another (handlers/agent.ts). Every row gets its `noteId`
-// when it is inserted, whatever the answer. A `closed` answer whose note is written overrules a different answer sent
-// at the same time, as a saved proposal overrules Not now (stores/chat-proposals.ts): the note exists. It holds no person
-// id (the audit event carries the actor) and no text.
+// location's days with no sales or almost no guests, keyed by the question's id (dates and a weekday number only). An
+// answer claims its row (`saving`), writes the note the answer saves (a closure note, or a likely-closed day's open-day
+// note) with the row's `noteId`, then marks it `done`, so a retry or a second tab finishes the same note instead of
+// making another (handlers/agent.ts). Every row gets its `noteId` when it is inserted, whatever the answer. An answer
+// whose note is written overrules a different answer sent at the same time, as a saved proposal overrules Not now
+// (stores/chat-proposals.ts): the note exists. It holds no person id (the audit event carries the actor) and no text:
+// `other` (Something else) stores the answer only.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
@@ -31,7 +32,7 @@ function answerSchema(): Schema<AnswerFields> {
     orgId: { type: Schema.Types.ObjectId, required: true },
     locationId: { type: Schema.Types.ObjectId, required: true },
     questionId: { type: String, required: true },
-    answer: { type: String, required: true, enum: ['closed', 'open', 'not_sure'] },
+    answer: { type: String, required: true, enum: ['closed', 'open', 'not_sure', 'other'] },
     noteId: { type: Schema.Types.ObjectId, required: true },
     status: { type: String, required: true, enum: ['saving', 'done'] },
     createdAt: { type: Date, required: true },
@@ -72,11 +73,11 @@ export interface AgentAnswerStore {
    */
   claim(scope: OrgScope, key: AnswerKey, input: { answer: QuestionAnswer; now: Date }): Promise<AnswerRecord | null>;
   /**
-   * `saving` to `done` with the claimed answer, only while the row still holds it. `closed`, called once its note is
-   * written, also moves a row a different answer took or finished meanwhile. True only for the call that changed the
-   * row, so each answer stored is recorded once.
+   * `saving` to `done` with the claimed answer, only while the row still holds it. An answer whose note is written
+   * (`noteWritten`) also moves a row a different answer took or finished meanwhile. True only for the call that changed
+   * the row, so each answer stored is recorded once.
    */
-  markDone(scope: OrgScope, key: AnswerKey, input: { answer: QuestionAnswer; now: Date }): Promise<boolean>;
+  markDone(scope: OrgScope, key: AnswerKey, input: { answer: QuestionAnswer; now: Date; noteWritten: boolean }): Promise<boolean>;
   /** Resolves the number deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
   /** Organization deletion (spec 10.7). */
@@ -125,8 +126,8 @@ export function createAgentAnswerStore(connection: Connection): AgentAnswerStore
       }
     },
     async markDone(scope, key, input) {
-      const held = input.answer === 'closed'
-        ? { $or: [{ status: 'saving' as const }, { answer: trusted({ $ne: 'closed' as const }) }] }
+      const held = input.noteWritten
+        ? { $or: [{ status: 'saving' as const }, { answer: trusted({ $ne: input.answer }) }] }
         : { status: 'saving' as const, answer: input.answer };
       const result = await Answer.updateOne(
         { ...keyOf(scope, key), ...held },

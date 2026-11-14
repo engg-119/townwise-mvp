@@ -1,3 +1,5 @@
+import type { KeyObject } from 'node:crypto';
+
 import type { Auth, AuthStores } from '@ckeith26/auth';
 import type { RedisHandle } from '@ckeith26/redis';
 import type { Logger, ServerConfig } from '@ckeith26/server-core';
@@ -5,6 +7,7 @@ import express, { type Router } from 'express';
 import type { Connection } from 'mongoose';
 
 import { mountTownwiseRoutes, TOWNWISE_ROUTES, type TownwiseRoute } from './access/routes.ts';
+import { createCalendarFetcher, type CalendarFetcher } from './calendar/fetch.ts';
 import type { ChatModel } from './chat/model.ts';
 import { TURN_TIME_LIMIT_MS } from './chat/turn.ts';
 import { resolveTownwiseConfig, type ResolvedTownwiseConfig, type TownwiseConfig } from './config.ts';
@@ -47,12 +50,24 @@ export interface TownwiseDeps {
   readonly files?: FileBlobs | undefined;
   /** Wakes the file reader (files/worker.ts) after an import starts or a file is queued. */
   readonly fileWorker?: { nudge(): void } | undefined;
+  /**
+   * Reading with TownwiseAI (files/ai-reader.ts, spec 11A.9); absent turns it off (main.ts builds it only while stored
+   * files are on, ANTHROPIC_API_KEY is set and TOWNWISE_FILES_MONTHLY_BUDGET_USD is above 0).
+   */
+  readonly aiReader?: { nudge(): void } | undefined;
   /** U13A: the researched headcount inputs; absent, the committed people-in-town/sources.ts. Tests pass synthetic ones. */
   readonly peopleData?: PeopleData | undefined;
   /** Starts the forecast lab's jobs; absent turns calibrations off (main.ts builds it from TOWNWISE_LAB_RUNNER). */
   readonly labRunner?: LabRunner | undefined;
   /** Who may call the lab callback (lab/caller.ts); main.ts builds it with the runner. Absent, /lab answers 404 to all. */
   readonly labCaller?: LabCaller | undefined;
+  /**
+   * Seals and opens owner calendar links (calendar/secret.ts); absent turns links off while calendar files still import
+   * (main.ts passes it only when TOWNWISE_CALENDAR_KEY is set).
+   */
+  readonly calendarKey?: KeyObject | undefined;
+  /** Fetches owner calendar links; absent, calendar/fetch.ts's guarded fetcher. Tests pass one over a local server. */
+  readonly calendarFetcher?: CalendarFetcher | undefined;
 }
 
 /**
@@ -87,6 +102,8 @@ export interface TownwiseContext {
   /** Null while stored files are off. */
   readonly files: FileBlobs | null;
   readonly nudgeFiles: () => void;
+  /** Reading with TownwiseAI: null while it is off (503 ai_unavailable); its nudge after a read is asked for. */
+  readonly aiReads: { nudge(): void } | null;
   /** The one door TownwiseAI's tools read a reference item's text through (chat/* imports no file code). */
   readonly items: ItemReader;
   /** U13A. */
@@ -95,6 +112,10 @@ export interface TownwiseContext {
   readonly labRunner: LabRunner | null;
   /** Null while the forecast lab is off (the callback answers 404). */
   readonly labCaller: LabCaller | null;
+  /** Null while calendar links are off (503 calendar_links_unavailable). */
+  readonly calendarKey: KeyObject | null;
+  /** The one way a handler reaches an owner's calendar address (calendar/fetch.ts). */
+  readonly calendarFetcher: CalendarFetcher;
 }
 
 /** Registers the Townwise models on `connection` (call it before ensureIndexes) and builds what every handler receives. */
@@ -116,6 +137,7 @@ export function createTownwiseContext(deps: TownwiseDeps): TownwiseContext {
     placesMap: deps.placesMap ?? null,
     files: deps.files ?? null,
     nudgeFiles: () => { deps.fileWorker?.nudge(); },
+    aiReads: deps.aiReader ?? null,
     items: createItemReader(stores, deps.files ?? null),
     ports: {
       peopleInTown: createPeopleInTownReader({ stores, data: deps.peopleData ?? PEOPLE_DATA }),
@@ -124,6 +146,8 @@ export function createTownwiseContext(deps: TownwiseDeps): TownwiseContext {
     },
     labRunner: deps.labRunner ?? null,
     labCaller: deps.labCaller ?? null,
+    calendarKey: deps.calendarKey ?? null,
+    calendarFetcher: deps.calendarFetcher ?? createCalendarFetcher(),
   };
 }
 

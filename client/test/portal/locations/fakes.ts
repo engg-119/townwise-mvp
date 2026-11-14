@@ -125,7 +125,7 @@ export function salesOf(days: readonly SalesDay[], uploads: Upload[] = []): Sale
 export function noteOf(id: string, extra?: Partial<Note>): Note {
   return {
     id, kind: 'closure', startDate: '2026-03-02', endDate: '2026-03-02', weekdays: null, effect: 'closed', expectedGuests: null,
-    detail: null, createdByEmail: ADMIN_EMAIL, createdAt: '2026-02-01T15:00:00.000Z', updatedAt: '2026-02-01T15:00:00.000Z',
+    detail: null, startTime: null, endTime: null, createdByEmail: ADMIN_EMAIL, createdAt: '2026-02-01T15:00:00.000Z', updatedAt: '2026-02-01T15:00:00.000Z',
     canEdit: true, ...extra,
   };
 }

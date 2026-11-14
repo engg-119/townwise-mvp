@@ -2,8 +2,9 @@ import { z } from 'zod';
 
 import type { ApiClient } from '../../api/client';
 
-// The two estimate reads (spec 10.13, docs/portal/estimates.md): people in town for a range of days, and "How Townwise
-// estimates" for a location. Their shapes live here, not in src/portal/schemas.ts, so this folder owns them.
+// The estimate reads (spec 10.13, docs/portal/estimates.md): people in town for a range of days, "How Townwise
+// estimates" for a location, and the published forecast for a range of days (the one client read of it, which the
+// Calendar, Home and TownwiseAI's pages share). Their shapes live here, not in src/portal/schemas.ts, so this folder owns them.
 // `z.object` strips unknown keys, so a field the API adds later never breaks a page.
 
 function locationPath(locationId: string): `/${string}` {
@@ -96,6 +97,108 @@ export const liveAccuracySchema = z.object({
 });
 export type LiveAccuracy = z.infer<typeof liveAccuracySchema>;
 
+const DAY_STATUSES = ['open', 'closed', 'booked'] as const;
+
+/** A web link: http or https. A regex, so the check does not lean on each platform's `URL` support. */
+const WEB_LINK = /^https?:\/\//i;
+
+/** What a note or a business rule did to a forecast day: its id, guest count and outcome (spec 14.5). */
+const appliedSchema = z.object({ id: z.string(), guests: z.number().nullable(), outcome: z.string() });
+
+/**
+ * Whether a reason usually brings more or fewer guests (spec 14.4): `pct` is its size rounded to the nearest 5 (never
+ * negative), 'same' at 5 or less; `basis` 'model' is the run's own effect, 'history' how the location's own last 52
+ * weeks usually ran over `days` days (null for the model's).
+ */
+const reasonEffectSchema = z.object({
+  direction: z.enum(['more', 'fewer', 'same']),
+  pct: z.number(),
+  basis: z.enum(['model', 'history']),
+  days: z.number().nullable(),
+});
+export type ReasonEffect = z.infer<typeof reasonEffectSchema>;
+
+/**
+ * A reason a forecast day gives. `kind` is any string, so a kind this client doesn't know never fails a page; 'note'
+ * is one of the location's notes, which the API words from its kind, guests and hours (never its detail), with what it
+ * did to the day in `note.outcome` (spec 14.5); 'rule' is a business rule with a schedule (D31), worded from the
+ * schedule (never the rule's text), with what it did in `rule.outcome` (missing from an API before rules). A source
+ * whose url is not a web link is dropped. `effect` is set from the town's today on, null when there is nothing honest
+ * to say, missing from an API before effects; one this client can't read is null, so it never fails a page.
+ */
+const forecastReasonSchema = z.object({
+  kind: z.string(),
+  label: z.string(),
+  effectPct: z.number().nullable(),
+  effect: reasonEffectSchema.nullish().catch(null),
+  sources: z.array(z.object({ label: z.string(), url: z.string() })).transform((sources) => sources.filter((source) => WEB_LINK.test(source.url))),
+  note: appliedSchema.nullable(),
+  rule: appliedSchema.nullish(),
+});
+export type ForecastReason = z.infer<typeof forecastReasonSchema>;
+
+/** The note's or the rule's part of a reason: what it did to the day; null on the run's own reasons. */
+export function appliedOf(reason: ForecastReason): z.infer<typeof appliedSchema> | null {
+  return reason.note ?? reason.rule ?? null;
+}
+
+/** Whether a note or a business rule on the day had this outcome. */
+export function yoursDid(day: Pick<ForecastDay, 'reasons'>, outcome: string): boolean {
+  return day.reasons.some((reason) => appliedOf(reason)?.outcome === outcome);
+}
+
+/**
+ * Whose guests a day's `noteGuests` are, from the reasons that added or booked them: “your rules”, “your notes and
+ * rules”, else “your notes” (also when the API left the notes past its first six out of the reasons).
+ */
+export function guestsFromWords(day: Pick<ForecastDay, 'reasons'>): 'your notes' | 'your rules' | 'your notes and rules' {
+  const counted = (outcome: string | undefined): boolean => outcome === 'added' || outcome === 'booked';
+  const notes = day.reasons.some((reason) => counted(reason.note?.outcome));
+  const rules = day.reasons.some((reason) => counted(reason.rule?.outcome));
+  if (rules) return notes ? 'your notes and rules' : 'your rules';
+  return 'your notes';
+}
+
+/**
+ * A published forecast day. `status`, `low`, `mid` and `high` are the day as the location's notes leave it from the
+ * town's today on; `model` is the run's own (its range is the 80% one), equal to the day's when no note changed it.
+ * `noteGuests`: guests notes add to an open day, or a buyout's party on a booked day. `moreNotes`: note reasons past
+ * the first 6. `inRange` is always the model's.
+ */
+const forecastDaySchema = z.object({
+  date: z.string(),
+  status: z.enum(DAY_STATUSES),
+  low: z.number().nullable(),
+  mid: z.number().nullable(),
+  high: z.number().nullable(),
+  model: z.object({ status: z.enum(DAY_STATUSES), low: z.number().nullable(), mid: z.number().nullable(), high: z.number().nullable() }),
+  noteGuests: z.number(),
+  moreNotes: z.number(),
+  /** Rule reasons past the first 6 (D31); an older answer has none. */
+  moreRules: z.number().optional(),
+  reasons: z.array(forecastReasonSchema),
+  runId: z.string(),
+  actual: z.number().nullable(),
+  inRange: z.boolean().nullable(),
+});
+export type ForecastDay = z.infer<typeof forecastDaySchema>;
+
+/**
+ * GET .../forecast (spec 10.13, 14.5). `available` is false when no published run covers any day of the range. A week a
+ * note changed the status of is left out; another week's figures include `noteGuests` (0 from an API before notes).
+ */
+export const forecastWindowSchema = z.object({
+  available: z.boolean(),
+  reason: z.enum(['no_published_forecast', 'not_covered']).nullable(),
+  runs: z.array(z.object({ id: z.string(), model: z.object({ label: z.string() }), madeAt: z.string(), live: liveAccuracySchema.nullable() })),
+  days: z.array(forecastDaySchema),
+  weeks: z.array(z.object({
+    from: z.string(), to: z.string(), openDays: z.number(), low: z.number(), mid: z.number(), high: z.number(), runId: z.string(),
+    noteGuests: z.number().default(0),
+  })),
+});
+export type ForecastWindow = z.infer<typeof forecastWindowSchema>;
+
 export const estimatesAboutSchema = z.object({
   version: z.string(),
   card: z.object({
@@ -121,6 +224,11 @@ export type EstimatesAbout = z.infer<typeof estimatesAboutSchema>;
 /** People in town from `from` to `to`, inclusive, at most 92 days. */
 export function fetchPeopleInTown(api: ApiClient, locationId: string, range: { from: string; to: string }): Promise<PeopleInTown> {
   return api.json(`${locationPath(locationId)}/people-in-town?from=${range.from}&to=${range.to}`, peopleInTownSchema);
+}
+
+/** The published forecast from `from` to `to`, inclusive, at most 42 days (the API's rule: a six-week calendar grid). */
+export function fetchForecast(api: ApiClient, locationId: string, range: { from: string; to: string }): Promise<ForecastWindow> {
+  return api.json(`${locationPath(locationId)}/forecast?from=${range.from}&to=${range.to}`, forecastWindowSchema);
 }
 
 export function fetchEstimatesAbout(api: ApiClient, locationId: string): Promise<EstimatesAbout> {

@@ -5,13 +5,15 @@ import { createLocation, openAsAdminOrgId, type TownInput } from './api';
 import { CONTACT_EMAIL } from './contact';
 import { hasCode } from './errors';
 import { useAction } from './hooks';
+import { defaultLocationName } from './locations/naming';
 import { addLabel } from './onboarding/checklist';
 import { PlaceChecklist } from './onboarding/PlaceChecklist';
-import { createLocationAt, placeChanged, placeName, placesUnavailable, townInputOf, type UsablePlace } from './onboarding/places';
+import { createLocationAt, placeChanged, placesUnavailable, townInputOf, type UsablePlace } from './onboarding/places';
 import { usePlaceChecklist, type CheckedRow } from './onboarding/usePlaceChecklist';
 import { usePlaceSearchAvailability } from './onboarding/usePlaceSearch';
 import { usePortal, useReadOnly } from './PortalProvider';
 import { locationHref } from './routing';
+import { townNameOf } from './towns';
 import { Actions, Button } from './ui/Button';
 import { ErrorNotice, ReadOnlyLine } from './ui/feedback';
 import { FormField } from './ui/FormField';
@@ -20,7 +22,8 @@ import { checkTown, EMPTY_TOWN, TOWN_COPY, TownFields, townValueOf, type TownMes
 
 // The Add location form (spec P10; inline on Locations when an org admin has none yet, P9). While the Google Places
 // search is on (GET /api/org `placeSearch`), the form starts with the places checklist (onboarding/usePlaceChecklist.ts):
-// each checked place has a Name, starting from Google's, and the primary “Add location” or “Add {n} locations” sends
+// each checked place has a Name, starting as “{Google name}, {Town}” (an address's as “{organization}, {Town}”,
+// locations/naming.ts defaultLocationName), and the primary “Add location” or “Add {n} locations” sends
 // them one after another to POST /api/org/locations, each with its place. Each row then says how it went: an added
 // row leaves, a taken name or a place Google now answers differently says so on its row and the rest go on, and the
 // location limit, a 503 or any other failure stops the rest (the 503 on its row, any other with Try again for the rows
@@ -28,8 +31,11 @@ import { checkTown, EMPTY_TOWN, TOWN_COPY, TownFields, townValueOf, type TownMes
 // opens. While it reloads the search stays as the last read had it, and P9 keeps the form while rows are left
 // (`onRowsLeft`). “Can’t find it? Enter it yourself” opens Name and Town, which add one location without a place
 // (after a row's 503, starting from that row). With the search off, under view-as, and after the search's 503, the
-// form is Name and Town alone. P21's staff setup (D23) mounts the same form with a `target` of its own: its route,
-// what follows, and the search's availability.
+// form is Name and Town alone. While the organization has no location yet (and this form has added none), a single
+// checked place has no Name and is sent with its default, and by hand there is Town alone, named “{organization},
+// {Town}” (D29: with one location the name is never shown); a second checked place, or a taken name, shows Name.
+// P21's staff setup (D23) mounts the same form with a `target` of its own: its route, what follows, the search's
+// availability, and the organization's name and location count.
 
 export const LOCATION_COPY = {
   name: 'Enter the location’s name.',
@@ -62,9 +68,13 @@ export interface AddLocationTarget {
   placeSearch: boolean;
   /** 409 location_limit, in the target's words. */
   limitLine: string;
+  /** The organization's name, for a default Name. */
+  orgName: string;
+  /** How many locations the organization has: with none, a single first location is not asked its Name. */
+  locationCount: number;
 }
 
-/** A checked row's Name as typed (null: still Google's), the Name's message, and a line about its place. */
+/** A checked row's Name as typed (null: still the default), the Name's message, and a line about its place. */
 interface RowEdit { name: string | null; message: string | null; line: string | null }
 
 const NO_EDIT: RowEdit = { name: null, message: null, line: null };
@@ -97,6 +107,18 @@ export function AddLocationForm(props: {
   const [lastSearch, setLastSearch] = useState(orgSearch ?? false);
   if (orgSearch !== null && orgSearch !== lastSearch) setLastSearch(orgSearch);
   const known = target === undefined ? (orgSearch ?? lastSearch) : target.placeSearch;
+  // The organization's location count, kept from the last read as the search is; null before the first.
+  const orgCount = org?.status === 'ready' ? org.data.locations.length : null;
+  const [lastCount, setLastCount] = useState(orgCount);
+  if (orgCount !== null && orgCount !== lastCount) setLastCount(orgCount);
+  const orgName = target?.orgName ?? (me.access.state === 'member' ? me.access.org.name : '');
+  const locationCount = target?.locationCount ?? lastCount;
+  // A press here added one: the organization has a location, though its read may not say so yet.
+  const [addedAny, setAddedAny] = useState(false);
+  /** No location yet: the first is named for the person (D29). */
+  const first = locationCount === 0 && !addedAny;
+  // By hand, Name shows for a first location too once it holds a name to keep: a taken one, or a row's after its 503.
+  const [nameShown, setNameShown] = useState(false);
   const search = usePlaceSearchAvailability(api, { known, readOnly });
   const checklist = usePlaceChecklist(api, PLACE_COPY.unavailable);
   const { remove } = checklist;
@@ -120,8 +142,9 @@ export function AddLocationForm(props: {
 
   /** After a press that added any: the organization reloads, and once none is left the first one's Home opens. */
   const after = useCallback(async (added: readonly Added[], finished: boolean): Promise<void> => {
-    const [first] = added;
-    if (first === undefined) return;
+    const [one] = added;
+    if (one === undefined) return;
+    setAddedAny(true);
     if (target !== undefined) {
       await target.onAdded(added, finished);
       return;
@@ -129,7 +152,7 @@ export function AddLocationForm(props: {
     // Before the reload, in the same render, so P9 never swaps the form for its loading line.
     onRowsLeft?.(!finished);
     reloadOrg();
-    if (finished) router.push(locationHref(first.id));
+    if (finished) router.push(locationHref(one.id));
   }, [onRowsLeft, reloadOrg, router, target]);
 
   const addByHand = useAction(useCallback(async (input: { name: string; town: TownInput }) => {
@@ -137,7 +160,12 @@ export function AddLocationForm(props: {
     try {
       added = await send(input, null);
     } catch (error) {
-      if (hasCode(error, 409, 'location_name_taken')) { setMessages({ name: LOCATION_COPY.taken }); return; }
+      if (hasCode(error, 409, 'location_name_taken')) {
+        setName(input.name);
+        setNameShown(true);
+        setMessages({ name: LOCATION_COPY.taken });
+        return;
+      }
       if (hasCode(error, 409, 'location_limit')) { setLimit(true); return; }
       if (hasCode(error, 400, 'unknown_town')) { setMessages({ town: { choice: TOWN_COPY.choice } }); return; }
       throw error;
@@ -155,7 +183,7 @@ export function AddLocationForm(props: {
         try {
           location = await send(row.input, row.place.placeId);
         } catch (error) {
-          if (hasCode(error, 409, 'location_name_taken')) { mark(row.place, { message: LOCATION_COPY.taken }); continue; }
+          if (hasCode(error, 409, 'location_name_taken')) { mark(row.place, { name: row.input.name, message: LOCATION_COPY.taken }); continue; }
           if (placeChanged(error)) { mark(row.place, { line: PLACE_COPY.changed }); continue; }
           if (hasCode(error, 409, 'location_limit')) { setLimit(true); break; }
           if (placesUnavailable(error)) { mark(row.place, { line: PLACE_COPY.notAdded }); break; }
@@ -183,18 +211,28 @@ export function AddLocationForm(props: {
     if (empty && !adding) onRowsLeft?.(false);
   }, [empty, adding, onRowsLeft]);
 
+  const askName = !first || nameShown;
+
   function submitByHand(): void {
     if (readOnly) return;
-    const trimmed = name.trim();
     const checked = checkTown(town);
+    const trimmed = askName || !('input' in checked)
+      ? name.trim()
+      : defaultLocationName({ name: null, kind: 'business', town: { name: townNameOf(checked.input) } }, orgName);
     const next: Messages = {};
-    if (trimmed === '' || trimmed.length > 80) next.name = LOCATION_COPY.name;
+    if (askName && (trimmed === '' || trimmed.length > 80)) next.name = LOCATION_COPY.name;
     if ('messages' in checked) next.town = checked.messages;
     setMessages(next);
     setLimit(false);
     if (next.name !== undefined || !('input' in checked)) return;
     addByHand.run({ name: trimmed, town: checked.input });
   }
+
+  /** A checked row's Name until one is typed. */
+  const defaultName = (place: UsablePlace): string => defaultLocationName(place, orgName);
+  /** A single first place is sent with its default and shows no Name, unless one was typed or the API refused it. */
+  const single = first && checklist.rows.length === 1;
+  const asksName = (edit: RowEdit): boolean => !single || edit.name !== null || edit.message !== null;
 
   /** Checks every row's Name, then sends the rows in order; with a bad Name nothing is sent. */
   function submitPlaces(): void {
@@ -204,7 +242,7 @@ export function AddLocationForm(props: {
     for (const row of checklist.rows) {
       if (row.status !== 'checked') continue;
       const edit = edits.get(row.place) ?? NO_EDIT;
-      const trimmed = (edit.name ?? placeName(row.place)).trim();
+      const trimmed = (edit.name ?? defaultName(row.place)).trim();
       const bad = trimmed === '' || trimmed.length > 80;
       next.set(row.place, { name: edit.name, message: bad ? LOCATION_COPY.name : null, line: null });
       rows.push({ key: row.key, place: row.place, input: { name: trimmed, town: townInputOf(row.place.town) } });
@@ -219,7 +257,8 @@ export function AddLocationForm(props: {
   function enterByHand(): void {
     const notAdded = checklist.rows.find((row): row is CheckedRow => row.status === 'checked' && edits.get(row.place)?.line === PLACE_COPY.notAdded);
     if (notAdded !== undefined) {
-      setName((edits.get(notAdded.place)?.name ?? placeName(notAdded.place)).trim());
+      setName((edits.get(notAdded.place)?.name ?? defaultName(notAdded.place)).trim());
+      setNameShown(true);
       setTown(townValueOf(notAdded.place.town));
     }
     setMode({ kind: 'manual' });
@@ -240,7 +279,7 @@ export function AddLocationForm(props: {
           state={checklist}
           autoFocus={chosen !== null}
           label="Search Google Maps for the location"
-          helper="Type its name. Google Maps suggests places in the US."
+          helper="Type its name or street address. Google Maps suggests places in the US."
           disabled={addPlaces.pending}
           onUnavailable={onUnavailable}
           rowExtra={(row) => {
@@ -248,16 +287,18 @@ export function AddLocationForm(props: {
             // Read-only while adding: the press has read each Name, so one typed now would not be the one sent.
             return (
               <>
-                <FormField
-                  label="Name"
-                  value={edit.name ?? placeName(row.place)}
-                  onChangeText={(text) => { setEdits((current) => withEdit(current, row.place, { name: text })); }}
-                  autoCapitalize="words"
-                  maxLength={80}
-                  messages={edit.message === null ? [] : [edit.message]}
-                  alert
-                  readOnly={addPlaces.pending}
-                />
+                {asksName(edit) ? (
+                  <FormField
+                    label="Name"
+                    value={edit.name ?? defaultName(row.place)}
+                    onChangeText={(text) => { setEdits((current) => withEdit(current, row.place, { name: text })); }}
+                    autoCapitalize="words"
+                    maxLength={80}
+                    messages={edit.message === null ? [] : [edit.message]}
+                    alert
+                    readOnly={addPlaces.pending}
+                  />
+                ) : null}
                 {edit.line === null ? null : <ErrorNotice message={edit.line} />}
               </>
             );
@@ -277,16 +318,18 @@ export function AddLocationForm(props: {
     <Stack gap={20}>
       <ReadOnlyLine text={line} nativeID={readOnlyId} />
       {down ? <ErrorNotice message={PLACE_COPY.unavailable} /> : null}
-      <FormField
-        label="Name"
-        value={name}
-        onChangeText={setName}
-        autoCapitalize="words"
-        maxLength={80}
-        messages={messages.name === undefined ? [] : [messages.name]}
-        alert
-        {...ro}
-      />
+      {askName ? (
+        <FormField
+          label="Name"
+          value={name}
+          onChangeText={setName}
+          autoCapitalize="words"
+          maxLength={80}
+          messages={messages.name === undefined ? [] : [messages.name]}
+          alert
+          {...ro}
+        />
+      ) : null}
       <TownFields value={town} onChange={setTown} {...(messages.town === undefined ? {} : { messages: messages.town })} {...ro} />
       {limitNotice}
       {addByHand.error === null ? null : <ErrorNotice error={addByHand.error} onRetry={submitByHand} />}

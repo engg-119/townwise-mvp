@@ -69,7 +69,7 @@ test('the client app marks where you are in the top bar; the header names the lo
   expect(screen.getAllByRole('heading', { level: 1 }).map((heading) => heading.textContent)).toEqual(['Notes']);
   expect(screen.getByRole('link', { name: 'All locations' }).getAttribute('href')).toBe('/dashboard');
   expect(screen.getByRole('link', { name: 'Location settings' }).getAttribute('href')).toBe('/locations/l1/settings');
-  // The location switcher is a real select, labelled “Location”; the sections then open the other location.
+  // The location switcher is a real select, labeled “Location”; the sections then open the other location.
   const switcher = screen.getByRole('combobox', { name: 'Location' });
   choose(switcher, 'River Grill');
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l2/notes'); });
@@ -233,7 +233,9 @@ test('a GET /api/me read that finds open as admin over sends End once, and the c
 test('Waiting draws the town’s chart on web, with its summary and the numbers', async () => {
   renderAt('/waiting', fakePortalApi({ me: meOf(ACCESS.pending) }));
   expect(await screen.findByRole('heading', { name: 'While you wait: Stowe, VT' })).toBeTruthy();
-  const svg = document.querySelector('svg');
+  // The chart's SVG, found in the chart's own box (the one that ends with its scale line), not by page order: the top
+  // bar draws icons too.
+  const svg = screen.getByText('Scale fitted to this town. Index: 100 = an average month').parentElement?.querySelector('svg');
   expect(svg?.getAttribute('aria-hidden')).toBe('true');
   expect(svg?.querySelectorAll('path').length).toBeGreaterThan(4);
   expect(screen.getByText('Scale fitted to this town. Index: 100 = an average month')).toBeTruthy();

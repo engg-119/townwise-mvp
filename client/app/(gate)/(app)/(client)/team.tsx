@@ -4,11 +4,12 @@ import { StyleSheet, Text, View } from 'react-native';
 import { useLoad } from '../../../../src/portal/hooks';
 import { usePortal } from '../../../../src/portal/PortalProvider';
 import { Page } from '../../../../src/portal/shell/Page';
+import { TableSkeleton } from '../../../../src/portal/skeleton';
 import { AddPeople } from '../../../../src/portal/team/AddPeople';
 import { fetchMembers, type MemberView } from '../../../../src/portal/team/api';
 import { TEAM_COPY } from '../../../../src/portal/team/copy';
 import { TeamTable, type TeamUpdate } from '../../../../src/portal/team/TeamTable';
-import { ErrorNotice, LoadingLine } from '../../../../src/portal/ui/feedback';
+import { ErrorNotice } from '../../../../src/portal/ui/feedback';
 import { Columns, Section, Stack } from '../../../../src/portal/ui/layout';
 import { Mono, Small } from '../../../../src/portal/ui/text';
 import { theme } from '../../../../src/theme';
@@ -69,7 +70,8 @@ export default function TeamPage(): React.JSX.Element {
   let list: React.ReactNode;
   if (members !== null) list = <TeamTable org={org} members={members} update={update} addedCount={added} />;
   else if (state.status === 'failed') list = <ErrorNotice error={state.error} onRetry={retry} />;
-  else list = <LoadingLine text={TEAM_COPY.loading} />;
+  // TeamTable's columns; a row holds the role's and Remove's 44px buttons.
+  else list = <TableSkeleton name="team" label={TEAM_COPY.loading} columns={[{ flex: 1.6 }, { flex: 0.7 }, { flex: 0.7 }, {}, { flex: 1.4 }]} rowHeight={56} />;
 
   return (
     <Page eyebrow={org} title="Team" lead={TEAM_COPY.lead}>

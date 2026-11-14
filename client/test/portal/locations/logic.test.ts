@@ -16,6 +16,7 @@ describe('the note form checks the API’s rules (api/src/handlers/notes.ts read
     expect(checkNote(draft({}), TODAY)).toEqual({
       input: {
         kind: 'closure', startDate: '2026-12-24', endDate: '2026-12-24', weekdays: null, effect: 'closed', expectedGuests: null, detail: null,
+        startTime: null, endTime: null,
       },
     });
   });
@@ -27,7 +28,7 @@ describe('the note form checks the API’s rules (api/src/handlers/notes.ts read
     expect(checked).toEqual({
       input: {
         kind: 'private_event', startDate: '2026-12-24', endDate: '2027-03-29', weekdays: [0, 1, 6], effect: 'more_guests', expectedGuests: 1200,
-        detail: 'A dinner.',
+        detail: 'A dinner.', startTime: null, endTime: null,
       },
     });
   });
@@ -77,7 +78,7 @@ describe('the note form checks the API’s rules (api/src/handlers/notes.ts read
   test('an existing note reads back into the form, and the form gives the same note', () => {
     const note = noteOf('n1', { kind: 'private_event', startDate: '2027-03-01', endDate: '2027-03-29', weekdays: [1], effect: 'more_guests', expectedGuests: 40, detail: 'A dinner.' });
     const checked = checkNote(draftOf(note), TODAY);
-    expect(checked).toEqual({ input: { kind: 'private_event', startDate: '2027-03-01', endDate: '2027-03-29', weekdays: [1], effect: 'more_guests', expectedGuests: 40, detail: 'A dinner.' } });
+    expect(checked).toEqual({ input: { kind: 'private_event', startDate: '2027-03-01', endDate: '2027-03-29', weekdays: [1], effect: 'more_guests', expectedGuests: 40, detail: 'A dinner.', startTime: null, endTime: null } });
     expect(draftOf(noteOf('n2')).endDate).toBe('');
   });
 });

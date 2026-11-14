@@ -18,6 +18,7 @@ import { listDataTool } from './list-data.ts';
 import { suggestNextTool } from './next.ts';
 import { notesTool } from './notes.ts';
 import { overviewTool } from './overview.ts';
+import { ownerCalendarTool } from './owner-calendar.ts';
 import { peopleInTownTool } from './people-in-town.ts';
 import { proposeDataTool } from './propose-data.ts';
 import { proposeNoteTool } from './propose-note.ts';
@@ -25,6 +26,7 @@ import { readDataTool } from './read-data.ts';
 import { salesDaysTool } from './sales-days.ts';
 import { townCalendarTool } from './town-calendar.ts';
 import { townProfileTool } from './town-profile.ts';
+import { orderBoardTool, orderLineTool, orderSetupTool, proposeOrderChangeTool, proposeOrderRuleTool } from './orders.ts';
 import { showVisualTool, type Visual } from './visual.ts';
 
 export interface ToolContext {
@@ -39,6 +41,14 @@ export interface ToolContext {
   readonly role: Role;
   /** The caller as chat.turn_completed records them, for the events a tool records. */
   readonly actor: Pick<AuditEventInput, 'actorUserId' | 'actorEmail' | 'actorRole' | 'viewAsGrantId'>;
+  /**
+   * What this turn has read so far, shared by its tool calls (D36). `readUntrusted` is set from the start when the
+   * turn's requests carry the content of files attached to the person's message, and by read_data_item once it hands
+   * back an item's text in this turn. While it is set, start_calibration (the one tool that acts at once) refuses, so
+   * words from a file of Your data can never start it. A read from an earlier turn is sent again only as a stub
+   * (savedTurn), so it never sets it.
+   */
+  readonly turn: { readUntrusted: boolean };
 }
 
 export type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue };
@@ -120,6 +130,14 @@ export const TOOL_REGISTRY: readonly ChatTool<unknown>[] = [
   startCalibrationTool,
   getCalibrationTool,
   compareForecastModelsTool,
+  // The owner's own calendars (openspec change connect-owner-calendar).
+  ownerCalendarTool,
+  // Orders: the live board, one line, the setup, and the two cards. A quantity is never the model's.
+  orderBoardTool,
+  orderLineTool,
+  orderSetupTool,
+  proposeOrderChangeTool,
+  proposeOrderRuleTool,
 ];
 
 /** The tool definitions sent to the model, in registry order. */

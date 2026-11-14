@@ -2,7 +2,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 
 import { PlaceMap } from '../../../src/portal/places/PlaceMap';
 
-// The confirm card's map on web, through react-native-web: one labelled image whose only content is Google's own
+// The confirm card's map on web, through react-native-web: one labeled image whose only content is Google's own
 // image (so nothing covers Google's logo), loaded from the signed URL, at 2:1; nothing at all without a map.
 
 const URL = 'https://maps.googleapis.com/maps/api/staticmap?center=place_id%3AChIJTestPlace0001&key=test-static-key&signature=yLf7UY5VigCJ9Tc0GyjJzgV7Dbs=';
@@ -10,7 +10,7 @@ const LABEL = 'Map of the area around Lou’s Restaurant';
 
 afterEach(() => { cleanup(); });
 
-test('a map renders one labelled image of the signed URL at 2:1, with nothing laid over it', () => {
+test('a map renders one labeled image of the signed URL at 2:1, with nothing laid over it', () => {
   const { container } = render(<PlaceMap map={{ url: URL, width: 640, height: 320 }} label={LABEL} />);
   // react-native-web draws the picture as a background layer of a role="img" element (whose children are
   // presentational, so the label is read once) and keeps a transparent <img> of the same URL for the context menu.
