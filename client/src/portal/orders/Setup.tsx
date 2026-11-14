@@ -1,24 +1,9 @@
-import { StyleSheet, View } from 'react-native';
+import { SetupEditor } from './SetupEditor';
 
-import { theme } from '../../theme';
-import { locationHref } from '../routing';
-import { useLocation } from '../shell/LocationShell';
-import { LinkButton } from '../ui/Button';
-import { Small } from '../ui/text';
-
-// P31 Ordering setup (/locations/[id]/orders/setup, members; design Decisions 3, 4 and 8): suppliers and their
-// delivery days, the items, item sales and counts, read with fetchOrderSetup and saved with saveOrderSetup
-// (orders/api.ts). A placeholder until the page lands (tasks 6.3 and 6.4).
+// P31 Ordering setup on iOS and Android (/locations/[id]/orders/setup, members): suppliers, deliveries and items,
+// edited and saved as on the web. The template, the sheet import and the item sales upload read files, which is web
+// only (a native file picker is a new dependency), so the page says to use a computer for those. Setup.web.tsx adds
+// them on the web.
 export function Setup(): React.JSX.Element {
-  const { location } = useLocation();
-  return (
-    <View style={styles.page}>
-      <Small>The ordering setup page isn’t built yet.</Small>
-      <LinkButton href={locationHref(location.id, 'orders')} label="Back to Orders" />
-    </View>
-  );
+  return <SetupEditor />;
 }
-
-const styles = StyleSheet.create({
-  page: { gap: theme.space[3] },
-});
