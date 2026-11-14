@@ -25,7 +25,7 @@ function input(fields: Partial<CalendarInput> = {}): CalendarInput {
     today: TODAY, month: '2026-11', forecast: null, salesDays: [],
     events: [townEvent({ start: '2026-11-21', title: 'Dartmouth home football' }), townEvent({ start: '2026-12-03', title: 'Tree lighting' })],
     notes: [note({ startDate: '2026-11-21', expectedGuests: 70 })],
-    imported: [{ uid: 'i1', title: 'Wine delivery', startDate: '2026-11-21', endDate: '2026-11-21', startTime: null, endTime: null }],
+    imported: [{ calendarId: 'c1', uid: 'i1', title: 'Wine delivery', startDate: '2026-11-21', endDate: '2026-11-21', startTime: null, endTime: null }],
     filters: ALL_FILTERS,
     ...fields,
   };

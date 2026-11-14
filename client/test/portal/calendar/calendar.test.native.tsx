@@ -12,11 +12,11 @@ import { cleanup, fireEvent, screen, within } from 'expo-router/testing-library'
 import { ACCESS, fakePortalApi, meOf, orgOf, writes, type FakePortalApi } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { townEvent } from '../analytics/fakes';
-import { calendarFake, forecastDay, forecastOf, NOTES_PATH, savedNote, type CalendarFake } from './fakes';
+import { calendarFake, forecastDay, forecastOf, NOTES_PATH, ownerCalendar, ownerEvent, savedNote, type CalendarFake } from './fakes';
 
 // P28 Calendar on native (spec 16.3): the same reads and grid as on web, a Pressable grid with the day
-// panel under it, adding a note from the day, and no calendar file import (no file picker is installed). Today is
-// Wed, Nov 11, 2026. Synthetic figures only.
+// panel under it, adding a note from the day, the location's stored calendar events, and no calendar file import (no
+// file picker is installed). Today is Wed, Nov 11, 2026. Synthetic figures and made-up titles only.
 
 beforeEach(() => {
   jest.useFakeTimers({
@@ -55,8 +55,8 @@ function november(guests = 0): unknown {
   return forecastOf(days);
 }
 
-function setup(): { api: FakePortalApi; fake: CalendarFake } {
-  const fake = calendarFake({ events: [townEvent({ start: SATURDAY, title: 'Dartmouth home football' })], forecasts: { '2026-11': november() } });
+function setup(init: Partial<Pick<CalendarFake, 'calendars' | 'ownerEvents'>> = {}): { api: FakePortalApi; fake: CalendarFake } {
+  const fake = calendarFake({ events: [townEvent({ start: SATURDAY, title: 'Dartmouth home football' })], forecasts: { '2026-11': november() }, ...init });
   return { api: fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: fake }), fake };
 }
 
@@ -85,6 +85,19 @@ test('no import control; the line says to use the web', async () => {
   expect(await screen.findByText('To add events from your own calendar file, open Townwise on the web.')).toBeTruthy();
   expect(screen.queryByText('Import a calendar file')).toBeNull();
   expect(screen.queryByRole('button', { name: 'Your calendar' })).toBeNull();
+});
+
+test('stored events show on native: in the week’s agenda and the day panel', async () => {
+  const { api } = setup({
+    calendars: [ownerCalendar({ id: 'c1', label: 'Kitchen', eventCount: 1 })],
+    ownerEvents: [ownerEvent({ calendarId: 'c1', uid: 'e1', title: 'Wine delivery', startDate: SATURDAY, startTime: '09:00', endTime: '10:00' })],
+  });
+  await renderApp(`/locations/l1/calendar?day=${SATURDAY}&view=week`, api);
+  const agenda = await screen.findByLabelText('Nov 16 to 22, 2026');
+  expect(within(agenda).getByText('Wine delivery')).toBeTruthy();
+  expect(within(panel()).getByText('From your calendar: Wine delivery')).toBeTruthy();
+  expect(within(panel()).getByRole('button', { name: 'Make a note from Wine delivery' })).toBeTruthy();
+  expect(writes(api)).toEqual([]);
 });
 
 test('adds a note from the day and reloads the forecast', async () => {

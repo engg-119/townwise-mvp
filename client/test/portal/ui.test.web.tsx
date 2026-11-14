@@ -36,6 +36,21 @@ test('a button that turns disabled keeps its element and its focus: aria-disable
   expect(onPress).toHaveBeenCalledTimes(1);
 });
 
+test('a disclosure button has aria-expanded and aria-controls, and a button without them has neither', () => {
+  const view = render(<Button variant="outline" label="Your calendars" expanded={false} controls="p1" onPress={() => undefined} />);
+  const button = screen.getByRole('button', { name: 'Your calendars' });
+  expect(button.getAttribute('aria-expanded')).toBe('false');
+  expect(button.getAttribute('aria-controls')).toBe('p1');
+  view.rerender(<Button variant="outline" label="Your calendars" expanded controls="p1" onPress={() => undefined} />);
+  expect(button.getAttribute('aria-expanded')).toBe('true');
+  expect(button.getAttribute('aria-controls')).toBe('p1');
+  cleanup();
+  render(<Button variant="outline" label="Check again" onPress={() => undefined} />);
+  const plain = screen.getByRole('button', { name: 'Check again' });
+  expect(plain.hasAttribute('aria-expanded')).toBe(false);
+  expect(plain.hasAttribute('aria-controls')).toBe(false);
+});
+
 function dialog(props: Partial<ConfirmDialogProps> & Pick<ConfirmDialogProps, 'onCancel'>): React.JSX.Element {
   return (
     <ConfirmDialog visible title="Remove the invitation?" body="They can’t join with it anymore." confirmLabel="Remove" pendingLabel="Removing…" onConfirm={() => undefined} {...props} />

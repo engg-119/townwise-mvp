@@ -68,7 +68,7 @@ const GAME: TownEvent = townEvent({ start: '2026-11-21', title: 'Dartmouth home 
 const VETERANS: TownEvent = holiday('2026-11-11', 'Veterans Day', 'us:veterans', 'Veterans Day');
 const TERM: TownEvent = townEvent({ id: 'hanover-nh:term', start: '2026-09-14', end: '2026-11-17', title: 'Fall term classes', kind: 'term' });
 const PARTY = note({ startDate: '2026-11-21', expectedGuests: 70, startTime: '18:00', endTime: '21:00', detail: 'A rehearsal dinner.' });
-const IMPORTED: ImportedEvent = { uid: 'u1', title: 'Wine delivery', startDate: '2026-11-21', endDate: '2026-11-21', startTime: '09:00', endTime: '10:00' };
+const IMPORTED: ImportedEvent = { calendarId: 'c1', uid: 'u1', title: 'Wine delivery', startDate: '2026-11-21', endDate: '2026-11-21', startTime: '09:00', endTime: '10:00' };
 
 function input(fields: Partial<CalendarInput> = {}): CalendarInput {
   return {

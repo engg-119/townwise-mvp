@@ -27,7 +27,7 @@ import type { Rule } from '../rules/api';
 // leaves out a holiday, event or term Why already names. The tooltip and Home's day detail take the same order in
 // short words (reasonShortLines).
 
-/** The filter chips, in toolbar order. `imported` ("Your calendar") shows only after an import. */
+/** The filter chips, in toolbar order. `imported` ("Your calendar") shows only when the location has a calendar. */
 export const FILTER_KEYS = ['holidays', 'events', 'terms', 'notes', 'imported'] as const;
 export type FilterKey = (typeof FILTER_KEYS)[number];
 export type Filters = Readonly<Record<FilterKey, boolean>>;
@@ -36,25 +36,22 @@ export const FILTER_LABEL: Readonly<Record<FilterKey, string>> = {
 };
 export const ALL_FILTERS: Filters = { holidays: true, events: true, terms: true, notes: true, imported: true };
 
-/** An event from the owner's own calendar file, kept in the page's memory only (spec 17). */
+/**
+ * An event from one of the location's own calendars, as the API keeps it (spec 17, D33; GET .../owner-calendars/events).
+ * A UID can repeat across calendars (the same export imported twice), so `{calendarId}:{uid}` is what keys one.
+ */
 export interface ImportedEvent {
+  calendarId: string;
   uid: string;
   title: string;
   startDate: string;
   endDate: string;
   /**
-   * Local 'HH:MM', only when the event starts and ends on the same day, or ends by 06:00 the next morning (ics.ts), when
-   * endTime is before startTime.
+   * The town's 'HH:MM', only when the event starts and ends on the same day, or ends by 06:00 the next morning
+   * (api/src/calendar/ics.ts), when endTime is before startTime.
    */
   startTime: string | null;
   endTime: string | null;
-}
-
-/** The owner's calendar file as the page holds it: its name, its events and how many repeating events it left out. */
-export interface ImportedCalendar {
-  fileName: string;
-  events: ImportedEvent[];
-  skipped: number;
 }
 
 export interface CalendarInput {
@@ -69,6 +66,7 @@ export interface CalendarInput {
   notes: readonly Note[];
   /** The location's business rules (D31); Home passes the same rules for its tooltip. */
   rules?: readonly Rule[];
+  /** The grid's stored events from the location's own calendars; none when their read failed. */
   imported: readonly ImportedEvent[];
   filters: Filters;
 }

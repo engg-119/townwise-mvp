@@ -1,26 +1,20 @@
-import { StyleSheet, View } from 'react-native';
-
 import { Mono } from '../ui/text';
-import type { ImportedCalendar } from './model';
+import { CALENDARS_COPY } from './calendars';
 
-// The owner's calendar file on native (P28, spec 16.3): no file picker is installed, so the header row says
-// where to import one instead, on the full-width line under the row where web shows its help. Web has its own file
-// (IcsImport.web.tsx), which takes the same props.
-
-export const NATIVE_IMPORT_LINE = 'To add events from your own calendar file, open Townwise on the web.';
+// The calendar file import on native (P28, spec 16.3; connect-owner-calendar design decision 11): no file picker is
+// installed, so the "Your calendars" panel says where to import one instead, in the place web's "Import a calendar
+// file" has. Web has its own file (IcsImport.web.tsx), which takes the same props. The siblings share only this type:
+// on web a value exported here would resolve to the .web file itself, so their words are in calendars.ts.
 
 export interface IcsImportProps {
-  /** The page's day, for the 400 days either side that a file's events are kept within. */
-  today: string;
-  /** The file read last, while the page is open; null before one. */
-  imported: ImportedCalendar | null;
-  onImport: (imported: ImportedCalendar) => void;
+  /** The id of the panel's help, which describes the import button (web). */
+  describedBy: string;
+  /** While the panel posts the file chosen last: the button reads "Importing…", disabled (web). */
+  pending: boolean;
+  /** A file of at most 1 MB, read: its name and its text, which the API parses. */
+  onFile: (file: { name: string; text: string }) => void;
+  /** The words for a file refused before or as it is read. */
+  onRefusal: (words: string) => void;
 }
 
-export const IcsImport: (props: IcsImportProps) => React.JSX.Element = () => (
-  <View style={styles.line}><Mono>{NATIVE_IMPORT_LINE}</Mono></View>
-);
-
-const styles = StyleSheet.create({
-  line: { flexBasis: '100%' },
-});
+export const IcsImport: (props: IcsImportProps) => React.JSX.Element = () => <Mono>{CALENDARS_COPY.nativeLine}</Mono>;

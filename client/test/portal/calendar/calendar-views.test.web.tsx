@@ -363,14 +363,43 @@ test('Week then Month returns to the grid you left: a trailing day keeps Novembe
 test('an import refusal shown before a switch is still shown after it', async () => {
   const { api } = setup();
   await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const calendars = screen.getByRole('button', { name: 'Your calendars' });
+  fireEvent.click(calendars);
   chooseLargeFile();
-  expect(await screen.findByText(TOO_LARGE)).toBeTruthy();
+  expect(await within(screen.getByRole('region', { name: 'Your calendars' })).findByText(TOO_LARGE)).toBeTruthy();
   fireEvent.click(viewButton('Week'));
   expect(await screen.findByRole('grid', { name: 'Nov 16 to 22, 2026' })).toBeTruthy();
-  expect(screen.getByText(TOO_LARGE)).toBeTruthy();
+  // The panel stays open across the switch: getByRole finds only a region that shows.
+  expect(within(screen.getByRole('region', { name: 'Your calendars' })).getByText(TOO_LARGE)).toBeTruthy();
+  expect(calendars.getAttribute('aria-expanded')).toBe('true');
   fireEvent.click(viewButton('Month'));
   expect(await screen.findByRole('grid', { name: 'November 2026' })).toBeTruthy();
-  expect(screen.getByText(TOO_LARGE)).toBeTruthy();
+  expect(within(screen.getByRole('region', { name: 'Your calendars' })).getByText(TOO_LARGE)).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Your calendars' })).toBe(calendars);
+  expect(calendars.getAttribute('aria-expanded')).toBe('true');
+});
+
+test('at 1280 the header row holds Today, Previous month, Next month, the label, the view switch and Your calendars, in that order, and the closed panel is its last item', async () => {
+  const { api } = setup();
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const label = screen.getByText('November 2026');
+  const row = label.parentElement?.parentElement;
+  if (row === null || row === undefined) throw new Error('no header row');
+  const order = [
+    screen.getByRole('button', { name: 'Today' }), screen.getByRole('button', { name: 'Previous month' }), screen.getByRole('button', { name: 'Next month' }),
+    label, screen.getByRole('group', { name: 'Calendar view' }), screen.getByRole('button', { name: 'Your calendars' }),
+  ];
+  order.slice(1).forEach((element, index) => { expect(before(order[index] as Element, element)).toBe(true); });
+  const button = screen.getByRole('button', { name: 'Your calendars' });
+  expect(button.parentElement).toBe(row);
+  // A closed panel's accessible name is empty, so it is found as the button's aria-controls names it.
+  const panel = document.getElementById(button.getAttribute('aria-controls') ?? '');
+  if (panel === null) throw new Error('no panel');
+  expect([panel.getAttribute('role'), panel.getAttribute('aria-label')]).toEqual(['region', 'Your calendars']);
+  expect(panel.parentElement).toBe(row);
+  expect(panel.nextElementSibling).toBeNull();
+  expect(before(button, panel)).toBe(true);
+  expect(window.getComputedStyle(panel).display).toBe('none');
 });
 
 test('at 1280 the header label is 216px wide in both views', async () => {

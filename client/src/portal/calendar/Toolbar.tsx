@@ -12,10 +12,11 @@ import { FILTER_KEYS, FILTER_LABEL, type FilterKey, type Filters } from './model
 // change is announced while focus stays on the button). The arrows sit before the label, so they never move under the
 // pointer, and from 641px the label has a fixed width that holds the longest week label, so nothing after it moves
 // either, in either view. Then the "Calendar view" switch, Month and Week as one segmented pair of `.tgl` buttons
-// (aria-pressed on web, a checked state on native, as ToggleGroup's), and `trailing`: controls the page passes, as the
-// row's own items, so a full-width line among them (the import's help and messages) sits under the row. From 1024px
-// the switch and the trailing controls sit at the right of the row (the arrows' group takes the free space), on a line
-// they wrap to as well; below that they start their own line at the left, together. No item is taller than 44px.
+// (aria-pressed on web, a checked state on native, as ToggleGroup's), and `trailing`: what the page passes, as the
+// row's own items, which is the "Your calendars" button and its panel (YourCalendars.tsx), a full-width item that is
+// the row's last, so it opens under the row. From 1024px the switch and the button sit at the right of the row (the
+// arrows' group takes the free space), on a line they wrap to as well; below that they start their own line at the
+// left, together. No item but the open panel is taller than 44px.
 // Previous and Next are disabled in place at the 25 months' ends. The filters are their own group (CalendarFilters),
 // which the page places by width.
 
@@ -39,7 +40,7 @@ export function Toolbar(props: {
   onToday: () => void;
   view: CalendarView;
   onView: (view: CalendarView) => void;
-  /** After the switch, as the row's own flex items: the import control on web, or the line that points to it on native. */
+  /** After the switch, as the row's own flex items: the "Your calendars" button and its full-width panel, the last item. */
   trailing: React.ReactNode;
 }): React.JSX.Element {
   const { desktop, phone } = useBreakpoint();
@@ -77,13 +78,13 @@ export function Toolbar(props: {
 }
 
 /**
- * “Show on the calendar”: the filters hide marks and list items, never a figure; "Your calendar" shows only once a
- * file is imported. Filters are page state, not stored.
+ * “Show on the calendar”: the filters hide marks and list items, never a figure; "Your calendar" shows only when the
+ * location has a calendar. Filters are page state, not stored.
  */
 export function CalendarFilters(props: {
   filters: Filters;
   onFilter: (key: FilterKey) => void;
-  /** Whether an imported calendar is open, so its chip shows. */
+  /** Whether the location has a calendar, so its chip shows. */
   imported: boolean;
 }): React.JSX.Element {
   const keys = FILTER_KEYS.filter((key) => key !== 'imported' || props.imported);

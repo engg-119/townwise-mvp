@@ -34,7 +34,7 @@ const SATURDAY = '2026-11-21';
 const BOUNDS = monthBounds(TODAY);
 
 function imported(title: string, startTime: string | null, endTime: string | null): ImportedEvent {
-  return { uid: title, title, startDate: SATURDAY, endDate: SATURDAY, startTime, endTime };
+  return { calendarId: 'c1', uid: title, title, startDate: SATURDAY, endDate: SATURDAY, startTime, endTime };
 }
 
 const PATIO = ruleOf('r1', 'Patio closes at 8 pm', {

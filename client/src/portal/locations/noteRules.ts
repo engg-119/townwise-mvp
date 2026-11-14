@@ -100,10 +100,10 @@ export function draftOfContent(content: NoteInput): NoteDraft {
 }
 
 /**
- * The form's draft of a note made from an event in the owner's calendar file (spec 16.3 P28): a private
+ * The form's draft of a note made from an event in one of the location's own calendars (spec 16.3 P28): a private
  * event, more guests, the event's dates and, for a timed one-day event, its hours. An event running past midnight to
- * 06:00 is its start day's only (calendar/ics.ts), and its hours are left out, since a note's end comes after its
- * start. The detail starts empty and the title is never copied: calendar titles often name customers.
+ * 06:00 is its start day's only (api/src/calendar/ics.ts), and its hours are left out, since a note's end comes after
+ * its start. The detail starts empty and the title is never copied: calendar titles often name customers.
  */
 export function draftOfImported(event: { startDate: string; endDate: string; startTime: string | null; endTime: string | null }): NoteDraft {
   const { startTime, endTime } = event;

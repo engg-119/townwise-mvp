@@ -37,7 +37,7 @@ function renderToolbar(fields: { canPrevious?: boolean; canNext?: boolean; view?
       onToday={today}
       view={fields.view ?? 'month'}
       onView={onView}
-      trailing={<button type="button">Import a calendar file</button>}
+      trailing={<button type="button">Your calendars</button>}
     />,
   );
   return { previous, next, today, onView };
@@ -84,7 +84,7 @@ test('Previous and Next are disabled in place at the 25 months’ ends', () => {
 test('the trailing controls come after the label, as the header row’s own items', () => {
   renderToolbar();
   const label = screen.getByText('November 2026');
-  const trailing = screen.getByRole('button', { name: 'Import a calendar file' });
+  const trailing = screen.getByRole('button', { name: 'Your calendars' });
   expect(before(label, trailing)).toBe(true);
   const row = label.parentElement?.parentElement;
   expect(trailing.parentElement).toBe(row);
@@ -129,7 +129,7 @@ test('the switch sits after the label and before the trailing controls, in the h
     renderToolbar();
     const label = screen.getByText('November 2026');
     const group = screen.getByRole('group', { name: 'Calendar view' });
-    const trailing = screen.getByRole('button', { name: 'Import a calendar file' });
+    const trailing = screen.getByRole('button', { name: 'Your calendars' });
     expect(before(label, group)).toBe(true);
     expect(before(group, trailing)).toBe(true);
     // A row item beside the trailing controls, so below 1024px they start their line together.
@@ -149,7 +149,7 @@ test('the label stays 216px wide in both views', () => {
   expect(window.getComputedStyle(screen.getByText('Dec 28, 2026 to Jan 3, 2027')).width).toBe('216px');
 });
 
-test('CalendarFilters is the “Show on the calendar” group of pressed chips; Your calendar only after an import', () => {
+test('CalendarFilters is the “Show on the calendar” group of pressed chips; Your calendar only when the location has a calendar', () => {
   const onFilter = jest.fn();
   const { rerender } = render(<CalendarFilters filters={{ ...ALL_FILTERS, terms: false }} onFilter={onFilter} imported={false} />);
   const group = screen.getByRole('group', { name: 'Show on the calendar' });

@@ -28,6 +28,13 @@ interface CommonProps {
 
 export interface ButtonProps extends CommonProps {
   onPress?: () => void;
+  /**
+   * A disclosure's state: aria-expanded on web, accessibilityState's `expanded` on native. Left out, the button says
+   * nothing about it.
+   */
+  expanded?: boolean;
+  /** The id (nativeID) of the region the button shows and hides, as aria-controls (web). */
+  controls?: string;
 }
 
 // react-native-web reports hover in the press state; React Native's types do not declare it.
@@ -87,8 +94,9 @@ export function Button(props: ButtonProps): React.JSX.Element {
       ref={ref}
       role="button"
       {...(Platform.OS === 'web' ? {} : { disabled })}
+      {...(Platform.OS === 'web' || props.expanded === undefined ? {} : { accessibilityState: { expanded: props.expanded } })}
       {...(props.accessibilityLabel === undefined ? {} : { accessibilityLabel: props.accessibilityLabel })}
-      {...webAria({ 'aria-describedby': props.describedBy })}
+      {...webAria({ 'aria-describedby': props.describedBy, 'aria-expanded': props.expanded, 'aria-controls': props.controls })}
       {...(disabled || props.onPress === undefined ? {} : { onPress: props.onPress })}
       style={(state) => boxStyle(variant, hovered(state), disabled, props.block === true)}
     >

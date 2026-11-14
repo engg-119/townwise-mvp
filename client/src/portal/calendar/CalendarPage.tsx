@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Platform, StyleSheet, View, type ViewStyle } from 'react-native';
 
+import type { ApiClient } from '../../api/client';
 import { theme } from '../../theme';
 import { fetchCalendar } from '../analytics/api';
 import { dayMonthRange, mondayOf } from '../analytics/week';
@@ -25,13 +26,14 @@ import { ErrorNotice, Notice } from '../ui/feedback';
 import { CalendarDay, PANEL_ID } from './CalendarDay';
 import { CalendarGrid } from './CalendarGrid';
 import { CalendarWeek } from './CalendarWeek';
+import { fetchOwnerCalendarEvents, fetchOwnerCalendars, type OwnerCalendarEvent } from './api';
 import { buildGrid, buildWeek, gridMonthFor, gridRange, pastRangeFor, shownFor, stepWeek, weekLabel } from './grid';
-import { IcsImport } from './IcsImport';
 import { CalendarFilters, Toolbar, type CalendarView } from './Toolbar';
 import {
   ALL_FILTERS, dayView, monthBounds, monthLabel, savedNotice, selectedDay, stepMonth, tooltipLines,
-  type CalendarInput, type FilterKey, type Filters, type ImportedCalendar, type ImportedEvent,
+  type CalendarInput, type FilterKey, type Filters, type ImportedEvent,
 } from './model';
+import { YourCalendars } from './YourCalendars';
 
 // P28 Calendar (/locations/[locationId]/calendar, members; spec 16.3, D30): a month grid of 6 weeks (grid.ts), each
 // day with the published forecast's guests, what drives each day, and the location's notes, which a member adds,
@@ -42,18 +44,21 @@ import {
 // Previous and Next move the day a week (grid.ts stepWeek). The grid's month is this page's own state, not the URL's:
 // a leading or trailing day is selected in place, and the grid moves only on Previous, Next, Today, PageUp and
 // PageDown, or when `?day=` leaves its 42 days (a key past the first or last row, browser back or forward, a link).
-// It reads five existing member routes: the notes with the business rules (D31; the day lists the rules whose
-// schedule covers it, edited on Rules), and over the grid's range (gridRange) its town calendar, its stored days (the
-// past part only) and its forecast (one read of at most 42 days). On a month change the new grid shows at once,
-// dimmed, with the days the kept reads cover and the rest pending until the new reads land. The forecast read stands
-// alone: when it fails the page still shows, with Try again for it only. After a note is saved or deleted the notes
-// and the forecast read again, since the API adjusts the forecast from notes on read (spec 14.5) and the client never
-// adds a note's guests itself; meanwhile the old figures stay, dimmed and aria-busy, and a save's notice says
-// “Saved.” until the new read says what the note did to the day. Under view-as the page shows in full with its writes
-// disabled in place. The owner's calendar file (web only, spec 16.3 P28 and 17) is read in the browser and held in
-// this page's state only, so it is gone on reload or on leaving; importing one turns "Your calendar" on, and Make a
-// note opens the form from one of its events with its dates and hours but never its title. Importing is allowed under
-// view-as, since it sends nothing; Make a note is disabled there. "Today" is the device's date.
+// It reads the notes with the business rules (D31; the day lists the rules whose schedule covers it, edited on Rules),
+// the location's calendars for "Your calendars" (spec 10.17, YourCalendars.tsx: part of the first load, so the button's
+// name never changes after the page shows, and its failure leaves the page showing), and over the grid's range
+// (gridRange) its town calendar, its stored days (the past part only), its calendars' stored events and its forecast
+// (one read of at most 42 days each). On a month change the new grid shows at once, dimmed, with the days the kept
+// reads cover and the rest pending until the new reads land. The forecast read stands alone, and the stored events'
+// failure is caught inside the grid's read: either failing leaves the page showing, without them, with Try again for
+// that read only. After a note is saved or deleted the notes and the forecast read again, since the API adjusts the
+// forecast from notes on read (spec 14.5) and the client never adds a note's guests itself; meanwhile the old figures
+// stay, dimmed and aria-busy, and a save's notice says “Saved.” until the new read says what the note did to the day.
+// Under view-as the page shows in full with its writes disabled in place. The location's own calendars (spec 16.3 P28
+// and 17, D33) are kept by the API, each an imported .ics file or a link, and their events show as "Your calendar"
+// on web and native; after one is added the list and the grid's stored events read again (never the forecast: stored
+// events change it only through notes), and "Your calendar" turns on. Make a note opens the form from one of their
+// events with its dates and hours but never its title; it is disabled under view-as. "Today" is the device's date.
 
 const READ_ONLY_ID = 'calendar-ro';
 /** The grid's slot: on web, focus that was on a cell the last render removed goes to the selected cell. */
@@ -63,7 +68,7 @@ const NOTE_GONE = 'This note isn’t available.';
 /** The desktop panel beside the grid, sticky as Analytics' is. */
 const sticky = (Platform.OS === 'web' ? { position: 'sticky', top: 16 } : {}) as unknown as ViewStyle;
 
-/** A new note's `source` keys its form, so the form starts again from each event in the owner's calendar file. */
+/** A new note's `source` keys its form, so the form starts again from each stored event (`{calendarId}:{uid}`). */
 type FormState = { mode: 'new'; draft: NoteDraft; source: string } | { mode: 'edit'; note: Note } | null;
 
 interface Kept<T> {
@@ -89,6 +94,20 @@ function useKept<T>(load: () => Promise<T>): Kept<T> {
     data: ready ?? kept, busy: state.status === 'loading', error: state.status === 'failed' ? state.error : null,
     settled: settled || state.status !== 'loading', reload,
   };
+}
+
+/**
+ * The grid's stored events from the location's calendars. A failure is no events and a flag, so the grid still shows
+ * without them (connect-owner-calendar design decision 11), as it does without a forecast.
+ */
+async function storedEventsOf(
+  api: ApiClient, locationId: string, range: { from: string; to: string },
+): Promise<{ events: OwnerCalendarEvent[]; failed: boolean }> {
+  try {
+    return { events: await fetchOwnerCalendarEvents(api, locationId, range), failed: false };
+  } catch {
+    return { events: [], failed: true };
+  }
 }
 
 /** The panel's notice: words, or the note just saved, whose notice waits for the forecast read again (savedNotice). */
@@ -125,8 +144,6 @@ function CalendarView(): React.JSX.Element {
   const month = gridMonthFor(selected, nextShown, rendered);
   if (month !== rendered) setRendered(month);
   const [filters, setFilters] = useState<Filters>(ALL_FILTERS);
-  // The owner's calendar file (spec 17), in this page's memory only.
-  const [imported, setImported] = useState<ImportedCalendar | null>(null);
   const [form, setForm] = useState<FormState>(null);
   const [notice, setNotice] = useState<PanelNotice>(null);
   const [deleting, setDeleting] = useState<Note | null>(null);
@@ -143,16 +160,18 @@ function CalendarView(): React.JSX.Element {
   const monthData = useKept(useCallback(async () => {
     const range = gridRange(month, bounds);
     const past = pastRangeFor(range, today);
-    const [calendar, days] = await Promise.all([
+    const [calendar, days, stored] = await Promise.all([
       fetchCalendar(api, location.id, range),
       past === null ? Promise.resolve([]) : fetchSalesDays(api, location.id, past),
+      storedEventsOf(api, location.id, range),
     ]);
-    return { month, calendar, days };
+    return { month, calendar, days, stored: stored.events, storedFailed: stored.failed };
   }, [api, location.id, month, today, bounds]));
   const forecast = useKept(useCallback(
     async () => ({ month, window: await fetchForecast(api, location.id, gridRange(month, bounds)) }),
     [api, location.id, month, bounds],
   ));
+  const calendars = useKept(useCallback(() => fetchOwnerCalendars(api, location.id), [api, location.id]));
 
   // Below 1024px on web the panel is under the grid: a day clicked or entered there brings it into view (an arrow key
   // keeps the focused cell in view instead).
@@ -175,10 +194,13 @@ function CalendarView(): React.JSX.Element {
   const shown = monthData.data;
   const forecastFailed = forecast.error !== null && shown?.month === month;
   const forecastWindow = forecastFailed || forecast.data === null || forecast.data.month !== shown?.month ? null : forecast.data.window;
+  // The stored events and "Your calendar" show only while the list's last read answered with a calendar: a failed list
+  // read leaves the grid without them (design decision 11), as the button then reads "Your calendars".
+  const hasCalendars = calendars.error === null && (calendars.data ?? []).length > 0;
   const input = useMemo<CalendarInput | null>(() => (shown === null || notes.data === null ? null : {
     today, month: shown.month, forecast: forecastWindow, salesDays: shown.days, events: shown.calendar.events, notes: notes.data.list,
-    rules: notes.data.rules, imported: imported?.events ?? [], filters,
-  }), [today, shown, forecastWindow, notes.data, imported, filters]);
+    rules: notes.data.rules, imported: hasCalendars ? shown.stored : [], filters,
+  }), [today, shown, forecastWindow, notes.data, hasCalendars, filters]);
   const rows = useMemo(() => (input === null || view === 'week' ? [] : buildGrid(month, input, bounds)), [input, view, month, bounds]);
   const week = useMemo(() => (input === null || view !== 'week' ? [] : buildWeek(selected, month, input, bounds)), [input, view, selected, month, bounds]);
   // The days the kept reads cover: their own grid's, which lags the shown grid's while a month change reads.
@@ -188,6 +210,18 @@ function CalendarView(): React.JSX.Element {
 
   const { reload: reloadNotes } = notes;
   const { reload: reloadForecast } = forecast;
+  const { reload: reloadCalendars } = calendars;
+  const { reload: reloadMonth } = monthData;
+  // After a calendar is added, refreshed or removed, and on the panel's Try again: the list and the grid's stored
+  // events. Stored events change the forecast only through notes, so neither the forecast nor the notes read again.
+  const readCalendarsAgain = useCallback(() => {
+    reloadCalendars();
+    reloadMonth();
+  }, [reloadCalendars, reloadMonth]);
+  const onCalendarsChanged = useCallback((added: boolean) => {
+    readCalendarsAgain();
+    if (added) setFilters((current) => ({ ...current, imported: true }));
+  }, [readCalendarsAgain]);
   const reloadDay = useCallback(() => {
     markStale();
     reloadNotes();
@@ -253,20 +287,16 @@ function CalendarView(): React.JSX.Element {
   }, [router, view]);
 
   const toggle = useCallback((key: FilterKey) => { setFilters((current) => ({ ...current, [key]: !current[key] })); }, []);
-  const onImport = useCallback((next: ImportedCalendar) => {
-    setImported(next);
-    setFilters((current) => ({ ...current, imported: true }));
-  }, []);
   // None over a pending day: the kept reads would word it from reads that don't cover it.
   const tooltip = useCallback((date: string) => (input === null || !covers(date) ? null : tooltipLines(date, input)), [input, covers]);
 
   const failure = notes.error ?? monthData.error;
   if (failure !== null) {
-    return <LoadFailure error={failure} onRetry={() => { notes.reload(); monthData.reload(); }} />;
+    return <LoadFailure error={failure} onRetry={() => { notes.reload(); monthData.reload(); calendars.reload(); }} />;
   }
-  // The forecast holds the page back only for its first read: after one answer or failure, Try again, a month change
-  // and a note write keep the page showing, dimmed, with no forecast figures until it answers.
-  if (input === null || shown === null || !forecast.settled) {
+  // The forecast and the calendars hold the page back only for their first read: after one answer or failure, Try
+  // again, a month change and a note write keep the page showing, dimmed, with no forecast figures until it answers.
+  if (input === null || shown === null || !forecast.settled || !calendars.settled) {
     return <CalendarSkeleton label="Loading the calendar" />;
   }
   const readOnlyId = readOnly ? READ_ONLY_ID : null;
@@ -290,8 +320,9 @@ function CalendarView(): React.JSX.Element {
       onPrevious: () => { toMonth(stepMonth(month, -1)); }, onNext: () => { toMonth(stepMonth(month, 1)); },
     };
   const failedFor = view === 'week' ? dayMonthRange(monday, addDays(monday, 6)) : MONTH_NAMES[Number(month.slice(5, 7)) - 1] ?? '';
+  const storedFailed = shown.storedFailed && shown.month === month;
 
-  const filtersNode = <CalendarFilters filters={filters} onFilter={toggle} imported={imported !== null} />;
+  const filtersNode = <CalendarFilters filters={filters} onFilter={toggle} imported={hasCalendars} />;
   const formNode = form === null ? null : (
     <NoteForm
       key={form.mode === 'edit' ? form.note.id : `${form.source}-${selected}`}
@@ -320,7 +351,7 @@ function CalendarView(): React.JSX.Element {
       onDelete={(note) => { setStaleError(remove.error); setDeleting(note); }}
       onMakeNote={(event: ImportedEvent) => {
         setNotice(null);
-        setForm({ mode: 'new', draft: draftOfImported(event), source: `ics-${event.uid}` });
+        setForm({ mode: 'new', draft: draftOfImported(event), source: `${event.calendarId}:${event.uid}` });
       }}
     />
   );
@@ -337,15 +368,23 @@ function CalendarView(): React.JSX.Element {
         onToday={() => { select(today, false, today.slice(0, 7)); }}
         view={view}
         onView={onView}
-        trailing={<IcsImport today={today} imported={imported} onImport={onImport} />}
+        trailing={(
+          <YourCalendars
+            calendars={calendars.data}
+            failed={calendars.error !== null}
+            onRetry={readCalendarsAgain}
+            onChanged={onCalendarsChanged}
+          />
+        )}
       />
       {forecastFailed ? <ErrorNotice message={`Couldn’t load the forecast for ${failedFor}. Try again.`} onRetry={forecast.reload} /> : null}
+      {storedFailed ? <ErrorNotice message="Couldn’t load the events from your calendars. Try again." onRetry={monthData.reload} /> : null}
       <View style={desktop ? styles.split : styles.stacked}>
         {/* From 641px the filters head the grid's column, so from 1024px the panel beside it starts level with them. */}
         <View style={[styles.column, desktop ? styles.wide : null]}>
           {phone ? null : filtersNode}
-          {/* Both views render in this slot, so the focus restore covers a switch of views too; the import control in
-              the header row is outside it, so a switch never remounts it and a shown result or refusal stays. */}
+          {/* Both views render in this slot, so the focus restore covers a switch of views too; "Your calendars" and its
+              panel in the header row are outside it, so a switch never remounts them and a shown result or refusal stays. */}
           <View nativeID={SLOT_ID}>
             {view === 'week' ? (
               <CalendarWeek

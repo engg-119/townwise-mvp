@@ -2,6 +2,7 @@ import type { z } from 'zod';
 
 import { ApiError, type ApiClient, type RequestOptions } from '../../../src/api/client';
 import type { TownEvent } from '../../../src/portal/analytics/api';
+import type { OwnerCalendar, OwnerCalendarEvent } from '../../../src/portal/calendar/api';
 import type { ForecastDay } from '../../../src/portal/estimates/api';
 import type { Note, NoteInput, SalesDay } from '../../../src/portal/locations/api';
 import { addDays } from '../../../src/portal/locations/dates';
@@ -10,19 +11,23 @@ import { EMAIL, refusal } from '../../helpers/portal';
 import { calendarBody } from '../analytics/fakes';
 import { noteOf } from '../locations/fakes';
 
-// The Calendar page's five reads (spec 16.3 P28), for fakePortalApi's `fallback`: GET .../notes, .../rules,
-// .../calendar, .../sales/days and .../forecast for location l1, answered from mutable fields so a test can change
-// what the next read returns (the forecast after a note is saved). Any range's calendar answers with `events`, its
-// sales days from `days`, and its forecast from `forecasts` by month ('YYYY-MM'): a grid's read spans the days of the
-// months either side, so the grid's month (the month of the range's 7th day: a grid has at most 6 leading days, and a
-// clamped range starts on the 1st) decides an ApiError or no published forecast, and the days come from every month's
-// window within the range. `hold` keeps a route's read from one `from` waiting until the test releases it, so a test
-// can see a grid whose reads are in flight. DELETE (through `request`) answers 204. Writes the portal fake answers
-// itself (POST and PATCH) go in its `answers`. Every figure is made up.
+// The Calendar page's reads (spec 16.3 P28), for fakePortalApi's `fallback`: GET .../notes, .../rules,
+// .../calendar, .../sales/days and .../forecast for location l1, and the owner calendars' two (spec 10.17): the list,
+// GET .../owner-calendars, from `calendars`, and the stored events, GET .../owner-calendars/events, from `ownerEvents`
+// (either may be an ApiError instead). They answer from mutable fields so a test can change what the next read returns
+// (the forecast after a note is saved). Any range's calendar answers with `events`, its stored events with the
+// `ownerEvents` that overlap it, its sales days from `days`, and its forecast from `forecasts` by month ('YYYY-MM'): a
+// grid's read spans the days of the months either side, so the grid's month (the month of the range's 7th day: a grid
+// has at most 6 leading days, and a clamped range starts on the 1st) decides an ApiError or no published forecast, and
+// the days come from every month's window within the range. `hold` keeps a route's read from one `from` waiting until
+// the test releases it, so a test can see a grid whose reads are in flight. DELETE (through `request`) answers 204, or
+// the ApiError a test sets in `deletes` for its path. Writes the portal fake answers itself (POST and PATCH) go in its
+// `answers`. Every figure, name and title is made up.
 
 export const PATH = '/api/org/locations/l1';
 export const NOTES_PATH = `${PATH}/notes`;
 export const RULES_PATH = `${PATH}/rules`;
+export const CALENDARS_PATH = `${PATH}/owner-calendars`;
 
 export interface CalendarFake extends ApiClient {
   notes: Note[] | ApiError;
@@ -32,19 +37,27 @@ export interface CalendarFake extends ApiClient {
   days: SalesDay[];
   /** By month; an ApiError rejects that month's read. A month missing here has no published forecast. */
   forecasts: Record<string, unknown>;
+  /** The location's owner calendars, oldest first; an ApiError rejects the list's read. */
+  calendars: OwnerCalendar[] | ApiError;
+  /** Their stored events, by start; an ApiError rejects every stored-events read. */
+  ownerEvents: OwnerCalendarEvent[] | ApiError;
+  /** What a DELETE of a path answers instead of 204. */
+  deletes: Record<string, ApiError>;
   /** Every GET path, in order. */
   paths: string[];
   /** Holds every read of `route` from `from` until the returned function runs; the reads then answer as usual. */
   hold: (route: HeldRoute, from: string) => () => void;
 }
 
-export type HeldRoute = 'calendar' | 'sales/days' | 'forecast';
+export type HeldRoute = 'calendar' | 'sales/days' | 'forecast' | 'owner-calendars/events';
 
 interface WindowBody { available?: boolean; days?: { date: string }[] }
 
 export const NO_FORECAST = { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [] };
 
-export function calendarFake(init: Partial<Pick<CalendarFake, 'notes' | 'rules' | 'events' | 'days' | 'forecasts'>> = {}): CalendarFake {
+export function calendarFake(
+  init: Partial<Pick<CalendarFake, 'notes' | 'rules' | 'events' | 'days' | 'forecasts' | 'calendars' | 'ownerEvents'>> = {},
+): CalendarFake {
   const holds = new Map<string, Promise<void>>();
   const answer = <T>(value: unknown, schema: z.ZodType<T>): Promise<T> =>
     (value instanceof ApiError ? Promise.reject(value) : Promise.resolve(schema.parse(value)));
@@ -54,13 +67,17 @@ export function calendarFake(init: Partial<Pick<CalendarFake, 'notes' | 'rules' 
     events: init.events ?? [],
     days: init.days ?? [],
     forecasts: init.forecasts ?? {},
+    calendars: init.calendars ?? [],
+    ownerEvents: init.ownerEvents ?? [],
+    deletes: {},
     paths: [],
     json<T>(path: `/${string}`, schema: z.ZodType<T>, opts?: RequestOptions): Promise<T> {
       if ((opts?.method ?? 'GET') !== 'GET') return Promise.reject(refusal(404, 'not_found'));
       fake.paths.push(path);
       if (path === NOTES_PATH) return answer(fake.notes instanceof ApiError ? fake.notes : { notes: fake.notes }, schema);
       if (path === RULES_PATH) return answer({ rules: fake.rules, limit: 30 }, schema);
-      const range = /^\/api\/org\/locations\/l1\/(calendar|sales\/days|forecast)\?from=([\d-]+)&to=([\d-]+)$/.exec(path);
+      if (path === CALENDARS_PATH) return answer(fake.calendars instanceof ApiError ? fake.calendars : { calendars: fake.calendars }, schema);
+      const range = /^\/api\/org\/locations\/l1\/(calendar|sales\/days|forecast|owner-calendars\/events)\?from=([\d-]+)&to=([\d-]+)$/.exec(path);
       const [, route, from = '', to = ''] = range ?? [];
       const respond = (): Promise<T> => {
         if (route === 'calendar') {
@@ -68,6 +85,10 @@ export function calendarFake(init: Partial<Pick<CalendarFake, 'notes' | 'rules' 
         }
         if (route === 'sales/days') return answer({ days: fake.days.filter((day) => day.date >= from && day.date <= to) }, schema);
         if (route === 'forecast') return answer(forecastFor(fake.forecasts, from, to), schema);
+        if (route === 'owner-calendars/events') {
+          const stored = fake.ownerEvents;
+          return answer(stored instanceof ApiError ? stored : { events: stored.filter((event) => event.startDate <= to && event.endDate >= from) }, schema);
+        }
         return Promise.reject(refusal(404, 'not_found'));
       };
       const held = holds.get(`${route ?? ''} ${from}`);
@@ -78,9 +99,10 @@ export function calendarFake(init: Partial<Pick<CalendarFake, 'notes' | 'rules' 
       holds.set(`${route} ${from}`, new Promise<void>((resolve) => { release = resolve; }));
       return () => { holds.delete(`${route} ${from}`); release(); };
     },
-    request(_path: `/${string}`, opts?: RequestOptions): Promise<Response> {
+    request(path: `/${string}`, opts?: RequestOptions): Promise<Response> {
       if (opts?.method !== 'DELETE') return Promise.reject(refusal(404, 'not_found'));
-      return Promise.resolve({ ok: true, status: 204 } as Response);
+      const refused = fake.deletes[path];
+      return refused === undefined ? Promise.resolve({ ok: true, status: 204 } as Response) : Promise.reject(refused);
     },
     stream: () => Promise.reject(refusal(404, 'not_found')),
     logout: () => Promise.resolve(),
@@ -118,6 +140,24 @@ export function forecastDay(fields: Partial<ForecastDay> & Pick<ForecastDay, 'da
 /** The window for `days`. */
 export function forecastOf(days: ForecastDay[]): unknown {
   return { available: true, reason: null, runs: [{ id: 'r1', model: { label: 'Townwise demand model v9' }, madeAt: '2026-11-01', live: null }], days, weeks: [] };
+}
+
+/** An owner calendar as GET .../owner-calendars sends it: a file named Kitchen with no events, refreshed fine. */
+export function ownerCalendar(fields: Partial<OwnerCalendar> = {}): OwnerCalendar {
+  return {
+    id: 'c1', label: 'Kitchen', kind: 'file', host: null, eventCount: 0, skippedRepeating: 0, status: 'ok',
+    lastSuccessAt: '2026-11-11T15:00:00.000Z', lastAttemptAt: '2026-11-11T15:00:00.000Z', createdAt: '2026-11-01T15:00:00.000Z',
+    ...fields,
+  };
+}
+
+/** A stored event as GET .../owner-calendars/events sends it: one all-day day in Kitchen, ending the day it starts. */
+export function ownerEvent(fields: Partial<OwnerCalendarEvent> = {}): OwnerCalendarEvent {
+  const startDate = fields.startDate ?? '2026-11-21';
+  return {
+    calendarId: 'c1', calendar: 'Kitchen', uid: 'e1', title: 'Wine delivery', startDate, endDate: startDate, startTime: null, endTime: null,
+    ...fields,
+  };
 }
 
 /** A note the API saved from this body. */

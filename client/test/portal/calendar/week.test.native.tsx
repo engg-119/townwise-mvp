@@ -25,7 +25,7 @@ function input(): CalendarInput {
     today: TODAY, month: '2026-11', forecast: forecastOf([forecastDay({ date: SATURDAY })]) as ForecastWindow, salesDays: [],
     events: [townEvent({ start: SATURDAY, title: 'Dartmouth home football' })],
     notes: [note({ startDate: SATURDAY, expectedGuests: 70, startTime: '18:00', endTime: '21:00' })],
-    imported: [{ uid: 'i1', title: 'Wine delivery', startDate: SATURDAY, endDate: SATURDAY, startTime: '09:00', endTime: '10:00' }],
+    imported: [{ calendarId: 'c1', uid: 'i1', title: 'Wine delivery', startDate: SATURDAY, endDate: SATURDAY, startTime: '09:00', endTime: '10:00' }],
     filters: ALL_FILTERS,
   };
 }

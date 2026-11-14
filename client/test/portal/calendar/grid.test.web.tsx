@@ -38,7 +38,7 @@ const SALES = [
 ];
 
 function imported(date: string, title: string): ImportedEvent {
-  return { uid: `${date}-${title}`, title, startDate: date, endDate: date, startTime: null, endTime: null };
+  return { calendarId: 'c1', uid: `${date}-${title}`, title, startDate: date, endDate: date, startTime: null, endTime: null };
 }
 
 function input(fields: Partial<CalendarInput> = {}): CalendarInput {

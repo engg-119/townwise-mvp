@@ -184,7 +184,7 @@ export function CalendarDay(props: {
           </Actions>
         )}
         {view.imported.map((event) => (
-          <View key={event.uid} style={styles.item}>
+          <View key={`${event.calendarId}:${event.uid}`} style={styles.item}>
             <Small white>{`From your calendar: ${event.title}`}</Small>
             <Mono>{importedLine(event)}</Mono>
             <Actions>

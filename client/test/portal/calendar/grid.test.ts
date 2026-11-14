@@ -324,7 +324,7 @@ describe('buildWeek', () => {
   const bounds = monthBounds(TODAY);
   const SATURDAY = '2026-11-21';
   const imported = (fields: Partial<ImportedEvent> & Pick<ImportedEvent, 'title'>): ImportedEvent => ({
-    uid: fields.title, startDate: SATURDAY, endDate: SATURDAY, startTime: null, endTime: null, ...fields,
+    calendarId: 'c1', uid: fields.title, startDate: SATURDAY, endDate: SATURDAY, startTime: null, endTime: null, ...fields,
   });
   const schedule = (fields: Partial<RuleSchedule> = {}): RuleSchedule => ({
     kind: 'closure', startDate: '2026-11-01', endDate: null, weekdays: null, effect: 'closed', expectedGuests: null, startTime: null, endTime: null, ...fields,
