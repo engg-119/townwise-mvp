@@ -91,6 +91,13 @@ export const DOCX_READ_BYTES = 10 * MIB;
 /** word/document.xml, uncompressed. */
 export const DOCX_MAX_DOCUMENT_BYTES = 50 * MIB;
 
+/**
+ * TownwiseAI attachments (spec D36): the largest picture sent to the model, 3.75 MB, so its base64 (4 characters for
+ * every 3 bytes) stays within the API's 5 MB an image. [CONFIRM: at most 5 a message, 20,000 characters, 3.75 MB a
+ * picture, about 150k tokens in all]
+ */
+export const MODEL_PICTURE_BYTES = 3_750_000;
+
 /** The AI column step (spec 11A): calls per file, per ZIP (at most one a family of its tables) and per import. */
 export const MODEL_CALLS_PER_FILE = 2;
 export const MODEL_CALLS_PER_ZIP = 5;

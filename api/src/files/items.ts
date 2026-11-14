@@ -1,5 +1,6 @@
 // Reference items (spec 11A, D28): pasted text kept as a `.txt` stored file, and the one reader TownwiseAI's tools use
-// for a text item's words. The title and the text are never logged or audited. Nothing here logs.
+// for a text item's words, which also reads a file attached to a message for its turn (D36: text, or a picture's
+// bytes). The title, the text and a picture are never logged or audited. Nothing here logs.
 import { createHash } from 'node:crypto';
 
 import { Types } from 'mongoose';
@@ -7,12 +8,12 @@ import { Types } from 'mongoose';
 import type { OrgScope } from '../access/policy.ts';
 import type { Role } from '../access/resolve.ts';
 import { utcDay } from '../dates.ts';
-import type { FileRecord } from '../stores/files.ts';
+import type { FileKind, FileRecord } from '../stores/files.ts';
 import type { TownwiseStores } from '../stores/index.ts';
 import { BlobMissingError, type FileBlobs } from './blobs.ts';
-import { CHUNK_BYTES, DAILY_UPLOAD_BYTES, FILES_PER_LOCATION, STORED_BYTES_PER_ORG } from './limits.ts';
+import { CHUNK_BYTES, DAILY_UPLOAD_BYTES, FILES_PER_LOCATION, MODEL_PICTURE_BYTES, STORED_BYTES_PER_ORG } from './limits.ts';
 import { decoderFor, detectEncoding } from './parse/text.ts';
-import { sanitizeName } from './sniff.ts';
+import { pictureType, sanitizeName, type PictureType } from './sniff.ts';
 import { fingerprintOf } from './upload.ts';
 
 export const TEXT_ITEM_MAX_CHARS = 10_000;
@@ -125,10 +126,31 @@ export type ItemText =
   | { readonly status: 'ok'; readonly text: string; readonly truncated: boolean }
   | { readonly status: 'files_off' | 'not_found' | 'not_readable' | 'turned_off' | 'gone' };
 
-/** The door TownwiseAI's tools read an item's text through (chat/* imports no file code). */
+/** What a file attached to a TownwiseAI message is, in its words (spec D36). A picture is known by its bytes. */
+export type AttachmentKind = 'text' | 'picture' | 'pdf' | 'word' | 'excel' | 'zip' | 'file';
+
+/** A stored file's kind as an attachment's; a file of kind `other` is a picture when its bytes say so. */
+const ATTACHMENT_KINDS: Readonly<Record<FileKind, AttachmentKind>> = {
+  text: 'text', xlsx: 'excel', xls: 'excel', pdf: 'pdf', docx: 'word', doc: 'word', zip: 'zip', other: 'file',
+};
+
+/** A file attached to a TownwiseAI message, as that turn sends it to the model (spec D36). */
+export type ItemForModel =
+  /** A text file: its first characters, as readText reads them. */
+  | { readonly status: 'text'; readonly text: string; readonly truncated: boolean }
+  /** A picture of at most MODEL_PICTURE_BYTES: its bytes, base64. */
+  | { readonly status: 'picture'; readonly mediaType: PictureType; readonly base64: string }
+  /** Kept on Your data, but not sent: a kind TownwiseAI can't read yet, a picture too large, turned off, or its original deleted. */
+  | { readonly status: 'not_readable' | 'too_large' | 'turned_off' | 'gone'; readonly kind: AttachmentKind }
+  /** Not a file a message can attach: stored files are off, no such file at this location, a sales file, or not kept yet. */
+  | { readonly status: 'files_off' | 'not_found' | 'not_reference' | 'not_ready' };
+
+/** The door TownwiseAI's tools and its turns read an item through (chat/* imports no file code). */
 export interface ItemReader {
   readonly on: boolean;
   readText(scope: OrgScope, locationId: string, fileId: string): Promise<ItemText>;
+  /** A reference file attached to a message (spec D36): its content for this turn, or why none is sent. */
+  readForModel(scope: OrgScope, locationId: string, fileId: string): Promise<ItemForModel>;
 }
 
 async function bytesOf(body: AsyncIterable<unknown>): Promise<Buffer> {
@@ -136,6 +158,36 @@ async function bytesOf(body: AsyncIterable<unknown>): Promise<Buffer> {
   for await (const part of body) parts.push(Buffer.isBuffer(part) ? part : Buffer.from(part as Uint8Array));
   return Buffer.concat(parts);
 }
+
+/** The first `count` bytes of the file's original. Throws BlobMissingError when it is gone. */
+async function rawBytes(blobs: FileBlobs, scope: OrgScope, file: FileRecord, count: number): Promise<Buffer> {
+  return bytesOf(await blobs.openRaw(scope, { locationId: file.locationId, fileId: file.id }, { offset: 0, count }));
+}
+
+/** A text file's first READ_ITEM_BYTES, decoded, at most READ_ITEM_MAX_CHARS. Throws BlobMissingError when it is gone. */
+async function textOf(blobs: FileBlobs, scope: OrgScope, file: FileRecord): Promise<{ text: string; truncated: boolean }> {
+  const bytes = await rawBytes(blobs, scope, file, Math.min(file.sizeBytes, READ_ITEM_BYTES));
+  // When the item was read whole, a last byte that cannot end a UTF-8 character means windows-1252 (detectEncoding
+  // forgives it, because a longer file may continue). A cut item streams, so the character cut at the edge is
+  // dropped rather than an error.
+  const whole = file.sizeBytes <= READ_ITEM_BYTES;
+  let encoding = detectEncoding(bytes);
+  if (whole && encoding === 'utf-8') {
+    try {
+      new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+      encoding = 'windows-1252';
+    }
+  }
+  const decoded = decoderFor(encoding).decode(bytes, { stream: !whole });
+  let text = decoded.slice(0, READ_ITEM_MAX_CHARS);
+  const last = text.charCodeAt(text.length - 1);
+  if (decoded.length > READ_ITEM_MAX_CHARS && last >= 0xd800 && last <= 0xdbff) text = text.slice(0, -1);
+  return { text, truncated: decoded.length > READ_ITEM_MAX_CHARS || file.sizeBytes > READ_ITEM_BYTES };
+}
+
+/** Enough of a file's first bytes to tell a picture (pictureType). */
+const PICTURE_HEAD_BYTES = 12;
 
 export function createItemReader(stores: Pick<TownwiseStores, 'files'>, blobs: FileBlobs | null): ItemReader {
   return {
@@ -148,31 +200,36 @@ export function createItemReader(stores: Pick<TownwiseStores, 'files'>, blobs: F
       if (file.purpose !== 'reference' || file.kind !== 'text' || file.status !== 'kept') return { status: 'not_readable' };
       if (file.disabledAt !== null) return { status: 'turned_off' };
       if (file.rawDeletedAt !== null) return { status: 'gone' };
-      let bytes: Buffer;
       try {
-        const count = Math.min(file.sizeBytes, READ_ITEM_BYTES);
-        bytes = await bytesOf(await blobs.openRaw(scope, { locationId: file.locationId, fileId: file.id }, { offset: 0, count }));
+        return { status: 'ok', ...await textOf(blobs, scope, file) };
       } catch (err) {
         if (err instanceof BlobMissingError) return { status: 'gone' };
         throw err;
       }
-      // When the item was read whole, a last byte that cannot end a UTF-8 character means windows-1252 (detectEncoding
-      // forgives it, because a longer file may continue). A cut item streams, so the character cut at the edge is
-      // dropped rather than an error.
-      const whole = file.sizeBytes <= READ_ITEM_BYTES;
-      let encoding = detectEncoding(bytes);
-      if (whole && encoding === 'utf-8') {
-        try {
-          new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-        } catch {
-          encoding = 'windows-1252';
-        }
+    },
+    async readForModel(scope, locationId, fileId) {
+      if (blobs === null) return { status: 'files_off' };
+      if (!OBJECT_ID.test(fileId) || !OBJECT_ID.test(locationId)) return { status: 'not_found' };
+      const file = await stores.files.get(scope, locationId, fileId);
+      if (file === null || file.status === 'deleting') return { status: 'not_found' };
+      if (file.purpose !== 'reference') return { status: 'not_reference' };
+      if (file.status !== 'kept') return { status: 'not_ready' };
+      const kind = ATTACHMENT_KINDS[file.kind];
+      // A deleted original never comes back, so it is said before a turned-off item's state.
+      if (file.rawDeletedAt !== null) return { status: 'gone', kind };
+      if (file.disabledAt !== null) return { status: 'turned_off', kind };
+      try {
+        if (file.kind === 'text') return { status: 'text', ...await textOf(blobs, scope, file) };
+        if (file.kind !== 'other') return { status: 'not_readable', kind };
+        // Known by its bytes, never its name.
+        const mediaType = pictureType(await rawBytes(blobs, scope, file, Math.min(file.sizeBytes, PICTURE_HEAD_BYTES)));
+        if (mediaType === null) return { status: 'not_readable', kind };
+        if (file.sizeBytes > MODEL_PICTURE_BYTES) return { status: 'too_large', kind: 'picture' };
+        return { status: 'picture', mediaType, base64: (await rawBytes(blobs, scope, file, file.sizeBytes)).toString('base64') };
+      } catch (err) {
+        if (err instanceof BlobMissingError) return { status: 'gone', kind };
+        throw err;
       }
-      const decoded = decoderFor(encoding).decode(bytes, { stream: !whole });
-      let text = decoded.slice(0, READ_ITEM_MAX_CHARS);
-      const last = text.charCodeAt(text.length - 1);
-      if (decoded.length > READ_ITEM_MAX_CHARS && last >= 0xd800 && last <= 0xdbff) text = text.slice(0, -1);
-      return { status: 'ok', text, truncated: decoded.length > READ_ITEM_MAX_CHARS || file.sizeBytes > READ_ITEM_BYTES };
     },
   };
 }

@@ -106,7 +106,7 @@ function context(opts: {
   const ctx = { ports: { peopleInTown: reader, forecasts: opts.forecasts ?? createForecastReader({ stores: forecastStores([]) }) } } as unknown as TownwiseContext;
   const scope = { orgId: '000000000000000000000003' } as unknown as OrgScope;
   return { ctx, scope, location: location(opts.town), today: TODAY, timeZone: 'America/New_York', role: 'member',
-    actor: { actorUserId: SENTINEL_USER, actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null } };
+    actor: { actorUserId: SENTINEL_USER, actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null }, attachedContent: false };
 }
 
 async function run(name: string, input: unknown, tc: ToolContext = context()): Promise<{ content: string; parsed: Record<string, unknown> }> {

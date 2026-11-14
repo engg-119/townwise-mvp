@@ -1,8 +1,9 @@
 // One tuning chat turn (docs/portal/tuning-chat.md sections 3 and 4): a manual streaming loop. Stream a model call,
 // take its finalMessage(), run its tool calls, append, repeat, for at most 8 calls. Every assistant message is kept
 // exactly as received, thinking blocks included, except what a mid-reply fallback requires dropping (echoable). The
-// turn's messages are returned for one save (savedTurn: an item's text is kept only as a stub); a failed, aborted or
-// refused turn returns nothing to save, only its cost, which is charged after every call either way.
+// turn's messages are returned for one save (savedTurn: an item's text is kept only as a stub, and an attached file's
+// content is sent but never saved); a failed, aborted or refused turn returns nothing to save, only its cost, which is
+// charged after every call either way.
 import { AnthropicError, APIConnectionError, APIError, InternalServerError, RateLimitError } from '@anthropic-ai/sdk';
 import type {
   BetaContentBlock, BetaMessage, BetaMessageParam, BetaMessageStreamParams, BetaRawContentBlockDelta, BetaRawMessageStreamEvent,
@@ -78,6 +79,12 @@ export interface TurnInput {
   readonly history: readonly BetaMessageParam[];
   /** Null for a regenerate: the history already ends with the person's message. */
   readonly userMessage: BetaMessageParam | null;
+  /**
+   * The person's message as every request of this turn sends it, when it carries attachments (chat/attachments.ts):
+   * with the files' content, which is never saved. It stands in for `userMessage`, or for a regenerate for the
+   * history's last message. Null when the message carries none.
+   */
+  readonly expanded: BetaMessageParam | null;
   /** The nodes the turn's messages are stored under: `user` is null for a regenerate, and `reply.parentId` is the user node. */
   readonly nodes: { readonly user: TurnNode | null; readonly reply: { readonly id: string; readonly parentId: string } };
   readonly signal: AbortSignal;
@@ -247,10 +254,12 @@ export function echoable(content: readonly BetaContentBlock[]): BetaContentBlock
  * purged. A thinking block's signature binds everything before it (preserved thinking), so every thinking block after
  * the first stubbed result is dropped too; blocks before it stay valid, and an assistant message left with nothing is
  * dropped. The turn's own later calls already read the whole result. The saved history is append-only from then on.
+ * `expanded` (the turn sent the person's message with its attachments' content, D36): every thinking block of the
+ * turn comes after content that is never saved, so none is.
  */
-export function savedTurn(turn: readonly TurnMessage[]): StoredMessage[] {
+export function savedTurn(turn: readonly TurnMessage[], expanded = false): StoredMessage[] {
   const names = new Map<string, string>();
-  let stubbed = false;
+  let stubbed = expanded;
   const saved: StoredMessage[] = [];
   for (const { param, ...placed } of turn) {
     let kept = param;
@@ -295,7 +304,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     await input.charge(cost);
   };
   const done = (stopReason: DoneReason): TurnResult => {
-    const messages = savedTurn(timed);
+    const messages = savedTurn(timed, input.expanded !== null);
     return {
       kind: 'done', stopReason, messages, calls, model, inputTokens, outputTokens, costMicroUsd: spent,
       // A reply's messages start with an assistant message, so the last one stored names the deepest node written.
@@ -305,6 +314,15 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
 
   // A function, not a property read: the signal changes under the loop, which narrowing cannot see.
   const aborted = (): boolean => input.signal.aborted;
+
+  // Every request: the history and the turn so far, with the person's message (a regenerate's is the history's last)
+  // sent as `expanded` when it carries attachments. What is saved is `turn`, which holds the stored form.
+  const personAt = input.userMessage === null ? input.history.length - 1 : input.history.length;
+  const requestMessages = (): BetaMessageParam[] => {
+    const messages = [...input.history, ...turn];
+    if (input.expanded !== null) messages[personAt] = input.expanded;
+    return messages;
+  };
 
   if (input.userMessage !== null && user !== null) append(input.userMessage, user);
   try {
@@ -319,7 +337,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       const usage = usageTracker(input.now);
       let message: BetaMessage;
       try {
-        const stream = input.model.stream(requestParams([...input.history, ...turn]), { signal: input.signal });
+        const stream = input.model.stream(requestParams(requestMessages()), { signal: input.signal });
         for await (const event of stream) {
           usage.observe(event);
           if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
