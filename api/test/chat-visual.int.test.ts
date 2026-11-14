@@ -3,7 +3,8 @@
 // forecast, and a reload replays it as a part; suggest_next streams a `suggestions` event and replays as the reply's
 // `next`, and a message that calls only it ends the turn without another model call once text was written (before, its
 // result asks for the answer); and neither a visual's figures nor a suggestion's text reaches a log or an audit event.
-// Synthetic data only.
+// Daily guests from today on show the published forecast with no sales yet (its middle, range and closed or booked
+// days), and say why nothing was shown with no forecast, or for net sales after today. Synthetic data only.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
@@ -19,6 +20,7 @@ import { call, signIn, signInStaff, startTownwiseServer, type TestSession, type 
 /** A published run (staff import, then publish): guests 80 to 120 on every open day from 2026-05-01 to 2026-05-14. */
 const FORECAST = JSON.parse(readFileSync(new URL('fixtures/forecast-run.json', import.meta.url), 'utf8')) as Record<string, unknown>;
 const SHOWN = 'Shown to the owner under your reply. Describe it in a sentence or two; don’t repeat every figure.';
+const SHOWN_FORECAST = `${SHOWN} Give the forecast as its range.`;
 const SUGGESTED = 'Shown to the owner as three buttons.';
 const UNANSWERED = 'Shown to the owner as three buttons. The owner has not seen an answer yet: they see only text you write, never your thinking. Write your answer to the owner now, as text.';
 const THREE = ['Sentinel-next-one: how did Monday go?', 'Sentinel-next-two: any events soon?', 'Sentinel-next-three: show May'];
@@ -27,7 +29,26 @@ let server: TownwiseTestServer;
 let model: ScriptedModel;
 let orgId: string;
 let locationId: string;
+/** A location with a run published from today on, and one with no published run. */
+let aheadId: string;
+let unforecastId: string;
 let author: TestSession;
+
+/** Guests 80.6, 100.4 and 120.2 a day from 2026-06-01 (today) to 2026-06-14; Jun 1 117.4, 180.5 and 255.2; Jun 10 closed, Jun 13 booked. */
+function aheadRun(): Record<string, unknown> {
+  const open = (date: string, low: number, mid: number, high: number) => ({ date, status: 'open', low, mid, high, baseline: null, reasons: [] });
+  const shut = (date: string, status: 'closed' | 'booked') => ({ date, status, low: null, mid: null, high: null, baseline: null, reasons: [] });
+  const days = Array.from({ length: 14 }, (_, i) => `2026-06-${String(i + 1).padStart(2, '0')}`).map((date) => {
+    if (date === '2026-06-01') return open(date, 117.4, 180.5, 255.2);
+    if (date === '2026-06-10') return shut(date, 'closed');
+    if (date === '2026-06-13') return shut(date, 'booked');
+    return open(date, 80.6, 100.4, 120.2);
+  });
+  return {
+    ...FORECAST, model: { family: 'hybrid_linear_xgboost', version: 'v10', notebookCommit: '0000000' },
+    dataThrough: '2026-05-31', madeAt: '2026-06-01', days, weeks: [],
+  };
+}
 
 beforeAll(async () => {
   model = scriptedModel();
@@ -43,10 +64,18 @@ beforeAll(async () => {
   await addSalesDay(server, { orgId, locationId, date: '2026-05-02', guests: 151, netSalesCents: null });
   await addSalesDay(server, { orgId, locationId, date: '2026-05-05', guests: 98, netSalesCents: 251_077 });
   const staff = await signInStaff(server);
-  const imported = await call(server, `/api/admin/orgs/${orgId}/locations/${locationId}/forecast-runs`, { session: staff, json: FORECAST });
-  expect(imported.status).toBe(201);
-  const { run } = await imported.json() as { run: { id: string } };
-  expect((await call(server, `/api/admin/orgs/${orgId}/forecast-runs/${run.id}/publish`, { session: staff, json: {} })).status).toBe(200);
+  const publish = async (location: string, file: Record<string, unknown>): Promise<void> => {
+    const imported = await call(server, `/api/admin/orgs/${orgId}/locations/${location}/forecast-runs`, { session: staff, json: file });
+    expect(imported.status).toBe(201);
+    const { run } = await imported.json() as { run: { id: string } };
+    expect((await call(server, `/api/admin/orgs/${orgId}/forecast-runs/${run.id}/publish`, { session: staff, json: {} })).status).toBe(200);
+  };
+  await publish(locationId, FORECAST);
+  aheadId = await addLocation(server, { orgId, name: 'Garden' });
+  await addSalesDay(server, { orgId, locationId: aheadId, date: '2026-05-29', guests: 120, netSalesCents: 300_000 });
+  await addSalesDay(server, { orgId, locationId: aheadId, date: '2026-05-30', guests: 90, netSalesCents: null });
+  await publish(aheadId, aheadRun());
+  unforecastId = await addLocation(server, { orgId, name: 'Cellar' });
 });
 afterAll(async () => { await server.close(); });
 beforeEach(async () => {
@@ -69,8 +98,8 @@ function parseSse(body: string): SseEvent[] {
   });
 }
 
-async function turn(json: unknown): Promise<SseEvent[]> {
-  const res = await call(server, `/api/org/locations/${locationId}/chat/turns`, { session: author, json });
+async function turn(json: unknown, at: string = locationId): Promise<SseEvent[]> {
+  const res = await call(server, `/api/org/locations/${at}/chat/turns`, { session: author, json });
   expect(res.status).toBe(200);
   return parseSse(await res.text());
 }
@@ -88,8 +117,8 @@ function conversationIdOf(events: SseEvent[]): string {
   return (events[0]?.data as { id: string }).id;
 }
 
-async function view(id: string): Promise<ConversationView> {
-  return await (await call(server, `/api/org/locations/${locationId}/chat/${id}`, { session: author })).json() as ConversationView;
+async function view(id: string, at: string = locationId): Promise<ConversationView> {
+  return await (await call(server, `/api/org/locations/${at}/chat/${id}`, { session: author })).json() as ConversationView;
 }
 
 async function storedParams(id: string): Promise<BetaMessageParam[]> {
@@ -103,15 +132,18 @@ function toolResults(param: BetaMessageParam | undefined): BetaToolResultBlockPa
 }
 
 const MAY = { kind: 'daily', metric: 'guests', from: '2026-05-01', to: '2026-05-05', by: null, compare: null };
-const band = { low: 80, high: 120 };
+const band = { low: 80, mid: 100, high: 120 };
 const MAY_GUESTS = {
   kind: 'daily', metric: 'guests', from: '2026-05-01', to: '2026-05-05',
   forecast: { model: 'Townwise demand model v9', madeAt: '2026-05-01' },
   days: [
     { date: '2026-05-01', value: 137, ...band }, { date: '2026-05-02', value: 151, ...band }, { date: '2026-05-03', value: null, ...band },
-    { date: '2026-05-04', value: null, low: null, high: null }, { date: '2026-05-05', value: 98, ...band },
+    { date: '2026-05-04', value: null, low: null, mid: null, high: null, status: 'closed' }, { date: '2026-05-05', value: 98, ...band },
   ],
 };
+/** The v10 run's figures, rounded as get_forecast rounds them: low down, mid to the nearest guest, high up. */
+const aheadBand = { low: 80, mid: 100, high: 121 };
+const AHEAD = { model: 'Townwise demand model v10', madeAt: '2026-06-01' };
 
 describe('show_visual', () => {
   it('show_visual streams a visual event with server figures, tool events with null views, and GET replays it as a part in order', async () => {
@@ -162,6 +194,70 @@ describe('show_visual', () => {
     expect(eventData(events, 'visual')).toEqual([]);
     expect(eventData(events, 'tool').map((e) => (e as { state: string }).state)).toEqual(['running', 'error']);
     expect(toolResults(messagesOf(model.calls[1]).at(-1))[0]).toMatchObject({ tool_use_id: 'toolu_v3', is_error: true });
+  });
+});
+
+describe('show_visual with the published forecast', () => {
+  const week = { kind: 'daily', metric: 'guests', from: '2026-06-08', to: '2026-06-14', by: null, compare: null };
+
+  it('a week from today on with no sales yet shows the published forecast: its middle, range, closed and booked days', async () => {
+    model.script(
+      { kind: 'message', message: message([toolUse('toolu_f1', 'show_visual', week)]) },
+      { kind: 'message', message: message([text('Next week looks steady.')]) },
+    );
+    const events = await turn({ content: 'What about next week?' }, aheadId);
+    const visual = {
+      kind: 'daily', metric: 'guests', from: '2026-06-08', to: '2026-06-14', forecast: AHEAD,
+      days: [
+        { date: '2026-06-08', value: null, ...aheadBand }, { date: '2026-06-09', value: null, ...aheadBand },
+        { date: '2026-06-10', value: null, low: null, mid: null, high: null, status: 'closed' },
+        { date: '2026-06-11', value: null, ...aheadBand }, { date: '2026-06-12', value: null, ...aheadBand },
+        { date: '2026-06-13', value: null, low: null, mid: null, high: null, status: 'booked' },
+        { date: '2026-06-14', value: null, ...aheadBand },
+      ],
+    };
+    expect(eventData(events, 'visual')).toEqual([{ id: 'toolu_f1', visual }]);
+    expect(JSON.parse(toolResults(messagesOf(model.calls[1]).at(-1))[0]?.content as string)).toEqual({ shown: SHOWN_FORECAST, visual });
+    expect((await view(conversationIdOf(events), aheadId)).messages.at(-1)?.parts[0]).toEqual({ type: 'visual', id: 'toolu_f1', visual });
+  });
+
+  it('a range with sales before today and the forecast from today on keeps both, the middle rounded like get_forecast', async () => {
+    model.script(
+      { kind: 'message', message: message([toolUse('toolu_f2', 'show_visual', { ...week, from: '2026-05-29', to: '2026-06-02' })]) },
+      { kind: 'message', message: message([text('Last weekend, then this week.')]) },
+    );
+    const events = await turn({ content: 'Show last weekend into this week.' }, aheadId);
+    const visual = {
+      kind: 'daily', metric: 'guests', from: '2026-05-29', to: '2026-06-02', forecast: AHEAD,
+      days: [
+        { date: '2026-05-29', value: 120, low: null, mid: null, high: null }, { date: '2026-05-30', value: 90, low: null, mid: null, high: null },
+        { date: '2026-05-31', value: null, low: null, mid: null, high: null },
+        { date: '2026-06-01', value: null, low: 117, mid: 181, high: 256 }, { date: '2026-06-02', value: null, ...aheadBand },
+      ],
+    };
+    expect(eventData(events, 'visual')).toEqual([{ id: 'toolu_f2', visual }]);
+    expect(JSON.parse(toolResults(messagesOf(model.calls[1]).at(-1))[0]?.content as string)).toEqual({ shown: SHOWN_FORECAST, visual });
+  });
+
+  it('says why nothing was shown: no published run for days with no sales, and net sales after today', async () => {
+    model.script(
+      { kind: 'message', message: message([toolUse('toolu_f3', 'show_visual', week)]) },
+      { kind: 'message', message: message([text('There is no forecast yet.')]) },
+    );
+    const none = await turn({ content: 'What about next week?' }, unforecastId);
+    expect(eventData(none, 'visual')).toEqual([]);
+    expect(JSON.parse(toolResults(messagesOf(model.calls[1]).at(-1))[0]?.content as string))
+      .toEqual({ available: false, reason: 'No sales or published forecast in this range, so nothing was shown.' });
+
+    model.calls.length = 0;
+    model.script(
+      { kind: 'message', message: message([toolUse('toolu_f4', 'show_visual', { ...week, metric: 'net_sales' })]) },
+      { kind: 'message', message: message([text('Townwise forecasts guests only.')]) },
+    );
+    const net = await turn({ content: 'Net sales next week?' }, aheadId);
+    expect(eventData(net, 'visual')).toEqual([]);
+    expect(JSON.parse(toolResults(messagesOf(model.calls[1]).at(-1))[0]?.content as string))
+      .toEqual({ available: false, reason: 'Townwise forecasts guests only, so there are no net sales to show for future days.' });
   });
 });
 

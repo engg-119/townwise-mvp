@@ -9,12 +9,16 @@ import type { BetaMessageParam } from '@anthropic-ai/sdk/resources/beta/messages
 import { Types } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import type { OrgScope } from '../src/access/policy.ts';
+import { attachmentsBlock } from '../src/chat/attachments.ts';
 import { REPLACED_RULES_BLOCK, rulesBlock } from '../src/chat/user-message.ts';
+import { createMemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import type { ConversationView } from '../src/handlers/chat.ts';
 import { addLocation, addSeat, createOrg } from './helpers/fixtures.ts';
 import { message, messagesOf, scriptedModel, text, type ScriptedModel } from './helpers/chat-model.ts';
 import { call, signIn, startTownwiseServer, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
 
+const blobs = createMemoryFileBlobs();
 let server: TownwiseTestServer;
 let model: ScriptedModel;
 let orgId: string;
@@ -23,7 +27,7 @@ let locationId: string;
 
 beforeAll(async () => {
   model = scriptedModel();
-  server = await startTownwiseServer({ chat: model });
+  server = await startTownwiseServer({ chat: model, files: blobs });
   orgId = await createOrg(server, { name: 'Rules Context Tavern' });
   const email = `author-${randomUUID().slice(0, 8)}@example.test`;
   author = await signIn(server, email);
@@ -173,6 +177,35 @@ describe('business rules in the person\'s message', () => {
     if (first.userNodeId === null) throw new Error('no user node');
     await turn({ conversationId: first.id, replyTo: first.userNodeId });
     expect(messagesOf(model.calls.at(-1))).toEqual([withBlock(['Closed Mondays'], 'Are we open Monday?')]);
+  });
+
+  it('with attachments the message is [rules block, attachments block, text], and a later rules change stubs only the rules block', async () => {
+    await addRule('Closed Mondays');
+    const _id = new Types.ObjectId();
+    await server.connection.collection('tw_files').insertOne({
+      _id, orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), importId: null, purpose: 'reference',
+      uploadedBy: author.userId, uploaderRole: 'member', uploadedAt: server.clock.now(), name: 'Menu.txt', kind: 'text', sizeBytes: 9,
+      fingerprint: _id.toHexString().padStart(64, '0'), upload: null, status: 'kept', outcome: 'reference', progress: null,
+      readStartedAt: null, readMs: null, answers: {}, uploadId: null, result: null, report: null, cleanBytes: null, rawDeletedAt: null, attempts: 0,
+    });
+    await blobs.writeRaw({ orgId } as unknown as OrgScope, { locationId, fileId: _id.toHexString() }, Buffer.from('Fall menu'), 'text/plain');
+    const ref = `f_${_id.toHexString()}`;
+    const block = attachmentsBlock([`- ${ref}: a text file`]);
+    const first = await turn({ content: 'What is on it?', attachments: [ref] });
+    expect(sentUserMessage()).toEqual({
+      role: 'user', content: [
+        { type: 'text', text: rulesBlock(plain(['Closed Mondays'])) }, { type: 'text', text: block },
+        { type: 'document', source: { type: 'text', media_type: 'text/plain', data: 'Fall menu' }, title: ref },
+        { type: 'text', text: 'What is on it?' },
+      ],
+    });
+    const stored = { role: 'user', content: [{ type: 'text', text: rulesBlock(plain(['Closed Mondays'])) }, { type: 'text', text: block }, { type: 'text', text: 'What is on it?' }] };
+    expect(JSON.parse((await rawParams(first.id))[0] ?? '{}')).toEqual(stored);
+    await addRule('Patio opens in May');
+    await turn({ conversationId: first.id, content: 'And now?' });
+    expect(messagesOf(model.calls.at(-1))[0]).toEqual({
+      role: 'user', content: [{ type: 'text', text: REPLACED_RULES_BLOCK }, { type: 'text', text: block }, { type: 'text', text: 'What is on it?' }],
+    });
   });
 
   it('GET .../chat/:conversationId shows the person\'s text without the block', async () => {

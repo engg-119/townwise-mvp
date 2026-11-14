@@ -283,6 +283,25 @@ test('Privacy describes how forecasts are built and what Townwise keeps', () => 
   expect(text).toContain('Forecasts. Townwise builds your forecasts from your sales history and notes on Townwise’s own servers, in a job that sees only that location’s days. The model it fits learns only from your restaurant and is used only for your restaurant; Townwise keeps the results (a range of guests per day, the dates the model learned from, and how accurate it has been) and not the model. When Townwise staff import a forecast instead, it was built on the team’s own computers from sales exports you sent us; that model and those exports stay with Townwise staff, are used only for your restaurant, and are deleted when your organization is deleted or when you ask. You and TownwiseAI see the results. Deleting your sales data or your organization deletes them.');
 });
 
+test('Privacy says what letting TownwiseAI read a file sends, adds and keeps, and no line says files are never read (D34)', () => {
+  renderAt('/privacy');
+  const sales = [...screen.getByRole('region', { name: 'Your restaurant’s sales data' }).querySelectorAll('p')].map((p) => p.textContent);
+  const paragraph = sales.find((line) => line.startsWith('Files you let TownwiseAI read.'));
+  expect(paragraph).toBe('Files you let TownwiseAI read. Townwise never sends a file you add to an AI model unless you ask, one file at a time: the box under Add a file, or “Let TownwiseAI read this file” on the file’s page, is off until you choose it. Then Townwise sends that whole file to Anthropic’s Claude, with today’s date and your location’s time zone, and nothing else: not the file’s name, your organization’s or location’s name, or anyone’s email. A point-of-sale export sent this way can hold diner or staff names, and Claude reads all of it; TownwiseAI is told not to repeat a person’s name, email or phone number. TownwiseAI adds what it finds to your account: dated events as notes, daily totals it can check against the file’s own text as sales days, and a summary on Your data it can read later; when an org admin asks, it may also start updating the forecast. Everything it adds can be undone from the file’s page; a forecast update it started keeps running and goes live only once Townwise turns forecasts on for you. What Claude found is kept with the file until you undo the read or the file’s original is deleted; the notes and sales days TownwiseAI added stay until you undo the read or delete them yourself, and its summary on Your data is kept like any item added for reference.');
+  // The lead-in is bold, as the section's other paragraphs have theirs.
+  const lead = [...screen.getByRole('region', { name: 'Your restaurant’s sales data' }).querySelectorAll('p')].find((p) => p.textContent.startsWith('Files you let'));
+  expect(lead?.firstElementChild?.textContent).toBe('Files you let TownwiseAI read.');
+  // It follows the paragraph that points to it.
+  expect(sales.indexOf(paragraph ?? '')).toBe(sales.findIndex((line) => line.startsWith('Your files are personal data too.')) + 1);
+  const anthropic = within(screen.getByRole('region', { name: 'Who else sees it' })).getAllByRole('listitem').find((item) => item.textContent.startsWith('Anthropic,'));
+  expect(anthropic?.textContent).toContain('When you let TownwiseAI read a file, the whole file is sent to it.');
+  expect(anthropic?.textContent).toContain('Townwise never sends it your team’s names or email addresses, apart from any in a file you let it read.');
+  const text = screen.getByRole('main').textContent;
+  expect(text).toContain('Notes and other text in your files are stored but never read, unless you let TownwiseAI read the file.');
+  expect(text).not.toMatch(/TownwiseAI never reads the sales files you drop\./);
+  expect(text).not.toMatch(/stored but never read\./);
+});
+
 test('Privacy says notes hold optional hours and change the published forecast (spec 17, D30)', () => {
   renderAt('/privacy');
   const text = screen.getByRole('main').textContent;
@@ -298,12 +317,12 @@ test('Privacy makes the three commitments and no longer says the app has no uplo
   expect(text).toContain('The operator responsible for your data is the Townwise team, a group of students in ENGG 119, AI in the Real World, at Dartmouth’s Thayer School of Engineering in Hanover, NH. Townwise is not an official Dartmouth product.');
   expect(text).toContain('we will delete your account and its data within 30 days');
   expect(text).toContain('sends us only the date, guest count and net sales for each day');
-  expect(text).toContain('Effective November 5, 2026. Last updated November 12, 2026.');
+  expect(text).toContain('Effective November 5, 2026. Last updated November 14, 2026.');
   // D25: open as admin before anyone joins, then view-as only.
   expect(text).toContain('Before anyone from your organization has joined Townwise, staff setting it up for you, with your consent, can open it as its admin: they see and change what an admin can, except your team, until the first person joins. Each time, and every change they make, is recorded and shown to your organization’s admins.');
-  expect(text).toContain('Once anyone has joined, Townwise staff can see the sales figures and your location notes only through view-as');
+  expect(text).toContain('Once anyone has joined, Townwise staff can see the sales figures, your location notes and your calendars with their events only through view-as');
   expect(text).toContain('uploads, TownwiseAI messages, and staff view-as and open as admin for one hour');
-  expect(text).toContain('public facts about its town (its calendar, and who is likely in town, with the public sources behind them). TownwiseAI never reads the sales files you drop. It reads a text item on Your data, text you pasted or a text file you added, only when you ask, and never a file’s name.');
+  expect(text).toContain('public facts about its town (its calendar, and who is likely in town, with the public sources behind them). TownwiseAI never reads the sales files you drop unless you let it read one. It reads a text item on Your data, text you pasted or a text file you added, only when you ask, and never a file’s name. When it reads the location’s own calendars, Anthropic receives their events’ titles, dates and hours.');
   expect(text).toContain('Turning an item off leaves it out of your numbers, forecasts and TownwiseAI until someone turns it back on.');
   expect(text).toContain('Items you add for reference follow the same rules: we delete each one 365 days after it was sent, or sooner when you delete it.');
   // Your data as the app gives it: an item's original downloads to the person who added it and org admins only, and
@@ -312,7 +331,7 @@ test('Privacy makes the three commitments and no longer says the app has no uplo
   expect(text).not.toContain('can see and download them');
   expect(text).toContain('only an org admin can delete an upload, which deletes the days it still holds. For a sales file, they can instead delete just its original and keep its cleaned daily totals, and an org admin can delete all originals for a location at once and keep the cleaned daily totals; items added for reference stay.');
   expect(text).toContain('we delete your organization’s originals, items you added for reference included, and keep the cleaned totals.');
-  expect(text).toContain('For a file you drop for your sales history, we never read those fields, and only the three values a day leave it.');
+  expect(text).toContain('For a file you drop for your sales history, unless you let TownwiseAI read that file (below), we never read those fields, and only the three values a day leave it.');
   expect(text).toContain('Notes, uploads and items on Your data that you added stay with your organization, including text you kept from TownwiseAI.');
   expect(text).toContain('Answers are deleted with the location’s sales data, the location or the organization.');
   // Stored files (privacy pass 2), Google Places and Maps (1b) and the welcome marker (1c).
@@ -325,6 +344,20 @@ test('Privacy makes the three commitments and no longer says the app has no uplo
   expect(text).toContain('When you first open Townwise after approval, we note that we showed you the welcome, and when.');
   expect(text).toContain('the proposal’s wording stays only in your conversation, and in your notes if you save it.');
   expect(text).not.toMatch(/no place to upload|before any upload exists|email account holders/i);
+});
+
+test('Privacy says what Townwise keeps of a location’s calendars, that it fetches a link and keeps it encrypted, that staff read events through view-as, and that removing one deletes its events', () => {
+  renderAt('/privacy');
+  const items = within(screen.getByRole('region', { name: 'Your organization and team' })).getAllByRole('listitem');
+  const calendars = items.find((item) => item.textContent.startsWith('Your calendars.'));
+  if (calendars === undefined) throw new Error('no Your calendars item');
+  expect(calendars.textContent).toContain('For each event we keep its title, its dates and its hours, never its description, its place or its guests; an imported file itself is not kept.');
+  expect(calendars.textContent).toContain('Townwise fetches a calendar link from our server when you add it and about every 6 hours after that, and keeps the link encrypted');
+  expect(calendars.textContent).toContain('Removing a calendar deletes its events.');
+  // Staff in view-as read the calendars and their events, titles included (api/README.md, Owner calendars item 7).
+  const whoCanSee = within(screen.getByRole('region', { name: 'Your restaurant’s sales data' })).getAllByRole('listitem');
+  expect(whoCanSee.some((item) => item.textContent.includes('your calendars with their events only through view-as'))).toBe(true);
+  expect(screen.getByRole('main').textContent).toContain('its locations, sales data, uploads, notes, calendars, team, TownwiseAI conversations');
 });
 
 test('Privacy says which two emails Townwise sends, through whom, and that it keeps only a log line with ids', () => {

@@ -29,7 +29,8 @@ export interface CalibrationRequester {
   /** The person who asked; null once their records are deleted. */
   userId: string | null;
   role: 'org_admin' | 'superadmin';
-  via: 'chat' | 'console';
+  /** TownwiseAI's chat, the staff console, or a file someone let TownwiseAI read (spec 11A.9). */
+  via: 'chat' | 'console' | 'file';
 }
 
 export interface CalibrationGate { published: boolean; reason: string }
@@ -67,7 +68,7 @@ function calibrationSchema(): Schema<CalibrationFields> {
   const requestedBy = new Schema({
     userId: { type: String, default: null },
     role: { type: String, required: true, enum: ['org_admin', 'superadmin'] },
-    via: { type: String, required: true, enum: ['chat', 'console'] },
+    via: { type: String, required: true, enum: ['chat', 'console', 'file'] },
   }, sub);
   const gate = new Schema({ published: { type: Boolean, required: true }, reason: { type: String, required: true } }, sub);
   const schema = new Schema<CalibrationFields>({

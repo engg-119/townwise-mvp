@@ -1,6 +1,7 @@
 import { ApiError } from '../../../src/api/client';
 import { KEPT_CODES } from '../../../src/portal/files/api';
 import { DATA_STATES, DATA_VIAS } from '../../../src/portal/data/api';
+import { rowAiLine } from '../../../src/portal/data/aiCopy';
 import * as copy from '../../../src/portal/data/copy';
 import { dailyTotalsOf, itemOf } from './fakes';
 
@@ -19,6 +20,18 @@ test('every state has a status line, and a kept item says why', () => {
   expect(copy.stateLine({ state: 'failed', outcome: null })).toBe('Couldn’t read it');
   expect(copy.stateLine({ state: 'not_finished', outcome: null })).toBe('Didn’t finish');
   expect(copy.stateLine({ state: 'waiting', outcome: null })).toBe('Waiting for an answer');
+});
+
+test('a row’s Status names what TownwiseAI did with its file, and nothing without a read, once undone or for a later status (D34)', () => {
+  expect(rowAiLine(null)).toBeNull();
+  expect(rowAiLine({ status: 'queued' })).toBe('TownwiseAI is reading it');
+  expect(rowAiLine({ status: 'reading' })).toBe('TownwiseAI is reading it');
+  expect(rowAiLine({ status: 'done' })).toBe('Read by TownwiseAI');
+  expect(rowAiLine({ status: 'failed' })).toBe('TownwiseAI couldn’t read it');
+  expect(rowAiLine({ status: 'skipped' })).toBe('TownwiseAI didn’t read it');
+  expect(rowAiLine({ status: 'undone' })).toBeNull();
+  expect(rowAiLine({ status: 'a_status_from_later' })).toBeNull();
+  expect(rowAiLine({ status: 'constructor' })).toBeNull();
 });
 
 test('every way an item arrived has its line', () => {

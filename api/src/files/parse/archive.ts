@@ -1,6 +1,7 @@
 // A stored ZIP, read in place inside the parse thread (spec 11A): the central directory by ranged reads, the archive
 // guards before anything is inflated, then each entry as a file of its own (its kind from its name and first bytes),
 // its tables read as families (families.ts). A ZIP inside the ZIP is opened from memory; one inside that is not opened.
+// For a ZIP someone let TownwiseAI read (spec 11A.9), readArchiveText makes its entries text behind the same guards.
 // Entry paths are the organization's data: they go back to the main thread only to be listed for the organization,
 // never to a log or a model.
 import type { FileAnswers, FileKind } from '../../stores/files.ts';
@@ -100,14 +101,15 @@ async function wholeOf(source: Source, entry: ZipEntry): Promise<Buffer> {
   }
 }
 
-async function headOf(source: Source, entry: ZipEntry): Promise<Buffer> {
+/** An entry's first `max` bytes (its head, by default); damage as wholeOf. */
+async function headOf(source: Source, entry: ZipEntry, max = HEAD_BYTES): Promise<Buffer> {
   const parts: Buffer[] = [];
   let bytes = 0;
   try {
     for await (const part of bytesOf(source, entry)) {
       parts.push(part);
       bytes += part.length;
-      if (bytes >= HEAD_BYTES) break;
+      if (bytes >= max) break;
     }
   } catch (err) {
     if (err instanceof ZipDamagedError) {
@@ -116,7 +118,7 @@ async function headOf(source: Source, entry: ZipEntry): Promise<Buffer> {
     }
     throw err;
   }
-  return Buffer.concat(parts).subarray(0, HEAD_BYTES);
+  return Buffer.concat(parts).subarray(0, max);
 }
 
 /** A text entry's records, decoded as a text file is (UTF-16 by mark, else strict UTF-8, else windows-1252). */
@@ -350,6 +352,110 @@ export async function readArchive(
     return { kind: 'days', days: result.days, report: { ...result.report, families: result.families }, entries };
   } catch (err) {
     if (err instanceof ArchiveRefused) return { kind: 'kept', outcome: err.outcome, entries: [] };
+    throw err;
+  }
+}
+
+/** The kinds of entry readArchiveText makes text of, and the words its label gives each. */
+export type ArchiveTextKind = 'text' | 'xlsx' | 'docx' | 'pdf';
+
+const ENTRY_WORDS: Readonly<Record<ArchiveTextKind, string>> = {
+  text: 'a text file', xlsx: 'an Excel workbook', docx: 'a Word document', pdf: 'a PDF document, as its text',
+};
+
+/** One entry handed to readArchiveText's `textOf`: its bytes, and `more` when a text entry was read only in part. */
+export interface ArchiveTextEntry { readonly kind: ArchiveTextKind; readonly bytes: Buffer; readonly more: boolean }
+
+export type ArchiveText =
+  | { readonly kind: 'text'; readonly text: string; readonly source: string; readonly cut: boolean; readonly read: number; readonly skipped: number }
+  | { readonly kind: 'kept'; readonly outcome: 'too_large' | 'not_readable' | 'encrypted' | 'kind_not_read' };
+
+function isTextKind(kind: FileKind): kind is ArchiveTextKind {
+  return kind === 'text' || kind === 'xlsx' || kind === 'docx' || kind === 'pdf';
+}
+
+/**
+ * Reading with TownwiseAI (spec 11A.9): a ZIP's top-level entries as one text, behind readArchive's listing and guards.
+ * Each text, CSV or TSV file, workbook, Word document or PDF (a workbook, document or PDF within READ_CAPS) becomes text
+ * through `textOf` under an "Entry n (what it is):" line, never its path. At most `maxEntries` are read, and the text
+ * stops at `maxChars` (`cut`); a text entry is read only as far as the characters left could need. System files are
+ * passed over. Pictures, other kinds, a ZIP inside, encrypted, damaged or empty entries are counted as `skipped`, and so
+ * is every entry after the text is full or the last entry is read, which also makes it `cut`. `source` is the entries'
+ * texts without their labels. An archive the guards refuse is `too_large` (too big) or `not_readable`; one with no entry
+ * read is `encrypted` when every entry was, else `kind_not_read`.
+ */
+export async function readArchiveText(read: RangeRead, size: number, input: {
+  maxChars: number; maxEntries: number;
+  textOf: (entry: ArchiveTextEntry, maxChars: number) => Promise<{ text: string; cut: boolean } | null>;
+}): Promise<ArchiveText> {
+  const parts: string[] = [];
+  const sources: string[] = [];
+  let length = 0;
+  let skipped = 0;
+  let encrypted = 0;
+  let considered = 0;
+  let cut = false;
+  const refused = (outcome: KeptOutcome): ArchiveText => ({ kind: 'kept', outcome: outcome === 'zip_too_big' ? 'too_large' : 'not_readable' });
+  try {
+    const listing = await listingOf(read, size, ZIP_MAX_ENTRIES);
+    const guard = guardZip(listing, size, GUARD_LIMITS);
+    if (guard !== null) return refused(guard);
+    const source: Source = { read, limits: dataLimits(listing) };
+    for (const entry of listing.entries) {
+      if (entry.name.endsWith('/') || isSystemFile(entry.name)) continue;
+      considered += 1;
+      if (parts.length >= input.maxEntries || length >= input.maxChars) {
+        skipped += 1;
+        cut = true;
+        continue;
+      }
+      if ((entry.flags & 1) !== 0 || (entry.method !== 0 && entry.method !== 8)) {
+        if ((entry.flags & 1) !== 0) encrypted += 1;
+        skipped += 1;
+        continue;
+      }
+      const made = await entryText(source, entry, parts.length, input.maxChars - length, input.textOf);
+      if (made === 'encrypted') encrypted += 1;
+      if (typeof made === 'string') {
+        if (made === 'full') cut = true;
+        skipped += 1;
+        continue;
+      }
+      parts.push(made.label + made.text);
+      sources.push(made.text);
+      length += made.label.length + made.text.length;
+      if (made.cut) cut = true;
+    }
+  } catch (err) {
+    if (err instanceof ArchiveRefused) return refused(err.outcome);
+    throw err;
+  }
+  if (parts.length === 0) return { kind: 'kept', outcome: considered > 0 && encrypted === considered ? 'encrypted' : 'kind_not_read' };
+  return { kind: 'text', text: parts.join(''), source: sources.join('\n'), cut, read: parts.length, skipped };
+}
+
+/** One entry's label and text, or why it was skipped: `full` when no room is left for any of its text. */
+async function entryText(
+  source: Source, entry: ZipEntry, index: number, room: number,
+  textOf: (entry: ArchiveTextEntry, maxChars: number) => Promise<{ text: string; cut: boolean } | null>,
+): Promise<{ label: string; text: string; cut: boolean } | 'skip' | 'encrypted' | 'full'> {
+  try {
+    const sniffed = sniff(entry.name, await headOf(source, entry));
+    if (sniffed.outcome === 'encrypted') return 'encrypted';
+    const kind = sniffed.kind;
+    if (sniffed.outcome !== null || !isTextKind(kind)) return 'skip';
+    if (kind !== 'text' && entry.uncompressedSize > READ_CAPS[kind]) return 'skip';
+    const label = `${index === 0 ? '' : '\n\n'}Entry ${String(index + 1)} (${ENTRY_WORDS[kind]}):\n`;
+    const left = room - label.length;
+    if (left <= 0) return 'full';
+    // A text entry is read as far as the characters left could need: four bytes a character at most, and a mark.
+    const want = kind === 'text' ? Math.min(entry.uncompressedSize, left * 4 + 4) : entry.uncompressedSize;
+    const bytes = want < entry.uncompressedSize ? await headOf(source, entry, want) : await wholeOf(source, entry);
+    const made = await textOf({ kind, bytes, more: bytes.length < entry.uncompressedSize }, left);
+    if (made === null || made.text.trim() === '') return 'skip';
+    return { label, text: made.text, cut: made.cut };
+  } catch (err) {
+    if (err instanceof TableKept) return 'skip';
     throw err;
   }
 }

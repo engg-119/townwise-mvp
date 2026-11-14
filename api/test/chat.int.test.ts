@@ -181,6 +181,7 @@ describe('a plain answer', () => {
       'get_location_overview', 'get_sales_days', 'list_notes', 'get_town_profile', 'propose_note',
       'get_town_calendar', 'get_people_in_town', 'get_forecast', 'get_day', 'show_visual', 'suggest_next',
       'list_data_items', 'read_data_item', 'propose_data_item', 'start_calibration', 'get_calibration', 'compare_forecast_models',
+      'get_owner_calendar',
       'get_order_board', 'get_order_line', 'get_order_setup', 'propose_order_change', 'propose_order_rule',
     ]);
     expect(params?.tools?.every((tool) => 'eager_input_streaming' in tool && tool.eager_input_streaming === true)).toBe(true);
@@ -206,10 +207,11 @@ describe('a plain answer', () => {
         { id: replyNodeId, parentId: userNodeId, role: 'assistant' },
       ],
       messages: [
-        { nodeId: userNodeId, role: 'user', text: 'What changed in May?', proposals: [], parts: [], feedback: null, next: null, at, endedAt: at },
+        { nodeId: userNodeId, role: 'user', text: 'What changed in May?', proposals: [], parts: [], feedback: null, next: null, at, endedAt: at, attachments: [] },
         {
           nodeId: replyNodeId, role: 'assistant', text: 'May was steady, with two busy Fridays.', proposals: [],
           parts: [{ type: 'text', text: 'May was steady, with two busy Fridays.' }], feedback: null, next: null, at, endedAt: at,
+          attachments: [],
         },
       ],
     });

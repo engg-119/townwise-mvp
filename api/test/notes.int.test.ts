@@ -77,7 +77,7 @@ describe('POST /api/org/locations/:locationId/notes', () => {
     expect(note).toEqual({
       id: note.id, kind: 'private_event', startDate: '2026-08-14', endDate: '2026-08-16', weekdays: [5, 6], effect: 'more_guests',
       expectedGuests: 180, detail, startTime: null, endTime: null, createdByEmail: author.email, createdAt: server.clock.now().toISOString(),
-      updatedAt: server.clock.now().toISOString(), canEdit: true,
+      updatedAt: server.clock.now().toISOString(), canEdit: true, source: null,
     });
     const stored = await server.connection.collection('tw_notes').findOne({ _id: new Types.ObjectId(note.id) });
     expect(Object.keys(stored ?? {}).sort()).toEqual([

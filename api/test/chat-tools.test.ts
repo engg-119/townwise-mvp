@@ -33,6 +33,8 @@ const FROZEN_NAMES = [
   'list_data_items', 'read_data_item', 'propose_data_item',
   // The forecast lab.
   'start_calibration', 'get_calibration', 'compare_forecast_models',
+  // The owner's own calendars.
+  'get_owner_calendar',
   // Orders.
   'get_order_board', 'get_order_line', 'get_order_setup', 'propose_order_change', 'propose_order_rule',
 ];
@@ -164,7 +166,7 @@ describe('get_day', () => {
   function note(fields: Partial<NoteRecord>): NoteRecord {
     return {
       id: '000000000000000000000002', kind: 'private_event', startDate: '2026-11-21', endDate: '2026-11-21', weekdays: null,
-      effect: 'more_guests', expectedGuests: 60, detail: 'Sentinel-day-detail', startTime: null, endTime: null, createdBy: SENTINEL_USER, byStaff: false,
+      effect: 'more_guests', expectedGuests: 60, detail: 'Sentinel-day-detail', startTime: null, endTime: null, createdBy: SENTINEL_USER, byStaff: false, source: null,
       createdAt: new Date('2026-11-01T00:00:00Z'), updatedAt: new Date('2026-11-01T00:00:00Z'), ...fields,
     };
   }
@@ -178,7 +180,7 @@ describe('get_day', () => {
     const upload: UploadRecord = {
       id: UPLOAD_ID, locationId: '000000000000000000000001', uploadedBy: SENTINEL_USER, uploadedAt: new Date('2026-11-23T03:30:00Z'),
       status: 'applied', dayCount: 7, inserted: 7, replaced: 0, kept: 0, firstDate: '2026-11-16', lastDate: '2026-11-22', hasGuests: true,
-      hasNetSales: true, byStaff: false, disabledAt: null, disabledBy: null,
+      hasNetSales: true, byStaff: false, disabledAt: null, disabledBy: null, source: null,
     };
     const stores = {
       salesDays: {
@@ -209,6 +211,7 @@ describe('get_day', () => {
       timeZone: 'America/New_York',
       role: 'member',
       actor: { actorUserId: SENTINEL_USER, actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null },
+      turn: { readUntrusted: false },
     };
     return { tc, byIds, ranges };
   }

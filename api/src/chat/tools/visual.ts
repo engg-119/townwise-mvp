@@ -2,6 +2,9 @@
 // every figure from the location's stored days (and, for daily guests, its published forecast through
 // ctx.ports.forecasts), returns them to the model as the result and streams the same visual to the owner, who sees it
 // under the reply. Four kinds: a daily line, a weekday or month breakdown, a short table of days and a few totals.
+// Daily guests read the forecast before deciding whether there is anything to show, since a day from today on has a
+// forecast and no sales yet: such a range is shown when a day has a value or a day from today on has a band, a closed
+// or a booked status. Net sales have no forecast, so an all-future net sales range says Townwise forecasts guests only.
 // Closed and likely-closed days (spec D32, closed-days.ts, from the location's notes, rule schedules and the 8 weeks
 // before each range) are closures, not slow days: breakdown and metrics average open days only, as Analytics does, and
 // a days table marks a likely-closed row. Visuals hold figures, so the tool's card has no views and nothing of a visual
@@ -15,15 +18,18 @@ import { scheduledRules } from '../../forecasts/adjust.ts';
 import { eachDay } from '../../forecasts/file.ts';
 import { MAX_FORECAST_RANGE_DAYS, type ForecastDayView, type ForecastWindowRun } from '../../forecasts/reader.ts';
 import type { SalesDay } from '../../stores/sales-days.ts';
-import type { ChatTool, ToolContext } from './registry.ts';
+import type { ChatTool, ToolContext, ToolRun } from './registry.ts';
 import { DATE } from './shared.ts';
 
 export type Metric = 'guests' | 'netSales';
+/** A day the published forecast closed or booked (a private buyout); an open day has none. */
+export type ForecastStatus = 'closed' | 'booked';
 
 export type Visual =
   | {
     kind: 'daily'; metric: Metric; from: string; to: string;
-    days: { date: string; value: number | null; low: number | null; high: number | null }[];
+    /** `low`, `mid` and `high` are the forecast's, rounded as get_forecast rounds them; `status` is set only on a closed or booked day. */
+    days: { date: string; value: number | null; low: number | null; mid: number | null; high: number | null; status?: ForecastStatus | undefined }[];
     forecast: { model: string; madeAt: string } | null;
   }
   | {
@@ -52,7 +58,13 @@ export interface VisualRequest {
 
 /** What the model reads with the figures. */
 export const VISUAL_RESULT = 'Shown to the owner under your reply. Describe it in a sentence or two; don’t repeat every figure.';
+/** With a band on a day from today on: the prompt's rule that a forecast is given as its range, said where it applies. */
+export const FORECAST_VISUAL_RESULT = `${VISUAL_RESULT} Give the forecast as its range.`;
 export const NO_SALES_REASON = 'No sales in this range, so nothing was shown.';
+/** Daily guests over a range reaching today with no value and no forecast on a day from today on. */
+export const NO_SALES_OR_FORECAST_REASON = 'No sales or published forecast in this range, so nothing was shown.';
+/** Daily net sales over a range wholly after today: no sales yet, and the forecast is of guests only. */
+export const GUESTS_ONLY_REASON = 'Townwise forecasts guests only, so there are no net sales to show for future days.';
 
 /** last_year: the same dates this many days earlier, so weekdays line up (Analytics' YEAR_DAYS). */
 const YEAR_DAYS = 364;
@@ -84,7 +96,8 @@ const value = z.number().nullable();
 export const visualSchema: z.ZodType<Visual> = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('daily'), metric, from: isoDate, to: isoDate,
-    days: z.array(z.object({ date: isoDate, value, low: value, high: value })),
+    // A visual stored before `mid` and `status` existed still parses and replays: mid as null, no status.
+    days: z.array(z.object({ date: isoDate, value, low: value, mid: value.default(null), high: value, status: z.enum(['closed', 'booked']).optional() })),
     forecast: z.object({ model: z.string(), madeAt: z.string() }).nullable(),
   }),
   z.object({
@@ -159,10 +172,11 @@ function valuesOf(days: readonly SalesDay[], of: Metric): number[] {
 }
 
 /**
- * One row per day of the range; the forecast band (low down, high up, as get_forecast rounds) only for guests. The band
- * is the day's range as the owner's notes leave it from the town's today on (spec 14.5), the same low and high
- * get_forecast and the Calendar give, so a closed or booked day has none; it is the model's 80% range only on a day no
- * note changed (get_forecast's modelRange is the model's own on the others).
+ * One row per day of the range; the forecast band (low down, mid to the nearest guest, high up, as get_forecast rounds)
+ * only for guests. The band is the day's range as the owner's notes leave it from the town's today on (spec 14.5), the
+ * same low, mid and high get_forecast and the Calendar give, so a closed or booked day has none and says which it is in
+ * `status`; it is the model's 80% range only on a day no note changed (get_forecast's modelRange is the model's own on
+ * the others).
  */
 export function dailyVisual(
   req: VisualRequest, days: readonly SalesDay[], forecast: readonly ForecastDayView[], run: { model: string; madeAt: string } | null,
@@ -172,12 +186,16 @@ export function dailyVisual(
   const band = new Map(of === 'guests' ? forecast.map((day) => [day.date, day]) : []);
   const out = eachDay(req.from, req.to).map((date) => {
     const row = rows.get(date);
-    const low = band.get(date)?.low ?? null;
-    const high = band.get(date)?.high ?? null;
+    const forecastDay = band.get(date);
+    const low = forecastDay?.low ?? null;
+    const mid = forecastDay?.mid ?? null;
+    const high = forecastDay?.high ?? null;
     const banded = low !== null && high !== null;
+    const status = forecastDay === undefined || forecastDay.status === 'open' ? null : forecastDay.status;
     return {
       date, value: row === undefined ? null : shown(unitsOf(row, of), of),
-      low: banded ? Math.floor(low) : null, high: banded ? Math.ceil(high) : null,
+      low: banded ? Math.floor(low) : null, mid: banded && mid !== null ? Math.round(mid) : null, high: banded ? Math.ceil(high) : null,
+      ...(status === null ? {} : { status }),
     };
   });
   const hasBand = out.some((day) => day.low !== null);
@@ -304,6 +322,15 @@ async function closuresOf(tc: ToolContext): Promise<(read: readonly SalesDay[]) 
   };
 }
 
+function unavailable(reason: string): ToolRun {
+  return { content: JSON.stringify({ available: false, reason }) };
+}
+
+/** A daily visual's days from today on, the ones a forecast is for; none for another kind. */
+function daysAhead(visual: Visual, today: string): Extract<Visual, { kind: 'daily' }>['days'] {
+  return visual.kind === 'daily' ? visual.days.filter((day) => day.date >= today) : [];
+}
+
 /** `days` is the range's stored days; `read` the same with the 8 weeks before (every kind but daily). */
 async function visualFor(tc: ToolContext, req: VisualRequest, days: readonly SalesDay[], read: readonly SalesDay[]): Promise<Visual> {
   if (req.kind === 'daily') {
@@ -366,8 +393,17 @@ export const showVisualTool: ChatTool<VisualRequest> = {
       ? await tc.ctx.stores.salesDays.days(tc.scope, tc.location.id, { from: req.from, to: req.to })
       : await readWithLookback(tc, req);
     const days = read.filter((day) => day.date >= req.from);
-    if (!hasValue(req, days)) return { content: JSON.stringify({ available: false, reason: NO_SALES_REASON }) };
+    const sales = hasValue(req, days);
+    // Daily guests reaching today read the published forecast before deciding: a day from today on has no sales yet. A
+    // range that ends before today can show only sales, as before forecasts reached this tool.
+    const forecastable = req.kind === 'daily' && req.metric === 'guests' && req.to >= tc.today;
+    if (!sales && !forecastable) {
+      const futureNetSales = req.kind === 'daily' && req.metric === 'netSales' && req.from > tc.today;
+      return unavailable(futureNetSales ? GUESTS_ONLY_REASON : NO_SALES_REASON);
+    }
     const visual = await visualFor(tc, req, days, read);
-    return { content: JSON.stringify({ shown: VISUAL_RESULT, visual }), visual };
+    const ahead = daysAhead(visual, tc.today);
+    if (!sales && !ahead.some((day) => day.low !== null || day.status !== undefined)) return unavailable(NO_SALES_OR_FORECAST_REASON);
+    return { content: JSON.stringify({ shown: ahead.some((day) => day.low !== null) ? FORECAST_VISUAL_RESULT : VISUAL_RESULT, visual }), visual };
   },
 };

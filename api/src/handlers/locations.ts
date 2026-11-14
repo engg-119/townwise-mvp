@@ -269,6 +269,8 @@ export async function removeLocation(ctx: TownwiseContext, scope: OrgScope, loca
   await ctx.stores.calibrations.removeForLocation(scope, locationId);
   // U13B: forecasts staff imported for it, even with no sales data left.
   await ctx.stores.forecasts.removeForLocation(scope, locationId);
+  // The owner's calendars and their events.
+  await ctx.stores.ownerCalendars.removeForLocation(scope, locationId);
   // Orders: saved edits, confirmed rules, the setup, item sales and counts go with the location.
   await ctx.stores.orders.removeForLocation(scope, locationId);
   await ctx.stores.orderSetups.removeForLocation(scope, locationId);

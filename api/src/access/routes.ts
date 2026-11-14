@@ -17,7 +17,7 @@ import { rateReply } from '../handlers/chat-feedback.ts';
 import { actOnItemProposal, getItemProposal } from '../handlers/chat-item-proposals.ts';
 import { actOnOrderProposal, getOrderProposal } from '../handlers/chat-order-proposals.ts';
 import { actOnProposal } from '../handlers/chat-proposals.ts';
-import { getDataItem, listData, removeDataItem, replaceDataItem, updateDataItem } from '../handlers/data.ts';
+import { getDataItem, listData, removeDataItem, replaceDataItem, requestAiRead, undoAiRead, updateDataItem } from '../handlers/data.ts';
 import { deleteOrg, deletePerson, purgeOriginals } from '../handlers/deletion.ts';
 import { getEstimatesAbout, getForecast, getPeopleInTown } from '../handlers/estimates.ts';
 import { deleteItemSales, getOrderSetup, saveOrderCount, saveOrderSetup, uploadItemSales } from '../handlers/order-setup.ts';
@@ -32,6 +32,9 @@ import { declineInvite, getMe, joinInvite, recordWelcome } from '../handlers/me.
 import { createNote, deleteNote, listNotes, updateNote } from '../handlers/notes.ts';
 import { startOpenAsAdmin } from '../handlers/open-as-admin.ts';
 import { getStaffActivity, leaveOrg, renameOrg } from '../handlers/org.ts';
+import {
+  createOwnerCalendar, listOwnerCalendarEvents, listOwnerCalendars, refreshOwnerCalendar, removeOwnerCalendar,
+} from '../handlers/owner-calendars.ts';
 import { placesAutocomplete, placesDetails, placesMap } from '../handlers/places.ts';
 import { getProfile, updateProfile } from '../handlers/profile.ts';
 import { createAccessRequest } from '../handlers/requests.ts';
@@ -59,12 +62,14 @@ export interface TownwiseRoute {
    * '8kb' on a TownwiseAI proposal; '32kb' on the other JSON writes, among them (D29) the Places map, whose 25 place
    * ids may reach 13 KB, and an order count; '256kb' only on the upload routes (the member one, D23 staff setup's, and
    * the item sales upload) and (U13B) the staff forecast import; '1mb' only on the ordering setup's save (300 items
-   * with 10 point-of-sale names each can pass 256kb); 'stream' only on the chunk route, whose handler reads the raw
-   * body itself after the policy has passed.
+   * with 10 point-of-sale names each can pass 256kb); '2mb' only on adding an owner calendar, whose body may carry a
+   * calendar file of at most 1 MB (its handler counts the file's own bytes) as a JSON string, in which each CR, LF,
+   * tab, quote and backslash takes two bytes; 'stream' only on the chunk route, whose handler reads the raw body
+   * itself after the policy has passed.
    */
-  readonly bodyLimit: 'none' | '1kb' | '2kb' | '8kb' | '32kb' | '256kb' | '1mb' | 'stream';
+  readonly bodyLimit: 'none' | '1kb' | '2kb' | '8kb' | '32kb' | '256kb' | '1mb' | '2mb' | 'stream';
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
-  readonly limiter?: 'uploads' | 'item_sales' | 'requests' | 'view-as' | 'chat' | 'places' | 'files' | 'file_chunks' | 'downloads';
+  readonly limiter?: 'uploads' | 'item_sales' | 'requests' | 'view-as' | 'chat' | 'places' | 'files' | 'file_chunks' | 'downloads' | 'ai_reads';
   /**
    * Runs while staff have the organization open as its admin (D25), as the grant organization's org admin. Without it
    * the route is refused then (403 `open_as_admin_refused`; staff routes 409 `open_as_admin_active`), so a new route
@@ -189,6 +194,30 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     id: 'org.rules.remove', method: 'DELETE', path: '/org/locations/:locationId/rules/:ruleId', policy: 'member',
     bodyLimit: 'none', openAsAdmin: true, handler: deleteRule,
   },
+  // The owner's own calendars (openspec change connect-owner-calendar, design decision 7), as notes: every member, open
+  // as admin included. events is declared before the :calendarId routes. "Refresh now" has no body; its handler holds
+  // it to one per calendar per 5 minutes. No route limiter: a file import fetches nothing, and adding a link spends one
+  // of the account's link adds in its handler before the fetch.
+  {
+    id: 'org.owner_calendars.list', method: 'GET', path: '/org/locations/:locationId/owner-calendars', policy: 'member',
+    bodyLimit: 'none', openAsAdmin: true, handler: listOwnerCalendars,
+  },
+  {
+    id: 'org.owner_calendars.events', method: 'GET', path: '/org/locations/:locationId/owner-calendars/events', policy: 'member',
+    bodyLimit: 'none', openAsAdmin: true, handler: listOwnerCalendarEvents,
+  },
+  {
+    id: 'org.owner_calendars.create', method: 'POST', path: '/org/locations/:locationId/owner-calendars', policy: 'member',
+    bodyLimit: '2mb', openAsAdmin: true, handler: createOwnerCalendar,
+  },
+  {
+    id: 'org.owner_calendars.refresh', method: 'POST', path: '/org/locations/:locationId/owner-calendars/:calendarId/refresh',
+    policy: 'member', bodyLimit: 'none', openAsAdmin: true, handler: refreshOwnerCalendar,
+  },
+  {
+    id: 'org.owner_calendars.remove', method: 'DELETE', path: '/org/locations/:locationId/owner-calendars/:calendarId',
+    policy: 'member', bodyLimit: 'none', openAsAdmin: true, handler: removeOwnerCalendar,
+  },
   // Stored files and imports (spec 10.11, 11A). imports/current is declared before imports/:importId.
   {
     id: 'org.files.create', method: 'POST', path: '/org/locations/:locationId/files', policy: 'member', bodyLimit: '2kb',
@@ -251,6 +280,15 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.data.replace', method: 'POST', path: '/org/locations/:locationId/data/:ref/replace', policy: 'member',
     bodyLimit: '2kb', openAsAdmin: true, handler: replaceDataItem,
+  },
+  // Spec 11A.9 (D34): letting TownwiseAI read an item's stored file, opted in per file, and undoing what the read made.
+  {
+    id: 'org.data.ai_read', method: 'POST', path: '/org/locations/:locationId/data/:ref/ai', policy: 'member', bodyLimit: '2kb',
+    limiter: 'ai_reads', openAsAdmin: true, handler: requestAiRead,
+  },
+  {
+    id: 'org.data.ai_undo', method: 'DELETE', path: '/org/locations/:locationId/data/:ref/ai', policy: 'member', bodyLimit: 'none',
+    openAsAdmin: true, handler: undoAiRead,
   },
   {
     id: 'org.data.remove', method: 'DELETE', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: 'none',
@@ -525,7 +563,7 @@ const VIEW_AS_END = { method: 'POST', path: '/admin/view-as/end' } as const;
 
 /** Spec 10.8. [CONFIRM: limits] */
 const WRITES_LIMIT = { name: 'townwise:writes', limit: 300, windowSeconds: 600 } as const;
-const ROUTE_LIMITS = {
+export const ROUTE_LIMITS = {
   uploads: { name: 'townwise:uploads', limit: 30, windowSeconds: 3600, whenStoreDown: 'allow' },
   // The browser sends an item sales file in chunks of up to 31 days (244 days is 8 chunks, more when a chunk is split
   // by size), so it has its own count instead of spending the sales uploads'. The kit's names take no underscore.
@@ -541,6 +579,8 @@ const ROUTE_LIMITS = {
   files: { name: 'townwise:files', limit: 120, windowSeconds: 3600, whenStoreDown: 'allow' },
   file_chunks: { name: 'townwise:file-chunks', limit: 1500, windowSeconds: 3600, whenStoreDown: 'allow' },
   downloads: { name: 'townwise:downloads', limit: 300, windowSeconds: 3600, whenStoreDown: 'allow' },
+  // Spec 11A.9: each read is a model call on a whole file, so a store outage denies (the writes limiter allows).
+  ai_reads: { name: 'townwise:ai-reads', limit: 30, windowSeconds: 3600, whenStoreDown: 'deny' },
 } as const;
 
 /** The only route that may stream its body. */

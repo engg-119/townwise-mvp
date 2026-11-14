@@ -1,6 +1,6 @@
 import type { QueuedUpload } from '../../../src/portal/files/uploadQueue';
 import {
-  calendarYears, cardMoves, doneLine, filesReadLine, foundLines, importToStart, mergeRows, needsHistory, nextEntrance, overLine,
+  aiRefOf, calendarYears, cardMoves, doneLine, filesReadLine, foundLines, importToStart, mergeRows, needsHistory, nextEntrance, overLine,
   pendingRange, phaseOf, rowProgress, sendingCount, statusLine, STEP, storedCount, SUGGESTIONS,
 } from '../../../src/portal/onboarding/history';
 import { locationOf, orgOf } from '../../helpers/portal';
@@ -9,7 +9,7 @@ import { fileViewOf, importViewOf } from '../files/fakes';
 // The drop step's pure rules (spec P11, storage2 2.1, 2.2 and 15.3): when it shows, its phases, how this screen's
 // uploads merge with the server's list, when reading can start, and its lines. Pillars: every line comes from the
 // server's counts and dates, never a guess, and "Estimating" stands where there is no basis (T, E); the suggestions
-// promise nothing the reader doesn't do, such as reading notes inside files (honest copy, P).
+// promise nothing the readers don't do: the sales reader takes only daily totals, and TownwiseAI reads a file only when let (honest copy, P).
 
 const HANOVER = { townId: 'hanover-nh', name: 'Hanover', state: 'NH' };
 const DAYS = { dayCount: 10, guestsDayCount: 10, netSalesDayCount: 10, firstDate: '2025-01-01', lastDate: '2025-01-10', missingDays: 0 };
@@ -79,6 +79,16 @@ test('Read my history starts the open import, else the one the first upload join
   expect(importToStart(null, 'i2')).toBe('i2');
   expect(importToStart(importViewOf('i1', { status: 'done' }), 'i2')).toBe('i2');
   expect(importToStart(null, null)).toBeNull();
+});
+
+test('TownwiseAI is asked through a dropped file’s upload when it wrote days, else the file, and only once it is read for sales (D34)', () => {
+  // The fake's file wrote days into upload u1.
+  expect(aiRefOf(fileViewOf('f1'))).toBe('u_u1');
+  expect(aiRefOf(fileViewOf('f2', { status: 'kept', outcome: 'no_sales_columns', result: null }))).toBe('f_f2');
+  expect(aiRefOf(fileViewOf('f3', { status: 'failed', outcome: 'internal', result: null }))).toBe('f_f3');
+  for (const status of ['uploading', 'stored', 'queued', 'reading', 'waiting'] as const) {
+    expect(aiRefOf(fileViewOf('f4', { status, result: null }))).toBeNull();
+  }
 });
 
 test('progress: bytes sent while uploading, units read only when the server knows the total', () => {
@@ -156,7 +166,7 @@ test('the drag line counts files when the browser says how many', () => {
 test('the suggestions name every kind the owner asked for and promise nothing the reader does not do', () => {
   const text = SUGGESTIONS.map((each) => `${each.title} ${each.body}`).join(' ');
   for (const kind of ['Daily sales summaries', 'Sales reports', 'ZIP', 'PDF', 'Check-level']) expect(text).toContain(kind);
-  expect(text).toContain('doesn’t read notes inside files yet');
+  expect(text).toContain('Townwise reads only the daily totals in your files, unless you let TownwiseAI read them');
   expect(text).not.toMatch(/forecast/i);
   // No em dashes in copy.
   expect(JSON.stringify({ SUGGESTIONS, STEP })).not.toContain('—');

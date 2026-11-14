@@ -1,39 +1,44 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
-import { ADD_FILE, useComposerFiles } from '../../src/chat/ui/ComposerFiles.web';
+import { ATTACH_FILES, useComposerFiles } from '../../src/chat/ui/ComposerFiles.web';
 
-// The composer's + : hover turns its own border white (it cannot reach past the composer's rounded box), and a
-// disabled + (view-as) shows no hover.
+// The composer's + (Attach files) is the round arrow of ChatButton: a 44px circle whose hover fill stays inside the
+// composer's rounded box, and a disabled + (view-as) shows no hover.
 
 jest.mock('../../src/portal/PortalProvider', () => ({ usePortal: () => ({ api: {} }) }));
 jest.mock('../../src/portal/files/api', () => ({ listFiles: () => Promise.resolve([]) }));
 jest.mock('../../src/portal/files/uploadQueue', () => ({
-  useUploadQueue: () => ({ items: [], add: () => undefined, cancel: () => undefined, forget: () => undefined, filesUnavailable: false }),
+  useUploadQueue: () => ({ items: [], add: () => [], cancel: () => undefined, forget: () => undefined, filesUnavailable: false }),
 }));
 jest.mock('../../src/portal/hooks', () => ({ useLoad: () => ({ state: { status: 'ready', data: true } }) }));
 
 afterEach(cleanup);
 
 function Harness(props: { readOnlyId: string | null }): React.JSX.Element {
-  return <>{useComposerFiles('loc', props.readOnlyId).button}</>;
+  return <>{useComposerFiles('loc', props.readOnlyId, () => undefined).button}</>;
 }
 
-function border(): string {
-  return getComputedStyle(screen.getByRole('button', { name: ADD_FILE })).borderTopColor;
+function plus(): HTMLElement {
+  return screen.getByRole('button', { name: ATTACH_FILES });
 }
 
-test('hover whitens the + border, and leaving clears it', () => {
+test('the + is a 44px circle with a plus icon; hover fills it, and leaving clears it', () => {
   render(<Harness readOnlyId={null} />);
-  const rest = border();
-  fireEvent.mouseEnter(screen.getByRole('button', { name: ADD_FILE }));
-  expect(border()).not.toBe(rest);
-  fireEvent.mouseLeave(screen.getByRole('button', { name: ADD_FILE }));
-  expect(border()).toBe(rest);
+  const style = getComputedStyle(plus());
+  expect(style.getPropertyValue('border-top-left-radius')).toBe('22px');
+  expect(style.getPropertyValue('width')).toBe('44px');
+  expect(plus().querySelector('svg')).not.toBeNull();
+  const rest = getComputedStyle(plus()).backgroundColor;
+  fireEvent.mouseEnter(plus());
+  expect(getComputedStyle(plus()).backgroundColor).not.toBe(rest);
+  fireEvent.mouseLeave(plus());
+  expect(getComputedStyle(plus()).backgroundColor).toBe(rest);
 });
 
 test('a disabled + shows no hover', () => {
   render(<Harness readOnlyId="note" />);
-  const rest = border();
-  fireEvent.mouseEnter(screen.getByRole('button', { name: ADD_FILE }));
-  expect(border()).toBe(rest);
+  expect(plus().getAttribute('aria-disabled')).toBe('true');
+  const rest = getComputedStyle(plus()).backgroundColor;
+  fireEvent.mouseEnter(plus());
+  expect(getComputedStyle(plus()).backgroundColor).toBe(rest);
 });

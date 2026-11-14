@@ -27,7 +27,7 @@ const TREE: TreeNode[] = [{ id: 'u1', parentId: null, role: 'user' }, { id: 'a1'
 function msg(key: string, role: ChatMessage['role'], words: string, nodeId: string, parentId: string | null): ChatMessage {
   return {
     key, role, parts: [{ type: 'text', key: `${key}t`, text: words }], state: 'complete', note: null, nodeId, parentId, feedback: null,
-    ratingError: null, next: null, request: null, startedAt: null, endedAt: null, at: null,
+    ratingError: null, next: null, request: null, startedAt: null, endedAt: null, at: null, attachments: [],
   };
 }
 
@@ -45,7 +45,7 @@ it('hides Copy on native and keeps the reply text selectable', async () => {
   const chat = fakeChat();
   await render(
     <>
-      <UserMessage message={msg('m1', 'user', 'How was December?', 'u1', null)} tree={TREE} chat={chat} readOnlyId={null} busy={false} actions="hover" onAnnounce={jest.fn()} />
+      <UserMessage message={msg('m1', 'user', 'How was December?', 'u1', null)} tree={TREE} chat={chat} locationId="l1" readOnlyId={null} busy={false} actions="hover" onAnnounce={jest.fn()} />
       <ReplyView
         message={msg('m2', 'assistant', 'December was busy.', 'a1', 'u1')}
         ctx={{ town: 'Hanover', hasTownProfile: true }}
@@ -76,7 +76,7 @@ it('shows every row on native, whatever the message’s place', async () => {
   const chat = fakeChat();
   await render(
     <>
-      <UserMessage message={{ ...msg('m1', 'user', 'How was December?', 'u1', null), at: Date.now() }} tree={TREE} chat={chat} readOnlyId={null} busy={false} actions="hover" onAnnounce={jest.fn()} />
+      <UserMessage message={{ ...msg('m1', 'user', 'How was December?', 'u1', null), at: Date.now() }} tree={TREE} chat={chat} locationId="l1" readOnlyId={null} busy={false} actions="hover" onAnnounce={jest.fn()} />
       <ReplyView
         message={{ ...msg('m2', 'assistant', 'December was busy.', 'a1', 'u1'), at: Date.now() }}
         ctx={{ town: 'Hanover', hasTownProfile: true }}
