@@ -301,9 +301,9 @@ test('Privacy makes the three commitments and no longer says the app has no uplo
   expect(text).toContain('Effective November 5, 2026. Last updated November 12, 2026.');
   // D25: open as admin before anyone joins, then view-as only.
   expect(text).toContain('Before anyone from your organization has joined Townwise, staff setting it up for you, with your consent, can open it as its admin: they see and change what an admin can, except your team, until the first person joins. Each time, and every change they make, is recorded and shown to your organization’s admins.');
-  expect(text).toContain('Once anyone has joined, Townwise staff can see the sales figures and your location notes only through view-as');
+  expect(text).toContain('Once anyone has joined, Townwise staff can see the sales figures, your location notes and your calendars with their events only through view-as');
   expect(text).toContain('uploads, TownwiseAI messages, and staff view-as and open as admin for one hour');
-  expect(text).toContain('public facts about its town (its calendar, and who is likely in town, with the public sources behind them). TownwiseAI never reads the sales files you drop. It reads a text item on Your data, text you pasted or a text file you added, only when you ask, and never a file’s name.');
+  expect(text).toContain('public facts about its town (its calendar, and who is likely in town, with the public sources behind them). TownwiseAI never reads the sales files you drop. It reads a text item on Your data, text you pasted or a text file you added, only when you ask, and never a file’s name. When it reads the location’s own calendars, Anthropic receives their events’ titles, dates and hours.');
   expect(text).toContain('Turning an item off leaves it out of your numbers, forecasts and TownwiseAI until someone turns it back on.');
   expect(text).toContain('Items you add for reference follow the same rules: we delete each one 365 days after it was sent, or sooner when you delete it.');
   // Your data as the app gives it: an item's original downloads to the person who added it and org admins only, and
@@ -325,6 +325,20 @@ test('Privacy makes the three commitments and no longer says the app has no uplo
   expect(text).toContain('When you first open Townwise after approval, we note that we showed you the welcome, and when.');
   expect(text).toContain('the proposal’s wording stays only in your conversation, and in your notes if you save it.');
   expect(text).not.toMatch(/no place to upload|before any upload exists|email account holders/i);
+});
+
+test('Privacy says what Townwise keeps of a location’s calendars, that it fetches a link and keeps it encrypted, that staff read events through view-as, and that removing one deletes its events', () => {
+  renderAt('/privacy');
+  const items = within(screen.getByRole('region', { name: 'Your organization and team' })).getAllByRole('listitem');
+  const calendars = items.find((item) => item.textContent.startsWith('Your calendars.'));
+  if (calendars === undefined) throw new Error('no Your calendars item');
+  expect(calendars.textContent).toContain('For each event we keep its title, its dates and its hours, never its description, its place or its guests; an imported file itself is not kept.');
+  expect(calendars.textContent).toContain('Townwise fetches a calendar link from our server when you add it and about every 6 hours after that, and keeps the link encrypted');
+  expect(calendars.textContent).toContain('Removing a calendar deletes its events.');
+  // Staff in view-as read the calendars and their events, titles included (api/README.md, Owner calendars item 7).
+  const whoCanSee = within(screen.getByRole('region', { name: 'Your restaurant’s sales data' })).getAllByRole('listitem');
+  expect(whoCanSee.some((item) => item.textContent.includes('your calendars with their events only through view-as'))).toBe(true);
+  expect(screen.getByRole('main').textContent).toContain('its locations, sales data, uploads, notes, calendars, team, TownwiseAI conversations');
 });
 
 test('Privacy says which two emails Townwise sends, through whom, and that it keeps only a log line with ids', () => {

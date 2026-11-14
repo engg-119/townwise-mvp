@@ -135,6 +135,7 @@ describe('GET is side-effect free (7.3)', () => {
       'org.people.get': '?from=2026-05-01&to=2026-05-31',
       // U13B.
       'org.forecast.get': '?from=2026-05-01&to=2026-05-31',
+      'org.owner_calendars.events': '?from=2026-05-01&to=2026-05-31',
     };
     const getRoutes = TOWNWISE_ROUTES.filter((route) => route.method === 'GET');
     const pathOf = (route: TownwiseRoute, values: Record<string, string>): string => {

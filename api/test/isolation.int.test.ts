@@ -12,8 +12,8 @@ import { createItemReader } from '../src/files/items.ts';
 import { createMemoryFileBlobs, type MemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import { createTownwiseStores } from '../src/stores/index.ts';
 import {
-  addConversation, addInvite, addLocation, addNote, addOpenAsAdminGrant, addOrderRecords, addRequest, addSalesDay, addSeat, addUpload,
-  createOrg, ORDER_COLLECTIONS,
+  addConversation, addInvite, addLocation, addNote, addOpenAsAdminGrant, addOrderRecords, addOwnerCalendar, addRequest, addSalesDay, addSeat,
+  addUpload, createOrg, ORDER_COLLECTIONS,
 } from './helpers/fixtures.ts';
 import { seedReadFile } from './helpers/files.ts';
 import { PROBE_ROUTES } from './helpers/probe.ts';
@@ -50,6 +50,8 @@ interface Tenant {
   refFileId: string;
   /** A business rule of the location (spec 6.24), the member's. */
   ruleId: string;
+  /** An owner calendar of the location, named and titled after the organization. */
+  calendarId: string;
 }
 
 /**
@@ -70,6 +72,8 @@ interface SetupTenant {
   refFileId: string;
   /** A business rule of its location, the staff member's, as A's and B's. */
   ruleId: string;
+  /** An owner calendar, as A's and B's. */
+  calendarId: string;
 }
 
 let a: Tenant;
@@ -103,6 +107,7 @@ async function tenant(name: string): Promise<Tenant> {
   const importId = String((await server.connection.collection('tw_files').findOne({ _id: new Types.ObjectId(fileId) }))?.importId);
   const refFileId = await addReferenceItem(orgId, locationId, member.session.userId, name);
   const ruleId = await addRuleRow(orgId, locationId, member.session.userId, name);
+  const calendarId = await addOwnerCalendar(server, { orgId, locationId, label: `${name} bookings`, title: `${name} private booking` });
   await withProposal(conversationId, name);
   await addOrderRecords(server, { orgId, locationId, conversationId });
   // U9: an answer to a TownwiseAI question.
@@ -112,7 +117,7 @@ async function tenant(name: string): Promise<Tenant> {
   });
   return {
     orgId, name, admin, member, inviteId, seatIds, locationId, locationName, noteId, conversationId, fileId, importId, uploadId, refFileId,
-    ruleId,
+    ruleId, calendarId,
   };
 }
 
@@ -133,7 +138,8 @@ async function setupTenant(name: string, staffUserId: string): Promise<SetupTena
   const importId = String((await server.connection.collection('tw_files').findOne({ _id: new Types.ObjectId(fileId) }))?.importId);
   const refFileId = await addReferenceItem(orgId, locationId, staffUserId, name);
   const ruleId = await addRuleRow(orgId, locationId, staffUserId, name);
-  return { orgId, inviteId, locationId, noteId, conversationId, fileId, importId, uploadId, refFileId, ruleId };
+  const calendarId = await addOwnerCalendar(server, { orgId, locationId });
+  return { orgId, inviteId, locationId, noteId, conversationId, fileId, importId, uploadId, refFileId, ruleId, calendarId };
 }
 
 /** A business rule of the location (spec 6.24), in the shape the store writes. */
@@ -206,6 +212,8 @@ async function snapshotOf(org: Tenant): Promise<string> {
     ...ORDER_COLLECTIONS,
     // Business rules (spec 6.24).
     'tw_business_rules',
+    // Owner calendars.
+    'tw_calendar_sources', 'tw_calendar_events',
   ]) {
     docs.push(await server.connection.collection(name).find({ orgId }).sort({ _id: 1 }).toArray());
   }
@@ -233,7 +241,7 @@ function bIds(): Record<string, string> {
   return {
     orgId: b.orgId, inviteId: b.inviteId, memberId: b.inviteId, userId: b.member.session.userId,
     locationId: b.locationId, noteId: b.noteId, conversationId: b.conversationId, fileId: b.fileId, importId: b.importId,
-    ref: `u_${b.uploadId}`, ruleId: b.ruleId,
+    ref: `u_${b.uploadId}`, ruleId: b.ruleId, calendarId: b.calendarId,
   };
 }
 
@@ -243,6 +251,7 @@ function bSecrets(): string[] {
     b.orgId, b.name, b.admin.email, b.member.email, b.locationId, b.locationName, b.noteId, b.conversationId, `${b.name} private chat`,
     b.fileId, b.importId, b.uploadId, `${b.name} private item`, b.refFileId, `${b.name} private item.txt`, `${b.name} reference text`,
     b.ruleId, `${b.name} private rule`,
+    b.calendarId, `${b.name} bookings`, `${b.name} private booking`,
   ];
 }
 
@@ -315,6 +324,7 @@ const BODY: Record<string, unknown> = {
   // Business rules.
   'org.rules.create': { text: 'Closed Mondays' },
   'org.rules.update': { text: 'Closed Tuesdays' },
+  'org.owner_calendars.create': { kind: 'file', label: 'Added by A', ics: 'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n' },
 };
 const QUERY: Record<string, string> = {
   'org.sales.days': '?from=2026-01-01&to=2026-05-31', 'org.calendar.get': '?from=2026-01-01&to=2026-05-31',
@@ -322,6 +332,7 @@ const QUERY: Record<string, string> = {
   'org.people.get': '?from=2026-05-01&to=2026-05-31',
   // U13B.
   'org.forecast.get': '?from=2026-05-01&to=2026-05-31',
+  'org.owner_calendars.events': '?from=2026-11-01&to=2026-11-30',
 };
 
 /**
@@ -332,6 +343,7 @@ async function expectForeignIdsNotFound(route: TownwiseRoute, session: TestSessi
   const bOwn: Record<string, string[]> = {
     memberId: [b.inviteId, ...b.seatIds], locationId: [b.locationId], noteId: [b.noteId], conversationId: [b.conversationId],
     fileId: [b.fileId], importId: [b.importId], ref: [`u_${b.uploadId}`, `f_${b.refFileId}`], ruleId: [b.ruleId],
+    calendarId: [b.calendarId],
   };
   const params = [...route.path.matchAll(/:([A-Za-z]+)/g)].map((match) => match[1] ?? '');
   // Every other segment is the caller's own, so the request reaches the route: an empty one would match no route, and
@@ -360,7 +372,8 @@ async function expectForeignIdsNotFound(route: TownwiseRoute, session: TestSessi
 
 /** The path ids of an organization's own records, and the ids no organization owns, for `route`. */
 function ownIds(
-  org: Pick<Tenant, 'inviteId' | 'locationId' | 'noteId' | 'conversationId' | 'fileId' | 'importId' | 'uploadId' | 'ruleId'>, route: TownwiseRoute,
+  org: Pick<Tenant, 'inviteId' | 'locationId' | 'noteId' | 'conversationId' | 'fileId' | 'importId' | 'uploadId' | 'ruleId' | 'calendarId'>,
+  route: TownwiseRoute,
 ): Record<string, string> {
   return {
     memberId: org.inviteId, locationId: org.locationId, noteId: org.noteId, conversationId: org.conversationId, fileId: org.fileId,
@@ -371,11 +384,12 @@ function ownIds(
     ref: `u_${org.uploadId}`, ruleId: org.ruleId,
     // The reply of the organization's conversation (its stored messages have no tree, so their nodes are legacy-{index}).
     nodeId: 'legacy-1',
+    calendarId: org.calendarId,
   };
 }
 
 describe('isolation of id-bearing tenant routes, generated from the route table', () => {
-  it('covers the team, location, sales, note, business rule, tuning chat, proposal and order routes', () => {
+  it('covers the team, location, sales, note, business rule, tuning chat, proposal, owner calendar and order routes', () => {
     expect(tenantRoutesWithIds.map((route) => route.id)).toEqual(expect.arrayContaining([
       'org.members.update', 'org.members.remove', 'org.locations.update', 'org.locations.remove', 'org.sales.get',
       'org.sales.days', 'org.sales.upload', 'org.sales.remove', 'org.notes.list', 'org.notes.create', 'org.notes.update',
@@ -397,6 +411,9 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
       'org.chat.order_proposal',
       // Business rules.
       'org.rules.list', 'org.rules.create', 'org.rules.update', 'org.rules.remove',
+      // Owner calendars.
+      'org.owner_calendars.list', 'org.owner_calendars.events', 'org.owner_calendars.create', 'org.owner_calendars.refresh',
+      'org.owner_calendars.remove',
     ]));
   });
 

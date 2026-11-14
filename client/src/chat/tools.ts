@@ -23,8 +23,10 @@ export interface ToolStep {
  * (F10) whether GET .../estimates/about says a forecast is published for the location. `hasForecast` is true only once
  * that read says so; absent or false, nothing claims a forecast. `hasSales` false (the location has no sales days yet)
  * leaves the sales out of every line built from the table, so no line claims TownwiseAI answers from them.
+ * `hasCalendar` is true only once a read says the location has a calendar of its own connected; absent or false,
+ * nothing claims one.
  */
-export interface ToolContext { town: string; hasTownProfile: boolean; hasForecast?: boolean; hasSales?: boolean }
+export interface ToolContext { town: string; hasTownProfile: boolean; hasForecast?: boolean; hasSales?: boolean; hasCalendar?: boolean }
 
 export interface SourceLink { host: string; url: string }
 
@@ -362,6 +364,33 @@ const TOOLS: Readonly<Record<string, ToolRow>> = {
     detail: (result) => labDetail(result),
     terms: { available: 'Available', status: 'Status', weeks: 'Held-out weeks', published: 'Published' },
     values: { status: CALIBRATION_STATUS },
+  },
+  // The owner's own calendars (api/src/chat/tools/owner-calendar.ts). Its views carry dates and counts only, never an
+  // event's title or a calendar's name. Its `reads` line shows only once the page knows the location has a calendar.
+  get_owner_calendar: {
+    object: (input) => {
+      const range = rangeOf(input);
+      return range === null ? 'your calendars' : `your calendars for ${range}`;
+    },
+    detail: (result) => {
+      if (result.available === false) return 'No calendar connected';
+      const events = count(result, 'eventCount');
+      const calendars = count(result, 'calendars');
+      if (events === null || calendars === null) return null;
+      if (events === 0) return 'No events in this range';
+      const read = `${plural(events, 'event', 'events')} from ${plural(calendars, 'calendar', 'calendars')}`;
+      return result.truncated === true ? `The first ${read}` : read;
+    },
+    basedOn: (input, _ctx, result) => {
+      const range = rangeOf(input);
+      const name = range === null ? 'your calendars' : `your calendars for ${range}`;
+      return result?.available === false ? `${name} (none connected)` : name;
+    },
+    terms: {
+      available: 'Calendar connected', calendars: 'Calendars', eventCount: 'Events', truncated: 'Cut short',
+      skippedRepeating: 'Repeating events not imported',
+    },
+    reads: (ctx) => (ctx.hasCalendar === true ? 'your calendars' : null),
   },
   // Orders (api/src/chat/tools/orders.ts): the live board, one line, and the setup, never the sample. Figures, names
   // and quantities stay in the result the model reads; the card shows counts and dates.

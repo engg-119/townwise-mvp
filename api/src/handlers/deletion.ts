@@ -55,6 +55,8 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     const deletedNotes = await stores.notes.removeForOrg(scope);
     // D31, business rules.
     await stores.businessRules.removeForOrg(scope);
+    // The owner's calendars: their events, then the calendars.
+    await stores.ownerCalendars.removeForOrg(scope);
     await stores.chatConversations.removeForOrg(scope);
     await stores.chatLiveTurns.removeForOrg(scope);
     await stores.chatUsage.removeForOrg(scope);

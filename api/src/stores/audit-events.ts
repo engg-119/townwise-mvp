@@ -44,6 +44,11 @@ export const AUDIT_DETAIL_KEYS = {
   'rule.created': ['locationId', 'via', 'scheduled'],
   'rule.updated': ['locationId', 'scheduled'],
   'rule.deleted': ['locationId'],
+  // Owner calendars (openspec change connect-owner-calendar, design decision 10): ids, the kind ('file' or 'link'), the
+  // event count and the status code only. Never the calendar's label, host or address, or an event's title.
+  'owner_calendar.added': ['locationId', 'calendarId', 'kind', 'eventCount', 'status'],
+  'owner_calendar.removed': ['locationId', 'calendarId', 'kind', 'eventCount'],
+  'owner_calendar.refreshed': ['locationId', 'calendarId', 'kind', 'eventCount', 'status'],
   // `attachments` (D36): how many files the person's message carried, only on a turn whose message carried any.
   'chat.turn_completed': ['locationId', 'conversationId', 'model', 'calls', 'inputTokens', 'outputTokens', 'stopReason', 'attachments'],
   'chat.conversation_deleted': ['locationId', 'conversationId'],
@@ -88,7 +93,9 @@ export type AuditTargetType =
   // The forecast lab.
   | 'calibration'
   // Business rules (D31).
-  | 'rule';
+  | 'rule'
+  // Owner calendars.
+  | 'owner_calendar';
 export type AuditDetails = Record<string, string | number | boolean | null>;
 
 export interface AuditEventFields {

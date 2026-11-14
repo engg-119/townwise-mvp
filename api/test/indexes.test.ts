@@ -39,6 +39,8 @@ describe('indexes', () => {
       'tw_order_setups', 'tw_item_sales', 'tw_order_counts',
       // Business rules (spec 6.24).
       'tw_business_rules',
+      // The owner's own calendars.
+      'tw_calendar_sources', 'tw_calendar_events',
     ].sort());
   });
 
@@ -81,6 +83,8 @@ describe('indexes', () => {
       'TwForecastRun', 'TwForecast', 'TwCalibration',
       'TwOrderCard', 'TwOrderDecision', 'TwOrderRule', 'TwOrderSetup', 'TwItemSalesDay', 'TwOrderCount',
       'TwBusinessRule',
+      // The owner's own calendars.
+      'TwCalendarSource', 'TwCalendarEvent',
     ]) {
       for (const [fields] of indexesOf(connection, model)) {
         const keys = Object.keys(fields);
@@ -173,6 +177,18 @@ describe('indexes', () => {
 
   it('keeps the file reader’s AI spend apart from the chat’s, one counter per organization per month', () => {
     expect(indexesOf(registered(), 'TwFilesUsage')).toContainEqual([{ orgId: 1, month: 1 }, expect.objectContaining({ unique: true })]);
+  });
+
+  it('holds a location’s calendars in 5 unique slots, finds due links for the refresh loop, and reads a calendar’s events by generation and date', () => {
+    const connection = registered();
+    expect(indexesOf(connection, 'TwCalendarSource')).toContainEqual([
+      { orgId: 1, locationId: 1, slot: 1 }, expect.objectContaining({ unique: true }),
+    ]);
+    // The refresh loop's claim spans organizations (stores/cross-tenant.ts claimDueCalendar).
+    expect(indexesOf(connection, 'TwCalendarSource')).toContainEqual([{ nextRefreshAt: 1 }, expect.anything()]);
+    expect(connection.models.TwCalendarSource?.schema.path('slot')).toMatchObject({ options: { min: 0, max: 4 } });
+    expect(indexesOf(connection, 'TwCalendarEvent')).toContainEqual([{ orgId: 1, sourceId: 1, generation: 1, startDate: 1 }, expect.anything()]);
+    for (const model of ['TwCalendarSource', 'TwCalendarEvent']) expect(connection.models[model]?.schema.get('strict')).toBe('throw');
   });
 
   it('keeps one ordering setup per location, and one item sales day and one count per location per date, strict: throw', () => {

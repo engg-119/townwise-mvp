@@ -23,6 +23,7 @@ import { createOrderCountStore, type OrderCountStore } from './order-counts.ts';
 import { createOrderSetupStore, type OrderSetupStore } from './order-setups.ts';
 import { createOrderStore, type OrderStore } from './orders.ts';
 import { createOrgStore, type OrgStore } from './orgs.ts';
+import { createOwnerCalendarStore, type OwnerCalendarStore } from './owner-calendars.ts';
 import { createProfileStore, type ProfileStore } from './profiles.ts';
 import { createSalesDayStore, type SalesDayStore } from './sales-days.ts';
 import { createUploadDayStore, type UploadDayStore } from './upload-days.ts';
@@ -68,6 +69,8 @@ export interface TownwiseStores {
   readonly forecasts: ForecastStore;
   /** The forecast lab's calibrations. */
   readonly calibrations: CalibrationStore;
+  /** The owner's own calendars and their events (openspec change connect-owner-calendar). */
+  readonly ownerCalendars: OwnerCalendarStore;
 }
 
 /** Registers every Townwise model on `connection`; call it before ensureIndexes. */
@@ -107,5 +110,7 @@ export function createTownwiseStores(connection: Connection): TownwiseStores {
     forecasts: createForecastStore(connection),
     // The forecast lab.
     calibrations: createCalibrationStore(connection),
+    // The owner's own calendars.
+    ownerCalendars: createOwnerCalendarStore(connection),
   };
 }
