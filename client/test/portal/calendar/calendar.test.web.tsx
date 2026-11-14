@@ -55,7 +55,7 @@ afterEach(() => {
   if (width !== 1280) setWidth(1280);
 });
 
-const NOVEMBER_FORECAST = `${PATH}/forecast?from=2026-11-01&to=2026-11-30`;
+const NOVEMBER_FORECAST = `${PATH}/forecast?from=2026-10-26&to=2026-12-06`;
 const GUESTS_HELP = 'Townwise forecasts whole days, so these guests add to the whole day’s total, on each day the note covers.';
 const GAME = townEvent({ start: '2026-11-21', title: 'Dartmouth home football' });
 const VETERANS = holiday('2026-11-11', 'Veterans Day', 'us:veterans', 'Veterans Day');
@@ -251,18 +251,18 @@ test('a business rule with a schedule (D31): its reason shows under Why, and the
   expect(within(panel()).queryByText(/^Your rule: /)).toBeNull();
 });
 
-test('the forecast read covers exactly the shown month (one request of at most 31 days)', async () => {
+test('the forecast read covers exactly the shown grid (one request of at most 42 days)', async () => {
   const { api, fake } = setup();
   await renderAt('/locations/l1/calendar', api);
   expect(cell('2026-11-11').getAttribute('aria-selected')).toBe('true');
   expect(within(panel()).getByRole('heading', { name: 'Today, Wed, Nov 11' })).toBeTruthy();
   expect(forecastReads(fake)).toEqual([NOVEMBER_FORECAST]);
-  // Sales days only for the month's past part, and the 8 weeks before it that likely closed reads (spec D32).
-  expect(fake.paths.filter((path) => path.includes('/sales/days?'))).toEqual([`${PATH}/sales/days?from=2026-09-06&to=2026-11-10`]);
+  // Sales days only for the grid's past part, and the 8 weeks before it that likely closed reads (spec D32).
+  expect(fake.paths.filter((path) => path.includes('/sales/days?'))).toEqual([`${PATH}/sales/days?from=2026-08-31&to=2026-11-10`]);
   fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
   expect(await screen.findByRole('grid', { name: 'December 2026' })).toBeTruthy();
-  expect(forecastReads(fake)).toEqual([NOVEMBER_FORECAST, `${PATH}/forecast?from=2026-12-01&to=2026-12-31`]);
-  // A month after today has no past part to read.
+  expect(forecastReads(fake)).toEqual([NOVEMBER_FORECAST, `${PATH}/forecast?from=2026-11-30&to=2027-01-10`]);
+  // A grid after today has no past part to read.
   expect(fake.paths.filter((path) => path.includes('/sales/days?'))).toHaveLength(1);
   expect(screen.getByText('December 2026')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Today' }));

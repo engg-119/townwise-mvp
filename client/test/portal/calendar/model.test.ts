@@ -1,7 +1,7 @@
 import type { TownEvent } from '../../../src/portal/analytics/api';
 import {
-  ALL_FILTERS, calendarMonth, captionOf, dayView, forecastWords, monthBounds, pastRange, reasonOutcomeWords, reasonShortLines, savedNotice, selectedDay,
-  statusWord, tooltipLines, type CalendarCell, type CalendarInput, type ImportedEvent,
+  ALL_FILTERS, calendarMonth, captionOf, dayCell, dayView, eventsOn, forecastWords, monthBounds, rangeWords, reasonOutcomeWords, reasonShortLines,
+  savedNotice, selectedDay, statusWord, tooltipLines, type CalendarCell, type CalendarInput, type ImportedEvent,
 } from '../../../src/portal/calendar/model';
 import type { ForecastDay, ForecastWindow } from '../../../src/portal/estimates/api';
 import { daysBetween } from '../../../src/portal/locations/dates';
@@ -100,6 +100,27 @@ test('a future day shows the forecast’s rounded mid and +N when notes added gu
   expect(cellOf(rows, '2026-11-16').inWeek).toBe(false);
 });
 
+test('dayCell builds any day’s cell from the reads, whatever month they were made for', () => {
+  const lighting = townEvent({ start: '2026-12-03', title: 'Tree lighting' });
+  const reads = input({ events: [GAME, lighting], forecast: windowOf([forecastDay({ date: '2026-12-03' })]) });
+  // Dec 3 in November's grid is the cell December's own month would build.
+  expect(dayCell('2026-12-03', reads)).toEqual(cellOf(calendarMonth({ ...reads, month: '2026-12' }), '2026-12-03'));
+  expect(dayCell('2026-12-03', reads)).toMatchObject({ chips: ['Tree lighting'], figure: { value: 212, kind: 'forecast' }, inWeek: false });
+  expect(dayCell('2026-11-21', reads)).toEqual(cellOf(calendarMonth(reads), '2026-11-21'));
+  // Today's week comes from today, not from the month.
+  expect(dayCell('2026-11-09', { ...reads, month: '2026-12' }).inWeek).toBe(true);
+});
+
+test('eventsOn keeps an event the day’s reasons name, which the panel’s On the calendar leaves out', () => {
+  expect(eventsOn('2026-11-21', input()).map((event) => event.title)).toEqual(['Dartmouth home football']);
+  expect(dayView('2026-11-21', input()).events).toEqual([]);
+  expect(eventsOn('2026-11-21', input({ filters: { ...ALL_FILTERS, events: false } }))).toEqual([]);
+});
+
+test('rangeWords rounds a range’s low down and its high up', () => {
+  expect(rangeWords(180.4, 239.2)).toBe('180 to 240');
+});
+
 test('a past day shows its stored guests and never a forecast figure', () => {
   const rows = calendarMonth(input());
   expect(cellOf(rows, '2026-11-07')).toMatchObject({ figure: { value: 138, kind: 'actual' }, status: null });
@@ -151,7 +172,7 @@ test('filters hide holidays, town events, term dates, notes and imported events 
   expect(all.notes.map((each) => each.id)).toEqual([PARTY.id]);
   expect(all.imported.map((event) => event.title)).toEqual(['Wine delivery']);
   expect(cellOf(calendarMonth(input()), '2026-11-21')).toMatchObject({
-    chips: ['Dartmouth home football', 'Private event, 70'], more: 1, marks: { event: true, note: true, imported: true },
+    chips: ['Dartmouth home football', 'Private event, 70', 'Wine delivery'], more: 0, marks: { event: true, note: true, imported: true },
   });
   // Term periods show in the day panel only: they span weeks, so no cell repeats them.
   expect(dayView('2026-11-12', input()).events.map((event) => event.title)).toEqual(['Fall term classes']);
@@ -313,12 +334,6 @@ test('monthBounds allows 12 months back and 12 ahead, inside the API’s 400 day
   expect(selectedDay('2025-10-31', TODAY)).toBe(TODAY);
   expect(selectedDay('2026-02-30', TODAY)).toBe(TODAY);
   expect(selectedDay(undefined, TODAY)).toBe(TODAY);
-  // The past part of a month and the 8 weeks before it (likely closed reads them, spec D32), for GET .../sales/days:
-  // none for this month's first day or a later month.
-  expect(pastRange('2026-11', TODAY)).toEqual({ from: '2026-09-06', to: '2026-11-10' });
-  expect(pastRange('2026-10', TODAY)).toEqual({ from: '2026-08-06', to: '2026-10-31' });
-  expect(pastRange('2026-12', TODAY)).toBeNull();
-  expect(pastRange('2026-11', '2026-11-01')).toBeNull();
 });
 
 test('savedNotice says what the saved note did to the day, from the forecast read again', () => {

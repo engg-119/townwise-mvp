@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 import { CalendarGrid } from '../../../src/portal/calendar/CalendarGrid.web';
-import type { CalendarCell } from '../../../src/portal/calendar/model';
+import { monthBounds, type CalendarCell } from '../../../src/portal/calendar/model';
 
 // The Calendar's tooltip follows the pointer: over a day it shows, over anything that is not a day (a gap, the
 // weekday row, an empty leading cell) it goes, and leaving the grid hides it.
@@ -24,6 +24,8 @@ function setup(): void {
     <CalendarGrid
       rows={[[null, cell('2026-11-03'), cell('2026-11-04'), null, null, null, null]]}
       selected="2026-11-03"
+      month="2026-11"
+      bounds={monthBounds('2026-11-11')}
       onSelect={() => undefined}
       busy={false}
       label="November 2026"
@@ -52,6 +54,8 @@ test('the tooltip goes over an empty leading cell and over a row', () => {
     <CalendarGrid
       rows={[[null, cell('2026-11-03'), cell('2026-11-04'), null, null, null, null]]}
       selected="2026-11-03"
+      month="2026-11"
+      bounds={monthBounds('2026-11-11')}
       onSelect={() => undefined}
       busy={false}
       label="November 2026"

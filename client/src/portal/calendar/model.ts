@@ -1,6 +1,6 @@
 import { formatCount, plural } from '../format';
 import type { TownEvent } from '../analytics/api';
-import { closureOf, likelyClosedWords, noteCovers, TYPICAL_LOOKBACK_DAYS, typicalGuests } from '../analytics/days';
+import { closureOf, likelyClosedWords, noteCovers, typicalGuests } from '../analytics/days';
 import { mondayOf, weekDates } from '../analytics/week';
 import { MONTH_NAMES, shortDate } from '../analytics/words';
 import { appliedOf, guestsFromWords, yoursDid, type ForecastDay, type ForecastReason, type ForecastWindow, type ReasonEffect } from '../estimates/api';
@@ -59,11 +59,11 @@ export interface ImportedCalendar {
 
 export interface CalendarInput {
   today: string;
-  /** 'YYYY-MM'. */
+  /** 'YYYY-MM': the month whose grid the reads cover (grid.ts gridRange). */
   month: string;
-  /** The month's forecast read; null while it loads or when it failed. */
+  /** The grid's forecast read; null while it loads or when it failed. */
   forecast: ForecastWindow | null;
-  /** The stored days of the month's past part, and of the 8 weeks before the month that likely closed reads (pastRange). */
+  /** The stored days of the grid's past part, and of the 8 weeks before it that likely closed reads (grid.ts pastRangeFor). */
   salesDays: readonly SalesDay[];
   events: readonly TownEvent[];
   notes: readonly Note[];
@@ -85,7 +85,8 @@ function marksCell(event: Pick<TownEvent, 'kind'>): boolean {
   return event.kind === 'holiday' || event.kind === 'event';
 }
 
-function eventsOn(date: string, input: CalendarInput): TownEvent[] {
+/** The day's holidays, town events and term periods as the filters allow, including those the day's Why names. */
+export function eventsOn(date: string, input: CalendarInput): TownEvent[] {
   return input.events.filter((event) => event.start <= date && date <= event.end && input.filters[filterOf(event)]);
 }
 
@@ -130,7 +131,7 @@ function whole(value: number): string {
 }
 
 /** “180 to 240”: a range's low rounded down and its high up (spec 14.4). */
-function rangeWords(low: number, high: number): string {
+export function rangeWords(low: number, high: number): string {
   return `${formatCount(Math.floor(low))} to ${formatCount(Math.ceil(high))}`;
 }
 
@@ -159,7 +160,7 @@ export interface CalendarCell {
   figure: CellFigure | null;
   /** Guests the location's notes add to a forecast figure (“+70”); 0 when none. */
   noteGuests: number;
-  /** The first two entries of the day: holidays and town events, then notes, then imported events. */
+  /** The first three entries of the day: holidays and town events, then notes, then imported events (grid.ts entryLines). */
   chips: string[];
   /** Entries past the chips. */
   more: number;
@@ -168,7 +169,7 @@ export interface CalendarCell {
   label: string;
 }
 
-const MAX_CHIPS = 2;
+const MAX_CHIPS = 3;
 
 interface FigureOf { status: CalendarCell['status']; figure: CellFigure | null; noteGuests: number; words: string | null }
 
@@ -199,7 +200,9 @@ function figureOf(date: string, input: CalendarInput): FigureOf {
   return { status: null, figure: { value: Math.round(day.mid), kind: 'forecast' }, noteGuests: day.noteGuests, words };
 }
 
-function cellOf(date: string, input: CalendarInput, week: { from: string; to: string }): CalendarCell {
+/** One day's cell from the reads in `input`, whichever month they were made for; today's week comes from `input.today`. */
+export function dayCell(date: string, input: CalendarInput): CalendarCell {
+  const monday = mondayOf(input.today);
   const events = eventsOn(date, input).filter(marksCell);
   const notes = notesOn(date, input);
   const imported = importedOn(date, input);
@@ -217,7 +220,7 @@ function cellOf(date: string, input: CalendarInput, week: { from: string; to: st
   return {
     date,
     isToday,
-    inWeek: date >= week.from && date <= week.to,
+    inWeek: date >= monday && date <= addDays(monday, 6),
     status: found.status,
     figure: found.figure,
     noteGuests: found.noteGuests,
@@ -231,20 +234,11 @@ function cellOf(date: string, input: CalendarInput, week: { from: string; to: st
 /** The month as week rows, Monday first; null where a row's day is in another month. */
 export function calendarMonth(input: CalendarInput): (CalendarCell | null)[][] {
   const { from, to } = monthRange(input.month);
-  const monday = mondayOf(input.today);
-  const week = { from: monday, to: addDays(monday, 6) };
   const rows: (CalendarCell | null)[][] = [];
   for (let start = mondayOf(from); start <= to; start = addDays(start, 7)) {
-    rows.push(weekDates(start).map((date) => (date < from || date > to ? null : cellOf(date, input, week))));
+    rows.push(weekDates(start).map((date) => (date < from || date > to ? null : dayCell(date, input))));
   }
   return rows;
-}
-
-/** The cell's sizes (spec 16.3 P28): taller cells and bigger figures as the screen widens. */
-export function cellSizes(width: number): { minHeight: number; figure: number; chips: boolean } {
-  if (width >= 1024) return { minHeight: 96, figure: 22, chips: true };
-  if (width > 640) return { minHeight: 64, figure: 18, chips: false };
-  return { minHeight: 52, figure: 15, chips: false };
 }
 
 /** The word under a figure: stored guests read "guests", a buyout's party "booked". */
@@ -623,15 +617,4 @@ export function selectedDay(param: string | undefined, today: string): string {
 /** “November 2026”. */
 export function monthLabel(month: string): string {
   return `${MONTH_NAMES[Number(month.slice(5, 7)) - 1] ?? ''} ${month.slice(0, 4)}`;
-}
-
-/**
- * What GET .../sales/days reads for `month`: its days before today, from the 8 weeks before it, whose same weekdays
- * give each day's typical guests (spec D32); null when no day of the month is past.
- */
-export function pastRange(month: string, today: string): { from: string; to: string } | null {
-  const { from, to } = monthRange(month);
-  const yesterday = addDays(today, -1);
-  const end = to < yesterday ? to : yesterday;
-  return from > end ? null : { from: addDays(from, -TYPICAL_LOOKBACK_DAYS), to: end };
 }

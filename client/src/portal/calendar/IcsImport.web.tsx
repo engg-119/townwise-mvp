@@ -1,9 +1,9 @@
 import { useId, useRef, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
 import { formatCount, plural } from '../format';
-import { Actions, Button } from '../ui/Button';
+import { Button } from '../ui/Button';
 import { Messages } from '../ui/feedback';
 import { Small } from '../ui/text';
 import { parseIcs } from './ics';
@@ -15,6 +15,12 @@ import type { IcsImportProps } from './IcsImport';
 // them in memory only: nothing is stored or sent, and they are gone on reload or on leaving the page. Allowed under
 // view-as, since it reads a file in the viewer's own browser. Native shows a line instead (IcsImport.tsx). The 1 MB
 // and 2,000 events await the team's sign-off (the [CONFIRM] in ics.ts).
+//
+// It sits in the header row's trailing slot and returns its pieces as the row's own items: the button (described by
+// the help), "How importing works" (aria-expanded, aria-controls; the help stays mounted while hidden, so the
+// button's description always resolves) and a full-width line under the row, shown only when it has something to
+// say: the help while open, and the result and refusals whether the help is open or not. That line is the last item,
+// so a control the page passes before this one stays in the row. [CONFIRM: the import help behind "How importing works"]
 
 const MAX_BYTES = 1024 * 1024;
 
@@ -38,6 +44,7 @@ export function IcsImport(props: IcsImportProps): React.JSX.Element {
   const input = useRef<HTMLInputElement>(null);
   const helpId = `${useId().replace(/:/g, '')}-help`;
   const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
 
   async function choose(file: File): Promise<void> {
     if (file.size > MAX_BYTES) { setError(ICS_COPY.tooLarge); return; }
@@ -54,8 +61,9 @@ export function IcsImport(props: IcsImportProps): React.JSX.Element {
     onImport({ fileName: file.name, events: result.events, skipped: result.skippedRepeating });
   }
 
+  const hasMessages = error !== null || imported !== null;
   return (
-    <View style={styles.root}>
+    <>
       <input
         ref={input}
         type="file"
@@ -70,16 +78,29 @@ export function IcsImport(props: IcsImportProps): React.JSX.Element {
           if (chosen !== undefined) void choose(chosen);
         }}
       />
-      <Actions>
-        <Button variant="outline" label="Import a calendar file" describedBy={helpId} onPress={() => { input.current?.click(); }} />
-      </Actions>
-      <Small nativeID={helpId}>{ICS_COPY.help}</Small>
-      {error === null ? null : <Messages live="alert" items={[error]} />}
-      {imported === null ? null : <Messages live="status" items={importedLines(imported.fileName, imported.events.length, imported.skipped)} />}
-    </View>
+      <Button variant="outline" label="Import a calendar file" describedBy={helpId} onPress={() => { input.current?.click(); }} />
+      <Pressable
+        role="button"
+        aria-expanded={open}
+        {...{ 'aria-controls': helpId }}
+        onPress={() => { setOpen((value) => !value); }}
+        style={styles.toggle}
+      >
+        <Text style={styles.toggleText}>How importing works</Text>
+      </Pressable>
+      <View style={[styles.line, open || hasMessages ? null : styles.hidden]}>
+        <Small nativeID={helpId} style={open ? styles.help : styles.hidden}>{ICS_COPY.help}</Small>
+        {error === null ? null : <Messages live="alert" items={[error]} />}
+        {imported === null ? null : <Messages live="status" items={importedLines(imported.fileName, imported.events.length, imported.skipped)} />}
+      </View>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { gap: theme.space[2], maxWidth: 520 },
+  toggle: { minHeight: 44, justifyContent: 'center' },
+  toggleText: { ...theme.type.ui, color: theme.color.white, textDecorationLine: 'underline', textDecorationColor: theme.color.line },
+  line: { flexBasis: '100%', gap: theme.space[2] },
+  help: { maxWidth: 680 },
+  hidden: { display: 'none' },
 });
