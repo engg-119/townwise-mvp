@@ -54,16 +54,12 @@ export default function TownwiseAIScreen(): React.JSX.Element {
   useEffect(() => {
     if (orderParam === undefined) return undefined;
     let live = true;
-    void (async () => {
-      try {
-        const own = await fetchOrderBoard(api, location.id);
-        const board = own.available ? own : await fetchOrderBoard(api, location.id, true);
-        const text = orderDraft(orderParam, itemParam, board.available ? board : null);
-        if (live) setOrderText(text);
-      } catch {
-        if (live) setOrderText(null);
-      }
-    })();
+    fetchOrderBoard(api, location.id)
+      .then((own) => (own.available ? own : fetchOrderBoard(api, location.id, true)))
+      .then(
+        (board) => { if (live) setOrderText(orderDraft(orderParam, itemParam, board.available ? board : null)); },
+        () => { if (live) setOrderText(null); },
+      );
     return () => { live = false; };
   }, [api, itemParam, location.id, orderParam]);
   const draft = orderText ?? aboutDraft(params.about, localToday());
