@@ -33,6 +33,8 @@ const FROZEN_NAMES = [
   'list_data_items', 'read_data_item', 'propose_data_item',
   // The forecast lab.
   'start_calibration', 'get_calibration', 'compare_forecast_models',
+  // The owner's own calendars.
+  'get_owner_calendar',
 ];
 
 describe('the tool registry', () => {

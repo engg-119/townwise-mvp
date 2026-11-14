@@ -1,3 +1,5 @@
+import type { KeyObject } from 'node:crypto';
+
 import type { Auth, AuthStores } from '@ckeith26/auth';
 import type { RedisHandle } from '@ckeith26/redis';
 import type { Logger, ServerConfig } from '@ckeith26/server-core';
@@ -5,6 +7,7 @@ import express, { type Router } from 'express';
 import type { Connection } from 'mongoose';
 
 import { mountTownwiseRoutes, TOWNWISE_ROUTES, type TownwiseRoute } from './access/routes.ts';
+import { createCalendarFetcher, type CalendarFetcher } from './calendar/fetch.ts';
 import type { ChatModel } from './chat/model.ts';
 import { TURN_TIME_LIMIT_MS } from './chat/turn.ts';
 import { resolveTownwiseConfig, type ResolvedTownwiseConfig, type TownwiseConfig } from './config.ts';
@@ -53,6 +56,13 @@ export interface TownwiseDeps {
   readonly labRunner?: LabRunner | undefined;
   /** Who may call the lab callback (lab/caller.ts); main.ts builds it with the runner. Absent, /lab answers 404 to all. */
   readonly labCaller?: LabCaller | undefined;
+  /**
+   * Seals and opens owner calendar links (calendar/secret.ts); absent turns links off while calendar files still import
+   * (main.ts passes it only when TOWNWISE_CALENDAR_KEY is set).
+   */
+  readonly calendarKey?: KeyObject | undefined;
+  /** Fetches owner calendar links; absent, calendar/fetch.ts's guarded fetcher. Tests pass one over a local server. */
+  readonly calendarFetcher?: CalendarFetcher | undefined;
 }
 
 /**
@@ -95,6 +105,10 @@ export interface TownwiseContext {
   readonly labRunner: LabRunner | null;
   /** Null while the forecast lab is off (the callback answers 404). */
   readonly labCaller: LabCaller | null;
+  /** Null while calendar links are off (503 calendar_links_unavailable). */
+  readonly calendarKey: KeyObject | null;
+  /** The one way a handler reaches an owner's calendar address (calendar/fetch.ts). */
+  readonly calendarFetcher: CalendarFetcher;
 }
 
 /** Registers the Townwise models on `connection` (call it before ensureIndexes) and builds what every handler receives. */
@@ -124,6 +138,8 @@ export function createTownwiseContext(deps: TownwiseDeps): TownwiseContext {
     },
     labRunner: deps.labRunner ?? null,
     labCaller: deps.labCaller ?? null,
+    calendarKey: deps.calendarKey ?? null,
+    calendarFetcher: deps.calendarFetcher ?? createCalendarFetcher(),
   };
 }
 

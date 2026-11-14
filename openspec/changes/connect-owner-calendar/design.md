@@ -6,7 +6,7 @@ There is no server-side fetch of a user-supplied URL, no per-tenant secret and n
 
 This change builds on the Calendar page and business-rules work (P27, D30 to D32), which is uncommitted at the time of writing. It starts once that work is on `develop`.
 
-Owner decisions (2026-11-12, issue #10): keep calendars on the server with titles; TownwiseAI reads titles; events change the forecast only through notes the owner saves; TownwiseAI reads PDF and Word files from Your data.
+Owner decisions (2026-11-12, issue #10): keep calendars on the server with titles; TownwiseAI reads titles; events change the forecast only through notes the owner saves. TownwiseAI reading PDF and Word files was first part of this design (decision 9) and moved to `read-files-with-townwise-ai` (PR #69) on 2026-11-13.
 
 ## Goals / Non-Goals
 
@@ -14,7 +14,6 @@ Owner decisions (2026-11-12, issue #10): keep calendars on the server with title
 - A location's calendars, imported or subscribed, are kept and visible on every visit, on web and native.
 - A subscription stays current without the owner doing anything.
 - TownwiseAI can read the calendar and turn the events that matter into notes the owner saves.
-- TownwiseAI can read PDF and Word files the owner adds to Your data.
 - No new way for a request to reach an internal address, and no calendar address in logs, audit events or responses.
 
 **Non-Goals:**
@@ -43,18 +42,18 @@ Owner decisions (2026-11-12, issue #10): keep calendars on the server with title
 
 **7. Routes, spec 10.17, every one `member` with `openAsAdmin`, like notes.** Writes are refused under view-as by the existing guard; reads are allowed.
 - `GET /org/locations/:locationId/owner-calendars`: the calendars (no address).
-- `POST /org/locations/:locationId/owner-calendars`: `{ kind: 'file', label, ics }` or `{ kind: 'link', label, url }`. The route's `bodyLimit` union (`api/src/access/routes.ts:60`) tops out at `'256kb'` today, so this adds `'1mb'`, used by this route only, and notes it in the union's comment. *Alternative:* send the file through the chunked Files upload. Rejected: that needs blob storage, which is off in many environments, for a file the API parses once and does not keep.
+- `POST /org/locations/:locationId/owner-calendars`: `{ kind: 'file', label, ics }` or `{ kind: 'link', label, url }`. The route's `bodyLimit` union (`api/src/access/routes.ts:60`) tops out at `'256kb'` today, so this adds `'2mb'`, used by this route only, and notes it in the union's comment: the file's text arrives as a JSON string, where every CRLF, quote and backslash takes two bytes, so the handler counts the file's own bytes against the 1 MB cap (400 `too_large`). Each link add is a fetch, so it spends one of the account's 12 link adds an hour before fetching (429 `rate_limited`): removing a link and adding it again then fetches it no more often than "Refresh now" may. *Alternative:* send the file through the chunked Files upload. Rejected: that needs blob storage, which is off in many environments, for a file the API parses once and does not keep.
 - `POST /org/locations/:locationId/owner-calendars/:calendarId/refresh`: a link only.
 - `DELETE /org/locations/:locationId/owner-calendars/:calendarId`.
 - `GET /org/locations/:locationId/owner-calendars/events?from&to`: at most 92 days, `to` at most 400 days after today.
 
 A calendar from another organization or location answers 404, the same as an unknown id (tenant isolation).
 
-**8. TownwiseAI tool `get_owner_calendar`, appended at the end of the registry.** Input `{ from, to }` with the limits of `get_town_calendar`. Returns `{ events: [{ calendar, title, startDate, endDate, startTime, endTime }], calendars, skippedRepeating }`, or `{ available: false, reason }` when the location has no calendar. The input view shows the dates and the result view shows counts only, as for other tools. One prompt line: read it for questions about the restaurant's own bookings; for an event that changes guests, propose a note with `propose_note`; never copy a person's or group's name from a title into a note. Titles are never logged, and tool inputs and results are never logged (existing rule).
+**8. TownwiseAI tool `get_owner_calendar`, appended at the end of the registry.** Input `{ from, to }` with the limits of `get_town_calendar`. Returns `{ events: [{ calendar, title, startDate, endDate, startTime, endTime }], truncated, calendars, skippedRepeating }`, at most the first 100 events by start with `truncated` true when there are more (a location can hold 10,000; 100 at the longest title and name are about 41,000 characters), or `{ available: false, reason }` when the location has no calendar. The input view shows the dates and the result view shows counts only, as for other tools. One prompt line: read it for questions about the restaurant's own bookings; for an event that changes guests, propose a note with `propose_note`; never copy a person's or group's name from a title into a note. Titles are never logged, and tool inputs and results are never logged (existing rule).
 
-**9. PDF and Word for `read_data_item`.** `readableByTownwiseAi` accepts `pdf` and `docx` as well as `text`, under the same conditions. A PDF is returned as a `document` block inside the tool result (the installed `@anthropic-ai/sdk` 1.3.0 accepts this in `BetaToolResultBlockParam.content`), capped at 10 MB and 100 pages. A larger one answers `{ available: false, reason: 'too_large' }`. A Word file's paragraph and table text is extracted in the parse thread with the existing zip guards and returned as text under today's 20,000 character cap. The saved conversation keeps only the reference and counts, as it does for text items, so the bytes are not stored twice. *Alternative:* extract PDF text with `unpdf` in the API. Rejected: `pdf.ts` is the only file allowed to import `unpdf` and it runs in the parse thread for tables; the model reads PDFs, layout included, better than our text extraction would.
+**9. (Withdrawn 2026-11-13: moved to `read-files-with-townwise-ai`, PR #69.) PDF and Word for `read_data_item`.** `readableByTownwiseAi` accepts `pdf` and `docx` as well as `text`, under the same conditions. A PDF is returned as a `document` block inside the tool result (the installed `@anthropic-ai/sdk` 1.3.0 accepts this in `BetaToolResultBlockParam.content`), capped at 10 MB and 100 pages. A larger one answers `{ available: false, reason: 'too_large' }`. A Word file's paragraph and table text is extracted in the parse thread with the existing zip guards and returned as text under today's 20,000 character cap. The saved conversation keeps only the reference and counts, as it does for text items, so the bytes are not stored twice. *Alternative:* extract PDF text with `unpdf` in the API. Rejected: `pdf.ts` is the only file allowed to import `unpdf` and it runs in the parse thread for tables; the model reads PDFs, layout included, better than our text extraction would.
 
-**10. Privacy and audit.** Audit events `townwise.owner_calendar_added`, `townwise.owner_calendar_removed` and `townwise.owner_calendar_refreshed` carry ids, `kind`, event counts and the status code only. They never carry the label, host, address or a title. The refresh loop logs source id, status code, counts and duration. Deleting a location or organization deletes both collections in `handlers/deletion.ts`.
+**10. Privacy and audit.** Audit events `owner_calendar.added`, `owner_calendar.removed` and `owner_calendar.refreshed` carry ids, `kind`, event counts and the status code only. They never carry the label, host, address or a title. The refresh loop logs source id, status code, counts and duration. Deleting a location or organization deletes both collections in `handlers/deletion.ts`.
 
 ## Risks / Trade-offs
 
@@ -62,18 +61,17 @@ A calendar from another organization or location answers 404, the same as an unk
 - [Server-side request forgery through an owner-supplied address] → The address check on every resolved address, pinned connection, re-checked redirects, port 443 only. Unit tests cover each blocked range, a redirect to a private address and a hostname that resolves to one.
 - [A Key Vault key that is lost makes every stored address unreadable] → Each link then fails with `status: 'key_mismatch'` and the owner pastes it again. Events already stored are unaffected. The runbook says the key is never rotated without re-adding links.
 - [A slow or huge feed ties up a replica] → 10 s timeout, 1 MB cap, one fetch at a time per replica, 2,000 events kept.
-- [PDFs cost more tokens than text] → They count against the existing monthly TownwiseAI budget; the 10 MB and 100 page caps bound one read.
 - [Repeating events are common in subscriptions and are not imported] → They are counted and shown ("12 repeating events weren't imported"), as today; expansion is a follow-up.
 - [The base work (P27, D30 to D32) is uncommitted and still changing] → Implementation waits for it to land on `develop`, then branches.
 
 ## Migration Plan
 
-1. Create the `TOWNWISE_CALENDAR_KEY` secret in Key Vault (runbook step) and add it to `api_secrets` in `containerapp.tf`. Until it exists, links are off and file imports work.
+1. The key joins `api_secrets` (`infra/terraform/production/main.tf`) only when `enable_calendar_links` is true, default false, as `enable_chat` does for the chat, so a release deploys with links off and file imports working. To turn links on, seed `townwise-calendar-key` in Key Vault, then set the flag and apply (`infra/README.md`, step 21).
 2. Deploy. New collections and indexes are created at boot by `ensureIndexes`. No existing data changes.
 3. Rollback: redeploy the previous image. The new collections are ignored by the old code; drop them by hand if the feature is abandoned.
 
 ## Open Questions
 
 - [CONFIRM: 5 calendars per location, 6 hour refresh, a 60 character name] (defaults I chose).
-- [CONFIRM: PDFs up to 10 MB and 100 pages for TownwiseAI].
+- [CONFIRM: 12 link adds per account an hour].
 - Whether "Make a note" from an event should now offer the title as the note's detail. This change keeps it empty, as the spec says today.

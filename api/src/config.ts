@@ -1,3 +1,5 @@
+import { createSecretKey, type KeyObject } from 'node:crypto';
+
 import { ConfigError, type ServerConfig } from '@ckeith26/server-core';
 import { z } from 'zod';
 
@@ -6,6 +8,17 @@ import { normalizeEmail } from './normalize-email.ts';
 const MAX_STAFF = 20;
 const ACS_HOST = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.communication\.azure\.com$/;
 const LAB_JOB_ID = /^\/subscriptions\/[0-9a-f-]{36}\/resourceGroups\/[\w.()-]{1,90}\/providers\/Microsoft\.App\/jobs\/[a-z0-9-]{2,32}$/i;
+const CALENDAR_KEY_BYTES = 32;
+
+/** Canonical base64 of exactly 32 bytes, as a secret key (calendar/secret.ts). The message never holds the value. */
+const calendarKeySchema = z.string().transform((raw, ctx): KeyObject => {
+  const bytes = Buffer.from(raw, 'base64');
+  if (bytes.length !== CALENDAR_KEY_BYTES || bytes.toString('base64') !== raw) {
+    ctx.addIssue({ code: 'custom', message: 'expected 32 random bytes in base64 (openssl rand -base64 32)' });
+    return z.NEVER;
+  }
+  return createSecretKey(bytes);
+}).meta({ secret: true });
 
 /** Spread into the one loadEnv call in main.ts. Messages never include the values. */
 export const configSchema = z.object({
@@ -68,6 +81,12 @@ export const configSchema = z.object({
   TOWNWISE_LAB_CALLER_ID: z.guid({ message: 'expected a GUID' }).optional(),
   /** `azure` only: the Entra tenant the lab job's token comes from. */
   TOWNWISE_LAB_TENANT_ID: z.guid({ message: 'expected a GUID' }).optional(),
+  /**
+   * Seals owner calendar links (openspec change connect-owner-calendar, design decision 4). Absent turns calendar links
+   * off (503 calendar_links_unavailable) while calendar files still import; anything but 32 bytes of base64 refuses
+   * boot. main.ts takes it out of the config it passes around and hands it only to what reads links.
+   */
+  TOWNWISE_CALENDAR_KEY: calendarKeySchema.optional(),
 });
 
 export type TownwiseConfig = z.infer<typeof configSchema>;

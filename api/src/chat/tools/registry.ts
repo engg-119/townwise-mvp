@@ -18,6 +18,7 @@ import { listDataTool } from './list-data.ts';
 import { suggestNextTool } from './next.ts';
 import { notesTool } from './notes.ts';
 import { overviewTool } from './overview.ts';
+import { ownerCalendarTool } from './owner-calendar.ts';
 import { peopleInTownTool } from './people-in-town.ts';
 import { proposeDataTool } from './propose-data.ts';
 import { proposeNoteTool } from './propose-note.ts';
@@ -120,6 +121,8 @@ export const TOOL_REGISTRY: readonly ChatTool<unknown>[] = [
   startCalibrationTool,
   getCalibrationTool,
   compareForecastModelsTool,
+  // The owner's own calendars (openspec change connect-owner-calendar).
+  ownerCalendarTool,
 ];
 
 /** The tool definitions sent to the model, in registry order. */

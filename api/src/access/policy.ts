@@ -5,7 +5,7 @@ import { AppError } from '@ckeith26/server-core';
 import type { Request } from 'express';
 
 import type { ListedBlob } from '../files/blobs.ts';
-import type { ClaimedImport, JoinedSeat, LabCallbackClaim, SweptFile, SweptImport } from '../stores/cross-tenant.ts';
+import type { ClaimedCalendar, ClaimedImport, JoinedSeat, LabCallbackClaim, SweptFile, SweptImport } from '../stores/cross-tenant.ts';
 import type { OrgRecord, OrgStore } from '../stores/orgs.ts';
 import type { OpenAsAdminGrantRecord } from '../stores/view-as-grants.ts';
 import type { Access, ResolvedSeat, Resolution, Role } from './resolve.ts';
@@ -46,6 +46,11 @@ export function scopeForLabCallback(claim: LabCallbackClaim): OrgScope {
 /** The daily file sweep only (files/sweeper.ts), for the organization of a file, an import or a blob it found. */
 export function scopeForSweep(found: SweptFile | SweptImport | ListedBlob): OrgScope {
   return mint(found.orgId);
+}
+
+/** The calendar refresh loop only (calendar/refresher.ts), for the organization of the link calendar it just claimed. */
+export function scopeForCalendarRefresh(claim: ClaimedCalendar): OrgScope {
+  return mint(claim.orgId);
 }
 
 /** Approval (F3) and staff creation (F10) only, for the organization that handler just created. */

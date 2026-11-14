@@ -156,6 +156,11 @@ function noteSummary(verb: string, d: AuditDetails): string {
   return `${verb} a note (${NOTE_KINDS[text(d.kind)] ?? text(d.kind)}), ${text(d.startDate)} to ${text(d.endDate)}`;
 }
 
+/** An owner calendar by its kind only: its label, host and address are never in the record. */
+function calendarWords(d: AuditDetails): string {
+  return d.kind === 'link' ? 'a calendar link' : 'a calendar file';
+}
+
 /** The plain-words summary for an event, from its action and allowlisted details only. */
 export function summaryOf(action: AuditAction, d: AuditDetails): string {
   switch (action) {
@@ -198,6 +203,10 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'rule.created': return d.via === 'townwise_ai' ? 'Added a business rule, from TownwiseAI' : 'Added a business rule';
     case 'rule.updated': return 'Edited a business rule';
     case 'rule.deleted': return 'Deleted a business rule';
+    case 'owner_calendar.added': return `Added ${calendarWords(d)} with ${text(d.eventCount)} events`;
+    case 'owner_calendar.removed': return `Removed ${calendarWords(d)}`;
+    case 'owner_calendar.refreshed':
+      return d.status === 'ok' ? `Refreshed ${calendarWords(d)}: ${text(d.eventCount)} events` : `Refreshing ${calendarWords(d)} failed (${text(d.status)})`;
     case 'chat.turn_completed': return 'Asked the tuning chat about a location';
     case 'chat.conversation_deleted': return 'Deleted a tuning chat conversation';
     case 'agent.question_answered':

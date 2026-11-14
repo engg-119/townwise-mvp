@@ -3,7 +3,8 @@
 // outside the twelve, the model card with no forecast, strict ranges, 404 across organizations, view-as reads, and
 // no log line of their own. U13B: the published forecast (drafts and withdrawn runs invisible, the newest eligible
 // run per date, actuals and live accuracy) and the model card's run state. Spec 14.5: saved notes adjusting the read
-// from today on, past days, accuracy and weeks kept honest, and no other tenant's notes. Every figure is synthetic.
+// from today on, past days, accuracy and weeks kept honest, and no other tenant's notes. A stored owner calendar event
+// changes neither the forecast nor people in town (openspec change connect-owner-calendar). Every figure is synthetic.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
@@ -16,7 +17,7 @@ import type { ForecastWindow } from '../src/forecasts/reader.ts';
 import type { PeopleInTownWindow } from '../src/people-in-town/estimate.ts';
 import type { PeopleData } from '../src/people-in-town/sources.ts';
 import type { Town } from '../src/towns.ts';
-import { addGrant, addLocation, addNote, addSalesDay, addSeat, createOrg } from './helpers/fixtures.ts';
+import { addGrant, addLocation, addNote, addOwnerCalendar, addSalesDay, addSeat, createOrg } from './helpers/fixtures.ts';
 import {
   call, MINUTE, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
@@ -178,8 +179,8 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
   });
   afterAll(async () => { await removeStaffFactor(server); });
 
-  async function staffImport(body: unknown): Promise<string> {
-    const res = await call(server, `/api/admin/orgs/${orgId}/locations/${forecasted}/forecast-runs`, { session: staff, json: body });
+  async function staffImport(body: unknown, locationId = forecasted): Promise<string> {
+    const res = await call(server, `/api/admin/orgs/${orgId}/locations/${locationId}/forecast-runs`, { session: staff, json: body });
     expect(res.status).toBe(201);
     return (await res.json() as { run: { id: string } }).run.id;
   }
@@ -540,6 +541,25 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
         available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], notCovered: [{ from: '2026-06-01', to: '2026-06-14' }],
       });
     });
+  });
+
+  it('a stored calendar event on a future day that no note covers leaves that day’s forecast and people in town as they were', async () => {
+    // The owner-calendar spec's "Event without a note". The fixture calendar's events fall on November 2 and 3.
+    const booked = await addLocation(server, { orgId, name: 'Booked Room' });
+    const open = { status: 'open', low: 80, mid: 100, high: 120, baseline: null, reasons: [] };
+    const days = [{ date: '2026-11-02', ...open }, { date: '2026-11-03', ...open }];
+    await staffChange(await staffImport({ ...structuredClone(RUN), dataThrough: '2026-05-31', madeAt: '2026-06-01', days, weeks: [] }, booked), 'publish');
+    const range = '?from=2026-11-02&to=2026-11-03';
+    const reads = async (): Promise<unknown[]> => [
+      await (await call(server, `/api/org/locations/${booked}/forecast${range}`, { session: member })).json() as ForecastWindow,
+      await window(booked, '2026-11-02', '2026-11-03'),
+    ];
+    const before = await reads();
+    expect(before[0]).toMatchObject({ available: true, days: [{ date: '2026-11-02', mid: 100 }, { date: '2026-11-03', mid: 100 }] });
+    await addOwnerCalendar(server, { orgId, locationId: booked });
+    const stored = await (await call(server, `/api/org/locations/${booked}/owner-calendars/events${range}`, { session: member })).json() as { events: unknown[] };
+    expect(stored.events).toHaveLength(2);
+    expect(await reads()).toEqual(before);
   });
 });
 
