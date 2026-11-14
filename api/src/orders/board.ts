@@ -1,6 +1,8 @@
-// The order board the Orders page and TownwiseAI both read. A location with no item sales, count, or supplier
-// schedule has no board. The sample is a labeled preview, not that location's stock, and it is not built from
-// ground_truth. This version does not compute S = μ_W + z·σ_W. The fields are here so a later board can.
+// The order board the Orders page and TownwiseAI both read: one next order per supplier (design Decision 2), each line
+// computed by engine.ts from the location's setup, item sales and counts (orders/live.ts reads them). The sample is a
+// labeled preview in the same shape, not that location's stock; rules and saved edits never change it.
+import { addDays, clockTime, shortDate, weekdayName } from './dates.ts';
+import { targetFor, unitFor, type EngineLine, type OrderCategory, type OrderUnit, type SupplierOrderPlan } from './engine.ts';
 
 export type OrderConfidence = 'high' | 'medium' | 'low';
 
@@ -19,38 +21,59 @@ export interface OrderLine {
   readonly itemId: string;
   readonly name: string;
   readonly supplier: string;
-  readonly unit: string;
+  readonly unit: OrderUnit;
   readonly neverRunOut: boolean;
   readonly recommended: number;
   readonly alternative: number | null;
   readonly par: number;
-  /** Window demand in purchase units, once item history exists. Null until then. */
+  /** Window demand in purchase units; null without item sales for the window's weekdays. */
   readonly mu: number | null;
-  /** Window-total error in purchase units. Null until item history exists. */
+  /** Spread of past window errors in purchase units; null under 2 past windows. */
   readonly sigma: number | null;
+  /** The order-up-to level S = mu + z x (sigma or 0); null without mu. */
+  readonly orderUpTo: number | null;
+  /** The chance of not running out the quantity aims for. */
+  readonly target: number;
   readonly onHand: number | null;
   readonly countAgeDays: number | null;
   readonly confidence: OrderConfidence;
+  readonly dealSize: number | null;
+  /** Covered item-sales days in the 8 weeks before today. */
+  readonly coveredDays: number;
   readonly why: string;
   readonly sample: boolean;
   readonly edit: OrderEdit | null;
-  readonly rule: OrderRuleView | null;
+  /** Every active rule for the item, each turned off on its own. */
+  readonly rules: readonly OrderRuleView[];
+}
+
+export interface SupplierOrder {
+  readonly supplierId: string;
+  readonly supplier: string;
+  /** The order-by date, and its time (HH:MM, the town's zone). */
+  readonly cutoff: string;
+  readonly cutoffTime: string;
+  readonly delivery: string;
+  /** The supplier's following delivery, which this order lasts until. */
+  readonly coversThrough: string;
+  readonly deadline: string;
+  readonly lines: readonly OrderLine[];
 }
 
 export interface OrderBoard {
   readonly available: true;
   readonly sample: boolean;
-  readonly cutoff: string;
-  readonly delivery: string;
-  readonly coversThrough: string;
-  readonly deadline: string;
+  /** What the board lacks: 'item sales', 'a recent count'. */
   readonly missing: readonly string[];
-  readonly lines: readonly OrderLine[];
+  /** By cutoff. */
+  readonly orders: readonly SupplierOrder[];
 }
 
 export interface OrderUnavailable {
   readonly available: false;
   readonly reason: string;
+  /** What the setup lacks: 'the supplier schedule', 'the items'. */
+  readonly missing: readonly string[];
 }
 
 export type OrderAnswer = OrderBoard | OrderUnavailable;
@@ -70,110 +93,116 @@ export interface StoredRule {
   readonly off: boolean;
 }
 
-export const ORDER_UNAVAILABLE = 'Townwise can’t see this location’s item sales, a recent count, or its supplier schedule.';
+export const ORDER_UNAVAILABLE = 'Townwise can’t build an order for this location until its ordering setup has a supplier schedule and items.';
 
-const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
-const SHORT_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
-const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
-
-/** A calendar date, read as UTC so a weekday does not depend on the server's zone. */
-function at(iso: string): Date {
-  return new Date(`${iso}T00:00:00.000Z`);
+export function unavailable(missing: readonly string[]): OrderUnavailable {
+  return { available: false, reason: ORDER_UNAVAILABLE, missing: [...missing] };
 }
 
-export function addDays(iso: string, days: number): string {
-  const date = at(iso);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
+/** 'Order by Wed, Nov 18, 2:00pm. Thursday’s delivery covers through Monday.' */
+export function deadline(order: Pick<SupplierOrder, 'cutoff' | 'cutoffTime' | 'delivery' | 'coversThrough'>): string {
+  return `Order by ${shortDate(order.cutoff)}, ${clockTime(order.cutoffTime)}. ${weekdayName(order.delivery)}’s delivery covers through ${weekdayName(order.coversThrough)}.`;
 }
 
-function weekday(iso: string): string {
-  return WEEKDAYS[at(iso).getUTCDay()] ?? '';
-}
-
-function shortDate(iso: string): string {
-  const date = at(iso);
-  return `${SHORT_WEEKDAYS[date.getUTCDay()] ?? ''}, ${SHORT_MONTHS[date.getUTCMonth()] ?? ''} ${String(date.getUTCDate())}`;
+/** The engine's plans as the board: a line per item, no edits and no rules yet (withPreferences adds them). */
+export function liveBoard(plans: readonly SupplierOrderPlan[], missing: readonly string[]): OrderBoard {
+  return {
+    available: true,
+    sample: false,
+    missing: [...missing],
+    orders: plans.map((plan): SupplierOrder => ({
+      supplierId: plan.supplierId,
+      supplier: plan.supplier,
+      cutoff: plan.cutoff,
+      cutoffTime: plan.cutoffTime,
+      delivery: plan.delivery,
+      coversThrough: plan.coversThrough,
+      deadline: deadline(plan),
+      lines: plan.lines.map((line: EngineLine): OrderLine => ({ ...line, sample: false, edit: null, rules: [] })),
+    })),
+  };
 }
 
 /** The next Wednesday on or after `today`, the Thursday delivery, and the Monday that delivery covers through. */
 export function sampleSchedule(today: string): { cutoff: string; delivery: string; coversThrough: string } {
   let cutoff = today;
-  while (at(cutoff).getUTCDay() !== 3) cutoff = addDays(cutoff, 1);
+  while (weekdayName(cutoff) !== 'Wednesday') cutoff = addDays(cutoff, 1);
   const delivery = addDays(cutoff, 1);
   return { cutoff, delivery, coversThrough: addDays(delivery, 4) };
-}
-
-function deadline(schedule: { cutoff: string; delivery: string; coversThrough: string }): string {
-  return `Order by ${shortDate(schedule.cutoff)}, 2:00pm. ${weekday(schedule.delivery)}’s delivery covers through ${weekday(schedule.coversThrough)}.`;
 }
 
 interface SampleItem {
   readonly itemId: string;
   readonly name: string;
+  readonly supplierId: string;
   readonly supplier: string;
-  readonly unit: string;
+  readonly category: OrderCategory;
+  readonly unit: OrderUnit;
   readonly neverRunOut: boolean;
   readonly par: number;
   readonly alternative: number;
 }
 
 const SAMPLE_ITEMS: readonly SampleItem[] = [
-  { itemId: 'sample-lager', name: 'Sample lager', supplier: 'Sample distributor', unit: 'cases', neverRunOut: true, par: 8, alternative: 6 },
-  { itemId: 'sample-seltzer', name: 'Sample seltzer', supplier: 'Sample distributor', unit: 'cases', neverRunOut: false, par: 3, alternative: 6 },
-  { itemId: 'sample-keg', name: 'Sample keg', supplier: 'Sample brewery', unit: 'kegs', neverRunOut: true, par: 2, alternative: 1 },
+  {
+    itemId: 'sample-lager', name: 'Sample lager', supplierId: 'sample-distributor', supplier: 'Sample distributor', category: 'bottles_cans',
+    unit: 'cases', neverRunOut: true, par: 8, alternative: 6,
+  },
+  {
+    itemId: 'sample-seltzer', name: 'Sample seltzer', supplierId: 'sample-distributor', supplier: 'Sample distributor', category: 'bottles_cans',
+    unit: 'cases', neverRunOut: false, par: 3, alternative: 6,
+  },
+  {
+    itemId: 'sample-keg', name: 'Sample keg', supplierId: 'sample-brewery', supplier: 'Sample brewery', category: 'draft',
+    unit: 'kegs', neverRunOut: true, par: 2, alternative: 1,
+  },
 ];
 
-function sampleWhy(schedule: { delivery: string; coversThrough: string }): string {
-  return `${weekday(schedule.delivery)}’s delivery covers through ${weekday(schedule.coversThrough)}. No count, so this is the par.`;
-}
+const SAMPLE_CUTOFF_TIME = '14:00';
 
-/** The labeled preview. Rules and saved edits do not change it, and nothing on it can be saved. */
+/** The labeled preview: an order per sample supplier. Rules and saved edits do not change it, and nothing on it can be saved. */
 export function sampleBoard(today: string): OrderBoard {
-  const schedule = sampleSchedule(today);
-  const why = sampleWhy(schedule);
-  const lines = SAMPLE_ITEMS.map((item): OrderLine => ({
-    itemId: item.itemId,
-    name: item.name,
-    supplier: item.supplier,
-    unit: item.unit,
-    neverRunOut: item.neverRunOut,
-    recommended: item.par,
-    alternative: item.alternative,
-    par: item.par,
-    mu: null,
-    sigma: null,
-    onHand: null,
-    countAgeDays: null,
-    confidence: 'low',
-    why,
-    sample: true,
-    edit: null,
-    rule: null,
-  }));
-  return {
-    available: true,
-    sample: true,
+  const schedule = { ...sampleSchedule(today), cutoffTime: SAMPLE_CUTOFF_TIME };
+  const why = `${weekdayName(schedule.delivery)}’s delivery covers through ${weekdayName(schedule.coversThrough)}. No count, so this is the par.`;
+  const suppliers = [...new Map(SAMPLE_ITEMS.map((item) => [item.supplierId, item.supplier])).entries()]
+    .sort(([, a], [, b]) => a.localeCompare(b));
+  const orders = suppliers.map(([supplierId, supplier]): SupplierOrder => ({
+    supplierId,
+    supplier,
     ...schedule,
     deadline: deadline(schedule),
-    missing: ['item sales', 'a recent count', 'the supplier schedule'],
-    lines: sortLines(lines),
-  };
-}
-
-/** This version has no live board. Item history, a count, and a schedule fill one later. */
-export function liveBoard(): null {
-  return null;
-}
-
-export function unavailable(): OrderUnavailable {
-  return { available: false, reason: ORDER_UNAVAILABLE };
+    lines: sortLines(SAMPLE_ITEMS.filter((item) => item.supplierId === supplierId).map((item): OrderLine => ({
+      itemId: item.itemId,
+      name: item.name,
+      supplier: item.supplier,
+      unit: item.unit,
+      neverRunOut: item.neverRunOut,
+      recommended: item.par,
+      alternative: item.alternative,
+      par: item.par,
+      mu: null,
+      sigma: null,
+      orderUpTo: null,
+      target: targetFor(item).target,
+      onHand: null,
+      countAgeDays: null,
+      confidence: 'low',
+      dealSize: null,
+      coveredDays: 0,
+      why,
+      sample: true,
+      edit: null,
+      rules: [],
+    }))),
+  }));
+  return { available: true, sample: true, missing: ['item sales', 'a recent count', 'the supplier schedule'], orders };
 }
 
 function sortLines(lines: readonly OrderLine[]): OrderLine[] {
   return [...lines].sort((a, b) => Number(b.neverRunOut) - Number(a.neverRunOut) || a.name.localeCompare(b.name));
 }
 
+/** The newest edit per item for this delivery; `decisions` come newest first. */
 function latestEdits(decisions: readonly StoredDecision[], delivery: string): Map<string, OrderEdit> {
   const found = new Map<string, OrderEdit>();
   for (const decision of decisions) {
@@ -194,39 +223,47 @@ function activeRules(rules: readonly StoredRule[]): Map<string, StoredRule[]> {
   return found;
 }
 
-function ruleSentence(delta: number, unit: string, situation: string): string {
-  const word = delta < 0 ? 'fewer' : 'extra';
-  return `Includes ${String(Math.abs(delta))} ${word} ${unit} because ${situation}`;
+/** 'Includes 2 extra cases from your rule: a football weekend.' The situation is the owner's own words. */
+function ruleSentence(delta: number, unit: OrderUnit, situation: string): string {
+  const size = Math.abs(delta);
+  const words = situation.replace(/[.!?]+$/, '');
+  return delta < 0
+    ? `Leaves out ${String(size)} ${unitFor(size, unit)} from your rule: ${words}.`
+    : `Includes ${String(size)} extra ${unitFor(size, unit)} from your rule: ${words}.`;
 }
 
 /**
- * A confirmed rule is the only past preference that changes a later line. A saved edit is shown and does not.
- * A sample is returned unchanged.
+ * Each order's lines with the latest edit saved for that order's delivery, and every active rule of the item (design
+ * Decision 6): each rule is listed on its own, and together they move the recommended quantity, never below 0. A rule
+ * applies to every order of its item until it is turned off. A sample is returned unchanged.
  */
 export function withPreferences(board: OrderBoard, decisions: readonly StoredDecision[], rules: readonly StoredRule[]): OrderBoard {
   if (board.sample) return board;
-  const edits = latestEdits(decisions, board.delivery);
   const byItem = activeRules(rules);
-  const lines = board.lines.map((line) => {
-    const edit = edits.get(line.itemId) ?? null;
-    const applied = byItem.get(line.itemId) ?? [];
-    const delta = applied.reduce((sum, rule) => sum + rule.delta, 0);
-    const sentence = applied.map((rule) => ruleSentence(rule.delta, line.unit, rule.situation)).join(' ');
-    const primary = applied[0];
-    return {
-      ...line,
-      recommended: Math.max(0, line.recommended + delta),
-      why: sentence === '' ? line.why : `${line.why} ${sentence}.`,
-      edit,
-      rule: primary === undefined ? null : { id: primary.id, delta, situation: primary.situation },
-    };
+  const orders = board.orders.map((order) => {
+    const edits = latestEdits(decisions, order.delivery);
+    const lines = order.lines.map((line): OrderLine => {
+      const applied = byItem.get(line.itemId) ?? [];
+      const delta = applied.reduce((sum, rule) => sum + rule.delta, 0);
+      return {
+        ...line,
+        recommended: Math.max(0, line.recommended + delta),
+        why: [line.why, ...applied.map((rule) => ruleSentence(rule.delta, line.unit, rule.situation))].join(' '),
+        edit: edits.get(line.itemId) ?? null,
+        rules: applied.map((rule) => ({ id: rule.id, delta: rule.delta, situation: rule.situation })),
+      };
+    });
+    return { ...order, lines };
   });
-  return { ...board, lines };
+  return { ...board, orders };
 }
 
-/** The sample line for this delivery and item, or null. A live line is never invented. */
-export function findLine(today: string, delivery: string, itemId: string): OrderLine | null {
-  const board = sampleBoard(today);
-  if (board.delivery !== delivery) return null;
-  return board.lines.find((line) => line.itemId === itemId) ?? null;
+/** The order and line for this item and delivery on the board, or null. A line is never invented. */
+export function findLine(board: OrderBoard, delivery: string, itemId: string): { order: SupplierOrder; line: OrderLine } | null {
+  for (const order of board.orders) {
+    if (order.delivery !== delivery) continue;
+    const line = order.lines.find((candidate) => candidate.itemId === itemId);
+    if (line !== undefined) return { order, line };
+  }
+  return null;
 }

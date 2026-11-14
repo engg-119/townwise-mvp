@@ -6,6 +6,7 @@
 // window's error uses only its covered days; with no sigma the why line says there is no cushion yet; lines at 0 stay.
 
 import type { OrderConfidence } from './board.ts';
+import { shortDate, weekdayName } from './dates.ts';
 
 export type OrderCategory = 'bottles_cans' | 'draft' | 'liquor' | 'cocktail_ingredient';
 export type OrderUnit = 'cases' | 'kegs' | 'bottles' | 'units';
@@ -126,8 +127,6 @@ const TARGETS: Record<OrderCategory | 'never_run_out', { target: number; z: numb
 };
 const SINGULAR: Record<OrderUnit, string> = { cases: 'case', kegs: 'keg', bottles: 'bottle', units: 'unit' };
 const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
-const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
-const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
 
 function dayNumber(iso: string): number {
   return Date.parse(`${iso}T00:00:00.000Z`) / DAY_MS;
@@ -312,19 +311,15 @@ function number(value: number): string {
   return Math.abs(value - Math.round(value)) < 1e-6 ? String(Math.round(value)) : value.toFixed(1);
 }
 
+/** The unit for a quantity: the singular for exactly one, else the plural. */
+export function unitFor(value: number, unit: OrderUnit): string {
+  return Math.abs(value - 1) < 1e-6 ? SINGULAR[unit] : unit;
+}
+
 function amount(value: number, unit: OrderUnit): string {
   // A slow item's use rounds to 0.0 at one decimal; say what is true instead.
   if (value > 0 && value < 0.05) return `less than 0.1 ${unit}`;
-  return `${number(value)} ${Math.abs(value - 1) < 1e-6 ? SINGULAR[unit] : unit}`;
-}
-
-function weekdayName(iso: string): string {
-  return WEEKDAYS[weekdayOf(dayNumber(iso))] ?? '';
-}
-
-function shortDate(iso: string): string {
-  const date = new Date(`${iso}T00:00:00.000Z`);
-  return `${weekdayName(iso).slice(0, 3)}, ${SHORT_MONTHS[date.getUTCMonth()] ?? ''} ${date.getUTCDate()}`;
+  return `${number(value)} ${unitFor(value, unit)}`;
 }
 
 function dealPhrase(quantity: number, dealSize: number | null): string {

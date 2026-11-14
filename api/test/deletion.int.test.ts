@@ -296,7 +296,7 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
     expect(await count('tw_orgs', { _id: orgId })).toBe(0);
   });
 
-  it('sales days and chat usage written after the first sweep, by an upload or a chat turn in flight, are swept too', async () => {
+  it('sales days, item sales, counts and chat usage written after the first sweep, by requests in flight, are swept too', async () => {
     const org = await populatedOrg('Late Writes Grill', 'suspended');
     const model = server.connection.models.TwOrg as unknown as { deleteOne: (...args: unknown[]) => Promise<unknown> };
     const deleteOne = model.deleteOne.bind(model);
@@ -305,6 +305,11 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
       const removed = await deleteOne(...args);
       await addSalesDay(server, { orgId: org.orgId, locationId, date: '2026-05-03', guests: 77, netSalesCents: 199_900 });
       await addChatUsage(server, { orgId: org.orgId, month: '2026-07', costMicroUsd: 40_000 });
+      // An item sales upload and a count still running.
+      const where = { orgId: new Types.ObjectId(org.orgId), locationId: new Types.ObjectId(locationId) };
+      const itemId = new Types.ObjectId().toHexString();
+      await server.connection.collection('tw_item_sales').insertOne({ ...where, date: '2026-05-03', items: { [itemId]: 12 }, uploadedAt: server.clock.now() });
+      await server.connection.collection('tw_order_counts').insertOne({ ...where, date: '2026-05-03', items: { [itemId]: 2 }, updatedAt: server.clock.now() });
       return removed;
     });
     let res: Response;

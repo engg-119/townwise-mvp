@@ -2,7 +2,7 @@
 // The model names an item and a delivery. It does not type a quantity. Views are dates and counts, never a figure.
 import { z } from 'zod';
 
-import { findLine, ORDER_UNAVAILABLE, sampleBoard, type OrderBoard, type OrderLine } from '../../orders/board.ts';
+import { findLine, ORDER_UNAVAILABLE, sampleBoard, type OrderBoard, type OrderLine, type SupplierOrder } from '../../orders/board.ts';
 import type { ChatTool, ToolContext } from './registry.ts';
 
 export const ORDER_CHANGE_RESULT = 'Shown to the owner as a proposal. They decide the quantity and why.';
@@ -40,7 +40,7 @@ interface ModelLine {
   readonly why: string;
   readonly sample: boolean;
   readonly edit: { readonly quantity: number; readonly reason: string } | null;
-  readonly rule: { readonly delta: number; readonly situation: string } | null;
+  readonly rules: readonly { readonly delta: number; readonly situation: string }[];
 }
 
 function modelLine(line: OrderLine): ModelLine {
@@ -61,21 +61,24 @@ function modelLine(line: OrderLine): ModelLine {
     why: line.why,
     sample: line.sample,
     edit: line.edit,
-    rule: line.rule === null ? null : { delta: line.rule.delta, situation: line.rule.situation },
+    rules: line.rules.map((rule) => ({ delta: rule.delta, situation: rule.situation })),
+  };
+}
+
+function modelOrder(order: SupplierOrder): Record<string, unknown> {
+  return {
+    supplier: order.supplier,
+    cutoff: order.cutoff,
+    cutoffTime: order.cutoffTime,
+    delivery: order.delivery,
+    coversThrough: order.coversThrough,
+    deadline: order.deadline,
+    lines: order.lines.map(modelLine),
   };
 }
 
 function modelBoard(board: OrderBoard): string {
-  return JSON.stringify({
-    available: true,
-    sample: board.sample,
-    cutoff: board.cutoff,
-    delivery: board.delivery,
-    coversThrough: board.coversThrough,
-    deadline: board.deadline,
-    missing: board.missing,
-    lines: board.lines.map(modelLine),
-  });
+  return JSON.stringify({ available: true, sample: board.sample, missing: board.missing, orders: board.orders.map(modelOrder) });
 }
 
 function unavailable(): string {
@@ -84,10 +87,13 @@ function unavailable(): string {
 
 function boardView(content: string): { available: boolean; sample?: boolean; delivery?: string; lineCount?: number } | null {
   try {
-    const parsed = JSON.parse(content) as { available?: unknown; sample?: unknown; delivery?: unknown; lines?: unknown };
+    const parsed = JSON.parse(content) as { available?: unknown; sample?: unknown; orders?: unknown };
     if (parsed.available === false) return { available: false };
-    if (parsed.available !== true || typeof parsed.delivery !== 'string' || !Array.isArray(parsed.lines)) return null;
-    return { available: true, sample: parsed.sample === true, delivery: parsed.delivery, lineCount: parsed.lines.length };
+    if (parsed.available !== true || !Array.isArray(parsed.orders)) return null;
+    const orders = parsed.orders as { delivery?: unknown; lines?: unknown }[];
+    const delivery = orders[0]?.delivery;
+    const lineCount = orders.reduce((sum, order) => sum + (Array.isArray(order.lines) ? order.lines.length : 0), 0);
+    return { available: true, sample: parsed.sample === true, ...(typeof delivery === 'string' ? { delivery } : {}), lineCount };
   } catch {
     return null;
   }
@@ -122,15 +128,15 @@ export const orderBoardTool: ChatTool<OrderBoardInput> = {
   },
   inputView: (input) => (input.delivery === undefined ? {} : { delivery: input.delivery }),
   resultView: (content) => boardView(content),
-  async run(tc, input) {
-    return { content: await boardContent(tc, input.delivery) };
+  run(tc, input) {
+    return Promise.resolve({ content: boardContent(tc, input.delivery) });
   },
 };
 
-async function boardContent(tc: ToolContext, delivery: string | undefined): Promise<string> {
+function boardContent(tc: ToolContext, delivery: string | undefined): string {
   if (delivery === undefined) return unavailable();
   const board = sampleBoard(tc.today);
-  return board.delivery === delivery ? modelBoard(board) : unavailable();
+  return board.orders.some((order) => order.delivery === delivery) ? modelBoard(board) : unavailable();
 }
 
 export const orderLineTool: ChatTool<OrderLineInput> = {
@@ -156,14 +162,15 @@ export const orderLineTool: ChatTool<OrderLineInput> = {
   inputView: ({ itemId: id, delivery }) => ({ itemId: id, delivery }),
   resultView: (content) => {
     const view = boardView(content);
-    if (view === null || view.available === false) return view === null ? null : { available: false };
+    if (view === null) return null;
+    if (!view.available) return { available: false };
     return { available: true, sample: view.sample === true, ...(view.delivery === undefined ? {} : { delivery: view.delivery }) };
   },
   run(tc, input) {
-    const line = findLine(tc.today, input.delivery, input.itemId);
-    if (line === null) return Promise.resolve({ content: unavailable() });
     const board = sampleBoard(tc.today);
-    return Promise.resolve({ content: modelBoard({ ...board, lines: [line] }) });
+    const found = findLine(board, input.delivery, input.itemId);
+    if (found === null) return Promise.resolve({ content: unavailable() });
+    return Promise.resolve({ content: modelBoard({ ...board, orders: [{ ...found.order, lines: [found.line] }] }) });
   },
 };
 
@@ -189,8 +196,8 @@ export const proposeOrderChangeTool: ChatTool<OrderChangeInput> = {
   },
   inputView: ({ itemId: id, delivery }) => ({ itemId: id, delivery }),
   resultView: (content) => shownView(content, ORDER_CHANGE_RESULT),
-  run(_tc, _input) {
-    // A live line is the only one that can be changed. This version has none, and a sample cannot be saved.
+  run() {
+    // A live line is the only one that can be changed, and a sample cannot be saved. The tools task reads the live board.
     return Promise.resolve({ content: JSON.stringify({ shown: false, reason: NOT_SHOWN }) });
   },
 };

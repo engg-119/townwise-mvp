@@ -1,16 +1,22 @@
-// GET and POST /api/org/locations/:locationId/orders. The page and TownwiseAI read one board. A location has no
-// live board until item sales, a count, and a supplier schedule exist, so the preview is the labeled sample.
-// Saving an edit or a rule against the sample is refused. Nothing is sent to a distributor.
+// GET and POST /api/org/locations/:locationId/orders. The page and TownwiseAI read one board (orders/live.ts): the
+// location's next order per supplier, or what its ordering setup lacks. `?sample=true` is the labeled preview, and an
+// edit or a rule is never saved against it. Nothing is sent to a distributor. Audit details carry ids and dates only,
+// never the owner's reason or a quantity.
+import { objectId } from '@ckeith26/mongo';
 import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 
+import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
-import type { Principal } from '../access/policy.ts';
-import { liveBoard, sampleBoard, unavailable, withPreferences, type OrderAnswer, type StoredDecision, type StoredRule } from '../orders/board.ts';
-import type { DecisionRecord, RuleRecord } from '../stores/orders.ts';
-import { localDay, timeZoneOf } from '../time-zones.ts';
+import type { MemberPrincipal, Principal } from '../access/policy.ts';
+import { findLine, sampleBoard } from '../orders/board.ts';
+import { addDays } from '../orders/dates.ts';
+import { loadBoardNow, townClock } from '../orders/live.ts';
+import type { LocationRecord } from '../stores/locations.ts';
+import type { DecisionRecord } from '../stores/orders.ts';
 import { loadLocation, memberOf } from './locations.ts';
+import { actorOf } from './team.ts';
 
 const REASON_MAX = 280;
 
@@ -27,76 +33,82 @@ const ruleBody = z.strictObject({
 });
 
 const offBody = z.strictObject({
-  ruleId: z.string().trim().min(1).max(32),
+  ruleId: objectId.transform((id) => id.toLowerCase()),
 });
 
-function todayOf(ctx: TownwiseContext, town: Parameters<typeof timeZoneOf>[0]): string {
-  return localDay(ctx.now(), timeZoneOf(town).timeZone);
-}
-
-function asDecisions(rows: readonly DecisionRecord[]): StoredDecision[] {
-  return rows.map((row) => ({ itemId: row.itemId, delivery: row.delivery, quantity: row.quantity, reason: row.reason }));
-}
-
-function asRules(rows: readonly RuleRecord[]): StoredRule[] {
-  return rows.map((row) => ({ id: row.id, itemId: row.itemId, delta: row.delta, situation: row.situation, off: row.off }));
-}
-
-async function answer(ctx: TownwiseContext, scope: Parameters<typeof ctx.stores.orders.listDecisions>[0], locationId: string, today: string, sample: boolean): Promise<OrderAnswer> {
-  if (!sample) {
-    const live = liveBoard();
-    if (live === null) return unavailable();
-    const [decisions, rules] = await Promise.all([
-      ctx.stores.orders.listDecisions(scope, locationId),
-      ctx.stores.orders.listRules(scope, locationId),
-    ]);
-    return withPreferences(live, asDecisions(decisions), asRules(rules));
-  }
-  return sampleBoard(today);
+function notFound(): AppError {
+  return new AppError(404, 'not_found', 'Not found');
 }
 
 /** GET .../orders. `?sample=true` is the labeled preview. */
 export async function getOrders(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
-  const sample = req.query.sample === 'true';
-  const board = await answer(ctx, caller.scope, location.id, todayOf(ctx, location.town), sample);
+  const board = req.query.sample === 'true'
+    ? sampleBoard(townClock(ctx, location).today)
+    : await loadBoardNow(ctx, caller.scope, location);
   res.status(200).json(board);
 }
 
-/** POST .../orders/decisions. The recommended quantity is the board's, never the body's. */
+export interface DecisionInput {
+  readonly itemId: string;
+  readonly delivery: string;
+  readonly quantity: number;
+  readonly reason: string;
+}
+
+/**
+ * Saves the owner's quantity for one line of its supplier's next order, read from the live board now: 409
+ * `order_unavailable` without a board, 404 for an item or a delivery not on it. The recommended quantity is the
+ * board's, never the caller's. Shared with the order change card (chat-order-proposals.ts).
+ */
+export async function saveDecision(
+  ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord, input: DecisionInput,
+): Promise<DecisionRecord> {
+  const board = await loadBoardNow(ctx, caller.scope, location);
+  if (!board.available || board.sample) throw new AppError(409, 'order_unavailable', 'There is no order to change for this location.');
+  const found = findLine(board, input.delivery, input.itemId);
+  if (found === null) throw notFound();
+  const { order, line } = found;
+  return ctx.stores.orders.addDecision(caller.scope, location.id, {
+    itemId: line.itemId,
+    delivery: order.delivery,
+    windowStart: order.cutoff,
+    windowEnd: addDays(order.coversThrough, -1),
+    recommended: line.recommended,
+    quantity: input.quantity,
+    unit: line.unit,
+    reason: input.reason,
+    now: ctx.now(),
+  });
+}
+
+/** POST .../orders/decisions. */
 export async function saveOrderDecision(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
   const body = parseInput(decisionBody, req.body);
-  const today = todayOf(ctx, location.town);
-  const board = await answer(ctx, caller.scope, location.id, today, false);
-  if (!board.available || board.sample) throw new AppError(409, 'order_unavailable', 'There is no order to change for this location.');
-  const line = board.lines.find((item) => item.itemId === body.itemId && board.delivery === body.delivery);
-  if (line === undefined) throw new AppError(404, 'not_found', 'Not found');
-  const saved = await ctx.stores.orders.addDecision(caller.scope, location.id, {
-    itemId: line.itemId,
-    delivery: board.delivery,
-    windowStart: board.delivery,
-    windowEnd: board.coversThrough,
-    recommended: line.recommended,
-    quantity: body.quantity,
-    unit: line.unit,
-    reason: body.reason,
-    now: ctx.now(),
+  const saved = await saveDecision(ctx, caller, location, body);
+  await recordAfter(ctx, {
+    ...actorOf(caller), at: ctx.now(), orgId: caller.scope.orgId, action: 'order.decision_saved',
+    target: { type: 'location', id: location.id },
+    details: { locationId: location.id, itemId: saved.itemId, delivery: saved.delivery },
   });
   res.status(200).json({
     decision: { itemId: saved.itemId, delivery: saved.delivery, quantity: saved.quantity, reason: saved.reason, recommended: saved.recommended },
   });
 }
 
-/** POST .../orders/rules. The amount is the saved edit's difference, and the situation is that edit's reason. */
+/**
+ * POST .../orders/rules. The amount is the latest saved edit's difference, and the situation is that edit's reason. A
+ * rule already saved for the item and situation is the answer; one turned off is 409 `rule_off`.
+ */
 export async function saveOrderRule(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
   const body = parseInput(ruleBody, req.body);
   const decision = await ctx.stores.orders.latestDecision(caller.scope, location.id, body.itemId);
-  if (decision === null || decision.reason !== body.situation) throw new AppError(404, 'not_found', 'Not found');
+  if (decision?.reason !== body.situation) throw notFound();
   const existing = await ctx.stores.orders.findRule(caller.scope, location.id, body.itemId, body.situation);
   if (existing?.off === true) throw new AppError(409, 'rule_off', 'That rule is turned off.');
   const delta = decision.quantity - decision.recommended;
@@ -104,6 +116,13 @@ export async function saveOrderRule(ctx: TownwiseContext, req: Request, res: Res
   const rule = existing ?? await ctx.stores.orders.addRule(caller.scope, location.id, {
     itemId: decision.itemId, delta, unit: decision.unit, situation: decision.reason, now: ctx.now(),
   });
+  if (existing === null) {
+    await recordAfter(ctx, {
+      ...actorOf(caller), at: ctx.now(), orgId: caller.scope.orgId, action: 'order.rule_saved',
+      target: { type: 'location', id: location.id },
+      details: { locationId: location.id, itemId: rule.itemId },
+    });
+  }
   res.status(200).json({ rule: { id: rule.id, itemId: rule.itemId, delta: rule.delta, situation: rule.situation, off: rule.off } });
 }
 
@@ -113,6 +132,11 @@ export async function turnOffOrderRule(ctx: TownwiseContext, req: Request, res: 
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
   const body = parseInput(offBody, req.body);
   const turned = await ctx.stores.orders.turnOff(caller.scope, location.id, body.ruleId, ctx.now());
-  if (!turned) throw new AppError(404, 'not_found', 'Not found');
+  if (!turned) throw notFound();
+  await recordAfter(ctx, {
+    ...actorOf(caller), at: ctx.now(), orgId: caller.scope.orgId, action: 'order.rule_turned_off',
+    target: { type: 'location', id: location.id },
+    details: { locationId: location.id, ruleId: body.ruleId },
+  });
   res.status(204).end();
 }

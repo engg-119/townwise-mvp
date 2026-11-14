@@ -125,6 +125,8 @@ function cardSchema(): Schema<CardFields> {
     createdAt: { type: Date, required: true },
   }, { strict: true, versionKey: false, read: 'primary' });
   schema.index({ orgId: 1, conversationId: 1, proposalId: 1 }, { unique: true });
+  // Location deletion removes a location's cards without scanning the organization's.
+  schema.index({ orgId: 1, locationId: 1 });
   return schema;
 }
 

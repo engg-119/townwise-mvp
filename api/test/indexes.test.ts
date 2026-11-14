@@ -174,6 +174,7 @@ describe('indexes', () => {
     expect(indexesOf(connection, 'TwOrderCard')).toContainEqual([
       { orgId: 1, conversationId: 1, proposalId: 1 }, expect.objectContaining({ unique: true }),
     ]);
+    expect(indexesOf(connection, 'TwOrderCard').map(([keys]) => keys)).toContainEqual({ orgId: 1, locationId: 1 });
   });
 
   it('lists a ZIP’s entries once each, in archive order', () => {
